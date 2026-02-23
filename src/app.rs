@@ -122,8 +122,8 @@ pub struct App {
     pub status_message: Option<StatusMessage>,
     /// Files detected as changed by Claude Code output analysis.
     pub cc_changed_files: Vec<String>,
-    /// Worktree names whose Claude Code sessions are waiting for user input.
-    pub cc_waiting_worktrees: HashSet<String>,
+    /// Worktree paths whose Claude Code sessions are waiting for user input.
+    pub cc_waiting_worktrees: HashSet<PathBuf>,
     /// Whether the session history viewer is active.
     pub history_active: bool,
     /// Session history records loaded from the database.
@@ -832,7 +832,7 @@ impl App {
             .pty_manager
             .sessions()
             .iter()
-            .filter(|s| s.worktree == worktree_name && s.kind == pty_manager::SessionKind::ClaudeCode)
+            .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
             .count();
         let label = format!("CC:{}", cc_count + 1);
         let shell = self.config.general.shell.clone();
@@ -860,7 +860,7 @@ impl App {
             .pty_manager
             .sessions()
             .iter()
-            .filter(|s| s.worktree == worktree_name && s.kind == pty_manager::SessionKind::Shell)
+            .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::Shell)
             .count();
         let label = format!("SH:{}", sh_count + 1);
         let shell = self.config.general.shell.clone();
@@ -1024,35 +1024,35 @@ impl App {
     /// Return `(index_in_pty_manager, &PtySession)` pairs for Claude Code sessions
     /// belonging to the currently selected worktree.
     pub fn current_worktree_claude_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
-        let wt_name = self.selected_worktree_branch();
+        let wt_path = self.selected_worktree_path();
         self.pty_manager
             .sessions()
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.worktree == wt_name && s.kind == pty_manager::SessionKind::ClaudeCode)
+            .filter(|(_, s)| s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode)
             .collect()
     }
 
     /// Return `(index_in_pty_manager, &PtySession)` pairs for Shell sessions
     /// belonging to the currently selected worktree.
     pub fn current_worktree_shell_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
-        let wt_name = self.selected_worktree_branch();
+        let wt_path = self.selected_worktree_path();
         self.pty_manager
             .sessions()
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.worktree == wt_name && s.kind == pty_manager::SessionKind::Shell)
+            .filter(|(_, s)| s.working_dir == wt_path && s.kind == pty_manager::SessionKind::Shell)
             .collect()
     }
 
     /// Update the terminal content area size for Claude PTY sessions and resize them.
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal_size_claude = (rows, cols);
-        let wt_name = self.selected_worktree_branch();
+        let wt_path = self.selected_worktree_path();
         let count = self.pty_manager.session_count();
         for idx in 0..count {
             let s = &self.pty_manager.sessions()[idx];
-            if s.worktree == wt_name && s.kind == pty_manager::SessionKind::ClaudeCode {
+            if s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode {
                 self.pty_manager.resize_session(idx, rows, cols);
             }
         }
@@ -1061,11 +1061,11 @@ impl App {
     /// Update the terminal content area size for Shell PTY sessions and resize them.
     pub fn update_shell_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal_size_shell = (rows, cols);
-        let wt_name = self.selected_worktree_branch();
+        let wt_path = self.selected_worktree_path();
         let count = self.pty_manager.session_count();
         for idx in 0..count {
             let s = &self.pty_manager.sessions()[idx];
-            if s.worktree == wt_name && s.kind == pty_manager::SessionKind::Shell {
+            if s.working_dir == wt_path && s.kind == pty_manager::SessionKind::Shell {
                 self.pty_manager.resize_session(idx, rows, cols);
             }
         }
@@ -1108,7 +1108,7 @@ impl App {
     /// currently focused on that worktree's terminal, a status message is
     /// shown as a notification.
     pub fn check_cc_waiting_state(&mut self) {
-        let mut new_waiting: HashSet<String> = HashSet::new();
+        let mut new_waiting: HashSet<PathBuf> = HashSet::new();
 
         // Source 1: Hook signal files (high reliability).
         let signal_dir = self.repo_path.join(".conductor").join("cc-waiting");
@@ -1118,7 +1118,7 @@ impl App {
                 let path_str = filename.replace("__", "/");
                 for wt in &self.worktrees {
                     if wt.path.to_string_lossy() == path_str {
-                        new_waiting.insert(wt.branch.clone());
+                        new_waiting.insert(wt.path.clone());
                     }
                 }
             }
@@ -1132,22 +1132,27 @@ impl App {
                 continue;
             }
             if self.pty_manager.is_waiting_for_input(idx) {
-                new_waiting.insert(session.worktree.clone());
+                new_waiting.insert(session.working_dir.clone());
             }
         }
 
         // Detect worktrees that newly entered waiting state.
-        let current_wt = self.selected_worktree_branch();
+        let current_wt_path = self.selected_worktree_path();
         let is_terminal_focused = matches!(self.focus, Focus::TerminalClaude);
 
-        for wt in &new_waiting {
-            if !self.cc_waiting_worktrees.contains(wt) {
+        for wt_path in &new_waiting {
+            if !self.cc_waiting_worktrees.contains(wt_path) {
+                // Resolve display name from worktree list.
+                let display_name = self.worktrees.iter()
+                    .find(|w| &w.path == wt_path)
+                    .map(|w| w.branch.clone())
+                    .unwrap_or_else(|| "?".to_string());
                 // Newly waiting — notify if user is not focused on that terminal.
-                let skip_notify = is_terminal_focused && *wt == current_wt;
+                let skip_notify = is_terminal_focused && *wt_path == current_wt_path;
                 if !skip_notify {
-                    self.set_status(format!("CC waiting for input: {wt}"), StatusLevel::Info);
+                    self.set_status(format!("CC waiting for input: {display_name}"), StatusLevel::Info);
                     if self.config.notification.cc_waiting {
-                        let msg = format!("CC waiting for input: {wt}");
+                        let msg = format!("CC waiting for input: {display_name}");
                         std::thread::spawn(move || {
                             let _ = std::process::Command::new("terminal-notifier")
                                 .args(["-title", "Conductor", "-message", &msg])
@@ -1174,8 +1179,8 @@ impl App {
         let signal_dir = self.repo_path.join(".conductor").join("cc-waiting");
         let sanitized = session.working_dir.display().to_string().replace('/', "__");
         let _ = std::fs::remove_file(signal_dir.join(&sanitized));
-        let worktree = session.worktree.clone();
-        self.cc_waiting_worktrees.remove(&worktree);
+        let working_dir = session.working_dir.clone();
+        self.cc_waiting_worktrees.remove(&working_dir);
     }
 
     // ── Review helpers ────────────────────────────────────────────────
@@ -1909,6 +1914,14 @@ impl App {
             .get(self.selected_worktree)
             .map(|w| w.branch.clone())
             .unwrap_or_default()
+    }
+
+    /// Return the directory path for the currently selected worktree.
+    pub fn selected_worktree_path(&self) -> PathBuf {
+        self.worktrees
+            .get(self.selected_worktree)
+            .map(|w| w.path.clone())
+            .unwrap_or_else(|| self.repo_path.clone())
     }
 
     /// Return `(worktree_name, working_dir)` for the currently selected worktree.

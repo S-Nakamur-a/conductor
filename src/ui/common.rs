@@ -3,6 +3,7 @@
 //! Provides reusable widgets such as PTY output rendering, session tab bars,
 //! and the status bar.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use ratatui::layout::Rect;
@@ -200,12 +201,18 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         return;
     }
 
-    // Sort for stable ordering.
-    let mut waiting: Vec<&String> = app.cc_waiting_worktrees.iter().collect();
-    waiting.sort();
+    // Sort for stable ordering (by display name).
+    let mut waiting: Vec<(&PathBuf, String)> = app.cc_waiting_worktrees.iter().map(|p| {
+        let name = app.worktrees.iter()
+            .find(|w| &w.path == p)
+            .map(|w| w.branch.clone())
+            .unwrap_or_else(|| p.file_name().and_then(|f| f.to_str()).unwrap_or("?").to_string());
+        (p, name)
+    }).collect();
+    waiting.sort_by(|a, b| a.1.cmp(&b.1));
 
     // Build badge strings: "[branch ⏳]"
-    let badges: Vec<String> = waiting.iter().map(|b| format!("[{b} ⏳]")).collect();
+    let badges: Vec<String> = waiting.iter().map(|(_, name)| format!("[{name} ⏳]")).collect();
     let total_badge_width: u16 = badges
         .iter()
         .map(|b| UnicodeWidthStr::width(b.as_str()) as u16 + 1) // +1 for space separator
@@ -234,9 +241,9 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         let badge_line = Line::from(Span::styled(badge_str, badge_style));
         frame.render_widget(Paragraph::new(badge_line), badge_area);
 
-        // Record position for click handling.
+        // Record position for click handling (store branch name).
         app.title_bar_badges
-            .push((x, x + w, waiting[i].clone()));
+            .push((x, x + w, waiting[i].1.clone()));
 
         x += w + 1; // +1 for separator space
     }
