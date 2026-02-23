@@ -135,11 +135,10 @@ fn run_loop(
     const STATS_REFRESH_POLL: Duration = Duration::from_secs(30);
     let mut last_stats_refresh = Instant::now();
 
-    // ── ccusage polling (opt-in via CONDUCTOR_CCUSAGE=1) ────────
-    const CCUSAGE_POLL: Duration = Duration::from_secs(120);
-    let ccusage_enabled =
-        std::env::var("CONDUCTOR_CCUSAGE").map(|v| v == "1").unwrap_or(false);
-    let mut last_ccusage_poll = Instant::now() - CCUSAGE_POLL; // trigger immediately
+    // ── ccusage polling (opt-in via [ccusage] enabled = true) ─────
+    let ccusage_poll = Duration::from_secs(app.config.ccusage.poll_interval_secs);
+    let ccusage_enabled = app.config.ccusage.enabled;
+    let mut last_ccusage_poll = Instant::now() - ccusage_poll; // trigger immediately
     let ccusage_result: Arc<Mutex<Option<crate::app::CcusageInfo>>> =
         Arc::new(Mutex::new(None));
 
@@ -264,7 +263,7 @@ fn run_loop(
         }
 
         // ── ccusage background fetch ────────────────────────────────
-        if ccusage_enabled && last_ccusage_poll.elapsed() >= CCUSAGE_POLL {
+        if ccusage_enabled && last_ccusage_poll.elapsed() >= ccusage_poll {
             last_ccusage_poll = Instant::now();
             let result_handle = Arc::clone(&ccusage_result);
             std::thread::spawn(move || {
