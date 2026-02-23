@@ -4,7 +4,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "(cd \"${CLAUDE_PLUGIN_ROOT}/mcp/conductor-comment\" && npm install --silent 2>/dev/null) && npx --yes tsx \"${CLAUDE_PLUGIN_ROOT}/mcp/conductor-comment/src/index.ts\""
+        "(cd \"${CLAUDE_PLUGIN_ROOT}/mcp/conductor-comment\" && npm ci --silent 2>/dev/null) && npx --yes tsx \"${CLAUDE_PLUGIN_ROOT}/mcp/conductor-comment/src/index.ts\""
       ]
     }
   }
