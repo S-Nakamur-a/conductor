@@ -22,6 +22,8 @@ Terminal-based Git workspace and code review TUI written in Rust. Manages multip
 
 ## Installation
 
+### 1. Install the binary
+
 ```sh
 git clone https://github.com/S-Nakamur-a/conductor.git
 cd conductor
@@ -29,6 +31,16 @@ make install
 ```
 
 `make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`) and installs MCP server dependencies (`npm install`).
+
+### 2. Install the Claude Code plugin
+
+```sh
+claude plugin add github:S-Nakamur-a/conductor
+```
+
+This sets up:
+- **MCP server** — review comment DB integration
+- **Hooks** — waiting-state detection for Claude Code sessions
 
 ## Usage
 
@@ -67,14 +79,17 @@ Worktree | Explorer | Viewer | Terminal (Claude Code / Shell)
 
 Conductor includes an MCP server (`mcp/conductor-comment/`) that exposes the review database to Claude Code sessions running inside the terminal. This enables Claude Code to read and write review comments directly.
 
+The MCP server is automatically configured when you install the Claude Code plugin (see Installation step 2).
+
+For development:
+
 ```sh
 cd mcp/conductor-comment
 npm install
 npm run build  # compile TypeScript
 npm start      # run compiled JS
+# or: npm run dev (runs via tsx, no build step needed)
 ```
-
-For development: `npm run dev` (runs via tsx, no build step needed).
 
 ## Configuration
 

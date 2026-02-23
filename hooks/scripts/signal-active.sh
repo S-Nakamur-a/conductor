@@ -7,6 +7,11 @@ if [ -z "$REPO_ROOT" ]; then
   exit 0
 fi
 
+# Guard: only fire in Conductor-managed repos
+if [ ! -d "$REPO_ROOT/.conductor" ]; then
+  exit 0
+fi
+
 WAITING_DIR="$REPO_ROOT/.conductor/cc-waiting"
 ENCODED_CWD=$(echo "$PWD" | sed 's|/|__|g')
 rm -f "$WAITING_DIR/$ENCODED_CWD"
