@@ -34,13 +34,17 @@ make install
 
 ### 2. Install the Claude Code plugin
 
-```sh
-claude plugin add github:S-Nakamur-a/conductor
+In a Claude Code session, run:
+
+```
+/plugin marketplace add S-Nakamur-a/conductor
+/plugin install conductor@conductor-marketplace
 ```
 
 This sets up:
 - **MCP server** — review comment DB integration
 - **Hooks** — waiting-state detection for Claude Code sessions
+- **Commands** — `/address-conductor-comment` for resolving review comments
 
 ## Usage
 
