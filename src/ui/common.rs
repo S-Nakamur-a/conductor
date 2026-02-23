@@ -152,49 +152,43 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     // ── Right-aligned items (accumulated right_offset) ──────────
     let mut right_offset: u16 = 0;
 
-    // ── ccusage display (token count + cost) ────────────────────
-    if let Some(ref info) = app.ccusage_info {
-        let tok_str = format_tokens(info.total_tokens);
-        let ccusage_text = format!(" {} | ${:.2} ", tok_str, info.total_cost);
-        let ccusage_w = UnicodeWidthStr::width(ccusage_text.as_str()) as u16;
-        if ccusage_w + 2 < area.width {
-            let ccusage_style = Style::default()
-                .fg(Color::Green)
-                .bg(Color::DarkGray);
-            let ccusage_area = Rect::new(
-                area.x + area.width - ccusage_w - right_offset,
-                area.y,
-                ccusage_w,
-                1,
-            );
-            let ccusage_line = Line::from(Span::styled(&ccusage_text, ccusage_style));
-            frame.render_widget(Paragraph::new(ccusage_line), ccusage_area);
-            right_offset += ccusage_w + 1;
+    // ── Stats display (streak + ccusage, unified) ─────────────
+    {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(ref streak) = app.streak_info {
+            if streak.consecutive_days > 0 {
+                parts.push(format!(
+                    "{} days",
+                    streak.consecutive_days,
+                ));
+            }
+            if streak.today_activity_count > 0 {
+                parts.push(format!(
+                    "{} PRs",
+                    streak.today_activity_count,
+                ));
+            }
         }
-    }
-
-    // ── Streak display (right-aligned, before badges) ────────────
-    if let Some(ref streak) = app.streak_info {
-        if streak.consecutive_days > 0 || streak.today_activity_count > 0 {
-            let streak_text = format!(
-                " {}d | {} today ",
-                streak.consecutive_days,
-                streak.today_activity_count,
-            );
-            let streak_w = UnicodeWidthStr::width(streak_text.as_str()) as u16;
-            if streak_w + 2 < area.width {
-                let streak_style = Style::default()
-                    .fg(Color::Yellow)
+        if let Some(ref info) = app.ccusage_info {
+            parts.push(format!("{} tokens", format_tokens(info.total_tokens)));
+            parts.push(format!("${:.2}", info.total_cost));
+        }
+        if !parts.is_empty() {
+            let stats_text = format!(" {} ", parts.join(" | "));
+            let stats_w = UnicodeWidthStr::width(stats_text.as_str()) as u16;
+            if stats_w + 2 < area.width {
+                let stats_style = Style::default()
+                    .fg(Color::Green)
                     .bg(Color::DarkGray);
-                let streak_area = Rect::new(
-                    area.x + area.width - streak_w,
+                let stats_area = Rect::new(
+                    area.x + area.width - stats_w - right_offset,
                     area.y,
-                    streak_w,
+                    stats_w,
                     1,
                 );
-                let streak_line = Line::from(Span::styled(&streak_text, streak_style));
-                frame.render_widget(Paragraph::new(streak_line), streak_area);
-                right_offset = streak_w + 1;
+                let stats_line = Line::from(Span::styled(&stats_text, stats_style));
+                frame.render_widget(Paragraph::new(stats_line), stats_area);
+                right_offset += stats_w + 1;
             }
         }
     }
@@ -373,10 +367,10 @@ fn vt100_cell_to_style(cell: &vt100::Cell) -> Style {
 /// Format a token count into a human-readable string (e.g. "1.2K", "14.2M").
 fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
-        format!("{:.1}M tok", tokens as f64 / 1_000_000.0)
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {
-        format!("{:.1}K tok", tokens as f64 / 1_000.0)
+        format!("{:.1}K", tokens as f64 / 1_000.0)
     } else {
-        format!("{tokens} tok")
+        format!("{tokens}")
     }
 }
