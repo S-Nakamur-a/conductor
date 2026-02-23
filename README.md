@@ -77,7 +77,7 @@ Worktree | Explorer | Viewer | Terminal (Claude Code / Shell)
 
 ### Command Palette
 
-**Alt+;** (any panel, including terminal) or **:** (Worktree panel) to open the command palette. All available commands are listed and fuzzy-searchable — worktree operations, terminal management, diff toggles, review comments, etc.
+**Ctrl+.** (any panel, including terminal) or **:** (non-terminal panels) to open the command palette. All available commands are listed and fuzzy-searchable — worktree operations, terminal management, diff toggles, review comments, etc.
 
 ## MCP Server
 
