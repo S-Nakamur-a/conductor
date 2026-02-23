@@ -1,0 +1,382 @@
+//! Shared UI components used across multiple panels.
+//!
+//! Provides reusable widgets such as PTY output rendering, session tab bars,
+//! and the status bar.
+
+use std::sync::{Arc, Mutex};
+
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
+
+/// Render the vt100 screen of a PTY session into the given area.
+///
+/// `scroll_offset` controls scrollback: 0 = live view (bottom), >0 = scroll back into history.
+/// Scrollback is disabled when the PTY is in alternate screen mode (vim, less, etc.).
+pub fn render_pty_output(
+    frame: &mut Frame,
+    area: Rect,
+    screen_arc: &Arc<Mutex<vt100::Parser>>,
+    scroll_offset: usize,
+) {
+    let mut parser = screen_arc.lock().unwrap_or_else(|e| e.into_inner());
+
+    let is_alt_screen = parser.screen().alternate_screen();
+    let effective_offset = if is_alt_screen { 0 } else { scroll_offset };
+
+    parser.set_scrollback(effective_offset);
+
+    let screen = parser.screen();
+    let (rows, cols) = screen.size();
+
+    // Debug: log alternate screen state periodically.
+    if is_alt_screen {
+        // Check if the screen has any visible (non-space) content.
+        let has_content = (0..rows.min(5)).any(|r| {
+            (0..cols).any(|c| {
+                if let Some(cell) = screen.cell(r, c) {
+                    let ch = cell.contents();
+                    !ch.is_empty() && ch != " "
+                } else {
+                    false
+                }
+            })
+        });
+        let cursor = screen.cursor_position();
+        log::debug!(
+            "ALT_SCREEN render: has_content={has_content}, size=({rows},{cols}), area=({},{}) cursor=({},{})",
+            area.height, area.width, cursor.0, cursor.1,
+        );
+    }
+
+    let max_rows = area.height;
+    let max_cols = area.width;
+
+    let mut text_lines: Vec<Line> = Vec::new();
+    for row in 0..rows.min(max_rows) {
+        let mut spans: Vec<Span> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_style = Style::default();
+
+        let mut skip_cols: u16 = 0;
+        for col in 0..cols.min(max_cols) {
+            if skip_cols > 0 {
+                skip_cols -= 1;
+                continue;
+            }
+            let cell = screen.cell(row, col).unwrap();
+            let ch = cell.contents();
+            let style = vt100_cell_to_style(cell);
+
+            if style != current_style && !current_text.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
+                current_style = style;
+            }
+            if ch.is_empty() {
+                current_text.push(' ');
+            } else {
+                let w = UnicodeWidthStr::width(ch.as_str());
+                if w > 1 {
+                    skip_cols = (w as u16) - 1;
+                }
+                current_text.push_str(&ch);
+            }
+        }
+        if !current_text.is_empty() {
+            spans.push(Span::styled(current_text, current_style));
+        }
+        text_lines.push(Line::from(spans));
+    }
+
+    let paragraph = Paragraph::new(text_lines);
+    frame.render_widget(paragraph, area);
+
+    // Restore live view so other readers see the current screen.
+    parser.set_scrollback(0);
+
+    // Show a visual indicator when scrolled back.
+    if effective_offset > 0 {
+        let indicator = Line::from(Span::styled(
+            format!(" ↑ scrollback ({effective_offset} lines — Shift+End to return) "),
+            Style::default().fg(Color::Black).bg(Color::Yellow),
+        ));
+        frame.render_widget(Paragraph::new(indicator), Rect { height: 1, ..area });
+    }
+}
+
+/// Render the title bar at the top showing worktree name and working directory.
+/// Also renders CC waiting badges on the right side and records their positions
+/// in `app.title_bar_badges` for click handling.
+pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    let wt_name = app
+        .worktrees
+        .get(app.selected_worktree)
+        .map(|w| w.branch.as_str())
+        .unwrap_or("—");
+    let wt_path = app
+        .worktrees
+        .get(app.selected_worktree)
+        .map(|w| w.path.display().to_string())
+        .unwrap_or_else(|| app.repo_path.display().to_string());
+
+    let has_waiting = !app.cc_waiting_worktrees.is_empty();
+
+    // When CC sessions are waiting, pulse the title bar background to draw attention.
+    let (bar_bg, conductor_bg, conductor_fg) = if has_waiting {
+        let phase = (app.ui_tick / 20) % 3;
+        match phase {
+            0 => (Color::Rgb(60, 40, 0), Color::Yellow, Color::Black),
+            1 => (Color::Rgb(50, 30, 0), Color::Rgb(200, 160, 0), Color::Black),
+            _ => (Color::DarkGray, Color::Cyan, Color::Black),
+        }
+    } else {
+        (Color::DarkGray, Color::Cyan, Color::Black)
+    };
+
+    let line = Line::from(vec![
+        Span::styled(
+            " conductor ",
+            Style::default().fg(conductor_fg).bg(conductor_bg).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(wt_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(wt_path, Style::default().fg(Color::Gray)),
+    ]);
+    let paragraph = Paragraph::new(line).style(Style::default().bg(bar_bg));
+    frame.render_widget(paragraph, area);
+
+    // ── Right-aligned items (accumulated right_offset) ──────────
+    let mut right_offset: u16 = 0;
+
+    // ── ccusage display (token count + cost) ────────────────────
+    if let Some(ref info) = app.ccusage_info {
+        let tok_str = format_tokens(info.total_tokens);
+        let ccusage_text = format!(" {} | ${:.2} ", tok_str, info.total_cost);
+        let ccusage_w = UnicodeWidthStr::width(ccusage_text.as_str()) as u16;
+        if ccusage_w + 2 < area.width {
+            let ccusage_style = Style::default()
+                .fg(Color::Green)
+                .bg(Color::DarkGray);
+            let ccusage_area = Rect::new(
+                area.x + area.width - ccusage_w - right_offset,
+                area.y,
+                ccusage_w,
+                1,
+            );
+            let ccusage_line = Line::from(Span::styled(&ccusage_text, ccusage_style));
+            frame.render_widget(Paragraph::new(ccusage_line), ccusage_area);
+            right_offset += ccusage_w + 1;
+        }
+    }
+
+    // ── Streak display (right-aligned, before badges) ────────────
+    if let Some(ref streak) = app.streak_info {
+        if streak.consecutive_days > 0 || streak.today_activity_count > 0 {
+            let streak_text = format!(
+                " {}d | {} today ",
+                streak.consecutive_days,
+                streak.today_activity_count,
+            );
+            let streak_w = UnicodeWidthStr::width(streak_text.as_str()) as u16;
+            if streak_w + 2 < area.width {
+                let streak_style = Style::default()
+                    .fg(Color::Yellow)
+                    .bg(Color::DarkGray);
+                let streak_area = Rect::new(
+                    area.x + area.width - streak_w,
+                    area.y,
+                    streak_w,
+                    1,
+                );
+                let streak_line = Line::from(Span::styled(&streak_text, streak_style));
+                frame.render_widget(Paragraph::new(streak_line), streak_area);
+                right_offset = streak_w + 1;
+            }
+        }
+    }
+
+    // ── CC waiting badges (right-aligned) ────────────────────────
+    app.title_bar_badges.clear();
+
+    if app.cc_waiting_worktrees.is_empty() {
+        return;
+    }
+
+    // Sort for stable ordering.
+    let mut waiting: Vec<&String> = app.cc_waiting_worktrees.iter().collect();
+    waiting.sort();
+
+    // Build badge strings: "[branch ⏳]"
+    let badges: Vec<String> = waiting.iter().map(|b| format!("[{b} ⏳]")).collect();
+    let total_badge_width: u16 = badges
+        .iter()
+        .map(|b| UnicodeWidthStr::width(b.as_str()) as u16 + 1) // +1 for space separator
+        .sum::<u16>()
+        .saturating_sub(1); // no trailing space
+
+    if total_badge_width + right_offset + 2 > area.width {
+        return; // not enough room
+    }
+
+    // Pulse animation: alternate colors based on ui_tick.
+    let pulse_color = if (app.ui_tick / 15) % 2 == 0 {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
+    let badge_style = Style::default()
+        .fg(Color::Black)
+        .bg(pulse_color)
+        .add_modifier(Modifier::BOLD);
+
+    let mut x = area.x + area.width - total_badge_width - right_offset;
+    for (i, badge_str) in badges.iter().enumerate() {
+        let w = UnicodeWidthStr::width(badge_str.as_str()) as u16;
+        let badge_area = Rect::new(x, area.y, w, 1);
+        let badge_line = Line::from(Span::styled(badge_str, badge_style));
+        frame.render_widget(Paragraph::new(badge_line), badge_area);
+
+        // Record position for click handling.
+        app.title_bar_badges
+            .push((x, x + w, waiting[i].clone()));
+
+        x += w + 1; // +1 for separator space
+    }
+}
+
+/// Render a status bar at the bottom of the screen.
+pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
+    use crate::app::StatusLevel;
+    use crate::theme::Theme;
+
+    let theme = Theme::from_name(&app.config.viewer.theme);
+
+    if let Some(ref msg) = app.status_message {
+        let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
+
+        // Color based on level.
+        let fg_color = match msg.level {
+            StatusLevel::Success => theme.success,
+            StatusLevel::Error   => theme.error,
+            StatusLevel::Warning => theme.warning,
+            StatusLevel::Info    => theme.info,
+        };
+
+        // Flash background for the first ~500ms (30 ticks).
+        let bg_color = if age < 30 {
+            if (age / 5) % 2 == 0 {
+                match msg.level {
+                    StatusLevel::Success => Color::Rgb(0, 30, 0),
+                    StatusLevel::Error   => Color::Rgb(40, 0, 0),
+                    StatusLevel::Warning => Color::Rgb(40, 30, 0),
+                    StatusLevel::Info    => Color::Rgb(0, 20, 40),
+                }
+            } else {
+                Color::Reset
+            }
+        } else {
+            Color::Reset
+        };
+
+        // Fade: after 2.5 seconds (150 ticks), dimmed style.
+        let style = if age >= 150 {
+            Style::default().fg(Color::DarkGray).bg(Color::Reset)
+        } else {
+            let mut s = Style::default().fg(fg_color).bg(bg_color);
+            if age < 30 {
+                s = s.add_modifier(Modifier::BOLD);
+            }
+            s
+        };
+
+        let display_text = format!("{}{}", msg.icon(), msg.text);
+        let span = Span::styled(display_text, style);
+        frame.render_widget(Paragraph::new(span), area);
+    } else {
+        // Default keybinding hint text.
+        let hint = app.status_bar_text();
+        let span = Span::styled(hint, Style::default().fg(Color::Gray));
+        frame.render_widget(Paragraph::new(span), area);
+    }
+}
+
+/// Render the current worktree branch and repository name at the far right
+/// of the given row area (overlays on the same line).
+pub fn render_worktree_label(
+    frame: &mut Frame,
+    row_area: Rect,
+    worktree_branch: &str,
+    repo_path: &std::path::Path,
+) {
+    let repo_name = repo_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| repo_path.display().to_string());
+
+    let branch_part = worktree_branch;
+    let repo_part = format!("[{repo_name}]");
+    let total_width = UnicodeWidthStr::width(branch_part) + 1 + UnicodeWidthStr::width(repo_part.as_str());
+
+    if total_width as u16 + 1 > row_area.width {
+        return;
+    }
+
+    let label_area = Rect::new(
+        row_area.x + row_area.width - total_width as u16,
+        row_area.y,
+        total_width as u16,
+        1,
+    );
+
+    let line = Line::from(vec![
+        Span::styled(branch_part, Style::default().fg(Color::Cyan)),
+        Span::raw(" "),
+        Span::styled(repo_part, Style::default().fg(Color::DarkGray)),
+    ]);
+    let paragraph = Paragraph::new(line);
+    frame.render_widget(paragraph, label_area);
+}
+
+// ── vt100 helpers ──────────────────────────────────────────────────────
+
+fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
+    match color {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(i) => Color::Indexed(i),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+fn vt100_cell_to_style(cell: &vt100::Cell) -> Style {
+    let mut style = Style::default();
+    style = style.fg(vt100_color_to_ratatui(cell.fgcolor()));
+    style = style.bg(vt100_color_to_ratatui(cell.bgcolor()));
+    if cell.bold() {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.italic() {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if cell.underline() {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    if cell.inverse() {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    style
+}
+
+/// Format a token count into a human-readable string (e.g. "1.2K", "14.2M").
+fn format_tokens(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M tok", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}K tok", tokens as f64 / 1_000.0)
+    } else {
+        format!("{tokens} tok")
+    }
+}

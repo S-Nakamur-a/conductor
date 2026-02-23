@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "conductor": {
+      "command": "npx",
+      "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/mcp/conductor-comment/src/index.ts"]
+    }
+  }
+}

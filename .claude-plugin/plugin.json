@@ -1,0 +1,11 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "description": "Hooks, MCP tools, and commands for Claude Code sessions running inside Conductor TUI",
+  "author": {
+    "name": "S-Nakamur-a"
+  },
+  "repository": "https://github.com/S-Nakamur-a/conductor",
+  "license": "MIT",
+  "keywords": ["conductor", "code-review", "worktree", "tui"]
+}
