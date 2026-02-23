@@ -321,8 +321,7 @@ impl ViewerState {
                 // syntect defaults lack some common extensions — map them
                 // to a close-enough syntax so highlighting still works.
                 let fallback = match ext {
-                    "tsx" | "jsx" => "js",
-                    "mts" | "cts" => "ts",
+                    "ts" | "tsx" | "jsx" | "mts" | "cts" => "js",
                     _ => return None,
                 };
                 syntax_set.find_syntax_by_extension(fallback)
