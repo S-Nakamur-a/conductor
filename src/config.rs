@@ -37,6 +37,8 @@ pub struct Config {
     pub keybinds: KeybindsConfig,
     /// `[notification]` -- OS notification settings.
     pub notification: NotificationConfig,
+    /// `[ccusage]` -- Claude Code token usage display.
+    pub ccusage: CcusageConfig,
 }
 
 
@@ -232,6 +234,25 @@ pub struct NotificationConfig {
     pub cc_waiting: bool,
 }
 
+/// `[ccusage]` section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CcusageConfig {
+    /// Enable Claude Code token usage display in the title bar.
+    pub enabled: bool,
+    /// Polling interval in seconds.
+    pub poll_interval_secs: u64,
+}
+
+impl Default for CcusageConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 120,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -295,6 +316,8 @@ mod tests {
         assert!(cfg2.diff.word_diff);
         assert_eq!(cfg2.review.prompt_action, PromptAction::Clipboard);
         assert!(!cfg2.notification.cc_waiting);
+        assert!(!cfg2.ccusage.enabled);
+        assert_eq!(cfg2.ccusage.poll_interval_secs, 120);
     }
 
     #[test]
@@ -323,6 +346,16 @@ mod tests {
         let p = PathBuf::from("~/dev/project");
         let expanded = expand_tilde(&p);
         assert!(!expanded.to_string_lossy().starts_with('~'));
+    }
+
+    #[test]
+    fn ccusage_config_parse() {
+        let cfg: CcusageConfig =
+            toml::from_str(r#"enabled = true
+poll_interval_secs = 60"#)
+                .expect("parse");
+        assert!(cfg.enabled);
+        assert_eq!(cfg.poll_interval_secs, 60);
     }
 
     #[test]
