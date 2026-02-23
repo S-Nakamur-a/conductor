@@ -29,7 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, wt)| {
-            let is_waiting = app.cc_waiting_worktrees.contains(&wt.branch);
+            let is_waiting = app.cc_waiting_worktrees.contains(&wt.path);
 
             let marker = if wt.is_main {
                 "\u{25cf}" // ●
