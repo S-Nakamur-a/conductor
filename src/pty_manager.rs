@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
-use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -245,12 +244,7 @@ impl PtyManager {
             })
             .context("Failed to spawn PTY reader thread")?;
 
-        // 7. Inject Claude Code hooks for waiting-state detection.
-        if kind == SessionKind::ClaudeCode {
-            inject_cc_hooks(working_dir, repo_root);
-        }
-
-        // 8. Build the session struct.
+        // 7. Build the session struct.
         let session = PtySession {
             id: Uuid::new_v4().to_string(),
             label: label.to_string(),
@@ -832,109 +826,6 @@ impl PtyManager {
         if buf.len() > limit {
             let excess = buf.len() - limit;
             buf.drain(..excess);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Claude Code hook injection
-// ---------------------------------------------------------------------------
-
-/// Inject Claude Code hooks into the worktree's `.claude/settings.local.json`
-/// so that the `Stop` event creates a marker file and `UserPromptSubmit` removes it.
-///
-/// The marker file lives at `<repo_root>/.conductor/cc-waiting/<sanitized_cwd>`,
-/// allowing the main app loop to detect waiting state without PTY heuristics.
-fn inject_cc_hooks(working_dir: &Path, repo_root: &Path) {
-    let signal_dir = repo_root.join(".conductor").join("cc-waiting");
-    let signal_dir_str = signal_dir.display().to_string();
-
-    // Marker identifier appended to commands so we can recognise our hooks.
-    const MARKER: &str = "# conductor-hook";
-
-    let stop_cmd = format!(
-        "mkdir -p '{signal_dir_str}' && touch '{signal_dir_str}/'$(echo \"$PWD\" | sed 's|/|__|g') {MARKER}"
-    );
-    let clear_cmd = format!(
-        "rm -f '{signal_dir_str}/'$(echo \"$PWD\" | sed 's|/|__|g') {MARKER}"
-    );
-
-    // Build the hooks JSON value.
-    let hooks_value = serde_json::json!({
-        "Stop": [
-            { "hooks": [{ "type": "command", "command": stop_cmd }] }
-        ],
-        "Notification": [
-            {
-                "matcher": "permission_prompt|elicitation_dialog|idle_prompt",
-                "hooks": [{ "type": "command", "command": stop_cmd }]
-            }
-        ],
-        "UserPromptSubmit": [
-            { "hooks": [{ "type": "command", "command": clear_cmd }] }
-        ]
-    });
-
-    // Read existing settings (if any) and merge.
-    let settings_dir = working_dir.join(".claude");
-    let settings_path = settings_dir.join("settings.local.json");
-
-    let mut root: serde_json::Map<String, JsonValue> = if settings_path.exists() {
-        match std::fs::read_to_string(&settings_path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => serde_json::Map::new(),
-        }
-    } else {
-        serde_json::Map::new()
-    };
-
-    // Merge hooks: preserve non-conductor hooks, replace conductor ones.
-    let new_hooks_map = hooks_value.as_object().unwrap();
-
-    let existing_hooks = root
-        .entry("hooks")
-        .or_insert_with(|| JsonValue::Object(serde_json::Map::new()));
-
-    if let Some(hooks_obj) = existing_hooks.as_object_mut() {
-        for (event_name, new_entries) in new_hooks_map {
-            // Remove any previous conductor-injected entries for this event.
-            let filtered: Vec<JsonValue> = hooks_obj
-                .get(event_name)
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter(|entry| {
-                            // Keep entries that don't contain our marker.
-                            let s = serde_json::to_string(entry).unwrap_or_default();
-                            !s.contains(MARKER)
-                        })
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            // Append our new entries.
-            let mut merged = filtered;
-            if let Some(new_arr) = new_entries.as_array() {
-                merged.extend(new_arr.iter().cloned());
-            }
-            hooks_obj.insert(event_name.clone(), JsonValue::Array(merged));
-        }
-    }
-
-    // Write back.
-    if let Err(e) = std::fs::create_dir_all(&settings_dir) {
-        log::warn!("failed to create .claude dir: {e}");
-        return;
-    }
-    match serde_json::to_string_pretty(&root) {
-        Ok(json_str) => {
-            if let Err(e) = std::fs::write(&settings_path, json_str) {
-                log::warn!("failed to write CC hooks to {}: {e}", settings_path.display());
-            }
-        }
-        Err(e) => {
-            log::warn!("failed to serialize CC hooks: {e}");
         }
     }
 }
