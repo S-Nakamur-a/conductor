@@ -514,6 +514,7 @@ impl ViewerState {
     /// tend to contain a very large number of files and are rarely useful to
     /// browse interactively.
     const SKIP_DIRS: &[&str] = &[
+        ".git",
         "node_modules",
         "target",
         "vendor",
@@ -598,10 +599,6 @@ impl ViewerState {
         for child in &children {
             let name = child.file_name().to_string_lossy().to_string();
 
-            if name.starts_with('.') {
-                continue;
-            }
-
             let child_path = child.path();
             let is_dir = child_path.is_dir();
 
@@ -661,11 +658,6 @@ impl ViewerState {
 
         for child in &children {
             let name = child.file_name().to_string_lossy().to_string();
-
-            // Skip hidden directories like .git
-            if name.starts_with('.') {
-                continue;
-            }
 
             let child_path = child.path();
             let is_dir = child_path.is_dir();
