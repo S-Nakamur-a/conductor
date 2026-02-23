@@ -81,14 +81,14 @@ Worktree | Explorer | Viewer | Terminal (Claude Code / Shell)
 
 ## MCP Server
 
-Conductor includes an MCP server (`mcp/conductor-comment/`) that exposes the review database to Claude Code sessions running inside the terminal. This enables Claude Code to read and write review comments directly.
+Conductor includes an MCP server (`plugins/conductor/mcp/conductor-comment/`) that exposes the review database to Claude Code sessions running inside the terminal. This enables Claude Code to read and write review comments directly.
 
 The MCP server is automatically configured when you install the Claude Code plugin (see Installation step 2).
 
 For development:
 
 ```sh
-cd mcp/conductor-comment
+cd plugins/conductor/mcp/conductor-comment
 npm install
 npm run build  # compile TypeScript
 npm start      # run compiled JS

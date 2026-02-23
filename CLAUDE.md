@@ -16,12 +16,12 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 - **Check:** `cargo check`
 - **Logging:** Set `RUST_LOG=debug` (or `info`, `warn`) before running
 
-### MCP Server (mcp/conductor-comment/)
+### MCP Server (plugins/conductor/mcp/conductor-comment/)
 
 Node.js MCP server that exposes review DB tools to Claude Code sessions.
 
-- **Build:** `cd mcp/conductor-comment && npm run build`
-- **Dev:** `cd mcp/conductor-comment && npm run dev`
+- **Build:** `cd plugins/conductor/mcp/conductor-comment && npm run build`
+- **Dev:** `cd plugins/conductor/mcp/conductor-comment && npm run dev`
 
 ## Architecture
 

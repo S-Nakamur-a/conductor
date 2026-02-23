@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "conductor",
-      "source": ".",
+      "source": "./plugins/conductor",
       "description": "Hooks, MCP tools, and commands for Claude Code sessions running inside Conductor TUI"
     }
   ]
