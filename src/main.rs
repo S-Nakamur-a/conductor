@@ -261,6 +261,7 @@ fn run_loop(
         if last_worktree_poll.elapsed() >= WORKTREE_POLL {
             last_worktree_poll = Instant::now();
             app.refresh_worktrees();
+            app.check_diff_viewer_staleness();
         }
 
         // Periodically remove dead PTY sessions (exited processes).
@@ -312,9 +313,6 @@ fn run_loop(
         // Nudge PTY sessions that just entered alternate screen mode
         // (e.g. fzf) by sending a no-op resize to trigger SIGWINCH.
         app.pty_manager.nudge_alt_screen_sessions();
-
-        // Scan Claude Code PTY output for file-change patterns.
-        app.check_cc_output();
 
         if app.should_quit {
             return Ok(());
