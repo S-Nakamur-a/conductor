@@ -3,7 +3,7 @@
 //! Displays the list of worktrees with selection, status indicators,
 //! and creation/deletion UI overlays.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
@@ -16,8 +16,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Worktree;
     let border_color = if focused { Color::Yellow } else { Color::DarkGray };
 
+    let is_expanded = app.expanded_panel == Some(Focus::Worktree);
+    let (expand_label, expand_color) = if is_expanded {
+        ("[>=<]", Color::Yellow)
+    } else {
+        ("[<=>]", Color::DarkGray)
+    };
+
     let block = Block::default()
         .title(" Worktrees ")
+        .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 

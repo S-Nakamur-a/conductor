@@ -104,17 +104,35 @@ function getDb(): Database.Database {
 
 server.tool(
   "get_pending_comments",
-  "List unresolved (pending) review comments. Returns compact summaries. Use get_comment_thread to read full details and replies for a specific comment.",
+  "List unresolved (pending) review comments. By default, only comments for the current git branch are returned. Set all_branches=true to see comments across all branches. Use get_comment_thread to read full details and replies for a specific comment.",
   {
     worktree: z.string().optional().describe("Filter by worktree name"),
-    branch: z.string().optional().describe("Filter by branch name"),
+    branch: z
+      .string()
+      .optional()
+      .describe(
+        "Filter by branch name. If omitted, defaults to the current git branch (auto-detected)."
+      ),
+    all_branches: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set to true to return comments from all branches (disables auto branch filter)"
+      ),
     file_path: z
       .string()
       .optional()
       .describe("Filter by file path (exact match)"),
   },
-  async ({ worktree, branch, file_path }) => {
+  async ({ worktree, branch, all_branches, file_path }) => {
     const d = getDb();
+
+    // Resolve effective branch filter:
+    // 1. Explicit branch param takes priority
+    // 2. If all_branches is true, no branch filter
+    // 3. Otherwise, auto-detect current branch
+    const effectiveBranch =
+      branch ?? (all_branches ? undefined : currentBranch() ?? undefined);
 
     let sql = `
       SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
@@ -128,9 +146,9 @@ server.tool(
       sql += " AND worktree = ?";
       params.push(worktree);
     }
-    if (branch) {
+    if (effectiveBranch) {
       sql += " AND branch = ?";
-      params.push(branch);
+      params.push(effectiveBranch);
     }
     if (file_path) {
       sql += " AND file_path = ?";
@@ -142,9 +160,15 @@ server.tool(
     const rows = d.prepare(sql).all(...params) as ReviewComment[];
 
     if (rows.length === 0) {
+      const branchNote = effectiveBranch
+        ? ` (branch: ${effectiveBranch})`
+        : "";
       return {
         content: [
-          { type: "text" as const, text: "No pending comments found." },
+          {
+            type: "text" as const,
+            text: `No pending comments found${branchNote}.`,
+          },
         ],
       };
     }
@@ -156,7 +180,10 @@ server.tool(
       return `[${r.kind.toUpperCase()}] ${loc} (id: ${r.id.slice(0, 8)})\n  ${r.body}`;
     });
 
-    const summary = `${rows.length} pending comment(s):\n\n${lines.join("\n\n")}`;
+    const branchNote = effectiveBranch
+      ? ` on branch "${effectiveBranch}"`
+      : " across all branches";
+    const summary = `${rows.length} pending comment(s)${branchNote}:\n\n${lines.join("\n\n")}`;
 
     return {
       content: [{ type: "text" as const, text: summary }],

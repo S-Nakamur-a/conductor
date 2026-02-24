@@ -11,7 +11,7 @@ pub enum CommandId {
     FocusViewer,
     FocusTerminalClaude,
     FocusTerminalShell,
-    ToggleTerminalExpand,
+    TogglePanelExpand,
 
     // Worktree
     CreateWorktree,
@@ -96,8 +96,8 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "terminal claude" },
     PaletteCommand { id: CommandId::FocusTerminalShell, label: "Focus: Shell Terminal",
         category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "terminal shell" },
-    PaletteCommand { id: CommandId::ToggleTerminalExpand, label: "Toggle Terminal Expand",
-        category: CommandCategory::Navigation, keybinding: None, keywords: "resize maximize" },
+    PaletteCommand { id: CommandId::TogglePanelExpand, label: "Toggle Panel Expand",
+        category: CommandCategory::Navigation, keybinding: None, keywords: "resize maximize fullscreen" },
 
     // Worktree
     PaletteCommand { id: CommandId::CreateWorktree, label: "Worktree: Create New",

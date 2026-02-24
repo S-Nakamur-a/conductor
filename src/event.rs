@@ -1857,7 +1857,12 @@ fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_x: u16, is_
 
     // Check [<=>] toggle.
     if relative_x >= x && relative_x < x + 5 {
-        app.terminal_expanded = !app.terminal_expanded;
+        let target = if is_claude { Focus::TerminalClaude } else { Focus::TerminalShell };
+        if app.expanded_panel.is_some() {
+            app.expanded_panel = None;
+        } else {
+            app.expanded_panel = Some(target);
+        }
     }
 }
 
@@ -1881,7 +1886,7 @@ pub fn handle_mouse_event(
     let notif_area = outer[1];
     let main_area = outer[2];
 
-    let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.terminal_expanded, main_area.width);
+    let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.expanded_panel, main_area.width);
 
     let left_end = main_area.x + left_w;
     let explorer_end = left_end + explorer_w;
@@ -1946,6 +1951,33 @@ pub fn handle_mouse_event(
 
             // Only handle clicks in the main area.
             if row >= main_area.y && row < main_area.y + main_area.height {
+                // Check for [<=>] expand button clicks on the top border row.
+                if row == main_area.y {
+                    let expand_btn_target = if col < left_end && left_w >= 7 {
+                        let btn_start = main_area.x + left_w - 6;
+                        let btn_end = main_area.x + left_w - 1;
+                        if col >= btn_start && col < btn_end { Some(Focus::Worktree) } else { None }
+                    } else if col >= left_end && col < explorer_end && explorer_w >= 7 {
+                        let btn_start = left_end + explorer_w - 6;
+                        let btn_end = left_end + explorer_w - 1;
+                        if col >= btn_start && col < btn_end { Some(Focus::Explorer) } else { None }
+                    } else if col >= explorer_end && col < viewer_end && viewer_w >= 7 {
+                        let btn_start = explorer_end + viewer_w - 6;
+                        let btn_end = explorer_end + viewer_w - 1;
+                        if col >= btn_start && col < btn_end { Some(Focus::Viewer) } else { None }
+                    } else {
+                        None
+                    };
+                    if let Some(target) = expand_btn_target {
+                        if app.expanded_panel == Some(target) {
+                            app.expanded_panel = None;
+                        } else {
+                            app.expanded_panel = Some(target);
+                        }
+                        return;
+                    }
+                }
+
                 if col < left_end {
                     // Click selects and switches to the worktree.
                     let relative_row = (row - main_area.y) as usize;
@@ -1964,13 +1996,6 @@ pub fn handle_mouse_event(
                     // Explorer column.
                     app.focus = Focus::Explorer;
 
-                    // Double-click detection.
-                    let now = std::time::Instant::now();
-                    let (prev_time, prev_row) = app.last_explorer_click;
-                    let is_double = now.duration_since(prev_time).as_millis() < 400
-                        && prev_row == row;
-                    app.last_explorer_click = (now, row);
-
                     // Determine if click is in top half (file tree) or bottom half (diff list).
                     if row >= explorer_mid_y {
                         app.viewer_state.explorer_focus_on_diff_list = true;
@@ -1981,31 +2006,29 @@ pub fn handle_mouse_event(
                             let idx = app.viewer_state.diff_list_scroll + click_offset;
                             if idx < app.diff_state.display_list.len() {
                                 app.viewer_state.diff_list_selected = idx;
-                                // Double-click: toggle header or open file in Viewer.
-                                if is_double {
-                                    if app.diff_state.toggle_section(idx) {
-                                        // Toggled a section header.
-                                        let new_count = app.diff_state.display_list.len();
-                                        if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
-                                            app.viewer_state.diff_list_selected = new_count - 1;
+                                // Single-click: toggle header or open file in Viewer.
+                                if app.diff_state.toggle_section(idx) {
+                                    // Toggled a section header.
+                                    let new_count = app.diff_state.display_list.len();
+                                    if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
+                                        app.viewer_state.diff_list_selected = new_count - 1;
+                                    }
+                                } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(idx) {
+                                    let file_path = file_diff.path.clone();
+                                    let first_change_line = file_diff.hunks.iter()
+                                        .flat_map(|h| h.lines.iter())
+                                        .find(|l| l.tag != crate::diff_state::DiffLineTag::Equal)
+                                        .and_then(|l| l.new_line_no.or(l.old_line_no));
+                                    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                                        let wt_path = wt.path.clone();
+                                        app.viewer_state.open_file(&wt_path, &file_path);
+                                        if let Some(line) = first_change_line {
+                                            app.viewer_state.file_scroll = line.saturating_sub(4);
                                         }
-                                    } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(idx) {
-                                        let file_path = file_diff.path.clone();
-                                        let first_change_line = file_diff.hunks.iter()
-                                            .flat_map(|h| h.lines.iter())
-                                            .find(|l| l.tag != crate::diff_state::DiffLineTag::Equal)
-                                            .and_then(|l| l.new_line_no.or(l.old_line_no));
-                                        if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                                            let wt_path = wt.path.clone();
-                                            app.viewer_state.open_file(&wt_path, &file_path);
-                                            if let Some(line) = first_change_line {
-                                                app.viewer_state.file_scroll = line.saturating_sub(4);
-                                            }
-                                            app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
-                                            app.rehighlight_viewer();
-                                            app.review_state.build_file_comment_cache(&file_path);
-                                            app.set_focus(Focus::Viewer);
-                                        }
+                                        app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
+                                        app.rehighlight_viewer();
+                                        app.review_state.build_file_comment_cache(&file_path);
+                                        app.set_focus(Focus::Viewer);
                                     }
                                 }
                             }
@@ -2020,24 +2043,22 @@ pub fn handle_mouse_event(
                             let idx = app.viewer_state.tree_scroll + click_offset;
                             if let Some(&tree_idx) = visible.get(idx) {
                                 app.viewer_state.tree_selected = tree_idx;
-                                // Double-click opens the file in Viewer (or toggles dir).
-                                if is_double {
-                                    if let Some(entry) = app.viewer_state.file_tree.get(tree_idx).cloned() {
-                                        if entry.is_dir {
-                                            // Lazy-load children before expanding.
-                                            if !entry.is_expanded {
-                                                if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                                                    app.viewer_state.ensure_children_loaded(tree_idx, &wt.path);
-                                                }
+                                // Single-click opens the file in Viewer (or toggles dir).
+                                if let Some(entry) = app.viewer_state.file_tree.get(tree_idx).cloned() {
+                                    if entry.is_dir {
+                                        // Lazy-load children before expanding.
+                                        if !entry.is_expanded {
+                                            if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                                                app.viewer_state.ensure_children_loaded(tree_idx, &wt.path);
                                             }
-                                            app.viewer_state.toggle_dir(tree_idx);
-                                        } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                                            let wt_path = wt.path.clone();
-                                            app.viewer_state.open_file(&wt_path, &entry.path);
-                                            app.rehighlight_viewer();
-                                            app.review_state.build_file_comment_cache(&entry.path);
-                                            app.set_focus(Focus::Viewer);
                                         }
+                                        app.viewer_state.toggle_dir(tree_idx);
+                                    } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                                        let wt_path = wt.path.clone();
+                                        app.viewer_state.open_file(&wt_path, &entry.path);
+                                        app.rehighlight_viewer();
+                                        app.review_state.build_file_comment_cache(&entry.path);
+                                        app.set_focus(Focus::Viewer);
                                     }
                                 }
                             }
@@ -2107,19 +2128,12 @@ pub fn handle_mouse_event(
                         main_area.y + (main_area.height as u32 * 80 / 100) as u16;
                     let terminal_x = viewer_end;
 
-                    // Double-click detection for terminal panels.
-                    let now = std::time::Instant::now();
-                    let is_double =
-                        now.duration_since(app.last_terminal_click).as_millis() < 400;
-                    app.last_terminal_click = now;
-
                     if row < terminal_split_y {
                         app.focus = Focus::TerminalClaude;
                         // Click on tab bar (first row of Claude panel).
                         if row == main_area.y {
                             handle_terminal_tab_click(app, col, terminal_x, true);
-                        } else if is_double
-                            && app.current_worktree_claude_sessions().is_empty()
+                        } else if app.current_worktree_claude_sessions().is_empty()
                         {
                             spawn_terminal_session(app);
                         }
@@ -2128,8 +2142,7 @@ pub fn handle_mouse_event(
                         // Click on tab bar (first row of Shell panel).
                         if row == terminal_split_y {
                             handle_terminal_tab_click(app, col, terminal_x, false);
-                        } else if is_double
-                            && app.current_worktree_shell_sessions().is_empty()
+                        } else if app.current_worktree_shell_sessions().is_empty()
                         {
                             spawn_terminal_session(app);
                         }

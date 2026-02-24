@@ -166,10 +166,6 @@ pub struct App {
     pub active_claude_session: Option<usize>,
     /// Index of the active Shell session for the current worktree (into pty_manager.sessions).
     pub active_shell_session: Option<usize>,
-    /// Timestamp and row of the last mouse click in the Explorer/Diff area (for double-click detection).
-    pub last_explorer_click: (std::time::Instant, u16),
-    /// Timestamp of the last mouse click in a terminal panel (for double-click detection).
-    pub last_terminal_click: std::time::Instant,
 
     // ── Create worktree 2-step flow ─────────────────────────────
     /// Branch name entered in step 1, held while step 2 (base branch) is active.
@@ -233,8 +229,9 @@ pub struct App {
     /// Which panel's help to display (captured at the moment `?` was pressed).
     pub help_context: Focus,
 
-    /// Whether the terminal column is manually expanded (via the [<=>] button).
-    pub terminal_expanded: bool,
+    /// Which panel is currently expanded to 100% (via the [<=>] button).
+    /// `None` means no panel is expanded (default layout).
+    pub expanded_panel: Option<Focus>,
 
     // ── Command palette overlay ─────────────────────────────────
     /// Whether the command palette is open.
@@ -396,8 +393,6 @@ impl App {
             needs_clear: false,
             active_claude_session: None,
             active_shell_session: None,
-            last_explorer_click: (std::time::Instant::now(), 0),
-            last_terminal_click: std::time::Instant::now(),
             worktree_pending_branch: String::new(),
             base_branch_list: Vec::new(),
             base_branch_selected: 0,
@@ -421,7 +416,7 @@ impl App {
             syntect_theme,
             help_active: false,
             help_context: Focus::Worktree,
-            terminal_expanded: false,
+            expanded_panel: None,
             command_palette_active: false,
             command_palette_filter: String::new(),
             command_palette_selected: 0,
@@ -667,8 +662,12 @@ impl App {
             CommandId::FocusViewer => self.set_focus(Focus::Viewer),
             CommandId::FocusTerminalClaude => self.set_focus(Focus::TerminalClaude),
             CommandId::FocusTerminalShell => self.set_focus(Focus::TerminalShell),
-            CommandId::ToggleTerminalExpand => {
-                self.terminal_expanded = !self.terminal_expanded;
+            CommandId::TogglePanelExpand => {
+                if self.expanded_panel == Some(self.focus) {
+                    self.expanded_panel = None;
+                } else {
+                    self.expanded_panel = Some(self.focus);
+                }
             }
             CommandId::CreateWorktree => {
                 self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
@@ -1561,6 +1560,14 @@ impl App {
 
     // ── Worktree create / delete helpers ──────────────────────────
 
+    /// Select a worktree by its path and trigger UI updates.
+    fn select_worktree_by_path(&mut self, path: &std::path::Path) {
+        if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
+            self.selected_worktree = idx;
+            self.on_worktree_changed();
+        }
+    }
+
     /// Create a worktree from a base ref (2-step flow).
     pub fn create_worktree_from_base(&mut self, branch_name: &str, base_ref: &str) {
         let base = if base_ref.is_empty() { "origin/main" } else { base_ref };
@@ -1569,11 +1576,12 @@ impl App {
             Ok(engine) => {
                 match engine.create_worktree_from_base(branch_name, base, wt_dir.as_deref()) {
                     Ok(path) => {
+                        self.record_stat("branches_created");
+                        self.refresh_worktrees();
+                        self.select_worktree_by_path(&path);
                         self.set_status(format!(
                             "Created worktree: {} (from {})", path.display(), base
                         ), StatusLevel::Success);
-                        self.record_stat("branches_created");
-                        self.refresh_worktrees();
                     }
                     Err(e) => {
                         self.set_status(format!("Error: {e}"), StatusLevel::Error);
@@ -1593,11 +1601,12 @@ impl App {
             Ok(engine) => {
                 match engine.create_worktree_from_remote(remote_branch, wt_dir.as_deref()) {
                     Ok(path) => {
+                        self.record_stat("branches_created");
+                        self.refresh_worktrees();
+                        self.select_worktree_by_path(&path);
                         self.set_status(format!(
                             "Created tracking worktree: {}", path.display()
                         ), StatusLevel::Success);
-                        self.record_stat("branches_created");
-                        self.refresh_worktrees();
                     }
                     Err(e) => {
                         self.set_status(format!("Error: {e}"), StatusLevel::Error);

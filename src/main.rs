@@ -195,7 +195,7 @@ fn run_loop(
             .split(area);
             let main_area = outer[2];
 
-            let (left_w, explorer_w, viewer_w) = accordion_widths(app.terminal_expanded, main_area.width);
+            let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
             let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
 
             if right_w > 2 {
@@ -322,24 +322,25 @@ fn run_loop(
     }
 }
 
-/// Calculate accordion panel widths based on terminal expansion state.
+/// Calculate accordion panel widths based on panel expansion state.
 ///
 /// Returns `(left_width, explorer_width, viewer_width)`. The right panel gets whatever remains.
-pub fn accordion_widths(terminal_expanded: bool, total_width: u16) -> (u16, u16, u16) {
-    let min_col = 3_u16;
+pub fn accordion_widths(expanded_panel: Option<crate::app::Focus>, total_width: u16) -> (u16, u16, u16) {
+    use crate::app::Focus;
 
-    if terminal_expanded {
-        // When terminal is expanded, shrink left panels to give more width.
-        let left = min_col;
-        let explorer = (total_width * 8 / 100).max(min_col);
-        let viewer = (total_width * 12 / 100).max(min_col);
-        (left, explorer, viewer)
-    } else {
-        // Default proportions.
-        let left = (total_width * 15 / 100).max(min_col);
-        let explorer = (total_width * 20 / 100).max(min_col);
-        let viewer = (total_width * 30 / 100).max(min_col);
-        (left, explorer, viewer)
+    match expanded_panel {
+        Some(Focus::Worktree) => (total_width, 0, 0),
+        Some(Focus::Explorer) => (0, total_width, 0),
+        Some(Focus::Viewer) => (0, 0, total_width),
+        Some(Focus::TerminalClaude | Focus::TerminalShell) => (0, 0, 0),
+        None => {
+            // Default proportions.
+            let min_col = 3_u16;
+            let left = (total_width * 15 / 100).max(min_col);
+            let explorer = (total_width * 20 / 100).max(min_col);
+            let viewer = (total_width * 30 / 100).max(min_col);
+            (left, explorer, viewer)
+        }
     }
 }
 
@@ -373,7 +374,7 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     }
 
     // ── Accordion column widths ─────────────────────────────────────
-    let (left_w, explorer_w, viewer_w) = accordion_widths(app.terminal_expanded, main_area.width);
+    let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
     let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
 
     let columns = Layout::horizontal([
