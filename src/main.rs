@@ -258,7 +258,7 @@ fn run_loop(
         if last_stats_refresh.elapsed() >= STATS_REFRESH_POLL {
             last_stats_refresh = Instant::now();
             if let Some(store) = &app.review_store {
-                app.streak_info = store.calculate_streak().ok();
+                app.today_stats = store.get_today_stats().ok();
             }
         }
 

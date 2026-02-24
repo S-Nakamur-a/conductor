@@ -253,8 +253,8 @@ pub struct App {
     // ── Gamification (session stats + streak) ────────────────────
     /// ID of the current stats session (for gamification tracking).
     pub stats_session_id: Option<String>,
-    /// Cached streak info (refreshed periodically).
-    pub streak_info: Option<review_store::StreakInfo>,
+    /// Cached today's activity stats (refreshed periodically).
+    pub today_stats: Option<review_store::DailyStats>,
     /// HEAD oid per worktree branch (for commit detection).
     pub worktree_heads: HashMap<String, String>,
 
@@ -335,7 +335,7 @@ impl App {
         if let Some(store) = &review_store {
             let _ = store.increment_daily_stat("sessions_used");
         }
-        let streak_info = review_store.as_ref().and_then(|store| store.calculate_streak().ok());
+        let today_stats = review_store.as_ref().and_then(|store| store.get_today_stats().ok());
 
         let theme = Theme::from_name(&config.viewer.theme);
 
@@ -409,7 +409,7 @@ impl App {
             terminal_scroll_claude: 0,
             terminal_scroll_shell: 0,
             stats_session_id,
-            streak_info,
+            today_stats,
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             bg_branch_rx: None,
