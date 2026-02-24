@@ -1903,6 +1903,26 @@ impl App {
 
         let wt_path = wt.path.clone();
         let branch = wt.branch.clone();
+
+        // Kill all PTY sessions (Claude Code + Shell) associated with this worktree
+        // before removing the worktree directory. Walk backwards so removals don't
+        // shift indices we haven't processed yet.
+        let session_indices: Vec<usize> = self
+            .pty_manager
+            .sessions()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.working_dir == wt_path)
+            .map(|(idx, _)| idx)
+            .collect();
+        for &idx in session_indices.iter().rev() {
+            log::info!(
+                "killing PTY session {} for deleted worktree '{branch}'",
+                idx
+            );
+            self.close_terminal_session(idx);
+        }
+
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.remove_worktree(&wt_path) {
