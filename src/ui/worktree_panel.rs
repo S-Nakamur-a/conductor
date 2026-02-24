@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             let marker_style = if is_waiting {
                 Style::default()
-                    .fg(if pulse_on { Color::Yellow } else { Color::Cyan })
+                    .fg(if pulse_on { Color::Rgb(255, 165, 0) } else { Color::Rgb(200, 120, 0) })
                     .add_modifier(Modifier::BOLD)
             } else if i == app.selected_worktree {
                 Style::default()
@@ -80,7 +80,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 spans.push(Span::styled(
                     indicator,
                     Style::default()
-                        .fg(if pulse_on { Color::Yellow } else { Color::Cyan })
+                        .fg(if pulse_on { Color::Rgb(255, 165, 0) } else { Color::Rgb(200, 120, 0) })
                         .add_modifier(Modifier::BOLD),
                 ));
             }
@@ -99,9 +99,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             // Apply background highlight to the entire row when waiting.
             if is_waiting {
                 let bg = if pulse_on {
-                    Color::Rgb(0, 50, 65)
+                    Color::Rgb(60, 35, 0)   // warm orange tint
                 } else {
-                    Color::Rgb(0, 30, 40)
+                    Color::Rgb(40, 22, 0)   // darker orange pulse
                 };
                 item.style(Style::default().bg(bg))
             } else {
