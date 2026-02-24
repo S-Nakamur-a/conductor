@@ -14,16 +14,29 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-/// Render the vt100 screen of a PTY session into the given area.
+/// A snapshot of a single cell's content and style, extracted from the vt100 screen.
+struct CellSnapshot {
+    text: String,
+    style: Style,
+}
+
+/// A snapshot of the vt100 screen contents, captured while holding the lock
+/// so that the lock can be released before the (slower) ratatui rendering step.
+struct ScreenSnapshot {
+    rows: Vec<Vec<CellSnapshot>>,
+    effective_offset: usize,
+}
+
+/// Take a point-in-time snapshot of the vt100 screen contents.
 ///
-/// `scroll_offset` controls scrollback: 0 = live view (bottom), >0 = scroll back into history.
-/// Scrollback is disabled when the PTY is in alternate screen mode (vim, less, etc.).
-pub fn render_pty_output(
-    frame: &mut Frame,
-    area: Rect,
+/// Acquires and releases the parser lock as quickly as possible, extracting
+/// only the cell data needed for rendering into a local structure.
+fn snapshot_screen(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,
-) {
+    max_rows: u16,
+    max_cols: u16,
+) -> ScreenSnapshot {
     let mut parser = screen_arc.lock().unwrap_or_else(|e| e.into_inner());
 
     let is_alt_screen = parser.screen().alternate_screen();
@@ -36,7 +49,6 @@ pub fn render_pty_output(
 
     // Debug: log alternate screen state periodically.
     if is_alt_screen {
-        // Check if the screen has any visible (non-space) content.
         let has_content = (0..rows.min(5)).any(|r| {
             (0..cols).any(|c| {
                 if let Some(cell) = screen.cell(r, c) {
@@ -49,29 +61,66 @@ pub fn render_pty_output(
         });
         let cursor = screen.cursor_position();
         log::debug!(
-            "ALT_SCREEN render: has_content={has_content}, size=({rows},{cols}), area=({},{}) cursor=({},{})",
-            area.height, area.width, cursor.0, cursor.1,
+            "ALT_SCREEN render: has_content={has_content}, size=({rows},{cols}), area=({max_rows},{max_cols}) cursor=({},{})",
+            cursor.0, cursor.1,
         );
     }
 
-    let max_rows = area.height;
-    let max_cols = area.width;
-
-    let mut text_lines: Vec<Line> = Vec::new();
+    // Extract cell data into local snapshot.
+    let mut snapshot_rows: Vec<Vec<CellSnapshot>> = Vec::with_capacity(rows.min(max_rows) as usize);
     for row in 0..rows.min(max_rows) {
+        let mut row_cells: Vec<CellSnapshot> = Vec::new();
+        for col in 0..cols.min(max_cols) {
+            let cell = screen.cell(row, col).unwrap();
+            row_cells.push(CellSnapshot {
+                text: cell.contents(),
+                style: vt100_cell_to_style(cell),
+            });
+        }
+        snapshot_rows.push(row_cells);
+    }
+
+    // Restore live view so other readers see the current screen.
+    parser.set_scrollback(0);
+
+    // Lock is dropped here when `parser` goes out of scope.
+    ScreenSnapshot {
+        rows: snapshot_rows,
+        effective_offset,
+    }
+}
+
+/// Render the vt100 screen of a PTY session into the given area.
+///
+/// `scroll_offset` controls scrollback: 0 = live view (bottom), >0 = scroll back into history.
+/// Scrollback is disabled when the PTY is in alternate screen mode (vim, less, etc.).
+///
+/// The screen lock is held only long enough to snapshot cell data; all ratatui
+/// widget construction and rendering happens after the lock is released.
+pub fn render_pty_output(
+    frame: &mut Frame,
+    area: Rect,
+    screen_arc: &Arc<Mutex<vt100::Parser>>,
+    scroll_offset: usize,
+) {
+    // Phase 1: snapshot screen contents (lock is held briefly).
+    let snapshot = snapshot_screen(screen_arc, scroll_offset, area.height, area.width);
+
+    // Phase 2: build ratatui widgets from the snapshot (no lock held).
+    let mut text_lines: Vec<Line> = Vec::new();
+    for row_cells in &snapshot.rows {
         let mut spans: Vec<Span> = Vec::new();
         let mut current_text = String::new();
         let mut current_style = Style::default();
 
-        let mut skip_cols: u16 = 0;
-        for col in 0..cols.min(max_cols) {
+        let mut skip_cols: usize = 0;
+        for cell in row_cells {
             if skip_cols > 0 {
                 skip_cols -= 1;
                 continue;
             }
-            let cell = screen.cell(row, col).unwrap();
-            let ch = cell.contents();
-            let style = vt100_cell_to_style(cell);
+            let ch = &cell.text;
+            let style = cell.style;
 
             if style != current_style && !current_text.is_empty() {
                 spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
@@ -82,9 +131,9 @@ pub fn render_pty_output(
             } else {
                 let w = UnicodeWidthStr::width(ch.as_str());
                 if w > 1 {
-                    skip_cols = (w as u16) - 1;
+                    skip_cols = w - 1;
                 }
-                current_text.push_str(&ch);
+                current_text.push_str(ch);
             }
         }
         if !current_text.is_empty() {
@@ -96,13 +145,10 @@ pub fn render_pty_output(
     let paragraph = Paragraph::new(text_lines);
     frame.render_widget(paragraph, area);
 
-    // Restore live view so other readers see the current screen.
-    parser.set_scrollback(0);
-
     // Show a visual indicator when scrolled back.
-    if effective_offset > 0 {
+    if snapshot.effective_offset > 0 {
         let indicator = Line::from(Span::styled(
-            format!(" ↑ scrollback ({effective_offset} lines — Shift+End to return) "),
+            format!(" ↑ scrollback ({} lines — Shift+End to return) ", snapshot.effective_offset),
             Style::default().fg(Color::Black).bg(Color::Yellow),
         ));
         frame.render_widget(Paragraph::new(indicator), Rect { height: 1, ..area });
