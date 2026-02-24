@@ -932,14 +932,12 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     app.worktree_input_buffer.clear();
                     app.set_status("Cancelled (empty name).".to_string(), StatusLevel::Warning);
                 } else {
-                    // Move to step 2: base branch input.
+                    // Move to step 2: base branch picker.
                     app.worktree_pending_branch = name;
                     app.worktree_input_buffer.clear();
                     app.worktree_input_mode = WorktreeInputMode::CreatingWorktreeBase;
-                    app.set_status(
-                        "Base branch (Enter for origin/main, Esc to cancel):".to_string(),
-                        StatusLevel::Info,
-                    );
+                    app.load_base_branches();
+                    app.status_message = None;
                 }
             }
             KeyCode::Backspace => {
@@ -950,29 +948,54 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
             }
             _ => {}
         },
-        WorktreeInputMode::CreatingWorktreeBase => match key.code {
-            KeyCode::Esc => {
-                app.worktree_input_mode = WorktreeInputMode::Normal;
-                app.worktree_input_buffer.clear();
-                app.worktree_pending_branch.clear();
-                app.set_status("Cancelled.".to_string(), StatusLevel::Warning);
+        WorktreeInputMode::CreatingWorktreeBase => {
+            let filtered = app.filtered_base_branches();
+            let count = filtered.len();
+
+            match key.code {
+                KeyCode::Esc => {
+                    app.worktree_input_mode = WorktreeInputMode::Normal;
+                    app.base_branch_filter.clear();
+                    app.worktree_pending_branch.clear();
+                    app.set_status("Cancelled.".to_string(), StatusLevel::Warning);
+                }
+                KeyCode::Down => {
+                    if count > 0 && app.base_branch_selected + 1 < count {
+                        app.base_branch_selected += 1;
+                    }
+                }
+                KeyCode::Up => {
+                    if app.base_branch_selected > 0 {
+                        app.base_branch_selected -= 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    let filtered = app.filtered_base_branches();
+                    let base_ref = if let Some(&(original_idx, _)) = filtered.get(app.base_branch_selected) {
+                        app.base_branch_list.get(original_idx).cloned().unwrap_or_default()
+                    } else if !app.base_branch_filter.is_empty() {
+                        // No match — use the filter text as a raw ref.
+                        app.base_branch_filter.clone()
+                    } else {
+                        String::new() // Will default to origin/main
+                    };
+                    let branch_name = app.worktree_pending_branch.clone();
+                    app.worktree_input_mode = WorktreeInputMode::Normal;
+                    app.base_branch_filter.clear();
+                    app.worktree_pending_branch.clear();
+                    app.create_worktree_from_base(&branch_name, &base_ref);
+                }
+                KeyCode::Backspace => {
+                    app.base_branch_filter.pop();
+                    app.base_branch_selected = 0;
+                }
+                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    app.base_branch_filter.push(c);
+                    app.base_branch_selected = 0;
+                }
+                _ => {}
             }
-            KeyCode::Enter => {
-                let base_ref = app.worktree_input_buffer.clone();
-                let branch_name = app.worktree_pending_branch.clone();
-                app.worktree_input_mode = WorktreeInputMode::Normal;
-                app.worktree_input_buffer.clear();
-                app.worktree_pending_branch.clear();
-                app.create_worktree_from_base(&branch_name, &base_ref);
-            }
-            KeyCode::Backspace => {
-                app.worktree_input_buffer.pop();
-            }
-            KeyCode::Char(c) => {
-                app.worktree_input_buffer.push(c);
-            }
-            _ => {}
-        },
+        }
         WorktreeInputMode::ConfirmingDelete => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 // Save branch name before deleting worktree.

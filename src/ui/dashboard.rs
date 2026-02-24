@@ -518,38 +518,89 @@ pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Render the base branch input overlay (step 2 of worktree creation).
 pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let popup_height = 5_u16;
-    let popup_width = area.width.saturating_sub(8).min(60);
+    let popup_width = 70_u16.min(area.width.saturating_sub(4));
+    let popup_height = 22_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height + 2);
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
+    // Split into filter bar + list.
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(3),
+    ])
+    .split(popup_area);
+
+    // Filter bar.
     let title = format!(
-        " Base Branch for '{}' (default: origin/main) ",
+        " Base Branch for '{}' (type to filter, Enter: select, Esc: cancel) ",
         app.worktree_pending_branch,
     );
-    let block = Block::default()
+    let filter_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
+    let filter_inner = filter_block.inner(chunks[0]);
+    frame.render_widget(filter_block, chunks[0]);
 
-    let hint_line = Line::from(Span::styled(
-        "Enter a base ref (e.g. origin/main, origin/develop) or press Enter for default",
-        Style::default().fg(Color::DarkGray),
-    ));
-    let input_text = format!("{}\u{2588}", app.worktree_input_buffer);
-    let input_line = Line::from(Span::styled(
-        input_text,
+    let filter_text = format!("{}\u{2588}", app.base_branch_filter);
+    let filter_para = Paragraph::new(Span::styled(
+        filter_text,
         Style::default().fg(Color::White),
     ));
+    frame.render_widget(filter_para, filter_inner);
 
-    let paragraph = Paragraph::new(vec![hint_line, input_line]);
-    frame.render_widget(paragraph, inner);
+    // Branch list.
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let list_inner = list_block.inner(chunks[1]);
+    frame.render_widget(list_block, chunks[1]);
+
+    let filtered = app.filtered_base_branches();
+    if filtered.is_empty() {
+        let hint = if app.base_branch_filter.is_empty() {
+            "  No branches found.".to_string()
+        } else {
+            format!("  No matches. Enter will use '{}' as base ref.", app.base_branch_filter)
+        };
+        let paragraph = Paragraph::new(hint)
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(paragraph, list_inner);
+        return;
+    }
+
+    let items: Vec<ListItem> = filtered
+        .iter()
+        .enumerate()
+        .map(|(vis_idx, (_orig_idx, branch))| {
+            let style = if vis_idx == app.base_branch_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(Span::styled(
+                format!("  {branch}"),
+                style,
+            )))
+        })
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let mut state = ListState::default();
+    state.select(Some(app.base_branch_selected));
+    frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
 /// Render the branch deletion confirmation overlay.
