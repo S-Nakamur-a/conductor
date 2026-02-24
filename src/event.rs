@@ -1871,18 +1871,19 @@ pub fn handle_mouse_event(
             // Only handle clicks in the main area.
             if row >= main_area.y && row < main_area.y + main_area.height {
                 if col < left_end {
-                    app.focus = Focus::Worktree;
-
                     // Click selects and switches to the worktree.
                     let relative_row = (row - main_area.y) as usize;
-                    let item_row = relative_row.saturating_sub(1);
-                    if !app.worktrees.is_empty() {
-                        app.selected_worktree =
-                            item_row.min(app.worktrees.len().saturating_sub(1));
-                    }
+                    let item_row = relative_row.saturating_sub(1); // row 0 is border
 
-                    app.on_worktree_changed();
-                    app.set_focus(Focus::Explorer);
+                    if !app.worktrees.is_empty() && item_row < app.worktrees.len() {
+                        // Clicked on an actual worktree item.
+                        app.selected_worktree = item_row;
+                        app.on_worktree_changed();
+                        app.set_focus(Focus::Explorer);
+                    } else {
+                        // Clicked on blank space below worktree items — just focus.
+                        app.set_focus(Focus::Worktree);
+                    }
                 } else if col < explorer_end {
                     // Explorer column.
                     app.focus = Focus::Explorer;
