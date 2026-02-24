@@ -243,7 +243,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         };
         if let Some(comments) = app.review_state.file_comments.get(&cursor_line) {
             let has_selection = vs.selected_range().is_some();
-            render_comment_preview(frame, area, comments, cursor_line, has_selection);
+            render_comment_preview(
+                frame,
+                area,
+                comments,
+                cursor_line,
+                has_selection,
+                &app.review_state.reply_counts,
+            );
         }
     }
 
@@ -260,22 +267,13 @@ fn render_comment_preview(
     comments: &[ReviewComment],
     line: usize,
     has_selection: bool,
+    reply_counts: &std::collections::HashMap<String, usize>,
 ) {
     let max_comments: usize = 3;
-    let content_count = comments.len().min(max_comments);
-    let height = (1 + content_count) as u16; // 1 header + N comments
+    let max_body_lines: usize = 3;
     let width = area.width.saturating_sub(2);
 
-    // Position above the selection hint overlay if a selection is active.
-    let offset_for_selection = if has_selection { 1_u16 } else { 0 };
-    let y = area
-        .y
-        .saturating_add(area.height)
-        .saturating_sub(height + 1 + offset_for_selection);
-    let preview_area = Rect::new(area.x + 1, y, width, height);
-
-    frame.render_widget(ratatui::widgets::Clear, preview_area);
-
+    // Pre-build all lines to know the exact height.
     let mut lines = Vec::new();
 
     // Header line.
@@ -293,33 +291,81 @@ fn render_comment_preview(
             format!(" {count_label}"),
             Style::default().fg(Color::DarkGray),
         ),
+        Span::styled(
+            "  Space: view thread",
+            Style::default().fg(Color::DarkGray),
+        ),
     ]));
 
-    // Comment bodies (truncated to fit).
+    // Comment bodies (multi-line preview).
     for comment in comments.iter().take(max_comments) {
         let kind_badge = crate::ui::review::kind_badge_span(comment.kind);
         let author_label = match comment.author {
             crate::review_store::Author::User => "you",
             crate::review_store::Author::Claude => "claude",
         };
-        let prefix_len = 4 + author_label.len() + 2; // "[S] " + author + ": "
-        let max_body = (width as usize).saturating_sub(prefix_len);
-        let body: String = comment
-            .body
-            .replace('\n', " ")
-            .chars()
-            .take(max_body)
-            .collect();
 
+        // Reply count badge.
+        let reply_count = reply_counts.get(&comment.id).copied().unwrap_or(0);
+        let reply_badge = if reply_count > 0 {
+            Span::styled(
+                format!(" [{reply_count} replies]"),
+                Style::default().fg(Color::Cyan),
+            )
+        } else {
+            Span::raw("")
+        };
+
+        // First line: kind badge + author + reply count.
         lines.push(Line::from(vec![
             kind_badge,
             Span::styled(
                 format!("{author_label}: "),
                 Style::default().fg(Color::Cyan),
             ),
-            Span::styled(body, Style::default().fg(Color::White)),
+            reply_badge,
         ]));
+
+        // Body lines (up to max_body_lines).
+        let body_lines: Vec<&str> = comment.body.split('\n').collect();
+        let show_count = body_lines.len().min(max_body_lines);
+        let truncated = body_lines.len() > max_body_lines;
+        for body_line in body_lines.iter().take(show_count) {
+            let max_chars = (width as usize).saturating_sub(4); // "  " indent
+            let display: String = body_line.chars().take(max_chars).collect();
+            lines.push(Line::from(Span::styled(
+                format!("  {display}"),
+                Style::default().fg(Color::White),
+            )));
+        }
+        if truncated {
+            lines.push(Line::from(Span::styled(
+                "  ...",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
     }
+
+    if comments.len() > max_comments {
+        lines.push(Line::from(Span::styled(
+            format!("  +{} more", comments.len() - max_comments),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let height = lines.len() as u16;
+
+    // Position above the selection hint overlay if a selection is active.
+    let offset_for_selection = if has_selection { 1_u16 } else { 0 };
+    let max_height = area.height.saturating_sub(2 + offset_for_selection);
+    let clamped_height = height.min(max_height);
+    let y = area
+        .y
+        .saturating_add(area.height)
+        .saturating_sub(clamped_height + 1 + offset_for_selection);
+    let preview_area = Rect::new(area.x + 1, y, width, clamped_height);
+
+    frame.render_widget(ratatui::widgets::Clear, preview_area);
 
     let paragraph = Paragraph::new(lines).style(Style::default().bg(Color::Rgb(30, 30, 50)));
     frame.render_widget(paragraph, preview_area);
