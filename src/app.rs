@@ -1555,6 +1555,14 @@ impl App {
 
     // ── Worktree create / delete helpers ──────────────────────────
 
+    /// Select a worktree by its path and trigger UI updates.
+    fn select_worktree_by_path(&mut self, path: &std::path::Path) {
+        if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
+            self.selected_worktree = idx;
+            self.on_worktree_changed();
+        }
+    }
+
     /// Create a worktree from a base ref (2-step flow).
     pub fn create_worktree_from_base(&mut self, branch_name: &str, base_ref: &str) {
         let base = if base_ref.is_empty() { "origin/main" } else { base_ref };
@@ -1563,11 +1571,12 @@ impl App {
             Ok(engine) => {
                 match engine.create_worktree_from_base(branch_name, base, wt_dir.as_deref()) {
                     Ok(path) => {
+                        self.record_stat("branches_created");
+                        self.refresh_worktrees();
+                        self.select_worktree_by_path(&path);
                         self.set_status(format!(
                             "Created worktree: {} (from {})", path.display(), base
                         ), StatusLevel::Success);
-                        self.record_stat("branches_created");
-                        self.refresh_worktrees();
                     }
                     Err(e) => {
                         self.set_status(format!("Error: {e}"), StatusLevel::Error);
@@ -1587,11 +1596,12 @@ impl App {
             Ok(engine) => {
                 match engine.create_worktree_from_remote(remote_branch, wt_dir.as_deref()) {
                     Ok(path) => {
+                        self.record_stat("branches_created");
+                        self.refresh_worktrees();
+                        self.select_worktree_by_path(&path);
                         self.set_status(format!(
                             "Created tracking worktree: {}", path.display()
                         ), StatusLevel::Success);
-                        self.record_stat("branches_created");
-                        self.refresh_worktrees();
                     }
                     Err(e) => {
                         self.set_status(format!("Error: {e}"), StatusLevel::Error);
