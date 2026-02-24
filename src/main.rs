@@ -34,8 +34,10 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use crate::app::App;
 use crate::event::{handle_key_event, handle_mouse_event};
 
-/// Tick rate for the main event loop (approximately 60 fps).
-const TICK_RATE: Duration = Duration::from_millis(16);
+/// Tick rate when terminal panels are focused (~120fps for responsive PTY).
+const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
+/// Tick rate when non-terminal panels are focused (low CPU usage).
+const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
 
 fn main() -> Result<()> {
     // ── Initialise logging (honour RUST_LOG env var) ─────────────────
@@ -217,7 +219,11 @@ fn run_loop(
         }
 
         // Wait for an event.
-        if crossterm_poll(TICK_RATE)? {
+        let tick = match app.focus {
+            crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+            _ => TICK_RATE_IDLE,
+        };
+        if crossterm_poll(tick)? {
             match crossterm_read()? {
                 Event::Key(key) => handle_key_event(app, key),
                 Event::Mouse(mouse) => handle_mouse_event(app, mouse, last_frame_area),
@@ -309,18 +315,6 @@ fn run_loop(
 
         // Scan Claude Code PTY output for file-change patterns.
         app.check_cc_output();
-
-        // Try to auto-detect session labels for Claude Code sessions.
-        for i in 0..app.pty_manager.sessions().len() {
-            let session = &app.pty_manager.sessions()[i];
-            if session.kind == crate::pty_manager::SessionKind::ClaudeCode
-                && session.label.starts_with("CC:")
-            {
-                if let Some(new_label) = app.pty_manager.auto_detect_label(i) {
-                    app.pty_manager.set_label(i, &new_label);
-                }
-            }
-        }
 
         if app.should_quit {
             return Ok(());

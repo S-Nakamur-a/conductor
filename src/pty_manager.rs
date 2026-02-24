@@ -448,55 +448,6 @@ impl PtyManager {
             .unwrap_or(false)
     }
 
-    /// Try to auto-detect a session label from the PTY output.
-    ///
-    /// Looks for patterns like "I'll " or "Let me " at the start of Claude's output
-    /// and extracts the first sentence as a label.
-    pub fn auto_detect_label(&mut self, idx: usize) -> Option<String> {
-        let output = self.get_output(idx);
-
-        // Look through the first 20 lines for Claude's response.
-        for line in output.iter().take(20) {
-            // Strip ANSI escape sequences before matching.
-            let clean = strip_ansi(line);
-            let trimmed = clean.trim();
-
-            // Skip empty lines, prompts, and commands.
-            if trimmed.is_empty() || trimmed.starts_with('$') || trimmed.starts_with('>') {
-                continue;
-            }
-
-            // Look for typical Claude opening patterns.
-            let patterns = [
-                "I'll ", "I will ", "Let me ", "I'm going to ",
-                "I can ", "Sure, ", "OK, ", "Alright, ",
-            ];
-
-            for pattern in &patterns {
-                if trimmed.starts_with(pattern) || trimmed.contains(pattern) {
-                    // Extract up to the first period or 60 chars.
-                    let text = if let Some(dot_pos) = trimmed.find('.') {
-                        &trimmed[..dot_pos]
-                    } else if trimmed.len() > 60 {
-                        &trimmed[..60]
-                    } else {
-                        trimmed
-                    };
-                    return Some(text.to_string());
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Update the label for a session at the given index.
-    pub fn set_label(&mut self, idx: usize, label: &str) {
-        if let Some(session) = self.sessions.get_mut(idx) {
-            session.label = label.to_string();
-        }
-    }
-
     // -- Input waiting detection ---------------------------------------------
 
     /// Check whether the Claude Code session at `idx` appears to be waiting
