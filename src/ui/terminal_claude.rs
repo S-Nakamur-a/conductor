@@ -50,7 +50,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let pulse_on = (app.ui_tick / 30) % 2 == 0;
             let label_style = if is_waiting {
                 Style::default()
-                    .fg(if pulse_on { Color::Yellow } else { Color::Cyan })
+                    .fg(if pulse_on { Color::Rgb(255, 165, 0) } else { Color::Rgb(200, 120, 0) })
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()

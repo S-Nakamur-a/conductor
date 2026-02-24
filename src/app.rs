@@ -247,9 +247,9 @@ pub struct App {
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
 
-    /// Title bar badge positions: (start_col, end_col, branch_name).
+    /// Notification bar badge positions: (start_col, end_col, branch_name).
     /// Populated during rendering for click-to-jump.
-    pub title_bar_badges: Vec<(u16, u16, String)>,
+    pub notification_bar_badges: Vec<(u16, u16, String)>,
 
     /// Scrollback offset for the Claude Code terminal (0 = live view at bottom).
     pub terminal_scroll_claude: usize,
@@ -426,7 +426,7 @@ impl App {
             command_palette_filter: String::new(),
             command_palette_selected: 0,
             ui_tick: 0,
-            title_bar_badges: Vec::new(),
+            notification_bar_badges: Vec::new(),
             terminal_scroll_claude: 0,
             terminal_scroll_shell: 0,
             stats_session_id,

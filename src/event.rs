@@ -1869,13 +1869,16 @@ pub fn handle_mouse_event(
     use ratatui::layout::{Constraint, Layout};
 
     // Compute layout regions — must match render_ui in main.rs.
+    let notif_height: u16 = if !app.cc_waiting_worktrees.is_empty() { 1 } else { 0 };
     let outer = Layout::vertical([
         Constraint::Length(1), // title bar
+        Constraint::Length(notif_height), // notification bar
         Constraint::Min(0),
         Constraint::Length(1), // status bar
     ])
     .split(frame_area);
-    let main_area = outer[1];
+    let notif_area = outer[1];
+    let main_area = outer[2];
 
     let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.terminal_expanded, main_area.width);
 
@@ -1918,9 +1921,9 @@ pub fn handle_mouse_event(
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            // Title bar click — check for badge clicks.
-            if row < main_area.y {
-                for (start_col, end_col, branch) in &app.title_bar_badges {
+            // Notification bar click — check for badge clicks.
+            if notif_height > 0 && row == notif_area.y {
+                for (start_col, end_col, branch) in &app.notification_bar_badges {
                     if col >= *start_col && col < *end_col {
                         if let Some(wt_idx) =
                             app.worktrees.iter().position(|w| w.branch == *branch)
@@ -1935,21 +1938,27 @@ pub fn handle_mouse_event(
                 return;
             }
 
+            // Title bar click — ignore.
+            if row < main_area.y {
+                return;
+            }
+
             // Only handle clicks in the main area.
             if row >= main_area.y && row < main_area.y + main_area.height {
                 if col < left_end {
-                    app.focus = Focus::Worktree;
-
                     // Click selects and switches to the worktree.
                     let relative_row = (row - main_area.y) as usize;
-                    let item_row = relative_row.saturating_sub(1);
-                    if !app.worktrees.is_empty() {
-                        app.selected_worktree =
-                            item_row.min(app.worktrees.len().saturating_sub(1));
-                    }
+                    let item_row = relative_row.saturating_sub(1); // row 0 is border
 
-                    app.on_worktree_changed();
-                    app.set_focus(Focus::Explorer);
+                    if !app.worktrees.is_empty() && item_row < app.worktrees.len() {
+                        // Clicked on an actual worktree item.
+                        app.selected_worktree = item_row;
+                        app.on_worktree_changed();
+                        app.set_focus(Focus::Explorer);
+                    } else {
+                        // Clicked on blank space below worktree items — just focus.
+                        app.set_focus(Focus::Worktree);
+                    }
                 } else if col < explorer_end {
                     // Explorer column.
                     app.focus = Focus::Explorer;
