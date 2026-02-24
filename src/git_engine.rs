@@ -758,7 +758,7 @@ impl GitEngine {
     /// worktree's path, not the main one.  We detect this by inspecting the
     /// git dir structure: linked worktrees have their git dir at
     /// `<main>/.git/worktrees/<name>/`.
-    fn main_worktree_path(&self) -> Result<PathBuf> {
+    pub fn main_worktree_path(&self) -> Result<PathBuf> {
         let git_dir = self.repo.path(); // linked: <main>/.git/worktrees/<name>/
                                          // main:   <main>/.git/
 
