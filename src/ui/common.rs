@@ -153,41 +153,56 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     // ── Right-aligned items (accumulated right_offset) ──────────
     let mut right_offset: u16 = 0;
 
-    // ── Stats display (streak + ccusage, unified) ─────────────
+    // ── Stats display (today's activity + ccusage) ────────────
     {
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(ref streak) = app.streak_info {
-            if streak.consecutive_days > 0 {
-                parts.push(format!(
-                    "{} days",
-                    streak.consecutive_days,
-                ));
-            }
-            if streak.today_activity_count > 0 {
-                parts.push(format!(
-                    "{} PRs",
-                    streak.today_activity_count,
-                ));
-            }
+        let sep = Span::styled(" | ", Style::default().fg(Color::DarkGray).bg(Color::DarkGray));
+        let mut spans: Vec<Span> = Vec::new();
+
+        if let Some(ref stats) = app.today_stats {
+            spans.push(Span::styled(
+                format!("{} branches", stats.branches_created),
+                Style::default().fg(Color::Cyan).bg(Color::DarkGray),
+            ));
+            spans.push(sep.clone());
+            spans.push(Span::styled(
+                format!("{} commits", stats.commits_made),
+                Style::default().fg(Color::Green).bg(Color::DarkGray),
+            ));
+            spans.push(sep.clone());
+            spans.push(Span::styled(
+                format!("{} reviews", stats.reviews_created),
+                Style::default().fg(Color::Magenta).bg(Color::DarkGray),
+            ));
         }
         if let Some(ref info) = app.ccusage_info {
-            parts.push(format!("{} tokens", format_tokens(info.total_tokens)));
-            parts.push(format!("${:.2}", info.total_cost));
+            if !spans.is_empty() {
+                spans.push(sep.clone());
+            }
+            spans.push(Span::styled(
+                format!("{} tokens", format_tokens(info.total_tokens)),
+                Style::default().fg(Color::Yellow).bg(Color::DarkGray),
+            ));
+            spans.push(sep.clone());
+            spans.push(Span::styled(
+                format!("${:.2}", info.total_cost),
+                Style::default().fg(Color::LightGreen).bg(Color::DarkGray),
+            ));
         }
-        if !parts.is_empty() {
-            let stats_text = format!(" {} ", parts.join(" | "));
-            let stats_w = UnicodeWidthStr::width(stats_text.as_str()) as u16;
+
+        if !spans.is_empty() {
+            // Add padding spaces
+            spans.insert(0, Span::styled(" ", Style::default().bg(Color::DarkGray)));
+            spans.push(Span::styled(" ", Style::default().bg(Color::DarkGray)));
+
+            let stats_line = Line::from(spans);
+            let stats_w = stats_line.width() as u16;
             if stats_w + 2 < area.width {
-                let stats_style = Style::default()
-                    .fg(Color::Green)
-                    .bg(Color::DarkGray);
                 let stats_area = Rect::new(
                     area.x + area.width - stats_w - right_offset,
                     area.y,
                     stats_w,
                     1,
                 );
-                let stats_line = Line::from(Span::styled(&stats_text, stats_style));
                 frame.render_widget(Paragraph::new(stats_line), stats_area);
                 right_offset += stats_w + 1;
             }
