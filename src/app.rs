@@ -176,6 +176,12 @@ pub struct App {
     // ── Create worktree 2-step flow ─────────────────────────────
     /// Branch name entered in step 1, held while step 2 (base branch) is active.
     pub worktree_pending_branch: String,
+    /// Full list of branches available as base for worktree creation.
+    pub base_branch_list: Vec<String>,
+    /// Currently selected index in the base branch picker.
+    pub base_branch_selected: usize,
+    /// Filter string for narrowing the base branch list.
+    pub base_branch_filter: String,
 
     // ── Switch (remote branch checkout) ─────────────────────────
     /// Whether the switch-branch overlay is active.
@@ -396,6 +402,9 @@ impl App {
             last_explorer_click: (std::time::Instant::now(), 0),
             last_terminal_click: std::time::Instant::now(),
             worktree_pending_branch: String::new(),
+            base_branch_list: Vec::new(),
+            base_branch_selected: 0,
+            base_branch_filter: String::new(),
             switch_branch_active: false,
             switch_branch_list: Vec::new(),
             switch_branch_selected: 0,
@@ -1789,6 +1798,48 @@ impl App {
         } else {
             let filter_lower = self.switch_branch_filter.to_lowercase();
             self.switch_branch_list
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.to_lowercase().contains(&filter_lower))
+                .collect()
+        }
+    }
+
+    /// Load branches available as base for worktree creation.
+    /// Lists remote branches and pre-selects `origin/<main_branch>`.
+    pub fn load_base_branches(&mut self) {
+        match git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => {
+                match engine.list_remote_branches() {
+                    Ok(branches) => {
+                        self.base_branch_list = branches;
+                        self.base_branch_selected = 0;
+                        self.base_branch_filter.clear();
+                        // Pre-select origin/<main_branch> if it exists.
+                        let default_base = format!("origin/{}", self.config.general.main_branch);
+                        if let Some(pos) = self.base_branch_list.iter().position(|b| b == &default_base) {
+                            self.base_branch_selected = pos;
+                        }
+                    }
+                    Err(e) => {
+                        self.set_status(format!("Error listing branches: {e}"), StatusLevel::Error);
+                        self.base_branch_list.clear();
+                    }
+                }
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"), StatusLevel::Error);
+            }
+        }
+    }
+
+    /// Return the filtered list of base branches based on the current filter.
+    pub fn filtered_base_branches(&self) -> Vec<(usize, &String)> {
+        if self.base_branch_filter.is_empty() {
+            self.base_branch_list.iter().enumerate().collect()
+        } else {
+            let filter_lower = self.base_branch_filter.to_lowercase();
+            self.base_branch_list
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| b.to_lowercase().contains(&filter_lower))
