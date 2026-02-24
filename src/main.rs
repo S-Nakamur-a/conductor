@@ -1,6 +1,7 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
 mod app;
+mod ccusage_cache;
 mod claude_sessions;
 mod command_palette;
 mod config;
@@ -136,11 +137,23 @@ fn run_loop(
     let mut last_stats_refresh = Instant::now();
 
     // ── ccusage polling (opt-in via [ccusage] enabled = true) ─────
-    let ccusage_poll = Duration::from_secs(app.config.ccusage.poll_interval_secs);
+    // Uses a global file cache so multiple Conductor instances don't
+    // redundantly run `npx ccusage`.
+    let ccusage_poll_secs = app.config.ccusage.poll_interval_secs;
+    let ccusage_poll = Duration::from_secs(ccusage_poll_secs);
     let ccusage_enabled = app.config.ccusage.enabled;
-    let mut last_ccusage_poll = Instant::now() - ccusage_poll; // trigger immediately
     let ccusage_result: Arc<Mutex<Option<crate::app::CcusageInfo>>> =
         Arc::new(Mutex::new(None));
+
+    // On startup: immediately show whatever is in the cache.
+    if ccusage_enabled {
+        if let Some(info) = ccusage_cache::read_any() {
+            app.ccusage_info = Some(info);
+        }
+    }
+    // Schedule the first freshness check after a short delay so the UI
+    // renders immediately, then we check/refresh the cache in background.
+    let mut last_ccusage_poll = Instant::now() - ccusage_poll;
 
     loop {
         if app.needs_clear {
@@ -262,37 +275,19 @@ fn run_loop(
             }
         }
 
-        // ── ccusage background fetch ────────────────────────────────
+        // ── ccusage background fetch (with global file cache) ────────
         if ccusage_enabled && last_ccusage_poll.elapsed() >= ccusage_poll {
             last_ccusage_poll = Instant::now();
             let result_handle = Arc::clone(&ccusage_result);
+            let max_age = ccusage_poll_secs;
             std::thread::spawn(move || {
-                let today = chrono::Local::now().format("%Y%m%d").to_string();
-                let output = std::process::Command::new("npx")
-                    .args(["ccusage@17.1.3", "daily", "--json", "--since", &today])
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
-                    .output();
-                if let Ok(out) = output {
-                    if out.status.success() {
-                        if let Ok(text) = String::from_utf8(out.stdout) {
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                                let tokens = val
-                                    .pointer("/totals/totalTokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                let cost = val
-                                    .pointer("/totals/totalCost")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0);
-                                if let Ok(mut lock) = result_handle.lock() {
-                                    *lock = Some(crate::app::CcusageInfo {
-                                        total_tokens: tokens,
-                                        total_cost: cost,
-                                    });
-                                }
-                            }
-                        }
+                // Check if another Conductor instance already refreshed
+                // the cache recently — if so, just use that.
+                let info = ccusage_cache::read_if_fresh(max_age)
+                    .or_else(|| ccusage_cache::fetch_and_cache());
+                if let Some(info) = info {
+                    if let Ok(mut lock) = result_handle.lock() {
+                        *lock = Some(info);
                     }
                 }
             });
