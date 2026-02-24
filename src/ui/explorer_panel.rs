@@ -323,7 +323,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         .iter()
         .filter(|c| c.status == crate::review_store::CommentStatus::Pending)
         .count();
-    let title = format!(" Comments ({pending}/{total}) [Enter:expand e:edit x:del r:resolve R:reply] ");
+    let title = format!(" Comments ({pending}/{total}) [Space:view Enter:expand e:edit R:reply] ");
 
     let block = Block::default()
         .title(title)
@@ -345,10 +345,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                 CommentListRow::Comment { comment_idx } => {
                     let comment = app.review_state.comments.get(*comment_idx)?;
 
-                    let kind_badge = match comment.kind {
-                        crate::review_store::CommentKind::Suggest => "[S]",
-                        crate::review_store::CommentKind::Question => "[Q]",
-                    };
+                    let kind_badge = crate::ui::review::kind_icon(comment.kind);
                     let status_marker = match comment.status {
                         crate::review_store::CommentStatus::Pending => "\u{25cb}", // ○
                         crate::review_store::CommentStatus::Resolved => "\u{2713}", // ✓
