@@ -22,7 +22,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .title(" Claude Code ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
-        let msg = Paragraph::new(" Enter / Double-click / Ctrl+n: new session")
+        let msg = Paragraph::new(" Enter / Click / Ctrl+n: new session")
             .style(Style::default().fg(Color::DarkGray))
             .block(block);
         frame.render_widget(msg, area);

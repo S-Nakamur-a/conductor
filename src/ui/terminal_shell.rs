@@ -22,7 +22,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .title(" Shell ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
-        let msg = Paragraph::new(" Enter / Double-click / Ctrl+t: new session")
+        let msg = Paragraph::new(" Enter / Click / Ctrl+t: new session")
             .style(Style::default().fg(Color::DarkGray))
             .block(block);
         frame.render_widget(msg, area);
