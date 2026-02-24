@@ -166,10 +166,6 @@ pub struct App {
     pub active_claude_session: Option<usize>,
     /// Index of the active Shell session for the current worktree (into pty_manager.sessions).
     pub active_shell_session: Option<usize>,
-    /// Timestamp and row of the last mouse click in the Explorer/Diff area (for double-click detection).
-    pub last_explorer_click: (std::time::Instant, u16),
-    /// Timestamp of the last mouse click in a terminal panel (for double-click detection).
-    pub last_terminal_click: std::time::Instant,
 
     // ── Create worktree 2-step flow ─────────────────────────────
     /// Branch name entered in step 1, held while step 2 (base branch) is active.
@@ -396,8 +392,6 @@ impl App {
             needs_clear: false,
             active_claude_session: None,
             active_shell_session: None,
-            last_explorer_click: (std::time::Instant::now(), 0),
-            last_terminal_click: std::time::Instant::now(),
             worktree_pending_branch: String::new(),
             base_branch_list: Vec::new(),
             base_branch_selected: 0,
