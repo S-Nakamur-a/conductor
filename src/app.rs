@@ -612,6 +612,18 @@ impl App {
 
     /// Set focus to a panel, lazily loading data when first needed.
     pub fn set_focus(&mut self, focus: Focus) {
+        // Collapse expanded panel when focus moves to a panel that would have zero width.
+        if let Some(expanded) = self.expanded_panel {
+            let dominated = match expanded {
+                Focus::TerminalClaude | Focus::TerminalShell => {
+                    matches!(focus, Focus::TerminalClaude | Focus::TerminalShell)
+                }
+                other => other == focus,
+            };
+            if !dominated {
+                self.expanded_panel = None;
+            }
+        }
         match focus {
             Focus::Explorer | Focus::Viewer => {
                 if self.viewer_state.file_tree.is_empty() {
@@ -830,24 +842,26 @@ impl App {
 
     /// Cycle focus forward: Worktree → Explorer → Viewer → TerminalClaude → TerminalShell → Worktree
     pub fn cycle_focus_forward(&mut self) {
-        self.focus = match self.focus {
+        let next = match self.focus {
             Focus::Worktree => Focus::Explorer,
             Focus::Explorer => Focus::Viewer,
             Focus::Viewer => Focus::TerminalClaude,
             Focus::TerminalClaude => Focus::TerminalShell,
             Focus::TerminalShell => Focus::Worktree,
         };
+        self.set_focus(next);
     }
 
     /// Cycle focus backward.
     pub fn cycle_focus_backward(&mut self) {
-        self.focus = match self.focus {
+        let prev = match self.focus {
             Focus::Worktree => Focus::TerminalShell,
             Focus::Explorer => Focus::Worktree,
             Focus::Viewer => Focus::Explorer,
             Focus::TerminalClaude => Focus::Viewer,
             Focus::TerminalShell => Focus::TerminalClaude,
         };
+        self.set_focus(prev);
     }
 
     // ── Terminal / PTY helpers ────────────────────────────────────────

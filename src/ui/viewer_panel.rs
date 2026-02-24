@@ -27,9 +27,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Viewer;
     let border_color = if focused { Color::Yellow } else { Color::DarkGray };
 
+    let is_expanded = app.expanded_panel == Some(Focus::Viewer);
+    let (expand_label, expand_color) = if is_expanded {
+        ("[>=<]", Color::Yellow)
+    } else {
+        ("[<=>]", Color::DarkGray)
+    };
+
+    // Truncate title so it doesn't overlap with the [<=>] button on the right.
+    // Reserve: 2 (borders) + expand_label width + 1 (gap).
+    let max_title_len = (area.width as usize).saturating_sub(2 + expand_label.len() + 1);
     let title = match &vs.current_file {
         Some(path) => {
-            if !vs.search_matches.is_empty() {
+            let raw = if !vs.search_matches.is_empty() {
                 format!(
                     " {} [{}/{}] ",
                     path,
@@ -40,16 +50,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!(" {path} [no matches] ")
             } else {
                 format!(" {path} ")
+            };
+            if raw.len() > max_title_len && max_title_len > 4 {
+                // Truncate with ellipsis: " …<tail> "
+                let inner_max = max_title_len.saturating_sub(2); // leading/trailing spaces
+                let tail: String = raw.trim().chars().rev().take(inner_max.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect();
+                format!(" \u{2026}{tail} ")
+            } else {
+                raw
             }
         }
         None => " (no file selected) ".to_string(),
-    };
-
-    let is_expanded = app.expanded_panel == Some(Focus::Viewer);
-    let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", Color::Yellow)
-    } else {
-        ("[<=>]", Color::DarkGray)
     };
 
     let block = Block::default()

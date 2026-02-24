@@ -86,7 +86,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
         if key.code == KeyCode::Esc && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.focus = Focus::Explorer;
+            app.set_focus(Focus::Explorer);
             return;
         }
 
@@ -1994,7 +1994,7 @@ pub fn handle_mouse_event(
                     }
                 } else if col < explorer_end {
                     // Explorer column.
-                    app.focus = Focus::Explorer;
+                    app.set_focus(Focus::Explorer);
 
                     // Determine if click is in top half (file tree) or bottom half (diff list).
                     if row >= explorer_mid_y {
@@ -2066,7 +2066,7 @@ pub fn handle_mouse_event(
                     }
                 } else if col < viewer_end {
                     // Viewer column.
-                    app.focus = Focus::Viewer;
+                    app.set_focus(Focus::Viewer);
 
                     // Detect clicks on the gutter (line number area) for line selection.
                     let panel_x = explorer_end;
@@ -2129,7 +2129,7 @@ pub fn handle_mouse_event(
                     let terminal_x = viewer_end;
 
                     if row < terminal_split_y {
-                        app.focus = Focus::TerminalClaude;
+                        app.set_focus(Focus::TerminalClaude);
                         // Click on tab bar (first row of Claude panel).
                         if row == main_area.y {
                             handle_terminal_tab_click(app, col, terminal_x, true);
@@ -2138,7 +2138,7 @@ pub fn handle_mouse_event(
                             spawn_terminal_session(app);
                         }
                     } else {
-                        app.focus = Focus::TerminalShell;
+                        app.set_focus(Focus::TerminalShell);
                         // Click on tab bar (first row of Shell panel).
                         if row == terminal_split_y {
                             handle_terminal_tab_click(app, col, terminal_x, false);
