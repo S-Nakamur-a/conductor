@@ -2037,39 +2037,68 @@ pub fn handle_mouse_event(
                     // Explorer column.
                     app.set_focus(Focus::Explorer);
 
-                    // Determine if click is in top half (file tree) or bottom half (diff list).
+                    // Determine if click is in top half (file tree) or bottom half (diff/comment list).
                     if row >= explorer_mid_y {
                         app.viewer_state.explorer_focus_on_diff_list = true;
-                        // Select the clicked display list item.
                         let inner_y = explorer_mid_y + 1; // inside border
                         if row >= inner_y {
                             let click_offset = (row - inner_y) as usize;
-                            let idx = app.viewer_state.diff_list_scroll + click_offset;
-                            if idx < app.diff_state.display_list.len() {
-                                app.viewer_state.diff_list_selected = idx;
-                                // Single-click: toggle header or open file in Viewer.
-                                if app.diff_state.toggle_section(idx) {
-                                    // Toggled a section header.
-                                    let new_count = app.diff_state.display_list.len();
-                                    if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
-                                        app.viewer_state.diff_list_selected = new_count - 1;
+
+                            if app.viewer_state.explorer_show_comments {
+                                // Comment list is displayed — handle comment selection.
+                                let idx = app.viewer_state.comment_list_scroll + click_offset;
+                                let row_count = app.review_state.comment_list_rows.len();
+                                if idx < row_count {
+                                    app.viewer_state.comment_list_selected = idx;
+                                    // Navigate to the comment's file location.
+                                    if let Some(comment_idx) =
+                                        app.review_state.selected_comment_idx(idx)
+                                    {
+                                        navigate_to_comment(app, comment_idx);
                                     }
-                                } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(idx) {
-                                    let file_path = file_diff.path.clone();
-                                    let first_change_line = file_diff.hunks.iter()
-                                        .flat_map(|h| h.lines.iter())
-                                        .find(|l| l.tag != crate::diff_state::DiffLineTag::Equal)
-                                        .and_then(|l| l.new_line_no.or(l.old_line_no));
-                                    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                                        let wt_path = wt.path.clone();
-                                        app.viewer_state.open_file(&wt_path, &file_path);
-                                        if let Some(line) = first_change_line {
-                                            app.viewer_state.file_scroll = line.saturating_sub(4);
+                                }
+                            } else {
+                                // Diff list is displayed — handle diff selection.
+                                let idx = app.viewer_state.diff_list_scroll + click_offset;
+                                if idx < app.diff_state.display_list.len() {
+                                    app.viewer_state.diff_list_selected = idx;
+                                    // Single-click: toggle header or open file in Viewer.
+                                    if app.diff_state.toggle_section(idx) {
+                                        // Toggled a section header.
+                                        let new_count = app.diff_state.display_list.len();
+                                        if new_count > 0
+                                            && app.viewer_state.diff_list_selected >= new_count
+                                        {
+                                            app.viewer_state.diff_list_selected = new_count - 1;
                                         }
-                                        app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
-                                        app.rehighlight_viewer();
-                                        app.review_state.build_file_comment_cache(&file_path);
-                                        app.set_focus(Focus::Viewer);
+                                    } else if let Some((file_diff, _section)) =
+                                        app.diff_state.resolve_file(idx)
+                                    {
+                                        let file_path = file_diff.path.clone();
+                                        let first_change_line = file_diff
+                                            .hunks
+                                            .iter()
+                                            .flat_map(|h| h.lines.iter())
+                                            .find(|l| {
+                                                l.tag != crate::diff_state::DiffLineTag::Equal
+                                            })
+                                            .and_then(|l| l.new_line_no.or(l.old_line_no));
+                                        if let Some(wt) =
+                                            app.worktrees.get(app.selected_worktree)
+                                        {
+                                            let wt_path = wt.path.clone();
+                                            app.viewer_state.open_file(&wt_path, &file_path);
+                                            if let Some(line) = first_change_line {
+                                                app.viewer_state.file_scroll =
+                                                    line.saturating_sub(4);
+                                            }
+                                            app.viewer_state
+                                                .reveal_file_in_tree(&file_path, &wt_path);
+                                            app.rehighlight_viewer();
+                                            app.review_state
+                                                .build_file_comment_cache(&file_path);
+                                            app.set_focus(Focus::Viewer);
+                                        }
                                     }
                                 }
                             }
