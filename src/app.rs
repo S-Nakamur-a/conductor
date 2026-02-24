@@ -94,6 +94,8 @@ pub struct App {
     pub focus: Focus,
     /// Working directory of the repository being inspected.
     pub repo_path: PathBuf,
+    /// Display name of the main repository (directory name of the main worktree).
+    pub main_repo_name: String,
     /// Whether the application should quit on the next tick.
     pub should_quit: bool,
     /// Index of the currently selected worktree in the worktree list.
@@ -339,9 +341,22 @@ impl App {
 
         let theme = Theme::from_name(&config.viewer.theme);
 
+        // Derive the main repo display name from the main worktree path.
+        let main_repo_name = git_engine::GitEngine::open(&repo_path)
+            .and_then(|engine| engine.main_worktree_path())
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| {
+                repo_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| repo_path.display().to_string())
+            });
+
         let mut app = Self {
             focus: Focus::Worktree,
             repo_path,
+            main_repo_name,
             should_quit: false,
             selected_worktree: 0,
             worktrees: Vec::new(),
@@ -437,6 +452,18 @@ impl App {
             }
         };
 
+        // Update main repo name for the new repository.
+        self.main_repo_name = git_engine::GitEngine::open(&self.repo_path)
+            .and_then(|engine| engine.main_worktree_path())
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| {
+                self.repo_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| self.repo_path.display().to_string())
+            });
+
         // Refresh worktrees and reviews eagerly; viewer/diff will lazy-load.
         self.selected_worktree = 0;
         self.refresh_worktrees();
@@ -446,12 +473,7 @@ impl App {
         self.active_claude_session = None;
         self.active_shell_session = None;
 
-        let repo_name = self
-            .repo_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| self.repo_path.display().to_string());
-        self.set_status(format!("Switched to repository: {repo_name}"), StatusLevel::Success);
+        self.set_status(format!("Switched to repository: {}", self.main_repo_name), StatusLevel::Success);
     }
 
     /// Open a repository from an arbitrary filesystem path.

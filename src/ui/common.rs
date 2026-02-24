@@ -3,6 +3,7 @@
 //! Provides reusable widgets such as PTY output rendering, session tab bars,
 //! and the status bar.
 
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -108,6 +109,43 @@ pub fn render_pty_output(
     }
 }
 
+/// Convert HSL (h: 0-360, s: 0-1, l: 0-1) to RGB.
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h2 = h / 60.0;
+    let x = c * (1.0 - (h2 % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match h2 as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    (
+        ((r1 + m) * 255.0) as u8,
+        ((g1 + m) * 255.0) as u8,
+        ((b1 + m) * 255.0) as u8,
+    )
+}
+
+/// Generate badge background and branch text colors from a repository name.
+///
+/// Uses a hash of the name to pick a hue, then produces two colors:
+/// - Badge background: muted (S=0.6, L=0.45)
+/// - Branch text: brighter (S=0.7, L=0.75)
+fn name_to_color(name: &str) -> (Color, Color) {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut hasher);
+    let hash = hasher.finish();
+    let hue = (hash % 360) as f64;
+
+    let (br, bg, bb) = hsl_to_rgb(hue, 0.6, 0.45);
+    let (tr, tg, tb) = hsl_to_rgb(hue, 0.7, 0.75);
+    (Color::Rgb(br, bg, bb), Color::Rgb(tr, tg, tb))
+}
+
 /// Render the title bar at the top showing worktree name and working directory.
 /// Also renders CC waiting badges on the right side and records their positions
 /// in `app.title_bar_badges` for click handling.
@@ -125,25 +163,34 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 
     let has_waiting = !app.cc_waiting_worktrees.is_empty();
 
-    // When CC sessions are waiting, pulse the title bar background to draw attention.
+    let (badge_bg, branch_fg) = name_to_color(&app.main_repo_name);
+
+    // When CC sessions are waiting, pulse the title bar by varying lightness.
     let (bar_bg, conductor_bg, conductor_fg) = if has_waiting {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        app.main_repo_name.hash(&mut hasher);
+        let hue = (hasher.finish() % 360) as f64;
         let phase = (app.ui_tick / 20) % 3;
-        match phase {
-            0 => (Color::Rgb(60, 40, 0), Color::Yellow, Color::Black),
-            1 => (Color::Rgb(50, 30, 0), Color::Rgb(200, 160, 0), Color::Black),
-            _ => (Color::DarkGray, Color::Cyan, Color::Black),
-        }
+        let (l_badge, l_bar) = match phase {
+            0 => (0.55, 0.20),   // brighter pulse
+            1 => (0.40, 0.15),   // slightly darker
+            _ => (0.45, 0.12),   // normal
+        };
+        let (br, bg_c, bb) = hsl_to_rgb(hue, 0.6, l_badge);
+        let (bar_r, bar_g, bar_b) = hsl_to_rgb(hue, 0.3, l_bar);
+        (Color::Rgb(bar_r, bar_g, bar_b), Color::Rgb(br, bg_c, bb), Color::Black)
     } else {
-        (Color::DarkGray, Color::Cyan, Color::Black)
+        (Color::DarkGray, badge_bg, Color::Black)
     };
 
+    let badge_text = format!(" {} ", app.main_repo_name);
     let line = Line::from(vec![
         Span::styled(
-            " conductor ",
+            &badge_text,
             Style::default().fg(conductor_fg).bg(conductor_bg).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(wt_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(wt_name, Style::default().fg(branch_fg).add_modifier(Modifier::BOLD)),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(wt_path, Style::default().fg(Color::Gray)),
     ]);
@@ -238,11 +285,14 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         return; // not enough room
     }
 
-    // Pulse animation: alternate colors based on ui_tick.
-    let pulse_color = if (app.ui_tick / 15) % 2 == 0 {
-        Color::Yellow
-    } else {
-        Color::Cyan
+    // Pulse animation: alternate lightness based on ui_tick using hash-derived hue.
+    let pulse_color = {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        app.main_repo_name.hash(&mut hasher);
+        let hue = (hasher.finish() % 360) as f64;
+        let l = if (app.ui_tick / 15) % 2 == 0 { 0.55 } else { 0.65 };
+        let (r, g, b) = hsl_to_rgb(hue, 0.7, l);
+        Color::Rgb(r, g, b)
     };
     let badge_style = Style::default()
         .fg(Color::Black)
