@@ -122,8 +122,10 @@ pub struct App {
     pub worktree_input_buffer: String,
     /// Status message (flash message) shown in the status bar.
     pub status_message: Option<StatusMessage>,
-    /// Files detected as changed by Claude Code output analysis.
-    pub cc_changed_files: Vec<String>,
+    /// Last known HEAD oid for the selected worktree (for change-detection polling).
+    pub last_poll_head_oid: Option<String>,
+    /// Last known status signature (added, modified, deleted) for the selected worktree.
+    pub last_poll_status: Option<(usize, usize, usize)>,
     /// Worktree paths whose Claude Code sessions are waiting for user input.
     pub cc_waiting_worktrees: HashSet<PathBuf>,
     /// Whether the session history viewer is active.
@@ -371,7 +373,8 @@ impl App {
             worktree_input_mode: WorktreeInputMode::Normal,
             worktree_input_buffer: String::new(),
             status_message: None,
-            cc_changed_files: Vec::new(),
+            last_poll_head_oid: None,
+            last_poll_status: None,
             cc_waiting_worktrees: HashSet::new(),
             history_active: false,
             history_records: Vec::new(),
@@ -1112,29 +1115,38 @@ impl App {
         }
     }
 
-    // ── Claude Code output analysis ────────────────────────────────────
+    // ── Lightweight change-detection polling ─────────────────────────────
 
-    /// Scan all Claude Code sessions for file-change patterns in their PTY
-    /// output.
-    pub fn check_cc_output(&mut self) {
-        let session_count = self.pty_manager.session_count();
-        let mut found_new = false;
+    /// Check whether the diff and viewer panels need refreshing by comparing
+    /// the current worktree's HEAD oid and status counts against the last
+    /// known values.  Only triggers the expensive `refresh_diff()` and
+    /// `refresh_viewer()` when an actual change is detected.
+    ///
+    /// Called after `refresh_worktrees()` in the polling loop, which already
+    /// fetches HEAD oids and status counts as a side effect.
+    pub fn check_diff_viewer_staleness(&mut self) {
+        let wt = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => wt,
+            None => return,
+        };
 
-        for idx in 0..session_count {
-            let new_files = self.pty_manager.detect_changed_files(idx);
-            if !new_files.is_empty() {
-                found_new = true;
-                for f in new_files {
-                    if !self.cc_changed_files.contains(&f) {
-                        self.cc_changed_files.push(f);
-                    }
-                }
-            }
-        }
+        let current_head = self.worktree_heads.get(&wt.branch).cloned();
+        let current_status = (wt.added, wt.modified, wt.deleted);
 
-        if found_new {
+        let head_changed = self.last_poll_head_oid.as_ref() != current_head.as_ref();
+        let status_changed = self.last_poll_status != Some(current_status);
+
+        if head_changed || status_changed {
+            log::debug!(
+                "Change detected for worktree '{}': head_changed={}, status_changed={}",
+                wt.branch, head_changed, status_changed,
+            );
             self.refresh_diff();
+            self.refresh_viewer();
         }
+
+        self.last_poll_head_oid = current_head;
+        self.last_poll_status = Some(current_status);
     }
 
     // ── Claude Code input-waiting detection ────────────────────────────
@@ -1891,6 +1903,26 @@ impl App {
 
         let wt_path = wt.path.clone();
         let branch = wt.branch.clone();
+
+        // Kill all PTY sessions (Claude Code + Shell) associated with this worktree
+        // before removing the worktree directory. Walk backwards so removals don't
+        // shift indices we haven't processed yet.
+        let session_indices: Vec<usize> = self
+            .pty_manager
+            .sessions()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.working_dir == wt_path)
+            .map(|(idx, _)| idx)
+            .collect();
+        for &idx in session_indices.iter().rev() {
+            log::info!(
+                "killing PTY session {} for deleted worktree '{branch}'",
+                idx
+            );
+            self.close_terminal_session(idx);
+        }
+
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.remove_worktree(&wt_path) {
@@ -1977,6 +2009,12 @@ impl App {
         self.refresh_viewer();
         self.refresh_diff();
         self.refresh_reviews();
+
+        // Snapshot baseline so the next poll cycle doesn't trigger a redundant refresh.
+        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+            self.last_poll_head_oid = self.worktree_heads.get(&wt.branch).cloned();
+            self.last_poll_status = Some((wt.added, wt.modified, wt.deleted));
+        }
 
         // Update active sessions to match the new worktree.
         let wt_name = self.selected_worktree_branch();
