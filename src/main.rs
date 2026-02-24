@@ -310,18 +310,6 @@ fn run_loop(
         // Scan Claude Code PTY output for file-change patterns.
         app.check_cc_output();
 
-        // Try to auto-detect session labels for Claude Code sessions.
-        for i in 0..app.pty_manager.sessions().len() {
-            let session = &app.pty_manager.sessions()[i];
-            if session.kind == crate::pty_manager::SessionKind::ClaudeCode
-                && session.label.starts_with("CC:")
-            {
-                if let Some(new_label) = app.pty_manager.auto_detect_label(i) {
-                    app.pty_manager.set_label(i, &new_label);
-                }
-            }
-        }
-
         if app.should_quit {
             return Ok(());
         }
