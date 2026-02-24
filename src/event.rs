@@ -1850,14 +1850,7 @@ pub fn handle_mouse_event(
                 if col < left_end {
                     app.focus = Focus::Worktree;
 
-                    // Double-click detection.
-                    let now = std::time::Instant::now();
-                    let (prev_time, prev_row) = app.last_worktree_click;
-                    let is_double = now.duration_since(prev_time).as_millis() < 400
-                        && prev_row == row;
-                    app.last_worktree_click = (now, row);
-
-                    // Click selects a worktree.
+                    // Click selects and switches to the worktree.
                     let relative_row = (row - main_area.y) as usize;
                     let item_row = relative_row.saturating_sub(1);
                     if !app.worktrees.is_empty() {
@@ -1865,11 +1858,8 @@ pub fn handle_mouse_event(
                             item_row.min(app.worktrees.len().saturating_sub(1));
                     }
 
-                    // Double-click switches to the selected worktree.
-                    if is_double {
-                        app.on_worktree_changed();
-                        app.set_focus(Focus::Explorer);
-                    }
+                    app.on_worktree_changed();
+                    app.set_focus(Focus::Explorer);
                 } else if col < explorer_end {
                     // Explorer column.
                     app.focus = Focus::Explorer;
