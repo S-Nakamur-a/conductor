@@ -82,14 +82,6 @@ pub struct PtySession {
     /// A vt100 parser that processes raw PTY bytes for proper terminal rendering.
     screen: Arc<Mutex<vt100::Parser>>,
 
-    // -- Claude Code output analysis fields --------------------------------
-
-    /// Index of the last line scanned for file-change patterns.
-    /// This avoids re-processing already-scanned output.
-    last_scanned_line: usize,
-    /// File paths detected as changed by scanning the PTY output.
-    detected_changed_files: Vec<String>,
-
     // -- Input waiting detection ------------------------------------------
 
     /// Timestamp of the last PTY output received. Shared with the reader thread.
@@ -258,8 +250,6 @@ impl PtyManager {
             output_buffer,
             max_buffer_lines,
             screen,
-            last_scanned_line: 0,
-            detected_changed_files: Vec::new(),
             last_output_time,
             alt_screen_entered,
             alt_screen_nudge_until: None,
@@ -514,142 +504,6 @@ impl PtyManager {
         text
     }
 
-    // -- Claude Code output analysis ----------------------------------------
-
-    /// Scan the output buffer of the session at `idx` for patterns indicating
-    /// file modifications by Claude Code. Returns newly detected file paths
-    /// since the last scan.
-    ///
-    /// Only scans lines added since the last call (tracked via
-    /// `last_scanned_line`), so repeated calls are lightweight.
-    pub fn detect_changed_files(&mut self, idx: usize) -> Vec<String> {
-        let session = match self.sessions.get(idx) {
-            Some(s) => s,
-            None => return Vec::new(),
-        };
-
-        // Only scan Claude Code sessions.
-        if session.kind != SessionKind::ClaudeCode {
-            return Vec::new();
-        }
-
-        let buf = session
-            .output_buffer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let start = session.last_scanned_line;
-        if start >= buf.len() {
-            return Vec::new();
-        }
-
-        let mut new_files: Vec<String> = Vec::new();
-
-        for line in &buf[start..] {
-            if let Some(path) = Self::extract_changed_path(line) {
-                if !new_files.contains(&path) {
-                    new_files.push(path);
-                }
-            }
-        }
-
-        let new_len = buf.len();
-        drop(buf);
-
-        // Update tracking state on the session.
-        let Some(session) = self.sessions.get_mut(idx) else {
-            return new_files;
-        };
-        session.last_scanned_line = new_len;
-        for f in &new_files {
-            if !session.detected_changed_files.contains(f) {
-                session.detected_changed_files.push(f.clone());
-            }
-        }
-
-        new_files
-    }
-
-    // -- Private helpers ----------------------------------------------------
-
-    /// Try to extract a file path from a single line of Claude Code output.
-    ///
-    /// Matches patterns such as:
-    /// - `Wrote to <path>` / `Updated <path>` / `Created <path>` / `Modified <path>`
-    /// - Lines containing checkmark characters (`✓` / `✔`) followed by a file path
-    /// - `Edit(<path>)` / `Write(<path>)` tool call patterns
-    fn extract_changed_path(line: &str) -> Option<String> {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        // Strip ANSI escape codes for reliable matching.
-        let clean = strip_ansi(trimmed);
-        let clean = clean.trim();
-
-        // Pattern 1: "Wrote to <path>" / "Updated <path>" / "Created <path>" / "Modified <path>"
-        let action_prefixes = [
-            "Wrote to ", "Updated ", "Created ", "Modified ",
-            "Wrote ", "Editing ", "Writing ",
-        ];
-        for prefix in &action_prefixes {
-            if let Some(rest) = clean.strip_prefix(prefix) {
-                let path = rest.trim().trim_end_matches('.');
-                if looks_like_path(path) {
-                    return Some(path.to_string());
-                }
-            }
-        }
-
-        // Pattern 2: Checkmark characters followed by a path.
-        // e.g., "✓ src/main.rs" or "✔ src/lib.rs"
-        for marker in &["\u{2713}", "\u{2714}"] {
-            if let Some(rest) = clean.strip_prefix(marker) {
-                let path = rest.trim();
-                if looks_like_path(path) {
-                    return Some(path.to_string());
-                }
-            }
-        }
-
-        // Pattern 3: Tool result patterns — "Edit(path)" or "Write(path)"
-        for tool in &["Edit(", "Write("] {
-            if let Some(rest) = clean.strip_prefix(tool) {
-                if let Some(end) = rest.find(')') {
-                    let path = rest[..end].trim();
-                    if looks_like_path(path) {
-                        return Some(path.to_string());
-                    }
-                }
-            }
-        }
-
-        // Pattern 4: Lines after tool markers like "⎿  Wrote to <path>"
-        // Claude Code uses box-drawing / bracket characters before the action.
-        if let Some(pos) = clean.find("Wrote to ") {
-            let rest = &clean[pos + "Wrote to ".len()..];
-            let path = rest.trim().trim_end_matches('.');
-            if looks_like_path(path) {
-                return Some(path.to_string());
-            }
-        }
-        for action in &["Updated ", "Created ", "Modified "] {
-            if let Some(pos) = clean.find(action) {
-                // Only match if the action word appears after a non-alpha prefix
-                // (tool marker, bullet, etc.) to avoid false positives in prose.
-                if pos > 0 && !clean.as_bytes()[pos - 1].is_ascii_alphabetic() {
-                    let rest = &clean[pos + action.len()..];
-                    let path = rest.trim().trim_end_matches('.');
-                    if looks_like_path(path) {
-                        return Some(path.to_string());
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
     /// Background reader thread function.
     ///
     /// Continuously reads from the PTY reader, feeds raw bytes to the vt100
@@ -785,33 +639,6 @@ impl PtyManager {
 // Free helper functions
 // ---------------------------------------------------------------------------
 
-/// Strip ANSI escape sequences from a string.
-///
-/// This handles the common CSI sequences (`ESC[...m`, etc.) that terminal
-/// emulators use for colour and formatting.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            // Skip the escape sequence.
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Consume until a letter (the final byte of a CSI sequence).
-                while let Some(&c) = chars.peek() {
-                    chars.next();
-                    if c.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
 /// Count the number of Cursor Position Report requests (`CSI 6 n` = `\x1b[6n`)
 /// in a byte slice.  Programs send this to ask the terminal "where is the
 /// cursor?" and expect a `CSI row ; col R` response.
@@ -825,18 +652,3 @@ fn count_csi_dsr(bytes: &[u8]) -> usize {
         .count()
 }
 
-/// Heuristic check for whether a string looks like a file path.
-///
-/// Accepts strings that contain a `/` or `.` and don't contain whitespace
-/// (typical for relative or absolute paths emitted by Claude Code).
-fn looks_like_path(s: &str) -> bool {
-    if s.is_empty() || s.len() < 2 {
-        return false;
-    }
-    // Must not contain spaces (file paths in output are usually unquoted).
-    if s.contains(' ') {
-        return false;
-    }
-    // Must contain a `/` or a `.` (e.g., src/main.rs or Cargo.toml).
-    s.contains('/') || s.contains('.')
-}
