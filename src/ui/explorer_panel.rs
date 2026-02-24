@@ -4,9 +4,9 @@
 //! and a list of changed (diff) files in the bottom half. Enter on a file
 //! opens it in the Viewer panel.
 
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
@@ -127,8 +127,16 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         " Explorer ".to_string()
     };
 
+    let is_expanded = app.expanded_panel == Some(Focus::Explorer);
+    let (expand_label, expand_color) = if is_expanded {
+        ("[>=<]", Color::Yellow)
+    } else {
+        ("[<=>]", Color::DarkGray)
+    };
+
     let block = Block::default()
         .title(title)
+        .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 

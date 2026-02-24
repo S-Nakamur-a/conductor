@@ -1856,7 +1856,12 @@ fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_x: u16, is_
 
     // Check [<=>] toggle.
     if relative_x >= x && relative_x < x + 5 {
-        app.terminal_expanded = !app.terminal_expanded;
+        let target = if is_claude { Focus::TerminalClaude } else { Focus::TerminalShell };
+        if app.expanded_panel.is_some() {
+            app.expanded_panel = None;
+        } else {
+            app.expanded_panel = Some(target);
+        }
     }
 }
 
@@ -1880,7 +1885,7 @@ pub fn handle_mouse_event(
     let notif_area = outer[1];
     let main_area = outer[2];
 
-    let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.terminal_expanded, main_area.width);
+    let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.expanded_panel, main_area.width);
 
     let left_end = main_area.x + left_w;
     let explorer_end = left_end + explorer_w;
@@ -1945,6 +1950,33 @@ pub fn handle_mouse_event(
 
             // Only handle clicks in the main area.
             if row >= main_area.y && row < main_area.y + main_area.height {
+                // Check for [<=>] expand button clicks on the top border row.
+                if row == main_area.y {
+                    let expand_btn_target = if col < left_end && left_w >= 7 {
+                        let btn_start = main_area.x + left_w - 6;
+                        let btn_end = main_area.x + left_w - 1;
+                        if col >= btn_start && col < btn_end { Some(Focus::Worktree) } else { None }
+                    } else if col >= left_end && col < explorer_end && explorer_w >= 7 {
+                        let btn_start = left_end + explorer_w - 6;
+                        let btn_end = left_end + explorer_w - 1;
+                        if col >= btn_start && col < btn_end { Some(Focus::Explorer) } else { None }
+                    } else if col >= explorer_end && col < viewer_end && viewer_w >= 7 {
+                        let btn_start = explorer_end + viewer_w - 6;
+                        let btn_end = explorer_end + viewer_w - 1;
+                        if col >= btn_start && col < btn_end { Some(Focus::Viewer) } else { None }
+                    } else {
+                        None
+                    };
+                    if let Some(target) = expand_btn_target {
+                        if app.expanded_panel == Some(target) {
+                            app.expanded_panel = None;
+                        } else {
+                            app.expanded_panel = Some(target);
+                        }
+                        return;
+                    }
+                }
+
                 if col < left_end {
                     // Click selects and switches to the worktree.
                     let relative_row = (row - main_area.y) as usize;

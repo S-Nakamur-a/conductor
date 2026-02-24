@@ -229,8 +229,9 @@ pub struct App {
     /// Which panel's help to display (captured at the moment `?` was pressed).
     pub help_context: Focus,
 
-    /// Whether the terminal column is manually expanded (via the [<=>] button).
-    pub terminal_expanded: bool,
+    /// Which panel is currently expanded to 100% (via the [<=>] button).
+    /// `None` means no panel is expanded (default layout).
+    pub expanded_panel: Option<Focus>,
 
     // ── Command palette overlay ─────────────────────────────────
     /// Whether the command palette is open.
@@ -415,7 +416,7 @@ impl App {
             syntect_theme,
             help_active: false,
             help_context: Focus::Worktree,
-            terminal_expanded: false,
+            expanded_panel: None,
             command_palette_active: false,
             command_palette_filter: String::new(),
             command_palette_selected: 0,
@@ -661,8 +662,12 @@ impl App {
             CommandId::FocusViewer => self.set_focus(Focus::Viewer),
             CommandId::FocusTerminalClaude => self.set_focus(Focus::TerminalClaude),
             CommandId::FocusTerminalShell => self.set_focus(Focus::TerminalShell),
-            CommandId::ToggleTerminalExpand => {
-                self.terminal_expanded = !self.terminal_expanded;
+            CommandId::TogglePanelExpand => {
+                if self.expanded_panel == Some(self.focus) {
+                    self.expanded_panel = None;
+                } else {
+                    self.expanded_panel = Some(self.focus);
+                }
             }
             CommandId::CreateWorktree => {
                 self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;

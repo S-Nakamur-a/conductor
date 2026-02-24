@@ -62,7 +62,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Add [+] and [<=>] tabs.
     let mut titles = tab_titles;
     titles.push(Line::from(Span::styled("[+]", Style::default().fg(Color::Green))));
-    let (expand_label, expand_color) = if app.terminal_expanded {
+    let is_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
+    let (expand_label, expand_color) = if is_expanded {
         ("[>=<]", Color::Yellow)
     } else {
         ("[<=>]", Color::DarkGray)
