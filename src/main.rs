@@ -182,14 +182,16 @@ fn run_loop(
         // Compute PTY sizes for Claude and Shell panels.
         {
             let area = last_frame_area;
-            // Must match render_ui layout: title bar (1) + main + status bar (1).
+            // Must match render_ui layout: title bar (1) + notification bar (0 or 1) + main + status bar (1).
+            let notif_height: u16 = if !app.cc_waiting_worktrees.is_empty() { 1 } else { 0 };
             let outer = Layout::vertical([
                 Constraint::Length(1),
+                Constraint::Length(notif_height),
                 Constraint::Min(0),
                 Constraint::Length(1),
             ])
             .split(area);
-            let main_area = outer[1];
+            let main_area = outer[2];
 
             let (left_w, explorer_w, viewer_w) = accordion_widths(app.terminal_expanded, main_area.width);
             let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
@@ -351,20 +353,30 @@ pub fn accordion_widths(terminal_expanded: bool, total_width: u16) -> (u16, u16,
 fn render_ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
-    // Outer: title bar (1 row) + main content + status bar (1 row).
+    let has_notifications = !app.cc_waiting_worktrees.is_empty();
+    let notif_height: u16 = if has_notifications { 1 } else { 0 };
+
+    // Outer: title bar (1 row) + notification bar (0 or 1 row) + main content + status bar (1 row).
     let outer = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(notif_height),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
     .split(area);
 
     let title_area = outer[0];
-    let main_area = outer[1];
-    let status_area = outer[2];
+    let notif_area = outer[1];
+    let main_area = outer[2];
+    let status_area = outer[3];
 
     // ── Title bar ───────────────────────────────────────────────────
     ui::common::render_title_bar(frame, title_area, app);
+
+    // ── Notification bar (CC waiting) ───────────────────────────────
+    if has_notifications {
+        ui::common::render_notification_bar(frame, notif_area, app);
+    }
 
     // ── Accordion column widths ─────────────────────────────────────
     let (left_w, explorer_w, viewer_w) = accordion_widths(app.terminal_expanded, main_area.width);

@@ -147,8 +147,6 @@ fn name_to_color(name: &str) -> (Color, Color) {
 }
 
 /// Render the title bar at the top showing worktree name and working directory.
-/// Also renders CC waiting badges on the right side and records their positions
-/// in `app.title_bar_badges` for click handling.
 pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
     let wt_name = app
         .worktrees
@@ -161,27 +159,11 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         .map(|w| w.path.display().to_string())
         .unwrap_or_else(|| app.repo_path.display().to_string());
 
-    let has_waiting = !app.cc_waiting_worktrees.is_empty();
-
     let (badge_bg, branch_fg) = name_to_color(&app.main_repo_name);
 
-    // When CC sessions are waiting, pulse the title bar by varying lightness.
-    let (bar_bg, conductor_bg, conductor_fg) = if has_waiting {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        app.main_repo_name.hash(&mut hasher);
-        let hue = (hasher.finish() % 360) as f64;
-        let phase = (app.ui_tick / 20) % 3;
-        let (l_badge, l_bar) = match phase {
-            0 => (0.55, 0.20),   // brighter pulse
-            1 => (0.40, 0.15),   // slightly darker
-            _ => (0.45, 0.12),   // normal
-        };
-        let (br, bg_c, bb) = hsl_to_rgb(hue, 0.6, l_badge);
-        let (bar_r, bar_g, bar_b) = hsl_to_rgb(hue, 0.3, l_bar);
-        (Color::Rgb(bar_r, bar_g, bar_b), Color::Rgb(br, bg_c, bb), Color::Black)
-    } else {
-        (Color::DarkGray, badge_bg, Color::Black)
-    };
+    let bar_bg = Color::DarkGray;
+    let conductor_bg = badge_bg;
+    let conductor_fg = Color::Black;
 
     let badge_text = format!(" {} ", app.main_repo_name);
     let line = Line::from(vec![
@@ -197,10 +179,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     let paragraph = Paragraph::new(line).style(Style::default().bg(bar_bg));
     frame.render_widget(paragraph, area);
 
-    // ── Right-aligned items (accumulated right_offset) ──────────
-    let mut right_offset: u16 = 0;
-
-    // ── Stats display (today's activity + ccusage) ────────────
+    // ── Right-aligned stats display (today's activity + ccusage) ──────────
     {
         let sep = Span::styled(" | ", Style::default().fg(Color::DarkGray).bg(Color::DarkGray));
         let mut spans: Vec<Span> = Vec::new();
@@ -245,25 +224,52 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             let stats_w = stats_line.width() as u16;
             if stats_w + 2 < area.width {
                 let stats_area = Rect::new(
-                    area.x + area.width - stats_w - right_offset,
+                    area.x + area.width - stats_w,
                     area.y,
                     stats_w,
                     1,
                 );
                 frame.render_widget(Paragraph::new(stats_line), stats_area);
-                right_offset += stats_w + 1;
             }
         }
     }
+}
 
-    // ── CC waiting badges (right-aligned) ────────────────────────
-    app.title_bar_badges.clear();
+/// Render the notification bar showing CC waiting badges.
+/// Returns the height consumed (0 if no notifications, 1 if shown).
+/// Records badge positions in `app.notification_bar_badges` for click handling.
+pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> u16 {
+    app.notification_bar_badges.clear();
 
     if app.cc_waiting_worktrees.is_empty() {
-        return;
+        return 0;
     }
 
-    // Sort for stable ordering (by display name).
+    // Orange-tinted background for the notification bar.
+    let pulse_on = (app.ui_tick / 20) % 2 == 0;
+    let bar_bg = if pulse_on {
+        Color::Rgb(50, 30, 0)  // warm dark orange
+    } else {
+        Color::Rgb(35, 20, 0)  // darker pulse
+    };
+
+    // Fill background.
+    let bg_line = Line::from(Span::styled(
+        " ".repeat(area.width as usize),
+        Style::default().bg(bar_bg),
+    ));
+    frame.render_widget(Paragraph::new(bg_line), area);
+
+    // Leading indicator.
+    let prefix = " ⏳ ";
+    let prefix_style = Style::default()
+        .fg(Color::Rgb(255, 180, 50))
+        .bg(bar_bg)
+        .add_modifier(Modifier::BOLD);
+    let prefix_area = Rect::new(area.x, area.y, prefix.len() as u16, 1);
+    frame.render_widget(Paragraph::new(Span::styled(prefix, prefix_style)), prefix_area);
+
+    // Collect waiting worktrees sorted by branch name.
     let mut waiting: Vec<(&PathBuf, String)> = app.cc_waiting_worktrees.iter().map(|p| {
         let name = app.worktrees.iter()
             .find(|w| &w.path == p)
@@ -273,45 +279,57 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     }).collect();
     waiting.sort_by(|a, b| a.1.cmp(&b.1));
 
-    // Build badge strings: "[branch ⏳]"
-    let badges: Vec<String> = waiting.iter().map(|(_, name)| format!("[{name} ⏳]")).collect();
-    let total_badge_width: u16 = badges
-        .iter()
-        .map(|b| UnicodeWidthStr::width(b.as_str()) as u16 + 1) // +1 for space separator
-        .sum::<u16>()
-        .saturating_sub(1); // no trailing space
-
-    if total_badge_width + right_offset + 2 > area.width {
-        return; // not enough room
-    }
-
-    // Pulse animation: alternate lightness based on ui_tick using hash-derived hue.
-    let pulse_color = {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        app.main_repo_name.hash(&mut hasher);
-        let hue = (hasher.finish() % 360) as f64;
-        let l = if (app.ui_tick / 15) % 2 == 0 { 0.55 } else { 0.65 };
-        let (r, g, b) = hsl_to_rgb(hue, 0.7, l);
-        Color::Rgb(r, g, b)
+    // Badge colors: orange pulse.
+    let badge_bg = if pulse_on {
+        Color::Rgb(200, 120, 0) // bright orange
+    } else {
+        Color::Rgb(180, 100, 0) // slightly dimmer
     };
     let badge_style = Style::default()
         .fg(Color::Black)
-        .bg(pulse_color)
+        .bg(badge_bg)
         .add_modifier(Modifier::BOLD);
 
-    let mut x = area.x + area.width - total_badge_width - right_offset;
-    for (i, badge_str) in badges.iter().enumerate() {
+    let sep_style = Style::default()
+        .fg(Color::Rgb(180, 120, 40))
+        .bg(bar_bg);
+
+    let mut x = area.x + UnicodeWidthStr::width(prefix) as u16;
+
+    for (i, (_path, name)) in waiting.iter().enumerate() {
+        if i > 0 {
+            // Separator between badges.
+            let sep_area = Rect::new(x, area.y, 1, 1);
+            frame.render_widget(Paragraph::new(Span::styled(" ", sep_style)), sep_area);
+            x += 1;
+        }
+
+        let badge_str = format!(" {name} ⏳ ");
         let w = UnicodeWidthStr::width(badge_str.as_str()) as u16;
+
+        if x + w > area.x + area.width {
+            break; // not enough room
+        }
+
         let badge_area = Rect::new(x, area.y, w, 1);
-        let badge_line = Line::from(Span::styled(badge_str, badge_style));
-        frame.render_widget(Paragraph::new(badge_line), badge_area);
+        frame.render_widget(Paragraph::new(Span::styled(&badge_str, badge_style)), badge_area);
 
-        // Record position for click handling (store branch name).
-        app.title_bar_badges
-            .push((x, x + w, waiting[i].1.clone()));
+        // Record position for click handling.
+        app.notification_bar_badges.push((x, x + w, name.clone()));
 
-        x += w + 1; // +1 for separator space
+        x += w;
     }
+
+    // Trailing hint text.
+    let hint = " (click to jump)";
+    let hint_w = UnicodeWidthStr::width(hint) as u16;
+    if x + hint_w < area.x + area.width {
+        let hint_area = Rect::new(x + 1, area.y, hint_w, 1);
+        let hint_style = Style::default().fg(Color::Rgb(120, 90, 40)).bg(bar_bg);
+        frame.render_widget(Paragraph::new(Span::styled(hint, hint_style)), hint_area);
+    }
+
+    1
 }
 
 /// Render a status bar at the bottom of the screen.
