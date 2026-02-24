@@ -12,6 +12,9 @@ use crate::app::{App, Focus};
 
 /// Render the Claude Code terminal panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let focused = app.focus == Focus::TerminalClaude;
     let border_color = if focused { Color::Yellow } else { Color::DarkGray };
 
