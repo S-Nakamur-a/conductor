@@ -76,6 +76,9 @@ fn file_icon(name: &str) -> &'static str {
 
 /// Render the explorer (file tree) panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let focused = app.focus == Focus::Explorer;
 
     // Split into top (file tree) and bottom (diff list).

@@ -23,6 +23,9 @@ struct DiffAnnotation {
 
 /// Render the viewer (file content) panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let vs = &app.viewer_state;
     let focused = app.focus == Focus::Viewer;
     let border_color = if focused { Color::Yellow } else { Color::DarkGray };
