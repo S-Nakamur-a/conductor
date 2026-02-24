@@ -71,6 +71,14 @@ pub struct ReviewState {
     pub cached_replies: HashMap<String, Vec<ReviewReply>>,
     /// Virtual row list for the comment panel (rebuilt on expansion changes).
     pub comment_list_rows: Vec<CommentListRow>,
+
+    // ── Comment detail overlay ──────────────────────────────────
+    /// Whether the comment detail modal is visible.
+    pub comment_detail_active: bool,
+    /// Scroll offset within the detail modal.
+    pub comment_detail_scroll: usize,
+    /// Index of the comment being viewed in the detail modal.
+    pub comment_detail_idx: usize,
 }
 
 impl ReviewState {
@@ -95,6 +103,9 @@ impl ReviewState {
             expanded_comments: HashSet::new(),
             cached_replies: HashMap::new(),
             comment_list_rows: Vec::new(),
+            comment_detail_active: false,
+            comment_detail_scroll: 0,
+            comment_detail_idx: 0,
         }
     }
 

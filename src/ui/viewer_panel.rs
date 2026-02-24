@@ -13,7 +13,7 @@ use ratatui::Frame;
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::review_state::ReviewInputMode;
-use crate::review_store::{CommentKind, ReviewComment};
+use crate::review_store::ReviewComment;
 
 /// Annotation for a diff line, carrying the tag and optional inline segments.
 struct DiffAnnotation {
@@ -275,10 +275,7 @@ fn render_comment_preview(
 
     // Comment bodies (truncated to fit).
     for comment in comments.iter().take(max_comments) {
-        let kind_badge = match comment.kind {
-            CommentKind::Suggest => Span::styled("[S] ", Style::default().fg(Color::Green)),
-            CommentKind::Question => Span::styled("[Q] ", Style::default().fg(Color::Magenta)),
-        };
+        let kind_badge = crate::ui::review::kind_badge_span(comment.kind);
         let author_label = match comment.author {
             crate::review_store::Author::User => "you",
             crate::review_store::Author::Claude => "claude",

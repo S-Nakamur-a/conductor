@@ -17,6 +17,10 @@ use crate::review_store::{Author, CommentKind};
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // ── 1. Overlay handlers — consume ALL keys when active ────────────
 
+    if app.review_state.comment_detail_active {
+        handle_comment_detail_key(app, key);
+        return;
+    }
     if app.review_state.input_mode != ReviewInputMode::Normal {
         handle_review_input_key(app, key);
         return;
@@ -764,6 +768,26 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                 None => {}
             }
         }
+        KeyCode::Char(' ') => {
+            // Open comment detail modal.
+            let visual = app.viewer_state.comment_list_selected;
+            if let Some(comment_idx) = app.review_state.selected_comment_idx(visual) {
+                app.review_state.comment_detail_idx = comment_idx;
+                app.review_state.comment_detail_scroll = 0;
+                app.review_state.comment_detail_active = true;
+                // Ensure replies are loaded for the detail view.
+                if let Some(comment) = app.review_state.comments.get(comment_idx) {
+                    let cid = comment.id.clone();
+                    if !app.review_state.cached_replies.contains_key(&cid) {
+                        if let Some(store) = app.review_store.as_ref() {
+                            if let Ok(replies) = store.get_replies(&cid) {
+                                app.review_state.cached_replies.insert(cid, replies);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
 
@@ -1259,6 +1283,43 @@ fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+// ── Overlay: comment detail ─────────────────────────────────────────────
+
+fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(' ') => {
+            app.review_state.comment_detail_active = false;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.review_state.comment_detail_scroll += 1;
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if app.review_state.comment_detail_scroll > 0 {
+                app.review_state.comment_detail_scroll -= 1;
+            }
+        }
+        KeyCode::Char('e') => {
+            // Edit from the detail view.
+            let idx = app.review_state.comment_detail_idx;
+            if let Some(comment) = app.review_state.comments.get(idx) {
+                app.review_state.input_buffer = comment.body.clone();
+                app.review_state.input_mode = ReviewInputMode::EditingComment;
+                app.review_state.selected = idx;
+                app.review_state.comment_detail_active = false;
+            }
+        }
+        KeyCode::Char('R') => {
+            // Reply from the detail view.
+            let idx = app.review_state.comment_detail_idx;
+            app.review_state.input_buffer.clear();
+            app.review_state.input_mode = ReviewInputMode::ReplyingToComment;
+            app.review_state.selected = idx;
+            app.review_state.comment_detail_active = false;
+        }
+        _ => {}
+    }
+}
+
 // ── Overlay: help ───────────────────────────────────────────────────────
 
 fn handle_help_key(app: &mut App, key: KeyEvent) {
@@ -1301,6 +1362,12 @@ fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
 // ── Overlay: review input ───────────────────────────────────────────────
 
 fn handle_review_input_key(app: &mut App, key: KeyEvent) {
+    // Alt+Enter inserts a newline (multi-line editing).
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
+        app.review_state.input_buffer.push('\n');
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
             app.review_state.input_buffer.clear();

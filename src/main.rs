@@ -453,6 +453,9 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     if app.review_state.template_picker_active {
         ui::review::render_template_picker_overlay(frame, main_area, &app.review_state);
     }
+    if app.review_state.comment_detail_active {
+        ui::review::render_comment_detail_overlay(frame, main_area, app);
+    }
     if app.resume_session_active {
         ui::dashboard::render_resume_session_overlay(frame, main_area, app);
     }
