@@ -920,6 +920,7 @@ fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
         KeyCode::PageUp => b"\x1b[5~".to_vec(),
         KeyCode::PageDown => b"\x1b[6~".to_vec(),
         KeyCode::Tab => vec![b'\t'],
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
         _ => return,
     };
 
