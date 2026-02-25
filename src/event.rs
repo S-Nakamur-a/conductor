@@ -90,16 +90,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
 
-        // Ctrl+w — close the active terminal session.
+        // Ctrl+w — jump to Worktree panel.
         if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let session_idx = match app.focus {
-                Focus::TerminalClaude => app.active_claude_session,
-                Focus::TerminalShell => app.active_shell_session,
-                _ => unreachable!(),
-            };
-            if let Some(idx) = session_idx {
-                app.close_terminal_session(idx);
-            }
+            app.set_focus(Focus::Worktree);
             return;
         }
 
@@ -156,21 +149,12 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             }
         }
 
-        // Ctrl+. — command palette, Ctrl+, — worktree jump (intercepted before PTY forward).
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('.') => {
-                    app.command_palette_active = true;
-                    app.command_palette_filter.clear();
-                    app.command_palette_selected = 0;
-                    return;
-                }
-                KeyCode::Char(',') => {
-                    app.set_focus(Focus::Worktree);
-                    return;
-                }
-                _ => {}
-            }
+        // Ctrl+p — command palette (intercepted before PTY forward).
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+            app.command_palette_active = true;
+            app.command_palette_filter.clear();
+            app.command_palette_selected = 0;
+            return;
         }
 
         // Forward all keys (including Esc, Ctrl+*, Tab) to the active PTY session.
@@ -192,15 +176,15 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            // Ctrl+. — command palette.
-            KeyCode::Char('.') => {
+            // Ctrl+p — command palette.
+            KeyCode::Char('p') => {
                 app.command_palette_active = true;
                 app.command_palette_filter.clear();
                 app.command_palette_selected = 0;
                 return;
             }
-            // Ctrl+, — jump to Worktree panel.
-            KeyCode::Char(',') => {
+            // Ctrl+w — jump to Worktree panel.
+            KeyCode::Char('w') => {
                 app.set_focus(Focus::Worktree);
                 return;
             }
@@ -246,12 +230,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 }
                 return;
             }
-            // Ctrl+p — resume Claude Code session picker.
-            KeyCode::Char('p') => {
-                app.resume_session_active = true;
-                app.load_resume_sessions();
-                return;
-            }
+            // (Ctrl+p is now command palette — handled above)
             _ => {}
         }
     }
