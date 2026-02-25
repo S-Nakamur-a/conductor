@@ -846,6 +846,129 @@ impl App {
                     self.repo_selector_selected = self.repo_list_index;
                 }
             }
+            CommandId::UngrabBranch => {
+                if self.grabbed_branch.is_none() {
+                    self.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
+                } else {
+                    self.worktree_input_mode = WorktreeInputMode::ConfirmingUngrab;
+                    self.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
+                }
+            }
+            CommandId::ShowDiffList => {
+                self.viewer_state.explorer_show_comments = false;
+                self.viewer_state.explorer_focus_on_diff_list = true;
+                self.set_focus(Focus::Explorer);
+            }
+            CommandId::ShowCommentList => {
+                self.viewer_state.explorer_show_comments = true;
+                self.viewer_state.explorer_focus_on_diff_list = true;
+                self.set_focus(Focus::Explorer);
+            }
+            CommandId::AddReviewComment => {
+                if let Some(file_path) = self.viewer_state.current_file.clone() {
+                    let location = if let Some((start, end)) = self.viewer_state.selected_range() {
+                        if start == end {
+                            format!("{file_path}:{start} ")
+                        } else {
+                            format!("{file_path}:{start}-{end} ")
+                        }
+                    } else {
+                        let line = self.viewer_state.file_scroll + 1;
+                        format!("{file_path}:{line} ")
+                    };
+                    self.viewer_state.clear_selection();
+                    self.review_state.input_buffer = location;
+                    self.review_state.input_kind = crate::review_store::CommentKind::Suggest;
+                    self.review_state.input_mode = crate::review_state::ReviewInputMode::AddingComment;
+                    self.review_state.status_message =
+                        Some("Add comment: [s:|q:]file:line body".to_string());
+                    self.set_focus(Focus::Viewer);
+                } else {
+                    self.set_status("No file open in viewer.".to_string(), StatusLevel::Warning);
+                }
+            }
+            CommandId::ViewCommentDetail => {
+                // Try viewer context first (current line), then comment list context.
+                if self.viewer_state.current_file.is_some() {
+                    let cursor_line = if let Some((start, _)) = self.viewer_state.selected_range() {
+                        start
+                    } else {
+                        self.viewer_state.file_scroll + 1
+                    };
+                    if let Some(comments) = self.review_state.file_comments.get(&cursor_line) {
+                        if !comments.is_empty() {
+                            let target_id = &comments[0].id;
+                            if let Some(idx) = self.review_state.comments.iter().position(|c| c.id == *target_id) {
+                                let cid = target_id.clone();
+                                if !self.review_state.cached_replies.contains_key(&cid) {
+                                    if let Some(store) = self.review_store.as_ref() {
+                                        if let Ok(replies) = store.get_replies(&cid) {
+                                            self.review_state.cached_replies.insert(cid, replies);
+                                        }
+                                    }
+                                }
+                                self.review_state.comment_detail_idx = idx;
+                                self.review_state.comment_detail_scroll = 0;
+                                self.review_state.comment_detail_active = true;
+                                self.set_focus(Focus::Viewer);
+                                return;
+                            }
+                        }
+                    }
+                }
+                self.set_status("No comment on current line.".to_string(), StatusLevel::Warning);
+            }
+            CommandId::DeleteComment => {
+                if self.viewer_state.explorer_show_comments
+                    && self.viewer_state.explorer_focus_on_diff_list
+                    && !self.review_state.comment_list_rows.is_empty()
+                {
+                    self.delete_selected_review_comment();
+                } else {
+                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+                }
+            }
+            CommandId::ToggleCommentResolve => {
+                if self.viewer_state.explorer_show_comments
+                    && self.viewer_state.explorer_focus_on_diff_list
+                    && !self.review_state.comment_list_rows.is_empty()
+                {
+                    self.toggle_selected_review_status();
+                } else {
+                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+                }
+            }
+            CommandId::EditComment => {
+                let comment_idx = self
+                    .review_state
+                    .selected_comment_idx(self.viewer_state.comment_list_selected);
+                if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
+                    self.review_state.input_buffer = comment.body.clone();
+                    self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
+                    self.review_state.selected = comment_idx.unwrap();
+                    self.review_state.status_message =
+                        Some("Edit comment (Enter to save, Esc to cancel)".to_string());
+                } else {
+                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+                }
+            }
+            CommandId::ReplyToComment => {
+                let comment_idx = self
+                    .review_state
+                    .selected_comment_idx(self.viewer_state.comment_list_selected);
+                if let Some(idx) = comment_idx {
+                    self.review_state.input_buffer.clear();
+                    self.review_state.input_mode = crate::review_state::ReviewInputMode::ReplyingToComment;
+                    self.review_state.selected = idx;
+                    self.review_state.status_message =
+                        Some("Reply to comment (Enter to send, Esc to cancel)".to_string());
+                } else {
+                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+                }
+            }
+            CommandId::SaveSessionHistory => {
+                self.save_current_session_history();
+            }
             CommandId::Quit => self.should_quit = true,
         }
     }
