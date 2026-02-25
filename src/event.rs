@@ -933,6 +933,48 @@ fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
     }
 }
 
+// ── Paste event handling ────────────────────────────────────────────────
+
+/// Handle a bracketed paste event. When the terminal panel is focused,
+/// forward the entire pasted text to the PTY in one write, wrapped with
+/// bracketed-paste escape sequences so the shell/application treats it as
+/// a single paste rather than individual keystrokes.
+pub fn handle_paste_event(app: &mut App, data: String) {
+    if app.focus != Focus::TerminalClaude && app.focus != Focus::TerminalShell {
+        // For non-terminal panels, insert the first line into whichever input
+        // buffer is active (e.g. worktree input, search, etc.).
+        // For now, only handle terminal paste — overlay paste is not common.
+        return;
+    }
+
+    let session_idx = match app.focus {
+        Focus::TerminalClaude => app.active_claude_session,
+        Focus::TerminalShell => app.active_shell_session,
+        _ => None,
+    };
+
+    if let Some(idx) = session_idx {
+        // Wrap the paste data with bracketed-paste escape sequences so
+        // that the child process (shell, editor, claude-code) knows this
+        // is pasted text and will not execute each line individually.
+        let mut buf = Vec::with_capacity(data.len() + 12);
+        buf.extend_from_slice(b"\x1b[200~");
+        buf.extend_from_slice(data.as_bytes());
+        buf.extend_from_slice(b"\x1b[201~");
+
+        if let Err(e) = app.pty_manager.write_to_session(idx, &buf) {
+            log::warn!("failed to write paste data to PTY session: {e}");
+        } else {
+            match app.focus {
+                Focus::TerminalClaude => app.terminal_scroll_claude = 0,
+                Focus::TerminalShell => app.terminal_scroll_shell = 0,
+                _ => {}
+            }
+            app.clear_cc_waiting_signal(idx);
+        }
+    }
+}
+
 // ── Overlay: worktree input ─────────────────────────────────────────────
 
 fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
