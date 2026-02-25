@@ -198,6 +198,8 @@ pub struct App {
     pub sync_branches: Vec<String>,
     /// Currently selected index in the sync list.
     pub sync_selected: usize,
+    /// Tracks which branch was last synced per worktree path (for resync).
+    pub synced_branch: HashMap<PathBuf, String>,
 
     // ── Prune ───────────────────────────────────────────────────
     /// Whether the prune overlay is active.
@@ -410,6 +412,7 @@ impl App {
             sync_active: false,
             sync_branches: Vec::new(),
             sync_selected: 0,
+            synced_branch: HashMap::new(),
             prune_active: false,
             prune_stale: Vec::new(),
             worktree_pending_delete_branch: String::new(),
@@ -652,7 +655,7 @@ impl App {
     /// Return a help text string describing the keybindings for the current focus.
     pub fn status_bar_text(&self) -> &'static str {
         match self.focus {
-            Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | y/Y: sync/unsync | P: prune",
+            Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | y: sync/resync | Y: unsync | P: prune",
             Focus::Explorer => "Alt+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
             Focus::Viewer => "Alt+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
             Focus::TerminalClaude => "Alt+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
@@ -712,11 +715,15 @@ impl App {
                 }
             }
             CommandId::SyncBranch => {
-                self.load_sync_branches();
-                if self.sync_branches.is_empty() {
-                    self.set_status_info("No other worktree branches to sync.".to_string());
+                if self.current_synced_branch().is_some() {
+                    self.execute_resync();
                 } else {
-                    self.sync_active = true;
+                    self.load_sync_branches();
+                    if self.sync_branches.is_empty() {
+                        self.set_status_info("No other worktree branches to sync.".to_string());
+                    } else {
+                        self.sync_active = true;
+                    }
                 }
             }
             CommandId::PruneWorktrees => {
@@ -1681,6 +1688,7 @@ impl App {
             Ok(engine) => {
                 match engine.sync_merge(&wt_path, source_branch) {
                     Ok(msg) => {
+                        self.synced_branch.insert(wt_path, source_branch.to_string());
                         self.set_status(msg, StatusLevel::Success);
                         self.refresh_worktrees();
                     }
@@ -1693,6 +1701,53 @@ impl App {
                 self.set_status(format!("Error: {e}"), StatusLevel::Error);
             }
         }
+    }
+
+    /// Execute resync: unsync then sync again with the previously synced branch.
+    pub fn execute_resync(&mut self) {
+        let (wt_path, branch) = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => {
+                if let Some(b) = self.synced_branch.get(&wt.path) {
+                    (wt.path.clone(), b.clone())
+                } else {
+                    self.set_status("No previous sync to repeat.".to_string(), StatusLevel::Warning);
+                    return;
+                }
+            }
+            None => {
+                self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
+                return;
+            }
+        };
+        match git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => {
+                // First unsync (reset --hard HEAD).
+                if let Err(e) = engine.unsync_reset(&wt_path) {
+                    self.set_status(format!("Resync failed during reset: {e}"), StatusLevel::Error);
+                    return;
+                }
+                // Then sync again.
+                match engine.sync_merge(&wt_path, &branch) {
+                    Ok(msg) => {
+                        self.set_status(format!("Resynced: {msg}"), StatusLevel::Success);
+                        self.refresh_worktrees();
+                    }
+                    Err(e) => {
+                        self.set_status(format!("Resync error: {e}"), StatusLevel::Error);
+                    }
+                }
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"), StatusLevel::Error);
+            }
+        }
+    }
+
+    /// Returns the synced branch for the currently selected worktree, if any.
+    pub fn current_synced_branch(&self) -> Option<&str> {
+        self.worktrees.get(self.selected_worktree)
+            .and_then(|wt| self.synced_branch.get(&wt.path))
+            .map(|s| s.as_str())
     }
 
     /// Execute unsync (reset --hard HEAD) on the current worktree.
@@ -1708,6 +1763,7 @@ impl App {
             Ok(engine) => {
                 match engine.unsync_reset(&wt_path) {
                     Ok(msg) => {
+                        self.synced_branch.remove(&wt_path);
                         self.set_status(msg, StatusLevel::Success);
                         self.refresh_worktrees();
                     }
