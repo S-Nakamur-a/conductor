@@ -9,15 +9,6 @@ use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use git2::{Repository, StatusOptions, StatusShow};
 
-/// Result of a sync merge operation.
-#[derive(Debug)]
-pub enum SyncResult {
-    /// The merge was performed successfully.
-    Merged(String),
-    /// The target is already up-to-date with the source branch.
-    UpToDate,
-}
-
 /// Info about a single worktree.
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -367,146 +358,108 @@ impl GitEngine {
         }
     }
 
-    // ── Sync / Unsync (wt sync, unsync) ─────────────────────────
+    // ── Grab / Ungrab ──────────────────────────────────────────────
 
-    /// Merge `branch_name` into the worktree at `worktree_path` without
-    /// committing (--no-commit --no-ff equivalent). If conflicts occur,
-    /// aborts and resets.
-    pub fn sync_merge(&self, worktree_path: &Path, branch_name: &str) -> Result<SyncResult> {
-        let repo = Repository::open(worktree_path)
-            .with_context(|| format!(
-                "Cannot open worktree at {}. Is the path valid?",
-                worktree_path.display()
-            ))?;
-
-        // Find the branch to merge.
-        let branch_ref = repo.find_branch(branch_name, git2::BranchType::Local)
-            .with_context(|| format!(
-                "Branch '{branch_name}' not found locally. Was it deleted or renamed?"
-            ))?;
-        let branch_commit_oid = branch_ref.get().peel_to_commit()
-            .context("Failed to resolve branch commit. The branch ref may be corrupt.")?
-            .id();
-        let branch_annotated = repo.find_annotated_commit(branch_commit_oid)
-            .context("Failed to find annotated commit for branch.")?;
-
-        // Perform merge analysis.
-        let (analysis, _preference) = repo.merge_analysis(&[&branch_annotated])?;
-
-        if analysis.is_up_to_date() {
-            return Ok(SyncResult::UpToDate);
-        }
-
-        if !analysis.is_fast_forward() && !analysis.is_normal() {
-            anyhow::bail!(
-                "Cannot merge '{branch_name}': unrelated histories. \
-                 Ensure both branches share a common ancestor."
-            );
-        }
-
-        // Perform the merge (this updates the index and workdir but does NOT commit).
-        repo.merge(&[&branch_annotated], None, None)
-            .with_context(|| format!(
-                "Merge of '{branch_name}' failed. \
-                 Try committing or stashing local changes first."
-            ))?;
-
-        // Check for conflicts.
-        let index = repo.index()?;
-        if index.has_conflicts() {
-            // Collect conflicting file paths for a helpful message.
-            let conflict_paths: Vec<String> = index.conflicts()?
-                .filter_map(|c| c.ok())
-                .filter_map(|c| {
-                    c.our.or(c.their).or(c.ancestor)
-                        .and_then(|e| String::from_utf8(e.path).ok())
-                })
-                .collect();
-            let conflict_list = if conflict_paths.len() <= 3 {
-                conflict_paths.join(", ")
-            } else {
-                format!("{} (+{} more)", conflict_paths[..3].join(", "), conflict_paths.len() - 3)
-            };
-
-            // Abort: reset to HEAD.
-            let head_commit = repo.head()?.peel_to_commit()?;
-            repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)?;
-            repo.cleanup_state()?;
-            anyhow::bail!(
-                "Conflicts with '{branch_name}' in: {conflict_list}. \
-                 Sync aborted, worktree restored. Resolve conflicts in the source branch first."
-            );
-        }
-
-        Ok(SyncResult::Merged(format!(
-            "Synced '{branch_name}' → main (uncommitted). Press y to resync, Y to unsync."
-        )))
-    }
-
-    /// Reset worktree to HEAD (undo sync). Equivalent to `git reset --hard HEAD`.
-    pub fn unsync_reset(&self, worktree_path: &Path) -> Result<String> {
+    /// Check whether a worktree has uncommitted changes to tracked files.
+    pub fn has_tracked_changes(&self, worktree_path: &Path) -> Result<bool> {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open worktree at {}", worktree_path.display()))?;
-
-        let head_commit = repo.head()?.peel_to_commit()?;
-        repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)
-            .context("failed to reset --hard HEAD")?;
-        repo.cleanup_state().ok(); // best-effort cleanup of MERGE_HEAD etc.
-
-        Ok("Unsynced — reset to HEAD. Press y to sync again.".to_string())
-    }
-
-    // ── Propagate (auto-commit source worktree) ───────────────────
-
-    /// Stage all changes and create an auto-commit in the given worktree.
-    /// Returns `Ok(Some(oid_string))` if a commit was created, or `Ok(None)`
-    /// if the worktree is clean (nothing to commit).
-    pub fn auto_commit_worktree(&self, worktree_path: &Path) -> Result<Option<String>> {
-        let repo = Repository::open(worktree_path)
-            .with_context(|| format!(
-                "Cannot open worktree at {}",
-                worktree_path.display()
-            ))?;
-
-        // Check if there are any changes to commit.
         let statuses = repo.statuses(Some(
             StatusOptions::new()
-                .include_untracked(true)
+                .include_untracked(false)
                 .show(StatusShow::IndexAndWorkdir),
         ))?;
+        Ok(!statuses.is_empty())
+    }
 
-        if statuses.is_empty() {
-            return Ok(None);
+    /// Grab a branch: move the source worktree to a temporary `__grab`
+    /// branch, then checkout main to the original branch.
+    ///
+    /// Requires both worktrees to have no uncommitted tracked changes.
+    pub fn grab_branch(
+        &self,
+        main_path: &Path,
+        source_worktree_path: &Path,
+        branch_name: &str,
+    ) -> Result<()> {
+        if self.has_tracked_changes(main_path)? {
+            anyhow::bail!("Main worktree has uncommitted tracked changes. Commit or stash first.");
+        }
+        if self.has_tracked_changes(source_worktree_path)? {
+            anyhow::bail!(
+                "Worktree '{branch_name}' has uncommitted tracked changes. Commit or stash first."
+            );
         }
 
-        // Stage all changes (equivalent to `git add -A`).
-        let mut index = repo.index()?;
-        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
-        index.update_all(["*"].iter(), None)?;
-        index.write()?;
+        let grab_branch_name = format!("{branch_name}__grab");
 
-        // Create the commit.
-        let tree_oid = index.write_tree()?;
-        let tree = repo.find_tree(tree_oid)?;
-        let head_commit = repo.head()?.peel_to_commit()?;
+        // Create __grab branch on source worktree and checkout it.
+        let source_repo = Repository::open(source_worktree_path)
+            .with_context(|| format!("cannot open worktree at {}", source_worktree_path.display()))?;
+        let head_commit = source_repo.head()?.peel_to_commit()?;
+        source_repo.branch(&grab_branch_name, &head_commit, false)
+            .with_context(|| format!("failed to create branch '{grab_branch_name}'"))?;
+        source_repo.set_head(&format!("refs/heads/{grab_branch_name}"))
+            .with_context(|| format!("failed to set HEAD to '{grab_branch_name}'"))?;
+        source_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .context("failed to checkout __grab branch")?;
 
-        let sig = repo.signature()
-            .or_else(|_| git2::Signature::now("Conductor", "conductor@localhost"))
-            .context("cannot create git signature")?;
+        // Checkout main worktree to the original branch.
+        let main_repo = Repository::open(main_path)
+            .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
+        main_repo.set_head(&format!("refs/heads/{branch_name}"))
+            .with_context(|| format!("failed to set main HEAD to '{branch_name}'"))?;
+        main_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .with_context(|| format!("failed to checkout '{branch_name}' in main worktree"))?;
 
-        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S");
-        let message = format!("propagate: auto-commit {timestamp}");
+        Ok(())
+    }
 
-        let oid = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            &message,
-            &tree,
-            &[&head_commit],
-        )?;
+    /// Ungrab: return main to main branch, restore source worktree to
+    /// original branch, and delete the temporary `__grab` branch.
+    ///
+    /// Requires both worktrees to have no uncommitted tracked changes.
+    pub fn ungrab_branch(
+        &self,
+        main_path: &Path,
+        source_worktree_path: &Path,
+        branch_name: &str,
+        main_branch: &str,
+    ) -> Result<()> {
+        if self.has_tracked_changes(main_path)? {
+            anyhow::bail!("Main worktree has uncommitted tracked changes. Commit or stash first.");
+        }
+        if self.has_tracked_changes(source_worktree_path)? {
+            anyhow::bail!(
+                "Worktree (on __grab) has uncommitted tracked changes. Commit or stash first."
+            );
+        }
 
-        Ok(Some(oid.to_string()))
+        // Checkout main worktree back to main branch.
+        let main_repo = Repository::open(main_path)
+            .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
+        main_repo.set_head(&format!("refs/heads/{main_branch}"))
+            .with_context(|| format!("failed to set main HEAD to '{main_branch}'"))?;
+        main_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .with_context(|| format!("failed to checkout '{main_branch}' in main worktree"))?;
+
+        // Checkout source worktree back to original branch.
+        let source_repo = Repository::open(source_worktree_path)
+            .with_context(|| format!("cannot open worktree at {}", source_worktree_path.display()))?;
+        source_repo.set_head(&format!("refs/heads/{branch_name}"))
+            .with_context(|| format!("failed to set HEAD to '{branch_name}'"))?;
+        source_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .with_context(|| format!("failed to checkout '{branch_name}'"))?;
+
+        // Delete the temporary __grab branch.
+        let grab_branch_name = format!("{branch_name}__grab");
+        let mut grab_branch = source_repo
+            .find_branch(&grab_branch_name, git2::BranchType::Local)
+            .with_context(|| format!("branch '{grab_branch_name}' not found"))?;
+        grab_branch.delete()
+            .with_context(|| format!("failed to delete branch '{grab_branch_name}'"))?;
+
+        Ok(())
     }
 
     // ── Fetch ────────────────────────────────────────────────────

@@ -84,8 +84,17 @@ pub enum WorktreeInputMode {
     ConfirmingDelete,
     /// Confirming branch deletion after worktree removal (y/n/f).
     ConfirmingDeleteBranch,
-    /// Confirming unsync / reset (y/n).
-    ConfirmingUnsync,
+    /// Confirming ungrab (y/n).
+    ConfirmingUngrab,
+}
+
+/// Info about a grabbed branch (branch checkout swap with main).
+#[derive(Debug, Clone)]
+pub struct GrabbedBranch {
+    /// The original branch name (e.g., "feature-x").
+    pub branch: String,
+    /// Path of the worktree that originally had this branch.
+    pub source_worktree: PathBuf,
 }
 
 /// Top-level application state shared across all UI panels.
@@ -191,15 +200,15 @@ pub struct App {
     /// Filter string for narrowing the switch branch list.
     pub switch_branch_filter: String,
 
-    // ── Sync (merge branch for testing) ─────────────────────────
-    /// Whether the sync overlay is active.
-    pub sync_active: bool,
-    /// List of local branch names available for sync.
-    pub sync_branches: Vec<String>,
-    /// Currently selected index in the sync list.
-    pub sync_selected: usize,
-    /// Tracks which branch was last synced per worktree path (for resync).
-    pub synced_branch: HashMap<PathBuf, String>,
+    // ── Grab (checkout branch on main) ─────────────────────────
+    /// Whether the grab branch picker overlay is active.
+    pub grab_active: bool,
+    /// List of local branch names available for grab.
+    pub grab_branches: Vec<String>,
+    /// Currently selected index in the grab list.
+    pub grab_selected: usize,
+    /// Currently grabbed branch info (branch name + source worktree path).
+    pub grabbed_branch: Option<GrabbedBranch>,
 
     // ── Prune ───────────────────────────────────────────────────
     /// Whether the prune overlay is active.
@@ -409,10 +418,10 @@ impl App {
             switch_branch_list: Vec::new(),
             switch_branch_selected: 0,
             switch_branch_filter: String::new(),
-            sync_active: false,
-            sync_branches: Vec::new(),
-            sync_selected: 0,
-            synced_branch: HashMap::new(),
+            grab_active: false,
+            grab_branches: Vec::new(),
+            grab_selected: 0,
+            grabbed_branch: None,
             prune_active: false,
             prune_stale: Vec::new(),
             worktree_pending_delete_branch: String::new(),
@@ -655,7 +664,7 @@ impl App {
     /// Return a help text string describing the keybindings for the current focus.
     pub fn status_bar_text(&self) -> &'static str {
         match self.focus {
-            Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | y: sync/resync | Y: unsync | P: prune",
+            Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
             Focus::Explorer => "Alt+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
             Focus::Viewer => "Alt+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
             Focus::TerminalClaude => "Alt+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
@@ -714,15 +723,15 @@ impl App {
                     self.status_message = None;
                 }
             }
-            CommandId::SyncBranch => {
-                if self.current_synced_branch().is_some() {
-                    self.execute_resync();
+            CommandId::GrabBranch => {
+                if self.grabbed_branch.is_some() {
+                    self.set_status("Already grabbing a branch. Ungrab first (Y).".to_string(), StatusLevel::Warning);
                 } else {
-                    self.load_sync_branches();
-                    if self.sync_branches.is_empty() {
-                        self.set_status_info("No non-main worktrees to sync.".to_string());
+                    self.load_grab_branches();
+                    if self.grab_branches.is_empty() {
+                        self.set_status_info("No non-main worktrees to grab.".to_string());
                     } else {
-                        self.sync_active = true;
+                        self.grab_active = true;
                     }
                 }
             }
@@ -788,9 +797,6 @@ impl App {
                 } else {
                     self.set_status_info("No other worktree branches available.".to_string());
                 }
-            }
-            CommandId::PropagateSyncedChanges => {
-                self.execute_propagate();
             }
             CommandId::NewClaudeCode => {
                 if let Err(e) = self.spawn_claude_code() {
@@ -1678,8 +1684,8 @@ impl App {
         }
     }
 
-    /// Execute sync: merge feature branch into the main worktree (no commit).
-    pub fn execute_sync(&mut self, feature_branch: &str) {
+    /// Execute grab: checkout main to the selected worktree's branch.
+    pub fn execute_grab(&mut self, branch_name: &str) {
         let main_path = match self.worktrees.iter().find(|w| w.is_main) {
             Some(wt) => wt.path.clone(),
             None => {
@@ -1687,198 +1693,77 @@ impl App {
                 return;
             }
         };
-        match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => {
-                match engine.sync_merge(&main_path, feature_branch) {
-                    Ok(git_engine::SyncResult::Merged(msg)) => {
-                        self.synced_branch.insert(main_path, feature_branch.to_string());
-                        self.set_status(msg, StatusLevel::Success);
-                        self.refresh_worktrees();
-                    }
-                    Ok(git_engine::SyncResult::UpToDate) => {
-                        self.set_status(
-                            format!("Already up-to-date with '{feature_branch}'. No changes to merge."),
-                            StatusLevel::Info,
-                        );
-                    }
-                    Err(e) => {
-                        self.set_status(format!("Sync error: {e}"), StatusLevel::Error);
-                    }
-                }
-            }
-            Err(e) => {
-                self.set_status(format!("Error: {e}"), StatusLevel::Error);
-            }
-        }
-    }
-
-    /// Execute resync: unsync main then sync again with the previously synced branch.
-    pub fn execute_resync(&mut self) {
-        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
-            Some(wt) => wt.path.clone(),
-            None => {
-                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
-                return;
-            }
-        };
-        let branch = match self.synced_branch.get(&main_path) {
-            Some(b) => b.clone(),
-            None => {
-                self.set_status("No previous sync to repeat.".to_string(), StatusLevel::Warning);
-                return;
-            }
-        };
-        match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => {
-                // First unsync (reset --hard HEAD).
-                if let Err(e) = engine.unsync_reset(&main_path) {
-                    self.set_status(format!("Resync failed during reset: {e}"), StatusLevel::Error);
-                    return;
-                }
-                // Then sync again.
-                match engine.sync_merge(&main_path, &branch) {
-                    Ok(git_engine::SyncResult::Merged(msg)) => {
-                        self.set_status(format!("Resynced: {msg}"), StatusLevel::Success);
-                        self.refresh_worktrees();
-                    }
-                    Ok(git_engine::SyncResult::UpToDate) => {
-                        self.synced_branch.remove(&main_path);
-                        self.set_status(
-                            format!("'{branch}' is now up-to-date with main. Sync cleared."),
-                            StatusLevel::Info,
-                        );
-                        self.refresh_worktrees();
-                    }
-                    Err(e) => {
-                        self.set_status(format!("Resync error: {e}"), StatusLevel::Error);
-                    }
-                }
-            }
-            Err(e) => {
-                self.set_status(format!("Error: {e}"), StatusLevel::Error);
-            }
-        }
-    }
-
-    /// Returns the synced feature branch for the main worktree, if any.
-    pub fn current_synced_branch(&self) -> Option<&str> {
-        self.worktrees.iter()
-            .find(|w| w.is_main)
-            .and_then(|wt| self.synced_branch.get(&wt.path))
-            .map(|s| s.as_str())
-    }
-
-    /// Execute unsync (reset --hard HEAD) on the main worktree.
-    pub fn execute_unsync(&mut self) {
-        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
-            Some(wt) => wt.path.clone(),
-            None => {
-                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
-                return;
-            }
-        };
-        match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => {
-                match engine.unsync_reset(&main_path) {
-                    Ok(msg) => {
-                        self.synced_branch.remove(&main_path);
-                        self.set_status(msg, StatusLevel::Success);
-                        self.refresh_worktrees();
-                    }
-                    Err(e) => {
-                        self.set_status(format!("Unsync error: {e}"), StatusLevel::Error);
-                    }
-                }
-            }
-            Err(e) => {
-                self.set_status(format!("Error: {e}"), StatusLevel::Error);
-            }
-        }
-    }
-
-    /// Propagate uncommitted changes from the synced feature branch into main.
-    /// Auto-commits on the feature worktree, then re-syncs into main.
-    pub fn execute_propagate(&mut self) {
-        // 1. Get the synced feature branch for the main worktree.
-        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
-            Some(wt) => wt.path.clone(),
-            None => {
-                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
-                return;
-            }
-        };
-        let synced_branch = match self.synced_branch.get(&main_path) {
-            Some(b) => b.clone(),
-            None => {
-                self.set_status(
-                    "Not synced — propagate requires an active sync.".to_string(),
-                    StatusLevel::Warning,
-                );
-                return;
-            }
-        };
-
-        // 2. Find the worktree that owns the synced feature branch.
-        let source_path = match self.worktrees.iter().find(|w| w.branch == synced_branch) {
+        let source_path = match self.worktrees.iter().find(|w| w.branch == branch_name) {
             Some(w) => w.path.clone(),
             None => {
                 self.set_status(
-                    format!("Source worktree for '{synced_branch}' not found."),
+                    format!("Worktree for '{branch_name}' not found."),
                     StatusLevel::Error,
                 );
                 return;
             }
         };
-
-        // 3. Auto-commit on source, then resync into main.
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
-                match engine.auto_commit_worktree(&source_path) {
-                    Ok(Some(_oid)) => {
-                        // Unsync main (reset --hard HEAD).
-                        if let Err(e) = engine.unsync_reset(&main_path) {
-                            self.set_status(
-                                format!("Propagate failed during reset: {e}"),
-                                StatusLevel::Error,
-                            );
-                            return;
-                        }
-                        // Re-sync feature branch into main.
-                        match engine.sync_merge(&main_path, &synced_branch) {
-                            Ok(git_engine::SyncResult::Merged(msg)) => {
-                                self.set_status(
-                                    format!("Propagated: {msg}"),
-                                    StatusLevel::Success,
-                                );
-                                self.refresh_worktrees();
-                            }
-                            Ok(git_engine::SyncResult::UpToDate) => {
-                                self.set_status(
-                                    format!("Propagated (commit applied, now up-to-date)."),
-                                    StatusLevel::Success,
-                                );
-                                self.synced_branch.remove(&main_path);
-                                self.refresh_worktrees();
-                            }
-                            Err(e) => {
-                                self.set_status(
-                                    format!("Propagate sync error: {e}"),
-                                    StatusLevel::Error,
-                                );
-                            }
-                        }
-                    }
-                    Ok(None) => {
+                match engine.grab_branch(&main_path, &source_path, branch_name) {
+                    Ok(()) => {
+                        self.grabbed_branch = Some(GrabbedBranch {
+                            branch: branch_name.to_string(),
+                            source_worktree: source_path,
+                        });
                         self.set_status(
-                            format!("Source '{synced_branch}' is clean — nothing to propagate."),
-                            StatusLevel::Info,
+                            format!("Grabbed '{branch_name}' — main is now on this branch. Press Y to ungrab."),
+                            StatusLevel::Success,
                         );
+                        self.refresh_worktrees();
                     }
                     Err(e) => {
+                        self.set_status(format!("Grab error: {e}"), StatusLevel::Error);
+                    }
+                }
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"), StatusLevel::Error);
+            }
+        }
+    }
+
+    /// Execute ungrab: return main to main branch, restore worktree to original branch.
+    pub fn execute_ungrab(&mut self) {
+        let grabbed = match self.grabbed_branch.clone() {
+            Some(g) => g,
+            None => {
+                self.set_status("Not grabbing any branch.".to_string(), StatusLevel::Warning);
+                return;
+            }
+        };
+        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
+            Some(wt) => wt.path.clone(),
+            None => {
+                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
+                return;
+            }
+        };
+        let main_branch = self.config.general.main_branch.clone();
+        match git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => {
+                match engine.ungrab_branch(
+                    &main_path,
+                    &grabbed.source_worktree,
+                    &grabbed.branch,
+                    &main_branch,
+                ) {
+                    Ok(()) => {
+                        let branch = grabbed.branch.clone();
+                        self.grabbed_branch = None;
                         self.set_status(
-                            format!("Auto-commit error: {e}"),
-                            StatusLevel::Error,
+                            format!("Ungrabbed '{branch}' — main restored."),
+                            StatusLevel::Success,
                         );
+                        self.refresh_worktrees();
+                    }
+                    Err(e) => {
+                        self.set_status(format!("Ungrab error: {e}"), StatusLevel::Error);
                     }
                 }
             }
@@ -2048,16 +1933,14 @@ impl App {
         }
     }
 
-    /// Load sync branch candidates (non-main worktree branches).
-    /// Sync always merges main into a target worktree, so candidates are all
-    /// worktrees except the main one.
-    pub fn load_sync_branches(&mut self) {
-        self.sync_branches = self.worktrees
+    /// Load grab branch candidates (non-main worktree branches).
+    pub fn load_grab_branches(&mut self) {
+        self.grab_branches = self.worktrees
             .iter()
             .filter(|w| !w.is_main)
             .map(|w| w.branch.clone())
             .collect();
-        self.sync_selected = 0;
+        self.grab_selected = 0;
     }
 
     pub fn delete_selected_worktree(&mut self) {

@@ -422,10 +422,10 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// Render the sync branch picker overlay.
-pub fn render_sync_overlay(frame: &mut Frame, area: Rect, app: &App) {
+/// Render the grab branch picker overlay.
+pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
-    let content_lines = app.sync_branches.len() as u16;
+    let content_lines = app.grab_branches.len() as u16;
     let popup_height = (content_lines + 2).min(14).min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -434,26 +434,26 @@ pub fn render_sync_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     let block = Block::default()
-        .title(" Sync → main (Enter: merge, Esc: cancel) ")
+        .title(" Grab → main (Enter: grab, Esc: cancel) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    if app.sync_branches.is_empty() {
-        let paragraph = Paragraph::new("  No branches to sync.")
+    if app.grab_branches.is_empty() {
+        let paragraph = Paragraph::new("  No branches to grab.")
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(paragraph, inner);
         return;
     }
 
     let items: Vec<ListItem> = app
-        .sync_branches
+        .grab_branches
         .iter()
         .enumerate()
         .map(|(i, branch)| {
-            let style = if i == app.sync_selected {
+            let style = if i == app.grab_selected {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
@@ -474,7 +474,7 @@ pub fn render_sync_overlay(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.sync_selected));
+    state.select(Some(app.grab_selected));
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
@@ -958,9 +958,8 @@ fn help_lines_for(focus: crate::app::Focus) -> Vec<Line<'static>> {
             help_key(&mut lines, "w", "Create new worktree");
             help_key(&mut lines, "X", "Delete selected worktree");
             help_key(&mut lines, "s", "Switch (checkout remote branch)");
-            help_key(&mut lines, "y", "Sync (merge other branch in)");
-            help_key(&mut lines, "Y", "Unsync (reset --hard HEAD)");
-            help_key(&mut lines, "S", "Propagate (commit source & resync)");
+            help_key(&mut lines, "g", "Grab (checkout branch on main)");
+            help_key(&mut lines, "G", "Ungrab (restore main branch)");
             help_key(&mut lines, "p", "Cherry-pick from other branch");
             help_key(&mut lines, "P", "Prune stale worktrees");
             help_key(&mut lines, "m", "Merge branch into main");

@@ -26,8 +26,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ("[<=>]", Color::DarkGray)
     };
 
+    let title = if app.grabbed_branch.is_some() {
+        " Worktrees [GRABBED] "
+    } else {
+        " Worktrees "
+    };
+    let title_style = if app.grabbed_branch.is_some() {
+        Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+
     let block = Block::default()
-        .title(" Worktrees ")
+        .title(Span::styled(title, title_style))
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
@@ -35,22 +46,32 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Pulse phase: ~1s cycle at 60fps (30 frames on, 30 frames off).
     let pulse_on = (app.ui_tick / 30) % 2 == 0;
 
+    // Check if this worktree is on a __grab branch (should be greyed out).
+    let is_grab_branch = |wt: &crate::git_engine::WorktreeInfo| -> bool {
+        wt.branch.ends_with("__grab")
+    };
+
     let items: Vec<ListItem> = app
         .worktrees
         .iter()
         .enumerate()
         .map(|(i, wt)| {
             let is_waiting = app.cc_waiting_worktrees.contains(&wt.path);
+            let is_grabbed = is_grab_branch(wt);
 
             let marker = if wt.is_main {
                 "\u{25cf}" // ●
+            } else if is_grabbed {
+                "\u{1f512}" // 🔒
             } else if i == app.selected_worktree {
                 "\u{25c9}" // ◉
             } else {
                 "\u{25cb}" // ○
             };
 
-            let marker_style = if is_waiting {
+            let marker_style = if is_grabbed {
+                Style::default().fg(Color::DarkGray)
+            } else if is_waiting {
                 Style::default()
                     .fg(if pulse_on { Color::Rgb(255, 165, 0) } else { Color::Rgb(200, 120, 0) })
                     .add_modifier(Modifier::BOLD)
@@ -68,7 +89,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!("+{} ~{} -{}", wt.added, wt.modified, wt.deleted)
             };
 
-            let branch_style = if is_waiting {
+            let branch_style = if is_grabbed {
+                Style::default().fg(Color::DarkGray)
+            } else if is_waiting {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
@@ -85,8 +108,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(wt.branch.clone(), branch_style),
             ];
 
+            // Grabbed indicator on __grab worktree.
+            if is_grabbed {
+                spans.push(Span::styled(
+                    " (grabbed)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+
+            // Tag main worktree when holding a grabbed branch.
+            if wt.is_main && app.grabbed_branch.is_some() {
+                spans.push(Span::styled(
+                    " \u{2190}grabbed",
+                    Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD),
+                ));
+            }
+
             // Prominent waiting indicator with pulse animation.
-            if is_waiting {
+            if is_waiting && !is_grabbed {
                 let indicator = if pulse_on { " \u{25c6}" } else { " \u{25c7}" }; // ◆ / ◇
                 spans.push(Span::styled(
                     indicator,
@@ -98,7 +137,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             spans.push(Span::styled(
                 format!(" {status_text}"),
-                if wt.is_clean {
+                if is_grabbed {
+                    Style::default().fg(Color::DarkGray)
+                } else if wt.is_clean {
                     Style::default().fg(Color::DarkGray)
                 } else {
                     Style::default().fg(Color::Magenta)
@@ -106,33 +147,35 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             ));
 
             // Remote sync indicator (ahead/behind upstream).
-            match (wt.ahead, wt.behind) {
-                (Some(0), Some(0)) => {
-                    // Synced with remote
-                    spans.push(Span::styled(" ≡", Style::default().fg(Color::DarkGray)));
-                }
-                (Some(ahead), Some(behind)) => {
-                    let mut parts = Vec::new();
-                    if ahead > 0 {
-                        parts.push(format!("↑{ahead}"));
+            if !is_grabbed {
+                match (wt.ahead, wt.behind) {
+                    (Some(0), Some(0)) => {
+                        // Synced with remote
+                        spans.push(Span::styled(" ≡", Style::default().fg(Color::DarkGray)));
                     }
-                    if behind > 0 {
-                        parts.push(format!("↓{behind}"));
+                    (Some(ahead), Some(behind)) => {
+                        let mut parts = Vec::new();
+                        if ahead > 0 {
+                            parts.push(format!("↑{ahead}"));
+                        }
+                        if behind > 0 {
+                            parts.push(format!("↓{behind}"));
+                        }
+                        spans.push(Span::styled(
+                            format!(" {}", parts.join("")),
+                            Style::default().fg(Color::Cyan),
+                        ));
                     }
-                    spans.push(Span::styled(
-                        format!(" {}", parts.join("")),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                _ => {
-                    // No upstream tracking
+                    _ => {
+                        // No upstream tracking
+                    }
                 }
             }
 
             let item = ListItem::new(Line::from(spans));
 
             // Apply background highlight to the entire row when waiting.
-            if is_waiting {
+            if is_waiting && !is_grabbed {
                 let bg = if pulse_on {
                     Color::Rgb(60, 35, 0)   // warm orange tint
                 } else {
