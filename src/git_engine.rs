@@ -361,15 +361,25 @@ impl GitEngine {
     // ── Grab / Ungrab ──────────────────────────────────────────────
 
     /// Check whether a worktree has uncommitted changes to tracked files.
+    ///
+    /// Uses `git diff --quiet HEAD` (shell-out) to match the behaviour of the
+    /// `wt grab` zsh helper exactly.  libgit2's status API can report extra
+    /// entries (renames, type-changes, ignored-file edge-cases) that
+    /// `git diff HEAD` does not, causing false positives.
     pub fn has_tracked_changes(&self, worktree_path: &Path) -> Result<bool> {
-        let repo = Repository::open(worktree_path)
-            .with_context(|| format!("cannot open worktree at {}", worktree_path.display()))?;
-        let statuses = repo.statuses(Some(
-            StatusOptions::new()
-                .include_untracked(false)
-                .show(StatusShow::IndexAndWorkdir),
-        ))?;
-        Ok(!statuses.is_empty())
+        use std::process::{Command, Stdio};
+
+        let status = Command::new("git")
+            .args(["diff", "--quiet", "HEAD"])
+            .current_dir(worktree_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .context("failed to run `git diff --quiet HEAD`")?;
+
+        // exit 0 = clean, exit 1 = dirty
+        Ok(!status.success())
     }
 
     /// Grab a branch: move the source worktree to a temporary `__grab`
