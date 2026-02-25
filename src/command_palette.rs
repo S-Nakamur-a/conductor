@@ -45,6 +45,26 @@ pub enum CommandId {
     OpenRepo,
     SwitchRepo,
 
+    // Worktree (additional)
+    UngrabBranch,
+
+    // Explorer
+    ShowDiffList,
+    ShowCommentList,
+
+    // Viewer / Review
+    AddReviewComment,
+    ViewCommentDetail,
+
+    // Comment actions
+    DeleteComment,
+    ToggleCommentResolve,
+    EditComment,
+    ReplyToComment,
+
+    // Session
+    SaveSessionHistory,
+
     // App
     Quit,
 }
@@ -119,6 +139,10 @@ pub const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand { id: CommandId::CherryPick, label: "Worktree: Cherry-pick",
         category: CommandCategory::Worktree, keybinding: Some("p"), keywords: "cherry pick commit" },
 
+    // Worktree (additional)
+    PaletteCommand { id: CommandId::UngrabBranch, label: "Worktree: Ungrab Branch",
+        category: CommandCategory::Worktree, keybinding: Some("G"), keywords: "ungrab release branch" },
+
     // Terminal
     PaletteCommand { id: CommandId::NewClaudeCode, label: "Terminal: New Claude Code",
         category: CommandCategory::Terminal, keybinding: Some("Ctrl+n"), keywords: "spawn ai" },
@@ -136,6 +160,10 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::View, keybinding: Some("/"), keywords: "find grep" },
     PaletteCommand { id: CommandId::ToggleHelp, label: "Show Help",
         category: CommandCategory::View, keybinding: Some("?"), keywords: "keybindings shortcuts" },
+    PaletteCommand { id: CommandId::ShowDiffList, label: "Explorer: Show Diff List",
+        category: CommandCategory::View, keybinding: Some("d"), keywords: "diff changed files" },
+    PaletteCommand { id: CommandId::ShowCommentList, label: "Explorer: Show Comment List",
+        category: CommandCategory::View, keybinding: Some("c"), keywords: "comment review list" },
 
     // Review
     PaletteCommand { id: CommandId::ShowReviewComments, label: "Review: Show Comments",
@@ -144,6 +172,20 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Review, keybinding: None, keywords: "template prompt" },
     PaletteCommand { id: CommandId::SessionHistory, label: "Review: Session History",
         category: CommandCategory::Review, keybinding: Some("H"), keywords: "history log" },
+    PaletteCommand { id: CommandId::AddReviewComment, label: "Review: Add Comment",
+        category: CommandCategory::Review, keybinding: Some("c"), keywords: "new comment add write" },
+    PaletteCommand { id: CommandId::ViewCommentDetail, label: "Review: View Comment Detail",
+        category: CommandCategory::Review, keybinding: Some("Space"), keywords: "detail preview" },
+    PaletteCommand { id: CommandId::DeleteComment, label: "Review: Delete Comment",
+        category: CommandCategory::Review, keybinding: Some("x"), keywords: "remove delete" },
+    PaletteCommand { id: CommandId::ToggleCommentResolve, label: "Review: Toggle Resolve",
+        category: CommandCategory::Review, keybinding: Some("r"), keywords: "resolve unresolve status" },
+    PaletteCommand { id: CommandId::EditComment, label: "Review: Edit Comment",
+        category: CommandCategory::Review, keybinding: Some("e"), keywords: "edit modify update" },
+    PaletteCommand { id: CommandId::ReplyToComment, label: "Review: Reply to Comment",
+        category: CommandCategory::Review, keybinding: Some("R"), keywords: "reply respond" },
+    PaletteCommand { id: CommandId::SaveSessionHistory, label: "Session: Save History",
+        category: CommandCategory::Review, keybinding: Some("s"), keywords: "save record session" },
 
     // Repository
     PaletteCommand { id: CommandId::OpenRepo, label: "Repository: Open by Path",
