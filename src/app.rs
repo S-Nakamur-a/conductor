@@ -120,6 +120,8 @@ pub struct App {
     pub worktree_input_mode: WorktreeInputMode,
     /// Text buffer for worktree name input.
     pub worktree_input_buffer: String,
+    /// Timestamp of the last click on worktree blank space (for double-click detection).
+    pub worktree_blank_last_click: std::time::Instant,
     /// Status message (flash message) shown in the status bar.
     pub status_message: Option<StatusMessage>,
     /// Last known HEAD oid for the selected worktree (for change-detection polling).
@@ -372,6 +374,7 @@ impl App {
             pty_manager: pty_manager::PtyManager::new(),
             worktree_input_mode: WorktreeInputMode::Normal,
             worktree_input_buffer: String::new(),
+            worktree_blank_last_click: std::time::Instant::now(),
             status_message: None,
             last_poll_head_oid: None,
             last_poll_status: None,
