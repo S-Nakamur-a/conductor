@@ -9,6 +9,15 @@ use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use git2::{Repository, StatusOptions, StatusShow};
 
+/// Result of a sync merge operation.
+#[derive(Debug)]
+pub enum SyncResult {
+    /// The merge was performed successfully.
+    Merged(String),
+    /// The target is already up-to-date with the source branch.
+    UpToDate,
+}
+
 /// Info about a single worktree.
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -361,9 +370,9 @@ impl GitEngine {
     // ── Sync / Unsync (wt sync, unsync) ─────────────────────────
 
     /// Merge `branch_name` into the worktree at `worktree_path` without
-    /// committing (--no-commit equivalent). If conflicts occur, aborts
-    /// and resets.
-    pub fn sync_merge(&self, worktree_path: &Path, branch_name: &str) -> Result<String> {
+    /// committing (--no-commit --no-ff equivalent). If conflicts occur,
+    /// aborts and resets.
+    pub fn sync_merge(&self, worktree_path: &Path, branch_name: &str) -> Result<SyncResult> {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!(
                 "Cannot open worktree at {}. Is the path valid?",
@@ -371,14 +380,10 @@ impl GitEngine {
             ))?;
 
         // Find the branch to merge.
-        let branch_ref = match repo.find_branch(branch_name, git2::BranchType::Local) {
-            Ok(b) => b,
-            Err(_) => {
-                return Ok(format!(
-                    "Branch '{branch_name}' not found locally. Was it deleted or renamed?"
-                ));
-            }
-        };
+        let branch_ref = repo.find_branch(branch_name, git2::BranchType::Local)
+            .with_context(|| format!(
+                "Branch '{branch_name}' not found locally. Was it deleted or renamed?"
+            ))?;
         let branch_commit_oid = branch_ref.get().peel_to_commit()
             .context("Failed to resolve branch commit. The branch ref may be corrupt.")?
             .id();
@@ -389,27 +394,22 @@ impl GitEngine {
         let (analysis, _preference) = repo.merge_analysis(&[&branch_annotated])?;
 
         if analysis.is_up_to_date() {
-            return Ok(format!(
-                "Already up-to-date with '{branch_name}'. No changes to merge."
-            ));
+            return Ok(SyncResult::UpToDate);
         }
 
-        if analysis.is_fast_forward() || analysis.is_normal() {
-            // Proceed with merge.
-        } else {
-            return Ok(format!(
+        if !analysis.is_fast_forward() && !analysis.is_normal() {
+            anyhow::bail!(
                 "Cannot merge '{branch_name}': unrelated histories. \
                  Ensure both branches share a common ancestor."
-            ));
+            );
         }
 
         // Perform the merge (this updates the index and workdir but does NOT commit).
-        if let Err(e) = repo.merge(&[&branch_annotated], None, None) {
-            return Ok(format!(
-                "Merge of '{branch_name}' failed: {e}. \
+        repo.merge(&[&branch_annotated], None, None)
+            .with_context(|| format!(
+                "Merge of '{branch_name}' failed. \
                  Try committing or stashing local changes first."
-            ));
-        }
+            ))?;
 
         // Check for conflicts.
         let index = repo.index()?;
@@ -432,15 +432,15 @@ impl GitEngine {
             let head_commit = repo.head()?.peel_to_commit()?;
             repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)?;
             repo.cleanup_state()?;
-            return Ok(format!(
+            anyhow::bail!(
                 "Conflicts with '{branch_name}' in: {conflict_list}. \
                  Sync aborted, worktree restored. Resolve conflicts in the source branch first."
-            ));
+            );
         }
 
-        Ok(format!(
-            "Synced '{branch_name}' (uncommitted). Press y to resync, Y to unsync."
-        ))
+        Ok(SyncResult::Merged(format!(
+            "Synced '{branch_name}' → main (uncommitted). Press y to resync, Y to unsync."
+        )))
     }
 
     /// Reset worktree to HEAD (undo sync). Equivalent to `git reset --hard HEAD`.

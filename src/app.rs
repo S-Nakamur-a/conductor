@@ -1678,22 +1678,28 @@ impl App {
         }
     }
 
-    /// Execute sync merge on the current worktree.
-    pub fn execute_sync(&mut self, source_branch: &str) {
-        let wt_path = match self.worktrees.get(self.selected_worktree) {
+    /// Execute sync: merge feature branch into the main worktree (no commit).
+    pub fn execute_sync(&mut self, feature_branch: &str) {
+        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
             Some(wt) => wt.path.clone(),
             None => {
-                self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
+                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
                 return;
             }
         };
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
-                match engine.sync_merge(&wt_path, source_branch) {
-                    Ok(msg) => {
-                        self.synced_branch.insert(wt_path, source_branch.to_string());
+                match engine.sync_merge(&main_path, feature_branch) {
+                    Ok(git_engine::SyncResult::Merged(msg)) => {
+                        self.synced_branch.insert(main_path, feature_branch.to_string());
                         self.set_status(msg, StatusLevel::Success);
                         self.refresh_worktrees();
+                    }
+                    Ok(git_engine::SyncResult::UpToDate) => {
+                        self.set_status(
+                            format!("Already up-to-date with '{feature_branch}'. No changes to merge."),
+                            StatusLevel::Info,
+                        );
                     }
                     Err(e) => {
                         self.set_status(format!("Sync error: {e}"), StatusLevel::Error);
@@ -1706,33 +1712,41 @@ impl App {
         }
     }
 
-    /// Execute resync: unsync then sync again with the previously synced branch.
+    /// Execute resync: unsync main then sync again with the previously synced branch.
     pub fn execute_resync(&mut self) {
-        let (wt_path, branch) = match self.worktrees.get(self.selected_worktree) {
-            Some(wt) => {
-                if let Some(b) = self.synced_branch.get(&wt.path) {
-                    (wt.path.clone(), b.clone())
-                } else {
-                    self.set_status("No previous sync to repeat.".to_string(), StatusLevel::Warning);
-                    return;
-                }
-            }
+        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
+            Some(wt) => wt.path.clone(),
             None => {
-                self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
+                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
+                return;
+            }
+        };
+        let branch = match self.synced_branch.get(&main_path) {
+            Some(b) => b.clone(),
+            None => {
+                self.set_status("No previous sync to repeat.".to_string(), StatusLevel::Warning);
                 return;
             }
         };
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 // First unsync (reset --hard HEAD).
-                if let Err(e) = engine.unsync_reset(&wt_path) {
+                if let Err(e) = engine.unsync_reset(&main_path) {
                     self.set_status(format!("Resync failed during reset: {e}"), StatusLevel::Error);
                     return;
                 }
                 // Then sync again.
-                match engine.sync_merge(&wt_path, &branch) {
-                    Ok(msg) => {
+                match engine.sync_merge(&main_path, &branch) {
+                    Ok(git_engine::SyncResult::Merged(msg)) => {
                         self.set_status(format!("Resynced: {msg}"), StatusLevel::Success);
+                        self.refresh_worktrees();
+                    }
+                    Ok(git_engine::SyncResult::UpToDate) => {
+                        self.synced_branch.remove(&main_path);
+                        self.set_status(
+                            format!("'{branch}' is now up-to-date with main. Sync cleared."),
+                            StatusLevel::Info,
+                        );
                         self.refresh_worktrees();
                     }
                     Err(e) => {
@@ -1746,27 +1760,28 @@ impl App {
         }
     }
 
-    /// Returns the synced branch for the currently selected worktree, if any.
+    /// Returns the synced feature branch for the main worktree, if any.
     pub fn current_synced_branch(&self) -> Option<&str> {
-        self.worktrees.get(self.selected_worktree)
+        self.worktrees.iter()
+            .find(|w| w.is_main)
             .and_then(|wt| self.synced_branch.get(&wt.path))
             .map(|s| s.as_str())
     }
 
-    /// Execute unsync (reset --hard HEAD) on the current worktree.
+    /// Execute unsync (reset --hard HEAD) on the main worktree.
     pub fn execute_unsync(&mut self) {
-        let wt_path = match self.worktrees.get(self.selected_worktree) {
+        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
             Some(wt) => wt.path.clone(),
             None => {
-                self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
+                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
                 return;
             }
         };
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
-                match engine.unsync_reset(&wt_path) {
+                match engine.unsync_reset(&main_path) {
                     Ok(msg) => {
-                        self.synced_branch.remove(&wt_path);
+                        self.synced_branch.remove(&main_path);
                         self.set_status(msg, StatusLevel::Success);
                         self.refresh_worktrees();
                     }
@@ -1781,29 +1796,29 @@ impl App {
         }
     }
 
-    /// Propagate uncommitted changes from the synced source branch into the
-    /// current worktree. Auto-commits on the source, then re-syncs.
+    /// Propagate uncommitted changes from the synced feature branch into main.
+    /// Auto-commits on the feature worktree, then re-syncs into main.
     pub fn execute_propagate(&mut self) {
-        // 1. Get the synced branch for current worktree.
-        let (wt_path, synced_branch) = match self.worktrees.get(self.selected_worktree) {
-            Some(wt) => {
-                if let Some(b) = self.synced_branch.get(&wt.path) {
-                    (wt.path.clone(), b.clone())
-                } else {
-                    self.set_status(
-                        "Not synced — propagate requires an active sync.".to_string(),
-                        StatusLevel::Warning,
-                    );
-                    return;
-                }
-            }
+        // 1. Get the synced feature branch for the main worktree.
+        let main_path = match self.worktrees.iter().find(|w| w.is_main) {
+            Some(wt) => wt.path.clone(),
             None => {
-                self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
+                self.set_status("Main worktree not found.".to_string(), StatusLevel::Error);
+                return;
+            }
+        };
+        let synced_branch = match self.synced_branch.get(&main_path) {
+            Some(b) => b.clone(),
+            None => {
+                self.set_status(
+                    "Not synced — propagate requires an active sync.".to_string(),
+                    StatusLevel::Warning,
+                );
                 return;
             }
         };
 
-        // 2. Find the worktree that owns the synced branch.
+        // 2. Find the worktree that owns the synced feature branch.
         let source_path = match self.worktrees.iter().find(|w| w.branch == synced_branch) {
             Some(w) => w.path.clone(),
             None => {
@@ -1815,26 +1830,34 @@ impl App {
             }
         };
 
-        // 3. Auto-commit on source, then resync.
+        // 3. Auto-commit on source, then resync into main.
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.auto_commit_worktree(&source_path) {
                     Ok(Some(_oid)) => {
-                        // Unsync (reset --hard HEAD).
-                        if let Err(e) = engine.unsync_reset(&wt_path) {
+                        // Unsync main (reset --hard HEAD).
+                        if let Err(e) = engine.unsync_reset(&main_path) {
                             self.set_status(
                                 format!("Propagate failed during reset: {e}"),
                                 StatusLevel::Error,
                             );
                             return;
                         }
-                        // Re-sync with the source branch.
-                        match engine.sync_merge(&wt_path, &synced_branch) {
-                            Ok(msg) => {
+                        // Re-sync feature branch into main.
+                        match engine.sync_merge(&main_path, &synced_branch) {
+                            Ok(git_engine::SyncResult::Merged(msg)) => {
                                 self.set_status(
                                     format!("Propagated: {msg}"),
                                     StatusLevel::Success,
                                 );
+                                self.refresh_worktrees();
+                            }
+                            Ok(git_engine::SyncResult::UpToDate) => {
+                                self.set_status(
+                                    format!("Propagated (commit applied, now up-to-date)."),
+                                    StatusLevel::Success,
+                                );
+                                self.synced_branch.remove(&main_path);
                                 self.refresh_worktrees();
                             }
                             Err(e) => {
