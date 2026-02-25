@@ -105,6 +105,30 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 },
             ));
 
+            // Remote sync indicator (ahead/behind upstream).
+            match (wt.ahead, wt.behind) {
+                (Some(0), Some(0)) => {
+                    // Synced with remote
+                    spans.push(Span::styled(" ≡", Style::default().fg(Color::DarkGray)));
+                }
+                (Some(ahead), Some(behind)) => {
+                    let mut parts = Vec::new();
+                    if ahead > 0 {
+                        parts.push(format!("↑{ahead}"));
+                    }
+                    if behind > 0 {
+                        parts.push(format!("↓{behind}"));
+                    }
+                    spans.push(Span::styled(
+                        format!(" {}", parts.join("")),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                _ => {
+                    // No upstream tracking
+                }
+            }
+
             let item = ListItem::new(Line::from(spans));
 
             // Apply background highlight to the entire row when waiting.
