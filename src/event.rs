@@ -338,7 +338,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 // First sync: show branch picker.
                 app.load_sync_branches();
                 if app.sync_branches.is_empty() {
-                    app.set_status("No other worktree branches to sync.".to_string(), StatusLevel::Warning);
+                    app.set_status("No non-main worktrees to sync.".to_string(), StatusLevel::Warning);
                 } else {
                     app.sync_active = true;
                 }
@@ -1545,9 +1545,14 @@ fn handle_sync_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            if let Some(branch) = app.sync_branches.get(app.sync_selected).cloned() {
+            if let Some(target_branch) = app.sync_branches.get(app.sync_selected).cloned() {
                 app.sync_active = false;
-                app.execute_sync(&branch);
+                // Switch selected worktree to the target, then sync main into it.
+                if let Some(idx) = app.worktrees.iter().position(|w| w.branch == target_branch) {
+                    app.selected_worktree = idx;
+                }
+                let main_branch = app.config.general.main_branch.clone();
+                app.execute_sync(&main_branch);
             }
         }
         KeyCode::Esc => {

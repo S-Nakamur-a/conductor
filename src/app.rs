@@ -720,7 +720,7 @@ impl App {
                 } else {
                     self.load_sync_branches();
                     if self.sync_branches.is_empty() {
-                        self.set_status_info("No other worktree branches to sync.".to_string());
+                        self.set_status_info("No non-main worktrees to sync.".to_string());
                     } else {
                         self.sync_active = true;
                     }
@@ -1938,12 +1938,13 @@ impl App {
         }
     }
 
-    /// Load sync branch candidates (other local worktree branches).
+    /// Load sync branch candidates (non-main worktree branches).
+    /// Sync always merges main into a target worktree, so candidates are all
+    /// worktrees except the main one.
     pub fn load_sync_branches(&mut self) {
-        let current_branch = self.selected_worktree_branch();
         self.sync_branches = self.worktrees
             .iter()
-            .filter(|w| w.branch != current_branch)
+            .filter(|w| !w.is_main)
             .map(|w| w.branch.clone())
             .collect();
         self.sync_selected = 0;

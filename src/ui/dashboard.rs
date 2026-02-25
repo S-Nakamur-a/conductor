@@ -434,7 +434,7 @@ pub fn render_sync_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     let block = Block::default()
-        .title(" Sync Branch (Enter: merge, Esc: cancel) ")
+        .title(" Sync main into… (Enter: merge, Esc: cancel) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
