@@ -125,7 +125,7 @@ pub const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand { id: CommandId::NewShell, label: "Terminal: New Shell",
         category: CommandCategory::Terminal, keybinding: Some("Ctrl+t"), keywords: "spawn bash zsh" },
     PaletteCommand { id: CommandId::ResumeClaudeSession, label: "Terminal: Resume Claude Session",
-        category: CommandCategory::Terminal, keybinding: Some("Ctrl+p"), keywords: "resume continue" },
+        category: CommandCategory::Terminal, keybinding: None, keywords: "resume continue" },
 
     // Git
     PaletteCommand { id: CommandId::RefreshDiff, label: "Diff: Refresh",
