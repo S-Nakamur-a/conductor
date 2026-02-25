@@ -17,13 +17,12 @@ pub enum CommandId {
     CreateWorktree,
     DeleteWorktree,
     SwitchBranch,
-    SyncBranch,
+    GrabBranch,
     PruneWorktrees,
     MergeToMain,
     RefreshWorktrees,
     ResetMainToOrigin,
     CherryPick,
-    PropagateSyncedChanges,
 
     // Terminal
     NewClaudeCode,
@@ -107,8 +106,8 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Worktree, keybinding: Some("X"), keywords: "remove branch" },
     PaletteCommand { id: CommandId::SwitchBranch, label: "Worktree: Switch Branch (Remote)",
         category: CommandCategory::Worktree, keybinding: Some("s"), keywords: "checkout remote" },
-    PaletteCommand { id: CommandId::SyncBranch, label: "Worktree: Sync / Resync",
-        category: CommandCategory::Worktree, keybinding: Some("y"), keywords: "merge integrate resync" },
+    PaletteCommand { id: CommandId::GrabBranch, label: "Worktree: Grab Branch",
+        category: CommandCategory::Worktree, keybinding: Some("g"), keywords: "grab checkout branch" },
     PaletteCommand { id: CommandId::PruneWorktrees, label: "Worktree: Prune Stale",
         category: CommandCategory::Worktree, keybinding: Some("P"), keywords: "clean stale" },
     PaletteCommand { id: CommandId::MergeToMain, label: "Worktree: Merge into Main",
@@ -119,8 +118,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Worktree, keybinding: Some("R"), keywords: "reset origin" },
     PaletteCommand { id: CommandId::CherryPick, label: "Worktree: Cherry-pick",
         category: CommandCategory::Worktree, keybinding: Some("p"), keywords: "cherry pick commit" },
-    PaletteCommand { id: CommandId::PropagateSyncedChanges, label: "Worktree: Propagate",
-        category: CommandCategory::Worktree, keybinding: Some("S"), keywords: "propagate sync commit send push" },
 
     // Terminal
     PaletteCommand { id: CommandId::NewClaudeCode, label: "Terminal: New Claude Code",

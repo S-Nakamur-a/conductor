@@ -33,8 +33,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         handle_switch_branch_key(app, key);
         return;
     }
-    if app.sync_active {
-        handle_sync_key(app, key);
+    if app.grab_active {
+        handle_grab_key(app, key);
         return;
     }
     if app.prune_active {
@@ -330,27 +330,24 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 app.set_status("No remote branches found.".to_string(), StatusLevel::Warning);
             }
         }
-        KeyCode::Char('y') => {
-            if app.current_synced_branch().is_some() {
-                // Resync: unsync then sync again with the same branch.
-                app.execute_resync();
+        KeyCode::Char('g') => {
+            if app.grabbed_branch.is_some() {
+                app.set_status("Already grabbing a branch. Ungrab first (G).".to_string(), StatusLevel::Warning);
             } else {
-                // First sync: show branch picker.
-                app.load_sync_branches();
-                if app.sync_branches.is_empty() {
-                    app.set_status("No non-main worktrees to sync.".to_string(), StatusLevel::Warning);
+                app.load_grab_branches();
+                if app.grab_branches.is_empty() {
+                    app.set_status("No non-main worktrees to grab.".to_string(), StatusLevel::Warning);
                 } else {
-                    app.sync_active = true;
+                    app.grab_active = true;
                 }
             }
         }
-        KeyCode::Char('Y') => {
-            if app.current_synced_branch().is_none() {
-                app.set_status("Not synced — nothing to unsync.".to_string(), StatusLevel::Warning);
+        KeyCode::Char('G') => {
+            if app.grabbed_branch.is_none() {
+                app.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
             } else {
-                // Unsync: confirm reset --hard HEAD.
-                app.worktree_input_mode = crate::app::WorktreeInputMode::ConfirmingUnsync;
-                app.set_status("Unsync (reset --hard HEAD)? All uncommitted changes will be lost. (y/n)".to_string(), StatusLevel::Warning);
+                app.worktree_input_mode = crate::app::WorktreeInputMode::ConfirmingUngrab;
+                app.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
             }
         }
         KeyCode::Char('P') => {
@@ -423,9 +420,6 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                     app.set_status(format!("Error: {e}"), StatusLevel::Error);
                 }
             }
-        }
-        KeyCode::Char('S') => {
-            app.execute_propagate();
         }
         KeyCode::Char('p') => {
             let current_branch = app
@@ -1060,14 +1054,14 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 app.set_status("Branch kept.".to_string(), StatusLevel::Warning);
             }
         },
-        WorktreeInputMode::ConfirmingUnsync => match key.code {
+        WorktreeInputMode::ConfirmingUngrab => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 app.worktree_input_mode = WorktreeInputMode::Normal;
-                app.execute_unsync();
+                app.execute_ungrab();
             }
             _ => {
                 app.worktree_input_mode = WorktreeInputMode::Normal;
-                app.set_status("Unsync cancelled.".to_string(), StatusLevel::Warning);
+                app.set_status("Ungrab cancelled.".to_string(), StatusLevel::Warning);
             }
         },
         WorktreeInputMode::Normal => unreachable!(),
@@ -1531,31 +1525,30 @@ fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: sync ───────────────────────────────────────────────────────
+// ── Overlay: grab ───────────────────────────────────────────────────────
 
-fn handle_sync_key(app: &mut App, key: KeyEvent) {
-    let count = app.sync_branches.len();
+fn handle_grab_key(app: &mut App, key: KeyEvent) {
+    let count = app.grab_branches.len();
 
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
-            if count > 0 && app.sync_selected + 1 < count {
-                app.sync_selected += 1;
+            if count > 0 && app.grab_selected + 1 < count {
+                app.grab_selected += 1;
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            if app.sync_selected > 0 {
-                app.sync_selected -= 1;
+            if app.grab_selected > 0 {
+                app.grab_selected -= 1;
             }
         }
         KeyCode::Enter => {
-            if let Some(feature_branch) = app.sync_branches.get(app.sync_selected).cloned() {
-                app.sync_active = false;
-                // Merge the selected feature branch into main worktree.
-                app.execute_sync(&feature_branch);
+            if let Some(branch) = app.grab_branches.get(app.grab_selected).cloned() {
+                app.grab_active = false;
+                app.execute_grab(&branch);
             }
         }
         KeyCode::Esc => {
-            app.sync_active = false;
+            app.grab_active = false;
         }
         _ => {}
     }

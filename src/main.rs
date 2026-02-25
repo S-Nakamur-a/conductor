@@ -419,8 +419,8 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingDeleteBranch {
         ui::dashboard::render_delete_branch_confirm_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingUnsync {
-        render_confirm_overlay(frame, main_area, app, " Confirm Unsync ", ratatui::style::Color::Yellow);
+    if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingUngrab {
+        render_confirm_overlay(frame, main_area, app, " Confirm Ungrab ", ratatui::style::Color::Yellow);
     }
     if app.cherry_pick_active {
         ui::dashboard::render_cherry_pick_overlay(frame, main_area, app);
@@ -428,8 +428,8 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     if app.switch_branch_active {
         ui::dashboard::render_switch_branch_overlay(frame, main_area, app);
     }
-    if app.sync_active {
-        ui::dashboard::render_sync_overlay(frame, main_area, app);
+    if app.grab_active {
+        ui::dashboard::render_grab_overlay(frame, main_area, app);
     }
     if app.prune_active {
         ui::dashboard::render_prune_overlay(frame, main_area, app);
