@@ -789,6 +789,9 @@ impl App {
                     self.set_status_info("No other worktree branches available.".to_string());
                 }
             }
+            CommandId::PropagateSyncedChanges => {
+                self.execute_propagate();
+            }
             CommandId::NewClaudeCode => {
                 if let Err(e) = self.spawn_claude_code() {
                     self.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
@@ -1769,6 +1772,90 @@ impl App {
                     }
                     Err(e) => {
                         self.set_status(format!("Unsync error: {e}"), StatusLevel::Error);
+                    }
+                }
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"), StatusLevel::Error);
+            }
+        }
+    }
+
+    /// Propagate uncommitted changes from the synced source branch into the
+    /// current worktree. Auto-commits on the source, then re-syncs.
+    pub fn execute_propagate(&mut self) {
+        // 1. Get the synced branch for current worktree.
+        let (wt_path, synced_branch) = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => {
+                if let Some(b) = self.synced_branch.get(&wt.path) {
+                    (wt.path.clone(), b.clone())
+                } else {
+                    self.set_status(
+                        "Not synced — propagate requires an active sync.".to_string(),
+                        StatusLevel::Warning,
+                    );
+                    return;
+                }
+            }
+            None => {
+                self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
+                return;
+            }
+        };
+
+        // 2. Find the worktree that owns the synced branch.
+        let source_path = match self.worktrees.iter().find(|w| w.branch == synced_branch) {
+            Some(w) => w.path.clone(),
+            None => {
+                self.set_status(
+                    format!("Source worktree for '{synced_branch}' not found."),
+                    StatusLevel::Error,
+                );
+                return;
+            }
+        };
+
+        // 3. Auto-commit on source, then resync.
+        match git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => {
+                match engine.auto_commit_worktree(&source_path) {
+                    Ok(Some(_oid)) => {
+                        // Unsync (reset --hard HEAD).
+                        if let Err(e) = engine.unsync_reset(&wt_path) {
+                            self.set_status(
+                                format!("Propagate failed during reset: {e}"),
+                                StatusLevel::Error,
+                            );
+                            return;
+                        }
+                        // Re-sync with the source branch.
+                        match engine.sync_merge(&wt_path, &synced_branch) {
+                            Ok(msg) => {
+                                self.set_status(
+                                    format!("Propagated: {msg}"),
+                                    StatusLevel::Success,
+                                );
+                                self.refresh_worktrees();
+                            }
+                            Err(e) => {
+                                self.set_status(
+                                    format!("Propagate sync error: {e}"),
+                                    StatusLevel::Error,
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        self.set_status(
+                            format!("Source '{synced_branch}' is clean — nothing to propagate."),
+                            StatusLevel::Info,
+                        );
+                    }
+                    Err(e) => {
+                        self.set_status(
+                            format!("Auto-commit error: {e}"),
+                            StatusLevel::Error,
+                        );
                     }
                 }
             }
