@@ -791,6 +791,10 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
 
 /// Navigate to the file and line of the comment at the given index.
 fn navigate_to_comment(app: &mut App, comment_idx: usize) {
+    navigate_to_comment_with_focus(app, comment_idx, true);
+}
+
+fn navigate_to_comment_with_focus(app: &mut App, comment_idx: usize, focus_viewer: bool) {
     if let Some(comment) = app.review_state.comments.get(comment_idx) {
         let file_path = comment.file_path.clone();
         let line = comment.line_start as usize;
@@ -802,7 +806,9 @@ fn navigate_to_comment(app: &mut App, comment_idx: usize) {
             app.viewer_state.selected_line_start = Some(line);
             app.viewer_state.selected_line_end = None;
             app.review_state.build_file_comment_cache(&file_path);
-            app.set_focus(Focus::Viewer);
+            if focus_viewer {
+                app.set_focus(Focus::Viewer);
+            }
         }
     }
 }
@@ -2051,11 +2057,22 @@ pub fn handle_mouse_event(
                                 let row_count = app.review_state.comment_list_rows.len();
                                 if idx < row_count {
                                     app.viewer_state.comment_list_selected = idx;
+
+                                    // Double-click detection.
+                                    let now = std::time::Instant::now();
+                                    let elapsed = now.duration_since(app.viewer_state.last_comment_click_time);
+                                    let is_double = elapsed.as_millis() < 400
+                                        && app.viewer_state.last_comment_click_idx == idx;
+                                    app.viewer_state.last_comment_click_time = now;
+                                    app.viewer_state.last_comment_click_idx = idx;
+
                                     // Navigate to the comment's file location.
                                     if let Some(comment_idx) =
                                         app.review_state.selected_comment_idx(idx)
                                     {
-                                        navigate_to_comment(app, comment_idx);
+                                        // Single click: jump to location, keep focus on comments.
+                                        // Double click: jump and focus Viewer.
+                                        navigate_to_comment_with_focus(app, comment_idx, is_double);
                                     }
                                 }
                             } else {
