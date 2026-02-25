@@ -90,16 +90,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
 
-        // Ctrl+w — close the active terminal session.
+        // Ctrl+w — jump to Worktree panel.
         if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let session_idx = match app.focus {
-                Focus::TerminalClaude => app.active_claude_session,
-                Focus::TerminalShell => app.active_shell_session,
-                _ => unreachable!(),
-            };
-            if let Some(idx) = session_idx {
-                app.close_terminal_session(idx);
-            }
+            app.set_focus(Focus::Worktree);
             return;
         }
 
@@ -156,21 +149,12 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             }
         }
 
-        // Ctrl+. — command palette, Ctrl+, — worktree jump (intercepted before PTY forward).
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('.') => {
-                    app.command_palette_active = true;
-                    app.command_palette_filter.clear();
-                    app.command_palette_selected = 0;
-                    return;
-                }
-                KeyCode::Char(',') => {
-                    app.set_focus(Focus::Worktree);
-                    return;
-                }
-                _ => {}
-            }
+        // Ctrl+p — command palette (intercepted before PTY forward).
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+            app.command_palette_active = true;
+            app.command_palette_filter.clear();
+            app.command_palette_selected = 0;
+            return;
         }
 
         // Forward all keys (including Esc, Ctrl+*, Tab) to the active PTY session.
@@ -192,15 +176,15 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            // Ctrl+. — command palette.
-            KeyCode::Char('.') => {
+            // Ctrl+p — command palette.
+            KeyCode::Char('p') => {
                 app.command_palette_active = true;
                 app.command_palette_filter.clear();
                 app.command_palette_selected = 0;
                 return;
             }
-            // Ctrl+, — jump to Worktree panel.
-            KeyCode::Char(',') => {
+            // Ctrl+w — jump to Worktree panel.
+            KeyCode::Char('w') => {
                 app.set_focus(Focus::Worktree);
                 return;
             }
@@ -246,12 +230,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 }
                 return;
             }
-            // Ctrl+p — resume Claude Code session picker.
-            KeyCode::Char('p') => {
-                app.resume_session_active = true;
-                app.load_resume_sessions();
-                return;
-            }
+            // (Ctrl+p is now command palette — handled above)
             _ => {}
         }
     }
@@ -887,6 +866,10 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('c') => {
             open_viewer_comment(app);
+        }
+        KeyCode::Char(' ') => {
+            // Open comment detail modal for comments on the current line.
+            open_viewer_comment_detail(app);
         }
         _ => {}
     }
@@ -1676,6 +1659,43 @@ fn open_viewer_comment(app: &mut App) {
         Some("Add comment: [s:|q:]file:line body".to_string());
 }
 
+/// Open the comment detail modal from the Viewer panel for the current line.
+fn open_viewer_comment_detail(app: &mut App) {
+    // Determine which line the cursor is on (same logic as preview).
+    let cursor_line = if let Some((start, _)) = app.viewer_state.selected_range() {
+        start
+    } else {
+        app.viewer_state.file_scroll + 1
+    };
+
+    // Find a comment on that line.
+    let comments = match app.review_state.file_comments.get(&cursor_line) {
+        Some(c) if !c.is_empty() => c,
+        _ => return,
+    };
+
+    // Find the index of the first comment in the master comment list.
+    let target_id = &comments[0].id;
+    let comment_idx = match app.review_state.comments.iter().position(|c| &c.id == target_id) {
+        Some(idx) => idx,
+        None => return,
+    };
+
+    // Load replies if not cached.
+    let cid = target_id.clone();
+    if !app.review_state.cached_replies.contains_key(&cid) {
+        if let Some(store) = app.review_store.as_ref() {
+            if let Ok(replies) = store.get_replies(&cid) {
+                app.review_state.cached_replies.insert(cid, replies);
+            }
+        }
+    }
+
+    app.review_state.comment_detail_idx = comment_idx;
+    app.review_state.comment_detail_scroll = 0;
+    app.review_state.comment_detail_active = true;
+}
+
 /// Parse the input buffer and add a new review comment.
 ///
 /// Format: `[s:|q:]file_path:line[-end] body_text`
@@ -1990,46 +2010,87 @@ pub fn handle_mouse_event(
                         app.on_worktree_changed();
                         app.set_focus(Focus::Explorer);
                     } else {
-                        // Clicked on blank space below worktree items — just focus.
-                        app.set_focus(Focus::Worktree);
+                        // Clicked on blank space below worktree items.
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(app.worktree_blank_last_click);
+                        app.worktree_blank_last_click = now;
+
+                        if elapsed.as_millis() < 400 {
+                            // Double-click → open worktree creation dialog.
+                            app.worktree_input_mode =
+                                crate::app::WorktreeInputMode::CreatingWorktree;
+                            app.worktree_input_buffer.clear();
+                        } else {
+                            // Single click → just focus.
+                            app.set_focus(Focus::Worktree);
+                        }
                     }
                 } else if col < explorer_end {
                     // Explorer column.
                     app.set_focus(Focus::Explorer);
 
-                    // Determine if click is in top half (file tree) or bottom half (diff list).
+                    // Determine if click is in top half (file tree) or bottom half (diff/comment list).
                     if row >= explorer_mid_y {
                         app.viewer_state.explorer_focus_on_diff_list = true;
-                        // Select the clicked display list item.
                         let inner_y = explorer_mid_y + 1; // inside border
                         if row >= inner_y {
                             let click_offset = (row - inner_y) as usize;
-                            let idx = app.viewer_state.diff_list_scroll + click_offset;
-                            if idx < app.diff_state.display_list.len() {
-                                app.viewer_state.diff_list_selected = idx;
-                                // Single-click: toggle header or open file in Viewer.
-                                if app.diff_state.toggle_section(idx) {
-                                    // Toggled a section header.
-                                    let new_count = app.diff_state.display_list.len();
-                                    if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
-                                        app.viewer_state.diff_list_selected = new_count - 1;
+
+                            if app.viewer_state.explorer_show_comments {
+                                // Comment list is displayed — handle comment selection.
+                                let idx = app.viewer_state.comment_list_scroll + click_offset;
+                                let row_count = app.review_state.comment_list_rows.len();
+                                if idx < row_count {
+                                    app.viewer_state.comment_list_selected = idx;
+                                    // Navigate to the comment's file location.
+                                    if let Some(comment_idx) =
+                                        app.review_state.selected_comment_idx(idx)
+                                    {
+                                        navigate_to_comment(app, comment_idx);
                                     }
-                                } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(idx) {
-                                    let file_path = file_diff.path.clone();
-                                    let first_change_line = file_diff.hunks.iter()
-                                        .flat_map(|h| h.lines.iter())
-                                        .find(|l| l.tag != crate::diff_state::DiffLineTag::Equal)
-                                        .and_then(|l| l.new_line_no.or(l.old_line_no));
-                                    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                                        let wt_path = wt.path.clone();
-                                        app.viewer_state.open_file(&wt_path, &file_path);
-                                        if let Some(line) = first_change_line {
-                                            app.viewer_state.file_scroll = line.saturating_sub(4);
+                                }
+                            } else {
+                                // Diff list is displayed — handle diff selection.
+                                let idx = app.viewer_state.diff_list_scroll + click_offset;
+                                if idx < app.diff_state.display_list.len() {
+                                    app.viewer_state.diff_list_selected = idx;
+                                    // Single-click: toggle header or open file in Viewer.
+                                    if app.diff_state.toggle_section(idx) {
+                                        // Toggled a section header.
+                                        let new_count = app.diff_state.display_list.len();
+                                        if new_count > 0
+                                            && app.viewer_state.diff_list_selected >= new_count
+                                        {
+                                            app.viewer_state.diff_list_selected = new_count - 1;
                                         }
-                                        app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
-                                        app.rehighlight_viewer();
-                                        app.review_state.build_file_comment_cache(&file_path);
-                                        app.set_focus(Focus::Viewer);
+                                    } else if let Some((file_diff, _section)) =
+                                        app.diff_state.resolve_file(idx)
+                                    {
+                                        let file_path = file_diff.path.clone();
+                                        let first_change_line = file_diff
+                                            .hunks
+                                            .iter()
+                                            .flat_map(|h| h.lines.iter())
+                                            .find(|l| {
+                                                l.tag != crate::diff_state::DiffLineTag::Equal
+                                            })
+                                            .and_then(|l| l.new_line_no.or(l.old_line_no));
+                                        if let Some(wt) =
+                                            app.worktrees.get(app.selected_worktree)
+                                        {
+                                            let wt_path = wt.path.clone();
+                                            app.viewer_state.open_file(&wt_path, &file_path);
+                                            if let Some(line) = first_change_line {
+                                                app.viewer_state.file_scroll =
+                                                    line.saturating_sub(4);
+                                            }
+                                            app.viewer_state
+                                                .reveal_file_in_tree(&file_path, &wt_path);
+                                            app.rehighlight_viewer();
+                                            app.review_state
+                                                .build_file_comment_cache(&file_path);
+                                            app.set_focus(Focus::Viewer);
+                                        }
                                     }
                                 }
                             }

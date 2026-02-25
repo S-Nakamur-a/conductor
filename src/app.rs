@@ -120,6 +120,8 @@ pub struct App {
     pub worktree_input_mode: WorktreeInputMode,
     /// Text buffer for worktree name input.
     pub worktree_input_buffer: String,
+    /// Timestamp of the last click on worktree blank space (for double-click detection).
+    pub worktree_blank_last_click: std::time::Instant,
     /// Status message (flash message) shown in the status bar.
     pub status_message: Option<StatusMessage>,
     /// Last known HEAD oid for the selected worktree (for change-detection polling).
@@ -372,6 +374,7 @@ impl App {
             pty_manager: pty_manager::PtyManager::new(),
             worktree_input_mode: WorktreeInputMode::Normal,
             worktree_input_buffer: String::new(),
+            worktree_blank_last_click: std::time::Instant::now(),
             status_message: None,
             last_poll_head_oid: None,
             last_poll_status: None,
@@ -652,7 +655,7 @@ impl App {
             Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | y/Y: sync/unsync | P: prune",
             Focus::Explorer => "Alt+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
             Focus::Viewer => "Alt+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
-            Focus::TerminalClaude => "Alt+1-5: jump | Ctrl+n: new CC | Ctrl+p: resume CC | keys → PTY",
+            Focus::TerminalClaude => "Alt+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
             Focus::TerminalShell => "Alt+1-5: jump | Ctrl+t: new shell | keys → PTY",
         }
     }

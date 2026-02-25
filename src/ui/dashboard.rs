@@ -942,14 +942,13 @@ fn help_lines_for(focus: crate::app::Focus) -> Vec<Line<'static>> {
     help_section(&mut lines, "Global");
     help_key(&mut lines, "Ctrl+n", "New Claude Code session");
     help_key(&mut lines, "Ctrl+t", "New Shell session");
-    help_key(&mut lines, "Ctrl+p", "Resume Claude Code session");
+    help_key(&mut lines, "Ctrl+p", "Command palette");
+    help_key(&mut lines, "Ctrl+w", "Jump to Worktree panel");
     help_key(&mut lines, "Ctrl+o", "Open repository by path");
     help_key(&mut lines, "Ctrl+r", "Switch repository");
     help_key(&mut lines, "Tab / Shift+Tab", "Cycle panel focus");
     help_key(&mut lines, "q / Q", "Quit application");
     help_key(&mut lines, "?", "Toggle this help");
-    help_key(&mut lines, "Ctrl+.", "Command palette");
-    help_key(&mut lines, "Ctrl+,", "Jump to Worktree panel");
 
     match focus {
         Focus::Worktree => {
