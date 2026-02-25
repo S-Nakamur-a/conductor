@@ -1686,6 +1686,18 @@ impl App {
 
     /// Execute grab: checkout main to the selected worktree's branch.
     pub fn execute_grab(&mut self, branch_name: &str) {
+        // Pre-check: already grabbing another branch
+        if let Some(ref grabbed) = self.grabbed_branch {
+            self.set_status(
+                format!(
+                    "Already grabbed: {}. Ungrab first (Y).",
+                    grabbed.branch
+                ),
+                StatusLevel::Warning,
+            );
+            return;
+        }
+
         let main_path = match self.worktrees.iter().find(|w| w.is_main) {
             Some(wt) => wt.path.clone(),
             None => {
