@@ -331,18 +331,27 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char('y') => {
-            // Sync: show branch picker to merge into current worktree.
-            app.load_sync_branches();
-            if app.sync_branches.is_empty() {
-                app.set_status("No other worktree branches to sync.".to_string(), StatusLevel::Warning);
+            if app.current_synced_branch().is_some() {
+                // Resync: unsync then sync again with the same branch.
+                app.execute_resync();
             } else {
-                app.sync_active = true;
+                // First sync: show branch picker.
+                app.load_sync_branches();
+                if app.sync_branches.is_empty() {
+                    app.set_status("No other worktree branches to sync.".to_string(), StatusLevel::Warning);
+                } else {
+                    app.sync_active = true;
+                }
             }
         }
         KeyCode::Char('Y') => {
-            // Unsync: confirm reset --hard HEAD.
-            app.worktree_input_mode = crate::app::WorktreeInputMode::ConfirmingUnsync;
-            app.set_status("Unsync (reset --hard HEAD)? All uncommitted changes will be lost. (y/n)".to_string(), StatusLevel::Warning);
+            if app.current_synced_branch().is_none() {
+                app.set_status("Not synced — nothing to unsync.".to_string(), StatusLevel::Warning);
+            } else {
+                // Unsync: confirm reset --hard HEAD.
+                app.worktree_input_mode = crate::app::WorktreeInputMode::ConfirmingUnsync;
+                app.set_status("Unsync (reset --hard HEAD)? All uncommitted changes will be lost. (y/n)".to_string(), StatusLevel::Warning);
+            }
         }
         KeyCode::Char('P') => {
             // Prune: find stale worktrees.
