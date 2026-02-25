@@ -424,6 +424,9 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+        KeyCode::Char('S') => {
+            app.execute_propagate();
+        }
         KeyCode::Char('p') => {
             let current_branch = app
                 .worktrees

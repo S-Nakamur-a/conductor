@@ -960,6 +960,7 @@ fn help_lines_for(focus: crate::app::Focus) -> Vec<Line<'static>> {
             help_key(&mut lines, "s", "Switch (checkout remote branch)");
             help_key(&mut lines, "y", "Sync (merge other branch in)");
             help_key(&mut lines, "Y", "Unsync (reset --hard HEAD)");
+            help_key(&mut lines, "S", "Propagate (commit source & resync)");
             help_key(&mut lines, "p", "Cherry-pick from other branch");
             help_key(&mut lines, "P", "Prune stale worktrees");
             help_key(&mut lines, "m", "Merge branch into main");

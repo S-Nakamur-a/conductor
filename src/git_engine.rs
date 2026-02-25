@@ -452,6 +452,59 @@ impl GitEngine {
         Ok("Unsynced — reset to HEAD. Press y to sync again.".to_string())
     }
 
+    // ── Propagate (auto-commit source worktree) ───────────────────
+
+    /// Stage all changes and create an auto-commit in the given worktree.
+    /// Returns `Ok(Some(oid_string))` if a commit was created, or `Ok(None)`
+    /// if the worktree is clean (nothing to commit).
+    pub fn auto_commit_worktree(&self, worktree_path: &Path) -> Result<Option<String>> {
+        let repo = Repository::open(worktree_path)
+            .with_context(|| format!(
+                "Cannot open worktree at {}",
+                worktree_path.display()
+            ))?;
+
+        // Check if there are any changes to commit.
+        let statuses = repo.statuses(Some(
+            StatusOptions::new()
+                .include_untracked(true)
+                .show(StatusShow::IndexAndWorkdir),
+        ))?;
+
+        if statuses.is_empty() {
+            return Ok(None);
+        }
+
+        // Stage all changes (equivalent to `git add -A`).
+        let mut index = repo.index()?;
+        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
+        index.update_all(["*"].iter(), None)?;
+        index.write()?;
+
+        // Create the commit.
+        let tree_oid = index.write_tree()?;
+        let tree = repo.find_tree(tree_oid)?;
+        let head_commit = repo.head()?.peel_to_commit()?;
+
+        let sig = repo.signature()
+            .or_else(|_| git2::Signature::now("Conductor", "conductor@localhost"))
+            .context("cannot create git signature")?;
+
+        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S");
+        let message = format!("propagate: auto-commit {timestamp}");
+
+        let oid = repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            &message,
+            &tree,
+            &[&head_commit],
+        )?;
+
+        Ok(Some(oid.to_string()))
+    }
+
     // ── Fetch ────────────────────────────────────────────────────
 
     /// Run `git fetch --prune origin` by shelling out to the `git` CLI.

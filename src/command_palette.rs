@@ -23,6 +23,7 @@ pub enum CommandId {
     RefreshWorktrees,
     ResetMainToOrigin,
     CherryPick,
+    PropagateSyncedChanges,
 
     // Terminal
     NewClaudeCode,
@@ -118,6 +119,8 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Worktree, keybinding: Some("R"), keywords: "reset origin" },
     PaletteCommand { id: CommandId::CherryPick, label: "Worktree: Cherry-pick",
         category: CommandCategory::Worktree, keybinding: Some("p"), keywords: "cherry pick commit" },
+    PaletteCommand { id: CommandId::PropagateSyncedChanges, label: "Worktree: Propagate",
+        category: CommandCategory::Worktree, keybinding: Some("S"), keywords: "propagate sync commit send push" },
 
     // Terminal
     PaletteCommand { id: CommandId::NewClaudeCode, label: "Terminal: New Claude Code",
