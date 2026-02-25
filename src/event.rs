@@ -1548,14 +1548,10 @@ fn handle_sync_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            if let Some(target_branch) = app.sync_branches.get(app.sync_selected).cloned() {
+            if let Some(feature_branch) = app.sync_branches.get(app.sync_selected).cloned() {
                 app.sync_active = false;
-                // Switch selected worktree to the target, then sync main into it.
-                if let Some(idx) = app.worktrees.iter().position(|w| w.branch == target_branch) {
-                    app.selected_worktree = idx;
-                }
-                let main_branch = app.config.general.main_branch.clone();
-                app.execute_sync(&main_branch);
+                // Merge the selected feature branch into main worktree.
+                app.execute_sync(&feature_branch);
             }
         }
         KeyCode::Esc => {
