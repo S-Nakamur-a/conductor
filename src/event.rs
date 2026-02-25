@@ -1651,6 +1651,7 @@ fn open_viewer_comment(app: &mut App) {
         format!("{file_path}:{line} ")
     };
 
+    app.viewer_state.clear_selection();
     app.review_state.input_buffer = location;
     app.review_state.input_kind = CommentKind::Suggest;
     app.review_state.input_mode = ReviewInputMode::AddingComment;
