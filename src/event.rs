@@ -2030,8 +2030,20 @@ pub fn handle_mouse_event(
                         app.on_worktree_changed();
                         app.set_focus(Focus::Explorer);
                     } else {
-                        // Clicked on blank space below worktree items — just focus.
-                        app.set_focus(Focus::Worktree);
+                        // Clicked on blank space below worktree items.
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(app.worktree_blank_last_click);
+                        app.worktree_blank_last_click = now;
+
+                        if elapsed.as_millis() < 400 {
+                            // Double-click → open worktree creation dialog.
+                            app.worktree_input_mode =
+                                crate::app::WorktreeInputMode::CreatingWorktree;
+                            app.worktree_input_buffer.clear();
+                        } else {
+                            // Single click → just focus.
+                            app.set_focus(Focus::Worktree);
+                        }
                     }
                 } else if col < explorer_end {
                     // Explorer column.
