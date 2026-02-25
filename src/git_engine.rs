@@ -26,6 +26,10 @@ pub struct WorktreeInfo {
     pub deleted: usize,
     /// True when the working directory has no uncommitted changes.
     pub is_clean: bool,
+    /// Commits ahead of upstream (local commits not yet pushed). `None` if no upstream.
+    pub ahead: Option<usize>,
+    /// Commits behind upstream (remote commits not yet pulled). `None` if no upstream.
+    pub behind: Option<usize>,
 }
 
 /// Summary info for a single commit.
@@ -862,6 +866,7 @@ impl GitEngine {
         let branch = Self::current_branch_name(&repo);
         let (added, modified, deleted) = Self::status_counts(&repo).unwrap_or((0, 0, 0));
         let is_clean = added == 0 && modified == 0 && deleted == 0;
+        let (ahead, behind) = Self::ahead_behind_upstream(&repo);
 
         Ok(WorktreeInfo {
             path: path.to_path_buf(),
@@ -871,7 +876,42 @@ impl GitEngine {
             modified,
             deleted,
             is_clean,
+            ahead,
+            behind,
         })
+    }
+
+    /// Compute ahead/behind counts relative to the upstream tracking branch.
+    /// Returns `(None, None)` if there is no upstream or on error.
+    fn ahead_behind_upstream(repo: &Repository) -> (Option<usize>, Option<usize>) {
+        let head = match repo.head() {
+            Ok(h) if h.is_branch() => h,
+            _ => return (None, None),
+        };
+        let local_oid = match head.target() {
+            Some(oid) => oid,
+            None => return (None, None),
+        };
+        let branch_name = match head.shorthand() {
+            Some(name) => name.to_string(),
+            None => return (None, None),
+        };
+        let branch = match repo.find_branch(&branch_name, git2::BranchType::Local) {
+            Ok(b) => b,
+            Err(_) => return (None, None),
+        };
+        let upstream = match branch.upstream() {
+            Ok(u) => u,
+            Err(_) => return (None, None),
+        };
+        let upstream_oid = match upstream.get().target() {
+            Some(oid) => oid,
+            None => return (None, None),
+        };
+        match repo.graph_ahead_behind(local_oid, upstream_oid) {
+            Ok((ahead, behind)) => (Some(ahead), Some(behind)),
+            Err(_) => (None, None),
+        }
     }
 
     /// Format a `chrono::Duration` as a human-readable "X ago" string.
