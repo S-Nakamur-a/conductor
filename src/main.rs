@@ -32,7 +32,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::app::App;
-use crate::event::{handle_key_event, handle_mouse_event};
+use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
 
 /// Tick rate when terminal panels are focused (~120fps for responsive PTY).
 const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
@@ -50,6 +50,7 @@ fn main() -> Result<()> {
         stdout,
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableBracketedPaste,
     )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -73,6 +74,7 @@ fn main() -> Result<()> {
         terminal.backend_mut(),
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste,
     )?;
     terminal.show_cursor()?;
 
@@ -227,6 +229,7 @@ fn run_loop(
             match crossterm_read()? {
                 Event::Key(key) => handle_key_event(app, key),
                 Event::Mouse(mouse) => handle_mouse_event(app, mouse, last_frame_area),
+                Event::Paste(data) => handle_paste_event(app, data),
                 Event::Resize(_, _) => {}
                 _ => {}
             }
