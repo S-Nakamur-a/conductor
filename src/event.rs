@@ -82,6 +82,19 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // ── 1b. Alt+1-5 — panel jump (intercepted globally, even from terminals) ─
+
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        match key.code {
+            KeyCode::Char('1') => { app.set_focus(Focus::Worktree); return; }
+            KeyCode::Char('2') => { app.set_focus(Focus::Explorer); return; }
+            KeyCode::Char('3') => { app.set_focus(Focus::Viewer); return; }
+            KeyCode::Char('4') => { app.set_focus(Focus::TerminalClaude); return; }
+            KeyCode::Char('5') => { app.set_focus(Focus::TerminalShell); return; }
+            _ => {}
+        }
+    }
+
     // ── 2. Terminal focus — Ctrl+Esc leaves terminal, everything else → PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
