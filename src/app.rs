@@ -663,12 +663,25 @@ impl App {
 
     /// Return a help text string describing the keybindings for the current focus.
     pub fn status_bar_text(&self) -> &'static str {
-        match self.focus {
-            Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
-            Focus::Explorer => "Alt+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
-            Focus::Viewer => "Alt+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
-            Focus::TerminalClaude => "Alt+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
-            Focus::TerminalShell => "Alt+1-5: jump | Ctrl+t: new shell | keys → PTY",
+        #[cfg(target_os = "macos")]
+        {
+            match self.focus {
+                Focus::Worktree => "Opt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
+                Focus::Explorer => "Opt+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
+                Focus::Viewer => "Opt+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
+                Focus::TerminalClaude => "Opt+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
+                Focus::TerminalShell => "Opt+1-5: jump | Ctrl+t: new shell | keys → PTY",
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            match self.focus {
+                Focus::Worktree => "Alt+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
+                Focus::Explorer => "Alt+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
+                Focus::Viewer => "Alt+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
+                Focus::TerminalClaude => "Alt+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
+                Focus::TerminalShell => "Alt+1-5: jump | Ctrl+t: new shell | keys → PTY",
+            }
         }
     }
 
