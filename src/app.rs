@@ -982,6 +982,9 @@ impl App {
             CommandId::SaveSessionHistory => {
                 self.save_current_session_history();
             }
+            CommandId::OpenPullRequest => {
+                self.open_pr_in_browser();
+            }
             CommandId::Quit => self.should_quit = true,
         }
     }
@@ -2236,6 +2239,37 @@ impl App {
         self.terminal_scroll_shell = 0;
 
         self.set_status(format!("Switched to worktree: {wt_name}"), StatusLevel::Success);
+    }
+
+    // ── Open PR in browser ───────────────────────────────────────
+
+    /// Open the pull-request page for the selected worktree's branch in the
+    /// default web browser.
+    pub fn open_pr_in_browser(&mut self) {
+        let branch = self.selected_worktree_branch();
+        if branch.is_empty() {
+            self.set_status("No worktree selected.".to_string(), StatusLevel::Warning);
+            return;
+        }
+
+        match crate::git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => match engine.pr_url_for_branch(&branch) {
+                Some(url) => {
+                    log::info!("Opening PR URL: {url}");
+                    if let Err(e) = open::that(&url) {
+                        self.set_status(format!("Failed to open browser: {e}"), StatusLevel::Error);
+                    } else {
+                        self.set_status(format!("Opened PR for '{branch}'"), StatusLevel::Success);
+                    }
+                }
+                None => {
+                    self.set_status("Could not determine remote URL.".to_string(), StatusLevel::Error);
+                }
+            },
+            Err(e) => {
+                self.set_status(format!("Error: {e}"), StatusLevel::Error);
+            }
+        }
     }
 
     // ── Public accessor helpers ─────────────────────────────────────

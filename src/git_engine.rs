@@ -472,6 +472,56 @@ impl GitEngine {
         Ok(())
     }
 
+    // ── PR URL ───────────────────────────────────────────────────
+
+    /// Build a GitHub/GitLab pull-request URL for the given branch.
+    ///
+    /// Reads the `origin` remote URL, converts it to an HTTPS base, and
+    /// appends the platform-specific path for creating a new pull request.
+    /// Returns `None` if the remote URL cannot be parsed.
+    pub fn pr_url_for_branch(&self, branch: &str) -> Option<String> {
+        let remote = self.repo.find_remote("origin").ok()?;
+        let raw_url = remote.url()?;
+        let base = Self::remote_url_to_https_base(raw_url)?;
+
+        // GitHub: /compare/<branch>  (shows existing PR or create form)
+        // GitLab: /-/merge_requests/new?merge_request[source_branch]=<branch>
+        if base.contains("gitlab") {
+            Some(format!(
+                "{base}/-/merge_requests/new?merge_request[source_branch]={branch}",
+            ))
+        } else {
+            // Default to GitHub-style.
+            Some(format!("{base}/pull/{branch}"))
+        }
+    }
+
+    /// Convert a git remote URL to an HTTPS base URL (no trailing slash).
+    ///
+    /// Handles SSH (`git@host:owner/repo.git`) and HTTPS
+    /// (`https://host/owner/repo.git`) formats.
+    fn remote_url_to_https_base(url: &str) -> Option<String> {
+        let url = url.trim();
+        if url.starts_with("git@") || url.starts_with("ssh://") {
+            // git@github.com:owner/repo.git  →  https://github.com/owner/repo
+            // ssh://git@github.com/owner/repo.git
+            let without_prefix = url
+                .strip_prefix("ssh://")
+                .unwrap_or(url)
+                .strip_prefix("git@")
+                .unwrap_or(url);
+            // "github.com:owner/repo.git" or "github.com/owner/repo.git"
+            let normalised = without_prefix.replace(':', "/");
+            let trimmed = normalised.trim_end_matches(".git");
+            Some(format!("https://{trimmed}"))
+        } else if url.starts_with("https://") || url.starts_with("http://") {
+            let trimmed = url.trim_end_matches(".git");
+            Some(trimmed.to_string())
+        } else {
+            None
+        }
+    }
+
     // ── Fetch ────────────────────────────────────────────────────
 
     /// Run `git fetch --prune origin` by shelling out to the `git` CLI.
@@ -1085,5 +1135,37 @@ mod tests {
         // The main worktree path should exist and contain a .git directory.
         assert!(main_path.exists(), "main worktree path should exist");
         assert!(main_path.join(".git").exists(), "main worktree should contain .git");
+    }
+
+    #[test]
+    fn remote_url_to_https_base_ssh() {
+        assert_eq!(
+            GitEngine::remote_url_to_https_base("git@github.com:owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string()),
+        );
+    }
+
+    #[test]
+    fn remote_url_to_https_base_https() {
+        assert_eq!(
+            GitEngine::remote_url_to_https_base("https://github.com/owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string()),
+        );
+    }
+
+    #[test]
+    fn remote_url_to_https_base_no_suffix() {
+        assert_eq!(
+            GitEngine::remote_url_to_https_base("https://github.com/owner/repo"),
+            Some("https://github.com/owner/repo".to_string()),
+        );
+    }
+
+    #[test]
+    fn remote_url_to_https_base_ssh_prefix() {
+        assert_eq!(
+            GitEngine::remote_url_to_https_base("ssh://git@github.com/owner/repo.git"),
+            Some("https://github.com/owner/repo".to_string()),
+        );
     }
 }

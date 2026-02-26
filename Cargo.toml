@@ -25,6 +25,7 @@ env_logger = "0.11"
 notify = "7"
 unicode-width = "0.2"
 vt100 = "0.15"
+open = "5"
 
 [dev-dependencies]
 tempfile = "3"
