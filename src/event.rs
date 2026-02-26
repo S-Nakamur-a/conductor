@@ -2075,7 +2075,7 @@ pub fn handle_mouse_event(
                         // Clicked on an actual worktree item.
                         app.selected_worktree = item_row;
                         app.on_worktree_changed();
-                        app.set_focus(Focus::Explorer);
+                        app.set_focus(Focus::Worktree);
                     } else {
                         // Clicked on blank space below worktree items.
                         let now = std::time::Instant::now();
