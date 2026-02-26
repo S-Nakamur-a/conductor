@@ -65,6 +65,9 @@ pub enum CommandId {
     // Session
     SaveSessionHistory,
 
+    // GitHub / PR
+    OpenPullRequest,
+
     // App
     Quit,
 }
@@ -192,6 +195,10 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Repository, keybinding: Some("Ctrl+o"), keywords: "open directory" },
     PaletteCommand { id: CommandId::SwitchRepo, label: "Repository: Switch",
         category: CommandCategory::Repository, keybinding: Some("Ctrl+r"), keywords: "project change" },
+
+    // GitHub / PR
+    PaletteCommand { id: CommandId::OpenPullRequest, label: "Worktree: Open Pull Request",
+        category: CommandCategory::Worktree, keybinding: Some("v"), keywords: "pr github browser web open" },
 
     // App
     PaletteCommand { id: CommandId::Quit, label: "Quit Conductor",
