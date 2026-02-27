@@ -1428,7 +1428,9 @@ fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
             app.review_state.comment_detail_active = false;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            app.review_state.comment_detail_scroll += 1;
+            if app.review_state.comment_detail_scroll < app.review_state.comment_detail_max_scroll {
+                app.review_state.comment_detail_scroll += 1;
+            }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             if app.review_state.comment_detail_scroll > 0 {
