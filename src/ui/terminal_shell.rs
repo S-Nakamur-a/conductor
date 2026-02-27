@@ -11,7 +11,7 @@ use ratatui::Frame;
 use crate::app::{App, Focus};
 
 /// Render the Shell terminal panel into the given area.
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -95,7 +95,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         if let Some(screen_arc) = app.pty_manager.get_screen(active_idx) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
-            crate::ui::common::render_pty_output(frame, inner, &screen_arc, app.terminal_scroll_shell);
+
+            // When focused (or cache empty), do the expensive vt100 snapshot.
+            // Otherwise, reuse cached lines for fast rendering.
+            if focused || app.pty_cache_shell.lines.is_empty() {
+                app.pty_cache_shell = crate::ui::common::build_pty_lines(
+                    &screen_arc,
+                    app.terminal_scroll_shell,
+                    inner.height,
+                    inner.width,
+                );
+            }
+            crate::ui::common::render_pty_cached(frame, inner, &app.pty_cache_shell);
         } else {
             frame.render_widget(output_block, output_area);
         }

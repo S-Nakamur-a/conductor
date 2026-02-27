@@ -36,8 +36,12 @@ use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
 
 /// Tick rate when terminal panels are focused (~120fps for responsive PTY).
 const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
-/// Tick rate when non-terminal panels are focused (low CPU usage).
+/// Tick rate right after user input for responsive scrolling (~60fps).
+const TICK_RATE_ACTIVE: Duration = Duration::from_millis(16);
+/// Tick rate when non-terminal panels are idle (low CPU usage).
 const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
+/// How long to keep using the active tick rate after the last input event.
+const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn main() -> Result<()> {
     // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
@@ -159,6 +163,9 @@ fn run_loop(
     const STATS_REFRESH_POLL: Duration = Duration::from_secs(30);
     let mut last_stats_refresh = Instant::now();
 
+    // Track last user input to switch between active/idle tick rates.
+    let mut last_input_time = Instant::now() - ACTIVITY_TIMEOUT;
+
     // ── ccusage polling (opt-in via [ccusage] enabled = true) ─────
     // Uses a global file cache so multiple Conductor instances don't
     // redundantly run `npx ccusage`.
@@ -178,29 +185,41 @@ fn run_loop(
     // renders immediately, then we check/refresh the cache in background.
     let mut last_ccusage_poll = Instant::now() - ccusage_poll;
 
+    let mut needs_redraw = true;
+
     loop {
         if app.needs_clear {
             terminal.clear()?;
             app.needs_clear = false;
+            needs_redraw = true;
         }
 
-        // Advance animation tick.
-        app.ui_tick = app.ui_tick.wrapping_add(1);
+        // Terminal panels need continuous rendering for PTY output.
+        if matches!(app.focus, crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell) {
+            needs_redraw = true;
+        }
 
-        // Auto-clear status messages after ~3 seconds (180 ticks at 60fps).
-        const STATUS_FADE_TICKS: u64 = 180;
-        if let Some(ref msg) = app.status_message {
-            let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
-            if age >= STATUS_FADE_TICKS {
-                app.status_message = None;
+        if needs_redraw {
+            // Advance animation tick only on actual renders.
+            app.ui_tick = app.ui_tick.wrapping_add(1);
+
+            // Auto-clear status messages after ~3 seconds (180 ticks at 60fps).
+            const STATUS_FADE_TICKS: u64 = 180;
+            if let Some(ref msg) = app.status_message {
+                let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
+                if age >= STATUS_FADE_TICKS {
+                    app.status_message = None;
+                }
             }
-        }
 
-        // Draw the current frame.
-        terminal.draw(|frame| {
-            last_frame_area = frame.area();
-            render_ui(frame, app);
-        })?;
+            // Draw the current frame.
+            terminal.draw(|frame| {
+                last_frame_area = frame.area();
+                render_ui(frame, app);
+            })?;
+
+            needs_redraw = false;
+        }
 
         // Compute PTY sizes for Claude and Shell panels.
         {
@@ -239,19 +258,23 @@ fn run_loop(
             }
         }
 
-        // Wait for an event.
+        // Wait for an event. Use a fast tick rate shortly after user input
+        // so that scrolling and navigation feel responsive, then fall back to
+        // an idle rate to save CPU.
         let tick = match app.focus {
             crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+            _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
             _ => TICK_RATE_IDLE,
         };
         if crossterm_poll(tick)? {
             match crossterm_read()? {
-                Event::Key(key) => handle_key_event(app, key),
-                Event::Mouse(mouse) => handle_mouse_event(app, mouse, last_frame_area),
-                Event::Paste(data) => handle_paste_event(app, data),
+                Event::Key(key) => { last_input_time = Instant::now(); handle_key_event(app, key); }
+                Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
+                Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
                 Event::Resize(_, _) => {}
                 _ => {}
             }
+            needs_redraw = true;
         }
 
         // Check for file system change events (debounced).
@@ -270,6 +293,7 @@ fn run_loop(
                         app.refresh_worktrees();
                         app.refresh_viewer();
                         app.refresh_diff();
+                        needs_redraw = true;
                     }
                 }
             }
@@ -284,18 +308,21 @@ fn run_loop(
             last_worktree_poll = Instant::now();
             app.refresh_worktrees();
             app.check_diff_viewer_staleness();
+            needs_redraw = true;
         }
 
         // Periodically remove dead PTY sessions (exited processes).
         if last_pty_cleanup.elapsed() >= PTY_CLEANUP_POLL {
             last_pty_cleanup = Instant::now();
             app.cleanup_dead_sessions();
+            needs_redraw = true;
         }
 
         // Periodically check if any Claude Code sessions are waiting for input.
         if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
+            needs_redraw = true;
         }
 
         // Periodically refresh gamification stats (streak, today's activity).
@@ -304,6 +331,7 @@ fn run_loop(
             if let Some(store) = &app.review_store {
                 app.today_stats = store.get_today_stats().ok();
             }
+            needs_redraw = true;
         }
 
         // ── ccusage background fetch (with global file cache) ────────
@@ -328,6 +356,7 @@ fn run_loop(
             if let Ok(mut lock) = ccusage_result.try_lock() {
                 if let Some(info) = lock.take() {
                     app.ccusage_info = Some(info);
+                    needs_redraw = true;
                 }
             }
         }

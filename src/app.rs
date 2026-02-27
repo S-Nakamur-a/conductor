@@ -268,6 +268,11 @@ pub struct App {
     /// Scrollback offset for the Shell terminal (0 = live view at bottom).
     pub terminal_scroll_shell: usize,
 
+    /// Cached PTY render output for Claude terminal (avoids expensive vt100 snapshots when not focused).
+    pub pty_cache_claude: crate::ui::common::PtyRenderCache,
+    /// Cached PTY render output for Shell terminal.
+    pub pty_cache_shell: crate::ui::common::PtyRenderCache,
+
     // ── Gamification (session stats + streak) ────────────────────
     /// ID of the current stats session (for gamification tracking).
     pub stats_session_id: Option<String>,
@@ -442,6 +447,8 @@ impl App {
             notification_bar_badges: Vec::new(),
             terminal_scroll_claude: 0,
             terminal_scroll_shell: 0,
+            pty_cache_claude: Default::default(),
+            pty_cache_shell: Default::default(),
             stats_session_id,
             today_stats,
             worktree_heads: HashMap::new(),
@@ -2237,6 +2244,8 @@ impl App {
 
         self.terminal_scroll_claude = 0;
         self.terminal_scroll_shell = 0;
+        self.pty_cache_claude = Default::default();
+        self.pty_cache_shell = Default::default();
 
         self.set_status(format!("Switched to worktree: {wt_name}"), StatusLevel::Success);
     }

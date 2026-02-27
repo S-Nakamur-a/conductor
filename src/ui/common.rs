@@ -16,6 +16,22 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
+/// Cached PTY render output to avoid expensive vt100 snapshots every frame.
+///
+/// When a terminal panel is not focused, we reuse the previously built
+/// ratatui `Line` data instead of re-locking the vt100 parser mutex and
+/// copying thousands of cells.
+pub struct PtyRenderCache {
+    pub lines: Vec<Line<'static>>,
+    pub effective_offset: usize,
+}
+
+impl Default for PtyRenderCache {
+    fn default() -> Self {
+        Self { lines: Vec::new(), effective_offset: 0 }
+    }
+}
+
 /// A snapshot of a single cell's content and style, extracted from the vt100 screen.
 struct CellSnapshot {
     text: String,
@@ -92,23 +108,43 @@ fn snapshot_screen(
     }
 }
 
-/// Render the vt100 screen of a PTY session into the given area.
+/// Build ratatui `Line`s from a vt100 PTY screen snapshot.
 ///
-/// `scroll_offset` controls scrollback: 0 = live view (bottom), >0 = scroll back into history.
-/// Scrollback is disabled when the PTY is in alternate screen mode (vim, less, etc.).
-///
-/// The screen lock is held only long enough to snapshot cell data; all ratatui
-/// widget construction and rendering happens after the lock is released.
-pub fn render_pty_output(
-    frame: &mut Frame,
-    area: Rect,
+/// This is the expensive operation: it locks the vt100 parser mutex,
+/// copies cell data, then builds styled `Line` objects. The result can
+/// be cached in a [`PtyRenderCache`] and reused across frames.
+pub fn build_pty_lines(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,
-) {
-    // Phase 1: snapshot screen contents (lock is held briefly).
-    let snapshot = snapshot_screen(screen_arc, scroll_offset, area.height, area.width);
+    max_rows: u16,
+    max_cols: u16,
+) -> PtyRenderCache {
+    let snapshot = snapshot_screen(screen_arc, scroll_offset, max_rows, max_cols);
+    let lines = lines_from_snapshot(&snapshot);
+    PtyRenderCache {
+        lines,
+        effective_offset: snapshot.effective_offset,
+    }
+}
 
-    // Phase 2: build ratatui widgets from the snapshot (no lock held).
+/// Render previously built PTY lines from a [`PtyRenderCache`].
+///
+/// This is cheap: it just clones the cached `Line` data into a `Paragraph`.
+pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache) {
+    let paragraph = Paragraph::new(cache.lines.clone());
+    frame.render_widget(paragraph, area);
+
+    if cache.effective_offset > 0 {
+        let indicator = Line::from(Span::styled(
+            format!(" ↑ scrollback ({} lines — Shift+End to return) ", cache.effective_offset),
+            Style::default().fg(Color::Black).bg(Color::Yellow),
+        ));
+        frame.render_widget(Paragraph::new(indicator), Rect { height: 1, ..area });
+    }
+}
+
+/// Build `Vec<Line<'static>>` from a `ScreenSnapshot`.
+fn lines_from_snapshot(snapshot: &ScreenSnapshot) -> Vec<Line<'static>> {
     let mut text_lines: Vec<Line> = Vec::new();
     for row_cells in &snapshot.rows {
         let mut spans: Vec<Span> = Vec::new();
@@ -143,18 +179,7 @@ pub fn render_pty_output(
         }
         text_lines.push(Line::from(spans));
     }
-
-    let paragraph = Paragraph::new(text_lines);
-    frame.render_widget(paragraph, area);
-
-    // Show a visual indicator when scrolled back.
-    if snapshot.effective_offset > 0 {
-        let indicator = Line::from(Span::styled(
-            format!(" ↑ scrollback ({} lines — Shift+End to return) ", snapshot.effective_offset),
-            Style::default().fg(Color::Black).bg(Color::Yellow),
-        ));
-        frame.render_widget(Paragraph::new(indicator), Rect { height: 1, ..area });
-    }
+    text_lines
 }
 
 /// Convert HSL (h: 0-360, s: 0-1, l: 0-1) to RGB.
