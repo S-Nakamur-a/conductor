@@ -5,7 +5,7 @@
 //! opens it in the Viewer panel.
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
@@ -100,7 +100,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Show search input overlay.
     if app.viewer_state.search_active {
-        render_search_box(frame, area, &app.viewer_state.search_query);
+        render_search_box(frame, area, &app.viewer_state.search_query, &app.theme);
     }
 
     // Show filename search overlay.
@@ -111,14 +111,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
 /// Render the file tree (top half).
 fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let tree_focused = panel_focused && !vs.explorer_focus_on_diff_list;
     let border_color = if tree_focused {
-        Color::Yellow
+        theme.border_focused
     } else if panel_focused {
-        Color::White
+        theme.border_secondary
     } else {
-        Color::DarkGray
+        theme.border_unfocused
     };
 
     let visible = vs.visible_indices();
@@ -137,9 +138,9 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
     let is_expanded = app.expanded_panel == Some(Focus::Explorer);
     let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", Color::Yellow)
+        ("[>=<]", theme.border_focused)
     } else {
-        ("[<=>]", Color::DarkGray)
+        ("[<=>]", theme.border_unfocused)
     };
 
     let block = Block::default()
@@ -173,18 +174,18 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
             let style = if vis_idx == selected_vis_idx && tree_focused {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
+                    .fg(theme.selected_fg)
+                    .bg(theme.selected_bg)
                     .add_modifier(Modifier::BOLD)
             } else if vis_idx == selected_vis_idx {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::DarkGray)
+                    .fg(theme.selected_fg_inactive)
+                    .bg(theme.selected_bg_inactive)
                     .add_modifier(Modifier::BOLD)
             } else if entry.is_dir {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(theme.info)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.fg)
             };
 
             Some(ListItem::new(Span::styled(label, style)))
@@ -210,14 +211,15 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::diff_state::{DiffListEntry, DiffSection};
 
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let diff_focused = panel_focused && vs.explorer_focus_on_diff_list;
     let border_color = if diff_focused {
-        Color::Yellow
+        theme.border_focused
     } else if panel_focused {
-        Color::White
+        theme.border_secondary
     } else {
-        Color::DarkGray
+        theme.border_unfocused
     };
 
     let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
@@ -253,17 +255,17 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
                 let style = if idx == vs.diff_list_selected && diff_focused {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
+                        .fg(theme.selected_fg)
+                        .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else if idx == vs.diff_list_selected {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::DarkGray)
+                        .fg(theme.selected_fg_inactive)
+                        .bg(theme.selected_bg_inactive)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.info)
                         .add_modifier(Modifier::BOLD)
                 };
 
@@ -293,20 +295,20 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
                 let style = if idx == vs.diff_list_selected && diff_focused {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
+                        .fg(theme.selected_fg)
+                        .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else if idx == vs.diff_list_selected {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::DarkGray)
+                        .fg(theme.selected_fg_inactive)
+                        .bg(theme.selected_bg_inactive)
                         .add_modifier(Modifier::BOLD)
                 } else if file_diff.is_new {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(theme.success)
                 } else if file_diff.is_deleted {
-                    Style::default().fg(Color::Red)
+                    Style::default().fg(theme.error)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme.fg)
                 };
 
                 ListItem::new(Span::styled(label, style))
@@ -322,14 +324,15 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::review_state::CommentListRow;
 
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let list_focused = panel_focused && vs.explorer_focus_on_diff_list;
     let border_color = if list_focused {
-        Color::Yellow
+        theme.border_focused
     } else if panel_focused {
-        Color::White
+        theme.border_secondary
     } else {
-        Color::DarkGray
+        theme.border_unfocused
     };
 
     let total = app.review_state.comments.len();
@@ -416,18 +419,18 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 
                     let style = if row_idx == vs.comment_list_selected && list_focused {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Yellow)
+                            .fg(theme.selected_fg)
+                            .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD)
                     } else if row_idx == vs.comment_list_selected {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::DarkGray)
+                            .fg(theme.selected_fg_inactive)
+                            .bg(theme.selected_bg_inactive)
                             .add_modifier(Modifier::BOLD)
                     } else if comment.status == crate::review_store::CommentStatus::Resolved {
-                        Style::default().fg(Color::DarkGray)
+                        Style::default().fg(theme.muted)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(theme.fg)
                     };
 
                     Some(ListItem::new(Span::styled(label, style)))
@@ -457,16 +460,16 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 
                     let style = if row_idx == vs.comment_list_selected && list_focused {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Yellow)
+                            .fg(theme.selected_fg)
+                            .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD)
                     } else if row_idx == vs.comment_list_selected {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::DarkGray)
+                            .fg(theme.selected_fg_inactive)
+                            .bg(theme.selected_bg_inactive)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Rgb(120, 120, 140))
+                        Style::default().fg(theme.reply_text)
                     };
 
                     Some(ListItem::new(Span::styled(label, style)))
@@ -480,7 +483,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 }
 
 /// Render a search input box at the bottom of the given area.
-fn render_search_box(frame: &mut Frame, area: Rect, query: &str) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &crate::theme::Theme) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
@@ -490,7 +493,7 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &str) {
     let text = format!("/{query}\u{2588}");
     let paragraph = ratatui::widgets::Paragraph::new(Span::styled(
         text,
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
 }

@@ -10,20 +10,22 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 
 use crate::app::{App, Focus};
+use crate::theme::Theme;
 
 /// Render the worktree panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    let theme = &app.theme;
     let focused = app.focus == Focus::Worktree;
-    let border_color = if focused { Color::Yellow } else { Color::DarkGray };
+    let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
 
     let is_expanded = app.expanded_panel == Some(Focus::Worktree);
     let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", Color::Yellow)
+        ("[>=<]", theme.border_focused)
     } else {
-        ("[<=>]", Color::DarkGray)
+        ("[<=>]", theme.border_unfocused)
     };
 
     let title = if app.grabbed_branch.is_some() {
@@ -32,7 +34,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         " Worktrees "
     };
     let title_style = if app.grabbed_branch.is_some() {
-        Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD)
+        Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -70,17 +72,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             };
 
             let marker_style = if is_grabbed {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.muted)
             } else if is_waiting {
                 Style::default()
-                    .fg(if pulse_on { Color::Rgb(255, 165, 0) } else { Color::Rgb(200, 120, 0) })
+                    .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
                     .add_modifier(Modifier::BOLD)
             } else if i == app.selected_worktree {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.fg)
             };
 
             let status_text = if wt.is_clean {
@@ -90,17 +92,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             };
 
             let branch_style = if is_grabbed {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.muted)
             } else if is_waiting {
                 Style::default()
-                    .fg(Color::White)
+                    .fg(theme.fg)
                     .add_modifier(Modifier::BOLD)
             } else if i == app.selected_worktree {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Green)
+                Style::default().fg(theme.success)
             };
 
             let mut spans = vec![
@@ -112,7 +114,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             if is_grabbed {
                 spans.push(Span::styled(
                     " (grabbed)",
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.muted),
                 ));
             }
 
@@ -120,7 +122,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             if wt.is_main && app.grabbed_branch.is_some() {
                 spans.push(Span::styled(
                     " \u{2190}grabbed",
-                    Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD),
                 ));
             }
 
@@ -130,7 +132,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 spans.push(Span::styled(
                     indicator,
                     Style::default()
-                        .fg(if pulse_on { Color::Rgb(255, 165, 0) } else { Color::Rgb(200, 120, 0) })
+                        .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
                         .add_modifier(Modifier::BOLD),
                 ));
             }
@@ -138,9 +140,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             spans.push(Span::styled(
                 format!(" {status_text}"),
                 if is_grabbed {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(theme.muted)
                 } else if wt.is_clean {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(theme.muted)
                 } else {
                     Style::default().fg(Color::Magenta)
                 },
@@ -151,7 +153,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 match (wt.ahead, wt.behind) {
                     (Some(0), Some(0)) => {
                         // Synced with remote
-                        spans.push(Span::styled(" ≡", Style::default().fg(Color::DarkGray)));
+                        spans.push(Span::styled(" ≡", Style::default().fg(theme.muted)));
                     }
                     (Some(ahead), Some(behind)) => {
                         let mut parts = Vec::new();
@@ -163,7 +165,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                         }
                         spans.push(Span::styled(
                             format!(" {}", parts.join("")),
-                            Style::default().fg(Color::Cyan),
+                            Style::default().fg(theme.info),
                         ));
                     }
                     _ => {
@@ -177,9 +179,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             // Apply background highlight to the entire row when waiting.
             if is_waiting && !is_grabbed {
                 let bg = if pulse_on {
-                    Color::Rgb(60, 35, 0)   // warm orange tint
+                    Theme::darken(theme.waiting_primary, 0.24)
                 } else {
-                    Color::Rgb(40, 22, 0)   // darker orange pulse
+                    Theme::darken(theme.waiting_primary, 0.16)
                 };
                 item.style(Style::default().bg(bg))
             } else {
@@ -192,7 +194,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .block(block)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(theme.selected_bg_inactive)
                 .add_modifier(Modifier::BOLD),
         );
 
