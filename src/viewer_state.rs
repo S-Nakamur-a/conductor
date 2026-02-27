@@ -192,9 +192,26 @@ impl ViewerState {
         if let Some(ref rel_path) = prev_file {
             let full = worktree_path.join(rel_path);
             if full.is_file() {
+                // Preserve diff mode state across tree refreshes so that
+                // file-watcher / periodic refreshes don't kick the user
+                // out of the unified diff view.
+                let was_diff_mode = self.diff_mode;
+                let prev_diff_lines = if was_diff_mode {
+                    std::mem::take(&mut self.diff_view_lines)
+                } else {
+                    Vec::new()
+                };
+                let prev_diff_scroll = self.diff_view_scroll;
+
                 self.open_file(worktree_path, rel_path);
                 self.file_scroll = prev_file_scroll;
                 self.h_scroll = prev_h_scroll;
+
+                if was_diff_mode {
+                    self.diff_mode = true;
+                    self.diff_view_lines = prev_diff_lines;
+                    self.diff_view_scroll = prev_diff_scroll;
+                }
 
                 // Try to restore tree_selected to point at the file entry.
                 if let Some(idx) = self.file_tree.iter().position(|e| e.path == *rel_path) {
