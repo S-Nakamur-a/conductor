@@ -519,6 +519,40 @@ impl ViewerState {
         }
     }
 
+    /// Return the maximum line width (in characters) of the current content.
+    ///
+    /// In diff mode this scans `diff_view_lines`; otherwise it scans
+    /// `file_content`. Returns 0 when there is nothing to display.
+    pub fn max_content_width(&self) -> usize {
+        if self.diff_mode {
+            self.diff_view_lines
+                .iter()
+                .map(|entry| match entry {
+                    UnifiedDiffEntry::Line { content, .. } => content.chars().count(),
+                    UnifiedDiffEntry::HunkSeparator { func_header } => {
+                        func_header.as_ref().map_or(0, |h| h.chars().count())
+                    }
+                })
+                .max()
+                .unwrap_or(0)
+        } else {
+            self.file_content
+                .iter()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0)
+        }
+    }
+
+    /// Increase `h_scroll` by `delta`, clamping so the view never scrolls
+    /// past the longest line in the current content.
+    pub fn scroll_right(&mut self, delta: usize) {
+        let max_w = self.max_content_width();
+        // Allow scrolling until only a few characters remain visible.
+        let limit = max_w.saturating_sub(4);
+        self.h_scroll = (self.h_scroll + delta).min(limit);
+    }
+
     /// Exit unified diff mode and reset related state.
     pub fn exit_diff_mode(&mut self) {
         self.diff_mode = false;
