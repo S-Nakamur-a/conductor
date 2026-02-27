@@ -310,7 +310,7 @@ impl App {
         };
 
         // Initialize syntect syntax set and theme.
-        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let syntax_set = two_face::syntax::extra_newlines();
         let ts = ThemeSet::load_defaults();
         let syntect_theme = if let Some(ref path) = config.viewer.syntax_theme_file {
             match ThemeSet::get_theme(path) {

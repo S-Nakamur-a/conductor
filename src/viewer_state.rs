@@ -539,15 +539,6 @@ impl ViewerState {
 
         let syntax = syntax_set
             .find_syntax_by_extension(ext)
-            .or_else(|| {
-                // syntect defaults lack some common extensions — map them
-                // to a close-enough syntax so highlighting still works.
-                let fallback = match ext {
-                    "ts" | "tsx" | "jsx" | "mts" | "cts" => "js",
-                    _ => return None,
-                };
-                syntax_set.find_syntax_by_extension(fallback)
-            })
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
         let mut h = HighlightLines::new(syntax, theme);
