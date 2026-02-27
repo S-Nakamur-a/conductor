@@ -12,6 +12,8 @@ use syntect::highlighting::Theme as SyntectTheme;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
+use crate::diff_state::{DiffLineTag, FileDiff, InlineSegment};
+
 /// A single entry in the flattened file tree.
 #[derive(Debug, Clone)]
 pub struct FileTreeEntry {
@@ -29,6 +31,25 @@ pub struct FileTreeEntry {
     /// Always `false` for files. Directories start as `false` and are set to
     /// `true` after their children are read from the filesystem.
     pub children_loaded: bool,
+}
+
+/// An entry in the unified diff view.
+#[derive(Debug, Clone)]
+pub enum UnifiedDiffEntry {
+    /// A separator between hunks.
+    HunkSeparator,
+    /// A single line (context, addition, or deletion).
+    Line {
+        tag: DiffLineTag,
+        /// Line number in the new file. `Some` for Equal/Insert, `None` for Delete.
+        new_line_no: Option<usize>,
+        /// Line number in the old file. `Some` for Equal/Delete, `None` for Insert.
+        old_line_no: Option<usize>,
+        /// The text content of this line.
+        content: String,
+        /// Intra-line change segments (word diff).
+        inline_segments: Vec<InlineSegment>,
+    },
 }
 
 /// All state owned by the Viewer mode.
@@ -88,6 +109,12 @@ pub struct ViewerState {
     pub last_comment_click_time: std::time::Instant,
     /// The index that was last clicked in the comment list.
     pub last_comment_click_idx: usize,
+    /// Whether the viewer is in unified diff mode.
+    pub diff_mode: bool,
+    /// Unified diff view entries (populated when entering diff mode).
+    pub diff_view_lines: Vec<UnifiedDiffEntry>,
+    /// Vertical scroll offset for the diff view.
+    pub diff_view_scroll: usize,
 }
 
 impl Default for ViewerState {
@@ -120,6 +147,9 @@ impl Default for ViewerState {
             comment_preview_line: None,
             last_comment_click_time: std::time::Instant::now(),
             last_comment_click_idx: usize::MAX,
+            diff_mode: false,
+            diff_view_lines: Vec::new(),
+            diff_view_scroll: 0,
         }
     }
 }
@@ -177,6 +207,7 @@ impl ViewerState {
 
     /// Open (read) a file and store its lines in `file_content`.
     pub fn open_file(&mut self, worktree_path: &Path, relative_path: &str) {
+        self.exit_diff_mode();
         self.highlighted_lines.clear();
         let full = worktree_path.join(relative_path);
         match fs::read_to_string(&full) {
@@ -436,6 +467,42 @@ impl ViewerState {
         }
 
         false
+    }
+
+    // ── Unified diff view ─────────────────────────────────────────────────
+
+    /// Build the unified diff view entries from a `FileDiff`.
+    pub fn build_unified_diff_view(&mut self, file_diff: &FileDiff) {
+        self.diff_view_lines.clear();
+
+        for (hunk_idx, hunk) in file_diff.hunks.iter().enumerate() {
+            // Add hunk separator between hunks (not before the first one).
+            if hunk_idx > 0 {
+                self.diff_view_lines.push(UnifiedDiffEntry::HunkSeparator);
+            }
+
+            for line in &hunk.lines {
+                self.diff_view_lines.push(UnifiedDiffEntry::Line {
+                    tag: line.tag,
+                    new_line_no: line.new_line_no,
+                    old_line_no: line.old_line_no,
+                    content: line.content.clone(),
+                    inline_segments: line.inline_segments.clone(),
+                });
+            }
+        }
+
+        if !self.diff_view_lines.is_empty() {
+            self.diff_mode = true;
+            self.diff_view_scroll = 0;
+        }
+    }
+
+    /// Exit unified diff mode and reset related state.
+    pub fn exit_diff_mode(&mut self) {
+        self.diff_mode = false;
+        self.diff_view_lines.clear();
+        self.diff_view_scroll = 0;
     }
 
     // ── Tree reveal ──────────────────────────────────────────────────────

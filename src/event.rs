@@ -611,21 +611,27 @@ fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
                     app.viewer_state.diff_list_selected = new_count - 1;
                 }
             } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(selected) {
-                // Open the selected diff file in the Viewer and scroll to first change.
+                // Open the selected diff file in the Viewer and enter unified diff mode.
                 let file_path = file_diff.path.clone();
-                let first_change_line = file_diff.hunks.iter()
-                    .flat_map(|h| h.lines.iter())
-                    .find(|l| l.tag != crate::diff_state::DiffLineTag::Equal)
-                    .and_then(|l| l.new_line_no.or(l.old_line_no));
+                let file_diff_clone = file_diff.clone();
                 if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                     let wt_path = wt.path.clone();
                     app.viewer_state.open_file(&wt_path, &file_path);
-                    if let Some(line) = first_change_line {
-                        app.viewer_state.file_scroll = line.saturating_sub(4);
-                    }
                     app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&file_path);
+
+                    // Build unified diff view from the file's hunks.
+                    app.viewer_state.build_unified_diff_view(&file_diff_clone);
+
+                    // Scroll to the first changed line in the diff view.
+                    if let Some(pos) = app.viewer_state.diff_view_lines.iter().position(|e| {
+                        matches!(e, crate::viewer_state::UnifiedDiffEntry::Line { tag, .. }
+                            if *tag != crate::diff_state::DiffLineTag::Equal)
+                    }) {
+                        app.viewer_state.diff_view_scroll = pos.saturating_sub(3);
+                    }
+
                     app.set_focus(Focus::Viewer);
                 }
             }
@@ -832,6 +838,12 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     // Clear comment preview on any key input.
     app.viewer_state.comment_preview_line = None;
 
+    // Unified diff mode has its own navigation.
+    if app.viewer_state.diff_mode {
+        handle_viewer_diff_mode_key(app, key);
+        return;
+    }
+
     let total = app.viewer_state.file_content.len();
 
     // Esc goes back to Explorer.
@@ -897,6 +909,77 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char(' ') => {
             // Open comment detail modal for comments on the current line.
+            open_viewer_comment_detail(app);
+        }
+        _ => {}
+    }
+}
+
+/// Key handling for the viewer panel in unified diff mode.
+fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
+    let total = app.viewer_state.diff_view_lines.len();
+
+    // Esc exits diff mode and goes back to Explorer.
+    if key.code == KeyCode::Esc {
+        app.viewer_state.clear_selection();
+        app.viewer_state.exit_diff_mode();
+        app.set_focus(Focus::Explorer);
+        return;
+    }
+
+    if total == 0 {
+        return;
+    }
+
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            if app.viewer_state.diff_view_scroll + 1 < total {
+                app.viewer_state.diff_view_scroll += 1;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.viewer_state.diff_view_scroll =
+                app.viewer_state.diff_view_scroll.saturating_sub(1);
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewer_state.diff_view_scroll =
+                (app.viewer_state.diff_view_scroll + 15).min(total.saturating_sub(1));
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewer_state.diff_view_scroll =
+                app.viewer_state.diff_view_scroll.saturating_sub(15);
+        }
+        KeyCode::Char('g') => {
+            app.viewer_state.diff_view_scroll = 0;
+        }
+        KeyCode::Char('G') => {
+            app.viewer_state.diff_view_scroll = total.saturating_sub(1);
+        }
+        KeyCode::Char('h') | KeyCode::Left => {
+            app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
+        }
+        KeyCode::Char('l') | KeyCode::Right => {
+            app.viewer_state.h_scroll += 4;
+        }
+        KeyCode::Char('0') => {
+            app.viewer_state.h_scroll = 0;
+        }
+        KeyCode::Char('c') => {
+            // Comment: only allowed on lines with new_line_no (Equal/Insert).
+            if let Some(entry) = app.viewer_state.diff_view_lines.get(app.viewer_state.diff_view_scroll) {
+                match entry {
+                    crate::viewer_state::UnifiedDiffEntry::Line { tag, new_line_no: Some(_), .. }
+                        if *tag != crate::diff_state::DiffLineTag::Delete =>
+                    {
+                        open_viewer_comment(app);
+                    }
+                    _ => {
+                        app.status_message = Some("Cannot comment on deleted lines".to_string().into());
+                    }
+                }
+            }
+        }
+        KeyCode::Char(' ') => {
             open_viewer_comment_detail(app);
         }
         _ => {}
@@ -2148,28 +2231,27 @@ pub fn handle_mouse_event(
                                         app.diff_state.resolve_file(idx)
                                     {
                                         let file_path = file_diff.path.clone();
-                                        let first_change_line = file_diff
-                                            .hunks
-                                            .iter()
-                                            .flat_map(|h| h.lines.iter())
-                                            .find(|l| {
-                                                l.tag != crate::diff_state::DiffLineTag::Equal
-                                            })
-                                            .and_then(|l| l.new_line_no.or(l.old_line_no));
+                                        let file_diff_clone = file_diff.clone();
                                         if let Some(wt) =
                                             app.worktrees.get(app.selected_worktree)
                                         {
                                             let wt_path = wt.path.clone();
                                             app.viewer_state.open_file(&wt_path, &file_path);
-                                            if let Some(line) = first_change_line {
-                                                app.viewer_state.file_scroll =
-                                                    line.saturating_sub(4);
-                                            }
                                             app.viewer_state
                                                 .reveal_file_in_tree(&file_path, &wt_path);
                                             app.rehighlight_viewer();
                                             app.review_state
                                                 .build_file_comment_cache(&file_path);
+
+                                            // Build unified diff view.
+                                            app.viewer_state.build_unified_diff_view(&file_diff_clone);
+                                            if let Some(pos) = app.viewer_state.diff_view_lines.iter().position(|e| {
+                                                matches!(e, crate::viewer_state::UnifiedDiffEntry::Line { tag, .. }
+                                                    if *tag != crate::diff_state::DiffLineTag::Equal)
+                                            }) {
+                                                app.viewer_state.diff_view_scroll = pos.saturating_sub(3);
+                                            }
+
                                             app.set_focus(Focus::Viewer);
                                         }
                                     }
@@ -2216,6 +2298,44 @@ pub fn handle_mouse_event(
                     let inner_x = panel_x + 1; // inside border
                     let inner_y = main_area.y + 1; // inside border
 
+                    if app.viewer_state.diff_mode {
+                        // Diff mode: resolve line number from diff_view_lines.
+                        let diff_total = app.viewer_state.diff_view_lines.len();
+                        if diff_total > 0 && row >= inner_y {
+                            let line_offset = (row - inner_y) as usize;
+                            let idx = app.viewer_state.diff_view_scroll + line_offset;
+                            if let Some(crate::viewer_state::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view_lines.get(idx) {
+                                if *tag != crate::diff_state::DiffLineTag::Delete {
+                                    let line_1 = *line_1;
+                                    let has_comment = app.review_state.file_comments.contains_key(&line_1);
+                                    if has_comment {
+                                        let now = std::time::Instant::now();
+                                        let elapsed = now.duration_since(app.viewer_state.last_line_click_time);
+                                        let is_double = elapsed.as_millis() < 400
+                                            && app.viewer_state.last_line_click_line == line_1;
+                                        app.viewer_state.last_line_click_time = now;
+                                        app.viewer_state.last_line_click_line = line_1;
+
+                                        if is_double {
+                                            app.viewer_state.selected_line_start = Some(line_1);
+                                            app.viewer_state.selected_line_end = None;
+                                            app.viewer_state.comment_preview_line = None;
+                                            open_viewer_comment(app);
+                                        } else {
+                                            app.viewer_state.clear_selection();
+                                            app.viewer_state.comment_preview_line = Some(line_1);
+                                        }
+                                    } else {
+                                        app.viewer_state.comment_preview_line = None;
+                                        let is_double = app.viewer_state.click_line_number(line_1);
+                                        if is_double {
+                                            open_viewer_comment(app);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
                     let total_lines = app.viewer_state.file_content.len();
                     if total_lines > 0 && row >= inner_y {
                         let gutter_width = {
@@ -2265,6 +2385,7 @@ pub fn handle_mouse_event(
                             }
                         }
                     }
+                    } // end non-diff-mode
                 } else {
                     // Right column: top 80% = Claude, bottom 20% = Shell.
                     let terminal_split_y =

@@ -104,6 +104,8 @@ pub struct DiffLine {
     pub new_line_no: Option<usize>,
     /// Intra-line change segments. Empty vec = fallback to whole-line rendering.
     pub inline_segments: Vec<InlineSegment>,
+    /// The text content of this line (tab-expanded).
+    pub content: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +349,30 @@ impl DiffState {
         }
     }
 
+    // ── Helpers ────────────────────────────────────────────────────────
+
+    /// Expand tab characters to spaces, matching the viewer's tab expansion.
+    pub fn expand_tabs(line: &str, tab_width: usize) -> String {
+        if !line.contains('\t') {
+            return line.to_string();
+        }
+        let mut result = String::with_capacity(line.len());
+        let mut col = 0;
+        for ch in line.chars() {
+            if ch == '\t' {
+                let spaces = tab_width - (col % tab_width);
+                for _ in 0..spaces {
+                    result.push(' ');
+                }
+                col += spaces;
+            } else {
+                result.push(ch);
+                col += 1;
+            }
+        }
+        result
+    }
+
     // ── Private helpers ─────────────────────────────────────────────────
 
     /// Use `git2` + `similar` to compute file-level diffs for a given range.
@@ -471,6 +497,13 @@ impl DiffState {
                                 })
                                 .collect();
 
+                            // Build content by joining segment texts.
+                            let content: String = segments.iter()
+                                .map(|s| s.text.trim_end_matches('\n').trim_end_matches('\r'))
+                                .collect::<Vec<_>>()
+                                .join("");
+                            let content = Self::expand_tabs(&content, 4);
+
                             let has_emphasis = segments.iter().any(|s| s.emphasized);
                             let inline_segments =
                                 if has_emphasis { segments } else { Vec::new() };
@@ -480,6 +513,7 @@ impl DiffState {
                                 old_line_no,
                                 new_line_no,
                                 inline_segments,
+                                content,
                             });
                         }
                     } else {
@@ -499,11 +533,15 @@ impl DiffState {
                             let old_line_no = change.old_index().map(|i| i + 1);
                             let new_line_no = change.new_index().map(|i| i + 1);
 
+                            let raw = change.value().trim_end_matches('\n').trim_end_matches('\r');
+                            let content = Self::expand_tabs(raw, 4);
+
                             hunk_lines.push(DiffLine {
                                 tag,
                                 old_line_no,
                                 new_line_no,
                                 inline_segments: Vec::new(),
+                                content,
                             });
                         }
                     }
