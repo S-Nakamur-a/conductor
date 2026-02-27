@@ -77,6 +77,8 @@ pub struct ReviewState {
     pub comment_detail_active: bool,
     /// Scroll offset within the detail modal.
     pub comment_detail_scroll: usize,
+    /// Maximum scroll offset (set by render).
+    pub comment_detail_max_scroll: usize,
     /// Index of the comment being viewed in the detail modal.
     pub comment_detail_idx: usize,
 }
@@ -105,6 +107,7 @@ impl ReviewState {
             comment_list_rows: Vec::new(),
             comment_detail_active: false,
             comment_detail_scroll: 0,
+            comment_detail_max_scroll: 0,
             comment_detail_idx: 0,
         }
     }
