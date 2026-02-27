@@ -173,9 +173,9 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
 }
 
 /// Render a centered detail modal for viewing a full comment and its replies.
-pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
-    let popup_height = 24_u16.min(area.height.saturating_sub(4));
+    let popup_height = area.height.saturating_sub(4).max(10);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -288,10 +288,46 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Apply scroll.
+    // Compute total content height accounting for word-wrap.
+    let content_width = inner.width as usize;
+    let total_lines: usize = lines
+        .iter()
+        .map(|line| {
+            let line_len: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            if content_width > 0 && line_len > content_width {
+                (line_len + content_width - 1) / content_width
+            } else {
+                1
+            }
+        })
+        .sum();
+    let visible_height = inner.height as usize;
+    let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Store max_scroll and clamp scroll offset.
+    app.review_state.comment_detail_max_scroll = max_scroll;
+    if app.review_state.comment_detail_scroll > max_scroll {
+        app.review_state.comment_detail_scroll = max_scroll;
+    }
     let scroll = app.review_state.comment_detail_scroll as u16;
+
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
     frame.render_widget(paragraph, inner);
+
+    // Scroll indicator on the bottom border.
+    if total_lines > visible_height {
+        let current = app.review_state.comment_detail_scroll;
+        let indicator = format!(" [{}/{} j/k:scroll] ", current + visible_height.min(total_lines), total_lines);
+        let indicator_span = Span::styled(indicator, Style::default().fg(Color::DarkGray));
+        let indicator_x = popup_area.x + popup_area.width.saturating_sub(indicator_span.width() as u16 + 2);
+        let indicator_y = popup_area.y + popup_area.height - 1;
+        if indicator_x > popup_area.x && indicator_y < area.y + area.height {
+            frame.render_widget(
+                indicator_span,
+                Rect::new(indicator_x, indicator_y, popup_area.width.saturating_sub(2), 1),
+            );
+        }
+    }
 }

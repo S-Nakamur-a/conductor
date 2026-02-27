@@ -764,13 +764,13 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                         // Toggle expansion.
                         app.toggle_comment_expansion();
                     } else {
-                        // No replies — navigate to file.
-                        navigate_to_comment(app, comment_idx);
+                        // No replies — navigate to file, keep focus on comments.
+                        navigate_to_comment_with_focus(app, comment_idx, false);
                     }
                 }
                 Some(CommentListRow::Reply { comment_idx, .. }) => {
-                    // Navigate to the parent comment's file location.
-                    navigate_to_comment(app, comment_idx);
+                    // Navigate to the parent comment's file location, keep focus on comments.
+                    navigate_to_comment_with_focus(app, comment_idx, false);
                 }
                 None => {}
             }
@@ -809,10 +809,8 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
 }
 
 /// Navigate to the file and line of the comment at the given index.
-fn navigate_to_comment(app: &mut App, comment_idx: usize) {
-    navigate_to_comment_with_focus(app, comment_idx, true);
-}
-
+/// When `focus_viewer` is true, the focus moves to the Viewer panel;
+/// otherwise the current panel focus is preserved (e.g. comment list).
 fn navigate_to_comment_with_focus(app: &mut App, comment_idx: usize, focus_viewer: bool) {
     if let Some(comment) = app.review_state.comments.get(comment_idx) {
         let file_path = comment.file_path.clone();
@@ -1428,7 +1426,9 @@ fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
             app.review_state.comment_detail_active = false;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            app.review_state.comment_detail_scroll += 1;
+            if app.review_state.comment_detail_scroll < app.review_state.comment_detail_max_scroll {
+                app.review_state.comment_detail_scroll += 1;
+            }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             if app.review_state.comment_detail_scroll > 0 {
