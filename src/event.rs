@@ -1453,6 +1453,19 @@ fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
             app.review_state.selected = idx;
             app.review_state.comment_detail_active = false;
         }
+        KeyCode::Char('x') => {
+            // Delete from the detail view.
+            let idx = app.review_state.comment_detail_idx;
+            app.review_state.selected = idx;
+            app.review_state.comment_detail_active = false;
+            app.delete_selected_review_comment();
+        }
+        KeyCode::Char('r') => {
+            // Toggle resolve from the detail view.
+            let idx = app.review_state.comment_detail_idx;
+            app.review_state.selected = idx;
+            app.toggle_selected_review_status();
+        }
         _ => {}
     }
 }

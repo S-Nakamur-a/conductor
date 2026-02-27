@@ -221,7 +221,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         crate::review_store::CommentStatus::Resolved => "\u{2713} Resolved",
     };
 
-    let title = format!(" {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply) ");
+    let title = format!(" {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, x: delete) ");
 
     let block = Block::default()
         .title(title)
