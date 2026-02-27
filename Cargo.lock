@@ -295,6 +295,7 @@ dependencies = [
  "open",
  "portable-pty",
  "ratatui",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

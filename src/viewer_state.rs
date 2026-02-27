@@ -37,7 +37,9 @@ pub struct FileTreeEntry {
 #[derive(Debug, Clone)]
 pub enum UnifiedDiffEntry {
     /// A separator between hunks.
-    HunkSeparator,
+    HunkSeparator {
+        func_header: Option<String>,
+    },
     /// A single line (context, addition, or deletion).
     Line {
         tag: DiffLineTag,
@@ -495,7 +497,9 @@ impl ViewerState {
         for (hunk_idx, hunk) in file_diff.hunks.iter().enumerate() {
             // Add hunk separator between hunks (not before the first one).
             if hunk_idx > 0 {
-                self.diff_view_lines.push(UnifiedDiffEntry::HunkSeparator);
+                self.diff_view_lines.push(UnifiedDiffEntry::HunkSeparator {
+                    func_header: hunk.func_header.clone(),
+                });
             }
 
             for line in &hunk.lines {
