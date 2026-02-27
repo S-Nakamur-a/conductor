@@ -40,6 +40,25 @@ const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
 const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
 
 fn main() -> Result<()> {
+    // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if let Some(config_dir) = dirs::config_dir() {
+                let log_dir = config_dir.join("conductor");
+                let _ = std::fs::create_dir_all(&log_dir);
+                let log_path = log_dir.join("panic.log");
+                let bt = std::backtrace::Backtrace::force_capture();
+                let payload = format!(
+                    "=== Conductor panic at {} ===\n{info}\n\nBacktrace:\n{bt}\n\n",
+                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                );
+                let _ = std::fs::write(&log_path, &payload);
+            }
+            default_hook(info);
+        }));
+    }
+
     // ── Initialise logging (honour RUST_LOG env var) ─────────────────
     env_logger::init();
 
@@ -198,7 +217,7 @@ fn run_loop(
             let main_area = outer[2];
 
             let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
-            let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
+            let right_w = main_area.width.saturating_sub(left_w.saturating_add(explorer_w).saturating_add(viewer_w));
 
             if right_w > 2 {
                 let right_cols = right_w.saturating_sub(2); // borders
@@ -337,9 +356,9 @@ pub fn accordion_widths(expanded_panel: Option<crate::app::Focus>, total_width: 
         None => {
             // Default proportions.
             let min_col = 3_u16;
-            let left = (total_width * 15 / 100).max(min_col);
-            let explorer = (total_width * 20 / 100).max(min_col);
-            let viewer = (total_width * 30 / 100).max(min_col);
+            let left = ((total_width as u32 * 15 / 100) as u16).max(min_col);
+            let explorer = ((total_width as u32 * 20 / 100) as u16).max(min_col);
+            let viewer = ((total_width as u32 * 30 / 100) as u16).max(min_col);
             (left, explorer, viewer)
         }
     }
@@ -376,7 +395,7 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // ── Accordion column widths ─────────────────────────────────────
     let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
-    let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
+    let right_w = main_area.width.saturating_sub(left_w.saturating_add(explorer_w).saturating_add(viewer_w));
 
     let columns = Layout::horizontal([
         Constraint::Length(left_w),
