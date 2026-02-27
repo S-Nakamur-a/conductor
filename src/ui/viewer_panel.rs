@@ -295,17 +295,40 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
         .take(inner_height)
         .map(|entry| {
             match entry {
-                UnifiedDiffEntry::HunkSeparator => {
-                    // Thin grey separator line.
-                    let sep = format!(
-                        "{:─<width$}",
-                        " ··· ",
-                        width = area.width.saturating_sub(2) as usize,
-                    );
-                    Line::from(Span::styled(
-                        sep,
-                        Style::default().fg(Color::DarkGray),
-                    ))
+                UnifiedDiffEntry::HunkSeparator { func_header } => {
+                    let width = area.width.saturating_sub(2) as usize;
+                    match func_header {
+                        Some(header) => {
+                            let prefix = " ··· ";
+                            let suffix = " ───";
+                            // Fill the rest with ─
+                            let header_display = format!("{prefix}{header}{suffix}");
+                            let fill_len = width.saturating_sub(header_display.chars().count());
+                            let fill: String = "─".repeat(fill_len);
+                            Line::from(vec![
+                                Span::styled(prefix, Style::default().fg(Color::DarkGray)),
+                                Span::styled(
+                                    header.clone(),
+                                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                ),
+                                Span::styled(
+                                    format!("{suffix}{fill}"),
+                                    Style::default().fg(Color::DarkGray),
+                                ),
+                            ])
+                        }
+                        None => {
+                            let sep = format!(
+                                "{:─<width$}",
+                                " ··· ",
+                                width = width,
+                            );
+                            Line::from(Span::styled(
+                                sep,
+                                Style::default().fg(Color::DarkGray),
+                            ))
+                        }
+                    }
                 }
                 UnifiedDiffEntry::Line {
                     tag,

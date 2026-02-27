@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use git2::Repository;
+use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 
 use crate::config::DiffView;
@@ -117,6 +118,8 @@ pub struct DiffLine {
 pub struct DiffHunk {
     /// The lines that make up this hunk.
     pub lines: Vec<DiffLine>,
+    /// Function context header (e.g. "fn some_function()"), if detected.
+    pub func_header: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +378,58 @@ impl DiffState {
 
     // ── Private helpers ─────────────────────────────────────────────────
 
+    /// Return a regex pattern for detecting function/class/struct headers
+    /// based on the file extension. Returns `None` for unsupported extensions.
+    fn func_pattern_for_ext(ext: &str) -> Option<Regex> {
+        let pattern = match ext {
+            // Rust
+            "rs" => r"^\s*(pub\s+)?(async\s+)?(fn|impl|struct|enum|trait|mod|macro_rules!)\b",
+            // TypeScript / JavaScript
+            "ts" | "tsx" | "js" | "jsx" | "mjs" | "mts" | "cjs" | "cts" => {
+                r"^\s*(export\s+)?(default\s+)?(async\s+)?(function\*?|class)\b|^\s*(export\s+)?(const|let|var)\s+\w+\s*="
+            }
+            // Python
+            "py" => r"^\s*(async\s+)?(def|class)\b",
+            // Go
+            "go" => r"^(func|type)\b",
+            // Java / C# / Kotlin
+            "java" | "cs" | "kt" | "kts" => {
+                r"^\s*(public|private|protected|internal|static|abstract|override|final|suspend)?\s*(public|private|protected|internal|static|abstract|override|final|suspend)?\s*(class|interface|enum|record|fun|void|int|long|string|bool|boolean|var|val|object)\b"
+            }
+            // C / C++
+            "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "hxx" => {
+                r"^[a-zA-Z_][\w:*&<> ]*\s+\*?\w+\s*\(|^\s*(class|struct|enum|namespace|template)\b"
+            }
+            // Ruby
+            "rb" => r"^\s*(def|class|module)\b",
+            // PHP
+            "php" => r"^\s*(public|private|protected|static)?\s*(function|class|interface|trait)\b",
+            // Shell
+            "sh" | "bash" | "zsh" => r"^\s*(\w+\s*\(\)|function\s+\w+)",
+            _ => return None,
+        };
+        Regex::new(pattern).ok()
+    }
+
+    /// Scan upward from `start_line` (0-indexed) to find the nearest function
+    /// header in the old file content.
+    fn find_func_header(old_lines: &[&str], start_line: usize, pattern: &Regex) -> Option<String> {
+        for i in (0..=start_line).rev() {
+            let line = old_lines[i].trim_end();
+            if pattern.is_match(line) {
+                // Truncate very long headers for display.
+                let trimmed = line.trim();
+                let header = if trimmed.len() > 80 {
+                    format!("{}…", &trimmed[..80])
+                } else {
+                    trimmed.to_string()
+                };
+                return Some(header);
+            }
+        }
+        None
+    }
+
     /// Use `git2` + `similar` to compute file-level diffs for a given range.
     fn compute_diff_range(
         worktree_path: &Path,
@@ -463,6 +518,14 @@ impl DiffState {
             // Use `similar` to compute line-level diff with context.
             let text_diff = TextDiff::from_lines(&old_content, &new_content);
 
+            // Prepare function context extraction.
+            let ext = Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            let func_pattern = Self::func_pattern_for_ext(ext);
+            let old_lines: Vec<&str> = old_content.lines().collect();
+
             let context_radius = 3;
             let mut hunks = Vec::new();
             let mut total_added = 0usize;
@@ -547,8 +610,23 @@ impl DiffState {
                     }
                 }
 
+                // Extract function context header for this hunk.
+                let func_header = func_pattern.as_ref().and_then(|pat| {
+                    // Find the first line number in the hunk (old side).
+                    let first_old_line = hunk_lines.iter().find_map(|l| l.old_line_no);
+                    let first_new_line = hunk_lines.iter().find_map(|l| l.new_line_no);
+                    let start = first_old_line.or(first_new_line).unwrap_or(1);
+                    if start > 0 && !old_lines.is_empty() {
+                        let search_from = (start - 1).min(old_lines.len() - 1);
+                        Self::find_func_header(&old_lines, search_from, pat)
+                    } else {
+                        None
+                    }
+                });
+
                 hunks.push(DiffHunk {
                     lines: hunk_lines,
+                    func_header,
                 });
             }
 
