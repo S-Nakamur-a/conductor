@@ -45,6 +45,10 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         handle_cherry_pick_key(app, key);
         return;
     }
+    if app.viewer_state.filename_search_active {
+        handle_filename_search_key(app, key);
+        return;
+    }
     if app.viewer_state.search_active {
         handle_viewer_search_key(app, key);
         return;
@@ -559,6 +563,13 @@ fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             if let Some(&last) = visible.last() {
                 app.viewer_state.tree_selected = last;
             }
+        }
+        KeyCode::Char('/') => {
+            app.viewer_state.filename_search_active = true;
+            app.viewer_state.filename_search_query.clear();
+            app.viewer_state.filename_search_results.clear();
+            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.execute_filename_search();
         }
         _ => {}
     }
@@ -1482,6 +1493,74 @@ fn handle_help_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('2') => app.help_context = Focus::Explorer,
         KeyCode::Char('3') => app.help_context = Focus::Viewer,
         KeyCode::Char('4') => app.help_context = Focus::TerminalClaude,
+        _ => {}
+    }
+}
+
+// ── Overlay: filename search ────────────────────────────────────────────
+
+fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.viewer_state.filename_search_active = false;
+            app.viewer_state.filename_search_query.clear();
+            app.viewer_state.filename_search_results.clear();
+            app.viewer_state.filename_search_selected = 0;
+        }
+        KeyCode::Enter => {
+            if let Some(result) = app
+                .viewer_state
+                .filename_search_results
+                .get(app.viewer_state.filename_search_selected)
+                .cloned()
+            {
+                app.viewer_state.filename_search_active = false;
+
+                // Reveal and open the selected file (keep Focus on Explorer).
+                if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                    let wt_path = wt.path.clone();
+                    app.viewer_state.reveal_file_in_tree(&result.path, &wt_path);
+                    app.viewer_state.open_file(&wt_path, &result.path);
+                    app.rehighlight_viewer();
+                    app.review_state.build_file_comment_cache(&result.path);
+                }
+            }
+            app.viewer_state.filename_search_query.clear();
+            app.viewer_state.filename_search_results.clear();
+            app.viewer_state.filename_search_selected = 0;
+        }
+        KeyCode::Backspace => {
+            app.viewer_state.filename_search_query.pop();
+            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.execute_filename_search();
+        }
+        KeyCode::Down => {
+            let count = app.viewer_state.filename_search_results.len();
+            if count > 0 && app.viewer_state.filename_search_selected + 1 < count {
+                app.viewer_state.filename_search_selected += 1;
+            }
+        }
+        KeyCode::Up => {
+            if app.viewer_state.filename_search_selected > 0 {
+                app.viewer_state.filename_search_selected -= 1;
+            }
+        }
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = app.viewer_state.filename_search_results.len();
+            if count > 0 && app.viewer_state.filename_search_selected + 1 < count {
+                app.viewer_state.filename_search_selected += 1;
+            }
+        }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.viewer_state.filename_search_selected > 0 {
+                app.viewer_state.filename_search_selected -= 1;
+            }
+        }
+        KeyCode::Char(c) => {
+            app.viewer_state.filename_search_query.push(c);
+            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.execute_filename_search();
+        }
         _ => {}
     }
 }

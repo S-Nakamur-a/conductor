@@ -14,6 +14,17 @@ use syntect::util::LinesWithEndings;
 
 use crate::diff_state::{DiffLineTag, FileDiff, InlineSegment};
 
+/// A file matched by filename fuzzy search, with its score.
+#[derive(Debug, Clone)]
+pub struct ScoredFile {
+    /// Index in `file_tree`.
+    pub tree_index: usize,
+    /// Relative path of the file.
+    pub path: String,
+    /// Fuzzy match score (higher = better).
+    pub score: i32,
+}
+
 /// A single entry in the flattened file tree.
 #[derive(Debug, Clone)]
 pub struct FileTreeEntry {
@@ -117,6 +128,14 @@ pub struct ViewerState {
     pub diff_view_lines: Vec<UnifiedDiffEntry>,
     /// Vertical scroll offset for the diff view.
     pub diff_view_scroll: usize,
+    /// Whether the filename search overlay is active.
+    pub filename_search_active: bool,
+    /// Current filename search query.
+    pub filename_search_query: String,
+    /// Scored and sorted fuzzy search results.
+    pub filename_search_results: Vec<ScoredFile>,
+    /// Selected index within the search results list.
+    pub filename_search_selected: usize,
 }
 
 impl Default for ViewerState {
@@ -152,6 +171,10 @@ impl Default for ViewerState {
             diff_mode: false,
             diff_view_lines: Vec::new(),
             diff_view_scroll: 0,
+            filename_search_active: false,
+            filename_search_query: String::new(),
+            filename_search_results: Vec::new(),
+            filename_search_selected: 0,
         }
     }
 }
@@ -353,6 +376,149 @@ impl ViewerState {
             self.search_match_idx - 1
         };
         self.file_scroll = self.search_matches[self.search_match_idx];
+    }
+
+    // ── Filename fuzzy search ─────────────────────────────────────────────
+
+    /// Run fuzzy filename search over the file tree and populate results.
+    pub fn execute_filename_search(&mut self) {
+        self.filename_search_results.clear();
+
+        let query = self.filename_search_query.to_lowercase();
+
+        for (idx, entry) in self.file_tree.iter().enumerate() {
+            if entry.is_dir {
+                continue;
+            }
+
+            let path_lower = entry.path.to_lowercase();
+            let name_lower = entry.name.to_lowercase();
+
+            // If query is empty, include all files with score 0.
+            if query.is_empty() {
+                self.filename_search_results.push(ScoredFile {
+                    tree_index: idx,
+                    path: entry.path.clone(),
+                    score: 0,
+                });
+                continue;
+            }
+
+            // Check fuzzy subsequence match first — skip non-matching files.
+            if !Self::is_fuzzy_match(&query, &path_lower) {
+                continue;
+            }
+
+            let mut score: i32 = 10; // Base score for fuzzy match.
+
+            // Bonus: consecutive character matches.
+            score += Self::consecutive_bonus(&query, &path_lower);
+
+            // Bonus: filename exact prefix.
+            if name_lower.starts_with(&query) {
+                score += 100;
+            }
+
+            // Bonus: path substring match.
+            if path_lower.contains(&query) {
+                score += 50;
+            }
+
+            // Bonus: filename substring match.
+            if name_lower.contains(&query) {
+                score += 30;
+            }
+
+            // Bonus: word boundary match (char after '/', '_', '-', '.').
+            if Self::has_word_boundary_match(&query, &path_lower) {
+                score += 20;
+            }
+
+            self.filename_search_results.push(ScoredFile {
+                tree_index: idx,
+                path: entry.path.clone(),
+                score,
+            });
+        }
+
+        // Sort by score descending, then path ascending for stability.
+        self.filename_search_results.sort_by(|a, b| {
+            b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path))
+        });
+    }
+
+    /// Check if all characters of `query` appear in `haystack` in order.
+    fn is_fuzzy_match(query: &str, haystack: &str) -> bool {
+        let mut haystack_chars = haystack.chars();
+        for qc in query.chars() {
+            if !haystack_chars.any(|hc| hc == qc) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Award bonus points for consecutive matching characters.
+    fn consecutive_bonus(query: &str, haystack: &str) -> i32 {
+        let mut bonus = 0i32;
+        let mut consecutive = 0;
+        let mut hay_iter = haystack.chars().peekable();
+
+        for qc in query.chars() {
+            let mut found = false;
+            for hc in hay_iter.by_ref() {
+                if hc == qc {
+                    consecutive += 1;
+                    if consecutive > 1 {
+                        bonus += consecutive;
+                    }
+                    found = true;
+                    break;
+                }
+                consecutive = 0;
+            }
+            if !found {
+                break;
+            }
+        }
+        bonus
+    }
+
+    /// Check if query characters match at word boundaries in the haystack
+    /// (after '/', '_', '-', '.', or at position 0).
+    fn has_word_boundary_match(query: &str, haystack: &str) -> bool {
+        let boundary_chars: Vec<char> = haystack
+            .char_indices()
+            .filter(|&(i, _)| {
+                if i == 0 {
+                    return true;
+                }
+                let prev = haystack.as_bytes().get(i - 1).copied().unwrap_or(0);
+                matches!(prev, b'/' | b'_' | b'-' | b'.')
+            })
+            .map(|(_, c)| c)
+            .collect();
+
+        if boundary_chars.len() < query.len() {
+            return false;
+        }
+
+        let mut bi = 0;
+        for qc in query.chars() {
+            let mut found = false;
+            while bi < boundary_chars.len() {
+                if boundary_chars[bi] == qc {
+                    bi += 1;
+                    found = true;
+                    break;
+                }
+                bi += 1;
+            }
+            if !found {
+                return false;
+            }
+        }
+        true
     }
 
     /// Run syntect highlighting on `file_content` and cache the result.
