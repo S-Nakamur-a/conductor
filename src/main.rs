@@ -488,7 +488,7 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
         ui::review::render_input_overlay(frame, main_area, app);
     }
     if app.review_state.template_picker_active {
-        ui::review::render_template_picker_overlay(frame, main_area, &app.review_state);
+        ui::review::render_template_picker_overlay(frame, main_area, &app.review_state, &app.theme);
     }
     if app.review_state.comment_detail_active {
         ui::review::render_comment_detail_overlay(frame, main_area, app);
@@ -511,7 +511,7 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
         .map(|w| w.branch.as_str())
         .unwrap_or("");
     ui::common::render_status_bar(frame, status_area, app);
-    ui::common::render_worktree_label(frame, status_area, worktree_branch, &app.repo_path);
+    ui::common::render_worktree_label(frame, status_area, worktree_branch, &app.repo_path, &app.theme);
 }
 
 /// Render a small confirmation overlay for worktree deletion.

@@ -5,7 +5,7 @@
 //! opens it in the Viewer panel.
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
@@ -100,20 +100,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Show search input overlay.
     if app.viewer_state.search_active {
-        render_search_box(frame, area, &app.viewer_state.search_query);
+        render_search_box(frame, area, &app.viewer_state.search_query, &app.theme);
+    }
+
+    // Show filename search overlay.
+    if app.viewer_state.filename_search_active {
+        render_filename_search_overlay(frame, chunks[0], app);
     }
 }
 
 /// Render the file tree (top half).
 fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let tree_focused = panel_focused && !vs.explorer_focus_on_diff_list;
     let border_color = if tree_focused {
-        Color::Yellow
+        theme.border_focused
     } else if panel_focused {
-        Color::White
+        theme.border_secondary
     } else {
-        Color::DarkGray
+        theme.border_unfocused
     };
 
     let visible = vs.visible_indices();
@@ -132,9 +138,9 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
     let is_expanded = app.expanded_panel == Some(Focus::Explorer);
     let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", Color::Yellow)
+        ("[>=<]", theme.border_focused)
     } else {
-        ("[<=>]", Color::DarkGray)
+        ("[<=>]", theme.border_unfocused)
     };
 
     let block = Block::default()
@@ -168,18 +174,18 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
             let style = if vis_idx == selected_vis_idx && tree_focused {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
+                    .fg(theme.selected_fg)
+                    .bg(theme.selected_bg)
                     .add_modifier(Modifier::BOLD)
             } else if vis_idx == selected_vis_idx {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::DarkGray)
+                    .fg(theme.selected_fg_inactive)
+                    .bg(theme.selected_bg_inactive)
                     .add_modifier(Modifier::BOLD)
             } else if entry.is_dir {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(theme.info)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.fg)
             };
 
             Some(ListItem::new(Span::styled(label, style)))
@@ -205,14 +211,15 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::diff_state::{DiffListEntry, DiffSection};
 
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let diff_focused = panel_focused && vs.explorer_focus_on_diff_list;
     let border_color = if diff_focused {
-        Color::Yellow
+        theme.border_focused
     } else if panel_focused {
-        Color::White
+        theme.border_secondary
     } else {
-        Color::DarkGray
+        theme.border_unfocused
     };
 
     let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
@@ -248,17 +255,17 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
                 let style = if idx == vs.diff_list_selected && diff_focused {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
+                        .fg(theme.selected_fg)
+                        .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else if idx == vs.diff_list_selected {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::DarkGray)
+                        .fg(theme.selected_fg_inactive)
+                        .bg(theme.selected_bg_inactive)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.info)
                         .add_modifier(Modifier::BOLD)
                 };
 
@@ -288,20 +295,20 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
                 let style = if idx == vs.diff_list_selected && diff_focused {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
+                        .fg(theme.selected_fg)
+                        .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else if idx == vs.diff_list_selected {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::DarkGray)
+                        .fg(theme.selected_fg_inactive)
+                        .bg(theme.selected_bg_inactive)
                         .add_modifier(Modifier::BOLD)
                 } else if file_diff.is_new {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(theme.success)
                 } else if file_diff.is_deleted {
-                    Style::default().fg(Color::Red)
+                    Style::default().fg(theme.error)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme.fg)
                 };
 
                 ListItem::new(Span::styled(label, style))
@@ -317,14 +324,15 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::review_state::CommentListRow;
 
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let list_focused = panel_focused && vs.explorer_focus_on_diff_list;
     let border_color = if list_focused {
-        Color::Yellow
+        theme.border_focused
     } else if panel_focused {
-        Color::White
+        theme.border_secondary
     } else {
-        Color::DarkGray
+        theme.border_unfocused
     };
 
     let total = app.review_state.comments.len();
@@ -411,18 +419,18 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 
                     let style = if row_idx == vs.comment_list_selected && list_focused {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Yellow)
+                            .fg(theme.selected_fg)
+                            .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD)
                     } else if row_idx == vs.comment_list_selected {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::DarkGray)
+                            .fg(theme.selected_fg_inactive)
+                            .bg(theme.selected_bg_inactive)
                             .add_modifier(Modifier::BOLD)
                     } else if comment.status == crate::review_store::CommentStatus::Resolved {
-                        Style::default().fg(Color::DarkGray)
+                        Style::default().fg(theme.muted)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(theme.fg)
                     };
 
                     Some(ListItem::new(Span::styled(label, style)))
@@ -452,16 +460,16 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 
                     let style = if row_idx == vs.comment_list_selected && list_focused {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Yellow)
+                            .fg(theme.selected_fg)
+                            .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD)
                     } else if row_idx == vs.comment_list_selected {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::DarkGray)
+                            .fg(theme.selected_fg_inactive)
+                            .bg(theme.selected_bg_inactive)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Rgb(120, 120, 140))
+                        Style::default().fg(theme.reply_text)
                     };
 
                     Some(ListItem::new(Span::styled(label, style)))
@@ -475,7 +483,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 }
 
 /// Render a search input box at the bottom of the given area.
-fn render_search_box(frame: &mut Frame, area: Rect, query: &str) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &crate::theme::Theme) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
@@ -485,7 +493,96 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &str) {
     let text = format!("/{query}\u{2588}");
     let paragraph = ratatui::widgets::Paragraph::new(Span::styled(
         text,
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
+}
+
+/// Render the filename search overlay on top of the file tree area.
+fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let vs = &app.viewer_state;
+    let inner_width = area.width.saturating_sub(2);
+    let inner_height = area.height.saturating_sub(2) as usize;
+
+    if inner_width == 0 || inner_height == 0 {
+        return;
+    }
+
+    // Input box at the top of the panel (inside the border).
+    let input_y = area.y + 1;
+    let input_area = Rect::new(area.x + 1, input_y, inner_width, 1);
+    frame.render_widget(ratatui::widgets::Clear, input_area);
+
+    let total_files = vs.file_tree.iter().filter(|e| !e.is_dir).count();
+    let match_count = vs.filename_search_results.len();
+    let counter = format!(" {match_count}/{total_files}");
+    let query_width = inner_width.saturating_sub(counter.len() as u16 + 1) as usize;
+
+    let query_display = &vs.filename_search_query;
+    let query_text = format!("/{query_display}\u{2588}");
+    // Truncate display if needed.
+    let query_truncated: String = query_text.chars().take(query_width).collect();
+
+    let input_line = Line::from(vec![
+        Span::styled(query_truncated, Style::default().fg(Color::Yellow)),
+        Span::styled(counter, Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(ratatui::widgets::Paragraph::new(input_line), input_area);
+
+    // Results list below the input.
+    let results_start_y = input_y + 1;
+    let results_height = (area.y + area.height).saturating_sub(results_start_y + 1) as usize;
+
+    if results_height == 0 {
+        return;
+    }
+
+    // Scroll the results if selected is beyond visible range.
+    let scroll = if vs.filename_search_selected >= results_height {
+        vs.filename_search_selected - results_height + 1
+    } else {
+        0
+    };
+
+    if vs.filename_search_results.is_empty() && !vs.filename_search_query.is_empty() {
+        let no_match_area = Rect::new(area.x + 1, results_start_y, inner_width, 1);
+        frame.render_widget(ratatui::widgets::Clear, no_match_area);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(Span::styled(
+                "No matches",
+                Style::default().fg(Color::DarkGray),
+            )),
+            no_match_area,
+        );
+        return;
+    }
+
+    for (vi, result) in vs
+        .filename_search_results
+        .iter()
+        .skip(scroll)
+        .take(results_height)
+        .enumerate()
+    {
+        let y = results_start_y + vi as u16;
+        let row_area = Rect::new(area.x + 1, y, inner_width, 1);
+        frame.render_widget(ratatui::widgets::Clear, row_area);
+
+        let is_selected = scroll + vi == vs.filename_search_selected;
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        // Truncate path to fit.
+        let display: String = result.path.chars().take(inner_width as usize).collect();
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(Span::styled(display, style)),
+            row_area,
+        );
+    }
 }
