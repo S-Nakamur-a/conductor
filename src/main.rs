@@ -185,29 +185,41 @@ fn run_loop(
     // renders immediately, then we check/refresh the cache in background.
     let mut last_ccusage_poll = Instant::now() - ccusage_poll;
 
+    let mut needs_redraw = true;
+
     loop {
         if app.needs_clear {
             terminal.clear()?;
             app.needs_clear = false;
+            needs_redraw = true;
         }
 
-        // Advance animation tick.
-        app.ui_tick = app.ui_tick.wrapping_add(1);
+        // Terminal panels need continuous rendering for PTY output.
+        if matches!(app.focus, crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell) {
+            needs_redraw = true;
+        }
 
-        // Auto-clear status messages after ~3 seconds (180 ticks at 60fps).
-        const STATUS_FADE_TICKS: u64 = 180;
-        if let Some(ref msg) = app.status_message {
-            let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
-            if age >= STATUS_FADE_TICKS {
-                app.status_message = None;
+        if needs_redraw {
+            // Advance animation tick only on actual renders.
+            app.ui_tick = app.ui_tick.wrapping_add(1);
+
+            // Auto-clear status messages after ~3 seconds (180 ticks at 60fps).
+            const STATUS_FADE_TICKS: u64 = 180;
+            if let Some(ref msg) = app.status_message {
+                let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
+                if age >= STATUS_FADE_TICKS {
+                    app.status_message = None;
+                }
             }
-        }
 
-        // Draw the current frame.
-        terminal.draw(|frame| {
-            last_frame_area = frame.area();
-            render_ui(frame, app);
-        })?;
+            // Draw the current frame.
+            terminal.draw(|frame| {
+                last_frame_area = frame.area();
+                render_ui(frame, app);
+            })?;
+
+            needs_redraw = false;
+        }
 
         // Compute PTY sizes for Claude and Shell panels.
         {
@@ -262,6 +274,7 @@ fn run_loop(
                 Event::Resize(_, _) => {}
                 _ => {}
             }
+            needs_redraw = true;
             // Drain any remaining queued events so burst input (e.g. rapid
             // j/k presses or mouse scroll) is fully processed before the
             // next render, preventing the "lag then jump" effect.
@@ -292,6 +305,7 @@ fn run_loop(
                         app.refresh_worktrees();
                         app.refresh_viewer();
                         app.refresh_diff();
+                        needs_redraw = true;
                     }
                 }
             }
@@ -306,18 +320,21 @@ fn run_loop(
             last_worktree_poll = Instant::now();
             app.refresh_worktrees();
             app.check_diff_viewer_staleness();
+            needs_redraw = true;
         }
 
         // Periodically remove dead PTY sessions (exited processes).
         if last_pty_cleanup.elapsed() >= PTY_CLEANUP_POLL {
             last_pty_cleanup = Instant::now();
             app.cleanup_dead_sessions();
+            needs_redraw = true;
         }
 
         // Periodically check if any Claude Code sessions are waiting for input.
         if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
+            needs_redraw = true;
         }
 
         // Periodically refresh gamification stats (streak, today's activity).
@@ -326,6 +343,7 @@ fn run_loop(
             if let Some(store) = &app.review_store {
                 app.today_stats = store.get_today_stats().ok();
             }
+            needs_redraw = true;
         }
 
         // ── ccusage background fetch (with global file cache) ────────
@@ -350,6 +368,7 @@ fn run_loop(
             if let Ok(mut lock) = ccusage_result.try_lock() {
                 if let Some(info) = lock.take() {
                     app.ccusage_info = Some(info);
+                    needs_redraw = true;
                 }
             }
         }

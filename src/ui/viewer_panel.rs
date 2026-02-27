@@ -18,9 +18,9 @@ use crate::theme::Theme;
 use crate::viewer_state::UnifiedDiffEntry;
 
 /// Annotation for a diff line, carrying the tag and optional inline segments.
-struct DiffAnnotation {
-    tag: DiffLineTag,
-    inline_segments: Vec<InlineSegment>,
+pub struct DiffAnnotation {
+    pub tag: DiffLineTag,
+    pub inline_segments: Vec<InlineSegment>,
 }
 
 /// Render the viewer (file content) panel into the given area.
@@ -630,7 +630,7 @@ fn render_comment_preview(
 /// are added first so that committed annotations don't overwrite them (the
 /// viewer shows the workdir version of the file, so uncommitted changes are
 /// more relevant).
-fn build_diff_annotations(app: &App) -> std::collections::HashMap<usize, DiffAnnotation> {
+pub fn build_diff_annotations(app: &App) -> std::collections::HashMap<usize, DiffAnnotation> {
     use crate::diff_state::FileDiff;
 
     let mut annotations = std::collections::HashMap::new();
