@@ -908,7 +908,7 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
         }
         KeyCode::Char('l') | KeyCode::Right => {
-            app.viewer_state.h_scroll += 4;
+            app.viewer_state.scroll_right(4);
         }
         KeyCode::Char('0') => {
             app.viewer_state.h_scroll = 0;
@@ -968,7 +968,7 @@ fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
         }
         KeyCode::Char('l') | KeyCode::Right => {
-            app.viewer_state.h_scroll += 4;
+            app.viewer_state.scroll_right(4);
         }
         KeyCode::Char('0') => {
             app.viewer_state.h_scroll = 0;
@@ -2189,7 +2189,7 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollRight => {
             if col >= explorer_end && col < viewer_end {
-                app.viewer_state.h_scroll += 4;
+                app.viewer_state.scroll_right(4);
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
