@@ -11,6 +11,7 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::review_state::{ReviewInputMode, ReviewState};
 use crate::review_store::CommentKind;
+use crate::theme::Theme;
 
 /// Emoji icon for a comment kind.
 pub fn kind_icon(kind: CommentKind) -> &'static str {
@@ -34,6 +35,7 @@ pub fn kind_badge_span(kind: CommentKind) -> Span<'static> {
 
 /// Render an input box overlay when adding or editing a comment.
 pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
     let popup_height = 12_u16.min(area.height.saturating_sub(4));
     let popup_width = area.width.saturating_sub(8).min(80);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -75,7 +77,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.border_focused));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
@@ -96,7 +98,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
             lines.push(Line::from(Span::styled(
                 preview,
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(theme.muted)
                     .add_modifier(Modifier::ITALIC),
             )));
             lines.push(Line::from(""));
@@ -107,14 +109,14 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let buf = &app.review_state.input_buffer;
     let mut input_lines: Vec<Line> = buf
         .split('\n')
-        .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(Color::White))))
+        .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(theme.fg))))
         .collect();
 
     // Append block cursor to the last input line.
     if let Some(last) = input_lines.last_mut() {
         last.spans.push(Span::styled(
             "\u{2588}",
-            Style::default().fg(Color::White),
+            Style::default().fg(theme.fg),
         ));
     }
     lines.extend(input_lines);
@@ -126,7 +128,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     };
     lines.push(Line::from(Span::styled(
         hint,
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.muted),
     )));
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
@@ -134,7 +136,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Render a centered popup for the comment template picker.
-pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &ReviewState) {
+pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &ReviewState, theme: &Theme) {
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
     let popup_height = 15_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -146,7 +148,7 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
     let block = Block::default()
         .title(" Templates (Enter: use, x: delete, Esc: close) ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.border_focused));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
@@ -154,7 +156,7 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
     if state.templates.is_empty() {
         let empty = Paragraph::new(Line::from(vec![Span::styled(
             "  No templates saved. Use T to save a comment as template.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         )]));
         frame.render_widget(empty, inner);
         return;
@@ -173,10 +175,10 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
 
         let style = if is_selected {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.fg)
         };
 
         let prefix = if is_selected { "> " } else { "  " };
@@ -188,7 +190,7 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
         ]));
         lines.push(Line::from(vec![Span::styled(
             format!("    {body_preview}"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         )]));
     }
 
@@ -198,6 +200,7 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
 
 /// Render a centered detail modal for viewing a full comment and its replies.
 pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
+    let theme = &app.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
     let popup_height = area.height.saturating_sub(4).max(10);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -226,7 +229,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.info));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
@@ -242,8 +245,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         format!("{}:{}", comment.file_path, comment.line_start)
     };
     lines.push(Line::from(vec![
-        Span::styled(" \u{1f4cd} ", Style::default().fg(Color::Yellow)), // 📍
-        Span::styled(line_range, Style::default().fg(Color::Yellow)),
+        Span::styled(" \u{1f4cd} ", Style::default().fg(theme.accent)), // 📍
+        Span::styled(line_range, Style::default().fg(theme.accent)),
     ]));
 
     let author_label = match comment.author {
@@ -253,7 +256,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     lines.push(Line::from(vec![
         Span::styled(
             format!(" by {author_label}"),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(theme.info),
         ),
     ]));
 
@@ -261,14 +264,14 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     let sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
     lines.push(Line::from(Span::styled(
         format!(" {sep}"),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.muted),
     )));
 
     // Comment body (full, multi-line).
     for body_line in comment.body.split('\n') {
         lines.push(Line::from(Span::styled(
             format!(" {body_line}"),
-            Style::default().fg(Color::White),
+            Style::default().fg(theme.fg),
         )));
     }
 
@@ -280,12 +283,12 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
             let reply_sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
             lines.push(Line::from(Span::styled(
                 format!(" {reply_sep}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             )));
             lines.push(Line::from(Span::styled(
                 format!(" \u{1f4ac} Replies ({})", replies.len()), // 💬
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme.info)
                     .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(Span::raw("")));
@@ -298,13 +301,13 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("  \u{21b3} [{r_author}] "),
-                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(theme.info),
                     ),
                 ]));
                 for reply_line in reply.body.split('\n') {
                     lines.push(Line::from(Span::styled(
                         format!("    {reply_line}"),
-                        Style::default().fg(Color::Rgb(180, 180, 200)),
+                        Style::default().fg(theme.reply_text),
                     )));
                 }
                 lines.push(Line::from(Span::raw("")));
@@ -344,7 +347,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     if total_lines > visible_height {
         let current = app.review_state.comment_detail_scroll;
         let indicator = format!(" [{}/{} j/k:scroll] ", current + visible_height.min(total_lines), total_lines);
-        let indicator_span = Span::styled(indicator, Style::default().fg(Color::DarkGray));
+        let indicator_span = Span::styled(indicator, Style::default().fg(theme.muted));
         let indicator_x = popup_area.x + popup_area.width.saturating_sub(indicator_span.width() as u16 + 2);
         let indicator_y = popup_area.y + popup_area.height - 1;
         if indicator_x > popup_area.x && indicator_y < area.y + area.height {

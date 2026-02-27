@@ -3,7 +3,7 @@
 //! Displays session tabs and the PTY output of the active shell session.
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 use ratatui::Frame;
@@ -15,8 +15,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    let theme = &app.theme;
     let focused = app.focus == Focus::TerminalShell;
-    let border_color = if focused { Color::Yellow } else { Color::DarkGray };
+    let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
 
     let sessions = app.current_worktree_shell_sessions();
 
@@ -26,7 +27,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
         let msg = Paragraph::new(" Enter / Click / Ctrl+t: new session")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.muted))
             .block(block);
         frame.render_widget(msg, area);
         return;
@@ -51,9 +52,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let label = format!("[SH:{}]", tab_idx + 1);
             let is_active = Some(*global_idx) == app.active_shell_session;
             let close_style = if is_active {
-                Style::default().fg(Color::Red)
+                Style::default().fg(theme.error)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.muted)
             };
             Line::from(vec![
                 Span::raw(label),
@@ -64,12 +65,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Add [+] and [<=>] tabs.
     let mut titles = tab_titles;
-    titles.push(Line::from(Span::styled("[+]", Style::default().fg(Color::Green))));
+    titles.push(Line::from(Span::styled("[+]", Style::default().fg(theme.success))));
     let is_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
     let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", Color::Yellow)
+        ("[>=<]", theme.border_focused)
     } else {
-        ("[<=>]", Color::DarkGray)
+        ("[<=>]", theme.border_unfocused)
     };
     titles.push(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))));
 
@@ -77,7 +78,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .select(selected_tab)
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
         .divider(Span::raw(" "))

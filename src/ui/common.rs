@@ -14,6 +14,8 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::theme::Theme;
+
 /// A snapshot of a single cell's content and style, extracted from the vt100 screen.
 struct CellSnapshot {
     text: String,
@@ -194,6 +196,7 @@ fn name_to_color(name: &str) -> (Color, Color) {
 
 /// Render the title bar at the top showing worktree name and working directory.
 pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    let theme = &app.theme;
     let wt_name = app
         .worktrees
         .get(app.selected_worktree)
@@ -207,7 +210,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 
     let (badge_bg, branch_fg) = name_to_color(&app.main_repo_name);
 
-    let bar_bg = Color::DarkGray;
+    let bar_bg = theme.titlebar_bg;
     let conductor_bg = badge_bg;
     let conductor_fg = Color::Black;
 
@@ -219,31 +222,31 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         ),
         Span::raw(" "),
         Span::styled(wt_name, Style::default().fg(branch_fg).add_modifier(Modifier::BOLD)),
-        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-        Span::styled(wt_path, Style::default().fg(Color::Gray)),
+        Span::styled(" │ ", Style::default().fg(theme.muted)),
+        Span::styled(wt_path, Style::default().fg(theme.dir_fg)),
     ]);
     let paragraph = Paragraph::new(line).style(Style::default().bg(bar_bg));
     frame.render_widget(paragraph, area);
 
     // ── Right-aligned stats display (today's activity + ccusage) ──────────
     {
-        let sep = Span::styled(" | ", Style::default().fg(Color::DarkGray).bg(Color::DarkGray));
+        let sep = Span::styled(" | ", Style::default().fg(theme.muted).bg(bar_bg));
         let mut spans: Vec<Span> = Vec::new();
 
         if let Some(ref stats) = app.today_stats {
             spans.push(Span::styled(
                 format!("{} branches", stats.branches_created),
-                Style::default().fg(Color::Cyan).bg(Color::DarkGray),
+                Style::default().fg(theme.info).bg(bar_bg),
             ));
             spans.push(sep.clone());
             spans.push(Span::styled(
                 format!("{} commits", stats.commits_made),
-                Style::default().fg(Color::Green).bg(Color::DarkGray),
+                Style::default().fg(theme.success).bg(bar_bg),
             ));
             spans.push(sep.clone());
             spans.push(Span::styled(
                 format!("{} reviews", stats.reviews_created),
-                Style::default().fg(Color::Magenta).bg(Color::DarkGray),
+                Style::default().fg(Color::Magenta).bg(bar_bg),
             ));
         }
         if let Some(ref info) = app.ccusage_info {
@@ -252,19 +255,19 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             }
             spans.push(Span::styled(
                 format!("{} tokens", format_tokens(info.total_tokens)),
-                Style::default().fg(Color::Yellow).bg(Color::DarkGray),
+                Style::default().fg(theme.accent).bg(bar_bg),
             ));
             spans.push(sep.clone());
             spans.push(Span::styled(
                 format!("${:.2}", info.total_cost),
-                Style::default().fg(Color::LightGreen).bg(Color::DarkGray),
+                Style::default().fg(Color::LightGreen).bg(bar_bg),
             ));
         }
 
         if !spans.is_empty() {
             // Add padding spaces
-            spans.insert(0, Span::styled(" ", Style::default().bg(Color::DarkGray)));
-            spans.push(Span::styled(" ", Style::default().bg(Color::DarkGray)));
+            spans.insert(0, Span::styled(" ", Style::default().bg(bar_bg)));
+            spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
 
             let stats_line = Line::from(spans);
             let stats_w = stats_line.width() as u16;
@@ -291,12 +294,14 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         return 0;
     }
 
+    let theme = &app.theme;
+
     // Orange-tinted background for the notification bar.
     let pulse_on = (app.ui_tick / 20) % 2 == 0;
     let bar_bg = if pulse_on {
-        Color::Rgb(50, 30, 0)  // warm dark orange
+        Theme::darken(theme.waiting_primary, 0.20)
     } else {
-        Color::Rgb(35, 20, 0)  // darker pulse
+        Theme::darken(theme.waiting_primary, 0.14)
     };
 
     // Fill background.
@@ -309,7 +314,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
     // Leading indicator.
     let prefix = " ⏳ ";
     let prefix_style = Style::default()
-        .fg(Color::Rgb(255, 180, 50))
+        .fg(theme.waiting_primary)
         .bg(bar_bg)
         .add_modifier(Modifier::BOLD);
     let prefix_area = Rect::new(area.x, area.y, prefix.len() as u16, 1);
@@ -327,9 +332,9 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     // Badge colors: orange pulse.
     let badge_bg = if pulse_on {
-        Color::Rgb(200, 120, 0) // bright orange
+        theme.waiting_secondary
     } else {
-        Color::Rgb(180, 100, 0) // slightly dimmer
+        Theme::darken(theme.waiting_secondary, 0.90)
     };
     let badge_style = Style::default()
         .fg(Color::Black)
@@ -337,7 +342,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         .add_modifier(Modifier::BOLD);
 
     let sep_style = Style::default()
-        .fg(Color::Rgb(180, 120, 40))
+        .fg(Theme::darken(theme.waiting_primary, 0.70))
         .bg(bar_bg);
 
     let mut x = area.x + UnicodeWidthStr::width(prefix) as u16;
@@ -371,7 +376,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
     let hint_w = UnicodeWidthStr::width(hint) as u16;
     if x + hint_w < area.x + area.width {
         let hint_area = Rect::new(x + 1, area.y, hint_w, 1);
-        let hint_style = Style::default().fg(Color::Rgb(120, 90, 40)).bg(bar_bg);
+        let hint_style = Style::default().fg(Theme::darken(theme.waiting_primary, 0.47)).bg(bar_bg);
         frame.render_widget(Paragraph::new(Span::styled(hint, hint_style)), hint_area);
     }
 
@@ -381,9 +386,8 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 /// Render a status bar at the bottom of the screen.
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     use crate::app::StatusLevel;
-    use crate::theme::Theme;
 
-    let theme = Theme::from_name(&app.config.viewer.theme);
+    let theme = &app.theme;
 
     if let Some(ref msg) = app.status_message {
         let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
@@ -400,10 +404,10 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
         let bg_color = if age < 30 {
             if (age / 5) % 2 == 0 {
                 match msg.level {
-                    StatusLevel::Success => Color::Rgb(0, 30, 0),
-                    StatusLevel::Error   => Color::Rgb(40, 0, 0),
-                    StatusLevel::Warning => Color::Rgb(40, 30, 0),
-                    StatusLevel::Info    => Color::Rgb(0, 20, 40),
+                    StatusLevel::Success => theme.status_bg_success,
+                    StatusLevel::Error   => theme.status_bg_error,
+                    StatusLevel::Warning => theme.status_bg_warning,
+                    StatusLevel::Info    => theme.status_bg_info,
                 }
             } else {
                 Color::Reset
@@ -414,7 +418,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
 
         // Fade: after 2.5 seconds (150 ticks), dimmed style.
         let style = if age >= 150 {
-            Style::default().fg(Color::DarkGray).bg(Color::Reset)
+            Style::default().fg(theme.muted).bg(Color::Reset)
         } else {
             let mut s = Style::default().fg(fg_color).bg(bg_color);
             if age < 30 {
@@ -429,7 +433,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     } else {
         // Default keybinding hint text.
         let hint = app.status_bar_text();
-        let span = Span::styled(hint, Style::default().fg(Color::Gray));
+        let span = Span::styled(hint, Style::default().fg(theme.hint));
         frame.render_widget(Paragraph::new(span), area);
     }
 }
@@ -441,6 +445,7 @@ pub fn render_worktree_label(
     row_area: Rect,
     worktree_branch: &str,
     repo_path: &std::path::Path,
+    theme: &Theme,
 ) {
     let repo_name = repo_path
         .file_name()
@@ -463,9 +468,9 @@ pub fn render_worktree_label(
     );
 
     let line = Line::from(vec![
-        Span::styled(branch_part, Style::default().fg(Color::Cyan)),
+        Span::styled(branch_part, Style::default().fg(theme.info)),
         Span::raw(" "),
-        Span::styled(repo_part, Style::default().fg(Color::DarkGray)),
+        Span::styled(repo_part, Style::default().fg(theme.muted)),
     ]);
     let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, label_area);

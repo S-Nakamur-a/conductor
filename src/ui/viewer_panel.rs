@@ -14,6 +14,7 @@ use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::review_state::ReviewInputMode;
 use crate::review_store::ReviewComment;
+use crate::theme::Theme;
 use crate::viewer_state::UnifiedDiffEntry;
 
 /// Annotation for a diff line, carrying the tag and optional inline segments.
@@ -27,15 +28,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let focused = app.focus == Focus::Viewer;
-    let border_color = if focused { Color::Yellow } else { Color::DarkGray };
+    let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
 
     let is_expanded = app.expanded_panel == Some(Focus::Viewer);
     let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", Color::Yellow)
+        ("[>=<]", theme.border_focused)
     } else {
-        ("[<=>]", Color::DarkGray)
+        ("[<=>]", theme.border_unfocused)
     };
 
     // Truncate title so it doesn't overlap with the [<=>] button on the right.
@@ -81,7 +83,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     if vs.file_content.is_empty() {
         let placeholder = Paragraph::new("Select a file to view its contents.")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.muted))
             .block(block);
         frame.render_widget(placeholder, area);
         return;
@@ -120,21 +122,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
             let gutter_style = if is_selected {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::LightBlue)
+                    .fg(theme.gutter_selected_fg)
+                    .bg(theme.gutter_selected_bg)
                     .add_modifier(Modifier::BOLD)
             } else if diff_tag == Some(DiffLineTag::Insert) {
-                Style::default().fg(Color::Green)
+                Style::default().fg(theme.diff_add)
             } else if diff_tag == Some(DiffLineTag::Delete) {
-                Style::default().fg(Color::Red)
+                Style::default().fg(theme.diff_del)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.muted)
             };
             let gutter_span = Span::styled(num, gutter_style);
 
             // Comment badge.
             let badge = if comment_lines.contains(&line_1) {
-                Span::styled("\u{25c6} ", Style::default().fg(Color::Yellow))
+                Span::styled("\u{25c6} ", Style::default().fg(theme.accent))
             } else {
                 Span::raw("  ")
             };
@@ -147,19 +149,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let content_spans: Vec<Span> = if is_current_match {
                 vec![Span::styled(
                     content.to_string(),
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                    Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg),
                 )]
             } else if is_match {
                 vec![Span::styled(
                     content.to_string(),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(theme.search_match_fg)
                         .add_modifier(Modifier::BOLD),
                 )]
             } else if is_selected {
                 vec![Span::styled(
                     content.to_string(),
-                    Style::default().bg(Color::DarkGray).fg(Color::White),
+                    Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
                 )]
             } else if let Some(ann) = annotation {
                 if !ann.inline_segments.is_empty() {
@@ -171,11 +173,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     };
 
                     if ann.tag == DiffLineTag::Insert {
-                        // Insert lines: the viewer shows the new file, so
-                        // highlighted_lines[line_no] corresponds to this line.
-                        // Try full merge (syntax fg + word-diff emphasis bg).
-                        // If that fails, still use syntax highlighting with
-                        // line-level diff bg (lose word emphasis, keep colours).
                         vs.highlighted_lines.get(line_no)
                             .filter(|t| !t.is_empty())
                             .and_then(|tokens| merge_syntax_with_inline(
@@ -183,8 +180,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                             ))
                             .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
                     } else {
-                        // Delete lines: the deleted content doesn't exist in
-                        // the viewer's file, so we can't use syntax tokens.
                         render_inline_diff_spans(
                             &ann.inline_segments,
                             diff_bg,
@@ -205,8 +200,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             };
 
             // Apply horizontal scroll to content spans, clipping to panel width.
-            // Gutter: prefix(1) + line_no(gutter_width) + " │ "(3) = gutter_width + 4
-            // Badge: 2 chars.  Block border: 1 char each side.
             let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
             let content_spans = h_scroll_spans(content_spans, vs.h_scroll, content_max_w);
 
@@ -217,8 +210,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     // Clear the area first to avoid stale content when scrolling.
-    // ratatui 0.29 does not reset cells between frames, so without this
-    // the diff algorithm may leave old characters visible.
     frame.render_widget(ratatui::widgets::Clear, area);
 
     let paragraph = Paragraph::new(lines).block(block);
@@ -237,7 +228,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(ratatui::widgets::Clear, hint_area);
         let hint_widget = Paragraph::new(Span::styled(
             hint,
-            Style::default().fg(Color::Black).bg(Color::LightBlue),
+            Style::default().fg(theme.gutter_selected_fg).bg(theme.gutter_selected_bg),
         ));
         frame.render_widget(hint_widget, hint_area);
     }
@@ -260,18 +251,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 cursor_line,
                 has_selection,
                 &app.review_state.reply_counts,
+                theme,
             );
         }
     }
 
     // Show search input overlay.
     if vs.search_active {
-        render_search_box(frame, area, &vs.search_query);
+        render_search_box(frame, area, &vs.search_query, theme);
     }
 }
 
 /// Render the unified diff view (GitHub-style).
 fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
+    let theme = &app.theme;
     let vs = &app.viewer_state;
     let inner_height = area.height.saturating_sub(2) as usize;
 
@@ -306,14 +299,14 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                             let fill_len = width.saturating_sub(header_display.chars().count());
                             let fill: String = "─".repeat(fill_len);
                             Line::from(vec![
-                                Span::styled(prefix, Style::default().fg(Color::DarkGray)),
+                                Span::styled(prefix, Style::default().fg(theme.muted)),
                                 Span::styled(
                                     header.clone(),
-                                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                    Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC),
                                 ),
                                 Span::styled(
                                     format!("{suffix}{fill}"),
-                                    Style::default().fg(Color::DarkGray),
+                                    Style::default().fg(theme.muted),
                                 ),
                             ])
                         }
@@ -325,7 +318,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                             );
                             Line::from(Span::styled(
                                 sep,
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(theme.muted),
                             ))
                         }
                     }
@@ -357,21 +350,21 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     let num = format!("{gutter_prefix}{line_num_str} \u{2502} ");
                     let gutter_style = if is_selected {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::LightBlue)
+                            .fg(theme.gutter_selected_fg)
+                            .bg(theme.gutter_selected_bg)
                             .add_modifier(Modifier::BOLD)
                     } else {
                         match tag {
-                            DiffLineTag::Insert => Style::default().fg(Color::Green),
-                            DiffLineTag::Delete => Style::default().fg(Color::Red),
-                            DiffLineTag::Equal => Style::default().fg(Color::DarkGray),
+                            DiffLineTag::Insert => Style::default().fg(theme.diff_add),
+                            DiffLineTag::Delete => Style::default().fg(theme.diff_del),
+                            DiffLineTag::Equal => Style::default().fg(theme.muted),
                         }
                     };
                     let gutter_span = Span::styled(num, gutter_style);
 
                     // Comment badge (only for lines with new_line_no).
                     let badge = if new_line_no.is_some_and(|n| comment_lines.contains(&n)) {
-                        Span::styled("\u{25c6} ", Style::default().fg(Color::Yellow))
+                        Span::styled("\u{25c6} ", Style::default().fg(theme.accent))
                     } else {
                         Span::raw("  ")
                     };
@@ -380,7 +373,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     let content_spans: Vec<Span> = if is_selected {
                         vec![Span::styled(
                             content.clone(),
-                            Style::default().bg(Color::DarkGray).fg(Color::White),
+                            Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
                         )]
                     } else if !inline_segments.is_empty() {
                         match tag {
@@ -419,7 +412,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                                 if let Some(line_no) = new_line_no {
                                     syntax_spans_for_line(vs, line_no - 1, None)
                                 } else {
-                                    vec![Span::styled(content.clone(), Style::default().fg(Color::White))]
+                                    vec![Span::styled(content.clone(), Style::default().fg(theme.fg))]
                                 }
                             }
                         }
@@ -432,21 +425,21 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                                 } else {
                                     vec![Span::styled(
                                         content.clone(),
-                                        Style::default().fg(Color::White).bg(diff_bg.unwrap_or(Color::Reset)),
+                                        Style::default().fg(theme.fg).bg(diff_bg.unwrap_or(Color::Reset)),
                                     )]
                                 }
                             }
                             DiffLineTag::Delete => {
                                 vec![Span::styled(
                                     content.clone(),
-                                    Style::default().fg(Color::White).bg(diff_bg.unwrap_or(Color::Reset)),
+                                    Style::default().fg(theme.fg).bg(diff_bg.unwrap_or(Color::Reset)),
                                 )]
                             }
                             DiffLineTag::Equal => {
                                 if let Some(line_no) = new_line_no {
                                     syntax_spans_for_line(vs, line_no - 1, None)
                                 } else {
-                                    vec![Span::styled(content.clone(), Style::default().fg(Color::White))]
+                                    vec![Span::styled(content.clone(), Style::default().fg(theme.fg))]
                                 }
                             }
                         }
@@ -482,7 +475,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
         frame.render_widget(ratatui::widgets::Clear, hint_area);
         let hint_widget = Paragraph::new(Span::styled(
             hint,
-            Style::default().fg(Color::Black).bg(Color::LightBlue),
+            Style::default().fg(theme.gutter_selected_fg).bg(theme.gutter_selected_bg),
         ));
         frame.render_widget(hint_widget, hint_area);
     }
@@ -512,6 +505,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     cursor_line,
                     has_selection,
                     &app.review_state.reply_counts,
+                    theme,
                 );
             }
         }
@@ -526,6 +520,7 @@ fn render_comment_preview(
     line: usize,
     has_selection: bool,
     reply_counts: &std::collections::HashMap<String, usize>,
+    theme: &Theme,
 ) {
     let max_comments: usize = 3;
     let max_body_lines: usize = 3;
@@ -543,15 +538,15 @@ fn render_comment_preview(
     lines.push(Line::from(vec![
         Span::styled(
             format!(" L{line} "),
-            Style::default().fg(Color::Black).bg(Color::Yellow),
+            Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg),
         ),
         Span::styled(
             format!(" {count_label}"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ),
         Span::styled(
             "  Space: view thread",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ),
     ]));
 
@@ -568,7 +563,7 @@ fn render_comment_preview(
         let reply_badge = if reply_count > 0 {
             Span::styled(
                 format!(" [{reply_count} replies]"),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.info),
             )
         } else {
             Span::raw("")
@@ -579,7 +574,7 @@ fn render_comment_preview(
             kind_badge,
             Span::styled(
                 format!("{author_label}: "),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.info),
             ),
             reply_badge,
         ]));
@@ -593,13 +588,13 @@ fn render_comment_preview(
             let display: String = body_line.chars().take(max_chars).collect();
             lines.push(Line::from(Span::styled(
                 format!("  {display}"),
-                Style::default().fg(Color::White),
+                Style::default().fg(theme.fg),
             )));
         }
         if truncated {
             lines.push(Line::from(Span::styled(
                 "  ...",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             )));
         }
     }
@@ -607,7 +602,7 @@ fn render_comment_preview(
     if comments.len() > max_comments {
         lines.push(Line::from(Span::styled(
             format!("  +{} more", comments.len() - max_comments),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         )));
     }
 
@@ -625,7 +620,7 @@ fn render_comment_preview(
 
     frame.render_widget(ratatui::widgets::Clear, preview_area);
 
-    let paragraph = Paragraph::new(lines).style(Style::default().bg(Color::Rgb(30, 30, 50)));
+    let paragraph = Paragraph::new(lines).style(Style::default().bg(theme.comment_preview_bg));
     frame.render_widget(paragraph, preview_area);
 }
 
@@ -647,10 +642,6 @@ fn build_diff_annotations(app: &App) -> std::collections::HashMap<usize, DiffAnn
     let insert_annotations = |file_diff: &FileDiff, map: &mut std::collections::HashMap<usize, DiffAnnotation>| {
         for hunk in &file_diff.hunks {
             for line in &hunk.lines {
-                // The viewer displays the NEW file content, so only Insert
-                // lines (keyed by new_line_no) can be meaningfully annotated.
-                // Delete lines use old_line_no which refers to the old file
-                // and would collide with Insert entries, hiding additions.
                 if line.tag == DiffLineTag::Insert {
                     if let Some(n) = line.new_line_no {
                         map.entry(n).or_insert_with(|| DiffAnnotation {
@@ -795,7 +786,7 @@ fn expand_tabs(line: &str, tab_width: usize) -> String {
     result
 }
 
-fn render_search_box(frame: &mut Frame, area: Rect, query: &str) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &Theme) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
@@ -805,7 +796,7 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &str) {
     let text = format!("/{query}\u{2588}");
     let paragraph = Paragraph::new(Span::styled(
         text,
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
 }
