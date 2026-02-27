@@ -275,18 +275,6 @@ fn run_loop(
                 _ => {}
             }
             needs_redraw = true;
-            // Drain any remaining queued events so burst input (e.g. rapid
-            // j/k presses or mouse scroll) is fully processed before the
-            // next render, preventing the "lag then jump" effect.
-            while crossterm_poll(Duration::ZERO)? {
-                match crossterm_read()? {
-                    Event::Key(key) => { last_input_time = Instant::now(); handle_key_event(app, key); }
-                    Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
-                    Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
-                    Event::Resize(_, _) => {}
-                    _ => {}
-                }
-            }
         }
 
         // Check for file system change events (debounced).
