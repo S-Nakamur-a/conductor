@@ -36,8 +36,12 @@ use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
 
 /// Tick rate when terminal panels are focused (~120fps for responsive PTY).
 const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
-/// Tick rate when non-terminal panels are focused (low CPU usage).
+/// Tick rate right after user input for responsive scrolling (~60fps).
+const TICK_RATE_ACTIVE: Duration = Duration::from_millis(16);
+/// Tick rate when non-terminal panels are idle (low CPU usage).
 const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
+/// How long to keep using the active tick rate after the last input event.
+const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn main() -> Result<()> {
     // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
@@ -159,6 +163,9 @@ fn run_loop(
     const STATS_REFRESH_POLL: Duration = Duration::from_secs(30);
     let mut last_stats_refresh = Instant::now();
 
+    // Track last user input to switch between active/idle tick rates.
+    let mut last_input_time = Instant::now() - ACTIVITY_TIMEOUT;
+
     // ── ccusage polling (opt-in via [ccusage] enabled = true) ─────
     // Uses a global file cache so multiple Conductor instances don't
     // redundantly run `npx ccusage`.
@@ -239,18 +246,33 @@ fn run_loop(
             }
         }
 
-        // Wait for an event.
+        // Wait for an event. Use a fast tick rate shortly after user input
+        // so that scrolling and navigation feel responsive, then fall back to
+        // an idle rate to save CPU.
         let tick = match app.focus {
             crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+            _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
             _ => TICK_RATE_IDLE,
         };
         if crossterm_poll(tick)? {
             match crossterm_read()? {
-                Event::Key(key) => handle_key_event(app, key),
-                Event::Mouse(mouse) => handle_mouse_event(app, mouse, last_frame_area),
-                Event::Paste(data) => handle_paste_event(app, data),
+                Event::Key(key) => { last_input_time = Instant::now(); handle_key_event(app, key); }
+                Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
+                Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
                 Event::Resize(_, _) => {}
                 _ => {}
+            }
+            // Drain any remaining queued events so burst input (e.g. rapid
+            // j/k presses or mouse scroll) is fully processed before the
+            // next render, preventing the "lag then jump" effect.
+            while crossterm_poll(Duration::ZERO)? {
+                match crossterm_read()? {
+                    Event::Key(key) => { last_input_time = Instant::now(); handle_key_event(app, key); }
+                    Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
+                    Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
+                    Event::Resize(_, _) => {}
+                    _ => {}
+                }
             }
         }
 
