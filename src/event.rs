@@ -2498,17 +2498,34 @@ fn handle_mouse_scroll(
         }
     } else if col < viewer_end {
         // Viewer scroll.
-        let total = app.viewer_state.file_content.len();
-        if total > 0 {
-            if delta > 0 {
-                app.viewer_state.file_scroll = (app.viewer_state.file_scroll
-                    + delta.unsigned_abs() as usize)
-                    .min(total.saturating_sub(1));
-            } else {
-                app.viewer_state.file_scroll = app
-                    .viewer_state
-                    .file_scroll
-                    .saturating_sub(delta.unsigned_abs() as usize);
+        if app.viewer_state.diff_mode {
+            // Unified diff view scroll.
+            let total = app.viewer_state.diff_view_lines.len();
+            if total > 0 {
+                if delta > 0 {
+                    app.viewer_state.diff_view_scroll = (app.viewer_state.diff_view_scroll
+                        + delta.unsigned_abs() as usize)
+                        .min(total.saturating_sub(1));
+                } else {
+                    app.viewer_state.diff_view_scroll = app
+                        .viewer_state
+                        .diff_view_scroll
+                        .saturating_sub(delta.unsigned_abs() as usize);
+                }
+            }
+        } else {
+            let total = app.viewer_state.file_content.len();
+            if total > 0 {
+                if delta > 0 {
+                    app.viewer_state.file_scroll = (app.viewer_state.file_scroll
+                        + delta.unsigned_abs() as usize)
+                        .min(total.saturating_sub(1));
+                } else {
+                    app.viewer_state.file_scroll = app
+                        .viewer_state
+                        .file_scroll
+                        .saturating_sub(delta.unsigned_abs() as usize);
+                }
             }
         }
     } else {
