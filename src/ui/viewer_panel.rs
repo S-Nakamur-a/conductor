@@ -204,8 +204,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 syntax_spans_for_line(vs, line_no, gutter_bg)
             };
 
-            // Apply horizontal scroll to content spans.
-            let content_spans = h_scroll_spans(content_spans, vs.h_scroll);
+            // Apply horizontal scroll to content spans, clipping to panel width.
+            // Gutter: prefix(1) + line_no(gutter_width) + " │ "(3) = gutter_width + 4
+            // Badge: 2 chars.  Block border: 1 char each side.
+            let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
+            let content_spans = h_scroll_spans(content_spans, vs.h_scroll, content_max_w);
 
             let mut spans = vec![gutter_span, badge];
             spans.extend(content_spans);
@@ -426,8 +429,9 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                         }
                     };
 
-                    // Apply horizontal scroll.
-                    let content_spans = h_scroll_spans(content_spans, vs.h_scroll);
+                    // Apply horizontal scroll, clipping to panel width.
+                    let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
+                    let content_spans = h_scroll_spans(content_spans, vs.h_scroll, content_max_w);
 
                     let mut spans = vec![gutter_span, badge];
                     spans.extend(content_spans);
@@ -815,26 +819,44 @@ fn syntax_spans_for_line(
     }
 }
 
-/// Skip `offset` characters from the beginning of a sequence of `Span`s,
-/// preserving per-span styling.  Returns the remaining spans.
-fn h_scroll_spans(spans: Vec<Span<'static>>, offset: usize) -> Vec<Span<'static>> {
-    if offset == 0 {
-        return spans;
-    }
-    let mut remaining = offset;
+/// Skip `offset` characters from the beginning of a sequence of `Span`s and
+/// truncate to at most `max_width` characters, preserving per-span styling.
+fn h_scroll_spans(spans: Vec<Span<'static>>, offset: usize, max_width: usize) -> Vec<Span<'static>> {
+    let mut remaining_skip = offset;
+    let mut remaining_width = max_width;
     let mut result: Vec<Span<'static>> = Vec::new();
     for span in spans {
-        let char_count = span.content.chars().count();
-        if remaining >= char_count {
-            remaining -= char_count;
-            continue;
+        if remaining_width == 0 {
+            break;
         }
-        if remaining > 0 {
-            let s: String = span.content.chars().skip(remaining).collect();
-            result.push(Span::styled(s, span.style));
-            remaining = 0;
+        let char_count = span.content.chars().count();
+        // Left clipping: skip characters for horizontal scroll offset.
+        if remaining_skip > 0 {
+            if remaining_skip >= char_count {
+                remaining_skip -= char_count;
+                continue;
+            }
+            let s: String = span.content.chars().skip(remaining_skip).collect();
+            let len = s.chars().count();
+            if len <= remaining_width {
+                remaining_width -= len;
+                result.push(Span::styled(s, span.style));
+            } else {
+                let truncated: String = s.chars().take(remaining_width).collect();
+                remaining_width = 0;
+                result.push(Span::styled(truncated, span.style));
+            }
+            remaining_skip = 0;
         } else {
-            result.push(span);
+            // Right clipping: truncate to remaining panel width.
+            if char_count <= remaining_width {
+                remaining_width -= char_count;
+                result.push(span);
+            } else {
+                let truncated: String = span.content.chars().take(remaining_width).collect();
+                remaining_width = 0;
+                result.push(Span::styled(truncated, span.style));
+            }
         }
     }
     result
