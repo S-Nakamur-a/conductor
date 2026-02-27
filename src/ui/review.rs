@@ -80,20 +80,44 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
+    let mut lines: Vec<Line> = Vec::new();
+
+    // When replying, show a preview of the parent comment's first line.
+    if app.review_state.input_mode == ReviewInputMode::ReplyingToComment {
+        if let Some(parent) = app.review_state.comments.get(app.review_state.selected) {
+            let first_line = parent.body.lines().next().unwrap_or("");
+            let max_len = inner.width.saturating_sub(4) as usize;
+            let preview = if first_line.chars().count() > max_len {
+                let truncated: String = first_line.chars().take(max_len).collect();
+                format!("\u{258e} {truncated}\u{2026}")
+            } else {
+                format!("\u{258e} {first_line}")
+            };
+            lines.push(Line::from(Span::styled(
+                preview,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+            lines.push(Line::from(""));
+        }
+    }
+
     // Build multi-line display: show each line of the buffer, with cursor at end.
     let buf = &app.review_state.input_buffer;
-    let mut lines: Vec<Line> = buf
+    let mut input_lines: Vec<Line> = buf
         .split('\n')
         .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(Color::White))))
         .collect();
 
-    // Append block cursor to the last line.
-    if let Some(last) = lines.last_mut() {
+    // Append block cursor to the last input line.
+    if let Some(last) = input_lines.last_mut() {
         last.spans.push(Span::styled(
             "\u{2588}",
             Style::default().fg(Color::White),
         ));
     }
+    lines.extend(input_lines);
 
     // Hint line at the bottom.
     let hint = match app.review_state.input_mode {
