@@ -102,6 +102,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.viewer_state.search_active {
         render_search_box(frame, area, &app.viewer_state.search_query, &app.theme);
     }
+
+    // Show filename search overlay.
+    if app.viewer_state.filename_search_active {
+        render_filename_search_overlay(frame, chunks[0], app);
+    }
 }
 
 /// Render the file tree (top half).
@@ -491,4 +496,93 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &crate::
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
+}
+
+/// Render the filename search overlay on top of the file tree area.
+fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let vs = &app.viewer_state;
+    let inner_width = area.width.saturating_sub(2);
+    let inner_height = area.height.saturating_sub(2) as usize;
+
+    if inner_width == 0 || inner_height == 0 {
+        return;
+    }
+
+    // Input box at the top of the panel (inside the border).
+    let input_y = area.y + 1;
+    let input_area = Rect::new(area.x + 1, input_y, inner_width, 1);
+    frame.render_widget(ratatui::widgets::Clear, input_area);
+
+    let total_files = vs.file_tree.iter().filter(|e| !e.is_dir).count();
+    let match_count = vs.filename_search_results.len();
+    let counter = format!(" {match_count}/{total_files}");
+    let query_width = inner_width.saturating_sub(counter.len() as u16 + 1) as usize;
+
+    let query_display = &vs.filename_search_query;
+    let query_text = format!("/{query_display}\u{2588}");
+    // Truncate display if needed.
+    let query_truncated: String = query_text.chars().take(query_width).collect();
+
+    let input_line = Line::from(vec![
+        Span::styled(query_truncated, Style::default().fg(Color::Yellow)),
+        Span::styled(counter, Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(ratatui::widgets::Paragraph::new(input_line), input_area);
+
+    // Results list below the input.
+    let results_start_y = input_y + 1;
+    let results_height = (area.y + area.height).saturating_sub(results_start_y + 1) as usize;
+
+    if results_height == 0 {
+        return;
+    }
+
+    // Scroll the results if selected is beyond visible range.
+    let scroll = if vs.filename_search_selected >= results_height {
+        vs.filename_search_selected - results_height + 1
+    } else {
+        0
+    };
+
+    if vs.filename_search_results.is_empty() && !vs.filename_search_query.is_empty() {
+        let no_match_area = Rect::new(area.x + 1, results_start_y, inner_width, 1);
+        frame.render_widget(ratatui::widgets::Clear, no_match_area);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(Span::styled(
+                "No matches",
+                Style::default().fg(Color::DarkGray),
+            )),
+            no_match_area,
+        );
+        return;
+    }
+
+    for (vi, result) in vs
+        .filename_search_results
+        .iter()
+        .skip(scroll)
+        .take(results_height)
+        .enumerate()
+    {
+        let y = results_start_y + vi as u16;
+        let row_area = Rect::new(area.x + 1, y, inner_width, 1);
+        frame.render_widget(ratatui::widgets::Clear, row_area);
+
+        let is_selected = scroll + vi == vs.filename_search_selected;
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        // Truncate path to fit.
+        let display: String = result.path.chars().take(inner_width as usize).collect();
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(Span::styled(display, style)),
+            row_area,
+        );
+    }
 }
