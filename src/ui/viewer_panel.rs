@@ -666,8 +666,12 @@ fn render_inline_diff_spans(
         .iter()
         .map(|seg| {
             let bg = if seg.emphasized { emphasis_bg } else { diff_bg };
+            let text = expand_tabs(
+                seg.text.trim_end_matches('\n').trim_end_matches('\r'),
+                4,
+            );
             Span::styled(
-                seg.text.clone(),
+                text,
                 Style::default().fg(Color::White).bg(bg),
             )
         })
