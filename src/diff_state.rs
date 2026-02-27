@@ -420,7 +420,12 @@ impl DiffState {
                 // Truncate very long headers for display.
                 let trimmed = line.trim();
                 let header = if trimmed.len() > 80 {
-                    format!("{}…", &trimmed[..80])
+                    // Find the last char boundary at or before byte 80.
+                    let mut end = 80;
+                    while !trimmed.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &trimmed[..end])
                 } else {
                     trimmed.to_string()
                 };
