@@ -14,6 +14,7 @@ use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::review_state::ReviewInputMode;
 use crate::review_store::ReviewComment;
+use crate::viewer_state::UnifiedDiffEntry;
 
 /// Annotation for a diff line, carrying the tag and optional inline segments.
 struct DiffAnnotation {
@@ -71,6 +72,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
+
+    // Unified diff mode: delegate to dedicated renderer.
+    if vs.diff_mode && !vs.diff_view_lines.is_empty() {
+        render_diff_view(frame, area, app, block);
+        return;
+    }
 
     if vs.file_content.is_empty() {
         let placeholder = Paragraph::new("Select a file to view its contents.")
@@ -260,6 +267,230 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+/// Render the unified diff view (GitHub-style).
+fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
+    let vs = &app.viewer_state;
+    let inner_height = area.height.saturating_sub(2) as usize;
+
+    // Compute max line number for gutter width.
+    let max_line_no = vs.diff_view_lines.iter().filter_map(|entry| {
+        match entry {
+            UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+            _ => None,
+        }
+    }).max().unwrap_or(0);
+    let gutter_width = digit_count(max_line_no);
+
+    // Collect line numbers that have review comments.
+    let comment_lines: std::collections::HashSet<usize> =
+        app.review_state.file_comments.keys().copied().collect();
+
+    let lines: Vec<Line> = vs
+        .diff_view_lines
+        .iter()
+        .skip(vs.diff_view_scroll)
+        .take(inner_height)
+        .map(|entry| {
+            match entry {
+                UnifiedDiffEntry::HunkSeparator => {
+                    // Thin grey separator line.
+                    let sep = format!(
+                        "{:─<width$}",
+                        " ··· ",
+                        width = area.width.saturating_sub(2) as usize,
+                    );
+                    Line::from(Span::styled(
+                        sep,
+                        Style::default().fg(Color::DarkGray),
+                    ))
+                }
+                UnifiedDiffEntry::Line {
+                    tag,
+                    new_line_no,
+                    old_line_no: _,
+                    content,
+                    inline_segments,
+                } => {
+                    let is_selected = new_line_no
+                        .map(|n| vs.is_line_selected(n))
+                        .unwrap_or(false);
+
+                    // Gutter marker.
+                    let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
+                        DiffLineTag::Insert => ("+", Some(app.theme.diff_add_bg), Some(app.theme.diff_add_bg_emphasis)),
+                        DiffLineTag::Delete => ("-", Some(app.theme.diff_del_bg), Some(app.theme.diff_del_bg_emphasis)),
+                        DiffLineTag::Equal => (" ", None, None),
+                    };
+
+                    // Line number (blank for Delete lines).
+                    let line_num_str = match new_line_no {
+                        Some(n) => format!("{n:>gutter_width$}"),
+                        None => " ".repeat(gutter_width),
+                    };
+
+                    let num = format!("{gutter_prefix}{line_num_str} \u{2502} ");
+                    let gutter_style = if is_selected {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::LightBlue)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        match tag {
+                            DiffLineTag::Insert => Style::default().fg(Color::Green),
+                            DiffLineTag::Delete => Style::default().fg(Color::Red),
+                            DiffLineTag::Equal => Style::default().fg(Color::DarkGray),
+                        }
+                    };
+                    let gutter_span = Span::styled(num, gutter_style);
+
+                    // Comment badge (only for lines with new_line_no).
+                    let badge = if new_line_no.is_some_and(|n| comment_lines.contains(&n)) {
+                        Span::styled("\u{25c6} ", Style::default().fg(Color::Yellow))
+                    } else {
+                        Span::raw("  ")
+                    };
+
+                    // Content styling.
+                    let content_spans: Vec<Span> = if is_selected {
+                        vec![Span::styled(
+                            content.clone(),
+                            Style::default().bg(Color::DarkGray).fg(Color::White),
+                        )]
+                    } else if !inline_segments.is_empty() {
+                        match tag {
+                            DiffLineTag::Insert => {
+                                // Try syntax highlighting + word-diff merge.
+                                if let Some(line_no) = new_line_no {
+                                    let idx = line_no - 1;
+                                    vs.highlighted_lines.get(idx)
+                                        .filter(|t| !t.is_empty())
+                                        .and_then(|tokens| merge_syntax_with_inline(
+                                            inline_segments, tokens,
+                                            diff_bg.unwrap_or(Color::Reset),
+                                            emphasis_bg.unwrap_or(Color::Reset),
+                                        ))
+                                        .unwrap_or_else(|| render_inline_diff_spans(
+                                            inline_segments,
+                                            diff_bg.unwrap_or(Color::Reset),
+                                            emphasis_bg.unwrap_or(Color::Reset),
+                                        ))
+                                } else {
+                                    render_inline_diff_spans(
+                                        inline_segments,
+                                        diff_bg.unwrap_or(Color::Reset),
+                                        emphasis_bg.unwrap_or(Color::Reset),
+                                    )
+                                }
+                            }
+                            DiffLineTag::Delete => {
+                                render_inline_diff_spans(
+                                    inline_segments,
+                                    diff_bg.unwrap_or(Color::Reset),
+                                    emphasis_bg.unwrap_or(Color::Reset),
+                                )
+                            }
+                            DiffLineTag::Equal => {
+                                if let Some(line_no) = new_line_no {
+                                    syntax_spans_for_line(vs, line_no - 1, None)
+                                } else {
+                                    vec![Span::styled(content.clone(), Style::default().fg(Color::White))]
+                                }
+                            }
+                        }
+                    } else {
+                        // No inline segments — use syntax highlighting or plain.
+                        match tag {
+                            DiffLineTag::Insert => {
+                                if let Some(line_no) = new_line_no {
+                                    syntax_spans_for_line(vs, line_no - 1, diff_bg)
+                                } else {
+                                    vec![Span::styled(
+                                        content.clone(),
+                                        Style::default().fg(Color::White).bg(diff_bg.unwrap_or(Color::Reset)),
+                                    )]
+                                }
+                            }
+                            DiffLineTag::Delete => {
+                                vec![Span::styled(
+                                    content.clone(),
+                                    Style::default().fg(Color::White).bg(diff_bg.unwrap_or(Color::Reset)),
+                                )]
+                            }
+                            DiffLineTag::Equal => {
+                                if let Some(line_no) = new_line_no {
+                                    syntax_spans_for_line(vs, line_no - 1, None)
+                                } else {
+                                    vec![Span::styled(content.clone(), Style::default().fg(Color::White))]
+                                }
+                            }
+                        }
+                    };
+
+                    // Apply horizontal scroll.
+                    let content_spans = h_scroll_spans(content_spans, vs.h_scroll);
+
+                    let mut spans = vec![gutter_span, badge];
+                    spans.extend(content_spans);
+                    Line::from(spans)
+                }
+            }
+        })
+        .collect();
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, area);
+
+    // Show selection hint overlay.
+    if let Some((start, end)) = vs.selected_range() {
+        let hint = if start == end {
+            format!(" L{start} selected \u{2502} c: comment  Esc: clear ")
+        } else {
+            format!(" L{start}-L{end} selected \u{2502} c: comment  Esc: clear ")
+        };
+        let hint_width = hint.len().min(area.width.saturating_sub(2) as usize) as u16;
+        let y = area.y + area.height.saturating_sub(2);
+        let hint_area = Rect::new(area.x + 1, y, hint_width, 1);
+        frame.render_widget(ratatui::widgets::Clear, hint_area);
+        let hint_widget = Paragraph::new(Span::styled(
+            hint,
+            Style::default().fg(Color::Black).bg(Color::LightBlue),
+        ));
+        frame.render_widget(hint_widget, hint_area);
+    }
+
+    // Show comment preview overlay.
+    if !vs.search_active && app.review_state.input_mode == ReviewInputMode::Normal {
+        let cursor_line = if let Some(line) = vs.comment_preview_line {
+            line
+        } else if let Some((start, _)) = vs.selected_range() {
+            start
+        } else {
+            // Determine current line from diff_view_scroll position.
+            vs.diff_view_lines.get(vs.diff_view_scroll)
+                .and_then(|e| match e {
+                    UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+                    _ => None,
+                })
+                .unwrap_or(0)
+        };
+        if cursor_line > 0 {
+            if let Some(comments) = app.review_state.file_comments.get(&cursor_line) {
+                let has_selection = vs.selected_range().is_some();
+                render_comment_preview(
+                    frame,
+                    area,
+                    comments,
+                    cursor_line,
+                    has_selection,
+                    &app.review_state.reply_counts,
+                );
+            }
+        }
+    }
+}
+
 /// Render a comment preview overlay at the bottom of the viewer area.
 fn render_comment_preview(
     frame: &mut Frame,
@@ -389,24 +620,17 @@ fn build_diff_annotations(app: &App) -> std::collections::HashMap<usize, DiffAnn
     let insert_annotations = |file_diff: &FileDiff, map: &mut std::collections::HashMap<usize, DiffAnnotation>| {
         for hunk in &file_diff.hunks {
             for line in &hunk.lines {
-                match line.tag {
-                    DiffLineTag::Insert => {
-                        if let Some(n) = line.new_line_no {
-                            map.entry(n).or_insert_with(|| DiffAnnotation {
-                                tag: DiffLineTag::Insert,
-                                inline_segments: line.inline_segments.clone(),
-                            });
-                        }
+                // The viewer displays the NEW file content, so only Insert
+                // lines (keyed by new_line_no) can be meaningfully annotated.
+                // Delete lines use old_line_no which refers to the old file
+                // and would collide with Insert entries, hiding additions.
+                if line.tag == DiffLineTag::Insert {
+                    if let Some(n) = line.new_line_no {
+                        map.entry(n).or_insert_with(|| DiffAnnotation {
+                            tag: DiffLineTag::Insert,
+                            inline_segments: line.inline_segments.clone(),
+                        });
                     }
-                    DiffLineTag::Delete => {
-                        if let Some(n) = line.old_line_no {
-                            map.entry(n).or_insert_with(|| DiffAnnotation {
-                                tag: DiffLineTag::Delete,
-                                inline_segments: line.inline_segments.clone(),
-                            });
-                        }
-                    }
-                    DiffLineTag::Equal => {}
                 }
             }
         }
