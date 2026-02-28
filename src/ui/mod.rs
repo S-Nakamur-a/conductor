@@ -3,6 +3,7 @@
 //! Each sub-module corresponds to one panel in the unified layout.
 
 pub mod common;
+pub mod decoration;
 pub mod worktree_panel;
 pub mod explorer_panel;
 pub mod viewer_panel;

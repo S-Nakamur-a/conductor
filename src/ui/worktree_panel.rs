@@ -1,16 +1,17 @@
 //! Worktree panel — left-most column showing the worktree list.
 //!
 //! Displays the list of worktrees with selection, status indicators,
-//! and creation/deletion UI overlays.
+//! detail info, and an optional decoration zone (aquarium).
 
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Focus};
 use crate::theme::Theme;
+use crate::ui::decoration::{self, DecorationMode};
 
 /// Render the worktree panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -38,6 +39,42 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         Style::default()
     };
+
+    // ── Zone layout calculation ────────────────────────────────────
+    // Zone 1: worktree list (fixed height = items + 2 for borders)
+    let list_rows = (app.worktrees.len() as u16 + 2).max(5);
+    // Zone 2: detail section (base branch + local branches)
+    let detail_content_rows = 1 + app.local_branches.len() as u16; // "Base: ..." + branch lines
+    let detail_rows = (detail_content_rows + 2).min(8); // +2 for top border + header line, capped at 8
+    // Zone 3: decoration (whatever is left)
+    let decoration_mode = DecorationMode::from_str(&app.config.general.decoration);
+    let min_decoration_rows: u16 = if decoration_mode == DecorationMode::None { 0 } else { 4 };
+
+    // If the area is too small to fit all zones, progressively hide decoration and detail.
+    let total_needed = list_rows + detail_rows + min_decoration_rows;
+    let (zone1_h, zone2_h, zone3_constraint) = if area.height >= total_needed {
+        // All zones fit.
+        (list_rows, detail_rows, Constraint::Min(0))
+    } else if area.height >= list_rows + detail_rows {
+        // Detail fits but decoration might be tiny — show what's left.
+        (list_rows, detail_rows, Constraint::Min(0))
+    } else if area.height >= list_rows + 3 {
+        // Squeeze detail, no decoration.
+        let remaining = area.height.saturating_sub(list_rows);
+        (list_rows, remaining, Constraint::Length(0))
+    } else {
+        // Only list fits.
+        (area.height, 0, Constraint::Length(0))
+    };
+
+    let zones = Layout::vertical([
+        Constraint::Length(zone1_h),
+        Constraint::Length(zone2_h),
+        zone3_constraint,
+    ])
+    .split(area);
+
+    // ── Zone 1: Worktree list ─────────────────────────────────────
 
     let block = Block::default()
         .title(Span::styled(title, title_style))
@@ -201,5 +238,85 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let mut state = ListState::default();
     state.select(Some(app.selected_worktree));
 
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_stateful_widget(list, zones[0], &mut state);
+
+    // ── Zone 2: Detail section ────────────────────────────────────
+
+    if zone2_h >= 3 {
+        render_detail(frame, zones[1], app, theme, border_color);
+    }
+
+    // ── Zone 3: Decoration ────────────────────────────────────────
+
+    if zones[2].height >= min_decoration_rows {
+        decoration::render_decoration(
+            frame,
+            zones[2],
+            &app.aquarium_state,
+            theme,
+            decoration_mode,
+        );
+    }
+}
+
+/// Render the detail section: base branch and local branch list.
+fn render_detail(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    theme: &Theme,
+    border_color: Color,
+) {
+    let block = Block::default()
+        .title(Span::styled(
+            " Detail ",
+            Style::default().fg(theme.muted),
+        ))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Base branch.
+    lines.push(Line::from(vec![
+        Span::styled(" Base: ", Style::default().fg(theme.muted)),
+        Span::styled(
+            app.config.general.main_branch.as_str(),
+            Style::default().fg(theme.info),
+        ),
+    ]));
+
+    // Branches header.
+    if !app.local_branches.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " Branches:",
+            Style::default().fg(theme.muted),
+        )));
+
+        let max_branch_lines = inner.height.saturating_sub(2) as usize;
+        for branch in app.local_branches.iter().take(max_branch_lines) {
+            let style = if Some(branch.as_str()) == app.worktrees.get(app.selected_worktree).map(|w| w.branch.as_str()) {
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.fg)
+            };
+            lines.push(Line::from(Span::styled(format!("  {branch}"), style)));
+        }
+        if app.local_branches.len() > max_branch_lines {
+            lines.push(Line::from(Span::styled(
+                format!("  +{} more", app.local_branches.len() - max_branch_lines),
+                Style::default().fg(theme.muted),
+            )));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
 }

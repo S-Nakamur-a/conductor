@@ -102,6 +102,21 @@ impl GitEngine {
         Ok(infos)
     }
 
+    // ── Local branch listing ────────────────────────────────────
+
+    /// Return a sorted list of all local branch names.
+    pub fn list_local_branches(&self) -> Result<Vec<String>> {
+        let branches = self.repo.branches(Some(git2::BranchType::Local))?;
+        let mut names: Vec<String> = branches
+            .filter_map(|b| {
+                let (branch, _) = b.ok()?;
+                branch.name().ok()?.map(String::from)
+            })
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
     // ── Branch prefix helpers ────────────────────────────────────
 
     /// Strip common branch prefixes (feature/, fix/, etc.) to derive a

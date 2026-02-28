@@ -212,6 +212,17 @@ fn run_loop(
                 }
             }
 
+            // Tick the aquarium animation using last-known worktree panel width.
+            {
+                let (left_w, _, _) = accordion_widths(app.expanded_panel, last_frame_area.width);
+                // Estimate decoration zone height: subtract list + detail from panel height.
+                let panel_h = last_frame_area.height.saturating_sub(3); // title+notif+status
+                let list_h = (app.worktrees.len() as u16 + 2).max(5);
+                let detail_h = (1 + app.local_branches.len() as u16 + 2).min(8);
+                let deco_h = panel_h.saturating_sub(list_h + detail_h);
+                app.tick_aquarium(left_w.saturating_sub(2), deco_h);
+            }
+
             // Draw the current frame.
             terminal.draw(|frame| {
                 last_frame_area = frame.area();
