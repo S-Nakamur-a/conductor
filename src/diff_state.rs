@@ -527,7 +527,11 @@ impl DiffState {
             // blob id is zero (unstaged / untracked).
             let new_content = if use_workdir && delta.new_file().id().is_zero() {
                 let full_path = worktree_path.join(&path);
-                std::fs::read_to_string(&full_path).unwrap_or_default()
+                match std::fs::read(&full_path) {
+                    Ok(bytes) => String::from_utf8(bytes)
+                        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).to_string()),
+                    Err(_) => String::new(),
+                }
             } else {
                 Self::blob_content(&repo, &delta.new_file())
             };
@@ -535,6 +539,12 @@ impl DiffState {
             // Also skip single-delta case-only renames (when rename detection
             // merges delete+add into one delta).
             if Self::is_case_only_rename(&delta) && old_content == new_content {
+                continue;
+            }
+
+            // Skip files with no actual content changes.
+            // Catches spurious deltas from case-insensitive FS stat mismatches.
+            if old_content == new_content {
                 continue;
             }
 
