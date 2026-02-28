@@ -116,6 +116,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 );
             }
             crate::ui::common::render_pty_cached(frame, inner, &app.pty_cache_claude);
+
+            // Set cursor position for IME when focused and not scrolled back.
+            if focused {
+                if let Some((row, col)) = app.pty_cache_claude.cursor_position {
+                    let cursor_x = inner.x + col;
+                    let cursor_y = inner.y + row;
+                    if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {
+                        frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
+                    }
+                }
+            }
         } else {
             frame.render_widget(output_block, output_area);
         }

@@ -4,11 +4,12 @@
 //! have been modified (according to diff_state) are highlighted inline.
 //! Review comments are shown as inline badges.
 
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{Alignment, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
@@ -798,6 +799,11 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &Theme) 
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
+    // +1 for the leading '/' character
+    let cursor_x = search_area.x + 1 + UnicodeWidthStr::width(query) as u16;
+    if cursor_x < search_area.x + search_area.width {
+        frame.set_cursor_position(Position::new(cursor_x, search_area.y));
+    }
 }
 
 // ── Syntax highlighting via cached syntect data ─────────────────────────

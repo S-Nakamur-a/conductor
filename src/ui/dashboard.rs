@@ -3,14 +3,25 @@
 //!
 //! These are rendered as overlays on top of the main 3-column layout.
 
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::theme::Theme;
+
+/// Set the terminal cursor position for IME at the end of a single-line input buffer.
+fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &str) {
+    let text_width = UnicodeWidthStr::width(buffer) as u16;
+    let cursor_x = area.x + text_width;
+    let cursor_y = area.y;
+    if cursor_x < area.x + area.width && cursor_y < area.y + area.height {
+        frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+    }
+}
 
 /// Render the session history viewer overlay.
 pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
@@ -132,6 +143,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme.fg),
         ));
         frame.render_widget(paragraph, inner);
+        set_cursor_for_input(frame, inner, &app.history_search_query);
     }
 }
 
@@ -160,6 +172,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(theme.fg),
     ));
     frame.render_widget(paragraph, inner);
+    set_cursor_for_input(frame, inner, &app.worktree_input_buffer);
 }
 
 /// Render the cherry-pick commit picker overlay.
@@ -348,6 +361,7 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     ))
     .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);
+    set_cursor_for_input(frame, inner, &app.open_repo_buffer);
 }
 
 /// Render the switch-branch (remote branch checkout) overlay.
@@ -383,6 +397,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(theme.fg),
     ));
     frame.render_widget(filter_para, filter_inner);
+    set_cursor_for_input(frame, filter_inner, &app.switch_branch_filter);
 
     // Branch list.
     let list_block = Block::default()
@@ -562,6 +577,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
         Style::default().fg(theme.fg),
     ));
     frame.render_widget(filter_para, filter_inner);
+    set_cursor_for_input(frame, filter_inner, &app.base_branch_filter);
 
     // Branch list.
     let list_block = Block::default()
@@ -688,6 +704,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(theme.fg),
     ));
     frame.render_widget(filter_para, filter_inner);
+    set_cursor_for_input(frame, filter_inner, &app.resume_session_filter);
 
     // Session list.
     let list_block = Block::default()
@@ -799,6 +816,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         )),
         search_inner,
     );
+    set_cursor_for_input(frame, search_inner, &app.command_palette_filter);
 
     // Command list
     let list_block = Block::default()
@@ -1076,6 +1094,15 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
         .style(Style::default().fg(theme.fg))
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, chunks[0]);
+    {
+        let last_line = app.smart_description_buffer.split('\n').next_back().unwrap_or("");
+        let line_count = app.smart_description_buffer.split('\n').count().saturating_sub(1);
+        let cursor_x = chunks[0].x + UnicodeWidthStr::width(last_line) as u16;
+        let cursor_y = chunks[0].y + line_count as u16;
+        if cursor_x < chunks[0].x + chunks[0].width && cursor_y < chunks[0].y + chunks[0].height {
+            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        }
+    }
 
     // Help hint.
     let hint = Line::from(vec![
@@ -1175,6 +1202,14 @@ pub fn render_smart_confirm_branch_overlay(frame: &mut Frame, area: Rect, app: &
         )),
         chunks[1],
     );
+    {
+        // +1 for the leading space in " {branch_name}"
+        let cursor_x = chunks[1].x + 1 + UnicodeWidthStr::width(app.smart_branch_name.as_str()) as u16;
+        let cursor_y = chunks[1].y;
+        if cursor_x < chunks[1].x + chunks[1].width && cursor_y < chunks[1].y + chunks[1].height {
+            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        }
+    }
 
     // Blank line
     // chunks[2] is blank separator

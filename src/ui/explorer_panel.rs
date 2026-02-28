@@ -4,11 +4,12 @@
 //! and a list of changed (diff) files in the bottom half. Enter on a file
 //! opens it in the Viewer panel.
 
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus};
 
@@ -496,6 +497,11 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &crate::
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
+    // +1 for the leading '/' character
+    let cursor_x = search_area.x + 1 + UnicodeWidthStr::width(query) as u16;
+    if cursor_x < search_area.x + search_area.width {
+        frame.set_cursor_position(Position::new(cursor_x, search_area.y));
+    }
 }
 
 /// Render the filename search overlay on top of the file tree area.
@@ -528,6 +534,11 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(counter, Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(ratatui::widgets::Paragraph::new(input_line), input_area);
+    // +1 for the leading '/' character
+    let cursor_x = input_area.x + 1 + UnicodeWidthStr::width(query_display.as_str()) as u16;
+    if cursor_x < input_area.x + input_area.width {
+        frame.set_cursor_position(Position::new(cursor_x, input_area.y));
+    }
 
     // Results list below the input.
     let results_start_y = input_y + 1;

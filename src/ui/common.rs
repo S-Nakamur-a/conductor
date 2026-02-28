@@ -25,6 +25,8 @@ use crate::theme::Theme;
 pub struct PtyRenderCache {
     pub lines: Vec<Line<'static>>,
     pub effective_offset: usize,
+    /// Cursor position (row, col) from the vt100 parser, used for IME positioning.
+    pub cursor_position: Option<(u16, u16)>,
 }
 
 /// A snapshot of a single cell's content and style, extracted from the vt100 screen.
@@ -38,6 +40,8 @@ struct CellSnapshot {
 struct ScreenSnapshot {
     rows: Vec<Vec<CellSnapshot>>,
     effective_offset: usize,
+    /// Cursor position (row, col) from the vt100 parser.
+    cursor_position: (u16, u16),
 }
 
 /// Take a point-in-time snapshot of the vt100 screen contents.
@@ -93,6 +97,10 @@ fn snapshot_screen(
         snapshot_rows.push(row_cells);
     }
 
+    // Capture cursor position before restoring scrollback.
+    let cursor = screen.cursor_position();
+    let cursor_position = (cursor.0, cursor.1);
+
     // Restore live view so other readers see the current screen.
     parser.set_scrollback(0);
 
@@ -100,6 +108,7 @@ fn snapshot_screen(
     ScreenSnapshot {
         rows: snapshot_rows,
         effective_offset,
+        cursor_position,
     }
 }
 
@@ -116,9 +125,17 @@ pub fn build_pty_lines(
 ) -> PtyRenderCache {
     let snapshot = snapshot_screen(screen_arc, scroll_offset, max_rows, max_cols);
     let lines = lines_from_snapshot(&snapshot);
+    // Only expose cursor when not scrolled back; scrollback means we're viewing
+    // history and the cursor position is not meaningful for IME.
+    let cursor_position = if snapshot.effective_offset == 0 {
+        Some(snapshot.cursor_position)
+    } else {
+        None
+    };
     PtyRenderCache {
         lines,
         effective_offset: snapshot.effective_offset,
+        cursor_position,
     }
 }
 
