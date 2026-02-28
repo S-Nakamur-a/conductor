@@ -705,16 +705,19 @@ impl GitEngine {
                 revwalk.count()
             };
 
-            // Move branch ref forward.
+            // Update working directory & index first, then move branch ref.
+            // (checkout_tree works on the target tree directly, avoiding stale
+            //  HEAD state that can cause checkout_head to skip file updates.)
+            let target_commit = wt_repo.find_commit(upstream_oid)?;
+            wt_repo.checkout_tree(
+                target_commit.as_object(),
+                Some(git2::build::CheckoutBuilder::new().safe()),
+            )?;
             let mut branch_ref = wt_repo.find_reference(&format!("refs/heads/{branch_name}"))?;
             branch_ref.set_target(
                 upstream_oid,
                 &format!("conductor: fast-forward pull {upstream_name} into {branch_name}"),
             )?;
-            // Update working directory (safe — won't clobber local changes).
-            wt_repo.checkout_head(Some(
-                git2::build::CheckoutBuilder::new().safe()
-            ))?;
             return Ok(format!(
                 "Pulled '{branch_name}': fast-forward ({count} commit(s))"
             ));
