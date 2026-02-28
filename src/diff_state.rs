@@ -492,8 +492,20 @@ impl DiffState {
 
         let mut file_diffs = Vec::new();
 
+        // Build a set of delta indices to skip: case-only path differences
+        // with identical content.  On case-insensitive filesystems (macOS),
+        // git may report a delete + add pair where the paths differ only in
+        // case (e.g. "Photo.png" deleted, "photo.png" added) even though
+        // the file content is identical.  We detect these pairs by comparing
+        // blob OIDs and lowercased paths.
+        let skip_indices = Self::find_case_only_rename_indices(&diff);
+
         let num_deltas = diff.deltas().len();
         for delta_idx in 0..num_deltas {
+            if skip_indices.contains(&delta_idx) {
+                continue;
+            }
+
             let delta = diff.get_delta(delta_idx).unwrap();
 
             let status = delta.status();
@@ -519,6 +531,12 @@ impl DiffState {
             } else {
                 Self::blob_content(&repo, &delta.new_file())
             };
+
+            // Also skip single-delta case-only renames (when rename detection
+            // merges delete+add into one delta).
+            if Self::is_case_only_rename(&delta) && old_content == new_content {
+                continue;
+            }
 
             // Use `similar` to compute line-level diff with context.
             let text_diff = TextDiff::from_lines(&old_content, &new_content);
@@ -648,6 +666,80 @@ impl DiffState {
         Ok(file_diffs)
     }
 
+    /// Find delta indices that form case-only rename pairs (delete + add with
+    /// paths differing only in case and identical blob content).
+    ///
+    /// Returns a set of indices to skip during diff processing.
+    fn find_case_only_rename_indices(diff: &git2::Diff<'_>) -> std::collections::HashSet<usize> {
+        use std::collections::HashMap;
+
+        let mut skip = std::collections::HashSet::new();
+
+        // Collect deleted entries: lowercased path → (index, blob oid).
+        let mut deleted: HashMap<String, Vec<(usize, git2::Oid)>> = HashMap::new();
+        // Collect added entries: lowercased path → (index, blob oid).
+        let mut added: HashMap<String, Vec<(usize, git2::Oid)>> = HashMap::new();
+
+        for (idx, delta) in diff.deltas().enumerate() {
+            let status = delta.status();
+            match status {
+                git2::Delta::Deleted => {
+                    if let Some(p) = delta.old_file().path() {
+                        let key = p.to_string_lossy().to_lowercase();
+                        let oid = delta.old_file().id();
+                        deleted.entry(key).or_default().push((idx, oid));
+                    }
+                }
+                git2::Delta::Added | git2::Delta::Untracked => {
+                    if let Some(p) = delta.new_file().path() {
+                        let key = p.to_string_lossy().to_lowercase();
+                        let oid = delta.new_file().id();
+                        added.entry(key).or_default().push((idx, oid));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Match pairs: same lowercased path, same blob OID, different actual path.
+        for (lower_path, del_entries) in &deleted {
+            if let Some(add_entries) = added.get(lower_path) {
+                for &(del_idx, del_oid) in del_entries {
+                    for &(add_idx, add_oid) in add_entries {
+                        if !del_oid.is_zero() && del_oid == add_oid {
+                            // Verify actual paths differ (not the same exact path).
+                            let del_delta = diff.get_delta(del_idx).unwrap();
+                            let add_delta = diff.get_delta(add_idx).unwrap();
+                            let del_path = del_delta.old_file().path().unwrap();
+                            let add_path = add_delta.new_file().path().unwrap();
+                            if del_path != add_path {
+                                skip.insert(del_idx);
+                                skip.insert(add_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        skip
+    }
+
+    /// Check whether a delta represents a case-only rename, i.e. old_path and
+    /// new_path are equal when compared case-insensitively but differ in their
+    /// exact bytes.  Returns `false` if either path is absent.
+    fn is_case_only_rename(delta: &git2::DiffDelta<'_>) -> bool {
+        if let (Some(old_path), Some(new_path)) =
+            (delta.old_file().path(), delta.new_file().path())
+        {
+            let old_s = old_path.to_string_lossy();
+            let new_s = new_path.to_string_lossy();
+            old_s != new_s && old_s.eq_ignore_ascii_case(&new_s)
+        } else {
+            false
+        }
+    }
+
     /// Read blob content for a diff file entry, returning an empty string if
     /// the blob is absent (new or deleted file).
     fn blob_content(repo: &Repository, file: &git2::DiffFile<'_>) -> String {
@@ -683,5 +775,126 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Test that case-only path differences with identical content are filtered out.
+    ///
+    /// Creates a git repo where the tree contains entries that differ only in
+    /// case (e.g. `Photo.png` vs `photo.png`).  On case-insensitive
+    /// filesystems these refer to the same file, and `compute_diff_range`
+    /// should exclude them when the blob content is identical.
+    #[test]
+    fn test_case_only_rename_filtered_out() {
+        use super::*;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // ── Initial commit on "main" with "Photo.png" ──
+        let blob_oid = repo.blob(b"image data").unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        tb.insert("Photo.png", blob_oid, 0o100644).unwrap();
+        let tree_oid = tb.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        let commit1 = repo
+            .commit(Some("refs/heads/main"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        let commit1 = repo.find_commit(commit1).unwrap();
+
+        // ── Second commit on "feature" with "photo.png" (case change only, same blob) ──
+        let mut tb2 = repo.treebuilder(None).unwrap();
+        tb2.insert("photo.png", blob_oid, 0o100644).unwrap();
+        let tree2_oid = tb2.write().unwrap();
+        let tree2 = repo.find_tree(tree2_oid).unwrap();
+
+        let commit2 = repo
+            .commit(
+                Some("refs/heads/feature"),
+                &sig,
+                &sig,
+                "rename case",
+                &tree2,
+                &[&commit1],
+            )
+            .unwrap();
+
+        // Point HEAD at feature.
+        repo.set_head_detached(commit2).unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        // Also create the local branch ref so compute_diff_range can find it.
+        repo.branch("feature", &repo.find_commit(commit2).unwrap(), true)
+            .unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+
+        let files =
+            DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false)
+                .unwrap();
+
+        // The case-only rename with identical content should be filtered out.
+        assert!(
+            files.is_empty(),
+            "case-only rename with same content should be excluded, got: {:?}",
+            files.iter().map(|f| &f.path).collect::<Vec<_>>()
+        );
+    }
+
+    /// Test that a case rename WITH content changes is NOT filtered out.
+    #[test]
+    fn test_case_rename_with_content_change_kept() {
+        use super::*;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // ── Initial commit on "main" with "Photo.png" ──
+        let blob1 = repo.blob(b"image data v1").unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        tb.insert("Photo.png", blob1, 0o100644).unwrap();
+        let tree_oid = tb.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        let commit1 = repo
+            .commit(Some("refs/heads/main"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        let commit1 = repo.find_commit(commit1).unwrap();
+
+        // ── Second commit: case change + content change ──
+        let blob2 = repo.blob(b"image data v2 -- updated").unwrap();
+        let mut tb2 = repo.treebuilder(None).unwrap();
+        tb2.insert("photo.png", blob2, 0o100644).unwrap();
+        let tree2_oid = tb2.write().unwrap();
+        let tree2 = repo.find_tree(tree2_oid).unwrap();
+
+        let commit2 = repo
+            .commit(
+                Some("refs/heads/feature"),
+                &sig,
+                &sig,
+                "rename + edit",
+                &tree2,
+                &[&commit1],
+            )
+            .unwrap();
+
+        repo.set_head_detached(commit2).unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        repo.branch("feature", &repo.find_commit(commit2).unwrap(), true)
+            .unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+
+        let files =
+            DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false)
+                .unwrap();
+
+        // The rename with actual content changes should still appear.
+        assert!(
+            !files.is_empty(),
+            "case rename with content change should NOT be filtered out"
+        );
     }
 }
