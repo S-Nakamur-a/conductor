@@ -2,11 +2,12 @@
 //!
 //! These are rendered as overlays on top of the main layout when active.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::review_state::{ReviewInputMode, ReviewState};
@@ -107,6 +108,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     // Build multi-line display: show each line of the buffer, with cursor at end.
     let buf = &app.review_state.input_buffer;
+    let prefix_line_count = lines.len();
     let mut input_lines: Vec<Line> = buf
         .split('\n')
         .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(theme.fg))))
@@ -119,6 +121,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme.fg),
         ));
     }
+    let input_line_count = input_lines.len();
     lines.extend(input_lines);
 
     // Hint line at the bottom.
@@ -133,6 +136,17 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, inner);
+
+    // Set cursor position for IME.
+    {
+        let last_line = buf.split('\n').next_back().unwrap_or("");
+        let cursor_row = prefix_line_count + input_line_count.saturating_sub(1);
+        let cursor_x = inner.x + UnicodeWidthStr::width(last_line) as u16;
+        let cursor_y = inner.y + cursor_row as u16;
+        if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {
+            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        }
+    }
 }
 
 /// Render a centered popup for the comment template picker.
