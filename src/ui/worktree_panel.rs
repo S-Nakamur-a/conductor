@@ -41,38 +41,35 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     // ── Zone layout calculation ────────────────────────────────────
-    // Zone 1: worktree list (fixed height = items + 2 for borders)
-    let list_rows = (app.worktrees.len() as u16 + 2).max(5);
-    // Zone 2: detail section (selected worktree info)
-    let detail_content_rows: u16 = 4; // branch, path, status, remote
-    let detail_rows = detail_content_rows + 1; // +1 for top border
-    // Zone 3: decoration (whatever is left)
+    // Zone 1: worktree list   — 30%
+    // Zone 2: detail section  — 50%
+    // Zone 3: decoration      — 20%
     let decoration_mode = DecorationMode::from_str(&app.config.general.decoration);
-    let min_decoration_rows: u16 = if decoration_mode == DecorationMode::None { 0 } else { 4 };
 
-    // If the area is too small to fit all zones, progressively hide decoration and detail.
-    let total_needed = list_rows + detail_rows + min_decoration_rows;
-    let (zone1_h, zone2_h, zone3_constraint) = if area.height >= total_needed {
-        // All zones fit.
-        (list_rows, detail_rows, Constraint::Min(0))
-    } else if area.height >= list_rows + detail_rows {
-        // Detail fits but decoration might be tiny — show what's left.
-        (list_rows, detail_rows, Constraint::Min(0))
-    } else if area.height >= list_rows + 3 {
-        // Squeeze detail, no decoration.
-        let remaining = area.height.saturating_sub(list_rows);
-        (list_rows, remaining, Constraint::Length(0))
+    let zones = if decoration_mode == DecorationMode::None {
+        // No decoration: split between list and detail only.
+        Layout::vertical([
+            Constraint::Percentage(30),
+            Constraint::Percentage(70),
+            Constraint::Length(0),
+        ])
+        .split(area)
+    } else if area.height < 10 {
+        // Too small: only show the list.
+        Layout::vertical([
+            Constraint::Percentage(100),
+            Constraint::Length(0),
+            Constraint::Length(0),
+        ])
+        .split(area)
     } else {
-        // Only list fits.
-        (area.height, 0, Constraint::Length(0))
+        Layout::vertical([
+            Constraint::Percentage(30),
+            Constraint::Percentage(50),
+            Constraint::Percentage(20),
+        ])
+        .split(area)
     };
-
-    let zones = Layout::vertical([
-        Constraint::Length(zone1_h),
-        Constraint::Length(zone2_h),
-        zone3_constraint,
-    ])
-    .split(area);
 
     // ── Zone 1: Worktree list ─────────────────────────────────────
 
@@ -242,13 +239,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // ── Zone 2: Detail section ────────────────────────────────────
 
-    if zone2_h >= 3 {
+    if zones[1].height >= 3 {
         render_detail(frame, zones[1], app, theme, border_color);
     }
 
     // ── Zone 3: Decoration ────────────────────────────────────────
 
-    if zones[2].height >= min_decoration_rows {
+    if zones[2].height >= 4 {
         decoration::render_decoration(
             frame,
             zones[2],
