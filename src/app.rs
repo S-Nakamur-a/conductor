@@ -271,6 +271,8 @@ pub struct App {
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
+    /// Independent tick counter for aquarium animation (incremented at fixed interval).
+    pub aquarium_tick: u64,
 
     /// Notification bar badge positions: (start_col, end_col, branch_name).
     /// Populated during rendering for click-to-jump.
@@ -475,6 +477,7 @@ impl App {
             command_palette_filter: String::new(),
             command_palette_selected: 0,
             ui_tick: 0,
+            aquarium_tick: 0,
             notification_bar_badges: Vec::new(),
             terminal_scroll_claude: 0,
             terminal_scroll_shell: 0,
@@ -648,13 +651,15 @@ impl App {
         }
     }
 
-    /// Advance the aquarium animation by one tick.
-    pub fn tick_aquarium(&mut self, width: u16, height: u16) {
+    /// Advance the aquarium animation by one tick. Returns true if the aquarium
+    /// was actually updated (i.e. decoration mode is Aquarium).
+    pub fn tick_aquarium(&mut self, width: u16, height: u16) -> bool {
         use crate::ui::decoration::{AquariumActivity, DecorationMode};
         let mode = DecorationMode::from_str(&self.config.general.decoration);
         if mode != DecorationMode::Aquarium {
-            return;
+            return false;
         }
+        self.aquarium_tick = self.aquarium_tick.wrapping_add(1);
         let activity = if self.cc_waiting_worktrees.is_empty() {
             AquariumActivity::Calm
         } else {
@@ -662,11 +667,12 @@ impl App {
         };
         crate::ui::decoration::tick_aquarium(
             &mut self.aquarium_state,
-            self.ui_tick,
+            self.aquarium_tick,
             width,
             height,
             activity,
         );
+        true
     }
 
     /// Reload the viewer file tree for the currently selected worktree.
