@@ -414,6 +414,9 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+        KeyCode::Char('u') => {
+            app.start_pull_worktree();
+        }
         KeyCode::Char('H') => {
             app.history_active = true;
             app.load_session_history();

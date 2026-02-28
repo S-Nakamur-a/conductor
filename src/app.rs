@@ -304,6 +304,10 @@ pub struct App {
     /// Receiver for branch lists fetched in the background.
     pub bg_branch_rx: Option<mpsc::Receiver<Vec<String>>>,
 
+    // ── Background pull ────────────────────────────────────────
+    /// Receiver for pull results from a background thread.
+    pub bg_pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
+
     // ── Smart Worktree ──────────────────────────────────────────
     /// Multi-line task description buffer for smart worktree creation.
     pub smart_description_buffer: String,
@@ -488,6 +492,7 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             bg_branch_rx: None,
+            bg_pull_rx: None,
             smart_description_buffer: String::new(),
             smart_gen_rx: None,
             smart_branch_name: String::new(),
@@ -2120,6 +2125,70 @@ impl App {
             Err(mpsc::TryRecvError::Empty) => { /* still fetching */ }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.bg_branch_rx = None;
+            }
+        }
+    }
+
+    // ── Pull worktree (fetch + fast-forward) ──────────────────────────
+
+    /// Start a background pull (fetch + fast-forward) for the selected worktree.
+    pub fn start_pull_worktree(&mut self) {
+        if self.bg_pull_rx.is_some() {
+            self.set_status("A pull is already in progress.".to_string(), StatusLevel::Warning);
+            return;
+        }
+
+        let wt = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => wt,
+            None => return,
+        };
+
+        let branch = wt.branch.clone();
+        let wt_path = wt.path.clone();
+        let repo_path = self.repo_path.clone();
+
+        self.set_status(format!("Pulling '{branch}'..."), StatusLevel::Info);
+
+        let (tx, rx) = mpsc::channel();
+        self.bg_pull_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = (|| -> Result<String, String> {
+                let engine = git_engine::GitEngine::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repo: {e}"))?;
+                engine.pull_worktree(&wt_path)
+                    .map_err(|e| format!("{e}"))
+            })();
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll the background pull channel. Non-blocking.
+    pub fn poll_bg_pull(&mut self) {
+        let rx = match self.bg_pull_rx.as_ref() {
+            Some(rx) => rx,
+            None => return,
+        };
+        match rx.try_recv() {
+            Ok(Ok(msg)) => {
+                let level = if msg.contains("up-to-date") {
+                    StatusLevel::Info
+                } else if msg.contains("fast-forward") {
+                    StatusLevel::Success
+                } else {
+                    StatusLevel::Warning
+                };
+                self.set_status(msg, level);
+                self.refresh_worktrees();
+                self.bg_pull_rx = None;
+            }
+            Ok(Err(err)) => {
+                self.set_status(format!("Pull failed: {err}"), StatusLevel::Error);
+                self.bg_pull_rx = None;
+            }
+            Err(mpsc::TryRecvError::Empty) => { /* still pulling */ }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.bg_pull_rx = None;
             }
         }
     }

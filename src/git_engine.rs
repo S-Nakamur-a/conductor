@@ -636,6 +636,99 @@ impl GitEngine {
         Ok(())
     }
 
+    // ── Pull (fetch + fast-forward) ────────────────────────────────────
+
+    /// Fetch from origin and fast-forward the branch in the given worktree.
+    ///
+    /// Returns a human-readable status message describing the outcome.
+    /// Only fast-forward merges are performed; non-FF situations are reported
+    /// so the user can resolve them manually.
+    ///
+    /// NOTE: calls `fetch_origin()` internally, so this performs network I/O.
+    /// Must be called from a background thread.
+    pub fn pull_worktree(&self, worktree_path: &Path) -> Result<String> {
+        let wt_repo = Repository::open(worktree_path)
+            .with_context(|| format!("cannot open worktree at {}", worktree_path.display()))?;
+
+        // Ensure HEAD points to a branch (not detached).
+        let head = wt_repo.head().context("cannot read HEAD")?;
+        if !head.is_branch() {
+            anyhow::bail!("Cannot pull: HEAD is detached");
+        }
+        let branch_name = head.shorthand().unwrap_or("unknown").to_string();
+
+        // Ensure the branch has an upstream configured.
+        let local_branch = wt_repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .with_context(|| format!("branch '{branch_name}' not found"))?;
+        let upstream = local_branch
+            .upstream()
+            .with_context(|| format!("No upstream configured for '{branch_name}'"))?;
+        let upstream_name = upstream
+            .name()?
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Fetch from origin (updates all remote refs).
+        self.fetch_origin()?;
+
+        // Re-open the repo to pick up the updated remote refs.
+        let wt_repo = Repository::open(worktree_path)
+            .with_context(|| format!("cannot re-open worktree at {}", worktree_path.display()))?;
+
+        // Resolve upstream OID after fetch.
+        let upstream_ref = wt_repo
+            .find_reference(&format!("refs/remotes/{upstream_name}"))
+            .with_context(|| format!("upstream ref 'refs/remotes/{upstream_name}' not found after fetch"))?;
+        let upstream_oid = upstream_ref
+            .peel_to_commit()
+            .context("upstream ref is not a commit")?
+            .id();
+        let annotated = wt_repo
+            .find_annotated_commit(upstream_oid)
+            .context("failed to find annotated commit for upstream")?;
+
+        // Merge analysis.
+        let (analysis, _preference) = wt_repo.merge_analysis(&[&annotated])?;
+
+        if analysis.is_up_to_date() {
+            return Ok(format!("'{branch_name}' is already up-to-date"));
+        }
+
+        if analysis.is_fast_forward() {
+            // Count commits for the status message.
+            let head_oid = wt_repo.head()?.peel_to_commit()?.id();
+            let count = {
+                let mut revwalk = wt_repo.revwalk()?;
+                revwalk.push(upstream_oid)?;
+                revwalk.hide(head_oid)?;
+                revwalk.count()
+            };
+
+            // Move branch ref forward.
+            let mut branch_ref = wt_repo.find_reference(&format!("refs/heads/{branch_name}"))?;
+            branch_ref.set_target(
+                upstream_oid,
+                &format!("conductor: fast-forward pull {upstream_name} into {branch_name}"),
+            )?;
+            // Update working directory (safe — won't clobber local changes).
+            wt_repo.checkout_head(Some(
+                git2::build::CheckoutBuilder::new().safe()
+            ))?;
+            return Ok(format!(
+                "Pulled '{branch_name}': fast-forward ({count} commit(s))"
+            ));
+        }
+
+        if analysis.is_normal() {
+            return Ok(format!(
+                "Cannot fast-forward '{branch_name}'. Manual merge needed"
+            ));
+        }
+
+        anyhow::bail!("pull: unexpected merge analysis result for '{branch_name}'");
+    }
+
     // ── Merge / Reset operations ─────────────────────────────────────
 
     /// Merge `branch_name` into the main branch using a fast-forward-only merge.

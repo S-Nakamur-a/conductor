@@ -323,6 +323,9 @@ fn run_loop(
         // Check if a background fetch for the switch-branch overlay has finished.
         app.poll_bg_branches();
 
+        // Check if a background pull has finished.
+        app.poll_bg_pull();
+
         // Check if smart worktree generation has finished.
         app.poll_smart_generation();
 
