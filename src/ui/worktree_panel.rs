@@ -50,14 +50,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let decoration_mode = DecorationMode::from_str(&app.config.general.decoration);
     let min_decoration_rows: u16 = if decoration_mode == DecorationMode::None { 0 } else { 4 };
 
+    // Cap decoration height at 20% of the total panel area.
+    let max_deco_h = area.height / 5;
+
     // If the area is too small to fit all zones, progressively hide decoration and detail.
     let total_needed = list_rows + detail_rows + min_decoration_rows;
     let (zone1_h, zone2_h, zone3_constraint) = if area.height >= total_needed {
-        // All zones fit.
-        (list_rows, detail_rows, Constraint::Min(0))
+        // All zones fit — cap decoration at 20%.
+        let remaining = area.height.saturating_sub(list_rows + detail_rows);
+        let deco_h = remaining.min(max_deco_h);
+        (list_rows, detail_rows, Constraint::Length(deco_h))
     } else if area.height >= list_rows + detail_rows {
-        // Detail fits but decoration might be tiny — show what's left.
-        (list_rows, detail_rows, Constraint::Min(0))
+        // Detail fits but decoration might be tiny — show what's left, capped.
+        let remaining = area.height.saturating_sub(list_rows + detail_rows);
+        let deco_h = remaining.min(max_deco_h);
+        (list_rows, detail_rows, Constraint::Length(deco_h))
     } else if area.height >= list_rows + 3 {
         // Squeeze detail, no decoration.
         let remaining = area.height.saturating_sub(list_rows);
@@ -69,7 +76,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let zones = Layout::vertical([
         Constraint::Length(zone1_h),
-        Constraint::Length(zone2_h),
+        Constraint::Min(zone2_h),  // Detail absorbs leftover space from capped decoration
         zone3_constraint,
     ])
     .split(area);

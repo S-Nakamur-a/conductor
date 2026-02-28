@@ -319,6 +319,10 @@ pub struct App {
     pub local_branches: Vec<String>,
     /// Aquarium animation state for the decoration zone.
     pub aquarium_state: crate::ui::decoration::AquariumState,
+    /// Separate tick counter for aquarium animation (time-based, not frame-based).
+    pub aquarium_tick: u64,
+    /// Last time the aquarium was ticked (for fixed-rate animation).
+    pub last_aquarium_time: std::time::Instant,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -492,6 +496,8 @@ impl App {
             smart_auto_spawn: false,
             local_branches: Vec::new(),
             aquarium_state: Default::default(),
+            aquarium_tick: 0,
+            last_aquarium_time: std::time::Instant::now(),
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -648,13 +654,14 @@ impl App {
         }
     }
 
-    /// Advance the aquarium animation by one tick.
+    /// Advance the aquarium animation by one tick (called at a fixed interval).
     pub fn tick_aquarium(&mut self, width: u16, height: u16) {
         use crate::ui::decoration::{AquariumActivity, DecorationMode};
         let mode = DecorationMode::from_str(&self.config.general.decoration);
         if mode != DecorationMode::Aquarium {
             return;
         }
+        self.aquarium_tick = self.aquarium_tick.wrapping_add(1);
         let activity = if self.cc_waiting_worktrees.is_empty() {
             AquariumActivity::Calm
         } else {
@@ -662,7 +669,7 @@ impl App {
         };
         crate::ui::decoration::tick_aquarium(
             &mut self.aquarium_state,
-            self.ui_tick,
+            self.aquarium_tick,
             width,
             height,
             activity,
