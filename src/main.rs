@@ -42,8 +42,8 @@ const TICK_RATE_ACTIVE: Duration = Duration::from_millis(16);
 const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
 /// How long to keep using the active tick rate after the last input event.
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
-/// Fixed interval for aquarium animation updates (~20fps), independent of main tick rate.
-const AQUARIUM_TICK_INTERVAL: Duration = Duration::from_millis(50);
+/// Fixed interval for decoration animation updates (~10fps), independent of main tick rate.
+const DECORATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<()> {
     // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
@@ -189,8 +189,8 @@ fn run_loop(
 
     let mut needs_redraw = true;
 
-    // Independent timer for aquarium animation (ticks at fixed ~20fps).
-    let mut last_aquarium_time = Instant::now();
+    // Independent timer for decoration animation (ticks at fixed ~20fps).
+    let mut last_decoration_time = Instant::now();
 
     loop {
         if app.needs_clear {
@@ -263,15 +263,15 @@ fn run_loop(
             }
         }
 
-        // Tick aquarium on a fixed timer, independent of main tick rate.
-        if last_aquarium_time.elapsed() >= AQUARIUM_TICK_INTERVAL {
-            last_aquarium_time = Instant::now();
+        // Tick decoration on a fixed timer, independent of main tick rate.
+        if last_decoration_time.elapsed() >= DECORATION_TICK_INTERVAL {
+            last_decoration_time = Instant::now();
             let (left_w, _, _) = accordion_widths(app.expanded_panel, last_frame_area.width);
             let panel_h = last_frame_area.height.saturating_sub(3);
             let list_h = (app.worktrees.len() as u16 + 2).max(5);
             let detail_h = (1 + app.local_branches.len() as u16 + 2).min(8);
             let deco_h = panel_h.saturating_sub(list_h + detail_h);
-            if app.tick_aquarium(left_w.saturating_sub(2), deco_h) {
+            if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
                 needs_redraw = true;
             }
         }
@@ -279,12 +279,12 @@ fn run_loop(
         // Wait for an event. Use a fast tick rate shortly after user input
         // so that scrolling and navigation feel responsive, then fall back to
         // an idle rate to save CPU.
-        let aquarium_active = crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
-            == crate::ui::decoration::DecorationMode::Aquarium;
+        let decoration_active = crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
+            .has_animation();
         let tick = match app.focus {
             crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
             _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
-            _ if aquarium_active => AQUARIUM_TICK_INTERVAL,
+            _ if decoration_active => DECORATION_TICK_INTERVAL,
             _ => TICK_RATE_IDLE,
         };
         if crossterm_poll(tick)? {

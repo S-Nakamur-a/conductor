@@ -271,8 +271,8 @@ pub struct App {
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
-    /// Independent tick counter for aquarium animation (incremented at fixed interval).
-    pub aquarium_tick: u64,
+    /// Independent tick counter for decoration animation (incremented at fixed interval).
+    pub decoration_tick: u64,
 
     /// Notification bar badge positions: (start_col, end_col, branch_name).
     /// Populated during rendering for click-to-jump.
@@ -323,8 +323,8 @@ pub struct App {
     // ── Worktree panel detail + decoration ──────────────────────
     /// Cached local branch list (refreshed with worktrees).
     pub local_branches: Vec<String>,
-    /// Aquarium animation state for the decoration zone.
-    pub aquarium_state: crate::ui::decoration::AquariumState,
+    /// Animation state for all decoration modes.
+    pub decoration_states: crate::ui::decoration::DecorationStates,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -481,7 +481,7 @@ impl App {
             command_palette_filter: String::new(),
             command_palette_selected: 0,
             ui_tick: 0,
-            aquarium_tick: 0,
+            decoration_tick: 0,
             notification_bar_badges: Vec::new(),
             terminal_scroll_claude: 0,
             terminal_scroll_shell: 0,
@@ -499,7 +499,7 @@ impl App {
             smart_prompt: String::new(),
             smart_auto_spawn: false,
             local_branches: Vec::new(),
-            aquarium_state: Default::default(),
+            decoration_states: Default::default(),
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -656,26 +656,27 @@ impl App {
         }
     }
 
-    /// Advance the aquarium animation by one tick. Returns true if the aquarium
-    /// was actually updated (i.e. decoration mode is Aquarium).
-    pub fn tick_aquarium(&mut self, width: u16, height: u16) -> bool {
-        use crate::ui::decoration::{AquariumActivity, DecorationMode};
+    /// Advance the decoration animation by one tick. Returns `true` when
+    /// an animation was actually updated (i.e. mode is not `None`).
+    pub fn tick_decoration(&mut self, width: u16, height: u16) -> bool {
+        use crate::ui::decoration::{DecorationActivity, DecorationMode};
         let mode = DecorationMode::from_str(&self.config.general.decoration);
-        if mode != DecorationMode::Aquarium {
+        if !mode.has_animation() {
             return false;
         }
-        self.aquarium_tick = self.aquarium_tick.wrapping_add(1);
+        self.decoration_tick = self.decoration_tick.wrapping_add(1);
         let activity = if self.cc_waiting_worktrees.is_empty() {
-            AquariumActivity::Calm
+            DecorationActivity::Calm
         } else {
-            AquariumActivity::Active
+            DecorationActivity::Active
         };
-        crate::ui::decoration::tick_aquarium(
-            &mut self.aquarium_state,
-            self.aquarium_tick,
+        crate::ui::decoration::tick_decoration(
+            &mut self.decoration_states,
+            self.decoration_tick,
             width,
             height,
             activity,
+            mode,
         );
         true
     }

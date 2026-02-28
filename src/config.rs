@@ -99,7 +99,8 @@ pub struct GeneralConfig {
     /// Custom base directory for worktrees.
     /// When `None`, defaults to `<repo-parent>/<repo-name>-worktrees/`.
     pub worktree_dir: Option<PathBuf>,
-    /// Decoration mode for the worktree panel: "aquarium" (default), "none".
+    /// Decoration mode for the worktree panel:
+    /// "aquarium" (default), "space", "garden", "city", "none".
     pub decoration: String,
 }
 

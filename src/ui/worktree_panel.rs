@@ -247,7 +247,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         decoration::render_decoration(
             frame,
             zones[2],
-            &app.aquarium_state,
+            &app.decoration_states,
             theme,
             decoration_mode,
         );
