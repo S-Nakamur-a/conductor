@@ -313,6 +313,12 @@ pub struct App {
     pub smart_prompt: String,
     /// When true, auto-spawn Claude Code after worktree creation and pre-type the prompt.
     pub smart_auto_spawn: bool,
+
+    // ── Worktree panel detail + decoration ──────────────────────
+    /// Cached local branch list (refreshed with worktrees).
+    pub local_branches: Vec<String>,
+    /// Aquarium animation state for the decoration zone.
+    pub aquarium_state: crate::ui::decoration::AquariumState,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -484,6 +490,8 @@ impl App {
             smart_branch_name: String::new(),
             smart_prompt: String::new(),
             smart_auto_spawn: false,
+            local_branches: Vec::new(),
+            aquarium_state: Default::default(),
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -603,35 +611,62 @@ impl App {
     /// Refresh the cached worktree list from the repository.
     pub fn refresh_worktrees(&mut self) {
         match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => match engine.list_worktrees() {
-                Ok(worktrees) => {
-                    self.worktrees = worktrees;
-                    if !self.worktrees.is_empty() && self.selected_worktree >= self.worktrees.len()
-                    {
-                        self.selected_worktree = self.worktrees.len() - 1;
-                    }
-                    // Detect commits by HEAD oid changes.
-                    for wt in &self.worktrees {
-                        if let Ok(wt_engine) = git_engine::GitEngine::open(&wt.path) {
-                            if let Ok(head_oid) = wt_engine.head_oid_string() {
-                                if let Some(old) = self.worktree_heads.get(&wt.branch) {
-                                    if old != &head_oid {
-                                        self.record_stat("commits_made");
+            Ok(engine) => {
+                match engine.list_worktrees() {
+                    Ok(worktrees) => {
+                        self.worktrees = worktrees;
+                        if !self.worktrees.is_empty() && self.selected_worktree >= self.worktrees.len()
+                        {
+                            self.selected_worktree = self.worktrees.len() - 1;
+                        }
+                        // Detect commits by HEAD oid changes.
+                        for wt in &self.worktrees {
+                            if let Ok(wt_engine) = git_engine::GitEngine::open(&wt.path) {
+                                if let Ok(head_oid) = wt_engine.head_oid_string() {
+                                    if let Some(old) = self.worktree_heads.get(&wt.branch) {
+                                        if old != &head_oid {
+                                            self.record_stat("commits_made");
+                                        }
                                     }
+                                    self.worktree_heads.insert(wt.branch.clone(), head_oid);
                                 }
-                                self.worktree_heads.insert(wt.branch.clone(), head_oid);
                             }
                         }
                     }
+                    Err(e) => {
+                        log::warn!("failed to list worktrees: {e}");
+                    }
                 }
-                Err(e) => {
-                    log::warn!("failed to list worktrees: {e}");
+                // Refresh local branches for the detail zone.
+                if let Ok(branches) = engine.list_local_branches() {
+                    self.local_branches = branches;
                 }
-            },
+            }
             Err(e) => {
                 log::warn!("failed to open git repository: {e}");
             }
         }
+    }
+
+    /// Advance the aquarium animation by one tick.
+    pub fn tick_aquarium(&mut self, width: u16, height: u16) {
+        use crate::ui::decoration::{AquariumActivity, DecorationMode};
+        let mode = DecorationMode::from_str(&self.config.general.decoration);
+        if mode != DecorationMode::Aquarium {
+            return;
+        }
+        let activity = if self.cc_waiting_worktrees.is_empty() {
+            AquariumActivity::Calm
+        } else {
+            AquariumActivity::Active
+        };
+        crate::ui::decoration::tick_aquarium(
+            &mut self.aquarium_state,
+            self.ui_tick,
+            width,
+            height,
+            activity,
+        );
     }
 
     /// Reload the viewer file tree for the currently selected worktree.

@@ -99,6 +99,8 @@ pub struct GeneralConfig {
     /// Custom base directory for worktrees.
     /// When `None`, defaults to `<repo-parent>/<repo-name>-worktrees/`.
     pub worktree_dir: Option<PathBuf>,
+    /// Decoration mode for the worktree panel: "aquarium" (default), "none".
+    pub decoration: String,
 }
 
 impl Default for GeneralConfig {
@@ -109,6 +111,7 @@ impl Default for GeneralConfig {
             shell: default_shell(),
             repos: Vec::new(),
             worktree_dir: None,
+            decoration: String::from("aquarium"),
         }
     }
 }
@@ -307,6 +310,7 @@ mod tests {
         let cfg2: Config = toml::from_str(&toml_str).expect("deserialize");
 
         assert_eq!(cfg2.general.main_branch, "main");
+        assert_eq!(cfg2.general.decoration, "aquarium");
         assert_eq!(cfg2.terminal.inactive_scrollback, 1000);
         assert_eq!(cfg2.terminal.active_scrollback, 10000);
         assert_eq!(cfg2.viewer.theme, "catppuccin-mocha");
