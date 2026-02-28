@@ -147,7 +147,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     let block = Block::default()
-        .title(" New Worktree Name ")
+        .title(" New Worktree Name (Tab: Smart Mode) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));
 
@@ -1040,4 +1040,165 @@ fn help_lines_for(focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>>
     }
 
     lines
+}
+
+// ── Smart Worktree overlays ──────────────────────────────────────────
+
+/// Render the Smart Worktree description input overlay (multi-line).
+pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup_width = 80_u16.min(area.width.saturating_sub(4));
+    let popup_height = 14_u16.min(area.height.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Smart Worktree — Describe your task ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.info));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    // Split: text area + help hint
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    // Render multi-line text with block cursor.
+    let display = format!("{}\u{2588}", app.smart_description_buffer);
+    let paragraph = Paragraph::new(display)
+        .style(Style::default().fg(theme.fg))
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    frame.render_widget(paragraph, chunks[0]);
+
+    // Help hint.
+    let hint = Line::from(vec![
+        Span::styled("Alt+Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(": newline  ", Style::default().fg(theme.muted)),
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(": generate  ", Style::default().fg(theme.muted)),
+        Span::styled("Tab", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(": manual  ", Style::default().fg(theme.muted)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(": cancel", Style::default().fg(theme.muted)),
+    ]);
+    frame.render_widget(Paragraph::new(hint), chunks[1]);
+}
+
+/// Render the Smart Worktree generating/loading overlay.
+pub fn render_smart_generating_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup_width = 60_u16.min(area.width.saturating_sub(4));
+    let popup_height = 5_u16;
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Smart Worktree ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.info));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    // Braille spinner animation using ui_tick.
+    let braille = ['\u{2801}', '\u{2802}', '\u{2804}', '\u{2840}', '\u{2880}', '\u{2820}', '\u{2810}', '\u{2808}'];
+    let idx = (app.ui_tick / 4) as usize % braille.len();
+    let spinner = braille[idx];
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {spinner} "), Style::default().fg(theme.accent)),
+            Span::styled(
+                "Generating branch name and prompt...",
+                Style::default().fg(theme.fg),
+            ),
+        ]),
+        Line::from(Span::styled(
+            " Press Esc to cancel",
+            Style::default().fg(theme.muted),
+        )),
+    ];
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
+}
+
+/// Render the Smart Worktree branch confirmation/edit overlay.
+pub fn render_smart_confirm_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup_width = 70_u16.min(area.width.saturating_sub(4));
+    let popup_height = 9_u16.min(area.height.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Smart Worktree — Confirm Branch Name ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.info));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    // Label
+    frame.render_widget(
+        Paragraph::new(Span::styled(" Branch name:", Style::default().fg(theme.muted))),
+        chunks[0],
+    );
+
+    // Editable branch name with cursor
+    let branch_display = format!(" {}\u{2588}", app.smart_branch_name);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            branch_display,
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        )),
+        chunks[1],
+    );
+
+    // Blank line
+    // chunks[2] is blank separator
+
+    // Prompt preview (truncated)
+    let max_preview = (popup_width as usize).saturating_sub(4);
+    let preview = if app.smart_prompt.len() > max_preview {
+        format!(" {}...", &app.smart_prompt[..max_preview.saturating_sub(3)])
+    } else {
+        format!(" {}", &app.smart_prompt)
+    };
+    // Replace newlines with spaces for single-line preview.
+    let preview = preview.replace('\n', " ");
+    frame.render_widget(
+        Paragraph::new(Span::styled(preview, Style::default().fg(theme.muted))),
+        chunks[3],
+    );
+
+    // Help hint
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(": continue  ", Style::default().fg(theme.muted)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(": cancel", Style::default().fg(theme.muted)),
+    ]);
+    frame.render_widget(Paragraph::new(hint), chunks[4]);
 }
