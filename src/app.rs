@@ -86,6 +86,19 @@ pub enum WorktreeInputMode {
     ConfirmingDeleteBranch,
     /// Confirming ungrab (y/n).
     ConfirmingUngrab,
+    /// Smart Worktree: typing a multi-line task description.
+    SmartDescription,
+    /// Smart Worktree: waiting for LLM to generate branch name + prompt.
+    SmartGenerating,
+    /// Smart Worktree: confirming/editing the generated branch name.
+    SmartConfirmBranch,
+}
+
+/// Result from the smart worktree LLM generation.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SmartGenResult {
+    pub branch: String,
+    pub prompt: String,
 }
 
 /// Info about a grabbed branch (branch checkout swap with main).
@@ -288,6 +301,18 @@ pub struct App {
     // ── Background fetch for switch-branch overlay ──────────────
     /// Receiver for branch lists fetched in the background.
     pub bg_branch_rx: Option<mpsc::Receiver<Vec<String>>>,
+
+    // ── Smart Worktree ──────────────────────────────────────────
+    /// Multi-line task description buffer for smart worktree creation.
+    pub smart_description_buffer: String,
+    /// Receiver for the background LLM generation result.
+    pub smart_gen_rx: Option<mpsc::Receiver<Result<SmartGenResult, String>>>,
+    /// Generated branch name (editable in SmartConfirmBranch state).
+    pub smart_branch_name: String,
+    /// Generated prompt to pre-type into Claude Code.
+    pub smart_prompt: String,
+    /// When true, auto-spawn Claude Code after worktree creation and pre-type the prompt.
+    pub smart_auto_spawn: bool,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -454,6 +479,11 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             bg_branch_rx: None,
+            smart_description_buffer: String::new(),
+            smart_gen_rx: None,
+            smart_branch_name: String::new(),
+            smart_prompt: String::new(),
+            smart_auto_spawn: false,
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -722,7 +752,7 @@ impl App {
             CommandId::CreateWorktree => {
                 self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
                 self.worktree_input_buffer.clear();
-                self.set_status_info("New branch name (Enter to continue, Esc to cancel):".to_string());
+                self.set_status_info("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string());
             }
             CommandId::DeleteWorktree => {
                 if let Some(wt) = self.worktrees.get(self.selected_worktree) {
@@ -1773,8 +1803,26 @@ impl App {
                         self.set_status(format!(
                             "Created worktree: {} (from {})", path.display(), base
                         ), StatusLevel::Success);
+
+                        // Smart Worktree: auto-spawn Claude Code and pre-type prompt.
+                        if self.smart_auto_spawn {
+                            let prompt = std::mem::take(&mut self.smart_prompt);
+                            self.smart_auto_spawn = false;
+                            match self.spawn_claude_code() {
+                                Ok(idx) => {
+                                    if !prompt.is_empty() {
+                                        let _ = self.pty_manager.write_to_session(idx, prompt.as_bytes());
+                                    }
+                                    self.set_focus(Focus::TerminalClaude);
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to auto-spawn Claude Code: {e}");
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
+                        self.smart_auto_spawn = false;
                         self.set_status(format!("Error: {e}"), StatusLevel::Error);
                     }
                 }
@@ -2031,6 +2079,106 @@ impl App {
             Err(mpsc::TryRecvError::Empty) => { /* still fetching */ }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.bg_branch_rx = None;
+            }
+        }
+    }
+
+    // ── Smart Worktree generation ──────────────────────────────────────
+
+    /// Spawn a background thread to generate a branch name and prompt via `claude --print`.
+    pub fn start_smart_generation(&mut self, description: &str) {
+        let (tx, rx) = mpsc::channel();
+        self.smart_gen_rx = Some(rx);
+
+        let desc = description.to_string();
+        std::thread::spawn(move || {
+            let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
+Output ONLY a JSON object with two fields:
+- "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
+- "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
+No markdown fences, no explanation, just the JSON object."#;
+
+            let result = std::process::Command::new("claude")
+                .args(["--print", "-p", system_prompt])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+
+            let result = match result {
+                Ok(mut child) => {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(desc.as_bytes());
+                    }
+                    match child.wait_with_output() {
+                        Ok(output) => {
+                            if !output.status.success() {
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                Err(format!("claude exited with {}: {}", output.status, stderr))
+                            } else {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                // Strip markdown fences if present.
+                                let json_str = stdout
+                                    .trim()
+                                    .strip_prefix("```json")
+                                    .or_else(|| stdout.trim().strip_prefix("```"))
+                                    .unwrap_or(stdout.trim());
+                                let json_str = json_str
+                                    .strip_suffix("```")
+                                    .unwrap_or(json_str)
+                                    .trim();
+                                serde_json::from_str::<SmartGenResult>(json_str)
+                                    .map_err(|e| format!("JSON parse error: {e}\nRaw output: {stdout}"))
+                            }
+                        }
+                        Err(e) => Err(format!("Failed to wait for claude: {e}")),
+                    }
+                }
+                Err(e) => Err(format!("Failed to spawn claude: {e}")),
+            };
+
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll the smart generation background task. Non-blocking.
+    pub fn poll_smart_generation(&mut self) {
+        let rx = match self.smart_gen_rx.as_ref() {
+            Some(rx) => rx,
+            None => return,
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                self.smart_branch_name = result.branch;
+                self.smart_prompt = result.prompt;
+                self.worktree_input_mode = WorktreeInputMode::SmartConfirmBranch;
+                self.smart_gen_rx = None;
+                self.set_status(
+                    "Branch name generated. Edit if needed, Enter to continue.".to_string(),
+                    StatusLevel::Success,
+                );
+            }
+            Ok(Err(e)) => {
+                log::warn!("Smart generation failed: {e}");
+                // Fallback to manual mode.
+                self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
+                self.worktree_input_buffer.clear();
+                self.smart_gen_rx = None;
+                self.set_status(
+                    format!("Smart generation failed, enter branch name manually: {e}"),
+                    StatusLevel::Error,
+                );
+            }
+            Err(mpsc::TryRecvError::Empty) => { /* still generating */ }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
+                self.worktree_input_buffer.clear();
+                self.smart_gen_rx = None;
+                self.set_status(
+                    "Smart generation thread disconnected, enter branch name manually.".to_string(),
+                    StatusLevel::Error,
+                );
             }
         }
     }

@@ -324,7 +324,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             // Step 1: enter branch name for new worktree.
             app.worktree_input_mode = crate::app::WorktreeInputMode::CreatingWorktree;
             app.worktree_input_buffer.clear();
-            app.set_status("New branch name (Enter to continue, Esc to cancel):".to_string(), StatusLevel::Info);
+            app.set_status("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(), StatusLevel::Info);
         }
         KeyCode::Char('X') => {
             if let Some(wt) = app.worktrees.get(app.selected_worktree) {
@@ -1095,6 +1095,15 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 app.worktree_input_buffer.clear();
                 app.status_message = None;
             }
+            KeyCode::Tab => {
+                // Switch to Smart Mode.
+                app.smart_description_buffer = std::mem::take(&mut app.worktree_input_buffer);
+                app.worktree_input_mode = WorktreeInputMode::SmartDescription;
+                app.set_status(
+                    "Describe your task (Alt+Enter: newline, Enter: generate, Tab: manual mode, Esc: cancel)".to_string(),
+                    StatusLevel::Info,
+                );
+            }
             KeyCode::Enter => {
                 let name = app.worktree_input_buffer.clone();
                 if name.is_empty() {
@@ -1213,6 +1222,85 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 app.worktree_input_mode = WorktreeInputMode::Normal;
                 app.set_status("Ungrab cancelled.".to_string(), StatusLevel::Warning);
             }
+        },
+        WorktreeInputMode::SmartDescription => {
+            // Alt+Enter inserts a newline (multi-line editing).
+            if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
+                app.smart_description_buffer.push('\n');
+                return;
+            }
+            match key.code {
+                KeyCode::Esc => {
+                    app.worktree_input_mode = WorktreeInputMode::Normal;
+                    app.smart_description_buffer.clear();
+                    app.status_message = None;
+                }
+                KeyCode::Tab => {
+                    // Switch back to manual mode.
+                    app.worktree_input_buffer = std::mem::take(&mut app.smart_description_buffer);
+                    app.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
+                    app.set_status(
+                        "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
+                        StatusLevel::Info,
+                    );
+                }
+                KeyCode::Enter => {
+                    let desc = app.smart_description_buffer.trim().to_string();
+                    if desc.is_empty() {
+                        app.set_status("Description is empty.".to_string(), StatusLevel::Warning);
+                    } else {
+                        app.worktree_input_mode = WorktreeInputMode::SmartGenerating;
+                        app.start_smart_generation(&desc);
+                        app.set_status("Generating branch name and prompt...".to_string(), StatusLevel::Info);
+                    }
+                }
+                KeyCode::Backspace => {
+                    app.smart_description_buffer.pop();
+                }
+                KeyCode::Char(c) => {
+                    app.smart_description_buffer.push(c);
+                }
+                _ => {}
+            }
+        }
+        WorktreeInputMode::SmartGenerating => {
+            // Only Esc is accepted during generation.
+            if key.code == KeyCode::Esc {
+                app.worktree_input_mode = WorktreeInputMode::Normal;
+                app.smart_description_buffer.clear();
+                app.smart_gen_rx = None;
+                app.set_status("Smart generation cancelled.".to_string(), StatusLevel::Warning);
+            }
+        }
+        WorktreeInputMode::SmartConfirmBranch => match key.code {
+            KeyCode::Esc => {
+                app.worktree_input_mode = WorktreeInputMode::Normal;
+                app.smart_branch_name.clear();
+                app.smart_prompt.clear();
+                app.smart_description_buffer.clear();
+                app.set_status("Smart worktree cancelled.".to_string(), StatusLevel::Warning);
+            }
+            KeyCode::Enter => {
+                let branch = app.smart_branch_name.trim().to_string();
+                if branch.is_empty() {
+                    app.set_status("Branch name is empty.".to_string(), StatusLevel::Warning);
+                } else {
+                    app.worktree_pending_branch = branch;
+                    app.smart_branch_name.clear();
+                    app.smart_description_buffer.clear();
+                    app.smart_auto_spawn = true;
+                    app.worktree_input_mode = WorktreeInputMode::CreatingWorktreeBase;
+                    app.load_base_branches();
+                    app.status_message = None;
+                }
+            }
+            KeyCode::Backspace => {
+                app.smart_branch_name.pop();
+            }
+            KeyCode::Char(c) => {
+                app.smart_branch_name.push(c);
+            }
+            _ => {}
         },
         WorktreeInputMode::Normal => unreachable!(),
     }

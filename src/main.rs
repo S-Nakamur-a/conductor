@@ -302,6 +302,9 @@ fn run_loop(
         // Check if a background fetch for the switch-branch overlay has finished.
         app.poll_bg_branches();
 
+        // Check if smart worktree generation has finished.
+        app.poll_smart_generation();
+
         // Periodically refresh the worktree list to pick up external changes
         // (e.g. `git worktree add` run inside a terminal panel).
         if last_worktree_poll.elapsed() >= WORKTREE_POLL {
@@ -472,6 +475,15 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     }
     if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingUngrab {
         render_confirm_overlay(frame, main_area, app, " Confirm Ungrab ", ratatui::style::Color::Yellow);
+    }
+    if app.worktree_input_mode == crate::app::WorktreeInputMode::SmartDescription {
+        ui::dashboard::render_smart_description_overlay(frame, main_area, app);
+    }
+    if app.worktree_input_mode == crate::app::WorktreeInputMode::SmartGenerating {
+        ui::dashboard::render_smart_generating_overlay(frame, main_area, app);
+    }
+    if app.worktree_input_mode == crate::app::WorktreeInputMode::SmartConfirmBranch {
+        ui::dashboard::render_smart_confirm_branch_overlay(frame, main_area, app);
     }
     if app.cherry_pick_active {
         ui::dashboard::render_cherry_pick_overlay(frame, main_area, app);
