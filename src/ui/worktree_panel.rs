@@ -43,9 +43,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // ── Zone layout calculation ────────────────────────────────────
     // Zone 1: worktree list (fixed height = items + 2 for borders)
     let list_rows = (app.worktrees.len() as u16 + 2).max(5);
-    // Zone 2: detail section (base branch + local branches)
-    let detail_content_rows = 1 + app.local_branches.len() as u16; // "Base: ..." + branch lines
-    let detail_rows = (detail_content_rows + 2).min(8); // +2 for top border + header line, capped at 8
+    // Zone 2: detail section (selected worktree info)
+    let detail_content_rows: u16 = 4; // branch, path, status, remote
+    let detail_rows = detail_content_rows + 1; // +1 for top border
     // Zone 3: decoration (whatever is left)
     let decoration_mode = DecorationMode::from_str(&app.config.general.decoration);
     let min_decoration_rows: u16 = if decoration_mode == DecorationMode::None { 0 } else { 4 };
@@ -259,7 +259,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// Render the detail section: base branch and local branch list.
+/// Render the detail section: selected worktree info.
 fn render_detail(
     frame: &mut Frame,
     area: Rect,
@@ -282,40 +282,74 @@ fn render_detail(
         return;
     }
 
+    let Some(wt) = app.worktrees.get(app.selected_worktree) else {
+        return;
+    };
+
     let mut lines: Vec<Line> = Vec::new();
 
-    // Base branch.
+    // Branch name.
     lines.push(Line::from(vec![
-        Span::styled(" Base: ", Style::default().fg(theme.muted)),
+        Span::styled(" Branch: ", Style::default().fg(theme.muted)),
         Span::styled(
-            app.config.general.main_branch.as_str(),
-            Style::default().fg(theme.info),
+            wt.branch.as_str(),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         ),
     ]));
 
-    // Branches header.
-    if !app.local_branches.is_empty() {
-        lines.push(Line::from(Span::styled(
-            " Branches:",
-            Style::default().fg(theme.muted),
-        )));
+    // Path (show last component for brevity).
+    let path_display = wt
+        .path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| wt.path.display().to_string());
+    lines.push(Line::from(vec![
+        Span::styled(" Path:   ", Style::default().fg(theme.muted)),
+        Span::styled(path_display, Style::default().fg(theme.fg)),
+    ]));
 
-        let max_branch_lines = inner.height.saturating_sub(2) as usize;
-        for branch in app.local_branches.iter().take(max_branch_lines) {
-            let style = if Some(branch.as_str()) == app.worktrees.get(app.selected_worktree).map(|w| w.branch.as_str()) {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.fg)
-            };
-            lines.push(Line::from(Span::styled(format!("  {branch}"), style)));
+    // Status.
+    let status_spans = if wt.is_clean {
+        vec![
+            Span::styled(" Status: ", Style::default().fg(theme.muted)),
+            Span::styled("\u{2713} clean", Style::default().fg(theme.success)),
+        ]
+    } else {
+        vec![
+            Span::styled(" Status: ", Style::default().fg(theme.muted)),
+            Span::styled(
+                format!("+{} ~{} -{}", wt.added, wt.modified, wt.deleted),
+                Style::default().fg(Color::Magenta),
+            ),
+        ]
+    };
+    lines.push(Line::from(status_spans));
+
+    // Remote sync.
+    let remote_spans = match (wt.ahead, wt.behind) {
+        (Some(0), Some(0)) => vec![
+            Span::styled(" Remote: ", Style::default().fg(theme.muted)),
+            Span::styled("\u{2261} synced", Style::default().fg(theme.success)),
+        ],
+        (Some(ahead), Some(behind)) => {
+            let mut parts = Vec::new();
+            if ahead > 0 {
+                parts.push(format!("\u{2191}{ahead}"));
+            }
+            if behind > 0 {
+                parts.push(format!("\u{2193}{behind}"));
+            }
+            vec![
+                Span::styled(" Remote: ", Style::default().fg(theme.muted)),
+                Span::styled(parts.join(" "), Style::default().fg(theme.info)),
+            ]
         }
-        if app.local_branches.len() > max_branch_lines {
-            lines.push(Line::from(Span::styled(
-                format!("  +{} more", app.local_branches.len() - max_branch_lines),
-                Style::default().fg(theme.muted),
-            )));
-        }
-    }
+        _ => vec![
+            Span::styled(" Remote: ", Style::default().fg(theme.muted)),
+            Span::styled("no upstream", Style::default().fg(theme.muted)),
+        ],
+    };
+    lines.push(Line::from(remote_spans));
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
