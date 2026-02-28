@@ -21,15 +21,10 @@ use crate::theme::Theme;
 /// When a terminal panel is not focused, we reuse the previously built
 /// ratatui `Line` data instead of re-locking the vt100 parser mutex and
 /// copying thousands of cells.
+#[derive(Default)]
 pub struct PtyRenderCache {
     pub lines: Vec<Line<'static>>,
     pub effective_offset: usize,
-}
-
-impl Default for PtyRenderCache {
-    fn default() -> Self {
-        Self { lines: Vec::new(), effective_offset: 0 }
-    }
 }
 
 /// A snapshot of a single cell's content and style, extracted from the vt100 screen.

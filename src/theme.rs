@@ -9,14 +9,10 @@ use ratatui::style::Color;
 #[derive(Debug, Clone)]
 pub struct Theme {
     // ── Core ─────────────────────────────────────────────────────────
-    /// Background color for the main area.
-    pub bg: Color,
     /// Foreground color for normal text.
     pub fg: Color,
     /// Accent color (used for highlights, selections).
     pub accent: Color,
-    /// Color for borders and separators.
-    pub border: Color,
     /// Color for muted/dimmed text.
     pub muted: Color,
     /// Color for success indicators.
@@ -91,8 +87,6 @@ pub struct Theme {
     // ── Title bar ────────────────────────────────────────────────────
     /// Title bar background color.
     pub titlebar_bg: Color,
-    /// Branch name text color in the title bar.
-    pub branch_fg: Color,
     /// Directory path text color in the title bar.
     pub dir_fg: Color,
 
@@ -129,20 +123,6 @@ impl Theme {
         }
     }
 
-    /// Return a list of all built-in theme names.
-    pub fn all_names() -> &'static [&'static str] {
-        &[
-            "catppuccin-mocha",
-            "dracula",
-            "nord",
-            "solarized-dark",
-            "tokyo-night",
-            "gruvbox",
-            "rose-pine",
-            "kanagawa",
-        ]
-    }
-
     /// Darken an RGB color by the given factor (0.0 = black, 1.0 = unchanged).
     /// Non-RGB colors are returned unchanged.
     pub fn darken(color: Color, factor: f64) -> Color {
@@ -161,10 +141,8 @@ impl Theme {
     /// Default theme — matches the original hardcoded colors exactly.
     fn catppuccin_mocha() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::White,
             accent: Color::Yellow,
-            border: Color::Cyan,
             muted: Color::DarkGray,
             success: Color::Green,
             error: Color::Red,
@@ -202,7 +180,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(200, 120, 0),
 
             titlebar_bg: Color::DarkGray,
-            branch_fg: Color::Green,
             dir_fg: Color::Gray,
 
             status_bg_success: Color::Rgb(0, 30, 0),
@@ -217,10 +194,8 @@ impl Theme {
 
     fn dracula() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(248, 248, 242),
             accent: Color::Rgb(255, 121, 198),
-            border: Color::Rgb(98, 114, 164),
             muted: Color::Rgb(68, 71, 90),
             success: Color::Rgb(80, 250, 123),
             error: Color::Rgb(255, 85, 85),
@@ -258,7 +233,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(200, 140, 80),
 
             titlebar_bg: Color::Rgb(40, 42, 54),
-            branch_fg: Color::Rgb(80, 250, 123),
             dir_fg: Color::Rgb(98, 114, 164),
 
             status_bg_success: Color::Rgb(20, 50, 20),
@@ -273,10 +247,8 @@ impl Theme {
 
     fn nord() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(216, 222, 233),
             accent: Color::Rgb(136, 192, 208),
-            border: Color::Rgb(76, 86, 106),
             muted: Color::Rgb(59, 66, 82),
             success: Color::Rgb(163, 190, 140),
             error: Color::Rgb(191, 97, 106),
@@ -314,7 +286,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(170, 100, 80),
 
             titlebar_bg: Color::Rgb(46, 52, 64),
-            branch_fg: Color::Rgb(163, 190, 140),
             dir_fg: Color::Rgb(76, 86, 106),
 
             status_bg_success: Color::Rgb(20, 40, 20),
@@ -329,10 +300,8 @@ impl Theme {
 
     fn solarized_dark() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(131, 148, 150),
             accent: Color::Rgb(181, 137, 0),
-            border: Color::Rgb(88, 110, 117),
             muted: Color::Rgb(0, 43, 54),
             success: Color::Rgb(133, 153, 0),
             error: Color::Rgb(220, 50, 47),
@@ -370,7 +339,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(160, 60, 18),
 
             titlebar_bg: Color::Rgb(7, 54, 66),
-            branch_fg: Color::Rgb(133, 153, 0),
             dir_fg: Color::Rgb(88, 110, 117),
 
             status_bg_success: Color::Rgb(10, 35, 10),
@@ -385,10 +353,8 @@ impl Theme {
 
     fn tokyo_night() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(192, 202, 245),
             accent: Color::Rgb(122, 162, 247),
-            border: Color::Rgb(59, 66, 97),
             muted: Color::Rgb(59, 66, 97),
             success: Color::Rgb(158, 206, 106),
             error: Color::Rgb(247, 118, 142),
@@ -426,7 +392,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(200, 120, 70),
 
             titlebar_bg: Color::Rgb(26, 27, 38),
-            branch_fg: Color::Rgb(158, 206, 106),
             dir_fg: Color::Rgb(65, 72, 104),
 
             status_bg_success: Color::Rgb(15, 35, 15),
@@ -441,10 +406,8 @@ impl Theme {
 
     fn gruvbox() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(235, 219, 178),
             accent: Color::Rgb(250, 189, 47),
-            border: Color::Rgb(102, 92, 84),
             muted: Color::Rgb(60, 56, 54),
             success: Color::Rgb(184, 187, 38),
             error: Color::Rgb(251, 73, 52),
@@ -482,7 +445,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(200, 100, 20),
 
             titlebar_bg: Color::Rgb(50, 48, 47),
-            branch_fg: Color::Rgb(184, 187, 38),
             dir_fg: Color::Rgb(102, 92, 84),
 
             status_bg_success: Color::Rgb(18, 32, 8),
@@ -497,10 +459,8 @@ impl Theme {
 
     fn rose_pine() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(224, 222, 244),
             accent: Color::Rgb(235, 188, 186),
-            border: Color::Rgb(110, 106, 134),
             muted: Color::Rgb(57, 53, 82),
             success: Color::Rgb(156, 207, 216),
             error: Color::Rgb(235, 111, 146),
@@ -538,7 +498,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(190, 120, 118),
 
             titlebar_bg: Color::Rgb(25, 23, 36),
-            branch_fg: Color::Rgb(156, 207, 216),
             dir_fg: Color::Rgb(110, 106, 134),
 
             status_bg_success: Color::Rgb(15, 35, 38),
@@ -553,10 +512,8 @@ impl Theme {
 
     fn kanagawa() -> Self {
         Self {
-            bg: Color::Reset,
             fg: Color::Rgb(220, 215, 186),
             accent: Color::Rgb(127, 180, 202),
-            border: Color::Rgb(84, 84, 109),
             muted: Color::Rgb(54, 54, 70),
             success: Color::Rgb(152, 187, 108),
             error: Color::Rgb(195, 64, 67),
@@ -594,7 +551,6 @@ impl Theme {
             waiting_secondary: Color::Rgb(200, 120, 75),
 
             titlebar_bg: Color::Rgb(22, 22, 29),
-            branch_fg: Color::Rgb(152, 187, 108),
             dir_fg: Color::Rgb(84, 84, 109),
 
             status_bg_success: Color::Rgb(15, 32, 10),

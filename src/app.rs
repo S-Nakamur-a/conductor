@@ -2317,8 +2317,7 @@ No markdown fences, no explanation, just the JSON object."#;
             .collect();
         for &idx in session_indices.iter().rev() {
             log::info!(
-                "killing PTY session {} for deleted worktree '{branch}'",
-                idx
+                "killing PTY session {idx} for deleted worktree '{branch}'"
             );
             self.close_terminal_session(idx);
         }

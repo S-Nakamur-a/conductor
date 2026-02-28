@@ -17,8 +17,6 @@ use crate::diff_state::{DiffLineTag, FileDiff, InlineSegment};
 /// A file matched by filename fuzzy search, with its score.
 #[derive(Debug, Clone)]
 pub struct ScoredFile {
-    /// Index in `file_tree`.
-    pub tree_index: usize,
     /// Relative path of the file.
     pub path: String,
     /// Fuzzy match score (higher = better).
@@ -56,8 +54,6 @@ pub enum UnifiedDiffEntry {
         tag: DiffLineTag,
         /// Line number in the new file. `Some` for Equal/Insert, `None` for Delete.
         new_line_no: Option<usize>,
-        /// Line number in the old file. `Some` for Equal/Delete, `None` for Insert.
-        old_line_no: Option<usize>,
         /// The text content of this line.
         content: String,
         /// Intra-line change segments (word diff).
@@ -386,7 +382,7 @@ impl ViewerState {
 
         let query = self.filename_search_query.to_lowercase();
 
-        for (idx, entry) in self.file_tree.iter().enumerate() {
+        for entry in &self.file_tree {
             if entry.is_dir {
                 continue;
             }
@@ -397,7 +393,6 @@ impl ViewerState {
             // If query is empty, include all files with score 0.
             if query.is_empty() {
                 self.filename_search_results.push(ScoredFile {
-                    tree_index: idx,
                     path: entry.path.clone(),
                     score: 0,
                 });
@@ -435,7 +430,6 @@ impl ViewerState {
             }
 
             self.filename_search_results.push(ScoredFile {
-                tree_index: idx,
                 path: entry.path.clone(),
                 score,
             });
@@ -663,7 +657,6 @@ impl ViewerState {
                 self.diff_view_lines.push(UnifiedDiffEntry::Line {
                     tag: line.tag,
                     new_line_no: line.new_line_no,
-                    old_line_no: line.old_line_no,
                     content: line.content.clone(),
                     inline_segments: line.inline_segments.clone(),
                 });

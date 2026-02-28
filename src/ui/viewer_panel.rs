@@ -326,7 +326,6 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                 UnifiedDiffEntry::Line {
                     tag,
                     new_line_no,
-                    old_line_no: _,
                     content,
                     inline_segments,
                 } => {

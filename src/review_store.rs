@@ -133,7 +133,6 @@ pub struct DailyStats {
     pub reviews_created: i64,
     pub branches_created: i64,
     pub commits_made: i64,
-    pub sessions_used: i64,
 }
 
 /// Summary statistics for the current session.
@@ -148,7 +147,6 @@ pub struct SessionStatsSnapshot {
 #[derive(Debug, Clone)]
 pub struct StreakInfo {
     pub consecutive_days: u32,
-    pub today_activity_count: i64,
 }
 
 /// A saved session history record.
@@ -648,7 +646,7 @@ impl ReviewStore {
     pub fn get_today_stats(&self) -> Result<DailyStats> {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let result = self.conn.query_row(
-            "SELECT reviews_created, branches_created, commits_made, sessions_used
+            "SELECT reviews_created, branches_created, commits_made
              FROM daily_stats WHERE date = ?1",
             params![today],
             |row| {
@@ -656,7 +654,6 @@ impl ReviewStore {
                     reviews_created: row.get(0)?,
                     branches_created: row.get(1)?,
                     commits_made: row.get(2)?,
-                    sessions_used: row.get(3)?,
                 })
             },
         );
@@ -666,7 +663,6 @@ impl ReviewStore {
                 reviews_created: 0,
                 branches_created: 0,
                 commits_made: 0,
-                sessions_used: 0,
             }),
             Err(e) => Err(e.into()),
         }
@@ -687,15 +683,8 @@ impl ReviewStore {
         if dates.is_empty() {
             return Ok(StreakInfo {
                 consecutive_days: 0,
-                today_activity_count: 0,
             });
         }
-
-        let today_stats = self.get_today_stats()?;
-        let today_count = today_stats.reviews_created
-            + today_stats.branches_created
-            + today_stats.commits_made
-            + today_stats.sessions_used;
 
         let mut streak = 0u32;
         let mut expected = chrono::Local::now().date_naive();
@@ -717,7 +706,6 @@ impl ReviewStore {
 
         Ok(StreakInfo {
             consecutive_days: streak,
-            today_activity_count: today_count,
         })
     }
 
@@ -1104,7 +1092,6 @@ mod tests {
 
         let streak = store.calculate_streak().unwrap();
         assert_eq!(streak.consecutive_days, 1);
-        assert_eq!(streak.today_activity_count, 3);
     }
 
     #[test]
@@ -1127,7 +1114,6 @@ mod tests {
         assert_eq!(stats.reviews_created, 1);
         assert_eq!(stats.branches_created, 1);
         assert_eq!(stats.commits_made, 1);
-        assert_eq!(stats.sessions_used, 1);
     }
 
     #[test]
@@ -1137,7 +1123,6 @@ mod tests {
         assert_eq!(stats.reviews_created, 0);
         assert_eq!(stats.branches_created, 0);
         assert_eq!(stats.commits_made, 0);
-        assert_eq!(stats.sessions_used, 0);
     }
 
     // ── Gamification: streak calculation ────────────────────────
@@ -1147,7 +1132,6 @@ mod tests {
         let store = test_store();
         let streak = store.calculate_streak().unwrap();
         assert_eq!(streak.consecutive_days, 0);
-        assert_eq!(streak.today_activity_count, 0);
     }
 
     #[test]
@@ -1208,7 +1192,6 @@ mod tests {
 
         let streak = store.calculate_streak().unwrap();
         assert_eq!(streak.consecutive_days, 2);
-        assert_eq!(streak.today_activity_count, 0);
     }
 
     // ── Gamification: session stats ─────────────────────────────

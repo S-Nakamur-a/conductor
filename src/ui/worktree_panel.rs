@@ -173,9 +173,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             spans.push(Span::styled(
                 format!(" {status_text}"),
-                if is_grabbed {
-                    Style::default().fg(theme.muted)
-                } else if wt.is_clean {
+                if is_grabbed || wt.is_clean {
                     Style::default().fg(theme.muted)
                 } else {
                     Style::default().fg(Color::Magenta)

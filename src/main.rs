@@ -367,7 +367,7 @@ fn run_loop(
                 // Check if another Conductor instance already refreshed
                 // the cache recently — if so, just use that.
                 let info = ccusage_cache::read_if_fresh(max_age)
-                    .or_else(|| ccusage_cache::fetch_and_cache());
+                    .or_else(ccusage_cache::fetch_and_cache);
                 if let Some(info) = info {
                     if let Ok(mut lock) = result_handle.lock() {
                         *lock = Some(info);

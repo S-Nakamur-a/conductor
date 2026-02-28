@@ -1183,7 +1183,7 @@ pub fn render_smart_confirm_branch_overlay(frame: &mut Frame, area: Rect, app: &
     let max_preview = (popup_width as usize).saturating_sub(4);
     let truncated: String = app.smart_prompt.chars().take(max_preview.saturating_sub(3)).collect();
     let preview = if truncated.len() < app.smart_prompt.len() {
-        format!(" {}...", truncated)
+        format!(" {truncated}...")
     } else {
         format!(" {}", &app.smart_prompt)
     };

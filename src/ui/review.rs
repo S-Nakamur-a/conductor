@@ -322,7 +322,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         .map(|line| {
             let line_len: usize = line.spans.iter().map(|s| s.content.len()).sum();
             if content_width > 0 && line_len > content_width {
-                (line_len + content_width - 1) / content_width
+                line_len.div_ceil(content_width)
             } else {
                 1
             }
