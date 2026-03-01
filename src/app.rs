@@ -13,6 +13,7 @@ use syntect::parsing::SyntaxSet;
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
+use crate::keymap::KeyMap;
 use crate::pty_manager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, Author, CommentKind, ReviewStore};
@@ -126,6 +127,8 @@ pub struct App {
     pub worktrees: Vec<git_engine::WorktreeInfo>,
     /// Application configuration loaded from config file.
     pub config: config::Config,
+    /// Resolved keybinding map (defaults + user overrides).
+    pub keymap: KeyMap,
     /// UI color theme.
     pub theme: Theme,
     /// State for the Explorer/Viewer panel (file tree + file content).
@@ -401,6 +404,7 @@ impl App {
         }
         let today_stats = review_store.as_ref().and_then(|store| store.get_today_stats().ok());
 
+        let keymap = KeyMap::new(&config.keybinds);
         let theme = Theme::from_name(&config.viewer.theme);
 
         // Derive the main repo display name from the main worktree path.
@@ -423,6 +427,7 @@ impl App {
             selected_worktree: 0,
             worktrees: Vec::new(),
             config,
+            keymap,
             theme,
             viewer_state: ViewerState::default(),
             diff_state,
