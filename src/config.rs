@@ -39,6 +39,8 @@ pub struct Config {
     pub notification: NotificationConfig,
     /// `[ccusage]` -- Claude Code token usage display.
     pub ccusage: CcusageConfig,
+    /// `[updates]` -- startup version check settings.
+    pub updates: UpdatesConfig,
 }
 
 
@@ -257,6 +259,25 @@ impl Default for CcusageConfig {
     }
 }
 
+/// `[updates]` section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdatesConfig {
+    /// Check for new versions on startup.
+    pub check_on_startup: bool,
+    /// Minimum interval (seconds) between update checks (cache TTL).
+    pub check_interval_secs: u64,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check_on_startup: true,
+            check_interval_secs: 86400, // 24 hours
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -323,6 +344,8 @@ mod tests {
         assert!(!cfg2.notification.cc_waiting);
         assert!(!cfg2.ccusage.enabled);
         assert_eq!(cfg2.ccusage.poll_interval_secs, 120);
+        assert!(cfg2.updates.check_on_startup);
+        assert_eq!(cfg2.updates.check_interval_secs, 86400);
     }
 
     #[test]
@@ -361,6 +384,16 @@ poll_interval_secs = 60"#)
                 .expect("parse");
         assert!(cfg.enabled);
         assert_eq!(cfg.poll_interval_secs, 60);
+    }
+
+    #[test]
+    fn updates_config_parse() {
+        let cfg: UpdatesConfig =
+            toml::from_str(r#"check_on_startup = false
+check_interval_secs = 3600"#)
+                .expect("parse");
+        assert!(!cfg.check_on_startup);
+        assert_eq!(cfg.check_interval_secs, 3600);
     }
 
     #[test]
