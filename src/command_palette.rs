@@ -180,7 +180,7 @@ pub const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand { id: CommandId::ViewCommentDetail, label: "Review: View Comment Detail",
         category: CommandCategory::Review, keybinding: Some("Space"), keywords: "detail preview" },
     PaletteCommand { id: CommandId::DeleteComment, label: "Review: Delete Comment",
-        category: CommandCategory::Review, keybinding: Some("x"), keywords: "remove delete" },
+        category: CommandCategory::Review, keybinding: Some("Del"), keywords: "remove delete" },
     PaletteCommand { id: CommandId::ToggleCommentResolve, label: "Review: Toggle Resolve",
         category: CommandCategory::Review, keybinding: Some("r"), keywords: "resolve unresolve status" },
     PaletteCommand { id: CommandId::EditComment, label: "Review: Edit Comment",
