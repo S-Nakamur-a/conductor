@@ -160,7 +160,7 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
     frame.render_widget(Clear, popup_area);
 
     let block = Block::default()
-        .title(" Templates (Enter: use, x: delete, Esc: close) ")
+        .title(" Templates (Enter: use, Del: delete, Esc: close) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));
 
@@ -238,7 +238,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         crate::review_store::CommentStatus::Resolved => "\u{2713} Resolved",
     };
 
-    let title = format!(" {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, x: delete) ");
+    let title = format!(" {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, Del: delete) ");
 
     let block = Block::default()
         .title(title)

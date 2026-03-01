@@ -1021,7 +1021,7 @@ fn help_lines_for(focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>>
             help_key(&mut lines, "Enter / l", "Expand/collapse replies or jump", theme);
             help_key(&mut lines, "h", "Collapse thread", theme);
             help_key(&mut lines, "e", "Edit selected comment", theme);
-            help_key(&mut lines, "x", "Delete selected comment", theme);
+            help_key(&mut lines, "Del", "Delete selected comment", theme);
             help_key(&mut lines, "r", "Toggle resolve/pending", theme);
             help_key(&mut lines, "R", "Reply to comment", theme);
             help_key(&mut lines, "Esc", "Back to file tree", theme);

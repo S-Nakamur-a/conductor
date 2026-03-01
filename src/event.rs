@@ -675,7 +675,7 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.viewer_state.explorer_focus_on_diff_list = false;
         }
-        KeyCode::Char('x') => {
+        KeyCode::Delete => {
             // Delete the selected comment (resolve via parent).
             if row_count > 0 {
                 app.delete_selected_review_comment();
@@ -1555,7 +1555,7 @@ fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
             app.review_state.selected = idx;
             app.review_state.comment_detail_active = false;
         }
-        KeyCode::Char('x') => {
+        KeyCode::Delete => {
             // Delete from the detail view.
             let idx = app.review_state.comment_detail_idx;
             app.review_state.selected = idx;
@@ -1787,7 +1787,7 @@ fn handle_review_template_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.review_state.template_picker_active = false;
         }
-        KeyCode::Char('x') => {
+        KeyCode::Delete => {
             if let Some(tmpl) =
                 app.review_state.templates.get(app.review_state.template_selected)
             {
