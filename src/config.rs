@@ -220,16 +220,26 @@ pub enum PromptAction {
     SendToSession,
 }
 
+/// A keybind value: either a single key chord or multiple alternatives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeybindValue {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
 /// `[keybinds]` section.
 ///
-/// Stores arbitrary `key = "action"` pairs that can override the default
-/// key bindings at runtime.
+/// Per-context key-bind overrides. Keys are action names (e.g. `"navigate_down"`),
+/// values are key chord strings (e.g. `"j"` or `["j", "down"]`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeybindsConfig {
-    /// Map from key chord string to action name.
-    #[serde(flatten)]
-    pub overrides: HashMap<String, String>,
+    pub global: HashMap<String, KeybindValue>,
+    pub worktree: HashMap<String, KeybindValue>,
+    pub explorer: HashMap<String, KeybindValue>,
+    pub viewer: HashMap<String, KeybindValue>,
+    pub terminal: HashMap<String, KeybindValue>,
 }
 
 /// `[notification]` section.
@@ -399,11 +409,27 @@ check_interval_secs = 3600"#)
     #[test]
     fn keybinds_parse() {
         let toml_str = r#"
+[global]
 quit = "q"
-refresh = "r"
+
+[worktree]
+navigate_down = ["j", "down"]
+create_worktree = "w"
 "#;
         let kb: KeybindsConfig = toml::from_str(toml_str).expect("parse keybinds");
-        assert_eq!(kb.overrides.get("quit").unwrap(), "q");
-        assert_eq!(kb.overrides.get("refresh").unwrap(), "r");
+        match kb.global.get("quit").unwrap() {
+            KeybindValue::Single(s) => assert_eq!(s, "q"),
+            _ => panic!("expected Single"),
+        }
+        match kb.worktree.get("navigate_down").unwrap() {
+            KeybindValue::Multiple(v) => {
+                assert_eq!(v, &vec!["j".to_string(), "down".to_string()]);
+            }
+            _ => panic!("expected Multiple"),
+        }
+        match kb.worktree.get("create_worktree").unwrap() {
+            KeybindValue::Single(s) => assert_eq!(s, "w"),
+            _ => panic!("expected Single"),
+        }
     }
 }

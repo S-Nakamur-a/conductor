@@ -9,6 +9,7 @@ mod diff_state;
 mod event;
 mod file_watcher;
 mod git_engine;
+mod keymap;
 mod pty_manager;
 mod review_state;
 mod review_store;

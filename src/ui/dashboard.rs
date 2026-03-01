@@ -934,7 +934,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(tabs[1]);
     frame.render_widget(block, tabs[1]);
 
-    let lines = help_lines_for(app.help_context, theme);
+    let lines = help_lines_for(app, app.help_context, theme);
     let paragraph = Paragraph::new(lines)
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);
@@ -951,8 +951,8 @@ fn help_section(lines: &mut Vec<Line<'static>>, title: &'static str, theme: &The
     )));
 }
 
-/// Add a key binding line.
-fn help_key(lines: &mut Vec<Line<'static>>, keys: &'static str, desc: &'static str, theme: &Theme) {
+/// Add a key binding line (dynamic: keys from KeyMap).
+fn help_key_dyn(lines: &mut Vec<Line<'static>>, keys: String, desc: &'static str, theme: &Theme) {
     lines.push(Line::from(vec![
         Span::styled(
             format!("  {keys:<18}"),
@@ -964,86 +964,117 @@ fn help_key(lines: &mut Vec<Line<'static>>, keys: &'static str, desc: &'static s
     ]));
 }
 
+/// Format keys for an action in a given context (e.g. "j / Down").
+fn fmt_keys(app: &App, ctx: crate::keymap::KeyContext, action: crate::keymap::Action) -> String {
+    let keys = app.keymap.keys_for_action(ctx, action);
+    if keys.is_empty() {
+        "(unbound)".to_string()
+    } else {
+        keys.join(" / ")
+    }
+}
+
 /// Build help text lines for the given focus context.
-fn help_lines_for(focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>> {
+fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>> {
     use crate::app::Focus;
+    use crate::keymap::{Action, KeyContext};
 
     let mut lines = Vec::new();
 
     // Global section always shown.
     help_section(&mut lines, "Global", theme);
-    help_key(&mut lines, "Ctrl+n", "New Claude Code session", theme);
-    help_key(&mut lines, "Ctrl+t", "New Shell session", theme);
-    help_key(&mut lines, "Ctrl+p", "Command palette", theme);
-    help_key(&mut lines, "Ctrl+w", "Jump to Worktree panel", theme);
-    help_key(&mut lines, "Ctrl+o", "Open repository by path", theme);
-    help_key(&mut lines, "Ctrl+r", "Switch repository", theme);
-    help_key(&mut lines, "Tab / Shift+Tab", "Cycle panel focus", theme);
-    help_key(&mut lines, "q / Q", "Quit application", theme);
-    help_key(&mut lines, "?", "Toggle this help", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::NewClaudeCode), "New Claude Code session", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::NewShell), "New Shell session", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CommandPalette), "Command palette", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::FocusWorktree), "Jump to Worktree panel", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::OpenRepo), "Open repository by path", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::SwitchRepo), "Switch repository", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CycleFocusForward), "Cycle panel focus forward", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CycleFocusBackward), "Cycle panel focus backward", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::Quit), "Quit application", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::ShowHelp), "Toggle this help", theme);
 
     match focus {
         Focus::Worktree => {
+            let ctx = KeyContext::Worktree;
             help_section(&mut lines, "Worktree Panel", theme);
-            help_key(&mut lines, "j / k", "Navigate up/down", theme);
-            help_key(&mut lines, "Enter", "Select worktree -> Explorer", theme);
-            help_key(&mut lines, "w", "Create new worktree", theme);
-            help_key(&mut lines, "X", "Delete selected worktree", theme);
-            help_key(&mut lines, "s", "Switch (checkout remote branch)", theme);
-            help_key(&mut lines, "g", "Grab (checkout branch on main)", theme);
-            help_key(&mut lines, "G", "Ungrab (restore main branch)", theme);
-            help_key(&mut lines, "p", "Cherry-pick from other branch", theme);
-            help_key(&mut lines, "P", "Prune stale worktrees", theme);
-            help_key(&mut lines, "m", "Merge branch into main", theme);
-            help_key(&mut lines, "r", "Refresh worktree list", theme);
-            help_key(&mut lines, "R", "Reset main to origin/main", theme);
-            help_key(&mut lines, "H", "Session history viewer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateDown), "Navigate down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateUp), "Navigate up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::Select), "Select worktree -> Explorer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::CreateWorktree), "Create new worktree", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::DeleteWorktree), "Delete selected worktree", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SwitchBranch), "Switch (checkout remote branch)", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::GrabBranch), "Grab (checkout branch on main)", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::UngrabBranch), "Ungrab (restore main branch)", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::CherryPick), "Cherry-pick from other branch", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PruneWorktrees), "Prune stale worktrees", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::MergeToMain), "Merge branch into main", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::RefreshWorktrees), "Refresh worktree list", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ResetMainToOrigin), "Reset main to origin/main", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PullWorktree), "Pull worktree", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SessionHistory), "Session history viewer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::OpenPullRequest), "Open pull request in browser", theme);
         }
         Focus::Explorer => {
+            let ctx = KeyContext::Explorer;
             help_section(&mut lines, "Explorer Panel (File Tree)", theme);
-            help_key(&mut lines, "j / k", "Navigate up/down", theme);
-            help_key(&mut lines, "l / Right", "Expand directory", theme);
-            help_key(&mut lines, "h / Left", "Collapse directory", theme);
-            help_key(&mut lines, "Enter", "Open file -> Viewer", theme);
-            help_key(&mut lines, "d", "Switch to Diff list", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateDown), "Navigate down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateUp), "Navigate up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ExpandOrRight), "Expand directory", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::CollapseOrLeft), "Collapse directory", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::Select), "Open file -> Viewer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ShowDiffList), "Switch to Diff list", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ShowCommentList), "Show review comments", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SearchFilename), "Search filename", theme);
 
-            help_key(&mut lines, "c", "Show review comments", theme);
-
+            let ctx2 = KeyContext::ExplorerDiffList;
             help_section(&mut lines, "Explorer Panel (Diff List)", theme);
-            help_key(&mut lines, "j / k", "Navigate up/down", theme);
-            help_key(&mut lines, "Enter", "Open diff file -> Viewer", theme);
-            help_key(&mut lines, "u", "Toggle committed/all diff scope", theme);
-            help_key(&mut lines, "Esc", "Back to file tree", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::NavigateDown), "Navigate down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::NavigateUp), "Navigate up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::Select), "Open diff file -> Viewer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::ExitSubPanel), "Back to file tree", theme);
 
+            let ctx3 = KeyContext::ExplorerCommentList;
             help_section(&mut lines, "Explorer Panel (Comments)", theme);
-            help_key(&mut lines, "j / k", "Navigate up/down", theme);
-            help_key(&mut lines, "g / G", "Jump to top/bottom", theme);
-            help_key(&mut lines, "Enter / l", "Expand/collapse replies or jump", theme);
-            help_key(&mut lines, "h", "Collapse thread", theme);
-            help_key(&mut lines, "e", "Edit selected comment", theme);
-            help_key(&mut lines, "Del", "Delete selected comment", theme);
-            help_key(&mut lines, "r", "Toggle resolve/pending", theme);
-            help_key(&mut lines, "R", "Reply to comment", theme);
-            help_key(&mut lines, "Esc", "Back to file tree", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::NavigateDown), "Navigate down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::NavigateUp), "Navigate up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::GoToTop), "Jump to top", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::GoToBottom), "Jump to bottom", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::Select), "Expand/collapse or jump", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::CollapseOrLeft), "Collapse thread", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::EditComment), "Edit selected comment", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::DeleteComment), "Delete selected comment", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::ToggleResolve), "Toggle resolve/pending", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::ReplyToComment), "Reply to comment", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::ExitSubPanel), "Back to file tree", theme);
         }
         Focus::Viewer => {
+            let ctx = KeyContext::Viewer;
             help_section(&mut lines, "Viewer Panel", theme);
-            help_key(&mut lines, "j / k", "Scroll up/down", theme);
-            help_key(&mut lines, "Ctrl+d / Ctrl+u", "Scroll half-page down/up", theme);
-            help_key(&mut lines, "g / G", "Jump to top/bottom", theme);
-            help_key(&mut lines, "/", "Search in file", theme);
-            help_key(&mut lines, "n / N", "Next/prev search match", theme);
-            help_key(&mut lines, "c", "Add review comment at line", theme);
-            help_key(&mut lines, "Esc", "Back to Explorer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateDown), "Scroll down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateUp), "Scroll up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollHalfPageDown), "Scroll half-page down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollHalfPageUp), "Scroll half-page up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::GoToTop), "Jump to top", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::GoToBottom), "Jump to bottom", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SearchInFile), "Search in file", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NextSearchMatch), "Next search match", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PrevSearchMatch), "Previous search match", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::AddComment), "Add review comment at line", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ExitToExplorer), "Back to Explorer", theme);
         }
         Focus::TerminalClaude | Focus::TerminalShell => {
+            let ctx = KeyContext::Terminal;
             help_section(&mut lines, "Terminal Panel", theme);
-            help_key(&mut lines, "Ctrl+Esc", "Leave terminal -> Explorer", theme);
-            help_key(&mut lines, "(all other keys)", "Forwarded to PTY as-is", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::LeaveTerminal), "Leave terminal -> Explorer", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollbackUp), "Scroll up", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollbackDown), "Scroll down", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollbackTop), "Scroll to top", theme);
+            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SnapToLive), "Snap to live", theme);
 
             help_section(&mut lines, "Note", theme);
             lines.push(Line::from(Span::styled(
-                "  While in the terminal, all keys except Ctrl+Esc are",
+                "  While in the terminal, all keys except the above are",
                 Style::default().fg(theme.muted),
             )));
             lines.push(Line::from(Span::styled(

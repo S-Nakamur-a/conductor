@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, StatusLevel};
 use crate::git_engine;
+use crate::keymap::{Action, KeyContext};
 use crate::review_state::ReviewInputMode;
 use crate::review_store::{Author, CommentKind};
 
@@ -86,37 +87,25 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── 1b. Alt+1-5 — panel jump (intercepted globally, even from terminals) ─
-
-    if key.modifiers.contains(KeyModifiers::ALT) {
-        match key.code {
-            KeyCode::Char('1') => { app.set_focus(Focus::Worktree); return; }
-            KeyCode::Char('2') => { app.set_focus(Focus::Explorer); return; }
-            KeyCode::Char('3') => { app.set_focus(Focus::Viewer); return; }
-            KeyCode::Char('4') => { app.set_focus(Focus::TerminalClaude); return; }
-            KeyCode::Char('5') => { app.set_focus(Focus::TerminalShell); return; }
-            _ => {}
-        }
-    }
-
-    // ── 2. Terminal focus — Ctrl+Esc leaves terminal, everything else → PTY ─
+    // ── 1b. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
-        if key.code == KeyCode::Esc && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.set_focus(Focus::Explorer);
-            return;
-        }
-
-        // Ctrl+w — jump to Worktree panel.
-        if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.set_focus(Focus::Worktree);
-            return;
-        }
-
-        // ── Scrollback navigation (Shift+PageUp/PageDown/Home/End) ──
-        if key.modifiers.contains(KeyModifiers::SHIFT) {
-            match key.code {
-                KeyCode::PageUp => {
+        // Check terminal-specific and global bindings first.
+        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
+            match action {
+                Action::LeaveTerminal => { app.set_focus(Focus::Explorer); return; }
+                Action::FocusWorktree => { app.set_focus(Focus::Worktree); return; }
+                Action::FocusExplorer => { app.set_focus(Focus::Explorer); return; }
+                Action::FocusViewer => { app.set_focus(Focus::Viewer); return; }
+                Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); return; }
+                Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); return; }
+                Action::CommandPalette => {
+                    app.command_palette_active = true;
+                    app.command_palette_filter.clear();
+                    app.command_palette_selected = 0;
+                    return;
+                }
+                Action::ScrollbackUp => {
                     let page = match app.focus {
                         Focus::TerminalClaude => app.terminal_size_claude.0 as usize / 2,
                         Focus::TerminalShell => app.terminal_size_shell.0 as usize / 2,
@@ -130,7 +119,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     *scroll = scroll.saturating_add(page.max(1));
                     return;
                 }
-                KeyCode::PageDown => {
+                Action::ScrollbackDown => {
                     let page = match app.focus {
                         Focus::TerminalClaude => app.terminal_size_claude.0 as usize / 2,
                         Focus::TerminalShell => app.terminal_size_shell.0 as usize / 2,
@@ -144,17 +133,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     *scroll = scroll.saturating_sub(page.max(1));
                     return;
                 }
-                KeyCode::End => {
-                    // Snap to live view.
-                    match app.focus {
-                        Focus::TerminalClaude => app.terminal_scroll_claude = 0,
-                        Focus::TerminalShell => app.terminal_scroll_shell = 0,
-                        _ => unreachable!(),
-                    }
-                    return;
-                }
-                KeyCode::Home => {
-                    // Scroll to top of scrollback buffer.
+                Action::ScrollbackTop => {
                     match app.focus {
                         Focus::TerminalClaude => app.terminal_scroll_claude = 1000,
                         Focus::TerminalShell => app.terminal_scroll_shell = 1000,
@@ -162,19 +141,19 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     }
                     return;
                 }
-                _ => {}
+                Action::SnapToLive => {
+                    match app.focus {
+                        Focus::TerminalClaude => app.terminal_scroll_claude = 0,
+                        Focus::TerminalShell => app.terminal_scroll_shell = 0,
+                        _ => unreachable!(),
+                    }
+                    return;
+                }
+                _ => {} // Other global actions not intercepted in terminal
             }
         }
 
-        // Ctrl+p — command palette (intercepted before PTY forward).
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
-            app.command_palette_active = true;
-            app.command_palette_filter.clear();
-            app.command_palette_selected = 0;
-            return;
-        }
-
-        // Forward all keys (including Esc, Ctrl+*, Tab) to the active PTY session.
+        // Forward all remaining keys to the active PTY session.
         let session_idx = match app.focus {
             Focus::TerminalClaude => app.active_claude_session,
             Focus::TerminalShell => app.active_shell_session,
@@ -183,111 +162,27 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         if let Some(idx) = session_idx {
             forward_key_to_pty(app, idx, key);
         } else if key.code == KeyCode::Enter {
-            // No active session — Enter spawns a new one.
             spawn_terminal_session(app);
         }
         return;
     }
 
-    // ── 3. Global Ctrl shortcuts (non-terminal panels only) ─────
+    // ── 2. Non-terminal panels — resolve via keymap ──────────────────
 
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        match key.code {
-            // Ctrl+p — command palette.
-            KeyCode::Char('p') => {
-                app.command_palette_active = true;
-                app.command_palette_filter.clear();
-                app.command_palette_selected = 0;
-                return;
-            }
-            // Ctrl+w — jump to Worktree panel.
-            KeyCode::Char('w') => {
-                app.set_focus(Focus::Worktree);
-                return;
-            }
-            // Ctrl+n — new Claude Code session.
-            KeyCode::Char('n') => {
-                app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
-                if let Err(e) = app.spawn_claude_code() {
-                    app.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
-                    log::warn!("failed to spawn Claude Code session: {e}");
-                } else {
-                    app.status_message = None;
-                }
-                if app.focus != Focus::TerminalClaude {
-                    app.set_focus(Focus::TerminalClaude);
-                }
-                return;
-            }
-            // Ctrl+t — new Shell session.
-            KeyCode::Char('t') => {
-                app.set_status("Starting shell...".to_string(), StatusLevel::Info);
-                if let Err(e) = app.spawn_shell() {
-                    app.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
-                    log::warn!("failed to spawn shell session: {e}");
-                } else {
-                    app.status_message = None;
-                }
-                if app.focus != Focus::TerminalShell {
-                    app.set_focus(Focus::TerminalShell);
-                }
-                return;
-            }
-            // Ctrl+o — open repository path input.
-            KeyCode::Char('o') => {
-                app.open_repo_active = true;
-                app.open_repo_buffer = app.repo_path.display().to_string();
-                return;
-            }
-            // Ctrl+r — repository selector.
-            KeyCode::Char('r') => {
-                if app.repo_list.len() > 1 {
-                    app.repo_selector_active = true;
-                    app.repo_selector_selected = app.repo_list_index;
-                }
-                return;
-            }
-            // (Ctrl+p is now command palette — handled above)
-            _ => {}
+    let context = match app.focus {
+        Focus::Worktree => KeyContext::Worktree,
+        Focus::Explorer => KeyContext::Explorer,
+        Focus::Viewer => KeyContext::Viewer,
+        Focus::TerminalClaude | Focus::TerminalShell => unreachable!(),
+    };
+
+    if let Some(action) = app.keymap.resolve(&key, context) {
+        if dispatch_global_action(app, action) {
+            return;
         }
     }
 
-    // ── 4. Non-terminal panels — Tab/BackTab cycle focus ─────────────
-
-    match key.code {
-        KeyCode::Tab => {
-            app.cycle_focus_forward();
-            return;
-        }
-        KeyCode::BackTab => {
-            app.cycle_focus_backward();
-            return;
-        }
-        _ => {}
-    }
-
-    // ── 5. Non-terminal q/Q quit, ? help ──────────────────────────────
-
-    match key.code {
-        KeyCode::Char('q') | KeyCode::Char('Q') => {
-            app.quit();
-            return;
-        }
-        KeyCode::Char('?') => {
-            app.help_context = app.focus;
-            app.help_active = true;
-            return;
-        }
-        KeyCode::Char(':') => {
-            app.command_palette_active = true;
-            app.command_palette_filter.clear();
-            app.command_palette_selected = 0;
-            return;
-        }
-        _ => {}
-    }
-
-    // ── 6. Focus-specific keybindings ────────────────────────────────
+    // ── 3. Focus-specific keybindings ────────────────────────────────
 
     match app.focus {
         Focus::Worktree => handle_worktree_key(app, key),
@@ -297,16 +192,82 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Dispatch global actions that are shared across non-terminal panels.
+/// Returns `true` if the action was handled.
+fn dispatch_global_action(app: &mut App, action: Action) -> bool {
+    match action {
+        Action::Quit => { app.quit(); true }
+        Action::ShowHelp => {
+            app.help_context = app.focus;
+            app.help_active = true;
+            true
+        }
+        Action::CommandPalette => {
+            app.command_palette_active = true;
+            app.command_palette_filter.clear();
+            app.command_palette_selected = 0;
+            true
+        }
+        Action::CycleFocusForward => { app.cycle_focus_forward(); true }
+        Action::CycleFocusBackward => { app.cycle_focus_backward(); true }
+        Action::FocusWorktree => { app.set_focus(Focus::Worktree); true }
+        Action::FocusExplorer => { app.set_focus(Focus::Explorer); true }
+        Action::FocusViewer => { app.set_focus(Focus::Viewer); true }
+        Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); true }
+        Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); true }
+        Action::NewClaudeCode => {
+            app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
+            if let Err(e) = app.spawn_claude_code() {
+                app.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
+                log::warn!("failed to spawn Claude Code session: {e}");
+            } else {
+                app.status_message = None;
+            }
+            if app.focus != Focus::TerminalClaude {
+                app.set_focus(Focus::TerminalClaude);
+            }
+            true
+        }
+        Action::NewShell => {
+            app.set_status("Starting shell...".to_string(), StatusLevel::Info);
+            if let Err(e) = app.spawn_shell() {
+                app.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
+                log::warn!("failed to spawn shell session: {e}");
+            } else {
+                app.status_message = None;
+            }
+            if app.focus != Focus::TerminalShell {
+                app.set_focus(Focus::TerminalShell);
+            }
+            true
+        }
+        Action::OpenRepo => {
+            app.open_repo_active = true;
+            app.open_repo_buffer = app.repo_path.display().to_string();
+            true
+        }
+        Action::SwitchRepo => {
+            if app.repo_list.len() > 1 {
+                app.repo_selector_active = true;
+                app.repo_selector_selected = app.repo_list_index;
+            }
+            true
+        }
+        _ => false, // Not a global action — let panel-specific handler try.
+    }
+}
+
 // ── Worktree panel ──────────────────────────────────────────────────────
 
 fn handle_worktree_key(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
+    let action = app.keymap.resolve(&key, KeyContext::Worktree);
+    match action {
+        Some(Action::NavigateDown) => {
             if !app.worktrees.is_empty() {
                 app.selected_worktree = (app.selected_worktree + 1) % app.worktrees.len();
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::NavigateUp) => {
             if !app.worktrees.is_empty() {
                 app.selected_worktree = if app.selected_worktree == 0 {
                     app.worktrees.len() - 1
@@ -315,18 +276,16 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 };
             }
         }
-        KeyCode::Enter => {
-            // Confirm worktree selection, refresh all panels, and move to Explorer.
+        Some(Action::Select) => {
             app.on_worktree_changed();
             app.set_focus(Focus::Explorer);
         }
-        KeyCode::Char('w') => {
-            // Step 1: enter branch name for new worktree.
+        Some(Action::CreateWorktree) => {
             app.worktree_input_mode = crate::app::WorktreeInputMode::CreatingWorktree;
             app.worktree_input_buffer.clear();
             app.set_status("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(), StatusLevel::Info);
         }
-        KeyCode::Char('X') => {
+        Some(Action::DeleteWorktree) => {
             if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                 if wt.is_main {
                     app.set_status("Cannot delete the main worktree.".to_string(), StatusLevel::Error);
@@ -336,8 +295,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('s') => {
-            // Switch: show remote branch picker (uses cached refs, no network fetch).
+        Some(Action::SwitchBranch) => {
             app.set_status("Loading branches...".to_string(), StatusLevel::Info);
             app.load_switch_branches();
             if !app.switch_branch_list.is_empty() {
@@ -347,7 +305,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 app.set_status("No remote branches found.".to_string(), StatusLevel::Warning);
             }
         }
-        KeyCode::Char('g') => {
+        Some(Action::GrabBranch) => {
             if app.grabbed_branch.is_some() {
                 app.set_status("Already grabbing a branch. Ungrab first (G).".to_string(), StatusLevel::Warning);
             } else {
@@ -359,7 +317,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('G') => {
+        Some(Action::UngrabBranch) => {
             if app.grabbed_branch.is_none() {
                 app.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
             } else {
@@ -367,8 +325,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 app.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
             }
         }
-        KeyCode::Char('P') => {
-            // Prune: find stale worktrees.
+        Some(Action::PruneWorktrees) => {
             match git_engine::GitEngine::open(&app.repo_path) {
                 Ok(engine) => {
                     match engine.find_stale_worktrees() {
@@ -390,7 +347,7 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('m') => {
+        Some(Action::MergeToMain) => {
             if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                 if wt.is_main {
                     app.set_status("Cannot merge main into itself.".to_string(), StatusLevel::Error);
@@ -414,17 +371,17 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('u') => {
+        Some(Action::PullWorktree) => {
             app.start_pull_worktree();
         }
-        KeyCode::Char('H') => {
+        Some(Action::SessionHistory) => {
             app.history_active = true;
             app.load_session_history();
         }
-        KeyCode::Char('r') => {
+        Some(Action::RefreshWorktrees) => {
             app.refresh_worktrees();
         }
-        KeyCode::Char('R') => {
+        Some(Action::ResetMainToOrigin) => {
             let main_branch = app.config.general.main_branch.clone();
             match git_engine::GitEngine::open(&app.repo_path) {
                 Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
@@ -441,10 +398,10 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('v') => {
+        Some(Action::OpenPullRequest) => {
             app.open_pr_in_browser();
         }
-        KeyCode::Char('p') => {
+        Some(Action::CherryPick) => {
             let current_branch = app
                 .worktrees
                 .get(app.selected_worktree)
@@ -474,18 +431,20 @@ fn handle_explorer_key(app: &mut App, key: KeyEvent) {
         app.refresh_viewer();
     }
 
-    // d — switch focus to diff list.
-    if key.code == KeyCode::Char('d') && key.modifiers.is_empty() {
-        app.viewer_state.explorer_show_comments = false;
-        app.viewer_state.explorer_focus_on_diff_list = true;
-        return;
-    }
-
-    // c — switch focus to comment list.
-    if key.code == KeyCode::Char('c') && key.modifiers.is_empty() {
-        app.viewer_state.explorer_show_comments = true;
-        app.viewer_state.explorer_focus_on_diff_list = true;
-        return;
+    // Check for show-diff / show-comments before delegating to sub-panels.
+    let action = app.keymap.resolve(&key, KeyContext::Explorer);
+    match action {
+        Some(Action::ShowDiffList) => {
+            app.viewer_state.explorer_show_comments = false;
+            app.viewer_state.explorer_focus_on_diff_list = true;
+            return;
+        }
+        Some(Action::ShowCommentList) => {
+            app.viewer_state.explorer_show_comments = true;
+            app.viewer_state.explorer_focus_on_diff_list = true;
+            return;
+        }
+        _ => {}
     }
 
     if app.viewer_state.explorer_focus_on_diff_list {
@@ -507,43 +466,38 @@ fn handle_explorer_key(app: &mut App, key: KeyEvent) {
         .position(|&i| i == app.viewer_state.tree_selected)
         .unwrap_or(0);
 
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
+    match action {
+        Some(Action::NavigateDown) => {
             if cur_vis + 1 < visible.len() {
                 app.viewer_state.tree_selected = visible[cur_vis + 1];
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::NavigateUp) => {
             if cur_vis > 0 {
                 app.viewer_state.tree_selected = visible[cur_vis - 1];
             }
         }
-        KeyCode::Enter => {
+        Some(Action::Select) => {
             let idx = app.viewer_state.tree_selected;
             if let Some(entry) = app.viewer_state.file_tree.get(idx).cloned() {
                 if entry.is_dir {
-                    // Lazy-load children before expanding.
                     if !entry.is_expanded {
                         if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                             app.viewer_state.ensure_children_loaded(idx, &wt.path);
                         }
                     }
                     app.viewer_state.toggle_dir(idx);
-                } else {
-                    // Open the file in the Viewer panel.
-                    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                        let path = wt.path.clone();
-                        app.viewer_state.open_file(&path, &entry.path);
-                        app.rehighlight_viewer();
-                        app.review_state.build_file_comment_cache(&entry.path);
-                        app.set_focus(Focus::Viewer);
-                    }
+                } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                    let path = wt.path.clone();
+                    app.viewer_state.open_file(&path, &entry.path);
+                    app.rehighlight_viewer();
+                    app.review_state.build_file_comment_cache(&entry.path);
+                    app.set_focus(Focus::Viewer);
                 }
             }
         }
-        KeyCode::Char('l') | KeyCode::Right => {
+        Some(Action::ExpandOrRight) => {
             let idx = app.viewer_state.tree_selected;
-            // Lazy-load children before expanding.
             if let Some(entry) = app.viewer_state.file_tree.get(idx) {
                 if entry.is_dir && !entry.is_expanded {
                     if let Some(wt) = app.worktrees.get(app.selected_worktree) {
@@ -553,21 +507,21 @@ fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             }
             app.viewer_state.expand_dir(idx);
         }
-        KeyCode::Char('h') | KeyCode::Left => {
+        Some(Action::CollapseOrLeft) => {
             let idx = app.viewer_state.tree_selected;
             app.viewer_state.collapse_dir(idx);
         }
-        KeyCode::Char('g') => {
+        Some(Action::GoToTop) => {
             if let Some(&first) = visible.first() {
                 app.viewer_state.tree_selected = first;
             }
         }
-        KeyCode::Char('G') => {
+        Some(Action::GoToBottom) => {
             if let Some(&last) = visible.last() {
                 app.viewer_state.tree_selected = last;
             }
         }
-        KeyCode::Char('/') => {
+        Some(Action::SearchFilename) => {
             app.viewer_state.filename_search_active = true;
             app.viewer_state.filename_search_query.clear();
             app.viewer_state.filename_search_results.clear();
@@ -584,48 +538,42 @@ fn handle_explorer_key(app: &mut App, key: KeyEvent) {
 
 fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
     let count = app.diff_state.display_list.len();
+    let action = app.keymap.resolve(&key, KeyContext::ExplorerDiffList);
 
-    match key.code {
-        KeyCode::Esc => {
-            // Return focus to file tree.
+    match action {
+        Some(Action::ExitSubPanel) => {
             app.viewer_state.explorer_focus_on_diff_list = false;
         }
-        KeyCode::Char('j') | KeyCode::Down => {
+        Some(Action::NavigateDown) => {
             if count > 0 && app.viewer_state.diff_list_selected + 1 < count {
                 app.viewer_state.diff_list_selected += 1;
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::NavigateUp) => {
             if app.viewer_state.diff_list_selected > 0 {
                 app.viewer_state.diff_list_selected -= 1;
             }
         }
-        KeyCode::Char('h') | KeyCode::Left => {
-            // Collapse the section the cursor is on.
+        Some(Action::CollapseOrLeft) => {
             let selected = app.viewer_state.diff_list_selected;
             app.diff_state.collapse_section(selected);
-            // Clamp selection.
             let new_count = app.diff_state.display_list.len();
             if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
                 app.viewer_state.diff_list_selected = new_count - 1;
             }
         }
-        KeyCode::Char('l') | KeyCode::Right => {
-            // Expand the section the cursor is on.
+        Some(Action::ExpandOrRight) => {
             let selected = app.viewer_state.diff_list_selected;
             app.diff_state.expand_section(selected);
         }
-        KeyCode::Enter => {
+        Some(Action::Select) => {
             let selected = app.viewer_state.diff_list_selected;
-            // If on a section header, toggle collapse.
             if app.diff_state.toggle_section(selected) {
-                // Clamp selection after rebuild.
                 let new_count = app.diff_state.display_list.len();
                 if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
                     app.viewer_state.diff_list_selected = new_count - 1;
                 }
             } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(selected) {
-                // Open the selected diff file in the Viewer and enter unified diff mode.
                 let file_path = file_diff.path.clone();
                 let file_diff_clone = file_diff.clone();
                 if let Some(wt) = app.worktrees.get(app.selected_worktree) {
@@ -635,10 +583,8 @@ fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&file_path);
 
-                    // Build unified diff view from the file's hunks.
                     app.viewer_state.build_unified_diff_view(&file_diff_clone);
 
-                    // Scroll to the first changed line in the diff view.
                     if let Some(pos) = app.viewer_state.diff_view_lines.iter().position(|e| {
                         matches!(e, crate::viewer_state::UnifiedDiffEntry::Line { tag, .. }
                             if *tag != crate::diff_state::DiffLineTag::Equal)
@@ -650,10 +596,10 @@ fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('g') => {
+        Some(Action::GoToTop) => {
             app.viewer_state.diff_list_selected = 0;
         }
-        KeyCode::Char('G') => {
+        Some(Action::GoToBottom) => {
             if count > 0 {
                 app.viewer_state.diff_list_selected = count - 1;
             }
@@ -670,25 +616,23 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
     use crate::review_state::CommentListRow;
 
     let row_count = app.review_state.comment_list_rows.len();
+    let action = app.keymap.resolve(&key, KeyContext::ExplorerCommentList);
 
-    match key.code {
-        KeyCode::Esc => {
+    match action {
+        Some(Action::ExitSubPanel) => {
             app.viewer_state.explorer_focus_on_diff_list = false;
         }
-        KeyCode::Delete => {
-            // Delete the selected comment (resolve via parent).
+        Some(Action::DeleteComment) => {
             if row_count > 0 {
                 app.delete_selected_review_comment();
             }
         }
-        KeyCode::Char('r') => {
-            // Toggle resolve status (resolve via parent).
+        Some(Action::ToggleResolve) => {
             if row_count > 0 {
                 app.toggle_selected_review_status();
             }
         }
-        KeyCode::Char('e') => {
-            // Edit the selected comment (resolve via parent).
+        Some(Action::EditComment) => {
             let comment_idx = app
                 .review_state
                 .selected_comment_idx(app.viewer_state.comment_list_selected);
@@ -700,8 +644,7 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                     Some("Edit comment (Enter to save, Esc to cancel)".to_string());
             }
         }
-        KeyCode::Char('R') => {
-            // Reply to the selected comment (resolve via parent).
+        Some(Action::ReplyToComment) => {
             if row_count > 0 {
                 let comment_idx = app
                     .review_state
@@ -715,30 +658,28 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char('j') | KeyCode::Down => {
+        Some(Action::NavigateDown) => {
             if row_count > 0 && app.viewer_state.comment_list_selected + 1 < row_count {
                 app.viewer_state.comment_list_selected += 1;
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::NavigateUp) => {
             if app.viewer_state.comment_list_selected > 0 {
                 app.viewer_state.comment_list_selected -= 1;
             }
         }
-        KeyCode::Char('g') => {
+        Some(Action::GoToTop) => {
             app.viewer_state.comment_list_selected = 0;
         }
-        KeyCode::Char('G') => {
+        Some(Action::GoToBottom) => {
             if row_count > 0 {
                 app.viewer_state.comment_list_selected = row_count - 1;
             }
         }
-        KeyCode::Char('h') | KeyCode::Left => {
-            // Collapse the current thread, or move to parent comment if on a reply row.
+        Some(Action::CollapseOrLeft) => {
             let visual = app.viewer_state.comment_list_selected;
             match app.review_state.comment_list_rows.get(visual).cloned() {
                 Some(CommentListRow::Reply { comment_idx, .. }) => {
-                    // Find the parent comment row and move selection there.
                     if let Some(parent_visual) = app
                         .review_state
                         .comment_list_rows
@@ -747,11 +688,9 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                     {
                         app.viewer_state.comment_list_selected = parent_visual;
                     }
-                    // Collapse the parent.
                     app.toggle_comment_expansion();
                 }
                 Some(CommentListRow::Comment { comment_idx }) => {
-                    // If expanded, collapse.
                     if let Some(comment) = app.review_state.comments.get(comment_idx) {
                         if app.review_state.expanded_comments.contains(&comment.id) {
                             app.toggle_comment_expansion();
@@ -761,7 +700,7 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                 None => {}
             }
         }
-        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+        Some(Action::Select) | Some(Action::ExpandOrRight) => {
             let visual = app.viewer_state.comment_list_selected;
             match app.review_state.comment_list_rows.get(visual).cloned() {
                 Some(CommentListRow::Comment { comment_idx }) => {
@@ -775,28 +714,23 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                         > 0;
 
                     if has_replies {
-                        // Toggle expansion.
                         app.toggle_comment_expansion();
                     } else {
-                        // No replies — navigate to file, keep focus on comments.
                         navigate_to_comment_with_focus(app, comment_idx, false);
                     }
                 }
                 Some(CommentListRow::Reply { comment_idx, .. }) => {
-                    // Navigate to the parent comment's file location, keep focus on comments.
                     navigate_to_comment_with_focus(app, comment_idx, false);
                 }
                 None => {}
             }
         }
-        KeyCode::Char(' ') => {
-            // Open comment detail modal.
+        Some(Action::ViewCommentDetail) => {
             let visual = app.viewer_state.comment_list_selected;
             if let Some(comment_idx) = app.review_state.selected_comment_idx(visual) {
                 app.review_state.comment_detail_idx = comment_idx;
                 app.review_state.comment_detail_scroll = 0;
                 app.review_state.comment_detail_active = true;
-                // Ensure replies are loaded for the detail view.
                 if let Some(comment) = app.review_state.comments.get(comment_idx) {
                     let cid = comment.id.clone();
                     if !app.review_state.cached_replies.contains_key(&cid) {
@@ -857,9 +791,9 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     }
 
     let total = app.viewer_state.file_content.len();
+    let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
-    // Esc goes back to Explorer.
-    if key.code == KeyCode::Esc {
+    if let Some(Action::ExitToExplorer) = action {
         app.viewer_state.clear_selection();
         app.set_focus(Focus::Explorer);
         return;
@@ -869,58 +803,51 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
+    match action {
+        Some(Action::NavigateDown) => {
             if app.viewer_state.file_scroll + 1 < total {
                 app.viewer_state.file_scroll += 1;
             }
-
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::NavigateUp) => {
             app.viewer_state.file_scroll = app.viewer_state.file_scroll.saturating_sub(1);
-
         }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        Some(Action::ScrollHalfPageDown) => {
             app.viewer_state.file_scroll =
                 (app.viewer_state.file_scroll + 15).min(total.saturating_sub(1));
-
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        Some(Action::ScrollHalfPageUp) => {
             app.viewer_state.file_scroll = app.viewer_state.file_scroll.saturating_sub(15);
-
         }
-        KeyCode::Char('g') => {
+        Some(Action::GoToTop) => {
             app.viewer_state.file_scroll = 0;
-
         }
-        KeyCode::Char('G') => {
+        Some(Action::GoToBottom) => {
             app.viewer_state.file_scroll = total.saturating_sub(1);
-
         }
-        KeyCode::Char('/') => {
+        Some(Action::SearchInFile) => {
             app.viewer_state.search_active = true;
             app.viewer_state.search_query.clear();
         }
-        KeyCode::Char('n') => {
+        Some(Action::NextSearchMatch) => {
             app.viewer_state.next_search_match();
         }
-        KeyCode::Char('N') => {
+        Some(Action::PrevSearchMatch) => {
             app.viewer_state.prev_search_match();
         }
-        KeyCode::Char('h') | KeyCode::Left => {
+        Some(Action::ScrollLeft) => {
             app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
         }
-        KeyCode::Char('l') | KeyCode::Right => {
+        Some(Action::ScrollRight) => {
             app.viewer_state.scroll_right(4);
         }
-        KeyCode::Char('0') => {
+        Some(Action::ScrollHome) => {
             app.viewer_state.h_scroll = 0;
         }
-        KeyCode::Char('c') => {
+        Some(Action::AddComment) => {
             open_viewer_comment(app);
         }
-        KeyCode::Char(' ') => {
-            // Open comment detail modal for comments on the current line.
+        Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
         }
         _ => {}
@@ -930,9 +857,9 @@ fn handle_viewer_key(app: &mut App, key: KeyEvent) {
 /// Key handling for the viewer panel in unified diff mode.
 fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     let total = app.viewer_state.diff_view_lines.len();
+    let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
-    // Esc exits diff mode and goes back to Explorer.
-    if key.code == KeyCode::Esc {
+    if let Some(Action::ExitToExplorer) = action {
         app.viewer_state.clear_selection();
         app.viewer_state.exit_diff_mode();
         app.set_focus(Focus::Explorer);
@@ -943,41 +870,40 @@ fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
+    match action {
+        Some(Action::NavigateDown) => {
             if app.viewer_state.diff_view_scroll + 1 < total {
                 app.viewer_state.diff_view_scroll += 1;
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::NavigateUp) => {
             app.viewer_state.diff_view_scroll =
                 app.viewer_state.diff_view_scroll.saturating_sub(1);
         }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        Some(Action::ScrollHalfPageDown) => {
             app.viewer_state.diff_view_scroll =
                 (app.viewer_state.diff_view_scroll + 15).min(total.saturating_sub(1));
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        Some(Action::ScrollHalfPageUp) => {
             app.viewer_state.diff_view_scroll =
                 app.viewer_state.diff_view_scroll.saturating_sub(15);
         }
-        KeyCode::Char('g') => {
+        Some(Action::GoToTop) => {
             app.viewer_state.diff_view_scroll = 0;
         }
-        KeyCode::Char('G') => {
+        Some(Action::GoToBottom) => {
             app.viewer_state.diff_view_scroll = total.saturating_sub(1);
         }
-        KeyCode::Char('h') | KeyCode::Left => {
+        Some(Action::ScrollLeft) => {
             app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
         }
-        KeyCode::Char('l') | KeyCode::Right => {
+        Some(Action::ScrollRight) => {
             app.viewer_state.scroll_right(4);
         }
-        KeyCode::Char('0') => {
+        Some(Action::ScrollHome) => {
             app.viewer_state.h_scroll = 0;
         }
-        KeyCode::Char('c') => {
-            // Comment: only allowed on lines with new_line_no (Equal/Insert).
+        Some(Action::AddComment) => {
             if let Some(entry) = app.viewer_state.diff_view_lines.get(app.viewer_state.diff_view_scroll) {
                 match entry {
                     crate::viewer_state::UnifiedDiffEntry::Line { tag, new_line_no: Some(_), .. }
@@ -991,7 +917,7 @@ fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        KeyCode::Char(' ') => {
+        Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
         }
         _ => {}
