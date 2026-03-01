@@ -14,6 +14,7 @@ mod review_state;
 mod review_store;
 mod theme;
 mod ui;
+mod update_checker;
 mod viewer_state;
 
 use std::io;
@@ -186,6 +187,31 @@ fn run_loop(
     // Schedule the first freshness check after a short delay so the UI
     // renders immediately, then we check/refresh the cache in background.
     let mut last_ccusage_poll = Instant::now() - ccusage_poll;
+
+    // ── Update check (opt-out via [updates] check_on_startup = false) ─
+    let update_check_enabled = app.config.updates.check_on_startup;
+    let update_check_interval = app.config.updates.check_interval_secs;
+    let update_result: Arc<Mutex<Option<update_checker::UpdateInfo>>> =
+        Arc::new(Mutex::new(None));
+
+    if update_check_enabled {
+        if let Some(cached) = update_checker::read_cache(update_check_interval) {
+            if update_checker::is_newer(&cached.latest_version, update_checker::current_version()) {
+                app.update_info = Some(cached);
+            }
+        }
+        // If cache was stale or missing, kick off a background check.
+        if app.update_info.is_none() && !update_checker::cache_is_fresh(update_check_interval) {
+            let result_handle = Arc::clone(&update_result);
+            std::thread::spawn(move || {
+                if let Some(info) = update_checker::check_for_update() {
+                    if let Ok(mut lock) = result_handle.lock() {
+                        *lock = Some(info);
+                    }
+                }
+            });
+        }
+    }
 
     let mut needs_redraw = true;
 
@@ -384,6 +410,18 @@ fn run_loop(
                 if let Some(info) = lock.take() {
                     app.ccusage_info = Some(info);
                     needs_redraw = true;
+                }
+            }
+        }
+
+        // Pick up update check result from background thread.
+        if update_check_enabled && app.update_info.is_none() {
+            if let Ok(mut lock) = update_result.try_lock() {
+                if let Some(info) = lock.take() {
+                    if update_checker::is_newer(&info.latest_version, update_checker::current_version()) {
+                        app.update_info = Some(info);
+                        needs_redraw = true;
+                    }
                 }
             }
         }

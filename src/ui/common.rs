@@ -300,6 +300,18 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
                 Style::default().fg(Color::LightGreen).bg(bar_bg),
             ));
         }
+        if let Some(ref update) = app.update_info {
+            if !spans.is_empty() {
+                spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
+            }
+            spans.push(Span::styled(
+                format!(" ↑ v{} available ", update.latest_version),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
 
         if !spans.is_empty() {
             // Add padding spaces

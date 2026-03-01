@@ -300,6 +300,10 @@ pub struct App {
     /// Cached ccusage info (refreshed periodically via background thread).
     pub ccusage_info: Option<CcusageInfo>,
 
+    // ── Update check ───────────────────────────────────────────
+    /// Latest release info when a newer version is available.
+    pub update_info: Option<crate::update_checker::UpdateInfo>,
+
     // ── Background fetch for switch-branch overlay ──────────────
     /// Receiver for branch lists fetched in the background.
     pub bg_branch_rx: Option<mpsc::Receiver<Vec<String>>>,
@@ -491,6 +495,7 @@ impl App {
             today_stats,
             worktree_heads: HashMap::new(),
             ccusage_info: None,
+            update_info: None,
             bg_branch_rx: None,
             bg_pull_rx: None,
             smart_description_buffer: String::new(),
