@@ -82,6 +82,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Pulse phase: ~1s cycle at 60fps (30 frames on, 30 frames off).
     let pulse_on = (app.ui_tick / 30) % 2 == 0;
 
+    // Determine the worktree path shown in the focused CC panel (if any)
+    // so we can suppress blink for that worktree.
+    let focused_cc_wt: Option<std::path::PathBuf> = if app.focus == Focus::TerminalClaude {
+        Some(app.selected_worktree_path())
+    } else {
+        None
+    };
+
     // Check if this worktree is on a __grab branch (should be greyed out).
     let is_grab_branch = |wt: &crate::git_engine::WorktreeInfo| -> bool {
         wt.branch.ends_with("__grab")
@@ -94,6 +102,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .map(|(i, wt)| {
             let is_waiting = app.cc_waiting_worktrees.contains(&wt.path);
             let is_grabbed = is_grab_branch(wt);
+            let suppress_blink = is_waiting && focused_cc_wt.as_deref() == Some(wt.path.as_path());
 
             let marker = if wt.is_main {
                 "\u{25cf}" // ●
@@ -107,10 +116,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             let marker_style = if is_grabbed {
                 Style::default().fg(theme.muted)
-            } else if is_waiting {
+            } else if is_waiting && !suppress_blink {
                 Style::default()
                     .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
                     .add_modifier(Modifier::BOLD)
+            } else if is_waiting {
+                // Static style for focused CC session.
+                Style::default().fg(theme.waiting_primary)
             } else if i == app.selected_worktree {
                 Style::default()
                     .fg(theme.accent)
@@ -162,11 +174,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             // Prominent waiting indicator with pulse animation.
             if is_waiting && !is_grabbed {
-                let indicator = if pulse_on { " \u{25c6}" } else { " \u{25c7}" }; // ◆ / ◇
+                let effective_pulse = !suppress_blink && pulse_on;
+                let indicator = if effective_pulse { " \u{25c6}" } else { " \u{25c7}" }; // ◆ / ◇
+                // When suppressed, show static ◇ with primary color (no blink).
+                let indicator = if suppress_blink { " \u{25c6}" } else { indicator }; // ◆ (static)
+                let indicator_fg = if suppress_blink || effective_pulse {
+                    theme.waiting_primary
+                } else {
+                    theme.waiting_secondary
+                };
                 spans.push(Span::styled(
                     indicator,
                     Style::default()
-                        .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
+                        .fg(indicator_fg)
                         .add_modifier(Modifier::BOLD),
                 ));
             }
@@ -210,7 +230,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             // Apply background highlight to the entire row when waiting.
             if is_waiting && !is_grabbed {
-                let bg = if pulse_on {
+                let bg = if suppress_blink {
+                    // Static background when focused on this session.
+                    Theme::darken(theme.waiting_primary, 0.20)
+                } else if pulse_on {
                     Theme::darken(theme.waiting_primary, 0.24)
                 } else {
                     Theme::darken(theme.waiting_primary, 0.16)
