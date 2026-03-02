@@ -48,6 +48,9 @@ const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
 /// Fixed interval for decoration animation updates (~10fps), independent of main tick rate.
 const DECORATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
+/// Interval for refreshing unfocused terminal panels (~2fps).
+/// Balances visibility of background PTY output with CPU usage.
+const UNFOCUSED_TERMINAL_REFRESH: Duration = Duration::from_millis(500);
 
 fn main() -> Result<()> {
     // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
@@ -231,6 +234,9 @@ fn run_loop(
     // Independent timer for decoration animation (ticks at fixed ~20fps).
     let mut last_decoration_time = Instant::now();
 
+    // Timer for refreshing unfocused terminal panels.
+    let mut last_unfocused_terminal_refresh = Instant::now();
+
     loop {
         if app.needs_clear {
             terminal.clear()?;
@@ -321,6 +327,18 @@ fn run_loop(
             if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
                 needs_redraw = true;
             }
+        }
+
+        // Periodically refresh unfocused terminal panels so background PTY
+        // output (e.g. running builds, Claude Code responses) remains visible.
+        if !matches!(app.focus, crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
+            && last_unfocused_terminal_refresh.elapsed() >= UNFOCUSED_TERMINAL_REFRESH
+        {
+            last_unfocused_terminal_refresh = Instant::now();
+            // Invalidate caches so the next draw picks up fresh PTY content.
+            app.pty_cache_claude = Default::default();
+            app.pty_cache_shell = Default::default();
+            needs_redraw = true;
         }
 
         // Wait for an event. Use a fast tick rate shortly after user input
