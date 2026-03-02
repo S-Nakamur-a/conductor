@@ -397,10 +397,83 @@ impl GitEngine {
         Ok(!status.success())
     }
 
+    /// Return the git common dir (`.git/` for main, resolved via commondir
+    /// for linked worktrees).  This is the shared directory where refs,
+    /// objects, and our `wt-grab` state file live.
+    pub fn git_common_dir(&self) -> Result<PathBuf> {
+        let git_dir = self.repo.path(); // .git/ or .git/worktrees/<name>/
+        // Check for .git/worktrees/<name>/commondir which points to the shared .git/.
+        let commondir_file = git_dir.join("commondir");
+        if commondir_file.exists() {
+            let content = std::fs::read_to_string(&commondir_file)
+                .context("failed to read commondir")?;
+            let relative = content.trim();
+            let resolved = git_dir.join(relative);
+            return Ok(resolved.canonicalize().unwrap_or(resolved));
+        }
+        // Already the main repo's .git/ directory.
+        Ok(git_dir.to_path_buf())
+    }
+
+    /// Persist grab state to `$git_common_dir/wt-grab`.
+    /// Format matches the zsh `wt grab` helper: 3 lines —
+    /// branch name, worktree path, stash branch name.
+    pub fn save_grab_state(
+        &self,
+        branch: &str,
+        source_worktree_path: &Path,
+        stash_branch: &str,
+    ) -> Result<()> {
+        let grab_file = self.git_common_dir()?.join("wt-grab");
+        let content = format!(
+            "{}\n{}\n{}\n",
+            branch,
+            source_worktree_path.display(),
+            stash_branch,
+        );
+        std::fs::write(&grab_file, content)
+            .with_context(|| format!("failed to write {}", grab_file.display()))
+    }
+
+    /// Load grab state from `$git_common_dir/wt-grab`.
+    /// Returns `(branch, source_worktree_path, stash_branch)` or `None`
+    /// if the file does not exist.
+    pub fn load_grab_state(&self) -> Result<Option<(String, PathBuf, String)>> {
+        let grab_file = self.git_common_dir()?.join("wt-grab");
+        if !grab_file.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&grab_file)
+            .with_context(|| format!("failed to read {}", grab_file.display()))?;
+        let mut lines = content.lines();
+        let branch = lines.next()
+            .ok_or_else(|| anyhow!("wt-grab: missing branch line"))?
+            .to_string();
+        let wt_path = PathBuf::from(
+            lines.next()
+                .ok_or_else(|| anyhow!("wt-grab: missing worktree path line"))?,
+        );
+        let stash_branch = lines.next()
+            .ok_or_else(|| anyhow!("wt-grab: missing stash branch line"))?
+            .to_string();
+        Ok(Some((branch, wt_path, stash_branch)))
+    }
+
+    /// Remove the `$git_common_dir/wt-grab` state file.
+    pub fn remove_grab_state(&self) -> Result<()> {
+        let grab_file = self.git_common_dir()?.join("wt-grab");
+        if grab_file.exists() {
+            std::fs::remove_file(&grab_file)
+                .with_context(|| format!("failed to remove {}", grab_file.display()))?;
+        }
+        Ok(())
+    }
+
     /// Grab a branch: move the source worktree to a temporary `__grab`
     /// branch, then checkout main to the original branch.
     ///
     /// Requires both worktrees to have no uncommitted tracked changes.
+    /// Persists state to `$git_common_dir/wt-grab`.
     pub fn grab_branch(
         &self,
         main_path: &Path,
@@ -437,6 +510,9 @@ impl GitEngine {
         main_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .with_context(|| format!("failed to checkout '{branch_name}' in main worktree"))?;
 
+        // Persist grab state for crash recovery and zsh `wt` compatibility.
+        self.save_grab_state(branch_name, source_worktree_path, &grab_branch_name)?;
+
         Ok(())
     }
 
@@ -444,6 +520,8 @@ impl GitEngine {
     /// original branch, and delete the temporary `__grab` branch.
     ///
     /// Requires both worktrees to have no uncommitted tracked changes.
+    /// Uses `set_head` + hard `reset` so that the index and working tree
+    /// are reliably updated even when commits have been added after grab.
     pub fn ungrab_branch(
         &self,
         main_path: &Path,
@@ -461,28 +539,37 @@ impl GitEngine {
         }
 
         // Checkout main worktree back to main branch.
-        let main_repo = Repository::open(main_path)
-            .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
-        main_repo.set_head(&format!("refs/heads/{main_branch}"))
-            .with_context(|| format!("failed to set main HEAD to '{main_branch}'"))?;
-        main_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-            .with_context(|| format!("failed to checkout '{main_branch}' in main worktree"))?;
+        // Scope the main_repo so it is dropped (and file handles released)
+        // before we open the source worktree repo.
+        {
+            let main_repo = Repository::open(main_path)
+                .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
+            main_repo.set_head(&format!("refs/heads/{main_branch}"))
+                .with_context(|| format!("failed to set main HEAD to '{main_branch}'"))?;
+            let head_commit = main_repo.head()?.peel_to_commit()?;
+            main_repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)
+                .with_context(|| format!("failed to reset main worktree to '{main_branch}'"))?;
+        }
 
         // Checkout source worktree back to original branch.
         let source_repo = Repository::open(source_worktree_path)
             .with_context(|| format!("cannot open worktree at {}", source_worktree_path.display()))?;
         source_repo.set_head(&format!("refs/heads/{branch_name}"))
             .with_context(|| format!("failed to set HEAD to '{branch_name}'"))?;
-        source_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-            .with_context(|| format!("failed to checkout '{branch_name}'"))?;
+        let head_commit = source_repo.head()?.peel_to_commit()?;
+        source_repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)
+            .with_context(|| format!("failed to reset worktree to '{branch_name}'"))?;
 
         // Delete the temporary __grab branch.
         let grab_branch_name = format!("{branch_name}__grab");
-        let mut grab_branch = source_repo
+        if let Ok(mut grab_branch) = source_repo
             .find_branch(&grab_branch_name, git2::BranchType::Local)
-            .with_context(|| format!("branch '{grab_branch_name}' not found"))?;
-        grab_branch.delete()
-            .with_context(|| format!("failed to delete branch '{grab_branch_name}'"))?;
+        {
+            let _ = grab_branch.delete();
+        }
+
+        // Remove the persisted grab state file.
+        self.remove_grab_state()?;
 
         Ok(())
     }
