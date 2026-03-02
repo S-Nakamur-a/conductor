@@ -137,6 +137,8 @@ pub struct ViewerState {
     pub filename_search_results: Vec<ScoredFile>,
     /// Selected index within the search results list.
     pub filename_search_selected: usize,
+    /// Cached list of all file paths for filename search (populated on search start).
+    pub filename_search_all_files: Vec<String>,
 }
 
 impl Default for ViewerState {
@@ -178,6 +180,7 @@ impl Default for ViewerState {
             filename_search_query: TextInput::new(),
             filename_search_results: Vec::new(),
             filename_search_selected: 0,
+            filename_search_all_files: Vec::new(),
         }
     }
 }
@@ -383,24 +386,20 @@ impl ViewerState {
 
     // ── Filename fuzzy search ─────────────────────────────────────────────
 
-    /// Run fuzzy filename search over the file tree and populate results.
+    /// Run fuzzy filename search over the cached file list and populate results.
     pub fn execute_filename_search(&mut self) {
         self.filename_search_results.clear();
 
         let query = self.filename_search_query.to_lowercase();
 
-        for entry in &self.file_tree {
-            if entry.is_dir {
-                continue;
-            }
-
-            let path_lower = entry.path.to_lowercase();
-            let name_lower = entry.name.to_lowercase();
+        for path in &self.filename_search_all_files {
+            let path_lower = path.to_lowercase();
+            let name_lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
 
             // If query is empty, include all files with score 0.
             if query.is_empty() {
                 self.filename_search_results.push(ScoredFile {
-                    path: entry.path.clone(),
+                    path: path.clone(),
                     score: 0,
                 });
                 continue;
@@ -437,7 +436,7 @@ impl ViewerState {
             }
 
             self.filename_search_results.push(ScoredFile {
-                path: entry.path.clone(),
+                path: path.clone(),
                 score,
             });
         }
@@ -905,6 +904,44 @@ impl ViewerState {
                 is_expanded: false,
                 children_loaded: false,
             });
+        }
+    }
+
+    /// Populate the filename search cache by walking the entire filesystem
+    /// tree under the given worktree root.
+    pub fn populate_filename_search_cache(&mut self, worktree_root: &Path) {
+        self.filename_search_all_files.clear();
+        Self::collect_all_file_paths(worktree_root, worktree_root, 0, &mut self.filename_search_all_files);
+    }
+
+    /// Recursively collect all file paths under `dir`, skipping the same
+    /// directories as `walk_dir` / `SKIP_DIRS`.  Only file paths (not
+    /// directories) are appended to `paths`, stored as relative paths from
+    /// `root`.
+    fn collect_all_file_paths(root: &Path, dir: &Path, depth: usize, paths: &mut Vec<String>) {
+        if depth > Self::MAX_DEPTH {
+            return;
+        }
+        let Ok(read_dir) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in read_dir.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let child_path = entry.path();
+            let is_dir = child_path.is_dir();
+            if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            let rel_path = child_path
+                .strip_prefix(root)
+                .unwrap_or(&child_path)
+                .to_string_lossy()
+                .to_string();
+            if is_dir {
+                Self::collect_all_file_paths(root, &child_path, depth + 1, paths);
+            } else {
+                paths.push(rel_path);
+            }
         }
     }
 
