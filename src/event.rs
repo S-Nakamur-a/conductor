@@ -247,7 +247,7 @@ fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         }
         Action::OpenRepo => {
             app.open_repo_active = true;
-            app.open_repo_buffer = app.repo_path.display().to_string();
+            app.open_repo_buffer.set_text(&app.repo_path.display().to_string());
             true
         }
         Action::SwitchRepo => {
@@ -674,7 +674,7 @@ fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                 .review_state
                 .selected_comment_idx(app.viewer_state.comment_list_selected);
             if let Some(comment) = comment_idx.and_then(|idx| app.review_state.comments.get(idx)) {
-                app.review_state.input_buffer = comment.body.clone();
+                app.review_state.input_buffer.set_text(&comment.body);
                 app.review_state.input_mode = ReviewInputMode::EditingComment;
                 app.review_state.selected = comment_idx.unwrap();
                 app.review_state.status_message =
@@ -1015,9 +1015,40 @@ fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
 /// a single paste rather than individual keystrokes.
 pub fn handle_paste_event(app: &mut App, data: String) {
     if app.focus != Focus::TerminalClaude && app.focus != Focus::TerminalShell {
-        // For non-terminal panels, insert the first line into whichever input
-        // buffer is active (e.g. worktree input, search, etc.).
-        // For now, only handle terminal paste — overlay paste is not common.
+        // Dispatch paste data to the active overlay input buffer.
+        use crate::app::WorktreeInputMode;
+
+        let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+
+        if app.review_state.input_mode != ReviewInputMode::Normal {
+            // Review input is multiline.
+            app.review_state.input_buffer.insert_str(&data);
+        } else if app.worktree_input_mode == WorktreeInputMode::SmartDescription {
+            // Smart description is multiline.
+            app.smart_description_buffer.insert_str(&data);
+        } else if app.worktree_input_mode == WorktreeInputMode::CreatingWorktree
+            || app.worktree_input_mode == WorktreeInputMode::CreatingWorktreeBase
+            || app.worktree_input_mode == WorktreeInputMode::SmartConfirmBranch
+        {
+            app.worktree_input_buffer.insert_str(&single_line);
+        } else if app.viewer_state.search_active {
+            app.viewer_state.search_query.insert_str(&single_line);
+        } else if app.viewer_state.filename_search_active {
+            app.viewer_state.filename_search_query.insert_str(&single_line);
+        } else if app.review_state.search_active {
+            app.review_state.search_query.insert_str(&single_line);
+            app.review_state.apply_filter();
+        } else if app.switch_branch_active {
+            app.switch_branch_filter.insert_str(&single_line);
+        } else if app.command_palette_active {
+            app.command_palette_filter.insert_str(&single_line);
+        } else if app.open_repo_active {
+            app.open_repo_buffer.insert_str(&single_line);
+        } else if app.history_active {
+            app.history_search_query.insert_str(&single_line);
+        } else if app.resume_session_active {
+            app.resume_session_filter.insert_str(&single_line);
+        }
         return;
     }
 
@@ -1063,7 +1094,9 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Tab => {
                 // Switch to Smart Mode.
-                app.smart_description_buffer = std::mem::take(&mut app.worktree_input_buffer);
+                let text = app.worktree_input_buffer.text().to_string();
+                app.worktree_input_buffer.clear();
+                app.smart_description_buffer.set_text(&text);
                 app.worktree_input_mode = WorktreeInputMode::SmartDescription;
                 app.set_status(
                     "Describe your task (Alt+Enter: newline, Enter: generate, Tab: manual mode, Esc: cancel)".to_string(),
@@ -1071,7 +1104,7 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 );
             }
             KeyCode::Enter => {
-                let name = app.worktree_input_buffer.clone();
+                let name = app.worktree_input_buffer.text().to_string();
                 if name.is_empty() {
                     app.worktree_input_mode = WorktreeInputMode::Normal;
                     app.worktree_input_buffer.clear();
@@ -1086,10 +1119,37 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Backspace => {
-                app.worktree_input_buffer.pop();
+                app.worktree_input_buffer.delete_backward();
+            }
+            KeyCode::Delete => {
+                app.worktree_input_buffer.delete_forward();
+            }
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                app.worktree_input_buffer.move_word_left();
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                app.worktree_input_buffer.move_word_right();
+            }
+            KeyCode::Left => {
+                app.worktree_input_buffer.move_left();
+            }
+            KeyCode::Right => {
+                app.worktree_input_buffer.move_right();
+            }
+            KeyCode::Home => {
+                app.worktree_input_buffer.move_home();
+            }
+            KeyCode::End => {
+                app.worktree_input_buffer.move_end();
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.worktree_input_buffer.select_all_and_clear();
+            }
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                clipboard_paste(app, |a| &mut a.worktree_input_buffer, false);
             }
             KeyCode::Char(c) => {
-                app.worktree_input_buffer.push(c);
+                app.worktree_input_buffer.insert_char(c);
             }
             _ => {}
         },
@@ -1120,7 +1180,7 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                         app.base_branch_list.get(original_idx).cloned().unwrap_or_default()
                     } else if !app.base_branch_filter.is_empty() {
                         // No match — use the filter text as a raw ref.
-                        app.base_branch_filter.clone()
+                        app.base_branch_filter.text().to_string()
                     } else {
                         String::new() // Will default to origin/main
                     };
@@ -1131,11 +1191,41 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     app.create_worktree_from_base(&branch_name, &base_ref);
                 }
                 KeyCode::Backspace => {
-                    app.base_branch_filter.pop();
+                    app.base_branch_filter.delete_backward();
+                    app.base_branch_selected = 0;
+                }
+                KeyCode::Delete => {
+                    app.base_branch_filter.delete_forward();
+                    app.base_branch_selected = 0;
+                }
+                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                    app.base_branch_filter.move_word_left();
+                }
+                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                    app.base_branch_filter.move_word_right();
+                }
+                KeyCode::Left => {
+                    app.base_branch_filter.move_left();
+                }
+                KeyCode::Right => {
+                    app.base_branch_filter.move_right();
+                }
+                KeyCode::Home => {
+                    app.base_branch_filter.move_home();
+                }
+                KeyCode::End => {
+                    app.base_branch_filter.move_end();
+                }
+                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.base_branch_filter.select_all_and_clear();
+                    app.base_branch_selected = 0;
+                }
+                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    clipboard_paste(app, |a| &mut a.base_branch_filter, false);
                     app.base_branch_selected = 0;
                 }
                 KeyCode::Char(c) if key.modifiers.is_empty() => {
-                    app.base_branch_filter.push(c);
+                    app.base_branch_filter.insert_char(c);
                     app.base_branch_selected = 0;
                 }
                 _ => {}
@@ -1192,7 +1282,7 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
         WorktreeInputMode::SmartDescription => {
             // Alt+Enter inserts a newline (multi-line editing).
             if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
-                app.smart_description_buffer.push('\n');
+                app.smart_description_buffer.insert_char('\n');
                 return;
             }
             match key.code {
@@ -1203,7 +1293,9 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 }
                 KeyCode::Tab => {
                     // Switch back to manual mode.
-                    app.worktree_input_buffer = std::mem::take(&mut app.smart_description_buffer);
+                    let text = app.smart_description_buffer.text().to_string();
+                    app.smart_description_buffer.clear();
+                    app.worktree_input_buffer.set_text(&text);
                     app.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
                     app.set_status(
                         "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
@@ -1221,10 +1313,37 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     }
                 }
                 KeyCode::Backspace => {
-                    app.smart_description_buffer.pop();
+                    app.smart_description_buffer.delete_backward();
+                }
+                KeyCode::Delete => {
+                    app.smart_description_buffer.delete_forward();
+                }
+                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                    app.smart_description_buffer.move_word_left();
+                }
+                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                    app.smart_description_buffer.move_word_right();
+                }
+                KeyCode::Left => {
+                    app.smart_description_buffer.move_left();
+                }
+                KeyCode::Right => {
+                    app.smart_description_buffer.move_right();
+                }
+                KeyCode::Home => {
+                    app.smart_description_buffer.move_home();
+                }
+                KeyCode::End => {
+                    app.smart_description_buffer.move_end();
+                }
+                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.smart_description_buffer.select_all_and_clear();
+                }
+                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    clipboard_paste(app, |a| &mut a.smart_description_buffer, true);
                 }
                 KeyCode::Char(c) => {
-                    app.smart_description_buffer.push(c);
+                    app.smart_description_buffer.insert_char(c);
                 }
                 _ => {}
             }
@@ -1261,10 +1380,37 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Backspace => {
-                app.smart_branch_name.pop();
+                app.smart_branch_name.delete_backward();
+            }
+            KeyCode::Delete => {
+                app.smart_branch_name.delete_forward();
+            }
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                app.smart_branch_name.move_word_left();
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                app.smart_branch_name.move_word_right();
+            }
+            KeyCode::Left => {
+                app.smart_branch_name.move_left();
+            }
+            KeyCode::Right => {
+                app.smart_branch_name.move_right();
+            }
+            KeyCode::Home => {
+                app.smart_branch_name.move_home();
+            }
+            KeyCode::End => {
+                app.smart_branch_name.move_end();
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.smart_branch_name.select_all_and_clear();
+            }
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                clipboard_paste(app, |a| &mut a.smart_branch_name, false);
             }
             KeyCode::Char(c) => {
-                app.smart_branch_name.push(c);
+                app.smart_branch_name.insert_char(c);
             }
             _ => {}
         },
@@ -1336,10 +1482,37 @@ fn handle_history_key(app: &mut App, key: KeyEvent) {
                 app.history_search_query.clear();
             }
             KeyCode::Backspace => {
-                app.history_search_query.pop();
+                app.history_search_query.delete_backward();
+            }
+            KeyCode::Delete => {
+                app.history_search_query.delete_forward();
+            }
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                app.history_search_query.move_word_left();
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+                app.history_search_query.move_word_right();
+            }
+            KeyCode::Left => {
+                app.history_search_query.move_left();
+            }
+            KeyCode::Right => {
+                app.history_search_query.move_right();
+            }
+            KeyCode::Home => {
+                app.history_search_query.move_home();
+            }
+            KeyCode::End => {
+                app.history_search_query.move_end();
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.history_search_query.select_all_and_clear();
+            }
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                clipboard_paste(app, |a| &mut a.history_search_query, false);
             }
             KeyCode::Char(c) => {
-                app.history_search_query.push(c);
+                app.history_search_query.insert_char(c);
             }
             _ => {}
         }
@@ -1421,11 +1594,41 @@ fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
             app.load_resume_sessions();
         }
         KeyCode::Backspace => {
-            app.resume_session_filter.pop();
+            app.resume_session_filter.delete_backward();
+            app.resume_session_selected = 0;
+        }
+        KeyCode::Delete => {
+            app.resume_session_filter.delete_forward();
+            app.resume_session_selected = 0;
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.resume_session_filter.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.resume_session_filter.move_word_right();
+        }
+        KeyCode::Left => {
+            app.resume_session_filter.move_left();
+        }
+        KeyCode::Right => {
+            app.resume_session_filter.move_right();
+        }
+        KeyCode::Home => {
+            app.resume_session_filter.move_home();
+        }
+        KeyCode::End => {
+            app.resume_session_filter.move_end();
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.resume_session_filter.select_all_and_clear();
+            app.resume_session_selected = 0;
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.resume_session_filter, false);
             app.resume_session_selected = 0;
         }
         KeyCode::Char(c) if key.modifiers.is_empty() => {
-            app.resume_session_filter.push(c);
+            app.resume_session_filter.insert_char(c);
             app.resume_session_selected = 0;
         }
         _ => {}
@@ -1468,16 +1671,43 @@ fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
             app.open_repo_buffer.clear();
         }
         KeyCode::Enter => {
-            let buffer = app.open_repo_buffer.clone();
+            let buffer = app.open_repo_buffer.text().to_string();
             app.open_repo_active = false;
             app.open_repo_buffer.clear();
             app.open_repo_from_path(&buffer);
         }
         KeyCode::Backspace => {
-            app.open_repo_buffer.pop();
+            app.open_repo_buffer.delete_backward();
+        }
+        KeyCode::Delete => {
+            app.open_repo_buffer.delete_forward();
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.open_repo_buffer.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.open_repo_buffer.move_word_right();
+        }
+        KeyCode::Left => {
+            app.open_repo_buffer.move_left();
+        }
+        KeyCode::Right => {
+            app.open_repo_buffer.move_right();
+        }
+        KeyCode::Home => {
+            app.open_repo_buffer.move_home();
+        }
+        KeyCode::End => {
+            app.open_repo_buffer.move_end();
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.open_repo_buffer.select_all_and_clear();
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.open_repo_buffer, false);
         }
         KeyCode::Char(c) => {
-            app.open_repo_buffer.push(c);
+            app.open_repo_buffer.insert_char(c);
         }
         _ => {}
     }
@@ -1504,7 +1734,7 @@ fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
             // Edit from the detail view.
             let idx = app.review_state.comment_detail_idx;
             if let Some(comment) = app.review_state.comments.get(idx) {
-                app.review_state.input_buffer = comment.body.clone();
+                app.review_state.input_buffer.set_text(&comment.body);
                 app.review_state.input_mode = ReviewInputMode::EditingComment;
                 app.review_state.selected = idx;
                 app.review_state.comment_detail_active = false;
@@ -1584,7 +1814,12 @@ fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.filename_search_selected = 0;
         }
         KeyCode::Backspace => {
-            app.viewer_state.filename_search_query.pop();
+            app.viewer_state.filename_search_query.delete_backward();
+            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.execute_filename_search();
+        }
+        KeyCode::Delete => {
+            app.viewer_state.filename_search_query.delete_forward();
             app.viewer_state.filename_search_selected = 0;
             app.viewer_state.execute_filename_search();
         }
@@ -1610,8 +1845,36 @@ fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
                 app.viewer_state.filename_search_selected -= 1;
             }
         }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.viewer_state.filename_search_query.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.viewer_state.filename_search_query.move_word_right();
+        }
+        KeyCode::Left => {
+            app.viewer_state.filename_search_query.move_left();
+        }
+        KeyCode::Right => {
+            app.viewer_state.filename_search_query.move_right();
+        }
+        KeyCode::Home => {
+            app.viewer_state.filename_search_query.move_home();
+        }
+        KeyCode::End => {
+            app.viewer_state.filename_search_query.move_end();
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewer_state.filename_search_query.select_all_and_clear();
+            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.execute_filename_search();
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.viewer_state.filename_search_query, false);
+            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.execute_filename_search();
+        }
         KeyCode::Char(c) => {
-            app.viewer_state.filename_search_query.push(c);
+            app.viewer_state.filename_search_query.insert_char(c);
             app.viewer_state.filename_search_selected = 0;
             app.viewer_state.execute_filename_search();
         }
@@ -1631,11 +1894,41 @@ fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.execute_search();
         }
         KeyCode::Backspace => {
-            app.viewer_state.search_query.pop();
+            app.viewer_state.search_query.delete_backward();
+            app.viewer_state.execute_search();
+        }
+        KeyCode::Delete => {
+            app.viewer_state.search_query.delete_forward();
+            app.viewer_state.execute_search();
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.viewer_state.search_query.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.viewer_state.search_query.move_word_right();
+        }
+        KeyCode::Left => {
+            app.viewer_state.search_query.move_left();
+        }
+        KeyCode::Right => {
+            app.viewer_state.search_query.move_right();
+        }
+        KeyCode::Home => {
+            app.viewer_state.search_query.move_home();
+        }
+        KeyCode::End => {
+            app.viewer_state.search_query.move_end();
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewer_state.search_query.select_all_and_clear();
+            app.viewer_state.execute_search();
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.viewer_state.search_query, false);
             app.viewer_state.execute_search();
         }
         KeyCode::Char(c) => {
-            app.viewer_state.search_query.push(c);
+            app.viewer_state.search_query.insert_char(c);
             app.viewer_state.execute_search();
         }
         _ => {}
@@ -1647,7 +1940,7 @@ fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
 fn handle_review_input_key(app: &mut App, key: KeyEvent) {
     // Alt+Enter inserts a newline (multi-line editing).
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
-        app.review_state.input_buffer.push('\n');
+        app.review_state.input_buffer.insert_char('\n');
         return;
     }
 
@@ -1658,7 +1951,7 @@ fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             app.review_state.status_message = None;
         }
         KeyCode::Enter => {
-            let buffer = app.review_state.input_buffer.clone();
+            let buffer = app.review_state.input_buffer.text().to_string();
             match app.review_state.input_mode {
                 ReviewInputMode::AddingComment => {
                     submit_new_comment(app, &buffer);
@@ -1679,7 +1972,10 @@ fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             app.review_state.input_mode = ReviewInputMode::Normal;
         }
         KeyCode::Backspace => {
-            app.review_state.input_buffer.pop();
+            app.review_state.input_buffer.delete_backward();
+        }
+        KeyCode::Delete => {
+            app.review_state.input_buffer.delete_forward();
         }
         KeyCode::Tab if app.review_state.input_mode == ReviewInputMode::AddingComment => {
             app.review_state.input_kind = match app.review_state.input_kind {
@@ -1687,8 +1983,32 @@ fn handle_review_input_key(app: &mut App, key: KeyEvent) {
                 CommentKind::Question => CommentKind::Suggest,
             };
         }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.review_state.input_buffer.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.review_state.input_buffer.move_word_right();
+        }
+        KeyCode::Left => {
+            app.review_state.input_buffer.move_left();
+        }
+        KeyCode::Right => {
+            app.review_state.input_buffer.move_right();
+        }
+        KeyCode::Home => {
+            app.review_state.input_buffer.move_home();
+        }
+        KeyCode::End => {
+            app.review_state.input_buffer.move_end();
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.review_state.input_buffer.select_all_and_clear();
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.review_state.input_buffer, true);
+        }
         KeyCode::Char(c) => {
-            app.review_state.input_buffer.push(c);
+            app.review_state.input_buffer.insert_char(c);
         }
         _ => {}
     }
@@ -1708,11 +2028,37 @@ fn handle_review_search_key(app: &mut App, key: KeyEvent) {
             app.review_state.apply_filter();
         }
         KeyCode::Backspace => {
-            app.review_state.search_query.pop();
+            app.review_state.search_query.delete_backward();
+            app.review_state.apply_filter();
+        }
+        KeyCode::Delete => {
+            app.review_state.search_query.delete_forward();
+            app.review_state.apply_filter();
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.review_state.search_query.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.review_state.search_query.move_word_right();
+        }
+        KeyCode::Left => { app.review_state.search_query.move_left(); }
+        KeyCode::Right => { app.review_state.search_query.move_right(); }
+        KeyCode::Home => { app.review_state.search_query.move_home(); }
+        KeyCode::End => { app.review_state.search_query.move_end(); }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.review_state.search_query.select_all_and_clear();
+            app.review_state.apply_filter();
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.review_state.search_query, false);
             app.review_state.apply_filter();
         }
         KeyCode::Char(c) => {
-            app.review_state.search_query.push(c);
+            app.review_state.search_query.insert_char(c);
             app.review_state.apply_filter();
         }
         _ => {}
@@ -1739,7 +2085,7 @@ fn handle_review_template_key(app: &mut App, key: KeyEvent) {
             if let Some(tmpl) =
                 app.review_state.templates.get(app.review_state.template_selected)
             {
-                app.review_state.input_buffer = tmpl.body.clone();
+                app.review_state.input_buffer.set_text(&tmpl.body);
                 app.review_state.input_kind = tmpl.kind;
                 app.review_state.input_mode = ReviewInputMode::AddingComment;
                 app.review_state.status_message =
@@ -1801,11 +2147,37 @@ fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
             app.switch_branch_filter.clear();
         }
         KeyCode::Backspace => {
-            app.switch_branch_filter.pop();
+            app.switch_branch_filter.delete_backward();
             app.switch_branch_selected = 0;
         }
-        KeyCode::Char(c) if key.modifiers.is_empty() => {
-            app.switch_branch_filter.push(c);
+        KeyCode::Delete => {
+            app.switch_branch_filter.delete_forward();
+            app.switch_branch_selected = 0;
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.switch_branch_filter.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.switch_branch_filter.move_word_right();
+        }
+        KeyCode::Left => { app.switch_branch_filter.move_left(); }
+        KeyCode::Right => { app.switch_branch_filter.move_right(); }
+        KeyCode::Home => { app.switch_branch_filter.move_home(); }
+        KeyCode::End => { app.switch_branch_filter.move_end(); }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.switch_branch_filter.select_all_and_clear();
+            app.switch_branch_selected = 0;
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.switch_branch_filter, false);
+            app.switch_branch_selected = 0;
+        }
+        KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            app.switch_branch_filter.insert_char(c);
             app.switch_branch_selected = 0;
         }
         _ => {}
@@ -1890,11 +2262,37 @@ fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
             app.command_palette_filter.clear();
         }
         KeyCode::Backspace => {
-            app.command_palette_filter.pop();
+            app.command_palette_filter.delete_backward();
+            app.command_palette_selected = 0;
+        }
+        KeyCode::Delete => {
+            app.command_palette_filter.delete_forward();
+            app.command_palette_selected = 0;
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.command_palette_filter.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.command_palette_filter.move_word_right();
+        }
+        KeyCode::Left => { app.command_palette_filter.move_left(); }
+        KeyCode::Right => { app.command_palette_filter.move_right(); }
+        KeyCode::Home => { app.command_palette_filter.move_home(); }
+        KeyCode::End => { app.command_palette_filter.move_end(); }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.command_palette_filter.select_all_and_clear();
+            app.command_palette_selected = 0;
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.command_palette_filter, false);
             app.command_palette_selected = 0;
         }
         KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-            app.command_palette_filter.push(c);
+            app.command_palette_filter.insert_char(c);
             app.command_palette_selected = 0;
         }
         _ => {}
@@ -1902,6 +2300,29 @@ fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/// Paste clipboard contents into the `TextInput` returned by `get_buffer`.
+///
+/// If `multiline` is false, newlines are stripped from the pasted text.
+fn clipboard_paste<F>(app: &mut App, get_buffer: F, multiline: bool)
+where
+    F: FnOnce(&mut App) -> &mut crate::text_input::TextInput,
+{
+    use copypasta::ClipboardProvider;
+    let text = app
+        .clipboard
+        .as_mut()
+        .and_then(|ctx| ctx.get_contents().ok());
+    if let Some(text) = text {
+        let buf = get_buffer(app);
+        if multiline {
+            buf.insert_str(&text);
+        } else {
+            let cleaned: String = text.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+            buf.insert_str(&cleaned);
+        }
+    }
+}
 
 /// Adjust `tree_scroll` so that `tree_selected` stays visible.
 fn adjust_tree_scroll(app: &mut App) {
@@ -1951,7 +2372,7 @@ fn open_viewer_comment(app: &mut App) {
     };
 
     app.viewer_state.clear_selection();
-    app.review_state.input_buffer = location;
+    app.review_state.input_buffer.set_text(&location);
     app.review_state.input_kind = CommentKind::Suggest;
     app.review_state.input_mode = ReviewInputMode::AddingComment;
     app.review_state.status_message =

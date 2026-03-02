@@ -8,19 +8,24 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
-use unicode_width::UnicodeWidthStr;
-
 use crate::app::{App, UpdateState};
+use crate::text_input::TextInput;
 use crate::theme::Theme;
 
-/// Set the terminal cursor position for IME at the end of a single-line input buffer.
-fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &str) {
-    let text_width = UnicodeWidthStr::width(buffer) as u16;
+/// Set the terminal cursor position for IME at the cursor position within a
+/// single-line `TextInput`.
+fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
+    let text_width = buffer.display_width_before_cursor() as u16;
     let cursor_x = area.x + text_width;
     let cursor_y = area.y;
     if cursor_x < area.x + area.width && cursor_y < area.y + area.height {
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
+}
+
+/// Format a single-line `TextInput` with a block cursor at the cursor position.
+fn format_input_with_cursor(buffer: &TextInput) -> String {
+    format!("{}\u{2588}{}", buffer.text_before_cursor(), buffer.text_after_cursor())
 }
 
 /// Render the session history viewer overlay.
@@ -137,7 +142,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         let inner = search_block.inner(search_rect);
         frame.render_widget(search_block, search_rect);
 
-        let input_text = format!("{}\u{2588}", app.history_search_query);
+        let input_text = format_input_with_cursor(&app.history_search_query);
         let paragraph = Paragraph::new(Span::styled(
             input_text,
             Style::default().fg(theme.fg),
@@ -166,7 +171,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let input_text = format!("{}\u{2588}", app.worktree_input_buffer);
+    let input_text = format_input_with_cursor(&app.worktree_input_buffer);
     let paragraph = Paragraph::new(Span::styled(
         input_text,
         Style::default().fg(theme.fg),
@@ -354,7 +359,7 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let input_text = format!("{}\u{2588}", app.open_repo_buffer);
+    let input_text = format_input_with_cursor(&app.open_repo_buffer);
     let paragraph = Paragraph::new(Span::styled(
         input_text,
         Style::default().fg(theme.fg),
@@ -391,7 +396,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let filter_inner = filter_block.inner(chunks[0]);
     frame.render_widget(filter_block, chunks[0]);
 
-    let filter_text = format!("{}\u{2588}", app.switch_branch_filter);
+    let filter_text = format_input_with_cursor(&app.switch_branch_filter);
     let filter_para = Paragraph::new(Span::styled(
         filter_text,
         Style::default().fg(theme.fg),
@@ -571,7 +576,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
     let filter_inner = filter_block.inner(chunks[0]);
     frame.render_widget(filter_block, chunks[0]);
 
-    let filter_text = format!("{}\u{2588}", app.base_branch_filter);
+    let filter_text = format_input_with_cursor(&app.base_branch_filter);
     let filter_para = Paragraph::new(Span::styled(
         filter_text,
         Style::default().fg(theme.fg),
@@ -694,11 +699,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let filter_inner = filter_block.inner(chunks[0]);
     frame.render_widget(filter_block, chunks[0]);
 
-    let filter_text = if app.resume_session_filter.is_empty() {
-        "\u{2588}".to_string()
-    } else {
-        format!("{}\u{2588}", app.resume_session_filter)
-    };
+    let filter_text = format_input_with_cursor(&app.resume_session_filter);
     let filter_para = Paragraph::new(Span::styled(
         filter_text,
         Style::default().fg(theme.fg),
@@ -804,11 +805,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let search_inner = search_block.inner(chunks[0]);
     frame.render_widget(search_block, chunks[0]);
 
-    let search_text = if app.command_palette_filter.is_empty() {
-        "\u{2588}".to_string() // block cursor
-    } else {
-        format!("{}\u{2588}", app.command_palette_filter)
-    };
+    let search_text = format_input_with_cursor(&app.command_palette_filter);
     frame.render_widget(
         Paragraph::new(Span::styled(
             search_text,
@@ -1120,16 +1117,19 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     .split(inner);
 
     // Render multi-line text with block cursor.
-    let display = format!("{}\u{2588}", app.smart_description_buffer);
+    let display = format!(
+        "{}\u{2588}{}",
+        app.smart_description_buffer.text_before_cursor(),
+        app.smart_description_buffer.text_after_cursor()
+    );
     let paragraph = Paragraph::new(display)
         .style(Style::default().fg(theme.fg))
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, chunks[0]);
     {
-        let last_line = app.smart_description_buffer.split('\n').next_back().unwrap_or("");
-        let line_count = app.smart_description_buffer.split('\n').count().saturating_sub(1);
-        let cursor_x = chunks[0].x + UnicodeWidthStr::width(last_line) as u16;
-        let cursor_y = chunks[0].y + line_count as u16;
+        let (row, _col) = app.smart_description_buffer.cursor_row_col();
+        let cursor_x = chunks[0].x + app.smart_description_buffer.display_width_before_cursor() as u16;
+        let cursor_y = chunks[0].y + row as u16;
         if cursor_x < chunks[0].x + chunks[0].width && cursor_y < chunks[0].y + chunks[0].height {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
@@ -1225,7 +1225,11 @@ pub fn render_smart_confirm_branch_overlay(frame: &mut Frame, area: Rect, app: &
     );
 
     // Editable branch name with cursor
-    let branch_display = format!(" {}\u{2588}", app.smart_branch_name);
+    let branch_display = format!(
+        " {}\u{2588}{}",
+        app.smart_branch_name.text_before_cursor(),
+        app.smart_branch_name.text_after_cursor()
+    );
     frame.render_widget(
         Paragraph::new(Span::styled(
             branch_display,
@@ -1235,7 +1239,7 @@ pub fn render_smart_confirm_branch_overlay(frame: &mut Frame, area: Rect, app: &
     );
     {
         // +1 for the leading space in " {branch_name}"
-        let cursor_x = chunks[1].x + 1 + UnicodeWidthStr::width(app.smart_branch_name.as_str()) as u16;
+        let cursor_x = chunks[1].x + 1 + app.smart_branch_name.display_width_before_cursor() as u16;
         let cursor_y = chunks[1].y;
         if cursor_x < chunks[1].x + chunks[1].width && cursor_y < chunks[1].y + chunks[1].height {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));

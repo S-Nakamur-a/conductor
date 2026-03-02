@@ -7,8 +7,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
-use unicode_width::UnicodeWidthStr;
-
 use crate::app::App;
 use crate::review_state::{ReviewInputMode, ReviewState};
 use crate::review_store::CommentKind;
@@ -106,22 +104,19 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Build multi-line display: show each line of the buffer, with cursor at end.
+    // Build multi-line display with block cursor at the cursor position.
     let buf = &app.review_state.input_buffer;
     let prefix_line_count = lines.len();
-    let mut input_lines: Vec<Line> = buf
+    let display = format!(
+        "{}\u{2588}{}",
+        buf.text_before_cursor(),
+        buf.text_after_cursor()
+    );
+    let input_lines: Vec<Line> = display
         .split('\n')
         .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(theme.fg))))
         .collect();
 
-    // Append block cursor to the last input line.
-    if let Some(last) = input_lines.last_mut() {
-        last.spans.push(Span::styled(
-            "\u{2588}",
-            Style::default().fg(theme.fg),
-        ));
-    }
-    let input_line_count = input_lines.len();
     lines.extend(input_lines);
 
     // Hint line at the bottom.
@@ -139,9 +134,9 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     // Set cursor position for IME.
     {
-        let last_line = buf.split('\n').next_back().unwrap_or("");
-        let cursor_row = prefix_line_count + input_line_count.saturating_sub(1);
-        let cursor_x = inner.x + UnicodeWidthStr::width(last_line) as u16;
+        let (cursor_row_in_buf, _) = buf.cursor_row_col();
+        let cursor_row = prefix_line_count + cursor_row_in_buf;
+        let cursor_x = inner.x + buf.display_width_before_cursor() as u16;
         let cursor_y = inner.y + cursor_row as u16;
         if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));

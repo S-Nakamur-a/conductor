@@ -9,8 +9,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
-use unicode_width::UnicodeWidthStr;
-
 use crate::app::{App, Focus};
 
 /// Return an emoji icon for a file based on its extension or name.
@@ -484,21 +482,21 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 }
 
 /// Render a search input box at the bottom of the given area.
-fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &crate::theme::Theme) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &crate::theme::Theme) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
 
     frame.render_widget(ratatui::widgets::Clear, search_area);
 
-    let text = format!("/{query}\u{2588}");
+    let text = format!("/{}\u{2588}{}", query.text_before_cursor(), query.text_after_cursor());
     let paragraph = ratatui::widgets::Paragraph::new(Span::styled(
         text,
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
     // +1 for the leading '/' character
-    let cursor_x = search_area.x + 1 + UnicodeWidthStr::width(query) as u16;
+    let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
     if cursor_x < search_area.x + search_area.width {
         frame.set_cursor_position(Position::new(cursor_x, search_area.y));
     }
@@ -524,8 +522,8 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let counter = format!(" {match_count}/{total_files}");
     let query_width = inner_width.saturating_sub(counter.len() as u16 + 1) as usize;
 
-    let query_display = &vs.filename_search_query;
-    let query_text = format!("/{query_display}\u{2588}");
+    let query_input = &vs.filename_search_query;
+    let query_text = format!("/{}\u{2588}{}", query_input.text_before_cursor(), query_input.text_after_cursor());
     // Truncate display if needed.
     let query_truncated: String = query_text.chars().take(query_width).collect();
 
@@ -535,7 +533,7 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     ]);
     frame.render_widget(ratatui::widgets::Paragraph::new(input_line), input_area);
     // +1 for the leading '/' character
-    let cursor_x = input_area.x + 1 + UnicodeWidthStr::width(query_display.as_str()) as u16;
+    let cursor_x = input_area.x + 1 + query_input.display_width_before_cursor() as u16;
     if cursor_x < input_area.x + input_area.width {
         frame.set_cursor_position(Position::new(cursor_x, input_area.y));
     }
