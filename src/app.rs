@@ -597,6 +597,24 @@ impl App {
         };
         app.refresh_worktrees();
         app.refresh_reviews();
+
+        // Restore grab state from $git_common_dir/wt-grab if it exists.
+        if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
+            match engine.load_grab_state() {
+                Ok(Some((branch, source_worktree, _stash_branch))) => {
+                    app.grabbed_branch = Some(GrabbedBranch {
+                        branch,
+                        source_worktree,
+                    });
+                    log::info!("Restored grab state from wt-grab file");
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    log::warn!("failed to load grab state: {e}");
+                }
+            }
+        }
+
         app
     }
 
