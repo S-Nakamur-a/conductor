@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, Focus, StatusLevel};
+use crate::app::{App, Focus, StatusLevel, UpdateState};
 use crate::git_engine;
 use crate::keymap::{Action, KeyContext};
 use crate::review_state::ReviewInputMode;
@@ -18,6 +18,10 @@ use crate::review_store::{Author, CommentKind};
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // ── 1. Overlay handlers — consume ALL keys when active ────────────
 
+    if app.update_state != UpdateState::Idle {
+        handle_update_key(app, key);
+        return;
+    }
     if app.review_state.comment_detail_active {
         handle_comment_detail_key(app, key);
         return;
@@ -253,7 +257,40 @@ fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             }
             true
         }
+        Action::UpdateAndRestart => {
+            if app.update_info.is_some() {
+                app.start_update_confirm();
+            }
+            true
+        }
         _ => false, // Not a global action — let panel-specific handler try.
+    }
+}
+
+// ── Update overlay ──────────────────────────────────────────────────────
+
+fn handle_update_key(app: &mut App, key: KeyEvent) {
+    match app.update_state {
+        UpdateState::Confirming => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.start_update_download();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.update_state = UpdateState::Idle;
+            }
+            _ => {}
+        },
+        UpdateState::InProgress => {
+            if key.code == KeyCode::Esc {
+                app.update_rx = None;
+                app.update_state = UpdateState::Idle;
+            }
+        }
+        UpdateState::Failed => {
+            // Any key dismisses the error.
+            app.update_state = UpdateState::Idle;
+        }
+        UpdateState::Restarting | UpdateState::Idle => {}
     }
 }
 
@@ -2227,8 +2264,13 @@ pub fn handle_mouse_event(
                 return;
             }
 
-            // Title bar click — ignore.
+            // Title bar click — check for update badge.
             if row < main_area.y {
+                if let Some((start, end)) = app.update_badge_cols {
+                    if col >= start && col < end && app.update_info.is_some() {
+                        app.start_update_confirm();
+                    }
+                }
                 return;
             }
 

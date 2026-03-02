@@ -69,6 +69,7 @@ pub enum CommandId {
     OpenPullRequest,
 
     // App
+    UpdateAndRestart,
     Quit,
 }
 
@@ -201,6 +202,8 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Worktree, keybinding: Some("v"), keywords: "pr github browser web open" },
 
     // App
+    PaletteCommand { id: CommandId::UpdateAndRestart, label: "App: Update and Restart",
+        category: CommandCategory::App, keybinding: None, keywords: "update upgrade restart download version" },
     PaletteCommand { id: CommandId::Quit, label: "Quit Conductor",
         category: CommandCategory::App, keybinding: Some("q"), keywords: "exit close" },
 ];

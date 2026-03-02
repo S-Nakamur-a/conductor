@@ -111,6 +111,32 @@ pub struct GrabbedBranch {
     pub source_worktree: PathBuf,
 }
 
+/// State of the in-app update flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateState {
+    /// Normal operation — no update in progress.
+    Idle,
+    /// Confirmation dialog is shown.
+    Confirming,
+    /// Download & build running in background thread.
+    InProgress,
+    /// About to restart the process.
+    Restarting,
+    /// An error occurred — message shown until dismissed.
+    Failed,
+}
+
+/// Messages sent from the background update thread.
+#[derive(Debug, Clone)]
+pub enum UpdateProgress {
+    /// Intermediate status message.
+    Status(String),
+    /// Update completed successfully.
+    Done(String),
+    /// Update failed with an error message.
+    Error(String),
+}
+
 /// Top-level application state shared across all UI panels.
 pub struct App {
     /// Current panel focus.
@@ -307,6 +333,22 @@ pub struct App {
     /// Latest release info when a newer version is available.
     pub update_info: Option<crate::update_checker::UpdateInfo>,
 
+    // ── Update & restart ──────────────────────────────────────
+    /// Current state of the update flow.
+    pub update_state: UpdateState,
+    /// Receiver for progress messages from the background update thread.
+    pub update_rx: Option<mpsc::Receiver<UpdateProgress>>,
+    /// Latest progress message to display in the overlay.
+    pub update_progress_message: String,
+    /// Path to the executable at startup (for exec-based restart).
+    pub startup_exe: PathBuf,
+    /// Command-line arguments at startup (for exec-based restart).
+    pub startup_args: Vec<String>,
+    /// Set to `true` when the update is done and the app should restart.
+    pub should_restart: bool,
+    /// Column range (start, end) of the update badge in the title bar.
+    pub update_badge_cols: Option<(u16, u16)>,
+
     // ── Background fetch for switch-branch overlay ──────────────
     /// Receiver for branch lists fetched in the background.
     pub bg_branch_rx: Option<mpsc::Receiver<Vec<String>>>,
@@ -501,6 +543,13 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             update_info: None,
+            update_state: UpdateState::Idle,
+            update_rx: None,
+            update_progress_message: String::new(),
+            startup_exe: std::env::current_exe().unwrap_or_default(),
+            startup_args: std::env::args().skip(1).collect(),
+            should_restart: false,
+            update_badge_cols: None,
             bg_branch_rx: None,
             bg_pull_rx: None,
             smart_description_buffer: String::new(),
@@ -1079,7 +1128,58 @@ impl App {
             CommandId::OpenPullRequest => {
                 self.open_pr_in_browser();
             }
+            CommandId::UpdateAndRestart => {
+                if self.update_info.is_some() {
+                    self.start_update_confirm();
+                } else {
+                    self.set_status("No update available.".to_string(), StatusLevel::Info);
+                }
+            }
             CommandId::Quit => self.should_quit = true,
+        }
+    }
+
+    /// Show the update confirmation dialog.
+    pub fn start_update_confirm(&mut self) {
+        self.update_state = UpdateState::Confirming;
+    }
+
+    /// Kick off the background update thread.
+    pub fn start_update_download(&mut self) {
+        let Some(ref info) = self.update_info else { return };
+        let version = info.latest_version.clone();
+        let tarball_url = info.tarball_url.clone();
+
+        self.update_state = UpdateState::InProgress;
+        self.update_progress_message = "Preparing update...".to_string();
+
+        let (tx, rx) = mpsc::channel();
+        self.update_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            perform_update(&tx, &version, &tarball_url);
+        });
+    }
+
+    /// Poll for progress messages from the background update thread.
+    pub fn poll_update_progress(&mut self) {
+        let Some(ref rx) = self.update_rx else { return };
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                UpdateProgress::Status(s) => {
+                    self.update_progress_message = s;
+                }
+                UpdateProgress::Done(s) => {
+                    self.update_progress_message = s;
+                    self.update_state = UpdateState::Restarting;
+                    self.should_restart = true;
+                    self.should_quit = true;
+                }
+                UpdateProgress::Error(s) => {
+                    self.update_progress_message = s;
+                    self.update_state = UpdateState::Failed;
+                }
+            }
         }
     }
 
@@ -2574,4 +2674,134 @@ No markdown fences, no explanation, just the JSON object."#;
             .map(|w| (w.branch.clone(), w.path.clone()))
             .unwrap_or_else(|| ("default".to_string(), self.repo_path.clone()))
     }
+}
+
+/// Run the update download-and-build in a background thread.
+///
+/// Sends [`UpdateProgress`] messages via the channel to report status.
+fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url: &str) {
+    use std::process::Command;
+
+    let tmpdir = std::env::temp_dir().join(format!("conductor-update-{version}"));
+    let _ = std::fs::remove_dir_all(&tmpdir);
+    if std::fs::create_dir_all(&tmpdir).is_err() {
+        let _ = tx.send(UpdateProgress::Error("Failed to create temp directory".to_string()));
+        return;
+    }
+
+    // Resolve tarball URL — if empty, re-fetch from API.
+    let url = if tarball_url.is_empty() {
+        let _ = tx.send(UpdateProgress::Status("Fetching release info...".to_string()));
+        match crate::update_checker::check_for_update() {
+            Some(info) if !info.tarball_url.is_empty() => info.tarball_url,
+            _ => {
+                let _ = tx.send(UpdateProgress::Error("Could not find tarball URL".to_string()));
+                let _ = std::fs::remove_dir_all(&tmpdir);
+                return;
+            }
+        }
+    } else {
+        tarball_url.to_string()
+    };
+
+    // Download.
+    let _ = tx.send(UpdateProgress::Status(format!("Downloading v{version}...")));
+    let tarball = tmpdir.join("source.tar.gz");
+    let dl = Command::new("curl")
+        .args(["-sfL", "--max-time", "120", "-o"])
+        .arg(&tarball)
+        .arg(&url)
+        .output();
+    match dl {
+        Err(e) => {
+            let _ = tx.send(UpdateProgress::Error(format!("curl not found: {e}")));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+        Ok(out) if !out.status.success() => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let _ = tx.send(UpdateProgress::Error(format!("Download failed: {stderr}")));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+        _ => {}
+    }
+
+    // Extract.
+    let _ = tx.send(UpdateProgress::Status("Extracting...".to_string()));
+    let extract = Command::new("tar")
+        .args(["xzf", "source.tar.gz"])
+        .current_dir(&tmpdir)
+        .output();
+    match extract {
+        Err(e) => {
+            let _ = tx.send(UpdateProgress::Error(format!("tar not found: {e}")));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+        Ok(out) if !out.status.success() => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let _ = tx.send(UpdateProgress::Error(format!("Extraction failed: {stderr}")));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+        _ => {}
+    }
+
+    // Find the extracted directory (GitHub tarballs extract to owner-repo-hash/).
+    let src_dir = match std::fs::read_dir(&tmpdir) {
+        Ok(entries) => {
+            let mut found = None;
+            for entry in entries.flatten() {
+                if entry.path().is_dir() && entry.file_name() != "source.tar.gz" {
+                    found = Some(entry.path());
+                    break;
+                }
+            }
+            match found {
+                Some(d) => d,
+                None => {
+                    let _ = tx.send(UpdateProgress::Error("No source directory found in tarball".to_string()));
+                    let _ = std::fs::remove_dir_all(&tmpdir);
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            let _ = tx.send(UpdateProgress::Error(format!("Failed to read temp dir: {e}")));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+    };
+
+    // Build & install.
+    let _ = tx.send(UpdateProgress::Status(format!("Building v{version}... (this may take a while)")));
+    let build = Command::new("make")
+        .arg("install")
+        .current_dir(&src_dir)
+        .output();
+    match build {
+        Err(e) => {
+            let _ = tx.send(UpdateProgress::Error(format!("make not found: {e}")));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+        Ok(out) if !out.status.success() => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let msg = if stderr.len() > 200 {
+                format!("Build failed: ...{}", &stderr[stderr.len() - 200..])
+            } else {
+                format!("Build failed: {stderr}")
+            };
+            let _ = tx.send(UpdateProgress::Error(msg));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            return;
+        }
+        _ => {}
+    }
+
+    // Clean up.
+    let _ = std::fs::remove_dir_all(&tmpdir);
+
+    let _ = tx.send(UpdateProgress::Done(format!("v{version} installed successfully! Restarting...")));
 }
