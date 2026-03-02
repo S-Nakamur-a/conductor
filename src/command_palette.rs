@@ -65,6 +65,9 @@ pub enum CommandId {
     // Session
     SaveSessionHistory,
 
+    // Search
+    SearchFullText,
+
     // GitHub / PR
     OpenPullRequest,
 
@@ -162,6 +165,8 @@ pub const COMMANDS: &[PaletteCommand] = &[
     // View
     PaletteCommand { id: CommandId::SearchInFile, label: "Search in File",
         category: CommandCategory::View, keybinding: Some("/"), keywords: "find grep" },
+    PaletteCommand { id: CommandId::SearchFullText, label: "Search: Full-text Search (Grep)",
+        category: CommandCategory::View, keybinding: Some("Ctrl+g"), keywords: "grep search find text content regex ripgrep fulltext" },
     PaletteCommand { id: CommandId::ToggleHelp, label: "Show Help",
         category: CommandCategory::View, keybinding: Some("?"), keywords: "keybindings shortcuts" },
     PaletteCommand { id: CommandId::ShowDiffList, label: "Explorer: Show Diff List",

@@ -12,4 +12,5 @@ pub mod terminal_shell;
 
 // Overlay renderers (used from main.rs render_ui overlays).
 pub mod dashboard;
+pub mod grep_search;
 pub mod review;

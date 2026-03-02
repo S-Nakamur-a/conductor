@@ -13,6 +13,7 @@ use syntect::parsing::SyntaxSet;
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
+use crate::grep_search::{GrepMatch, GrepProgress};
 use crate::keymap::KeyMap;
 use crate::pty_manager;
 use crate::review_state::ReviewState;
@@ -299,6 +300,26 @@ pub struct App {
     /// Currently selected index in the filtered command list.
     pub command_palette_selected: usize,
 
+    // ── Grep (full-text search) overlay ─────────────────────────
+    /// Whether the grep search overlay is active.
+    pub grep_search_active: bool,
+    /// Query input for grep search.
+    pub grep_search_query: TextInput,
+    /// Accumulated search results.
+    pub grep_search_results: Vec<GrepMatch>,
+    /// Index of the selected result.
+    pub grep_search_selected: usize,
+    /// Scroll offset for the result list.
+    pub grep_search_scroll: usize,
+    /// Whether a background search is currently running.
+    pub grep_search_running: bool,
+    /// Receiver for background search progress.
+    pub grep_search_rx: Option<mpsc::Receiver<GrepProgress>>,
+    /// Whether regex mode is enabled (vs literal matching).
+    pub grep_search_regex_mode: bool,
+    /// Whether the search is case-sensitive.
+    pub grep_search_case_sensitive: bool,
+
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
     /// Independent tick counter for decoration animation (incremented at fixed interval).
@@ -535,6 +556,15 @@ impl App {
             command_palette_active: false,
             command_palette_filter: TextInput::new(),
             command_palette_selected: 0,
+            grep_search_active: false,
+            grep_search_query: TextInput::new(),
+            grep_search_results: Vec::new(),
+            grep_search_selected: 0,
+            grep_search_scroll: 0,
+            grep_search_running: false,
+            grep_search_rx: None,
+            grep_search_regex_mode: false,
+            grep_search_case_sensitive: false,
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
@@ -1139,6 +1169,15 @@ impl App {
                 } else {
                     self.set_status("No update available.".to_string(), StatusLevel::Info);
                 }
+            }
+            CommandId::SearchFullText => {
+                self.grep_search_active = true;
+                self.grep_search_query.clear();
+                self.grep_search_results.clear();
+                self.grep_search_selected = 0;
+                self.grep_search_scroll = 0;
+                self.grep_search_running = false;
+                self.grep_search_rx = None;
             }
             CommandId::Quit => self.should_quit = true,
         }
@@ -2405,6 +2444,73 @@ No markdown fences, no explanation, just the JSON object."#;
                     "Smart generation thread disconnected, enter branch name manually.".to_string(),
                     StatusLevel::Error,
                 );
+            }
+        }
+    }
+
+    /// Start a background grep search with the current query and settings.
+    pub fn start_grep_search(&mut self) {
+        let query = self.grep_search_query.text().to_string();
+        if query.is_empty() {
+            return;
+        }
+
+        let wt_path = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => wt.path.clone(),
+            None => return,
+        };
+
+        // Reset results.
+        self.grep_search_results.clear();
+        self.grep_search_selected = 0;
+        self.grep_search_scroll = 0;
+        self.grep_search_running = true;
+
+        let (tx, rx) = mpsc::channel();
+        self.grep_search_rx = Some(rx);
+
+        let regex_mode = self.grep_search_regex_mode;
+        let case_sensitive = self.grep_search_case_sensitive;
+
+        crate::grep_search::run_search(&wt_path, &query, regex_mode, case_sensitive, tx);
+    }
+
+    /// Poll for background grep search results.
+    pub fn poll_grep_search(&mut self) {
+        let rx = match self.grep_search_rx.as_ref() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        // Drain all available messages.
+        loop {
+            match rx.try_recv() {
+                Ok(GrepProgress::Results(batch)) => {
+                    self.grep_search_results.extend(batch);
+                }
+                Ok(GrepProgress::Done(total)) => {
+                    self.grep_search_running = false;
+                    self.grep_search_rx = None;
+                    if total >= 5000 {
+                        self.set_status(
+                            format!("Search truncated at {total} results."),
+                            StatusLevel::Warning,
+                        );
+                    }
+                    return;
+                }
+                Ok(GrepProgress::Error(msg)) => {
+                    self.grep_search_running = false;
+                    self.grep_search_rx = None;
+                    self.set_status(format!("Search error: {msg}"), StatusLevel::Error);
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.grep_search_running = false;
+                    self.grep_search_rx = None;
+                    return;
+                }
             }
         }
     }

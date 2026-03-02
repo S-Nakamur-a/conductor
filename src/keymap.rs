@@ -88,6 +88,9 @@ pub enum Action {
 
     // ── App ──────────────────────────────────────────────────────
     UpdateAndRestart,
+
+    // ── Search ──────────────────────────────────────────────────
+    SearchFullText,
 }
 
 impl Action {
@@ -153,6 +156,7 @@ impl Action {
             "scrollback_top" => Some(Action::ScrollbackTop),
             "snap_to_live" => Some(Action::SnapToLive),
             "update_and_restart" => Some(Action::UpdateAndRestart),
+            "search_full_text" => Some(Action::SearchFullText),
             _ => None,
         }
     }
@@ -220,6 +224,7 @@ impl Action {
             Action::ScrollbackTop => "scrollback_top",
             Action::SnapToLive => "snap_to_live",
             Action::UpdateAndRestart => "update_and_restart",
+            Action::SearchFullText => "search_full_text",
         }
     }
 }
@@ -477,6 +482,7 @@ impl KeyMap {
         self.bind_alt(Global, '3', FocusViewer);
         self.bind_alt(Global, '4', FocusTerminalClaude);
         self.bind_alt(Global, '5', FocusTerminalShell);
+        self.bind_ctrl(Global, 'g', SearchFullText);
 
         // ── Worktree ─────────────────────────────────────────────
         self.bind_char(Worktree, 'j', NavigateDown);
