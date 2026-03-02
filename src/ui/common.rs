@@ -360,18 +360,23 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     let theme = &app.theme;
 
-    // Determine the worktree path of the focused CC session (if any).
+    // Determine the worktree path shown in the focused CC panel (if any).
     let focused_cc_wt: Option<std::path::PathBuf> = if app.focus == crate::app::Focus::TerminalClaude {
-        app.active_claude_session.and_then(|idx| {
-            app.pty_manager.sessions().get(idx).map(|s| s.working_dir.clone())
-        })
+        Some(app.selected_worktree_path())
     } else {
         None
     };
 
+    // Suppress the entire bar pulse when the only waiting session(s) are all focused.
+    let all_suppressed = focused_cc_wt.is_some()
+        && app.cc_waiting_worktrees.len() == 1
+        && focused_cc_wt.as_deref() == app.cc_waiting_worktrees.iter().next().map(|p| p.as_path());
+
     // Orange-tinted background for the notification bar.
     let pulse_on = (app.ui_tick / 20) % 2 == 0;
-    let bar_bg = if pulse_on {
+    let bar_bg = if all_suppressed {
+        Theme::darken(theme.waiting_primary, 0.17)
+    } else if pulse_on {
         Theme::darken(theme.waiting_primary, 0.20)
     } else {
         Theme::darken(theme.waiting_primary, 0.14)
