@@ -175,6 +175,10 @@ pub struct App {
     pub worktree_input_buffer: TextInput,
     /// Timestamp of the last click on worktree blank space (for double-click detection).
     pub worktree_blank_last_click: std::time::Instant,
+    /// Timestamp of the last click on empty Claude terminal area (for double-click detection).
+    pub terminal_claude_blank_last_click: std::time::Instant,
+    /// Timestamp of the last click on empty Shell terminal area (for double-click detection).
+    pub terminal_shell_blank_last_click: std::time::Instant,
     /// Status message (flash message) shown in the status bar.
     pub status_message: Option<StatusMessage>,
     /// Last known HEAD oid for the selected worktree (for change-detection polling).
@@ -504,6 +508,8 @@ impl App {
             worktree_input_mode: WorktreeInputMode::Normal,
             worktree_input_buffer: TextInput::new(),
             worktree_blank_last_click: std::time::Instant::now(),
+            terminal_claude_blank_last_click: std::time::Instant::now(),
+            terminal_shell_blank_last_click: std::time::Instant::now(),
             status_message: None,
             last_poll_head_oid: None,
             last_poll_status: None,
