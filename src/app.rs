@@ -2716,6 +2716,7 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
         .args(["-sfL", "--max-time", "120", "-o"])
         .arg(&tarball)
         .arg(&url)
+        .stdin(std::process::Stdio::null())
         .output();
     match dl {
         Err(e) => {
