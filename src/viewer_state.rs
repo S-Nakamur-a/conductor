@@ -115,6 +115,10 @@ pub struct ViewerState {
     pub comment_list_scroll: usize,
     /// Line number (1-indexed) for comment preview triggered by single-clicking a comment marker.
     pub comment_preview_line: Option<usize>,
+    /// Timestamp of the last file-tree click for double-click detection.
+    pub last_tree_click_time: std::time::Instant,
+    /// The tree index that was last clicked in the file tree.
+    pub last_tree_click_idx: usize,
     /// Timestamp of the last comment-list click for double-click detection.
     pub last_comment_click_time: std::time::Instant,
     /// The index that was last clicked in the comment list.
@@ -163,6 +167,8 @@ impl Default for ViewerState {
             comment_list_selected: 0,
             comment_list_scroll: 0,
             comment_preview_line: None,
+            last_tree_click_time: std::time::Instant::now(),
+            last_tree_click_idx: usize::MAX,
             last_comment_click_time: std::time::Instant::now(),
             last_comment_click_idx: usize::MAX,
             diff_mode: false,

@@ -2851,11 +2851,23 @@ pub fn handle_mouse_event(
                                         }
                                         app.viewer_state.toggle_dir(tree_idx);
                                     } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                                        // Double-click detection.
+                                        let now = std::time::Instant::now();
+                                        let elapsed = now.duration_since(app.viewer_state.last_tree_click_time);
+                                        let is_double = elapsed.as_millis() < 400
+                                            && app.viewer_state.last_tree_click_idx == tree_idx;
+                                        app.viewer_state.last_tree_click_time = now;
+                                        app.viewer_state.last_tree_click_idx = tree_idx;
+
                                         let wt_path = wt.path.clone();
                                         app.viewer_state.open_file(&wt_path, &entry.path);
                                         app.rehighlight_viewer();
                                         app.review_state.build_file_comment_cache(&entry.path);
-                                        app.set_focus(Focus::Viewer);
+                                        // Single click: keep focus on Explorer.
+                                        // Double click: move focus to Viewer.
+                                        if is_double {
+                                            app.set_focus(Focus::Viewer);
+                                        }
                                     }
                                 }
                             }
