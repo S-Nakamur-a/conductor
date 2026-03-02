@@ -517,7 +517,7 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let input_area = Rect::new(area.x + 1, input_y, inner_width, 1);
     frame.render_widget(ratatui::widgets::Clear, input_area);
 
-    let total_files = vs.file_tree.iter().filter(|e| !e.is_dir).count();
+    let total_files = vs.filename_search_all_files.len();
     let match_count = vs.filename_search_results.len();
     let counter = format!(" {match_count}/{total_files}");
     let query_width = inner_width.saturating_sub(counter.len() as u16 + 1) as usize;
