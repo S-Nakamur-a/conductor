@@ -2,7 +2,8 @@
 //!
 //! On startup, checks `GET /repos/S-Nakamur-a/conductor/releases/latest` via
 //! `curl` (no extra dependencies). Results are cached at
-//! `~/.cache/conductor/update-check.json` with a configurable TTL (default 24h).
+//! `~/.cache/conductor/update-check.json` so the badge can appear instantly
+//! while a fresh background fetch runs.
 
 use std::fs;
 use std::path::PathBuf;
@@ -46,36 +47,19 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Check whether the cache file exists and was written within `max_age_secs`.
-pub fn cache_is_fresh(max_age_secs: u64) -> bool {
-    let Some(path) = cache_path() else {
-        return false;
-    };
-    let Ok(data) = fs::read_to_string(&path) else {
-        return false;
-    };
-    let Ok(entry) = serde_json::from_str::<CacheEntry>(&data) else {
-        return false;
-    };
-    let age = now_epoch_secs().saturating_sub(entry.updated_at);
-    age <= max_age_secs
-}
-
-/// Read cached update info if it exists and is within `max_age_secs`.
-pub fn read_cache(max_age_secs: u64) -> Option<UpdateInfo> {
+/// Read cached update info regardless of age.
+///
+/// Used for instant badge display on startup while a fresh background
+/// fetch is in progress.
+pub fn read_cache() -> Option<UpdateInfo> {
     let path = cache_path()?;
     let data = fs::read_to_string(&path).ok()?;
     let entry: CacheEntry = serde_json::from_str(&data).ok()?;
-    let age = now_epoch_secs().saturating_sub(entry.updated_at);
-    if age <= max_age_secs {
-        Some(UpdateInfo {
-            latest_version: entry.latest_version,
-            release_url: entry.release_url,
-            tarball_url: entry.tarball_url,
-        })
-    } else {
-        None
-    }
+    Some(UpdateInfo {
+        latest_version: entry.latest_version,
+        release_url: entry.release_url,
+        tarball_url: entry.tarball_url,
+    })
 }
 
 /// Write cache entry atomically.
@@ -103,26 +87,51 @@ fn write_cache(info: &UpdateInfo) {
 ///
 /// Returns `None` on network errors, 404 (no releases yet), or parse failures.
 pub fn check_for_update() -> Option<UpdateInfo> {
-    let output = std::process::Command::new("curl")
+    use std::process::Stdio;
+
+    log::debug!("checking GitHub API for latest release");
+
+    let output = match std::process::Command::new("curl")
         .args([
             "-sfL",
             "--max-time",
             "5",
             "-H",
             "Accept: application/vnd.github+json",
+            "-H",
+            &format!("User-Agent: conductor/{}", current_version()),
             "https://api.github.com/repos/S-Nakamur-a/conductor/releases/latest",
         ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output()
-        .ok()?;
+    {
+        Ok(out) => out,
+        Err(e) => {
+            log::warn!("failed to run curl: {e}");
+            return None;
+        }
+    };
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::warn!(
+            "update check failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
         return None;
     }
 
     let text = String::from_utf8(output.stdout).ok()?;
-    let val: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let val: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("failed to parse GitHub API response: {e}");
+            return None;
+        }
+    };
 
     let tag = val.get("tag_name")?.as_str()?;
     let html_url = val
@@ -139,6 +148,8 @@ pub fn check_for_update() -> Option<UpdateInfo> {
 
     // Strip leading 'v' if present (e.g. "v0.3.0" → "0.3.0").
     let version = tag.strip_prefix('v').unwrap_or(tag).to_string();
+
+    log::debug!("latest release: {version} (current: {})", current_version());
 
     let info = UpdateInfo {
         latest_version: version,

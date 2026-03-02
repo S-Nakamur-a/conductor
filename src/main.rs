@@ -203,27 +203,26 @@ fn run_loop(
 
     // ── Update check (opt-out via [updates] check_on_startup = false) ─
     let update_check_enabled = app.config.updates.check_on_startup;
-    let update_check_interval = app.config.updates.check_interval_secs;
     let update_result: Arc<Mutex<Option<update_checker::UpdateInfo>>> =
         Arc::new(Mutex::new(None));
 
     if update_check_enabled {
-        if let Some(cached) = update_checker::read_cache(update_check_interval) {
+        // Show badge immediately from cache while the background fetch runs.
+        if let Some(cached) = update_checker::read_cache() {
             if update_checker::is_newer(&cached.latest_version, update_checker::current_version()) {
                 app.update_info = Some(cached);
             }
         }
-        // If cache was stale or missing, kick off a background check.
-        if app.update_info.is_none() && !update_checker::cache_is_fresh(update_check_interval) {
-            let result_handle = Arc::clone(&update_result);
-            std::thread::spawn(move || {
-                if let Some(info) = update_checker::check_for_update() {
-                    if let Ok(mut lock) = result_handle.lock() {
-                        *lock = Some(info);
-                    }
+        // Always fetch the latest release info in the background so we
+        // never miss a new version due to stale cache data.
+        let result_handle = Arc::clone(&update_result);
+        std::thread::spawn(move || {
+            if let Some(info) = update_checker::check_for_update() {
+                if let Ok(mut lock) = result_handle.lock() {
+                    *lock = Some(info);
                 }
-            });
-        }
+            }
+        });
     }
 
     let mut needs_redraw = true;
@@ -436,7 +435,8 @@ fn run_loop(
         }
 
         // Pick up update check result from background thread.
-        if update_check_enabled && app.update_info.is_none() {
+        // Always accept the fresh result — it supersedes any cached data.
+        if update_check_enabled {
             if let Ok(mut lock) = update_result.try_lock() {
                 if let Some(info) = lock.take() {
                     if update_checker::is_newer(&info.latest_version, update_checker::current_version()) {
