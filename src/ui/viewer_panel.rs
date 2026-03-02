@@ -9,8 +9,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
-use unicode_width::UnicodeWidthStr;
-
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::review_state::ReviewInputMode;
@@ -786,21 +784,21 @@ fn expand_tabs(line: &str, tab_width: usize) -> String {
     result
 }
 
-fn render_search_box(frame: &mut Frame, area: Rect, query: &str, theme: &Theme) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &Theme) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
 
     frame.render_widget(ratatui::widgets::Clear, search_area);
 
-    let text = format!("/{query}\u{2588}");
+    let text = format!("/{}\u{2588}{}", query.text_before_cursor(), query.text_after_cursor());
     let paragraph = Paragraph::new(Span::styled(
         text,
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
     // +1 for the leading '/' character
-    let cursor_x = search_area.x + 1 + UnicodeWidthStr::width(query) as u16;
+    let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
     if cursor_x < search_area.x + search_area.width {
         frame.set_cursor_position(Position::new(cursor_x, search_area.y));
     }

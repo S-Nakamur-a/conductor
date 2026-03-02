@@ -13,6 +13,7 @@ mod keymap;
 mod pty_manager;
 mod review_state;
 mod review_store;
+mod text_input;
 mod theme;
 mod ui;
 mod update_checker;

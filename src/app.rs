@@ -17,6 +17,7 @@ use crate::keymap::KeyMap;
 use crate::pty_manager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, Author, CommentKind, ReviewStore};
+use crate::text_input::TextInput;
 use crate::theme::Theme;
 use crate::viewer_state::ViewerState;
 
@@ -170,7 +171,7 @@ pub struct App {
     /// Whether a worktree creation dialog is showing.
     pub worktree_input_mode: WorktreeInputMode,
     /// Text buffer for worktree name input.
-    pub worktree_input_buffer: String,
+    pub worktree_input_buffer: TextInput,
     /// Timestamp of the last click on worktree blank space (for double-click detection).
     pub worktree_blank_last_click: std::time::Instant,
     /// Status message (flash message) shown in the status bar.
@@ -188,7 +189,7 @@ pub struct App {
     /// Index of the selected history record.
     pub history_selected: usize,
     /// Search query for session history.
-    pub history_search_query: String,
+    pub history_search_query: TextInput,
     /// Whether the history search input is active.
     pub history_search_active: bool,
     /// Whether the cherry-pick picker UI is active.
@@ -210,7 +211,7 @@ pub struct App {
     /// Whether the "open repository" path input is active.
     pub open_repo_active: bool,
     /// Text buffer for the "open repository" path input.
-    pub open_repo_buffer: String,
+    pub open_repo_buffer: TextInput,
     /// Last known terminal content area size (rows, cols) for Claude PTY.
     pub terminal_size_claude: (u16, u16),
     /// Last known terminal content area size (rows, cols) for Shell PTY.
@@ -230,7 +231,7 @@ pub struct App {
     /// Currently selected index in the base branch picker.
     pub base_branch_selected: usize,
     /// Filter string for narrowing the base branch list.
-    pub base_branch_filter: String,
+    pub base_branch_filter: TextInput,
 
     // ── Switch (remote branch checkout) ─────────────────────────
     /// Whether the switch-branch overlay is active.
@@ -240,7 +241,7 @@ pub struct App {
     /// Currently selected index in the switch list.
     pub switch_branch_selected: usize,
     /// Filter string for narrowing the switch branch list.
-    pub switch_branch_filter: String,
+    pub switch_branch_filter: TextInput,
 
     // ── Grab (checkout branch on main) ─────────────────────────
     /// Whether the grab branch picker overlay is active.
@@ -270,7 +271,7 @@ pub struct App {
     /// Currently selected index in the resume session list.
     pub resume_session_selected: usize,
     /// Filter string for narrowing the resume session list.
-    pub resume_session_filter: String,
+    pub resume_session_filter: TextInput,
     /// Whether to show sessions from all projects (true) or only current repo (false).
     pub resume_session_all_projects: bool,
 
@@ -294,7 +295,7 @@ pub struct App {
     /// Whether the command palette is open.
     pub command_palette_active: bool,
     /// Filter string for narrowing the command list.
-    pub command_palette_filter: String,
+    pub command_palette_filter: TextInput,
     /// Currently selected index in the filtered command list.
     pub command_palette_selected: usize,
 
@@ -359,15 +360,18 @@ pub struct App {
 
     // ── Smart Worktree ──────────────────────────────────────────
     /// Multi-line task description buffer for smart worktree creation.
-    pub smart_description_buffer: String,
+    pub smart_description_buffer: TextInput,
     /// Receiver for the background LLM generation result.
     pub smart_gen_rx: Option<mpsc::Receiver<Result<SmartGenResult, String>>>,
     /// Generated branch name (editable in SmartConfirmBranch state).
-    pub smart_branch_name: String,
+    pub smart_branch_name: TextInput,
     /// Generated prompt to pre-type into Claude Code.
     pub smart_prompt: String,
     /// When true, auto-spawn Claude Code after worktree creation and pre-type the prompt.
     pub smart_auto_spawn: bool,
+
+    /// System clipboard context for Ctrl+V paste support.
+    pub clipboard: Option<copypasta::ClipboardContext>,
 
     // ── Worktree panel detail + decoration ──────────────────────
     /// Cached local branch list (refreshed with worktrees).
@@ -477,7 +481,7 @@ impl App {
             review_state: ReviewState::new(),
             pty_manager: pty_manager::PtyManager::new(),
             worktree_input_mode: WorktreeInputMode::Normal,
-            worktree_input_buffer: String::new(),
+            worktree_input_buffer: TextInput::new(),
             worktree_blank_last_click: std::time::Instant::now(),
             status_message: None,
             last_poll_head_oid: None,
@@ -486,7 +490,7 @@ impl App {
             history_active: false,
             history_records: Vec::new(),
             history_selected: 0,
-            history_search_query: String::new(),
+            history_search_query: TextInput::new(),
             history_search_active: false,
             cherry_pick_active: false,
             cherry_pick_source_branch: String::new(),
@@ -497,7 +501,7 @@ impl App {
             repo_selector_active: false,
             repo_selector_selected: 0,
             open_repo_active: false,
-            open_repo_buffer: String::new(),
+            open_repo_buffer: TextInput::new(),
             terminal_size_claude: (24, 80),
             terminal_size_shell: (6, 80),
             needs_clear: false,
@@ -506,11 +510,11 @@ impl App {
             worktree_pending_branch: String::new(),
             base_branch_list: Vec::new(),
             base_branch_selected: 0,
-            base_branch_filter: String::new(),
+            base_branch_filter: TextInput::new(),
             switch_branch_active: false,
             switch_branch_list: Vec::new(),
             switch_branch_selected: 0,
-            switch_branch_filter: String::new(),
+            switch_branch_filter: TextInput::new(),
             grab_active: false,
             grab_branches: Vec::new(),
             grab_selected: 0,
@@ -521,7 +525,7 @@ impl App {
             resume_session_active: false,
             resume_sessions: Vec::new(),
             resume_session_selected: 0,
-            resume_session_filter: String::new(),
+            resume_session_filter: TextInput::new(),
             resume_session_all_projects: false,
             syntax_set,
             syntect_theme,
@@ -529,7 +533,7 @@ impl App {
             help_context: Focus::Worktree,
             expanded_panel: None,
             command_palette_active: false,
-            command_palette_filter: String::new(),
+            command_palette_filter: TextInput::new(),
             command_palette_selected: 0,
             ui_tick: 0,
             decoration_tick: 0,
@@ -552,11 +556,12 @@ impl App {
             update_badge_cols: None,
             bg_branch_rx: None,
             bg_pull_rx: None,
-            smart_description_buffer: String::new(),
+            smart_description_buffer: TextInput::new_multiline(),
             smart_gen_rx: None,
-            smart_branch_name: String::new(),
+            smart_branch_name: TextInput::new(),
             smart_prompt: String::new(),
             smart_auto_spawn: false,
+            clipboard: copypasta::ClipboardContext::new().ok(),
             local_branches: Vec::new(),
             decoration_states: Default::default(),
         };
@@ -994,7 +999,7 @@ impl App {
             }
             CommandId::OpenRepo => {
                 self.open_repo_active = true;
-                self.open_repo_buffer = self.repo_path.display().to_string();
+                self.open_repo_buffer.set_text(&self.repo_path.display().to_string());
             }
             CommandId::SwitchRepo => {
                 if self.repo_list.len() > 1 {
@@ -1033,7 +1038,7 @@ impl App {
                         format!("{file_path}:{line} ")
                     };
                     self.viewer_state.clear_selection();
-                    self.review_state.input_buffer = location;
+                    self.review_state.input_buffer.set_text(&location);
                     self.review_state.input_kind = crate::review_store::CommentKind::Suggest;
                     self.review_state.input_mode = crate::review_state::ReviewInputMode::AddingComment;
                     self.review_state.status_message =
@@ -1099,7 +1104,7 @@ impl App {
                     .review_state
                     .selected_comment_idx(self.viewer_state.comment_list_selected);
                 if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
-                    self.review_state.input_buffer = comment.body.clone();
+                    self.review_state.input_buffer.set_text(&comment.body);
                     self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
                     self.review_state.selected = comment_idx.unwrap();
                     self.review_state.status_message =
@@ -1864,7 +1869,7 @@ impl App {
 
     pub fn search_session_history(&mut self) {
         if let Some(store) = &self.review_store {
-            let query = self.history_search_query.clone();
+            let query = self.history_search_query.text().to_string();
             let result = if query.is_empty() {
                 store.list_session_history(50)
             } else {
@@ -2371,7 +2376,7 @@ No markdown fences, no explanation, just the JSON object."#;
         };
         match rx.try_recv() {
             Ok(Ok(result)) => {
-                self.smart_branch_name = result.branch;
+                self.smart_branch_name.set_text(&result.branch);
                 self.smart_prompt = result.prompt;
                 self.worktree_input_mode = WorktreeInputMode::SmartConfirmBranch;
                 self.smart_gen_rx = None;

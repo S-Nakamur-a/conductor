@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::review_store::{CommentKind, CommentTemplate, ReviewComment, ReviewReply, ReviewStore};
+use crate::text_input::TextInput;
 
 /// A single row in the virtual comment list.
 ///
@@ -42,13 +43,13 @@ pub struct ReviewState {
     /// Current input mode.
     pub input_mode: ReviewInputMode,
     /// Text buffer for the input field (used during adding/editing).
-    pub input_buffer: String,
+    pub input_buffer: TextInput,
     /// The kind of comment being created (Suggest or Question).
     pub input_kind: CommentKind,
     /// Optional flash message displayed at the bottom of the panel.
     pub status_message: Option<String>,
     /// Current search/filter query for comments.
-    pub search_query: String,
+    pub search_query: TextInput,
     /// Whether the search input is active.
     pub search_active: bool,
     /// Filtered comment indices (into the `comments` vec).
@@ -90,10 +91,10 @@ impl ReviewState {
             comments: Vec::new(),
             selected: 0,
             input_mode: ReviewInputMode::Normal,
-            input_buffer: String::new(),
+            input_buffer: TextInput::new_multiline(),
             input_kind: CommentKind::Suggest,
             status_message: None,
-            search_query: String::new(),
+            search_query: TextInput::new(),
             search_active: false,
             filtered_indices: Vec::new(),
             templates: Vec::new(),

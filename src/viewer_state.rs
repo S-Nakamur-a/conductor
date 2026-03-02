@@ -13,6 +13,7 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 use crate::diff_state::{DiffLineTag, FileDiff, InlineSegment};
+use crate::text_input::TextInput;
 
 /// A file matched by filename fuzzy search, with its score.
 #[derive(Debug, Clone)]
@@ -78,7 +79,7 @@ pub struct ViewerState {
     /// Relative path of the file currently displayed (if any).
     pub current_file: Option<String>,
     /// Current search query (empty = no active search).
-    pub search_query: String,
+    pub search_query: TextInput,
     /// Line indices that match the current search query.
     pub search_matches: Vec<usize>,
     /// Index into search_matches for the current match.
@@ -127,7 +128,7 @@ pub struct ViewerState {
     /// Whether the filename search overlay is active.
     pub filename_search_active: bool,
     /// Current filename search query.
-    pub filename_search_query: String,
+    pub filename_search_query: TextInput,
     /// Scored and sorted fuzzy search results.
     pub filename_search_results: Vec<ScoredFile>,
     /// Selected index within the search results list.
@@ -144,7 +145,7 @@ impl Default for ViewerState {
             file_scroll: 0,
             h_scroll: 0,
             current_file: None,
-            search_query: String::new(),
+            search_query: TextInput::new(),
             search_matches: Vec::new(),
             search_match_idx: 0,
             search_active: false,
@@ -168,7 +169,7 @@ impl Default for ViewerState {
             diff_view_lines: Vec::new(),
             diff_view_scroll: 0,
             filename_search_active: false,
-            filename_search_query: String::new(),
+            filename_search_query: TextInput::new(),
             filename_search_results: Vec::new(),
             filename_search_selected: 0,
         }
