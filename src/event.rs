@@ -3085,7 +3085,14 @@ pub fn handle_mouse_event(
                             handle_terminal_tab_click(app, col, terminal_x, true);
                         } else if app.current_worktree_claude_sessions().is_empty()
                         {
-                            spawn_terminal_session(app);
+                            // Double-click required to spawn a new Claude Code session.
+                            let now = std::time::Instant::now();
+                            let elapsed =
+                                now.duration_since(app.terminal_claude_blank_last_click);
+                            app.terminal_claude_blank_last_click = now;
+                            if elapsed.as_millis() < 400 {
+                                spawn_terminal_session(app);
+                            }
                         }
                     } else {
                         app.set_focus(Focus::TerminalShell);
@@ -3094,7 +3101,14 @@ pub fn handle_mouse_event(
                             handle_terminal_tab_click(app, col, terminal_x, false);
                         } else if app.current_worktree_shell_sessions().is_empty()
                         {
-                            spawn_terminal_session(app);
+                            // Double-click required to spawn a new Shell session.
+                            let now = std::time::Instant::now();
+                            let elapsed =
+                                now.duration_since(app.terminal_shell_blank_last_click);
+                            app.terminal_shell_blank_last_click = now;
+                            if elapsed.as_millis() < 400 {
+                                spawn_terminal_session(app);
+                            }
                         }
                     }
                 }
