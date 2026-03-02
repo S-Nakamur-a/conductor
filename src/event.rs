@@ -82,6 +82,10 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         handle_open_repo_key(app, key);
         return;
     }
+    if app.grep_search_active {
+        handle_grep_search_key(app, key);
+        return;
+    }
     if app.help_active {
         handle_help_key(app, key);
         return;
@@ -261,6 +265,16 @@ fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             if app.update_info.is_some() {
                 app.start_update_confirm();
             }
+            true
+        }
+        Action::SearchFullText => {
+            app.grep_search_active = true;
+            app.grep_search_query.clear();
+            app.grep_search_results.clear();
+            app.grep_search_selected = 0;
+            app.grep_search_scroll = 0;
+            app.grep_search_running = false;
+            app.grep_search_rx = None;
             true
         }
         _ => false, // Not a global action — let panel-specific handler try.
@@ -1880,6 +1894,91 @@ fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.filename_search_query.insert_char(c);
             app.viewer_state.filename_search_selected = 0;
             app.viewer_state.execute_filename_search();
+        }
+        _ => {}
+    }
+}
+
+// ── Overlay: grep (full-text) search ────────────────────────────────────
+
+fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.grep_search_active = false;
+            app.grep_search_running = false;
+            app.grep_search_rx = None;
+        }
+        KeyCode::Enter => {
+            if app.grep_search_results.is_empty() || app.grep_search_running {
+                // No results yet or still typing — start/restart search.
+                app.start_grep_search();
+            } else {
+                // Jump to the selected result.
+                if let Some(result) = app.grep_search_results.get(app.grep_search_selected).cloned() {
+                    app.grep_search_active = false;
+                    app.grep_search_running = false;
+                    app.grep_search_rx = None;
+
+                    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                        let wt_path = wt.path.clone();
+                        app.viewer_state.reveal_file_in_tree(&result.file_path, &wt_path);
+                        app.viewer_state.open_file(&wt_path, &result.file_path);
+                        app.rehighlight_viewer();
+                        app.viewer_state.file_scroll = result.line_number.saturating_sub(1);
+                        app.set_focus(Focus::Viewer);
+                    }
+                }
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = app.grep_search_results.len();
+            if count > 0 && app.grep_search_selected + 1 < count {
+                app.grep_search_selected += 1;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.grep_search_selected > 0 {
+                app.grep_search_selected -= 1;
+            }
+        }
+        KeyCode::Backspace => {
+            app.grep_search_query.delete_backward();
+        }
+        KeyCode::Delete => {
+            app.grep_search_query.delete_forward();
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.grep_search_query.move_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
+            app.grep_search_query.move_word_right();
+        }
+        KeyCode::Left => {
+            app.grep_search_query.move_left();
+        }
+        KeyCode::Right => {
+            app.grep_search_query.move_right();
+        }
+        KeyCode::Home => {
+            app.grep_search_query.move_home();
+        }
+        KeyCode::End => {
+            app.grep_search_query.move_end();
+        }
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.grep_search_regex_mode = !app.grep_search_regex_mode;
+        }
+        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.grep_search_case_sensitive = !app.grep_search_case_sensitive;
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.grep_search_query, false);
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.grep_search_query.select_all_and_clear();
+        }
+        KeyCode::Char(c) => {
+            app.grep_search_query.insert_char(c);
         }
         _ => {}
     }

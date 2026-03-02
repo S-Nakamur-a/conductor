@@ -9,6 +9,7 @@ mod diff_state;
 mod event;
 mod file_watcher;
 mod git_engine;
+mod grep_search;
 mod keymap;
 mod pty_manager;
 mod review_state;
@@ -245,6 +246,10 @@ fn run_loop(
         if app.update_state != crate::app::UpdateState::Idle {
             needs_redraw = true;
         }
+        // Grep search streaming results need continuous rendering.
+        if app.grep_search_running {
+            needs_redraw = true;
+        }
 
         if needs_redraw {
             // Advance animation tick only on actual renders.
@@ -371,6 +376,9 @@ fn run_loop(
 
         // Check if smart worktree generation has finished.
         app.poll_smart_generation();
+
+        // Poll grep search results.
+        app.poll_grep_search();
 
         // Poll update download progress.
         app.poll_update_progress();
@@ -597,6 +605,9 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     }
     if app.resume_session_active {
         ui::dashboard::render_resume_session_overlay(frame, main_area, app);
+    }
+    if app.grep_search_active {
+        ui::grep_search::render_grep_search_overlay(frame, main_area, app);
     }
     if app.command_palette_active {
         ui::dashboard::render_command_palette_overlay(frame, main_area, app);
