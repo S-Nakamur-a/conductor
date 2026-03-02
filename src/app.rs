@@ -1560,13 +1560,25 @@ impl App {
         let mut new_waiting: HashSet<PathBuf> = HashSet::new();
 
         // Source 1: Hook signal files (high reliability).
-        let signal_dir = self.repo_path.join(".conductor").join("cc-waiting");
+        // Signal files are written by the plugin hook to the main repo's
+        // `.conductor/cc-waiting/` directory.  Resolve via git so we look
+        // in the right place even when Conductor was launched from a linked
+        // worktree.
+        let signal_dir = git_engine::GitEngine::open(&self.repo_path)
+            .and_then(|e| e.main_worktree_path())
+            .unwrap_or_else(|_| self.repo_path.clone())
+            .join(".conductor")
+            .join("cc-waiting");
         if let Ok(entries) = std::fs::read_dir(&signal_dir) {
             for entry in entries.flatten() {
                 let filename = entry.file_name().to_string_lossy().to_string();
-                let path_str = filename.replace("__", "/");
+                let signal_path: PathBuf = PathBuf::from(filename.replace("__", "/"));
+                // Normalize both sides (strip trailing slashes) to ensure
+                // comparison succeeds regardless of how paths were serialized.
+                let signal_normalized: PathBuf = signal_path.components().collect();
                 for wt in &self.worktrees {
-                    if wt.path.to_string_lossy() == path_str {
+                    let wt_normalized: PathBuf = wt.path.components().collect();
+                    if wt_normalized == signal_normalized {
                         new_waiting.insert(wt.path.clone());
                     }
                 }
@@ -1625,8 +1637,14 @@ impl App {
         if session.kind != pty_manager::SessionKind::ClaudeCode {
             return;
         }
-        let signal_dir = self.repo_path.join(".conductor").join("cc-waiting");
-        let sanitized = session.working_dir.display().to_string().replace('/', "__");
+        let signal_dir = git_engine::GitEngine::open(&self.repo_path)
+            .and_then(|e| e.main_worktree_path())
+            .unwrap_or_else(|_| self.repo_path.clone())
+            .join(".conductor")
+            .join("cc-waiting");
+        // Normalize the path (strip trailing slash) to match the shell's $PWD encoding.
+        let normalized: PathBuf = session.working_dir.components().collect();
+        let sanitized = normalized.display().to_string().replace('/', "__");
         let _ = std::fs::remove_file(signal_dir.join(&sanitized));
         let working_dir = session.working_dir.clone();
         self.cc_waiting_worktrees.remove(&working_dir);

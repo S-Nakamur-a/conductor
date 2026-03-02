@@ -996,8 +996,11 @@ impl GitEngine {
         }
 
         // Normal (non-bare) repository.
+        // `repo.workdir()` may return a path with a trailing slash (libgit2
+        // convention).  Normalize via `components().collect()` so the path
+        // is consistent with linked-worktree paths and shell `$PWD` values.
         if let Some(workdir) = self.repo.workdir() {
-            return Ok(workdir.to_path_buf());
+            return Ok(workdir.components().collect());
         }
 
         // Bare repo — the "main worktree" is the git dir's parent.
