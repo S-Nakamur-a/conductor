@@ -51,15 +51,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             }
             let is_waiting = app.pty_manager.is_waiting_for_input(*global_idx);
             let label = format!("[CC:{}]", tab_idx + 1);
+            let is_active = Some(*global_idx) == app.active_claude_session;
+            let suppress_blink = focused && is_active;
             let pulse_on = (app.ui_tick / 30) % 2 == 0;
             let label_style = if is_waiting {
-                Style::default()
-                    .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
-                    .add_modifier(Modifier::BOLD)
+                if suppress_blink {
+                    // Static style when this panel is focused on this session.
+                    Style::default().fg(theme.waiting_primary)
+                } else {
+                    Style::default()
+                        .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
+                        .add_modifier(Modifier::BOLD)
+                }
             } else {
                 Style::default()
             };
-            let is_active = Some(*global_idx) == app.active_claude_session;
             let close_style = if is_active {
                 Style::default().fg(theme.error)
             } else {

@@ -360,6 +360,15 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     let theme = &app.theme;
 
+    // Determine the worktree path of the focused CC session (if any).
+    let focused_cc_wt: Option<std::path::PathBuf> = if app.focus == crate::app::Focus::TerminalClaude {
+        app.active_claude_session.and_then(|idx| {
+            app.pty_manager.sessions().get(idx).map(|s| s.working_dir.clone())
+        })
+    } else {
+        None
+    };
+
     // Orange-tinted background for the notification bar.
     let pulse_on = (app.ui_tick / 20) % 2 == 0;
     let bar_bg = if pulse_on {
@@ -394,16 +403,13 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
     }).collect();
     waiting.sort_by(|a, b| a.1.cmp(&b.1));
 
-    // Badge colors: orange pulse.
-    let badge_bg = if pulse_on {
+    // Badge colors: pulsing vs static (for focused session).
+    let badge_bg_pulse = if pulse_on {
         theme.waiting_secondary
     } else {
         Theme::darken(theme.waiting_secondary, 0.90)
     };
-    let badge_style = Style::default()
-        .fg(Color::Black)
-        .bg(badge_bg)
-        .add_modifier(Modifier::BOLD);
+    let badge_bg_static = theme.waiting_secondary;
 
     let sep_style = Style::default()
         .fg(Theme::darken(theme.waiting_primary, 0.70))
@@ -411,7 +417,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     let mut x = area.x + UnicodeWidthStr::width(prefix) as u16;
 
-    for (i, (_path, name)) in waiting.iter().enumerate() {
+    for (i, (path, name)) in waiting.iter().enumerate() {
         if i > 0 {
             // Separator between badges.
             let sep_area = Rect::new(x, area.y, 1, 1);
@@ -425,6 +431,14 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         if x + w > area.x + area.width {
             break; // not enough room
         }
+
+        // Suppress blinking for the badge matching the focused CC session.
+        let suppress = focused_cc_wt.as_deref() == Some(path.as_path());
+        let bg = if suppress { badge_bg_static } else { badge_bg_pulse };
+        let badge_style = Style::default()
+            .fg(Color::Black)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD);
 
         let badge_area = Rect::new(x, area.y, w, 1);
         frame.render_widget(Paragraph::new(Span::styled(&badge_str, badge_style)), badge_area);
