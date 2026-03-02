@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 pub struct UpdateInfo {
     pub latest_version: String,
     pub release_url: String,
+    pub tarball_url: String,
 }
 
 /// On-disk cache representation.
@@ -23,6 +24,8 @@ struct CacheEntry {
     updated_at: u64,
     latest_version: String,
     release_url: String,
+    #[serde(default)]
+    tarball_url: String,
 }
 
 /// Return the current crate version from `Cargo.toml`.
@@ -68,6 +71,7 @@ pub fn read_cache(max_age_secs: u64) -> Option<UpdateInfo> {
         Some(UpdateInfo {
             latest_version: entry.latest_version,
             release_url: entry.release_url,
+            tarball_url: entry.tarball_url,
         })
     } else {
         None
@@ -84,6 +88,7 @@ fn write_cache(info: &UpdateInfo) {
         updated_at: now_epoch_secs(),
         latest_version: info.latest_version.clone(),
         release_url: info.release_url.clone(),
+        tarball_url: info.tarball_url.clone(),
     };
     let Ok(json) = serde_json::to_string(&entry) else {
         return;
@@ -126,12 +131,19 @@ pub fn check_for_update() -> Option<UpdateInfo> {
         .unwrap_or("")
         .to_string();
 
+    let tarball_url = val
+        .get("tarball_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     // Strip leading 'v' if present (e.g. "v0.3.0" → "0.3.0").
     let version = tag.strip_prefix('v').unwrap_or(tag).to_string();
 
     let info = UpdateInfo {
         latest_version: version,
         release_url: html_url,
+        tarball_url,
     };
     write_cache(&info);
     Some(info)

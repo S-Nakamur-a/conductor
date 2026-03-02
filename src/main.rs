@@ -105,6 +105,17 @@ fn main() -> Result<()> {
     )?;
     terminal.show_cursor()?;
 
+    // ── Restart if update was installed ───────────────────────────────
+    if app.should_restart {
+        println!("Restarting Conductor...");
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(&app.startup_exe)
+            .args(&app.startup_args)
+            .exec();
+        eprintln!("Failed to restart: {err}");
+        std::process::exit(1);
+    }
+
     // ── Session summary (gamification) ──────────────────────────────
     if let (Some(store), Some(session_id)) = (&app.review_store, &app.stats_session_id) {
         if let Ok(stats) = store.end_stats_session(session_id) {
@@ -230,6 +241,10 @@ fn run_loop(
         if matches!(app.focus, crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell) {
             needs_redraw = true;
         }
+        // Update overlays need continuous rendering for spinner animation.
+        if app.update_state != crate::app::UpdateState::Idle {
+            needs_redraw = true;
+        }
 
         if needs_redraw {
             // Advance animation tick only on actual renders.
@@ -310,6 +325,7 @@ fn run_loop(
             .has_animation();
         let tick = match app.focus {
             crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+            _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
             _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
             _ if decoration_active => DECORATION_TICK_INTERVAL,
             _ => TICK_RATE_IDLE,
@@ -355,6 +371,9 @@ fn run_loop(
 
         // Check if smart worktree generation has finished.
         app.poll_smart_generation();
+
+        // Poll update download progress.
+        app.poll_update_progress();
 
         // Periodically refresh the worktree list to pick up external changes
         // (e.g. `git worktree add` run inside a terminal panel).
@@ -583,6 +602,15 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     }
     if app.help_active {
         ui::dashboard::render_help_overlay(frame, main_area, app);
+    }
+    match app.update_state {
+        crate::app::UpdateState::Confirming => {
+            ui::dashboard::render_update_confirm_overlay(frame, main_area, app);
+        }
+        crate::app::UpdateState::InProgress | crate::app::UpdateState::Restarting | crate::app::UpdateState::Failed => {
+            ui::dashboard::render_update_progress_overlay(frame, main_area, app);
+        }
+        crate::app::UpdateState::Idle => {}
     }
 
     // ── Status bar ──────────────────────────────────────────────────

@@ -300,12 +300,16 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
                 Style::default().fg(Color::LightGreen).bg(bar_bg),
             ));
         }
+        // Track the update badge text for position calculation.
+        let mut update_badge_text: Option<String> = None;
         if let Some(ref update) = app.update_info {
             if !spans.is_empty() {
                 spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
             }
+            let badge = format!(" ↑ v{} available ", update.latest_version);
+            update_badge_text = Some(badge.clone());
             spans.push(Span::styled(
-                format!(" ↑ v{} available ", update.latest_version),
+                badge,
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Yellow)
@@ -321,14 +325,25 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             let stats_line = Line::from(spans);
             let stats_w = stats_line.width() as u16;
             if stats_w + 2 < area.width {
-                let stats_area = Rect::new(
-                    area.x + area.width - stats_w,
-                    area.y,
-                    stats_w,
-                    1,
-                );
+                let stats_x = area.x + area.width - stats_w;
+                let stats_area = Rect::new(stats_x, area.y, stats_w, 1);
                 frame.render_widget(Paragraph::new(stats_line), stats_area);
+
+                // Compute absolute column range for the update badge.
+                if let Some(ref badge) = update_badge_text {
+                    let badge_w = UnicodeWidthStr::width(badge.as_str()) as u16;
+                    // Badge is at end of stats (before trailing padding space).
+                    let badge_end = stats_x + stats_w - 1; // -1 for trailing " "
+                    let badge_start = badge_end - badge_w;
+                    app.update_badge_cols = Some((badge_start, badge_end));
+                } else {
+                    app.update_badge_cols = None;
+                }
+            } else {
+                app.update_badge_cols = None;
             }
+        } else {
+            app.update_badge_cols = None;
         }
     }
 }

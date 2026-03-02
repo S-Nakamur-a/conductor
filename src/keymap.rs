@@ -85,6 +85,9 @@ pub enum Action {
     ScrollbackDown,
     ScrollbackTop,
     SnapToLive,
+
+    // ── App ──────────────────────────────────────────────────────
+    UpdateAndRestart,
 }
 
 impl Action {
@@ -149,6 +152,7 @@ impl Action {
             "scrollback_down" => Some(Action::ScrollbackDown),
             "scrollback_top" => Some(Action::ScrollbackTop),
             "snap_to_live" => Some(Action::SnapToLive),
+            "update_and_restart" => Some(Action::UpdateAndRestart),
             _ => None,
         }
     }
@@ -215,6 +219,7 @@ impl Action {
             Action::ScrollbackDown => "scrollback_down",
             Action::ScrollbackTop => "scrollback_top",
             Action::SnapToLive => "snap_to_live",
+            Action::UpdateAndRestart => "update_and_restart",
         }
     }
 }
