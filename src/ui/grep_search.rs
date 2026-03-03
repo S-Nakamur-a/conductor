@@ -20,6 +20,19 @@ fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
     }
 }
 
+/// Find the largest byte index `<= pos` that is a valid UTF-8 character
+/// boundary in `s`.  Equivalent to the nightly `str::floor_char_boundary`.
+fn floor_char_boundary(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut i = pos;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// Render the grep search overlay.
 pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -179,12 +192,16 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
             let ms = m.match_start.saturating_sub(trim_offset);
             let me = m.match_end.saturating_sub(trim_offset).min(content.len());
 
-            if ms < me && me <= content.len() && ms < max_content {
+            // Ensure max_content is at a valid UTF-8 character boundary
+            // to prevent panics when slicing multi-byte content.
+            let safe_max = floor_char_boundary(content, max_content);
+
+            if ms < me && me <= content.len() && ms < safe_max {
                 let before = &content[..ms];
-                let matched = &content[ms..me.min(max_content)];
-                let after_end = me.min(max_content);
-                let after = if after_end < content.len().min(max_content) {
-                    &content[after_end..content.len().min(max_content)]
+                let me_clamped = me.min(safe_max);
+                let matched = &content[ms..me_clamped];
+                let after = if me_clamped < safe_max {
+                    &content[me_clamped..safe_max]
                 } else {
                     ""
                 };
@@ -194,13 +211,14 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
                     Style::default().bg(theme.accent).add_modifier(Modifier::BOLD),
                 ));
                 spans.push(Span::styled(after.to_string(), content_style));
-                if content.len() > max_content && max_content > 3 {
+                if content.len() > safe_max {
                     spans.push(Span::styled("...", Style::default().fg(theme.muted)));
                 }
             } else {
                 // Fallback: no highlight, just truncate.
+                let safe_trunc = floor_char_boundary(content, max_content.saturating_sub(3));
                 let display = if content.len() > max_content && max_content > 3 {
-                    format!("{}...", &content[..max_content.saturating_sub(3)])
+                    format!("{}...", &content[..safe_trunc])
                 } else {
                     content.to_string()
                 };
