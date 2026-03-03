@@ -2839,10 +2839,18 @@ No markdown fences, no explanation, just the JSON object."#;
         let branch = wt.branch.clone();
         let is_main = wt.is_main;
 
+        // Collect active worktree branch names as candidates.
+        let worktree_branches: Vec<String> = self
+            .worktrees
+            .iter()
+            .filter(|w| !w.is_main && w.branch != branch)
+            .map(|w| w.branch.clone())
+            .collect();
+
         let mut details = git_engine::BranchDetails::default();
 
         if !is_main {
-            // Initial (base) branch: check DB first, fall back to heuristic.
+            // Parent branch: check DB first, fall back to reflog/merge-base heuristic.
             if let Some(store) = &self.review_store {
                 if let Ok(Some(base)) = store.get_worktree_base_branch(&branch) {
                     details.initial_branch = Some(base);
@@ -2850,25 +2858,47 @@ No markdown fences, no explanation, just the JSON object."#;
             }
             if details.initial_branch.is_none() {
                 if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
-                    details.initial_branch =
-                        engine.detect_initial_branch(&branch, &self.config.general.main_branch);
+                    details.initial_branch = engine.detect_parent_branch(
+                        &branch,
+                        &self.config.general.main_branch,
+                        &worktree_branches,
+                    );
                 }
             }
+        }
 
-            // Derived branches.
-            if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
-                let main = &self.config.general.main_branch;
-                let exclude = vec![main.clone()];
-                if let Ok(derived) = engine.find_derived_branches(&branch, &exclude) {
-                    details.derived_branches = derived;
-                }
+        // Derived (fork) branches: check DB first, fall back to git heuristic.
+        let mut db_children = Vec::new();
+        if let Some(store) = &self.review_store {
+            if let Ok(children) = store.get_worktree_children(&branch) {
+                db_children = children;
             }
+        }
 
-            // PR URL.
-            if self.gh_available {
-                details.pr_loading = true;
-                self.start_pr_url_lookup(&branch);
+        // Filter DB children to only those that are currently active worktree branches.
+        let active_branches: std::collections::HashSet<&str> =
+            self.worktrees.iter().map(|w| w.branch.as_str()).collect();
+
+        let filtered_children: Vec<String> = db_children
+            .into_iter()
+            .filter(|c| active_branches.contains(c.as_str()))
+            .collect();
+
+        if !filtered_children.is_empty() {
+            details.derived_branches = filtered_children;
+        } else if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
+            let main = &self.config.general.main_branch;
+            if let Ok(derived) =
+                engine.find_derived_branches(&branch, main, &worktree_branches)
+            {
+                details.derived_branches = derived;
             }
+        }
+
+        // PR URL (non-main only).
+        if !is_main && self.gh_available {
+            details.pr_loading = true;
+            self.start_pr_url_lookup(&branch);
         }
 
         self.branch_details = details;
