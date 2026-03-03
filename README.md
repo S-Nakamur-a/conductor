@@ -99,30 +99,64 @@ npm start      # run compiled JS
 
 Config file: `~/.config/conductor/config.toml`
 
-All fields are optional with sensible defaults. Example:
+All fields are optional with sensible defaults. Full example:
 
 ```toml
 [general]
-main_branch = "main"
-# shell = "/bin/zsh"            # defaults to $SHELL
-# worktree_dir = "~/worktrees"  # custom worktree base directory
+# repo = "/path/to/default/repo"       # default repository to open on startup
+main_branch = "main"                    # main/trunk branch name (default: "main")
+# shell = "/bin/zsh"                    # shell for PTY sessions (default: $SHELL)
+# repos = ["/path/to/repo1", "/path/to/repo2"]  # additional repos for multi-repo support
+# worktree_dir = "~/worktrees"          # custom worktree base directory
+                                        #   (default: <repo-parent>/<repo-name>-worktrees/)
+decoration = "aquarium"                 # worktree panel decoration
+                                        #   aquarium | space | garden | city | none
+
+[terminal]
+# inactive_scrollback = 1000            # scrollback lines for background sessions
+# active_scrollback = 10000             # scrollback lines for foreground session
 
 [viewer]
-theme = "catppuccin-mocha"     # catppuccin-mocha | dracula | nord | solarized-dark
+theme = "catppuccin-mocha"              # syntax highlighting theme
+                                        #   catppuccin-mocha | dracula | nord | solarized-dark
+# syntax_theme_file = "~/.config/conductor/custom.tmTheme"  # custom .tmTheme file path
+# tab_width = 2                         # spaces per tab stop
+# word_wrap = false                     # soft-wrap long lines
 
 [diff]
-# default_view = "unified"     # unified | side-by-side
-# word_diff = true
+# default_view = "unified"              # unified | side-by-side
+# word_diff = true                      # highlight intra-line word changes
 
 [review]
-# prompt_action = "clipboard"  # clipboard | send_to_session
+# prompt_template = "以下のレビューコメントに対応してください。\n\n{comments}"
+                                        # template for review prompts ({comments} is replaced)
+# prompt_action = "clipboard"           # clipboard | send_to_session
+
+[keybinds]
+# Per-context key-bind overrides. Keys are action names, values are a key chord
+# string or an array of alternatives.
+#
+# [keybinds.global]
+# quit = "q"
+#
+# [keybinds.worktree]
+# navigate_down = ["j", "down"]
+# create_worktree = "w"
+#
+# [keybinds.explorer]
+# [keybinds.viewer]
+# [keybinds.terminal]
 
 [notification]
-# cc_waiting = false
+# cc_waiting = false                    # OS notification when Claude Code is waiting for input
 
 [ccusage]
-# enabled = false
-# poll_interval_secs = 120
+# enabled = false                       # token usage display in the title bar (requires ccusage)
+# poll_interval_secs = 120              # polling interval in seconds
+
+[updates]
+# check_on_startup = true               # check for new versions on startup
+# check_interval_secs = 86400           # minimum interval between checks (default: 24h)
 ```
 
 ## Data Paths
