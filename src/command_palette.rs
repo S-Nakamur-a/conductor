@@ -124,7 +124,7 @@ pub const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand { id: CommandId::FocusTerminalShell, label: "Focus: Shell Terminal",
         category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "terminal shell" },
     PaletteCommand { id: CommandId::TogglePanelExpand, label: "Toggle Panel Expand",
-        category: CommandCategory::Navigation, keybinding: None, keywords: "resize maximize fullscreen" },
+        category: CommandCategory::Navigation, keybinding: Some("Cmd+Space"), keywords: "resize maximize fullscreen" },
 
     // Worktree
     PaletteCommand { id: CommandId::CreateWorktree, label: "Worktree: Create New",

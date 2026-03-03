@@ -91,6 +91,9 @@ pub enum Action {
 
     // ── Search ──────────────────────────────────────────────────
     SearchFullText,
+
+    // ── Panel layout ────────────────────────────────────────────
+    TogglePanelExpand,
 }
 
 impl Action {
@@ -157,6 +160,7 @@ impl Action {
             "snap_to_live" => Some(Action::SnapToLive),
             "update_and_restart" => Some(Action::UpdateAndRestart),
             "search_full_text" => Some(Action::SearchFullText),
+            "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             _ => None,
         }
     }
@@ -225,6 +229,7 @@ impl Action {
             Action::SnapToLive => "snap_to_live",
             Action::UpdateAndRestart => "update_and_restart",
             Action::SearchFullText => "search_full_text",
+            Action::TogglePanelExpand => "toggle_panel_expand",
         }
     }
 }
@@ -265,6 +270,7 @@ pub fn parse_key_chord(s: &str) -> Result<(KeyCode, KeyModifiers)> {
             "ctrl" | "control" => modifiers |= KeyModifiers::CONTROL,
             "alt" => modifiers |= KeyModifiers::ALT,
             "shift" => modifiers |= KeyModifiers::SHIFT,
+            "super" | "cmd" | "meta" => modifiers |= KeyModifiers::SUPER,
             other => bail!("unknown modifier: {other}"),
         }
     }
@@ -334,6 +340,9 @@ fn format_key_chord(code: &KeyCode, modifiers: &KeyModifiers) -> String {
     }
     if modifiers.contains(KeyModifiers::SHIFT) {
         parts.push("Shift".to_string());
+    }
+    if modifiers.contains(KeyModifiers::SUPER) {
+        parts.push("Cmd".to_string());
     }
 
     let key_name = match code {
@@ -483,6 +492,7 @@ impl KeyMap {
         self.bind_alt(Global, '4', FocusTerminalClaude);
         self.bind_alt(Global, '5', FocusTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
+        self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
 
         // ── Worktree ─────────────────────────────────────────────
         self.bind_char(Worktree, 'j', NavigateDown);
@@ -663,7 +673,7 @@ fn normalize_raw(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyMod
         }
     }
     // Strip state flags that aren't meaningful for binding lookup.
-    modifiers &= KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
+    modifiers &= KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER;
     (code, modifiers)
 }
 
@@ -732,7 +742,21 @@ mod tests {
     fn test_parse_key_chord_error() {
         assert!(parse_key_chord("").is_err());
         assert!(parse_key_chord("foobar").is_err());
-        assert!(parse_key_chord("super+a").is_err());
+    }
+
+    #[test]
+    fn test_parse_key_chord_super() {
+        let (code, mods) = parse_key_chord("super+space").unwrap();
+        assert_eq!(code, KeyCode::Char(' '));
+        assert_eq!(mods, KeyModifiers::SUPER);
+
+        let (code, mods) = parse_key_chord("cmd+a").unwrap();
+        assert_eq!(code, KeyCode::Char('a'));
+        assert_eq!(mods, KeyModifiers::SUPER);
+
+        let (code, mods) = parse_key_chord("meta+b").unwrap();
+        assert_eq!(code, KeyCode::Char('b'));
+        assert_eq!(mods, KeyModifiers::SUPER);
     }
 
     #[test]

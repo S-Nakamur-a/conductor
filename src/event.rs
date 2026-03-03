@@ -157,6 +157,14 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     }
                     return;
                 }
+                Action::TogglePanelExpand => {
+                    if app.expanded_panel == Some(app.focus) {
+                        app.expanded_panel = None;
+                    } else {
+                        app.expanded_panel = Some(app.focus);
+                    }
+                    return;
+                }
                 _ => {} // Other global actions not intercepted in terminal
             }
         }
@@ -275,6 +283,14 @@ fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.grep_search_scroll = 0;
             app.grep_search_running = false;
             app.grep_search_rx = None;
+            true
+        }
+        Action::TogglePanelExpand => {
+            if app.expanded_panel == Some(app.focus) {
+                app.expanded_panel = None;
+            } else {
+                app.expanded_panel = Some(app.focus);
+            }
             true
         }
         _ => false, // Not a global action — let panel-specific handler try.
