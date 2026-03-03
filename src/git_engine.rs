@@ -47,6 +47,19 @@ pub struct CommitInfo {
     pub time_ago: String,
 }
 
+/// Branch lineage and PR information for the detail panel.
+#[derive(Debug, Clone, Default)]
+pub struct BranchDetails {
+    /// The base (initial) branch this branch was created from.
+    pub initial_branch: Option<String>,
+    /// Branches that were forked from this branch.
+    pub derived_branches: Vec<String>,
+    /// GitHub PR URL for this branch (fetched via `gh`).
+    pub pr_url: Option<String>,
+    /// Whether a PR URL lookup is currently in progress.
+    pub pr_loading: bool,
+}
+
 /// Wrapper around a `git2::Repository` that exposes conductor-specific helpers.
 pub struct GitEngine {
     repo: Repository,
@@ -581,6 +594,77 @@ impl GitEngine {
     /// Reads the `origin` remote URL, converts it to an HTTPS base, and
     /// appends the platform-specific path for creating a new pull request.
     /// Returns `None` if the remote URL cannot be parsed.
+    /// Heuristically detect the initial (base) branch for a given branch.
+    ///
+    /// Returns `Some(main_branch)` when the branch shares history with main.
+    /// Returns `None` if the branch _is_ main or has no shared history.
+    pub fn detect_initial_branch(&self, branch: &str, main_branch: &str) -> Option<String> {
+        if branch == main_branch {
+            return None;
+        }
+
+        let branch_oid = self
+            .repo
+            .find_branch(branch, git2::BranchType::Local)
+            .ok()?
+            .get()
+            .target()?;
+
+        // Try origin/<main> first, then fall back to local <main>.
+        let main_ref_name = format!("refs/remotes/origin/{main_branch}");
+        let main_oid = self
+            .repo
+            .refname_to_id(&main_ref_name)
+            .or_else(|_| {
+                self.repo
+                    .find_branch(main_branch, git2::BranchType::Local)
+                    .and_then(|b| b.get().target().ok_or_else(|| git2::Error::from_str("no target")))
+            })
+            .ok()?;
+
+        // Validate shared history via merge-base.
+        self.repo.merge_base(branch_oid, main_oid).ok()?;
+
+        Some(main_branch.to_string())
+    }
+
+    /// Find local branches that were forked from the given branch.
+    ///
+    /// A candidate is considered "derived" if its merge-base with `branch`
+    /// equals `branch`'s HEAD — meaning the candidate branched off from here.
+    pub fn find_derived_branches(&self, branch: &str, exclude: &[String]) -> Result<Vec<String>> {
+        let target_oid = self
+            .repo
+            .find_branch(branch, git2::BranchType::Local)
+            .context("branch not found")?
+            .get()
+            .target()
+            .context("branch has no target")?;
+
+        let mut derived = Vec::new();
+        let branches = self.repo.branches(Some(git2::BranchType::Local))?;
+
+        for entry in branches {
+            let (candidate, _) = entry?;
+            let Some(name) = candidate.name()? else {
+                continue;
+            };
+            if name == branch || exclude.contains(&name.to_string()) {
+                continue;
+            }
+            let Some(candidate_oid) = candidate.get().target() else {
+                continue;
+            };
+            if let Ok(merge_base) = self.repo.merge_base(target_oid, candidate_oid) {
+                if merge_base == target_oid {
+                    derived.push(name.to_string());
+                }
+            }
+        }
+
+        Ok(derived)
+    }
+
     pub fn pr_url_for_branch(&self, branch: &str) -> Option<String> {
         let remote = self.repo.find_remote("origin").ok()?;
         let raw_url = remote.url()?;

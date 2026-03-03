@@ -401,6 +401,9 @@ fn run_loop(
         // Poll update download progress.
         app.poll_update_progress();
 
+        // Poll background PR URL lookup.
+        app.poll_pr_url();
+
         // Periodically refresh the worktree list to pick up external changes
         // (e.g. `git worktree add` run inside a terminal panel).
         if last_worktree_poll.elapsed() >= WORKTREE_POLL {

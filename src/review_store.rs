@@ -330,6 +330,21 @@ impl ReviewStore {
             .context("failed to migrate to v2 (daily_stats, session_stats)")?;
         }
 
+        if version < 3 {
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS worktree_metadata (
+                    branch       TEXT PRIMARY KEY,
+                    base_branch  TEXT NOT NULL,
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                PRAGMA user_version = 3;
+                ",
+            )
+            .context("failed to migrate to v3 (worktree_metadata)")?;
+        }
+
         Ok(Self { conn })
     }
 
@@ -620,6 +635,28 @@ impl ReviewStore {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    // -- Worktree Metadata --------------------------------------------------
+
+    /// Persist the base branch for a worktree branch.
+    pub fn save_worktree_base_branch(&self, branch: &str, base_branch: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO worktree_metadata (branch, base_branch) VALUES (?1, ?2)",
+            params![branch, base_branch],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve the persisted base branch for a worktree branch.
+    pub fn get_worktree_base_branch(&self, branch: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT base_branch FROM worktree_metadata WHERE branch = ?1",
+        )?;
+        let result = stmt
+            .query_row(params![branch], |row| row.get::<_, String>(0))
+            .ok();
+        Ok(result)
     }
 
     // -- Daily Stats / Gamification -----------------------------------------
