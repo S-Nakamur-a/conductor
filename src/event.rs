@@ -2748,15 +2748,29 @@ pub fn handle_mouse_event(
     ));
     let explorer_mid_y = explorer_v_split[1].y;
 
+    // Compute terminal panel's 80/20 vertical split — must match render_ui in main.rs.
+    let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
+    let terminal_v_split = Layout::vertical([
+        Constraint::Percentage(80),
+        Constraint::Percentage(20),
+    ])
+    .split(ratatui::layout::Rect::new(
+        viewer_end,
+        main_area.y,
+        right_w,
+        main_area.height,
+    ));
+    let terminal_split_y = terminal_v_split[1].y;
+
     let col = mouse.column;
     let row = mouse.row;
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
-            handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, 3);
+            handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, terminal_split_y, 3);
         }
         MouseEventKind::ScrollUp => {
-            handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, -3);
+            handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, terminal_split_y, -3);
         }
         MouseEventKind::ScrollLeft => {
             // Horizontal scroll — only affects viewer panel.
@@ -3074,8 +3088,6 @@ pub fn handle_mouse_event(
                     } // end non-diff-mode
                 } else {
                     // Right column: top 80% = Claude, bottom 20% = Shell.
-                    let terminal_split_y =
-                        main_area.y + (main_area.height as u32 * 80 / 100) as u16;
                     let terminal_x = viewer_end;
 
                     if row < terminal_split_y {
@@ -3129,6 +3141,7 @@ fn handle_mouse_scroll(
     explorer_end: u16,
     viewer_end: u16,
     explorer_mid_y: u16,
+    terminal_split_y: u16,
     delta: i32,
 ) {
     if row < main_area.y || row >= main_area.y + main_area.height {
@@ -3217,8 +3230,6 @@ fn handle_mouse_scroll(
         }
     } else {
         // Terminal panels (right column).
-        // Determine split point: top ~80% is Claude, bottom ~20% is Shell.
-        let terminal_split_y = main_area.y + (main_area.height * 4 / 5);
         let abs_delta = delta.unsigned_abs() as usize;
         if row < terminal_split_y {
             if delta < 0 {
