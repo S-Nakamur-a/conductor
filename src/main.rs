@@ -223,6 +223,8 @@ fn run_loop(
 
     // ── Update check (opt-out via [updates] check_on_startup = false) ─
     let update_check_enabled = app.config.updates.check_on_startup;
+    let update_check_interval = Duration::from_secs(app.config.updates.check_interval_secs);
+    let mut last_update_check = Instant::now();
     let update_result: Arc<Mutex<Option<update_checker::UpdateInfo>>> =
         Arc::new(Mutex::new(None));
 
@@ -477,6 +479,19 @@ fn run_loop(
                     needs_redraw = true;
                 }
             }
+        }
+
+        // Periodic update check — spawn a background fetch at the configured interval.
+        if update_check_enabled && last_update_check.elapsed() >= update_check_interval {
+            last_update_check = Instant::now();
+            let result_handle = Arc::clone(&update_result);
+            std::thread::spawn(move || {
+                if let Some(info) = update_checker::check_for_update() {
+                    if let Ok(mut lock) = result_handle.lock() {
+                        *lock = Some(info);
+                    }
+                }
+            });
         }
 
         // Pick up update check result from background thread.
