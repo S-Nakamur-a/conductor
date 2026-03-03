@@ -411,6 +411,10 @@ pub struct App {
     pub bg_pr_url_rx: Option<mpsc::Receiver<Option<String>>>,
     /// Whether the `gh` CLI is available on this system.
     pub gh_available: bool,
+
+    // ── Auto-resume Claude sessions ─────────────────────────────
+    /// Whether auto-resume should run on the next frame (one-shot).
+    pub pending_auto_resume: bool,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -485,6 +489,7 @@ impl App {
 
         let keymap = KeyMap::new(&config.keybinds);
         let theme = Theme::from_name(&config.viewer.theme);
+        let auto_resume = config.general.auto_resume;
 
         // Derive the main repo display name from the main worktree path.
         let main_repo_name = git_engine::GitEngine::open(&repo_path)
@@ -611,6 +616,7 @@ impl App {
             branch_details: Default::default(),
             bg_pr_url_rx: None,
             gh_available: Self::check_gh_available(),
+            pending_auto_resume: auto_resume,
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -1501,6 +1507,84 @@ impl App {
         self.pty_manager.activate_session(idx);
         self.active_claude_session = Some(idx);
         Ok(idx)
+    }
+
+    /// Automatically resume Claude Code sessions for all worktrees that had a
+    /// previous session. Called once after the first frame render.
+    pub fn perform_auto_resume(&mut self) {
+        if !self.pending_auto_resume {
+            return;
+        }
+        self.pending_auto_resume = false;
+
+        let paths: Vec<PathBuf> = self.worktrees.iter().map(|w| w.path.clone()).collect();
+        if paths.is_empty() {
+            return;
+        }
+
+        let sessions = match crate::claude_sessions::find_latest_sessions_for_paths(&paths) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("auto-resume: failed to find sessions: {e}");
+                return;
+            }
+        };
+
+        if sessions.is_empty() {
+            return;
+        }
+
+        let selected_wt_path = self.selected_worktree_path();
+        let shell = self.config.general.shell.clone();
+        let (rows, cols) = self.terminal_size_claude;
+        let repo_path = self.repo_path.clone();
+        let mut resumed_count = 0;
+
+        for wt in &self.worktrees.clone() {
+            let canonical = std::fs::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
+            let session = match sessions.get(&canonical) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            let label: String = session.display.chars().take(40).collect();
+            let label = if label.is_empty() {
+                format!("Resume:{}", &session.session_id[..8.min(session.session_id.len())])
+            } else {
+                label
+            };
+
+            match self.pty_manager.spawn_session(
+                pty_manager::SessionKind::ClaudeCode,
+                &wt.branch,
+                &label,
+                &shell,
+                &wt.path,
+                rows,
+                cols,
+                Some(&session.session_id),
+                &repo_path,
+            ) {
+                Ok(idx) => {
+                    resumed_count += 1;
+                    // Only activate + set active_claude_session for the currently selected worktree.
+                    if wt.path == selected_wt_path {
+                        self.pty_manager.activate_session(idx);
+                        self.active_claude_session = Some(idx);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("auto-resume: failed to spawn session for {}: {e}", wt.branch);
+                }
+            }
+        }
+
+        if resumed_count > 0 {
+            self.set_status(
+                format!("Auto-resumed {resumed_count} Claude session(s)"),
+                StatusLevel::Success,
+            );
+        }
     }
 
     /// Return `(index_in_pty_manager, &PtySession)` pairs for Claude Code sessions
