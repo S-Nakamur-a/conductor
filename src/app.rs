@@ -403,6 +403,14 @@ pub struct App {
     pub local_branches: Vec<String>,
     /// Animation state for all decoration modes.
     pub decoration_states: crate::ui::decoration::DecorationStates,
+
+    // ── Branch details (worktree detail panel) ────────────────────
+    /// Computed branch lineage and PR info for the selected worktree.
+    pub branch_details: git_engine::BranchDetails,
+    /// Receiver for background `gh pr view` lookup.
+    pub bg_pr_url_rx: Option<mpsc::Receiver<Option<String>>>,
+    /// Whether the `gh` CLI is available on this system.
+    pub gh_available: bool,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -600,6 +608,9 @@ impl App {
             clipboard: copypasta::ClipboardContext::new().ok(),
             local_branches: Vec::new(),
             decoration_states: Default::default(),
+            branch_details: Default::default(),
+            bg_pr_url_rx: None,
+            gh_available: Self::check_gh_available(),
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -2041,6 +2052,10 @@ impl App {
                 match engine.create_worktree_from_base(branch_name, base, wt_dir.as_deref()) {
                     Ok(path) => {
                         self.record_stat("branches_created");
+                        // Persist base branch for later display.
+                        if let Some(store) = &self.review_store {
+                            let _ = store.save_worktree_base_branch(branch_name, base);
+                        }
                         self.refresh_worktrees();
                         self.select_worktree_by_path(&path);
                         self.set_status(format!(
@@ -2084,6 +2099,13 @@ impl App {
                 match engine.create_worktree_from_remote(remote_branch, wt_dir.as_deref()) {
                     Ok(path) => {
                         self.record_stat("branches_created");
+                        // Persist base branch: derive local name from remote ref.
+                        let local_branch = remote_branch
+                            .strip_prefix("origin/")
+                            .unwrap_or(remote_branch);
+                        if let Some(store) = &self.review_store {
+                            let _ = store.save_worktree_base_branch(local_branch, remote_branch);
+                        }
                         self.refresh_worktrees();
                         self.select_worktree_by_path(&path);
                         self.set_status(format!(
@@ -2768,7 +2790,111 @@ No markdown fences, no explanation, just the JSON object."#;
         self.pty_cache_claude = Default::default();
         self.pty_cache_shell = Default::default();
 
+        self.compute_branch_details();
         self.set_status(format!("Switched to worktree: {wt_name}"), StatusLevel::Success);
+    }
+
+    // ── Branch details (worktree detail panel) ───────────────────
+
+    /// Check whether the `gh` CLI is available on this system.
+    fn check_gh_available() -> bool {
+        std::process::Command::new("gh")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Compute branch lineage and start PR URL lookup for the selected worktree.
+    pub fn compute_branch_details(&mut self) {
+        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+            self.branch_details = Default::default();
+            return;
+        };
+        let branch = wt.branch.clone();
+        let is_main = wt.is_main;
+
+        let mut details = git_engine::BranchDetails::default();
+
+        if !is_main {
+            // Initial (base) branch: check DB first, fall back to heuristic.
+            if let Some(store) = &self.review_store {
+                if let Ok(Some(base)) = store.get_worktree_base_branch(&branch) {
+                    details.initial_branch = Some(base);
+                }
+            }
+            if details.initial_branch.is_none() {
+                if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
+                    details.initial_branch =
+                        engine.detect_initial_branch(&branch, &self.config.general.main_branch);
+                }
+            }
+
+            // Derived branches.
+            if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
+                let main = &self.config.general.main_branch;
+                let exclude = vec![main.clone()];
+                if let Ok(derived) = engine.find_derived_branches(&branch, &exclude) {
+                    details.derived_branches = derived;
+                }
+            }
+
+            // PR URL.
+            if self.gh_available {
+                details.pr_loading = true;
+                self.start_pr_url_lookup(&branch);
+            }
+        }
+
+        self.branch_details = details;
+    }
+
+    /// Spawn a background thread to look up the PR URL via `gh pr view`.
+    fn start_pr_url_lookup(&mut self, branch: &str) {
+        let (tx, rx) = mpsc::channel();
+        self.bg_pr_url_rx = Some(rx);
+
+        let branch = branch.to_string();
+        let repo_path = self.repo_path.clone();
+
+        std::thread::spawn(move || {
+            let result = std::process::Command::new("gh")
+                .args(["pr", "view", "--head", &branch, "--json", "url", "-q", ".url"])
+                .current_dir(&repo_path)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()
+                .and_then(|output| {
+                    if output.status.success() {
+                        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if url.is_empty() { None } else { Some(url) }
+                    } else {
+                        None
+                    }
+                });
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll the background PR URL lookup for a result.
+    pub fn poll_pr_url(&mut self) {
+        if let Some(ref rx) = self.bg_pr_url_rx {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.branch_details.pr_url = result;
+                    self.branch_details.pr_loading = false;
+                    self.bg_pr_url_rx = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.branch_details.pr_loading = false;
+                    self.bg_pr_url_rx = None;
+                }
+            }
+        }
     }
 
     // ── Open PR in browser ───────────────────────────────────────

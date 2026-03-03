@@ -369,6 +369,60 @@ fn render_detail(
     };
     lines.push(Line::from(remote_spans));
 
+    // ── Branch lineage & PR info ──────────────────────────────────
+    let details = &app.branch_details;
+    let is_main = wt.is_main;
+
+    let has_lineage = details.initial_branch.is_some()
+        || !details.derived_branches.is_empty()
+        || (app.gh_available && !is_main);
+
+    if has_lineage {
+        lines.push(Line::from(""));
+
+        // Base branch.
+        if let Some(ref base) = details.initial_branch {
+            lines.push(Line::from(vec![
+                Span::styled(" Base:   ", Style::default().fg(theme.muted)),
+                Span::styled(base.as_str(), Style::default().fg(theme.fg)),
+            ]));
+        }
+
+        // Derived (forked) branches.
+        if !details.derived_branches.is_empty() {
+            let forks_text = details.derived_branches.join(", ");
+            lines.push(Line::from(vec![
+                Span::styled(" Forks:  ", Style::default().fg(theme.muted)),
+                Span::styled(forks_text, Style::default().fg(theme.info)),
+            ]));
+        }
+
+        // PR URL.
+        if app.gh_available && !is_main {
+            if details.pr_loading {
+                lines.push(Line::from(vec![
+                    Span::styled(" PR:     ", Style::default().fg(theme.muted)),
+                    Span::styled("loading...", Style::default().fg(theme.muted)),
+                ]));
+            } else if let Some(ref url) = details.pr_url {
+                lines.push(Line::from(vec![
+                    Span::styled(" PR:     ", Style::default().fg(theme.muted)),
+                    Span::styled(
+                        url.as_str(),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(" PR:     ", Style::default().fg(theme.muted)),
+                    Span::styled("none", Style::default().fg(theme.muted)),
+                ]));
+            }
+        }
+    }
+
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
 }
