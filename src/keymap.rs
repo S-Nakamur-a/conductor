@@ -501,7 +501,8 @@ impl KeyMap {
         self.bind_key(Worktree, KeyCode::Up, NavigateUp);
         self.bind_key(Worktree, KeyCode::Enter, Select);
         self.bind_char(Worktree, 'w', CreateWorktree);
-        self.bind_char(Worktree, 'X', DeleteWorktree);
+        self.bind_char(Worktree, 'x', DeleteWorktree);
+        self.bind_key(Worktree, KeyCode::Delete, DeleteWorktree);
         self.bind_char(Worktree, 's', SwitchBranch);
         self.bind_char(Worktree, 'g', GrabBranch);
         self.bind_char(Worktree, 'G', UngrabBranch);
@@ -556,6 +557,7 @@ impl KeyMap {
         self.bind_key(ExplorerCommentList, KeyCode::Enter, Select);
         self.bind_char(ExplorerCommentList, 'l', ExpandOrRight);
         self.bind_key(ExplorerCommentList, KeyCode::Right, ExpandOrRight);
+        self.bind_char(ExplorerCommentList, 'x', DeleteComment);
         self.bind_key(ExplorerCommentList, KeyCode::Delete, DeleteComment);
         self.bind_char(ExplorerCommentList, 'r', ToggleResolve);
         self.bind_char(ExplorerCommentList, 'e', EditComment);
