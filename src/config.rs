@@ -104,6 +104,8 @@ pub struct GeneralConfig {
     /// Decoration mode for the worktree panel:
     /// "aquarium" (default), "space", "garden", "city", "none".
     pub decoration: String,
+    /// Automatically resume Claude Code sessions from the previous run on startup.
+    pub auto_resume: bool,
 }
 
 impl Default for GeneralConfig {
@@ -115,6 +117,7 @@ impl Default for GeneralConfig {
             repos: Vec::new(),
             worktree_dir: None,
             decoration: String::from("aquarium"),
+            auto_resume: true,
         }
     }
 }

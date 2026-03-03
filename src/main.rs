@@ -178,6 +178,7 @@ fn run_loop(
     let mut last_frame_area = Rect::default();
     let mut last_claude_size: (u16, u16) = (0, 0);
     let mut last_shell_size: (u16, u16) = (0, 0);
+    let mut first_frame_done = false;
 
     // Debounce file-watcher refreshes to avoid expensive git operations on
     // every single file-system event.
@@ -332,6 +333,12 @@ fn run_loop(
                     app.update_shell_terminal_size(shell_pty_rows, right_cols);
                 }
             }
+        }
+
+        // Auto-resume Claude sessions after the first frame (PTY sizes are known).
+        if !first_frame_done {
+            first_frame_done = true;
+            app.perform_auto_resume();
         }
 
         // Tick decoration on a fixed timer, independent of main tick rate.

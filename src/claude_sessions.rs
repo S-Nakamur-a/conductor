@@ -4,6 +4,7 @@
 //! Each line in the history file is a JSON object with:
 //!   { "display": "...", "timestamp": ..., "project": "...", "sessionId": "..." }
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -29,6 +30,9 @@ pub struct ResumableSession {
     pub project_name: String,
     /// Human-readable time ago string (e.g. "3h ago").
     pub time_ago: String,
+    /// The full project path from the history entry.
+    #[allow(dead_code)]
+    pub project_path: String,
 }
 
 /// Return the path to the Claude history file.
@@ -117,11 +121,96 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
             display: entry.display,
             project_name,
             time_ago,
+            project_path: entry.project.clone(),
         });
     }
 
     // Already in reverse chronological order from the reversal above.
     Ok(sessions)
+}
+
+/// Find the most recent resumable session for each of the given worktree paths.
+///
+/// Reads `history.jsonl` once and returns a map from worktree path to its latest
+/// valid session. Only sessions whose JSONL file still exists on disk are included.
+pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathBuf, ResumableSession>> {
+    let history_path = match history_file_path() {
+        Some(p) if p.exists() => p,
+        _ => return Ok(HashMap::new()),
+    };
+
+    let content = std::fs::read_to_string(&history_path)?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    // Build a set of canonical path strings for fast lookup.
+    let path_strs: HashMap<String, PathBuf> = paths
+        .iter()
+        .map(|p| {
+            let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+            (canonical.to_string_lossy().to_string(), canonical)
+        })
+        .collect();
+
+    // Parse all valid entries, most recent last (file is in chronological order).
+    let entries: Vec<ClaudeHistoryEntry> = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<ClaudeHistoryEntry>(line).ok())
+        .filter(|e| !e.session_id.is_empty())
+        .collect();
+
+    // Track latest entry per path (later entries overwrite earlier ones).
+    let mut best: HashMap<String, ClaudeHistoryEntry> = HashMap::new();
+    for entry in entries {
+        // Canonicalize the project path from the history entry for comparison.
+        let entry_path = std::fs::canonicalize(&entry.project)
+            .unwrap_or_else(|_| PathBuf::from(&entry.project));
+        let entry_key = entry_path.to_string_lossy().to_string();
+
+        if !path_strs.contains_key(&entry_key) {
+            continue;
+        }
+
+        // Keep the entry with the highest timestamp.
+        let dominated = best
+            .get(&entry_key)
+            .is_none_or(|prev| entry.timestamp >= prev.timestamp);
+        if dominated {
+            best.insert(entry_key, entry);
+        }
+    }
+
+    // Convert to ResumableSession, validating that session files exist.
+    let mut result = HashMap::new();
+    for (key, entry) in best {
+        if !session_file_exists(&entry.session_id, &entry.project) {
+            continue;
+        }
+
+        let project_name = Path::new(&entry.project)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| entry.project.clone());
+        let time_ago = format_time_ago(now_ms, entry.timestamp);
+
+        if let Some(canonical) = path_strs.get(&key) {
+            result.insert(
+                canonical.clone(),
+                ResumableSession {
+                    session_id: entry.session_id,
+                    display: entry.display,
+                    project_name,
+                    time_ago,
+                    project_path: entry.project,
+                },
+            );
+        }
+    }
+
+    Ok(result)
 }
 
 fn format_time_ago(now_ms: u64, then_ms: u64) -> String {
