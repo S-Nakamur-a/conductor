@@ -864,6 +864,13 @@ impl App {
                     self.refresh_diff();
                 }
             }
+            Focus::TerminalClaude => {
+                // Clear CC waiting signal when user focuses on the terminal panel,
+                // not just when they actually type into it.
+                if let Some(idx) = self.active_claude_session {
+                    self.clear_cc_waiting_signal(idx);
+                }
+            }
             _ => {}
         }
         self.focus = focus;
@@ -1632,9 +1639,25 @@ impl App {
             }
         }
 
+        // Ignore waiting state for worktrees that have no CC session open.
+        // Signal files may persist after a session has exited; without this
+        // filter the notification bar would animate for a non-existent panel.
+        new_waiting.retain(|wt_path| {
+            self.pty_manager.sessions().iter().any(|s| {
+                s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == *wt_path
+            })
+        });
+
         // Detect worktrees that newly entered waiting state.
         let current_wt_path = self.selected_worktree_path();
         let is_terminal_focused = matches!(self.focus, Focus::TerminalClaude);
+
+        // When the user is focused on a CC terminal, treat the waiting state
+        // as acknowledged — remove it so the notification bar and worktree
+        // animation are fully cleared (not just pulse-suppressed).
+        if is_terminal_focused {
+            new_waiting.remove(&current_wt_path);
+        }
 
         for wt_path in &new_waiting {
             if !self.cc_waiting_worktrees.contains(wt_path) {
