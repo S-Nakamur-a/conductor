@@ -986,6 +986,7 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
     help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::FocusWorktree), "Jump to Worktree panel", theme);
     help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::OpenRepo), "Open repository by path", theme);
     help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::SwitchRepo), "Switch repository", theme);
+    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::SearchFullText), "Full-text search (grep)", theme);
     help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CycleFocusForward), "Cycle panel focus forward", theme);
     help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CycleFocusBackward), "Cycle panel focus backward", theme);
     help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::Quit), "Quit application", theme);
