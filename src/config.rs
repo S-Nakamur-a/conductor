@@ -283,7 +283,7 @@ impl Default for UpdatesConfig {
     fn default() -> Self {
         Self {
             check_on_startup: true,
-            check_interval_secs: 86400, // 24 hours
+            check_interval_secs: 3600, // 1 hour
         }
     }
 }
@@ -355,7 +355,7 @@ mod tests {
         assert!(!cfg2.ccusage.enabled);
         assert_eq!(cfg2.ccusage.poll_interval_secs, 120);
         assert!(cfg2.updates.check_on_startup);
-        assert_eq!(cfg2.updates.check_interval_secs, 86400);
+        assert_eq!(cfg2.updates.check_interval_secs, 3600);
     }
 
     #[test]
