@@ -477,7 +477,8 @@ impl KeyMap {
         self.bind_char(Global, 'q', Quit);
         self.bind_char(Global, 'Q', Quit);
         self.bind_char(Global, '?', ShowHelp);
-        self.bind_char(Global, ':', CommandPalette);
+        // ':' is bound per non-terminal context so it passes through to PTY
+        // in terminal panels. Ctrl+P remains global for command palette access.
         self.bind_ctrl(Global, 'p', CommandPalette);
         self.bind_key(Global, KeyCode::Tab, CycleFocusForward);
         self.bind_key(Global, KeyCode::BackTab, CycleFocusBackward);
@@ -514,6 +515,7 @@ impl KeyMap {
         self.bind_char(Worktree, 'u', PullWorktree);
         self.bind_char(Worktree, 'H', SessionHistory);
         self.bind_char(Worktree, 'v', OpenPullRequest);
+        self.bind_char(Worktree, ':', CommandPalette);
 
         // ── Explorer (file tree) ─────────────────────────────────
         self.bind_char(Explorer, 'j', NavigateDown);
@@ -530,6 +532,7 @@ impl KeyMap {
         self.bind_char(Explorer, 'd', ShowDiffList);
         self.bind_char(Explorer, 'c', ShowCommentList);
         self.bind_char(Explorer, '/', SearchFilename);
+        self.bind_char(Explorer, ':', CommandPalette);
 
         // ── Explorer: diff list ──────────────────────────────────
         self.bind_char(ExplorerDiffList, 'j', NavigateDown);
@@ -544,6 +547,7 @@ impl KeyMap {
         self.bind_char(ExplorerDiffList, 'g', GoToTop);
         self.bind_char(ExplorerDiffList, 'G', GoToBottom);
         self.bind_key(ExplorerDiffList, KeyCode::Esc, ExitSubPanel);
+        self.bind_char(ExplorerDiffList, ':', CommandPalette);
 
         // ── Explorer: comment list ───────────────────────────────
         self.bind_char(ExplorerCommentList, 'j', NavigateDown);
@@ -564,6 +568,7 @@ impl KeyMap {
         self.bind_char(ExplorerCommentList, 'R', ReplyToComment);
         self.bind_char(ExplorerCommentList, ' ', ViewCommentDetail);
         self.bind_key(ExplorerCommentList, KeyCode::Esc, ExitSubPanel);
+        self.bind_char(ExplorerCommentList, ':', CommandPalette);
 
         // ── Viewer ───────────────────────────────────────────────
         self.bind_char(Viewer, 'j', NavigateDown);
@@ -585,6 +590,7 @@ impl KeyMap {
         self.bind_char(Viewer, 'c', AddComment);
         self.bind_char(Viewer, ' ', ViewCommentDetail);
         self.bind_key(Viewer, KeyCode::Esc, ExitToExplorer);
+        self.bind_char(Viewer, ':', CommandPalette);
 
         // ── Viewer: diff mode ────────────────────────────────────
         self.bind_char(ViewerDiffMode, 'j', NavigateDown);
@@ -603,6 +609,7 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, 'c', AddComment);
         self.bind_char(ViewerDiffMode, ' ', ViewCommentDetail);
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
+        self.bind_char(ViewerDiffMode, ':', CommandPalette);
 
         // ── Terminal ─────────────────────────────────────────────
         self.bind(Terminal, KeyCode::Esc, KeyModifiers::CONTROL, LeaveTerminal);
