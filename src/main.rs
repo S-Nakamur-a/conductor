@@ -25,10 +25,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{Event, poll as crossterm_poll, read as crossterm_read};
+use crossterm::event::{
+    Event, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    poll as crossterm_poll, read as crossterm_read,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -78,12 +82,21 @@ fn main() -> Result<()> {
     // ── Set up crossterm terminal ────────────────────────────────────
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+    let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
     execute!(
         stdout,
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
     )?;
+    if keyboard_enhanced {
+        execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
+        )?;
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -101,6 +114,9 @@ fn main() -> Result<()> {
     let result = run_loop(&mut terminal, &mut app);
 
     // ── Restore terminal (always, even on error) ─────────────────────
+    if keyboard_enhanced {
+        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
