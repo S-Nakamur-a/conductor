@@ -380,21 +380,31 @@ fn render_detail(
     if has_lineage {
         lines.push(Line::from(""));
 
-        // Base branch.
+        // Parent branch.
         if let Some(ref base) = details.initial_branch {
             lines.push(Line::from(vec![
-                Span::styled(" Base:   ", Style::default().fg(theme.muted)),
+                Span::styled(" Parent: ", Style::default().fg(theme.muted)),
                 Span::styled(base.as_str(), Style::default().fg(theme.fg)),
             ]));
         }
 
-        // Derived (forked) branches.
+        // Derived (forked) branches — one per line for readability.
         if !details.derived_branches.is_empty() {
-            let forks_text = details.derived_branches.join(", ");
+            // First fork on the label line.
             lines.push(Line::from(vec![
                 Span::styled(" Forks:  ", Style::default().fg(theme.muted)),
-                Span::styled(forks_text, Style::default().fg(theme.info)),
+                Span::styled(
+                    details.derived_branches[0].as_str(),
+                    Style::default().fg(theme.info),
+                ),
             ]));
+            // Additional forks indented on subsequent lines.
+            for fork in &details.derived_branches[1..] {
+                lines.push(Line::from(vec![
+                    Span::styled("         ", Style::default().fg(theme.muted)),
+                    Span::styled(fork.as_str(), Style::default().fg(theme.info)),
+                ]));
+            }
         }
 
         // PR URL.

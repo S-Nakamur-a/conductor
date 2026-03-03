@@ -594,11 +594,17 @@ impl GitEngine {
     /// Reads the `origin` remote URL, converts it to an HTTPS base, and
     /// appends the platform-specific path for creating a new pull request.
     /// Returns `None` if the remote URL cannot be parsed.
-    /// Heuristically detect the initial (base) branch for a given branch.
+    /// Detect the parent branch using reflog, falling back to merge-base heuristic.
     ///
-    /// Returns `Some(main_branch)` when the branch shares history with main.
-    /// Returns `None` if the branch _is_ main or has no shared history.
-    pub fn detect_initial_branch(&self, branch: &str, main_branch: &str) -> Option<String> {
+    /// 1. Read the reflog for `branch` and find the creation commit (`id_new` of the oldest entry).
+    /// 2. For each candidate, check if the creation commit is an ancestor and pick the closest one.
+    /// 3. If reflog is unavailable, fall back to merge-base distance from `main_branch`.
+    pub fn detect_parent_branch(
+        &self,
+        branch: &str,
+        main_branch: &str,
+        candidates: &[String],
+    ) -> Option<String> {
         if branch == main_branch {
             return None;
         }
@@ -610,54 +616,162 @@ impl GitEngine {
             .get()
             .target()?;
 
-        // Try origin/<main> first, then fall back to local <main>.
-        let main_ref_name = format!("refs/remotes/origin/{main_branch}");
-        let main_oid = self
-            .repo
-            .refname_to_id(&main_ref_name)
-            .or_else(|_| {
-                self.repo
-                    .find_branch(main_branch, git2::BranchType::Local)
-                    .and_then(|b| b.get().target().ok_or_else(|| git2::Error::from_str("no target")))
-            })
-            .ok()?;
+        // Try reflog-based detection first.
+        if let Some(parent) =
+            self.detect_parent_via_reflog(branch, branch_oid, main_branch, candidates)
+        {
+            return Some(parent);
+        }
 
-        // Validate shared history via merge-base.
-        self.repo.merge_base(branch_oid, main_oid).ok()?;
-
-        Some(main_branch.to_string())
+        // Fallback: find the candidate whose merge-base is closest to branch HEAD.
+        self.detect_parent_via_merge_base(branch, branch_oid, main_branch, candidates)
     }
 
-    /// Find local branches that were forked from the given branch.
-    ///
-    /// A candidate is considered "derived" if its merge-base with `branch`
-    /// equals `branch`'s HEAD — meaning the candidate branched off from here.
-    pub fn find_derived_branches(&self, branch: &str, exclude: &[String]) -> Result<Vec<String>> {
-        let target_oid = self
+    /// Reflog-based parent detection: find which candidate contains the branch creation point.
+    fn detect_parent_via_reflog(
+        &self,
+        branch: &str,
+        _branch_oid: git2::Oid,
+        main_branch: &str,
+        candidates: &[String],
+    ) -> Option<String> {
+        let reflog = self
             .repo
-            .find_branch(branch, git2::BranchType::Local)
-            .context("branch not found")?
-            .get()
-            .target()
-            .context("branch has no target")?;
+            .reflog(&format!("refs/heads/{branch}"))
+            .ok()?;
 
-        let mut derived = Vec::new();
-        let branches = self.repo.branches(Some(git2::BranchType::Local))?;
+        if reflog.is_empty() {
+            return None;
+        }
 
-        for entry in branches {
-            let (candidate, _) = entry?;
-            let Some(name) = candidate.name()? else {
-                continue;
-            };
-            if name == branch || exclude.contains(&name.to_string()) {
+        // The oldest entry (last index) records when the branch was created.
+        let oldest = reflog.get(reflog.len() - 1)?;
+        let creation_oid = oldest.id_new();
+
+        // Build candidate list: provided candidates + main branch.
+        let all_candidates: Vec<&str> = candidates
+            .iter()
+            .map(|s| s.as_str())
+            .chain(std::iter::once(main_branch))
+            .filter(|&c| c != branch)
+            .collect();
+
+        let mut best: Option<(String, usize)> = None;
+
+        for &candidate_name in &all_candidates {
+            let candidate_oid = self.resolve_branch_oid(candidate_name)?;
+
+            // Check if the creation commit is an ancestor of the candidate.
+            let is_ancestor = self
+                .repo
+                .graph_descendant_of(candidate_oid, creation_oid)
+                .unwrap_or(false);
+            let is_same = candidate_oid == creation_oid;
+
+            if !is_ancestor && !is_same {
                 continue;
             }
-            let Some(candidate_oid) = candidate.get().target() else {
-                continue;
+
+            // Compute distance from creation_oid to candidate HEAD.
+            let (ahead, _) = self
+                .repo
+                .graph_ahead_behind(candidate_oid, creation_oid)
+                .unwrap_or((usize::MAX, 0));
+
+            if best.as_ref().is_none_or(|(_, d)| ahead < *d) {
+                best = Some((candidate_name.to_string(), ahead));
+            }
+        }
+
+        // Also check: is the creation commit actually on the branch itself only?
+        // If creation_oid == branch_oid and best is main with distance 0, that's fine.
+        best.map(|(name, _)| name)
+    }
+
+    /// Merge-base fallback: find closest candidate by merge-base distance.
+    fn detect_parent_via_merge_base(
+        &self,
+        branch: &str,
+        branch_oid: git2::Oid,
+        main_branch: &str,
+        candidates: &[String],
+    ) -> Option<String> {
+        let all_candidates: Vec<&str> = candidates
+            .iter()
+            .map(|s| s.as_str())
+            .chain(std::iter::once(main_branch))
+            .filter(|&c| c != branch)
+            .collect();
+
+        let mut best: Option<(String, usize)> = None;
+
+        for &candidate_name in &all_candidates {
+            let candidate_oid = match self.resolve_branch_oid(candidate_name) {
+                Some(oid) => oid,
+                None => continue,
             };
-            if let Ok(merge_base) = self.repo.merge_base(target_oid, candidate_oid) {
-                if merge_base == target_oid {
-                    derived.push(name.to_string());
+
+            let merge_base = match self.repo.merge_base(branch_oid, candidate_oid) {
+                Ok(mb) => mb,
+                Err(_) => continue,
+            };
+
+            // Distance from merge-base to branch HEAD (how many commits since branching).
+            let (ahead, _) = self
+                .repo
+                .graph_ahead_behind(branch_oid, merge_base)
+                .unwrap_or((usize::MAX, 0));
+
+            if best.as_ref().is_none_or(|(_, d)| ahead < *d) {
+                best = Some((candidate_name.to_string(), ahead));
+            }
+        }
+
+        best.map(|(name, _)| name)
+    }
+
+    /// Resolve a branch name to its OID, trying local first then origin remote.
+    fn resolve_branch_oid(&self, name: &str) -> Option<git2::Oid> {
+        // Try local branch first.
+        if let Ok(branch) = self.repo.find_branch(name, git2::BranchType::Local) {
+            if let Some(oid) = branch.get().target() {
+                return Some(oid);
+            }
+        }
+        // Try origin/<name>.
+        let remote_ref = format!("refs/remotes/origin/{name}");
+        self.repo.refname_to_id(&remote_ref).ok()
+    }
+
+    /// Find branches (from `candidates`) that were forked from the given branch.
+    ///
+    /// For each candidate, calls `detect_parent_branch` and checks if the result
+    /// is the current branch.
+    pub fn find_derived_branches(
+        &self,
+        branch: &str,
+        main_branch: &str,
+        candidates: &[String],
+    ) -> Result<Vec<String>> {
+        let mut derived = Vec::new();
+
+        for candidate in candidates {
+            if candidate == branch {
+                continue;
+            }
+            // Build candidates for the inner detect_parent_branch call:
+            // include the current branch + other candidates (excluding the candidate itself).
+            let inner_candidates: Vec<String> = candidates
+                .iter()
+                .filter(|c| c.as_str() != candidate)
+                .cloned()
+                .collect();
+
+            if let Some(parent) =
+                self.detect_parent_branch(candidate, main_branch, &inner_candidates)
+            {
+                if parent == branch {
+                    derived.push(candidate.clone());
                 }
             }
         }

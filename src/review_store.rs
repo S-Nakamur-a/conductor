@@ -659,6 +659,19 @@ impl ReviewStore {
         Ok(result)
     }
 
+    /// Retrieve all branches whose base_branch equals the given branch (direct children).
+    pub fn get_worktree_children(&self, base: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT branch FROM worktree_metadata WHERE base_branch = ?1",
+        )?;
+        let rows = stmt.query_map(params![base], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     // -- Daily Stats / Gamification -----------------------------------------
 
     /// Increment a counter in the daily_stats table for today.
