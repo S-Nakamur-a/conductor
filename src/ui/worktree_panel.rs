@@ -95,14 +95,34 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         wt.branch.ends_with("__grab")
     };
 
-    let items: Vec<ListItem> = app
+    // Braille spinner frames for async operations.
+    const BRAILLE_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let spinner_frame = BRAILLE_SPINNER[(app.ui_tick as usize / 4) % BRAILLE_SPINNER.len()];
+
+    let mut items: Vec<ListItem> = app
         .worktrees
         .iter()
         .enumerate()
         .map(|(i, wt)| {
             let is_waiting = app.cc_waiting_worktrees.contains(&wt.path);
             let is_grabbed = is_grab_branch(wt);
+            let is_pending_delete = app.is_worktree_pending_delete(&wt.path);
             let suppress_blink = is_waiting && focused_cc_wt.as_deref() == Some(wt.path.as_path());
+
+            // Override marker and styles for pending-delete worktrees.
+            if is_pending_delete {
+                let spans = vec![
+                    Span::styled(
+                        format!(" {spinner_frame}\u{1f5d1} "),  // 🗑
+                        Style::default().fg(theme.error),
+                    ),
+                    Span::styled(
+                        wt.branch.clone(),
+                        Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+                    ),
+                ];
+                return ListItem::new(Line::from(spans));
+            }
 
             let marker = if wt.is_main {
                 "\u{25cf}" // ●
@@ -244,6 +264,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             }
         })
         .collect();
+
+    // Append pending-create worktrees at the end of the list.
+    for pending in &app.pending_worktrees {
+        if pending.op == crate::app::PendingWorktreeOp::Creating {
+            let spans = vec![
+                Span::styled(
+                    format!(" {spinner_frame}\u{2728} "),  // ✨
+                    Style::default().fg(theme.success),
+                ),
+                Span::styled(
+                    pending.branch.clone(),
+                    Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+                ),
+            ];
+            items.push(ListItem::new(Line::from(spans)));
+        }
+    }
 
     let list = List::new(items)
         .block(block)

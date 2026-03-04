@@ -18,6 +18,12 @@ use crate::review_store::{Author, CommentKind};
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // ── 1. Overlay handlers — consume ALL keys when active ────────────
 
+    if app.worktree_skip_reason.is_some() {
+        if key.code == KeyCode::Esc {
+            app.worktree_skip_reason = None;
+        }
+        return;
+    }
     if app.update_state != UpdateState::Idle {
         handle_update_key(app, key);
         return;
@@ -356,6 +362,8 @@ fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                 if wt.is_main {
                     app.set_status("Cannot delete the main worktree.".to_string(), StatusLevel::Error);
+                } else if app.is_worktree_pending_delete(&wt.path) {
+                    app.set_status("Worktree is already being deleted.".to_string(), StatusLevel::Warning);
                 } else {
                     app.worktree_input_mode = crate::app::WorktreeInputMode::ConfirmingDelete;
                     app.set_status(format!("Delete worktree '{}'? (y/n)", wt.branch), StatusLevel::Warning);
@@ -1266,17 +1274,9 @@ fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
         }
         WorktreeInputMode::ConfirmingDelete => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                // Save branch name before deleting worktree.
-                let branch = app.worktrees
-                    .get(app.selected_worktree)
-                    .map(|w| w.branch.clone())
-                    .unwrap_or_default();
                 app.worktree_input_mode = WorktreeInputMode::Normal;
-                app.delete_selected_worktree();
-                // After deletion, ask about branch deletion.
-                if !branch.is_empty() {
-                    app.delete_branch(&branch, true);
-                }
+                // Branch deletion is handled by the completion handler (delete_branch_after = true).
+                app.delete_selected_worktree(true);
             }
             _ => {
                 app.worktree_input_mode = WorktreeInputMode::Normal;

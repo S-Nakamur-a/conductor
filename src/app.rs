@@ -4,7 +4,7 @@
 //! layout focus model, and transitions between panels.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use syntect::highlighting::ThemeSet;
@@ -95,6 +95,36 @@ pub enum WorktreeInputMode {
     SmartGenerating,
     /// Smart Worktree: confirming/editing the generated branch name.
     SmartConfirmBranch,
+}
+
+/// The kind of pending worktree background operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingWorktreeOp {
+    Creating,
+    Deleting,
+}
+
+/// A worktree operation currently running in a background thread.
+#[derive(Debug, Clone)]
+pub struct PendingWorktree {
+    pub branch: String,
+    pub op: PendingWorktreeOp,
+    pub base_ref: String,
+    pub worktree_path: Option<PathBuf>,
+    pub auto_spawn: bool,
+    pub smart_prompt: String,
+    pub delete_branch_after: bool,
+}
+
+/// Result of a background worktree operation.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum WorktreeOpResult {
+    Created { path: PathBuf, pending: PendingWorktree },
+    CreateFailed { error: String, pending: PendingWorktree },
+    Deleted { branch: String },
+    DeleteFailed { error: String, branch: String },
+    Skipped { branch: String, reason: String },
 }
 
 /// Result from the smart worktree LLM generation.
@@ -412,6 +442,16 @@ pub struct App {
     /// Whether the `gh` CLI is available on this system.
     pub gh_available: bool,
 
+    // ── Async worktree operations ────────────────────────────────
+    /// Worktree operations currently running in background threads.
+    pub pending_worktrees: Vec<PendingWorktree>,
+    /// Sender for worktree operation results (lazily created).
+    pub bg_worktree_tx: Option<mpsc::Sender<WorktreeOpResult>>,
+    /// Receiver for worktree operation results.
+    pub bg_worktree_rx: Option<mpsc::Receiver<WorktreeOpResult>>,
+    /// Reason text for worktree skip modal (shown until Esc).
+    pub worktree_skip_reason: Option<String>,
+
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
     pub pending_auto_resume: bool,
@@ -616,6 +656,10 @@ impl App {
             branch_details: Default::default(),
             bg_pr_url_rx: None,
             gh_available: Self::check_gh_available(),
+            pending_worktrees: Vec::new(),
+            bg_worktree_tx: None,
+            bg_worktree_rx: None,
+            worktree_skip_reason: None,
             pending_auto_resume: auto_resume,
         };
         app.refresh_worktrees();
@@ -2150,84 +2194,72 @@ impl App {
         }
     }
 
-    /// Create a worktree from a base ref (2-step flow).
+    /// Create a worktree from a base ref (2-step flow) — runs in a background thread.
     pub fn create_worktree_from_base(&mut self, branch_name: &str, base_ref: &str) {
         let base = if base_ref.is_empty() { "origin/main" } else { base_ref };
-        let wt_dir = self.config.general.worktree_dir.clone();
-        match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => {
-                match engine.create_worktree_from_base(branch_name, base, wt_dir.as_deref()) {
-                    Ok(path) => {
-                        self.record_stat("branches_created");
-                        // Persist base branch for later display.
-                        if let Some(store) = &self.review_store {
-                            let _ = store.save_worktree_base_branch(branch_name, base);
-                        }
-                        self.refresh_worktrees();
-                        self.select_worktree_by_path(&path);
-                        self.set_status(format!(
-                            "Created worktree: {} (from {})", path.display(), base
-                        ), StatusLevel::Success);
 
-                        // Smart Worktree: auto-spawn Claude Code and pre-type prompt.
-                        if self.smart_auto_spawn {
-                            let prompt = std::mem::take(&mut self.smart_prompt);
-                            self.smart_auto_spawn = false;
-                            match self.spawn_claude_code() {
-                                Ok(idx) => {
-                                    if !prompt.is_empty() {
-                                        let _ = self.pty_manager.write_to_session(idx, prompt.as_bytes());
-                                    }
-                                    self.set_focus(Focus::TerminalClaude);
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to auto-spawn Claude Code: {e}");
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        self.smart_auto_spawn = false;
-                        self.set_status(format!("Error: {e}"), StatusLevel::Error);
-                    }
-                }
-            }
-            Err(e) => {
-                self.set_status(format!("Error: {e}"), StatusLevel::Error);
-            }
-        }
+        let pending = PendingWorktree {
+            branch: branch_name.to_string(),
+            op: PendingWorktreeOp::Creating,
+            base_ref: base.to_string(),
+            worktree_path: None,
+            auto_spawn: self.smart_auto_spawn,
+            smart_prompt: std::mem::take(&mut self.smart_prompt),
+            delete_branch_after: false,
+        };
+        self.smart_auto_spawn = false;
+        self.pending_worktrees.push(pending.clone());
+        self.set_status(format!("Creating worktree '{branch_name}'..."), StatusLevel::Info);
+
+        let tx = self.worktree_op_sender();
+        let repo_path = self.repo_path.clone();
+        let branch = branch_name.to_string();
+        let base_owned = base.to_string();
+        let wt_dir = self.config.general.worktree_dir.clone();
+
+        std::thread::spawn(move || {
+            let result = git_engine::GitEngine::open(&repo_path)
+                .and_then(|engine| engine.create_worktree_from_base(&branch, &base_owned, wt_dir.as_deref()));
+            let msg = match result {
+                Ok(path) => WorktreeOpResult::Created { path, pending },
+                Err(e) => WorktreeOpResult::CreateFailed { error: format!("{e}"), pending },
+            };
+            let _ = tx.send(msg);
+        });
     }
 
-    /// Create a worktree from a remote branch.
+    /// Create a worktree from a remote branch — runs in a background thread.
     pub fn create_worktree_from_remote(&mut self, remote_branch: &str) {
+        let local_branch = remote_branch
+            .strip_prefix("origin/")
+            .unwrap_or(remote_branch);
+
+        let pending = PendingWorktree {
+            branch: local_branch.to_string(),
+            op: PendingWorktreeOp::Creating,
+            base_ref: remote_branch.to_string(),
+            worktree_path: None,
+            auto_spawn: false,
+            smart_prompt: String::new(),
+            delete_branch_after: false,
+        };
+        self.pending_worktrees.push(pending.clone());
+        self.set_status(format!("Creating worktree '{local_branch}'..."), StatusLevel::Info);
+
+        let tx = self.worktree_op_sender();
+        let repo_path = self.repo_path.clone();
+        let remote = remote_branch.to_string();
         let wt_dir = self.config.general.worktree_dir.clone();
-        match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => {
-                match engine.create_worktree_from_remote(remote_branch, wt_dir.as_deref()) {
-                    Ok(path) => {
-                        self.record_stat("branches_created");
-                        // Persist base branch: derive local name from remote ref.
-                        let local_branch = remote_branch
-                            .strip_prefix("origin/")
-                            .unwrap_or(remote_branch);
-                        if let Some(store) = &self.review_store {
-                            let _ = store.save_worktree_base_branch(local_branch, remote_branch);
-                        }
-                        self.refresh_worktrees();
-                        self.select_worktree_by_path(&path);
-                        self.set_status(format!(
-                            "Created tracking worktree: {}", path.display()
-                        ), StatusLevel::Success);
-                    }
-                    Err(e) => {
-                        self.set_status(format!("Error: {e}"), StatusLevel::Error);
-                    }
-                }
-            }
-            Err(e) => {
-                self.set_status(format!("Error: {e}"), StatusLevel::Error);
-            }
-        }
+
+        std::thread::spawn(move || {
+            let result = git_engine::GitEngine::open(&repo_path)
+                .and_then(|engine| engine.create_worktree_from_remote(&remote, wt_dir.as_deref()));
+            let msg = match result {
+                Ok(path) => WorktreeOpResult::Created { path, pending },
+                Err(e) => WorktreeOpResult::CreateFailed { error: format!("{e}"), pending },
+            };
+            let _ = tx.send(msg);
+        });
     }
 
     /// Delete a branch (optionally force).
@@ -2519,6 +2551,98 @@ impl App {
         }
     }
 
+    // ── Async worktree operations ──────────────────────────────────────
+
+    /// Poll for completed background worktree create/delete results.
+    pub fn poll_worktree_ops(&mut self) {
+        let rx = match self.bg_worktree_rx.as_ref() {
+            Some(rx) => rx,
+            None => return,
+        };
+        let mut results = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(result) => results.push(result),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.bg_worktree_rx = None;
+                    self.bg_worktree_tx = None;
+                    break;
+                }
+            }
+        }
+        for result in results {
+            self.handle_worktree_op_result(result);
+        }
+    }
+
+    fn handle_worktree_op_result(&mut self, result: WorktreeOpResult) {
+        match result {
+            WorktreeOpResult::Created { path, pending } => {
+                // Remove from pending list.
+                self.pending_worktrees.retain(|p| {
+                    !(p.op == PendingWorktreeOp::Creating && p.branch == pending.branch)
+                });
+
+                self.record_stat("branches_created");
+                if let Some(store) = &self.review_store {
+                    let _ = store.save_worktree_base_branch(&pending.branch, &pending.base_ref);
+                }
+                self.refresh_worktrees();
+                self.select_worktree_by_path(&path);
+                self.set_status(
+                    format!("Created worktree: {} (from {})", path.display(), pending.base_ref),
+                    StatusLevel::Success,
+                );
+
+                // Smart Worktree: auto-spawn Claude Code and pre-type prompt.
+                if pending.auto_spawn {
+                    match self.spawn_claude_code() {
+                        Ok(idx) => {
+                            if !pending.smart_prompt.is_empty() {
+                                let _ = self.pty_manager.write_to_session(idx, pending.smart_prompt.as_bytes());
+                            }
+                            self.set_focus(Focus::TerminalClaude);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to auto-spawn Claude Code: {e}");
+                        }
+                    }
+                }
+            }
+            WorktreeOpResult::CreateFailed { error, pending } => {
+                self.pending_worktrees.retain(|p| {
+                    !(p.op == PendingWorktreeOp::Creating && p.branch == pending.branch)
+                });
+                self.set_status(format!("Error: {error}"), StatusLevel::Error);
+            }
+            WorktreeOpResult::Deleted { ref branch } => {
+                let delete_branch_after = self.pending_worktrees.iter().any(|p| {
+                    p.op == PendingWorktreeOp::Deleting && p.branch == *branch && p.delete_branch_after
+                });
+                self.pending_worktrees.retain(|p| {
+                    !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch)
+                });
+                self.refresh_worktrees();
+                self.set_status(format!("Deleted worktree: {branch}"), StatusLevel::Success);
+
+                if delete_branch_after {
+                    self.delete_branch(branch, true);
+                }
+            }
+            WorktreeOpResult::DeleteFailed { error, ref branch } => {
+                self.pending_worktrees.retain(|p| {
+                    !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch)
+                });
+                self.set_status(format!("Error: {error}"), StatusLevel::Error);
+            }
+            WorktreeOpResult::Skipped { ref branch, ref reason } => {
+                self.pending_worktrees.retain(|p| p.branch != *branch);
+                self.worktree_skip_reason = Some(reason.clone());
+            }
+        }
+    }
+
     // ── Smart Worktree generation ──────────────────────────────────────
 
     /// Spawn a background thread to generate a branch name and prompt via `claude --print`.
@@ -2752,7 +2876,7 @@ No markdown fences, no explanation, just the JSON object."#;
         self.grab_selected = 0;
     }
 
-    pub fn delete_selected_worktree(&mut self) {
+    pub fn delete_selected_worktree(&mut self, delete_branch_after: bool) {
         let wt = match self.worktrees.get(self.selected_worktree) {
             Some(wt) => wt,
             None => return,
@@ -2784,22 +2908,31 @@ No markdown fences, no explanation, just the JSON object."#;
             self.close_terminal_session(idx);
         }
 
-        match git_engine::GitEngine::open(&self.repo_path) {
-            Ok(engine) => {
-                match engine.remove_worktree(&wt_path) {
-                    Ok(()) => {
-                        self.set_status(format!("Deleted worktree: {branch}"), StatusLevel::Success);
-                        self.refresh_worktrees();
-                    }
-                    Err(e) => {
-                        self.set_status(format!("Error: {e}"), StatusLevel::Error);
-                    }
-                }
-            }
-            Err(e) => {
-                self.set_status(format!("Error: {e}"), StatusLevel::Error);
-            }
-        }
+        // Add pending entry and run git removal in a background thread.
+        let pending = PendingWorktree {
+            branch: branch.clone(),
+            op: PendingWorktreeOp::Deleting,
+            base_ref: String::new(),
+            worktree_path: Some(wt_path.clone()),
+            auto_spawn: false,
+            smart_prompt: String::new(),
+            delete_branch_after,
+        };
+        self.pending_worktrees.push(pending);
+        self.set_status(format!("Deleting worktree '{branch}'..."), StatusLevel::Info);
+
+        let tx = self.worktree_op_sender();
+        let repo_path = self.repo_path.clone();
+
+        std::thread::spawn(move || {
+            let result = git_engine::GitEngine::open(&repo_path)
+                .and_then(|engine| engine.remove_worktree(&wt_path));
+            let msg = match result {
+                Ok(()) => WorktreeOpResult::Deleted { branch },
+                Err(e) => WorktreeOpResult::DeleteFailed { error: format!("{e}"), branch },
+            };
+            let _ = tx.send(msg);
+        });
     }
 
     // ── Cherry-pick helpers ────────────────────────────────────────────
@@ -2912,6 +3045,23 @@ No markdown fences, no explanation, just the JSON object."#;
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+
+    /// Get (or lazily create) a sender for worktree operation results.
+    fn worktree_op_sender(&mut self) -> mpsc::Sender<WorktreeOpResult> {
+        if self.bg_worktree_tx.is_none() {
+            let (tx, rx) = mpsc::channel();
+            self.bg_worktree_tx = Some(tx);
+            self.bg_worktree_rx = Some(rx);
+        }
+        self.bg_worktree_tx.as_ref().unwrap().clone()
+    }
+
+    /// Check if a worktree at the given path is pending deletion.
+    pub fn is_worktree_pending_delete(&self, path: &Path) -> bool {
+        self.pending_worktrees.iter().any(|p| {
+            p.op == PendingWorktreeOp::Deleting && p.worktree_path.as_deref() == Some(path)
+        })
     }
 
     /// Compute branch lineage and start PR URL lookup for the selected worktree.
