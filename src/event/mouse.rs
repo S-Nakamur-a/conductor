@@ -139,6 +139,31 @@ pub fn handle_mouse_event(
                 }
 
                 if col < left_end {
+                    // Check session panel clicks first.
+                    if let Some(panel_area) = app.session_panel_area {
+                        if row >= panel_area.y && row < panel_area.y + panel_area.height {
+                            let inner_y = panel_area.y + 1; // TOP border
+                            if row >= inner_y {
+                                let click_offset = row - inner_y;
+                                if let Some((_, wt_idx, pty_idx)) = app
+                                    .session_panel_rows
+                                    .iter()
+                                    .find(|(r, _, _)| *r == click_offset)
+                                    .copied()
+                                {
+                                    app.selected_worktree = wt_idx;
+                                    app.on_worktree_changed();
+                                    if let Some(idx) = pty_idx {
+                                        app.terminal.active_claude_session = Some(idx);
+                                        app.terminal.pty_manager.activate_session(idx);
+                                    }
+                                    app.set_focus(Focus::TerminalClaude);
+                                }
+                            }
+                            return;
+                        }
+                    }
+
                     // Click selects and switches to the worktree.
                     let relative_row = (row - main_area.y) as usize;
                     let item_row = relative_row.saturating_sub(1); // row 0 is border
@@ -447,6 +472,17 @@ fn handle_mouse_scroll(
     }
 
     if col < left_end {
+        // Check if scroll is within session panel area.
+        if let Some(panel_area) = app.session_panel_area {
+            if row >= panel_area.y && row < panel_area.y + panel_area.height {
+                if delta > 0 {
+                    app.session_panel_scroll = app.session_panel_scroll.saturating_add(delta.unsigned_abs() as usize);
+                } else {
+                    app.session_panel_scroll = app.session_panel_scroll.saturating_sub(delta.unsigned_abs() as usize);
+                }
+                return;
+            }
+        }
         // Worktree panel scroll.
         if delta > 0 {
             if !app.worktrees.is_empty() {

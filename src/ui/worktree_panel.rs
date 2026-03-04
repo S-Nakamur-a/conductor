@@ -14,13 +14,15 @@ use crate::theme::Theme;
 use crate::ui::decoration::{self, DecorationMode};
 
 /// Render the worktree panel into the given area.
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let theme = &app.theme;
     let focused = app.focus == Focus::Worktree;
-    let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
+    let border_color = if focused { app.theme.border_focused } else { app.theme.border_unfocused };
+
+    // Begin a scope so the `theme` borrow ends before the mutable zone-3 call.
+    let theme = &app.theme;
 
     let is_expanded = app.expanded_panel == Some(Focus::Worktree);
     let (expand_label, expand_color) = if is_expanded {
@@ -43,22 +45,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // ── Zone layout calculation ────────────────────────────────────
     // Zone 1: worktree list   — 30%
     // Zone 2: detail section  — 50%
-    // Zone 3: decoration      — 20%
+    // Zone 3: session panel / decoration — 20%
     let decoration_mode = DecorationMode::from_str(&app.config.general.decoration);
+    let has_sessions = !app.all_cc_sessions_by_worktree().is_empty();
 
-    let zones = if decoration_mode == DecorationMode::None {
-        // No decoration: split between list and detail only.
-        Layout::vertical([
-            Constraint::Percentage(30),
-            Constraint::Percentage(70),
-            Constraint::Length(0),
-        ])
-        .split(area)
-    } else if area.height < 10 {
+    let zones = if area.height < 10 {
         // Too small: only show the list.
         Layout::vertical([
             Constraint::Percentage(100),
             Constraint::Length(0),
+            Constraint::Length(0),
+        ])
+        .split(area)
+    } else if has_sessions {
+        // Sessions exist: always show session panel in zone 3.
+        Layout::vertical([
+            Constraint::Percentage(30),
+            Constraint::Percentage(50),
+            Constraint::Percentage(20),
+        ])
+        .split(area)
+    } else if decoration_mode == DecorationMode::None {
+        // No sessions, no decoration: split between list and detail only.
+        Layout::vertical([
+            Constraint::Percentage(30),
+            Constraint::Percentage(70),
             Constraint::Length(0),
         ])
         .split(area)
@@ -301,16 +312,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         render_detail(frame, zones[1], app, theme, border_color);
     }
 
-    // ── Zone 3: Decoration ────────────────────────────────────────
+    // Drop the immutable `theme` borrow so zone 3 can take `&mut app`.
+    #[allow(dropping_references)]
+    drop(theme);
+
+    // ── Zone 3: Session panel / Decoration ─────────────────────────
 
     if zones[2].height >= 4 {
-        decoration::render_decoration(
-            frame,
-            zones[2],
-            &app.decoration_states,
-            theme,
-            decoration_mode,
-        );
+        if has_sessions {
+            render_session_status(frame, zones[2], app, border_color);
+        } else {
+            app.session_panel_area = None;
+            decoration::render_decoration(
+                frame,
+                zones[2],
+                &app.decoration_states,
+                &app.theme,
+                decoration_mode,
+            );
+        }
+    } else {
+        app.session_panel_area = None;
     }
 }
 
@@ -471,5 +493,119 @@ fn render_detail(
     }
 
     let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
+}
+
+/// Render the session status panel showing Claude Code sessions across all worktrees.
+fn render_session_status(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut App,
+    border_color: Color,
+) {
+    // Clone theme colors to avoid borrow conflict with &mut app.
+    let theme_muted = app.theme.muted;
+    let theme_accent = app.theme.accent;
+    let theme_fg = app.theme.fg;
+    let theme_success = app.theme.success;
+    let theme_waiting = app.theme.waiting_primary;
+
+    // Gather session data before mutating app.
+    let groups = app.all_cc_sessions_by_worktree();
+    let waiting_flags: Vec<Vec<bool>> = groups
+        .iter()
+        .map(|(_, _, sessions)| {
+            sessions
+                .iter()
+                .map(|(pty_idx, _)| app.terminal.pty_manager.is_waiting_for_input(*pty_idx))
+                .collect()
+        })
+        .collect();
+
+    let block = Block::default()
+        .title(Span::styled(
+            " Sessions ",
+            Style::default().fg(theme_muted),
+        ))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 || inner.width == 0 {
+        app.session_panel_area = None;
+        return;
+    }
+
+    app.session_panel_area = Some(area);
+
+    // Build all content lines with their row metadata.
+    let mut all_lines: Vec<(Line<'_>, usize, Option<usize>)> = Vec::new();
+
+    for (group_i, (wt_idx, branch, sessions)) in groups.iter().enumerate() {
+        // Worktree header line.
+        all_lines.push((
+            Line::from(Span::styled(
+                format!(" {branch}"),
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            *wt_idx,
+            None,
+        ));
+
+        // Session lines.
+        for (sess_i, (pty_idx, label)) in sessions.iter().enumerate() {
+            let is_waiting = waiting_flags[group_i][sess_i];
+            let (icon, icon_color) = if is_waiting {
+                ("\u{1f4a4}", theme_waiting) // 💤
+            } else {
+                ("\u{1f3d7}\u{fe0f}", theme_success)  // 🏗️
+            };
+            let display_label = if label.is_empty() {
+                format!("CC:{}", pty_idx + 1)
+            } else {
+                label.clone()
+            };
+            all_lines.push((
+                Line::from(vec![
+                    Span::styled(
+                        format!("  {icon} "),
+                        Style::default().fg(icon_color),
+                    ),
+                    Span::styled(
+                        display_label,
+                        Style::default().fg(theme_fg),
+                    ),
+                ]),
+                *wt_idx,
+                Some(*pty_idx),
+            ));
+        }
+    }
+
+    // Apply scroll.
+    let max_scroll = all_lines.len().saturating_sub(inner.height as usize);
+    if app.session_panel_scroll > max_scroll {
+        app.session_panel_scroll = max_scroll;
+    }
+
+    // Populate row mapping and render.
+    app.session_panel_rows.clear();
+    let visible = all_lines
+        .iter()
+        .skip(app.session_panel_scroll)
+        .take(inner.height as usize);
+
+    let mut lines_to_render: Vec<Line<'_>> = Vec::new();
+    for (row_offset, (line, wt_idx, pty_idx)) in visible.enumerate() {
+        app.session_panel_rows
+            .push((row_offset as u16, *wt_idx, *pty_idx));
+        lines_to_render.push(line.clone());
+    }
+
+    let paragraph = Paragraph::new(lines_to_render);
     frame.render_widget(paragraph, inner);
 }
