@@ -374,6 +374,7 @@ fn run_loop(
         let tick = match app.focus {
             crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
             _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
+            _ if !app.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
             _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
             _ if decoration_active => DECORATION_TICK_INTERVAL,
             _ => TICK_RATE_IDLE,
@@ -429,6 +430,9 @@ fn run_loop(
         // Poll background PR URL lookup.
         app.poll_pr_url();
 
+        // Poll background worktree create/delete operations.
+        app.poll_worktree_ops();
+
         // Periodically refresh the worktree list to pick up external changes
         // (e.g. `git worktree add` run inside a terminal panel).
         if last_worktree_poll.elapsed() >= WORKTREE_POLL {
@@ -458,6 +462,11 @@ fn run_loop(
             if let Some(store) = &app.review_store {
                 app.today_stats = store.get_today_stats().ok();
             }
+            needs_redraw = true;
+        }
+
+        // Force redraw while worktree ops are pending (for spinner animation).
+        if !app.pending_worktrees.is_empty() {
             needs_redraw = true;
         }
 
@@ -684,6 +693,11 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::app::UpdateState::Idle => {}
     }
 
+    // ── Skip reason modal ────────────────────────────────────────────
+    if let Some(ref reason) = app.worktree_skip_reason {
+        render_skip_reason_overlay(frame, main_area, reason);
+    }
+
     // ── Status bar ──────────────────────────────────────────────────
     // Show worktree branch + repo on the right of status bar.
     let worktree_branch = app
@@ -732,4 +746,41 @@ fn render_confirm_overlay(
         ));
         frame.render_widget(paragraph, inner);
     }
+}
+
+/// Render a skip-reason informational popup.
+fn render_skip_reason_overlay(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    reason: &str,
+) {
+    let popup_height = 5_u16;
+    let popup_width = area.width.saturating_sub(8).min(60);
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = ratatui::widgets::Block::default()
+        .title(" Skipped ")
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let text = vec![
+        ratatui::text::Line::from(ratatui::text::Span::styled(
+            reason,
+            ratatui::style::Style::default().fg(ratatui::style::Color::Yellow),
+        )),
+        ratatui::text::Line::from(ratatui::text::Span::styled(
+            "(Esc) 閉じる",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        )),
+    ];
+    let paragraph = ratatui::widgets::Paragraph::new(text)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(paragraph, inner);
 }
