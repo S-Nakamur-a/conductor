@@ -267,14 +267,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Append pending-create worktrees at the end of the list.
     for pending in &app.worktree_mgr.pending_worktrees {
-        if pending.op == crate::app::PendingWorktreeOp::Creating {
+        if pending.op == crate::app::PendingWorktreeOp::Creating
+            || pending.op == crate::app::PendingWorktreeOp::SmartCreating
+        {
+            let is_smart = pending.op == crate::app::PendingWorktreeOp::SmartCreating;
+            let icon = if is_smart { "\u{1F9E0}" } else { "\u{2728}" }; // 🧠 vs ✨
+            let display_name = if pending.branch.is_empty() {
+                // LLM still generating — show truncated description.
+                let max = 30;
+                if pending.description.len() > max {
+                    format!("{}...", &pending.description[..max])
+                } else {
+                    pending.description.clone()
+                }
+            } else {
+                pending.branch.clone()
+            };
             let spans = vec![
                 Span::styled(
-                    format!(" {spinner_frame}\u{2728} "),  // ✨
+                    format!(" {spinner_frame}{icon} "),
                     Style::default().fg(theme.success),
                 ),
                 Span::styled(
-                    pending.branch.clone(),
+                    display_name,
                     Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
                 ),
             ];

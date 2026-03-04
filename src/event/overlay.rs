@@ -231,9 +231,9 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     if desc.is_empty() {
                         app.set_status("Description is empty.".to_string(), StatusLevel::Warning);
                     } else {
-                        app.worktree_mgr.input_mode = WorktreeInputMode::SmartGenerating;
-                        app.start_smart_generation(&desc);
-                        app.set_status("Generating branch name and prompt...".to_string(), StatusLevel::Info);
+                        app.start_smart_worktree_async(&desc);
+                        app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
+                        app.worktree_mgr.smart_description_buffer.clear();
                     }
                 }
                 KeyCode::Backspace => {
@@ -272,72 +272,6 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 _ => {}
             }
         }
-        WorktreeInputMode::SmartGenerating => {
-            // Only Esc is accepted during generation.
-            if key.code == KeyCode::Esc {
-                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-                app.worktree_mgr.smart_description_buffer.clear();
-                app.worktree_mgr.smart_gen_op.clear();
-                app.set_status("Smart generation cancelled.".to_string(), StatusLevel::Warning);
-            }
-        }
-        WorktreeInputMode::SmartConfirmBranch => match key.code {
-            KeyCode::Esc => {
-                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-                app.worktree_mgr.smart_branch_name.clear();
-                app.worktree_mgr.smart_prompt.clear();
-                app.worktree_mgr.smart_description_buffer.clear();
-                app.set_status("Smart worktree cancelled.".to_string(), StatusLevel::Warning);
-            }
-            KeyCode::Enter => {
-                let branch = app.worktree_mgr.smart_branch_name.trim().to_string();
-                if branch.is_empty() {
-                    app.set_status("Branch name is empty.".to_string(), StatusLevel::Warning);
-                } else {
-                    app.worktree_mgr.pending_branch = branch;
-                    app.worktree_mgr.smart_branch_name.clear();
-                    app.worktree_mgr.smart_description_buffer.clear();
-                    app.worktree_mgr.smart_auto_spawn = true;
-                    app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktreeBase;
-                    app.load_base_branches();
-                    app.status_message = None;
-                }
-            }
-            KeyCode::Backspace => {
-                app.worktree_mgr.smart_branch_name.delete_backward();
-            }
-            KeyCode::Delete => {
-                app.worktree_mgr.smart_branch_name.delete_forward();
-            }
-            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                app.worktree_mgr.smart_branch_name.move_word_left();
-            }
-            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                app.worktree_mgr.smart_branch_name.move_word_right();
-            }
-            KeyCode::Left => {
-                app.worktree_mgr.smart_branch_name.move_left();
-            }
-            KeyCode::Right => {
-                app.worktree_mgr.smart_branch_name.move_right();
-            }
-            KeyCode::Home => {
-                app.worktree_mgr.smart_branch_name.move_home();
-            }
-            KeyCode::End => {
-                app.worktree_mgr.smart_branch_name.move_end();
-            }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.worktree_mgr.smart_branch_name.select_all_and_clear();
-            }
-            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                clipboard_paste(app, |a| &mut a.worktree_mgr.smart_branch_name, false);
-            }
-            KeyCode::Char(c) => {
-                app.worktree_mgr.smart_branch_name.insert_char(c);
-            }
-            _ => {}
-        },
         WorktreeInputMode::Normal => unreachable!(),
     }
 }
