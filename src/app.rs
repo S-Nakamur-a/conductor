@@ -1155,6 +1155,9 @@ impl App {
                 self.grep_search.scroll = 0;
                 self.grep_search.running = false;
                 self.grep_search.bg_op.clear();
+                self.grep_search.bg_op_phase2.clear();
+                self.grep_search.debounce_deadline = None;
+                self.grep_search.phase1_active = false;
             }
             CommandId::Quit => self.should_quit = true,
         }
@@ -2651,8 +2654,48 @@ impl App {
         });
     }
 
-    /// Start a background grep search with the current query and settings.
-    pub fn start_grep_search(&mut self) {
+    /// Schedule an incremental grep search with debounce (200ms).
+    ///
+    /// Called on every keystroke that modifies the query. Sets a deadline;
+    /// `check_grep_debounce()` fires the actual search when the deadline passes.
+    pub fn schedule_grep_search(&mut self) {
+        let query = self.grep_search.query.text().to_string();
+        if query.is_empty() {
+            // Clear everything immediately.
+            self.grep_search.results.clear();
+            self.grep_search.selected = 0;
+            self.grep_search.scroll = 0;
+            self.grep_search.running = false;
+            self.grep_search.bg_op.clear();
+            self.grep_search.bg_op_phase2.clear();
+            self.grep_search.debounce_deadline = None;
+            self.grep_search.phase1_active = false;
+            return;
+        }
+        self.grep_search.debounce_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
+    }
+
+    /// Check if the debounce deadline has passed; if so, start the search.
+    /// Returns `true` if a search was started (caller should trigger redraw).
+    pub fn check_grep_debounce(&mut self) -> bool {
+        if let Some(deadline) = self.grep_search.debounce_deadline {
+            if std::time::Instant::now() >= deadline {
+                self.grep_search.debounce_deadline = None;
+                self.start_incremental_grep_search();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Start an incremental grep search.
+    ///
+    /// For short queries (≤3 chars), uses 2-phase search:
+    ///   phase1 — search only recently modified files (fast)
+    ///   phase2 — full search (runs in parallel, replaces phase1 results)
+    /// For longer queries, runs only a full search.
+    fn start_incremental_grep_search(&mut self) {
         let query = self.grep_search.query.text().to_string();
         if query.is_empty() {
             return;
@@ -2663,6 +2706,10 @@ impl App {
             None => return,
         };
 
+        // Cancel any previous search.
+        self.grep_search.bg_op.clear();
+        self.grep_search.bg_op_phase2.clear();
+
         // Reset results.
         self.grep_search.results.clear();
         self.grep_search.selected = 0;
@@ -2671,16 +2718,45 @@ impl App {
 
         let regex_mode = self.grep_search.regex_mode;
         let case_sensitive = self.grep_search.case_sensitive;
-        let wt_path2 = wt_path.clone();
-        let query2 = query.clone();
 
-        self.grep_search.bg_op.start(move |tx| {
-            crate::grep_search::run_search(&wt_path2, &query2, regex_mode, case_sensitive, tx);
-        });
+        if query.chars().count() <= 3 {
+            // 2-phase search for short queries.
+            self.grep_search.phase1_active = true;
+
+            // Get recently modified files (synchronous, fast).
+            let recent_files = crate::git_engine::recently_modified_files(&wt_path, 200)
+                .unwrap_or_default();
+
+            // Phase1: search only recent files.
+            if !recent_files.is_empty() {
+                let wt1 = wt_path.clone();
+                let q1 = query.clone();
+                let files1 = recent_files;
+                self.grep_search.bg_op.start(move |tx| {
+                    crate::grep_search::run_search_files(&wt1, &q1, regex_mode, case_sensitive, files1, tx);
+                });
+            }
+
+            // Phase2: full search (runs in parallel).
+            let wt2 = wt_path.clone();
+            let q2 = query.clone();
+            self.grep_search.bg_op_phase2.start(move |tx| {
+                crate::grep_search::run_search(&wt2, &q2, regex_mode, case_sensitive, tx);
+            });
+        } else {
+            // Single-phase full search for longer queries.
+            self.grep_search.phase1_active = false;
+            let wt2 = wt_path.clone();
+            let q2 = query.clone();
+            self.grep_search.bg_op.start(move |tx| {
+                crate::grep_search::run_search(&wt2, &q2, regex_mode, case_sensitive, tx);
+            });
+        }
     }
 
     /// Poll for background grep search results.
     pub fn poll_grep_search(&mut self) {
+        // Poll phase1 / single-phase bg_op.
         let messages = self.grep_search.bg_op.poll_all();
         for msg in messages {
             match msg {
@@ -2688,21 +2764,68 @@ impl App {
                     self.grep_search.results.extend(batch);
                 }
                 GrepProgress::Done(total) => {
-                    self.grep_search.running = false;
-                    self.grep_search.bg_op.clear();
-                    if total >= 5000 {
-                        self.set_status(
-                            format!("Search truncated at {total} results."),
-                            StatusLevel::Warning,
-                        );
+                    // If phase1 completed but phase2 is still running, keep running = true.
+                    if !self.grep_search.phase1_active || !self.grep_search.bg_op_phase2.is_running() {
+                        self.grep_search.running = false;
+                        self.grep_search.bg_op.clear();
+                        if total >= 5000 {
+                            self.set_status(
+                                format!("Search truncated at {total} results."),
+                                StatusLevel::Warning,
+                            );
+                        }
+                    } else {
+                        self.grep_search.bg_op.clear();
                     }
-                    return;
                 }
                 GrepProgress::Error(msg) => {
                     self.grep_search.running = false;
                     self.grep_search.bg_op.clear();
                     self.set_status(format!("Search error: {msg}"), StatusLevel::Error);
                     return;
+                }
+            }
+        }
+
+        // Poll phase2 bg_op.
+        if self.grep_search.phase1_active {
+            let messages2 = self.grep_search.bg_op_phase2.poll_all();
+            let mut got_phase2_results = false;
+            for msg in messages2 {
+                match msg {
+                    GrepProgress::Results(batch) => {
+                        if !got_phase2_results {
+                            // Replace phase1 results with phase2 results.
+                            self.grep_search.results.clear();
+                            self.grep_search.selected = 0;
+                            self.grep_search.scroll = 0;
+                            self.grep_search.phase1_active = false;
+                            got_phase2_results = true;
+                        }
+                        self.grep_search.results.extend(batch);
+                    }
+                    GrepProgress::Done(total) => {
+                        if !got_phase2_results {
+                            // Phase2 done with no results — clear phase1 results too
+                            // only if phase1 also had no results; otherwise keep phase1.
+                            self.grep_search.phase1_active = false;
+                        }
+                        self.grep_search.running = false;
+                        self.grep_search.bg_op_phase2.clear();
+                        if total >= 5000 {
+                            self.set_status(
+                                format!("Search truncated at {total} results."),
+                                StatusLevel::Warning,
+                            );
+                        }
+                    }
+                    GrepProgress::Error(msg) => {
+                        self.grep_search.phase1_active = false;
+                        self.grep_search.running = false;
+                        self.grep_search.bg_op_phase2.clear();
+                        self.set_status(format!("Search error: {msg}"), StatusLevel::Error);
+                        return;
+                    }
                 }
             }
         }

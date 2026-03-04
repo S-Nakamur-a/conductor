@@ -54,7 +54,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     .split(popup_area);
 
     // ── Search bar ──────────────────────────────────────────────
-    let title = " Full-text Search (Enter: search/jump, Esc: close) ";
+    let title = " Full-text Search (Enter: jump, Esc: close) ";
     let search_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -110,7 +110,10 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         format!("  Searching... ({} matches so far)", app.grep_search.results.len())
     } else if app.grep_search.results.is_empty() {
         if app.grep_search.query.is_empty() {
-            "  Type a query and press Enter to search".to_string()
+            "  Start typing to search".to_string()
+        } else if app.grep_search.debounce_deadline.is_some() {
+            // Debounce waiting — keep previous status or show nothing.
+            String::new()
         } else {
             "  No matches found".to_string()
         }

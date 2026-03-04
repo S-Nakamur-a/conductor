@@ -71,6 +71,12 @@ pub struct GrepSearchOverlay {
     pub bg_op: BackgroundOp<GrepProgress>,
     pub regex_mode: bool,
     pub case_sensitive: bool,
+    /// Debounce timer for incremental search.
+    pub debounce_deadline: Option<std::time::Instant>,
+    /// Whether phase1 (recently-modified files only) results are currently displayed.
+    pub phase1_active: bool,
+    /// Background op for phase2 (full search) when doing 2-phase incremental search.
+    pub bg_op_phase2: BackgroundOp<GrepProgress>,
 }
 
 

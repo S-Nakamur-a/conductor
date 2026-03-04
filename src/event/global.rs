@@ -78,6 +78,9 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.grep_search.scroll = 0;
             app.grep_search.running = false;
             app.grep_search.bg_op.clear();
+            app.grep_search.bg_op_phase2.clear();
+            app.grep_search.debounce_deadline = None;
+            app.grep_search.phase1_active = false;
             true
         }
         Action::TogglePanelExpand => {
