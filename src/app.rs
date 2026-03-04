@@ -472,6 +472,9 @@ impl App {
                     .unwrap_or_else(|| repo_path.display().to_string())
             });
 
+        let active_scrollback = config.terminal.active_scrollback;
+        let inactive_scrollback = config.terminal.inactive_scrollback;
+
         let mut app = Self {
             focus: Focus::Worktree,
             repo_path,
@@ -486,7 +489,7 @@ impl App {
             diff_state,
             review_store,
             review_state: ReviewState::new(),
-            terminal: TerminalState::default(),
+            terminal: TerminalState::new(active_scrollback, inactive_scrollback),
             worktree_mgr: WorktreeManager::default(),
             status_message: None,
             last_poll_head_oid: None,
@@ -736,7 +739,8 @@ impl App {
     pub fn refresh_viewer(&mut self) {
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             let path = wt.path.clone();
-            self.viewer_state.load_file_tree(&path);
+            let tab_width = self.config.viewer.tab_width;
+            self.viewer_state.load_file_tree(&path, tab_width);
             self.rehighlight_viewer();
         }
     }
@@ -756,7 +760,8 @@ impl App {
         let word_diff = self.config.diff.word_diff;
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             let path = wt.path.clone();
-            self.diff_state.load_diff(&path, &base_branch, word_diff);
+            let tab_width = self.config.viewer.tab_width;
+            self.diff_state.load_diff(&path, &base_branch, word_diff, tab_width);
         }
     }
 

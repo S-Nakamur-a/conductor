@@ -111,6 +111,7 @@ main_branch = "main"                    # main/trunk branch name (default: "main
                                         #   (default: <repo-parent>/<repo-name>-worktrees/)
 decoration = "aquarium"                 # worktree panel decoration
                                         #   aquarium | space | garden | city | none
+# auto_resume = true                    # automatically resume Claude Code sessions on startup
 
 [terminal]
 # inactive_scrollback = 1000            # scrollback lines for background sessions
@@ -121,13 +122,15 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
                                         #   catppuccin-mocha | dracula | nord | solarized-dark
 # syntax_theme_file = "~/.config/conductor/custom.tmTheme"  # custom .tmTheme file path
 # tab_width = 2                         # spaces per tab stop
-# word_wrap = false                     # soft-wrap long lines
+# word_wrap = false                     # soft-wrap long lines (未実装)
 
 [diff]
 # default_view = "unified"              # unified | side-by-side
 # word_diff = true                      # highlight intra-line word changes
 
 [review]
+# レビュー機能はMCPプラグイン (conductor plugin) に移行済みです。
+# 以下の設定は互換性のため残されていますが、通常は変更不要です。
 # prompt_template = "以下のレビューコメントに対応してください。\n\n{comments}"
                                         # template for review prompts ({comments} is replaced)
 # prompt_action = "clipboard"           # clipboard | send_to_session
@@ -156,7 +159,7 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 
 [updates]
 # check_on_startup = true               # check for new versions on startup
-# check_interval_secs = 86400           # minimum interval between checks (default: 24h)
+# check_interval_secs = 3600            # minimum interval between checks (default: 1h)
 ```
 
 ## Data Paths
