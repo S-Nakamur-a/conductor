@@ -324,6 +324,14 @@ pub struct App {
     /// Populated during rendering for click-to-jump.
     pub notification_bar_badges: Vec<(u16, u16, String)>,
 
+    // ── Session status panel ──────────────────────────────────────
+    /// Row mapping for session panel clicks: (row_offset, wt_idx, Option<pty_idx>).
+    pub session_panel_rows: Vec<(u16, usize, Option<usize>)>,
+    /// The screen area occupied by the session status panel (for hit testing).
+    pub session_panel_area: Option<ratatui::layout::Rect>,
+    /// Scroll offset for the session status panel.
+    pub session_panel_scroll: usize,
+
 
     // ── Gamification (session stats + streak) ────────────────────
     /// ID of the current stats session (for gamification tracking).
@@ -513,6 +521,9 @@ impl App {
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
+            session_panel_rows: Vec::new(),
+            session_panel_area: None,
+            session_panel_scroll: 0,
             stats_session_id,
             today_stats,
             worktree_heads: HashMap::new(),
@@ -3106,6 +3117,48 @@ impl App {
             .get(self.selected_worktree)
             .map(|w| w.path.clone())
             .unwrap_or_else(|| self.repo_path.clone())
+    }
+
+    /// Return all Claude Code sessions grouped by worktree.
+    ///
+    /// Returns `Vec<(wt_index, branch_name, sessions)>` where each session is
+    /// `(pty_index, label)`, sorted by worktree index.
+    #[allow(clippy::type_complexity)]
+    pub fn all_cc_sessions_by_worktree(&self) -> Vec<(usize, String, Vec<(usize, String)>)> {
+        use std::collections::BTreeMap;
+
+        let sessions = self.terminal.pty_manager.sessions();
+        // Group by worktree index.
+        let mut groups: BTreeMap<usize, Vec<(usize, String)>> = BTreeMap::new();
+
+        for (pty_idx, session) in sessions.iter().enumerate() {
+            if session.kind != pty_manager::SessionKind::ClaudeCode {
+                continue;
+            }
+            // Match session working_dir to a worktree.
+            if let Some(wt_idx) = self
+                .worktrees
+                .iter()
+                .position(|wt| wt.path == session.working_dir)
+            {
+                groups
+                    .entry(wt_idx)
+                    .or_default()
+                    .push((pty_idx, session.label.clone()));
+            }
+        }
+
+        groups
+            .into_iter()
+            .map(|(wt_idx, sessions)| {
+                let branch = self
+                    .worktrees
+                    .get(wt_idx)
+                    .map(|wt| wt.branch.clone())
+                    .unwrap_or_default();
+                (wt_idx, branch, sessions)
+            })
+            .collect()
     }
 
     /// Return `(worktree_name, working_dir)` for the currently selected worktree.
