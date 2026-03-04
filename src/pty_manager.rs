@@ -18,16 +18,6 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Maximum number of output lines kept for the currently displayed session.
-const ACTIVE_BUFFER_LIMIT: usize = 10_000;
-
-/// Maximum number of output lines kept for background (non-displayed) sessions.
-const INACTIVE_BUFFER_LIMIT: usize = 1_000;
-
-// ---------------------------------------------------------------------------
 // SessionKind
 // ---------------------------------------------------------------------------
 
@@ -112,15 +102,21 @@ pub struct PtyManager {
     /// Parallel vector of buffer-limit handles shared with reader threads.
     /// Each entry corresponds to the session at the same index in `sessions`.
     buffer_limits: Vec<Arc<Mutex<usize>>>,
+    /// Scrollback lines for the active (foreground) session.
+    active_scrollback: usize,
+    /// Scrollback lines for inactive (background) sessions.
+    inactive_scrollback: usize,
 }
 
 impl PtyManager {
-    /// Create a new `PtyManager` with no sessions.
-    pub fn new() -> Self {
+    /// Create a new `PtyManager` with no sessions, using the given scrollback limits.
+    pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
             pty_system: NativePtySystem::default(),
             sessions: Vec::new(),
             buffer_limits: Vec::new(),
+            active_scrollback,
+            inactive_scrollback,
         }
     }
 
@@ -197,11 +193,11 @@ impl PtyManager {
 
         // 5. Set up the shared output buffer.
         let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let max_buffer_lines = INACTIVE_BUFFER_LIMIT;
+        let max_buffer_lines = self.inactive_scrollback;
 
         // 5b. Create the vt100 parser with the same size as the PTY.
         let screen: Arc<Mutex<vt100::Parser>> =
-            Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 1000)));
+            Arc::new(Mutex::new(vt100::Parser::new(rows, cols, self.inactive_scrollback)));
 
         // 6. Spawn a background thread that continuously reads PTY output.
         let buffer_clone = Arc::clone(&output_buffer);
@@ -325,11 +321,11 @@ impl PtyManager {
     pub fn activate_session(&mut self, idx: usize) {
         if let Some(session) = self.sessions.get_mut(idx) {
             session.is_active = true;
-            session.max_buffer_lines = ACTIVE_BUFFER_LIMIT;
+            session.max_buffer_lines = self.active_scrollback;
         }
         if let Some(limit) = self.buffer_limits.get(idx) {
             let mut l = limit.lock().unwrap_or_else(|e| e.into_inner());
-            *l = ACTIVE_BUFFER_LIMIT;
+            *l = self.active_scrollback;
         }
     }
 

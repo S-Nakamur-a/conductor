@@ -43,10 +43,11 @@ pub struct TerminalState {
     pub needs_clear: bool,
 }
 
-impl Default for TerminalState {
-    fn default() -> Self {
+impl TerminalState {
+    /// Create a new `TerminalState` with the given scrollback limits.
+    pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
-            pty_manager: pty_manager::PtyManager::new(),
+            pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
             active_claude_session: None,
             active_shell_session: None,
             size_claude: (24, 80),

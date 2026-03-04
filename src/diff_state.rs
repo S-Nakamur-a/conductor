@@ -193,12 +193,12 @@ impl DiffState {
     ///
     /// Computes both committed (merge-base..HEAD) and uncommitted (HEAD vs
     /// workdir+index) diffs.
-    pub fn load_diff(&mut self, worktree_path: &Path, base_branch: &str, word_diff: bool) {
+    pub fn load_diff(&mut self, worktree_path: &Path, base_branch: &str, word_diff: bool, tab_width: usize) {
         self.base_branch = base_branch.to_string();
         self.error = None;
 
         // Compute committed diff.
-        match Self::compute_diff_range(worktree_path, base_branch, DiffRange::Committed, word_diff)
+        match Self::compute_diff_range(worktree_path, base_branch, DiffRange::Committed, word_diff, tab_width)
         {
             Ok(mut files) => {
                 files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -219,6 +219,7 @@ impl DiffState {
             base_branch,
             DiffRange::Uncommitted,
             word_diff,
+            tab_width,
         ) {
             Ok(mut files) => {
                 files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -441,6 +442,7 @@ impl DiffState {
         base_branch: &str,
         range: DiffRange,
         word_diff: bool,
+        tab_width: usize,
     ) -> Result<Vec<FileDiff>> {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open repo at {}", worktree_path.display()))?;
@@ -598,7 +600,7 @@ impl DiffState {
                                 .map(|s| s.text.trim_end_matches('\n').trim_end_matches('\r'))
                                 .collect::<Vec<_>>()
                                 .join("");
-                            let content = Self::expand_tabs(&content, 4);
+                            let content = Self::expand_tabs(&content, tab_width);
 
                             let has_emphasis = segments.iter().any(|s| s.emphasized);
                             let inline_segments =
@@ -630,7 +632,7 @@ impl DiffState {
                             let new_line_no = change.new_index().map(|i| i + 1);
 
                             let raw = change.value().trim_end_matches('\n').trim_end_matches('\r');
-                            let content = Self::expand_tabs(raw, 4);
+                            let content = Self::expand_tabs(raw, tab_width);
 
                             hunk_lines.push(DiffLine {
                                 tag,
@@ -840,7 +842,7 @@ mod tests {
         repo.set_head("refs/heads/feature").unwrap();
 
         let files =
-            DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false)
+            DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false, 4)
                 .unwrap();
 
         // The case-only rename with identical content should be filtered out.
@@ -898,7 +900,7 @@ mod tests {
         repo.set_head("refs/heads/feature").unwrap();
 
         let files =
-            DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false)
+            DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false, 4)
                 .unwrap();
 
         // The rename with actual content changes should still appear.

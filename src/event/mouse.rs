@@ -222,7 +222,8 @@ pub fn handle_mouse_event(
                                             app.worktrees.get(app.selected_worktree)
                                         {
                                             let wt_path = wt.path.clone();
-                                            app.viewer_state.open_file(&wt_path, &file_path);
+                                            let tab_width = app.config.viewer.tab_width;
+                                            app.viewer_state.open_file(&wt_path, &file_path, tab_width);
                                             app.viewer_state
                                                 .reveal_file_in_tree(&file_path, &wt_path);
                                             app.rehighlight_viewer();
@@ -274,7 +275,8 @@ pub fn handle_mouse_event(
                                         app.viewer_state.last_tree_click_idx = tree_idx;
 
                                         let wt_path = wt.path.clone();
-                                        app.viewer_state.open_file(&wt_path, &entry.path);
+                                        let tab_width = app.config.viewer.tab_width;
+                                        app.viewer_state.open_file(&wt_path, &entry.path, tab_width);
                                         app.rehighlight_viewer();
                                         app.review_state.build_file_comment_cache(&entry.path);
                                         // Single click: keep focus on Explorer.

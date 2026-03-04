@@ -73,7 +73,8 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
                     app.viewer_state.toggle_dir(idx);
                 } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                     let path = wt.path.clone();
-                    app.viewer_state.open_file(&path, &entry.path);
+                    let tab_width = app.config.viewer.tab_width;
+                    app.viewer_state.open_file(&path, &entry.path, tab_width);
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&entry.path);
                     app.set_focus(Focus::Viewer);
@@ -165,7 +166,8 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
                 let file_diff_clone = file_diff.clone();
                 if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                     let wt_path = wt.path.clone();
-                    app.viewer_state.open_file(&wt_path, &file_path);
+                    let tab_width = app.config.viewer.tab_width;
+                    app.viewer_state.open_file(&wt_path, &file_path, tab_width);
                     app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&file_path);
@@ -350,7 +352,8 @@ pub(super) fn navigate_to_comment_with_focus(app: &mut App, comment_idx: usize, 
         let line = comment.line_start as usize;
         if let Some(wt) = app.worktrees.get(app.selected_worktree) {
             let wt_path = wt.path.clone();
-            app.viewer_state.open_file(&wt_path, &file_path);
+            let tab_width = app.config.viewer.tab_width;
+            app.viewer_state.open_file(&wt_path, &file_path, tab_width);
             app.rehighlight_viewer();
             app.viewer_state.file_scroll = line.saturating_sub(1);
             app.viewer_state.selected_line_start = Some(line);

@@ -57,6 +57,18 @@ impl Config {
             config.expand_paths();
             Ok(config)
         } else {
+            // Generate a default config file with comments.
+            if let Some(parent) = config_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    log::warn!("failed to create config directory: {e}");
+                }
+            }
+            let default_content = generate_default_config();
+            if let Err(e) = std::fs::write(&config_path, &default_content) {
+                log::warn!("failed to write default config: {e}");
+            } else {
+                log::info!("generated default config at {}", config_path.display());
+            }
             Ok(Config::default())
         }
     }
@@ -320,6 +332,74 @@ fn expand_tilde(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Generate a default configuration file with all settings commented out.
+pub fn generate_default_config() -> String {
+    String::from(
+        r#"# Conductor configuration file
+# All fields are optional with sensible defaults.
+
+[general]
+# repo = "/path/to/default/repo"       # default repository to open on startup
+# main_branch = "main"                  # main/trunk branch name (default: "main")
+# shell = "/bin/zsh"                    # shell for PTY sessions (default: $SHELL)
+# repos = ["/path/to/repo1", "/path/to/repo2"]  # additional repos for multi-repo support
+# worktree_dir = "~/worktrees"          # custom worktree base directory
+#                                       #   (default: <repo-parent>/<repo-name>-worktrees/)
+# decoration = "aquarium"               # worktree panel decoration
+#                                       #   aquarium | space | garden | city | none
+# auto_resume = true                    # automatically resume Claude Code sessions on startup
+
+[terminal]
+# inactive_scrollback = 1000            # scrollback lines for background sessions
+# active_scrollback = 10000             # scrollback lines for foreground session
+
+[viewer]
+# theme = "catppuccin-mocha"            # syntax highlighting theme
+#                                       #   catppuccin-mocha | dracula | nord | solarized-dark
+# syntax_theme_file = "~/.config/conductor/custom.tmTheme"  # custom .tmTheme file path
+# tab_width = 2                         # spaces per tab stop
+# word_wrap = false                     # soft-wrap long lines (未実装)
+
+[diff]
+# default_view = "unified"              # unified | side-by-side
+# word_diff = true                      # highlight intra-line word changes
+
+[review]
+# レビュー機能はMCPプラグイン (conductor plugin) に移行済みです。
+# 以下の設定は互換性のため残されていますが、通常は変更不要です。
+# prompt_template = "以下のレビューコメントに対応してください。\n\n{comments}"
+#                                       # template for review prompts ({comments} is replaced)
+# prompt_action = "clipboard"           # clipboard | send_to_session
+
+[keybinds]
+# Per-context key-bind overrides. Keys are action names, values are a key chord
+# string or an array of alternatives.
+#
+# [keybinds.global]
+# quit = "q"
+#
+# [keybinds.worktree]
+# navigate_down = ["j", "down"]
+# create_worktree = "w"
+#
+# [keybinds.explorer]
+# [keybinds.viewer]
+# [keybinds.terminal]
+
+[notification]
+# cc_waiting = false                    # OS notification when Claude Code is waiting for input
+
+[ccusage]
+# enabled = false                       # token usage display in the title bar (requires ccusage)
+# poll_interval_secs = 120              # polling interval in seconds
+
+[updates]
+# check_on_startup = true               # check for new versions on startup
+# check_interval_secs = 3600            # minimum interval between checks (default: 1h)
+"#,
+    )
+}
+
 /// Default review prompt template (Japanese).
 fn default_prompt_template() -> String {
     String::from(
@@ -434,5 +514,16 @@ create_worktree = "w"
             KeybindValue::Single(s) => assert_eq!(s, "w"),
             _ => panic!("expected Single"),
         }
+    }
+
+    #[test]
+    fn generated_default_config_is_valid_toml() {
+        let content = generate_default_config();
+        let cfg: Config = toml::from_str(&content).expect("generated config must be valid TOML");
+        // All values should match defaults since everything is commented out.
+        assert_eq!(cfg.general.main_branch, "main");
+        assert_eq!(cfg.terminal.inactive_scrollback, 1000);
+        assert_eq!(cfg.viewer.tab_width, 2);
+        assert!(cfg.updates.check_on_startup);
     }
 }

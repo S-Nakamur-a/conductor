@@ -728,7 +728,8 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
                 if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                     let wt_path = wt.path.clone();
                     app.viewer_state.reveal_file_in_tree(&result.path, &wt_path);
-                    app.viewer_state.open_file(&wt_path, &result.path);
+                    let tab_width = app.config.viewer.tab_width;
+                    app.viewer_state.open_file(&wt_path, &result.path, tab_width);
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&result.path);
                 }
@@ -829,7 +830,8 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                         let wt_path = wt.path.clone();
                         app.viewer_state.reveal_file_in_tree(&result.file_path, &wt_path);
-                        app.viewer_state.open_file(&wt_path, &result.file_path);
+                        let tab_width = app.config.viewer.tab_width;
+                        app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
                         app.rehighlight_viewer();
                         app.viewer_state.file_scroll = result.line_number.saturating_sub(1);
                         app.set_focus(Focus::Viewer);

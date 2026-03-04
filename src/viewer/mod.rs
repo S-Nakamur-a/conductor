@@ -155,7 +155,7 @@ impl ViewerState {
     /// expansion state so that file-watcher refreshes don't disrupt the
     /// user's view. If the previously open file was deleted, the viewer
     /// naturally resets to "no file selected".
-    pub fn load_file_tree(&mut self, worktree_path: &Path) {
+    pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) {
         // Save state before clearing.
         let prev_file = self.current_file.clone();
         let prev_file_scroll = self.file_scroll;
@@ -193,7 +193,7 @@ impl ViewerState {
                 };
                 let prev_diff_scroll = self.diff_view_scroll;
 
-                self.open_file(worktree_path, rel_path);
+                self.open_file(worktree_path, rel_path, tab_width);
                 self.file_scroll = prev_file_scroll;
                 self.h_scroll = prev_h_scroll;
 
@@ -213,13 +213,13 @@ impl ViewerState {
     }
 
     /// Open (read) a file and store its lines in `file_content`.
-    pub fn open_file(&mut self, worktree_path: &Path, relative_path: &str) {
+    pub fn open_file(&mut self, worktree_path: &Path, relative_path: &str, tab_width: usize) {
         self.exit_diff_mode();
         self.highlighted_lines.clear();
         let full = worktree_path.join(relative_path);
         match fs::read_to_string(&full) {
             Ok(text) => {
-                self.file_content = text.lines().map(|l| Self::expand_tabs(l, 4)).collect();
+                self.file_content = text.lines().map(|l| Self::expand_tabs(l, tab_width)).collect();
                 // If file is empty but not zero-length, show one empty line.
                 if self.file_content.is_empty() && !text.is_empty() {
                     self.file_content.push(String::new());

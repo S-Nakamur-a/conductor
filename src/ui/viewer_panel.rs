@@ -29,6 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
     let theme = &app.theme;
     let vs = &app.viewer_state;
+    let tab_width = app.config.viewer.tab_width;
     let focused = app.focus == Focus::Viewer;
     let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
 
@@ -175,7 +176,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                         vs.highlighted_lines.get(line_no)
                             .filter(|t| !t.is_empty())
                             .and_then(|tokens| merge_syntax_with_inline(
-                                &ann.inline_segments, tokens, diff_bg, emphasis_bg,
+                                &ann.inline_segments, tokens, diff_bg, emphasis_bg, tab_width,
                             ))
                             .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
                     } else {
@@ -183,6 +184,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                             &ann.inline_segments,
                             diff_bg,
                             emphasis_bg,
+                            tab_width,
                         )
                     }
                 } else {
@@ -265,6 +267,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
     let theme = &app.theme;
     let vs = &app.viewer_state;
+    let tab_width = app.config.viewer.tab_width;
     let inner_height = area.height.saturating_sub(2) as usize;
 
     // Compute max line number for gutter width.
@@ -385,17 +388,20 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                                             inline_segments, tokens,
                                             diff_bg.unwrap_or(Color::Reset),
                                             emphasis_bg.unwrap_or(Color::Reset),
+                                            tab_width,
                                         ))
                                         .unwrap_or_else(|| render_inline_diff_spans(
                                             inline_segments,
                                             diff_bg.unwrap_or(Color::Reset),
                                             emphasis_bg.unwrap_or(Color::Reset),
+                                            tab_width,
                                         ))
                                 } else {
                                     render_inline_diff_spans(
                                         inline_segments,
                                         diff_bg.unwrap_or(Color::Reset),
                                         emphasis_bg.unwrap_or(Color::Reset),
+                                        tab_width,
                                     )
                                 }
                             }
@@ -404,6 +410,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                                     inline_segments,
                                     diff_bg.unwrap_or(Color::Reset),
                                     emphasis_bg.unwrap_or(Color::Reset),
+                                    tab_width,
                                 )
                             }
                             DiffLineTag::Equal => {
@@ -677,6 +684,7 @@ fn render_inline_diff_spans(
     segments: &[InlineSegment],
     diff_bg: Color,
     emphasis_bg: Color,
+    tab_width: usize,
 ) -> Vec<Span<'static>> {
     segments
         .iter()
@@ -684,7 +692,7 @@ fn render_inline_diff_spans(
             let bg = if seg.emphasized { emphasis_bg } else { diff_bg };
             let text = expand_tabs(
                 seg.text.trim_end_matches('\n').trim_end_matches('\r'),
-                4,
+                tab_width,
             );
             Span::styled(
                 text,
@@ -702,6 +710,7 @@ fn merge_syntax_with_inline(
     syntax_tokens: &[(Style, String)],
     diff_bg: Color,
     emphasis_bg: Color,
+    tab_width: usize,
 ) -> Option<Vec<Span<'static>>> {
     // Build expanded text and per-byte emphasis flag from inline segments.
     let mut expanded_text = String::new();
@@ -709,7 +718,7 @@ fn merge_syntax_with_inline(
 
     for seg in segments {
         let trimmed = seg.text.trim_end_matches('\n').trim_end_matches('\r');
-        let expanded = expand_tabs(trimmed, 4);
+        let expanded = expand_tabs(trimmed, tab_width);
         byte_emphasis.resize(byte_emphasis.len() + expanded.len(), seg.emphasized);
         expanded_text.push_str(&expanded);
     }
