@@ -217,6 +217,10 @@ pub struct App {
     pub last_poll_status: Option<(usize, usize, usize)>,
     /// Worktree paths whose Claude Code sessions are waiting for user input.
     pub cc_waiting_worktrees: HashSet<PathBuf>,
+    /// Acknowledged waiting states — maps worktree path to the PTY session's
+    /// `last_output_time` at the moment the user dismissed the notification.
+    /// Prevents re-triggering until new PTY output arrives.
+    cc_waiting_ack_time: HashMap<PathBuf, std::time::Instant>,
     /// Whether the session history viewer is active.
     pub history_active: bool,
     /// Session history records loaded from the database.
@@ -567,6 +571,7 @@ impl App {
             last_poll_head_oid: None,
             last_poll_status: None,
             cc_waiting_worktrees: HashSet::new(),
+            cc_waiting_ack_time: HashMap::new(),
             history_active: false,
             history_records: Vec::new(),
             history_selected: 0,
@@ -1783,8 +1788,45 @@ impl App {
         // When the user is focused on a CC terminal, treat the waiting state
         // as acknowledged — remove it so the notification bar and worktree
         // animation are fully cleared (not just pulse-suppressed).
-        if is_terminal_focused {
-            new_waiting.remove(&current_wt_path);
+        if is_terminal_focused && new_waiting.remove(&current_wt_path) {
+            // Record ack so the notification is not re-triggered by the
+            // PTY pattern-match source until new output arrives.
+            if let Some(session) = self.pty_manager.sessions().iter().find(|s| {
+                s.kind == pty_manager::SessionKind::ClaudeCode
+                    && s.working_dir == current_wt_path
+            }) {
+                let t = *session
+                    .last_output_time
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                self.cc_waiting_ack_time.insert(current_wt_path.clone(), t);
+            }
+        }
+
+        // Suppress re-triggering for worktrees the user already acknowledged
+        // if the PTY has not produced any new output since that acknowledgment.
+        let mut ack_expired: Vec<PathBuf> = Vec::new();
+        new_waiting.retain(|wt_path| {
+            if let Some(&ack_time) = self.cc_waiting_ack_time.get(wt_path) {
+                if let Some(session) = self.pty_manager.sessions().iter().find(|s| {
+                    s.kind == pty_manager::SessionKind::ClaudeCode
+                        && s.working_dir == *wt_path
+                }) {
+                    let current = *session
+                        .last_output_time
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if current == ack_time {
+                        return false; // no new output — suppress
+                    }
+                }
+                // New output arrived or session gone — ack is stale.
+                ack_expired.push(wt_path.clone());
+            }
+            true
+        });
+        for p in ack_expired {
+            self.cc_waiting_ack_time.remove(&p);
         }
 
         for wt_path in &new_waiting {
@@ -1823,6 +1865,15 @@ impl App {
         if session.kind != pty_manager::SessionKind::ClaudeCode {
             return;
         }
+        // Record the PTY output timestamp so that the periodic scan does not
+        // re-trigger the notification until new output actually arrives.
+        let last_output = *session
+            .last_output_time
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let working_dir = session.working_dir.clone();
+        self.cc_waiting_ack_time.insert(working_dir.clone(), last_output);
+
         let signal_dir = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
             .unwrap_or_else(|_| self.repo_path.clone())
@@ -1832,7 +1883,6 @@ impl App {
         let normalized: PathBuf = session.working_dir.components().collect();
         let sanitized = normalized.display().to_string().replace('/', "__");
         let _ = std::fs::remove_file(signal_dir.join(&sanitized));
-        let working_dir = session.working_dir.clone();
         self.cc_waiting_worktrees.remove(&working_dir);
     }
 
