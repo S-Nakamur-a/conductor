@@ -749,27 +749,28 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             app.grep_search.active = false;
             app.grep_search.running = false;
             app.grep_search.bg_op.clear();
+            app.grep_search.bg_op_phase2.clear();
+            app.grep_search.debounce_deadline = None;
+            app.grep_search.phase1_active = false;
         }
         KeyCode::Enter => {
-            if app.grep_search.results.is_empty() || app.grep_search.running {
-                // No results yet or still typing — start/restart search.
-                app.start_grep_search();
-            } else {
-                // Jump to the selected result.
-                if let Some(result) = app.grep_search.results.get(app.grep_search.selected).cloned() {
-                    app.grep_search.active = false;
-                    app.grep_search.running = false;
-                    app.grep_search.bg_op.clear();
+            // Jump to the selected result (if any).
+            if let Some(result) = app.grep_search.results.get(app.grep_search.selected).cloned() {
+                app.grep_search.active = false;
+                app.grep_search.running = false;
+                app.grep_search.bg_op.clear();
+                app.grep_search.bg_op_phase2.clear();
+                app.grep_search.debounce_deadline = None;
+                app.grep_search.phase1_active = false;
 
-                    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                        let wt_path = wt.path.clone();
-                        app.viewer_state.reveal_file_in_tree(&result.file_path, &wt_path);
-                        let tab_width = app.config.viewer.tab_width;
-                        app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
-                        app.rehighlight_viewer();
-                        app.viewer_state.file_scroll = result.line_number.saturating_sub(1);
-                        app.set_focus(Focus::Viewer);
-                    }
+                if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                    let wt_path = wt.path.clone();
+                    app.viewer_state.reveal_file_in_tree(&result.file_path, &wt_path);
+                    let tab_width = app.config.viewer.tab_width;
+                    app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
+                    app.rehighlight_viewer();
+                    app.viewer_state.file_scroll = result.line_number.saturating_sub(1);
+                    app.set_focus(Focus::Viewer);
                 }
             }
         }
@@ -786,9 +787,11 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Backspace => {
             app.grep_search.query.delete_backward();
+            app.schedule_grep_search();
         }
         KeyCode::Delete => {
             app.grep_search.query.delete_forward();
+            app.schedule_grep_search();
         }
         KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
             app.grep_search.query.move_word_left();
@@ -810,18 +813,23 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.grep_search.regex_mode = !app.grep_search.regex_mode;
+            app.schedule_grep_search();
         }
         KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.grep_search.case_sensitive = !app.grep_search.case_sensitive;
+            app.schedule_grep_search();
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.grep_search.query, false);
+            app.schedule_grep_search();
         }
         KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.grep_search.query.select_all_and_clear();
+            app.schedule_grep_search();
         }
         KeyCode::Char(c) => {
             app.grep_search.query.insert_char(c);
+            app.schedule_grep_search();
         }
         _ => {}
     }

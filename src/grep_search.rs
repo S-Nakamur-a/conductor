@@ -38,6 +38,85 @@ const MAX_RESULTS: usize = 5000;
 /// Batch size — results are sent in chunks of this many.
 const BATCH_SIZE: usize = 50;
 
+/// Run a full-text search over a specific list of files (for phase1 incremental search).
+///
+/// Similar to `run_search()` but only searches the given file paths instead of
+/// walking the entire directory tree.
+pub fn run_search_files(
+    root: &Path,
+    pattern: &str,
+    regex_mode: bool,
+    case_sensitive: bool,
+    files: Vec<String>,
+    tx: mpsc::Sender<GrepProgress>,
+) {
+    let root = root.to_path_buf();
+    let pattern = pattern.to_string();
+
+    std::thread::spawn(move || {
+        let escaped = if regex_mode {
+            pattern.clone()
+        } else {
+            regex::escape(&pattern)
+        };
+        let re = match RegexBuilder::new(&escaped)
+            .case_insensitive(!case_sensitive)
+            .build()
+        {
+            Ok(re) => re,
+            Err(e) => {
+                let _ = tx.send(GrepProgress::Error(format!("Invalid pattern: {e}")));
+                return;
+            }
+        };
+
+        let mut total = 0usize;
+        let mut batch = Vec::with_capacity(BATCH_SIZE);
+
+        for rel_path in &files {
+            let abs_path = root.join(rel_path);
+            let content = match fs::read_to_string(&abs_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            for (line_idx, line) in content.lines().enumerate() {
+                if let Some(m) = re.find(line) {
+                    batch.push(GrepMatch {
+                        file_path: rel_path.clone(),
+                        line_number: line_idx + 1,
+                        line_content: line.to_string(),
+                        match_start: m.start(),
+                        match_end: m.end(),
+                    });
+
+                    total += 1;
+
+                    if batch.len() >= BATCH_SIZE {
+                        if tx.send(GrepProgress::Results(std::mem::take(&mut batch))).is_err() {
+                            return;
+                        }
+                        batch = Vec::with_capacity(BATCH_SIZE);
+                    }
+
+                    if total >= MAX_RESULTS {
+                        if !batch.is_empty() {
+                            let _ = tx.send(GrepProgress::Results(batch));
+                        }
+                        let _ = tx.send(GrepProgress::Done(total));
+                        return;
+                    }
+                }
+            }
+        }
+
+        if !batch.is_empty() {
+            let _ = tx.send(GrepProgress::Results(batch));
+        }
+        let _ = tx.send(GrepProgress::Done(total));
+    });
+}
+
 /// Run a full-text search in a background thread.
 ///
 /// `root` is the worktree directory to search in.

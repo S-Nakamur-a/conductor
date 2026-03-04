@@ -279,6 +279,10 @@ fn run_loop(
         if app.grep_search.running {
             needs_redraw = true;
         }
+        // Grep debounce waiting needs active tick rate.
+        if app.grep_search.debounce_deadline.is_some() {
+            needs_redraw = true;
+        }
 
         if needs_redraw {
             // Advance animation tick only on actual renders.
@@ -424,6 +428,11 @@ fn run_loop(
 
         // Poll grep search results.
         app.poll_grep_search();
+
+        // Check grep debounce timer.
+        if app.grep_search.active && app.check_grep_debounce() {
+            needs_redraw = true;
+        }
 
         // Poll update download progress.
         app.poll_update_progress();
