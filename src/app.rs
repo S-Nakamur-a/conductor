@@ -7,20 +7,28 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+use crate::background::BackgroundOp;
+
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
-use crate::grep_search::{GrepMatch, GrepProgress};
+use crate::grep_search::GrepProgress;
 use crate::keymap::KeyMap;
+use crate::overlay::{
+    CherryPickOverlay, CommandPaletteOverlay, GrabOverlay, GrepSearchOverlay, HelpOverlay,
+    HistoryOverlay, OpenRepoOverlay, PruneOverlay, RepoSelectorOverlay, ResumeSessionOverlay,
+    SwitchBranchOverlay,
+};
 use crate::pty_manager;
 use crate::review_state::ReviewState;
+use crate::terminal_state::TerminalState;
 use crate::review_store::{self, Author, CommentKind, ReviewStore};
-use crate::text_input::TextInput;
+use crate::worktree_ops::WorktreeManager;
 use crate::theme::Theme;
-use crate::viewer_state::ViewerState;
+use crate::viewer::ViewerState;
 
 /// The severity/type of a status message, used for styling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,122 +205,46 @@ pub struct App {
     pub review_store: Option<ReviewStore>,
     /// UI state for review comments.
     pub review_state: ReviewState,
-    /// PTY session manager.
-    pub pty_manager: pty_manager::PtyManager,
-    /// Whether a worktree creation dialog is showing.
-    pub worktree_input_mode: WorktreeInputMode,
-    /// Text buffer for worktree name input.
-    pub worktree_input_buffer: TextInput,
-    /// Timestamp of the last click on worktree blank space (for double-click detection).
-    pub worktree_blank_last_click: std::time::Instant,
-    /// Timestamp of the last click on empty Claude terminal area (for double-click detection).
-    pub terminal_claude_blank_last_click: std::time::Instant,
-    /// Timestamp of the last click on empty Shell terminal area (for double-click detection).
-    pub terminal_shell_blank_last_click: std::time::Instant,
+    /// Terminal / PTY state.
+    pub terminal: TerminalState,
+    /// Worktree management state (creation, deletion, smart worktree, etc.).
+    pub worktree_mgr: WorktreeManager,
     /// Status message (flash message) shown in the status bar.
     pub status_message: Option<StatusMessage>,
     /// Last known HEAD oid for the selected worktree (for change-detection polling).
     pub last_poll_head_oid: Option<String>,
     /// Last known status signature (added, modified, deleted) for the selected worktree.
     pub last_poll_status: Option<(usize, usize, usize)>,
-    /// Worktree paths whose Claude Code sessions are waiting for user input.
-    pub cc_waiting_worktrees: HashSet<PathBuf>,
-    /// Acknowledged waiting states — maps worktree path to the PTY session's
-    /// `last_output_time` at the moment the user dismissed the notification.
-    /// Prevents re-triggering until new PTY output arrives.
-    cc_waiting_ack_time: HashMap<PathBuf, std::time::Instant>,
-    /// Whether the session history viewer is active.
-    pub history_active: bool,
-    /// Session history records loaded from the database.
-    pub history_records: Vec<review_store::SessionHistory>,
-    /// Index of the selected history record.
-    pub history_selected: usize,
-    /// Search query for session history.
-    pub history_search_query: TextInput,
-    /// Whether the history search input is active.
-    pub history_search_active: bool,
-    /// Whether the cherry-pick picker UI is active.
-    pub cherry_pick_active: bool,
-    /// Source branch for cherry-pick (selected from another worktree).
-    pub cherry_pick_source_branch: String,
-    /// List of commits from the source branch.
-    pub cherry_pick_commits: Vec<git_engine::CommitInfo>,
-    /// Index of the selected commit in the picker.
-    pub cherry_pick_selected: usize,
+    /// Session history overlay state.
+    pub history: HistoryOverlay,
+    /// Cherry-pick overlay state.
+    pub cherry_pick: CherryPickOverlay,
     /// List of known repository paths (including the current one).
     pub repo_list: Vec<std::path::PathBuf>,
     /// Index of the currently active repository in repo_list.
     pub repo_list_index: usize,
-    /// Whether the repo selector overlay is active.
-    pub repo_selector_active: bool,
-    /// Selected index in the repo selector.
-    pub repo_selector_selected: usize,
-    /// Whether the "open repository" path input is active.
-    pub open_repo_active: bool,
-    /// Text buffer for the "open repository" path input.
-    pub open_repo_buffer: TextInput,
-    /// Last known terminal content area size (rows, cols) for Claude PTY.
-    pub terminal_size_claude: (u16, u16),
-    /// Last known terminal content area size (rows, cols) for Shell PTY.
-    pub terminal_size_shell: (u16, u16),
-    /// Set to `true` when a full terminal clear + redraw is needed.
-    pub needs_clear: bool,
-    /// Index of the active Claude Code session for the current worktree (into pty_manager.sessions).
-    pub active_claude_session: Option<usize>,
-    /// Index of the active Shell session for the current worktree (into pty_manager.sessions).
-    pub active_shell_session: Option<usize>,
+    /// Repository selector overlay state.
+    pub repo_selector: RepoSelectorOverlay,
+    /// Open-repository path input overlay state.
+    pub open_repo: OpenRepoOverlay,
 
-    // ── Create worktree 2-step flow ─────────────────────────────
-    /// Branch name entered in step 1, held while step 2 (base branch) is active.
-    pub worktree_pending_branch: String,
-    /// Full list of branches available as base for worktree creation.
-    pub base_branch_list: Vec<String>,
-    /// Currently selected index in the base branch picker.
-    pub base_branch_selected: usize,
-    /// Filter string for narrowing the base branch list.
-    pub base_branch_filter: TextInput,
 
     // ── Switch (remote branch checkout) ─────────────────────────
-    /// Whether the switch-branch overlay is active.
-    pub switch_branch_active: bool,
-    /// Full list of remote branches.
-    pub switch_branch_list: Vec<String>,
-    /// Currently selected index in the switch list.
-    pub switch_branch_selected: usize,
-    /// Filter string for narrowing the switch branch list.
-    pub switch_branch_filter: TextInput,
+    /// Switch-branch overlay state.
+    pub switch_branch: SwitchBranchOverlay,
 
     // ── Grab (checkout branch on main) ─────────────────────────
-    /// Whether the grab branch picker overlay is active.
-    pub grab_active: bool,
-    /// List of local branch names available for grab.
-    pub grab_branches: Vec<String>,
-    /// Currently selected index in the grab list.
-    pub grab_selected: usize,
-    /// Currently grabbed branch info (branch name + source worktree path).
-    pub grabbed_branch: Option<GrabbedBranch>,
+    /// Grab branch overlay state.
+    pub grab: GrabOverlay,
 
     // ── Prune ───────────────────────────────────────────────────
-    /// Whether the prune overlay is active.
-    pub prune_active: bool,
-    /// List of stale worktree names found.
-    pub prune_stale: Vec<String>,
+    /// Prune overlay state.
+    pub prune: PruneOverlay,
 
-    // ── Delete flow (branch deletion after worktree removal) ────
-    /// Branch name pending deletion after worktree was removed.
-    pub worktree_pending_delete_branch: String,
 
     // ── Resume Claude session overlay ─────────────────────────
-    /// Whether the resume-session picker overlay is active.
-    pub resume_session_active: bool,
-    /// List of resumable Claude Code sessions.
-    pub resume_sessions: Vec<crate::claude_sessions::ResumableSession>,
-    /// Currently selected index in the resume session list.
-    pub resume_session_selected: usize,
-    /// Filter string for narrowing the resume session list.
-    pub resume_session_filter: TextInput,
-    /// Whether to show sessions from all projects (true) or only current repo (false).
-    pub resume_session_all_projects: bool,
+    /// Resume-session overlay state.
+    pub resume_session: ResumeSessionOverlay,
 
     // ── Syntax highlighting (syntect) ──────────────────────────
     /// Shared syntect syntax definitions.
@@ -321,42 +253,20 @@ pub struct App {
     pub syntect_theme: syntect::highlighting::Theme,
 
     // ── Help overlay ─────────────────────────────────────────────
-    /// Whether the help overlay is visible.
-    pub help_active: bool,
-    /// Which panel's help to display (captured at the moment `?` was pressed).
-    pub help_context: Focus,
+    /// Help overlay state.
+    pub help: HelpOverlay,
 
     /// Which panel is currently expanded to 100% (via the [<=>] button).
     /// `None` means no panel is expanded (default layout).
     pub expanded_panel: Option<Focus>,
 
     // ── Command palette overlay ─────────────────────────────────
-    /// Whether the command palette is open.
-    pub command_palette_active: bool,
-    /// Filter string for narrowing the command list.
-    pub command_palette_filter: TextInput,
-    /// Currently selected index in the filtered command list.
-    pub command_palette_selected: usize,
+    /// Command palette overlay state.
+    pub command_palette: CommandPaletteOverlay,
 
     // ── Grep (full-text search) overlay ─────────────────────────
-    /// Whether the grep search overlay is active.
-    pub grep_search_active: bool,
-    /// Query input for grep search.
-    pub grep_search_query: TextInput,
-    /// Accumulated search results.
-    pub grep_search_results: Vec<GrepMatch>,
-    /// Index of the selected result.
-    pub grep_search_selected: usize,
-    /// Scroll offset for the result list.
-    pub grep_search_scroll: usize,
-    /// Whether a background search is currently running.
-    pub grep_search_running: bool,
-    /// Receiver for background search progress.
-    pub grep_search_rx: Option<mpsc::Receiver<GrepProgress>>,
-    /// Whether regex mode is enabled (vs literal matching).
-    pub grep_search_regex_mode: bool,
-    /// Whether the search is case-sensitive.
-    pub grep_search_case_sensitive: bool,
+    /// Grep search overlay state.
+    pub grep_search: GrepSearchOverlay,
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
@@ -367,15 +277,6 @@ pub struct App {
     /// Populated during rendering for click-to-jump.
     pub notification_bar_badges: Vec<(u16, u16, String)>,
 
-    /// Scrollback offset for the Claude Code terminal (0 = live view at bottom).
-    pub terminal_scroll_claude: usize,
-    /// Scrollback offset for the Shell terminal (0 = live view at bottom).
-    pub terminal_scroll_shell: usize,
-
-    /// Cached PTY render output for Claude terminal (avoids expensive vt100 snapshots when not focused).
-    pub pty_cache_claude: crate::ui::common::PtyRenderCache,
-    /// Cached PTY render output for Shell terminal.
-    pub pty_cache_shell: crate::ui::common::PtyRenderCache,
 
     // ── Gamification (session stats + streak) ────────────────────
     /// ID of the current stats session (for gamification tracking).
@@ -396,8 +297,8 @@ pub struct App {
     // ── Update & restart ──────────────────────────────────────
     /// Current state of the update flow.
     pub update_state: UpdateState,
-    /// Receiver for progress messages from the background update thread.
-    pub update_rx: Option<mpsc::Receiver<UpdateProgress>>,
+    /// Background update operation.
+    pub update_op: BackgroundOp<UpdateProgress>,
     /// Latest progress message to display in the overlay.
     pub update_progress_message: String,
     /// Path to the executable at startup (for exec-based restart).
@@ -410,51 +311,28 @@ pub struct App {
     pub update_badge_cols: Option<(u16, u16)>,
 
     // ── Background fetch for switch-branch overlay ──────────────
-    /// Receiver for branch lists fetched in the background.
-    pub bg_branch_rx: Option<mpsc::Receiver<Vec<String>>>,
+    /// Background branch list fetch.
+    pub bg_branch_op: BackgroundOp<Vec<String>>,
 
     // ── Background pull ────────────────────────────────────────
-    /// Receiver for pull results from a background thread.
-    pub bg_pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Background pull operation.
+    pub bg_pull_op: BackgroundOp<Result<String, String>>,
 
-    // ── Smart Worktree ──────────────────────────────────────────
-    /// Multi-line task description buffer for smart worktree creation.
-    pub smart_description_buffer: TextInput,
-    /// Receiver for the background LLM generation result.
-    pub smart_gen_rx: Option<mpsc::Receiver<Result<SmartGenResult, String>>>,
-    /// Generated branch name (editable in SmartConfirmBranch state).
-    pub smart_branch_name: TextInput,
-    /// Generated prompt to pre-type into Claude Code.
-    pub smart_prompt: String,
-    /// When true, auto-spawn Claude Code after worktree creation and pre-type the prompt.
-    pub smart_auto_spawn: bool,
 
     /// System clipboard context for Ctrl+V paste support.
     pub clipboard: Option<copypasta::ClipboardContext>,
 
-    // ── Worktree panel detail + decoration ──────────────────────
-    /// Cached local branch list (refreshed with worktrees).
-    pub local_branches: Vec<String>,
     /// Animation state for all decoration modes.
     pub decoration_states: crate::ui::decoration::DecorationStates,
 
     // ── Branch details (worktree detail panel) ────────────────────
     /// Computed branch lineage and PR info for the selected worktree.
     pub branch_details: git_engine::BranchDetails,
-    /// Receiver for background `gh pr view` lookup.
-    pub bg_pr_url_rx: Option<mpsc::Receiver<Option<String>>>,
+    /// Background `gh pr view` lookup.
+    pub bg_pr_url_op: BackgroundOp<Option<String>>,
     /// Whether the `gh` CLI is available on this system.
     pub gh_available: bool,
 
-    // ── Async worktree operations ────────────────────────────────
-    /// Worktree operations currently running in background threads.
-    pub pending_worktrees: Vec<PendingWorktree>,
-    /// Sender for worktree operation results (lazily created).
-    pub bg_worktree_tx: Option<mpsc::Sender<WorktreeOpResult>>,
-    /// Receiver for worktree operation results.
-    pub bg_worktree_rx: Option<mpsc::Receiver<WorktreeOpResult>>,
-    /// Reason text for worktree skip modal (shown until Esc).
-    pub worktree_skip_reason: Option<String>,
 
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
@@ -561,110 +439,49 @@ impl App {
             diff_state,
             review_store,
             review_state: ReviewState::new(),
-            pty_manager: pty_manager::PtyManager::new(),
-            worktree_input_mode: WorktreeInputMode::Normal,
-            worktree_input_buffer: TextInput::new(),
-            worktree_blank_last_click: std::time::Instant::now(),
-            terminal_claude_blank_last_click: std::time::Instant::now(),
-            terminal_shell_blank_last_click: std::time::Instant::now(),
+            terminal: TerminalState::default(),
+            worktree_mgr: WorktreeManager::default(),
             status_message: None,
             last_poll_head_oid: None,
             last_poll_status: None,
-            cc_waiting_worktrees: HashSet::new(),
-            cc_waiting_ack_time: HashMap::new(),
-            history_active: false,
-            history_records: Vec::new(),
-            history_selected: 0,
-            history_search_query: TextInput::new(),
-            history_search_active: false,
-            cherry_pick_active: false,
-            cherry_pick_source_branch: String::new(),
-            cherry_pick_commits: Vec::new(),
-            cherry_pick_selected: 0,
+            history: HistoryOverlay::default(),
+            cherry_pick: CherryPickOverlay::default(),
             repo_list,
             repo_list_index: 0,
-            repo_selector_active: false,
-            repo_selector_selected: 0,
-            open_repo_active: false,
-            open_repo_buffer: TextInput::new(),
-            terminal_size_claude: (24, 80),
-            terminal_size_shell: (6, 80),
-            needs_clear: false,
-            active_claude_session: None,
-            active_shell_session: None,
-            worktree_pending_branch: String::new(),
-            base_branch_list: Vec::new(),
-            base_branch_selected: 0,
-            base_branch_filter: TextInput::new(),
-            switch_branch_active: false,
-            switch_branch_list: Vec::new(),
-            switch_branch_selected: 0,
-            switch_branch_filter: TextInput::new(),
-            grab_active: false,
-            grab_branches: Vec::new(),
-            grab_selected: 0,
-            grabbed_branch: None,
-            prune_active: false,
-            prune_stale: Vec::new(),
-            worktree_pending_delete_branch: String::new(),
-            resume_session_active: false,
-            resume_sessions: Vec::new(),
-            resume_session_selected: 0,
-            resume_session_filter: TextInput::new(),
-            resume_session_all_projects: false,
+            repo_selector: RepoSelectorOverlay::default(),
+            open_repo: OpenRepoOverlay::default(),
+            switch_branch: SwitchBranchOverlay::default(),
+            grab: GrabOverlay::default(),
+            prune: PruneOverlay::default(),
+            resume_session: ResumeSessionOverlay::default(),
             syntax_set,
             syntect_theme,
-            help_active: false,
-            help_context: Focus::Worktree,
+            help: HelpOverlay::default(),
             expanded_panel: None,
-            command_palette_active: false,
-            command_palette_filter: TextInput::new(),
-            command_palette_selected: 0,
-            grep_search_active: false,
-            grep_search_query: TextInput::new(),
-            grep_search_results: Vec::new(),
-            grep_search_selected: 0,
-            grep_search_scroll: 0,
-            grep_search_running: false,
-            grep_search_rx: None,
-            grep_search_regex_mode: false,
-            grep_search_case_sensitive: false,
+            command_palette: CommandPaletteOverlay::default(),
+            grep_search: GrepSearchOverlay::default(),
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
-            terminal_scroll_claude: 0,
-            terminal_scroll_shell: 0,
-            pty_cache_claude: Default::default(),
-            pty_cache_shell: Default::default(),
             stats_session_id,
             today_stats,
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             update_info: None,
             update_state: UpdateState::Idle,
-            update_rx: None,
+            update_op: BackgroundOp::default(),
             update_progress_message: String::new(),
             startup_exe: std::env::current_exe().unwrap_or_default(),
             startup_args: std::env::args().skip(1).collect(),
             should_restart: false,
             update_badge_cols: None,
-            bg_branch_rx: None,
-            bg_pull_rx: None,
-            smart_description_buffer: TextInput::new_multiline(),
-            smart_gen_rx: None,
-            smart_branch_name: TextInput::new(),
-            smart_prompt: String::new(),
-            smart_auto_spawn: false,
+            bg_branch_op: BackgroundOp::default(),
+            bg_pull_op: BackgroundOp::default(),
             clipboard: copypasta::ClipboardContext::new().ok(),
-            local_branches: Vec::new(),
             decoration_states: Default::default(),
             branch_details: Default::default(),
-            bg_pr_url_rx: None,
+            bg_pr_url_op: BackgroundOp::default(),
             gh_available: Self::check_gh_available(),
-            pending_worktrees: Vec::new(),
-            bg_worktree_tx: None,
-            bg_worktree_rx: None,
-            worktree_skip_reason: None,
             pending_auto_resume: auto_resume,
         };
         app.refresh_worktrees();
@@ -674,7 +491,7 @@ impl App {
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
             match engine.load_grab_state() {
                 Ok(Some((branch, source_worktree, _stash_branch))) => {
-                    app.grabbed_branch = Some(GrabbedBranch {
+                    app.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
                         branch,
                         source_worktree,
                     });
@@ -726,8 +543,8 @@ impl App {
         self.viewer_state = ViewerState::default();
         self.diff_state = DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
         self.refresh_reviews();
-        self.active_claude_session = None;
-        self.active_shell_session = None;
+        self.terminal.active_claude_session = None;
+        self.terminal.active_shell_session = None;
 
         self.set_status(format!("Switched to repository: {}", self.main_repo_name), StatusLevel::Success);
     }
@@ -774,8 +591,8 @@ impl App {
                 self.viewer_state = ViewerState::default();
                 self.diff_state = DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
                 self.refresh_reviews();
-                self.active_claude_session = None;
-                self.active_shell_session = None;
+                self.terminal.active_claude_session = None;
+                self.terminal.active_shell_session = None;
 
                 // Add to repo_list if not already present.
                 if !self.repo_list.contains(&canonical) {
@@ -831,7 +648,7 @@ impl App {
                 }
                 // Refresh local branches for the detail zone.
                 if let Ok(branches) = engine.list_local_branches() {
-                    self.local_branches = branches;
+                    self.worktree_mgr.local_branches = branches;
                 }
             }
             Err(e) => {
@@ -849,7 +666,7 @@ impl App {
             return false;
         }
         self.decoration_tick = self.decoration_tick.wrapping_add(1);
-        let activity = if self.cc_waiting_worktrees.is_empty() {
+        let activity = if self.terminal.cc_waiting_worktrees.is_empty() {
             DecorationActivity::Calm
         } else {
             DecorationActivity::Active
@@ -922,7 +739,7 @@ impl App {
             Focus::TerminalClaude => {
                 // Clear CC waiting signal when user focuses on the terminal panel,
                 // not just when they actually type into it.
-                if let Some(idx) = self.active_claude_session {
+                if let Some(idx) = self.terminal.active_claude_session {
                     self.clear_cc_waiting_signal(idx);
                 }
             }
@@ -988,8 +805,8 @@ impl App {
                 }
             }
             CommandId::CreateWorktree => {
-                self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
-                self.worktree_input_buffer.clear();
+                self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
+                self.worktree_mgr.input_buffer.clear();
                 self.set_status_info("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string());
             }
             CommandId::DeleteWorktree => {
@@ -998,7 +815,7 @@ impl App {
                         self.set_status("Cannot delete the main worktree.".to_string(), StatusLevel::Warning);
                     } else {
                         let branch = wt.branch.clone();
-                        self.worktree_input_mode = WorktreeInputMode::ConfirmingDelete;
+                        self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingDelete;
                         self.set_status_info(format!("Delete worktree '{branch}'? (y/n)"));
                     }
                 }
@@ -1006,20 +823,20 @@ impl App {
             CommandId::SwitchBranch => {
                 self.set_status_info("Loading branches...".to_string());
                 self.load_switch_branches();
-                if !self.switch_branch_list.is_empty() {
-                    self.switch_branch_active = true;
+                if !self.switch_branch.branches.is_empty() {
+                    self.switch_branch.active = true;
                     self.status_message = None;
                 }
             }
             CommandId::GrabBranch => {
-                if self.grabbed_branch.is_some() {
+                if self.worktree_mgr.grabbed_branch.is_some() {
                     self.set_status("Already grabbing a branch. Ungrab first (Y).".to_string(), StatusLevel::Warning);
                 } else {
                     self.load_grab_branches();
-                    if self.grab_branches.is_empty() {
+                    if self.grab.branches.is_empty() {
                         self.set_status_info("No non-main worktrees to grab.".to_string());
                     } else {
-                        self.grab_active = true;
+                        self.grab.active = true;
                     }
                 }
             }
@@ -1030,8 +847,8 @@ impl App {
                             if stale.is_empty() {
                                 self.set_status_info("No stale worktrees found.".to_string());
                             } else {
-                                self.prune_stale = stale;
-                                self.prune_active = true;
+                                self.prune.stale = stale;
+                                self.prune.active = true;
                             }
                         }
                         Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
@@ -1079,9 +896,9 @@ impl App {
                     .find(|w| w.branch != current_branch)
                     .map(|w| w.branch.clone());
                 if let Some(branch) = source {
-                    self.cherry_pick_source_branch = branch;
+                    self.cherry_pick.source_branch = branch;
                     self.load_cherry_pick_commits();
-                    self.cherry_pick_active = true;
+                    self.cherry_pick.active = true;
                 } else {
                     self.set_status_info("No other worktree branches available.".to_string());
                 }
@@ -1099,7 +916,7 @@ impl App {
                 self.set_focus(Focus::TerminalShell);
             }
             CommandId::ResumeClaudeSession => {
-                self.resume_session_active = true;
+                self.resume_session.active = true;
                 self.load_resume_sessions();
             }
             CommandId::RefreshDiff => self.refresh_diff(),
@@ -1109,8 +926,8 @@ impl App {
                 self.set_focus(Focus::Viewer);
             }
             CommandId::ToggleHelp => {
-                self.help_context = self.focus;
-                self.help_active = true;
+                self.help.context = self.focus;
+                self.help.active = true;
             }
             CommandId::ShowReviewComments => {
                 self.viewer_state.explorer_show_comments = true;
@@ -1121,24 +938,24 @@ impl App {
                 self.review_state.template_picker_active = true;
             }
             CommandId::SessionHistory => {
-                self.history_active = true;
+                self.history.active = true;
                 self.load_session_history();
             }
             CommandId::OpenRepo => {
-                self.open_repo_active = true;
-                self.open_repo_buffer.set_text(&self.repo_path.display().to_string());
+                self.open_repo.active = true;
+                self.open_repo.buffer.set_text(&self.repo_path.display().to_string());
             }
             CommandId::SwitchRepo => {
                 if self.repo_list.len() > 1 {
-                    self.repo_selector_active = true;
-                    self.repo_selector_selected = self.repo_list_index;
+                    self.repo_selector.active = true;
+                    self.repo_selector.selected = self.repo_list_index;
                 }
             }
             CommandId::UngrabBranch => {
-                if self.grabbed_branch.is_none() {
+                if self.worktree_mgr.grabbed_branch.is_none() {
                     self.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
                 } else {
-                    self.worktree_input_mode = WorktreeInputMode::ConfirmingUngrab;
+                    self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingUngrab;
                     self.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
                 }
             }
@@ -1268,13 +1085,13 @@ impl App {
                 }
             }
             CommandId::SearchFullText => {
-                self.grep_search_active = true;
-                self.grep_search_query.clear();
-                self.grep_search_results.clear();
-                self.grep_search_selected = 0;
-                self.grep_search_scroll = 0;
-                self.grep_search_running = false;
-                self.grep_search_rx = None;
+                self.grep_search.active = true;
+                self.grep_search.query.clear();
+                self.grep_search.results.clear();
+                self.grep_search.selected = 0;
+                self.grep_search.scroll = 0;
+                self.grep_search.running = false;
+                self.grep_search.bg_op.clear();
             }
             CommandId::Quit => self.should_quit = true,
         }
@@ -1294,18 +1111,14 @@ impl App {
         self.update_state = UpdateState::InProgress;
         self.update_progress_message = "Preparing update...".to_string();
 
-        let (tx, rx) = mpsc::channel();
-        self.update_rx = Some(rx);
-
-        std::thread::spawn(move || {
+        self.update_op.start(move |tx| {
             perform_update(&tx, &version, &tarball_url);
         });
     }
 
     /// Poll for progress messages from the background update thread.
     pub fn poll_update_progress(&mut self) {
-        let Some(ref rx) = self.update_rx else { return };
-        while let Ok(msg) = rx.try_recv() {
+        for msg in self.update_op.poll_all() {
             match msg {
                 UpdateProgress::Status(s) => {
                     self.update_progress_message = s;
@@ -1366,15 +1179,15 @@ impl App {
     pub fn spawn_claude_code(&mut self) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let cc_count = self
-            .pty_manager
+            .terminal.pty_manager
             .sessions()
             .iter()
             .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
             .count();
         let label = format!("CC:{}", cc_count + 1);
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal_size_claude;
-        let idx = self.pty_manager.spawn_session(
+        let (rows, cols) = self.terminal.size_claude;
+        let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::ClaudeCode,
             &worktree_name,
             &label,
@@ -1385,8 +1198,8 @@ impl App {
             None,
             &self.repo_path,
         )?;
-        self.pty_manager.activate_session(idx);
-        self.active_claude_session = Some(idx);
+        self.terminal.pty_manager.activate_session(idx);
+        self.terminal.active_claude_session = Some(idx);
         Ok(idx)
     }
 
@@ -1394,15 +1207,15 @@ impl App {
     pub fn spawn_shell(&mut self) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let sh_count = self
-            .pty_manager
+            .terminal.pty_manager
             .sessions()
             .iter()
             .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::Shell)
             .count();
         let label = format!("SH:{}", sh_count + 1);
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal_size_shell;
-        let idx = self.pty_manager.spawn_session(
+        let (rows, cols) = self.terminal.size_shell;
+        let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::Shell,
             &worktree_name,
             &label,
@@ -1413,8 +1226,8 @@ impl App {
             None,
             &self.repo_path,
         )?;
-        self.pty_manager.activate_session(idx);
-        self.active_shell_session = Some(idx);
+        self.terminal.pty_manager.activate_session(idx);
+        self.terminal.active_shell_session = Some(idx);
         Ok(idx)
     }
 
@@ -1424,11 +1237,11 @@ impl App {
     /// and falls back to the next available session for the current worktree.
     pub fn close_terminal_session(&mut self, global_idx: usize) {
         // Kill and remove the session.
-        let _ = self.pty_manager.kill_session(global_idx);
-        self.pty_manager.remove_session(global_idx);
+        let _ = self.terminal.pty_manager.kill_session(global_idx);
+        self.terminal.pty_manager.remove_session(global_idx);
 
         // Adjust active session indices.
-        for a in [&mut self.active_claude_session, &mut self.active_shell_session]
+        for a in [&mut self.terminal.active_claude_session, &mut self.terminal.active_shell_session]
             .into_iter()
             .flatten()
         {
@@ -1440,14 +1253,14 @@ impl App {
         }
 
         // Clear invalidated indices and fall back to next available session.
-        if self.active_claude_session == Some(usize::MAX) {
-            self.active_claude_session = self
+        if self.terminal.active_claude_session == Some(usize::MAX) {
+            self.terminal.active_claude_session = self
                 .current_worktree_claude_sessions()
                 .first()
                 .map(|(idx, _)| *idx);
         }
-        if self.active_shell_session == Some(usize::MAX) {
-            self.active_shell_session = self
+        if self.terminal.active_shell_session == Some(usize::MAX) {
+            self.terminal.active_shell_session = self
                 .current_worktree_shell_sessions()
                 .first()
                 .map(|(idx, _)| *idx);
@@ -1460,18 +1273,18 @@ impl App {
     /// removing later ones. Adjusts `active_claude_session` and
     /// `active_shell_session` indices after removal.
     pub fn cleanup_dead_sessions(&mut self) {
-        let count = self.pty_manager.session_count();
+        let count = self.terminal.pty_manager.session_count();
         let mut removed_any = false;
 
         // Walk backwards so removals don't shift indices we haven't checked yet.
         for idx in (0..count).rev() {
-            if !self.pty_manager.is_session_alive(idx) {
+            if !self.terminal.pty_manager.is_session_alive(idx) {
                 log::info!("removing dead PTY session at index {idx}");
-                self.pty_manager.remove_session(idx);
+                self.terminal.pty_manager.remove_session(idx);
                 removed_any = true;
 
                 // Adjust active session indices.
-                for a in [&mut self.active_claude_session, &mut self.active_shell_session].into_iter().flatten() {
+                for a in [&mut self.terminal.active_claude_session, &mut self.terminal.active_shell_session].into_iter().flatten() {
                     if *a == idx {
                         *a = usize::MAX; // mark for clear
                     } else if *a > idx {
@@ -1483,31 +1296,31 @@ impl App {
 
         if removed_any {
             // Clear any indices that were pointing at removed sessions.
-            if self.active_claude_session == Some(usize::MAX) {
-                self.active_claude_session = None;
+            if self.terminal.active_claude_session == Some(usize::MAX) {
+                self.terminal.active_claude_session = None;
             }
-            if self.active_shell_session == Some(usize::MAX) {
-                self.active_shell_session = None;
+            if self.terminal.active_shell_session == Some(usize::MAX) {
+                self.terminal.active_shell_session = None;
             }
         }
     }
 
     /// Load resumable Claude Code sessions from Claude's history.
     pub fn load_resume_sessions(&mut self) {
-        let filter = if self.resume_session_all_projects {
+        let filter = if self.resume_session.all_projects {
             None
         } else {
             Some(self.repo_path.as_path())
         };
         match crate::claude_sessions::load_resumable_sessions(filter) {
             Ok(sessions) => {
-                self.resume_sessions = sessions;
-                self.resume_session_selected = 0;
-                self.resume_session_filter.clear();
+                self.resume_session.sessions = sessions;
+                self.resume_session.selected = 0;
+                self.resume_session.filter.clear();
             }
             Err(e) => {
                 log::warn!("failed to load resumable sessions: {e}");
-                self.resume_sessions.clear();
+                self.resume_session.sessions.clear();
                 self.set_status(format!("Error loading sessions: {e}"), StatusLevel::Error);
             }
         }
@@ -1515,11 +1328,11 @@ impl App {
 
     /// Return the filtered list of resume sessions based on the current filter string.
     pub fn filtered_resume_sessions(&self) -> Vec<(usize, &crate::claude_sessions::ResumableSession)> {
-        if self.resume_session_filter.is_empty() {
-            self.resume_sessions.iter().enumerate().collect()
+        if self.resume_session.filter.is_empty() {
+            self.resume_session.sessions.iter().enumerate().collect()
         } else {
-            let filter_lower = self.resume_session_filter.to_lowercase();
-            self.resume_sessions
+            let filter_lower = self.resume_session.filter.to_lowercase();
+            self.resume_session.sessions
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| {
@@ -1541,8 +1354,8 @@ impl App {
             label
         };
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal_size_claude;
-        let idx = self.pty_manager.spawn_session(
+        let (rows, cols) = self.terminal.size_claude;
+        let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::ClaudeCode,
             &worktree_name,
             &label,
@@ -1553,8 +1366,8 @@ impl App {
             Some(session_id),
             &self.repo_path,
         )?;
-        self.pty_manager.activate_session(idx);
-        self.active_claude_session = Some(idx);
+        self.terminal.pty_manager.activate_session(idx);
+        self.terminal.active_claude_session = Some(idx);
         Ok(idx)
     }
 
@@ -1585,7 +1398,7 @@ impl App {
 
         let selected_wt_path = self.selected_worktree_path();
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal_size_claude;
+        let (rows, cols) = self.terminal.size_claude;
         let repo_path = self.repo_path.clone();
         let mut resumed_count = 0;
 
@@ -1603,7 +1416,7 @@ impl App {
                 label
             };
 
-            match self.pty_manager.spawn_session(
+            match self.terminal.pty_manager.spawn_session(
                 pty_manager::SessionKind::ClaudeCode,
                 &wt.branch,
                 &label,
@@ -1618,8 +1431,8 @@ impl App {
                     resumed_count += 1;
                     // Only activate + set active_claude_session for the currently selected worktree.
                     if wt.path == selected_wt_path {
-                        self.pty_manager.activate_session(idx);
-                        self.active_claude_session = Some(idx);
+                        self.terminal.pty_manager.activate_session(idx);
+                        self.terminal.active_claude_session = Some(idx);
                     }
                 }
                 Err(e) => {
@@ -1640,7 +1453,7 @@ impl App {
     /// belonging to the currently selected worktree.
     pub fn current_worktree_claude_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
-        self.pty_manager
+        self.terminal.pty_manager
             .sessions()
             .iter()
             .enumerate()
@@ -1652,7 +1465,7 @@ impl App {
     /// belonging to the currently selected worktree.
     pub fn current_worktree_shell_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
-        self.pty_manager
+        self.terminal.pty_manager
             .sessions()
             .iter()
             .enumerate()
@@ -1662,26 +1475,26 @@ impl App {
 
     /// Update the terminal content area size for Claude PTY sessions and resize them.
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
-        self.terminal_size_claude = (rows, cols);
+        self.terminal.size_claude = (rows, cols);
         let wt_path = self.selected_worktree_path();
-        let count = self.pty_manager.session_count();
+        let count = self.terminal.pty_manager.session_count();
         for idx in 0..count {
-            let s = &self.pty_manager.sessions()[idx];
+            let s = &self.terminal.pty_manager.sessions()[idx];
             if s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode {
-                self.pty_manager.resize_session(idx, rows, cols);
+                self.terminal.pty_manager.resize_session(idx, rows, cols);
             }
         }
     }
 
     /// Update the terminal content area size for Shell PTY sessions and resize them.
     pub fn update_shell_terminal_size(&mut self, rows: u16, cols: u16) {
-        self.terminal_size_shell = (rows, cols);
+        self.terminal.size_shell = (rows, cols);
         let wt_path = self.selected_worktree_path();
-        let count = self.pty_manager.session_count();
+        let count = self.terminal.pty_manager.session_count();
         for idx in 0..count {
-            let s = &self.pty_manager.sessions()[idx];
+            let s = &self.terminal.pty_manager.sessions()[idx];
             if s.working_dir == wt_path && s.kind == pty_manager::SessionKind::Shell {
-                self.pty_manager.resize_session(idx, rows, cols);
+                self.terminal.pty_manager.resize_session(idx, rows, cols);
             }
         }
     }
@@ -1761,13 +1574,13 @@ impl App {
         }
 
         // Source 2: PTY pattern match fallback (for [Y/n] prompts).
-        let session_count = self.pty_manager.session_count();
+        let session_count = self.terminal.pty_manager.session_count();
         for idx in 0..session_count {
-            let session = &self.pty_manager.sessions()[idx];
+            let session = &self.terminal.pty_manager.sessions()[idx];
             if session.kind != pty_manager::SessionKind::ClaudeCode {
                 continue;
             }
-            if self.pty_manager.is_waiting_for_input(idx) {
+            if self.terminal.pty_manager.is_waiting_for_input(idx) {
                 new_waiting.insert(session.working_dir.clone());
             }
         }
@@ -1776,7 +1589,7 @@ impl App {
         // Signal files may persist after a session has exited; without this
         // filter the notification bar would animate for a non-existent panel.
         new_waiting.retain(|wt_path| {
-            self.pty_manager.sessions().iter().any(|s| {
+            self.terminal.pty_manager.sessions().iter().any(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == *wt_path
             })
         });
@@ -1791,7 +1604,7 @@ impl App {
         if is_terminal_focused && new_waiting.remove(&current_wt_path) {
             // Record ack so the notification is not re-triggered by the
             // PTY pattern-match source until new output arrives.
-            if let Some(session) = self.pty_manager.sessions().iter().find(|s| {
+            if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode
                     && s.working_dir == current_wt_path
             }) {
@@ -1799,7 +1612,7 @@ impl App {
                     .last_output_time
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                self.cc_waiting_ack_time.insert(current_wt_path.clone(), t);
+                self.terminal.cc_waiting_ack_time.insert(current_wt_path.clone(), t);
             }
         }
 
@@ -1807,8 +1620,8 @@ impl App {
         // if the PTY has not produced any new output since that acknowledgment.
         let mut ack_expired: Vec<PathBuf> = Vec::new();
         new_waiting.retain(|wt_path| {
-            if let Some(&ack_time) = self.cc_waiting_ack_time.get(wt_path) {
-                if let Some(session) = self.pty_manager.sessions().iter().find(|s| {
+            if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(wt_path) {
+                if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
                     s.kind == pty_manager::SessionKind::ClaudeCode
                         && s.working_dir == *wt_path
                 }) {
@@ -1826,11 +1639,11 @@ impl App {
             true
         });
         for p in ack_expired {
-            self.cc_waiting_ack_time.remove(&p);
+            self.terminal.cc_waiting_ack_time.remove(&p);
         }
 
         for wt_path in &new_waiting {
-            if !self.cc_waiting_worktrees.contains(wt_path) {
+            if !self.terminal.cc_waiting_worktrees.contains(wt_path) {
                 // Resolve display name from worktree list.
                 let display_name = self.worktrees.iter()
                     .find(|w| &w.path == wt_path)
@@ -1852,13 +1665,13 @@ impl App {
             }
         }
 
-        self.cc_waiting_worktrees = new_waiting;
+        self.terminal.cc_waiting_worktrees = new_waiting;
     }
 
     /// Remove the hook signal file for a given session and clear its
     /// waiting state. Called when user sends input to a CC terminal.
     pub fn clear_cc_waiting_signal(&mut self, session_idx: usize) {
-        let session = match self.pty_manager.sessions().get(session_idx) {
+        let session = match self.terminal.pty_manager.sessions().get(session_idx) {
             Some(s) => s,
             None => return,
         };
@@ -1872,7 +1685,7 @@ impl App {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let working_dir = session.working_dir.clone();
-        self.cc_waiting_ack_time.insert(working_dir.clone(), last_output);
+        self.terminal.cc_waiting_ack_time.insert(working_dir.clone(), last_output);
 
         let signal_dir = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
@@ -1883,7 +1696,7 @@ impl App {
         let normalized: PathBuf = session.working_dir.components().collect();
         let sanitized = normalized.display().to_string().replace('/', "__");
         let _ = std::fs::remove_file(signal_dir.join(&sanitized));
-        self.cc_waiting_worktrees.remove(&working_dir);
+        self.terminal.cc_waiting_worktrees.remove(&working_dir);
     }
 
     // ── Review helpers ────────────────────────────────────────────────
@@ -2149,12 +1962,12 @@ impl App {
         if let Some(store) = &self.review_store {
             match store.list_session_history(50) {
                 Ok(records) => {
-                    self.history_records = records;
-                    self.history_selected = 0;
+                    self.history.records = records;
+                    self.history.selected = 0;
                 }
                 Err(e) => {
                     log::warn!("failed to load session history: {e}");
-                    self.history_records.clear();
+                    self.history.records.clear();
                 }
             }
         }
@@ -2162,7 +1975,7 @@ impl App {
 
     pub fn search_session_history(&mut self) {
         if let Some(store) = &self.review_store {
-            let query = self.history_search_query.text().to_string();
+            let query = self.history.search_query.text().to_string();
             let result = if query.is_empty() {
                 store.list_session_history(50)
             } else {
@@ -2170,8 +1983,8 @@ impl App {
             };
             match result {
                 Ok(records) => {
-                    self.history_records = records;
-                    self.history_selected = 0;
+                    self.history.records = records;
+                    self.history.selected = 0;
                 }
                 Err(e) => {
                     log::warn!("failed to search session history: {e}");
@@ -2182,8 +1995,8 @@ impl App {
 
     pub fn save_current_session_history(&mut self) {
         // Try the active Claude session first, then Shell.
-        let active_idx = self.active_claude_session
-            .or(self.active_shell_session);
+        let active_idx = self.terminal.active_claude_session
+            .or(self.terminal.active_shell_session);
         let active_idx = match active_idx {
             Some(idx) => idx,
             None => {
@@ -2192,7 +2005,7 @@ impl App {
             }
         };
 
-        let sessions = self.pty_manager.sessions();
+        let sessions = self.terminal.pty_manager.sessions();
         let session = match sessions.get(active_idx) {
             Some(s) => s,
             None => {
@@ -2208,17 +2021,17 @@ impl App {
             pty_manager::SessionKind::ClaudeCode => "claude_code",
             pty_manager::SessionKind::Shell => "shell",
         };
-        let output = self.pty_manager.get_output(active_idx).join("\n");
+        let output = self.terminal.pty_manager.get_output(active_idx).join("\n");
 
         if let Some(store) = &self.review_store {
             match store.save_session_history(&session_id, &worktree, &label, kind, &output) {
                 Ok(()) => {
                     self.status_message = Some(StatusMessage::new("Session history saved.".to_string(), StatusLevel::Success, self.ui_tick));
-                    if self.history_active {
+                    if self.history.active {
                         match store.list_session_history(50) {
                             Ok(records) => {
-                                self.history_records = records;
-                                self.history_selected = 0;
+                                self.history.records = records;
+                                self.history.selected = 0;
                             }
                             Err(e) => {
                                 log::warn!("failed to reload session history: {e}");
@@ -2253,12 +2066,12 @@ impl App {
             op: PendingWorktreeOp::Creating,
             base_ref: base.to_string(),
             worktree_path: None,
-            auto_spawn: self.smart_auto_spawn,
-            smart_prompt: std::mem::take(&mut self.smart_prompt),
+            auto_spawn: self.worktree_mgr.smart_auto_spawn,
+            smart_prompt: std::mem::take(&mut self.worktree_mgr.smart_prompt),
             delete_branch_after: false,
         };
-        self.smart_auto_spawn = false;
-        self.pending_worktrees.push(pending.clone());
+        self.worktree_mgr.smart_auto_spawn = false;
+        self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{branch_name}'..."), StatusLevel::Info);
 
         let tx = self.worktree_op_sender();
@@ -2293,7 +2106,7 @@ impl App {
             smart_prompt: String::new(),
             delete_branch_after: false,
         };
-        self.pending_worktrees.push(pending.clone());
+        self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{local_branch}'..."), StatusLevel::Info);
 
         let tx = self.worktree_op_sender();
@@ -2335,7 +2148,7 @@ impl App {
     /// Execute grab: checkout main to the selected worktree's branch.
     pub fn execute_grab(&mut self, branch_name: &str) {
         // Pre-check: already grabbing another branch
-        if let Some(ref grabbed) = self.grabbed_branch {
+        if let Some(ref grabbed) = self.worktree_mgr.grabbed_branch {
             self.set_status(
                 format!(
                     "Already grabbed: {}. Ungrab first (Y).",
@@ -2367,7 +2180,7 @@ impl App {
             Ok(engine) => {
                 match engine.grab_branch(&main_path, &source_path, branch_name) {
                     Ok(()) => {
-                        self.grabbed_branch = Some(GrabbedBranch {
+                        self.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
                             branch: branch_name.to_string(),
                             source_worktree: source_path,
                         });
@@ -2390,7 +2203,7 @@ impl App {
 
     /// Execute ungrab: return main to main branch, restore worktree to original branch.
     pub fn execute_ungrab(&mut self) {
-        let grabbed = match self.grabbed_branch.clone() {
+        let grabbed = match self.worktree_mgr.grabbed_branch.clone() {
             Some(g) => g,
             None => {
                 self.set_status("Not grabbing any branch.".to_string(), StatusLevel::Warning);
@@ -2415,7 +2228,7 @@ impl App {
                 ) {
                     Ok(()) => {
                         let branch = grabbed.branch.clone();
-                        self.grabbed_branch = None;
+                        self.worktree_mgr.grabbed_branch = None;
                         self.set_status(
                             format!("Ungrabbed '{branch}' — main restored."),
                             StatusLevel::Success,
@@ -2438,7 +2251,7 @@ impl App {
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 let mut pruned = 0;
-                for name in &self.prune_stale {
+                for name in &self.prune.stale {
                     match engine.prune_stale_worktree(name) {
                         Ok(()) => pruned += 1,
                         Err(e) => {
@@ -2447,7 +2260,7 @@ impl App {
                     }
                 }
                 self.set_status(format!("Pruned {pruned} stale worktree(s)."), StatusLevel::Success);
-                self.prune_stale.clear();
+                self.prune.stale.clear();
                 self.refresh_worktrees();
             }
             Err(e) => {
@@ -2467,13 +2280,13 @@ impl App {
             Ok(engine) => {
                 match engine.list_remote_branches() {
                     Ok(branches) => {
-                        self.switch_branch_list = branches;
-                        self.switch_branch_selected = 0;
-                        self.switch_branch_filter.clear();
+                        self.switch_branch.branches = branches;
+                        self.switch_branch.selected = 0;
+                        self.switch_branch.filter.clear();
                     }
                     Err(e) => {
                         self.set_status(format!("Error listing branches: {e}"), StatusLevel::Error);
-                        self.switch_branch_list.clear();
+                        self.switch_branch.branches.clear();
                     }
                 }
             }
@@ -2485,9 +2298,7 @@ impl App {
 
         // Fetch in background and send updated branch list back.
         let repo_path = self.repo_path.clone();
-        let (tx, rx) = mpsc::channel();
-        self.bg_branch_rx = Some(rx);
-        std::thread::spawn(move || {
+        self.bg_branch_op.start(move |tx| {
             let engine = match git_engine::GitEngine::open(&repo_path) {
                 Ok(e) => e,
                 Err(err) => {
@@ -2508,32 +2319,22 @@ impl App {
     /// Check whether the background fetch has finished and update the
     /// switch-branch list if new data is available. Non-blocking.
     pub fn poll_bg_branches(&mut self) {
-        let rx = match self.bg_branch_rx.as_ref() {
-            Some(rx) => rx,
-            None => return,
-        };
-        match rx.try_recv() {
-            Ok(branches) => {
-                // Preserve the user's current filter/selection as best we can.
-                let prev_selected_name = self.filtered_switch_branches()
-                    .get(self.switch_branch_selected)
-                    .map(|(_, name)| (*name).clone());
-                self.switch_branch_list = branches;
-                // Try to restore selection by name.
-                if let Some(name) = prev_selected_name {
-                    if let Some(pos) = self.filtered_switch_branches()
-                        .iter()
-                        .position(|(_, b)| **b == name)
-                    {
-                        self.switch_branch_selected = pos;
-                    }
+        if let Some(branches) = self.bg_branch_op.poll() {
+            // Preserve the user's current filter/selection as best we can.
+            let prev_selected_name = self.filtered_switch_branches()
+                .get(self.switch_branch.selected)
+                .map(|(_, name)| (*name).clone());
+            self.switch_branch.branches = branches;
+            // Try to restore selection by name.
+            if let Some(name) = prev_selected_name {
+                if let Some(pos) = self.filtered_switch_branches()
+                    .iter()
+                    .position(|(_, b)| **b == name)
+                {
+                    self.switch_branch.selected = pos;
                 }
-                self.bg_branch_rx = None;
             }
-            Err(mpsc::TryRecvError::Empty) => { /* still fetching */ }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.bg_branch_rx = None;
-            }
+            self.bg_branch_op.clear();
         }
     }
 
@@ -2541,7 +2342,7 @@ impl App {
 
     /// Start a background pull (fetch + fast-forward) for the selected worktree.
     pub fn start_pull_worktree(&mut self) {
-        if self.bg_pull_rx.is_some() {
+        if self.bg_pull_op.is_running() {
             self.set_status("A pull is already in progress.".to_string(), StatusLevel::Warning);
             return;
         }
@@ -2557,10 +2358,7 @@ impl App {
 
         self.set_status(format!("Pulling '{branch}'..."), StatusLevel::Info);
 
-        let (tx, rx) = mpsc::channel();
-        self.bg_pull_rx = Some(rx);
-
-        std::thread::spawn(move || {
+        self.bg_pull_op.start(move |tx| {
             let result = (|| -> Result<String, String> {
                 let engine = git_engine::GitEngine::open(&repo_path)
                     .map_err(|e| format!("Failed to open repo: {e}"))?;
@@ -2573,30 +2371,22 @@ impl App {
 
     /// Poll the background pull channel. Non-blocking.
     pub fn poll_bg_pull(&mut self) {
-        let rx = match self.bg_pull_rx.as_ref() {
-            Some(rx) => rx,
-            None => return,
-        };
-        match rx.try_recv() {
-            Ok(Ok(msg)) => {
-                let level = if msg.contains("up-to-date") {
-                    StatusLevel::Info
-                } else if msg.contains("fast-forward") {
-                    StatusLevel::Success
-                } else {
-                    StatusLevel::Warning
-                };
-                self.set_status(msg, level);
-                self.refresh_worktrees();
-                self.bg_pull_rx = None;
-            }
-            Ok(Err(err)) => {
-                self.set_status(format!("Pull failed: {err}"), StatusLevel::Error);
-                self.bg_pull_rx = None;
-            }
-            Err(mpsc::TryRecvError::Empty) => { /* still pulling */ }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.bg_pull_rx = None;
+        if let Some(result) = self.bg_pull_op.poll() {
+            match result {
+                Ok(msg) => {
+                    let level = if msg.contains("up-to-date") {
+                        StatusLevel::Info
+                    } else if msg.contains("fast-forward") {
+                        StatusLevel::Success
+                    } else {
+                        StatusLevel::Warning
+                    };
+                    self.set_status(msg, level);
+                    self.refresh_worktrees();
+                }
+                Err(err) => {
+                    self.set_status(format!("Pull failed: {err}"), StatusLevel::Error);
+                }
             }
         }
     }
@@ -2605,7 +2395,7 @@ impl App {
 
     /// Poll for completed background worktree create/delete results.
     pub fn poll_worktree_ops(&mut self) {
-        let rx = match self.bg_worktree_rx.as_ref() {
+        let rx = match self.worktree_mgr.bg_worktree_rx.as_ref() {
             Some(rx) => rx,
             None => return,
         };
@@ -2615,8 +2405,8 @@ impl App {
                 Ok(result) => results.push(result),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.bg_worktree_rx = None;
-                    self.bg_worktree_tx = None;
+                    self.worktree_mgr.bg_worktree_rx = None;
+                    self.worktree_mgr.bg_worktree_tx = None;
                     break;
                 }
             }
@@ -2630,7 +2420,7 @@ impl App {
         match result {
             WorktreeOpResult::Created { path, pending } => {
                 // Remove from pending list.
-                self.pending_worktrees.retain(|p| {
+                self.worktree_mgr.pending_worktrees.retain(|p| {
                     !(p.op == PendingWorktreeOp::Creating && p.branch == pending.branch)
                 });
 
@@ -2650,7 +2440,7 @@ impl App {
                     match self.spawn_claude_code() {
                         Ok(idx) => {
                             if !pending.smart_prompt.is_empty() {
-                                let _ = self.pty_manager.write_to_session(idx, pending.smart_prompt.as_bytes());
+                                let _ = self.terminal.pty_manager.write_to_session(idx, pending.smart_prompt.as_bytes());
                             }
                             self.set_focus(Focus::TerminalClaude);
                         }
@@ -2661,16 +2451,16 @@ impl App {
                 }
             }
             WorktreeOpResult::CreateFailed { error, pending } => {
-                self.pending_worktrees.retain(|p| {
+                self.worktree_mgr.pending_worktrees.retain(|p| {
                     !(p.op == PendingWorktreeOp::Creating && p.branch == pending.branch)
                 });
                 self.set_status(format!("Error: {error}"), StatusLevel::Error);
             }
             WorktreeOpResult::Deleted { ref branch } => {
-                let delete_branch_after = self.pending_worktrees.iter().any(|p| {
+                let delete_branch_after = self.worktree_mgr.pending_worktrees.iter().any(|p| {
                     p.op == PendingWorktreeOp::Deleting && p.branch == *branch && p.delete_branch_after
                 });
-                self.pending_worktrees.retain(|p| {
+                self.worktree_mgr.pending_worktrees.retain(|p| {
                     !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch)
                 });
                 self.refresh_worktrees();
@@ -2681,14 +2471,14 @@ impl App {
                 }
             }
             WorktreeOpResult::DeleteFailed { error, ref branch } => {
-                self.pending_worktrees.retain(|p| {
+                self.worktree_mgr.pending_worktrees.retain(|p| {
                     !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch)
                 });
                 self.set_status(format!("Error: {error}"), StatusLevel::Error);
             }
             WorktreeOpResult::Skipped { ref branch, ref reason } => {
-                self.pending_worktrees.retain(|p| p.branch != *branch);
-                self.worktree_skip_reason = Some(reason.clone());
+                self.worktree_mgr.pending_worktrees.retain(|p| p.branch != *branch);
+                self.worktree_mgr.skip_reason = Some(reason.clone());
             }
         }
     }
@@ -2697,11 +2487,8 @@ impl App {
 
     /// Spawn a background thread to generate a branch name and prompt via `claude --print`.
     pub fn start_smart_generation(&mut self, description: &str) {
-        let (tx, rx) = mpsc::channel();
-        self.smart_gen_rx = Some(rx);
-
         let desc = description.to_string();
-        std::thread::spawn(move || {
+        self.worktree_mgr.smart_gen_op.start(move |tx| {
             let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
 Output ONLY a JSON object with two fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
@@ -2754,39 +2541,26 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Poll the smart generation background task. Non-blocking.
     pub fn poll_smart_generation(&mut self) {
-        let rx = match self.smart_gen_rx.as_ref() {
-            Some(rx) => rx,
+        let result = match self.worktree_mgr.smart_gen_op.poll() {
+            Some(r) => r,
             None => return,
         };
-        match rx.try_recv() {
-            Ok(Ok(result)) => {
-                self.smart_branch_name.set_text(&result.branch);
-                self.smart_prompt = result.prompt;
-                self.worktree_input_mode = WorktreeInputMode::SmartConfirmBranch;
-                self.smart_gen_rx = None;
+        match result {
+            Ok(gen_result) => {
+                self.worktree_mgr.smart_branch_name.set_text(&gen_result.branch);
+                self.worktree_mgr.smart_prompt = gen_result.prompt;
+                self.worktree_mgr.input_mode = WorktreeInputMode::SmartConfirmBranch;
                 self.set_status(
                     "Branch name generated. Edit if needed, Enter to continue.".to_string(),
                     StatusLevel::Success,
                 );
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 log::warn!("Smart generation failed: {e}");
-                // Fallback to manual mode.
-                self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
-                self.worktree_input_buffer.clear();
-                self.smart_gen_rx = None;
+                self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
+                self.worktree_mgr.input_buffer.clear();
                 self.set_status(
                     format!("Smart generation failed, enter branch name manually: {e}"),
-                    StatusLevel::Error,
-                );
-            }
-            Err(mpsc::TryRecvError::Empty) => { /* still generating */ }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.worktree_input_mode = WorktreeInputMode::CreatingWorktree;
-                self.worktree_input_buffer.clear();
-                self.smart_gen_rx = None;
-                self.set_status(
-                    "Smart generation thread disconnected, enter branch name manually.".to_string(),
                     StatusLevel::Error,
                 );
             }
@@ -2795,7 +2569,7 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Start a background grep search with the current query and settings.
     pub fn start_grep_search(&mut self) {
-        let query = self.grep_search_query.text().to_string();
+        let query = self.grep_search.query.text().to_string();
         if query.is_empty() {
             return;
         }
@@ -2806,36 +2580,32 @@ No markdown fences, no explanation, just the JSON object."#;
         };
 
         // Reset results.
-        self.grep_search_results.clear();
-        self.grep_search_selected = 0;
-        self.grep_search_scroll = 0;
-        self.grep_search_running = true;
+        self.grep_search.results.clear();
+        self.grep_search.selected = 0;
+        self.grep_search.scroll = 0;
+        self.grep_search.running = true;
 
-        let (tx, rx) = mpsc::channel();
-        self.grep_search_rx = Some(rx);
+        let regex_mode = self.grep_search.regex_mode;
+        let case_sensitive = self.grep_search.case_sensitive;
+        let wt_path2 = wt_path.clone();
+        let query2 = query.clone();
 
-        let regex_mode = self.grep_search_regex_mode;
-        let case_sensitive = self.grep_search_case_sensitive;
-
-        crate::grep_search::run_search(&wt_path, &query, regex_mode, case_sensitive, tx);
+        self.grep_search.bg_op.start(move |tx| {
+            crate::grep_search::run_search(&wt_path2, &query2, regex_mode, case_sensitive, tx);
+        });
     }
 
     /// Poll for background grep search results.
     pub fn poll_grep_search(&mut self) {
-        let rx = match self.grep_search_rx.as_ref() {
-            Some(rx) => rx,
-            None => return,
-        };
-
-        // Drain all available messages.
-        loop {
-            match rx.try_recv() {
-                Ok(GrepProgress::Results(batch)) => {
-                    self.grep_search_results.extend(batch);
+        let messages = self.grep_search.bg_op.poll_all();
+        for msg in messages {
+            match msg {
+                GrepProgress::Results(batch) => {
+                    self.grep_search.results.extend(batch);
                 }
-                Ok(GrepProgress::Done(total)) => {
-                    self.grep_search_running = false;
-                    self.grep_search_rx = None;
+                GrepProgress::Done(total) => {
+                    self.grep_search.running = false;
+                    self.grep_search.bg_op.clear();
                     if total >= 5000 {
                         self.set_status(
                             format!("Search truncated at {total} results."),
@@ -2844,16 +2614,10 @@ No markdown fences, no explanation, just the JSON object."#;
                     }
                     return;
                 }
-                Ok(GrepProgress::Error(msg)) => {
-                    self.grep_search_running = false;
-                    self.grep_search_rx = None;
+                GrepProgress::Error(msg) => {
+                    self.grep_search.running = false;
+                    self.grep_search.bg_op.clear();
                     self.set_status(format!("Search error: {msg}"), StatusLevel::Error);
-                    return;
-                }
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.grep_search_running = false;
-                    self.grep_search_rx = None;
                     return;
                 }
             }
@@ -2862,11 +2626,11 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Return the filtered list of switch branches based on the current filter.
     pub fn filtered_switch_branches(&self) -> Vec<(usize, &String)> {
-        if self.switch_branch_filter.is_empty() {
-            self.switch_branch_list.iter().enumerate().collect()
+        if self.switch_branch.filter.is_empty() {
+            self.switch_branch.branches.iter().enumerate().collect()
         } else {
-            let filter_lower = self.switch_branch_filter.to_lowercase();
-            self.switch_branch_list
+            let filter_lower = self.switch_branch.filter.to_lowercase();
+            self.switch_branch.branches
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| b.to_lowercase().contains(&filter_lower))
@@ -2881,18 +2645,18 @@ No markdown fences, no explanation, just the JSON object."#;
             Ok(engine) => {
                 match engine.list_remote_branches() {
                     Ok(branches) => {
-                        self.base_branch_list = branches;
-                        self.base_branch_selected = 0;
-                        self.base_branch_filter.clear();
+                        self.worktree_mgr.base_branch_list = branches;
+                        self.worktree_mgr.base_branch_selected = 0;
+                        self.worktree_mgr.base_branch_filter.clear();
                         // Pre-select origin/<main_branch> if it exists.
                         let default_base = format!("origin/{}", self.config.general.main_branch);
-                        if let Some(pos) = self.base_branch_list.iter().position(|b| b == &default_base) {
-                            self.base_branch_selected = pos;
+                        if let Some(pos) = self.worktree_mgr.base_branch_list.iter().position(|b| b == &default_base) {
+                            self.worktree_mgr.base_branch_selected = pos;
                         }
                     }
                     Err(e) => {
                         self.set_status(format!("Error listing branches: {e}"), StatusLevel::Error);
-                        self.base_branch_list.clear();
+                        self.worktree_mgr.base_branch_list.clear();
                     }
                 }
             }
@@ -2904,11 +2668,11 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Return the filtered list of base branches based on the current filter.
     pub fn filtered_base_branches(&self) -> Vec<(usize, &String)> {
-        if self.base_branch_filter.is_empty() {
-            self.base_branch_list.iter().enumerate().collect()
+        if self.worktree_mgr.base_branch_filter.is_empty() {
+            self.worktree_mgr.base_branch_list.iter().enumerate().collect()
         } else {
-            let filter_lower = self.base_branch_filter.to_lowercase();
-            self.base_branch_list
+            let filter_lower = self.worktree_mgr.base_branch_filter.to_lowercase();
+            self.worktree_mgr.base_branch_list
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| b.to_lowercase().contains(&filter_lower))
@@ -2918,12 +2682,12 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Load grab branch candidates (non-main worktree branches).
     pub fn load_grab_branches(&mut self) {
-        self.grab_branches = self.worktrees
+        self.grab.branches = self.worktrees
             .iter()
             .filter(|w| !w.is_main)
             .map(|w| w.branch.clone())
             .collect();
-        self.grab_selected = 0;
+        self.grab.selected = 0;
     }
 
     pub fn delete_selected_worktree(&mut self, delete_branch_after: bool) {
@@ -2944,7 +2708,7 @@ No markdown fences, no explanation, just the JSON object."#;
         // before removing the worktree directory. Walk backwards so removals don't
         // shift indices we haven't processed yet.
         let session_indices: Vec<usize> = self
-            .pty_manager
+            .terminal.pty_manager
             .sessions()
             .iter()
             .enumerate()
@@ -2968,7 +2732,7 @@ No markdown fences, no explanation, just the JSON object."#;
             smart_prompt: String::new(),
             delete_branch_after,
         };
-        self.pending_worktrees.push(pending);
+        self.worktree_mgr.pending_worktrees.push(pending);
         self.set_status(format!("Deleting worktree '{branch}'..."), StatusLevel::Info);
 
         let tx = self.worktree_op_sender();
@@ -2988,33 +2752,33 @@ No markdown fences, no explanation, just the JSON object."#;
     // ── Cherry-pick helpers ────────────────────────────────────────────
 
     pub fn load_cherry_pick_commits(&mut self) {
-        let branch = self.cherry_pick_source_branch.clone();
+        let branch = self.cherry_pick.source_branch.clone();
         if branch.is_empty() {
-            self.cherry_pick_commits.clear();
+            self.cherry_pick.commits.clear();
             return;
         }
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.list_branch_commits(&branch, 20) {
                     Ok(commits) => {
-                        self.cherry_pick_commits = commits;
-                        self.cherry_pick_selected = 0;
+                        self.cherry_pick.commits = commits;
+                        self.cherry_pick.selected = 0;
                     }
                     Err(e) => {
                         log::warn!("failed to list commits for branch '{branch}': {e}");
-                        self.cherry_pick_commits.clear();
+                        self.cherry_pick.commits.clear();
                     }
                 }
             }
             Err(e) => {
                 log::warn!("failed to open git repository for cherry-pick: {e}");
-                self.cherry_pick_commits.clear();
+                self.cherry_pick.commits.clear();
             }
         }
     }
 
     pub fn execute_cherry_pick(&mut self) {
-        let commit = match self.cherry_pick_commits.get(self.cherry_pick_selected) {
+        let commit = match self.cherry_pick.commits.get(self.cherry_pick.selected) {
             Some(c) => c.clone(),
             None => {
                 self.set_status("No commit selected.".to_string(), StatusLevel::Error);
@@ -3063,22 +2827,22 @@ No markdown fences, no explanation, just the JSON object."#;
         // Update active sessions to match the new worktree.
         let wt_name = self.selected_worktree_branch();
         let claude_sessions = self.current_worktree_claude_sessions();
-        self.active_claude_session = claude_sessions.first().map(|(idx, _)| *idx);
+        self.terminal.active_claude_session = claude_sessions.first().map(|(idx, _)| *idx);
         let shell_sessions = self.current_worktree_shell_sessions();
-        self.active_shell_session = shell_sessions.first().map(|(idx, _)| *idx);
+        self.terminal.active_shell_session = shell_sessions.first().map(|(idx, _)| *idx);
 
         // Activate the PTY sessions.
-        if let Some(idx) = self.active_claude_session {
-            self.pty_manager.activate_session(idx);
+        if let Some(idx) = self.terminal.active_claude_session {
+            self.terminal.pty_manager.activate_session(idx);
         }
-        if let Some(idx) = self.active_shell_session {
-            self.pty_manager.activate_session(idx);
+        if let Some(idx) = self.terminal.active_shell_session {
+            self.terminal.pty_manager.activate_session(idx);
         }
 
-        self.terminal_scroll_claude = 0;
-        self.terminal_scroll_shell = 0;
-        self.pty_cache_claude = Default::default();
-        self.pty_cache_shell = Default::default();
+        self.terminal.scroll_claude = 0;
+        self.terminal.scroll_shell = 0;
+        self.terminal.cache_claude = Default::default();
+        self.terminal.cache_shell = Default::default();
 
         self.compute_branch_details();
         self.set_status(format!("Switched to worktree: {wt_name}"), StatusLevel::Success);
@@ -3099,17 +2863,17 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Get (or lazily create) a sender for worktree operation results.
     fn worktree_op_sender(&mut self) -> mpsc::Sender<WorktreeOpResult> {
-        if self.bg_worktree_tx.is_none() {
+        if self.worktree_mgr.bg_worktree_tx.is_none() {
             let (tx, rx) = mpsc::channel();
-            self.bg_worktree_tx = Some(tx);
-            self.bg_worktree_rx = Some(rx);
+            self.worktree_mgr.bg_worktree_tx = Some(tx);
+            self.worktree_mgr.bg_worktree_rx = Some(rx);
         }
-        self.bg_worktree_tx.as_ref().unwrap().clone()
+        self.worktree_mgr.bg_worktree_tx.as_ref().unwrap().clone()
     }
 
     /// Check if a worktree at the given path is pending deletion.
     pub fn is_worktree_pending_delete(&self, path: &Path) -> bool {
-        self.pending_worktrees.iter().any(|p| {
+        self.worktree_mgr.pending_worktrees.iter().any(|p| {
             p.op == PendingWorktreeOp::Deleting && p.worktree_path.as_deref() == Some(path)
         })
     }
@@ -3190,13 +2954,10 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Spawn a background thread to look up the PR URL via `gh pr view`.
     fn start_pr_url_lookup(&mut self, branch: &str) {
-        let (tx, rx) = mpsc::channel();
-        self.bg_pr_url_rx = Some(rx);
-
         let branch = branch.to_string();
         let repo_path = self.repo_path.clone();
 
-        std::thread::spawn(move || {
+        self.bg_pr_url_op.start(move |tx| {
             let result = std::process::Command::new("gh")
                 .args(["pr", "view", "--head", &branch, "--json", "url", "-q", ".url"])
                 .current_dir(&repo_path)
@@ -3218,19 +2979,9 @@ No markdown fences, no explanation, just the JSON object."#;
 
     /// Poll the background PR URL lookup for a result.
     pub fn poll_pr_url(&mut self) {
-        if let Some(ref rx) = self.bg_pr_url_rx {
-            match rx.try_recv() {
-                Ok(result) => {
-                    self.branch_details.pr_url = result;
-                    self.branch_details.pr_loading = false;
-                    self.bg_pr_url_rx = None;
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.branch_details.pr_loading = false;
-                    self.bg_pr_url_rx = None;
-                }
-            }
+        if let Some(result) = self.bg_pr_url_op.poll() {
+            self.branch_details.pr_url = result;
+            self.branch_details.pr_loading = false;
         }
     }
 

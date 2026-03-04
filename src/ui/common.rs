@@ -354,7 +354,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> u16 {
     app.notification_bar_badges.clear();
 
-    if app.cc_waiting_worktrees.is_empty() {
+    if app.terminal.cc_waiting_worktrees.is_empty() {
         return 0;
     }
 
@@ -369,8 +369,8 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     // Suppress the entire bar pulse when the only waiting session(s) are all focused.
     let all_suppressed = focused_cc_wt.is_some()
-        && app.cc_waiting_worktrees.len() == 1
-        && focused_cc_wt.as_deref() == app.cc_waiting_worktrees.iter().next().map(|p| p.as_path());
+        && app.terminal.cc_waiting_worktrees.len() == 1
+        && focused_cc_wt.as_deref() == app.terminal.cc_waiting_worktrees.iter().next().map(|p| p.as_path());
 
     // Orange-tinted background for the notification bar.
     let pulse_on = (app.ui_tick / 20) % 2 == 0;
@@ -399,7 +399,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
     frame.render_widget(Paragraph::new(Span::styled(prefix, prefix_style)), prefix_area);
 
     // Collect waiting worktrees sorted by branch name.
-    let mut waiting: Vec<(&PathBuf, String)> = app.cc_waiting_worktrees.iter().map(|p| {
+    let mut waiting: Vec<(&PathBuf, String)> = app.terminal.cc_waiting_worktrees.iter().map(|p| {
         let name = app.worktrees.iter()
             .find(|w| &w.path == p)
             .map(|w| w.branch.clone())

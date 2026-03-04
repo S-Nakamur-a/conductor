@@ -14,7 +14,7 @@ use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::review_state::ReviewInputMode;
 use crate::review_store::ReviewComment;
 use crate::theme::Theme;
-use crate::viewer_state::UnifiedDiffEntry;
+use crate::viewer::UnifiedDiffEntry;
 
 /// Annotation for a diff line, carrying the tag and optional inline segments.
 pub struct DiffAnnotation {
@@ -812,7 +812,7 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::T
 /// the background is overridden with the diff colour.  When no cache entry
 /// exists for the line, a plain white fallback is returned.
 fn syntax_spans_for_line(
-    vs: &crate::viewer_state::ViewerState,
+    vs: &crate::viewer::ViewerState,
     line_no: usize,
     diff_bg: Option<Color>,
 ) -> Vec<Span<'static>> {

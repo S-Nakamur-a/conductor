@@ -4,6 +4,12 @@
 //! the filesystem (skipping `.git` directories) and the content of the
 //! currently selected file.
 
+mod file_tree;
+mod file_view;
+
+pub use file_tree::{FileTreeEntry, ScoredFile};
+pub use file_view::UnifiedDiffEntry;
+
 use std::fs;
 use std::path::Path;
 
@@ -12,55 +18,8 @@ use syntect::highlighting::Theme as SyntectTheme;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
-use crate::diff_state::{DiffLineTag, FileDiff, InlineSegment};
+use crate::diff_state::FileDiff;
 use crate::text_input::TextInput;
-
-/// A file matched by filename fuzzy search, with its score.
-#[derive(Debug, Clone)]
-pub struct ScoredFile {
-    /// Relative path of the file.
-    pub path: String,
-    /// Fuzzy match score (higher = better).
-    pub score: i32,
-}
-
-/// A single entry in the flattened file tree.
-#[derive(Debug, Clone)]
-pub struct FileTreeEntry {
-    /// Path relative to the worktree root (e.g. `"src/main.rs"`).
-    pub path: String,
-    /// Display name — the final component of the path.
-    pub name: String,
-    /// Nesting depth (0 for top-level entries).
-    pub depth: usize,
-    /// Whether this entry is a directory.
-    pub is_dir: bool,
-    /// Whether a directory entry is currently expanded (ignored for files).
-    pub is_expanded: bool,
-    /// Whether this directory's children have been loaded into the tree.
-    /// Always `false` for files. Directories start as `false` and are set to
-    /// `true` after their children are read from the filesystem.
-    pub children_loaded: bool,
-}
-
-/// An entry in the unified diff view.
-#[derive(Debug, Clone)]
-pub enum UnifiedDiffEntry {
-    /// A separator between hunks.
-    HunkSeparator {
-        func_header: Option<String>,
-    },
-    /// A single line (context, addition, or deletion).
-    Line {
-        tag: DiffLineTag,
-        /// Line number in the new file. `Some` for Equal/Insert, `None` for Delete.
-        new_line_no: Option<usize>,
-        /// The text content of this line.
-        content: String,
-        /// Intra-line change segments (word diff).
-        inline_segments: Vec<InlineSegment>,
-    },
-}
 
 /// All state owned by the Viewer mode.
 pub struct ViewerState {
@@ -384,7 +343,7 @@ impl ViewerState {
         self.file_scroll = self.search_matches[self.search_match_idx];
     }
 
-    // ── Filename fuzzy search ─────────────────────────────────────────────
+    // -- Filename fuzzy search ------------------------------------------------
 
     /// Run fuzzy filename search over the cached file list and populate results.
     pub fn execute_filename_search(&mut self) {
@@ -579,7 +538,7 @@ impl ViewerState {
         }
     }
 
-    // ── Line selection helpers ────────────────────────────────────────────
+    // -- Line selection helpers -----------------------------------------------
 
     /// Clear the current line selection.
     pub fn clear_selection(&mut self) {
@@ -622,7 +581,7 @@ impl ViewerState {
         self.last_line_click_line = line_1indexed;
 
         if is_double {
-            // Double-click → select single line and signal comment creation.
+            // Double-click -> select single line and signal comment creation.
             self.selected_line_start = Some(line_1indexed);
             self.selected_line_end = None;
             return true;
@@ -645,7 +604,7 @@ impl ViewerState {
         false
     }
 
-    // ── Unified diff view ─────────────────────────────────────────────────
+    // -- Unified diff view ----------------------------------------------------
 
     /// Build the unified diff view entries from a `FileDiff`.
     pub fn build_unified_diff_view(&mut self, file_diff: &FileDiff) {
@@ -716,7 +675,7 @@ impl ViewerState {
         self.diff_view_scroll = 0;
     }
 
-    // ── Tree reveal ──────────────────────────────────────────────────────
+    // -- Tree reveal ----------------------------------------------------------
 
     /// Reveal and select a file in the explorer tree by its relative path.
     ///
@@ -767,7 +726,7 @@ impl ViewerState {
         }
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────────
+    // -- Internal helpers -----------------------------------------------------
 
     /// Expand tab characters to spaces, respecting tab stop positions.
     fn expand_tabs(line: &str, tab_width: usize) -> String {
