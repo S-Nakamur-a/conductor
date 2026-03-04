@@ -20,6 +20,8 @@ function findDbPath(): string {
   }
 
   // 2. Find git repo root from cwd, then look for .conductor/conductor.db
+  //    Try --show-toplevel first (works for main worktree), then fall back to
+  //    --git-common-dir which resolves to the main repo even from linked worktrees.
   try {
     const root = execSync("git rev-parse --show-toplevel", {
       encoding: "utf-8",
@@ -31,6 +33,22 @@ function findDbPath(): string {
     }
   } catch {
     // not in a git repo — fall through
+  }
+
+  // 3. Worktree-aware fallback: --git-common-dir returns the shared .git dir
+  //    (e.g. /main-repo/.git), so its parent is the main repo root.
+  try {
+    const gitCommonDir = execSync("git rev-parse --git-common-dir", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    const mainRoot = path.resolve(gitCommonDir, "..");
+    const candidate = path.join(mainRoot, ".conductor", "conductor.db");
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  } catch {
+    // fall through
   }
 
   throw new Error(
@@ -147,8 +165,8 @@ server.tool(
       params.push(worktree);
     }
     if (effectiveBranch) {
-      sql += " AND branch = ?";
-      params.push(effectiveBranch);
+      sql += " AND (branch = ? OR worktree = ?)";
+      params.push(effectiveBranch, effectiveBranch);
     }
     if (file_path) {
       sql += " AND file_path = ?";
