@@ -29,12 +29,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ("[<=>]", theme.border_unfocused)
     };
 
-    let title = if app.grabbed_branch.is_some() {
+    let title = if app.worktree_mgr.grabbed_branch.is_some() {
         " Worktrees [GRABBED] "
     } else {
         " Worktrees "
     };
-    let title_style = if app.grabbed_branch.is_some() {
+    let title_style = if app.worktree_mgr.grabbed_branch.is_some() {
         Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -104,7 +104,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, wt)| {
-            let is_waiting = app.cc_waiting_worktrees.contains(&wt.path);
+            let is_waiting = app.terminal.cc_waiting_worktrees.contains(&wt.path);
             let is_grabbed = is_grab_branch(wt);
             let is_pending_delete = app.is_worktree_pending_delete(&wt.path);
             let suppress_blink = is_waiting && focused_cc_wt.as_deref() == Some(wt.path.as_path());
@@ -185,7 +185,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             }
 
             // Tag main worktree when holding a grabbed branch.
-            if wt.is_main && app.grabbed_branch.is_some() {
+            if wt.is_main && app.worktree_mgr.grabbed_branch.is_some() {
                 spans.push(Span::styled(
                     " \u{2190}grabbed",
                     Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD),
@@ -266,7 +266,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     // Append pending-create worktrees at the end of the list.
-    for pending in &app.pending_worktrees {
+    for pending in &app.worktree_mgr.pending_worktrees {
         if pending.op == crate::app::PendingWorktreeOp::Creating {
             let spans = vec![
                 Span::styled(

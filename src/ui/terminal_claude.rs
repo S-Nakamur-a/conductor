@@ -46,12 +46,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .enumerate()
         .map(|(tab_idx, (global_idx, _session))| {
-            if Some(*global_idx) == app.active_claude_session {
+            if Some(*global_idx) == app.terminal.active_claude_session {
                 selected_tab = tab_idx;
             }
-            let is_waiting = app.pty_manager.is_waiting_for_input(*global_idx);
+            let is_waiting = app.terminal.pty_manager.is_waiting_for_input(*global_idx);
             let label = format!("[CC:{}]", tab_idx + 1);
-            let is_active = Some(*global_idx) == app.active_claude_session;
+            let is_active = Some(*global_idx) == app.terminal.active_claude_session;
             let suppress_blink = focused;
             let pulse_on = (app.ui_tick / 30) % 2 == 0;
             let label_style = if is_waiting {
@@ -106,26 +106,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
         .border_style(Style::default().fg(border_color));
 
-    if let Some(active_idx) = app.active_claude_session {
-        if let Some(screen_arc) = app.pty_manager.get_screen(active_idx) {
+    if let Some(active_idx) = app.terminal.active_claude_session {
+        if let Some(screen_arc) = app.terminal.pty_manager.get_screen(active_idx) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
 
             // When focused (or cache empty), do the expensive vt100 snapshot.
             // Otherwise, reuse cached lines for fast rendering.
-            if focused || app.pty_cache_claude.lines.is_empty() {
-                app.pty_cache_claude = crate::ui::common::build_pty_lines(
+            if focused || app.terminal.cache_claude.lines.is_empty() {
+                app.terminal.cache_claude = crate::ui::common::build_pty_lines(
                     &screen_arc,
-                    app.terminal_scroll_claude,
+                    app.terminal.scroll_claude,
                     inner.height,
                     inner.width,
                 );
             }
-            crate::ui::common::render_pty_cached(frame, inner, &app.pty_cache_claude);
+            crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_claude);
 
             // Set cursor position for IME when focused and not scrolled back.
             if focused {
-                if let Some((row, col)) = app.pty_cache_claude.cursor_position {
+                if let Some((row, col)) = app.terminal.cache_claude.cursor_position {
                     let cursor_x = inner.x + col;
                     let cursor_y = inner.y + row;
                     if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {

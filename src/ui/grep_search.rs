@@ -63,13 +63,13 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(search_block, chunks[0]);
 
     // Mode indicators: [.*] or [ab] for regex, [Aa] or [aa] for case
-    let regex_indicator = if app.grep_search_regex_mode { "[.*]" } else { "[ab]" };
-    let case_indicator = if app.grep_search_case_sensitive { "[Aa]" } else { "[aa]" };
+    let regex_indicator = if app.grep_search.regex_mode { "[.*]" } else { "[ab]" };
+    let case_indicator = if app.grep_search.case_sensitive { "[Aa]" } else { "[aa]" };
 
     let query_text = format!(
         "{}\u{2588}{}",
-        app.grep_search_query.text_before_cursor(),
-        app.grep_search_query.text_after_cursor(),
+        app.grep_search.query.text_before_cursor(),
+        app.grep_search.query.text_after_cursor(),
     );
 
     let mode_width = regex_indicator.len() + 1 + case_indicator.len() + 1; // +spaces
@@ -79,11 +79,11 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         let spans = vec![
             Span::styled(
                 format!("{regex_indicator} "),
-                Style::default().fg(if app.grep_search_regex_mode { theme.accent } else { theme.muted }),
+                Style::default().fg(if app.grep_search.regex_mode { theme.accent } else { theme.muted }),
             ),
             Span::styled(
                 format!("{case_indicator} "),
-                Style::default().fg(if app.grep_search_case_sensitive { theme.accent } else { theme.muted }),
+                Style::default().fg(if app.grep_search.case_sensitive { theme.accent } else { theme.muted }),
             ),
             Span::styled(query_text, Style::default().fg(theme.fg)),
         ];
@@ -91,7 +91,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
         // Set cursor position (after mode indicators + query text before cursor).
         let prefix_width = mode_width;
-        let cursor_offset = app.grep_search_query.display_width_before_cursor();
+        let cursor_offset = app.grep_search.query.display_width_before_cursor();
         let cursor_x = search_inner.x + prefix_width as u16 + cursor_offset as u16;
         let cursor_y = search_inner.y;
         if cursor_x < search_inner.x + search_inner.width && cursor_y < search_inner.y + search_inner.height {
@@ -102,21 +102,21 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
             Paragraph::new(Span::styled(query_text, Style::default().fg(theme.fg))),
             search_inner,
         );
-        set_cursor_for_input(frame, search_inner, &app.grep_search_query);
+        set_cursor_for_input(frame, search_inner, &app.grep_search.query);
     }
 
     // ── Status line ─────────────────────────────────────────────
-    let status_text = if app.grep_search_running {
-        format!("  Searching... ({} matches so far)", app.grep_search_results.len())
-    } else if app.grep_search_results.is_empty() {
-        if app.grep_search_query.is_empty() {
+    let status_text = if app.grep_search.running {
+        format!("  Searching... ({} matches so far)", app.grep_search.results.len())
+    } else if app.grep_search.results.is_empty() {
+        if app.grep_search.query.is_empty() {
             "  Type a query and press Enter to search".to_string()
         } else {
             "  No matches found".to_string()
         }
     } else {
-        let total = app.grep_search_results.len();
-        let pos = if total > 0 { app.grep_search_selected + 1 } else { 0 };
+        let total = app.grep_search.results.len();
+        let pos = if total > 0 { app.grep_search.selected + 1 } else { 0 };
         format!("  {pos}/{total} matches  |  Ctrl+R: regex  Ctrl+I: case")
     };
     frame.render_widget(
@@ -131,16 +131,16 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let list_inner = list_block.inner(chunks[2]);
     frame.render_widget(list_block, chunks[2]);
 
-    if app.grep_search_results.is_empty() {
+    if app.grep_search.results.is_empty() {
         return;
     }
 
     let visible_height = list_inner.height as usize;
-    let selected = app.grep_search_selected;
+    let selected = app.grep_search.selected;
 
     // Compute scroll offset to keep selected item visible.
     let scroll = {
-        let mut s = app.grep_search_scroll;
+        let mut s = app.grep_search.scroll;
         if selected < s {
             s = selected;
         }
@@ -155,7 +155,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner_width = list_inner.width as usize;
 
     let items: Vec<ListItem> = app
-        .grep_search_results
+        .grep_search.results
         .iter()
         .enumerate()
         .skip(scroll)

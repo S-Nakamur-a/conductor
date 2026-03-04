@@ -1,6 +1,7 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
 mod app;
+mod background;
 mod ccusage_cache;
 mod claude_sessions;
 mod command_palette;
@@ -11,14 +12,17 @@ mod file_watcher;
 mod git_engine;
 mod grep_search;
 mod keymap;
+mod overlay;
 mod pty_manager;
 mod review_state;
 mod review_store;
+mod terminal_state;
 mod text_input;
 mod theme;
 mod ui;
 mod update_checker;
-mod viewer_state;
+mod viewer;
+mod worktree_ops;
 
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -257,9 +261,9 @@ fn run_loop(
     let mut last_unfocused_terminal_refresh = Instant::now();
 
     loop {
-        if app.needs_clear {
+        if app.terminal.needs_clear {
             terminal.clear()?;
-            app.needs_clear = false;
+            app.terminal.needs_clear = false;
             needs_redraw = true;
         }
 
@@ -272,7 +276,7 @@ fn run_loop(
             needs_redraw = true;
         }
         // Grep search streaming results need continuous rendering.
-        if app.grep_search_running {
+        if app.grep_search.running {
             needs_redraw = true;
         }
 
@@ -302,7 +306,7 @@ fn run_loop(
         {
             let area = last_frame_area;
             // Must match render_ui layout: title bar (1) + notification bar (0 or 1) + main + status bar (1).
-            let notif_height: u16 = if !app.cc_waiting_worktrees.is_empty() { 1 } else { 0 };
+            let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty() { 1 } else { 0 };
             let outer = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Length(notif_height),
@@ -347,7 +351,7 @@ fn run_loop(
             let (left_w, _, _) = accordion_widths(app.expanded_panel, last_frame_area.width);
             let panel_h = last_frame_area.height.saturating_sub(3);
             let list_h = (app.worktrees.len() as u16 + 2).max(5);
-            let detail_h = (1 + app.local_branches.len() as u16 + 2).min(8);
+            let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
             let deco_h = panel_h.saturating_sub(list_h + detail_h);
             if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
                 needs_redraw = true;
@@ -361,8 +365,8 @@ fn run_loop(
         {
             last_unfocused_terminal_refresh = Instant::now();
             // Invalidate caches so the next draw picks up fresh PTY content.
-            app.pty_cache_claude = Default::default();
-            app.pty_cache_shell = Default::default();
+            app.terminal.cache_claude = Default::default();
+            app.terminal.cache_shell = Default::default();
             needs_redraw = true;
         }
 
@@ -374,7 +378,7 @@ fn run_loop(
         let tick = match app.focus {
             crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
             _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
-            _ if !app.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
+            _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
             _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
             _ if decoration_active => DECORATION_TICK_INTERVAL,
             _ => TICK_RATE_IDLE,
@@ -466,7 +470,7 @@ fn run_loop(
         }
 
         // Force redraw while worktree ops are pending (for spinner animation).
-        if !app.pending_worktrees.is_empty() {
+        if !app.worktree_mgr.pending_worktrees.is_empty() {
             needs_redraw = true;
         }
 
@@ -525,7 +529,7 @@ fn run_loop(
 
         // Nudge PTY sessions that just entered alternate screen mode
         // (e.g. fzf) by sending a no-op resize to trigger SIGWINCH.
-        app.pty_manager.nudge_alt_screen_sessions();
+        app.terminal.pty_manager.nudge_alt_screen_sessions();
 
         if app.should_quit {
             return Ok(());
@@ -559,7 +563,7 @@ pub fn accordion_widths(expanded_panel: Option<crate::app::Focus>, total_width: 
 fn render_ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
-    let has_notifications = !app.cc_waiting_worktrees.is_empty();
+    let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
     let notif_height: u16 = if has_notifications { 1 } else { 0 };
 
     // Outer: title bar (1 row) + notification bar (0 or 1 row) + main content + status bar (1 row).
@@ -617,49 +621,49 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // ── Overlays ────────────────────────────────────────────────────
     // These render on top of everything else when active.
-    if app.history_active {
+    if app.history.active {
         ui::dashboard::render_history_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::CreatingWorktree {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::CreatingWorktree {
         ui::dashboard::render_worktree_input_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::CreatingWorktreeBase {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::CreatingWorktreeBase {
         ui::dashboard::render_worktree_base_input_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingDelete {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::ConfirmingDelete {
         render_confirming_delete_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingDeleteBranch {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::ConfirmingDeleteBranch {
         ui::dashboard::render_delete_branch_confirm_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::ConfirmingUngrab {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::ConfirmingUngrab {
         render_confirm_overlay(frame, main_area, app, " Confirm Ungrab ", ratatui::style::Color::Yellow);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::SmartDescription {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::SmartDescription {
         ui::dashboard::render_smart_description_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::SmartGenerating {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::SmartGenerating {
         ui::dashboard::render_smart_generating_overlay(frame, main_area, app);
     }
-    if app.worktree_input_mode == crate::app::WorktreeInputMode::SmartConfirmBranch {
+    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::SmartConfirmBranch {
         ui::dashboard::render_smart_confirm_branch_overlay(frame, main_area, app);
     }
-    if app.cherry_pick_active {
+    if app.cherry_pick.active {
         ui::dashboard::render_cherry_pick_overlay(frame, main_area, app);
     }
-    if app.switch_branch_active {
+    if app.switch_branch.active {
         ui::dashboard::render_switch_branch_overlay(frame, main_area, app);
     }
-    if app.grab_active {
+    if app.grab.active {
         ui::dashboard::render_grab_overlay(frame, main_area, app);
     }
-    if app.prune_active {
+    if app.prune.active {
         ui::dashboard::render_prune_overlay(frame, main_area, app);
     }
-    if app.repo_selector_active {
+    if app.repo_selector.active {
         ui::dashboard::render_repo_selector_overlay(frame, main_area, app);
     }
-    if app.open_repo_active {
+    if app.open_repo.active {
         ui::dashboard::render_open_repo_overlay(frame, main_area, app);
     }
     if app.review_state.input_mode != crate::review_state::ReviewInputMode::Normal {
@@ -671,16 +675,16 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     if app.review_state.comment_detail_active {
         ui::review::render_comment_detail_overlay(frame, main_area, app);
     }
-    if app.resume_session_active {
+    if app.resume_session.active {
         ui::dashboard::render_resume_session_overlay(frame, main_area, app);
     }
-    if app.grep_search_active {
+    if app.grep_search.active {
         ui::grep_search::render_grep_search_overlay(frame, main_area, app);
     }
-    if app.command_palette_active {
+    if app.command_palette.active {
         ui::dashboard::render_command_palette_overlay(frame, main_area, app);
     }
-    if app.help_active {
+    if app.help.active {
         ui::dashboard::render_help_overlay(frame, main_area, app);
     }
     match app.update_state {
@@ -694,7 +698,7 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     }
 
     // ── Skip reason modal ────────────────────────────────────────────
-    if let Some(ref reason) = app.worktree_skip_reason {
+    if let Some(ref reason) = app.worktree_mgr.skip_reason {
         render_skip_reason_overlay(frame, main_area, reason);
     }
 

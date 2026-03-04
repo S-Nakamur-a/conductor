@@ -46,11 +46,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .enumerate()
         .map(|(tab_idx, (global_idx, _session))| {
-            if Some(*global_idx) == app.active_shell_session {
+            if Some(*global_idx) == app.terminal.active_shell_session {
                 selected_tab = tab_idx;
             }
             let label = format!("[SH:{}]", tab_idx + 1);
-            let is_active = Some(*global_idx) == app.active_shell_session;
+            let is_active = Some(*global_idx) == app.terminal.active_shell_session;
             let close_style = if is_active {
                 Style::default().fg(theme.error)
             } else {
@@ -91,26 +91,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
         .border_style(Style::default().fg(border_color));
 
-    if let Some(active_idx) = app.active_shell_session {
-        if let Some(screen_arc) = app.pty_manager.get_screen(active_idx) {
+    if let Some(active_idx) = app.terminal.active_shell_session {
+        if let Some(screen_arc) = app.terminal.pty_manager.get_screen(active_idx) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
 
             // When focused (or cache empty), do the expensive vt100 snapshot.
             // Otherwise, reuse cached lines for fast rendering.
-            if focused || app.pty_cache_shell.lines.is_empty() {
-                app.pty_cache_shell = crate::ui::common::build_pty_lines(
+            if focused || app.terminal.cache_shell.lines.is_empty() {
+                app.terminal.cache_shell = crate::ui::common::build_pty_lines(
                     &screen_arc,
-                    app.terminal_scroll_shell,
+                    app.terminal.scroll_shell,
                     inner.height,
                     inner.width,
                 );
             }
-            crate::ui::common::render_pty_cached(frame, inner, &app.pty_cache_shell);
+            crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_shell);
 
             // Set cursor position for IME when focused and not scrolled back.
             if focused {
-                if let Some((row, col)) = app.pty_cache_shell.cursor_position {
+                if let Some((row, col)) = app.terminal.cache_shell.cursor_position {
                     let cursor_x = inner.x + col;
                     let cursor_y = inner.y + row;
                     if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {
