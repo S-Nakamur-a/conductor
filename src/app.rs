@@ -99,10 +99,6 @@ pub enum WorktreeInputMode {
     ConfirmingUngrab,
     /// Smart Worktree: typing a multi-line task description.
     SmartDescription,
-    /// Smart Worktree: waiting for LLM to generate branch name + prompt.
-    SmartGenerating,
-    /// Smart Worktree: confirming/editing the generated branch name.
-    SmartConfirmBranch,
 }
 
 /// The kind of pending worktree background operation.
@@ -110,6 +106,8 @@ pub enum WorktreeInputMode {
 pub enum PendingWorktreeOp {
     Creating,
     Deleting,
+    /// Smart worktree: LLM generation + worktree creation running in background.
+    SmartCreating,
 }
 
 /// A worktree operation currently running in a background thread.
@@ -122,6 +120,8 @@ pub struct PendingWorktree {
     pub auto_spawn: bool,
     pub smart_prompt: String,
     pub delete_branch_after: bool,
+    /// Task description for smart worktree (displayed while LLM is generating).
+    pub description: String,
 }
 
 /// Result of a background worktree operation.
@@ -133,6 +133,10 @@ pub enum WorktreeOpResult {
     Deleted { branch: String },
     DeleteFailed { error: String, branch: String },
     Skipped { branch: String, reason: String },
+    /// Smart worktree: LLM resolved a branch name (for UI update).
+    SmartBranchResolved { description: String, branch: String, prompt: String },
+    /// Smart worktree: entire operation failed.
+    SmartFailed { description: String, error: String },
 }
 
 /// Result from the smart worktree LLM generation.
@@ -140,6 +144,49 @@ pub enum WorktreeOpResult {
 pub struct SmartGenResult {
     pub branch: String,
     pub prompt: String,
+}
+
+/// Run the LLM generation for smart worktree (branch name + prompt) via `claude --print`.
+fn run_smart_generation(desc: &str) -> Result<SmartGenResult, String> {
+    let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
+Output ONLY a JSON object with two fields:
+- "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
+- "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
+No markdown fences, no explanation, just the JSON object."#;
+
+    let mut child = std::process::Command::new("claude")
+        .args(["--print", "-p", system_prompt])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn claude: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(desc.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for claude: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("claude exited with {}: {}", output.status, stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_str = stdout
+        .trim()
+        .strip_prefix("```json")
+        .or_else(|| stdout.trim().strip_prefix("```"))
+        .unwrap_or(stdout.trim());
+    let json_str = json_str
+        .strip_suffix("```")
+        .unwrap_or(json_str)
+        .trim();
+    serde_json::from_str::<SmartGenResult>(json_str)
+        .map_err(|e| format!("JSON parse error: {e}\nRaw output: {stdout}"))
 }
 
 /// Info about a grabbed branch (branch checkout swap with main).
@@ -2066,11 +2113,11 @@ impl App {
             op: PendingWorktreeOp::Creating,
             base_ref: base.to_string(),
             worktree_path: None,
-            auto_spawn: self.worktree_mgr.smart_auto_spawn,
-            smart_prompt: std::mem::take(&mut self.worktree_mgr.smart_prompt),
+            auto_spawn: false,
+            smart_prompt: String::new(),
             delete_branch_after: false,
+            description: String::new(),
         };
-        self.worktree_mgr.smart_auto_spawn = false;
         self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{branch_name}'..."), StatusLevel::Info);
 
@@ -2105,6 +2152,7 @@ impl App {
             auto_spawn: false,
             smart_prompt: String::new(),
             delete_branch_after: false,
+            description: String::new(),
         };
         self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{local_branch}'..."), StatusLevel::Info);
@@ -2419,9 +2467,10 @@ impl App {
     fn handle_worktree_op_result(&mut self, result: WorktreeOpResult) {
         match result {
             WorktreeOpResult::Created { path, pending } => {
-                // Remove from pending list.
+                // Remove from pending list (matches both Creating and SmartCreating).
                 self.worktree_mgr.pending_worktrees.retain(|p| {
-                    !(p.op == PendingWorktreeOp::Creating && p.branch == pending.branch)
+                    !((p.op == PendingWorktreeOp::Creating || p.op == PendingWorktreeOp::SmartCreating)
+                        && p.branch == pending.branch)
                 });
 
                 self.record_stat("branches_created");
@@ -2452,7 +2501,8 @@ impl App {
             }
             WorktreeOpResult::CreateFailed { error, pending } => {
                 self.worktree_mgr.pending_worktrees.retain(|p| {
-                    !(p.op == PendingWorktreeOp::Creating && p.branch == pending.branch)
+                    !((p.op == PendingWorktreeOp::Creating || p.op == PendingWorktreeOp::SmartCreating)
+                        && p.branch == pending.branch)
                 });
                 self.set_status(format!("Error: {error}"), StatusLevel::Error);
             }
@@ -2480,91 +2530,109 @@ impl App {
                 self.worktree_mgr.pending_worktrees.retain(|p| p.branch != *branch);
                 self.worktree_mgr.skip_reason = Some(reason.clone());
             }
+            WorktreeOpResult::SmartBranchResolved { ref description, ref branch, ref prompt } => {
+                // Update the pending entry: set branch name and prompt.
+                for p in &mut self.worktree_mgr.pending_worktrees {
+                    if p.op == PendingWorktreeOp::SmartCreating && p.description == *description {
+                        p.branch = branch.clone();
+                        p.smart_prompt = prompt.clone();
+                        break;
+                    }
+                }
+                self.set_status(
+                    format!("Smart worktree: creating '{branch}'..."),
+                    StatusLevel::Info,
+                );
+            }
+            WorktreeOpResult::SmartFailed { ref description, ref error } => {
+                self.worktree_mgr.pending_worktrees.retain(|p| {
+                    !(p.op == PendingWorktreeOp::SmartCreating && p.description == *description)
+                });
+                log::warn!("Smart worktree failed: {error}");
+                self.set_status(
+                    format!("Smart worktree failed: {error}"),
+                    StatusLevel::Error,
+                );
+            }
         }
     }
 
     // ── Smart Worktree generation ──────────────────────────────────────
 
-    /// Spawn a background thread to generate a branch name and prompt via `claude --print`.
-    pub fn start_smart_generation(&mut self, description: &str) {
+    /// Run LLM generation + worktree creation asynchronously in a single background thread.
+    pub fn start_smart_worktree_async(&mut self, description: &str) {
         let desc = description.to_string();
-        self.worktree_mgr.smart_gen_op.start(move |tx| {
-            let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
-Output ONLY a JSON object with two fields:
-- "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
-- "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
-No markdown fences, no explanation, just the JSON object."#;
+        let main_branch = self.config.general.main_branch.clone();
+        let base_ref = format!("origin/{main_branch}");
+        let repo_path = self.repo_path.clone();
+        let wt_dir = self.config.general.worktree_dir.clone();
 
-            let result = std::process::Command::new("claude")
-                .args(["--print", "-p", system_prompt])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn();
+        // Add pending entry with empty branch (will be updated when LLM resolves).
+        let pending = PendingWorktree {
+            branch: String::new(),
+            op: PendingWorktreeOp::SmartCreating,
+            base_ref: base_ref.clone(),
+            worktree_path: None,
+            auto_spawn: true,
+            smart_prompt: String::new(),
+            delete_branch_after: false,
+            description: desc.clone(),
+        };
+        self.worktree_mgr.pending_worktrees.push(pending);
+        self.set_status("Smart worktree: generating...".to_string(), StatusLevel::Info);
 
-            let result = match result {
-                Ok(mut child) => {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = stdin.write_all(desc.as_bytes());
-                    }
-                    match child.wait_with_output() {
-                        Ok(output) => {
-                            if !output.status.success() {
-                                let stderr = String::from_utf8_lossy(&output.stderr);
-                                Err(format!("claude exited with {}: {}", output.status, stderr))
-                            } else {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                // Strip markdown fences if present.
-                                let json_str = stdout
-                                    .trim()
-                                    .strip_prefix("```json")
-                                    .or_else(|| stdout.trim().strip_prefix("```"))
-                                    .unwrap_or(stdout.trim());
-                                let json_str = json_str
-                                    .strip_suffix("```")
-                                    .unwrap_or(json_str)
-                                    .trim();
-                                serde_json::from_str::<SmartGenResult>(json_str)
-                                    .map_err(|e| format!("JSON parse error: {e}\nRaw output: {stdout}"))
-                            }
-                        }
-                        Err(e) => Err(format!("Failed to wait for claude: {e}")),
-                    }
+        let tx = self.worktree_op_sender();
+
+        std::thread::spawn(move || {
+            // Phase 1: LLM generation.
+            let gen_result = match run_smart_generation(&desc) {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(WorktreeOpResult::SmartFailed {
+                        description: desc,
+                        error: e,
+                    });
+                    return;
                 }
-                Err(e) => Err(format!("Failed to spawn claude: {e}")),
             };
 
-            let _ = tx.send(result);
-        });
-    }
+            if gen_result.branch.is_empty() {
+                let _ = tx.send(WorktreeOpResult::SmartFailed {
+                    description: desc,
+                    error: "LLM returned empty branch name".to_string(),
+                });
+                return;
+            }
 
-    /// Poll the smart generation background task. Non-blocking.
-    pub fn poll_smart_generation(&mut self) {
-        let result = match self.worktree_mgr.smart_gen_op.poll() {
-            Some(r) => r,
-            None => return,
-        };
-        match result {
-            Ok(gen_result) => {
-                self.worktree_mgr.smart_branch_name.set_text(&gen_result.branch);
-                self.worktree_mgr.smart_prompt = gen_result.prompt;
-                self.worktree_mgr.input_mode = WorktreeInputMode::SmartConfirmBranch;
-                self.set_status(
-                    "Branch name generated. Edit if needed, Enter to continue.".to_string(),
-                    StatusLevel::Success,
-                );
-            }
-            Err(e) => {
-                log::warn!("Smart generation failed: {e}");
-                self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
-                self.worktree_mgr.input_buffer.clear();
-                self.set_status(
-                    format!("Smart generation failed, enter branch name manually: {e}"),
-                    StatusLevel::Error,
-                );
-            }
-        }
+            let branch = gen_result.branch.clone();
+            let prompt = gen_result.prompt.clone();
+
+            // Report branch resolved (for UI update).
+            let _ = tx.send(WorktreeOpResult::SmartBranchResolved {
+                description: desc.clone(),
+                branch: branch.clone(),
+                prompt: prompt.clone(),
+            });
+
+            // Phase 2: Create worktree.
+            let pending = PendingWorktree {
+                branch: branch.clone(),
+                op: PendingWorktreeOp::SmartCreating,
+                base_ref: base_ref.clone(),
+                worktree_path: None,
+                auto_spawn: true,
+                smart_prompt: prompt,
+                delete_branch_after: false,
+                description: desc,
+            };
+            let result = git_engine::GitEngine::open(&repo_path)
+                .and_then(|engine| engine.create_worktree_from_base(&branch, &base_ref, wt_dir.as_deref()));
+            let msg = match result {
+                Ok(path) => WorktreeOpResult::Created { path, pending },
+                Err(e) => WorktreeOpResult::CreateFailed { error: format!("{e}"), pending },
+            };
+            let _ = tx.send(msg);
+        });
     }
 
     /// Start a background grep search with the current query and settings.
@@ -2731,6 +2799,7 @@ No markdown fences, no explanation, just the JSON object."#;
             auto_spawn: false,
             smart_prompt: String::new(),
             delete_branch_after,
+            description: String::new(),
         };
         self.worktree_mgr.pending_worktrees.push(pending);
         self.set_status(format!("Deleting worktree '{branch}'..."), StatusLevel::Info);

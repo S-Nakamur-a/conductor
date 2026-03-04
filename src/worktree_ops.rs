@@ -5,8 +5,7 @@
 
 use std::sync::mpsc;
 
-use crate::app::{GrabbedBranch, PendingWorktree, SmartGenResult, WorktreeInputMode, WorktreeOpResult};
-use crate::background::BackgroundOp;
+use crate::app::{GrabbedBranch, PendingWorktree, WorktreeInputMode, WorktreeOpResult};
 use crate::text_input::TextInput;
 
 /// Worktree management state.
@@ -43,14 +42,6 @@ pub struct WorktreeManager {
     // ── Smart Worktree ──────────────────────────────────────────
     /// Multi-line task description buffer for smart worktree creation.
     pub smart_description_buffer: TextInput,
-    /// Background operation for LLM generation.
-    pub smart_gen_op: BackgroundOp<Result<SmartGenResult, String>>,
-    /// Generated branch name (editable in SmartConfirmBranch state).
-    pub smart_branch_name: TextInput,
-    /// Generated prompt to pre-type into Claude Code.
-    pub smart_prompt: String,
-    /// When true, auto-spawn Claude Code after worktree creation.
-    pub smart_auto_spawn: bool,
 }
 
 impl Default for WorktreeManager {
@@ -71,10 +62,6 @@ impl Default for WorktreeManager {
             bg_worktree_tx: None,
             bg_worktree_rx: None,
             smart_description_buffer: TextInput::new_multiline(),
-            smart_gen_op: BackgroundOp::default(),
-            smart_branch_name: TextInput::new(),
-            smart_prompt: String::new(),
-            smart_auto_spawn: false,
         }
     }
 }

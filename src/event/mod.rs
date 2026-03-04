@@ -249,7 +249,6 @@ pub fn handle_paste_event(app: &mut App, data: String) {
             app.worktree_mgr.smart_description_buffer.insert_str(&data);
         } else if app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktree
             || app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktreeBase
-            || app.worktree_mgr.input_mode == WorktreeInputMode::SmartConfirmBranch
         {
             app.worktree_mgr.input_buffer.insert_str(&single_line);
         } else if app.viewer_state.search_active {

@@ -422,9 +422,6 @@ fn run_loop(
         // Check if a background pull has finished.
         app.poll_bg_pull();
 
-        // Check if smart worktree generation has finished.
-        app.poll_smart_generation();
-
         // Poll grep search results.
         app.poll_grep_search();
 
@@ -641,12 +638,6 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     }
     if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::SmartDescription {
         ui::dashboard::render_smart_description_overlay(frame, main_area, app);
-    }
-    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::SmartGenerating {
-        ui::dashboard::render_smart_generating_overlay(frame, main_area, app);
-    }
-    if app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::SmartConfirmBranch {
-        ui::dashboard::render_smart_confirm_branch_overlay(frame, main_area, app);
     }
     if app.cherry_pick.active {
         ui::dashboard::render_cherry_pick_overlay(frame, main_area, app);
