@@ -144,6 +144,14 @@ pub fn handle_mouse_event(
                     let item_row = relative_row.saturating_sub(1); // row 0 is border
 
                     if !app.worktree_list_rows.is_empty() && item_row < app.worktree_list_rows.len() {
+                        // Double-click detection.
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(app.worktree_mgr.item_last_click);
+                        let is_double = elapsed.as_millis() < 400
+                            && app.worktree_mgr.item_last_click_idx == item_row;
+                        app.worktree_mgr.item_last_click = now;
+                        app.worktree_mgr.item_last_click_idx = item_row;
+
                         app.worktree_list_selected = item_row;
                         app.sync_selected_worktree();
                         match app.worktree_list_rows[item_row] {
@@ -151,11 +159,15 @@ pub fn handle_mouse_event(
                                 app.on_worktree_changed();
                                 app.terminal.active_claude_session = Some(pty_idx);
                                 app.terminal.pty_manager.activate_session(pty_idx);
-                                app.set_focus(Focus::TerminalClaude);
+                                // Single click: keep focus on worktree panel.
+                                // Double click: move focus to terminal.
+                                if is_double {
+                                    app.set_focus(Focus::TerminalClaude);
+                                }
                             }
                             crate::app::WorktreeListRow::Worktree(_) => {
                                 app.on_worktree_changed();
-                                app.set_focus(Focus::Worktree);
+                                // Focus stays on worktree panel for both single and double click.
                             }
                         }
                     } else {

@@ -12,18 +12,26 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
     match action {
         Some(Action::NavigateDown) => {
             if !app.worktree_list_rows.is_empty() {
+                let prev_wt = app.selected_worktree;
                 app.worktree_list_selected = (app.worktree_list_selected + 1) % app.worktree_list_rows.len();
                 app.sync_selected_worktree();
+                if app.selected_worktree != prev_wt {
+                    app.on_worktree_changed();
+                }
             }
         }
         Some(Action::NavigateUp) => {
             if !app.worktree_list_rows.is_empty() {
+                let prev_wt = app.selected_worktree;
                 app.worktree_list_selected = if app.worktree_list_selected == 0 {
                     app.worktree_list_rows.len() - 1
                 } else {
                     app.worktree_list_selected - 1
                 };
                 app.sync_selected_worktree();
+                if app.selected_worktree != prev_wt {
+                    app.on_worktree_changed();
+                }
             }
         }
         Some(Action::Select) => {
