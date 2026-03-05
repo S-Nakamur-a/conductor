@@ -152,6 +152,7 @@ pub fn handle_mouse_event(
                         app.worktree_mgr.item_last_click = now;
                         app.worktree_mgr.item_last_click_idx = item_row;
 
+                        app.set_focus(Focus::Worktree);
                         app.worktree_list_selected = item_row;
                         app.sync_selected_worktree();
                         match app.worktree_list_rows[item_row] {
