@@ -31,7 +31,7 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 app.worktree_mgr.smart_description_buffer.set_text(&text);
                 app.worktree_mgr.input_mode = WorktreeInputMode::SmartDescription;
                 app.set_status(
-                    "Describe your task (Alt+Enter: newline, Enter: generate, Tab: manual mode, Esc: cancel)".to_string(),
+                    "Describe your task (Shift+Enter: newline, Enter: generate, Tab: manual mode, Esc: cancel)".to_string(),
                     StatusLevel::Info,
                 );
             }
@@ -204,8 +204,8 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
             }
         },
         WorktreeInputMode::SmartDescription => {
-            // Alt+Enter inserts a newline (multi-line editing).
-            if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
+            // Shift+Enter inserts a newline (multi-line editing).
+            if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.worktree_mgr.smart_description_buffer.insert_char('\n');
                 return;
             }
@@ -891,8 +891,8 @@ pub(super) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
 // ── Overlay: review input ───────────────────────────────────────────────
 
 pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
-    // Alt+Enter inserts a newline (multi-line editing).
-    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
+    // Shift+Enter inserts a newline (multi-line editing).
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
         app.review_state.input_buffer.insert_char('\n');
         return;
     }

@@ -1138,7 +1138,7 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
 
     // Help hint.
     let hint = Line::from(vec![
-        Span::styled("Alt+Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("Shift+Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(": newline  ", Style::default().fg(theme.muted)),
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(": generate  ", Style::default().fg(theme.muted)),

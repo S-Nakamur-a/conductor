@@ -50,25 +50,13 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 CommentKind::Question => "Question",
             };
             let icon = kind_icon(app.review_state.input_kind);
-            if cfg!(target_os = "macos") {
-                format!(" {icon} New {kind_label} (Tab: toggle | Opt+Enter: newline) ")
-            } else {
-                format!(" {icon} New {kind_label} (Tab: toggle | Alt+Enter: newline) ")
-            }
+            format!(" {icon} New {kind_label} (Tab: toggle | Shift+Enter: newline) ")
         }
         ReviewInputMode::EditingComment => {
-            if cfg!(target_os = "macos") {
-                " Edit Comment (Opt+Enter: newline) ".to_string()
-            } else {
-                " Edit Comment (Alt+Enter: newline) ".to_string()
-            }
+            " Edit Comment (Shift+Enter: newline) ".to_string()
         }
         ReviewInputMode::ReplyingToComment => {
-            if cfg!(target_os = "macos") {
-                " Reply to Comment (Opt+Enter: newline) ".to_string()
-            } else {
-                " Reply to Comment (Alt+Enter: newline) ".to_string()
-            }
+            " Reply to Comment (Shift+Enter: newline) ".to_string()
         }
         ReviewInputMode::Normal => unreachable!(),
     };
