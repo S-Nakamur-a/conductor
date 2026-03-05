@@ -51,12 +51,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let tab_titles: Vec<Line> = sessions
         .iter()
         .enumerate()
-        .map(|(tab_idx, (global_idx, _session))| {
+        .map(|(tab_idx, (global_idx, session))| {
             if Some(*global_idx) == app.terminal.active_claude_session {
                 selected_tab = tab_idx;
             }
             let is_waiting = app.terminal.pty_manager.is_waiting_for_input(*global_idx);
-            let label = format!("[CC:{}]", tab_idx + 1);
+            let label = format!("[{}]", session.label);
             let is_active = Some(*global_idx) == app.terminal.active_claude_session;
             let suppress_blink = focused;
             let pulse_on = (app.ui_tick / 30) % 2 == 0;

@@ -95,14 +95,12 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_
         return;
     }
 
-    let prefix = if is_claude { "CC" } else { "SH" };
-
     // Build tab title strings to compute widths (must match render logic).
-    // Each tab renders as: "[CC:1] [x]" — short label + " [x]" suffix.
+    // Each tab renders as: "[CC:🎹] [x]" — session label + " [x]" suffix.
     let tab_titles: Vec<String> = sessions
         .iter()
         .enumerate()
-        .map(|(tab_idx, (_, _label))| format!("[{}:{}]", prefix, tab_idx + 1))
+        .map(|(_, (_, label))| format!("[{}]", label))
         .collect();
 
     let close_suffix = " [x]"; // 4 chars

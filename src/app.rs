@@ -155,6 +155,25 @@ pub struct SmartGenResult {
     pub prompt: String,
 }
 
+/// Return an instrument emoji for the given index (rotating through the palette).
+pub(crate) fn instrument_emoji(index: usize) -> &'static str {
+    const INSTRUMENTS: &[&str] = &[
+        "\u{1f3b9}", // 🎹 Keyboard
+        "\u{1f3b8}", // 🎸 Guitar
+        "\u{1f3ba}", // 🎺 Trumpet
+        "\u{1f3bb}", // 🎻 Violin
+        "\u{1f941}", // 🥁 Drum
+        "\u{1f3b7}", // 🎷 Saxophone
+        "\u{1fa97}", // 🪗 Accordion
+        "\u{1fa95}", // 🪕 Banjo
+        "\u{1fa88}", // 🪈 Flute
+        "\u{1fa98}", // 🪘 Conga
+        "\u{1fa87}", // 🪇 Maracas
+        "\u{1f4ef}", // 📯 Postal Horn
+    ];
+    INSTRUMENTS[index % INSTRUMENTS.len()]
+}
+
 /// Run the LLM generation for smart worktree (branch name + prompt) via `claude --print`.
 fn run_smart_generation(desc: &str) -> Result<SmartGenResult, String> {
     let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
@@ -1257,7 +1276,7 @@ impl App {
             .iter()
             .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
             .count();
-        let label = format!("CC:{}", cc_count + 1);
+        let label = format!("CC:{}", instrument_emoji(cc_count));
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
         let idx = self.terminal.pty_manager.spawn_session(
