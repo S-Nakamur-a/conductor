@@ -51,11 +51,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let tab_titles: Vec<Line> = sessions
         .iter()
         .enumerate()
-        .map(|(tab_idx, (global_idx, _session))| {
+        .map(|(tab_idx, (global_idx, session))| {
             if Some(*global_idx) == app.terminal.active_shell_session {
                 selected_tab = tab_idx;
             }
-            let label = format!("[SH:{}]", tab_idx + 1);
+            let label = format!("[{}]", session.label);
             let is_active = Some(*global_idx) == app.terminal.active_shell_session;
             let close_style = if is_active {
                 Style::default().fg(theme.error)

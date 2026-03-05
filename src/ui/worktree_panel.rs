@@ -157,7 +157,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     let (icon, icon_color) = if is_waiting {
                         ("\u{1f4a4}", theme.waiting_primary) // 💤
                     } else {
-                        ("\u{1f3d7}\u{fe0f}", theme.success)  // 🏗️
+                        ("\u{1f3b5}", theme.success) // 🎵
                     };
                     let is_selected = row_idx == app.worktree_list_selected;
                     let label_style = if is_selected {
