@@ -72,6 +72,15 @@ impl From<String> for StatusMessage {
     }
 }
 
+/// A row in the flattened worktree list (worktree headers + inline session rows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeListRow {
+    /// A worktree entry at `worktrees[idx]`.
+    Worktree(usize),
+    /// A Claude Code session under a worktree.
+    Session { wt_idx: usize, pty_idx: usize },
+}
+
 /// Which panel currently has keyboard focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -324,13 +333,11 @@ pub struct App {
     /// Populated during rendering for click-to-jump.
     pub notification_bar_badges: Vec<(u16, u16, String)>,
 
-    // ── Session status panel ──────────────────────────────────────
-    /// Row mapping for session panel clicks: (row_offset, wt_idx, Option<pty_idx>).
-    pub session_panel_rows: Vec<(u16, usize, Option<usize>)>,
-    /// The screen area occupied by the session status panel (for hit testing).
-    pub session_panel_area: Option<ratatui::layout::Rect>,
-    /// Scroll offset for the session status panel.
-    pub session_panel_scroll: usize,
+    // ── Inline worktree+session list ────────────────────────────────
+    /// Flattened list of worktree rows and inline session rows.
+    pub worktree_list_rows: Vec<WorktreeListRow>,
+    /// Selected index within `worktree_list_rows`.
+    pub worktree_list_selected: usize,
 
 
     // ── Gamification (session stats + streak) ────────────────────
@@ -521,9 +528,8 @@ impl App {
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
-            session_panel_rows: Vec::new(),
-            session_panel_area: None,
-            session_panel_scroll: 0,
+            worktree_list_rows: Vec::new(),
+            worktree_list_selected: 0,
             stats_session_id,
             today_stats,
             worktree_heads: HashMap::new(),
@@ -716,6 +722,7 @@ impl App {
                 log::warn!("failed to open git repository: {e}");
             }
         }
+        self.rebuild_worktree_list_rows();
     }
 
     /// Advance the decoration animation by one tick. Returns `true` when
@@ -1266,6 +1273,7 @@ impl App {
         )?;
         self.terminal.pty_manager.activate_session(idx);
         self.terminal.active_claude_session = Some(idx);
+        self.rebuild_worktree_list_rows();
         Ok(idx)
     }
 
@@ -1331,6 +1339,7 @@ impl App {
                 .first()
                 .map(|(idx, _)| *idx);
         }
+        self.rebuild_worktree_list_rows();
     }
 
     /// Remove PTY sessions whose child processes have exited.
@@ -3282,6 +3291,39 @@ impl App {
                 (wt_idx, branch, sessions)
             })
             .collect()
+    }
+
+    /// Rebuild the flat list of worktree + inline session rows.
+    pub fn rebuild_worktree_list_rows(&mut self) {
+        let groups = self.all_cc_sessions_by_worktree();
+        let mut rows = Vec::new();
+        for (i, _wt) in self.worktrees.iter().enumerate() {
+            rows.push(WorktreeListRow::Worktree(i));
+            // Find sessions belonging to this worktree.
+            if let Some((_, _, sessions)) = groups.iter().find(|(wt_idx, _, _)| *wt_idx == i) {
+                for (pty_idx, _label) in sessions {
+                    rows.push(WorktreeListRow::Session { wt_idx: i, pty_idx: *pty_idx });
+                }
+            }
+        }
+        self.worktree_list_rows = rows;
+        // Clamp selected index.
+        if !self.worktree_list_rows.is_empty() && self.worktree_list_selected >= self.worktree_list_rows.len() {
+            self.worktree_list_selected = self.worktree_list_rows.len() - 1;
+        }
+    }
+
+    /// Derive `selected_worktree` from the current `worktree_list_selected`.
+    pub fn sync_selected_worktree(&mut self) {
+        if let Some(row) = self.worktree_list_rows.get(self.worktree_list_selected) {
+            let wt_idx = match *row {
+                WorktreeListRow::Worktree(i) => i,
+                WorktreeListRow::Session { wt_idx, .. } => wt_idx,
+            };
+            if wt_idx < self.worktrees.len() {
+                self.selected_worktree = wt_idx;
+            }
+        }
     }
 
     /// Return `(worktree_name, working_dir)` for the currently selected worktree.

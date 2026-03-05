@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyEvent};
 
-use crate::app::{App, Focus, StatusLevel};
+use crate::app::{App, Focus, StatusLevel, WorktreeListRow};
 use crate::git_engine;
 use crate::keymap::{Action, KeyContext};
 
@@ -11,22 +11,33 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
     let action = app.keymap.resolve(&key, KeyContext::Worktree);
     match action {
         Some(Action::NavigateDown) => {
-            if !app.worktrees.is_empty() {
-                app.selected_worktree = (app.selected_worktree + 1) % app.worktrees.len();
+            if !app.worktree_list_rows.is_empty() {
+                app.worktree_list_selected = (app.worktree_list_selected + 1) % app.worktree_list_rows.len();
+                app.sync_selected_worktree();
             }
         }
         Some(Action::NavigateUp) => {
-            if !app.worktrees.is_empty() {
-                app.selected_worktree = if app.selected_worktree == 0 {
-                    app.worktrees.len() - 1
+            if !app.worktree_list_rows.is_empty() {
+                app.worktree_list_selected = if app.worktree_list_selected == 0 {
+                    app.worktree_list_rows.len() - 1
                 } else {
-                    app.selected_worktree - 1
+                    app.worktree_list_selected - 1
                 };
+                app.sync_selected_worktree();
             }
         }
         Some(Action::Select) => {
-            app.on_worktree_changed();
-            app.set_focus(Focus::Explorer);
+            match app.worktree_list_rows.get(app.worktree_list_selected).copied() {
+                Some(WorktreeListRow::Session { pty_idx, .. }) => {
+                    app.terminal.active_claude_session = Some(pty_idx);
+                    app.terminal.pty_manager.activate_session(pty_idx);
+                    app.set_focus(Focus::TerminalClaude);
+                }
+                Some(WorktreeListRow::Worktree(_)) | None => {
+                    app.on_worktree_changed();
+                    app.set_focus(Focus::Explorer);
+                }
+            }
         }
         Some(Action::CreateWorktree) => {
             app.worktree_mgr.input_mode = crate::app::WorktreeInputMode::CreatingWorktree;

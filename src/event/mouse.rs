@@ -139,40 +139,25 @@ pub fn handle_mouse_event(
                 }
 
                 if col < left_end {
-                    // Check session panel clicks first.
-                    if let Some(panel_area) = app.session_panel_area {
-                        if row >= panel_area.y && row < panel_area.y + panel_area.height {
-                            let inner_y = panel_area.y + 1; // TOP border
-                            if row >= inner_y {
-                                let click_offset = row - inner_y;
-                                if let Some((_, wt_idx, pty_idx)) = app
-                                    .session_panel_rows
-                                    .iter()
-                                    .find(|(r, _, _)| *r == click_offset)
-                                    .copied()
-                                {
-                                    app.selected_worktree = wt_idx;
-                                    app.on_worktree_changed();
-                                    if let Some(idx) = pty_idx {
-                                        app.terminal.active_claude_session = Some(idx);
-                                        app.terminal.pty_manager.activate_session(idx);
-                                    }
-                                    app.set_focus(Focus::TerminalClaude);
-                                }
-                            }
-                            return;
-                        }
-                    }
-
-                    // Click selects and switches to the worktree.
+                    // Click selects and switches to the worktree/session.
                     let relative_row = (row - main_area.y) as usize;
                     let item_row = relative_row.saturating_sub(1); // row 0 is border
 
-                    if !app.worktrees.is_empty() && item_row < app.worktrees.len() {
-                        // Clicked on an actual worktree item.
-                        app.selected_worktree = item_row;
-                        app.on_worktree_changed();
-                        app.set_focus(Focus::Worktree);
+                    if !app.worktree_list_rows.is_empty() && item_row < app.worktree_list_rows.len() {
+                        app.worktree_list_selected = item_row;
+                        app.sync_selected_worktree();
+                        match app.worktree_list_rows[item_row] {
+                            crate::app::WorktreeListRow::Session { pty_idx, .. } => {
+                                app.on_worktree_changed();
+                                app.terminal.active_claude_session = Some(pty_idx);
+                                app.terminal.pty_manager.activate_session(pty_idx);
+                                app.set_focus(Focus::TerminalClaude);
+                            }
+                            crate::app::WorktreeListRow::Worktree(_) => {
+                                app.on_worktree_changed();
+                                app.set_focus(Focus::Worktree);
+                            }
+                        }
                     } else {
                         // Clicked on blank space below worktree items.
                         let now = std::time::Instant::now();
@@ -474,25 +459,16 @@ fn handle_mouse_scroll(
     }
 
     if col < left_end {
-        // Check if scroll is within session panel area.
-        if let Some(panel_area) = app.session_panel_area {
-            if row >= panel_area.y && row < panel_area.y + panel_area.height {
-                if delta > 0 {
-                    app.session_panel_scroll = app.session_panel_scroll.saturating_add(delta.unsigned_abs() as usize);
-                } else {
-                    app.session_panel_scroll = app.session_panel_scroll.saturating_sub(delta.unsigned_abs() as usize);
-                }
-                return;
-            }
-        }
         // Worktree panel scroll.
         if delta > 0 {
-            if !app.worktrees.is_empty() {
-                app.selected_worktree = (app.selected_worktree + 1)
-                    .min(app.worktrees.len().saturating_sub(1));
+            if !app.worktree_list_rows.is_empty() {
+                app.worktree_list_selected = (app.worktree_list_selected + 1)
+                    .min(app.worktree_list_rows.len().saturating_sub(1));
+                app.sync_selected_worktree();
             }
         } else {
-            app.selected_worktree = app.selected_worktree.saturating_sub(1);
+            app.worktree_list_selected = app.worktree_list_selected.saturating_sub(1);
+            app.sync_selected_worktree();
         }
     } else if col < explorer_end {
         // Explorer scroll.
