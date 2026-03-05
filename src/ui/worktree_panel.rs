@@ -8,10 +8,31 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, Focus, WorktreeListRow};
 use crate::theme::Theme;
 use crate::ui::decoration::{self, DecorationMode};
+
+/// Truncate a string to fit within `max_width` display columns.
+/// Appends "..." if truncation occurs.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut end = s.len();
+    for (i, ch) in s.char_indices() {
+        let cw = ch.width().unwrap_or(0);
+        if width + cw > max_width {
+            end = i;
+            break;
+        }
+        width += cw;
+    }
+    if end < s.len() {
+        format!("{}...", &s[..end])
+    } else {
+        s.to_string()
+    }
+}
 
 /// Render the worktree panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -311,12 +332,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let is_smart = pending.op == crate::app::PendingWorktreeOp::SmartCreating;
             let icon = if is_smart { "\u{1F9E0}" } else { "\u{2728}" }; // 🧠 vs ✨
             let display_name = if pending.branch.is_empty() {
-                let max = 30;
-                if pending.description.len() > max {
-                    format!("{}...", &pending.description[..max])
-                } else {
-                    pending.description.clone()
-                }
+                let max_width = 30;
+                truncate_to_width(&pending.description, max_width)
             } else {
                 pending.branch.clone()
             };
@@ -524,5 +541,49 @@ fn render_detail(
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_ascii_within_limit() {
+        assert_eq!(truncate_to_width("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_ascii_over_limit() {
+        assert_eq!(truncate_to_width("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn truncate_multibyte_within_limit() {
+        // Each CJK char is 2 columns wide; 3 chars = 6 columns
+        assert_eq!(truncate_to_width("日本語", 10), "日本語");
+    }
+
+    #[test]
+    fn truncate_multibyte_over_limit() {
+        // "日本語テスト" = 12 columns; limit to 6 => "日本語..."
+        assert_eq!(truncate_to_width("日本語テスト", 6), "日本語...");
+    }
+
+    #[test]
+    fn truncate_multibyte_boundary() {
+        // Limit 5: "日"(2) + "本"(2) = 4, next "語"(2) would exceed 5
+        assert_eq!(truncate_to_width("日本語", 5), "日本...");
+    }
+
+    #[test]
+    fn truncate_empty_string() {
+        assert_eq!(truncate_to_width("", 10), "");
+    }
+
+    #[test]
+    fn truncate_mixed_ascii_and_multibyte() {
+        // "a日b" = 1 + 2 + 1 = 4 columns
+        assert_eq!(truncate_to_width("a日b本c", 4), "a日b...");
+    }
 }
 
