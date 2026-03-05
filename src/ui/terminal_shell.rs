@@ -21,11 +21,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let sessions = app.current_worktree_shell_sessions();
 
+    let is_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
+
     if sessions.is_empty() {
-        let block = Block::default()
-            .title(" Shell ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color));
+        let block = if is_expanded {
+            Block::default().title(" Shell ")
+        } else {
+            Block::default()
+                .title(" Shell ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color))
+        };
         let msg = Paragraph::new(" Enter / Click / Ctrl+t: new session")
             .style(Style::default().fg(theme.muted))
             .block(block);
@@ -66,7 +72,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Add [+] and [<=>] tabs.
     let mut titles = tab_titles;
     titles.push(Line::from(Span::styled("[+]", Style::default().fg(theme.success))));
-    let is_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
     let (expand_label, expand_color) = if is_expanded {
         ("[>=<]", theme.border_focused)
     } else {
@@ -87,9 +92,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // PTY output.
     let output_area = chunks[1];
-    let output_block = Block::default()
-        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-        .border_style(Style::default().fg(border_color));
+    let output_block = if is_expanded {
+        Block::default()
+    } else {
+        Block::default()
+            .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+            .border_style(Style::default().fg(border_color))
+    };
 
     if let Some(active_idx) = app.terminal.active_shell_session {
         if let Some(screen_arc) = app.terminal.pty_manager.get_screen(active_idx) {
