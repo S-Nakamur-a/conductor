@@ -228,7 +228,12 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 spans.push(Span::styled(display, content_style));
             }
 
-            ListItem::new(Line::from(spans))
+            let item = ListItem::new(Line::from(spans));
+            if is_selected {
+                item.style(Style::default().bg(theme.selected_bg))
+            } else {
+                item
+            }
         })
         .collect();
 
