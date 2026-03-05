@@ -2276,6 +2276,7 @@ impl App {
                 return;
             }
         };
+        let selected_path = self.worktrees.get(self.selected_worktree).map(|w| w.path.clone());
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.grab_branch(&main_path, &source_path, branch_name) {
@@ -2289,6 +2290,9 @@ impl App {
                             StatusLevel::Success,
                         );
                         self.refresh_worktrees();
+                        if let Some(path) = selected_path {
+                            self.select_worktree_by_path(&path);
+                        }
                     }
                     Err(e) => {
                         self.set_status(format!("Grab error: {e}"), StatusLevel::Error);
@@ -2317,6 +2321,7 @@ impl App {
                 return;
             }
         };
+        let selected_path = self.worktrees.get(self.selected_worktree).map(|w| w.path.clone());
         let main_branch = self.config.general.main_branch.clone();
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
@@ -2334,6 +2339,9 @@ impl App {
                             StatusLevel::Success,
                         );
                         self.refresh_worktrees();
+                        if let Some(path) = selected_path {
+                            self.select_worktree_by_path(&path);
+                        }
                     }
                     Err(e) => {
                         self.set_status(format!("Ungrab error: {e}"), StatusLevel::Error);
