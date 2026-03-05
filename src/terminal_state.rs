@@ -41,6 +41,9 @@ pub struct TerminalState {
     pub shell_blank_last_click: Instant,
     /// Set to `true` when a full terminal clear + redraw is needed.
     pub needs_clear: bool,
+    /// Deferred prompts: session index → prompt text.
+    /// Written once the CC session becomes ready (waiting for input).
+    pub deferred_prompts: HashMap<usize, String>,
 }
 
 impl TerminalState {
@@ -61,6 +64,7 @@ impl TerminalState {
             claude_blank_last_click: Instant::now(),
             shell_blank_last_click: Instant::now(),
             needs_clear: false,
+            deferred_prompts: HashMap::new(),
         }
     }
 }

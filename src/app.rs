@@ -1361,6 +1361,16 @@ impl App {
         let _ = self.terminal.pty_manager.kill_session(global_idx);
         self.terminal.pty_manager.remove_session(global_idx);
 
+        // Adjust deferred prompts: remove the closed session, shift higher indices.
+        self.terminal.deferred_prompts.remove(&global_idx);
+        let shifted: Vec<(usize, String)> = self
+            .terminal
+            .deferred_prompts
+            .drain()
+            .map(|(k, v)| (if k > global_idx { k - 1 } else { k }, v))
+            .collect();
+        self.terminal.deferred_prompts.extend(shifted);
+
         // Adjust active session indices.
         for a in [&mut self.terminal.active_claude_session, &mut self.terminal.active_shell_session]
             .into_iter()
@@ -1404,6 +1414,16 @@ impl App {
                 log::info!("removing dead PTY session at index {idx}");
                 self.terminal.pty_manager.remove_session(idx);
                 removed_any = true;
+
+                // Adjust deferred prompts.
+                self.terminal.deferred_prompts.remove(&idx);
+                let shifted: Vec<(usize, String)> = self
+                    .terminal
+                    .deferred_prompts
+                    .drain()
+                    .map(|(k, v)| (if k > idx { k - 1 } else { k }, v))
+                    .collect();
+                self.terminal.deferred_prompts.extend(shifted);
 
                 // Adjust active session indices.
                 for a in [&mut self.terminal.active_claude_session, &mut self.terminal.active_shell_session].into_iter().flatten() {
@@ -1788,6 +1808,23 @@ impl App {
         }
 
         self.terminal.cc_waiting_worktrees = new_waiting;
+    }
+
+    /// Flush deferred prompts for CC sessions that are now waiting for input.
+    /// Called periodically from the main loop alongside `check_cc_waiting_state`.
+    pub fn flush_deferred_prompts(&mut self) {
+        let ready: Vec<usize> = self
+            .terminal
+            .deferred_prompts
+            .keys()
+            .copied()
+            .filter(|&idx| self.terminal.pty_manager.is_waiting_for_input(idx))
+            .collect();
+        for idx in ready {
+            if let Some(prompt) = self.terminal.deferred_prompts.remove(&idx) {
+                let _ = self.terminal.pty_manager.write_paste_to_session(idx, &prompt);
+            }
+        }
     }
 
     /// Remove the hook signal file for a given session and clear its
@@ -2611,12 +2648,13 @@ impl App {
                     StatusLevel::Success,
                 );
 
-                // Smart Worktree: auto-spawn Claude Code and pre-type prompt.
+                // Smart Worktree: auto-spawn Claude Code and defer prompt
+                // until the session is ready for input.
                 if pending.auto_spawn {
                     match self.spawn_claude_code() {
                         Ok(idx) => {
                             if !pending.smart_prompt.is_empty() {
-                                let _ = self.terminal.pty_manager.write_paste_to_session(idx, &pending.smart_prompt);
+                                self.terminal.deferred_prompts.insert(idx, pending.smart_prompt.clone());
                             }
                             self.set_focus(Focus::TerminalClaude);
                         }
