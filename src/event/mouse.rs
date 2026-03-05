@@ -436,6 +436,29 @@ pub fn handle_mouse_event(
                 }
             }
         }
+        MouseEventKind::Moved => {
+            // Track hover line for gutter highlight in the viewer panel.
+            let inner_y = main_area.y + 1;
+            if col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
+                let line_offset = (row - inner_y) as usize;
+                if app.viewer_state.diff_mode {
+                    let idx = app.viewer_state.diff_view_scroll + line_offset;
+                    app.viewer_state.hover_line = app.viewer_state.diff_view_lines.get(idx).and_then(|e| match e {
+                        crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+                        _ => None,
+                    });
+                } else {
+                    let line_1 = app.viewer_state.file_scroll + line_offset + 1;
+                    if line_1 <= app.viewer_state.file_content.len() {
+                        app.viewer_state.hover_line = Some(line_1);
+                    } else {
+                        app.viewer_state.hover_line = None;
+                    }
+                }
+            } else {
+                app.viewer_state.hover_line = None;
+            }
+        }
         _ => {}
     }
 }
