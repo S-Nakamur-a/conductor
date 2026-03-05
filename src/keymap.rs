@@ -463,10 +463,6 @@ impl KeyMap {
         self.bind(context, KeyCode::Char(c), KeyModifiers::CONTROL, action);
     }
 
-    fn bind_alt(&mut self, context: KeyContext, c: char, action: Action) {
-        self.bind(context, KeyCode::Char(c), KeyModifiers::ALT, action);
-    }
-
     // ── Default bindings (mirrors current event.rs hardcoded keys) ──
 
     fn load_defaults(&mut self) {
@@ -487,11 +483,11 @@ impl KeyMap {
         self.bind_ctrl(Global, 't', NewShell);
         self.bind_ctrl(Global, 'o', OpenRepo);
         self.bind_ctrl(Global, 'r', SwitchRepo);
-        self.bind_alt(Global, '1', FocusWorktree);
-        self.bind_alt(Global, '2', FocusExplorer);
-        self.bind_alt(Global, '3', FocusViewer);
-        self.bind_alt(Global, '4', FocusTerminalClaude);
-        self.bind_alt(Global, '5', FocusTerminalShell);
+        self.bind(Global, KeyCode::Char('1'), KeyModifiers::SUPER, FocusWorktree);
+        self.bind(Global, KeyCode::Char('2'), KeyModifiers::SUPER, FocusExplorer);
+        self.bind(Global, KeyCode::Char('3'), KeyModifiers::SUPER, FocusViewer);
+        self.bind(Global, KeyCode::Char('4'), KeyModifiers::SUPER, FocusTerminalClaude);
+        self.bind(Global, KeyCode::Char('5'), KeyModifiers::SUPER, FocusTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
         self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
 
