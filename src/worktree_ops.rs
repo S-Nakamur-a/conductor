@@ -16,6 +16,10 @@ pub struct WorktreeManager {
     pub input_buffer: TextInput,
     /// Timestamp of the last click on worktree blank space (for double-click detection).
     pub blank_last_click: std::time::Instant,
+    /// Timestamp of the last click on a worktree list item (for double-click detection).
+    pub item_last_click: std::time::Instant,
+    /// Index of the last clicked worktree list item.
+    pub item_last_click_idx: usize,
     /// Branch name entered in step 1, held while step 2 (base branch) is active.
     pub pending_branch: String,
     /// Full list of branches available as base for worktree creation.
@@ -50,6 +54,8 @@ impl Default for WorktreeManager {
             input_mode: WorktreeInputMode::Normal,
             input_buffer: TextInput::new(),
             blank_last_click: std::time::Instant::now(),
+            item_last_click: std::time::Instant::now(),
+            item_last_click_idx: usize::MAX,
             pending_branch: String::new(),
             base_branch_list: Vec::new(),
             base_branch_selected: 0,
