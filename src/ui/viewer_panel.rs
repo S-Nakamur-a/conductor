@@ -108,6 +108,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .map(|(line_no, content)| {
             let line_1 = line_no + 1;
             let is_selected = vs.is_line_selected(line_1);
+            let is_hovered = vs.hover_line == Some(line_1);
+            let is_in_pending_range = !is_selected && vs.selected_line_start.is_some() && vs.selected_line_end.is_none() && vs.hover_line.is_some() && {
+                let start = vs.selected_line_start.unwrap();
+                let hover = vs.hover_line.unwrap();
+                let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
+                line_1 >= lo && line_1 <= hi
+            };
 
             // Diff gutter marker.
             let annotation = diff_annotations.get(&line_1);
@@ -125,6 +132,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     .fg(theme.gutter_selected_fg)
                     .bg(theme.gutter_selected_bg)
                     .add_modifier(Modifier::BOLD)
+            } else if is_in_pending_range {
+                Style::default()
+                    .fg(theme.gutter_selected_fg)
+                    .bg(theme.gutter_pending_bg)
+            } else if is_hovered {
+                Style::default().fg(theme.gutter_hover_fg)
             } else if diff_tag == Some(DiffLineTag::Insert) {
                 Style::default().fg(theme.diff_add)
             } else if diff_tag == Some(DiffLineTag::Delete) {
@@ -162,6 +175,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 vec![Span::styled(
                     content.to_string(),
                     Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
+                )]
+            } else if is_in_pending_range {
+                vec![Span::styled(
+                    content.to_string(),
+                    Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
                 )]
             } else if let Some(ann) = annotation {
                 if !ann.inline_segments.is_empty() {
@@ -334,6 +352,16 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     let is_selected = new_line_no
                         .map(|n| vs.is_line_selected(n))
                         .unwrap_or(false);
+                    let is_hovered = new_line_no
+                        .map(|n| vs.hover_line == Some(n))
+                        .unwrap_or(false);
+                    let is_in_pending_range = !is_selected && new_line_no.is_some() && vs.selected_line_start.is_some() && vs.selected_line_end.is_none() && vs.hover_line.is_some() && {
+                        let n = new_line_no.unwrap();
+                        let start = vs.selected_line_start.unwrap();
+                        let hover = vs.hover_line.unwrap();
+                        let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
+                        n >= lo && n <= hi
+                    };
 
                     // Gutter marker.
                     let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
@@ -354,6 +382,12 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                             .fg(theme.gutter_selected_fg)
                             .bg(theme.gutter_selected_bg)
                             .add_modifier(Modifier::BOLD)
+                    } else if is_in_pending_range {
+                        Style::default()
+                            .fg(theme.gutter_selected_fg)
+                            .bg(theme.gutter_pending_bg)
+                    } else if is_hovered {
+                        Style::default().fg(theme.gutter_hover_fg)
                     } else {
                         match tag {
                             DiffLineTag::Insert => Style::default().fg(theme.diff_add),
@@ -375,6 +409,11 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                         vec![Span::styled(
                             content.clone(),
                             Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
+                        )]
+                    } else if is_in_pending_range {
+                        vec![Span::styled(
+                            content.clone(),
+                            Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
                         )]
                     } else if !inline_segments.is_empty() {
                         match tag {
