@@ -488,6 +488,20 @@ impl KeyMap {
         self.bind(Global, KeyCode::Char('3'), KeyModifiers::SUPER, FocusViewer);
         self.bind(Global, KeyCode::Char('4'), KeyModifiers::SUPER, FocusTerminalClaude);
         self.bind(Global, KeyCode::Char('5'), KeyModifiers::SUPER, FocusTerminalShell);
+        // Alt+number as fallback — Cmd+number is intercepted by most terminal emulators on macOS.
+        // When terminal sends Alt as Esc prefix (e.g. iTerm2 "Option sends Esc+"):
+        self.bind(Global, KeyCode::Char('1'), KeyModifiers::ALT, FocusWorktree);
+        self.bind(Global, KeyCode::Char('2'), KeyModifiers::ALT, FocusExplorer);
+        self.bind(Global, KeyCode::Char('3'), KeyModifiers::ALT, FocusViewer);
+        self.bind(Global, KeyCode::Char('4'), KeyModifiers::ALT, FocusTerminalClaude);
+        self.bind(Global, KeyCode::Char('5'), KeyModifiers::ALT, FocusTerminalShell);
+        // When macOS Option key produces Unicode (e.g. default Terminal.app / iTerm2 without Esc+ mode):
+        // Option+1='¡', Option+2='™', Option+3='£', Option+4='¢', Option+5='∞'
+        self.bind_char(Global, '¡', FocusWorktree);
+        self.bind_char(Global, '™', FocusExplorer);
+        self.bind_char(Global, '£', FocusViewer);
+        self.bind_char(Global, '¢', FocusTerminalClaude);
+        self.bind_char(Global, '∞', FocusTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
         self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
 
