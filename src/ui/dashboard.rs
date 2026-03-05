@@ -158,7 +158,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let popup_height = 3_u16;
     let popup_width = area.width.saturating_sub(8).min(60);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height + 2);
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
