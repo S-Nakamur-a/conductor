@@ -131,6 +131,8 @@ pub struct PendingWorktree {
     pub delete_branch_after: bool,
     /// Task description for smart worktree (displayed while LLM is generating).
     pub description: String,
+    /// When this pending entry was created (for timeout detection).
+    pub created_at: std::time::Instant,
 }
 
 /// Result of a background worktree operation.
@@ -2164,6 +2166,7 @@ impl App {
             smart_prompt: String::new(),
             delete_branch_after: false,
             description: String::new(),
+            created_at: std::time::Instant::now(),
         };
         self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{branch_name}'..."), StatusLevel::Info);
@@ -2200,6 +2203,7 @@ impl App {
             smart_prompt: String::new(),
             delete_branch_after: false,
             description: String::new(),
+            created_at: std::time::Instant::now(),
         };
         self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{local_branch}'..."), StatusLevel::Info);
@@ -2502,12 +2506,52 @@ impl App {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.worktree_mgr.bg_worktree_rx = None;
                     self.worktree_mgr.bg_worktree_tx = None;
+                    // Clean up any pending create/smart-create entries that will never complete.
+                    let orphaned: Vec<_> = self.worktree_mgr.pending_worktrees.iter()
+                        .filter(|p| matches!(p.op, PendingWorktreeOp::Creating | PendingWorktreeOp::SmartCreating))
+                        .map(|p| p.description.clone())
+                        .collect();
+                    if !orphaned.is_empty() {
+                        self.worktree_mgr.pending_worktrees.retain(|p| {
+                            !matches!(p.op, PendingWorktreeOp::Creating | PendingWorktreeOp::SmartCreating)
+                        });
+                        log::warn!("Cleaned up {} orphaned pending worktrees on channel disconnect", orphaned.len());
+                        self.set_status(
+                            "Worktree creation interrupted (channel disconnected)".to_string(),
+                            StatusLevel::Error,
+                        );
+                    }
                     break;
                 }
             }
         }
         for result in results {
             self.handle_worktree_op_result(result);
+        }
+
+        // Timeout detection: warn if any pending create/smart-create has been running too long.
+        const TIMEOUT_SECS: u64 = 120;
+        let now = std::time::Instant::now();
+        let timed_out: Vec<_> = self.worktree_mgr.pending_worktrees.iter()
+            .filter(|p| {
+                matches!(p.op, PendingWorktreeOp::Creating | PendingWorktreeOp::SmartCreating)
+                    && now.duration_since(p.created_at).as_secs() >= TIMEOUT_SECS
+            })
+            .map(|p| {
+                if p.description.is_empty() { p.branch.clone() } else { p.description.clone() }
+            })
+            .collect();
+        if !timed_out.is_empty() {
+            self.worktree_mgr.pending_worktrees.retain(|p| {
+                !(matches!(p.op, PendingWorktreeOp::Creating | PendingWorktreeOp::SmartCreating)
+                    && now.duration_since(p.created_at).as_secs() >= TIMEOUT_SECS)
+            });
+            let names = timed_out.join(", ");
+            log::warn!("Timed out pending worktrees: {names}");
+            self.set_status(
+                format!("Worktree creation timed out: {names}"),
+                StatusLevel::Error,
+            );
         }
     }
 
@@ -2624,6 +2668,7 @@ impl App {
             smart_prompt: String::new(),
             delete_branch_after: false,
             description: desc.clone(),
+            created_at: std::time::Instant::now(),
         };
         self.worktree_mgr.pending_worktrees.push(pending);
         self.set_status("Smart worktree: generating...".to_string(), StatusLevel::Info);
@@ -2631,54 +2676,66 @@ impl App {
         let tx = self.worktree_op_sender();
 
         std::thread::spawn(move || {
-            // Phase 1: LLM generation.
-            let gen_result = match run_smart_generation(&desc) {
-                Ok(r) => r,
-                Err(e) => {
+            let tx_panic = tx.clone();
+            let desc_panic = desc.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Phase 1: LLM generation.
+                let gen_result = match run_smart_generation(&desc) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send(WorktreeOpResult::SmartFailed {
+                            description: desc,
+                            error: e,
+                        });
+                        return;
+                    }
+                };
+
+                if gen_result.branch.is_empty() {
                     let _ = tx.send(WorktreeOpResult::SmartFailed {
                         description: desc,
-                        error: e,
+                        error: "LLM returned empty branch name".to_string(),
                     });
                     return;
                 }
-            };
 
-            if gen_result.branch.is_empty() {
-                let _ = tx.send(WorktreeOpResult::SmartFailed {
-                    description: desc,
-                    error: "LLM returned empty branch name".to_string(),
+                let branch = gen_result.branch.clone();
+                let prompt = gen_result.prompt.clone();
+
+                // Report branch resolved (for UI update).
+                let _ = tx.send(WorktreeOpResult::SmartBranchResolved {
+                    description: desc.clone(),
+                    branch: branch.clone(),
+                    prompt: prompt.clone(),
                 });
-                return;
+
+                // Phase 2: Create worktree.
+                let pending = PendingWorktree {
+                    branch: branch.clone(),
+                    op: PendingWorktreeOp::SmartCreating,
+                    base_ref: base_ref.clone(),
+                    worktree_path: None,
+                    auto_spawn: true,
+                    smart_prompt: prompt,
+                    delete_branch_after: false,
+                    description: desc,
+                    created_at: std::time::Instant::now(),
+                };
+                let result = git_engine::GitEngine::open(&repo_path)
+                    .and_then(|engine| engine.create_worktree_from_base(&branch, &base_ref, wt_dir.as_deref()));
+                let msg = match result {
+                    Ok(path) => WorktreeOpResult::Created { path, pending },
+                    Err(e) => WorktreeOpResult::CreateFailed { error: format!("{e}"), pending },
+                };
+                let _ = tx.send(msg);
+            }));
+
+            if result.is_err() {
+                let _ = tx_panic.send(WorktreeOpResult::SmartFailed {
+                    description: desc_panic,
+                    error: "Smart worktree thread panicked".to_string(),
+                });
             }
-
-            let branch = gen_result.branch.clone();
-            let prompt = gen_result.prompt.clone();
-
-            // Report branch resolved (for UI update).
-            let _ = tx.send(WorktreeOpResult::SmartBranchResolved {
-                description: desc.clone(),
-                branch: branch.clone(),
-                prompt: prompt.clone(),
-            });
-
-            // Phase 2: Create worktree.
-            let pending = PendingWorktree {
-                branch: branch.clone(),
-                op: PendingWorktreeOp::SmartCreating,
-                base_ref: base_ref.clone(),
-                worktree_path: None,
-                auto_spawn: true,
-                smart_prompt: prompt,
-                delete_branch_after: false,
-                description: desc,
-            };
-            let result = git_engine::GitEngine::open(&repo_path)
-                .and_then(|engine| engine.create_worktree_from_base(&branch, &base_ref, wt_dir.as_deref()));
-            let msg = match result {
-                Ok(path) => WorktreeOpResult::Created { path, pending },
-                Err(e) => WorktreeOpResult::CreateFailed { error: format!("{e}"), pending },
-            };
-            let _ = tx.send(msg);
         });
     }
 
@@ -2967,6 +3024,7 @@ impl App {
             smart_prompt: String::new(),
             delete_branch_after,
             description: String::new(),
+            created_at: std::time::Instant::now(),
         };
         self.worktree_mgr.pending_worktrees.push(pending);
         self.set_status(format!("Deleting worktree '{branch}'..."), StatusLevel::Info);
