@@ -88,7 +88,9 @@ fn snapshot_screen(
     for row in 0..rows.min(max_rows) {
         let mut row_cells: Vec<CellSnapshot> = Vec::new();
         for col in 0..cols.min(max_cols) {
-            let cell = screen.cell(row, col).unwrap();
+            let Some(cell) = screen.cell(row, col) else {
+                break;
+            };
             row_cells.push(CellSnapshot {
                 text: cell.contents(),
                 style: vt100_cell_to_style(cell),

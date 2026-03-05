@@ -323,14 +323,17 @@ fn run_loop(
             let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
             let right_w = main_area.width.saturating_sub(left_w.saturating_add(explorer_w).saturating_add(viewer_w));
 
-            if right_w > 2 {
-                let right_cols = right_w.saturating_sub(2); // borders
+            let is_terminal_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
+            let border_cols: u16 = if is_terminal_expanded { 0 } else { 2 };
+            let border_rows: u16 = if is_terminal_expanded { 1 } else { 2 }; // tab bar always, bottom border only when not expanded
+            if right_w > border_cols {
+                let right_cols = right_w.saturating_sub(border_cols);
                 // Claude: 80% of right height, Shell: 20%
                 let claude_rows_total = (main_area.height as u32 * 80 / 100) as u16;
                 let shell_rows_total = main_area.height.saturating_sub(claude_rows_total);
-                // Subtract tab bar (1) + bottom border (1) from each
-                let claude_pty_rows = claude_rows_total.saturating_sub(2);
-                let shell_pty_rows = shell_rows_total.saturating_sub(2);
+                // Subtract tab bar (1) + bottom border (0 or 1) from each
+                let claude_pty_rows = claude_rows_total.saturating_sub(border_rows);
+                let shell_pty_rows = shell_rows_total.saturating_sub(border_rows);
 
                 if (claude_pty_rows, right_cols) != last_claude_size && claude_pty_rows > 0 && right_cols > 0 {
                     last_claude_size = (claude_pty_rows, right_cols);
