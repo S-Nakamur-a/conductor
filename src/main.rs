@@ -446,6 +446,11 @@ fn run_loop(
         // Poll background worktree create/delete operations.
         app.poll_worktree_ops();
 
+        // Flush deferred prompts as soon as their target sessions are ready.
+        if !app.terminal.deferred_prompts.is_empty() {
+            app.flush_deferred_prompts();
+        }
+
         // Periodically refresh the worktree list to pick up external changes
         // (e.g. `git worktree add` run inside a terminal panel).
         if last_worktree_poll.elapsed() >= WORKTREE_POLL {
