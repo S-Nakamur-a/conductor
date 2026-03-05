@@ -270,9 +270,36 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
                 ListItem::new(Span::styled(label, style))
             }
+            DiffListEntry::Directory {
+                name,
+                depth,
+                collapsed,
+                ..
+            } => {
+                let indent = "  ".repeat(*depth);
+                let arrow = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
+                let label = format!("  {indent}{arrow} \u{1f4c1} {name}");
+
+                let style = if idx == vs.diff_list_selected && diff_focused {
+                    Style::default()
+                        .fg(theme.selected_fg)
+                        .bg(theme.selected_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else if idx == vs.diff_list_selected {
+                    Style::default()
+                        .fg(theme.selected_fg_inactive)
+                        .bg(theme.selected_bg_inactive)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.info)
+                };
+
+                ListItem::new(Span::styled(label, style))
+            }
             DiffListEntry::File {
                 section,
                 file_index,
+                depth,
             } => {
                 let files = match section {
                     DiffSection::Committed => &app.diff_state.committed_files,
@@ -286,10 +313,11 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                     .next()
                     .unwrap_or(&file_diff.path);
 
+                let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
                 let label = format!(
-                    "  {icon} {} +{} -{}",
-                    file_diff.path, file_diff.added_lines, file_diff.deleted_lines
+                    "  {indent}{icon} {filename} +{} -{}",
+                    file_diff.added_lines, file_diff.deleted_lines
                 );
 
                 let style = if idx == vs.diff_list_selected && diff_focused {
