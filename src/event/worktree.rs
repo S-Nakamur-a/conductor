@@ -1,6 +1,6 @@
 //! Worktree panel key handling.
 
-use crossterm::event::{KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Focus, StatusLevel, WorktreeListRow};
 use crate::git_engine;
@@ -8,6 +8,11 @@ use crate::keymap::{Action, KeyContext};
 
 /// Handle keys when the Worktree panel is focused.
 pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
+    // Esc cancels any pending smart worktree creation.
+    if key.code == KeyCode::Esc && app.cancel_smart_worktrees() {
+        return;
+    }
+
     let action = app.keymap.resolve(&key, KeyContext::Worktree);
     match action {
         Some(Action::NavigateDown) => {

@@ -5,7 +5,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 use crate::background::BackgroundOp;
 
@@ -133,6 +134,8 @@ pub struct PendingWorktree {
     pub description: String,
     /// When this pending entry was created (for timeout detection).
     pub created_at: std::time::Instant,
+    /// Cancellation token: set to `true` to request cancellation of the background thread.
+    pub cancel_token: Arc<AtomicBool>,
 }
 
 /// Result of a background worktree operation.
@@ -173,7 +176,13 @@ const INSTRUMENTS: &[&str] = &[
 ];
 
 /// Run the LLM generation for smart worktree (branch name + prompt) via `claude --print`.
-fn run_smart_generation(desc: &str) -> Result<SmartGenResult, String> {
+///
+/// Checks `cancel_token` periodically; if set, kills the child process and returns `Err`.
+fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>) -> Result<SmartGenResult, String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
+    }
+
     let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
 Output ONLY a JSON object with two fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
@@ -192,9 +201,25 @@ No markdown fences, no explanation, just the JSON object."#;
         use std::io::Write;
         let _ = stdin.write_all(desc.as_bytes());
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("Failed to wait for claude: {e}"))?;
+
+    // Poll the child process, checking for cancellation periodically.
+    let output = loop {
+        if cancel_token.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Cancelled".to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                break child.wait_with_output()
+                    .map_err(|e| format!("Failed to read claude output: {e}"))?;
+            }
+            Ok(None) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("Failed to wait for claude: {e}")),
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2168,6 +2193,7 @@ impl App {
             delete_branch_after: false,
             description: String::new(),
             created_at: std::time::Instant::now(),
+            cancel_token: Arc::new(AtomicBool::new(false)),
         };
         self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{branch_name}'..."), StatusLevel::Info);
@@ -2205,6 +2231,7 @@ impl App {
             delete_branch_after: false,
             description: String::new(),
             created_at: std::time::Instant::now(),
+            cancel_token: Arc::new(AtomicBool::new(false)),
         };
         self.worktree_mgr.pending_worktrees.push(pending.clone());
         self.set_status(format!("Creating worktree '{local_branch}'..."), StatusLevel::Info);
@@ -2640,7 +2667,7 @@ impl App {
                     }
                 }
                 self.set_status(
-                    format!("Smart worktree: creating '{branch}'..."),
+                    format!("Smart worktree: creating '{branch}'... (Esc to cancel)"),
                     StatusLevel::Info,
                 );
             }
@@ -2648,11 +2675,16 @@ impl App {
                 self.worktree_mgr.pending_worktrees.retain(|p| {
                     !(p.op == PendingWorktreeOp::SmartCreating && p.description == *description)
                 });
-                log::warn!("Smart worktree failed: {error}");
-                self.set_status(
-                    format!("Smart worktree failed: {error}"),
-                    StatusLevel::Error,
-                );
+                // Suppress error message if the operation was cancelled by user.
+                if error == "Cancelled" {
+                    log::info!("Smart worktree cancelled for: {description}");
+                } else {
+                    log::warn!("Smart worktree failed: {error}");
+                    self.set_status(
+                        format!("Smart worktree failed: {error}"),
+                        StatusLevel::Error,
+                    );
+                }
             }
         }
     }
@@ -2667,6 +2699,8 @@ impl App {
         let repo_path = self.repo_path.clone();
         let wt_dir = self.config.general.worktree_dir.clone();
 
+        let cancel_token = Arc::new(AtomicBool::new(false));
+
         // Add pending entry with empty branch (will be updated when LLM resolves).
         let pending = PendingWorktree {
             branch: String::new(),
@@ -2678,18 +2712,20 @@ impl App {
             delete_branch_after: false,
             description: desc.clone(),
             created_at: std::time::Instant::now(),
+            cancel_token: cancel_token.clone(),
         };
         self.worktree_mgr.pending_worktrees.push(pending);
-        self.set_status("Smart worktree: generating...".to_string(), StatusLevel::Info);
+        self.set_status("Smart worktree: generating... (Esc to cancel)".to_string(), StatusLevel::Info);
 
         let tx = self.worktree_op_sender();
 
+        let cancel = cancel_token;
         std::thread::spawn(move || {
             let tx_panic = tx.clone();
             let desc_panic = desc.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Phase 1: LLM generation.
-                let gen_result = match run_smart_generation(&desc) {
+                let gen_result = match run_smart_generation(&desc, &cancel) {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = tx.send(WorktreeOpResult::SmartFailed {
@@ -2711,6 +2747,15 @@ impl App {
                 let branch = gen_result.branch.clone();
                 let prompt = gen_result.prompt.clone();
 
+                // Check cancellation before proceeding to Phase 2.
+                if cancel.load(Ordering::Relaxed) {
+                    let _ = tx.send(WorktreeOpResult::SmartFailed {
+                        description: desc,
+                        error: "Cancelled".to_string(),
+                    });
+                    return;
+                }
+
                 // Report branch resolved (for UI update).
                 let _ = tx.send(WorktreeOpResult::SmartBranchResolved {
                     description: desc.clone(),
@@ -2729,6 +2774,7 @@ impl App {
                     delete_branch_after: false,
                     description: desc,
                     created_at: std::time::Instant::now(),
+                    cancel_token: cancel.clone(),
                 };
                 let result = git_engine::GitEngine::open(&repo_path)
                     .and_then(|engine| engine.create_worktree_from_base(&branch, &base_ref, wt_dir.as_deref()));
@@ -2746,6 +2792,35 @@ impl App {
                 });
             }
         });
+    }
+
+    /// Cancel all pending smart worktree creations.
+    ///
+    /// Sets the cancel token so the background thread stops, and removes
+    /// the pending entries from the list.
+    pub fn cancel_smart_worktrees(&mut self) -> bool {
+        let smart_pending: Vec<_> = self.worktree_mgr.pending_worktrees.iter()
+            .filter(|p| p.op == PendingWorktreeOp::SmartCreating)
+            .map(|p| p.cancel_token.clone())
+            .collect();
+
+        if smart_pending.is_empty() {
+            return false;
+        }
+
+        for token in &smart_pending {
+            token.store(true, Ordering::Relaxed);
+        }
+
+        self.worktree_mgr.pending_worktrees.retain(|p| {
+            p.op != PendingWorktreeOp::SmartCreating
+        });
+
+        self.set_status(
+            "Worktree creation cancelled.".to_string(),
+            StatusLevel::Info,
+        );
+        true
     }
 
     /// Schedule an incremental grep search with debounce (200ms).
@@ -3034,6 +3109,7 @@ impl App {
             delete_branch_after,
             description: String::new(),
             created_at: std::time::Instant::now(),
+            cancel_token: Arc::new(AtomicBool::new(false)),
         };
         self.worktree_mgr.pending_worktrees.push(pending);
         self.set_status(format!("Deleting worktree '{branch}'..."), StatusLevel::Info);
