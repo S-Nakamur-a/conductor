@@ -156,6 +156,7 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::Select) => {
             let selected = app.viewer_state.diff_list_selected;
+            // Toggle section headers and directories on Enter.
             if app.diff_state.toggle_section(selected) {
                 let new_count = app.diff_state.display_list.len();
                 if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
