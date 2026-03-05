@@ -2589,7 +2589,7 @@ impl App {
                     match self.spawn_claude_code() {
                         Ok(idx) => {
                             if !pending.smart_prompt.is_empty() {
-                                let _ = self.terminal.pty_manager.write_to_session(idx, pending.smart_prompt.as_bytes());
+                                let _ = self.terminal.pty_manager.write_paste_to_session(idx, &pending.smart_prompt);
                             }
                             self.set_focus(Focus::TerminalClaude);
                         }

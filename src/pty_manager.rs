@@ -281,6 +281,49 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Send a large text payload to the PTY using bracketed paste mode and
+    /// chunked writes to avoid hitting the kernel's PTY input buffer limit
+    /// (typically 4096 bytes on macOS / Linux).
+    pub fn write_paste_to_session(&mut self, idx: usize, text: &str) -> Result<()> {
+        const CHUNK_SIZE: usize = 1024;
+        const CHUNK_DELAY: Duration = Duration::from_millis(5);
+
+        let session = self
+            .sessions
+            .get_mut(idx)
+            .context("Session index out of bounds")?;
+        let mut writer = session
+            .writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // Begin bracketed paste mode.
+        writer
+            .write_all(b"\x1b[200~")
+            .context("Failed to write paste-start to PTY")?;
+        writer.flush().context("Failed to flush PTY writer")?;
+
+        // Write the payload in small chunks.
+        let data = text.as_bytes();
+        for chunk in data.chunks(CHUNK_SIZE) {
+            writer
+                .write_all(chunk)
+                .context("Failed to write chunk to PTY")?;
+            writer.flush().context("Failed to flush PTY writer")?;
+            if chunk.len() == CHUNK_SIZE {
+                thread::sleep(CHUNK_DELAY);
+            }
+        }
+
+        // End bracketed paste mode.
+        writer
+            .write_all(b"\x1b[201~")
+            .context("Failed to write paste-end to PTY")?;
+        writer.flush().context("Failed to flush PTY writer")?;
+
+        Ok(())
+    }
+
     /// Get a snapshot of the output buffer for the session at the given index.
     pub fn get_output(&self, idx: usize) -> Vec<String> {
         self.sessions
