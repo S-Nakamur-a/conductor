@@ -1810,15 +1810,23 @@ impl App {
         self.terminal.cc_waiting_worktrees = new_waiting;
     }
 
-    /// Flush deferred prompts for CC sessions that are now waiting for input.
-    /// Called periodically from the main loop alongside `check_cc_waiting_state`.
+    /// Flush deferred prompts for CC sessions that are now ready for input.
+    ///
+    /// Checks two conditions (either is sufficient):
+    /// 1. `is_waiting_for_input` — the session is idle with a "> " prompt
+    ///    (reliable for normal operation).
+    /// 2. `session_has_visible_output` — the session has rendered anything
+    ///    (faster for freshly spawned sessions that haven't reached idle yet).
     pub fn flush_deferred_prompts(&mut self) {
         let ready: Vec<usize> = self
             .terminal
             .deferred_prompts
             .keys()
             .copied()
-            .filter(|&idx| self.terminal.pty_manager.is_waiting_for_input(idx))
+            .filter(|&idx| {
+                self.terminal.pty_manager.is_waiting_for_input(idx)
+                    || self.terminal.pty_manager.session_has_visible_output(idx)
+            })
             .collect();
         for idx in ready {
             if let Some(prompt) = self.terminal.deferred_prompts.remove(&idx) {

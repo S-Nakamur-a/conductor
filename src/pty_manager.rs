@@ -324,6 +324,23 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Check whether the session at `idx` has produced any visible output
+    /// (i.e. the vt100 screen is not entirely blank).
+    pub fn session_has_visible_output(&self, idx: usize) -> bool {
+        self.sessions.get(idx).is_some_and(|s| {
+            let parser = s.screen.lock().unwrap_or_else(|e| e.into_inner());
+            let screen = parser.screen();
+            let cols = screen.size().1;
+            for row in 0..screen.size().0 {
+                let row_text = Self::extract_row_text(screen, row, cols);
+                if !row_text.trim().is_empty() {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
     /// Get a snapshot of the output buffer for the session at the given index.
     pub fn get_output(&self, idx: usize) -> Vec<String> {
         self.sessions

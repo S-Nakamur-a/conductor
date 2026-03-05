@@ -279,15 +279,9 @@ pub fn handle_paste_event(app: &mut App, data: String) {
     };
 
     if let Some(idx) = session_idx {
-        // Wrap the paste data with bracketed-paste escape sequences so
-        // that the child process (shell, editor, claude-code) knows this
-        // is pasted text and will not execute each line individually.
-        let mut buf = Vec::with_capacity(data.len() + 12);
-        buf.extend_from_slice(b"\x1b[200~");
-        buf.extend_from_slice(data.as_bytes());
-        buf.extend_from_slice(b"\x1b[201~");
-
-        if let Err(e) = app.terminal.pty_manager.write_to_session(idx, &buf) {
+        // Use chunked write with bracketed-paste wrapping so large pastes
+        // don't overflow the kernel PTY input buffer.
+        if let Err(e) = app.terminal.pty_manager.write_paste_to_session(idx, &data) {
             log::warn!("failed to write paste data to PTY session: {e}");
         } else {
             match app.focus {
