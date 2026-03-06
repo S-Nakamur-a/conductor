@@ -98,6 +98,7 @@ fn main() -> Result<()> {
             stdout,
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
             )
         )?;
     }
@@ -397,7 +398,11 @@ fn run_loop(
         };
         if crossterm_poll(tick)? {
             match crossterm_read()? {
-                Event::Key(key) => { last_input_time = Instant::now(); handle_key_event(app, key); }
+                Event::Key(key) => {
+                    log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
+                    last_input_time = Instant::now();
+                    handle_key_event(app, key);
+                }
                 Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
                 Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
                 Event::Resize(_, _) => {}

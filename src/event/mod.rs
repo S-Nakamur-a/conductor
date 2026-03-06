@@ -30,6 +30,22 @@ pub use self::mouse::handle_mouse_event;
 
 /// Process a single key event, updating application state as needed.
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
+    // ── 0. Global focus-switching — always available, even over overlays ──
+    if let Some(action) = app.keymap.resolve(&key, KeyContext::Global) {
+        match action {
+            Action::FocusWorktree
+            | Action::FocusExplorer
+            | Action::FocusViewer
+            | Action::FocusTerminalClaude
+            | Action::FocusTerminalShell => {
+                dismiss_overlays(app);
+                dispatch_global_action(app, action);
+                return;
+            }
+            _ => {}
+        }
+    }
+
     // ── 1. Overlay handlers — consume ALL keys when active ────────────
 
     if app.worktree_mgr.skip_reason.is_some() {
@@ -361,6 +377,29 @@ fn adjust_tree_scroll(app: &mut App) {
     } else if cur_vis >= app.viewer_state.tree_scroll + page_size {
         app.viewer_state.tree_scroll = cur_vis.saturating_sub(page_size - 1);
     }
+}
+
+/// Dismiss all active overlays so that focus-switching keys work globally.
+fn dismiss_overlays(app: &mut App) {
+    app.worktree_mgr.skip_reason = None;
+    app.review_state.comment_detail_active = false;
+    app.review_state.input_mode = ReviewInputMode::Normal;
+    app.worktree_mgr.input_mode = crate::app::WorktreeInputMode::Normal;
+    app.switch_branch.active = false;
+    app.grab.active = false;
+    app.prune.active = false;
+    app.cherry_pick.active = false;
+    app.viewer_state.filename_search_active = false;
+    app.viewer_state.search_active = false;
+    app.review_state.search_active = false;
+    app.review_state.template_picker_active = false;
+    app.history.active = false;
+    app.resume_session.active = false;
+    app.repo_selector.active = false;
+    app.open_repo.active = false;
+    app.grep_search.active = false;
+    app.help.active = false;
+    app.command_palette.active = false;
 }
 
 /// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.
