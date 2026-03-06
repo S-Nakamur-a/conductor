@@ -50,6 +50,9 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     app.status_message = None;
                 }
             }
+            KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+                app.worktree_mgr.input_buffer.clear();
+            }
             KeyCode::Backspace => {
                 app.worktree_mgr.input_buffer.delete_backward();
             }
@@ -121,6 +124,10 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     app.worktree_mgr.base_branch_filter.clear();
                     app.worktree_mgr.pending_branch.clear();
                     app.create_worktree_from_base(&branch_name, &base_ref);
+                }
+                KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+                    app.worktree_mgr.base_branch_filter.clear();
+                    app.worktree_mgr.base_branch_selected = 0;
                 }
                 KeyCode::Backspace => {
                     app.worktree_mgr.base_branch_filter.delete_backward();
@@ -236,6 +243,9 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                         app.worktree_mgr.smart_description_buffer.clear();
                     }
                 }
+                KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+                    app.worktree_mgr.smart_description_buffer.clear();
+                }
                 KeyCode::Backspace => {
                     app.worktree_mgr.smart_description_buffer.delete_backward();
                 }
@@ -337,6 +347,9 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Esc => {
                 app.history.search_active = false;
+                app.history.search_query.clear();
+            }
+            KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
                 app.history.search_query.clear();
             }
             KeyCode::Backspace => {
@@ -451,6 +464,10 @@ pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
             app.resume_session.all_projects = !app.resume_session.all_projects;
             app.load_resume_sessions();
         }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.resume_session.filter.clear();
+            app.resume_session.selected = 0;
+        }
         KeyCode::Backspace => {
             app.resume_session.filter.delete_backward();
             app.resume_session.selected = 0;
@@ -533,6 +550,9 @@ pub(super) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
             app.open_repo.active = false;
             app.open_repo.buffer.clear();
             app.open_repo_from_path(&buffer);
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.open_repo.buffer.clear();
         }
         KeyCode::Backspace => {
             app.open_repo.buffer.delete_backward();
@@ -672,6 +692,10 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.filename_search_results.clear();
             app.viewer_state.filename_search_selected = 0;
         }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.viewer_state.filename_search_query.clear();
+            app.viewer_state.filename_search_selected = 0;
+        }
         KeyCode::Backspace => {
             app.viewer_state.filename_search_query.delete_backward();
             app.viewer_state.filename_search_selected = 0;
@@ -785,6 +809,10 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.grep_search.selected -= 1;
             }
         }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.grep_search.query.clear();
+            app.schedule_grep_search();
+        }
         KeyCode::Backspace => {
             app.grep_search.query.delete_backward();
             app.schedule_grep_search();
@@ -844,6 +872,10 @@ pub(super) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             app.viewer_state.search_active = false;
+            app.viewer_state.execute_search();
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.viewer_state.search_query.clear();
             app.viewer_state.execute_search();
         }
         KeyCode::Backspace => {
@@ -924,6 +956,9 @@ pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             app.review_state.input_buffer.clear();
             app.review_state.input_mode = ReviewInputMode::Normal;
         }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.review_state.input_buffer.clear();
+        }
         KeyCode::Backspace => {
             app.review_state.input_buffer.delete_backward();
         }
@@ -978,6 +1013,10 @@ pub(super) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             app.review_state.search_active = false;
+            app.review_state.apply_filter();
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.review_state.search_query.clear();
             app.review_state.apply_filter();
         }
         KeyCode::Backspace => {
@@ -1099,6 +1138,10 @@ pub(super) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
             app.switch_branch.active = false;
             app.switch_branch.filter.clear();
         }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.switch_branch.filter.clear();
+            app.switch_branch.selected = 0;
+        }
         KeyCode::Backspace => {
             app.switch_branch.filter.delete_backward();
             app.switch_branch.selected = 0;
@@ -1213,6 +1256,10 @@ pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.command_palette.active = false;
             app.command_palette.filter.clear();
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.command_palette.filter.clear();
+            app.command_palette.selected = 0;
         }
         KeyCode::Backspace => {
             app.command_palette.filter.delete_backward();
