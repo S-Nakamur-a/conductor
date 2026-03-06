@@ -163,7 +163,7 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     clipboard_paste(app, |a| &mut a.worktree_mgr.base_branch_filter, false);
                     app.worktree_mgr.base_branch_selected = 0;
                 }
-                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                     app.worktree_mgr.base_branch_filter.insert_char(c);
                     app.worktree_mgr.base_branch_selected = 0;
                 }
@@ -502,7 +502,7 @@ pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
             clipboard_paste(app, |a| &mut a.resume_session.filter, false);
             app.resume_session.selected = 0;
         }
-        KeyCode::Char(c) if key.modifiers.is_empty() => {
+        KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
             app.resume_session.filter.insert_char(c);
             app.resume_session.selected = 0;
         }
