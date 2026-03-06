@@ -22,8 +22,11 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
     if let Some(Action::ExitToExplorer) = action {
-        app.viewer_state.clear_selection();
-        app.set_focus(crate::app::Focus::Explorer);
+        if app.viewer_state.selected_line_start.is_some() {
+            app.viewer_state.clear_selection();
+        } else {
+            app.set_focus(crate::app::Focus::Explorer);
+        }
         return;
     }
 
@@ -88,9 +91,12 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
     if let Some(Action::ExitToExplorer) = action {
-        app.viewer_state.clear_selection();
-        app.viewer_state.exit_diff_mode();
-        app.set_focus(crate::app::Focus::Explorer);
+        if app.viewer_state.selected_line_start.is_some() {
+            app.viewer_state.clear_selection();
+        } else {
+            app.viewer_state.exit_diff_mode();
+            app.set_focus(crate::app::Focus::Explorer);
+        }
         return;
     }
 
