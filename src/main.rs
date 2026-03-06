@@ -452,6 +452,9 @@ fn run_loop(
         // Poll background PR URL lookup.
         app.poll_pr_url();
 
+        // Poll background worktree-switch operations (file tree, diff, branch details).
+        app.poll_worktree_switch_ops();
+
         // Poll background worktree create/delete operations.
         app.poll_worktree_ops();
 
