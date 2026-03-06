@@ -37,6 +37,8 @@ pub struct Theme {
     pub diff_add_bg_emphasis: Color,
     /// Brighter background for emphasized (word-level) deletions.
     pub diff_del_bg_emphasis: Color,
+    /// Color for diff hunk section headers (function names, etc.) — brighter than muted.
+    pub diff_section_header: Color,
 
     // ── Border ───────────────────────────────────────────────────────
     /// Border color when panel is focused.
@@ -161,6 +163,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(40, 0, 0),
             diff_add_bg_emphasis: Color::Rgb(0, 80, 0),
             diff_del_bg_emphasis: Color::Rgb(80, 0, 0),
+            diff_section_header: Color::Gray,
 
             border_focused: Color::Yellow,
             border_unfocused: Color::DarkGray,
@@ -217,6 +220,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(60, 20, 20),
             diff_add_bg_emphasis: Color::Rgb(40, 100, 40),
             diff_del_bg_emphasis: Color::Rgb(100, 40, 40),
+            diff_section_header: Color::Rgb(98, 114, 164),
 
             border_focused: Color::Rgb(255, 121, 198),
             border_unfocused: Color::Rgb(68, 71, 90),
@@ -273,6 +277,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(40, 20, 20),
             diff_add_bg_emphasis: Color::Rgb(40, 70, 40),
             diff_del_bg_emphasis: Color::Rgb(70, 40, 40),
+            diff_section_header: Color::Rgb(76, 86, 106),
 
             border_focused: Color::Rgb(136, 192, 208),
             border_unfocused: Color::Rgb(59, 66, 82),
@@ -329,6 +334,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(40, 15, 15),
             diff_add_bg_emphasis: Color::Rgb(30, 60, 30),
             diff_del_bg_emphasis: Color::Rgb(70, 30, 30),
+            diff_section_header: Color::Rgb(88, 110, 117),
 
             border_focused: Color::Rgb(181, 137, 0),
             border_unfocused: Color::Rgb(0, 43, 54),
@@ -385,6 +391,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(45, 15, 20),
             diff_add_bg_emphasis: Color::Rgb(30, 70, 30),
             diff_del_bg_emphasis: Color::Rgb(80, 30, 35),
+            diff_section_header: Color::Rgb(86, 95, 137),
 
             border_focused: Color::Rgb(122, 162, 247),
             border_unfocused: Color::Rgb(59, 66, 97),
@@ -441,6 +448,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(45, 12, 8),
             diff_add_bg_emphasis: Color::Rgb(40, 65, 15),
             diff_del_bg_emphasis: Color::Rgb(80, 25, 15),
+            diff_section_header: Color::Rgb(102, 92, 84),
 
             border_focused: Color::Rgb(250, 189, 47),
             border_unfocused: Color::Rgb(60, 56, 54),
@@ -497,6 +505,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(45, 15, 25),
             diff_add_bg_emphasis: Color::Rgb(28, 60, 65),
             diff_del_bg_emphasis: Color::Rgb(75, 25, 40),
+            diff_section_header: Color::Rgb(110, 106, 134),
 
             border_focused: Color::Rgb(235, 188, 186),
             border_unfocused: Color::Rgb(57, 53, 82),
@@ -553,6 +562,7 @@ impl Theme {
             diff_del_bg: Color::Rgb(40, 12, 12),
             diff_add_bg_emphasis: Color::Rgb(35, 60, 22),
             diff_del_bg_emphasis: Color::Rgb(72, 22, 22),
+            diff_section_header: Color::Rgb(84, 84, 109),
 
             border_focused: Color::Rgb(127, 180, 202),
             border_unfocused: Color::Rgb(54, 54, 70),

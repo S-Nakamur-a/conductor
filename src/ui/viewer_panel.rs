@@ -322,7 +322,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                                 Span::styled(prefix, Style::default().fg(theme.muted)),
                                 Span::styled(
                                     header.clone(),
-                                    Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC),
+                                    Style::default().fg(theme.diff_section_header).add_modifier(Modifier::ITALIC),
                                 ),
                                 Span::styled(
                                     format!("{suffix}{fill}"),
