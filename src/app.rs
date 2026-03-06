@@ -437,10 +437,24 @@ pub struct App {
     /// Whether the `gh` CLI is available on this system.
     pub gh_available: bool,
 
+    // ── Background worktree-switch operations ────────────────────
+    /// Background diff computation.
+    pub bg_diff_op: BackgroundOp<BgDiffResult>,
+    /// Background file tree walk.
+    pub bg_file_tree_op: BackgroundOp<Vec<crate::viewer::FileTreeEntry>>,
+    /// Background branch details computation.
+    pub bg_branch_details_op: BackgroundOp<git_engine::BranchDetails>,
 
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
     pub pending_auto_resume: bool,
+}
+
+/// Result of a background diff computation.
+pub struct BgDiffResult {
+    pub committed: Vec<crate::diff_state::FileDiff>,
+    pub uncommitted: Vec<crate::diff_state::FileDiff>,
+    pub error: Option<String>,
 }
 
 /// Aggregated token usage and cost from ccusage.
@@ -591,6 +605,9 @@ impl App {
             branch_details: Default::default(),
             bg_pr_url_op: BackgroundOp::default(),
             gh_available: Self::check_gh_available(),
+            bg_diff_op: BackgroundOp::default(),
+            bg_file_tree_op: BackgroundOp::default(),
+            bg_branch_details_op: BackgroundOp::default(),
             pending_auto_resume: auto_resume,
         };
         app.refresh_worktrees();
@@ -3237,10 +3254,14 @@ impl App {
     }
 
     /// Called when the selected worktree changes — refreshes viewer, diff, sessions.
+    ///
+    /// Heavy operations (file tree walk, diff computation, branch details) are
+    /// dispatched to background threads so the UI stays responsive. Results are
+    /// applied in `poll_worktree_switch_ops()`.
     pub fn on_worktree_changed(&mut self) {
         self.viewer_state = ViewerState::default();
-        self.refresh_viewer();
-        self.refresh_diff();
+
+        // Reviews are fast (SQLite) — keep synchronous.
         self.refresh_reviews();
 
         // Snapshot baseline so the next poll cycle doesn't trigger a redundant refresh.
@@ -3269,8 +3290,180 @@ impl App {
         self.terminal.cache_claude = Default::default();
         self.terminal.cache_shell = Default::default();
 
-        self.compute_branch_details();
+        // Dispatch heavy operations to background threads.
+        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+            let wt_path = wt.path.clone();
+
+            // Background file tree walk.
+            {
+                let path = wt_path.clone();
+                self.bg_file_tree_op.start(move |tx| {
+                    let mut entries = Vec::new();
+                    ViewerState::walk_dir(&path, &path, 0, &mut entries);
+                    let _ = tx.send(entries);
+                });
+            }
+
+            // Background diff computation.
+            {
+                let path = wt_path.clone();
+                let base_branch = self.config.general.main_branch.clone();
+                let word_diff = self.config.diff.word_diff;
+                let tab_width = self.config.viewer.tab_width;
+                self.bg_diff_op.start(move |tx| {
+                    let mut result = BgDiffResult {
+                        committed: Vec::new(),
+                        uncommitted: Vec::new(),
+                        error: None,
+                    };
+                    match DiffState::compute_diff_range_static(
+                        &path, &base_branch, true, word_diff, tab_width,
+                    ) {
+                        Ok(mut files) => {
+                            files.sort_by(|a, b| a.path.cmp(&b.path));
+                            result.committed = files;
+                        }
+                        Err(e) => {
+                            result.error = Some(format!("{e:#}"));
+                            let _ = tx.send(result);
+                            return;
+                        }
+                    }
+                    match DiffState::compute_diff_range_static(
+                        &path, &base_branch, false, word_diff, tab_width,
+                    ) {
+                        Ok(mut files) => {
+                            files.sort_by(|a, b| a.path.cmp(&b.path));
+                            result.uncommitted = files;
+                        }
+                        Err(e) => {
+                            log::warn!("failed to compute uncommitted diff: {e:#}");
+                        }
+                    }
+                    let _ = tx.send(result);
+                });
+            }
+
+            // Background branch details computation.
+            self.start_bg_branch_details();
+        }
+
         self.set_status(format!("Switched to worktree: {wt_name}"), StatusLevel::Success);
+    }
+
+    /// Spawn background branch details computation.
+    fn start_bg_branch_details(&mut self) {
+        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+            self.branch_details = Default::default();
+            return;
+        };
+        let branch = wt.branch.clone();
+        let is_main = wt.is_main;
+        let repo_path = self.repo_path.clone();
+        let main_branch = self.config.general.main_branch.clone();
+        let worktree_branches: Vec<String> = self
+            .worktrees
+            .iter()
+            .filter(|w| !w.is_main && w.branch != branch)
+            .map(|w| w.branch.clone())
+            .collect();
+
+        // Check DB for cached parent/children before spawning the thread.
+        let db_initial_branch = if !is_main {
+            self.review_store
+                .as_ref()
+                .and_then(|store| store.get_worktree_base_branch(&branch).ok().flatten())
+        } else {
+            None
+        };
+
+        let active_branches: std::collections::HashSet<String> =
+            self.worktrees.iter().map(|w| w.branch.clone()).collect();
+        let db_children: Vec<String> = self
+            .review_store
+            .as_ref()
+            .and_then(|store| store.get_worktree_children(&branch).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| active_branches.contains(c))
+            .collect();
+
+        // Reset branch_details and start PR lookup (already async).
+        self.branch_details = Default::default();
+        if !is_main && self.gh_available {
+            self.branch_details.pr_loading = true;
+            self.start_pr_url_lookup(&branch);
+        }
+
+        self.bg_branch_details_op.start(move |tx| {
+            let mut details = git_engine::BranchDetails::default();
+
+            if !is_main {
+                details.initial_branch = db_initial_branch.or_else(|| {
+                    git_engine::GitEngine::open(&repo_path)
+                        .ok()
+                        .and_then(|engine| {
+                            engine.detect_parent_branch(&branch, &main_branch, &worktree_branches)
+                        })
+                });
+            }
+
+            if !db_children.is_empty() {
+                details.derived_branches = db_children;
+            } else if let Ok(engine) = git_engine::GitEngine::open(&repo_path) {
+                if let Ok(derived) =
+                    engine.find_derived_branches(&branch, &main_branch, &worktree_branches)
+                {
+                    details.derived_branches = derived;
+                }
+            }
+
+            let _ = tx.send(details);
+        });
+    }
+
+    /// Poll background worktree-switch operations (file tree, diff, branch details).
+    pub fn poll_worktree_switch_ops(&mut self) {
+        // File tree result.
+        if let Some(entries) = self.bg_file_tree_op.poll() {
+            self.viewer_state.file_tree = entries;
+            // Re-open the previously viewed file if it still exists.
+            if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+                let wt_path = wt.path.clone();
+                if let Some(ref rel_path) = self.viewer_state.current_file.clone() {
+                    let full = wt_path.join(rel_path);
+                    if full.is_file() {
+                        let tab_width = self.config.viewer.tab_width;
+                        self.viewer_state.open_file(&wt_path, rel_path, tab_width);
+                    }
+                }
+            }
+            self.rehighlight_viewer();
+        }
+
+        // Diff result.
+        if let Some(result) = self.bg_diff_op.poll() {
+            if let Some(error) = result.error {
+                self.diff_state.committed_files.clear();
+                self.diff_state.uncommitted_files.clear();
+                self.diff_state.error = Some(error);
+            } else {
+                self.diff_state.committed_files = result.committed;
+                self.diff_state.uncommitted_files = result.uncommitted;
+                self.diff_state.error = None;
+            }
+            self.diff_state.rebuild_display_list();
+        }
+
+        // Branch details result.
+        if let Some(details) = self.bg_branch_details_op.poll() {
+            // Preserve pr_url and pr_loading from the already-running PR lookup.
+            let pr_url = self.branch_details.pr_url.take();
+            let pr_loading = self.branch_details.pr_loading;
+            self.branch_details = details;
+            self.branch_details.pr_url = pr_url;
+            self.branch_details.pr_loading = pr_loading;
+        }
     }
 
     // ── Branch details (worktree detail panel) ───────────────────
@@ -3301,80 +3494,6 @@ impl App {
         self.worktree_mgr.pending_worktrees.iter().any(|p| {
             p.op == PendingWorktreeOp::Deleting && p.worktree_path.as_deref() == Some(path)
         })
-    }
-
-    /// Compute branch lineage and start PR URL lookup for the selected worktree.
-    pub fn compute_branch_details(&mut self) {
-        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
-            self.branch_details = Default::default();
-            return;
-        };
-        let branch = wt.branch.clone();
-        let is_main = wt.is_main;
-
-        // Collect active worktree branch names as candidates.
-        let worktree_branches: Vec<String> = self
-            .worktrees
-            .iter()
-            .filter(|w| !w.is_main && w.branch != branch)
-            .map(|w| w.branch.clone())
-            .collect();
-
-        let mut details = git_engine::BranchDetails::default();
-
-        if !is_main {
-            // Parent branch: check DB first, fall back to reflog/merge-base heuristic.
-            if let Some(store) = &self.review_store {
-                if let Ok(Some(base)) = store.get_worktree_base_branch(&branch) {
-                    details.initial_branch = Some(base);
-                }
-            }
-            if details.initial_branch.is_none() {
-                if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
-                    details.initial_branch = engine.detect_parent_branch(
-                        &branch,
-                        &self.config.general.main_branch,
-                        &worktree_branches,
-                    );
-                }
-            }
-        }
-
-        // Derived (fork) branches: check DB first, fall back to git heuristic.
-        let mut db_children = Vec::new();
-        if let Some(store) = &self.review_store {
-            if let Ok(children) = store.get_worktree_children(&branch) {
-                db_children = children;
-            }
-        }
-
-        // Filter DB children to only those that are currently active worktree branches.
-        let active_branches: std::collections::HashSet<&str> =
-            self.worktrees.iter().map(|w| w.branch.as_str()).collect();
-
-        let filtered_children: Vec<String> = db_children
-            .into_iter()
-            .filter(|c| active_branches.contains(c.as_str()))
-            .collect();
-
-        if !filtered_children.is_empty() {
-            details.derived_branches = filtered_children;
-        } else if let Ok(engine) = git_engine::GitEngine::open(&self.repo_path) {
-            let main = &self.config.general.main_branch;
-            if let Ok(derived) =
-                engine.find_derived_branches(&branch, main, &worktree_branches)
-            {
-                details.derived_branches = derived;
-            }
-        }
-
-        // PR URL (non-main only).
-        if !is_main && self.gh_available {
-            details.pr_loading = true;
-            self.start_pr_url_lookup(&branch);
-        }
-
-        self.branch_details = details;
     }
 
     /// Spawn a background thread to look up the PR URL via `gh pr view`.

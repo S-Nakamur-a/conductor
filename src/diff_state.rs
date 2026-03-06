@@ -670,6 +670,24 @@ impl DiffState {
         None
     }
 
+    /// Public wrapper for background diff computation.
+    ///
+    /// `committed`: if true, computes merge-base..HEAD; if false, HEAD vs workdir+index.
+    pub fn compute_diff_range_static(
+        worktree_path: &Path,
+        base_branch: &str,
+        committed: bool,
+        word_diff: bool,
+        tab_width: usize,
+    ) -> Result<Vec<FileDiff>> {
+        let range = if committed {
+            DiffRange::Committed
+        } else {
+            DiffRange::Uncommitted
+        };
+        Self::compute_diff_range(worktree_path, base_branch, range, word_diff, tab_width)
+    }
+
     /// Use `git2` + `similar` to compute file-level diffs for a given range.
     fn compute_diff_range(
         worktree_path: &Path,

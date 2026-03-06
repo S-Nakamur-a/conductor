@@ -911,7 +911,7 @@ impl ViewerState {
     /// directories that are auto-expanded (depth 0). Deeper directories
     /// will have `children_loaded: false` and their contents are loaded
     /// lazily when the user expands them.
-    fn walk_dir(
+    pub fn walk_dir(
         root: &Path,
         dir: &Path,
         depth: usize,
