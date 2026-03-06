@@ -14,8 +14,15 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
                 let ctrl_byte = (c as u8).wrapping_sub(b'a').wrapping_add(1);
                 vec![ctrl_byte]
             } else {
+                // With enhanced keyboard protocol, Shift+letter may arrive as
+                // lowercase char + SHIFT modifier. Apply the shift manually.
+                let ch = if key.modifiers.contains(KeyModifiers::SHIFT) && c.is_ascii_lowercase() {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                };
                 let mut buf = [0u8; 4];
-                let s = c.encode_utf8(&mut buf);
+                let s = ch.encode_utf8(&mut buf);
                 s.as_bytes().to_vec()
             }
         }

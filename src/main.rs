@@ -30,8 +30,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    poll as crossterm_poll, read as crossterm_read,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, poll as crossterm_poll, read as crossterm_read,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -98,7 +98,6 @@ fn main() -> Result<()> {
             stdout,
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
             )
         )?;
     }
@@ -398,7 +397,7 @@ fn run_loop(
         };
         if crossterm_poll(tick)? {
             match crossterm_read()? {
-                Event::Key(key) => {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
                     last_input_time = Instant::now();
                     handle_key_event(app, key);
