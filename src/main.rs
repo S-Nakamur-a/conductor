@@ -35,7 +35,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
@@ -114,6 +114,10 @@ fn main() -> Result<()> {
     };
     let mut app = App::new(repo_path);
 
+    // ── Set terminal window title ────────────────────────────────────
+    let window_title = format!("conductor - {}", app.main_repo_name);
+    execute!(io::stdout(), SetTitle(&window_title))?;
+
     // ── Main event loop ──────────────────────────────────────────────
     let result = run_loop(&mut terminal, &mut app);
 
@@ -127,6 +131,7 @@ fn main() -> Result<()> {
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture,
         crossterm::event::DisableBracketedPaste,
+        SetTitle(""),
     )?;
     terminal.show_cursor()?;
 
