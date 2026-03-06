@@ -1830,7 +1830,7 @@ impl App {
             .collect();
         for idx in ready {
             if let Some(prompt) = self.terminal.deferred_prompts.remove(&idx) {
-                let _ = self.terminal.pty_manager.write_paste_to_session(idx, &prompt);
+                let _ = self.terminal.pty_manager.write_chunked_to_session(idx, &prompt);
             }
         }
     }
