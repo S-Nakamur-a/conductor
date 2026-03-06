@@ -125,12 +125,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Pre-compute session data for inline display.
     let session_groups = app.all_cc_sessions_by_worktree();
+    // Map pty_idx → whether its parent worktree is in cc_waiting_worktrees
+    // (same trigger as the notification bar hourglass).
     let session_waiting: std::collections::HashMap<usize, bool> = session_groups
         .iter()
-        .flat_map(|(_, _, sessions)| {
-            sessions.iter().map(|(pty_idx, _)| {
-                (*pty_idx, app.terminal.pty_manager.is_waiting_for_input(*pty_idx))
-            })
+        .flat_map(|(wt_idx, _, sessions)| {
+            let wt_path = &app.worktrees[*wt_idx].path;
+            let waiting = app.terminal.cc_waiting_worktrees.contains(wt_path);
+            sessions.iter().map(move |(pty_idx, _)| (*pty_idx, waiting))
         })
         .collect();
 
@@ -154,21 +156,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     } else {
                         label.to_string()
                     };
-                    let (icon, icon_color) = if is_waiting {
-                        ("\u{1f4a4}", theme.waiting_primary) // 💤
-                    } else {
-                        ("\u{1f3b5}", theme.success) // 🎵
-                    };
                     let is_selected = row_idx == app.worktree_list_selected;
                     let label_style = if is_selected {
                         Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme.fg)
                     };
-                    ListItem::new(Line::from(vec![
-                        Span::styled(format!("   {icon} "), Style::default().fg(icon_color)),
-                        Span::styled(display_label, label_style),
-                    ]))
+                    let spans = if is_waiting {
+                        vec![
+                            Span::styled("   \u{23f3} ", Style::default().fg(theme.waiting_primary)), // ⏳
+                            Span::styled(display_label, label_style),
+                        ]
+                    } else {
+                        vec![
+                            Span::raw("     "),
+                            Span::styled(display_label, label_style),
+                        ]
+                    };
+                    ListItem::new(Line::from(spans))
                 }
                 WorktreeListRow::Worktree(i) => {
                     let wt = &app.worktrees[i];
