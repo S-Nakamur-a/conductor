@@ -12,6 +12,7 @@ mod file_watcher;
 mod git_engine;
 mod grep_search;
 mod keymap;
+mod media_state;
 mod overlay;
 mod pty_manager;
 mod review_state;
@@ -634,6 +635,15 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
     ui::explorer_panel::render(frame, columns[1], app);
 
     // ── Column 2: Viewer (file content) ─────────────────────────────
+    // Trigger background media rendering when a media file is selected.
+    if app.viewer_state.is_current_file_media() {
+        if let Some(ref rel_path) = app.viewer_state.current_file.clone() {
+            let full_path = app.selected_worktree_path().join(rel_path);
+            let cols = columns[2].width;
+            let rows = columns[2].height;
+            app.viewer_state.media_state.render_if_needed(&full_path, &rel_path, cols, rows);
+        }
+    }
     ui::viewer_panel::render(frame, columns[2], app);
 
     // ── Column 3: Terminal split (Claude 80% / Shell 20%) ───────────

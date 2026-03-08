@@ -19,6 +19,7 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 use crate::diff_state::FileDiff;
+use crate::media_state::{self, MediaState};
 use crate::text_input::TextInput;
 
 /// All state owned by the Viewer mode.
@@ -100,6 +101,8 @@ pub struct ViewerState {
     pub filename_search_selected: usize,
     /// Cached list of all file paths for filename search (populated on search start).
     pub filename_search_all_files: Vec<String>,
+    /// Media rendering state (images/videos displayed as ASCII art).
+    pub media_state: MediaState,
 }
 
 impl Default for ViewerState {
@@ -143,6 +146,7 @@ impl Default for ViewerState {
             filename_search_results: Vec::new(),
             filename_search_selected: 0,
             filename_search_all_files: Vec::new(),
+            media_state: MediaState::default(),
         }
     }
 }
@@ -220,6 +224,22 @@ impl ViewerState {
         self.exit_diff_mode();
         self.highlighted_lines.clear();
         let full = worktree_path.join(relative_path);
+
+        // Handle media files (images/videos) via aa-media.
+        if media_state::is_media_file(relative_path) {
+            self.file_content.clear();
+            self.current_file = Some(relative_path.to_string());
+            self.file_scroll = 0;
+            self.h_scroll = 0;
+            // Actual rendering is triggered lazily during render (when panel
+            // size is known). Clear the cache so it re-renders for the new file.
+            self.media_state.clear();
+            return;
+        }
+
+        // Clear media state when opening a non-media file.
+        self.media_state.clear();
+
         match fs::read_to_string(&full) {
             Ok(text) => {
                 self.file_content = text.lines().map(|l| Self::expand_tabs(l, tab_width)).collect();
@@ -239,6 +259,13 @@ impl ViewerState {
                 self.h_scroll = 0;
             }
         }
+    }
+
+    /// Returns true if the current file is a media file.
+    pub fn is_current_file_media(&self) -> bool {
+        self.current_file
+            .as_deref()
+            .map_or(false, media_state::is_media_file)
     }
 
     /// Toggle expand / collapse of the directory at index `idx` in
