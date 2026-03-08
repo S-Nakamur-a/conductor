@@ -373,14 +373,28 @@ fn run_loop(
 
         // Periodically refresh unfocused terminal panels so background PTY
         // output (e.g. running builds, Claude Code responses) remains visible.
-        if !matches!(app.focus, crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
-            && last_unfocused_terminal_refresh.elapsed() >= UNFOCUSED_TERMINAL_REFRESH
-        {
+        if last_unfocused_terminal_refresh.elapsed() >= UNFOCUSED_TERMINAL_REFRESH {
             last_unfocused_terminal_refresh = Instant::now();
-            // Invalidate caches so the next draw picks up fresh PTY content.
-            app.terminal.cache_claude = Default::default();
-            app.terminal.cache_shell = Default::default();
-            needs_redraw = true;
+            // Invalidate caches for unfocused terminal panels so the next
+            // draw picks up fresh PTY content.
+            match app.focus {
+                crate::app::Focus::TerminalClaude => {
+                    // Claude is focused (cache rebuilt every frame); refresh Shell.
+                    app.terminal.cache_shell = Default::default();
+                    needs_redraw = true;
+                }
+                crate::app::Focus::TerminalShell => {
+                    // Shell is focused; refresh Claude.
+                    app.terminal.cache_claude = Default::default();
+                    needs_redraw = true;
+                }
+                _ => {
+                    // Neither terminal focused; refresh both.
+                    app.terminal.cache_claude = Default::default();
+                    app.terminal.cache_shell = Default::default();
+                    needs_redraw = true;
+                }
+            }
         }
 
         // Wait for an event. Use a fast tick rate shortly after user input
