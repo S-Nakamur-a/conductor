@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
+use crate::media_state::MediaContent;
 use crate::review_state::ReviewInputMode;
 use crate::review_store::ReviewComment;
 use crate::theme::Theme;
@@ -78,6 +79,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Unified diff mode: delegate to dedicated renderer.
     if vs.diff_mode && !vs.diff_view_lines.is_empty() {
         render_diff_view(frame, area, app, block);
+        return;
+    }
+
+    // Media file mode: render image/video as ASCII art.
+    if vs.is_current_file_media() {
+        render_media_view(frame, area, app, block);
         return;
     }
 
@@ -552,6 +559,63 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     theme,
                 );
             }
+        }
+    }
+}
+
+/// Render media file (image/video) as ASCII art in the viewer panel.
+fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
+    let theme = &app.theme;
+    let vs = &app.viewer_state;
+
+    let content = vs.media_state.content.lock().unwrap().clone();
+
+    match content {
+        MediaContent::Loading => {
+            let loading = Paragraph::new("Loading media...")
+                .style(Style::default().fg(theme.muted))
+                .block(block);
+            frame.render_widget(loading, area);
+        }
+        MediaContent::Rendered { lines, dimensions, file_size } => {
+            frame.render_widget(ratatui::widgets::Clear, area);
+
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+
+            // Reserve last line for info bar.
+            let media_height = inner.height.saturating_sub(1) as usize;
+            let media_area = Rect::new(inner.x, inner.y, inner.width, media_height as u16);
+            let info_area = Rect::new(inner.x, inner.y + media_height as u16, inner.width, 1);
+
+            // Render the media lines.
+            let visible_lines: Vec<Line> = lines.into_iter().take(media_height).collect();
+            let paragraph = Paragraph::new(visible_lines);
+            frame.render_widget(paragraph, media_area);
+
+            // Info bar: dimensions + file size.
+            let size_str = if file_size >= 1_048_576 {
+                format!("{:.1} MB", file_size as f64 / 1_048_576.0)
+            } else if file_size >= 1024 {
+                format!("{:.1} KB", file_size as f64 / 1024.0)
+            } else {
+                format!("{file_size} B")
+            };
+            let info = format!(
+                " {}x{} | {} ",
+                dimensions.0, dimensions.1, size_str,
+            );
+            let info_widget = Paragraph::new(Span::styled(
+                info,
+                Style::default().fg(theme.muted),
+            ));
+            frame.render_widget(info_widget, info_area);
+        }
+        MediaContent::Error(msg) => {
+            let error = Paragraph::new(msg)
+                .style(Style::default().fg(Color::Red))
+                .block(block);
+            frame.render_widget(error, area);
         }
     }
 }
