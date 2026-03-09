@@ -325,6 +325,19 @@ pub fn handle_mouse_event(
                         // Diff mode: resolve line number from diff_view_lines.
                         let diff_total = app.viewer_state.diff_view_lines.len();
                         if diff_total > 0 && row >= inner_y {
+                            // Compute gutter width to restrict clicks to line number area.
+                            let max_line_no = app.viewer_state.diff_view_lines.iter().filter_map(|e| {
+                                if let crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } = e { *new_line_no } else { None }
+                            }).max().unwrap_or(0);
+                            let gutter_width = {
+                                let mut count = 0usize;
+                                let mut val = max_line_no;
+                                if val == 0 { 1 } else { while val > 0 { count += 1; val /= 10; } count }
+                            };
+                            // Gutter: marker(1) + line_num(gutter_width) + " │ "(3) + badge(2) = gutter_width + 6
+                            let gutter_end_x = inner_x + (gutter_width as u16) + 6;
+
+                            if col >= inner_x && col < gutter_end_x {
                             let line_offset = (row - inner_y) as usize;
                             let idx = app.viewer_state.diff_view_scroll + line_offset;
                             if let Some(crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view_lines.get(idx) {
@@ -357,6 +370,7 @@ pub fn handle_mouse_event(
                                     }
                                 }
                             }
+                            } // end gutter check
                         }
                     } else {
                     let total_lines = app.viewer_state.file_content.len();
