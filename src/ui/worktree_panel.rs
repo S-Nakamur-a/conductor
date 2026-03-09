@@ -257,7 +257,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
                     if wt.is_main && app.worktree_mgr.grabbed_branch.is_some() {
                         spans.push(Span::styled(
-                            " \u{2190}grabbed",
+                            " \u{1f4e5}grabbed",  // 📥grabbed
                             Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD),
                         ));
                     }
