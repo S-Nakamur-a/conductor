@@ -19,9 +19,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::TerminalShell;
     let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
 
+    let is_grabbed = app.is_selected_worktree_grabbed();
+
     let sessions = app.current_worktree_shell_sessions();
 
     let is_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
+
+    // If the selected worktree is grabbed, show a locked overlay instead of sessions.
+    if is_grabbed {
+        let block = if is_expanded {
+            Block::default().title(" Shell \u{1f512} ")
+        } else {
+            Block::default()
+                .title(Span::styled(
+                    " Shell \u{1f512} ",
+                    Style::default().fg(theme.muted),
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.muted))
+        };
+        let msg = Paragraph::new(Span::styled(
+            "  Locked — worktree is grabbed",
+            Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+        ))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
 
     if sessions.is_empty() {
         let block = if is_expanded {

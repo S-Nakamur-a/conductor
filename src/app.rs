@@ -3570,6 +3570,15 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Return `true` if the currently selected worktree is on a `__grab` branch
+    /// (i.e. its real branch was grabbed away to main and it holds a temporary checkout).
+    pub fn is_selected_worktree_grabbed(&self) -> bool {
+        self.worktrees
+            .get(self.selected_worktree)
+            .map(|w| w.branch.ends_with("__grab"))
+            .unwrap_or(false)
+    }
+
     /// Return the directory path for the currently selected worktree.
     pub fn selected_worktree_path(&self) -> PathBuf {
         self.worktrees

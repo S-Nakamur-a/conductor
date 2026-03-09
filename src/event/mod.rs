@@ -134,6 +134,19 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // ── 1b. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
+        // If the selected worktree is grabbed, block all terminal input
+        // except navigation keys (focus switching is handled above in §0).
+        if app.is_selected_worktree_grabbed() {
+            // Allow Esc to leave terminal, but block everything else.
+            if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
+                match action {
+                    Action::LeaveTerminal => { app.set_focus(Focus::Explorer); }
+                    _ => {}
+                }
+            }
+            return;
+        }
+
         // Check terminal-specific and global bindings first.
         if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
             match action {
@@ -293,6 +306,11 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         Focus::TerminalShell => app.terminal.active_shell_session,
         _ => None,
     };
+
+    // Block paste into grabbed worktree terminals.
+    if app.is_selected_worktree_grabbed() {
+        return;
+    }
 
     if let Some(idx) = session_idx {
         // Use chunked write with bracketed-paste wrapping so large pastes
