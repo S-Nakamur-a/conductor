@@ -2667,7 +2667,10 @@ impl App {
                     let _ = store.save_worktree_base_branch(&pending.branch, &pending.base_ref);
                 }
                 self.refresh_worktrees();
-                self.select_worktree_by_path(&path);
+                // Preserve the current focus and selected worktree — don't
+                // switch the user's view to the newly created worktree.
+                let prev_selected = self.selected_worktree;
+                let prev_focus = self.focus;
                 self.set_status(
                     format!("Created worktree: {} (from {})", path.display(), pending.base_ref),
                     StatusLevel::Success,
@@ -2676,17 +2679,23 @@ impl App {
                 // Smart Worktree: auto-spawn Claude Code and defer prompt
                 // until the session is ready for input.
                 if pending.auto_spawn {
+                    // Temporarily select the new worktree so spawn_claude_code
+                    // picks up the correct working directory.
+                    self.select_worktree_by_path(&path);
                     match self.spawn_claude_code() {
                         Ok(idx) => {
                             if !pending.smart_prompt.is_empty() {
                                 self.terminal.deferred_prompts.insert(idx, pending.smart_prompt.clone());
                             }
-                            self.set_focus(Focus::TerminalClaude);
                         }
                         Err(e) => {
                             log::warn!("Failed to auto-spawn Claude Code: {e}");
                         }
                     }
+                    // Restore the previous worktree selection and focus.
+                    self.selected_worktree = prev_selected;
+                    self.on_worktree_changed();
+                    self.focus = prev_focus;
                 }
             }
             WorktreeOpResult::CreateFailed { error, pending } => {
