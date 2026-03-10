@@ -209,8 +209,12 @@ impl GitEngine {
         self.force_prune_worktree_entry(dir_name);
 
         // Use `git worktree add` CLI — more reliable than libgit2's worktree API.
+        // We use spawn()+wait() instead of output() to avoid blocking on
+        // post-checkout hooks that spawn background processes (e.g. `npm ci &`).
+        // output() reads pipes until EOF, which blocks if background processes
+        // inherit the pipe FDs. wait() only waits for the child process to exit.
         let main_dir = self.main_worktree_path()?;
-        let output = std::process::Command::new("git")
+        let mut child = std::process::Command::new("git")
             .args([
                 "worktree", "add",
                 "-b", branch_name,
@@ -218,11 +222,20 @@ impl GitEngine {
                 base_ref,
             ])
             .current_dir(&main_dir)
-            .output()
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .context("failed to run `git worktree add`")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree add failed: {}", stderr.trim());
+        let status = child.wait().context("failed to wait for `git worktree add`")?;
+        if !status.success() {
+            // Safe to read stderr: if git failed, post-checkout hook didn't run,
+            // so no background processes hold the pipe open.
+            let mut stderr_buf = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                use std::io::Read;
+                let _ = stderr.read_to_string(&mut stderr_buf);
+            }
+            anyhow::bail!("git worktree add failed: {}", stderr_buf.trim());
         }
 
         Ok(wt_path)
@@ -276,8 +289,9 @@ impl GitEngine {
 
         // Use `git worktree add` CLI — more reliable than libgit2's worktree API
         // which can fail in various edge cases (stale locks, index issues, etc.).
+        // See create_worktree_from_base() for why we use spawn()+wait() over output().
         let main_dir = self.main_worktree_path()?;
-        let output = std::process::Command::new("git")
+        let mut child = std::process::Command::new("git")
             .args([
                 "worktree", "add",
                 "--track", "-b", local_branch,
@@ -285,11 +299,18 @@ impl GitEngine {
                 remote_branch,
             ])
             .current_dir(&main_dir)
-            .output()
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .context("failed to run `git worktree add`")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree add failed: {}", stderr.trim());
+        let status = child.wait().context("failed to wait for `git worktree add`")?;
+        if !status.success() {
+            let mut stderr_buf = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                use std::io::Read;
+                let _ = stderr.read_to_string(&mut stderr_buf);
+            }
+            anyhow::bail!("git worktree add failed: {}", stderr_buf.trim());
         }
 
         Ok(wt_path)
