@@ -402,26 +402,43 @@ fn run_loop(
         // an idle rate to save CPU.
         let decoration_active = crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
             .has_animation();
-        let tick = match app.focus {
-            crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
-            _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
-            _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
-            _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
-            _ if decoration_active => DECORATION_TICK_INTERVAL,
-            _ => TICK_RATE_IDLE,
+        // If a PTY reader thread has produced new output, skip the poll
+        // timeout entirely so we render the update on the very next frame.
+        let pty_dirty = app.terminal.pty_manager.take_output_notify();
+        let tick = if pty_dirty {
+            Duration::ZERO
+        } else {
+            match app.focus {
+                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
+                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
+                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
+                _ if decoration_active => DECORATION_TICK_INTERVAL,
+                _ => TICK_RATE_IDLE,
+            }
         };
         if crossterm_poll(tick)? {
-            match crossterm_read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
-                    last_input_time = Instant::now();
-                    handle_key_event(app, key);
+            // Drain all pending crossterm events to batch rapid input and
+            // avoid one-event-per-frame bottlenecks.
+            loop {
+                match crossterm_read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
+                        last_input_time = Instant::now();
+                        handle_key_event(app, key);
+                    }
+                    Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
+                    Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
+                    Event::Resize(_, _) => {}
+                    _ => {}
                 }
-                Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
-                Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
-                Event::Resize(_, _) => {}
-                _ => {}
+                needs_redraw = true;
+                // Continue draining if more events are immediately available.
+                if !crossterm_poll(Duration::ZERO)? {
+                    break;
+                }
             }
+        } else if pty_dirty {
             needs_redraw = true;
         }
 
