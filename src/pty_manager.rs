@@ -106,6 +106,9 @@ pub struct PtyManager {
     active_scrollback: usize,
     /// Scrollback lines for inactive (background) sessions.
     inactive_scrollback: usize,
+    /// Flag set by reader threads when new PTY output arrives.
+    /// The main loop checks this to skip poll timeouts and render immediately.
+    output_notify: Arc<AtomicBool>,
 }
 
 impl PtyManager {
@@ -117,7 +120,17 @@ impl PtyManager {
             buffer_limits: Vec::new(),
             active_scrollback,
             inactive_scrollback,
+            output_notify: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Check and clear the PTY output notification flag.
+    ///
+    /// Returns `true` if any reader thread has produced new output since the
+    /// last call.  Used by the main loop to skip poll timeouts and render
+    /// PTY changes immediately.
+    pub fn take_output_notify(&self) -> bool {
+        self.output_notify.swap(false, Ordering::Relaxed)
     }
 
     /// Spawn a new PTY session and return its index in the session list.
@@ -217,6 +230,8 @@ impl PtyManager {
         let alt_screen_entered = Arc::new(AtomicBool::new(false));
         let alt_screen_entered_for_thread = Arc::clone(&alt_screen_entered);
 
+        let output_notify_for_thread = Arc::clone(&self.output_notify);
+
         thread::Builder::new()
             .name(format!("pty-reader-{label}"))
             .spawn(move || {
@@ -228,6 +243,7 @@ impl PtyManager {
                     last_output_time_for_thread,
                     alt_screen_entered_for_thread,
                     writer_for_thread,
+                    output_notify_for_thread,
                 );
             })
             .context("Failed to spawn PTY reader thread")?;
@@ -612,6 +628,7 @@ impl PtyManager {
         last_output_time: Arc<Mutex<Instant>>,
         alt_screen_entered: Arc<AtomicBool>,
         writer: Arc<Mutex<Box<dyn Write + Send>>>,
+        output_notify: Arc<AtomicBool>,
     ) {
         let mut read_buf = [0u8; 4096];
         // Partial line accumulator (for data that doesn't end with '\n').
@@ -633,11 +650,12 @@ impl PtyManager {
                 Ok(n) => {
                     let bytes = &read_buf[..n];
 
-                    // Update the last output timestamp.
+                    // Update the last output timestamp and notify the main loop.
                     {
                         let mut t = last_output_time.lock().unwrap_or_else(|e| e.into_inner());
                         *t = Instant::now();
                     }
+                    output_notify.store(true, Ordering::Relaxed);
 
                     // Count terminal queries that need responses BEFORE
                     // feeding to the parser (the parser consumes the bytes).
