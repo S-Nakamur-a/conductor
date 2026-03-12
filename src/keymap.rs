@@ -597,7 +597,6 @@ impl KeyMap {
         self.bind_char(Viewer, '/', SearchInFile);
         self.bind_char(Viewer, 'n', NextSearchMatch);
         self.bind_char(Viewer, 'N', PrevSearchMatch);
-        self.bind_char(Viewer, 'c', AddComment);
         self.bind_char(Viewer, ' ', ViewCommentDetail);
         self.bind_key(Viewer, KeyCode::Esc, ExitToExplorer);
         self.bind_char(Viewer, ':', CommandPalette);
@@ -616,7 +615,6 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, 'l', ScrollRight);
         self.bind_key(ViewerDiffMode, KeyCode::Right, ScrollRight);
         self.bind_char(ViewerDiffMode, '0', ScrollHome);
-        self.bind_char(ViewerDiffMode, 'c', AddComment);
         self.bind_char(ViewerDiffMode, ' ', ViewCommentDetail);
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
         self.bind_char(ViewerDiffMode, ':', CommandPalette);

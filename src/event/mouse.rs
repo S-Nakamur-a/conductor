@@ -316,112 +316,46 @@ pub fn handle_mouse_event(
                     // Viewer column.
                     app.set_focus(Focus::Viewer);
 
-                    // Detect clicks on the gutter (line number area) for line selection.
-                    let panel_x = explorer_end;
-                    let inner_x = panel_x + 1; // inside border
+                    // Detect clicks on viewer lines for comment selection.
                     let inner_y = main_area.y + 1; // inside border
 
                     if app.viewer_state.diff_mode {
                         // Diff mode: resolve line number from diff_view_lines.
                         let diff_total = app.viewer_state.diff_view_lines.len();
                         if diff_total > 0 && row >= inner_y {
-                            // Compute gutter width to restrict clicks to line number area.
-                            let max_line_no = app.viewer_state.diff_view_lines.iter().filter_map(|e| {
-                                if let crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } = e { *new_line_no } else { None }
-                            }).max().unwrap_or(0);
-                            let gutter_width = {
-                                let mut count = 0usize;
-                                let mut val = max_line_no;
-                                if val == 0 { 1 } else { while val > 0 { count += 1; val /= 10; } count }
-                            };
-                            // Gutter: marker(1) + line_num(gutter_width) + " │ "(3) + badge(2) = gutter_width + 6
-                            let gutter_end_x = inner_x + (gutter_width as u16) + 6;
-
-                            if col >= inner_x && col < gutter_end_x {
                             let line_offset = (row - inner_y) as usize;
                             let idx = app.viewer_state.diff_view_scroll + line_offset;
                             if let Some(crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view_lines.get(idx) {
                                 if *tag != crate::diff_state::DiffLineTag::Delete {
                                     let line_1 = *line_1;
                                     let has_comment = app.review_state.file_comments.contains_key(&line_1);
-                                    if has_comment {
-                                        let now = std::time::Instant::now();
-                                        let elapsed = now.duration_since(app.viewer_state.last_line_click_time);
-                                        let is_double = elapsed.as_millis() < 400
-                                            && app.viewer_state.last_line_click_line == line_1;
-                                        app.viewer_state.last_line_click_time = now;
-                                        app.viewer_state.last_line_click_line = line_1;
-
-                                        if is_double {
-                                            app.viewer_state.selected_line_start = Some(line_1);
-                                            app.viewer_state.selected_line_end = None;
-                                            app.viewer_state.comment_preview_line = None;
-                                            open_viewer_comment(app);
-                                        } else {
-                                            app.viewer_state.clear_selection();
-                                            app.viewer_state.comment_preview_line = Some(line_1);
-                                        }
-                                    } else {
+                                    // Show comment preview on single click if the line has a comment.
+                                    app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
+                                    let should_open = app.viewer_state.click_line_number(line_1);
+                                    if should_open {
                                         app.viewer_state.comment_preview_line = None;
-                                        let is_double = app.viewer_state.click_line_number(line_1);
-                                        if is_double {
-                                            open_viewer_comment(app);
-                                        }
+                                        open_viewer_comment(app);
                                     }
                                 }
                             }
-                            } // end gutter check
                         }
                     } else {
-                    let total_lines = app.viewer_state.file_content.len();
-                    if total_lines > 0 && row >= inner_y {
-                        let gutter_width = {
-                            let mut count = 0usize;
-                            let mut val = total_lines;
-                            if val == 0 { 1 } else {
-                                while val > 0 { count += 1; val /= 10; }
-                                count
-                            }
-                        };
-                        // Gutter: marker(1) + line_num(gutter_width) + " │ "(3) + badge(2)
-                        let gutter_end_x = inner_x + (gutter_width as u16) + 6;
-
-                        if col >= inner_x && col < gutter_end_x {
+                        let total_lines = app.viewer_state.file_content.len();
+                        if total_lines > 0 && row >= inner_y {
                             let line_offset = (row - inner_y) as usize;
                             let line_1 = app.viewer_state.file_scroll + line_offset + 1;
 
                             if line_1 <= total_lines {
                                 let has_comment = app.review_state.file_comments.contains_key(&line_1);
-                                if has_comment {
-                                    // Double-click detection for comment lines
-                                    let now = std::time::Instant::now();
-                                    let elapsed = now.duration_since(app.viewer_state.last_line_click_time);
-                                    let is_double = elapsed.as_millis() < 400
-                                        && app.viewer_state.last_line_click_line == line_1;
-                                    app.viewer_state.last_line_click_time = now;
-                                    app.viewer_state.last_line_click_line = line_1;
-
-                                    if is_double {
-                                        app.viewer_state.selected_line_start = Some(line_1);
-                                        app.viewer_state.selected_line_end = None;
-                                        app.viewer_state.comment_preview_line = None;
-                                        open_viewer_comment(app);
-                                    } else {
-                                        // Single click → comment preview only
-                                        app.viewer_state.clear_selection();
-                                        app.viewer_state.comment_preview_line = Some(line_1);
-                                    }
-                                } else {
-                                    // No comment → existing line selection behavior
+                                // Show comment preview on single click if the line has a comment.
+                                app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
+                                let should_open = app.viewer_state.click_line_number(line_1);
+                                if should_open {
                                     app.viewer_state.comment_preview_line = None;
-                                    let is_double = app.viewer_state.click_line_number(line_1);
-                                    if is_double {
-                                        open_viewer_comment(app);
-                                    }
+                                    open_viewer_comment(app);
                                 }
                             }
                         }
-                    }
                     } // end non-diff-mode
                 } else {
                     // Right column: top 80% = Claude, bottom 20% = Shell.

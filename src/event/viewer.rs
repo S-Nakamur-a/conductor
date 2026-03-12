@@ -5,7 +5,7 @@ use crossterm::event::KeyEvent;
 use crate::app::App;
 use crate::keymap::{Action, KeyContext};
 
-use super::explorer::{open_viewer_comment, open_viewer_comment_detail};
+use super::explorer::open_viewer_comment_detail;
 
 /// Handle keys when the Viewer panel is focused.
 pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
@@ -75,9 +75,6 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         Some(Action::ScrollHome) => {
             app.viewer_state.h_scroll = 0;
         }
-        Some(Action::AddComment) => {
-            open_viewer_comment(app);
-        }
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
         }
@@ -136,20 +133,6 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::ScrollHome) => {
             app.viewer_state.h_scroll = 0;
-        }
-        Some(Action::AddComment) => {
-            if let Some(entry) = app.viewer_state.diff_view_lines.get(app.viewer_state.diff_view_scroll) {
-                match entry {
-                    crate::viewer::UnifiedDiffEntry::Line { tag, new_line_no: Some(_), .. }
-                        if *tag != crate::diff_state::DiffLineTag::Delete =>
-                    {
-                        open_viewer_comment(app);
-                    }
-                    _ => {
-                        app.status_message = Some("Cannot comment on deleted lines".to_string().into());
-                    }
-                }
-            }
         }
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);

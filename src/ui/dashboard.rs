@@ -1058,7 +1058,6 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
             help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SearchInFile), "Search in file", theme);
             help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NextSearchMatch), "Next search match", theme);
             help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PrevSearchMatch), "Previous search match", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::AddComment), "Add review comment at line", theme);
             help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ExitToExplorer), "Back to Explorer", theme);
         }
         Focus::TerminalClaude | Focus::TerminalShell => {
