@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "conductor"
-version = "0.21.2"
+version = "0.21.4"
 dependencies = [
  "aa-media",
  "anyhow",
