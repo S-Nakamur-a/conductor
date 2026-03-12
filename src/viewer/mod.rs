@@ -642,6 +642,28 @@ impl ViewerState {
         }
     }
 
+    /// Return the total gutter width (in columns) used by the line-number
+    /// area in the viewer panel.  The gutter consists of:
+    ///   prefix(1) + digits(gutter_width) + space(1) + '│'(1) + space(1)
+    /// = gutter_width + 4
+    pub fn gutter_total_width(&self) -> u16 {
+        let digit_w = if self.diff_mode {
+            let max_line_no = self
+                .diff_view_lines
+                .iter()
+                .filter_map(|entry| match entry {
+                    crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0);
+            digit_count(max_line_no)
+        } else {
+            digit_count(self.file_content.len())
+        };
+        (digit_w + 4) as u16
+    }
+
     // -- Unified diff view ----------------------------------------------------
 
     /// Build the unified diff view entries from a `FileDiff`.
@@ -1011,4 +1033,18 @@ impl ViewerState {
             }
         }
     }
+}
+
+/// Count the number of decimal digits in `n` (minimum 1).
+fn digit_count(n: usize) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    let mut count = 0;
+    let mut val = n;
+    while val > 0 {
+        count += 1;
+        val /= 10;
+    }
+    count
 }

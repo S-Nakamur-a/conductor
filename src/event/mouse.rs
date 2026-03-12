@@ -316,18 +316,43 @@ pub fn handle_mouse_event(
                     // Viewer column.
                     app.set_focus(Focus::Viewer);
 
-                    // Detect clicks on viewer lines for comment selection.
-                    let inner_y = main_area.y + 1; // inside border
+                    // Only trigger comment selection when clicking inside the
+                    // line-number gutter (left-most columns).  Clicks on the
+                    // code content area are treated as plain focus changes.
+                    let inner_x = explorer_end + 1; // inside left border
+                    let inner_y = main_area.y + 1; // inside top border
+                    let gutter_w = app.viewer_state.gutter_total_width();
+                    let on_gutter = col >= inner_x && col < inner_x + gutter_w;
 
-                    if app.viewer_state.diff_mode {
-                        // Diff mode: resolve line number from diff_view_lines.
-                        let diff_total = app.viewer_state.diff_view_lines.len();
-                        if diff_total > 0 && row >= inner_y {
-                            let line_offset = (row - inner_y) as usize;
-                            let idx = app.viewer_state.diff_view_scroll + line_offset;
-                            if let Some(crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view_lines.get(idx) {
-                                if *tag != crate::diff_state::DiffLineTag::Delete {
-                                    let line_1 = *line_1;
+                    if on_gutter {
+                        // Detect clicks on viewer lines for comment selection.
+                        if app.viewer_state.diff_mode {
+                            // Diff mode: resolve line number from diff_view_lines.
+                            let diff_total = app.viewer_state.diff_view_lines.len();
+                            if diff_total > 0 && row >= inner_y {
+                                let line_offset = (row - inner_y) as usize;
+                                let idx = app.viewer_state.diff_view_scroll + line_offset;
+                                if let Some(crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view_lines.get(idx) {
+                                    if *tag != crate::diff_state::DiffLineTag::Delete {
+                                        let line_1 = *line_1;
+                                        let has_comment = app.review_state.file_comments.contains_key(&line_1);
+                                        // Show comment preview on single click if the line has a comment.
+                                        app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
+                                        let should_open = app.viewer_state.click_line_number(line_1);
+                                        if should_open {
+                                            app.viewer_state.comment_preview_line = None;
+                                            open_viewer_comment(app);
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            let total_lines = app.viewer_state.file_content.len();
+                            if total_lines > 0 && row >= inner_y {
+                                let line_offset = (row - inner_y) as usize;
+                                let line_1 = app.viewer_state.file_scroll + line_offset + 1;
+
+                                if line_1 <= total_lines {
                                     let has_comment = app.review_state.file_comments.contains_key(&line_1);
                                     // Show comment preview on single click if the line has a comment.
                                     app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
@@ -338,25 +363,8 @@ pub fn handle_mouse_event(
                                     }
                                 }
                             }
-                        }
-                    } else {
-                        let total_lines = app.viewer_state.file_content.len();
-                        if total_lines > 0 && row >= inner_y {
-                            let line_offset = (row - inner_y) as usize;
-                            let line_1 = app.viewer_state.file_scroll + line_offset + 1;
-
-                            if line_1 <= total_lines {
-                                let has_comment = app.review_state.file_comments.contains_key(&line_1);
-                                // Show comment preview on single click if the line has a comment.
-                                app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
-                                let should_open = app.viewer_state.click_line_number(line_1);
-                                if should_open {
-                                    app.viewer_state.comment_preview_line = None;
-                                    open_viewer_comment(app);
-                                }
-                            }
-                        }
-                    } // end non-diff-mode
+                        } // end non-diff-mode
+                    }
                 } else {
                     // Right column: top 80% = Claude, bottom 20% = Shell.
                     let terminal_x = viewer_end;
