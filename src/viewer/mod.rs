@@ -599,8 +599,10 @@ impl ViewerState {
         }
     }
 
-    /// Handle a click on a line number.  Returns `true` if a double-click
-    /// was detected (the caller should open the comment input).
+    /// Handle a click on a line in the viewer.  Returns `true` when the
+    /// caller should open the comment input overlay (double-click for a
+    /// single-line comment, or second single-click on a different line for
+    /// a range comment).
     pub fn click_line_number(&mut self, line_1indexed: usize) -> bool {
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(self.last_line_click_time);
@@ -611,7 +613,7 @@ impl ViewerState {
         self.last_line_click_line = line_1indexed;
 
         if is_double {
-            // Double-click -> select single line and signal comment creation.
+            // Double-click → select single line and signal comment creation.
             self.selected_line_start = Some(line_1indexed);
             self.selected_line_end = None;
             return true;
@@ -619,19 +621,25 @@ impl ViewerState {
 
         // Single click logic:
         if self.selected_line_start.is_none() {
-            // First click — select start line.
+            // First click — select start line (highlight).
             self.selected_line_start = Some(line_1indexed);
             self.selected_line_end = None;
+            false
         } else if self.selected_line_end.is_none() {
-            // Second click — set end line (range).
-            self.selected_line_end = Some(line_1indexed);
+            if self.selected_line_start == Some(line_1indexed) {
+                // Clicked the same line again (slow double-click) — keep selection.
+                false
+            } else {
+                // Second click on a different line — set range and open comment.
+                self.selected_line_end = Some(line_1indexed);
+                true
+            }
         } else {
-            // Third click — start a new selection.
+            // Already have a completed range — start a new selection.
             self.selected_line_start = Some(line_1indexed);
             self.selected_line_end = None;
+            false
         }
-
-        false
     }
 
     // -- Unified diff view ----------------------------------------------------
