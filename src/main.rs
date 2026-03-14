@@ -515,6 +515,7 @@ fn run_loop(
         if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
+            app.process_permission_judgments();
             app.flush_deferred_prompts();
             needs_redraw = true;
         }

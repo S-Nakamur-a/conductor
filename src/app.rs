@@ -1883,6 +1883,124 @@ impl App {
         self.terminal.cc_waiting_worktrees.remove(&working_dir);
     }
 
+    // ── Permission auto-response ────────────────────────────────────
+
+    /// Scan `.conductor/cc-permissions/` for judgment files produced by the
+    /// `permission-judge.sh` hook and auto-send `y` or `n` to the
+    /// corresponding Claude Code PTY session.
+    ///
+    /// Files with `action: "ask_user"` are kept for the notification queue
+    /// (Step 3, not yet implemented).  Processed files are removed.
+    pub fn process_permission_judgments(&mut self) {
+        let permissions_dir = git_engine::GitEngine::open(&self.repo_path)
+            .and_then(|e| e.main_worktree_path())
+            .unwrap_or_else(|_| self.repo_path.clone())
+            .join(".conductor")
+            .join("cc-permissions");
+
+        let entries = match std::fs::read_dir(&permissions_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = std::fs::OpenOptions::new()
+                        .create(true).append(true)
+                        .open("/tmp/conductor-perm-debug.log")
+                        .and_then(|mut f| std::io::Write::write_all(&mut f,
+                            format!("read_to_string error: {e}, path={}\n", path.display()).as_bytes()));
+                    continue;
+                }
+            };
+            let _ = std::fs::OpenOptions::new()
+                .create(true).append(true)
+                .open("/tmp/conductor-perm-debug.log")
+                .and_then(|mut f| std::io::Write::write_all(&mut f,
+                    format!("found file: {} content_len={}\n", path.display(), content.len()).as_bytes()));
+
+            let parsed: serde_json::Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = std::fs::OpenOptions::new()
+                        .create(true).append(true)
+                        .open("/tmp/conductor-perm-debug.log")
+                        .and_then(|mut f| std::io::Write::write_all(&mut f,
+                            format!("JSON parse error: {e}, content={content}\n").as_bytes()));
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+
+            let action = parsed.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let cwd = parsed.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+            let reason = parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            let tool_name = parsed.get("tool")
+                .and_then(|t| t.get("tool_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+
+            match action {
+                "approve" | "deny" => {
+                    let approve = action == "approve";
+                    let cwd_path = PathBuf::from(cwd);
+
+                    // Find the CC session whose working_dir matches.
+                    let session_idx = self.terminal.pty_manager.sessions().iter().position(|s| {
+                        s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == cwd_path
+                    });
+
+                    if let Some(idx) = session_idx {
+                        // Detect the prompt format from the PTY screen and
+                        // get the appropriate keystrokes.
+                        let keystrokes = self.terminal.pty_manager
+                            .permission_prompt_keystrokes(idx, approve);
+
+                        if let Some(input_bytes) = keystrokes {
+                            let display = format!(
+                                "Auto-{}: {} ({})",
+                                if approve { "approved" } else { "denied" },
+                                tool_name,
+                                reason
+                            );
+                            self.set_status(display, StatusLevel::Info);
+
+                            let _ = self.terminal.pty_manager.write_to_session(idx, &input_bytes);
+                            self.clear_cc_waiting_signal(idx);
+                        } else {
+                            // Could not detect prompt format — skip for now,
+                            // will retry on next poll when the screen updates.
+                            log::info!("Permission: prompt not detected yet, retrying");
+                            return; // don't delete the file
+                        }
+                    }
+
+                    // Remove the processed file.
+                    let _ = std::fs::remove_file(&path);
+                }
+                "ask_user" => {
+                    // TODO (Step 3): Add to notification queue for user action.
+                    // For now, just log and leave the file for visibility.
+                    let display = format!("Permission ask: {} — {}", tool_name, reason);
+                    log::info!("{display}");
+                    // Remove so we don't re-process on next poll.
+                    let _ = std::fs::remove_file(&path);
+                }
+                _ => {
+                    // Unknown action — clean up.
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+
     // ── Review helpers ────────────────────────────────────────────────
 
     /// Reload review comments from the database for the currently selected worktree.

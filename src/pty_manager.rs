@@ -597,6 +597,64 @@ impl PtyManager {
         false
     }
 
+    /// Detect the permission prompt format on the screen and return the
+    /// appropriate keystrokes to approve or deny.
+    ///
+    /// Returns `None` if no recognisable permission prompt is visible.
+    pub fn permission_prompt_keystrokes(&self, idx: usize, approve: bool) -> Option<Vec<u8>> {
+        let session = self.sessions.get(idx)?;
+        let parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+
+        // Scan visible rows for prompt patterns.
+        let mut has_selector = false;
+        let mut has_yn_prompt = false;
+        let mut deny_option_offset: u16 = 0; // how many Down presses for "No"
+
+        for row in 0..rows {
+            let text = Self::extract_row_text(screen, row, cols);
+            let trimmed = text.trim();
+
+            // Numbered selector: look for "1. Yes" or "> 1."
+            if trimmed.contains("1. Yes") || trimmed.contains("1.  Yes") {
+                has_selector = true;
+            }
+            // Count options after "Yes" to know how far down "No" is.
+            if has_selector && (trimmed.contains("No") && trimmed.contains("3.")) {
+                deny_option_offset = 2; // Down twice from option 1
+            }
+
+            // [Y/n] or [y/N] style
+            if trimmed.contains("[Y/n]") || trimmed.contains("[y/N]") {
+                has_yn_prompt = true;
+            }
+        }
+
+        if has_selector {
+            if approve {
+                // Option 1 (Yes) is pre-selected — just press Enter.
+                Some(vec![b'\r'])
+            } else {
+                // Move down to "No" and press Enter.
+                let mut v = Vec::new();
+                for _ in 0..deny_option_offset {
+                    v.extend_from_slice(b"\x1b[B"); // Down arrow
+                }
+                v.push(b'\r');
+                Some(v)
+            }
+        } else if has_yn_prompt {
+            if approve {
+                Some(b"y\r".to_vec())
+            } else {
+                Some(b"n\r".to_vec())
+            }
+        } else {
+            None
+        }
+    }
+
     /// Extract the text content of a single row from the vt100 screen.
     fn extract_row_text(screen: &vt100::Screen, row: u16, cols: u16) -> String {
         let mut text = String::with_capacity(cols as usize);
