@@ -263,6 +263,9 @@ pub struct KeybindsConfig {
 pub struct NotificationConfig {
     /// Send OS notification when Claude Code is waiting for input.
     pub cc_waiting: bool,
+    /// Automatically respond to CC permission prompts using PERMISSION.md rules.
+    /// Off by default — this feature can auto-approve tool execution.
+    pub auto_permission: bool,
 }
 
 /// `[ccusage]` section.
@@ -388,6 +391,7 @@ pub fn generate_default_config() -> String {
 
 [notification]
 # cc_waiting = false                    # OS notification when Claude Code is waiting for input
+# auto_permission = false               # auto-respond to CC permission prompts using PERMISSION.md
 
 [ccusage]
 # enabled = false                       # token usage display in the title bar (requires ccusage)

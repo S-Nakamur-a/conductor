@@ -1892,6 +1892,10 @@ impl App {
     /// Files with `action: "ask_user"` are kept for the notification queue
     /// (Step 3, not yet implemented).  Processed files are removed.
     pub fn process_permission_judgments(&mut self) {
+        if !self.config.notification.auto_permission {
+            return;
+        }
+
         let permissions_dir = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
             .unwrap_or_else(|_| self.repo_path.clone())
