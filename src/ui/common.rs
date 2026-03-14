@@ -356,8 +356,15 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> u16 {
     app.notification_bar_badges.clear();
 
-    if app.terminal.cc_waiting_worktrees.is_empty() {
+    if app.terminal.cc_waiting_worktrees.is_empty()
+        && app.terminal.permission_queue.is_empty()
+    {
         return 0;
+    }
+
+    // If only permission queue items (no cc_waiting), render permission bar instead.
+    if app.terminal.cc_waiting_worktrees.is_empty() {
+        return render_permission_bar(frame, area, app);
     }
 
     let theme = &app.theme;
@@ -465,6 +472,51 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         frame.render_widget(Paragraph::new(Span::styled(hint, hint_style)), hint_area);
     }
 
+    1
+}
+
+/// Render a permission decision bar when there are pending permission requests.
+fn render_permission_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) -> u16 {
+    if app.terminal.permission_queue.is_empty() {
+        return 0;
+    }
+
+    let theme = &app.theme;
+    let pulse_on = (app.ui_tick / 20) % 2 == 0;
+    let bar_bg = if pulse_on {
+        Theme::darken(Color::Rgb(200, 80, 80), 0.20)
+    } else {
+        Theme::darken(Color::Rgb(200, 80, 80), 0.14)
+    };
+
+    // Fill background.
+    let bg_line = Line::from(Span::styled(
+        " ".repeat(area.width as usize),
+        Style::default().bg(bar_bg),
+    ));
+    frame.render_widget(Paragraph::new(bg_line), area);
+
+    let selected = app.terminal.permission_queue_selected;
+    let total = app.terminal.permission_queue.len();
+    let req = &app.terminal.permission_queue[selected.min(total.saturating_sub(1))];
+
+    let elapsed = req.created_at.elapsed().as_secs();
+    let text = format!(
+        " 🔐 Permission [{}/{}]: {} — {} ({}s ago) [y]es [n]o [j/k]nav ",
+        selected + 1, total, req.tool_name, req.reason, elapsed
+    );
+
+    let style = Style::default()
+        .fg(Color::White)
+        .bg(bar_bg)
+        .add_modifier(Modifier::BOLD);
+    let text_area = Rect::new(area.x, area.y, area.width, 1);
+    frame.render_widget(
+        Paragraph::new(Span::styled(&text, style)),
+        text_area,
+    );
+
+    let _ = theme; // suppress unused warning
     1
 }
 

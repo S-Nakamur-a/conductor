@@ -1915,93 +1915,131 @@ impl App {
 
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
-                Err(e) => {
-                    let _ = std::fs::OpenOptions::new()
-                        .create(true).append(true)
-                        .open("/tmp/conductor-perm-debug.log")
-                        .and_then(|mut f| std::io::Write::write_all(&mut f,
-                            format!("read_to_string error: {e}, path={}\n", path.display()).as_bytes()));
-                    continue;
-                }
+                Err(_) => continue,
             };
-            let _ = std::fs::OpenOptions::new()
-                .create(true).append(true)
-                .open("/tmp/conductor-perm-debug.log")
-                .and_then(|mut f| std::io::Write::write_all(&mut f,
-                    format!("found file: {} content_len={}\n", path.display(), content.len()).as_bytes()));
 
             let parsed: serde_json::Value = match serde_json::from_str(&content) {
                 Ok(v) => v,
-                Err(e) => {
-                    let _ = std::fs::OpenOptions::new()
-                        .create(true).append(true)
-                        .open("/tmp/conductor-perm-debug.log")
-                        .and_then(|mut f| std::io::Write::write_all(&mut f,
-                            format!("JSON parse error: {e}, content={content}\n").as_bytes()));
+                Err(_) => {
                     let _ = std::fs::remove_file(&path);
                     continue;
                 }
             };
 
+            let session_id = parsed.get("session_id")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
             let action = parsed.get("action").and_then(|v| v.as_str()).unwrap_or("");
             let cwd = parsed.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
-            let reason = parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            let reason = parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let tool_name = parsed.get("tool")
                 .and_then(|t| t.get("tool_name"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("?");
+                .unwrap_or("?").to_string();
+            let user_message = parsed.get("user_message")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            // Deduplicate: skip if we already processed this session's prompt.
+            if self.terminal.permission_processed_sessions.contains(&session_id) {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+
+            let cwd_path = PathBuf::from(cwd);
+            let session_idx = self.terminal.pty_manager.sessions().iter().position(|s| {
+                s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == cwd_path
+            });
 
             match action {
                 "approve" | "deny" => {
                     let approve = action == "approve";
-                    let cwd_path = PathBuf::from(cwd);
-
-                    // Find the CC session whose working_dir matches.
-                    let session_idx = self.terminal.pty_manager.sessions().iter().position(|s| {
-                        s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == cwd_path
-                    });
 
                     if let Some(idx) = session_idx {
-                        // Detect the prompt format from the PTY screen and
-                        // get the appropriate keystrokes.
                         let keystrokes = self.terminal.pty_manager
                             .permission_prompt_keystrokes(idx, approve);
 
                         if let Some(input_bytes) = keystrokes {
-                            let display = format!(
-                                "Auto-{}: {} ({})",
-                                if approve { "approved" } else { "denied" },
-                                tool_name,
-                                reason
+                            self.set_status(
+                                format!("Auto-{}: {} ({})",
+                                    if approve { "approved" } else { "denied" },
+                                    tool_name, reason),
+                                StatusLevel::Info,
                             );
-                            self.set_status(display, StatusLevel::Info);
-
                             let _ = self.terminal.pty_manager.write_to_session(idx, &input_bytes);
                             self.clear_cc_waiting_signal(idx);
+                            self.terminal.permission_processed_sessions.insert(session_id);
                         } else {
-                            // Could not detect prompt format — skip for now,
-                            // will retry on next poll when the screen updates.
-                            log::info!("Permission: prompt not detected yet, retrying");
-                            return; // don't delete the file
+                            // Prompt not visible yet — retry on next poll.
+                            return;
                         }
                     }
 
-                    // Remove the processed file.
                     let _ = std::fs::remove_file(&path);
                 }
                 "ask_user" => {
-                    // TODO (Step 3): Add to notification queue for user action.
-                    // For now, just log and leave the file for visibility.
-                    let display = format!("Permission ask: {} — {}", tool_name, reason);
-                    log::info!("{display}");
-                    // Remove so we don't re-process on next poll.
+                    if let Some(idx) = session_idx {
+                        self.terminal.permission_queue.push(
+                            crate::terminal_state::PermissionRequest {
+                                session_idx: idx,
+                                tool_name: tool_name.clone(),
+                                reason: reason.clone(),
+                                user_message,
+                                cwd: cwd_path,
+                                created_at: std::time::Instant::now(),
+                            },
+                        );
+                        self.set_status(
+                            format!("Permission needed: {} — {}", tool_name, reason),
+                            StatusLevel::Warning,
+                        );
+                    }
+                    self.terminal.permission_processed_sessions.insert(session_id);
                     let _ = std::fs::remove_file(&path);
                 }
                 _ => {
-                    // Unknown action — clean up.
                     let _ = std::fs::remove_file(&path);
                 }
             }
+        }
+
+        // Clean up processed session IDs that no longer have active sessions.
+        let active_sessions: HashSet<PathBuf> = self.terminal.pty_manager.sessions().iter()
+            .filter(|s| s.kind == pty_manager::SessionKind::ClaudeCode)
+            .map(|s| s.working_dir.clone())
+            .collect();
+        self.terminal.permission_queue.retain(|r| active_sessions.contains(&r.cwd));
+    }
+
+    /// Respond to the currently selected permission request.
+    /// Called when the user presses y (approve) or n (deny) on the queue.
+    pub fn respond_permission_request(&mut self, approve: bool) {
+        let idx = self.terminal.permission_queue_selected;
+        let request = match self.terminal.permission_queue.get(idx) {
+            Some(r) => r,
+            None => return,
+        };
+        let session_idx = request.session_idx;
+        let tool_name = request.tool_name.clone();
+
+        let keystrokes = self.terminal.pty_manager
+            .permission_prompt_keystrokes(session_idx, approve);
+
+        if let Some(input_bytes) = keystrokes {
+            self.set_status(
+                format!("{}: {} ",
+                    if approve { "Approved" } else { "Denied" },
+                    tool_name),
+                StatusLevel::Info,
+            );
+            let _ = self.terminal.pty_manager.write_to_session(session_idx, &input_bytes);
+            self.clear_cc_waiting_signal(session_idx);
+        }
+
+        self.terminal.permission_queue.remove(idx);
+        if self.terminal.permission_queue_selected > 0
+            && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
+        {
+            self.terminal.permission_queue_selected =
+                self.terminal.permission_queue.len().saturating_sub(1);
         }
     }
 

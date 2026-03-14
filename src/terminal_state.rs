@@ -10,6 +10,22 @@ use std::time::Instant;
 use crate::pty_manager;
 use crate::ui::common::PtyRenderCache;
 
+/// A permission prompt that requires the user's decision.
+pub struct PermissionRequest {
+    /// PTY session index for the CC session.
+    pub session_idx: usize,
+    /// Tool name (e.g. "Bash", "Write").
+    pub tool_name: String,
+    /// Reason the AI judge could not decide.
+    pub reason: String,
+    /// The user message that triggered the tool call.
+    pub user_message: String,
+    /// Working directory of the CC session.
+    pub cwd: PathBuf,
+    /// When this request was created.
+    pub created_at: Instant,
+}
+
 /// Aggregated state for the dual terminal panels (Claude Code + Shell).
 pub struct TerminalState {
     /// PTY session manager.
@@ -44,6 +60,12 @@ pub struct TerminalState {
     /// Deferred prompts: session index → prompt text.
     /// Written once the CC session becomes ready (waiting for input).
     pub deferred_prompts: HashMap<usize, String>,
+    /// Permission requests awaiting user decision (ask_user).
+    pub permission_queue: Vec<PermissionRequest>,
+    /// Currently selected index in the permission queue.
+    pub permission_queue_selected: usize,
+    /// Session IDs already processed (to prevent duplicate handling).
+    pub permission_processed_sessions: HashSet<String>,
 }
 
 impl TerminalState {
@@ -65,6 +87,9 @@ impl TerminalState {
             shell_blank_last_click: Instant::now(),
             needs_clear: false,
             deferred_prompts: HashMap::new(),
+            permission_queue: Vec::new(),
+            permission_queue_selected: 0,
+            permission_processed_sessions: HashSet::new(),
         }
     }
 }
