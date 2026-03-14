@@ -26,7 +26,14 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
                 s.as_bytes().to_vec()
             }
         }
-        KeyCode::Enter => vec![b'\r'],
+        KeyCode::Enter => {
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                // Shift+Enter → send CSI u sequence so Claude Code treats it as newline
+                b"\x1b[13;2u".to_vec()
+            } else {
+                vec![b'\r']
+            }
+        }
         KeyCode::Backspace => vec![0x7f],
         KeyCode::Esc => vec![0x1b],
         KeyCode::Left => b"\x1b[D".to_vec(),
