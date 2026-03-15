@@ -616,17 +616,21 @@ impl PtyManager {
             let text = Self::extract_row_text(screen, row, cols);
             let trimmed = text.trim();
 
-            // Numbered selector: look for "1. Yes" or "> 1."
-            if trimmed.contains("1. Yes") || trimmed.contains("1.  Yes") {
+            // Collapse all whitespace so we match regardless of how
+            // the terminal renders spaces (vt100 may strip them).
+            let collapsed: String = trimmed.split_whitespace().collect::<Vec<_>>().join("");
+
+            // Numbered selector: look for "1.Yes" (with or without spaces)
+            if collapsed.contains("1.Yes") || collapsed.contains("❯1.Yes") {
                 has_selector = true;
             }
             // Count options after "Yes" to know how far down "No" is.
-            if has_selector && (trimmed.contains("No") && trimmed.contains("3.")) {
+            if has_selector && collapsed.contains("3.") && collapsed.contains("No") {
                 deny_option_offset = 2; // Down twice from option 1
             }
 
             // [Y/n] or [y/N] style
-            if trimmed.contains("[Y/n]") || trimmed.contains("[y/N]") {
+            if collapsed.contains("[Y/n]") || collapsed.contains("[y/N]") {
                 has_yn_prompt = true;
             }
         }
