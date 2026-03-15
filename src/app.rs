@@ -2104,8 +2104,12 @@ impl App {
                         "--model", "haiku",
                         "--output-format", "json",
                         "--json-schema", &json_schema,
-                        "--allowedTools", "",
+                        "--tools", "",
                         "--max-budget-usd", "0.10",
+                        "--no-session-persistence",
+                        "--disable-slash-commands",
+                        "--no-chrome",
+                        "--system-prompt", "You are a permission judgment assistant. Output JSON only.",
                     ])
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
