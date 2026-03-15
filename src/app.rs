@@ -2003,11 +2003,6 @@ impl App {
                 continue;
             }
 
-            // If auto_permission is disabled, ignore.
-            if !self.config.notification.auto_permission {
-                continue;
-            }
-
             let cwd_path = PathBuf::from(&cwd);
             let session_idx = self.terminal.pty_manager.sessions().iter().position(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == cwd_path
@@ -2024,6 +2019,20 @@ impl App {
             }
 
             self.terminal.permission_processed_sessions.insert(dedup_key);
+
+            // If auto_permission is disabled, skip claude -p and treat as ask_user directly.
+            if !self.config.notification.auto_permission {
+                let tx = self.terminal.permission_judge_tx.clone();
+                let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
+                    session_idx: idx,
+                    action: "ask_user".to_string(),
+                    reason: "auto_permission is disabled".to_string(),
+                    tool_name: tool_name.clone(),
+                    user_message: user_message.clone(),
+                    cwd: cwd_path.clone(),
+                });
+                continue;
+            }
 
             // Read PERMISSION.md files.
             let repo_root = git_engine::GitEngine::open(&self.repo_path)
