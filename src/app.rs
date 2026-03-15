@@ -3246,6 +3246,15 @@ impl App {
 
     /// Run LLM generation + worktree creation asynchronously in a single background thread.
     pub fn start_smart_worktree_async(&mut self, description: &str) {
+        // Guard: skip if a smart worktree creation is already in progress.
+        if self.worktree_mgr.pending_worktrees.iter().any(|p| p.op == PendingWorktreeOp::SmartCreating) {
+            self.set_status(
+                "Smart worktree creation is already in progress.".to_string(),
+                StatusLevel::Warning,
+            );
+            return;
+        }
+
         let desc = description.to_string();
         let main_branch = self.config.general.main_branch.clone();
         let base_ref = format!("origin/{main_branch}");
