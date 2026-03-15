@@ -881,8 +881,8 @@ fn render_permission_overlay(
 
     // Size: fit content, max 50% of screen.
     let max_h = (area.height / 2).max(8);
-    // 2 lines per item (tool + reason) + 2 border + 1 hint
-    let content_h = (queue.len() as u16 * 2 + 1).min(max_h - 2);
+    // 3 lines per item (tool + reason + context) + 2 border + 1 hint
+    let content_h = (queue.len() as u16 * 3 + 1).min(max_h - 2);
     let popup_height = content_h + 2; // border
     let popup_width = area.width.saturating_sub(10).min(80);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -930,6 +930,21 @@ fn render_permission_overlay(
             Span::styled("    ", reason_style),
             Span::styled(&req.reason, reason_style),
         ]));
+
+        // Line 3: user_message context (why this tool is being called)
+        if !req.user_message.is_empty() {
+            let context_style = if is_selected {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let truncated: String = req.user_message.chars().take(70).collect();
+            let suffix = if req.user_message.chars().count() > 70 { "…" } else { "" };
+            lines.push(Line::from(vec![
+                Span::styled("    Context: ", context_style),
+                Span::styled(format!("{truncated}{suffix}"), context_style),
+            ]));
+        }
     }
 
     // Hint line
