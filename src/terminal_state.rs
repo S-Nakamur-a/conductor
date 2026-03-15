@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 use crate::pty_manager;
@@ -25,6 +25,8 @@ pub struct PermissionRequest {
     pub cwd: PathBuf,
     /// When this request was created.
     pub created_at: Instant,
+    /// PID of the osascript dialog process (if any), for killing on dismiss.
+    pub dialog_pid: Option<Arc<Mutex<Option<u32>>>>,
 }
 
 /// Result from an OS dialog permission prompt.

@@ -1977,6 +1977,11 @@ impl App {
                 }
                 "ask_user" => {
                     if let Some(idx) = session_idx {
+                        // Shared PID slot so the dialog can be killed from
+                        // the overlay if the user responds there first.
+                        let dialog_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
+                            std::sync::Arc::new(std::sync::Mutex::new(None));
+
                         self.terminal.permission_queue.push(
                             crate::terminal_state::PermissionRequest {
                                 session_idx: idx,
@@ -1985,6 +1990,7 @@ impl App {
                                 user_message,
                                 cwd: cwd_path,
                                 created_at: std::time::Instant::now(),
+                                dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
                             },
                         );
                         let notify_msg = format!("{}: {}", tool_name, reason);
@@ -1994,25 +2000,42 @@ impl App {
                         );
 
                         // Show a macOS dialog with Approve/Deny buttons.
-                        // The result is sent back via the channel and
-                        // processed in the main loop.
                         let tx = self.terminal.permission_dialog_tx.clone();
                         let dialog_session_idx = idx;
+                        let pid_slot = std::sync::Arc::clone(&dialog_pid);
                         std::thread::spawn(move || {
                             let script = format!(
                                 "display dialog \"{}\" with title \"Conductor Permission\" buttons {{\"Deny\", \"Approve\"}} default button \"Approve\"",
                                 notify_msg.replace('\\', "\\\\").replace('"', "\\\"")
                             );
-                            let output = std::process::Command::new("osascript")
+                            let child = match std::process::Command::new("osascript")
                                 .args(["-e", &script])
-                                .output();
-                            let approved = output
-                                .map(|o| String::from_utf8_lossy(&o.stdout).contains("Approve"))
-                                .unwrap_or(false);
-                            let _ = tx.send(crate::terminal_state::PermissionDialogResult {
-                                session_idx: dialog_session_idx,
-                                approved,
-                            });
+                                .stdout(std::process::Stdio::piped())
+                                .spawn()
+                            {
+                                Ok(c) => c,
+                                Err(_) => return,
+                            };
+
+                            // Store PID so it can be killed from the overlay.
+                            *pid_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+
+                            let output = child.wait_with_output();
+                            let approved = match &output {
+                                Ok(o) if o.status.success() => {
+                                    String::from_utf8_lossy(&o.stdout).contains("Approve")
+                                }
+                                _ => false,
+                            };
+                            let exited_normally = output.map(|o| o.status.success()).unwrap_or(false);
+
+                            // Only send if the dialog wasn't killed.
+                            if exited_normally {
+                                let _ = tx.send(crate::terminal_state::PermissionDialogResult {
+                                    session_idx: dialog_session_idx,
+                                    approved,
+                                });
+                            }
                         });
                     }
                     self.terminal.permission_processed_sessions.insert(session_id);
@@ -2075,6 +2098,15 @@ impl App {
         };
         let session_idx = request.session_idx;
         let tool_name = request.tool_name.clone();
+
+        // Kill the OS dialog process if it's still running.
+        if let Some(ref pid_arc) = request.dialog_pid {
+            if let Some(pid) = *pid_arc.lock().unwrap_or_else(|e| e.into_inner()) {
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .output();
+            }
+        }
 
         let keystrokes = self.terminal.pty_manager
             .permission_prompt_keystrokes(session_idx, approve);
