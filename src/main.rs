@@ -316,7 +316,8 @@ fn run_loop(
         {
             let area = last_frame_area;
             // Must match render_ui layout: title bar (1) + notification bar (0 or 1) + main + status bar (1).
-            let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty() { 1 } else { 0 };
+            let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty()
+                || !app.terminal.permission_judging.is_empty() { 1 } else { 0 };
             let outer = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Length(notif_height),
@@ -516,6 +517,7 @@ fn run_loop(
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
             app.process_permission_judgments();
+            app.process_permission_judge_results();
             app.process_permission_dialog_results();
             app.flush_deferred_prompts();
             needs_redraw = true;
@@ -624,7 +626,8 @@ pub fn accordion_widths(expanded_panel: Option<crate::app::Focus>, total_width: 
 fn render_ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
-    let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
+    let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty()
+        || !app.terminal.permission_judging.is_empty();
     let notif_height: u16 = if has_notifications { 1 } else { 0 };
 
     // Outer: title bar (1 row) + notification bar (0 or 1 row) + main content + status bar (1 row).

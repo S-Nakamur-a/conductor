@@ -37,6 +37,36 @@ pub struct PermissionDialogResult {
     pub approved: bool,
 }
 
+/// Result from `claude -p` permission judgment.
+pub struct PermissionJudgeResult {
+    /// PTY session index.
+    pub session_idx: usize,
+    /// The action: "approve", "deny", or "ask_user".
+    pub action: String,
+    /// Reason for the decision.
+    pub reason: String,
+    /// Tool name.
+    pub tool_name: String,
+    /// User message context.
+    pub user_message: String,
+    /// Working directory.
+    pub cwd: PathBuf,
+}
+
+/// A permission judgment being processed by `claude -p`.
+pub struct PermissionJudging {
+    /// PTY session index.
+    pub session_idx: usize,
+    /// Tool name.
+    pub tool_name: String,
+    /// Working directory.
+    pub cwd: PathBuf,
+    /// When the judgment started.
+    pub started_at: Instant,
+    /// PID of the `claude -p` process (for killing on cancel).
+    pub pid: Arc<Mutex<Option<u32>>>,
+}
+
 /// Aggregated state for the dual terminal panels (Claude Code + Shell).
 pub struct TerminalState {
     /// PTY session manager.
@@ -81,12 +111,19 @@ pub struct TerminalState {
     pub permission_dialog_tx: mpsc::Sender<PermissionDialogResult>,
     /// Receiver end — polled in the main loop.
     pub permission_dialog_rx: mpsc::Receiver<PermissionDialogResult>,
+    /// Currently running `claude -p` judgments (session_idx → state).
+    pub permission_judging: Vec<PermissionJudging>,
+    /// Channel for receiving `claude -p` judgment results.
+    pub permission_judge_tx: mpsc::Sender<PermissionJudgeResult>,
+    /// Receiver end — polled in the main loop.
+    pub permission_judge_rx: mpsc::Receiver<PermissionJudgeResult>,
 }
 
 impl TerminalState {
     /// Create a new `TerminalState` with the given scrollback limits.
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         let (dialog_tx, dialog_rx) = mpsc::channel();
+        let (judge_tx, judge_rx) = mpsc::channel();
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
             active_claude_session: None,
@@ -108,6 +145,9 @@ impl TerminalState {
             permission_processed_sessions: HashSet::new(),
             permission_dialog_tx: dialog_tx,
             permission_dialog_rx: dialog_rx,
+            permission_judging: Vec::new(),
+            permission_judge_tx: judge_tx,
+            permission_judge_rx: judge_rx,
         }
     }
 }
