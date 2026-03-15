@@ -33,8 +33,13 @@ if [ -z "$REPO_ROOT" ]; then
   REPO_ROOT="$CWD"
 fi
 
-PERMISSION_MD="$REPO_ROOT/PERMISSION.md"
-if [ ! -f "$PERMISSION_MD" ]; then
+# Project-level: <repo>/.claude/PERMISSION.md
+PROJECT_PERMISSION_MD="$REPO_ROOT/.claude/PERMISSION.md"
+# User-level: ~/.claude/PERMISSION.md
+GLOBAL_PERMISSION_MD="$HOME/.claude/PERMISSION.md"
+
+# At least one must exist.
+if [ ! -f "$PROJECT_PERMISSION_MD" ] && [ ! -f "$GLOBAL_PERMISSION_MD" ]; then
   exit 0
 fi
 
@@ -42,10 +47,10 @@ fi
 PERMISSIONS_DIR="$REPO_ROOT/.conductor/cc-permissions"
 mkdir -p "$PERMISSIONS_DIR"
 
-python3 - "$TRANSCRIPT_PATH" "$PERMISSION_MD" "$MESSAGE" "$CWD" "$SESSION_ID" "$PERMISSIONS_DIR" <<'PYEOF'
+python3 - "$TRANSCRIPT_PATH" "$PROJECT_PERMISSION_MD" "$GLOBAL_PERMISSION_MD" "$MESSAGE" "$CWD" "$SESSION_ID" "$PERMISSIONS_DIR" <<'PYEOF'
 import sys, json, subprocess, os, time
 
-transcript_path, permission_md_path, hook_message, cwd, session_id, permissions_dir = sys.argv[1:7]
+transcript_path, project_permission_md, global_permission_md, hook_message, cwd, session_id, permissions_dir = sys.argv[1:8]
 
 # ── Extract context from transcript JSONL ───────────────────────────
 with open(transcript_path, 'r') as f:
@@ -86,15 +91,36 @@ tool_context = json.dumps({
     'user_message': user_message or '(unknown)',
 }, ensure_ascii=False)
 
-# ── Read PERMISSION.md ──────────────────────────────────────────────
-with open(permission_md_path, 'r') as f:
-    permission_rules = f.read()
+# ── Read PERMISSION.md (global + project) ───────────────────────────
+global_rules = ''
+project_rules = ''
+if os.path.isfile(global_permission_md):
+    with open(global_permission_md, 'r') as f:
+        global_rules = f.read()
+if os.path.isfile(project_permission_md):
+    with open(project_permission_md, 'r') as f:
+        project_rules = f.read()
 
 # ── Build prompt ────────────────────────────────────────────────────
+rules_section = ''
+if global_rules and project_rules:
+    rules_section = f"""以下の2つのルールファイルがあります。
+両方の内容を考慮してください。矛盾する場合はプロジェクトルールを優先してください。
+
+### グローバルルール (~/.claude/PERMISSION.md)
+{global_rules}
+
+### プロジェクトルール (.claude/PERMISSION.md) ※こちらが優先
+{project_rules}"""
+elif project_rules:
+    rules_section = project_rules
+else:
+    rules_section = global_rules
+
 prompt = f"""ツール実行の許可判定を行ってください。
 
 ## ルール
-{permission_rules}
+{rules_section}
 
 ## 判定対象
 通知: {hook_message}
