@@ -918,7 +918,7 @@ fn render_permission_overlay(
         lines.push(Line::from(vec![
             Span::styled(marker, tool_style),
             Span::styled(&req.tool_name, tool_style),
-            Span::styled(format!("  ({}s ago)", elapsed), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  ({elapsed}s ago)"), Style::default().fg(Color::DarkGray)),
         ]));
 
         // Line 2: reason (indented)

@@ -1993,7 +1993,7 @@ impl App {
                                 dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
                             },
                         );
-                        let notify_msg = format!("{}: {}", tool_name, reason);
+                        let notify_msg = format!("{tool_name}: {reason}");
                         self.set_status(
                             format!("Permission needed: {notify_msg}"),
                             StatusLevel::Warning,
