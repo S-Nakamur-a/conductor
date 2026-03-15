@@ -1990,13 +1990,20 @@ impl App {
     /// Process incoming permission requests received via the Unix socket.
     /// If `auto_permission` is enabled, spawn `claude -p` to judge.
     pub fn process_permission_judgments(&mut self) {
+        // Drain pending requests back into the processing queue first.
+        let mut all_incoming: Vec<crate::terminal_state::IncomingPermission> =
+            std::mem::take(&mut self.terminal.permission_pending);
         while let Ok(incoming) = self.terminal.permission_incoming_rx.try_recv() {
-            let session_id = incoming.session_id;
-            let cwd = incoming.cwd;
-            let tool_name = incoming.tool_name;
-            let tool_input = incoming.tool_input;
-            let user_message = incoming.user_message;
-            let hook_message = incoming.hook_message;
+            all_incoming.push(incoming);
+        }
+
+        for incoming in all_incoming {
+            let session_id = incoming.session_id.clone();
+            let cwd = incoming.cwd.clone();
+            let tool_name = incoming.tool_name.clone();
+            let tool_input = incoming.tool_input.clone();
+            let user_message = incoming.user_message.clone();
+            let hook_message = incoming.hook_message.clone();
 
             // Deduplicate using session_id + timestamp.
             let dedup_key = format!("{}:{}", session_id, incoming.timestamp);
@@ -2018,8 +2025,9 @@ impl App {
                 continue;
             };
 
-            // Already judging this session? Skip.
+            // Already judging this session? Defer to next poll cycle.
             if self.terminal.permission_judging.iter().any(|j| j.session_idx == idx) {
+                self.terminal.permission_pending.push(incoming);
                 continue;
             }
 

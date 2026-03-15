@@ -139,6 +139,9 @@ pub struct TerminalState {
     pub permission_incoming_tx: mpsc::Sender<IncomingPermission>,
     /// Receiver end — polled in the main loop.
     pub permission_incoming_rx: mpsc::Receiver<IncomingPermission>,
+    /// Pending permission requests that were deferred because a judgment
+    /// was already in progress for the same session.
+    pub permission_pending: Vec<IncomingPermission>,
 }
 
 impl TerminalState {
@@ -173,6 +176,7 @@ impl TerminalState {
             permission_judge_rx: judge_rx,
             permission_incoming_tx: incoming_tx,
             permission_incoming_rx: incoming_rx,
+            permission_pending: Vec::new(),
         }
     }
 }
