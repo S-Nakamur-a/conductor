@@ -61,6 +61,8 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
         }
         // Clear CC waiting signal when user sends input to a Claude Code session.
         app.clear_cc_waiting_signal(session_idx);
+        // Cancel any running claude -p judgment — user responded manually.
+        app.cancel_permission_judging(session_idx);
     }
 }
 

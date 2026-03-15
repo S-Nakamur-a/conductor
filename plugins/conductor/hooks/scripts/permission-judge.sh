@@ -1,11 +1,10 @@
 #!/bin/bash
-# Smart permission judge for Conductor.
+# Save permission prompt context for Conductor to process.
 # Called by the Notification hook when notification_type is "permission_prompt".
 #
-# Reads the transcript JSONL to extract tool context, then calls claude -p
-# (haiku) with PERMISSION.md rules to decide: approve / deny / ask_user.
-#
-# Writes the decision to .conductor/cc-permissions/<session_id>.json
+# Extracts tool context from the CC transcript and writes a pending
+# judgment file to .conductor/cc-permissions/<session_id>.json.
+# Conductor reads this file and decides whether to call claude -p.
 
 set -euo pipefail
 
@@ -27,38 +26,26 @@ if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
   exit 0
 fi
 
-# ── Find PERMISSION.md ──────────────────────────────────────────────
+# ── Resolve repo root ──────────────────────────────────────────────
 REPO_ROOT=$(cd "$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)
 if [ -z "$REPO_ROOT" ]; then
   REPO_ROOT="$CWD"
 fi
 
-# Project-level: <repo>/.claude/PERMISSION.md
-PROJECT_PERMISSION_MD="$REPO_ROOT/.claude/PERMISSION.md"
-# User-level: ~/.claude/PERMISSION.md
-GLOBAL_PERMISSION_MD="$HOME/.claude/PERMISSION.md"
-
-# At least one must exist.
-if [ ! -f "$PROJECT_PERMISSION_MD" ] && [ ! -f "$GLOBAL_PERMISSION_MD" ]; then
-  exit 0
-fi
-
-# ── Extract context from transcript + call claude -p ────────────────
 PERMISSIONS_DIR="$REPO_ROOT/.conductor/cc-permissions"
 mkdir -p "$PERMISSIONS_DIR"
 
-python3 - "$TRANSCRIPT_PATH" "$PROJECT_PERMISSION_MD" "$GLOBAL_PERMISSION_MD" "$MESSAGE" "$CWD" "$SESSION_ID" "$PERMISSIONS_DIR" <<'PYEOF'
-import sys, json, subprocess, os, time
+# ── Extract tool context from transcript and write pending file ─────
+python3 - "$TRANSCRIPT_PATH" "$MESSAGE" "$CWD" "$SESSION_ID" "$PERMISSIONS_DIR" <<'PYEOF'
+import sys, json, os, time
 
-transcript_path, project_permission_md, global_permission_md, hook_message, cwd, session_id, permissions_dir = sys.argv[1:8]
+transcript_path, hook_message, cwd, session_id, permissions_dir = sys.argv[1:6]
 
-# ── Extract context from transcript JSONL ───────────────────────────
+# Extract context from last 15 lines of the transcript JSONL.
 with open(transcript_path, 'r') as f:
     lines = f.readlines()
 
-# Take last 15 lines for context
 tail_lines = lines[-15:]
-
 tool_info = None
 user_message = None
 
@@ -86,96 +73,12 @@ for line in reversed(tail_lines):
     if tool_info and user_message:
         break
 
-tool_context = json.dumps({
-    'tool': tool_info or {},
-    'user_message': user_message or '(unknown)',
-}, ensure_ascii=False)
-
-# ── Read PERMISSION.md (global + project) ───────────────────────────
-global_rules = ''
-project_rules = ''
-if os.path.isfile(global_permission_md):
-    with open(global_permission_md, 'r') as f:
-        global_rules = f.read()
-if os.path.isfile(project_permission_md):
-    with open(project_permission_md, 'r') as f:
-        project_rules = f.read()
-
-# ── Build prompt ────────────────────────────────────────────────────
-rules_section = ''
-if global_rules and project_rules:
-    rules_section = f"""以下の2つのルールファイルがあります。
-両方の内容を考慮してください。矛盾する場合はプロジェクトルールを優先してください。
-
-### グローバルルール (~/.claude/PERMISSION.md)
-{global_rules}
-
-### プロジェクトルール (.claude/PERMISSION.md) ※こちらが優先
-{project_rules}"""
-elif project_rules:
-    rules_section = project_rules
-else:
-    rules_section = global_rules
-
-prompt = f"""ツール実行の許可判定を行ってください。
-
-## ルール
-{rules_section}
-
-## 判定対象
-通知: {hook_message}
-ツール詳細: {tool_context}
-作業ディレクトリ: {cwd}
-
-action は approve, deny, ask_user のいずれか。reason は日本語で1文。"""
-
-# ── Call claude -p with structured output ───────────────────────────
-json_schema = json.dumps({
-    "type": "object",
-    "properties": {
-        "action": {"type": "string", "enum": ["approve", "deny", "ask_user"]},
-        "reason": {"type": "string"}
-    },
-    "required": ["action", "reason"]
-})
-
-try:
-    result = subprocess.run(
-        [
-            'claude', '-p',
-            '--model', 'haiku',
-            '--output-format', 'json',
-            '--json-schema', json_schema,
-            '--allowedTools', '',
-            '--max-budget-usd', '0.10',
-        ],
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    raw = result.stdout.strip()
-    outer = json.loads(raw)
-    # --json-schema puts structured output in "structured_output" field
-    decision = outer.get('structured_output') or {}
-    if not decision:
-        # Fallback: try "result" field
-        inner = outer.get('result', '')
-        if isinstance(inner, str) and inner:
-            decision = json.loads(inner)
-        elif isinstance(inner, dict):
-            decision = inner
-
-except Exception as e:
-    decision = {'action': 'ask_user', 'reason': f'判定失敗: {str(e)[:80]}'}
-
-# ── Write decision ──────────────────────────────────────────────────
+# Write a pending judgment file for Conductor to pick up.
 output = {
+    'status': 'pending',
     'session_id': session_id,
-    'action': decision.get('action', 'ask_user'),
-    'reason': decision.get('reason', ''),
-    'tool': (tool_info or {}),
+    'message': hook_message,
+    'tool': tool_info or {},
     'user_message': user_message or '',
     'cwd': cwd,
     'timestamp': int(time.time()),

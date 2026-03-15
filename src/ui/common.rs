@@ -356,7 +356,35 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> u16 {
     app.notification_bar_badges.clear();
 
+    // Show judging indicator if active (even without cc_waiting).
     if app.terminal.cc_waiting_worktrees.is_empty() {
+        if !app.terminal.permission_judging.is_empty() {
+            // Render judging-only bar.
+            let theme = &app.theme;
+            let bar_bg = Theme::darken(theme.waiting_primary, 0.17);
+            let bg_line = Line::from(Span::styled(
+                " ".repeat(area.width as usize),
+                Style::default().bg(bar_bg),
+            ));
+            frame.render_widget(Paragraph::new(bg_line), area);
+
+            let judging_names: Vec<&str> = app.terminal.permission_judging.iter()
+                .map(|j| j.tool_name.as_str())
+                .collect();
+            let elapsed = app.terminal.permission_judging.first()
+                .map(|j| j.started_at.elapsed().as_secs())
+                .unwrap_or(0);
+            let text = format!(" Judging: {} ({}s)", judging_names.join(", "), elapsed);
+            let style = Style::default()
+                .fg(Color::Rgb(200, 180, 100))
+                .bg(bar_bg)
+                .add_modifier(Modifier::BOLD);
+            frame.render_widget(
+                Paragraph::new(Span::styled(&text, style)),
+                Rect::new(area.x, area.y, area.width, 1),
+            );
+            return 1;
+        }
         return 0;
     }
 
