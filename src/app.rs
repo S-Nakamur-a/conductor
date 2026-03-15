@@ -1883,6 +1883,254 @@ impl App {
         self.terminal.cc_waiting_worktrees.remove(&working_dir);
     }
 
+    // ── Permission auto-response ────────────────────────────────────
+
+    /// Scan `.conductor/cc-permissions/` for judgment files produced by the
+    /// `permission-judge.sh` hook and auto-send `y` or `n` to the
+    /// corresponding Claude Code PTY session.
+    ///
+    /// Files with `action: "ask_user"` are kept for the notification queue
+    /// (Step 3, not yet implemented).  Processed files are removed.
+    pub fn process_permission_judgments(&mut self) {
+        if !self.config.notification.auto_permission {
+            return;
+        }
+
+        let permissions_dir = git_engine::GitEngine::open(&self.repo_path)
+            .and_then(|e| e.main_worktree_path())
+            .unwrap_or_else(|_| self.repo_path.clone())
+            .join(".conductor")
+            .join("cc-permissions");
+
+        let entries = match std::fs::read_dir(&permissions_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let parsed: serde_json::Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+
+            let session_id = parsed.get("session_id")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let action = parsed.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let cwd = parsed.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+            let reason = parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let tool_name = parsed.get("tool")
+                .and_then(|t| t.get("tool_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?").to_string();
+            let user_message = parsed.get("user_message")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            // Deduplicate: skip if we already processed this session's prompt.
+            if self.terminal.permission_processed_sessions.contains(&session_id) {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+
+            let cwd_path = PathBuf::from(cwd);
+            let session_idx = self.terminal.pty_manager.sessions().iter().position(|s| {
+                s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == cwd_path
+            });
+
+            match action {
+                "approve" | "deny" => {
+                    let approve = action == "approve";
+
+                    if let Some(idx) = session_idx {
+                        let keystrokes = self.terminal.pty_manager
+                            .permission_prompt_keystrokes(idx, approve);
+
+                        if let Some(input_bytes) = keystrokes {
+                            self.set_status(
+                                format!("Auto-{}: {} ({})",
+                                    if approve { "approved" } else { "denied" },
+                                    tool_name, reason),
+                                StatusLevel::Info,
+                            );
+                            let _ = self.terminal.pty_manager.write_to_session(idx, &input_bytes);
+                            self.clear_cc_waiting_signal(idx);
+                            self.terminal.permission_processed_sessions.insert(session_id);
+                        } else {
+                            // Prompt not visible yet — retry on next poll.
+                            return;
+                        }
+                    }
+
+                    let _ = std::fs::remove_file(&path);
+                }
+                "ask_user" => {
+                    if let Some(idx) = session_idx {
+                        // Shared PID slot so the dialog can be killed from
+                        // the overlay if the user responds there first.
+                        let dialog_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
+                            std::sync::Arc::new(std::sync::Mutex::new(None));
+
+                        self.terminal.permission_queue.push(
+                            crate::terminal_state::PermissionRequest {
+                                session_idx: idx,
+                                tool_name: tool_name.clone(),
+                                reason: reason.clone(),
+                                user_message,
+                                cwd: cwd_path,
+                                created_at: std::time::Instant::now(),
+                                dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
+                            },
+                        );
+                        let notify_msg = format!("{tool_name}: {reason}");
+                        self.set_status(
+                            format!("Permission needed: {notify_msg}"),
+                            StatusLevel::Warning,
+                        );
+
+                        // Show a macOS dialog with Approve/Deny buttons.
+                        let tx = self.terminal.permission_dialog_tx.clone();
+                        let dialog_session_idx = idx;
+                        let pid_slot = std::sync::Arc::clone(&dialog_pid);
+                        std::thread::spawn(move || {
+                            let script = format!(
+                                "display dialog \"{}\" with title \"Conductor Permission\" buttons {{\"Deny\", \"Approve\"}} default button \"Approve\"",
+                                notify_msg.replace('\\', "\\\\").replace('"', "\\\"")
+                            );
+                            let child = match std::process::Command::new("osascript")
+                                .args(["-e", &script])
+                                .stdout(std::process::Stdio::piped())
+                                .spawn()
+                            {
+                                Ok(c) => c,
+                                Err(_) => return,
+                            };
+
+                            // Store PID so it can be killed from the overlay.
+                            *pid_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+
+                            let output = child.wait_with_output();
+                            let approved = match &output {
+                                Ok(o) if o.status.success() => {
+                                    String::from_utf8_lossy(&o.stdout).contains("Approve")
+                                }
+                                _ => false,
+                            };
+                            let exited_normally = output.map(|o| o.status.success()).unwrap_or(false);
+
+                            // Only send if the dialog wasn't killed.
+                            if exited_normally {
+                                let _ = tx.send(crate::terminal_state::PermissionDialogResult {
+                                    session_idx: dialog_session_idx,
+                                    approved,
+                                });
+                            }
+                        });
+                    }
+                    self.terminal.permission_processed_sessions.insert(session_id);
+                    let _ = std::fs::remove_file(&path);
+                }
+                _ => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+
+        // Clean up processed session IDs that no longer have active sessions.
+        let active_sessions: HashSet<PathBuf> = self.terminal.pty_manager.sessions().iter()
+            .filter(|s| s.kind == pty_manager::SessionKind::ClaudeCode)
+            .map(|s| s.working_dir.clone())
+            .collect();
+        self.terminal.permission_queue.retain(|r| active_sessions.contains(&r.cwd));
+    }
+
+    /// Process results from OS permission dialogs (background threads).
+    pub fn process_permission_dialog_results(&mut self) {
+        while let Ok(result) = self.terminal.permission_dialog_rx.try_recv() {
+            let idx = result.session_idx;
+
+            // Remove from the queue.
+            if let Some(pos) = self.terminal.permission_queue.iter()
+                .position(|r| r.session_idx == idx)
+            {
+                let req = self.terminal.permission_queue.remove(pos);
+                if self.terminal.permission_queue_selected > 0
+                    && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
+                {
+                    self.terminal.permission_queue_selected =
+                        self.terminal.permission_queue.len().saturating_sub(1);
+                }
+
+                // Send keystrokes to PTY.
+                let keystrokes = self.terminal.pty_manager
+                    .permission_prompt_keystrokes(idx, result.approved);
+                if let Some(input_bytes) = keystrokes {
+                    let action_str = if result.approved { "Approved" } else { "Denied" };
+                    self.set_status(
+                        format!("{action_str} (dialog): {}", req.tool_name),
+                        StatusLevel::Info,
+                    );
+                    let _ = self.terminal.pty_manager.write_to_session(idx, &input_bytes);
+                    self.clear_cc_waiting_signal(idx);
+                }
+            }
+        }
+    }
+
+    /// Respond to the currently selected permission request.
+    /// Called when the user presses y (approve) or n (deny) on the queue.
+    pub fn respond_permission_request(&mut self, approve: bool) {
+        let idx = self.terminal.permission_queue_selected;
+        let request = match self.terminal.permission_queue.get(idx) {
+            Some(r) => r,
+            None => return,
+        };
+        let session_idx = request.session_idx;
+        let tool_name = request.tool_name.clone();
+
+        // Kill the OS dialog process if it's still running.
+        if let Some(ref pid_arc) = request.dialog_pid {
+            if let Some(pid) = *pid_arc.lock().unwrap_or_else(|e| e.into_inner()) {
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .output();
+            }
+        }
+
+        let keystrokes = self.terminal.pty_manager
+            .permission_prompt_keystrokes(session_idx, approve);
+
+        if let Some(input_bytes) = keystrokes {
+            self.set_status(
+                format!("{}: {} ",
+                    if approve { "Approved" } else { "Denied" },
+                    tool_name),
+                StatusLevel::Info,
+            );
+            let _ = self.terminal.pty_manager.write_to_session(session_idx, &input_bytes);
+            self.clear_cc_waiting_signal(session_idx);
+        }
+
+        self.terminal.permission_queue.remove(idx);
+        if self.terminal.permission_queue_selected > 0
+            && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
+        {
+            self.terminal.permission_queue_selected =
+                self.terminal.permission_queue.len().saturating_sub(1);
+        }
+    }
+
     // ── Review helpers ────────────────────────────────────────────────
 
     /// Reload review comments from the database for the currently selected worktree.

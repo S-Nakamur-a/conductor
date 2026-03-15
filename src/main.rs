@@ -515,6 +515,8 @@ fn run_loop(
         if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
+            app.process_permission_judgments();
+            app.process_permission_dialog_results();
             app.flush_deferred_prompts();
             needs_redraw = true;
         }
@@ -759,6 +761,11 @@ fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::app::UpdateState::Idle => {}
     }
 
+    // ── Permission queue overlay ──────────────────────────────────────
+    if !app.terminal.permission_queue.is_empty() {
+        render_permission_overlay(frame, main_area, app);
+    }
+
     // ── Skip reason modal ────────────────────────────────────────────
     if let Some(ref reason) = app.worktree_mgr.skip_reason {
         render_skip_reason_overlay(frame, main_area, reason);
@@ -848,5 +855,85 @@ fn render_skip_reason_overlay(
     ];
     let paragraph = ratatui::widgets::Paragraph::new(text)
         .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(paragraph, inner);
+}
+
+/// Render an overlay showing pending permission requests.
+fn render_permission_overlay(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    app: &App,
+) {
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+    let queue = &app.terminal.permission_queue;
+    if queue.is_empty() {
+        return;
+    }
+
+    let selected = app.terminal.permission_queue_selected.min(queue.len().saturating_sub(1));
+
+    // Size: fit content, max 50% of screen.
+    let max_h = (area.height / 2).max(8);
+    // 2 lines per item (tool + reason) + 2 border + 1 hint
+    let content_h = (queue.len() as u16 * 2 + 1).min(max_h - 2);
+    let popup_height = content_h + 2; // border
+    let popup_width = area.width.saturating_sub(10).min(80);
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let title = format!(" Permission Queue ({}) ", queue.len());
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(255, 140, 60)));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, req) in queue.iter().enumerate() {
+        let is_selected = i == selected;
+        let elapsed = req.created_at.elapsed().as_secs();
+
+        let marker = if is_selected { "▶ " } else { "  " };
+        let tool_style = if is_selected {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let reason_style = if is_selected {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Line 1: marker + tool name + elapsed
+        lines.push(Line::from(vec![
+            Span::styled(marker, tool_style),
+            Span::styled(&req.tool_name, tool_style),
+            Span::styled(format!("  ({elapsed}s ago)"), Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // Line 2: reason (indented)
+        lines.push(Line::from(vec![
+            Span::styled("    ", reason_style),
+            Span::styled(&req.reason, reason_style),
+        ]));
+    }
+
+    // Hint line
+    lines.push(Line::from(Span::styled(
+        " [y]approve  [n]deny  [j/k]navigate",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
 }
