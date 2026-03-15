@@ -1987,10 +1987,25 @@ impl App {
                                 created_at: std::time::Instant::now(),
                             },
                         );
+                        let notify_msg = format!("{}: {}", tool_name, reason);
                         self.set_status(
-                            format!("Permission needed: {} — {}", tool_name, reason),
+                            format!("Permission needed: {notify_msg}"),
                             StatusLevel::Warning,
                         );
+
+                        // OS notification so the user notices even when
+                        // Conductor is not in the foreground.
+                        std::thread::spawn(move || {
+                            let _ = std::process::Command::new("osascript")
+                                .args([
+                                    "-e",
+                                    &format!(
+                                        "display notification \"{}\" with title \"Conductor\" subtitle \"Permission needed\"",
+                                        notify_msg.replace('"', "\\\"")
+                                    ),
+                                ])
+                                .output();
+                        });
                     }
                     self.terminal.permission_processed_sessions.insert(session_id);
                     let _ = std::fs::remove_file(&path);
