@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Instant;
 
 use crate::pty_manager;
@@ -24,6 +25,14 @@ pub struct PermissionRequest {
     pub cwd: PathBuf,
     /// When this request was created.
     pub created_at: Instant,
+}
+
+/// Result from an OS dialog permission prompt.
+pub struct PermissionDialogResult {
+    /// PTY session index.
+    pub session_idx: usize,
+    /// Whether the user approved.
+    pub approved: bool,
 }
 
 /// Aggregated state for the dual terminal panels (Claude Code + Shell).
@@ -66,11 +75,16 @@ pub struct TerminalState {
     pub permission_queue_selected: usize,
     /// Session IDs already processed (to prevent duplicate handling).
     pub permission_processed_sessions: HashSet<String>,
+    /// Channel for receiving OS dialog results.
+    pub permission_dialog_tx: mpsc::Sender<PermissionDialogResult>,
+    /// Receiver end — polled in the main loop.
+    pub permission_dialog_rx: mpsc::Receiver<PermissionDialogResult>,
 }
 
 impl TerminalState {
     /// Create a new `TerminalState` with the given scrollback limits.
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
+        let (dialog_tx, dialog_rx) = mpsc::channel();
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
             active_claude_session: None,
@@ -90,6 +104,8 @@ impl TerminalState {
             permission_queue: Vec::new(),
             permission_queue_selected: 0,
             permission_processed_sessions: HashSet::new(),
+            permission_dialog_tx: dialog_tx,
+            permission_dialog_rx: dialog_rx,
         }
     }
 }

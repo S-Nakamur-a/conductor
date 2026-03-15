@@ -516,6 +516,7 @@ fn run_loop(
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
             app.process_permission_judgments();
+            app.process_permission_dialog_results();
             app.flush_deferred_prompts();
             needs_redraw = true;
         }

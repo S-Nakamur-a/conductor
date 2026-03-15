@@ -1993,18 +1993,26 @@ impl App {
                             StatusLevel::Warning,
                         );
 
-                        // OS notification so the user notices even when
-                        // Conductor is not in the foreground.
+                        // Show a macOS dialog with Approve/Deny buttons.
+                        // The result is sent back via the channel and
+                        // processed in the main loop.
+                        let tx = self.terminal.permission_dialog_tx.clone();
+                        let dialog_session_idx = idx;
                         std::thread::spawn(move || {
-                            let _ = std::process::Command::new("osascript")
-                                .args([
-                                    "-e",
-                                    &format!(
-                                        "display notification \"{}\" with title \"Conductor\" subtitle \"Permission needed\"",
-                                        notify_msg.replace('"', "\\\"")
-                                    ),
-                                ])
+                            let script = format!(
+                                "display dialog \"{}\" with title \"Conductor Permission\" buttons {{\"Deny\", \"Approve\"}} default button \"Approve\"",
+                                notify_msg.replace('\\', "\\\\").replace('"', "\\\"")
+                            );
+                            let output = std::process::Command::new("osascript")
+                                .args(["-e", &script])
                                 .output();
+                            let approved = output
+                                .map(|o| String::from_utf8_lossy(&o.stdout).contains("Approve"))
+                                .unwrap_or(false);
+                            let _ = tx.send(crate::terminal_state::PermissionDialogResult {
+                                session_idx: dialog_session_idx,
+                                approved,
+                            });
                         });
                     }
                     self.terminal.permission_processed_sessions.insert(session_id);
@@ -2022,6 +2030,39 @@ impl App {
             .map(|s| s.working_dir.clone())
             .collect();
         self.terminal.permission_queue.retain(|r| active_sessions.contains(&r.cwd));
+    }
+
+    /// Process results from OS permission dialogs (background threads).
+    pub fn process_permission_dialog_results(&mut self) {
+        while let Ok(result) = self.terminal.permission_dialog_rx.try_recv() {
+            let idx = result.session_idx;
+
+            // Remove from the queue.
+            if let Some(pos) = self.terminal.permission_queue.iter()
+                .position(|r| r.session_idx == idx)
+            {
+                let req = self.terminal.permission_queue.remove(pos);
+                if self.terminal.permission_queue_selected > 0
+                    && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
+                {
+                    self.terminal.permission_queue_selected =
+                        self.terminal.permission_queue.len().saturating_sub(1);
+                }
+
+                // Send keystrokes to PTY.
+                let keystrokes = self.terminal.pty_manager
+                    .permission_prompt_keystrokes(idx, result.approved);
+                if let Some(input_bytes) = keystrokes {
+                    let action_str = if result.approved { "Approved" } else { "Denied" };
+                    self.set_status(
+                        format!("{action_str} (dialog): {}", req.tool_name),
+                        StatusLevel::Info,
+                    );
+                    let _ = self.terminal.pty_manager.write_to_session(idx, &input_bytes);
+                    self.clear_cc_waiting_signal(idx);
+                }
+            }
+        }
     }
 
     /// Respond to the currently selected permission request.
