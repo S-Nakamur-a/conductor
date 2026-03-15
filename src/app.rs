@@ -2045,11 +2045,18 @@ impl App {
             let project_rules = std::fs::read_to_string(&project_md).unwrap_or_default();
             let global_rules = std::fs::read_to_string(&global_md).unwrap_or_default();
 
-            if project_rules.is_empty() && global_rules.is_empty() {
+            // Read allow/deny from settings.json and settings.local.json.
+            let settings_permissions =
+                read_settings_permissions(&repo_root, &home);
+
+            if project_rules.is_empty()
+                && global_rules.is_empty()
+                && settings_permissions.is_empty()
+            {
                 continue; // No rules — skip judgment.
             }
 
-            let rules_section = if !global_rules.is_empty() && !project_rules.is_empty() {
+            let mut rules_section = if !global_rules.is_empty() && !project_rules.is_empty() {
                 format!(
                     "以下の2つのルールがあります。矛盾する場合はプロジェクトルールを優先してください。\n\n\
                      ### グローバルルール (~/.claude/PERMISSION.md)\n{global_rules}\n\n\
@@ -2060,6 +2067,14 @@ impl App {
             } else {
                 global_rules
             };
+
+            if !settings_permissions.is_empty() {
+                rules_section.push_str(&format!(
+                    "\n\n### settings.json / settings.local.json の許可・拒否パターン\n\
+                     ユーザーが明示的に設定した allow/deny パターンです。これらに合致する場合は優先してください。\n\
+                     {settings_permissions}"
+                ));
+            }
 
             let tool_context = serde_json::json!({
                 "tool": { "tool_name": &tool_name, "tool_input": &tool_input },
@@ -4313,4 +4328,77 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
     let _ = std::fs::remove_dir_all(&tmpdir);
 
     let _ = tx.send(UpdateProgress::Done(format!("v{version} installed successfully! Restarting...")));
+}
+
+/// Read allow/deny permission patterns from Claude Code settings files.
+///
+/// Reads from up to 4 files (global settings, global local settings,
+/// project settings, project local settings) and formats them for the
+/// permission judgment prompt.
+fn read_settings_permissions(repo_root: &std::path::Path, home: &str) -> String {
+    let home_path = std::path::PathBuf::from(home);
+    let files: &[(&str, std::path::PathBuf)] = &[
+        (
+            "~/.claude/settings.json",
+            home_path.join(".claude").join("settings.json"),
+        ),
+        (
+            "~/.claude/settings.local.json",
+            home_path.join(".claude").join("settings.local.json"),
+        ),
+        (
+            ".claude/settings.json",
+            repo_root.join(".claude").join("settings.json"),
+        ),
+        (
+            ".claude/settings.local.json",
+            repo_root.join(".claude").join("settings.local.json"),
+        ),
+    ];
+
+    let mut parts = Vec::new();
+    for (label, path) in files {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let json: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let permissions = &json["permissions"];
+        let allow = permissions["allow"].as_array();
+        let deny = permissions["deny"].as_array();
+
+        if allow.is_none() && deny.is_none() {
+            continue;
+        }
+
+        let mut section = format!("**{label}**\n");
+        if let Some(allow_list) = allow {
+            if !allow_list.is_empty() {
+                section.push_str("- allow: ");
+                let items: Vec<String> = allow_list
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| format!("`{s}`")))
+                    .collect();
+                section.push_str(&items.join(", "));
+                section.push('\n');
+            }
+        }
+        if let Some(deny_list) = deny {
+            if !deny_list.is_empty() {
+                section.push_str("- deny: ");
+                let items: Vec<String> = deny_list
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| format!("`{s}`")))
+                    .collect();
+                section.push_str(&items.join(", "));
+                section.push('\n');
+            }
+        }
+        parts.push(section);
+    }
+
+    parts.join("\n")
 }
