@@ -907,9 +907,9 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
             {
                 Style::default()
                     .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
             } else {
-                Style::default().fg(theme.muted)
+                Style::default().fg(theme.fg)
             };
             vec![
                 Span::styled(format!(" {label} "), style),
