@@ -595,6 +595,7 @@ fn run_loop(
         app.terminal.pty_manager.nudge_alt_screen_sessions();
 
         if app.should_quit {
+            app.cleanup_permission_server();
             return Ok(());
         }
     }

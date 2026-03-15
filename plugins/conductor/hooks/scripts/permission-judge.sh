@@ -1,10 +1,9 @@
 #!/bin/bash
-# Save permission prompt context for Conductor to process.
+# Send permission prompt context to Conductor's Unix socket server.
 # Called by the Notification hook when notification_type is "permission_prompt".
 #
-# Extracts tool context from the CC transcript and writes a pending
-# judgment file to .conductor/cc-permissions/<session_id>.json.
-# Conductor reads this file and decides whether to call claude -p.
+# Extracts tool context from the CC transcript and sends it to
+# .conductor/server.sock for Conductor to judge via claude -p.
 
 set -euo pipefail
 
@@ -32,14 +31,16 @@ if [ -z "$REPO_ROOT" ]; then
   REPO_ROOT="$CWD"
 fi
 
-PERMISSIONS_DIR="$REPO_ROOT/.conductor/cc-permissions"
-mkdir -p "$PERMISSIONS_DIR"
+SOCK_PATH="$REPO_ROOT/.conductor/server.sock"
+if [ ! -S "$SOCK_PATH" ]; then
+  exit 0  # No Conductor server running.
+fi
 
-# ── Extract tool context from transcript and write pending file ─────
-python3 - "$TRANSCRIPT_PATH" "$MESSAGE" "$CWD" "$SESSION_ID" "$PERMISSIONS_DIR" <<'PYEOF'
-import sys, json, os, time
+# ── Extract tool context from transcript and send to socket ─────────
+python3 - "$TRANSCRIPT_PATH" "$MESSAGE" "$CWD" "$SESSION_ID" "$SOCK_PATH" <<'PYEOF'
+import sys, json, socket, time
 
-transcript_path, hook_message, cwd, session_id, permissions_dir = sys.argv[1:6]
+transcript_path, hook_message, cwd, session_id, sock_path = sys.argv[1:6]
 
 # Extract context from last 15 lines of the transcript JSONL.
 with open(transcript_path, 'r') as f:
@@ -73,9 +74,8 @@ for line in reversed(tail_lines):
     if tool_info and user_message:
         break
 
-# Write a pending judgment file for Conductor to pick up.
-output = {
-    'status': 'pending',
+# Send to Conductor's Unix socket.
+payload = {
     'session_id': session_id,
     'message': hook_message,
     'tool': tool_info or {},
@@ -84,7 +84,13 @@ output = {
     'timestamp': int(time.time()),
 }
 
-output_path = os.path.join(permissions_dir, f'{session_id}.json')
-with open(output_path, 'w') as f:
-    json.dump(output, f, ensure_ascii=False)
+try:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    sock.connect(sock_path)
+    sock.sendall(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+    sock.shutdown(socket.SHUT_WR)
+    sock.close()
+except Exception:
+    pass  # Conductor not running or socket error — silently ignore.
 PYEOF

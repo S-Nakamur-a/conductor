@@ -613,6 +613,9 @@ impl App {
         app.refresh_worktrees();
         app.refresh_reviews();
 
+        // Start Unix socket server for permission hooks.
+        app.start_permission_server();
+
         // Restore grab state from $git_common_dir/wt-grab if it exists.
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
             match engine.load_grab_state() {
@@ -1885,71 +1888,124 @@ impl App {
 
     // ── Permission auto-response ────────────────────────────────────
 
-    /// Scan `.conductor/cc-permissions/` for pending context files written
-    /// by the hook.  If `auto_permission` is enabled, spawn `claude -p` to
-    /// judge the permission.  Otherwise, just clean up the files.
-    pub fn process_permission_judgments(&mut self) {
-        let permissions_dir = git_engine::GitEngine::open(&self.repo_path)
+    /// Remove the Unix socket file on shutdown.
+    pub fn cleanup_permission_server(&self) {
+        let repo_root = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
-            .unwrap_or_else(|_| self.repo_path.clone())
-            .join(".conductor")
-            .join("cc-permissions");
+            .unwrap_or_else(|_| self.repo_path.clone());
+        let sock_path = repo_root.join(".conductor").join("server.sock");
+        let _ = std::fs::remove_file(&sock_path);
+    }
 
-        let entries = match std::fs::read_dir(&permissions_dir) {
-            Ok(e) => e,
-            Err(_) => return,
+    /// Start the Unix domain socket server for receiving permission requests
+    /// from hooks.  The socket is created at `.conductor/server.sock`.
+    fn start_permission_server(&self) {
+        use std::os::unix::net::UnixListener;
+
+        let repo_root = git_engine::GitEngine::open(&self.repo_path)
+            .and_then(|e| e.main_worktree_path())
+            .unwrap_or_else(|_| self.repo_path.clone());
+        let conductor_dir = repo_root.join(".conductor");
+        let _ = std::fs::create_dir_all(&conductor_dir);
+        let sock_path = conductor_dir.join("server.sock");
+
+        // Remove stale socket if it exists.
+        if sock_path.exists() {
+            let _ = std::fs::remove_file(&sock_path);
+        }
+
+        let listener = match UnixListener::bind(&sock_path) {
+            Ok(l) => l,
+            Err(e) => {
+                log::warn!("failed to bind permission socket {:?}: {}", sock_path, e);
+                return;
+            }
         };
+        // Non-blocking so the accept loop can check a shutdown flag.
+        listener.set_nonblocking(true).ok();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
+        log::info!("permission server listening on {:?}", sock_path);
 
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+        let tx = self.terminal.permission_incoming_tx.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
 
-            let parsed: serde_json::Value = match serde_json::from_str(&content) {
-                Ok(v) => v,
-                Err(_) => {
-                    let _ = std::fs::remove_file(&path);
-                    continue;
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let tx = tx.clone();
+                        std::thread::spawn(move || {
+                            let reader = BufReader::new(&stream);
+                            let mut data = String::new();
+                            for line in reader.lines() {
+                                match line {
+                                    Ok(l) => {
+                                        data.push_str(&l);
+                                        data.push('\n');
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+
+                            let parsed: serde_json::Value = match serde_json::from_str(data.trim()) {
+                                Ok(v) => v,
+                                Err(_) => return,
+                            };
+
+                            let incoming = crate::terminal_state::IncomingPermission {
+                                session_id: parsed.get("session_id")
+                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                tool_name: parsed.get("tool")
+                                    .and_then(|t| t.get("tool_name"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?").to_string(),
+                                tool_input: parsed.get("tool")
+                                    .and_then(|t| t.get("tool_input"))
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Object(Default::default())),
+                                user_message: parsed.get("user_message")
+                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                hook_message: parsed.get("message")
+                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                cwd: parsed.get("cwd")
+                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                timestamp: parsed.get("timestamp")
+                                    .and_then(|v| v.as_i64()).unwrap_or(0),
+                            };
+
+                            let _ = tx.send(incoming);
+                        });
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    Err(_) => {
+                        break;
+                    }
                 }
-            };
+            }
+        });
+    }
 
-            // Only process files with status "pending" (written by hook).
-            let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            if status != "pending" {
-                let _ = std::fs::remove_file(&path);
+    /// Process incoming permission requests received via the Unix socket.
+    /// If `auto_permission` is enabled, spawn `claude -p` to judge.
+    pub fn process_permission_judgments(&mut self) {
+        while let Ok(incoming) = self.terminal.permission_incoming_rx.try_recv() {
+            let session_id = incoming.session_id;
+            let cwd = incoming.cwd;
+            let tool_name = incoming.tool_name;
+            let tool_input = incoming.tool_input;
+            let user_message = incoming.user_message;
+            let hook_message = incoming.hook_message;
+
+            // Deduplicate using session_id + timestamp.
+            let dedup_key = format!("{}:{}", session_id, incoming.timestamp);
+            if self.terminal.permission_processed_sessions.contains(&dedup_key) {
                 continue;
             }
 
-            let session_id = parsed.get("session_id")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let cwd = parsed.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let tool_name = parsed.get("tool")
-                .and_then(|t| t.get("tool_name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("?").to_string();
-            let tool_input = parsed.get("tool")
-                .and_then(|t| t.get("tool_input"))
-                .cloned().unwrap_or(serde_json::Value::Object(Default::default()));
-            let user_message = parsed.get("user_message")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let hook_message = parsed.get("message")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-
-            // Deduplicate.
-            if self.terminal.permission_processed_sessions.contains(&session_id) {
-                let _ = std::fs::remove_file(&path);
-                continue;
-            }
-
-            // If auto_permission is disabled, just clean up.
+            // If auto_permission is disabled, ignore.
             if !self.config.notification.auto_permission {
-                let _ = std::fs::remove_file(&path);
                 continue;
             }
 
@@ -1959,18 +2015,15 @@ impl App {
             });
 
             let Some(idx) = session_idx else {
-                let _ = std::fs::remove_file(&path);
                 continue;
             };
 
             // Already judging this session? Skip.
             if self.terminal.permission_judging.iter().any(|j| j.session_idx == idx) {
-                let _ = std::fs::remove_file(&path);
                 continue;
             }
 
-            self.terminal.permission_processed_sessions.insert(session_id);
-            let _ = std::fs::remove_file(&path);
+            self.terminal.permission_processed_sessions.insert(dedup_key);
 
             // Read PERMISSION.md files.
             let repo_root = git_engine::GitEngine::open(&self.repo_path)

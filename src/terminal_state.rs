@@ -67,6 +67,24 @@ pub struct PermissionJudging {
     pub pid: Arc<Mutex<Option<u32>>>,
 }
 
+/// Incoming permission request received from the Unix socket server.
+pub struct IncomingPermission {
+    /// CC session ID.
+    pub session_id: String,
+    /// Tool name.
+    pub tool_name: String,
+    /// Tool input (JSON).
+    pub tool_input: serde_json::Value,
+    /// User message context.
+    pub user_message: String,
+    /// Hook notification message.
+    pub hook_message: String,
+    /// Working directory of the CC session.
+    pub cwd: String,
+    /// Timestamp from the hook.
+    pub timestamp: i64,
+}
+
 /// Aggregated state for the dual terminal panels (Claude Code + Shell).
 pub struct TerminalState {
     /// PTY session manager.
@@ -117,6 +135,10 @@ pub struct TerminalState {
     pub permission_judge_tx: mpsc::Sender<PermissionJudgeResult>,
     /// Receiver end — polled in the main loop.
     pub permission_judge_rx: mpsc::Receiver<PermissionJudgeResult>,
+    /// Channel for receiving incoming permission requests from the Unix socket server.
+    pub permission_incoming_tx: mpsc::Sender<IncomingPermission>,
+    /// Receiver end — polled in the main loop.
+    pub permission_incoming_rx: mpsc::Receiver<IncomingPermission>,
 }
 
 impl TerminalState {
@@ -124,6 +146,7 @@ impl TerminalState {
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         let (dialog_tx, dialog_rx) = mpsc::channel();
         let (judge_tx, judge_rx) = mpsc::channel();
+        let (incoming_tx, incoming_rx) = mpsc::channel();
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
             active_claude_session: None,
@@ -148,6 +171,8 @@ impl TerminalState {
             permission_judging: Vec::new(),
             permission_judge_tx: judge_tx,
             permission_judge_rx: judge_rx,
+            permission_incoming_tx: incoming_tx,
+            permission_incoming_rx: incoming_rx,
         }
     }
 }
