@@ -261,8 +261,6 @@ pub struct KeybindsConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationConfig {
-    /// Send OS notification when Claude Code is waiting for input.
-    pub cc_waiting: bool,
     /// Automatically respond to CC permission prompts using PERMISSION.md rules.
     /// Off by default — this feature can auto-approve tool execution.
     pub auto_permission: bool,
@@ -390,7 +388,6 @@ pub fn generate_default_config() -> String {
 # [keybinds.terminal]
 
 [notification]
-# cc_waiting = false                    # OS notification when Claude Code is waiting for input
 # auto_permission = false               # auto-respond to CC permission prompts using PERMISSION.md
 
 [ccusage]
@@ -438,7 +435,6 @@ mod tests {
         assert_eq!(cfg2.diff.default_view, DiffView::Unified);
         assert!(cfg2.diff.word_diff);
         assert_eq!(cfg2.review.prompt_action, PromptAction::Clipboard);
-        assert!(!cfg2.notification.cc_waiting);
         assert!(!cfg2.ccusage.enabled);
         assert_eq!(cfg2.ccusage.poll_interval_secs, 120);
         assert!(cfg2.updates.check_on_startup);

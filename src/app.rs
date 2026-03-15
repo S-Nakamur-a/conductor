@@ -1815,14 +1815,6 @@ impl App {
                 let skip_notify = is_terminal_focused && *wt_path == current_wt_path;
                 if !skip_notify {
                     self.set_status(format!("CC waiting for input: {display_name}"), StatusLevel::Info);
-                    if self.config.notification.cc_waiting {
-                        let msg = format!("CC waiting for input: {display_name}");
-                        std::thread::spawn(move || {
-                            let _ = std::process::Command::new("terminal-notifier")
-                                .args(["-title", "Conductor", "-message", &msg])
-                                .output();
-                        });
-                    }
                 }
             }
         }
@@ -2229,14 +2221,27 @@ impl App {
                         StatusLevel::Warning,
                     );
 
-                    // Show macOS dialog.
+                    // Show macOS dialog — include user_message for context on "why".
                     let tx = self.terminal.permission_dialog_tx.clone();
                     let dialog_session_idx = result.session_idx;
                     let pid_slot = std::sync::Arc::clone(&dialog_pid);
+                    // Retrieve user_message from the just-pushed request.
+                    let dialog_user_msg = self.terminal.permission_queue.last()
+                        .map(|r| r.user_message.clone())
+                        .unwrap_or_default();
                     std::thread::spawn(move || {
+                        let mut dialog_text = notify_msg.replace('\\', "\\\\").replace('"', "\\\"");
+                        if !dialog_user_msg.is_empty() {
+                            // Truncate long user messages for the dialog.
+                            let truncated: String = dialog_user_msg.chars().take(120).collect();
+                            let suffix = if dialog_user_msg.chars().count() > 120 { "…" } else { "" };
+                            let escaped = format!("\\n\\nContext: {truncated}{suffix}")
+                                .replace('\\', "\\\\").replace('"', "\\\"");
+                            dialog_text.push_str(&escaped);
+                        }
                         let script = format!(
                             "display dialog \"{}\" with title \"Conductor Permission\" buttons {{\"Deny\", \"Approve\"}} default button \"Approve\"",
-                            notify_msg.replace('\\', "\\\\").replace('"', "\\\"")
+                            dialog_text
                         );
                         let child = match std::process::Command::new("osascript")
                             .args(["-e", &script])

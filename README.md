@@ -18,7 +18,6 @@ Terminal-based Git workspace and code review TUI written in Rust. Manages multip
 | Dependency | Purpose | How to enable |
 |---|---|---|
 | **ccusage** (via npx) | Token usage / cost display in title bar | Set `ccusage.enabled = true` in config |
-| **terminal-notifier** | macOS notifications when Claude Code is waiting for input | `brew install terminal-notifier` + set `notification.cc_waiting = true` in config |
 
 ## Installation
 
@@ -151,7 +150,6 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 # [keybinds.terminal]
 
 [notification]
-# cc_waiting = false                    # OS notification when Claude Code is waiting for input
 
 [ccusage]
 # enabled = false                       # token usage display in the title bar (requires ccusage)
