@@ -131,45 +131,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── 1c. Permission queue — y/n/j/k when items are pending ──────────
-    if !app.terminal.permission_queue.is_empty()
-        && app.focus != Focus::TerminalClaude
-        && app.focus != Focus::TerminalShell
-    {
-        match key.code {
-            KeyCode::Char('y') => {
-                app.respond_permission_request(true);
-                return;
-            }
-            KeyCode::Char('n') => {
-                app.respond_permission_request(false);
-                return;
-            }
-            KeyCode::Char(c @ '1'..='9') => {
-                let option_index = (c as usize) - ('1' as usize); // '1' → 0, '2' → 1, etc.
-                app.respond_permission_request_by_index(option_index);
-                return;
-            }
-            KeyCode::Char('j') => {
-                let len = app.terminal.permission_queue.len();
-                if len > 0 {
-                    app.terminal.permission_queue_selected =
-                        (app.terminal.permission_queue_selected + 1) % len;
-                }
-                return;
-            }
-            KeyCode::Char('k') => {
-                let len = app.terminal.permission_queue.len();
-                if len > 0 {
-                    app.terminal.permission_queue_selected =
-                        (app.terminal.permission_queue_selected + len - 1) % len;
-                }
-                return;
-            }
-            _ => {} // fall through to normal key handling
-        }
-    }
-
     // ── 1b. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {

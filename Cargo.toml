@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.26.0"
+version = "0.26.1"
 edition = "2024"
 
 [dependencies]
@@ -32,6 +32,7 @@ ignore = "0.4"
 aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tiny_http = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

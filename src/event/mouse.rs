@@ -17,7 +17,7 @@ pub fn handle_mouse_event(
 
     // Compute layout regions — must match render_ui in main.rs.
     let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty()
-        || !app.terminal.permission_judging.is_empty() { 1 } else { 0 };
+        { 1 } else { 0 };
     let outer = Layout::vertical([
         Constraint::Length(1), // title bar
         Constraint::Length(notif_height), // notification bar
