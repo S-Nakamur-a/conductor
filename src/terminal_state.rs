@@ -37,7 +37,7 @@ pub struct PermissionDialogResult {
     pub approved: bool,
 }
 
-/// Result from `claude -p` permission judgment.
+/// Result from Gemini API permission judgment.
 pub struct PermissionJudgeResult {
     /// PTY session index.
     pub session_idx: usize,
@@ -53,7 +53,7 @@ pub struct PermissionJudgeResult {
     pub cwd: PathBuf,
 }
 
-/// A permission judgment being processed by `claude -p`.
+/// A permission judgment being processed via Gemini API.
 pub struct PermissionJudging {
     /// PTY session index.
     pub session_idx: usize,
@@ -63,7 +63,7 @@ pub struct PermissionJudging {
     pub cwd: PathBuf,
     /// When the judgment started.
     pub started_at: Instant,
-    /// PID of the `claude -p` process (for killing on cancel).
+    /// PID placeholder (kept for cancellation tracking).
     pub pid: Arc<Mutex<Option<u32>>>,
 }
 
@@ -129,9 +129,9 @@ pub struct TerminalState {
     pub permission_dialog_tx: mpsc::Sender<PermissionDialogResult>,
     /// Receiver end — polled in the main loop.
     pub permission_dialog_rx: mpsc::Receiver<PermissionDialogResult>,
-    /// Currently running `claude -p` judgments (session_idx → state).
+    /// Currently running API judgments (session_idx → state).
     pub permission_judging: Vec<PermissionJudging>,
-    /// Channel for receiving `claude -p` judgment results.
+    /// Channel for receiving API judgment results.
     pub permission_judge_tx: mpsc::Sender<PermissionJudgeResult>,
     /// Receiver end — polled in the main loop.
     pub permission_judge_rx: mpsc::Receiver<PermissionJudgeResult>,

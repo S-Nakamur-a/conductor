@@ -175,10 +175,10 @@ const INSTRUMENTS: &[&str] = &[
     "\u{1f4ef}", // 📯 Postal Horn
 ];
 
-/// Run the LLM generation for smart worktree (branch name + prompt) via `claude --print`.
+/// Run the LLM generation for smart worktree (branch name + prompt) via Gemini API.
 ///
-/// Checks `cancel_token` periodically; if set, kills the child process and returns `Err`.
-fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>) -> Result<SmartGenResult, String> {
+/// Checks `cancel_token` before calling; the API call itself is blocking.
+fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>, model: &str) -> Result<SmartGenResult, String> {
     if cancel_token.load(Ordering::Relaxed) {
         return Err("Cancelled".to_string());
     }
@@ -189,55 +189,24 @@ Output ONLY a JSON object with two fields:
 - "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
-    let mut child = std::process::Command::new("claude")
-        .args(["--print", "-p", system_prompt])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn claude: {e}"))?;
+    let raw = crate::gemini_api::call_messages_api(system_prompt, desc, Some(model), 1024)
+        .map_err(|e| format!("Gemini API error: {e}"))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(desc.as_bytes());
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
     }
 
-    // Poll the child process, checking for cancellation periodically.
-    let output = loop {
-        if cancel_token.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Cancelled".to_string());
-        }
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                break child.wait_with_output()
-                    .map_err(|e| format!("Failed to read claude output: {e}"))?;
-            }
-            Ok(None) => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(e) => return Err(format!("Failed to wait for claude: {e}")),
-        }
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("claude exited with {}: {}", output.status, stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json_str = stdout
+    let json_str = raw
         .trim()
         .strip_prefix("```json")
-        .or_else(|| stdout.trim().strip_prefix("```"))
-        .unwrap_or(stdout.trim());
+        .or_else(|| raw.trim().strip_prefix("```"))
+        .unwrap_or(raw.trim());
     let json_str = json_str
         .strip_suffix("```")
         .unwrap_or(json_str)
         .trim();
     serde_json::from_str::<SmartGenResult>(json_str)
-        .map_err(|e| format!("JSON parse error: {e}\nRaw output: {stdout}"))
+        .map_err(|e| format!("JSON parse error: {e}\nRaw output: {raw}"))
 }
 
 /// Info about a grabbed branch (branch checkout swap with main).
@@ -1980,7 +1949,7 @@ impl App {
     }
 
     /// Process incoming permission requests received via the Unix socket.
-    /// If `auto_permission` is enabled, spawn `claude -p` to judge.
+    /// If `auto_permission` is enabled, call Gemini API to judge.
     pub fn process_permission_judgments(&mut self) {
         // Drain pending requests back into the processing queue first.
         let mut all_incoming: Vec<crate::terminal_state::IncomingPermission> =
@@ -2020,7 +1989,7 @@ impl App {
 
             self.terminal.permission_processed_sessions.insert(dedup_key);
 
-            // If auto_permission is disabled, skip claude -p and treat as ask_user directly.
+            // If auto_permission is disabled, skip API call and treat as ask_user directly.
             if !self.config.notification.auto_permission {
                 let tx = self.terminal.permission_judge_tx.clone();
                 let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
@@ -2089,15 +2058,6 @@ impl App {
                  action は approve, deny, ask_user のいずれか。reason は日本語で1文。"
             );
 
-            let json_schema = serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": ["approve", "deny", "ask_user"]},
-                    "reason": {"type": "string"}
-                },
-                "required": ["action", "reason"]
-            }).to_string();
-
             // Track the judging state.
             let pid_arc: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
                 std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -2115,68 +2075,72 @@ impl App {
                 StatusLevel::Info,
             );
 
-            // Spawn claude -p in background.
+            // Spawn Gemini API call in background thread.
             let tx = self.terminal.permission_judge_tx.clone();
-            let pid_slot = std::sync::Arc::clone(&pid_arc);
             let tool_name_for_thread = tool_name.clone();
             let user_msg_for_thread = user_message.clone();
             let cwd_for_thread = cwd_path.clone();
+            let permission_model = self.config.api.permission_model.clone();
             std::thread::spawn(move || {
-                let mut child = match std::process::Command::new("claude")
-                    .args([
-                        "-p",
-                        "--model", "haiku",
-                        "--output-format", "json",
-                        "--json-schema", &json_schema,
-                        "--tools", "",
-                        "--max-budget-usd", "0.10",
-                        "--no-session-persistence",
-                        "--disable-slash-commands",
-                        "--no-chrome",
-                        "--system-prompt", "You are a permission judgment assistant. Output JSON only.",
-                    ])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .spawn()
-                {
-                    Ok(c) => c,
-                    Err(_) => return,
+                let system_prompt = "You are a permission judgment assistant. Output JSON only. \
+                    You must output a JSON object with two fields: \
+                    \"action\" (one of \"approve\", \"deny\", \"ask_user\") and \
+                    \"reason\" (a brief explanation in Japanese).";
+
+                let raw = match crate::gemini_api::call_messages_api(
+                    system_prompt,
+                    &prompt,
+                    Some(&permission_model),
+                    1024,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::warn!("Gemini API call failed: {e}");
+                        let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
+                            session_idx: idx,
+                            action: "ask_user".to_string(),
+                            reason: format!("API error: {e}"),
+                            tool_name: tool_name_for_thread,
+                            user_message: user_msg_for_thread,
+                            cwd: cwd_for_thread,
+                        });
+                        return;
+                    }
                 };
 
-                *pid_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+                log::debug!("Gemini raw response: {:?}", raw);
 
-                // Write prompt to stdin then close it.
-                use std::io::Write;
+                // Strip markdown code fences if present.
+                let stripped = raw.trim();
+                let stripped = stripped
+                    .strip_prefix("```json\n")
+                    .or_else(|| stripped.strip_prefix("```json"))
+                    .or_else(|| stripped.strip_prefix("```\n"))
+                    .or_else(|| stripped.strip_prefix("```"))
+                    .unwrap_or(stripped);
+                let stripped = stripped
+                    .strip_suffix("\n```")
+                    .or_else(|| stripped.strip_suffix("```"))
+                    .unwrap_or(stripped)
+                    .trim();
+
+                let (action, reason) = if let Ok(parsed) =
+                    serde_json::from_str::<serde_json::Value>(stripped)
                 {
-                    let stdin = child.stdin.as_mut();
-                    if let Some(s) = stdin {
-                        let _ = s.write_all(prompt.as_bytes());
-                    }
-                }
-                // Close stdin by taking it.
-                drop(child.stdin.take());
-
-                let output = child.wait_with_output();
-                let (action, reason) = match &output {
-                    Ok(o) if o.status.success() => {
-                        let raw = String::from_utf8_lossy(&o.stdout);
-                        if let Ok(outer) = serde_json::from_str::<serde_json::Value>(&raw) {
-                            let so = outer.get("structured_output")
-                                .and_then(|v| v.as_object());
-                            if let Some(obj) = so {
-                                let a = obj.get("action")
-                                    .and_then(|v| v.as_str()).unwrap_or("ask_user").to_string();
-                                let r = obj.get("reason")
-                                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                (a, r)
-                            } else {
-                                ("ask_user".to_string(), "パース失敗".to_string())
-                            }
-                        } else {
-                            ("ask_user".to_string(), "パース失敗".to_string())
-                        }
-                    }
-                    _ => return, // Process killed or failed — discard.
+                    let a = parsed
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ask_user")
+                        .to_string();
+                    let r = parsed
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (a, r)
+                } else {
+                    log::warn!("Permission judgment JSON parse failed. Stripped: {:?}", stripped);
+                    ("ask_user".to_string(), "パース失敗".to_string())
                 };
 
                 let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
@@ -2191,7 +2155,7 @@ impl App {
         }
     }
 
-    /// Process results from `claude -p` judgment threads.
+    /// Process results from API judgment threads.
     pub fn process_permission_judge_results(&mut self) {
         while let Ok(result) = self.terminal.permission_judge_rx.try_recv() {
             // Remove from judging list.
@@ -2376,7 +2340,7 @@ impl App {
         }
     }
 
-    /// Cancel any running `claude -p` judgment for a given session.
+    /// Cancel any running API judgment for a given session.
     /// Called when the user manually responds to a permission prompt.
     pub fn cancel_permission_judging(&mut self, session_idx: usize) {
         self.terminal.permission_judging.retain(|j| {
@@ -3309,6 +3273,7 @@ impl App {
         self.set_status("Smart worktree: generating... (Esc to cancel)".to_string(), StatusLevel::Info);
 
         let tx = self.worktree_op_sender();
+        let api_model = self.config.api.model.clone();
 
         let cancel = cancel_token;
         std::thread::spawn(move || {
@@ -3316,7 +3281,7 @@ impl App {
             let desc_panic = desc.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Phase 1: LLM generation.
-                let gen_result = match run_smart_generation(&desc, &cancel) {
+                let gen_result = match run_smart_generation(&desc, &cancel, &api_model) {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = tx.send(WorktreeOpResult::SmartFailed {

@@ -1,5 +1,6 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
+mod gemini_api;
 mod app;
 mod background;
 mod ccusage_cache;

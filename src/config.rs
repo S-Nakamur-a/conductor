@@ -41,6 +41,8 @@ pub struct Config {
     pub ccusage: CcusageConfig,
     /// `[updates]` -- startup version check settings.
     pub updates: UpdatesConfig,
+    /// `[api]` -- Gemini API settings.
+    pub api: ApiConfig,
 }
 
 
@@ -304,6 +306,25 @@ impl Default for UpdatesConfig {
     }
 }
 
+/// `[api]` section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ApiConfig {
+    /// Model ID for the Gemini API.
+    pub model: String,
+    /// Model ID used for permission judgment (lightweight tasks).
+    pub permission_model: String,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            model: String::from("gemini-2.5-flash"),
+            permission_model: String::from("gemini-2.5-flash"),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -397,6 +418,10 @@ pub fn generate_default_config() -> String {
 [updates]
 # check_on_startup = true               # check for new versions on startup
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
+
+[api]
+# model = "gemini-2.5-flash"            # model for smart worktree generation (Gemini API)
+# permission_model = "gemini-2.5-flash" # model for permission judgment (Gemini API)
 "#,
     )
 }
