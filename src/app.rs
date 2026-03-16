@@ -417,6 +417,7 @@ pub struct App {
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
     pub pending_auto_resume: bool,
+
 }
 
 /// Result of a background diff computation.
@@ -582,8 +583,8 @@ impl App {
         app.refresh_worktrees();
         app.refresh_reviews();
 
-        // Start Unix socket server for permission hooks.
-        app.start_permission_server();
+        // Start HTTP server for PermissionRequest hooks.
+        app.start_permission_http_server();
 
         // Restore grab state from $git_common_dir/wt-grab if it exists.
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
@@ -1847,639 +1848,89 @@ impl App {
         self.terminal.cc_waiting_worktrees.remove(&working_dir);
     }
 
-    // ── Permission auto-response ────────────────────────────────────
+    // ── Permission auto-response (native PermissionRequest hook) ────
 
-    /// Remove the Unix socket file on shutdown.
-    pub fn cleanup_permission_server(&self) {
-        let repo_root = git_engine::GitEngine::open(&self.repo_path)
-            .and_then(|e| e.main_worktree_path())
-            .unwrap_or_else(|_| self.repo_path.clone());
-        let sock_path = repo_root.join(".conductor").join("server.sock");
-        let _ = std::fs::remove_file(&sock_path);
-    }
+    /// Start the HTTP server for the PermissionRequest hook.
+    /// Listens on the configured port and handles permission decisions.
+    fn start_permission_http_server(&self) {
+        use crate::terminal_state::HookPermissionInput;
 
-    /// Start the Unix domain socket server for receiving permission requests
-    /// from hooks.  The socket is created at `.conductor/server.sock`.
-    fn start_permission_server(&self) {
-        use std::os::unix::net::UnixListener;
-
-        let repo_root = git_engine::GitEngine::open(&self.repo_path)
-            .and_then(|e| e.main_worktree_path())
-            .unwrap_or_else(|_| self.repo_path.clone());
-        let conductor_dir = repo_root.join(".conductor");
-        let _ = std::fs::create_dir_all(&conductor_dir);
-        let sock_path = conductor_dir.join("server.sock");
-
-        // Remove stale socket if it exists.
-        if sock_path.exists() {
-            let _ = std::fs::remove_file(&sock_path);
-        }
-
-        let listener = match UnixListener::bind(&sock_path) {
-            Ok(l) => l,
+        let port = self.config.notification.http_port;
+        let addr = format!("127.0.0.1:{port}");
+        let server = match tiny_http::Server::http(&addr) {
+            Ok(s) => s,
             Err(e) => {
-                log::warn!("failed to bind permission socket {:?}: {}", sock_path, e);
+                log::warn!("failed to start permission HTTP server on {addr}: {e}");
                 return;
             }
         };
-        // Non-blocking so the accept loop can check a shutdown flag.
-        listener.set_nonblocking(true).ok();
+        log::info!("permission HTTP server listening on {addr}");
 
-        log::info!("permission server listening on {:?}", sock_path);
+        let auto_permission = self.config.notification.auto_permission;
+        let permission_model = self.config.api.permission_model.clone();
+        let repo_path = self.repo_path.clone();
 
-        let tx = self.terminal.permission_incoming_tx.clone();
         std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-
-            loop {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        let tx = tx.clone();
-                        std::thread::spawn(move || {
-                            let reader = BufReader::new(&stream);
-                            let mut data = String::new();
-                            for line in reader.lines() {
-                                match line {
-                                    Ok(l) => {
-                                        data.push_str(&l);
-                                        data.push('\n');
-                                    }
-                                    Err(_) => break,
-                                }
-                            }
-
-                            let parsed: serde_json::Value = match serde_json::from_str(data.trim()) {
-                                Ok(v) => v,
-                                Err(_) => return,
-                            };
-
-                            let incoming = crate::terminal_state::IncomingPermission {
-                                session_id: parsed.get("session_id")
-                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                tool_name: parsed.get("tool")
-                                    .and_then(|t| t.get("tool_name"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("?").to_string(),
-                                tool_input: parsed.get("tool")
-                                    .and_then(|t| t.get("tool_input"))
-                                    .cloned()
-                                    .unwrap_or(serde_json::Value::Object(Default::default())),
-                                user_message: parsed.get("user_message")
-                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                hook_message: parsed.get("message")
-                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                cwd: parsed.get("cwd")
-                                    .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                timestamp: parsed.get("timestamp")
-                                    .and_then(|v| v.as_i64()).unwrap_or(0),
-                            };
-
-                            let _ = tx.send(incoming);
-                        });
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                    Err(_) => {
-                        break;
-                    }
+            for mut request in server.incoming_requests() {
+                // Only handle POST /api/permission.
+                if request.method() != &tiny_http::Method::Post
+                    || request.url() != "/api/permission"
+                {
+                    let response = tiny_http::Response::from_string("")
+                        .with_status_code(tiny_http::StatusCode(404));
+                    let _ = request.respond(response);
+                    continue;
                 }
-            }
-        });
-    }
 
-    /// Process incoming permission requests received via the Unix socket.
-    /// If `auto_permission` is enabled, call Gemini API to judge.
-    pub fn process_permission_judgments(&mut self) {
-        // Drain pending requests back into the processing queue first.
-        let mut all_incoming: Vec<crate::terminal_state::IncomingPermission> =
-            std::mem::take(&mut self.terminal.permission_pending);
-        while let Ok(incoming) = self.terminal.permission_incoming_rx.try_recv() {
-            all_incoming.push(incoming);
-        }
+                // Read body.
+                let mut body = String::new();
+                if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                    log::warn!("failed to read permission request body: {e}");
+                    let response = tiny_http::Response::from_string("")
+                        .with_status_code(tiny_http::StatusCode(400));
+                    let _ = request.respond(response);
+                    continue;
+                }
 
-        for incoming in all_incoming {
-            let session_id = incoming.session_id.clone();
-            let cwd = incoming.cwd.clone();
-            let tool_name = incoming.tool_name.clone();
-            let tool_input = incoming.tool_input.clone();
-            let user_message = incoming.user_message.clone();
-            let hook_message = incoming.hook_message.clone();
-
-            // Deduplicate using session_id + timestamp.
-            let dedup_key = format!("{}:{}", session_id, incoming.timestamp);
-            if self.terminal.permission_processed_sessions.contains(&dedup_key) {
-                continue;
-            }
-
-            let cwd_path = PathBuf::from(&cwd);
-            let session_idx = self.terminal.pty_manager.sessions().iter().position(|s| {
-                s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == cwd_path
-            });
-
-            let Some(idx) = session_idx else {
-                continue;
-            };
-
-            // Already judging this session? Defer to next poll cycle.
-            if self.terminal.permission_judging.iter().any(|j| j.session_idx == idx) {
-                self.terminal.permission_pending.push(incoming);
-                continue;
-            }
-
-            self.terminal.permission_processed_sessions.insert(dedup_key);
-
-            // If auto_permission is disabled, skip API call and treat as ask_user directly.
-            if !self.config.notification.auto_permission {
-                let tx = self.terminal.permission_judge_tx.clone();
-                let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
-                    session_idx: idx,
-                    action: "ask_user".to_string(),
-                    selected_index: None,
-                    reason: "auto_permission is disabled".to_string(),
-                    tool_name: tool_name.clone(),
-                    user_message: user_message.clone(),
-                    cwd: cwd_path.clone(),
-                });
-                continue;
-            }
-
-            // Extract permission choices from the PTY screen.
-            let choices = self.terminal.pty_manager.extract_permission_choices(idx);
-            if choices.is_none() {
-                // Choices not yet visible — defer to next poll cycle.
-                self.terminal.permission_pending.push(incoming);
-                continue;
-            }
-            let choices = choices.unwrap();
-
-            // Read PERMISSION.md files.
-            let repo_root = git_engine::GitEngine::open(&self.repo_path)
-                .and_then(|e| e.main_worktree_path())
-                .unwrap_or_else(|_| self.repo_path.clone());
-            let project_md = repo_root.join(".claude").join("PERMISSION.md");
-            let home = std::env::var("HOME").unwrap_or_default();
-            let global_md = PathBuf::from(&home).join(".claude").join("PERMISSION.md");
-
-            let project_rules = std::fs::read_to_string(&project_md).unwrap_or_default();
-            let global_rules = std::fs::read_to_string(&global_md).unwrap_or_default();
-
-            // Read allow/deny from settings.json and settings.local.json.
-            let settings_permissions =
-                read_settings_permissions(&repo_root, &home);
-
-            if project_rules.is_empty()
-                && global_rules.is_empty()
-                && settings_permissions.is_empty()
-            {
-                continue; // No rules — skip judgment.
-            }
-
-            let mut rules_section = if !global_rules.is_empty() && !project_rules.is_empty() {
-                format!(
-                    "以下の2つのルールがあります。矛盾する場合はプロジェクトルールを優先してください。\n\n\
-                     ### グローバルルール (~/.claude/PERMISSION.md)\n{global_rules}\n\n\
-                     ### プロジェクトルール (.claude/PERMISSION.md) ※こちらが優先\n{project_rules}"
-                )
-            } else if !project_rules.is_empty() {
-                project_rules
-            } else {
-                global_rules
-            };
-
-            if !settings_permissions.is_empty() {
-                rules_section.push_str(&format!(
-                    "\n\n### settings.json / settings.local.json の許可・拒否パターン\n\
-                     ユーザーが明示的に設定した allow/deny パターンです。これらに合致する場合は優先してください。\n\
-                     {settings_permissions}"
-                ));
-            }
-
-            let tool_context = serde_json::json!({
-                "tool": { "tool_name": &tool_name, "tool_input": &tool_input },
-                "user_message": &user_message,
-            }).to_string();
-
-            // Build choices list for the prompt.
-            let choices_text: String = choices.options.iter()
-                .map(|(i, label)| format!("  {i}: {label}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let max_index = choices.options.len().saturating_sub(1);
-
-            let prompt = format!(
-                "ツール実行の許可判定を行ってください。\n\n\
-                 ## ルール\n{rules_section}\n\n\
-                 ## 判定対象\n通知: {hook_message}\nツール詳細: {tool_context}\n\
-                 作業ディレクトリ: {cwd}\n\n\
-                 ## 選択肢\n以下の選択肢から適切なものを選んでください:\n{choices_text}\n\n\
-                 action は select または ask_user。\n\
-                 select の場合は selected_index に選択肢の番号(0〜{max_index})を指定。\n\
-                 判断できない場合は ask_user を選択。reason は日本語で1文。"
-            );
-
-            // Track the judging state.
-            let pid_arc: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
-                std::sync::Arc::new(std::sync::Mutex::new(None));
-            self.terminal.permission_judging.push(
-                crate::terminal_state::PermissionJudging {
-                    session_idx: idx,
-                    tool_name: tool_name.clone(),
-                    cwd: cwd_path.clone(),
-                    started_at: std::time::Instant::now(),
-                    pid: std::sync::Arc::clone(&pid_arc),
-                },
-            );
-            self.set_status(
-                format!("Judging permission: {tool_name}..."),
-                StatusLevel::Info,
-            );
-
-            // Spawn Gemini API call in background thread.
-            let tx = self.terminal.permission_judge_tx.clone();
-            let tool_name_for_thread = tool_name.clone();
-            let user_msg_for_thread = user_message.clone();
-            let cwd_for_thread = cwd_path.clone();
-            let permission_model = self.config.api.permission_model.clone();
-            std::thread::spawn(move || {
-                let system_prompt = "You are a permission judgment assistant. Output JSON only. \
-                    You must output a JSON object with three fields: \
-                    \"action\" (one of \"select\", \"ask_user\"), \
-                    \"selected_index\" (integer, the 0-based index of the chosen option when action is \"select\"), and \
-                    \"reason\" (a brief explanation in Japanese).";
-
-                let raw = match crate::gemini_api::call_messages_api(
-                    system_prompt,
-                    &prompt,
-                    Some(&permission_model),
-                    1024,
-                ) {
-                    Ok(r) => r,
+                let input: HookPermissionInput = match serde_json::from_str(&body) {
+                    Ok(v) => v,
                     Err(e) => {
-                        log::warn!("Gemini API call failed: {e}");
-                        let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
-                            session_idx: idx,
-                            action: "ask_user".to_string(),
-                            selected_index: None,
-                            reason: format!("API error: {e}"),
-                            tool_name: tool_name_for_thread,
-                            user_message: user_msg_for_thread,
-                            cwd: cwd_for_thread,
-                        });
-                        return;
+                        log::warn!("failed to parse permission request: {e}");
+                        let response = tiny_http::Response::from_string("")
+                            .with_status_code(tiny_http::StatusCode(400));
+                        let _ = request.respond(response);
+                        continue;
                     }
                 };
 
-                log::debug!("Gemini raw response: {:?}", raw);
+                log::info!(
+                    "permission request: tool={}, cwd={:?}, suggestions={:?}",
+                    input.tool_name,
+                    input.cwd,
+                    input.permission_suggestions
+                );
 
-                // Strip markdown code fences if present.
-                let stripped = raw.trim();
-                let stripped = stripped
-                    .strip_prefix("```json\n")
-                    .or_else(|| stripped.strip_prefix("```json"))
-                    .or_else(|| stripped.strip_prefix("```\n"))
-                    .or_else(|| stripped.strip_prefix("```"))
-                    .unwrap_or(stripped);
-                let stripped = stripped
-                    .strip_suffix("\n```")
-                    .or_else(|| stripped.strip_suffix("```"))
-                    .unwrap_or(stripped)
-                    .trim();
+                // Decide the permission.
+                let hook_response = judge_permission(
+                    &input,
+                    auto_permission,
+                    &permission_model,
+                    &repo_path,
+                );
 
-                let (action, selected_index, reason) = if let Ok(parsed) =
-                    serde_json::from_str::<serde_json::Value>(stripped)
-                {
-                    let a = parsed
-                        .get("action")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("ask_user")
-                        .to_string();
-                    let si = parsed
-                        .get("selected_index")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize);
-                    let r = parsed
-                        .get("reason")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    (a, si, r)
-                } else {
-                    log::warn!("Permission judgment JSON parse failed. Stripped: {:?}", stripped);
-                    ("ask_user".to_string(), None, "パース失敗".to_string())
-                };
-
-                let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
-                    session_idx: idx,
-                    action,
-                    selected_index,
-                    reason,
-                    tool_name: tool_name_for_thread,
-                    user_message: user_msg_for_thread,
-                    cwd: cwd_for_thread,
-                });
-            });
-        }
-    }
-
-    /// Process results from API judgment threads.
-    pub fn process_permission_judge_results(&mut self) {
-        while let Ok(result) = self.terminal.permission_judge_rx.try_recv() {
-            // Remove from judging list.
-            self.terminal.permission_judging.retain(|j| j.session_idx != result.session_idx);
-
-            // Check if the permission prompt is still visible (user hasn't
-            // already responded manually).
-            let prompt_visible = self.terminal.pty_manager
-                .extract_permission_choices(result.session_idx)
-                .is_some();
-            if !prompt_visible {
-                continue; // User already responded — discard.
-            }
-
-            match result.action.as_str() {
-                "select" => {
-                    let option_index = result.selected_index.unwrap_or(0);
-                    // Get the option label for the status message before sending.
-                    let option_label = self.terminal.pty_manager
-                        .extract_permission_choices(result.session_idx)
-                        .and_then(|c| c.options.get(option_index).map(|(_, l)| l.clone()))
-                        .unwrap_or_else(|| format!("option {option_index}"));
-                    let sent = self.terminal.pty_manager
-                        .send_permission_selection(result.session_idx, option_index);
-                    if sent {
-                        self.set_status(
-                            format!("Auto-selected [{}]: {} ({})",
-                                option_label, result.tool_name, result.reason),
-                            StatusLevel::Info,
-                        );
-                        self.clear_cc_waiting_signal(result.session_idx);
-                    } else {
-                        // Index out of range — fall through to ask_user.
-                        let dialog_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
-                            std::sync::Arc::new(std::sync::Mutex::new(None));
-
-                        let fallback_choices = self.terminal.pty_manager
-                            .extract_permission_choices(result.session_idx);
-                        self.terminal.permission_queue.push(
-                            crate::terminal_state::PermissionRequest {
-                                session_idx: result.session_idx,
-                                tool_name: result.tool_name.clone(),
-                                reason: format!("Invalid index {option_index}: {}", result.reason),
-                                user_message: result.user_message.clone(),
-                                cwd: result.cwd.clone(),
-                                created_at: std::time::Instant::now(),
-                                dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
-                                choices: fallback_choices.clone(),
-                            },
-                        );
-
-                        self.set_status(
-                            format!("Permission needed (invalid index): {}", result.tool_name),
-                            StatusLevel::Warning,
-                        );
-
-                        // Show macOS dialog for fallback.
-                        let tx = self.terminal.permission_dialog_tx.clone();
-                        let dialog_session_idx = result.session_idx;
-                        let pid_slot = std::sync::Arc::clone(&dialog_pid);
-                        let notify_msg = format!("{}: {}", result.tool_name, result.reason);
-                        let dialog_user_msg = result.user_message.clone();
-                        let dialog_choices = fallback_choices;
-                        std::thread::spawn(move || {
-                            let mut dialog_text = notify_msg.replace('\\', "\\\\").replace('"', "\\\"");
-                            if !dialog_user_msg.is_empty() {
-                                let truncated: String = dialog_user_msg.chars().take(120).collect();
-                                let suffix = if dialog_user_msg.chars().count() > 120 { "…" } else { "" };
-                                let escaped = format!("\\n\\nContext: {truncated}{suffix}")
-                                    .replace('\\', "\\\\").replace('"', "\\\"");
-                                dialog_text.push_str(&escaped);
-                            }
-                            spawn_permission_dialog(
-                                dialog_text,
-                                dialog_choices,
-                                dialog_session_idx,
-                                pid_slot,
-                                tx,
-                            );
-                        });
-                    }
-                }
-                _ => {
-                    // ask_user — add to queue with dialog.
-                    let dialog_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
-                        std::sync::Arc::new(std::sync::Mutex::new(None));
-
-                    let ask_choices = self.terminal.pty_manager
-                        .extract_permission_choices(result.session_idx);
-                    self.terminal.permission_queue.push(
-                        crate::terminal_state::PermissionRequest {
-                            session_idx: result.session_idx,
-                            tool_name: result.tool_name.clone(),
-                            reason: result.reason.clone(),
-                            user_message: result.user_message,
-                            cwd: result.cwd,
-                            created_at: std::time::Instant::now(),
-                            dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
-                            choices: ask_choices,
-                        },
+                let json = serde_json::to_string(&hook_response).unwrap_or_default();
+                log::info!("permission response: {json}");
+                let response = tiny_http::Response::from_string(json)
+                    .with_header(
+                        "Content-Type: application/json"
+                            .parse::<tiny_http::Header>()
+                            .unwrap(),
                     );
-
-                    let notify_msg = format!("{}: {}", result.tool_name, result.reason);
-                    self.set_status(
-                        format!("Permission needed: {notify_msg}"),
-                        StatusLevel::Warning,
-                    );
-
-                    // Show macOS dialog — include user_message for context on "why".
-                    let tx = self.terminal.permission_dialog_tx.clone();
-                    let dialog_session_idx = result.session_idx;
-                    let pid_slot = std::sync::Arc::clone(&dialog_pid);
-                    // Retrieve choices and user_message from the just-pushed request.
-                    let dialog_user_msg = self.terminal.permission_queue.last()
-                        .map(|r| r.user_message.clone())
-                        .unwrap_or_default();
-                    let dialog_choices = self.terminal.permission_queue.last()
-                        .and_then(|r| r.choices.clone());
-                    std::thread::spawn(move || {
-                        let mut dialog_text = notify_msg.replace('\\', "\\\\").replace('"', "\\\"");
-                        if !dialog_user_msg.is_empty() {
-                            let truncated: String = dialog_user_msg.chars().take(120).collect();
-                            let suffix = if dialog_user_msg.chars().count() > 120 { "…" } else { "" };
-                            let escaped = format!("\\n\\nContext: {truncated}{suffix}")
-                                .replace('\\', "\\\\").replace('"', "\\\"");
-                            dialog_text.push_str(&escaped);
-                        }
-                        spawn_permission_dialog(
-                            dialog_text,
-                            dialog_choices,
-                            dialog_session_idx,
-                            pid_slot,
-                            tx,
-                        );
-                    });
-                }
-            }
-        }
-
-        // Clean up judging entries for sessions that no longer exist.
-        let session_count = self.terminal.pty_manager.session_count();
-        self.terminal.permission_judging.retain(|j| j.session_idx < session_count);
-    }
-
-    /// Process results from OS permission dialogs (background threads).
-    pub fn process_permission_dialog_results(&mut self) {
-        while let Ok(result) = self.terminal.permission_dialog_rx.try_recv() {
-            let idx = result.session_idx;
-
-            // Check if prompt is still visible.
-            let prompt_visible = self.terminal.pty_manager
-                .extract_permission_choices(idx)
-                .is_some();
-
-            if let Some(pos) = self.terminal.permission_queue.iter()
-                .position(|r| r.session_idx == idx)
-            {
-                let req = self.terminal.permission_queue.remove(pos);
-                if self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
-                    && self.terminal.permission_queue_selected > 0
-                {
-                    self.terminal.permission_queue_selected =
-                        self.terminal.permission_queue.len().saturating_sub(1);
-                }
-
-                if prompt_visible {
-                    let option_label = self.terminal.pty_manager
-                        .extract_permission_choices(idx)
-                        .and_then(|c| c.options.get(result.selected_index).map(|(_, l)| l.clone()))
-                        .unwrap_or_else(|| format!("option {}", result.selected_index));
-                    let sent = self.terminal.pty_manager
-                        .send_permission_selection(idx, result.selected_index);
-                    if sent {
-                        self.set_status(
-                            format!("Selected [{}] (dialog): {}", option_label, req.tool_name),
-                            StatusLevel::Info,
-                        );
-                        self.clear_cc_waiting_signal(idx);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Respond to the currently selected permission request.
-    /// Called when the user presses y (approve) or n (deny) on the queue.
-    pub fn respond_permission_request(&mut self, approve: bool) {
-        let idx = self.terminal.permission_queue_selected;
-        let request = match self.terminal.permission_queue.get(idx) {
-            Some(r) => r,
-            None => return,
-        };
-        let session_idx = request.session_idx;
-        let tool_name = request.tool_name.clone();
-
-        // Kill the OS dialog process if it's still running.
-        if let Some(ref pid_arc) = request.dialog_pid {
-            if let Some(pid) = *pid_arc.lock().unwrap_or_else(|e| e.into_inner()) {
-                let _ = std::process::Command::new("kill")
-                    .arg(pid.to_string())
-                    .output();
-            }
-        }
-
-        let sent = self.terminal.pty_manager
-            .send_permission_response(session_idx, approve);
-
-        if sent {
-            self.set_status(
-                format!("{}: {}",
-                    if approve { "Approved" } else { "Denied" },
-                    tool_name),
-                StatusLevel::Info,
-            );
-            self.clear_cc_waiting_signal(session_idx);
-        }
-
-        self.terminal.permission_queue.remove(idx);
-        if self.terminal.permission_queue_selected > 0
-            && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
-        {
-            self.terminal.permission_queue_selected =
-                self.terminal.permission_queue.len().saturating_sub(1);
-        }
-    }
-
-    /// Respond to the currently selected permission request by choosing a
-    /// specific option index. Used when the user presses a number key (1/2/3).
-    pub fn respond_permission_request_by_index(&mut self, option_index: usize) {
-        let queue_idx = self.terminal.permission_queue_selected;
-        let request = match self.terminal.permission_queue.get(queue_idx) {
-            Some(r) => r,
-            None => return,
-        };
-        let session_idx = request.session_idx;
-        let tool_name = request.tool_name.clone();
-
-        // Kill the OS dialog process if it's still running.
-        if let Some(ref pid_arc) = request.dialog_pid {
-            if let Some(pid) = *pid_arc.lock().unwrap_or_else(|e| e.into_inner()) {
-                let _ = std::process::Command::new("kill")
-                    .arg(pid.to_string())
-                    .output();
-            }
-        }
-
-        let option_label = request.choices.as_ref()
-            .and_then(|c| c.options.get(option_index).map(|(_, l)| l.clone()))
-            .unwrap_or_else(|| format!("option {option_index}"));
-
-        let sent = self.terminal.pty_manager
-            .send_permission_selection(session_idx, option_index);
-
-        if sent {
-            self.set_status(
-                format!("Selected [{}]: {}", option_label, tool_name),
-                StatusLevel::Info,
-            );
-            self.clear_cc_waiting_signal(session_idx);
-        }
-
-        self.terminal.permission_queue.remove(queue_idx);
-        if self.terminal.permission_queue_selected > 0
-            && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
-        {
-            self.terminal.permission_queue_selected =
-                self.terminal.permission_queue.len().saturating_sub(1);
-        }
-    }
-
-    /// Refresh `choices` for any queued permission requests that don't have
-    /// them yet (e.g. because the PTY screen wasn't ready when queued).
-    pub fn update_permission_queue_choices(&mut self) {
-        for req in &mut self.terminal.permission_queue {
-            if req.choices.is_none() {
-                req.choices = self.terminal.pty_manager
-                    .extract_permission_choices(req.session_idx);
-            }
-        }
-    }
-
-    /// Cancel any running API judgment for a given session.
-    /// Called when the user manually responds to a permission prompt.
-    pub fn cancel_permission_judging(&mut self, session_idx: usize) {
-        self.terminal.permission_judging.retain(|j| {
-            if j.session_idx == session_idx {
-                if let Some(pid) = *j.pid.lock().unwrap_or_else(|e| e.into_inner()) {
-                    let _ = std::process::Command::new("kill")
-                        .arg(pid.to_string())
-                        .output();
-                }
-                false // remove
-            } else {
-                true // keep
+                let _ = request.respond(response);
             }
         });
     }
+
 
     // ── Review helpers ────────────────────────────────────────────────
 
@@ -4423,79 +3874,384 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
 ///
 /// Spawn an osascript permission dialog with buttons matching the extracted
 /// choices (or falling back to "Deny" / "Approve" if no choices available).
-fn spawn_permission_dialog(
-    dialog_text: String,
-    choices: Option<crate::pty_manager::PermissionChoices>,
-    session_idx: usize,
-    pid_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
-    tx: std::sync::mpsc::Sender<crate::terminal_state::PermissionDialogResult>,
-) {
-    // Build button list and labels from choices.
-    // osascript has a 3-button limit; truncate labels to fit.
-    let button_labels: Vec<String> = if let Some(ref c) = choices {
-        c.options
-            .iter()
-            .take(3) // osascript supports max 3 buttons
-            .map(|(_, label)| {
-                // Truncate long labels for dialog buttons.
-                let truncated: String = label.chars().take(40).collect();
-                if label.chars().count() > 40 {
-                    format!("{truncated}…")
-                } else {
-                    truncated
-                }
-            })
-            .collect()
+/// Judge a permission request. Called from the HTTP handler thread.
+///
+/// For `auto_permission`: calls Gemini API synchronously and returns the decision.
+/// For manual: pushes to the TUI queue and blocks on a channel until user responds.
+fn judge_permission(
+    input: &crate::terminal_state::HookPermissionInput,
+    auto_permission: bool,
+    permission_model: &str,
+    repo_path: &std::path::Path,
+) -> crate::terminal_state::HookPermissionResponse {
+    use crate::terminal_state::HookPermissionResponse;
+
+    if !auto_permission {
+        return ask_user_permission(input);
+    }
+
+    // Read PERMISSION.md rules.
+    let repo_root = git_engine::GitEngine::open(repo_path)
+        .and_then(|e| e.main_worktree_path())
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let project_md = repo_root.join(".claude").join("PERMISSION.md");
+    let home = std::env::var("HOME").unwrap_or_default();
+    let global_md = std::path::PathBuf::from(&home)
+        .join(".claude")
+        .join("PERMISSION.md");
+
+    let project_rules = std::fs::read_to_string(&project_md).unwrap_or_default();
+    let global_rules = std::fs::read_to_string(&global_md).unwrap_or_default();
+    let settings_permissions = read_settings_permissions(&repo_root, &home);
+
+    if project_rules.is_empty() && global_rules.is_empty() && settings_permissions.is_empty() {
+        // No rules — just allow.
+        return HookPermissionResponse::allow();
+    }
+
+    let mut rules_section = if !global_rules.is_empty() && !project_rules.is_empty() {
+        format!(
+            "以下の2つのルールがあります。矛盾する場合はプロジェクトルールを優先してください。\n\n\
+             ### グローバルルール (~/.claude/PERMISSION.md)\n{global_rules}\n\n\
+             ### プロジェクトルール (.claude/PERMISSION.md) ※こちらが優先\n{project_rules}"
+        )
+    } else if !project_rules.is_empty() {
+        project_rules
     } else {
-        vec!["Deny".to_string(), "Approve".to_string()]
+        global_rules
     };
 
-    // osascript buttons: {"label1", "label2", ...}
-    let buttons_str = button_labels
+    if !settings_permissions.is_empty() {
+        rules_section.push_str(&format!(
+            "\n\n### settings.json / settings.local.json の許可・拒否パターン\n\
+             ユーザーが明示的に設定した allow/deny パターンです。これらに合致する場合は優先してください。\n\
+             {settings_permissions}"
+        ));
+    }
+
+    let tool_context = serde_json::json!({
+        "tool_name": &input.tool_name,
+        "tool_input": &input.tool_input,
+    })
+    .to_string();
+
+    let cwd = input.cwd.as_deref().unwrap_or("unknown");
+
+    let prompt = format!(
+        "ツール実行の許可判定を行ってください。\n\n\
+         ## ルール\n{rules_section}\n\n\
+         ## 判定対象\nツール詳細: {tool_context}\n\
+         作業ディレクトリ: {cwd}\n\n\
+         action は allow, deny, ask_user のいずれか。\n\
+         判断できない場合は ask_user を選択。reason は日本語で1文。"
+    );
+
+    let system_prompt = "You are a permission judgment assistant. Output JSON only. \
+        You must output a JSON object with two fields: \
+        \"action\" (one of \"allow\", \"deny\", \"ask_user\") and \
+        \"reason\" (a brief explanation in Japanese).";
+
+    let raw = match crate::gemini_api::call_messages_api(
+        system_prompt,
+        &prompt,
+        Some(permission_model),
+        1024,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("Gemini API call failed: {e}");
+            return ask_user_permission(input);
+        }
+    };
+
+    log::debug!("Gemini permission response: {raw:?}");
+
+    // Strip markdown code fences if present.
+    let stripped = raw.trim();
+    let stripped = stripped
+        .strip_prefix("```json\n")
+        .or_else(|| stripped.strip_prefix("```json"))
+        .or_else(|| stripped.strip_prefix("```\n"))
+        .or_else(|| stripped.strip_prefix("```"))
+        .unwrap_or(stripped);
+    let stripped = stripped
+        .strip_suffix("\n```")
+        .or_else(|| stripped.strip_suffix("```"))
+        .unwrap_or(stripped)
+        .trim();
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(stripped) {
+        let action = parsed
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("ask_user");
+        let reason = parsed
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        match action {
+            "allow" => {
+                log::info!("permission auto-allowed: {} ({})", input.tool_name, reason);
+                HookPermissionResponse::allow()
+            }
+            "deny" => {
+                log::info!("permission auto-denied: {} ({})", input.tool_name, reason);
+                HookPermissionResponse::deny(reason)
+            }
+            _ => {
+                log::info!("permission ask_user: {} ({})", input.tool_name, reason);
+                ask_user_permission(input)
+            }
+        }
+    } else {
+        log::warn!("permission judgment JSON parse failed: {stripped:?}");
+        ask_user_permission(input)
+    }
+}
+
+/// Show an osascript dialog and block until the user responds.
+/// Buttons are built from permission_suggestions (e.g. "Allow", "Always allow", "Deny").
+fn ask_user_permission(
+    input: &crate::terminal_state::HookPermissionInput,
+) -> crate::terminal_state::HookPermissionResponse {
+    use crate::terminal_state::HookPermissionResponse;
+
+    let tool_summary = summarize_tool_input(&input.tool_name, &input.tool_input);
+    let cwd = input.cwd.as_deref().unwrap_or("?");
+
+    // Build dialog text with tool info, description, and cwd.
+    let description = input
+        .tool_input
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let mut text_parts = vec![format!("{}: {}", input.tool_name, tool_summary)];
+    if !description.is_empty() {
+        text_parts.push(description.to_string());
+    }
+    text_parts.push(format!("cwd: {cwd}"));
+    // osascript needs literal newlines via string concatenation with `return`.
+    let dialog_text = text_parts
         .iter()
-        .map(|l| {
+        .map(|s| s.replace('\\', "\\\\").replace('"', "\\\""))
+        .collect::<Vec<_>>()
+        .join("\" & return & \"");
+
+    // Build button labels from permission_suggestions.
+    // Format: "Allow", then each suggestion as readable label, then "Deny".
+    // osascript supports max 3 buttons.
+    let mut buttons: Vec<(String, Option<usize>)> = Vec::new(); // (label, suggestion_index)
+    buttons.push(("Allow".to_string(), None));
+
+    for (i, suggestion) in input.permission_suggestions.iter().enumerate() {
+        if buttons.len() >= 2 {
+            break; // Leave room for Deny
+        }
+        // Try to build a readable label from the suggestion.
+        // The suggestion has type, tool, and extra fields with context like paths.
+        let label = format_suggestion_label(suggestion);
+        // Truncate to 40 chars for osascript.
+        let label: String = label.chars().take(40).collect();
+        buttons.push((label, Some(i)));
+    }
+
+    buttons.push(("Deny".to_string(), None));
+
+    // osascript buttons: {"label1", "label2", ...}
+    let buttons_str = buttons
+        .iter()
+        .map(|(l, _)| {
             let escaped = l.replace('\\', "\\\\").replace('"', "\\\"");
             format!("\"{escaped}\"")
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let default_button = button_labels
+    let default_button = buttons
         .first()
-        .map(|l| l.replace('\\', "\\\\").replace('"', "\\\""))
-        .unwrap_or_else(|| "Approve".to_string());
+        .map(|(l, _)| l.replace('\\', "\\\\").replace('"', "\\\""))
+        .unwrap_or_else(|| "Allow".to_string());
 
     let script = format!(
         "display dialog \"{dialog_text}\" with title \"Conductor Permission\" buttons {{{buttons_str}}} default button \"{default_button}\""
     );
+
     let child = match std::process::Command::new("osascript")
         .args(["-e", &script])
         .stdout(std::process::Stdio::piped())
         .spawn()
     {
         Ok(c) => c,
-        Err(_) => return,
+        Err(e) => {
+            log::warn!("failed to spawn osascript: {e}");
+            return HookPermissionResponse::deny("Failed to show permission dialog");
+        }
     };
-    *pid_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
-    let output = child.wait_with_output();
-    if let Ok(o) = &output {
-        if o.status.success() {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            // osascript output is like "button returned:Yes\n"
-            // Extract the button name after "button returned:".
-            let pressed = stdout
-                .trim()
-                .strip_prefix("button returned:")
-                .unwrap_or("")
-                .to_string();
-            // Find which button was pressed by exact match.
-            let selected_index = button_labels
-                .iter()
-                .position(|label| *label == pressed)
-                .unwrap_or(0);
-            let _ = tx.send(crate::terminal_state::PermissionDialogResult {
-                session_idx,
-                selected_index,
-            });
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            log::warn!("osascript wait failed: {e}");
+            return HookPermissionResponse::deny("Permission dialog error");
+        }
+    };
+
+    if !output.status.success() {
+        // User pressed Escape or dialog was cancelled.
+        return HookPermissionResponse::deny("User cancelled permission dialog");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pressed = stdout
+        .trim()
+        .strip_prefix("button returned:")
+        .unwrap_or("")
+        .to_string();
+
+    log::info!("permission dialog: user pressed '{pressed}'");
+
+    if pressed == "Deny" {
+        return HookPermissionResponse::deny("User denied");
+    }
+
+    // Check if the pressed button corresponds to a suggestion (always allow).
+    for (label, suggestion_idx) in &buttons {
+        if *label == pressed {
+            if let Some(idx) = suggestion_idx {
+                if let Some(suggestion) = input.permission_suggestions.get(*idx) {
+                    log::info!("permission: always allow via suggestion {:?}", suggestion);
+                    // FIXME: Claude Code 2.1.76 does NOT apply updatedPermissions from hook
+                    // responses (the schema parses it but the hook processing path never calls
+                    // the internal fE() / setAppState() to update the permission context).
+                    // See: https://github.com/anthropics/claude-code/issues/24540
+                    //      https://github.com/anthropics/claude-code/issues/29440
+                    // As a workaround, we write the permission directly to
+                    // .claude/settings.local.json so Claude Code picks it up on subsequent
+                    // requests. Remove this workaround once updatedPermissions is fixed.
+                    apply_suggestion_to_settings(suggestion, cwd);
+                    // Still return updatedPermissions in case a future CC version supports it.
+                    return HookPermissionResponse::allow_with_permissions(
+                        vec![suggestion.clone()],
+                    );
+                }
+            }
+        }
+    }
+
+    // Plain "Allow".
+    HookPermissionResponse::allow()
+}
+
+/// Write a permission suggestion to `.claude/settings.local.json`.
+///
+/// FIXME: This is a workaround for Claude Code not applying `updatedPermissions`
+/// from hook responses. Once that's fixed, this function can be removed.
+fn apply_suggestion_to_settings(
+    suggestion: &crate::terminal_state::PermissionSuggestion,
+    cwd: &str,
+) {
+    let settings_path = std::path::Path::new(cwd)
+        .join(".claude")
+        .join("settings.local.json");
+
+    // Read existing settings or create empty object.
+    let mut settings: serde_json::Value = std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let permissions = settings
+        .as_object_mut()
+        .unwrap()
+        .entry("permissions")
+        .or_insert_with(|| serde_json::json!({}));
+    let allow_list = permissions
+        .as_object_mut()
+        .unwrap()
+        .entry("allow")
+        .or_insert_with(|| serde_json::json!([]));
+    let allow_arr = allow_list.as_array_mut().unwrap();
+
+    match suggestion.suggestion_type.as_str() {
+        "addDirectories" => {
+            // Add Read/Write/Edit/Bash rules for the directories.
+            if let Some(dirs) = suggestion.extra.get("directories").and_then(|v| v.as_array()) {
+                for dir in dirs {
+                    if let Some(dir_str) = dir.as_str() {
+                        let rules = [
+                            format!("Read({dir_str}/**)"),
+                            format!("Write({dir_str}/**)"),
+                            format!("Edit({dir_str}/**)"),
+                            format!("Bash({dir_str}/**)"),
+                        ];
+                        for rule in &rules {
+                            let rule_val = serde_json::Value::String(rule.clone());
+                            if !allow_arr.contains(&rule_val) {
+                                allow_arr.push(rule_val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "toolAlwaysAllow" => {
+            if let Some(ref tool) = suggestion.tool {
+                let rule_val = serde_json::Value::String(tool.clone());
+                if !allow_arr.contains(&rule_val) {
+                    allow_arr.push(rule_val);
+                }
+            }
+        }
+        other => {
+            log::info!("apply_suggestion_to_settings: unhandled type '{other}', skipping");
+            return;
+        }
+    }
+
+    // Ensure .claude directory exists.
+    if let Some(parent) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    match serde_json::to_string_pretty(&settings) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&settings_path, json) {
+                log::warn!("failed to write settings.local.json: {e}");
+            } else {
+                log::info!("updated settings.local.json: {:?}", settings_path);
+            }
+        }
+        Err(e) => log::warn!("failed to serialize settings: {e}"),
+    }
+}
+
+/// Build a human-readable label for a permission suggestion button.
+fn format_suggestion_label(suggestion: &crate::terminal_state::PermissionSuggestion) -> String {
+    if let Some(ref tool) = suggestion.tool {
+        format!("Always allow ({tool})")
+    } else {
+        "Always allow".to_string()
+    }
+}
+
+/// Summarize tool_input for display in dialogs.
+pub fn summarize_tool_input(tool_name: &str, tool_input: &serde_json::Value) -> String {
+    match tool_name {
+        "Bash" => tool_input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .chars()
+            .take(120)
+            .collect(),
+        "Write" | "Edit" | "Read" => tool_input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        _ => {
+            let s = tool_input.to_string();
+            s.chars().take(120).collect()
         }
     }
 }

@@ -5,89 +5,122 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
-use crate::pty_manager::{self, PermissionChoices};
+use serde::{Deserialize, Serialize};
+
+use crate::pty_manager;
 use crate::ui::common::PtyRenderCache;
 
-/// A permission prompt that requires the user's decision.
-pub struct PermissionRequest {
-    /// PTY session index for the CC session.
-    pub session_idx: usize,
-    /// Tool name (e.g. "Bash", "Write").
-    pub tool_name: String,
-    /// Reason the AI judge could not decide.
-    pub reason: String,
-    /// The user message that triggered the tool call.
-    pub user_message: String,
-    /// Working directory of the CC session.
-    pub cwd: PathBuf,
-    /// When this request was created.
-    pub created_at: Instant,
-    /// PID of the osascript dialog process (if any), for killing on dismiss.
-    pub dialog_pid: Option<Arc<Mutex<Option<u32>>>>,
-    /// Available permission choices extracted from the PTY screen.
-    pub choices: Option<PermissionChoices>,
+// ---------------------------------------------------------------------------
+// PermissionRequest hook input/output types (Claude Code native hooks)
+// ---------------------------------------------------------------------------
+
+/// A permission suggestion from Claude Code (e.g. "always allow this tool").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionSuggestion {
+    #[serde(rename = "type")]
+    pub suggestion_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// Catch-all for additional fields.
+    #[serde(flatten)]
+    pub extra: serde_json::Value,
 }
 
-/// Result from an OS dialog permission prompt.
-pub struct PermissionDialogResult {
-    /// PTY session index.
-    pub session_idx: usize,
-    /// The 0-based index of the selected option.
-    pub selected_index: usize,
-}
-
-/// Result from Gemini API permission judgment.
-pub struct PermissionJudgeResult {
-    /// PTY session index.
-    pub session_idx: usize,
-    /// The action: "select" or "ask_user".
-    pub action: String,
-    /// Index of the selected option (0-based). Used when action is "select".
-    pub selected_index: Option<usize>,
-    /// Reason for the decision.
-    pub reason: String,
-    /// Tool name.
+/// Input received from the PermissionRequest hook (JSON on HTTP POST body).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct HookPermissionInput {
+    pub session_id: Option<String>,
+    pub transcript_path: Option<String>,
+    pub cwd: Option<String>,
+    pub permission_mode: Option<String>,
     pub tool_name: String,
-    /// User message context.
-    pub user_message: String,
-    /// Working directory.
-    pub cwd: PathBuf,
-}
-
-/// A permission judgment being processed via Gemini API.
-pub struct PermissionJudging {
-    /// PTY session index.
-    pub session_idx: usize,
-    /// Tool name.
-    pub tool_name: String,
-    /// Working directory.
-    pub cwd: PathBuf,
-    /// When the judgment started.
-    pub started_at: Instant,
-    /// PID placeholder (kept for cancellation tracking).
-    pub pid: Arc<Mutex<Option<u32>>>,
-}
-
-/// Incoming permission request received from the Unix socket server.
-pub struct IncomingPermission {
-    /// CC session ID.
-    pub session_id: String,
-    /// Tool name.
-    pub tool_name: String,
-    /// Tool input (JSON).
     pub tool_input: serde_json::Value,
-    /// User message context.
-    pub user_message: String,
-    /// Hook notification message.
-    pub hook_message: String,
-    /// Working directory of the CC session.
-    pub cwd: String,
-    /// Timestamp from the hook.
-    pub timestamp: i64,
+    #[serde(default)]
+    pub permission_suggestions: Vec<PermissionSuggestion>,
 }
+
+/// The decision part of the hook response.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookPermissionDecision {
+    pub behavior: String, // "allow" or "deny"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_input: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_permissions: Option<Vec<PermissionSuggestion>>,
+}
+
+/// The event-specific output wrapper.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookSpecificOutput {
+    pub hook_event_name: String,
+    pub decision: HookPermissionDecision,
+}
+
+/// Full hook response JSON.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookPermissionResponse {
+    pub hook_specific_output: HookSpecificOutput,
+}
+
+impl HookPermissionResponse {
+    pub fn allow() -> Self {
+        Self {
+            hook_specific_output: HookSpecificOutput {
+                hook_event_name: "PermissionRequest".to_string(),
+                decision: HookPermissionDecision {
+                    behavior: "allow".to_string(),
+                    message: None,
+                    updated_input: None,
+                    updated_permissions: None,
+                },
+            },
+        }
+    }
+
+    pub fn allow_with_permissions(permissions: Vec<PermissionSuggestion>) -> Self {
+        Self {
+            hook_specific_output: HookSpecificOutput {
+                hook_event_name: "PermissionRequest".to_string(),
+                decision: HookPermissionDecision {
+                    behavior: "allow".to_string(),
+                    message: None,
+                    updated_input: None,
+                    updated_permissions: if permissions.is_empty() {
+                        None
+                    } else {
+                        Some(permissions)
+                    },
+                },
+            },
+        }
+    }
+
+    pub fn deny(reason: &str) -> Self {
+        Self {
+            hook_specific_output: HookSpecificOutput {
+                hook_event_name: "PermissionRequest".to_string(),
+                decision: HookPermissionDecision {
+                    behavior: "deny".to_string(),
+                    message: Some(reason.to_string()),
+                    updated_input: None,
+                    updated_permissions: None,
+                },
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TerminalState
+// ---------------------------------------------------------------------------
 
 /// Aggregated state for the dual terminal panels (Claude Code + Shell).
 pub struct TerminalState {
@@ -123,37 +156,11 @@ pub struct TerminalState {
     /// Deferred prompts: session index → prompt text.
     /// Written once the CC session becomes ready (waiting for input).
     pub deferred_prompts: HashMap<usize, String>,
-    /// Permission requests awaiting user decision (ask_user).
-    pub permission_queue: Vec<PermissionRequest>,
-    /// Currently selected index in the permission queue.
-    pub permission_queue_selected: usize,
-    /// Session IDs already processed (to prevent duplicate handling).
-    pub permission_processed_sessions: HashSet<String>,
-    /// Channel for receiving OS dialog results.
-    pub permission_dialog_tx: mpsc::Sender<PermissionDialogResult>,
-    /// Receiver end — polled in the main loop.
-    pub permission_dialog_rx: mpsc::Receiver<PermissionDialogResult>,
-    /// Currently running API judgments (session_idx → state).
-    pub permission_judging: Vec<PermissionJudging>,
-    /// Channel for receiving API judgment results.
-    pub permission_judge_tx: mpsc::Sender<PermissionJudgeResult>,
-    /// Receiver end — polled in the main loop.
-    pub permission_judge_rx: mpsc::Receiver<PermissionJudgeResult>,
-    /// Channel for receiving incoming permission requests from the Unix socket server.
-    pub permission_incoming_tx: mpsc::Sender<IncomingPermission>,
-    /// Receiver end — polled in the main loop.
-    pub permission_incoming_rx: mpsc::Receiver<IncomingPermission>,
-    /// Pending permission requests that were deferred because a judgment
-    /// was already in progress for the same session.
-    pub permission_pending: Vec<IncomingPermission>,
 }
 
 impl TerminalState {
     /// Create a new `TerminalState` with the given scrollback limits.
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
-        let (dialog_tx, dialog_rx) = mpsc::channel();
-        let (judge_tx, judge_rx) = mpsc::channel();
-        let (incoming_tx, incoming_rx) = mpsc::channel();
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
             active_claude_session: None,
@@ -170,17 +177,6 @@ impl TerminalState {
             shell_blank_last_click: Instant::now(),
             needs_clear: false,
             deferred_prompts: HashMap::new(),
-            permission_queue: Vec::new(),
-            permission_queue_selected: 0,
-            permission_processed_sessions: HashSet::new(),
-            permission_dialog_tx: dialog_tx,
-            permission_dialog_rx: dialog_rx,
-            permission_judging: Vec::new(),
-            permission_judge_tx: judge_tx,
-            permission_judge_rx: judge_rx,
-            permission_incoming_tx: incoming_tx,
-            permission_incoming_rx: incoming_rx,
-            permission_pending: Vec::new(),
         }
     }
 }
