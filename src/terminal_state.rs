@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
-use crate::pty_manager;
+use crate::pty_manager::{self, PermissionChoices};
 use crate::ui::common::PtyRenderCache;
 
 /// A permission prompt that requires the user's decision.
@@ -27,22 +27,26 @@ pub struct PermissionRequest {
     pub created_at: Instant,
     /// PID of the osascript dialog process (if any), for killing on dismiss.
     pub dialog_pid: Option<Arc<Mutex<Option<u32>>>>,
+    /// Available permission choices extracted from the PTY screen.
+    pub choices: Option<PermissionChoices>,
 }
 
 /// Result from an OS dialog permission prompt.
 pub struct PermissionDialogResult {
     /// PTY session index.
     pub session_idx: usize,
-    /// Whether the user approved.
-    pub approved: bool,
+    /// The 0-based index of the selected option.
+    pub selected_index: usize,
 }
 
 /// Result from Gemini API permission judgment.
 pub struct PermissionJudgeResult {
     /// PTY session index.
     pub session_idx: usize,
-    /// The action: "approve", "deny", or "ask_user".
+    /// The action: "select" or "ask_user".
     pub action: String,
+    /// Index of the selected option (0-based). Used when action is "select".
+    pub selected_index: Option<usize>,
     /// Reason for the decision.
     pub reason: String,
     /// Tool name.

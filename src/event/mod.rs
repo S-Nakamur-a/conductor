@@ -145,6 +145,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 app.respond_permission_request(false);
                 return;
             }
+            KeyCode::Char(c @ '1'..='9') => {
+                let option_index = (c as usize) - ('1' as usize); // '1' → 0, '2' → 1, etc.
+                app.respond_permission_request_by_index(option_index);
+                return;
+            }
             KeyCode::Char('j') => {
                 let len = app.terminal.permission_queue.len();
                 if len > 0 {

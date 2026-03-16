@@ -520,6 +520,7 @@ fn run_loop(
             app.process_permission_judgments();
             app.process_permission_judge_results();
             app.process_permission_dialog_results();
+            app.update_permission_queue_choices();
             app.flush_deferred_prompts();
             needs_redraw = true;
         }
@@ -882,8 +883,12 @@ fn render_permission_overlay(
 
     // Size: fit content, max 50% of screen.
     let max_h = (area.height / 2).max(8);
-    // 3 lines per item (tool + reason + context) + 2 border + 1 hint
-    let content_h = (queue.len() as u16 * 3 + 1).min(max_h - 2);
+    // 3 lines per item (tool + reason + context) + choice lines for selected + 2 border + 1 hint
+    let choice_lines: u16 = queue.get(selected)
+        .and_then(|r| r.choices.as_ref())
+        .map(|c| c.options.len() as u16)
+        .unwrap_or(0);
+    let content_h = (queue.len() as u16 * 3 + choice_lines + 1).min(max_h - 2);
     let popup_height = content_h + 2; // border
     let popup_width = area.width.saturating_sub(10).min(80);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -948,9 +953,29 @@ fn render_permission_overlay(
         }
     }
 
+    // Show available choices for the selected item.
+    let selected_req = queue.get(selected);
+    if let Some(req) = selected_req {
+        if let Some(ref choices) = req.choices {
+            let choice_style = Style::default().fg(Color::Rgb(180, 180, 255));
+            for (idx, label) in &choices.options {
+                let key_num = idx + 1; // display as 1-based
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {key_num}. "), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(label, choice_style),
+                ]));
+            }
+        }
+    }
+
     // Hint line
+    let hint_text = if selected_req.is_some_and(|r| r.choices.as_ref().is_some_and(|c| !c.options.is_empty())) {
+        " [1-9]select  [y]approve  [n]deny  [j/k]navigate"
+    } else {
+        " [y]approve  [n]deny  [j/k]navigate"
+    };
     lines.push(Line::from(Span::styled(
-        " [y]approve  [n]deny  [j/k]navigate",
+        hint_text,
         Style::default().fg(Color::DarkGray),
     )));
 

@@ -1995,6 +1995,7 @@ impl App {
                 let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
                     session_idx: idx,
                     action: "ask_user".to_string(),
+                    selected_index: None,
                     reason: "auto_permission is disabled".to_string(),
                     tool_name: tool_name.clone(),
                     user_message: user_message.clone(),
@@ -2002,6 +2003,15 @@ impl App {
                 });
                 continue;
             }
+
+            // Extract permission choices from the PTY screen.
+            let choices = self.terminal.pty_manager.extract_permission_choices(idx);
+            if choices.is_none() {
+                // Choices not yet visible — defer to next poll cycle.
+                self.terminal.permission_pending.push(incoming);
+                continue;
+            }
+            let choices = choices.unwrap();
 
             // Read PERMISSION.md files.
             let repo_root = git_engine::GitEngine::open(&self.repo_path)
@@ -2050,12 +2060,22 @@ impl App {
                 "user_message": &user_message,
             }).to_string();
 
+            // Build choices list for the prompt.
+            let choices_text: String = choices.options.iter()
+                .map(|(i, label)| format!("  {i}: {label}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let max_index = choices.options.len().saturating_sub(1);
+
             let prompt = format!(
                 "ツール実行の許可判定を行ってください。\n\n\
                  ## ルール\n{rules_section}\n\n\
                  ## 判定対象\n通知: {hook_message}\nツール詳細: {tool_context}\n\
                  作業ディレクトリ: {cwd}\n\n\
-                 action は approve, deny, ask_user のいずれか。reason は日本語で1文。"
+                 ## 選択肢\n以下の選択肢から適切なものを選んでください:\n{choices_text}\n\n\
+                 action は select または ask_user。\n\
+                 select の場合は selected_index に選択肢の番号(0〜{max_index})を指定。\n\
+                 判断できない場合は ask_user を選択。reason は日本語で1文。"
             );
 
             // Track the judging state.
@@ -2083,8 +2103,9 @@ impl App {
             let permission_model = self.config.api.permission_model.clone();
             std::thread::spawn(move || {
                 let system_prompt = "You are a permission judgment assistant. Output JSON only. \
-                    You must output a JSON object with two fields: \
-                    \"action\" (one of \"approve\", \"deny\", \"ask_user\") and \
+                    You must output a JSON object with three fields: \
+                    \"action\" (one of \"select\", \"ask_user\"), \
+                    \"selected_index\" (integer, the 0-based index of the chosen option when action is \"select\"), and \
                     \"reason\" (a brief explanation in Japanese).";
 
                 let raw = match crate::gemini_api::call_messages_api(
@@ -2099,6 +2120,7 @@ impl App {
                         let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
                             session_idx: idx,
                             action: "ask_user".to_string(),
+                            selected_index: None,
                             reason: format!("API error: {e}"),
                             tool_name: tool_name_for_thread,
                             user_message: user_msg_for_thread,
@@ -2124,7 +2146,7 @@ impl App {
                     .unwrap_or(stripped)
                     .trim();
 
-                let (action, reason) = if let Ok(parsed) =
+                let (action, selected_index, reason) = if let Ok(parsed) =
                     serde_json::from_str::<serde_json::Value>(stripped)
                 {
                     let a = parsed
@@ -2132,20 +2154,25 @@ impl App {
                         .and_then(|v| v.as_str())
                         .unwrap_or("ask_user")
                         .to_string();
+                    let si = parsed
+                        .get("selected_index")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize);
                     let r = parsed
                         .get("reason")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    (a, r)
+                    (a, si, r)
                 } else {
                     log::warn!("Permission judgment JSON parse failed. Stripped: {:?}", stripped);
-                    ("ask_user".to_string(), "パース失敗".to_string())
+                    ("ask_user".to_string(), None, "パース失敗".to_string())
                 };
 
                 let _ = tx.send(crate::terminal_state::PermissionJudgeResult {
                     session_idx: idx,
                     action,
+                    selected_index,
                     reason,
                     tool_name: tool_name_for_thread,
                     user_message: user_msg_for_thread,
@@ -2164,26 +2191,78 @@ impl App {
             // Check if the permission prompt is still visible (user hasn't
             // already responded manually).
             let prompt_visible = self.terminal.pty_manager
-                .permission_prompt_keystrokes(result.session_idx, true)
+                .extract_permission_choices(result.session_idx)
                 .is_some();
             if !prompt_visible {
                 continue; // User already responded — discard.
             }
 
             match result.action.as_str() {
-                "approve" | "deny" => {
-                    let approve = result.action == "approve";
-                    let keystrokes = self.terminal.pty_manager
-                        .permission_prompt_keystrokes(result.session_idx, approve);
-                    if let Some(input_bytes) = keystrokes {
+                "select" => {
+                    let option_index = result.selected_index.unwrap_or(0);
+                    // Get the option label for the status message before sending.
+                    let option_label = self.terminal.pty_manager
+                        .extract_permission_choices(result.session_idx)
+                        .and_then(|c| c.options.get(option_index).map(|(_, l)| l.clone()))
+                        .unwrap_or_else(|| format!("option {option_index}"));
+                    let sent = self.terminal.pty_manager
+                        .send_permission_selection(result.session_idx, option_index);
+                    if sent {
                         self.set_status(
-                            format!("Auto-{}: {} ({})",
-                                if approve { "approved" } else { "denied" },
-                                result.tool_name, result.reason),
+                            format!("Auto-selected [{}]: {} ({})",
+                                option_label, result.tool_name, result.reason),
                             StatusLevel::Info,
                         );
-                        let _ = self.terminal.pty_manager.write_to_session(result.session_idx, &input_bytes);
                         self.clear_cc_waiting_signal(result.session_idx);
+                    } else {
+                        // Index out of range — fall through to ask_user.
+                        let dialog_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
+                            std::sync::Arc::new(std::sync::Mutex::new(None));
+
+                        let fallback_choices = self.terminal.pty_manager
+                            .extract_permission_choices(result.session_idx);
+                        self.terminal.permission_queue.push(
+                            crate::terminal_state::PermissionRequest {
+                                session_idx: result.session_idx,
+                                tool_name: result.tool_name.clone(),
+                                reason: format!("Invalid index {option_index}: {}", result.reason),
+                                user_message: result.user_message.clone(),
+                                cwd: result.cwd.clone(),
+                                created_at: std::time::Instant::now(),
+                                dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
+                                choices: fallback_choices.clone(),
+                            },
+                        );
+
+                        self.set_status(
+                            format!("Permission needed (invalid index): {}", result.tool_name),
+                            StatusLevel::Warning,
+                        );
+
+                        // Show macOS dialog for fallback.
+                        let tx = self.terminal.permission_dialog_tx.clone();
+                        let dialog_session_idx = result.session_idx;
+                        let pid_slot = std::sync::Arc::clone(&dialog_pid);
+                        let notify_msg = format!("{}: {}", result.tool_name, result.reason);
+                        let dialog_user_msg = result.user_message.clone();
+                        let dialog_choices = fallback_choices;
+                        std::thread::spawn(move || {
+                            let mut dialog_text = notify_msg.replace('\\', "\\\\").replace('"', "\\\"");
+                            if !dialog_user_msg.is_empty() {
+                                let truncated: String = dialog_user_msg.chars().take(120).collect();
+                                let suffix = if dialog_user_msg.chars().count() > 120 { "…" } else { "" };
+                                let escaped = format!("\\n\\nContext: {truncated}{suffix}")
+                                    .replace('\\', "\\\\").replace('"', "\\\"");
+                                dialog_text.push_str(&escaped);
+                            }
+                            spawn_permission_dialog(
+                                dialog_text,
+                                dialog_choices,
+                                dialog_session_idx,
+                                pid_slot,
+                                tx,
+                            );
+                        });
                     }
                 }
                 _ => {
@@ -2191,6 +2270,8 @@ impl App {
                     let dialog_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
                         std::sync::Arc::new(std::sync::Mutex::new(None));
 
+                    let ask_choices = self.terminal.pty_manager
+                        .extract_permission_choices(result.session_idx);
                     self.terminal.permission_queue.push(
                         crate::terminal_state::PermissionRequest {
                             session_idx: result.session_idx,
@@ -2200,6 +2281,7 @@ impl App {
                             cwd: result.cwd,
                             created_at: std::time::Instant::now(),
                             dialog_pid: Some(std::sync::Arc::clone(&dialog_pid)),
+                            choices: ask_choices,
                         },
                     );
 
@@ -2213,42 +2295,28 @@ impl App {
                     let tx = self.terminal.permission_dialog_tx.clone();
                     let dialog_session_idx = result.session_idx;
                     let pid_slot = std::sync::Arc::clone(&dialog_pid);
-                    // Retrieve user_message from the just-pushed request.
+                    // Retrieve choices and user_message from the just-pushed request.
                     let dialog_user_msg = self.terminal.permission_queue.last()
                         .map(|r| r.user_message.clone())
                         .unwrap_or_default();
+                    let dialog_choices = self.terminal.permission_queue.last()
+                        .and_then(|r| r.choices.clone());
                     std::thread::spawn(move || {
                         let mut dialog_text = notify_msg.replace('\\', "\\\\").replace('"', "\\\"");
                         if !dialog_user_msg.is_empty() {
-                            // Truncate long user messages for the dialog.
                             let truncated: String = dialog_user_msg.chars().take(120).collect();
                             let suffix = if dialog_user_msg.chars().count() > 120 { "…" } else { "" };
                             let escaped = format!("\\n\\nContext: {truncated}{suffix}")
                                 .replace('\\', "\\\\").replace('"', "\\\"");
                             dialog_text.push_str(&escaped);
                         }
-                        let script = format!(
-                            "display dialog \"{}\" with title \"Conductor Permission\" buttons {{\"Deny\", \"Approve\"}} default button \"Approve\"",
-                            dialog_text
+                        spawn_permission_dialog(
+                            dialog_text,
+                            dialog_choices,
+                            dialog_session_idx,
+                            pid_slot,
+                            tx,
                         );
-                        let child = match std::process::Command::new("osascript")
-                            .args(["-e", &script])
-                            .stdout(std::process::Stdio::piped())
-                            .spawn()
-                        {
-                            Ok(c) => c,
-                            Err(_) => return,
-                        };
-                        *pid_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
-                        let output = child.wait_with_output();
-                        let approved = matches!(&output, Ok(o) if o.status.success()
-                            && String::from_utf8_lossy(&o.stdout).contains("Approve"));
-                        if output.map(|o| o.status.success()).unwrap_or(false) {
-                            let _ = tx.send(crate::terminal_state::PermissionDialogResult {
-                                session_idx: dialog_session_idx,
-                                approved,
-                            });
-                        }
                     });
                 }
             }
@@ -2266,7 +2334,7 @@ impl App {
 
             // Check if prompt is still visible.
             let prompt_visible = self.terminal.pty_manager
-                .permission_prompt_keystrokes(idx, true)
+                .extract_permission_choices(idx)
                 .is_some();
 
             if let Some(pos) = self.terminal.permission_queue.iter()
@@ -2281,15 +2349,17 @@ impl App {
                 }
 
                 if prompt_visible {
-                    let keystrokes = self.terminal.pty_manager
-                        .permission_prompt_keystrokes(idx, result.approved);
-                    if let Some(input_bytes) = keystrokes {
-                        let action_str = if result.approved { "Approved" } else { "Denied" };
+                    let option_label = self.terminal.pty_manager
+                        .extract_permission_choices(idx)
+                        .and_then(|c| c.options.get(result.selected_index).map(|(_, l)| l.clone()))
+                        .unwrap_or_else(|| format!("option {}", result.selected_index));
+                    let sent = self.terminal.pty_manager
+                        .send_permission_selection(idx, result.selected_index);
+                    if sent {
                         self.set_status(
-                            format!("{action_str} (dialog): {}", req.tool_name),
+                            format!("Selected [{}] (dialog): {}", option_label, req.tool_name),
                             StatusLevel::Info,
                         );
-                        let _ = self.terminal.pty_manager.write_to_session(idx, &input_bytes);
                         self.clear_cc_waiting_signal(idx);
                     }
                 }
@@ -2317,17 +2387,16 @@ impl App {
             }
         }
 
-        let keystrokes = self.terminal.pty_manager
-            .permission_prompt_keystrokes(session_idx, approve);
+        let sent = self.terminal.pty_manager
+            .send_permission_response(session_idx, approve);
 
-        if let Some(input_bytes) = keystrokes {
+        if sent {
             self.set_status(
                 format!("{}: {}",
                     if approve { "Approved" } else { "Denied" },
                     tool_name),
                 StatusLevel::Info,
             );
-            let _ = self.terminal.pty_manager.write_to_session(session_idx, &input_bytes);
             self.clear_cc_waiting_signal(session_idx);
         }
 
@@ -2337,6 +2406,61 @@ impl App {
         {
             self.terminal.permission_queue_selected =
                 self.terminal.permission_queue.len().saturating_sub(1);
+        }
+    }
+
+    /// Respond to the currently selected permission request by choosing a
+    /// specific option index. Used when the user presses a number key (1/2/3).
+    pub fn respond_permission_request_by_index(&mut self, option_index: usize) {
+        let queue_idx = self.terminal.permission_queue_selected;
+        let request = match self.terminal.permission_queue.get(queue_idx) {
+            Some(r) => r,
+            None => return,
+        };
+        let session_idx = request.session_idx;
+        let tool_name = request.tool_name.clone();
+
+        // Kill the OS dialog process if it's still running.
+        if let Some(ref pid_arc) = request.dialog_pid {
+            if let Some(pid) = *pid_arc.lock().unwrap_or_else(|e| e.into_inner()) {
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .output();
+            }
+        }
+
+        let option_label = request.choices.as_ref()
+            .and_then(|c| c.options.get(option_index).map(|(_, l)| l.clone()))
+            .unwrap_or_else(|| format!("option {option_index}"));
+
+        let sent = self.terminal.pty_manager
+            .send_permission_selection(session_idx, option_index);
+
+        if sent {
+            self.set_status(
+                format!("Selected [{}]: {}", option_label, tool_name),
+                StatusLevel::Info,
+            );
+            self.clear_cc_waiting_signal(session_idx);
+        }
+
+        self.terminal.permission_queue.remove(queue_idx);
+        if self.terminal.permission_queue_selected > 0
+            && self.terminal.permission_queue_selected >= self.terminal.permission_queue.len()
+        {
+            self.terminal.permission_queue_selected =
+                self.terminal.permission_queue.len().saturating_sub(1);
+        }
+    }
+
+    /// Refresh `choices` for any queued permission requests that don't have
+    /// them yet (e.g. because the PTY screen wasn't ready when queued).
+    pub fn update_permission_queue_choices(&mut self) {
+        for req in &mut self.terminal.permission_queue {
+            if req.choices.is_none() {
+                req.choices = self.terminal.pty_manager
+                    .extract_permission_choices(req.session_idx);
+            }
         }
     }
 
@@ -4297,6 +4421,85 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
 
 /// Read allow/deny permission patterns from Claude Code settings files.
 ///
+/// Spawn an osascript permission dialog with buttons matching the extracted
+/// choices (or falling back to "Deny" / "Approve" if no choices available).
+fn spawn_permission_dialog(
+    dialog_text: String,
+    choices: Option<crate::pty_manager::PermissionChoices>,
+    session_idx: usize,
+    pid_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+    tx: std::sync::mpsc::Sender<crate::terminal_state::PermissionDialogResult>,
+) {
+    // Build button list and labels from choices.
+    // osascript has a 3-button limit; truncate labels to fit.
+    let button_labels: Vec<String> = if let Some(ref c) = choices {
+        c.options
+            .iter()
+            .take(3) // osascript supports max 3 buttons
+            .map(|(_, label)| {
+                // Truncate long labels for dialog buttons.
+                let truncated: String = label.chars().take(40).collect();
+                if label.chars().count() > 40 {
+                    format!("{truncated}…")
+                } else {
+                    truncated
+                }
+            })
+            .collect()
+    } else {
+        vec!["Deny".to_string(), "Approve".to_string()]
+    };
+
+    // osascript buttons: {"label1", "label2", ...}
+    let buttons_str = button_labels
+        .iter()
+        .map(|l| {
+            let escaped = l.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("\"{escaped}\"")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let default_button = button_labels
+        .first()
+        .map(|l| l.replace('\\', "\\\\").replace('"', "\\\""))
+        .unwrap_or_else(|| "Approve".to_string());
+
+    let script = format!(
+        "display dialog \"{dialog_text}\" with title \"Conductor Permission\" buttons {{{buttons_str}}} default button \"{default_button}\""
+    );
+    let child = match std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    *pid_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+    let output = child.wait_with_output();
+    if let Ok(o) = &output {
+        if o.status.success() {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            // osascript output is like "button returned:Yes\n"
+            // Extract the button name after "button returned:".
+            let pressed = stdout
+                .trim()
+                .strip_prefix("button returned:")
+                .unwrap_or("")
+                .to_string();
+            // Find which button was pressed by exact match.
+            let selected_index = button_labels
+                .iter()
+                .position(|label| *label == pressed)
+                .unwrap_or(0);
+            let _ = tx.send(crate::terminal_state::PermissionDialogResult {
+                session_idx,
+                selected_index,
+            });
+        }
+    }
+}
+
 /// Reads from up to 4 files (global settings, global local settings,
 /// project settings, project local settings) and formats them for the
 /// permission judgment prompt.
