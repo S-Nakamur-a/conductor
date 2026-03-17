@@ -260,23 +260,12 @@ pub struct KeybindsConfig {
 }
 
 /// `[notification]` section.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationConfig {
     /// Automatically respond to CC permission prompts using PERMISSION.md rules.
     /// Off by default — this feature can auto-approve tool execution.
     pub auto_permission: bool,
-    /// HTTP port for the permission hook server.
-    pub http_port: u16,
-}
-
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self {
-            auto_permission: false,
-            http_port: 19876,
-        }
-    }
 }
 
 /// `[ccusage]` section.
@@ -421,7 +410,6 @@ pub fn generate_default_config() -> String {
 
 [notification]
 # auto_permission = false               # auto-respond to CC permission prompts using PERMISSION.md
-# http_port = 19876                     # HTTP port for the PermissionRequest hook server
 
 [ccusage]
 # enabled = false                       # token usage display in the title bar (requires ccusage)
