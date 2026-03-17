@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "http",
-            "url": "http://127.0.0.1:19876/api/permission",
-            "timeout": 60
-          }
-        ]
-      }
-    ],
     "Notification": [
       {
         "matcher": "permission_prompt|elicitation_dialog|idle_prompt",
