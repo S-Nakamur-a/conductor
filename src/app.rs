@@ -175,27 +175,14 @@ const INSTRUMENTS: &[&str] = &[
     "\u{1f4ef}", // 📯 Postal Horn
 ];
 
-/// Run the LLM generation for smart worktree (branch name + prompt) via Gemini API.
-///
-/// Checks `cancel_token` before calling; the API call itself is blocking.
-fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>, model: &str) -> Result<SmartGenResult, String> {
-    if cancel_token.load(Ordering::Relaxed) {
-        return Err("Cancelled".to_string());
-    }
-
-    let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
+const SMART_WORKTREE_SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
 Output ONLY a JSON object with two fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
 - "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
-    let raw = crate::gemini_api::call_messages_api(system_prompt, desc, Some(model), 1024)
-        .map_err(|e| format!("Gemini API error: {e}"))?;
-
-    if cancel_token.load(Ordering::Relaxed) {
-        return Err("Cancelled".to_string());
-    }
-
+/// Parse LLM raw output into `SmartGenResult`, stripping markdown fences if present.
+fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
     let json_str = raw
         .trim()
         .strip_prefix("```json")
@@ -207,6 +194,60 @@ No markdown fences, no explanation, just the JSON object."#;
         .trim();
     serde_json::from_str::<SmartGenResult>(json_str)
         .map_err(|e| format!("JSON parse error: {e}\nRaw output: {raw}"))
+}
+
+/// Fallback: call `claude -p` CLI with the same system prompt and description.
+fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
+    log::info!("Smart worktree: falling back to claude -p CLI");
+    let output = std::process::Command::new("claude")
+        .args(["-p", "--output-format", "text"])
+        .arg("--system-prompt")
+        .arg(SMART_WORKTREE_SYSTEM_PROMPT)
+        .arg(desc)
+        .output()
+        .map_err(|e| format!("Failed to run claude CLI: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("claude CLI failed ({}): {stderr}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if stdout.trim().is_empty() {
+        return Err("claude CLI returned empty output".to_string());
+    }
+    Ok(stdout)
+}
+
+/// Run the LLM generation for smart worktree (branch name + prompt).
+///
+/// Tries the Gemini API first; if it fails, falls back to `claude -p` CLI.
+/// Checks `cancel_token` before each call; the API calls are blocking.
+fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>, model: &str) -> Result<SmartGenResult, String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
+    }
+
+    // Phase 1: Try Gemini API.
+    let raw = match crate::gemini_api::call_messages_api(SMART_WORKTREE_SYSTEM_PROMPT, desc, Some(model), 1024) {
+        Ok(raw) => raw,
+        Err(gemini_err) => {
+            log::warn!("Gemini API failed, falling back to claude CLI: {gemini_err}");
+
+            if cancel_token.load(Ordering::Relaxed) {
+                return Err("Cancelled".to_string());
+            }
+
+            // Phase 1b: Fallback to claude -p CLI.
+            run_smart_generation_claude_cli(desc)?
+        }
+    };
+
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
+    }
+
+    parse_smart_gen_result(&raw)
 }
 
 /// Info about a grabbed branch (branch checkout swap with main).
