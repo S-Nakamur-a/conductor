@@ -33,6 +33,8 @@ pub struct TerminalState {
     pub cache_claude: PtyRenderCache,
     /// Cached PTY render output for Shell terminal.
     pub cache_shell: PtyRenderCache,
+    /// Worktree paths whose Claude Code sessions are actively working.
+    pub cc_active_worktrees: HashSet<PathBuf>,
     /// Worktree paths whose Claude Code sessions are waiting for user input.
     pub cc_waiting_worktrees: HashSet<PathBuf>,
     /// Acknowledged waiting states — maps worktree path to the PTY session's
@@ -62,6 +64,7 @@ impl TerminalState {
             scroll_shell: 0,
             cache_claude: Default::default(),
             cache_shell: Default::default(),
+            cc_active_worktrees: HashSet::new(),
             cc_waiting_worktrees: HashSet::new(),
             cc_waiting_ack_time: HashMap::new(),
             claude_blank_last_click: Instant::now(),
