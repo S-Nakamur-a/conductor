@@ -3390,8 +3390,9 @@ impl App {
             {
                 let path = wt_path.clone();
                 self.bg_file_tree_op.start(move |tx| {
+                    let gi = ViewerState::build_gitignore(&path);
                     let mut entries = Vec::new();
-                    ViewerState::walk_dir(&path, &path, 0, &mut entries);
+                    ViewerState::walk_dir(&path, &path, 0, &mut entries, Some(&gi));
                     let _ = tx.send(entries);
                 });
             }
@@ -3519,6 +3520,7 @@ impl App {
         // File tree result.
         if let Some(entries) = self.bg_file_tree_op.poll() {
             self.viewer_state.file_tree = entries;
+            self.viewer_state.invalidate_visible_cache();
             // Re-open the previously viewed file if it still exists.
             if let Some(wt) = self.worktrees.get(self.selected_worktree) {
                 let wt_path = wt.path.clone();

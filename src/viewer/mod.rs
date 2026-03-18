@@ -7,11 +7,13 @@
 mod file_tree;
 mod file_view;
 
-pub use file_tree::{FileTreeEntry, ScoredFile};
+pub use file_tree::{file_icon, FileTreeEntry, ScoredFile};
 pub use file_view::UnifiedDiffEntry;
 
 use std::fs;
 use std::path::Path;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::Theme as SyntectTheme;
@@ -103,6 +105,11 @@ pub struct ViewerState {
     pub filename_search_all_files: Vec<String>,
     /// Media rendering state (images/videos displayed as ASCII art).
     pub media_state: MediaState,
+    /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
+    cached_visible_indices: Option<Rc<Vec<usize>>>,
+    /// Gitignore matcher built from the worktree root. `Arc` so it can be
+    /// shared with background tree walks. `None` until the first tree load.
+    gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
 }
 
 impl Default for ViewerState {
@@ -147,6 +154,8 @@ impl Default for ViewerState {
             filename_search_selected: 0,
             filename_search_all_files: Vec::new(),
             media_state: MediaState::default(),
+            cached_visible_indices: None,
+            gitignore: None,
         }
     }
 }
@@ -174,15 +183,25 @@ impl ViewerState {
             .map(|e| e.path.clone())
             .collect();
 
+        // Build (or rebuild) the gitignore matcher for this worktree.
+        self.gitignore = Some(Arc::new(Self::build_gitignore(worktree_path)));
+
         // Rebuild the tree from disk.
         self.file_tree.clear();
-        Self::walk_dir(worktree_path, worktree_path, 0, &mut self.file_tree);
+        self.invalidate_visible_cache();
+        Self::walk_dir(worktree_path, worktree_path, 0, &mut self.file_tree, self.gitignore.as_deref());
 
-        // Restore directory expansion state.
-        for entry in &mut self.file_tree {
-            if entry.is_dir && expanded_dirs.contains(&entry.path) {
-                entry.is_expanded = true;
+        // Restore directory expansion state. For lazily-loaded dirs, also
+        // load their children so the tree looks the same as before the refresh.
+        let mut idx = 0;
+        while idx < self.file_tree.len() {
+            if self.file_tree[idx].is_dir && expanded_dirs.contains(&self.file_tree[idx].path) {
+                self.file_tree[idx].is_expanded = true;
+                if !self.file_tree[idx].children_loaded {
+                    self.ensure_children_loaded(idx, worktree_path);
+                }
             }
+            idx += 1;
         }
 
         // Re-open the previously viewed file if it still exists.
@@ -274,6 +293,7 @@ impl ViewerState {
         if let Some(entry) = self.file_tree.get_mut(idx) {
             if entry.is_dir {
                 entry.is_expanded = !entry.is_expanded;
+                self.invalidate_visible_cache();
             }
         }
     }
@@ -282,8 +302,9 @@ impl ViewerState {
     /// the entry is a file).
     pub fn expand_dir(&mut self, idx: usize) {
         if let Some(entry) = self.file_tree.get_mut(idx) {
-            if entry.is_dir {
+            if entry.is_dir && !entry.is_expanded {
                 entry.is_expanded = true;
+                self.invalidate_visible_cache();
             }
         }
     }
@@ -292,20 +313,32 @@ impl ViewerState {
     /// the entry is a file).
     pub fn collapse_dir(&mut self, idx: usize) {
         if let Some(entry) = self.file_tree.get_mut(idx) {
-            if entry.is_dir {
+            if entry.is_dir && entry.is_expanded {
                 entry.is_expanded = false;
+                self.invalidate_visible_cache();
             }
         }
     }
 
+    /// Invalidate the cached visible indices. Must be called whenever the
+    /// tree structure changes (expand/collapse, load children, reload tree).
+    pub fn invalidate_visible_cache(&mut self) {
+        self.cached_visible_indices = None;
+    }
+
     /// Return indices into `file_tree` that are currently visible, taking
-    /// collapsed directories into account.
-    pub fn visible_indices(&self) -> Vec<usize> {
-        let mut result = Vec::new();
+    /// collapsed directories into account. Results are cached (as `Rc`) until
+    /// `invalidate_visible_cache()` is called, so repeated calls within
+    /// the same frame are essentially free.
+    pub fn visible_indices(&mut self) -> Rc<Vec<usize>> {
+        if let Some(ref cached) = self.cached_visible_indices {
+            return Rc::clone(cached);
+        }
+
+        let mut result = Vec::with_capacity(self.file_tree.len());
         let mut skip_depth: Option<usize> = None;
 
         for (i, entry) in self.file_tree.iter().enumerate() {
-            // If we are skipping children of a collapsed dir, check depth.
             if let Some(sd) = skip_depth {
                 if entry.depth > sd {
                     continue;
@@ -321,7 +354,9 @@ impl ViewerState {
             }
         }
 
-        result
+        let rc = Rc::new(result);
+        self.cached_visible_indices = Some(Rc::clone(&rc));
+        rc
     }
 
     /// Execute a search over the file content and populate search_matches.
@@ -778,7 +813,10 @@ impl ViewerState {
                 // Intermediate directory — ensure children are loaded and expand.
                 self.ensure_children_loaded(idx, worktree_root);
                 if let Some(entry) = self.file_tree.get_mut(idx) {
-                    entry.is_expanded = true;
+                    if !entry.is_expanded {
+                        entry.is_expanded = true;
+                        self.invalidate_visible_cache();
+                    }
                 }
             }
 
@@ -851,7 +889,7 @@ impl ViewerState {
         let child_depth = entry.depth + 1;
 
         let mut children: Vec<FileTreeEntry> = Vec::new();
-        Self::read_dir_entries(worktree_root, &full_path, child_depth, &mut children);
+        Self::read_dir_entries(worktree_root, &full_path, child_depth, &mut children, self.gitignore.as_deref());
 
         self.file_tree[idx].children_loaded = true;
 
@@ -868,6 +906,31 @@ impl ViewerState {
         }
 
         self.file_tree.splice(insert_pos..insert_pos, children);
+        self.invalidate_visible_cache();
+    }
+
+    /// Build a gitignore matcher from the worktree root's `.gitignore`.
+    /// Only reads the root-level `.gitignore` — nested `.gitignore` files
+    /// are intentionally skipped because `GitignoreBuilder::add()` applies
+    /// their patterns globally (not scoped to the subdirectory), which can
+    /// cause false positives (e.g. `vendor/.gitignore` containing `*`).
+    pub fn build_gitignore(worktree_root: &Path) -> ignore::gitignore::Gitignore {
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(worktree_root);
+        let root_gi = worktree_root.join(".gitignore");
+        if root_gi.is_file() {
+            let _ = builder.add(&root_gi);
+        }
+        builder.build().unwrap_or_else(|_| {
+            ignore::gitignore::Gitignore::empty()
+        })
+    }
+
+    /// Check if a path should be ignored by gitignore rules.
+    fn is_gitignored(gi: Option<&ignore::gitignore::Gitignore>, path: &Path, is_dir: bool) -> bool {
+        match gi {
+            Some(gi) => gi.matched(path, is_dir).is_ignore(),
+            None => false,
+        }
     }
 
     /// Read the immediate children of `dir` and append them to `entries`.
@@ -878,6 +941,7 @@ impl ViewerState {
         dir: &Path,
         depth: usize,
         entries: &mut Vec<FileTreeEntry>,
+        gi: Option<&ignore::gitignore::Gitignore>,
     ) {
         if depth > Self::MAX_DEPTH {
             return;
@@ -909,12 +973,18 @@ impl ViewerState {
                 continue;
             }
 
+            // Skip gitignored paths.
+            if Self::is_gitignored(gi, &child_path, is_dir) {
+                continue;
+            }
+
             let rel_path = child_path
                 .strip_prefix(root)
                 .unwrap_or(&child_path)
                 .to_string_lossy()
                 .to_string();
 
+            let icon = if is_dir { "\u{1f4c1}" } else { file_icon(&name) };
             entries.push(FileTreeEntry {
                 path: rel_path,
                 name,
@@ -922,6 +992,7 @@ impl ViewerState {
                 is_dir,
                 is_expanded: false,
                 children_loaded: false,
+                icon,
             });
         }
     }
@@ -930,14 +1001,14 @@ impl ViewerState {
     /// tree under the given worktree root.
     pub fn populate_filename_search_cache(&mut self, worktree_root: &Path) {
         self.filename_search_all_files.clear();
-        Self::collect_all_file_paths(worktree_root, worktree_root, 0, &mut self.filename_search_all_files);
+        Self::collect_all_file_paths(worktree_root, worktree_root, 0, &mut self.filename_search_all_files, self.gitignore.as_deref());
     }
 
     /// Recursively collect all file paths under `dir`, skipping the same
     /// directories as `walk_dir` / `SKIP_DIRS`.  Only file paths (not
     /// directories) are appended to `paths`, stored as relative paths from
     /// `root`.
-    fn collect_all_file_paths(root: &Path, dir: &Path, depth: usize, paths: &mut Vec<String>) {
+    fn collect_all_file_paths(root: &Path, dir: &Path, depth: usize, paths: &mut Vec<String>, gi: Option<&ignore::gitignore::Gitignore>) {
         if depth > Self::MAX_DEPTH {
             return;
         }
@@ -951,13 +1022,16 @@ impl ViewerState {
             if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
                 continue;
             }
+            if Self::is_gitignored(gi, &child_path, is_dir) {
+                continue;
+            }
             let rel_path = child_path
                 .strip_prefix(root)
                 .unwrap_or(&child_path)
                 .to_string_lossy()
                 .to_string();
             if is_dir {
-                Self::collect_all_file_paths(root, &child_path, depth + 1, paths);
+                Self::collect_all_file_paths(root, &child_path, depth + 1, paths, gi);
             } else {
                 paths.push(rel_path);
             }
@@ -973,6 +1047,7 @@ impl ViewerState {
         dir: &Path,
         depth: usize,
         entries: &mut Vec<FileTreeEntry>,
+        gi: Option<&ignore::gitignore::Gitignore>,
     ) {
         if depth > Self::MAX_DEPTH {
             return;
@@ -1008,6 +1083,11 @@ impl ViewerState {
                 continue;
             }
 
+            // Skip gitignored paths.
+            if Self::is_gitignored(gi, &child_path, is_dir) {
+                continue;
+            }
+
             let rel_path = child_path
                 .strip_prefix(root)
                 .unwrap_or(&child_path)
@@ -1016,6 +1096,7 @@ impl ViewerState {
 
             let auto_expand = depth == 0;
 
+            let icon = if is_dir { "\u{1f4c1}" } else { file_icon(&name) };
             entries.push(FileTreeEntry {
                 path: rel_path,
                 name,
@@ -1023,12 +1104,14 @@ impl ViewerState {
                 is_dir,
                 is_expanded: auto_expand,
                 children_loaded: false,
+                icon,
             });
 
             if is_dir && auto_expand {
                 let entry_idx = entries.len() - 1;
-                // Recurse into auto-expanded directories.
-                Self::walk_dir(root, &child_path, depth + 1, entries);
+                // Load only the immediate children (one level) for auto-expanded directories.
+                // Deeper levels are loaded lazily when the user expands them.
+                Self::read_dir_entries(root, &child_path, depth + 1, entries, gi);
                 entries[entry_idx].children_loaded = true;
             }
         }
