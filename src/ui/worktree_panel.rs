@@ -125,14 +125,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Pre-compute session data for inline display.
     let session_groups = app.all_cc_sessions_by_worktree();
-    // Map pty_idx → whether its parent worktree is in cc_waiting_worktrees
-    // (same trigger as the notification bar hourglass).
+    // Map pty_idx → whether its parent worktree is in cc_waiting/cc_active.
     let session_waiting: std::collections::HashMap<usize, bool> = session_groups
         .iter()
         .flat_map(|(wt_idx, _, sessions)| {
             let wt_path = &app.worktrees[*wt_idx].path;
             let waiting = app.terminal.cc_waiting_worktrees.contains(wt_path);
             sessions.iter().map(move |(pty_idx, _)| (*pty_idx, waiting))
+        })
+        .collect();
+    let session_active: std::collections::HashMap<usize, bool> = session_groups
+        .iter()
+        .flat_map(|(wt_idx, _, sessions)| {
+            let wt_path = &app.worktrees[*wt_idx].path;
+            let active = app.terminal.cc_active_worktrees.contains(wt_path);
+            sessions.iter().map(move |(pty_idx, _)| (*pty_idx, active))
         })
         .collect();
 
@@ -162,9 +169,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     } else {
                         Style::default().fg(theme.fg)
                     };
+                    let is_active = session_active.get(&pty_idx).copied().unwrap_or(false);
                     let spans = if is_waiting {
                         vec![
                             Span::styled("   \u{23f3} ", Style::default().fg(theme.waiting_primary)), // ⏳
+                            Span::styled(display_label, label_style),
+                        ]
+                    } else if is_active {
+                        vec![
+                            Span::styled(format!("   {spinner_frame} "), Style::default().fg(theme.accent)),
                             Span::styled(display_label, label_style),
                         ]
                     } else {
@@ -178,6 +191,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 WorktreeListRow::Worktree(i) => {
                     let wt = &app.worktrees[i];
                     let is_waiting = app.terminal.cc_waiting_worktrees.contains(&wt.path);
+                    let is_active = app.terminal.cc_active_worktrees.contains(&wt.path);
                     let is_grabbed = is_grab_branch(wt);
                     let is_pending_delete = app.is_worktree_pending_delete(&wt.path);
                     let suppress_blink = is_waiting && focused_cc_wt.as_deref() == Some(wt.path.as_path());
@@ -275,6 +289,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                             indicator,
                             Style::default()
                                 .fg(indicator_fg)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    } else if is_active && !is_grabbed {
+                        spans.push(Span::styled(
+                            format!(" {spinner_frame}"),
+                            Style::default()
+                                .fg(theme.accent)
                                 .add_modifier(Modifier::BOLD),
                         ));
                     }

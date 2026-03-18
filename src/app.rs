@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
 use crate::background::BackgroundOp;
+use crate::cc_notify;
 
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
@@ -1705,64 +1706,131 @@ impl App {
 
     // ── Claude Code input-waiting detection ────────────────────────────
 
-    /// Scan all Claude Code sessions and update `cc_waiting_worktrees`.
+    /// Handle a single CC state notification received via the Unix socket.
+    pub fn handle_cc_notify(&mut self, event: cc_notify::CcNotifyEvent) {
+        // Normalize the cwd and match against known worktrees.
+        let event_normalized: PathBuf = event.cwd.components().collect();
+        let wt_path = self
+            .worktrees
+            .iter()
+            .find(|wt| {
+                let wt_normalized: PathBuf = wt.path.components().collect();
+                wt_normalized == event_normalized
+            })
+            .map(|wt| wt.path.clone());
+
+        let wt_path = match wt_path {
+            Some(p) => p,
+            None => return, // Unknown worktree — ignore.
+        };
+
+        // Verify a CC session exists for this worktree.
+        let has_session = self.terminal.pty_manager.sessions().iter().any(|s| {
+            s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == wt_path
+        });
+        if !has_session {
+            return;
+        }
+
+        match event.kind {
+            cc_notify::CcNotifyKind::Waiting => {
+                self.terminal.cc_active_worktrees.remove(&wt_path);
+
+                // Check ack suppression.
+                if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(&wt_path) {
+                    if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
+                        s.kind == pty_manager::SessionKind::ClaudeCode
+                            && s.working_dir == wt_path
+                    }) {
+                        let current = *session
+                            .last_output_time
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if current == ack_time {
+                            return; // Suppressed — no new output since ack.
+                        }
+                        self.terminal.cc_waiting_ack_time.remove(&wt_path);
+                    }
+                }
+
+                // Focus suppression: if user is focused on this terminal, auto-ack.
+                let is_focused = matches!(self.focus, Focus::TerminalClaude)
+                    && self.selected_worktree_path() == wt_path;
+                if is_focused {
+                    return;
+                }
+
+                let is_new = self.terminal.cc_waiting_worktrees.insert(wt_path.clone());
+                if is_new {
+                    let display_name = self
+                        .worktrees
+                        .iter()
+                        .find(|w| w.path == wt_path)
+                        .map(|w| w.branch.clone())
+                        .unwrap_or_else(|| "?".to_string());
+                    self.set_status(
+                        format!("CC waiting for input: {display_name}"),
+                        StatusLevel::Info,
+                    );
+                }
+            }
+            cc_notify::CcNotifyKind::Active => {
+                self.terminal.cc_waiting_worktrees.remove(&wt_path);
+                self.terminal.cc_active_worktrees.insert(wt_path);
+            }
+        }
+    }
+
+    /// Scan hook signal files and update `cc_waiting_worktrees` and
+    /// `cc_active_worktrees`.
     ///
-    /// Uses two sources:
-    /// 1. Hook signal files in `.conductor/cc-waiting/` (high reliability).
-    /// 2. PTY pattern matching fallback (for `[Y/n]` prompts).
+    /// Reads signal files from `.conductor/cc-waiting/` and
+    /// `.conductor/cc-active/` directories written by plugin hooks.
     ///
     /// If a worktree newly enters the waiting state and the user is not
     /// currently focused on that worktree's terminal, a status message is
     /// shown as a notification.
     pub fn check_cc_waiting_state(&mut self) {
-        let mut new_waiting: HashSet<PathBuf> = HashSet::new();
-
-        // Source 1: Hook signal files (high reliability).
-        // Signal files are written by the plugin hook to the main repo's
-        // `.conductor/cc-waiting/` directory.  Resolve via git so we look
-        // in the right place even when Conductor was launched from a linked
-        // worktree.
-        let signal_dir = git_engine::GitEngine::open(&self.repo_path)
+        // Resolve the main repo root so we look in the right place even
+        // when Conductor was launched from a linked worktree.
+        let conductor_dir = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
             .unwrap_or_else(|_| self.repo_path.clone())
-            .join(".conductor")
-            .join("cc-waiting");
-        if let Ok(entries) = std::fs::read_dir(&signal_dir) {
-            for entry in entries.flatten() {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                let signal_path: PathBuf = PathBuf::from(filename.replace("__", "/"));
-                // Normalize both sides (strip trailing slashes) to ensure
-                // comparison succeeds regardless of how paths were serialized.
-                let signal_normalized: PathBuf = signal_path.components().collect();
-                for wt in &self.worktrees {
-                    let wt_normalized: PathBuf = wt.path.components().collect();
-                    if wt_normalized == signal_normalized {
-                        new_waiting.insert(wt.path.clone());
+            .join(".conductor");
+
+        // Helper: scan a signal directory and collect matching worktree paths.
+        let scan_signal_dir = |dir_name: &str, worktrees: &[crate::git_engine::WorktreeInfo]| -> HashSet<PathBuf> {
+            let mut result = HashSet::new();
+            let signal_dir = conductor_dir.join(dir_name);
+            if let Ok(entries) = std::fs::read_dir(&signal_dir) {
+                for entry in entries.flatten() {
+                    let filename = entry.file_name().to_string_lossy().to_string();
+                    let signal_path: PathBuf = PathBuf::from(filename.replace("__", "/"));
+                    let signal_normalized: PathBuf = signal_path.components().collect();
+                    for wt in worktrees {
+                        let wt_normalized: PathBuf = wt.path.components().collect();
+                        if wt_normalized == signal_normalized {
+                            result.insert(wt.path.clone());
+                        }
                     }
                 }
             }
-        }
+            result
+        };
 
-        // Source 2: PTY pattern match fallback (for [Y/n] prompts).
-        let session_count = self.terminal.pty_manager.session_count();
-        for idx in 0..session_count {
-            let session = &self.terminal.pty_manager.sessions()[idx];
-            if session.kind != pty_manager::SessionKind::ClaudeCode {
-                continue;
-            }
-            if self.terminal.pty_manager.is_waiting_for_input(idx) {
-                new_waiting.insert(session.working_dir.clone());
-            }
-        }
+        let mut new_waiting = scan_signal_dir("cc-waiting", &self.worktrees);
+        let mut new_active = scan_signal_dir("cc-active", &self.worktrees);
 
-        // Ignore waiting state for worktrees that have no CC session open.
+        // Ignore states for worktrees that have no CC session open.
         // Signal files may persist after a session has exited; without this
-        // filter the notification bar would animate for a non-existent panel.
-        new_waiting.retain(|wt_path| {
+        // filter the UI would animate for a non-existent panel.
+        let has_cc_session = |wt_path: &PathBuf| -> bool {
             self.terminal.pty_manager.sessions().iter().any(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == *wt_path
             })
-        });
+        };
+        new_waiting.retain(&has_cc_session);
+        new_active.retain(has_cc_session);
 
         // Detect worktrees that newly entered waiting state.
         let current_wt_path = self.selected_worktree_path();
@@ -1828,6 +1896,7 @@ impl App {
         }
 
         self.terminal.cc_waiting_worktrees = new_waiting;
+        self.terminal.cc_active_worktrees = new_active;
     }
 
     /// Flush deferred prompts for CC sessions that are now ready for input.
@@ -1874,16 +1943,17 @@ impl App {
         let working_dir = session.working_dir.clone();
         self.terminal.cc_waiting_ack_time.insert(working_dir.clone(), last_output);
 
-        let signal_dir = git_engine::GitEngine::open(&self.repo_path)
+        let conductor_dir = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
             .unwrap_or_else(|_| self.repo_path.clone())
-            .join(".conductor")
-            .join("cc-waiting");
+            .join(".conductor");
         // Normalize the path (strip trailing slash) to match the shell's $PWD encoding.
         let normalized: PathBuf = session.working_dir.components().collect();
         let sanitized = normalized.display().to_string().replace('/', "__");
-        let _ = std::fs::remove_file(signal_dir.join(&sanitized));
+        let _ = std::fs::remove_file(conductor_dir.join("cc-waiting").join(&sanitized));
+        let _ = std::fs::remove_file(conductor_dir.join("cc-active").join(&sanitized));
         self.terminal.cc_waiting_worktrees.remove(&working_dir);
+        self.terminal.cc_active_worktrees.remove(&working_dir);
     }
 
     // ── Review helpers ────────────────────────────────────────────────

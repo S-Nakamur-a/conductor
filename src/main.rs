@@ -3,6 +3,7 @@
 mod gemini_api;
 mod app;
 mod background;
+mod cc_notify;
 mod ccusage_cache;
 mod claude_sessions;
 mod command_palette;
@@ -186,6 +187,9 @@ fn run_loop(
         app.worktrees.iter().map(|w| w.path.clone()).collect();
     let file_watcher = crate::file_watcher::FileWatcher::new(&watch_paths).ok();
 
+    // Set up socket listener for CC state notifications (instant delivery).
+    let cc_notify = crate::cc_notify::CcNotifyListener::new(&app.repo_path).ok();
+
     let mut last_frame_area = Rect::default();
     let mut last_claude_size: (u16, u16) = (0, 0);
     let mut last_shell_size: (u16, u16) = (0, 0);
@@ -205,7 +209,7 @@ fn run_loop(
     const PTY_CLEANUP_POLL: Duration = Duration::from_secs(10);
     let mut last_pty_cleanup = Instant::now();
 
-    const CC_WAITING_POLL: Duration = Duration::from_millis(500);
+    const CC_WAITING_POLL: Duration = Duration::from_secs(5);
     let mut last_cc_waiting_check = Instant::now();
 
     const STATS_REFRESH_POLL: Duration = Duration::from_secs(30);
@@ -463,6 +467,14 @@ fn run_loop(
                         needs_redraw = true;
                     }
                 }
+            }
+        }
+
+        // Drain socket-based CC state notifications (instant delivery).
+        if let Some(ref cc_notify) = cc_notify {
+            while let Some(event) = cc_notify.poll() {
+                app.handle_cc_notify(event);
+                needs_redraw = true;
             }
         }
 
