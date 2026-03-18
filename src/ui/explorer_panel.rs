@@ -10,68 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 use crate::app::{App, Focus};
-
-/// Return an emoji icon for a file based on its extension or name.
-fn file_icon(name: &str) -> &'static str {
-    // Special filenames first.
-    let lower = name.to_ascii_lowercase();
-    let special = match lower.as_str() {
-        "cargo.toml" | "cargo.lock" => Some("🦀"),
-        "package.json" | "package-lock.json" => Some("📦"),
-        "dockerfile" | "docker-compose.yml" | "docker-compose.yaml" => Some("🐳"),
-        "makefile" | "cmake" | "cmakelists.txt" => Some("🔧"),
-        ".gitignore" | ".gitattributes" | ".gitmodules" => Some("🔀"),
-        "license" | "license.md" | "license.txt" => Some("📜"),
-        "readme.md" | "readme" | "readme.txt" => Some("📖"),
-        _ => None,
-    };
-    if let Some(icon) = special {
-        return icon;
-    }
-
-    // By extension.
-    match name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
-        Some("rs") => "🦀",
-        Some("py") => "🐍",
-        Some("js") | Some("mjs") | Some("cjs") => "🟨",
-        Some("ts") | Some("mts") | Some("cts") => "🔷",
-        Some("jsx") | Some("tsx") => "⚛\u{fe0f}",
-        Some("go") => "🐹",
-        Some("rb") => "💎",
-        Some("java" | "class" | "jar") => "☕",
-        Some("c" | "h") => "🇨",
-        Some("cpp" | "cc" | "cxx" | "hpp") => "⚙\u{fe0f}",
-        Some("cs") => "🟪",
-        Some("swift") => "🐦",
-        Some("kt" | "kts") => "🟣",
-        Some("php") => "🐘",
-        Some("lua") => "🌙",
-        Some("sh" | "bash" | "zsh" | "fish") => "🐚",
-        Some("html" | "htm") => "🌐",
-        Some("css" | "scss" | "sass" | "less") => "🎨",
-        Some("json" | "jsonc" | "json5") => "📋",
-        Some("yaml" | "yml") => "📄",
-        Some("toml") => "⚙\u{fe0f}",
-        Some("xml" | "xsl") => "📰",
-        Some("md" | "mdx") => "📝",
-        Some("txt" | "text") => "📃",
-        Some("sql") => "🗄\u{fe0f}",
-        Some("graphql" | "gql") => "🔮",
-        Some("proto") => "📡",
-        Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" | "webp" | "bmp") => "🖼\u{fe0f}",
-        Some("mp4" | "mov" | "avi" | "webm") => "🎬",
-        Some("mp3" | "wav" | "ogg" | "flac") => "🎵",
-        Some("zip" | "tar" | "gz" | "bz2" | "xz" | "rar" | "7z") => "📦",
-        Some("pdf") => "📕",
-        Some("lock") => "🔒",
-        Some("env") => "🔐",
-        Some("log") => "📜",
-        Some("wasm") => "🟦",
-        Some("d.ts") => "🔷",
-        Some("test" | "spec") => "🧪",
-        _ => "📄",
-    }
-}
+use crate::viewer::file_icon;
 
 /// Render the explorer (file tree) panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -108,25 +47,47 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-/// Render the file tree (top half).
-fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
-    let theme = &app.theme;
-    let vs = &app.viewer_state;
-    let tree_focused = panel_focused && !vs.explorer_focus_on_diff_list;
-    let border_color = if tree_focused {
-        theme.border_focused
-    } else if panel_focused {
-        theme.border_secondary
+/// Cached indent strings by depth level to avoid repeated allocation.
+const INDENT_CACHE: &[&str] = &[
+    "",
+    "  ",
+    "    ",
+    "      ",
+    "        ",
+    "          ",
+    "            ",
+    "              ",
+    "                ",
+    "                  ",
+];
+
+/// Get an indent string for a given depth, using cache for common depths.
+fn indent_for_depth(depth: usize) -> std::borrow::Cow<'static, str> {
+    if depth < INDENT_CACHE.len() {
+        std::borrow::Cow::Borrowed(INDENT_CACHE[depth])
     } else {
-        theme.border_unfocused
+        std::borrow::Cow::Owned("  ".repeat(depth))
+    }
+}
+
+/// Render the file tree (top half).
+fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused: bool) {
+    let tree_focused = panel_focused && !app.viewer_state.explorer_focus_on_diff_list;
+    let border_color = if tree_focused {
+        app.theme.border_focused
+    } else if panel_focused {
+        app.theme.border_secondary
+    } else {
+        app.theme.border_unfocused
     };
 
-    let visible = vs.visible_indices();
+    let visible = app.viewer_state.visible_indices();
     let inner_height = area.height.saturating_sub(2) as usize;
 
+    let tree_selected = app.viewer_state.tree_selected;
     let selected_vis_idx = visible
         .iter()
-        .position(|&i| i == vs.tree_selected)
+        .position(|&i| i == tree_selected)
         .unwrap_or(0);
 
     let title = if visible.len() > inner_height {
@@ -136,6 +97,7 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
     };
 
     let is_expanded = app.expanded_panel == Some(Focus::Explorer);
+    let theme = &app.theme;
     let (expand_label, expand_color) = if is_expanded {
         ("[>=<]", theme.border_focused)
     } else {
@@ -148,7 +110,7 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
-    let scroll = vs.tree_scroll;
+    let scroll = app.viewer_state.tree_scroll;
 
     let items: Vec<ListItem> = visible
         .iter()
@@ -156,8 +118,8 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         .skip(scroll)
         .take(inner_height)
         .filter_map(|(vis_idx, &tree_idx)| {
-            let entry = vs.file_tree.get(tree_idx)?;
-            let indent = "  ".repeat(entry.depth);
+            let entry = app.viewer_state.file_tree.get(tree_idx)?;
+            let indent = indent_for_depth(entry.depth);
 
             let label = if entry.is_dir {
                 let arrow = if entry.is_expanded {
@@ -165,10 +127,9 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                 } else {
                     "\u{25b6}" // ▶
                 };
-                format!("{indent}{arrow} \u{1f4c1} {}", entry.name) // 📁
+                format!("{indent}{arrow} {} {}", entry.icon, entry.name)
             } else {
-                let icon = file_icon(&entry.name);
-                format!("{indent}  {icon} {}", entry.name)
+                format!("{indent}  {} {}", entry.icon, entry.name)
             };
 
             let style = if vis_idx == selected_vis_idx && tree_focused {
