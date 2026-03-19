@@ -1,7 +1,9 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
+mod gemini_api;
 mod app;
 mod background;
+mod cc_notify;
 mod ccusage_cache;
 mod claude_sessions;
 mod command_palette;
@@ -185,6 +187,9 @@ fn run_loop(
         app.worktrees.iter().map(|w| w.path.clone()).collect();
     let file_watcher = crate::file_watcher::FileWatcher::new(&watch_paths).ok();
 
+    // Set up socket listener for CC state notifications (instant delivery).
+    let cc_notify = crate::cc_notify::CcNotifyListener::new(&app.repo_path).ok();
+
     let mut last_frame_area = Rect::default();
     let mut last_claude_size: (u16, u16) = (0, 0);
     let mut last_shell_size: (u16, u16) = (0, 0);
@@ -204,7 +209,7 @@ fn run_loop(
     const PTY_CLEANUP_POLL: Duration = Duration::from_secs(10);
     let mut last_pty_cleanup = Instant::now();
 
-    const CC_WAITING_POLL: Duration = Duration::from_millis(500);
+    const CC_WAITING_POLL: Duration = Duration::from_secs(5);
     let mut last_cc_waiting_check = Instant::now();
 
     const STATS_REFRESH_POLL: Duration = Duration::from_secs(30);
@@ -317,7 +322,7 @@ fn run_loop(
             let area = last_frame_area;
             // Must match render_ui layout: title bar (1) + notification bar (0 or 1) + main + status bar (1).
             let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty()
-                || !app.terminal.permission_judging.is_empty() { 1 } else { 0 };
+                { 1 } else { 0 };
             let outer = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Length(notif_height),
@@ -465,6 +470,14 @@ fn run_loop(
             }
         }
 
+        // Drain socket-based CC state notifications (instant delivery).
+        if let Some(ref cc_notify) = cc_notify {
+            while let Some(event) = cc_notify.poll() {
+                app.handle_cc_notify(event);
+                needs_redraw = true;
+            }
+        }
+
         // Check if a background fetch for the switch-branch overlay has finished.
         app.poll_bg_branches();
 
@@ -516,9 +529,6 @@ fn run_loop(
         if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
             last_cc_waiting_check = Instant::now();
             app.check_cc_waiting_state();
-            app.process_permission_judgments();
-            app.process_permission_judge_results();
-            app.process_permission_dialog_results();
             app.flush_deferred_prompts();
             needs_redraw = true;
         }
@@ -595,7 +605,6 @@ fn run_loop(
         app.terminal.pty_manager.nudge_alt_screen_sessions();
 
         if app.should_quit {
-            app.cleanup_permission_server();
             return Ok(());
         }
     }

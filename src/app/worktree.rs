@@ -11,69 +11,79 @@ use std::sync::mpsc;
 
 use super::*;
 
-/// Run the LLM generation for smart worktree (branch name + prompt) via `claude --print`.
-///
-/// Checks `cancel_token` periodically; if set, kills the child process and returns `Err`.
-fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>) -> Result<SmartGenResult, String> {
-    if cancel_token.load(Ordering::Relaxed) {
-        return Err("Cancelled".to_string());
-    }
-
-    let system_prompt = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
+const SMART_WORKTREE_SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
 Output ONLY a JSON object with two fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
 - "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
-    let mut child = std::process::Command::new("claude")
-        .args(["--print", "-p", system_prompt])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn claude: {e}"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(desc.as_bytes());
-    }
-
-    // Poll the child process, checking for cancellation periodically.
-    let output = loop {
-        if cancel_token.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Cancelled".to_string());
-        }
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                break child.wait_with_output()
-                    .map_err(|e| format!("Failed to read claude output: {e}"))?;
-            }
-            Ok(None) => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(e) => return Err(format!("Failed to wait for claude: {e}")),
-        }
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("claude exited with {}: {}", output.status, stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json_str = stdout
+/// Parse LLM raw output into `SmartGenResult`, stripping markdown fences if present.
+fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
+    let json_str = raw
         .trim()
         .strip_prefix("```json")
-        .or_else(|| stdout.trim().strip_prefix("```"))
-        .unwrap_or(stdout.trim());
+        .or_else(|| raw.trim().strip_prefix("```"))
+        .unwrap_or(raw.trim());
     let json_str = json_str
         .strip_suffix("```")
         .unwrap_or(json_str)
         .trim();
     serde_json::from_str::<SmartGenResult>(json_str)
-        .map_err(|e| format!("JSON parse error: {e}\nRaw output: {stdout}"))
+        .map_err(|e| format!("JSON parse error: {e}\nRaw output: {raw}"))
+}
+
+/// Fallback: call `claude -p` CLI with the same system prompt and description.
+fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
+    log::info!("Smart worktree: falling back to claude -p CLI");
+    let output = std::process::Command::new("claude")
+        .args(["-p", "--output-format", "text"])
+        .arg("--system-prompt")
+        .arg(SMART_WORKTREE_SYSTEM_PROMPT)
+        .arg(desc)
+        .output()
+        .map_err(|e| format!("Failed to run claude CLI: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("claude CLI failed ({}): {stderr}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if stdout.trim().is_empty() {
+        return Err("claude CLI returned empty output".to_string());
+    }
+    Ok(stdout)
+}
+
+/// Run the LLM generation for smart worktree (branch name + prompt).
+///
+/// Tries the Gemini API first; if it fails, falls back to `claude -p` CLI.
+/// Checks `cancel_token` before each call; the API calls are blocking.
+fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>, model: &str) -> Result<SmartGenResult, String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
+    }
+
+    // Phase 1: Try Gemini API.
+    let raw = match crate::gemini_api::call_messages_api(SMART_WORKTREE_SYSTEM_PROMPT, desc, Some(model), 1024) {
+        Ok(raw) => raw,
+        Err(gemini_err) => {
+            log::warn!("Gemini API failed, falling back to claude CLI: {gemini_err}");
+
+            if cancel_token.load(Ordering::Relaxed) {
+                return Err("Cancelled".to_string());
+            }
+
+            // Phase 1b: Fallback to claude -p CLI.
+            run_smart_generation_claude_cli(desc)?
+        }
+    };
+
+    if cancel_token.load(Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
+    }
+
+    parse_smart_gen_result(&raw)
 }
 
 impl App {
@@ -645,6 +655,7 @@ impl App {
         self.set_status("Smart worktree: generating... (Esc to cancel)".to_string(), StatusLevel::Info);
 
         let tx = self.worktree_op_sender();
+        let api_model = self.config.api.model.clone();
 
         let cancel = cancel_token;
         std::thread::spawn(move || {
@@ -652,7 +663,7 @@ impl App {
             let desc_panic = desc.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Phase 1: LLM generation.
-                let gen_result = match run_smart_generation(&desc, &cancel) {
+                let gen_result = match run_smart_generation(&desc, &cancel, &api_model) {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = tx.send(WorktreeOpResult::SmartFailed {
@@ -1162,8 +1173,9 @@ impl App {
             {
                 let path = wt_path.clone();
                 self.bg_file_tree_op.start(move |tx| {
+                    let gi = ViewerState::build_gitignore(&path);
                     let mut entries = Vec::new();
-                    ViewerState::walk_dir(&path, &path, 0, &mut entries);
+                    ViewerState::walk_dir(&path, &path, 0, &mut entries, Some(&gi));
                     let _ = tx.send(entries);
                 });
             }
@@ -1291,6 +1303,7 @@ impl App {
         // File tree result.
         if let Some(entries) = self.bg_file_tree_op.poll() {
             self.viewer_state.file_tree = entries;
+            self.viewer_state.invalidate_visible_cache();
             // Re-open the previously viewed file if it still exists.
             if let Some(wt) = self.worktrees.get(self.selected_worktree) {
                 let wt_path = wt.path.clone();

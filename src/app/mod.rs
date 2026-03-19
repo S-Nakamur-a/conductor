@@ -488,9 +488,6 @@ impl App {
         app.refresh_worktrees();
         app.refresh_reviews();
 
-        // Start Unix socket server for permission hooks.
-        app.start_permission_server();
-
         // Restore grab state from $git_common_dir/wt-grab if it exists.
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
             match engine.load_grab_state() {
