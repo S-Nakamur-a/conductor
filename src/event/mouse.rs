@@ -28,7 +28,7 @@ pub fn handle_mouse_event(
     let notif_area = outer[1];
     let main_area = outer[2];
 
-    let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.expanded_panel, main_area.width);
+    let (left_w, explorer_w, viewer_w) = crate::ui::layout::accordion_widths(app.expanded_panel, main_area.width);
 
     let left_end = main_area.x + left_w;
     let explorer_end = left_end + explorer_w;

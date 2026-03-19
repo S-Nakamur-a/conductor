@@ -2,6 +2,7 @@
 
 use crate::app::{App, Focus, StatusLevel};
 use crate::keymap::Action;
+use crate::overlay::ActiveOverlay;
 
 /// Dispatch global actions that are shared across non-terminal panels.
 /// Returns `true` if the action was handled.
@@ -9,14 +10,14 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
     match action {
         Action::Quit => { app.quit(); true }
         Action::ShowHelp => {
-            app.help.context = app.focus;
-            app.help.active = true;
+            app.overlays.help.context = app.focus;
+            app.overlays.active = ActiveOverlay::Help;
             true
         }
         Action::CommandPalette => {
-            app.command_palette.active = true;
-            app.command_palette.filter.clear();
-            app.command_palette.selected = 0;
+            app.overlays.active = ActiveOverlay::CommandPalette;
+            app.overlays.command_palette.filter.clear();
+            app.overlays.command_palette.selected = 0;
             true
         }
         Action::CycleFocusForward => { app.cycle_focus_forward(); true }
@@ -53,14 +54,14 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::OpenRepo => {
-            app.open_repo.active = true;
-            app.open_repo.buffer.set_text(&app.repo_path.display().to_string());
+            app.overlays.active = ActiveOverlay::OpenRepo;
+            app.overlays.open_repo.buffer.set_text(&app.repo_path.display().to_string());
             true
         }
         Action::SwitchRepo => {
             if app.repo_list.len() > 1 {
-                app.repo_selector.active = true;
-                app.repo_selector.selected = app.repo_list_index;
+                app.overlays.active = ActiveOverlay::RepoSelector;
+                app.overlays.repo_selector.selected = app.repo_list_index;
             }
             true
         }
@@ -71,16 +72,16 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::SearchFullText => {
-            app.grep_search.active = true;
-            app.grep_search.query.clear();
-            app.grep_search.results.clear();
-            app.grep_search.selected = 0;
-            app.grep_search.scroll = 0;
-            app.grep_search.running = false;
-            app.grep_search.bg_op.clear();
-            app.grep_search.bg_op_phase2.clear();
-            app.grep_search.debounce_deadline = None;
-            app.grep_search.phase1_active = false;
+            app.overlays.active = ActiveOverlay::GrepSearch;
+            app.overlays.grep_search.query.clear();
+            app.overlays.grep_search.results.clear();
+            app.overlays.grep_search.selected = 0;
+            app.overlays.grep_search.scroll = 0;
+            app.overlays.grep_search.running = false;
+            app.overlays.grep_search.bg_op.clear();
+            app.overlays.grep_search.bg_op_phase2.clear();
+            app.overlays.grep_search.debounce_deadline = None;
+            app.overlays.grep_search.phase1_active = false;
             true
         }
         Action::TogglePanelExpand => {

@@ -16,6 +16,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Focus, UpdateState};
 use crate::keymap::{Action, KeyContext};
+use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
 use self::global::dispatch_global_action;
@@ -70,22 +71,24 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         handle_worktree_input_key(app, key);
         return;
     }
-    if app.switch_branch.active {
-        handle_switch_branch_key(app, key);
-        return;
+
+    // ── 1a. Overlay dispatch via ActiveOverlay enum ────────────────────
+    match app.overlays.active {
+        ActiveOverlay::None => {}
+        ActiveOverlay::SwitchBranch => { handle_switch_branch_key(app, key); return; }
+        ActiveOverlay::Grab => { handle_grab_key(app, key); return; }
+        ActiveOverlay::Prune => { handle_prune_key(app, key); return; }
+        ActiveOverlay::CherryPick => { handle_cherry_pick_key(app, key); return; }
+        ActiveOverlay::History => { handle_history_key(app, key); return; }
+        ActiveOverlay::ResumeSession => { handle_resume_session_key(app, key); return; }
+        ActiveOverlay::RepoSelector => { handle_repo_selector_key(app, key); return; }
+        ActiveOverlay::OpenRepo => { handle_open_repo_key(app, key); return; }
+        ActiveOverlay::GrepSearch => { handle_grep_search_key(app, key); return; }
+        ActiveOverlay::Help => { handle_help_key(app, key); return; }
+        ActiveOverlay::CommandPalette => { handle_command_palette_key(app, key); return; }
     }
-    if app.grab.active {
-        handle_grab_key(app, key);
-        return;
-    }
-    if app.prune.active {
-        handle_prune_key(app, key);
-        return;
-    }
-    if app.cherry_pick.active {
-        handle_cherry_pick_key(app, key);
-        return;
-    }
+
+    // ── 1b. Sub-modal states (search modes within panels) ─────────────
     if app.viewer_state.filename_search_active {
         handle_filename_search_key(app, key);
         return;
@@ -100,34 +103,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
     if app.review_state.template_picker_active {
         handle_review_template_key(app, key);
-        return;
-    }
-    if app.history.active {
-        handle_history_key(app, key);
-        return;
-    }
-    if app.resume_session.active {
-        handle_resume_session_key(app, key);
-        return;
-    }
-    if app.repo_selector.active {
-        handle_repo_selector_key(app, key);
-        return;
-    }
-    if app.open_repo.active {
-        handle_open_repo_key(app, key);
-        return;
-    }
-    if app.grep_search.active {
-        handle_grep_search_key(app, key);
-        return;
-    }
-    if app.help.active {
-        handle_help_key(app, key);
-        return;
-    }
-    if app.command_palette.active {
-        handle_command_palette_key(app, key);
         return;
     }
 
@@ -165,7 +140,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
     }
 
-    // ── 1b. Terminal focus — intercept configurable keys, forward rest to PTY ─
+    // ── 1d. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
         // If the selected worktree is grabbed, block all terminal input
@@ -191,9 +166,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); return; }
                 Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); return; }
                 Action::CommandPalette => {
-                    app.command_palette.active = true;
-                    app.command_palette.filter.clear();
-                    app.command_palette.selected = 0;
+                    app.overlays.active = ActiveOverlay::CommandPalette;
+                    app.overlays.command_palette.filter.clear();
+                    app.overlays.command_palette.selected = 0;
                     return;
                 }
                 Action::ScrollbackUp => {
@@ -321,16 +296,25 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         } else if app.review_state.search_active {
             app.review_state.search_query.insert_str(&single_line);
             app.review_state.apply_filter();
-        } else if app.switch_branch.active {
-            app.switch_branch.filter.insert_str(&single_line);
-        } else if app.command_palette.active {
-            app.command_palette.filter.insert_str(&single_line);
-        } else if app.open_repo.active {
-            app.open_repo.buffer.insert_str(&single_line);
-        } else if app.history.active {
-            app.history.search_query.insert_str(&single_line);
-        } else if app.resume_session.active {
-            app.resume_session.filter.insert_str(&single_line);
+        } else {
+            match app.overlays.active {
+                ActiveOverlay::SwitchBranch => {
+                    app.overlays.switch_branch.filter.insert_str(&single_line);
+                }
+                ActiveOverlay::CommandPalette => {
+                    app.overlays.command_palette.filter.insert_str(&single_line);
+                }
+                ActiveOverlay::OpenRepo => {
+                    app.overlays.open_repo.buffer.insert_str(&single_line);
+                }
+                ActiveOverlay::History => {
+                    app.overlays.history.search_query.insert_str(&single_line);
+                }
+                ActiveOverlay::ResumeSession => {
+                    app.overlays.resume_session.filter.insert_str(&single_line);
+                }
+                _ => {}
+            }
         }
         return;
     }
@@ -437,21 +421,11 @@ fn dismiss_overlays(app: &mut App) {
     app.review_state.comment_detail_active = false;
     app.review_state.input_mode = ReviewInputMode::Normal;
     app.worktree_mgr.input_mode = crate::app::WorktreeInputMode::Normal;
-    app.switch_branch.active = false;
-    app.grab.active = false;
-    app.prune.active = false;
-    app.cherry_pick.active = false;
+    app.overlays.active = ActiveOverlay::None;
     app.viewer_state.filename_search_active = false;
     app.viewer_state.search_active = false;
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
-    app.history.active = false;
-    app.resume_session.active = false;
-    app.repo_selector.active = false;
-    app.open_repo.active = false;
-    app.grep_search.active = false;
-    app.help.active = false;
-    app.command_palette.active = false;
 }
 
 /// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.

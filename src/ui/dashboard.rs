@@ -33,7 +33,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    let (content_area, search_area) = if app.history.search_active {
+    let (content_area, search_area) = if app.overlays.history.search_active {
         let chunks = Layout::vertical([
             Constraint::Min(3),
             Constraint::Length(3),
@@ -56,14 +56,14 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.info));
 
-    if app.history.records.is_empty() {
+    if app.overlays.history.records.is_empty() {
         let paragraph = Paragraph::new("  No history records.")
             .block(list_block)
             .style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, panes[0]);
     } else {
         let items: Vec<ListItem> = app
-            .history.records
+            .overlays.history.records
             .iter()
             .enumerate()
             .map(|(i, record)| {
@@ -73,7 +73,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
                     _ => "[??]",
                 };
 
-                let style = if i == app.history.selected {
+                let style = if i == app.overlays.history.selected {
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD)
@@ -110,7 +110,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
             );
 
         let mut state = ListState::default();
-        state.select(Some(app.history.selected));
+        state.select(Some(app.overlays.history.selected));
         frame.render_stateful_widget(list, panes[0], &mut state);
     }
 
@@ -120,7 +120,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.info));
 
-    let output_text = if let Some(record) = app.history.records.get(app.history.selected) {
+    let output_text = if let Some(record) = app.overlays.history.records.get(app.overlays.history.selected) {
         record.output_text.clone()
     } else {
         String::from("No record selected.")
@@ -142,13 +142,13 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         let inner = search_block.inner(search_rect);
         frame.render_widget(search_block, search_rect);
 
-        let input_text = format_input_with_cursor(&app.history.search_query);
+        let input_text = format_input_with_cursor(&app.overlays.history.search_query);
         let paragraph = Paragraph::new(Span::styled(
             input_text,
             Style::default().fg(theme.fg),
         ));
         frame.render_widget(paragraph, inner);
-        set_cursor_for_input(frame, inner, &app.history.search_query);
+        set_cursor_for_input(frame, inner, &app.overlays.history.search_query);
     }
 }
 
@@ -193,7 +193,7 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let title = format!(
         " Cherry-pick from {} (Tab: switch, Enter: pick, Esc: close) ",
-        app.cherry_pick.source_branch
+        app.overlays.cherry_pick.source_branch
     );
 
     let block = Block::default()
@@ -204,7 +204,7 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    if app.cherry_pick.commits.is_empty() {
+    if app.overlays.cherry_pick.commits.is_empty() {
         let paragraph = Paragraph::new("  No commits found on this branch.")
             .style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, inner);
@@ -212,11 +212,11 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let items: Vec<ListItem> = app
-        .cherry_pick.commits
+        .overlays.cherry_pick.commits
         .iter()
         .enumerate()
         .map(|(i, commit)| {
-            let style = if i == app.cherry_pick.selected {
+            let style = if i == app.overlays.cherry_pick.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -251,7 +251,7 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
         );
 
     let mut state = ListState::default();
-    state.select(Some(app.cherry_pick.selected));
+    state.select(Some(app.overlays.cherry_pick.selected));
 
     frame.render_stateful_widget(list, inner, &mut state);
 }
@@ -300,7 +300,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 "  "
             };
 
-            let style = if i == app.repo_selector.selected {
+            let style = if i == app.overlays.repo_selector.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -335,7 +335,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.repo_selector.selected));
+    state.select(Some(app.overlays.repo_selector.selected));
 
     frame.render_stateful_widget(list, inner, &mut state);
 }
@@ -359,14 +359,14 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let input_text = format_input_with_cursor(&app.open_repo.buffer);
+    let input_text = format_input_with_cursor(&app.overlays.open_repo.buffer);
     let paragraph = Paragraph::new(Span::styled(
         input_text,
         Style::default().fg(theme.fg),
     ))
     .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);
-    set_cursor_for_input(frame, inner, &app.open_repo.buffer);
+    set_cursor_for_input(frame, inner, &app.overlays.open_repo.buffer);
 }
 
 /// Render the switch-branch (remote branch checkout) overlay.
@@ -396,13 +396,13 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let filter_inner = filter_block.inner(chunks[0]);
     frame.render_widget(filter_block, chunks[0]);
 
-    let filter_text = format_input_with_cursor(&app.switch_branch.filter);
+    let filter_text = format_input_with_cursor(&app.overlays.switch_branch.filter);
     let filter_para = Paragraph::new(Span::styled(
         filter_text,
         Style::default().fg(theme.fg),
     ));
     frame.render_widget(filter_para, filter_inner);
-    set_cursor_for_input(frame, filter_inner, &app.switch_branch.filter);
+    set_cursor_for_input(frame, filter_inner, &app.overlays.switch_branch.filter);
 
     // Branch list.
     let list_block = Block::default()
@@ -424,7 +424,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(vis_idx, (_orig_idx, branch))| {
-            let style = if vis_idx == app.switch_branch.selected {
+            let style = if vis_idx == app.overlays.switch_branch.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -445,7 +445,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.switch_branch.selected));
+    state.select(Some(app.overlays.switch_branch.selected));
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
@@ -453,7 +453,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
 pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
-    let content_lines = app.grab.branches.len() as u16;
+    let content_lines = app.overlays.grab.branches.len() as u16;
     let popup_height = (content_lines + 2).min(14).min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -469,7 +469,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    if app.grab.branches.is_empty() {
+    if app.overlays.grab.branches.is_empty() {
         let paragraph = Paragraph::new("  No branches to grab.")
             .style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, inner);
@@ -477,11 +477,11 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let items: Vec<ListItem> = app
-        .grab.branches
+        .overlays.grab.branches
         .iter()
         .enumerate()
         .map(|(i, branch)| {
-            let style = if i == app.grab.selected {
+            let style = if i == app.overlays.grab.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -502,14 +502,14 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.grab.selected));
+    state.select(Some(app.overlays.grab.selected));
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
 /// Render the prune confirmation overlay.
 pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    let stale_count = app.prune.stale.len() as u16;
+    let stale_count = app.overlays.prune.stale.len() as u16;
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
     let popup_height = (stale_count + 4).min(16).min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -528,13 +528,13 @@ pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            format!("  Found {} stale worktree(s):", app.prune.stale.len()),
+            format!("  Found {} stale worktree(s):", app.overlays.prune.stale.len()),
             Style::default().fg(theme.accent),
         )),
         Line::from(""),
     ];
 
-    for name in &app.prune.stale {
+    for name in &app.overlays.prune.stale {
         lines.push(Line::from(Span::styled(
             format!("    - {name}"),
             Style::default().fg(theme.fg),
@@ -683,7 +683,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     .split(popup_area);
 
     // Filter bar.
-    let scope_label = if app.resume_session.all_projects {
+    let scope_label = if app.overlays.resume_session.all_projects {
         "all projects"
     } else {
         "this repo"
@@ -699,13 +699,13 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let filter_inner = filter_block.inner(chunks[0]);
     frame.render_widget(filter_block, chunks[0]);
 
-    let filter_text = format_input_with_cursor(&app.resume_session.filter);
+    let filter_text = format_input_with_cursor(&app.overlays.resume_session.filter);
     let filter_para = Paragraph::new(Span::styled(
         filter_text,
         Style::default().fg(theme.fg),
     ));
     frame.render_widget(filter_para, filter_inner);
-    set_cursor_for_input(frame, filter_inner, &app.resume_session.filter);
+    set_cursor_for_input(frame, filter_inner, &app.overlays.resume_session.filter);
 
     // Session list.
     let list_block = Block::default()
@@ -727,7 +727,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(vis_idx, (_orig_idx, session))| {
-            let style = if vis_idx == app.resume_session.selected {
+            let style = if vis_idx == app.overlays.resume_session.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -772,7 +772,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.resume_session.selected));
+    state.select(Some(app.overlays.resume_session.selected));
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
@@ -805,7 +805,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let search_inner = search_block.inner(chunks[0]);
     frame.render_widget(search_block, chunks[0]);
 
-    let search_text = format_input_with_cursor(&app.command_palette.filter);
+    let search_text = format_input_with_cursor(&app.overlays.command_palette.filter);
     frame.render_widget(
         Paragraph::new(Span::styled(
             search_text,
@@ -813,7 +813,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         )),
         search_inner,
     );
-    set_cursor_for_input(frame, search_inner, &app.command_palette.filter);
+    set_cursor_for_input(frame, search_inner, &app.overlays.command_palette.filter);
 
     // Command list
     let list_block = Block::default()
@@ -822,7 +822,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let list_inner = list_block.inner(chunks[1]);
     frame.render_widget(list_block, chunks[1]);
 
-    let filtered = command_palette::filter_commands(&app.command_palette.filter);
+    let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
     if filtered.is_empty() {
         frame.render_widget(
             Paragraph::new("  No matching commands.")
@@ -838,7 +838,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         .enumerate()
         .map(|(i, scored)| {
             let cmd = &command_palette::COMMANDS[scored.index];
-            let style = if i == app.command_palette.selected {
+            let style = if i == app.overlays.command_palette.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -849,7 +849,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
             let kb = cmd.keybinding.unwrap_or("");
             let line = Line::from(vec![
                 Span::styled(
-                    if i == app.command_palette.selected {
+                    if i == app.overlays.command_palette.selected {
                         " > "
                     } else {
                         "   "
@@ -868,7 +868,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
 
     let list = List::new(items);
     let mut state = ListState::default();
-    state.select(Some(app.command_palette.selected));
+    state.select(Some(app.overlays.command_palette.selected));
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
@@ -901,9 +901,9 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let tab_spans: Vec<Span> = tab_labels
         .iter()
         .flat_map(|(label, focus)| {
-            let style = if *focus == app.help.context
+            let style = if *focus == app.overlays.help.context
                 || (*focus == Focus::TerminalClaude
-                    && app.help.context == Focus::TerminalShell)
+                    && app.overlays.help.context == Focus::TerminalShell)
             {
                 Style::default()
                     .fg(theme.accent)
@@ -931,7 +931,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(tabs[1]);
     frame.render_widget(block, tabs[1]);
 
-    let lines = help_lines_for(app, app.help.context, theme);
+    let lines = help_lines_for(app, app.overlays.help.context, theme);
     let paragraph = Paragraph::new(lines)
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);

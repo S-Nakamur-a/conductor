@@ -13,7 +13,10 @@ pub mod viewer_panel;
 pub mod terminal_claude;
 pub mod terminal_shell;
 
-// Overlay renderers (used from main.rs render_ui overlays).
+// Top-level layout orchestration (render_ui, accordion_widths).
+pub mod layout;
+
+// Overlay renderers (used from layout::render_ui overlays).
 pub mod dashboard;
 pub mod grep_search;
 pub mod review;
