@@ -278,10 +278,9 @@ fn run_loop(
             needs_redraw = true;
         }
 
-        // Terminal panels need continuous rendering for PTY output.
-        if matches!(app.focus, crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell) {
-            needs_redraw = true;
-        }
+        // Terminal panels only need redraw when PTY output arrives (dirty flags
+        // are set below after `take_output_notify()`). The old unconditional
+        // `needs_redraw = true` caused 120fps full-UI re-renders even when idle.
         // Update overlays need continuous rendering for spinner animation.
         if app.update_state != crate::app::UpdateState::Idle {
             needs_redraw = true;
@@ -411,6 +410,10 @@ fn run_loop(
         // If a PTY reader thread has produced new output, skip the poll
         // timeout entirely so we render the update on the very next frame.
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
+        if pty_dirty {
+            app.terminal.dirty_claude = true;
+            app.terminal.dirty_shell = true;
+        }
         let tick = if pty_dirty {
             Duration::ZERO
         } else {

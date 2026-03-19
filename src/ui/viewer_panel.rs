@@ -17,17 +17,14 @@ use crate::review_store::ReviewComment;
 use crate::theme::Theme;
 use crate::viewer::UnifiedDiffEntry;
 
-/// Annotation for a diff line, carrying the tag and optional inline segments.
-pub struct DiffAnnotation {
-    pub tag: DiffLineTag,
-    pub inline_segments: Vec<InlineSegment>,
-}
-
 /// Render the viewer (file content) panel into the given area.
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    // Populate diff annotations cache before taking any shared borrows.
+    ensure_diff_annotations_cached(app);
+
     let theme = &app.theme;
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
@@ -99,8 +96,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let inner_height = area.height.saturating_sub(2) as usize;
     let gutter_width = digit_count(vs.file_content.len());
 
-    // Build diff annotations: map line_number -> DiffLineTag for current file.
-    let diff_annotations = build_diff_annotations(app);
+    // Diff annotations are cached in ViewerState (populated at function entry).
+    let diff_annotations = app.viewer_state.cached_diff_annotations.as_ref().unwrap();
 
     // Collect line numbers that have review comments (from in-memory cache).
     let comment_lines: std::collections::HashSet<usize> =
@@ -125,7 +122,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
             // Diff gutter marker.
             let annotation = diff_annotations.get(&line_1);
-            let diff_tag = annotation.map(|a| a.tag);
+            let diff_tag = annotation.map(|(tag, _)| *tag);
             let (gutter_prefix, gutter_bg) = match diff_tag {
                 Some(DiffLineTag::Insert) => ("+", Some(app.theme.diff_add_bg)),
                 Some(DiffLineTag::Delete) => ("-", None),
@@ -188,25 +185,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     content.to_string(),
                     Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
                 )]
-            } else if let Some(ann) = annotation {
-                if !ann.inline_segments.is_empty() {
+            } else if let Some((ann_tag, ann_segments)) = annotation {
+                if !ann_segments.is_empty() {
                     // Word-level diff: render each segment with appropriate background.
-                    let (diff_bg, emphasis_bg) = match ann.tag {
+                    let (diff_bg, emphasis_bg) = match ann_tag {
                         DiffLineTag::Insert => (app.theme.diff_add_bg, app.theme.diff_add_bg_emphasis),
                         DiffLineTag::Delete => (app.theme.diff_del_bg, app.theme.diff_del_bg_emphasis),
                         _ => (Color::Reset, Color::Reset),
                     };
 
-                    if ann.tag == DiffLineTag::Insert {
+                    if *ann_tag == DiffLineTag::Insert {
                         vs.highlighted_lines.get(line_no)
                             .filter(|t| !t.is_empty())
                             .and_then(|tokens| merge_syntax_with_inline(
-                                &ann.inline_segments, tokens, diff_bg, emphasis_bg, tab_width,
+                                ann_segments, tokens, diff_bg, emphasis_bg, tab_width,
                             ))
                             .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
                     } else {
                         render_inline_diff_spans(
-                            &ann.inline_segments,
+                            ann_segments,
                             diff_bg,
                             emphasis_bg,
                             tab_width,
@@ -214,7 +211,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     }
                 } else {
                     // Line-level diff only: use syntax highlighting with diff bg.
-                    let diff_bg = match ann.tag {
+                    let diff_bg = match ann_tag {
                         DiffLineTag::Insert => Some(app.theme.diff_add_bg),
                         DiffLineTag::Delete => Some(app.theme.diff_del_bg),
                         _ => None,
@@ -295,14 +292,8 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
     let tab_width = app.config.viewer.tab_width;
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    // Compute max line number for gutter width.
-    let max_line_no = vs.diff_view_lines.iter().filter_map(|entry| {
-        match entry {
-            UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
-            _ => None,
-        }
-    }).max().unwrap_or(0);
-    let gutter_width = digit_count(max_line_no);
+    // Use cached max line number (computed in build_unified_diff_view).
+    let gutter_width = digit_count(vs.diff_view_max_line_no);
 
     // Collect line numbers that have review comments.
     let comment_lines: std::collections::HashSet<usize> =
@@ -732,53 +723,59 @@ fn render_comment_preview(
     frame.render_widget(paragraph, preview_area);
 }
 
-/// Build a map of line_number -> DiffAnnotation for the currently viewed file.
-///
-/// Searches both committed and uncommitted file lists. Uncommitted annotations
-/// are added first so that committed annotations don't overwrite them (the
-/// viewer shows the workdir version of the file, so uncommitted changes are
-/// more relevant).
-pub fn build_diff_annotations(app: &App) -> std::collections::HashMap<usize, DiffAnnotation> {
+/// Ensure the diff annotations cache in `ViewerState` is populated for the
+/// currently viewed file. Only rebuilds if the file changed or the cache was
+/// invalidated (e.g. after `load_diff()`).
+fn ensure_diff_annotations_cached(app: &mut App) {
     use crate::diff_state::FileDiff;
 
-    let mut annotations = std::collections::HashMap::new();
-    let current_file = match &app.viewer_state.current_file {
-        Some(f) => f,
-        None => return annotations,
-    };
+    let current_file = app.viewer_state.current_file.clone();
 
-    let insert_annotations = |file_diff: &FileDiff, map: &mut std::collections::HashMap<usize, DiffAnnotation>| {
-        for hunk in &file_diff.hunks {
-            for line in &hunk.lines {
-                if line.tag == DiffLineTag::Insert {
-                    if let Some(n) = line.new_line_no {
-                        map.entry(n).or_insert_with(|| DiffAnnotation {
-                            tag: DiffLineTag::Insert,
-                            inline_segments: line.inline_segments.clone(),
-                        });
+    // Check if cache is still valid.
+    if app.viewer_state.cached_diff_annotations.is_some()
+        && app.viewer_state.cached_diff_annotations_file == current_file
+    {
+        return;
+    }
+
+    let mut annotations = std::collections::HashMap::new();
+
+    if let Some(ref current) = current_file {
+        let insert_annotations =
+            |file_diff: &FileDiff,
+             map: &mut std::collections::HashMap<usize, (DiffLineTag, Vec<InlineSegment>)>| {
+                for hunk in &file_diff.hunks {
+                    for line in &hunk.lines {
+                        if line.tag == DiffLineTag::Insert {
+                            if let Some(n) = line.new_line_no {
+                                map.entry(n).or_insert_with(|| {
+                                    (DiffLineTag::Insert, line.inline_segments.clone())
+                                });
+                            }
+                        }
                     }
                 }
+            };
+
+        // Uncommitted first (takes priority in the viewer).
+        for file_diff in &app.diff_state.uncommitted_files {
+            if file_diff.path == *current {
+                insert_annotations(file_diff, &mut annotations);
+                break;
             }
         }
-    };
 
-    // Uncommitted first (takes priority in the viewer).
-    for file_diff in &app.diff_state.uncommitted_files {
-        if file_diff.path == *current_file {
-            insert_annotations(file_diff, &mut annotations);
-            break;
+        // Committed second (or_insert prevents overwriting uncommitted).
+        for file_diff in &app.diff_state.committed_files {
+            if file_diff.path == *current {
+                insert_annotations(file_diff, &mut annotations);
+                break;
+            }
         }
     }
 
-    // Committed second (or_insert prevents overwriting uncommitted).
-    for file_diff in &app.diff_state.committed_files {
-        if file_diff.path == *current_file {
-            insert_annotations(file_diff, &mut annotations);
-            break;
-        }
-    }
-
-    annotations
+    app.viewer_state.cached_diff_annotations = Some(annotations);
+    app.viewer_state.cached_diff_annotations_file = current_file;
 }
 
 /// Render intra-line diff segments with emphasis highlighting (plain white fg).

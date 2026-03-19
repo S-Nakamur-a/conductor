@@ -151,15 +151,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
 
-            // When focused (or cache empty), do the expensive vt100 snapshot.
-            // Otherwise, reuse cached lines for fast rendering.
-            if focused || app.terminal.cache_claude.lines.is_empty() {
+            // Rebuild PTY snapshot only when new output arrives (dirty flag)
+            // or cache is empty. Avoids expensive vt100 mutex lock every frame.
+            if app.terminal.cache_claude.lines.is_empty()
+                || (focused && app.terminal.dirty_claude)
+            {
                 app.terminal.cache_claude = crate::ui::common::build_pty_lines(
                     &screen_arc,
                     app.terminal.scroll_claude,
                     inner.height,
                     inner.width,
                 );
+                app.terminal.dirty_claude = false;
             }
             crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_claude);
 

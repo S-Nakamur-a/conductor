@@ -714,6 +714,7 @@ impl App {
             let path = wt.path.clone();
             let tab_width = self.config.viewer.tab_width;
             self.diff_state.load_diff(&path, &base_branch, word_diff, tab_width);
+            self.viewer_state.invalidate_diff_annotations();
         }
     }
 

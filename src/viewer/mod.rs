@@ -107,6 +107,13 @@ pub struct ViewerState {
     pub media_state: MediaState,
     /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
     cached_visible_indices: Option<Rc<Vec<usize>>>,
+    /// Cached diff annotations for the currently viewed file (line_no -> (tag, segments)).
+    /// Invalidated when diff data changes or a different file is opened.
+    pub cached_diff_annotations: Option<std::collections::HashMap<usize, (crate::diff_state::DiffLineTag, Vec<crate::diff_state::InlineSegment>)>>,
+    /// The file path for which `cached_diff_annotations` was built.
+    pub cached_diff_annotations_file: Option<String>,
+    /// Cached max line number for diff view (avoids O(n) scan per frame).
+    pub diff_view_max_line_no: usize,
     /// Gitignore matcher built from the worktree root. `Arc` so it can be
     /// shared with background tree walks. `None` until the first tree load.
     gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
@@ -155,12 +162,21 @@ impl Default for ViewerState {
             filename_search_all_files: Vec::new(),
             media_state: MediaState::default(),
             cached_visible_indices: None,
+            cached_diff_annotations: None,
+            cached_diff_annotations_file: None,
+            diff_view_max_line_no: 0,
             gitignore: None,
         }
     }
 }
 
 impl ViewerState {
+    /// Invalidate the cached diff annotations (call when diff data changes).
+    pub fn invalidate_diff_annotations(&mut self) {
+        self.cached_diff_annotations = None;
+        self.cached_diff_annotations_file = None;
+    }
+
     /// Build the file tree by walking the filesystem under `worktree_path`.
     ///
     /// Directories named `.git` are skipped. The tree is sorted so that
@@ -723,6 +739,17 @@ impl ViewerState {
             }
         }
 
+        // Cache the max line number to avoid O(n) scan per frame.
+        self.diff_view_max_line_no = self
+            .diff_view_lines
+            .iter()
+            .filter_map(|e| match e {
+                UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
         if !self.diff_view_lines.is_empty() {
             self.diff_mode = true;
             self.diff_view_scroll = 0;
@@ -768,6 +795,7 @@ impl ViewerState {
         self.diff_mode = false;
         self.diff_view_lines.clear();
         self.diff_view_scroll = 0;
+        self.diff_view_max_line_no = 0;
     }
 
     // -- Tree reveal ----------------------------------------------------------
