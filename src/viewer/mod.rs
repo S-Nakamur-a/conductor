@@ -10,7 +10,9 @@ mod file_view;
 pub use file_tree::{file_icon, FileTreeEntry, ScoredFile};
 pub use file_view::UnifiedDiffEntry;
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -65,6 +67,8 @@ pub struct ViewerState {
     pub explorer_focus_on_diff_list: bool,
     /// Cached syntax-highlighted tokens per line (syntect output converted to ratatui styles).
     pub highlighted_lines: Vec<Vec<(ratatui::style::Style, String)>>,
+    /// Hash of (current_file, file_content) used to skip redundant re-highlighting.
+    highlighted_cache_key: Option<u64>,
     /// Last known inner height of the explorer file-tree pane (updated during render).
     pub explorer_tree_height: usize,
     /// Last known inner height of the explorer diff-list pane (updated during render).
@@ -141,6 +145,7 @@ impl Default for ViewerState {
             diff_list_scroll: 0,
             explorer_focus_on_diff_list: false,
             highlighted_lines: Vec::new(),
+            highlighted_cache_key: None,
             explorer_tree_height: 20,
             explorer_diff_list_height: 20,
             explorer_show_comments: false,
@@ -258,6 +263,7 @@ impl ViewerState {
     pub fn open_file(&mut self, worktree_path: &Path, relative_path: &str, tab_width: usize) {
         self.exit_diff_mode();
         self.highlighted_lines.clear();
+        self.highlighted_cache_key = None;
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
@@ -562,12 +568,29 @@ impl ViewerState {
     }
 
     /// Run syntect highlighting on `file_content` and cache the result.
+    ///
+    /// Computes a hash of `(current_file, file_content)` and skips
+    /// re-highlighting when the content has not changed since the last call.
     pub fn highlight_content(&mut self, syntax_set: &SyntaxSet, theme: &SyntectTheme) {
-        self.highlighted_lines.clear();
-
         if self.file_content.is_empty() {
+            self.highlighted_lines.clear();
+            self.highlighted_cache_key = None;
             return;
         }
+
+        // Compute a cache key from the file path and content.
+        let hash = {
+            let mut hasher = DefaultHasher::new();
+            self.current_file.hash(&mut hasher);
+            self.file_content.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        if self.highlighted_cache_key == Some(hash) {
+            return; // Content unchanged — skip redundant highlighting.
+        }
+
+        self.highlighted_lines.clear();
 
         // Determine syntax from file extension.
         let ext = self
@@ -617,6 +640,8 @@ impl ViewerState {
 
             self.highlighted_lines.push(spans);
         }
+
+        self.highlighted_cache_key = Some(hash);
     }
 
     // -- Line selection helpers -----------------------------------------------

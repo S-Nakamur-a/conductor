@@ -840,307 +840,361 @@ impl App {
             CommandId::FocusViewer => self.set_focus(Focus::Viewer),
             CommandId::FocusTerminalClaude => self.set_focus(Focus::TerminalClaude),
             CommandId::FocusTerminalShell => self.set_focus(Focus::TerminalShell),
-            CommandId::TogglePanelExpand => {
-                if self.expanded_panel == Some(self.focus) {
-                    self.expanded_panel = None;
-                } else {
-                    self.expanded_panel = Some(self.focus);
-                }
-            }
-            CommandId::CreateWorktree => {
-                self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
-                self.worktree_mgr.input_buffer.clear();
-                self.set_status_info("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string());
-            }
-            CommandId::DeleteWorktree => {
-                if let Some(wt) = self.worktrees.get(self.selected_worktree) {
-                    if wt.is_main {
-                        self.set_status("Cannot delete the main worktree.".to_string(), StatusLevel::Warning);
-                    } else {
-                        let branch = wt.branch.clone();
-                        self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingDelete;
-                        self.set_status_info(format!("Delete worktree '{branch}'? (y/n)"));
-                    }
-                }
-            }
-            CommandId::SwitchBranch => {
-                self.set_status_info("Loading branches...".to_string());
-                self.load_switch_branches();
-                if !self.overlays.switch_branch.branches.is_empty() {
-                    self.overlays.active = ActiveOverlay::SwitchBranch;
-                    self.status_message = None;
-                }
-            }
-            CommandId::GrabBranch => {
-                if self.worktree_mgr.grabbed_branch.is_some() {
-                    self.set_status("Already grabbing a branch. Ungrab first (Y).".to_string(), StatusLevel::Warning);
-                } else {
-                    self.load_grab_branches();
-                    if self.overlays.grab.branches.is_empty() {
-                        self.set_status_info("No non-main worktrees to grab.".to_string());
-                    } else {
-                        self.overlays.active = ActiveOverlay::Grab;
-                    }
-                }
-            }
-            CommandId::PruneWorktrees => {
-                match crate::git_engine::GitEngine::open(&self.repo_path) {
-                    Ok(engine) => match engine.find_stale_worktrees() {
-                        Ok(stale) => {
-                            if stale.is_empty() {
-                                self.set_status_info("No stale worktrees found.".to_string());
-                            } else {
-                                self.overlays.prune.stale = stale;
-                                self.overlays.active = ActiveOverlay::Prune;
-                            }
-                        }
-                        Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
-                    },
-                    Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
-                }
-            }
-            CommandId::MergeToMain => {
-                if let Some(wt) = self.worktrees.get(self.selected_worktree) {
-                    if wt.is_main {
-                        self.set_status("Cannot merge main into itself.".to_string(), StatusLevel::Warning);
-                    } else {
-                        let branch = wt.branch.clone();
-                        let main_branch = self.config.general.main_branch.clone();
-                        match crate::git_engine::GitEngine::open(&self.repo_path) {
-                            Ok(engine) => match engine.merge_into_main(&branch, &main_branch) {
-                                Ok(msg) => {
-                                    self.set_status(msg, StatusLevel::Success);
-                                    self.refresh_worktrees();
-                                }
-                                Err(e) => self.set_status(format!("Merge error: {e}"), StatusLevel::Error),
-                            },
-                            Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
-                        }
-                    }
-                }
-            }
+            CommandId::TogglePanelExpand => self.cmd_toggle_panel_expand(),
+            CommandId::CreateWorktree => self.cmd_create_worktree(),
+            CommandId::DeleteWorktree => self.cmd_delete_worktree(),
+            CommandId::SwitchBranch => self.cmd_switch_branch(),
+            CommandId::GrabBranch => self.cmd_grab_branch(),
+            CommandId::PruneWorktrees => self.cmd_prune_worktrees(),
+            CommandId::MergeToMain => self.cmd_merge_to_main(),
             CommandId::RefreshWorktrees => { let _ = self.refresh_worktrees(); }
-            CommandId::ResetMainToOrigin => {
+            CommandId::ResetMainToOrigin => self.cmd_reset_main_to_origin(),
+            CommandId::CherryPick => self.cmd_cherry_pick(),
+            CommandId::NewClaudeCode => self.cmd_new_claude_code(),
+            CommandId::NewShell => self.cmd_new_shell(),
+            CommandId::ResumeClaudeSession => self.cmd_resume_claude_session(),
+            CommandId::RefreshDiff => self.refresh_diff(),
+            CommandId::SearchInFile => self.cmd_search_in_file(),
+            CommandId::ToggleHelp => self.cmd_toggle_help(),
+            CommandId::ShowReviewComments => self.cmd_show_review_comments(),
+            CommandId::ShowReviewTemplates => { self.review_state.template_picker_active = true; }
+            CommandId::SessionHistory => self.cmd_session_history(),
+            CommandId::OpenRepo => self.cmd_open_repo(),
+            CommandId::SwitchRepo => self.cmd_switch_repo(),
+            CommandId::UngrabBranch => self.cmd_ungrab_branch(),
+            CommandId::ShowDiffList => self.cmd_show_diff_list(),
+            CommandId::ShowCommentList => self.cmd_show_comment_list(),
+            CommandId::AddReviewComment => self.cmd_add_review_comment(),
+            CommandId::ViewCommentDetail => self.cmd_view_comment_detail(),
+            CommandId::DeleteComment => self.cmd_delete_comment(),
+            CommandId::ToggleCommentResolve => self.cmd_toggle_comment_resolve(),
+            CommandId::EditComment => self.cmd_edit_comment(),
+            CommandId::ReplyToComment => self.cmd_reply_to_comment(),
+            CommandId::SaveSessionHistory => self.save_current_session_history(),
+            CommandId::OpenPullRequest => self.open_pr_in_browser(),
+            CommandId::UpdateAndRestart => self.cmd_update_and_restart(),
+            CommandId::SearchFullText => self.cmd_search_full_text(),
+            CommandId::Quit => self.should_quit = true,
+        }
+    }
+
+    // ── Command palette handler methods ──────────────────────────────
+
+    fn cmd_toggle_panel_expand(&mut self) {
+        if self.expanded_panel == Some(self.focus) {
+            self.expanded_panel = None;
+        } else {
+            self.expanded_panel = Some(self.focus);
+        }
+    }
+
+    fn cmd_create_worktree(&mut self) {
+        self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
+        self.worktree_mgr.input_buffer.clear();
+        self.set_status_info("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string());
+    }
+
+    fn cmd_delete_worktree(&mut self) {
+        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+            if wt.is_main {
+                self.set_status("Cannot delete the main worktree.".to_string(), StatusLevel::Warning);
+            } else {
+                let branch = wt.branch.clone();
+                self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingDelete;
+                self.set_status_info(format!("Delete worktree '{branch}'? (y/n)"));
+            }
+        }
+    }
+
+    fn cmd_switch_branch(&mut self) {
+        self.set_status_info("Loading branches...".to_string());
+        self.load_switch_branches();
+        if !self.overlays.switch_branch.branches.is_empty() {
+            self.overlays.active = ActiveOverlay::SwitchBranch;
+            self.status_message = None;
+        }
+    }
+
+    fn cmd_grab_branch(&mut self) {
+        if self.worktree_mgr.grabbed_branch.is_some() {
+            self.set_status("Already grabbing a branch. Ungrab first (Y).".to_string(), StatusLevel::Warning);
+        } else {
+            self.load_grab_branches();
+            if self.overlays.grab.branches.is_empty() {
+                self.set_status_info("No non-main worktrees to grab.".to_string());
+            } else {
+                self.overlays.active = ActiveOverlay::Grab;
+            }
+        }
+    }
+
+    fn cmd_prune_worktrees(&mut self) {
+        match crate::git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => match engine.find_stale_worktrees() {
+                Ok(stale) => {
+                    if stale.is_empty() {
+                        self.set_status_info("No stale worktrees found.".to_string());
+                    } else {
+                        self.overlays.prune.stale = stale;
+                        self.overlays.active = ActiveOverlay::Prune;
+                    }
+                }
+                Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
+            },
+            Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
+        }
+    }
+
+    fn cmd_merge_to_main(&mut self) {
+        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+            if wt.is_main {
+                self.set_status("Cannot merge main into itself.".to_string(), StatusLevel::Warning);
+            } else {
+                let branch = wt.branch.clone();
                 let main_branch = self.config.general.main_branch.clone();
                 match crate::git_engine::GitEngine::open(&self.repo_path) {
-                    Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
+                    Ok(engine) => match engine.merge_into_main(&branch, &main_branch) {
                         Ok(msg) => {
                             self.set_status(msg, StatusLevel::Success);
                             self.refresh_worktrees();
                         }
-                        Err(e) => self.set_status(format!("Reset error: {e}"), StatusLevel::Error),
+                        Err(e) => self.set_status(format!("Merge error: {e}"), StatusLevel::Error),
                     },
                     Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
                 }
             }
-            CommandId::CherryPick => {
-                let current_branch = self.selected_worktree_branch();
-                let source = self.worktrees.iter()
-                    .find(|w| w.branch != current_branch)
-                    .map(|w| w.branch.clone());
-                if let Some(branch) = source {
-                    self.overlays.cherry_pick.source_branch = branch;
-                    self.load_cherry_pick_commits();
-                    self.overlays.active = ActiveOverlay::CherryPick;
+        }
+    }
+
+    fn cmd_reset_main_to_origin(&mut self) {
+        let main_branch = self.config.general.main_branch.clone();
+        match crate::git_engine::GitEngine::open(&self.repo_path) {
+            Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
+                Ok(msg) => {
+                    self.set_status(msg, StatusLevel::Success);
+                    self.refresh_worktrees();
+                }
+                Err(e) => self.set_status(format!("Reset error: {e}"), StatusLevel::Error),
+            },
+            Err(e) => self.set_status(format!("Error: {e}"), StatusLevel::Error),
+        }
+    }
+
+    fn cmd_cherry_pick(&mut self) {
+        let current_branch = self.selected_worktree_branch();
+        let source = self.worktrees.iter()
+            .find(|w| w.branch != current_branch)
+            .map(|w| w.branch.clone());
+        if let Some(branch) = source {
+            self.overlays.cherry_pick.source_branch = branch;
+            self.load_cherry_pick_commits();
+            self.overlays.active = ActiveOverlay::CherryPick;
+        } else {
+            self.set_status_info("No other worktree branches available.".to_string());
+        }
+    }
+
+    fn cmd_new_claude_code(&mut self) {
+        if let Err(e) = self.spawn_claude_code() {
+            self.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
+        }
+        self.set_focus(Focus::TerminalClaude);
+    }
+
+    fn cmd_new_shell(&mut self) {
+        if let Err(e) = self.spawn_shell() {
+            self.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
+        }
+        self.set_focus(Focus::TerminalShell);
+    }
+
+    fn cmd_resume_claude_session(&mut self) {
+        self.overlays.active = ActiveOverlay::ResumeSession;
+        self.load_resume_sessions();
+    }
+
+    fn cmd_search_in_file(&mut self) {
+        self.viewer_state.search_active = true;
+        self.viewer_state.search_query.clear();
+        self.set_focus(Focus::Viewer);
+    }
+
+    fn cmd_toggle_help(&mut self) {
+        self.overlays.help.context = self.focus;
+        self.overlays.active = ActiveOverlay::Help;
+    }
+
+    fn cmd_show_review_comments(&mut self) {
+        self.viewer_state.explorer_show_comments = true;
+        self.viewer_state.explorer_focus_on_diff_list = true;
+        self.set_focus(Focus::Explorer);
+    }
+
+    fn cmd_session_history(&mut self) {
+        self.overlays.active = ActiveOverlay::History;
+        self.load_session_history();
+    }
+
+    fn cmd_open_repo(&mut self) {
+        self.overlays.active = ActiveOverlay::OpenRepo;
+        self.overlays.open_repo.buffer.set_text(&self.repo_path.display().to_string());
+    }
+
+    fn cmd_switch_repo(&mut self) {
+        if self.repo_list.len() > 1 {
+            self.overlays.active = ActiveOverlay::RepoSelector;
+            self.overlays.repo_selector.selected = self.repo_list_index;
+        }
+    }
+
+    fn cmd_ungrab_branch(&mut self) {
+        if self.worktree_mgr.grabbed_branch.is_none() {
+            self.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
+        } else {
+            self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingUngrab;
+            self.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
+        }
+    }
+
+    fn cmd_show_diff_list(&mut self) {
+        self.viewer_state.explorer_show_comments = false;
+        self.viewer_state.explorer_focus_on_diff_list = true;
+        self.set_focus(Focus::Explorer);
+    }
+
+    fn cmd_show_comment_list(&mut self) {
+        self.viewer_state.explorer_show_comments = true;
+        self.viewer_state.explorer_focus_on_diff_list = true;
+        self.set_focus(Focus::Explorer);
+    }
+
+    fn cmd_add_review_comment(&mut self) {
+        if let Some(file_path) = self.viewer_state.current_file.clone() {
+            let location = if let Some((start, end)) = self.viewer_state.selected_range() {
+                if start == end {
+                    format!("{file_path}:{start} ")
                 } else {
-                    self.set_status_info("No other worktree branches available.".to_string());
+                    format!("{file_path}:{start}-{end} ")
                 }
-            }
-            CommandId::NewClaudeCode => {
-                if let Err(e) = self.spawn_claude_code() {
-                    self.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
-                }
-                self.set_focus(Focus::TerminalClaude);
-            }
-            CommandId::NewShell => {
-                if let Err(e) = self.spawn_shell() {
-                    self.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
-                }
-                self.set_focus(Focus::TerminalShell);
-            }
-            CommandId::ResumeClaudeSession => {
-                self.overlays.active = ActiveOverlay::ResumeSession;
-                self.load_resume_sessions();
-            }
-            CommandId::RefreshDiff => self.refresh_diff(),
-            CommandId::SearchInFile => {
-                self.viewer_state.search_active = true;
-                self.viewer_state.search_query.clear();
-                self.set_focus(Focus::Viewer);
-            }
-            CommandId::ToggleHelp => {
-                self.overlays.help.context = self.focus;
-                self.overlays.active = ActiveOverlay::Help;
-            }
-            CommandId::ShowReviewComments => {
-                self.viewer_state.explorer_show_comments = true;
-                self.viewer_state.explorer_focus_on_diff_list = true;
-                self.set_focus(Focus::Explorer);
-            }
-            CommandId::ShowReviewTemplates => {
-                self.review_state.template_picker_active = true;
-            }
-            CommandId::SessionHistory => {
-                self.overlays.active = ActiveOverlay::History;
-                self.load_session_history();
-            }
-            CommandId::OpenRepo => {
-                self.overlays.active = ActiveOverlay::OpenRepo;
-                self.overlays.open_repo.buffer.set_text(&self.repo_path.display().to_string());
-            }
-            CommandId::SwitchRepo => {
-                if self.repo_list.len() > 1 {
-                    self.overlays.active = ActiveOverlay::RepoSelector;
-                    self.overlays.repo_selector.selected = self.repo_list_index;
-                }
-            }
-            CommandId::UngrabBranch => {
-                if self.worktree_mgr.grabbed_branch.is_none() {
-                    self.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
-                } else {
-                    self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingUngrab;
-                    self.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
-                }
-            }
-            CommandId::ShowDiffList => {
-                self.viewer_state.explorer_show_comments = false;
-                self.viewer_state.explorer_focus_on_diff_list = true;
-                self.set_focus(Focus::Explorer);
-            }
-            CommandId::ShowCommentList => {
-                self.viewer_state.explorer_show_comments = true;
-                self.viewer_state.explorer_focus_on_diff_list = true;
-                self.set_focus(Focus::Explorer);
-            }
-            CommandId::AddReviewComment => {
-                if let Some(file_path) = self.viewer_state.current_file.clone() {
-                    let location = if let Some((start, end)) = self.viewer_state.selected_range() {
-                        if start == end {
-                            format!("{file_path}:{start} ")
-                        } else {
-                            format!("{file_path}:{start}-{end} ")
-                        }
-                    } else {
-                        let line = self.viewer_state.file_scroll + 1;
-                        format!("{file_path}:{line} ")
-                    };
-                    self.viewer_state.clear_selection();
-                    self.review_state.input_buffer.set_text(&location);
-                    self.review_state.input_kind = crate::review_store::CommentKind::Suggest;
-                    self.review_state.input_mode = crate::review_state::ReviewInputMode::AddingComment;
-                    self.review_state.status_message =
-                        Some("Add comment: [s:|q:]file:line body".to_string());
-                    self.set_focus(Focus::Viewer);
-                } else {
-                    self.set_status("No file open in viewer.".to_string(), StatusLevel::Warning);
-                }
-            }
-            CommandId::ViewCommentDetail => {
-                // Try viewer context first (current line), then comment list context.
-                if self.viewer_state.current_file.is_some() {
-                    let cursor_line = if let Some((start, _)) = self.viewer_state.selected_range() {
-                        start
-                    } else {
-                        self.viewer_state.file_scroll + 1
-                    };
-                    if let Some(comments) = self.review_state.file_comments.get(&cursor_line) {
-                        if !comments.is_empty() {
-                            let target_id = &comments[0].id;
-                            if let Some(idx) = self.review_state.comments.iter().position(|c| c.id == *target_id) {
-                                let cid = target_id.clone();
-                                if !self.review_state.cached_replies.contains_key(&cid) {
-                                    if let Some(store) = self.review_store.as_ref() {
-                                        if let Ok(replies) = store.get_replies(&cid) {
-                                            self.review_state.cached_replies.insert(cid, replies);
-                                        }
-                                    }
+            } else {
+                let line = self.viewer_state.file_scroll + 1;
+                format!("{file_path}:{line} ")
+            };
+            self.viewer_state.clear_selection();
+            self.review_state.input_buffer.set_text(&location);
+            self.review_state.input_kind = crate::review_store::CommentKind::Suggest;
+            self.review_state.input_mode = crate::review_state::ReviewInputMode::AddingComment;
+            self.review_state.status_message =
+                Some("Add comment: [s:|q:]file:line body".to_string());
+            self.set_focus(Focus::Viewer);
+        } else {
+            self.set_status("No file open in viewer.".to_string(), StatusLevel::Warning);
+        }
+    }
+
+    fn cmd_view_comment_detail(&mut self) {
+        // Try viewer context first (current line), then comment list context.
+        if self.viewer_state.current_file.is_some() {
+            let cursor_line = if let Some((start, _)) = self.viewer_state.selected_range() {
+                start
+            } else {
+                self.viewer_state.file_scroll + 1
+            };
+            if let Some(comments) = self.review_state.file_comments.get(&cursor_line) {
+                if !comments.is_empty() {
+                    let target_id = &comments[0].id;
+                    if let Some(idx) = self.review_state.comments.iter().position(|c| c.id == *target_id) {
+                        let cid = target_id.clone();
+                        if !self.review_state.cached_replies.contains_key(&cid) {
+                            if let Some(store) = self.review_store.as_ref() {
+                                if let Ok(replies) = store.get_replies(&cid) {
+                                    self.review_state.cached_replies.insert(cid, replies);
                                 }
-                                self.review_state.comment_detail_idx = idx;
-                                self.review_state.comment_detail_scroll = 0;
-                                self.review_state.comment_detail_active = true;
-                                self.set_focus(Focus::Viewer);
-                                return;
                             }
                         }
+                        self.review_state.comment_detail_idx = idx;
+                        self.review_state.comment_detail_scroll = 0;
+                        self.review_state.comment_detail_active = true;
+                        self.set_focus(Focus::Viewer);
+                        return;
                     }
                 }
-                self.set_status("No comment on current line.".to_string(), StatusLevel::Warning);
             }
-            CommandId::DeleteComment => {
-                if self.viewer_state.explorer_show_comments
-                    && self.viewer_state.explorer_focus_on_diff_list
-                    && !self.review_state.comment_list_rows.is_empty()
-                {
-                    self.delete_selected_review_comment();
-                } else {
-                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
-                }
-            }
-            CommandId::ToggleCommentResolve => {
-                if self.viewer_state.explorer_show_comments
-                    && self.viewer_state.explorer_focus_on_diff_list
-                    && !self.review_state.comment_list_rows.is_empty()
-                {
-                    self.toggle_selected_review_status();
-                } else {
-                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
-                }
-            }
-            CommandId::EditComment => {
-                let comment_idx = self
-                    .review_state
-                    .selected_comment_idx(self.viewer_state.comment_list_selected);
-                if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
-                    self.review_state.input_buffer.set_text(&comment.body);
-                    self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
-                    self.review_state.selected = comment_idx.unwrap();
-                    self.review_state.status_message =
-                        Some("Edit comment (Enter to save, Esc to cancel)".to_string());
-                } else {
-                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
-                }
-            }
-            CommandId::ReplyToComment => {
-                let comment_idx = self
-                    .review_state
-                    .selected_comment_idx(self.viewer_state.comment_list_selected);
-                if let Some(idx) = comment_idx {
-                    self.review_state.input_buffer.clear();
-                    self.review_state.input_mode = crate::review_state::ReviewInputMode::ReplyingToComment;
-                    self.review_state.selected = idx;
-                    self.review_state.status_message =
-                        Some("Reply to comment (Enter to send, Esc to cancel)".to_string());
-                } else {
-                    self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
-                }
-            }
-            CommandId::SaveSessionHistory => {
-                self.save_current_session_history();
-            }
-            CommandId::OpenPullRequest => {
-                self.open_pr_in_browser();
-            }
-            CommandId::UpdateAndRestart => {
-                if self.update_info.is_some() {
-                    self.start_update_confirm();
-                } else {
-                    self.set_status("No update available.".to_string(), StatusLevel::Info);
-                }
-            }
-            CommandId::SearchFullText => {
-                self.overlays.active = ActiveOverlay::GrepSearch;
-                self.overlays.grep_search.query.clear();
-                self.overlays.grep_search.results.clear();
-                self.overlays.grep_search.selected = 0;
-                self.overlays.grep_search.scroll = 0;
-                self.overlays.grep_search.running = false;
-                self.overlays.grep_search.bg_op.clear();
-                self.overlays.grep_search.bg_op_phase2.clear();
-                self.overlays.grep_search.debounce_deadline = None;
-                self.overlays.grep_search.phase1_active = false;
-            }
-            CommandId::Quit => self.should_quit = true,
         }
+        self.set_status("No comment on current line.".to_string(), StatusLevel::Warning);
+    }
+
+    fn cmd_delete_comment(&mut self) {
+        if self.viewer_state.explorer_show_comments
+            && self.viewer_state.explorer_focus_on_diff_list
+            && !self.review_state.comment_list_rows.is_empty()
+        {
+            self.delete_selected_review_comment();
+        } else {
+            self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+        }
+    }
+
+    fn cmd_toggle_comment_resolve(&mut self) {
+        if self.viewer_state.explorer_show_comments
+            && self.viewer_state.explorer_focus_on_diff_list
+            && !self.review_state.comment_list_rows.is_empty()
+        {
+            self.toggle_selected_review_status();
+        } else {
+            self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+        }
+    }
+
+    fn cmd_edit_comment(&mut self) {
+        let comment_idx = self
+            .review_state
+            .selected_comment_idx(self.viewer_state.comment_list_selected);
+        if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
+            self.review_state.input_buffer.set_text(&comment.body);
+            self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
+            self.review_state.selected = comment_idx.unwrap();
+            self.review_state.status_message =
+                Some("Edit comment (Enter to save, Esc to cancel)".to_string());
+        } else {
+            self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+        }
+    }
+
+    fn cmd_reply_to_comment(&mut self) {
+        let comment_idx = self
+            .review_state
+            .selected_comment_idx(self.viewer_state.comment_list_selected);
+        if let Some(idx) = comment_idx {
+            self.review_state.input_buffer.clear();
+            self.review_state.input_mode = crate::review_state::ReviewInputMode::ReplyingToComment;
+            self.review_state.selected = idx;
+            self.review_state.status_message =
+                Some("Reply to comment (Enter to send, Esc to cancel)".to_string());
+        } else {
+            self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
+        }
+    }
+
+    fn cmd_update_and_restart(&mut self) {
+        if self.update_info.is_some() {
+            self.start_update_confirm();
+        } else {
+            self.set_status("No update available.".to_string(), StatusLevel::Info);
+        }
+    }
+
+    fn cmd_search_full_text(&mut self) {
+        self.overlays.active = ActiveOverlay::GrepSearch;
+        self.overlays.grep_search.query.clear();
+        self.overlays.grep_search.results.clear();
+        self.overlays.grep_search.selected = 0;
+        self.overlays.grep_search.scroll = 0;
+        self.overlays.grep_search.running = false;
+        self.overlays.grep_search.bg_op.clear();
+        self.overlays.grep_search.bg_op_phase2.clear();
+        self.overlays.grep_search.debounce_deadline = None;
+        self.overlays.grep_search.phase1_active = false;
     }
 
     /// Show the update confirmation dialog.
