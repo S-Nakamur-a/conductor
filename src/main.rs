@@ -256,12 +256,18 @@ fn run_loop(
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
 
+    /// Minimum interval between frames (~60fps). Prevents flooding the
+    /// terminal emulator with draw commands during rapid scroll, which
+    /// causes perceived "freezing then jump" behaviour.
+    const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+    let mut last_draw_time = Instant::now() - MIN_FRAME_INTERVAL;
+
     // ══════════════════════════════════════════════════════════════
     // Main event loop — ordered for minimal input-to-pixel latency:
     //   1. Wait for events / timeout
-    //   2. Handle events (state changes)
-    //   3. RENDER immediately (lowest latency for user input)
-    //   4. Background work (timers, polling, file watcher — ok to be slow)
+    //   2. Handle events — drain ALL pending (coalesce rapid scroll)
+    //   3. RENDER (throttled to ~60fps)
+    //   4. Background work (timers, polling, file watcher)
     // ══════════════════════════════════════════════════════════════
     loop {
         // ── 1. Wait for an event ─────────────────────────────────
@@ -273,14 +279,23 @@ fn run_loop(
             app.terminal.dirty_shell = true;
             app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
         }
-        let tick = if pty_dirty || app.dirty.any() {
-            Duration::ZERO
+
+        // Calculate poll timeout: honour frame throttle so we don't
+        // busy-loop while waiting for the next frame deadline.
+        let since_last_draw = last_draw_time.elapsed();
+        let frame_budget = MIN_FRAME_INTERVAL.saturating_sub(since_last_draw);
+
+        let tick = if app.dirty.any() {
+            // Dirty but frame budget not yet elapsed — wait for remaining time.
+            frame_budget
+        } else if pty_dirty {
+            frame_budget
         } else {
             match app.focus {
-                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
-                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
-                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
-                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
+                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL.max(frame_budget),
+                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE.max(frame_budget),
+                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE.max(frame_budget),
+                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE.max(frame_budget),
                 _ if decoration_active => DECORATION_TICK_INTERVAL,
                 _ => TICK_RATE_IDLE,
             }
@@ -288,9 +303,9 @@ fn run_loop(
 
         if crossterm_poll(tick)? {
             // ── 2. Handle events ─────────────────────────────────
-            // Break after scroll events to render intermediate frames.
+            // Drain ALL pending events. Rapid scroll events are coalesced
+            // into a single frame (throttled below at ~60fps).
             loop {
-                let mut was_scroll = false;
                 match crossterm_read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
@@ -298,11 +313,6 @@ fn run_loop(
                         handle_key_event(app, key);
                     }
                     Event::Mouse(mouse) => {
-                        was_scroll = matches!(
-                            mouse.kind,
-                            crossterm::event::MouseEventKind::ScrollDown
-                                | crossterm::event::MouseEventKind::ScrollUp
-                        );
                         last_input_time = Instant::now();
                         handle_mouse_event(app, mouse, last_frame_area);
                     }
@@ -311,7 +321,7 @@ fn run_loop(
                     _ => {}
                 }
                 app.dirty.mark_all();
-                if was_scroll || !crossterm_poll(Duration::ZERO)? {
+                if !crossterm_poll(Duration::ZERO)? {
                     break;
                 }
             }
@@ -334,7 +344,7 @@ fn run_loop(
             app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
         }
 
-        if app.dirty.any() {
+        if app.dirty.any() && last_draw_time.elapsed() >= MIN_FRAME_INTERVAL {
             app.ui_tick = app.ui_tick.wrapping_add(1);
 
             const STATUS_FADE_TICKS: u64 = 180;
@@ -350,6 +360,7 @@ fn run_loop(
                 render_ui(frame, app);
             })?;
 
+            last_draw_time = Instant::now();
             app.dirty.clear();
         }
 
