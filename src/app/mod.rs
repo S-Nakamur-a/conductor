@@ -168,6 +168,8 @@ pub struct GrabbedBranch {
     pub branch: String,
     /// Path of the worktree that originally had this branch.
     pub source_worktree: PathBuf,
+    /// Claude Code session ID from the source worktree (for resume after grab).
+    pub claude_session_id: Option<String>,
 }
 
 /// State of the in-app update flow.
@@ -524,10 +526,11 @@ impl App {
         // Restore grab state from $git_common_dir/wt-grab if it exists.
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
             match engine.load_grab_state() {
-                Ok(Some((branch, source_worktree, _stash_branch))) => {
+                Ok(Some((branch, source_worktree, _stash_branch, claude_session_id))) => {
                     app.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
                         branch,
                         source_worktree,
+                        claude_session_id,
                     });
                     log::info!("Restored grab state from wt-grab file");
                 }

@@ -273,6 +273,12 @@ impl App {
             return;
         }
 
+        // If we have a grabbed branch with a session ID, use it for the main worktree
+        // instead of whatever auto-resume would normally find (since the session was
+        // created in the source worktree, not the main worktree).
+        let grabbed_session_for_main = self.worktree_mgr.grabbed_branch.as_ref()
+            .and_then(|g| g.claude_session_id.clone());
+
         let selected_wt_path = self.selected_worktree_path();
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
@@ -281,6 +287,37 @@ impl App {
 
         for wt in &self.worktrees.clone() {
             let canonical = std::fs::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
+
+            // For main worktree with a grabbed session, prefer the grabbed session ID.
+            if wt.is_main {
+                if let Some(ref grabbed_id) = grabbed_session_for_main {
+                    let label = format!("Resume:{}", &grabbed_id[..8.min(grabbed_id.len())]);
+                    match self.terminal.pty_manager.spawn_session(
+                        pty_manager::SessionKind::ClaudeCode,
+                        &wt.branch,
+                        &label,
+                        &shell,
+                        &wt.path,
+                        rows,
+                        cols,
+                        Some(grabbed_id),
+                        &repo_path,
+                    ) {
+                        Ok(idx) => {
+                            resumed_count += 1;
+                            if wt.path == selected_wt_path {
+                                self.terminal.pty_manager.activate_session(idx);
+                                self.terminal.active_claude_session = Some(idx);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("auto-resume: failed to resume grabbed session for main: {e}");
+                        }
+                    }
+                    continue;
+                }
+            }
+
             let session = match sessions.get(&canonical) {
                 Some(s) => s,
                 None => continue,
