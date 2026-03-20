@@ -333,6 +333,9 @@ pub struct App {
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
     pub pending_auto_resume: bool,
+
+    /// Cached layout rectangles (recomputed when frame size or expansion state changes).
+    pub layout_cache: crate::ui::layout::LayoutCache,
 }
 
 /// Result of a background diff computation.
@@ -484,6 +487,7 @@ impl App {
             bg_file_tree_op: BackgroundOp::default(),
             bg_branch_details_op: BackgroundOp::default(),
             pending_auto_resume: auto_resume,
+            layout_cache: Default::default(),
         };
         app.refresh_worktrees();
         app.refresh_reviews();
@@ -619,11 +623,32 @@ impl App {
     }
 
     /// Refresh the cached worktree list from the repository.
-    pub fn refresh_worktrees(&mut self) {
+    ///
+    /// Returns `true` if the worktree list actually changed (different count,
+    /// branch names, or status counts), so callers can skip redraws when
+    /// nothing is different.
+    pub fn refresh_worktrees(&mut self) -> bool {
+        let mut changed = false;
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.list_worktrees() {
                     Ok(worktrees) => {
+                        // Detect whether the worktree list changed before replacing it.
+                        if worktrees.len() != self.worktrees.len() {
+                            changed = true;
+                        } else {
+                            for (old, new) in self.worktrees.iter().zip(worktrees.iter()) {
+                                if old.branch != new.branch
+                                    || old.added != new.added
+                                    || old.modified != new.modified
+                                    || old.deleted != new.deleted
+                                    || old.is_clean != new.is_clean
+                                {
+                                    changed = true;
+                                    break;
+                                }
+                            }
+                        }
                         self.worktrees = worktrees;
                         if !self.worktrees.is_empty() && self.selected_worktree >= self.worktrees.len()
                         {
@@ -636,6 +661,7 @@ impl App {
                                     if let Some(old) = self.worktree_heads.get(&wt.branch) {
                                         if old != &head_oid {
                                             self.record_stat("commits_made");
+                                            changed = true;
                                         }
                                     }
                                     self.worktree_heads.insert(wt.branch.clone(), head_oid);
@@ -649,6 +675,9 @@ impl App {
                 }
                 // Refresh local branches for the detail zone.
                 if let Ok(branches) = engine.list_local_branches() {
+                    if branches != self.worktree_mgr.local_branches {
+                        changed = true;
+                    }
                     self.worktree_mgr.local_branches = branches;
                 }
             }
@@ -657,6 +686,7 @@ impl App {
             }
         }
         self.rebuild_worktree_list_rows();
+        changed
     }
 
     /// Advance the decoration animation by one tick. Returns `true` when
@@ -881,7 +911,7 @@ impl App {
                     }
                 }
             }
-            CommandId::RefreshWorktrees => self.refresh_worktrees(),
+            CommandId::RefreshWorktrees => { let _ = self.refresh_worktrees(); }
             CommandId::ResetMainToOrigin => {
                 let main_branch = self.config.general.main_branch.clone();
                 match crate::git_engine::GitEngine::open(&self.repo_path) {

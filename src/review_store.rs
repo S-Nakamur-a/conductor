@@ -128,7 +128,7 @@ pub struct ReviewReply {
 }
 
 /// Daily activity statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DailyStats {
     pub reviews_created: i64,
     pub branches_created: i64,

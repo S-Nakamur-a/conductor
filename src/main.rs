@@ -43,11 +43,11 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
-use crate::ui::layout::{accordion_widths, render_ui};
+use crate::ui::layout::render_ui;
 
 /// Tick rate when terminal panels are focused (~120fps for responsive PTY).
 const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
@@ -316,33 +316,17 @@ fn run_loop(
             needs_redraw = false;
         }
 
-        // Compute PTY sizes for Claude and Shell panels.
+        // Resize PTY sessions to match panel dimensions from cached layout.
         {
-            let area = last_frame_area;
-            // Must match render_ui layout: title bar (1) + notification bar (0 or 1) + main + status bar (1).
-            let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty()
-                { 1 } else { 0 };
-            let outer = Layout::vertical([
-                Constraint::Length(1),
-                Constraint::Length(notif_height),
-                Constraint::Min(0),
-                Constraint::Length(1),
-            ])
-            .split(area);
-            let main_area = outer[2];
-
-            let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
-            let right_w = main_area.width.saturating_sub(left_w.saturating_add(explorer_w).saturating_add(viewer_w));
-
+            let cols = &app.layout_cache.columns;
             let is_terminal_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
             let border_cols: u16 = if is_terminal_expanded { 0 } else { 2 };
-            let border_rows: u16 = if is_terminal_expanded { 1 } else { 2 }; // tab bar always, bottom border only when not expanded
+            let border_rows: u16 = if is_terminal_expanded { 1 } else { 2 };
+            let right_w = cols[3].width;
             if right_w > border_cols {
                 let right_cols = right_w.saturating_sub(border_cols);
-                // Claude: 80% of right height, Shell: 20%
-                let claude_rows_total = (main_area.height as u32 * 80 / 100) as u16;
-                let shell_rows_total = main_area.height.saturating_sub(claude_rows_total);
-                // Subtract tab bar (1) + bottom border (0 or 1) from each
+                let claude_rows_total = app.layout_cache.terminal_split[0].height;
+                let shell_rows_total = app.layout_cache.terminal_split[1].height;
                 let claude_pty_rows = claude_rows_total.saturating_sub(border_rows);
                 let shell_pty_rows = shell_rows_total.saturating_sub(border_rows);
 
@@ -366,8 +350,8 @@ fn run_loop(
         // Tick decoration on a fixed timer, independent of main tick rate.
         if last_decoration_time.elapsed() >= DECORATION_TICK_INTERVAL {
             last_decoration_time = Instant::now();
-            let (left_w, _, _) = accordion_widths(app.expanded_panel, last_frame_area.width);
-            let panel_h = last_frame_area.height.saturating_sub(3);
+            let left_w = app.layout_cache.columns[0].width;
+            let panel_h = app.layout_cache.main_area.height;
             let list_h = (app.worktrees.len() as u16 + 2).max(5);
             let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
             let deco_h = panel_h.saturating_sub(list_h + detail_h);
@@ -516,33 +500,39 @@ fn run_loop(
         // (e.g. `git worktree add` run inside a terminal panel).
         if last_worktree_poll.elapsed() >= WORKTREE_POLL {
             last_worktree_poll = Instant::now();
-            app.refresh_worktrees();
+            if app.refresh_worktrees() {
+                needs_redraw = true;
+            }
             app.check_diff_viewer_staleness();
-            needs_redraw = true;
         }
 
         // Periodically remove dead PTY sessions (exited processes).
         if last_pty_cleanup.elapsed() >= PTY_CLEANUP_POLL {
             last_pty_cleanup = Instant::now();
-            app.cleanup_dead_sessions();
-            needs_redraw = true;
+            if app.cleanup_dead_sessions() {
+                needs_redraw = true;
+            }
         }
 
         // Periodically check if any Claude Code sessions are waiting for input.
         if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
             last_cc_waiting_check = Instant::now();
-            app.check_cc_waiting_state();
+            if app.check_cc_waiting_state() {
+                needs_redraw = true;
+            }
             app.flush_deferred_prompts();
-            needs_redraw = true;
         }
 
         // Periodically refresh gamification stats (streak, today's activity).
         if last_stats_refresh.elapsed() >= STATS_REFRESH_POLL {
             last_stats_refresh = Instant::now();
             if let Some(store) = &app.review_store {
-                app.today_stats = store.get_today_stats().ok();
+                let new_stats = store.get_today_stats().ok();
+                if new_stats != app.today_stats {
+                    app.today_stats = new_stats;
+                    needs_redraw = true;
+                }
             }
-            needs_redraw = true;
         }
 
         // Force redraw while worktree ops are pending (for spinner animation).

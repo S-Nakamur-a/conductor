@@ -8,6 +8,101 @@ use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::app::App;
 
+/// Cached layout rectangles computed once per frame.
+/// Shared between render_ui, mouse event handler, PTY sizing, and decoration.
+#[derive(Default, Clone)]
+pub struct LayoutCache {
+    /// Frame area used to compute this cache (cache key).
+    pub frame_area: Rect,
+    /// Expanded panel state when cache was computed (cache key).
+    pub expanded_panel: Option<crate::app::Focus>,
+    /// Whether notification bar was visible (cache key).
+    pub has_notifications: bool,
+    /// Title bar area.
+    pub title_area: Rect,
+    /// Notification bar area.
+    pub notif_area: Rect,
+    /// Main content area (between title and status bars).
+    pub main_area: Rect,
+    /// Status bar area.
+    pub status_area: Rect,
+    /// Column areas: [worktree, explorer, viewer, terminal].
+    pub columns: [Rect; 4],
+    /// Explorer panel vertical split mid-point Y coordinate.
+    pub explorer_mid_y: u16,
+    /// Terminal split: [claude_area, shell_area].
+    pub terminal_split: [Rect; 2],
+}
+
+impl LayoutCache {
+    /// Recompute layout if inputs changed. Returns true if cache was updated.
+    pub fn update(
+        &mut self,
+        frame_area: Rect,
+        expanded_panel: Option<crate::app::Focus>,
+        has_notifications: bool,
+    ) -> bool {
+        if self.frame_area == frame_area
+            && self.expanded_panel == expanded_panel
+            && self.has_notifications == has_notifications
+        {
+            return false;
+        }
+
+        self.frame_area = frame_area;
+        self.expanded_panel = expanded_panel;
+        self.has_notifications = has_notifications;
+
+        let notif_height: u16 = if has_notifications { 1 } else { 0 };
+
+        let outer = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(notif_height),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(frame_area);
+
+        self.title_area = outer[0];
+        self.notif_area = outer[1];
+        self.main_area = outer[2];
+        self.status_area = outer[3];
+
+        let (left_w, explorer_w, viewer_w) = accordion_widths(expanded_panel, self.main_area.width);
+        let right_w = self.main_area.width.saturating_sub(
+            left_w.saturating_add(explorer_w).saturating_add(viewer_w),
+        );
+
+        let cols = Layout::horizontal([
+            Constraint::Length(left_w),
+            Constraint::Length(explorer_w),
+            Constraint::Length(viewer_w),
+            Constraint::Length(right_w),
+        ])
+        .split(self.main_area);
+
+        self.columns = [cols[0], cols[1], cols[2], cols[3]];
+
+        // Explorer 50/50 vertical split
+        let explorer_split = Layout::vertical([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(self.columns[1]);
+        self.explorer_mid_y = explorer_split[1].y;
+
+        // Terminal 80/20 vertical split
+        let terminal_split = Layout::vertical([
+            Constraint::Percentage(80),
+            Constraint::Percentage(20),
+        ])
+        .split(self.columns[3]);
+        self.terminal_split = [terminal_split[0], terminal_split[1]];
+
+        true
+    }
+}
+
 /// Calculate accordion panel widths based on panel expansion state.
 ///
 /// Returns `(left_width, explorer_width, viewer_width)`. The right panel gets whatever remains.
@@ -33,23 +128,15 @@ pub(crate) fn accordion_widths(expanded_panel: Option<crate::app::Focus>, total_
 /// Top-level UI renderer — 3-column accordion layout + status bar.
 pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-
     let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
-    let notif_height: u16 = if has_notifications { 1 } else { 0 };
 
-    // Outer: title bar (1 row) + notification bar (0 or 1 row) + main content + status bar (1 row).
-    let outer = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(notif_height),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .split(area);
+    // Update layout cache (no-op if nothing changed).
+    app.layout_cache.update(area, app.expanded_panel, has_notifications);
 
-    let title_area = outer[0];
-    let notif_area = outer[1];
-    let main_area = outer[2];
-    let status_area = outer[3];
+    let title_area = app.layout_cache.title_area;
+    let notif_area = app.layout_cache.notif_area;
+    let main_area = app.layout_cache.main_area;
+    let status_area = app.layout_cache.status_area;
 
     // ── Title bar ───────────────────────────────────────────────────
     super::common::render_title_bar(frame, title_area, app);
@@ -59,17 +146,8 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         super::common::render_notification_bar(frame, notif_area, app);
     }
 
-    // ── Accordion column widths ─────────────────────────────────────
-    let (left_w, explorer_w, viewer_w) = accordion_widths(app.expanded_panel, main_area.width);
-    let right_w = main_area.width.saturating_sub(left_w.saturating_add(explorer_w).saturating_add(viewer_w));
-
-    let columns = Layout::horizontal([
-        Constraint::Length(left_w),
-        Constraint::Length(explorer_w),
-        Constraint::Length(viewer_w),
-        Constraint::Length(right_w),
-    ])
-    .split(main_area);
+    // ── Accordion column widths (from cache) ───────────────────────
+    let columns = app.layout_cache.columns;
 
     // ── Column 0: Worktree panel ────────────────────────────────────
     super::worktree_panel::render(frame, columns[0], app);
@@ -90,11 +168,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::viewer_panel::render(frame, columns[2], app);
 
     // ── Column 3: Terminal split (Claude 80% / Shell 20%) ───────────
-    let terminal_split = Layout::vertical([
-        Constraint::Percentage(80),
-        Constraint::Percentage(20),
-    ])
-    .split(columns[3]);
+    let terminal_split = app.layout_cache.terminal_split;
 
     super::terminal_claude::render(frame, terminal_split[0], app);
     super::terminal_shell::render(frame, terminal_split[1], app);

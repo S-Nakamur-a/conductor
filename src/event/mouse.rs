@@ -11,55 +11,22 @@ use super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
 pub fn handle_mouse_event(
     app: &mut App,
     mouse: MouseEvent,
-    frame_area: ratatui::layout::Rect,
+    _frame_area: ratatui::layout::Rect,
 ) {
-    use ratatui::layout::{Constraint, Layout};
+    // Read layout from cache (computed during render).
+    let lc = &app.layout_cache;
+    let notif_area = lc.notif_area;
+    let main_area = lc.main_area;
 
-    // Compute layout regions — must match render_ui in main.rs.
-    let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty()
-        { 1 } else { 0 };
-    let outer = Layout::vertical([
-        Constraint::Length(1), // title bar
-        Constraint::Length(notif_height), // notification bar
-        Constraint::Min(0),
-        Constraint::Length(1), // status bar
-    ])
-    .split(frame_area);
-    let notif_area = outer[1];
-    let main_area = outer[2];
+    let left_w = lc.columns[0].width;
+    let explorer_w = lc.columns[1].width;
+    let viewer_w = lc.columns[2].width;
+    let left_end = lc.columns[0].x + left_w;
+    let explorer_end = lc.columns[1].x + explorer_w;
+    let viewer_end = lc.columns[2].x + viewer_w;
 
-    let (left_w, explorer_w, viewer_w) = crate::ui::layout::accordion_widths(app.expanded_panel, main_area.width);
-
-    let left_end = main_area.x + left_w;
-    let explorer_end = left_end + explorer_w;
-    let viewer_end = explorer_end + viewer_w;
-
-    // Compute explorer panel's 50/50 vertical split — must match explorer_panel::render.
-    let explorer_v_split = Layout::vertical([
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-    ])
-    .split(ratatui::layout::Rect::new(
-        left_end,
-        main_area.y,
-        explorer_w,
-        main_area.height,
-    ));
-    let explorer_mid_y = explorer_v_split[1].y;
-
-    // Compute terminal panel's 80/20 vertical split — must match render_ui in main.rs.
-    let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
-    let terminal_v_split = Layout::vertical([
-        Constraint::Percentage(80),
-        Constraint::Percentage(20),
-    ])
-    .split(ratatui::layout::Rect::new(
-        viewer_end,
-        main_area.y,
-        right_w,
-        main_area.height,
-    ));
-    let terminal_split_y = terminal_v_split[1].y;
+    let explorer_mid_y = lc.explorer_mid_y;
+    let terminal_split_y = lc.terminal_split[1].y;
 
     let col = mouse.column;
     let row = mouse.row;
@@ -84,7 +51,7 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // Notification bar click — check for badge clicks.
-            if notif_height > 0 && row == notif_area.y {
+            if notif_area.height > 0 && row == notif_area.y {
                 for (start_col, end_col, branch) in &app.notification_bar_badges {
                     if col >= *start_col && col < *end_col {
                         if let Some(wt_idx) =

@@ -137,7 +137,7 @@ impl App {
     /// Iterates in reverse to preserve indices of earlier sessions while
     /// removing later ones. Adjusts `active_claude_session` and
     /// `active_shell_session` indices after removal.
-    pub fn cleanup_dead_sessions(&mut self) {
+    pub fn cleanup_dead_sessions(&mut self) -> bool {
         let count = self.terminal.pty_manager.session_count();
         let mut removed_any = false;
 
@@ -178,6 +178,8 @@ impl App {
                 self.terminal.active_shell_session = None;
             }
         }
+
+        removed_any
     }
 
     /// Load resumable Claude Code sessions from Claude's history.
@@ -494,7 +496,10 @@ impl App {
     /// If a worktree newly enters the waiting state and the user is not
     /// currently focused on that worktree's terminal, a status message is
     /// shown as a notification.
-    pub fn check_cc_waiting_state(&mut self) {
+    pub fn check_cc_waiting_state(&mut self) -> bool {
+        let old_waiting = self.terminal.cc_waiting_worktrees.clone();
+        let old_active = self.terminal.cc_active_worktrees.clone();
+
         // Resolve the main repo root so we look in the right place even
         // when Conductor was launched from a linked worktree.
         let conductor_dir = git_engine::GitEngine::open(&self.repo_path)
@@ -601,6 +606,9 @@ impl App {
 
         self.terminal.cc_waiting_worktrees = new_waiting;
         self.terminal.cc_active_worktrees = new_active;
+
+        self.terminal.cc_waiting_worktrees != old_waiting
+            || self.terminal.cc_active_worktrees != old_active
     }
 
     /// Flush deferred prompts for CC sessions that are now ready for input.
