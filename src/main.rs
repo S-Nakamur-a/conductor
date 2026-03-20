@@ -365,6 +365,9 @@ fn run_loop(
         }
 
         // Periodic timers (git polling, decoration, terminal refresh, etc.)
+        // Defer expensive I/O timers while user is actively interacting
+        // (e.g. scrolling) to prevent mid-scroll freezes.
+        let input_active = last_input_time.elapsed() < ACTIVITY_TIMEOUT;
         for name in timers.check_due() {
             match name {
                 "decoration" => {
@@ -392,24 +395,25 @@ fn run_loop(
                     }
                     app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
                 }
-                "worktree_poll" => {
+                // Expensive I/O timers — skip during active input to avoid scroll freezes.
+                "worktree_poll" if !input_active => {
                     if app.refresh_worktrees() {
                         app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER);
                     }
                     app.check_diff_viewer_staleness();
                 }
-                "pty_cleanup" => {
+                "pty_cleanup" if !input_active => {
                     if app.cleanup_dead_sessions() {
                         app.dirty.mark(crate::app::DirtyPanels::TERMINAL | crate::app::DirtyPanels::WORKTREE);
                     }
                 }
-                "cc_waiting" => {
+                "cc_waiting" if !input_active => {
                     if app.check_cc_waiting_state() {
                         app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
                     }
                     app.flush_deferred_prompts();
                 }
-                "stats_refresh" => {
+                "stats_refresh" if !input_active => {
                     if let Some(store) = &app.review_store {
                         let new_stats = store.get_today_stats().ok();
                         if new_stats != app.today_stats {
