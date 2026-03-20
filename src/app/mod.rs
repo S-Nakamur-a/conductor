@@ -20,6 +20,9 @@ use syntect::parsing::SyntaxSet;
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
+use crate::jump_history::JumpHistory;
+use crate::overlay::ReferencesOverlay;
+use crate::symbol_index::SymbolIndex;
 use crate::grep_search::GrepProgress;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
@@ -364,6 +367,12 @@ pub struct App {
 
     /// Cached layout rectangles (recomputed when frame size or expansion state changes).
     pub layout_cache: crate::ui::layout::LayoutCache,
+
+    // ── Code navigation (symbol index + jump history) ───────────
+    pub symbol_index: SymbolIndex,
+    pub jump_history: JumpHistory,
+    pub references_overlay: ReferencesOverlay,
+    pub bg_symbol_index_op: BackgroundOp<Result<usize, String>>,
 }
 
 /// Result of a background diff computation.
@@ -534,7 +543,12 @@ impl App {
             bg_branch_details_op: BackgroundOp::default(),
             pending_auto_resume: auto_resume,
             layout_cache: Default::default(),
+            symbol_index: SymbolIndex::new(PathBuf::new()),
+            jump_history: JumpHistory::new(),
+            references_overlay: ReferencesOverlay::default(),
+            bg_symbol_index_op: BackgroundOp::default(),
         };
+        app.symbol_index = SymbolIndex::new(app.repo_path.clone());
         app.refresh_worktrees();
         app.refresh_reviews();
 
@@ -867,6 +881,106 @@ impl App {
     /// Set a plain info status message (backward-compatible shorthand).
     pub fn set_status_info(&mut self, text: String) {
         self.set_status(text, StatusLevel::Info);
+    }
+
+    // ── Code navigation helpers ────────────────────────────────────
+
+    /// Extract the symbol under the cursor from the current viewer line.
+    pub fn get_symbol_at_cursor(&self) -> Option<String> {
+        let scroll = self.viewer_state.content.file_scroll;
+        let line = self.viewer_state.content.file_content.get(scroll)?;
+        extract_symbol_from_line(line)
+    }
+
+    /// Jump to a file location, pushing the current position onto the history.
+    pub fn jump_to_location(&mut self, file_path: &str, line: usize) {
+        // Save current location to history.
+        if let Some(ref cur_file) = self.viewer_state.content.current_file.clone() {
+            let loc = crate::jump_history::Location {
+                file_path: cur_file.clone(),
+                line: self.viewer_state.content.file_scroll,
+                h_scroll: self.viewer_state.content.h_scroll,
+            };
+            self.jump_history.push(loc);
+        }
+
+        // Open the target file.
+        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+            let wt_path = wt.path.clone();
+            let tab_width = self.config.viewer.tab_width;
+            self.viewer_state.open_file(&wt_path, file_path, tab_width);
+            self.rehighlight_viewer();
+            self.viewer_state.reveal_file_in_tree(file_path, &wt_path);
+        }
+
+        // Scroll to the target line (0-indexed).
+        let target_scroll = line.saturating_sub(1);
+        let total = self.viewer_state.content.file_content.len();
+        self.viewer_state.content.file_scroll = target_scroll.min(total.saturating_sub(1));
+        self.viewer_state.content.h_scroll = 0;
+        self.set_focus(Focus::Viewer);
+    }
+
+    /// Navigate back in the jump history.
+    pub fn jump_back(&mut self) {
+        let current = match self.viewer_state.content.current_file.clone() {
+            Some(f) => crate::jump_history::Location {
+                file_path: f,
+                line: self.viewer_state.content.file_scroll,
+                h_scroll: self.viewer_state.content.h_scroll,
+            },
+            None => return,
+        };
+
+        if let Some(loc) = self.jump_history.go_back(current) {
+            if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+                let wt_path = wt.path.clone();
+                let tab_width = self.config.viewer.tab_width;
+                self.viewer_state.open_file(&wt_path, &loc.file_path, tab_width);
+                self.rehighlight_viewer();
+                self.viewer_state.reveal_file_in_tree(&loc.file_path, &wt_path);
+            }
+            let total = self.viewer_state.content.file_content.len();
+            self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
+            self.viewer_state.content.h_scroll = loc.h_scroll;
+        }
+    }
+
+    /// Navigate forward in the jump history.
+    pub fn jump_forward(&mut self) {
+        let current = match self.viewer_state.content.current_file.clone() {
+            Some(f) => crate::jump_history::Location {
+                file_path: f,
+                line: self.viewer_state.content.file_scroll,
+                h_scroll: self.viewer_state.content.h_scroll,
+            },
+            None => return,
+        };
+
+        if let Some(loc) = self.jump_history.go_forward(current) {
+            if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+                let wt_path = wt.path.clone();
+                let tab_width = self.config.viewer.tab_width;
+                self.viewer_state.open_file(&wt_path, &loc.file_path, tab_width);
+                self.rehighlight_viewer();
+                self.viewer_state.reveal_file_in_tree(&loc.file_path, &wt_path);
+            }
+            let total = self.viewer_state.content.file_content.len();
+            self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
+            self.viewer_state.content.h_scroll = loc.h_scroll;
+        }
+    }
+
+    /// Start building the symbol index in the background.
+    pub fn start_symbol_index_build(&mut self) {
+        let index = self.symbol_index.clone();
+        self.bg_symbol_index_op.start(move |tx| {
+            let result = match index.build() {
+                Ok(count) => Ok(count),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = tx.send(result);
+        });
     }
 
     /// Open a file path (relative to the current worktree) in the Viewer panel.
@@ -1322,6 +1436,19 @@ impl App {
             self.ccusage_info = Some(info);
         }
 
+        // symbol index
+        if let Some(result) = self.bg_symbol_index_op.poll() {
+            match result {
+                Ok(count) => {
+                    log::info!("Symbol index built: {count} symbols");
+                    self.set_status(format!("Symbol index ready ({count} symbols)"), StatusLevel::Success);
+                }
+                Err(msg) => {
+                    log::warn!("Symbol index build failed: {msg}");
+                }
+            }
+        }
+
         // update check
         if let Some(Some(info)) = self.bg_update_check_op.poll() {
             if crate::update_checker::is_newer(
@@ -1747,5 +1874,33 @@ fn try_source_update(
     }
 
     true
+}
+
+// ── Free functions for symbol extraction ──────────────────────────────
+
+/// Extract a symbol name from a source code line at the cursor position.
+/// Returns the first Rust-like identifier found on the line that is not a keyword.
+pub fn extract_symbol_from_line(line: &str) -> Option<String> {
+    let re = regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\b").ok()?;
+    for cap in re.captures_iter(line) {
+        let word = cap.get(1)?.as_str();
+        if !is_rust_keyword(word) && word.len() > 1 {
+            return Some(word.to_string());
+        }
+    }
+    None
+}
+
+/// Check if a word is a Rust keyword (should not be treated as a symbol).
+pub fn is_rust_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "as" | "async" | "await" | "break" | "const" | "continue" | "crate"
+            | "dyn" | "else" | "enum" | "extern" | "false" | "fn" | "for"
+            | "if" | "impl" | "in" | "let" | "loop" | "match" | "mod"
+            | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
+            | "static" | "struct" | "super" | "trait" | "true" | "type"
+            | "unsafe" | "use" | "where" | "while" | "yield"
+    )
 }
 

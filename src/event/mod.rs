@@ -149,6 +149,12 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         EffectiveOverlay::None => {} // Fall through to panel dispatch.
     }
 
+    // ── 1b. References overlay (panel-level popup, not part of OverlayManager) ──
+    if app.references_overlay.active {
+        handle_references_key(app, key);
+        return;
+    }
+
     // ── 1c. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
@@ -440,6 +446,7 @@ fn dismiss_overlays(app: &mut App) {
     app.viewer_state.search.search_active = false;
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
+    app.references_overlay.active = false;
 }
 
 /// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.

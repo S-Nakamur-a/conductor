@@ -93,6 +93,13 @@ pub enum Action {
     // ── Search ──────────────────────────────────────────────────
     SearchFullText,
 
+    // ── Code navigation ─────────────────────────────────────────
+    GoToDefinition,
+    GoToImplementation,
+    FindReferences,
+    JumpBack,
+    JumpForward,
+
     // ── Panel layout ────────────────────────────────────────────
     TogglePanelExpand,
 }
@@ -162,6 +169,11 @@ impl Action {
             "open_file_from_terminal" => Some(Action::OpenFileFromTerminal),
             "update_and_restart" => Some(Action::UpdateAndRestart),
             "search_full_text" => Some(Action::SearchFullText),
+            "go_to_definition" => Some(Action::GoToDefinition),
+            "go_to_implementation" => Some(Action::GoToImplementation),
+            "find_references" => Some(Action::FindReferences),
+            "jump_back" => Some(Action::JumpBack),
+            "jump_forward" => Some(Action::JumpForward),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             _ => None,
         }
@@ -232,6 +244,11 @@ impl Action {
             Action::OpenFileFromTerminal => "open_file_from_terminal",
             Action::UpdateAndRestart => "update_and_restart",
             Action::SearchFullText => "search_full_text",
+            Action::GoToDefinition => "go_to_definition",
+            Action::GoToImplementation => "go_to_implementation",
+            Action::FindReferences => "find_references",
+            Action::JumpBack => "jump_back",
+            Action::JumpForward => "jump_forward",
             Action::TogglePanelExpand => "toggle_panel_expand",
         }
     }
@@ -603,6 +620,8 @@ impl KeyMap {
         self.bind_char(Viewer, ' ', ViewCommentDetail);
         self.bind_key(Viewer, KeyCode::Esc, ExitToExplorer);
         self.bind_char(Viewer, ':', CommandPalette);
+        self.bind_ctrl(Viewer, 'o', JumpBack);
+        self.bind_ctrl(Viewer, 'i', JumpForward);
 
         // ── Viewer: diff mode ────────────────────────────────────
         self.bind_char(ViewerDiffMode, 'j', NavigateDown);

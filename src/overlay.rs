@@ -130,6 +130,16 @@ pub struct OpenRepoOverlay {
 }
 
 
+/// Code navigation: references overlay state (for `gr` — Find References).
+#[derive(Default)]
+pub struct ReferencesOverlay {
+    pub active: bool,
+    pub symbol_name: String,
+    pub results: Vec<crate::symbol_index::Reference>,
+    pub selected: usize,
+    pub scroll: usize,
+}
+
 /// Help overlay state.
 pub struct HelpOverlay {
     pub context: Focus,
