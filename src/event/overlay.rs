@@ -581,6 +581,8 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
 // ── Overlay: grep (full-text) search ────────────────────────────────────
 
 pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
+    use crate::search_result_tree::SearchTreeRow;
+
     match key.code {
         KeyCode::Esc => {
             app.overlays.active = ActiveOverlay::None;
@@ -591,8 +593,10 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             app.overlays.grep_search.phase1_active = false;
         }
         KeyCode::Enter => {
-            // Jump to the selected result (if any).
-            if let Some(result) = app.overlays.grep_search.results.get(app.overlays.grep_search.selected).cloned() {
+            // Jump to the selected result — only if on a Match row.
+            let selected = app.overlays.grep_search.selected;
+            let result = app.overlays.grep_search.result_tree.get_match_at(selected).cloned();
+            if let Some(result) = result {
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.grep_search.running = false;
                 app.overlays.grep_search.bg_op.clear();
@@ -609,17 +613,90 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     app.viewer_state.content.file_scroll = result.line_number.saturating_sub(1);
                     app.set_focus(Focus::Viewer);
                 }
+            } else {
+                // On a Dir/File row: toggle expand/collapse.
+                app.overlays.grep_search.result_tree.toggle_expand(selected);
             }
         }
         KeyCode::Down | KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let count = app.overlays.grep_search.results.len();
-            if count > 0 && app.overlays.grep_search.selected + 1 < count {
-                app.overlays.grep_search.selected += 1;
+            let count = app.overlays.grep_search.result_tree.visible_rows().len();
+            if count == 0 {
+                return;
+            }
+            let selected = app.overlays.grep_search.selected;
+            // If current row is a collapsed dir/file, skip to the next sibling.
+            if app.overlays.grep_search.result_tree.is_collapsed(selected) {
+                if let Some(next) = app.overlays.grep_search.result_tree.next_sibling_index(selected) {
+                    app.overlays.grep_search.selected = next;
+                }
+            } else if selected + 1 < count {
+                app.overlays.grep_search.selected = selected + 1;
             }
         }
         KeyCode::Up | KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             if app.overlays.grep_search.selected > 0 {
                 app.overlays.grep_search.selected -= 1;
+            }
+        }
+        KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+            // Collapse the current node (or parent if on a Match row).
+            let selected = app.overlays.grep_search.selected;
+            let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
+            match rows.get(selected) {
+                Some(SearchTreeRow::Dir { expanded: true, .. }) | Some(SearchTreeRow::File { expanded: true, .. }) => {
+                    app.overlays.grep_search.result_tree.collapse(selected);
+                }
+                Some(SearchTreeRow::Match { depth, .. }) => {
+                    // Find parent file/dir row.
+                    let d = *depth;
+                    for i in (0..selected).rev() {
+                        let parent_depth = match &rows[i] {
+                            SearchTreeRow::Dir { depth, .. } => Some(*depth),
+                            SearchTreeRow::File { depth, .. } => Some(*depth),
+                            _ => None,
+                        };
+                        if let Some(pd) = parent_depth {
+                            if pd < d {
+                                app.overlays.grep_search.selected = i;
+                                app.overlays.grep_search.result_tree.collapse(i);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Some(SearchTreeRow::Dir { expanded: false, .. }) | Some(SearchTreeRow::File { expanded: false, .. }) => {
+                    // Already collapsed — move to parent dir.
+                    let d = match &rows[selected] {
+                        SearchTreeRow::Dir { depth, .. } => *depth,
+                        SearchTreeRow::File { depth, .. } => *depth,
+                        _ => 0,
+                    };
+                    if d > 0 {
+                        for i in (0..selected).rev() {
+                            if let SearchTreeRow::Dir { depth, .. } = &rows[i] {
+                                if *depth < d {
+                                    app.overlays.grep_search.selected = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+            // Expand the current node.
+            app.overlays.grep_search.result_tree.expand(app.overlays.grep_search.selected);
+        }
+        KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.overlays.grep_search.selected = 0;
+            app.overlays.grep_search.scroll = 0;
+        }
+        KeyCode::Char('G') => {
+            let count = app.overlays.grep_search.result_tree.visible_rows().len();
+            if count > 0 {
+                app.overlays.grep_search.selected = count - 1;
             }
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {

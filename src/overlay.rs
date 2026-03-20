@@ -10,7 +10,8 @@ use crate::app::Focus;
 use crate::background::BackgroundOp;
 use crate::claude_sessions::ResumableSession;
 use crate::git_engine::CommitInfo;
-use crate::grep_search::{GrepMatch, GrepProgress};
+use crate::grep_search::GrepProgress;
+use crate::search_result_tree::SearchResultTree;
 use crate::review_store::SessionHistory;
 use crate::text_input::TextInput;
 
@@ -79,7 +80,7 @@ pub struct ResumeSessionOverlay {
 #[derive(Default)]
 pub struct GrepSearchOverlay {
     pub query: TextInput,
-    pub results: Vec<GrepMatch>,
+    pub result_tree: SearchResultTree,
     pub selected: usize,
     pub scroll: usize,
     pub running: bool,
@@ -92,6 +93,8 @@ pub struct GrepSearchOverlay {
     pub phase1_active: bool,
     /// Background op for phase2 (full search) when doing 2-phase incremental search.
     pub bg_op_phase2: BackgroundOp<GrepProgress>,
+    /// Accumulates raw matches from background search, rebuilt into tree on completion.
+    pub pending_matches: Vec<crate::grep_search::GrepMatch>,
 }
 
 
