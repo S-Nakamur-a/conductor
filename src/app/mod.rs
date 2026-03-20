@@ -282,6 +282,12 @@ pub struct App {
     // ── Update check ───────────────────────────────────────────
     /// Latest release info when a newer version is available.
     pub update_info: Option<crate::update_checker::UpdateInfo>,
+    /// Background update check operation.
+    pub bg_update_check_op: BackgroundOp<Option<crate::update_checker::UpdateInfo>>,
+
+    // ── ccusage background op ────────────────────────────────────
+    /// Background ccusage fetch operation.
+    pub bg_ccusage_op: BackgroundOp<CcusageInfo>,
 
     // ── Update & restart ──────────────────────────────────────
     /// Current state of the update flow.
@@ -469,6 +475,8 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             update_info: None,
+            bg_update_check_op: BackgroundOp::default(),
+            bg_ccusage_op: BackgroundOp::default(),
             update_state: UpdateState::Idle,
             update_op: BackgroundOp::default(),
             update_progress_message: String::new(),
@@ -1171,6 +1179,35 @@ impl App {
                     self.update_progress_message = s;
                     self.update_state = UpdateState::Failed;
                 }
+            }
+        }
+    }
+
+    /// Poll all background operations and apply their results.
+    ///
+    /// Consolidates the scattered `poll_*()` calls that were previously
+    /// spread across `run_loop()` in `main.rs`.
+    pub fn poll_all_background_ops(&mut self) {
+        self.poll_bg_branches();
+        self.poll_bg_pull();
+        self.poll_grep_search();
+        self.poll_update_progress();
+        self.poll_pr_url();
+        self.poll_worktree_switch_ops();
+        self.poll_worktree_ops();
+
+        // ccusage
+        if let Some(info) = self.bg_ccusage_op.poll() {
+            self.ccusage_info = Some(info);
+        }
+
+        // update check
+        if let Some(Some(info)) = self.bg_update_check_op.poll() {
+            if crate::update_checker::is_newer(
+                &info.latest_version,
+                crate::update_checker::current_version(),
+            ) {
+                self.update_info = Some(info);
             }
         }
     }

@@ -29,7 +29,6 @@ mod viewer;
 mod worktree_ops;
 
 use std::io;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -218,8 +217,6 @@ fn run_loop(
     let ccusage_poll_secs = app.config.ccusage.poll_interval_secs;
     let ccusage_poll = Duration::from_secs(ccusage_poll_secs);
     let ccusage_enabled = app.config.ccusage.enabled;
-    let ccusage_result: Arc<Mutex<Option<crate::app::CcusageInfo>>> =
-        Arc::new(Mutex::new(None));
 
     // On startup: immediately show whatever is in the cache.
     if ccusage_enabled {
@@ -238,8 +235,6 @@ fn run_loop(
     if update_check_enabled {
         timers.register("update_check", update_check_interval);
     }
-    let update_result: Arc<Mutex<Option<update_checker::UpdateInfo>>> =
-        Arc::new(Mutex::new(None));
 
     if update_check_enabled {
         // Show badge immediately from cache while the background fetch runs.
@@ -250,13 +245,8 @@ fn run_loop(
         }
         // Always fetch the latest release info in the background so we
         // never miss a new version due to stale cache data.
-        let result_handle = Arc::clone(&update_result);
-        std::thread::spawn(move || {
-            if let Some(info) = update_checker::check_for_update() {
-                if let Ok(mut lock) = result_handle.lock() {
-                    *lock = Some(info);
-                }
-            }
+        app.bg_update_check_op.start(|tx| {
+            let _ = tx.send(update_checker::check_for_update());
         });
     }
 
@@ -397,26 +387,18 @@ fn run_loop(
                     }
                 }
                 "ccusage" => {
-                    let result_handle = Arc::clone(&ccusage_result);
                     let max_age = ccusage_poll_secs;
-                    std::thread::spawn(move || {
+                    app.bg_ccusage_op.start(move |tx| {
                         let info = ccusage_cache::read_if_fresh(max_age)
                             .or_else(ccusage_cache::fetch_and_cache);
                         if let Some(info) = info {
-                            if let Ok(mut lock) = result_handle.lock() {
-                                *lock = Some(info);
-                            }
+                            let _ = tx.send(info);
                         }
                     });
                 }
                 "update_check" => {
-                    let result_handle = Arc::clone(&update_result);
-                    std::thread::spawn(move || {
-                        if let Some(info) = update_checker::check_for_update() {
-                            if let Ok(mut lock) = result_handle.lock() {
-                                *lock = Some(info);
-                            }
-                        }
+                    app.bg_update_check_op.start(|tx| {
+                        let _ = tx.send(update_checker::check_for_update());
                     });
                 }
                 _ => {}
@@ -502,31 +484,14 @@ fn run_loop(
             }
         }
 
-        // Check if a background fetch for the switch-branch overlay has finished.
-        app.poll_bg_branches();
-
-        // Check if a background pull has finished.
-        app.poll_bg_pull();
-
-        // Poll grep search results.
-        app.poll_grep_search();
+        // Poll all background operations (branches, pull, grep, update,
+        // PR URL, worktree switch, worktree ops, ccusage, update check).
+        app.poll_all_background_ops();
 
         // Check grep debounce timer.
         if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch && app.check_grep_debounce() {
             needs_redraw = true;
         }
-
-        // Poll update download progress.
-        app.poll_update_progress();
-
-        // Poll background PR URL lookup.
-        app.poll_pr_url();
-
-        // Poll background worktree-switch operations (file tree, diff, branch details).
-        app.poll_worktree_switch_ops();
-
-        // Poll background worktree create/delete operations.
-        app.poll_worktree_ops();
 
         // Flush deferred prompts as soon as their target sessions are ready.
         if !app.terminal.deferred_prompts.is_empty() {
@@ -536,28 +501,6 @@ fn run_loop(
         // Force redraw while worktree ops are pending (for spinner animation).
         if !app.worktree_mgr.pending_worktrees.is_empty() {
             needs_redraw = true;
-        }
-
-        // Pick up ccusage result from background thread.
-        if ccusage_enabled {
-            if let Ok(mut lock) = ccusage_result.try_lock() {
-                if let Some(info) = lock.take() {
-                    app.ccusage_info = Some(info);
-                    needs_redraw = true;
-                }
-            }
-        }
-
-        // Pick up update check result from background thread.
-        if update_check_enabled {
-            if let Ok(mut lock) = update_result.try_lock() {
-                if let Some(info) = lock.take() {
-                    if update_checker::is_newer(&info.latest_version, update_checker::current_version()) {
-                        app.update_info = Some(info);
-                        needs_redraw = true;
-                    }
-                }
-            }
         }
 
         // Nudge PTY sessions that just entered alternate screen mode
