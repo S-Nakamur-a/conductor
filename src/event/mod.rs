@@ -14,7 +14,7 @@ mod worktree;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Focus, UpdateState};
+use crate::app::{App, Focus, UpdateState, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
@@ -25,6 +25,71 @@ use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use self::worktree::handle_worktree_key;
 use self::explorer::handle_explorer_key;
 use self::viewer::handle_viewer_key;
+
+// ── Effective overlay ───────────────────────────────────────────────────
+
+/// Unified overlay/modal state for dispatch. Collapses the multiple
+/// boolean/enum checks into a single discriminant.
+enum EffectiveOverlay {
+    /// Skip-reason modal (worktree creation failure detail).
+    SkipReason,
+    /// Update confirmation/progress/failure dialog.
+    UpdateState,
+    /// Comment detail popup.
+    CommentDetail,
+    /// Review text input (add/edit/reply).
+    ReviewInput,
+    /// Worktree text input (create/confirm/smart).
+    WorktreeInput,
+    /// An `ActiveOverlay` variant (switch-branch, cherry-pick, etc.).
+    Active(ActiveOverlay),
+    /// Filename search sub-modal.
+    FilenameSearch,
+    /// Viewer in-file search sub-modal.
+    ViewerSearch,
+    /// Review comment search sub-modal.
+    ReviewSearch,
+    /// Review template picker sub-modal.
+    ReviewTemplate,
+    /// No overlay — dispatch to focused panel.
+    None,
+}
+
+/// Determine the single effective overlay/modal that should consume input.
+fn effective_overlay(app: &App) -> EffectiveOverlay {
+    if app.worktree_mgr.skip_reason.is_some() {
+        return EffectiveOverlay::SkipReason;
+    }
+    if app.update_state != UpdateState::Idle {
+        return EffectiveOverlay::UpdateState;
+    }
+    if app.review_state.comment_detail_active {
+        return EffectiveOverlay::CommentDetail;
+    }
+    if app.review_state.input_mode != ReviewInputMode::Normal {
+        return EffectiveOverlay::ReviewInput;
+    }
+    if app.worktree_mgr.input_mode != WorktreeInputMode::Normal {
+        return EffectiveOverlay::WorktreeInput;
+    }
+    match app.overlays.active {
+        ActiveOverlay::None => {}
+        other => return EffectiveOverlay::Active(other),
+    }
+    if app.viewer_state.filename_search_active {
+        return EffectiveOverlay::FilenameSearch;
+    }
+    if app.viewer_state.search_active {
+        return EffectiveOverlay::ViewerSearch;
+    }
+    if app.review_state.search_active {
+        return EffectiveOverlay::ReviewSearch;
+    }
+    if app.review_state.template_picker_active {
+        return EffectiveOverlay::ReviewTemplate;
+    }
+    EffectiveOverlay::None
+}
 
 // Re-export public API.
 pub use self::mouse::handle_mouse_event;
@@ -47,63 +112,41 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
     }
 
-    // ── 1. Overlay handlers — consume ALL keys when active ────────────
+    // ── 1. Overlay / modal dispatch — consume ALL keys when active ────
 
-    if app.worktree_mgr.skip_reason.is_some() {
-        if key.code == KeyCode::Esc {
-            app.worktree_mgr.skip_reason = None;
+    match effective_overlay(app) {
+        EffectiveOverlay::SkipReason => {
+            if key.code == KeyCode::Esc {
+                app.worktree_mgr.skip_reason = None;
+            }
+            return;
         }
-        return;
-    }
-    if app.update_state != UpdateState::Idle {
-        handle_update_key(app, key);
-        return;
-    }
-    if app.review_state.comment_detail_active {
-        handle_comment_detail_key(app, key);
-        return;
-    }
-    if app.review_state.input_mode != ReviewInputMode::Normal {
-        handle_review_input_key(app, key);
-        return;
-    }
-    if app.worktree_mgr.input_mode != crate::app::WorktreeInputMode::Normal {
-        handle_worktree_input_key(app, key);
-        return;
-    }
-
-    // ── 1a. Overlay dispatch via ActiveOverlay enum ────────────────────
-    match app.overlays.active {
-        ActiveOverlay::None => {}
-        ActiveOverlay::SwitchBranch => { handle_switch_branch_key(app, key); return; }
-        ActiveOverlay::Grab => { handle_grab_key(app, key); return; }
-        ActiveOverlay::Prune => { handle_prune_key(app, key); return; }
-        ActiveOverlay::CherryPick => { handle_cherry_pick_key(app, key); return; }
-        ActiveOverlay::History => { handle_history_key(app, key); return; }
-        ActiveOverlay::ResumeSession => { handle_resume_session_key(app, key); return; }
-        ActiveOverlay::RepoSelector => { handle_repo_selector_key(app, key); return; }
-        ActiveOverlay::OpenRepo => { handle_open_repo_key(app, key); return; }
-        ActiveOverlay::GrepSearch => { handle_grep_search_key(app, key); return; }
-        ActiveOverlay::Help => { handle_help_key(app, key); return; }
-        ActiveOverlay::CommandPalette => { handle_command_palette_key(app, key); return; }
-    }
-
-    // ── 1b. Sub-modal states (search modes within panels) ─────────────
-    if app.viewer_state.filename_search_active {
-        handle_filename_search_key(app, key);
-        return;
-    }
-    if app.viewer_state.search_active {
-        handle_viewer_search_key(app, key);
-        return;
-    }
-    if app.review_state.search_active {
-        handle_review_search_key(app, key);
-        return;
-    }
-    if app.review_state.template_picker_active {
-        handle_review_template_key(app, key);
-        return;
+        EffectiveOverlay::UpdateState => { handle_update_key(app, key); return; }
+        EffectiveOverlay::CommentDetail => { handle_comment_detail_key(app, key); return; }
+        EffectiveOverlay::ReviewInput => { handle_review_input_key(app, key); return; }
+        EffectiveOverlay::WorktreeInput => { handle_worktree_input_key(app, key); return; }
+        EffectiveOverlay::Active(overlay) => {
+            match overlay {
+                ActiveOverlay::SwitchBranch => handle_switch_branch_key(app, key),
+                ActiveOverlay::Grab => handle_grab_key(app, key),
+                ActiveOverlay::Prune => handle_prune_key(app, key),
+                ActiveOverlay::CherryPick => handle_cherry_pick_key(app, key),
+                ActiveOverlay::History => handle_history_key(app, key),
+                ActiveOverlay::ResumeSession => handle_resume_session_key(app, key),
+                ActiveOverlay::RepoSelector => handle_repo_selector_key(app, key),
+                ActiveOverlay::OpenRepo => handle_open_repo_key(app, key),
+                ActiveOverlay::GrepSearch => handle_grep_search_key(app, key),
+                ActiveOverlay::Help => handle_help_key(app, key),
+                ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
+                ActiveOverlay::None => unreachable!(),
+            }
+            return;
+        }
+        EffectiveOverlay::FilenameSearch => { handle_filename_search_key(app, key); return; }
+        EffectiveOverlay::ViewerSearch => { handle_viewer_search_key(app, key); return; }
+        EffectiveOverlay::ReviewSearch => { handle_review_search_key(app, key); return; }
+        EffectiveOverlay::ReviewTemplate => { handle_review_template_key(app, key); return; }
+        EffectiveOverlay::None => {} // Fall through to panel dispatch.
     }
 
     // ── 1c. Terminal focus — intercept configurable keys, forward rest to PTY ─
@@ -241,8 +284,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 pub fn handle_paste_event(app: &mut App, data: String) {
     if app.focus != Focus::TerminalClaude && app.focus != Focus::TerminalShell {
         // Dispatch paste data to the active overlay input buffer.
-        use crate::app::WorktreeInputMode;
-
         let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
 
         if app.review_state.input_mode != ReviewInputMode::Normal {
@@ -386,7 +427,7 @@ fn dismiss_overlays(app: &mut App) {
     app.worktree_mgr.skip_reason = None;
     app.review_state.comment_detail_active = false;
     app.review_state.input_mode = ReviewInputMode::Normal;
-    app.worktree_mgr.input_mode = crate::app::WorktreeInputMode::Normal;
+    app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
     app.overlays.active = ActiveOverlay::None;
     app.viewer_state.filename_search_active = false;
     app.viewer_state.search_active = false;

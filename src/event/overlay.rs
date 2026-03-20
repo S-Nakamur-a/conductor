@@ -54,40 +54,12 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
             KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
                 app.worktree_mgr.input_buffer.clear();
             }
-            KeyCode::Backspace => {
-                app.worktree_mgr.input_buffer.delete_backward();
-            }
-            KeyCode::Delete => {
-                app.worktree_mgr.input_buffer.delete_forward();
-            }
-            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                app.worktree_mgr.input_buffer.move_word_left();
-            }
-            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                app.worktree_mgr.input_buffer.move_word_right();
-            }
-            KeyCode::Left => {
-                app.worktree_mgr.input_buffer.move_left();
-            }
-            KeyCode::Right => {
-                app.worktree_mgr.input_buffer.move_right();
-            }
-            KeyCode::Home => {
-                app.worktree_mgr.input_buffer.move_home();
-            }
-            KeyCode::End => {
-                app.worktree_mgr.input_buffer.move_end();
-            }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.worktree_mgr.input_buffer.select_all_and_clear();
-            }
             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 clipboard_paste(app, |a| &mut a.worktree_mgr.input_buffer, false);
             }
-            KeyCode::Char(c) => {
-                app.worktree_mgr.input_buffer.insert_char(c);
+            _ => {
+                app.worktree_mgr.input_buffer.handle_key(key);
             }
-            _ => {}
         },
         WorktreeInputMode::CreatingWorktreeBase => {
             let filtered = app.filtered_base_branches();
@@ -130,45 +102,21 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     app.worktree_mgr.base_branch_filter.clear();
                     app.worktree_mgr.base_branch_selected = 0;
                 }
-                KeyCode::Backspace => {
-                    app.worktree_mgr.base_branch_filter.delete_backward();
-                    app.worktree_mgr.base_branch_selected = 0;
-                }
-                KeyCode::Delete => {
-                    app.worktree_mgr.base_branch_filter.delete_forward();
-                    app.worktree_mgr.base_branch_selected = 0;
-                }
-                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                    app.worktree_mgr.base_branch_filter.move_word_left();
-                }
-                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                    app.worktree_mgr.base_branch_filter.move_word_right();
-                }
-                KeyCode::Left => {
-                    app.worktree_mgr.base_branch_filter.move_left();
-                }
-                KeyCode::Right => {
-                    app.worktree_mgr.base_branch_filter.move_right();
-                }
-                KeyCode::Home => {
-                    app.worktree_mgr.base_branch_filter.move_home();
-                }
-                KeyCode::End => {
-                    app.worktree_mgr.base_branch_filter.move_end();
-                }
-                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    app.worktree_mgr.base_branch_filter.select_all_and_clear();
-                    app.worktree_mgr.base_branch_selected = 0;
-                }
                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     clipboard_paste(app, |a| &mut a.worktree_mgr.base_branch_filter, false);
                     app.worktree_mgr.base_branch_selected = 0;
                 }
-                KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                    app.worktree_mgr.base_branch_filter.insert_char(c);
-                    app.worktree_mgr.base_branch_selected = 0;
+                _ => {
+                    if app.worktree_mgr.base_branch_filter.handle_key(key) {
+                        // Text changed — reset selection for filtering keys.
+                        match key.code {
+                            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                                app.worktree_mgr.base_branch_selected = 0;
+                            }
+                            _ => {}
+                        }
+                    }
                 }
-                _ => {}
             }
         }
         WorktreeInputMode::ConfirmingDelete => match key.code {
@@ -247,40 +195,12 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
                     app.worktree_mgr.smart_description_buffer.clear();
                 }
-                KeyCode::Backspace => {
-                    app.worktree_mgr.smart_description_buffer.delete_backward();
-                }
-                KeyCode::Delete => {
-                    app.worktree_mgr.smart_description_buffer.delete_forward();
-                }
-                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                    app.worktree_mgr.smart_description_buffer.move_word_left();
-                }
-                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                    app.worktree_mgr.smart_description_buffer.move_word_right();
-                }
-                KeyCode::Left => {
-                    app.worktree_mgr.smart_description_buffer.move_left();
-                }
-                KeyCode::Right => {
-                    app.worktree_mgr.smart_description_buffer.move_right();
-                }
-                KeyCode::Home => {
-                    app.worktree_mgr.smart_description_buffer.move_home();
-                }
-                KeyCode::End => {
-                    app.worktree_mgr.smart_description_buffer.move_end();
-                }
-                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    app.worktree_mgr.smart_description_buffer.select_all_and_clear();
-                }
                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     clipboard_paste(app, |a| &mut a.worktree_mgr.smart_description_buffer, true);
                 }
-                KeyCode::Char(c) => {
-                    app.worktree_mgr.smart_description_buffer.insert_char(c);
+                _ => {
+                    app.worktree_mgr.smart_description_buffer.handle_key(key);
                 }
-                _ => {}
             }
         }
         WorktreeInputMode::Normal => unreachable!(),
@@ -353,40 +273,12 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
             KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
                 app.overlays.history.search_query.clear();
             }
-            KeyCode::Backspace => {
-                app.overlays.history.search_query.delete_backward();
-            }
-            KeyCode::Delete => {
-                app.overlays.history.search_query.delete_forward();
-            }
-            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                app.overlays.history.search_query.move_word_left();
-            }
-            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-                app.overlays.history.search_query.move_word_right();
-            }
-            KeyCode::Left => {
-                app.overlays.history.search_query.move_left();
-            }
-            KeyCode::Right => {
-                app.overlays.history.search_query.move_right();
-            }
-            KeyCode::Home => {
-                app.overlays.history.search_query.move_home();
-            }
-            KeyCode::End => {
-                app.overlays.history.search_query.move_end();
-            }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.overlays.history.search_query.select_all_and_clear();
-            }
             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 clipboard_paste(app, |a| &mut a.overlays.history.search_query, false);
             }
-            KeyCode::Char(c) => {
-                app.overlays.history.search_query.insert_char(c);
+            _ => {
+                app.overlays.history.search_query.handle_key(key);
             }
-            _ => {}
         }
         return;
     }
@@ -469,45 +361,20 @@ pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
             app.overlays.resume_session.filter.clear();
             app.overlays.resume_session.selected = 0;
         }
-        KeyCode::Backspace => {
-            app.overlays.resume_session.filter.delete_backward();
-            app.overlays.resume_session.selected = 0;
-        }
-        KeyCode::Delete => {
-            app.overlays.resume_session.filter.delete_forward();
-            app.overlays.resume_session.selected = 0;
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.resume_session.filter.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.resume_session.filter.move_word_right();
-        }
-        KeyCode::Left => {
-            app.overlays.resume_session.filter.move_left();
-        }
-        KeyCode::Right => {
-            app.overlays.resume_session.filter.move_right();
-        }
-        KeyCode::Home => {
-            app.overlays.resume_session.filter.move_home();
-        }
-        KeyCode::End => {
-            app.overlays.resume_session.filter.move_end();
-        }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.resume_session.filter.select_all_and_clear();
-            app.overlays.resume_session.selected = 0;
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.overlays.resume_session.filter, false);
             app.overlays.resume_session.selected = 0;
         }
-        KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-            app.overlays.resume_session.filter.insert_char(c);
-            app.overlays.resume_session.selected = 0;
+        _ => {
+            if app.overlays.resume_session.filter.handle_key(key) {
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.overlays.resume_session.selected = 0;
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => {}
     }
 }
 
@@ -555,40 +422,12 @@ pub(super) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
             app.overlays.open_repo.buffer.clear();
         }
-        KeyCode::Backspace => {
-            app.overlays.open_repo.buffer.delete_backward();
-        }
-        KeyCode::Delete => {
-            app.overlays.open_repo.buffer.delete_forward();
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.open_repo.buffer.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.open_repo.buffer.move_word_right();
-        }
-        KeyCode::Left => {
-            app.overlays.open_repo.buffer.move_left();
-        }
-        KeyCode::Right => {
-            app.overlays.open_repo.buffer.move_right();
-        }
-        KeyCode::Home => {
-            app.overlays.open_repo.buffer.move_home();
-        }
-        KeyCode::End => {
-            app.overlays.open_repo.buffer.move_end();
-        }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.open_repo.buffer.select_all_and_clear();
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.overlays.open_repo.buffer, false);
         }
-        KeyCode::Char(c) => {
-            app.overlays.open_repo.buffer.insert_char(c);
+        _ => {
+            app.overlays.open_repo.buffer.handle_key(key);
         }
-        _ => {}
     }
 }
 
@@ -697,16 +536,6 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.filename_search_query.clear();
             app.viewer_state.filename_search_selected = 0;
         }
-        KeyCode::Backspace => {
-            app.viewer_state.filename_search_query.delete_backward();
-            app.viewer_state.filename_search_selected = 0;
-            app.viewer_state.execute_filename_search();
-        }
-        KeyCode::Delete => {
-            app.viewer_state.filename_search_query.delete_forward();
-            app.viewer_state.filename_search_selected = 0;
-            app.viewer_state.execute_filename_search();
-        }
         KeyCode::Down => {
             let count = app.viewer_state.filename_search_results.len();
             if count > 0 && app.viewer_state.filename_search_selected + 1 < count {
@@ -729,40 +558,23 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
                 app.viewer_state.filename_search_selected -= 1;
             }
         }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.viewer_state.filename_search_query.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.viewer_state.filename_search_query.move_word_right();
-        }
-        KeyCode::Left => {
-            app.viewer_state.filename_search_query.move_left();
-        }
-        KeyCode::Right => {
-            app.viewer_state.filename_search_query.move_right();
-        }
-        KeyCode::Home => {
-            app.viewer_state.filename_search_query.move_home();
-        }
-        KeyCode::End => {
-            app.viewer_state.filename_search_query.move_end();
-        }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.viewer_state.filename_search_query.select_all_and_clear();
-            app.viewer_state.filename_search_selected = 0;
-            app.viewer_state.execute_filename_search();
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.viewer_state.filename_search_query, false);
             app.viewer_state.filename_search_selected = 0;
             app.viewer_state.execute_filename_search();
         }
-        KeyCode::Char(c) => {
-            app.viewer_state.filename_search_query.insert_char(c);
-            app.viewer_state.filename_search_selected = 0;
-            app.viewer_state.execute_filename_search();
+        _ => {
+            if app.viewer_state.filename_search_query.handle_key(key) {
+                // Text-modifying keys reset selection and re-run search.
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.viewer_state.filename_search_selected = 0;
+                        app.viewer_state.execute_filename_search();
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => {}
     }
 }
 
@@ -814,32 +626,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             app.overlays.grep_search.query.clear();
             app.schedule_grep_search();
         }
-        KeyCode::Backspace => {
-            app.overlays.grep_search.query.delete_backward();
-            app.schedule_grep_search();
-        }
-        KeyCode::Delete => {
-            app.overlays.grep_search.query.delete_forward();
-            app.schedule_grep_search();
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.grep_search.query.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.grep_search.query.move_word_right();
-        }
-        KeyCode::Left => {
-            app.overlays.grep_search.query.move_left();
-        }
-        KeyCode::Right => {
-            app.overlays.grep_search.query.move_right();
-        }
-        KeyCode::Home => {
-            app.overlays.grep_search.query.move_home();
-        }
-        KeyCode::End => {
-            app.overlays.grep_search.query.move_end();
-        }
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
             app.schedule_grep_search();
@@ -852,15 +638,17 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
             app.schedule_grep_search();
         }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.grep_search.query.select_all_and_clear();
-            app.schedule_grep_search();
+        _ => {
+            if app.overlays.grep_search.query.handle_key(key) {
+                // Text-modifying keys trigger a new search.
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.schedule_grep_search();
+                    }
+                    _ => {}
+                }
+            }
         }
-        KeyCode::Char(c) => {
-            app.overlays.grep_search.query.insert_char(c);
-            app.schedule_grep_search();
-        }
-        _ => {}
     }
 }
 
@@ -879,45 +667,20 @@ pub(super) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.search_query.clear();
             app.viewer_state.execute_search();
         }
-        KeyCode::Backspace => {
-            app.viewer_state.search_query.delete_backward();
-            app.viewer_state.execute_search();
-        }
-        KeyCode::Delete => {
-            app.viewer_state.search_query.delete_forward();
-            app.viewer_state.execute_search();
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.viewer_state.search_query.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.viewer_state.search_query.move_word_right();
-        }
-        KeyCode::Left => {
-            app.viewer_state.search_query.move_left();
-        }
-        KeyCode::Right => {
-            app.viewer_state.search_query.move_right();
-        }
-        KeyCode::Home => {
-            app.viewer_state.search_query.move_home();
-        }
-        KeyCode::End => {
-            app.viewer_state.search_query.move_end();
-        }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.viewer_state.search_query.select_all_and_clear();
-            app.viewer_state.execute_search();
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.viewer_state.search_query, false);
             app.viewer_state.execute_search();
         }
-        KeyCode::Char(c) => {
-            app.viewer_state.search_query.insert_char(c);
-            app.viewer_state.execute_search();
+        _ => {
+            if app.viewer_state.search_query.handle_key(key) {
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.viewer_state.execute_search();
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => {}
     }
 }
 
@@ -960,46 +723,18 @@ pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
             app.review_state.input_buffer.clear();
         }
-        KeyCode::Backspace => {
-            app.review_state.input_buffer.delete_backward();
-        }
-        KeyCode::Delete => {
-            app.review_state.input_buffer.delete_forward();
-        }
         KeyCode::Tab if app.review_state.input_mode == ReviewInputMode::AddingComment => {
             app.review_state.input_kind = match app.review_state.input_kind {
                 CommentKind::Suggest => CommentKind::Question,
                 CommentKind::Question => CommentKind::Suggest,
             };
         }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.review_state.input_buffer.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) => {
-            app.review_state.input_buffer.move_word_right();
-        }
-        KeyCode::Left => {
-            app.review_state.input_buffer.move_left();
-        }
-        KeyCode::Right => {
-            app.review_state.input_buffer.move_right();
-        }
-        KeyCode::Home => {
-            app.review_state.input_buffer.move_home();
-        }
-        KeyCode::End => {
-            app.review_state.input_buffer.move_end();
-        }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.review_state.input_buffer.select_all_and_clear();
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.review_state.input_buffer, true);
         }
-        KeyCode::Char(c) => {
-            app.review_state.input_buffer.insert_char(c);
+        _ => {
+            app.review_state.input_buffer.handle_key(key);
         }
-        _ => {}
     }
 }
 
@@ -1020,41 +755,20 @@ pub(super) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
             app.review_state.search_query.clear();
             app.review_state.apply_filter();
         }
-        KeyCode::Backspace => {
-            app.review_state.search_query.delete_backward();
-            app.review_state.apply_filter();
-        }
-        KeyCode::Delete => {
-            app.review_state.search_query.delete_forward();
-            app.review_state.apply_filter();
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.review_state.search_query.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.review_state.search_query.move_word_right();
-        }
-        KeyCode::Left => { app.review_state.search_query.move_left(); }
-        KeyCode::Right => { app.review_state.search_query.move_right(); }
-        KeyCode::Home => { app.review_state.search_query.move_home(); }
-        KeyCode::End => { app.review_state.search_query.move_end(); }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.review_state.search_query.select_all_and_clear();
-            app.review_state.apply_filter();
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.review_state.search_query, false);
             app.review_state.apply_filter();
         }
-        KeyCode::Char(c) => {
-            app.review_state.search_query.insert_char(c);
-            app.review_state.apply_filter();
+        _ => {
+            if app.review_state.search_query.handle_key(key) {
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.review_state.apply_filter();
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => {}
     }
 }
 
@@ -1143,41 +857,20 @@ pub(super) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
             app.overlays.switch_branch.filter.clear();
             app.overlays.switch_branch.selected = 0;
         }
-        KeyCode::Backspace => {
-            app.overlays.switch_branch.filter.delete_backward();
-            app.overlays.switch_branch.selected = 0;
-        }
-        KeyCode::Delete => {
-            app.overlays.switch_branch.filter.delete_forward();
-            app.overlays.switch_branch.selected = 0;
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.overlays.switch_branch.filter.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.overlays.switch_branch.filter.move_word_right();
-        }
-        KeyCode::Left => { app.overlays.switch_branch.filter.move_left(); }
-        KeyCode::Right => { app.overlays.switch_branch.filter.move_right(); }
-        KeyCode::Home => { app.overlays.switch_branch.filter.move_home(); }
-        KeyCode::End => { app.overlays.switch_branch.filter.move_end(); }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.switch_branch.filter.select_all_and_clear();
-            app.overlays.switch_branch.selected = 0;
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.overlays.switch_branch.filter, false);
             app.overlays.switch_branch.selected = 0;
         }
-        KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-            app.overlays.switch_branch.filter.insert_char(c);
-            app.overlays.switch_branch.selected = 0;
+        _ => {
+            if app.overlays.switch_branch.filter.handle_key(key) {
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.overlays.switch_branch.selected = 0;
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => {}
     }
 }
 
@@ -1262,40 +955,19 @@ pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
             app.overlays.command_palette.filter.clear();
             app.overlays.command_palette.selected = 0;
         }
-        KeyCode::Backspace => {
-            app.overlays.command_palette.filter.delete_backward();
-            app.overlays.command_palette.selected = 0;
-        }
-        KeyCode::Delete => {
-            app.overlays.command_palette.filter.delete_forward();
-            app.overlays.command_palette.selected = 0;
-        }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.overlays.command_palette.filter.move_word_left();
-        }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.overlays.command_palette.filter.move_word_right();
-        }
-        KeyCode::Left => { app.overlays.command_palette.filter.move_left(); }
-        KeyCode::Right => { app.overlays.command_palette.filter.move_right(); }
-        KeyCode::Home => { app.overlays.command_palette.filter.move_home(); }
-        KeyCode::End => { app.overlays.command_palette.filter.move_end(); }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.command_palette.filter.select_all_and_clear();
-            app.overlays.command_palette.selected = 0;
-        }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.overlays.command_palette.filter, false);
             app.overlays.command_palette.selected = 0;
         }
-        KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-            app.overlays.command_palette.filter.insert_char(c);
-            app.overlays.command_palette.selected = 0;
+        _ => {
+            if app.overlays.command_palette.filter.handle_key(key) {
+                match key.code {
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                        app.overlays.command_palette.selected = 0;
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => {}
     }
 }
