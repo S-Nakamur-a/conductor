@@ -22,6 +22,7 @@ mod review_store;
 mod terminal_state;
 mod text_input;
 mod theme;
+mod timer;
 mod ui;
 mod update_checker;
 mod viewer;
@@ -201,19 +202,12 @@ fn run_loop(
     let mut fs_pending = false;
     let mut fs_first_seen: Option<Instant> = None;
 
-    // Periodically re-scan worktrees so that `git worktree add/remove`
-    // executed inside a terminal session is reflected in the UI.
-    const WORKTREE_POLL: Duration = Duration::from_secs(3);
-    let mut last_worktree_poll = Instant::now();
-
-    const PTY_CLEANUP_POLL: Duration = Duration::from_secs(10);
-    let mut last_pty_cleanup = Instant::now();
-
-    const CC_WAITING_POLL: Duration = Duration::from_secs(5);
-    let mut last_cc_waiting_check = Instant::now();
-
-    const STATS_REFRESH_POLL: Duration = Duration::from_secs(30);
-    let mut last_stats_refresh = Instant::now();
+    // Periodic timers — consolidated into a single registry.
+    let mut timers = timer::TimerRegistry::new();
+    timers.register("worktree_poll", Duration::from_secs(3));
+    timers.register("pty_cleanup", Duration::from_secs(10));
+    timers.register("cc_waiting", Duration::from_secs(5));
+    timers.register("stats_refresh", Duration::from_secs(30));
 
     // Track last user input to switch between active/idle tick rates.
     let mut last_input_time = Instant::now() - ACTIVITY_TIMEOUT;
@@ -233,14 +227,17 @@ fn run_loop(
             app.ccusage_info = Some(info);
         }
     }
-    // Schedule the first freshness check after a short delay so the UI
-    // renders immediately, then we check/refresh the cache in background.
-    let mut last_ccusage_poll = Instant::now() - ccusage_poll;
+    // Schedule the first freshness check immediately.
+    if ccusage_enabled {
+        timers.register_immediate("ccusage", ccusage_poll);
+    }
 
     // ── Update check (opt-out via [updates] check_on_startup = false) ─
     let update_check_enabled = app.config.updates.check_on_startup;
     let update_check_interval = Duration::from_secs(app.config.updates.check_interval_secs);
-    let mut last_update_check = Instant::now();
+    if update_check_enabled {
+        timers.register("update_check", update_check_interval);
+    }
     let update_result: Arc<Mutex<Option<update_checker::UpdateInfo>>> =
         Arc::new(Mutex::new(None));
 
@@ -265,11 +262,8 @@ fn run_loop(
 
     let mut needs_redraw = true;
 
-    // Independent timer for decoration animation (ticks at fixed ~20fps).
-    let mut last_decoration_time = Instant::now();
-
-    // Timer for refreshing unfocused terminal panels.
-    let mut last_unfocused_terminal_refresh = Instant::now();
+    timers.register("decoration", DECORATION_TICK_INTERVAL);
+    timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
 
     loop {
         if app.terminal.needs_clear {
@@ -348,41 +342,84 @@ fn run_loop(
         }
 
         // Tick decoration on a fixed timer, independent of main tick rate.
-        if last_decoration_time.elapsed() >= DECORATION_TICK_INTERVAL {
-            last_decoration_time = Instant::now();
-            let left_w = app.layout_cache.columns[0].width;
-            let panel_h = app.layout_cache.main_area.height;
-            let list_h = (app.worktrees.len() as u16 + 2).max(5);
-            let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
-            let deco_h = panel_h.saturating_sub(list_h + detail_h);
-            if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
-                needs_redraw = true;
-            }
-        }
-
-        // Periodically refresh unfocused terminal panels so background PTY
-        // output (e.g. running builds, Claude Code responses) remains visible.
-        if last_unfocused_terminal_refresh.elapsed() >= UNFOCUSED_TERMINAL_REFRESH {
-            last_unfocused_terminal_refresh = Instant::now();
-            // Invalidate caches for unfocused terminal panels so the next
-            // draw picks up fresh PTY content.
-            match app.focus {
-                crate::app::Focus::TerminalClaude => {
-                    // Claude is focused (cache rebuilt every frame); refresh Shell.
-                    app.terminal.cache_shell = Default::default();
+        // ── Periodic timers (consolidated) ───────────────────────────
+        for name in timers.check_due() {
+            match name {
+                "decoration" => {
+                    let left_w = app.layout_cache.columns[0].width;
+                    let panel_h = app.layout_cache.main_area.height;
+                    let list_h = (app.worktrees.len() as u16 + 2).max(5);
+                    let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
+                    let deco_h = panel_h.saturating_sub(list_h + detail_h);
+                    if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
+                        needs_redraw = true;
+                    }
+                }
+                "unfocused_terminal" => {
+                    match app.focus {
+                        crate::app::Focus::TerminalClaude => {
+                            app.terminal.cache_shell = Default::default();
+                        }
+                        crate::app::Focus::TerminalShell => {
+                            app.terminal.cache_claude = Default::default();
+                        }
+                        _ => {
+                            app.terminal.cache_claude = Default::default();
+                            app.terminal.cache_shell = Default::default();
+                        }
+                    }
                     needs_redraw = true;
                 }
-                crate::app::Focus::TerminalShell => {
-                    // Shell is focused; refresh Claude.
-                    app.terminal.cache_claude = Default::default();
-                    needs_redraw = true;
+                "worktree_poll" => {
+                    if app.refresh_worktrees() {
+                        needs_redraw = true;
+                    }
+                    app.check_diff_viewer_staleness();
                 }
-                _ => {
-                    // Neither terminal focused; refresh both.
-                    app.terminal.cache_claude = Default::default();
-                    app.terminal.cache_shell = Default::default();
-                    needs_redraw = true;
+                "pty_cleanup" => {
+                    if app.cleanup_dead_sessions() {
+                        needs_redraw = true;
+                    }
                 }
+                "cc_waiting" => {
+                    if app.check_cc_waiting_state() {
+                        needs_redraw = true;
+                    }
+                    app.flush_deferred_prompts();
+                }
+                "stats_refresh" => {
+                    if let Some(store) = &app.review_store {
+                        let new_stats = store.get_today_stats().ok();
+                        if new_stats != app.today_stats {
+                            app.today_stats = new_stats;
+                            needs_redraw = true;
+                        }
+                    }
+                }
+                "ccusage" => {
+                    let result_handle = Arc::clone(&ccusage_result);
+                    let max_age = ccusage_poll_secs;
+                    std::thread::spawn(move || {
+                        let info = ccusage_cache::read_if_fresh(max_age)
+                            .or_else(ccusage_cache::fetch_and_cache);
+                        if let Some(info) = info {
+                            if let Ok(mut lock) = result_handle.lock() {
+                                *lock = Some(info);
+                            }
+                        }
+                    });
+                }
+                "update_check" => {
+                    let result_handle = Arc::clone(&update_result);
+                    std::thread::spawn(move || {
+                        if let Some(info) = update_checker::check_for_update() {
+                            if let Ok(mut lock) = result_handle.lock() {
+                                *lock = Some(info);
+                            }
+                        }
+                    });
+                }
+                _ => {}
             }
         }
 
@@ -496,67 +533,11 @@ fn run_loop(
             app.flush_deferred_prompts();
         }
 
-        // Periodically refresh the worktree list to pick up external changes
-        // (e.g. `git worktree add` run inside a terminal panel).
-        if last_worktree_poll.elapsed() >= WORKTREE_POLL {
-            last_worktree_poll = Instant::now();
-            if app.refresh_worktrees() {
-                needs_redraw = true;
-            }
-            app.check_diff_viewer_staleness();
-        }
-
-        // Periodically remove dead PTY sessions (exited processes).
-        if last_pty_cleanup.elapsed() >= PTY_CLEANUP_POLL {
-            last_pty_cleanup = Instant::now();
-            if app.cleanup_dead_sessions() {
-                needs_redraw = true;
-            }
-        }
-
-        // Periodically check if any Claude Code sessions are waiting for input.
-        if last_cc_waiting_check.elapsed() >= CC_WAITING_POLL {
-            last_cc_waiting_check = Instant::now();
-            if app.check_cc_waiting_state() {
-                needs_redraw = true;
-            }
-            app.flush_deferred_prompts();
-        }
-
-        // Periodically refresh gamification stats (streak, today's activity).
-        if last_stats_refresh.elapsed() >= STATS_REFRESH_POLL {
-            last_stats_refresh = Instant::now();
-            if let Some(store) = &app.review_store {
-                let new_stats = store.get_today_stats().ok();
-                if new_stats != app.today_stats {
-                    app.today_stats = new_stats;
-                    needs_redraw = true;
-                }
-            }
-        }
-
         // Force redraw while worktree ops are pending (for spinner animation).
         if !app.worktree_mgr.pending_worktrees.is_empty() {
             needs_redraw = true;
         }
 
-        // ── ccusage background fetch (with global file cache) ────────
-        if ccusage_enabled && last_ccusage_poll.elapsed() >= ccusage_poll {
-            last_ccusage_poll = Instant::now();
-            let result_handle = Arc::clone(&ccusage_result);
-            let max_age = ccusage_poll_secs;
-            std::thread::spawn(move || {
-                // Check if another Conductor instance already refreshed
-                // the cache recently — if so, just use that.
-                let info = ccusage_cache::read_if_fresh(max_age)
-                    .or_else(ccusage_cache::fetch_and_cache);
-                if let Some(info) = info {
-                    if let Ok(mut lock) = result_handle.lock() {
-                        *lock = Some(info);
-                    }
-                }
-            });
-        }
         // Pick up ccusage result from background thread.
         if ccusage_enabled {
             if let Ok(mut lock) = ccusage_result.try_lock() {
@@ -567,21 +548,7 @@ fn run_loop(
             }
         }
 
-        // Periodic update check — spawn a background fetch at the configured interval.
-        if update_check_enabled && last_update_check.elapsed() >= update_check_interval {
-            last_update_check = Instant::now();
-            let result_handle = Arc::clone(&update_result);
-            std::thread::spawn(move || {
-                if let Some(info) = update_checker::check_for_update() {
-                    if let Ok(mut lock) = result_handle.lock() {
-                        *lock = Some(info);
-                    }
-                }
-            });
-        }
-
         // Pick up update check result from background thread.
-        // Always accept the fresh result — it supersedes any cached data.
         if update_check_enabled {
             if let Ok(mut lock) = update_result.try_lock() {
                 if let Some(info) = lock.take() {
