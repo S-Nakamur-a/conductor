@@ -256,9 +256,9 @@ fn run_loop(
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
 
-    /// Minimum interval between frames (~60fps). Prevents flooding the
-    /// terminal emulator with draw commands during rapid scroll, which
-    /// causes perceived "freezing then jump" behaviour.
+    // Minimum interval between frames (~60fps). Prevents flooding the
+    // terminal emulator with draw commands during rapid scroll, which
+    // causes perceived "freezing then jump" behaviour.
     const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
     let mut last_draw_time = Instant::now() - MIN_FRAME_INTERVAL;
 
@@ -285,10 +285,8 @@ fn run_loop(
         let since_last_draw = last_draw_time.elapsed();
         let frame_budget = MIN_FRAME_INTERVAL.saturating_sub(since_last_draw);
 
-        let tick = if app.dirty.any() {
-            // Dirty but frame budget not yet elapsed — wait for remaining time.
-            frame_budget
-        } else if pty_dirty {
+        let tick = if app.dirty.any() || pty_dirty {
+            // Need to render soon — wait only for the frame budget.
             frame_budget
         } else {
             match app.focus {
@@ -303,8 +301,9 @@ fn run_loop(
 
         if crossterm_poll(tick)? {
             // ── 2. Handle events ─────────────────────────────────
-            // Drain ALL pending events. Rapid scroll events are coalesced
-            // into a single frame (throttled below at ~60fps).
+            // Drain pending events, but stop after one frame budget
+            // (~16ms) so we don't starve rendering during rapid input.
+            let drain_deadline = Instant::now() + MIN_FRAME_INTERVAL;
             loop {
                 match crossterm_read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -321,7 +320,8 @@ fn run_loop(
                     _ => {}
                 }
                 app.dirty.mark_all();
-                if !crossterm_poll(Duration::ZERO)? {
+                // Stop draining if no more events or we've spent a full frame budget.
+                if Instant::now() >= drain_deadline || !crossterm_poll(Duration::ZERO)? {
                     break;
                 }
             }
@@ -365,30 +365,8 @@ fn run_loop(
         }
 
         // ── 4. Background work (ok to be slow) ──────────────────
-        // Resize PTY sessions to match panel dimensions.
-        {
-            let cols = &app.layout_cache.columns;
-            let is_terminal_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
-            let border_cols: u16 = if is_terminal_expanded { 0 } else { 2 };
-            let border_rows: u16 = if is_terminal_expanded { 1 } else { 2 };
-            let right_w = cols[3].width;
-            if right_w > border_cols {
-                let right_cols = right_w.saturating_sub(border_cols);
-                let claude_rows_total = app.layout_cache.terminal_split[0].height;
-                let shell_rows_total = app.layout_cache.terminal_split[1].height;
-                let claude_pty_rows = claude_rows_total.saturating_sub(border_rows);
-                let shell_pty_rows = shell_rows_total.saturating_sub(border_rows);
-
-                if (claude_pty_rows, right_cols) != last_claude_size && claude_pty_rows > 0 && right_cols > 0 {
-                    last_claude_size = (claude_pty_rows, right_cols);
-                    app.update_claude_terminal_size(claude_pty_rows, right_cols);
-                }
-                if (shell_pty_rows, right_cols) != last_shell_size && shell_pty_rows > 0 && right_cols > 0 {
-                    last_shell_size = (shell_pty_rows, right_cols);
-                    app.update_shell_terminal_size(shell_pty_rows, right_cols);
-                }
-            }
-        }
+        // Resize PTY sessions to match cached layout dimensions.
+        app.sync_pty_sizes(&mut last_claude_size, &mut last_shell_size);
 
         if !first_frame_done {
             first_frame_done = true;

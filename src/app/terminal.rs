@@ -350,6 +350,37 @@ impl App {
             .collect()
     }
 
+    /// Sync PTY session sizes with cached layout dimensions.
+    /// Only resizes when dimensions actually changed.
+    pub fn sync_pty_sizes(
+        &mut self,
+        last_claude_size: &mut (u16, u16),
+        last_shell_size: &mut (u16, u16),
+    ) {
+        let cols = &self.layout_cache.columns;
+        let is_terminal_expanded = matches!(
+            self.expanded_panel,
+            Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
+        );
+        let border_cols: u16 = if is_terminal_expanded { 0 } else { 2 };
+        let border_rows: u16 = if is_terminal_expanded { 1 } else { 2 };
+        let right_w = cols[3].width;
+        if right_w > border_cols {
+            let right_cols = right_w.saturating_sub(border_cols);
+            let claude_pty_rows = self.layout_cache.terminal_split[0].height.saturating_sub(border_rows);
+            let shell_pty_rows = self.layout_cache.terminal_split[1].height.saturating_sub(border_rows);
+
+            if (claude_pty_rows, right_cols) != *last_claude_size && claude_pty_rows > 0 && right_cols > 0 {
+                *last_claude_size = (claude_pty_rows, right_cols);
+                self.update_claude_terminal_size(claude_pty_rows, right_cols);
+            }
+            if (shell_pty_rows, right_cols) != *last_shell_size && shell_pty_rows > 0 && right_cols > 0 {
+                *last_shell_size = (shell_pty_rows, right_cols);
+                self.update_shell_terminal_size(shell_pty_rows, right_cols);
+            }
+        }
+    }
+
     /// Update the terminal content area size for Claude PTY sessions and resize them.
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_claude = (rows, cols);
