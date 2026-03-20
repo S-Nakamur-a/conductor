@@ -259,6 +259,11 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::ui::references::render_references_overlay(frame, main_area, app);
     }
 
+    // ── Symbol action overlay (after hint selection) ──
+    if app.symbol_action_overlay.active {
+        crate::ui::symbol_action::render_symbol_action_overlay(frame, main_area, app);
+    }
+
     // ── Skip reason modal ────────────────────────────────────────────
     if let Some(ref reason) = app.worktree_mgr.skip_reason {
         render_skip_reason_overlay(frame, main_area, reason);

@@ -226,6 +226,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
             let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
+            // Apply underline to hover symbol (Cmd+hover for jump targets).
+            let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
+                if hs.line == line_1 {
+                    apply_underline_range(content_spans, hs.start_col, hs.end_col, vs.content.h_scroll, theme.accent)
+                } else {
+                    content_spans
+                }
+            } else {
+                content_spans
+            };
+
+            // Apply symbol hint labels (Vimium-style).
+            let content_spans = if app.symbol_hint_overlay.active {
+                let hints_on_line: Vec<_> = app.symbol_hint_overlay.hints.iter()
+                    .filter(|h| h.line == line_1)
+                    .collect();
+                if hints_on_line.is_empty() {
+                    content_spans
+                } else {
+                    apply_hint_labels(content_spans, &hints_on_line, &app.symbol_hint_overlay.input, vs.content.h_scroll, theme)
+                }
+            } else {
+                content_spans
+            };
+
             let mut spans = vec![gutter_span, badge];
             spans.extend(content_spans);
             Line::from(spans)
@@ -1005,4 +1030,138 @@ fn digit_count(n: usize) -> usize {
         val /= 10;
     }
     count
+}
+
+/// Apply underline + accent fg to spans within `[start_col..end_col)` of the original content.
+/// `h_scroll` is the horizontal scroll offset already applied to the spans.
+fn apply_underline_range(
+    spans: Vec<Span<'static>>,
+    start_col: usize,
+    end_col: usize,
+    h_scroll: usize,
+    accent: Color,
+) -> Vec<Span<'static>> {
+    // Convert original content cols to visible cols (after h_scroll).
+    let vis_start = start_col.saturating_sub(h_scroll);
+    let vis_end = end_col.saturating_sub(h_scroll);
+    if vis_start >= vis_end {
+        return spans;
+    }
+
+    let mut result = Vec::with_capacity(spans.len() + 4);
+    let mut pos: usize = 0;
+    for span in spans {
+        let span_len = span.content.chars().count();
+        let span_end = pos + span_len;
+
+        if span_end <= vis_start || pos >= vis_end {
+            // Entirely outside the underline range.
+            result.push(span);
+        } else {
+            // This span overlaps the underline range.
+            let rel_start = vis_start.saturating_sub(pos);
+            let rel_end = vis_end.saturating_sub(pos).min(span_len);
+
+            let chars: Vec<char> = span.content.chars().collect();
+
+            // Before underline.
+            if rel_start > 0 {
+                let before: String = chars[..rel_start].iter().collect();
+                result.push(Span::styled(before, span.style));
+            }
+            // Underline portion.
+            let underlined: String = chars[rel_start..rel_end].iter().collect();
+            result.push(Span::styled(
+                underlined,
+                span.style.fg(accent).add_modifier(Modifier::UNDERLINED),
+            ));
+            // After underline.
+            if rel_end < span_len {
+                let after: String = chars[rel_end..].iter().collect();
+                result.push(Span::styled(after, span.style));
+            }
+        }
+        pos = span_end;
+    }
+    result
+}
+
+/// Apply Vimium-style hint labels to spans, replacing the first 2 characters of each
+/// hinted symbol with the label text in accent color + bold.
+fn apply_hint_labels(
+    spans: Vec<Span<'static>>,
+    hints: &[&crate::overlay::SymbolHint],
+    input: &str,
+    h_scroll: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let mut result = spans;
+    // Process hints in reverse order so earlier replacements don't shift positions of later ones.
+    let mut sorted: Vec<&&crate::overlay::SymbolHint> = hints.iter().collect();
+    sorted.sort_by(|a, b| b.start_col.cmp(&a.start_col));
+
+    for hint in sorted {
+        let vis_start = hint.start_col.saturating_sub(h_scroll);
+        let label_len = hint.label.chars().count();
+        let vis_end = vis_start + label_len;
+
+        // Determine if this hint matches the current input.
+        let is_matching = input.is_empty() || hint.label.starts_with(input);
+        let label_style = if is_matching {
+            Style::default()
+                .fg(Color::Black)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted).bg(Color::Reset)
+        };
+
+        // Replace characters at vis_start..vis_end with the label.
+        result = replace_span_range(result, vis_start, vis_end, &hint.label, label_style);
+    }
+    result
+}
+
+/// Replace characters in the range `[start..end)` of the span list with `replacement` text
+/// in the given style.
+fn replace_span_range(
+    spans: Vec<Span<'static>>,
+    start: usize,
+    end: usize,
+    replacement: &str,
+    style: Style,
+) -> Vec<Span<'static>> {
+    let mut result = Vec::with_capacity(spans.len() + 4);
+    let mut pos: usize = 0;
+
+    for span in spans {
+        let span_len = span.content.chars().count();
+        let span_end = pos + span_len;
+
+        if span_end <= start || pos >= end {
+            // Entirely outside the replacement range.
+            result.push(span);
+        } else {
+            let chars: Vec<char> = span.content.chars().collect();
+            let rel_start = start.saturating_sub(pos);
+            let rel_end = end.saturating_sub(pos).min(span_len);
+
+            // Before replacement.
+            if rel_start > 0 {
+                let before: String = chars[..rel_start].iter().collect();
+                result.push(Span::styled(before, span.style));
+            }
+            // Replacement portion (only emit once, from the first overlapping span).
+            if pos <= start {
+                result.push(Span::styled(replacement.to_string(), style));
+            }
+            // After replacement.
+            if rel_end < span_len {
+                let after: String = chars[rel_end..].iter().collect();
+                result.push(Span::styled(after, span.style));
+            }
+        }
+        pos = span_end;
+    }
+    result
 }

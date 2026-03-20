@@ -18,29 +18,43 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── pending 'g' key for multi-key sequences (gd, gi, gr, gg) ──
+    // ── pending 'g' key — symbol hints are shown, waiting for second key ──
     if app.viewer_state.pending_g_key {
         app.viewer_state.pending_g_key = false;
         match key.code {
             KeyCode::Char('d') => {
+                app.symbol_hint_overlay = Default::default();
                 handle_go_to_definition(app);
                 return;
             }
             KeyCode::Char('i') => {
+                app.symbol_hint_overlay = Default::default();
                 handle_go_to_implementation(app);
                 return;
             }
             KeyCode::Char('r') => {
+                app.symbol_hint_overlay = Default::default();
                 handle_find_references(app);
                 return;
             }
             KeyCode::Char('g') => {
                 // gg = go to top
+                app.symbol_hint_overlay = Default::default();
                 app.viewer_state.content.file_scroll = 0;
                 return;
             }
+            KeyCode::Esc => {
+                app.symbol_hint_overlay = Default::default();
+                return;
+            }
+            KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                // First character of a hint label — enter hint input mode.
+                app.symbol_hint_overlay.input.push(c);
+                return;
+            }
             _ => {
-                // Unknown second key — ignore the g prefix.
+                // Unknown second key — dismiss hints.
+                app.symbol_hint_overlay = Default::default();
             }
         }
     }
@@ -78,8 +92,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.content.file_scroll = app.viewer_state.content.file_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
-            // 'g' sets pending_g_key for multi-key sequences (gd, gi, gr, gg).
+            // 'g' — show symbol hints and wait for second key (gd, gi, gr, gg, or hint label).
             app.viewer_state.pending_g_key = true;
+            // Build hints using an estimated viewer height (will be clipped by actual content).
+            let hints = app.build_symbol_hints(50);
+            app.symbol_hint_overlay.active = !hints.is_empty();
+            app.symbol_hint_overlay.hints = hints;
+            app.symbol_hint_overlay.input.clear();
         }
         Some(Action::GoToBottom) => {
             app.viewer_state.content.file_scroll = total.saturating_sub(1);

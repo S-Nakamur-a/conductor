@@ -155,6 +155,18 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // ── 1b2. Symbol action overlay (after hint selection) ──
+    if app.symbol_action_overlay.active {
+        handle_symbol_action_key(app, key);
+        return;
+    }
+
+    // ── 1b3. Symbol hint overlay input (second char of label) ──
+    if app.symbol_hint_overlay.active && !app.symbol_hint_overlay.input.is_empty() {
+        handle_symbol_hint_key(app, key);
+        return;
+    }
+
     // ── 1c. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {

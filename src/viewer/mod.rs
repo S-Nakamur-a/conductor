@@ -219,10 +219,25 @@ impl Default for FilenameSearchState {
     }
 }
 
+/// Symbol hover info for Cmd+hover underline.
+#[derive(Debug, Clone)]
+pub struct HoverSymbol {
+    /// The symbol text (e.g. "AppState").
+    pub text: String,
+    /// Line number (1-indexed) where the symbol is located.
+    pub line: usize,
+    /// Start column (0-indexed, in content characters before h_scroll).
+    pub start_col: usize,
+    /// End column (exclusive, 0-indexed).
+    pub end_col: usize,
+}
+
 /// Double-click tracking state.
 pub struct ClickTracker {
     /// Line number (1-indexed) currently under the mouse cursor in the viewer gutter.
     pub hover_line: Option<usize>,
+    /// Symbol under the mouse cursor when Cmd/Ctrl is held (for underline + click-to-jump).
+    pub hover_symbol: Option<HoverSymbol>,
     /// Timestamp (ms) of the last line-number click for double-click detection.
     pub last_line_click_time: std::time::Instant,
     /// The 1-indexed line number that was last clicked on.
@@ -241,6 +256,7 @@ impl Default for ClickTracker {
     fn default() -> Self {
         Self {
             hover_line: None,
+            hover_symbol: None,
             last_line_click_time: std::time::Instant::now(),
             last_line_click_line: 0,
             last_tree_click_time: std::time::Instant::now(),

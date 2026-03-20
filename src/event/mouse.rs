@@ -285,14 +285,35 @@ pub fn handle_mouse_event(
                     // Viewer column.
                     app.set_focus(Focus::Viewer);
 
-                    // Only trigger comment selection when clicking inside the
-                    // line-number gutter (left-most columns).  Clicks on the
-                    // code content area are treated as plain focus changes.
                     let inner_x = explorer_end + 1; // inside left border
                     let inner_y = main_area.y + 1; // inside top border
                     let gutter_w = app.viewer_state.gutter_total_width();
                     let on_gutter = col >= inner_x && col < inner_x + gutter_w;
 
+                    // Cmd+Click (macOS) / Ctrl+Click — go-to-definition on the clicked symbol.
+                    let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
+                        || mouse.modifiers.contains(KeyModifiers::CONTROL);
+                    if has_jump_modifier && !on_gutter && !app.viewer_state.diff_view.diff_mode && row >= inner_y {
+                        let badge_w: u16 = 2;
+                        let content_start_x = inner_x + gutter_w + badge_w;
+                        if col >= content_start_x {
+                            let line_offset = (row - inner_y) as usize;
+                            let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
+                            let total_lines = app.viewer_state.content.file_content.len();
+                            if line_1 <= total_lines {
+                                let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
+                                let line_text = &app.viewer_state.content.file_content[line_1 - 1];
+                                if let Some((symbol, _, _)) = crate::app::extract_symbol_at_column(line_text, content_col) {
+                                    handle_symbol_click_jump(app, &symbol);
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // Only trigger comment selection when clicking inside the
+                    // line-number gutter (left-most columns).  Clicks on the
+                    // code content area are treated as plain focus changes.
                     if on_gutter {
                         // Detect clicks on viewer lines for comment selection.
                         if app.viewer_state.diff_view.diff_mode {
@@ -440,8 +461,47 @@ pub fn handle_mouse_event(
                         app.viewer_state.click.hover_line = None;
                     }
                 }
+
+                // Cmd/Ctrl+hover: resolve symbol for underline display.
+                let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
+                    || mouse.modifiers.contains(KeyModifiers::CONTROL);
+                if has_jump_modifier && !app.viewer_state.diff_view.diff_mode {
+                    let gutter_w = app.viewer_state.gutter_total_width();
+                    let inner_x = explorer_end + 1;
+                    let badge_w: u16 = 2;
+                    let content_start_x = inner_x + gutter_w + badge_w;
+                    if col >= content_start_x {
+                        let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
+                        let total_lines = app.viewer_state.content.file_content.len();
+                        if line_1 <= total_lines {
+                            let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
+                            let line_text = &app.viewer_state.content.file_content[line_1 - 1];
+                            if let Some((symbol, start, end)) = crate::app::extract_symbol_at_column(line_text, content_col) {
+                                if app.can_jump_to_symbol(&symbol) {
+                                    app.viewer_state.click.hover_symbol = Some(crate::viewer::HoverSymbol {
+                                        text: symbol,
+                                        line: line_1,
+                                        start_col: start,
+                                        end_col: end,
+                                    });
+                                } else {
+                                    app.viewer_state.click.hover_symbol = None;
+                                }
+                            } else {
+                                app.viewer_state.click.hover_symbol = None;
+                            }
+                        } else {
+                            app.viewer_state.click.hover_symbol = None;
+                        }
+                    } else {
+                        app.viewer_state.click.hover_symbol = None;
+                    }
+                } else {
+                    app.viewer_state.click.hover_symbol = None;
+                }
             } else {
                 app.viewer_state.click.hover_line = None;
+                app.viewer_state.click.hover_symbol = None;
             }
         }
         _ => {}
@@ -562,6 +622,68 @@ fn handle_mouse_scroll(
             app.terminal.scroll_shell = app.terminal.scroll_shell.saturating_add(abs_delta);
         } else {
             app.terminal.scroll_shell = app.terminal.scroll_shell.saturating_sub(abs_delta);
+        }
+    }
+}
+
+/// Handle Cmd+Click jump-to-definition for a symbol in the viewer.
+fn handle_symbol_click_jump(app: &mut App, symbol: &str) {
+    use crate::app::StatusLevel;
+
+    if !app.symbol_index.is_available() {
+        app.set_status("Symbol index not ready yet".to_string(), StatusLevel::Warning);
+        return;
+    }
+
+    let defs = app.symbol_index.find_definitions(symbol);
+
+    // Check if we're already at the definition — if so, show references instead.
+    let cur_file = app.viewer_state.content.current_file.clone().unwrap_or_default();
+    let cur_line = app.viewer_state.content.file_scroll + 1; // approximate 1-indexed
+    let already_at_def = defs.len() == 1
+        && defs[0].file_path == cur_file
+        && (defs[0].line as isize - cur_line as isize).unsigned_abs() <= 2;
+
+    if already_at_def {
+        // Already at definition — show references.
+        let root = app.symbol_index.root();
+        let refs = app.symbol_index.find_references(symbol, &root);
+        if refs.is_empty() {
+            app.set_status(format!("No references found for '{symbol}'"), StatusLevel::Warning);
+        } else {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = symbol.to_string();
+            app.references_overlay.results = refs;
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+        }
+        return;
+    }
+
+    match defs.len() {
+        0 => {
+            app.set_status(format!("No definition found for '{symbol}'"), StatusLevel::Warning);
+        }
+        1 => {
+            let file = defs[0].file_path.clone();
+            let line = defs[0].line;
+            app.jump_to_location(&file, line);
+            app.set_status(format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"), StatusLevel::Success);
+        }
+        n => {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (definitions)");
+            app.references_overlay.results = defs
+                .iter()
+                .map(|d| crate::symbol_index::Reference {
+                    file_path: d.file_path.clone(),
+                    line: d.line,
+                    content: format!("{:?} {}", d.kind, d.name),
+                })
+                .collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+            app.set_status(format!("{n} definitions found for '{symbol}'"), StatusLevel::Info);
         }
     }
 }
