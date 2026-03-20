@@ -36,14 +36,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         render_diff_list(frame, chunks[1], app, focused);
     }
 
-    // Show search input overlay.
+    // Show search input overlay (skip cursor positioning when a global overlay covers us).
+    let overlay_active = app.is_any_overlay_active();
     if app.viewer_state.search.search_active {
-        render_search_box(frame, area, &app.viewer_state.search.search_query, &app.theme);
+        render_search_box(frame, area, &app.viewer_state.search.search_query, &app.theme, overlay_active);
     }
 
     // Show filename search overlay.
     if app.viewer_state.filename_search.filename_search_active {
-        render_filename_search_overlay(frame, chunks[0], app);
+        render_filename_search_overlay(frame, chunks[0], app, overlay_active);
     }
 }
 
@@ -471,7 +472,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 }
 
 /// Render a search input box at the bottom of the given area.
-fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &crate::theme::Theme) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &crate::theme::Theme, suppress_cursor: bool) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
@@ -484,15 +485,17 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::T
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
-    // +1 for the leading '/' character
-    let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
-    if cursor_x < search_area.x + search_area.width {
-        frame.set_cursor_position(Position::new(cursor_x, search_area.y));
+    if !suppress_cursor {
+        // +1 for the leading '/' character
+        let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
+        if cursor_x < search_area.x + search_area.width {
+            frame.set_cursor_position(Position::new(cursor_x, search_area.y));
+        }
     }
 }
 
 /// Render the filename search overlay on top of the file tree area.
-fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
+fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App, suppress_cursor: bool) {
     let vs = &app.viewer_state.filename_search;
     let inner_width = area.width.saturating_sub(2);
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -521,10 +524,12 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(counter, Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(ratatui::widgets::Paragraph::new(input_line), input_area);
-    // +1 for the leading '/' character
-    let cursor_x = input_area.x + 1 + query_input.display_width_before_cursor() as u16;
-    if cursor_x < input_area.x + input_area.width {
-        frame.set_cursor_position(Position::new(cursor_x, input_area.y));
+    if !suppress_cursor {
+        // +1 for the leading '/' character
+        let cursor_x = input_area.x + 1 + query_input.display_width_before_cursor() as u16;
+        if cursor_x < input_area.x + input_area.width {
+            frame.set_cursor_position(Position::new(cursor_x, input_area.y));
+        }
     }
 
     // Results list below the input.

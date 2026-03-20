@@ -279,9 +279,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Show search input overlay.
+    // Show search input overlay (skip cursor positioning when a global overlay covers us).
     if vs.search.search_active {
-        render_search_box(frame, area, &vs.search.search_query, theme);
+        render_search_box(frame, area, &vs.search.search_query, theme, app.is_any_overlay_active());
     }
 }
 
@@ -893,7 +893,7 @@ fn expand_tabs(line: &str, tab_width: usize) -> String {
     result
 }
 
-fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &Theme) {
+fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &Theme, suppress_cursor: bool) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
@@ -906,10 +906,12 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::T
         Style::default().fg(theme.search_match_fg),
     ));
     frame.render_widget(paragraph, search_area);
-    // +1 for the leading '/' character
-    let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
-    if cursor_x < search_area.x + search_area.width {
-        frame.set_cursor_position(Position::new(cursor_x, search_area.y));
+    if !suppress_cursor {
+        // +1 for the leading '/' character
+        let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
+        if cursor_x < search_area.x + search_area.width {
+            frame.set_cursor_position(Position::new(cursor_x, search_area.y));
+        }
     }
 }
 

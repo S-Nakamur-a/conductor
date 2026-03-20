@@ -147,8 +147,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             }
             crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_shell);
 
-            // Set cursor position for IME when focused and not scrolled back.
-            if focused {
+            // Set cursor position for IME when focused, not scrolled back,
+            // and no overlay is covering this panel.
+            if focused && !app.is_any_overlay_active() {
                 if let Some((row, col)) = app.terminal.cache_shell.cursor_position {
                     let cursor_x = inner.x + col;
                     let cursor_y = inner.y + row;
