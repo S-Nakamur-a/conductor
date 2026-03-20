@@ -85,6 +85,7 @@ pub enum Action {
     ScrollbackDown,
     ScrollbackTop,
     SnapToLive,
+    OpenFileFromTerminal,
 
     // ── App ──────────────────────────────────────────────────────
     UpdateAndRestart,
@@ -158,6 +159,7 @@ impl Action {
             "scrollback_down" => Some(Action::ScrollbackDown),
             "scrollback_top" => Some(Action::ScrollbackTop),
             "snap_to_live" => Some(Action::SnapToLive),
+            "open_file_from_terminal" => Some(Action::OpenFileFromTerminal),
             "update_and_restart" => Some(Action::UpdateAndRestart),
             "search_full_text" => Some(Action::SearchFullText),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
@@ -227,6 +229,7 @@ impl Action {
             Action::ScrollbackDown => "scrollback_down",
             Action::ScrollbackTop => "scrollback_top",
             Action::SnapToLive => "snap_to_live",
+            Action::OpenFileFromTerminal => "open_file_from_terminal",
             Action::UpdateAndRestart => "update_and_restart",
             Action::SearchFullText => "search_full_text",
             Action::TogglePanelExpand => "toggle_panel_expand",
@@ -625,6 +628,7 @@ impl KeyMap {
         self.bind(Terminal, KeyCode::PageDown, KeyModifiers::SHIFT, ScrollbackDown);
         self.bind(Terminal, KeyCode::Home, KeyModifiers::SHIFT, ScrollbackTop);
         self.bind(Terminal, KeyCode::End, KeyModifiers::SHIFT, SnapToLive);
+        self.bind(Terminal, KeyCode::Char('g'), KeyModifiers::CONTROL, OpenFileFromTerminal);
     }
 
     /// Apply user overrides from config. For each overridden action,

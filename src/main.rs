@@ -19,6 +19,7 @@ mod overlay;
 mod pty_manager;
 mod review_state;
 mod review_store;
+mod terminal_link;
 mod terminal_state;
 mod text_input;
 mod theme;

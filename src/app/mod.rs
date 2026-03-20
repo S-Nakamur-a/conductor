@@ -851,6 +851,32 @@ impl App {
         self.set_status(text, StatusLevel::Info);
     }
 
+    /// Open a file path (relative to the current worktree) in the Viewer panel.
+    ///
+    /// Optionally jumps to `line` (1-indexed). Reveals the file in the explorer
+    /// tree, switches focus to Viewer, and shows a status message.
+    pub fn open_file_in_viewer(&mut self, relative_path: &str, line: Option<usize>) {
+        let wt_path = self.selected_worktree_path();
+        let tab_width = self.config.viewer.tab_width;
+
+        self.viewer_state.open_file(&wt_path, relative_path, tab_width);
+        self.viewer_state.reveal_file_in_tree(relative_path, &wt_path);
+
+        if let Some(ln) = line {
+            let max = self.viewer_state.content.file_content.len().saturating_sub(1);
+            self.viewer_state.content.file_scroll = (ln.saturating_sub(1)).min(max);
+        }
+
+        self.set_focus(Focus::Viewer);
+
+        let msg = if let Some(ln) = line {
+            format!("Opened {relative_path}:{ln} in Viewer")
+        } else {
+            format!("Opened {relative_path} in Viewer")
+        };
+        self.set_status(msg, StatusLevel::Success);
+    }
+
     /// Execute a command selected from the command palette.
     pub fn execute_palette_command(&mut self, id: crate::command_palette::CommandId) {
         use crate::command_palette::CommandId;
