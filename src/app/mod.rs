@@ -21,7 +21,7 @@ use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
 use crate::jump_history::JumpHistory;
-use crate::overlay::ReferencesOverlay;
+use crate::overlay::{ReferencesOverlay, SymbolHintOverlay, SymbolActionOverlay};
 use crate::symbol_index::SymbolIndex;
 use crate::grep_search::GrepProgress;
 use crate::keymap::KeyMap;
@@ -372,6 +372,8 @@ pub struct App {
     pub symbol_index: SymbolIndex,
     pub jump_history: JumpHistory,
     pub references_overlay: ReferencesOverlay,
+    pub symbol_hint_overlay: SymbolHintOverlay,
+    pub symbol_action_overlay: SymbolActionOverlay,
     pub bg_symbol_index_op: BackgroundOp<Result<usize, String>>,
 }
 
@@ -546,6 +548,8 @@ impl App {
             symbol_index: SymbolIndex::new(PathBuf::new()),
             jump_history: JumpHistory::new(),
             references_overlay: ReferencesOverlay::default(),
+            symbol_hint_overlay: SymbolHintOverlay::default(),
+            symbol_action_overlay: SymbolActionOverlay::default(),
             bg_symbol_index_op: BackgroundOp::default(),
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
@@ -981,6 +985,67 @@ impl App {
             };
             let _ = tx.send(result);
         });
+    }
+
+    /// Check whether a symbol has definitions in the symbol index.
+    pub fn can_jump_to_symbol(&self, name: &str) -> bool {
+        if !self.symbol_index.is_available() {
+            return false;
+        }
+        !self.symbol_index.find_definitions(name).is_empty()
+    }
+
+    /// Build symbol hints for visible lines in the viewer.
+    /// Returns hints with 2-character labels for jumpable symbols on screen.
+    pub fn build_symbol_hints(&self, inner_height: usize) -> Vec<crate::overlay::SymbolHint> {
+        let scroll = self.viewer_state.content.file_scroll;
+        let total = self.viewer_state.content.file_content.len();
+        let end = (scroll + inner_height).min(total);
+
+        let re = match regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\b") {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+
+        for line_idx in scroll..end {
+            let line = &self.viewer_state.content.file_content[line_idx];
+            let line_1 = line_idx + 1;
+            for cap in re.captures_iter(line) {
+                if let Some(m) = cap.get(1) {
+                    let word = m.as_str();
+                    if word.len() <= 1 || is_rust_keyword(word) {
+                        continue;
+                    }
+                    if !seen.insert(word.to_string()) {
+                        continue;
+                    }
+                    if !self.can_jump_to_symbol(word) {
+                        continue;
+                    }
+                    candidates.push((word.to_string(), line_1, m.start(), m.end()));
+                }
+            }
+        }
+
+        // Assign 2-character labels: aa, ab, ..., az, ba, bb, ...
+        candidates
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, line, start, end))| {
+                let first = (b'a' + (i / 26) as u8) as char;
+                let second = (b'a' + (i % 26) as u8) as char;
+                crate::overlay::SymbolHint {
+                    label: format!("{first}{second}"),
+                    symbol_name: name,
+                    line,
+                    start_col: start,
+                    end_col: end,
+                }
+            })
+            .collect()
     }
 
     /// Open a file path (relative to the current worktree) in the Viewer panel.
@@ -1904,3 +1969,95 @@ pub fn is_rust_keyword(word: &str) -> bool {
     )
 }
 
+/// Extract the symbol (identifier) at a specific column in a line.
+/// Returns `(symbol_text, start_col, end_col)` where cols are 0-indexed character offsets.
+pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize, usize)> {
+    if col >= line.len() {
+        return None;
+    }
+    // Check that the character at `col` is part of an identifier.
+    let ch = line.as_bytes().get(col).copied()?;
+    if !(ch.is_ascii_alphanumeric() || ch == b'_') {
+        return None;
+    }
+    // Walk backwards to find start of identifier.
+    let start = line[..col]
+        .bytes()
+        .rev()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        .count();
+    let start_col = col - start;
+    // Walk forwards to find end of identifier.
+    let end = line[col..]
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        .count();
+    let end_col = col + end;
+    let word = &line[start_col..end_col];
+    if word.len() <= 1 || is_rust_keyword(word) {
+        return None;
+    }
+    // Must start with letter or underscore.
+    if !word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        return None;
+    }
+    Some((word.to_string(), start_col, end_col))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_symbol_at_column_basic() {
+        let line = "    let foo = AppState::new();";
+        // Click on 'A' of AppState at col 14
+        let result = extract_symbol_at_column(line, 14);
+        assert_eq!(result, Some(("AppState".to_string(), 14, 22)));
+    }
+
+    #[test]
+    fn test_extract_symbol_at_column_middle() {
+        let line = "    let foo = AppState::new();";
+        // Click on 'S' of AppState at col 17
+        let result = extract_symbol_at_column(line, 17);
+        assert_eq!(result, Some(("AppState".to_string(), 14, 22)));
+    }
+
+    #[test]
+    fn test_extract_symbol_at_column_on_keyword() {
+        let line = "    let foo = bar;";
+        // Click on 'l' of let at col 4
+        let result = extract_symbol_at_column(line, 4);
+        assert_eq!(result, None); // "let" is a keyword
+    }
+
+    #[test]
+    fn test_extract_symbol_at_column_on_space() {
+        let line = "fn main() {}";
+        let result = extract_symbol_at_column(line, 2);
+        assert_eq!(result, None); // space
+    }
+
+    #[test]
+    fn test_extract_symbol_at_column_out_of_bounds() {
+        let line = "short";
+        let result = extract_symbol_at_column(line, 100);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_symbol_at_column_single_char() {
+        let line = "x + y";
+        // Single char identifiers are filtered out
+        let result = extract_symbol_at_column(line, 0);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_symbol_at_column_underscore_prefix() {
+        let line = "    _handler.call();";
+        let result = extract_symbol_at_column(line, 5);
+        assert_eq!(result, Some(("_handler".to_string(), 4, 12)));
+    }
+}

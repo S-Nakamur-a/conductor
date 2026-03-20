@@ -140,6 +140,53 @@ pub struct ReferencesOverlay {
     pub scroll: usize,
 }
 
+/// A single symbol hint shown during Vimium-style navigation.
+#[derive(Debug, Clone)]
+pub struct SymbolHint {
+    /// 2-character label (e.g. "aa", "ab").
+    pub label: String,
+    /// The symbol name (e.g. "AppState").
+    pub symbol_name: String,
+    /// 1-indexed line number.
+    pub line: usize,
+    /// 0-indexed start column in content.
+    pub start_col: usize,
+    /// 0-indexed end column (exclusive) in content.
+    pub end_col: usize,
+}
+
+/// Vimium-style symbol hint overlay — shown when `g` is pressed in Viewer.
+#[derive(Default)]
+pub struct SymbolHintOverlay {
+    pub active: bool,
+    /// All generated hints for visible symbols.
+    pub hints: Vec<SymbolHint>,
+    /// Characters typed so far for label matching (0-2 chars).
+    pub input: String,
+}
+
+/// An action available for a selected symbol.
+#[derive(Debug, Clone)]
+pub struct SymbolAction {
+    /// Key to press (e.g. 'd', 'i', 'r').
+    pub key: char,
+    /// Description (e.g. "Go to definition").
+    pub label: String,
+    /// Target file path.
+    pub file_path: String,
+    /// Target line number (1-indexed).
+    pub line: usize,
+}
+
+/// Action selection modal shown after picking a symbol hint.
+#[derive(Default)]
+pub struct SymbolActionOverlay {
+    pub active: bool,
+    pub symbol_name: String,
+    pub actions: Vec<SymbolAction>,
+    pub selected: usize,
+}
+
 /// Help overlay state.
 pub struct HelpOverlay {
     pub context: Focus,

@@ -21,6 +21,7 @@ pub mod dashboard;
 pub mod grep_search;
 pub mod references;
 pub mod review;
+pub mod symbol_action;
 
 /// Shared read-only context extracted from `App` for UI rendering.
 ///

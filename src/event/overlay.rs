@@ -1105,3 +1105,210 @@ fn adjust_references_scroll(app: &mut App) {
         *scroll = selected.saturating_sub(visible - 1);
     }
 }
+
+// ── Symbol hint overlay ─────────────────────────────────────────────────
+
+/// Handle key input while the symbol hint overlay is waiting for the second label character.
+pub(super) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.symbol_hint_overlay = Default::default();
+        }
+        KeyCode::Char(c) if c.is_ascii_lowercase() => {
+            app.symbol_hint_overlay.input.push(c);
+            let input = app.symbol_hint_overlay.input.clone();
+            // Find matching hint.
+            let matched = app
+                .symbol_hint_overlay
+                .hints
+                .iter()
+                .find(|h| h.label == input)
+                .cloned();
+            // Dismiss hints.
+            app.symbol_hint_overlay = Default::default();
+            if let Some(hint) = matched {
+                // Build action overlay for this symbol.
+                open_symbol_action_overlay(app, &hint.symbol_name);
+            }
+        }
+        _ => {
+            app.symbol_hint_overlay = Default::default();
+        }
+    }
+}
+
+/// Build and show the symbol action overlay for the given symbol.
+fn open_symbol_action_overlay(app: &mut App, symbol_name: &str) {
+    use crate::overlay::{SymbolAction, SymbolActionOverlay};
+
+    let mut actions = Vec::new();
+
+    // Definitions.
+    let defs = app.symbol_index.find_definitions(symbol_name);
+    if defs.len() == 1 {
+        actions.push(SymbolAction {
+            key: 'd',
+            label: "Go to definition".to_string(),
+            file_path: defs[0].file_path.clone(),
+            line: defs[0].line,
+        });
+    } else if defs.len() > 1 {
+        actions.push(SymbolAction {
+            key: 'd',
+            label: format!("Go to definition ({} results)", defs.len()),
+            file_path: defs[0].file_path.clone(),
+            line: defs[0].line,
+        });
+    }
+
+    // Implementations.
+    let impls = app.symbol_index.find_implementations(symbol_name);
+    if impls.len() == 1 {
+        actions.push(SymbolAction {
+            key: 'i',
+            label: "Go to implementation".to_string(),
+            file_path: impls[0].file_path.clone(),
+            line: impls[0].line,
+        });
+    } else if impls.len() > 1 {
+        actions.push(SymbolAction {
+            key: 'i',
+            label: format!("Go to implementation ({} results)", impls.len()),
+            file_path: impls[0].file_path.clone(),
+            line: impls[0].line,
+        });
+    }
+
+    // References (always show — count requires file scan).
+    let root = app.symbol_index.root();
+    let refs = app.symbol_index.find_references(symbol_name, &root);
+    if !refs.is_empty() {
+        actions.push(SymbolAction {
+            key: 'r',
+            label: format!("Find references ({} refs)", refs.len()),
+            file_path: refs[0].file_path.clone(),
+            line: refs[0].line,
+        });
+    }
+
+    if actions.is_empty() {
+        app.set_status(
+            format!("No navigation targets for '{symbol_name}'"),
+            crate::app::StatusLevel::Warning,
+        );
+        return;
+    }
+
+    app.symbol_action_overlay = SymbolActionOverlay {
+        active: true,
+        symbol_name: symbol_name.to_string(),
+        actions,
+        selected: 0,
+    };
+}
+
+// ── Symbol action overlay ───────────────────────────────────────────────
+
+/// Handle key input in the symbol action overlay.
+pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
+    let symbol = app.symbol_action_overlay.symbol_name.clone();
+    match key.code {
+        KeyCode::Esc => {
+            app.symbol_action_overlay = Default::default();
+        }
+        KeyCode::Char('d') => {
+            app.symbol_action_overlay = Default::default();
+            jump_to_symbol_definition(app, &symbol);
+        }
+        KeyCode::Char('i') => {
+            app.symbol_action_overlay = Default::default();
+            jump_to_symbol_implementation(app, &symbol);
+        }
+        KeyCode::Char('r') => {
+            app.symbol_action_overlay = Default::default();
+            jump_to_symbol_references(app, &symbol);
+        }
+        KeyCode::Enter => {
+            let idx = app.symbol_action_overlay.selected;
+            if let Some(action) = app.symbol_action_overlay.actions.get(idx).cloned() {
+                app.symbol_action_overlay = Default::default();
+                match action.key {
+                    'd' => jump_to_symbol_definition(app, &symbol),
+                    'i' => jump_to_symbol_implementation(app, &symbol),
+                    'r' => jump_to_symbol_references(app, &symbol),
+                    _ => {}
+                }
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let count = app.symbol_action_overlay.actions.len();
+            if app.symbol_action_overlay.selected + 1 < count {
+                app.symbol_action_overlay.selected += 1;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.symbol_action_overlay.selected = app.symbol_action_overlay.selected.saturating_sub(1);
+        }
+        _ => {}
+    }
+}
+
+fn jump_to_symbol_definition(app: &mut App, symbol: &str) {
+    let defs = app.symbol_index.find_definitions(symbol);
+    match defs.len() {
+        0 => {
+            app.set_status(format!("No definition found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        }
+        1 => {
+            app.jump_to_location(&defs[0].file_path, defs[0].line);
+            app.set_status(format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
+        }
+        _ => {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (definitions)");
+            app.references_overlay.results = defs.iter().map(|d| crate::symbol_index::Reference {
+                file_path: d.file_path.clone(), line: d.line,
+                content: format!("{:?} {}", d.kind, d.name),
+            }).collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+        }
+    }
+}
+
+fn jump_to_symbol_implementation(app: &mut App, symbol: &str) {
+    let impls = app.symbol_index.find_implementations(symbol);
+    match impls.len() {
+        0 => {
+            app.set_status(format!("No implementations found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        }
+        1 => {
+            app.jump_to_location(&impls[0].file_path, impls[0].line);
+            app.set_status(format!("Jumped to implementation of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
+        }
+        _ => {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (implementations)");
+            app.references_overlay.results = impls.iter().map(|d| crate::symbol_index::Reference {
+                file_path: d.file_path.clone(), line: d.line,
+                content: format!("{:?} {}", d.kind, d.name),
+            }).collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+        }
+    }
+}
+
+fn jump_to_symbol_references(app: &mut App, symbol: &str) {
+    let root = app.symbol_index.root();
+    let refs = app.symbol_index.find_references(symbol, &root);
+    if refs.is_empty() {
+        app.set_status(format!("No references found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        return;
+    }
+    app.references_overlay.active = true;
+    app.references_overlay.symbol_name = symbol.to_string();
+    app.references_overlay.results = refs;
+    app.references_overlay.selected = 0;
+    app.references_overlay.scroll = 0;
+}
