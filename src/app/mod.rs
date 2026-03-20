@@ -196,8 +196,28 @@ pub enum UpdateProgress {
     Error(String),
 }
 
+/// Tracks which UI panels need re-rendering.
+#[derive(Default, Clone, Copy)]
+pub struct DirtyPanels(u8);
+
+impl DirtyPanels {
+    pub const WORKTREE: u8 = 0b0000_0001;
+    pub const EXPLORER: u8 = 0b0000_0010;
+    pub const VIEWER: u8   = 0b0000_0100;
+    pub const TERMINAL: u8 = 0b0000_1000;
+    pub const ALL: u8      = 0b0000_1111;
+
+    pub fn mark(&mut self, bits: u8) { self.0 |= bits; }
+    pub fn mark_all(&mut self) { self.0 = Self::ALL; }
+    pub fn is_dirty(&self, bits: u8) -> bool { self.0 & bits != 0 }
+    pub fn any(&self) -> bool { self.0 != 0 }
+    pub fn clear(&mut self) { self.0 = 0; }
+}
+
 /// Top-level application state shared across all UI panels.
 pub struct App {
+    /// Tracks which panels need re-rendering.
+    pub dirty: DirtyPanels,
     /// Current panel focus.
     pub focus: Focus,
     /// All overlay popup states (switch-branch, grab, prune, help, etc.).
@@ -441,6 +461,7 @@ impl App {
         let inactive_scrollback = config.terminal.inactive_scrollback;
 
         let mut app = Self {
+            dirty: DirtyPanels(DirtyPanels::ALL),
             focus: Focus::Worktree,
             overlays: OverlayManager::default(),
             repo_path,

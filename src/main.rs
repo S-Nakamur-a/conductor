@@ -250,7 +250,8 @@ fn run_loop(
         });
     }
 
-    let mut needs_redraw = true;
+    // Seed the dirty flags so the first frame renders everything.
+    app.dirty.mark_all();
 
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
@@ -259,7 +260,7 @@ fn run_loop(
         if app.terminal.needs_clear {
             terminal.clear()?;
             app.terminal.needs_clear = false;
-            needs_redraw = true;
+            app.dirty.mark_all();
         }
 
         // Terminal panels only need redraw when PTY output arrives (dirty flags
@@ -267,18 +268,18 @@ fn run_loop(
         // `needs_redraw = true` caused 120fps full-UI re-renders even when idle.
         // Update overlays need continuous rendering for spinner animation.
         if app.update_state != crate::app::UpdateState::Idle {
-            needs_redraw = true;
+            app.dirty.mark_all();
         }
         // Grep search streaming results need continuous rendering.
         if app.overlays.grep_search.running {
-            needs_redraw = true;
+            app.dirty.mark_all();
         }
         // Grep debounce waiting needs active tick rate.
         if app.overlays.grep_search.debounce_deadline.is_some() {
-            needs_redraw = true;
+            app.dirty.mark_all();
         }
 
-        if needs_redraw {
+        if app.dirty.any() {
             // Advance animation tick only on actual renders.
             app.ui_tick = app.ui_tick.wrapping_add(1);
 
@@ -297,7 +298,7 @@ fn run_loop(
                 render_ui(frame, app);
             })?;
 
-            needs_redraw = false;
+            app.dirty.clear();
         }
 
         // Resize PTY sessions to match panel dimensions from cached layout.
@@ -342,7 +343,7 @@ fn run_loop(
                     let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
                     let deco_h = panel_h.saturating_sub(list_h + detail_h);
                     if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
-                        needs_redraw = true;
+                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
                     }
                 }
                 "unfocused_terminal" => {
@@ -358,22 +359,22 @@ fn run_loop(
                             app.terminal.cache_shell = Default::default();
                         }
                     }
-                    needs_redraw = true;
+                    app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
                 }
                 "worktree_poll" => {
                     if app.refresh_worktrees() {
-                        needs_redraw = true;
+                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER);
                     }
                     app.check_diff_viewer_staleness();
                 }
                 "pty_cleanup" => {
                     if app.cleanup_dead_sessions() {
-                        needs_redraw = true;
+                        app.dirty.mark(crate::app::DirtyPanels::TERMINAL | crate::app::DirtyPanels::WORKTREE);
                     }
                 }
                 "cc_waiting" => {
                     if app.check_cc_waiting_state() {
-                        needs_redraw = true;
+                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
                     }
                     app.flush_deferred_prompts();
                 }
@@ -382,7 +383,7 @@ fn run_loop(
                         let new_stats = store.get_today_stats().ok();
                         if new_stats != app.today_stats {
                             app.today_stats = new_stats;
-                            needs_redraw = true;
+                            app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
                         }
                     }
                 }
@@ -416,6 +417,7 @@ fn run_loop(
         if pty_dirty {
             app.terminal.dirty_claude = true;
             app.terminal.dirty_shell = true;
+            app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
         }
         let tick = if pty_dirty {
             Duration::ZERO
@@ -444,14 +446,12 @@ fn run_loop(
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
-                needs_redraw = true;
+                app.dirty.mark_all();
                 // Continue draining if more events are immediately available.
                 if !crossterm_poll(Duration::ZERO)? {
                     break;
                 }
             }
-        } else if pty_dirty {
-            needs_redraw = true;
         }
 
         // Check for file system change events (debounced).
@@ -470,7 +470,7 @@ fn run_loop(
                         app.refresh_worktrees();
                         app.refresh_viewer();
                         app.refresh_diff();
-                        needs_redraw = true;
+                        app.dirty.mark_all();
                     }
                 }
             }
@@ -480,7 +480,7 @@ fn run_loop(
         if let Some(ref cc_notify) = cc_notify {
             while let Some(event) = cc_notify.poll() {
                 app.handle_cc_notify(event);
-                needs_redraw = true;
+                app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
             }
         }
 
@@ -490,7 +490,7 @@ fn run_loop(
 
         // Check grep debounce timer.
         if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch && app.check_grep_debounce() {
-            needs_redraw = true;
+            app.dirty.mark_all();
         }
 
         // Flush deferred prompts as soon as their target sessions are ready.
@@ -500,7 +500,7 @@ fn run_loop(
 
         // Force redraw while worktree ops are pending (for spinner animation).
         if !app.worktree_mgr.pending_worktrees.is_empty() {
-            needs_redraw = true;
+            app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
         }
 
         // Nudge PTY sessions that just entered alternate screen mode
