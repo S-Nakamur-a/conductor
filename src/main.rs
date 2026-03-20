@@ -256,11 +256,11 @@ fn run_loop(
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
 
-    // Minimum interval between frames (~60fps). Prevents flooding the
-    // terminal emulator with draw commands during rapid scroll, which
-    // causes perceived "freezing then jump" behaviour.
-    const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
-    let mut last_draw_time = Instant::now() - MIN_FRAME_INTERVAL;
+    // Maximum time to spend draining events before rendering a frame.
+    // Prevents input starvation during rapid scroll (trackpad inertia
+    // can generate 100+ events). Events beyond this budget are deferred
+    // to the next iteration, ensuring smooth intermediate frames.
+    const MAX_DRAIN: Duration = Duration::from_millis(8);
 
     // ══════════════════════════════════════════════════════════════
     // Main event loop — ordered for minimal input-to-pixel latency:
@@ -280,20 +280,14 @@ fn run_loop(
             app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
         }
 
-        // Calculate poll timeout: honour frame throttle so we don't
-        // busy-loop while waiting for the next frame deadline.
-        let since_last_draw = last_draw_time.elapsed();
-        let frame_budget = MIN_FRAME_INTERVAL.saturating_sub(since_last_draw);
-
         let tick = if app.dirty.any() || pty_dirty {
-            // Need to render soon — wait only for the frame budget.
-            frame_budget
+            Duration::ZERO
         } else {
             match app.focus {
-                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL.max(frame_budget),
-                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE.max(frame_budget),
-                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE.max(frame_budget),
-                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE.max(frame_budget),
+                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
+                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
+                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
                 _ if decoration_active => DECORATION_TICK_INTERVAL,
                 _ => TICK_RATE_IDLE,
             }
@@ -301,9 +295,7 @@ fn run_loop(
 
         if crossterm_poll(tick)? {
             // ── 2. Handle events ─────────────────────────────────
-            // Drain pending events, but stop after one frame budget
-            // (~16ms) so we don't starve rendering during rapid input.
-            let drain_deadline = Instant::now() + MIN_FRAME_INTERVAL;
+            let drain_deadline = Instant::now() + MAX_DRAIN;
             loop {
                 match crossterm_read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -344,7 +336,7 @@ fn run_loop(
             app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
         }
 
-        if app.dirty.any() && last_draw_time.elapsed() >= MIN_FRAME_INTERVAL {
+        if app.dirty.any() {
             app.ui_tick = app.ui_tick.wrapping_add(1);
 
             const STATUS_FADE_TICKS: u64 = 180;
@@ -360,7 +352,6 @@ fn run_loop(
                 render_ui(frame, app);
             })?;
 
-            last_draw_time = Instant::now();
             app.dirty.clear();
         }
 
