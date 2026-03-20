@@ -381,6 +381,21 @@ pub struct CcusageInfo {
 }
 
 impl App {
+    /// Returns `true` when any overlay popup is visible on top of the main panels.
+    ///
+    /// Used by panel renderers to suppress cursor positioning so that the
+    /// terminal cursor (and therefore the IME candidate window) appears at
+    /// the overlay's input field, not at the underlying panel.
+    pub fn is_any_overlay_active(&self) -> bool {
+        self.overlays.active != ActiveOverlay::None
+            || self.worktree_mgr.input_mode != WorktreeInputMode::Normal
+            || self.review_state.input_mode != crate::review_state::ReviewInputMode::Normal
+            || self.review_state.template_picker_active
+            || self.review_state.comment_detail_active
+            || self.update_state != UpdateState::Idle
+            || self.worktree_mgr.skip_reason.is_some()
+    }
+
     /// Create a new `App` rooted at the given repository path.
     pub fn new(repo_path: PathBuf) -> Self {
         let config = config::Config::load().unwrap_or_default();
