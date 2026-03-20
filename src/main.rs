@@ -256,34 +256,87 @@ fn run_loop(
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
 
+    // ══════════════════════════════════════════════════════════════
+    // Main event loop — ordered for minimal input-to-pixel latency:
+    //   1. Wait for events / timeout
+    //   2. Handle events (state changes)
+    //   3. RENDER immediately (lowest latency for user input)
+    //   4. Background work (timers, polling, file watcher — ok to be slow)
+    // ══════════════════════════════════════════════════════════════
     loop {
+        // ── 1. Wait for an event ─────────────────────────────────
+        let decoration_active = crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
+            .has_animation();
+        let pty_dirty = app.terminal.pty_manager.take_output_notify();
+        if pty_dirty {
+            app.terminal.dirty_claude = true;
+            app.terminal.dirty_shell = true;
+            app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
+        }
+        let tick = if pty_dirty || app.dirty.any() {
+            Duration::ZERO
+        } else {
+            match app.focus {
+                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
+                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
+                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
+                _ if decoration_active => DECORATION_TICK_INTERVAL,
+                _ => TICK_RATE_IDLE,
+            }
+        };
+
+        if crossterm_poll(tick)? {
+            // ── 2. Handle events ─────────────────────────────────
+            // Break after scroll events to render intermediate frames.
+            loop {
+                let mut was_scroll = false;
+                match crossterm_read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
+                        last_input_time = Instant::now();
+                        handle_key_event(app, key);
+                    }
+                    Event::Mouse(mouse) => {
+                        was_scroll = matches!(
+                            mouse.kind,
+                            crossterm::event::MouseEventKind::ScrollDown
+                                | crossterm::event::MouseEventKind::ScrollUp
+                        );
+                        last_input_time = Instant::now();
+                        handle_mouse_event(app, mouse, last_frame_area);
+                    }
+                    Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
+                    Event::Resize(_, _) => {}
+                    _ => {}
+                }
+                app.dirty.mark_all();
+                if was_scroll || !crossterm_poll(Duration::ZERO)? {
+                    break;
+                }
+            }
+        }
+
+        // ── 3. RENDER — immediately after events for lowest latency ──
         if app.terminal.needs_clear {
             terminal.clear()?;
             app.terminal.needs_clear = false;
             app.dirty.mark_all();
         }
-
-        // Terminal panels only need redraw when PTY output arrives (dirty flags
-        // are set below after `take_output_notify()`). The old unconditional
-        // `needs_redraw = true` caused 120fps full-UI re-renders even when idle.
-        // Update overlays need continuous rendering for spinner animation.
-        if app.update_state != crate::app::UpdateState::Idle {
+        // Continuous dirty marking for active overlays.
+        if app.update_state != crate::app::UpdateState::Idle
+            || app.overlays.grep_search.running
+            || app.overlays.grep_search.debounce_deadline.is_some()
+        {
             app.dirty.mark_all();
         }
-        // Grep search streaming results need continuous rendering.
-        if app.overlays.grep_search.running {
-            app.dirty.mark_all();
-        }
-        // Grep debounce waiting needs active tick rate.
-        if app.overlays.grep_search.debounce_deadline.is_some() {
-            app.dirty.mark_all();
+        if !app.worktree_mgr.pending_worktrees.is_empty() {
+            app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
         }
 
         if app.dirty.any() {
-            // Advance animation tick only on actual renders.
             app.ui_tick = app.ui_tick.wrapping_add(1);
 
-            // Auto-clear status messages after ~3 seconds (180 ticks at 60fps).
             const STATUS_FADE_TICKS: u64 = 180;
             if let Some(ref msg) = app.status_message {
                 let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
@@ -292,7 +345,6 @@ fn run_loop(
                 }
             }
 
-            // Draw the current frame.
             terminal.draw(|frame| {
                 last_frame_area = frame.area();
                 render_ui(frame, app);
@@ -301,7 +353,8 @@ fn run_loop(
             app.dirty.clear();
         }
 
-        // Resize PTY sessions to match panel dimensions from cached layout.
+        // ── 4. Background work (ok to be slow) ──────────────────
+        // Resize PTY sessions to match panel dimensions.
         {
             let cols = &app.layout_cache.columns;
             let is_terminal_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
@@ -326,14 +379,12 @@ fn run_loop(
             }
         }
 
-        // Auto-resume Claude sessions after the first frame (PTY sizes are known).
         if !first_frame_done {
             first_frame_done = true;
             app.perform_auto_resume();
         }
 
-        // Tick decoration on a fixed timer, independent of main tick rate.
-        // ── Periodic timers (consolidated) ───────────────────────────
+        // Periodic timers (git polling, decoration, terminal refresh, etc.)
         for name in timers.check_due() {
             match name {
                 "decoration" => {
@@ -406,65 +457,7 @@ fn run_loop(
             }
         }
 
-        // Wait for an event. Use a fast tick rate shortly after user input
-        // so that scrolling and navigation feel responsive, then fall back to
-        // an idle rate to save CPU.
-        let decoration_active = crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
-            .has_animation();
-        // If a PTY reader thread has produced new output, skip the poll
-        // timeout entirely so we render the update on the very next frame.
-        let pty_dirty = app.terminal.pty_manager.take_output_notify();
-        if pty_dirty {
-            app.terminal.dirty_claude = true;
-            app.terminal.dirty_shell = true;
-            app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
-        }
-        let tick = if pty_dirty {
-            Duration::ZERO
-        } else {
-            match app.focus {
-                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
-                _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
-                _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
-                _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
-                _ if decoration_active => DECORATION_TICK_INTERVAL,
-                _ => TICK_RATE_IDLE,
-            }
-        };
-        if crossterm_poll(tick)? {
-            // Drain pending events, but break after scroll events so intermediate
-            // frames are rendered (prevents "scroll warp" on fast flick gestures).
-            loop {
-                let mut was_scroll = false;
-                match crossterm_read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
-                        last_input_time = Instant::now();
-                        handle_key_event(app, key);
-                    }
-                    Event::Mouse(mouse) => {
-                        was_scroll = matches!(
-                            mouse.kind,
-                            crossterm::event::MouseEventKind::ScrollDown
-                                | crossterm::event::MouseEventKind::ScrollUp
-                        );
-                        last_input_time = Instant::now();
-                        handle_mouse_event(app, mouse, last_frame_area);
-                    }
-                    Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
-                    Event::Resize(_, _) => {}
-                    _ => {}
-                }
-                app.dirty.mark_all();
-                // After a scroll event, break immediately to render the
-                // intermediate frame. For other events, keep draining.
-                if was_scroll || !crossterm_poll(Duration::ZERO)? {
-                    break;
-                }
-            }
-        }
-
-        // Check for file system change events (debounced).
+        // File system change events (debounced).
         if let Some(ref watcher) = file_watcher {
             while watcher.poll().is_some() {
                 if !fs_pending {
@@ -486,7 +479,7 @@ fn run_loop(
             }
         }
 
-        // Drain socket-based CC state notifications (instant delivery).
+        // CC state notifications.
         if let Some(ref cc_notify) = cc_notify {
             while let Some(event) = cc_notify.poll() {
                 app.handle_cc_notify(event);
@@ -494,27 +487,17 @@ fn run_loop(
             }
         }
 
-        // Poll all background operations (branches, pull, grep, update,
-        // PR URL, worktree switch, worktree ops, ccusage, update check).
+        // Poll all background operations.
         app.poll_all_background_ops();
 
-        // Check grep debounce timer.
         if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch && app.check_grep_debounce() {
             app.dirty.mark_all();
         }
 
-        // Flush deferred prompts as soon as their target sessions are ready.
         if !app.terminal.deferred_prompts.is_empty() {
             app.flush_deferred_prompts();
         }
 
-        // Force redraw while worktree ops are pending (for spinner animation).
-        if !app.worktree_mgr.pending_worktrees.is_empty() {
-            app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
-        }
-
-        // Nudge PTY sessions that just entered alternate screen mode
-        // (e.g. fzf) by sending a no-op resize to trigger SIGWINCH.
         app.terminal.pty_manager.nudge_alt_screen_sessions();
 
         if app.should_quit {
