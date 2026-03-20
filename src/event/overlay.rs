@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::{App, Focus, StatusLevel};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
+#[allow(unused_imports)]
 use crate::review_store::CommentKind;
 
 use super::clipboard_paste;
@@ -1046,5 +1047,61 @@ pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+    }
+}
+
+// ── References overlay ──────────────────────────────────────────────────
+
+pub(super) fn handle_references_key(app: &mut App, key: KeyEvent) {
+    let count = app.references_overlay.results.len();
+    if count == 0 {
+        if key.code == KeyCode::Esc {
+            app.references_overlay.active = false;
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.references_overlay.active = false;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            if app.references_overlay.selected + 1 < count {
+                app.references_overlay.selected += 1;
+                adjust_references_scroll(app);
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.references_overlay.selected = app.references_overlay.selected.saturating_sub(1);
+            adjust_references_scroll(app);
+        }
+        KeyCode::Char('g') => {
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+        }
+        KeyCode::Char('G') => {
+            app.references_overlay.selected = count.saturating_sub(1);
+            adjust_references_scroll(app);
+        }
+        KeyCode::Enter => {
+            let selected = app.references_overlay.selected;
+            if let Some(reference) = app.references_overlay.results.get(selected).cloned() {
+                app.references_overlay.active = false;
+                app.jump_to_location(&reference.file_path, reference.line);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn adjust_references_scroll(app: &mut App) {
+    let selected = app.references_overlay.selected;
+    let scroll = &mut app.references_overlay.scroll;
+    // Assume ~20 visible lines in the popup.
+    let visible = 20usize;
+    if selected < *scroll {
+        *scroll = selected;
+    } else if selected >= *scroll + visible {
+        *scroll = selected.saturating_sub(visible - 1);
     }
 }

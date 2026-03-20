@@ -19,6 +19,7 @@ pub mod layout;
 // Overlay renderers (used from layout::render_ui overlays).
 pub mod dashboard;
 pub mod grep_search;
+pub mod references;
 pub mod review;
 
 /// Shared read-only context extracted from `App` for UI rendering.

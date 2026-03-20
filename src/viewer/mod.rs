@@ -273,6 +273,8 @@ pub struct ViewerState {
     pub media_state: MediaState,
     /// Double-click tracking.
     pub click: ClickTracker,
+    /// Whether 'g' was pressed and waiting for a second key (gd, gi, gr).
+    pub pending_g_key: bool,
 }
 
 impl Default for ViewerState {
@@ -287,6 +289,7 @@ impl Default for ViewerState {
             filename_search: FilenameSearchState::default(),
             media_state: MediaState::default(),
             click: ClickTracker::default(),
+            pending_g_key: false,
         }
     }
 }

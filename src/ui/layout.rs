@@ -254,6 +254,11 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::app::UpdateState::Idle => {}
     }
 
+    // ── References overlay (panel-level, not part of OverlayManager) ──
+    if app.references_overlay.active {
+        crate::ui::references::render_references_overlay(frame, main_area, app);
+    }
+
     // ── Skip reason modal ────────────────────────────────────────────
     if let Some(ref reason) = app.worktree_mgr.skip_reason {
         render_skip_reason_overlay(frame, main_area, reason);

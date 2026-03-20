@@ -5,6 +5,8 @@ mod app;
 mod background;
 mod cc_notify;
 mod ccusage_cache;
+mod jump_history;
+mod symbol_index;
 mod claude_sessions;
 mod command_palette;
 mod config;
@@ -122,6 +124,9 @@ fn main() -> Result<()> {
     // ── Set terminal window title ────────────────────────────────────
     let window_title = format!("conductor - {}", app.main_repo_name);
     execute!(io::stdout(), SetTitle(&window_title))?;
+
+    // ── Build symbol index in background ─────────────────────────────
+    app.start_symbol_index_build();
 
     // ── Main event loop ──────────────────────────────────────────────
     let result = run_loop(&mut terminal, &mut app);
@@ -459,6 +464,9 @@ fn run_loop(
                         app.refresh_worktrees();
                         app.refresh_viewer();
                         app.refresh_diff();
+                        if !app.bg_symbol_index_op.is_running() {
+                            app.start_symbol_index_build();
+                        }
                         app.dirty.mark_all();
                     }
                 }
