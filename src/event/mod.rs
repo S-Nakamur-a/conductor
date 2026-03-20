@@ -14,8 +14,9 @@ mod worktree;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Focus, UpdateState};
+use crate::app::{App, Focus, UpdateState, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
+use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
 use self::global::dispatch_global_action;
@@ -24,6 +25,71 @@ use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use self::worktree::handle_worktree_key;
 use self::explorer::handle_explorer_key;
 use self::viewer::handle_viewer_key;
+
+// ── Effective overlay ───────────────────────────────────────────────────
+
+/// Unified overlay/modal state for dispatch. Collapses the multiple
+/// boolean/enum checks into a single discriminant.
+enum EffectiveOverlay {
+    /// Skip-reason modal (worktree creation failure detail).
+    SkipReason,
+    /// Update confirmation/progress/failure dialog.
+    UpdateState,
+    /// Comment detail popup.
+    CommentDetail,
+    /// Review text input (add/edit/reply).
+    ReviewInput,
+    /// Worktree text input (create/confirm/smart).
+    WorktreeInput,
+    /// An `ActiveOverlay` variant (switch-branch, cherry-pick, etc.).
+    Active(ActiveOverlay),
+    /// Filename search sub-modal.
+    FilenameSearch,
+    /// Viewer in-file search sub-modal.
+    ViewerSearch,
+    /// Review comment search sub-modal.
+    ReviewSearch,
+    /// Review template picker sub-modal.
+    ReviewTemplate,
+    /// No overlay — dispatch to focused panel.
+    None,
+}
+
+/// Determine the single effective overlay/modal that should consume input.
+fn effective_overlay(app: &App) -> EffectiveOverlay {
+    if app.worktree_mgr.skip_reason.is_some() {
+        return EffectiveOverlay::SkipReason;
+    }
+    if app.update_state != UpdateState::Idle {
+        return EffectiveOverlay::UpdateState;
+    }
+    if app.review_state.comment_detail_active {
+        return EffectiveOverlay::CommentDetail;
+    }
+    if app.review_state.input_mode != ReviewInputMode::Normal {
+        return EffectiveOverlay::ReviewInput;
+    }
+    if app.worktree_mgr.input_mode != WorktreeInputMode::Normal {
+        return EffectiveOverlay::WorktreeInput;
+    }
+    match app.overlays.active {
+        ActiveOverlay::None => {}
+        other => return EffectiveOverlay::Active(other),
+    }
+    if app.viewer_state.filename_search.filename_search_active {
+        return EffectiveOverlay::FilenameSearch;
+    }
+    if app.viewer_state.search.search_active {
+        return EffectiveOverlay::ViewerSearch;
+    }
+    if app.review_state.search_active {
+        return EffectiveOverlay::ReviewSearch;
+    }
+    if app.review_state.template_picker_active {
+        return EffectiveOverlay::ReviewTemplate;
+    }
+    EffectiveOverlay::None
+}
 
 // Re-export public API.
 pub use self::mouse::handle_mouse_event;
@@ -46,92 +112,44 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
     }
 
-    // ── 1. Overlay handlers — consume ALL keys when active ────────────
+    // ── 1. Overlay / modal dispatch — consume ALL keys when active ────
 
-    if app.worktree_mgr.skip_reason.is_some() {
-        if key.code == KeyCode::Esc {
-            app.worktree_mgr.skip_reason = None;
+    match effective_overlay(app) {
+        EffectiveOverlay::SkipReason => {
+            if key.code == KeyCode::Esc {
+                app.worktree_mgr.skip_reason = None;
+            }
+            return;
         }
-        return;
-    }
-    if app.update_state != UpdateState::Idle {
-        handle_update_key(app, key);
-        return;
-    }
-    if app.review_state.comment_detail_active {
-        handle_comment_detail_key(app, key);
-        return;
-    }
-    if app.review_state.input_mode != ReviewInputMode::Normal {
-        handle_review_input_key(app, key);
-        return;
-    }
-    if app.worktree_mgr.input_mode != crate::app::WorktreeInputMode::Normal {
-        handle_worktree_input_key(app, key);
-        return;
-    }
-    if app.switch_branch.active {
-        handle_switch_branch_key(app, key);
-        return;
-    }
-    if app.grab.active {
-        handle_grab_key(app, key);
-        return;
-    }
-    if app.prune.active {
-        handle_prune_key(app, key);
-        return;
-    }
-    if app.cherry_pick.active {
-        handle_cherry_pick_key(app, key);
-        return;
-    }
-    if app.viewer_state.filename_search_active {
-        handle_filename_search_key(app, key);
-        return;
-    }
-    if app.viewer_state.search_active {
-        handle_viewer_search_key(app, key);
-        return;
-    }
-    if app.review_state.search_active {
-        handle_review_search_key(app, key);
-        return;
-    }
-    if app.review_state.template_picker_active {
-        handle_review_template_key(app, key);
-        return;
-    }
-    if app.history.active {
-        handle_history_key(app, key);
-        return;
-    }
-    if app.resume_session.active {
-        handle_resume_session_key(app, key);
-        return;
-    }
-    if app.repo_selector.active {
-        handle_repo_selector_key(app, key);
-        return;
-    }
-    if app.open_repo.active {
-        handle_open_repo_key(app, key);
-        return;
-    }
-    if app.grep_search.active {
-        handle_grep_search_key(app, key);
-        return;
-    }
-    if app.help.active {
-        handle_help_key(app, key);
-        return;
-    }
-    if app.command_palette.active {
-        handle_command_palette_key(app, key);
-        return;
+        EffectiveOverlay::UpdateState => { handle_update_key(app, key); return; }
+        EffectiveOverlay::CommentDetail => { handle_comment_detail_key(app, key); return; }
+        EffectiveOverlay::ReviewInput => { handle_review_input_key(app, key); return; }
+        EffectiveOverlay::WorktreeInput => { handle_worktree_input_key(app, key); return; }
+        EffectiveOverlay::Active(overlay) => {
+            match overlay {
+                ActiveOverlay::SwitchBranch => handle_switch_branch_key(app, key),
+                ActiveOverlay::Grab => handle_grab_key(app, key),
+                ActiveOverlay::Prune => handle_prune_key(app, key),
+                ActiveOverlay::CherryPick => handle_cherry_pick_key(app, key),
+                ActiveOverlay::History => handle_history_key(app, key),
+                ActiveOverlay::ResumeSession => handle_resume_session_key(app, key),
+                ActiveOverlay::RepoSelector => handle_repo_selector_key(app, key),
+                ActiveOverlay::OpenRepo => handle_open_repo_key(app, key),
+                ActiveOverlay::GrepSearch => handle_grep_search_key(app, key),
+                ActiveOverlay::Help => handle_help_key(app, key),
+                ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
+                ActiveOverlay::None => unreachable!(),
+            }
+            return;
+        }
+        EffectiveOverlay::FilenameSearch => { handle_filename_search_key(app, key); return; }
+        EffectiveOverlay::ViewerSearch => { handle_viewer_search_key(app, key); return; }
+        EffectiveOverlay::ReviewSearch => { handle_review_search_key(app, key); return; }
+        EffectiveOverlay::ReviewTemplate => { handle_review_template_key(app, key); return; }
+        EffectiveOverlay::None => {} // Fall through to panel dispatch.
     }
 
-    // ── 1b. Terminal focus — intercept configurable keys, forward rest to PTY ─
+    // ── 1c. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
         // If the selected worktree is grabbed, block all terminal input
@@ -157,9 +175,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); return; }
                 Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); return; }
                 Action::CommandPalette => {
-                    app.command_palette.active = true;
-                    app.command_palette.filter.clear();
-                    app.command_palette.selected = 0;
+                    app.overlays.active = ActiveOverlay::CommandPalette;
+                    app.overlays.command_palette.filter.clear();
+                    app.overlays.command_palette.selected = 0;
                     return;
                 }
                 Action::ScrollbackUp => {
@@ -266,8 +284,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 pub fn handle_paste_event(app: &mut App, data: String) {
     if app.focus != Focus::TerminalClaude && app.focus != Focus::TerminalShell {
         // Dispatch paste data to the active overlay input buffer.
-        use crate::app::WorktreeInputMode;
-
         let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
 
         if app.review_state.input_mode != ReviewInputMode::Normal {
@@ -280,23 +296,32 @@ pub fn handle_paste_event(app: &mut App, data: String) {
             || app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktreeBase
         {
             app.worktree_mgr.input_buffer.insert_str(&single_line);
-        } else if app.viewer_state.search_active {
-            app.viewer_state.search_query.insert_str(&single_line);
-        } else if app.viewer_state.filename_search_active {
-            app.viewer_state.filename_search_query.insert_str(&single_line);
+        } else if app.viewer_state.search.search_active {
+            app.viewer_state.search.search_query.insert_str(&single_line);
+        } else if app.viewer_state.filename_search.filename_search_active {
+            app.viewer_state.filename_search.filename_search_query.insert_str(&single_line);
         } else if app.review_state.search_active {
             app.review_state.search_query.insert_str(&single_line);
             app.review_state.apply_filter();
-        } else if app.switch_branch.active {
-            app.switch_branch.filter.insert_str(&single_line);
-        } else if app.command_palette.active {
-            app.command_palette.filter.insert_str(&single_line);
-        } else if app.open_repo.active {
-            app.open_repo.buffer.insert_str(&single_line);
-        } else if app.history.active {
-            app.history.search_query.insert_str(&single_line);
-        } else if app.resume_session.active {
-            app.resume_session.filter.insert_str(&single_line);
+        } else {
+            match app.overlays.active {
+                ActiveOverlay::SwitchBranch => {
+                    app.overlays.switch_branch.filter.insert_str(&single_line);
+                }
+                ActiveOverlay::CommandPalette => {
+                    app.overlays.command_palette.filter.insert_str(&single_line);
+                }
+                ActiveOverlay::OpenRepo => {
+                    app.overlays.open_repo.buffer.insert_str(&single_line);
+                }
+                ActiveOverlay::History => {
+                    app.overlays.history.search_query.insert_str(&single_line);
+                }
+                ActiveOverlay::ResumeSession => {
+                    app.overlays.resume_session.filter.insert_str(&single_line);
+                }
+                _ => {}
+            }
         }
         return;
     }
@@ -385,15 +410,15 @@ fn adjust_tree_scroll(app: &mut App) {
     let visible = app.viewer_state.visible_indices();
     let cur_vis = visible
         .iter()
-        .position(|&i| i == app.viewer_state.tree_selected)
+        .position(|&i| i == app.viewer_state.tree.tree_selected)
         .unwrap_or(0);
 
-    let page_size = app.viewer_state.explorer_tree_height.max(1);
+    let page_size = app.viewer_state.explorer.explorer_tree_height.max(1);
 
-    if cur_vis < app.viewer_state.tree_scroll {
-        app.viewer_state.tree_scroll = cur_vis;
-    } else if cur_vis >= app.viewer_state.tree_scroll + page_size {
-        app.viewer_state.tree_scroll = cur_vis.saturating_sub(page_size - 1);
+    if cur_vis < app.viewer_state.tree.tree_scroll {
+        app.viewer_state.tree.tree_scroll = cur_vis;
+    } else if cur_vis >= app.viewer_state.tree.tree_scroll + page_size {
+        app.viewer_state.tree.tree_scroll = cur_vis.saturating_sub(page_size - 1);
     }
 }
 
@@ -402,32 +427,22 @@ fn dismiss_overlays(app: &mut App) {
     app.worktree_mgr.skip_reason = None;
     app.review_state.comment_detail_active = false;
     app.review_state.input_mode = ReviewInputMode::Normal;
-    app.worktree_mgr.input_mode = crate::app::WorktreeInputMode::Normal;
-    app.switch_branch.active = false;
-    app.grab.active = false;
-    app.prune.active = false;
-    app.cherry_pick.active = false;
-    app.viewer_state.filename_search_active = false;
-    app.viewer_state.search_active = false;
+    app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
+    app.overlays.active = ActiveOverlay::None;
+    app.viewer_state.filename_search.filename_search_active = false;
+    app.viewer_state.search.search_active = false;
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
-    app.history.active = false;
-    app.resume_session.active = false;
-    app.repo_selector.active = false;
-    app.open_repo.active = false;
-    app.grep_search.active = false;
-    app.help.active = false;
-    app.command_palette.active = false;
 }
 
 /// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.
 fn adjust_diff_list_scroll(app: &mut App) {
-    let selected = app.viewer_state.diff_list_selected;
-    let page_size = app.viewer_state.explorer_diff_list_height.max(1);
+    let selected = app.viewer_state.explorer.diff_list_selected;
+    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
 
-    if selected < app.viewer_state.diff_list_scroll {
-        app.viewer_state.diff_list_scroll = selected;
-    } else if selected >= app.viewer_state.diff_list_scroll + page_size {
-        app.viewer_state.diff_list_scroll = selected.saturating_sub(page_size - 1);
+    if selected < app.viewer_state.explorer.diff_list_scroll {
+        app.viewer_state.explorer.diff_list_scroll = selected;
+    } else if selected >= app.viewer_state.explorer.diff_list_scroll + page_size {
+        app.viewer_state.explorer.diff_list_scroll = selected.saturating_sub(page_size - 1);
     }
 }

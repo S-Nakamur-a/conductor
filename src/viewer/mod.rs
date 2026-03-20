@@ -10,7 +10,9 @@ mod file_view;
 pub use file_tree::{file_icon, FileTreeEntry, ScoredFile};
 pub use file_view::UnifiedDiffEntry;
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,14 +26,37 @@ use crate::diff_state::FileDiff;
 use crate::media_state::{self, MediaState};
 use crate::text_input::TextInput;
 
-/// All state owned by the Viewer mode.
-pub struct ViewerState {
+// ── Sub-structs ──────────────────────────────────────────────────────
+
+/// File tree management state.
+pub struct FileTreeState {
     /// Flattened file tree (directories + files, pre-order).
     pub file_tree: Vec<FileTreeEntry>,
     /// Index of the selected row in the *full* (unfiltered) tree.
     pub tree_selected: usize,
     /// Vertical scroll offset for the tree pane.
     pub tree_scroll: usize,
+    /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
+    pub cached_visible_indices: Option<Rc<Vec<usize>>>,
+    /// Gitignore matcher built from the worktree root. `Arc` so it can be
+    /// shared with background tree walks. `None` until the first tree load.
+    pub gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
+}
+
+impl Default for FileTreeState {
+    fn default() -> Self {
+        Self {
+            file_tree: Vec::new(),
+            tree_selected: 0,
+            tree_scroll: 0,
+            cached_visible_indices: None,
+            gitignore: None,
+        }
+    }
+}
+
+/// File content viewing state.
+pub struct FileContentState {
     /// Lines of the currently open file.
     pub file_content: Vec<String>,
     /// Vertical scroll offset in the file-content pane.
@@ -40,6 +65,34 @@ pub struct ViewerState {
     pub h_scroll: usize,
     /// Relative path of the file currently displayed (if any).
     pub current_file: Option<String>,
+    /// Cached syntax-highlighted tokens per line (syntect output converted to ratatui styles).
+    pub highlighted_lines: Vec<Vec<(ratatui::style::Style, String)>>,
+    /// Hash of (current_file, file_content) used to skip redundant re-highlighting.
+    pub highlighted_cache_key: Option<u64>,
+    /// Cached diff annotations for the currently viewed file (line_no -> (tag, segments)).
+    /// Invalidated when diff data changes or a different file is opened.
+    pub cached_diff_annotations: Option<std::collections::HashMap<usize, (crate::diff_state::DiffLineTag, Vec<crate::diff_state::InlineSegment>)>>,
+    /// The file path for which `cached_diff_annotations` was built.
+    pub cached_diff_annotations_file: Option<String>,
+}
+
+impl Default for FileContentState {
+    fn default() -> Self {
+        Self {
+            file_content: Vec::new(),
+            file_scroll: 0,
+            h_scroll: 0,
+            current_file: None,
+            highlighted_lines: Vec::new(),
+            highlighted_cache_key: None,
+            cached_diff_annotations: None,
+            cached_diff_annotations_file: None,
+        }
+    }
+}
+
+/// In-file search state.
+pub struct SearchState {
     /// Current search query (empty = no active search).
     pub search_query: TextInput,
     /// Line indices that match the current search query.
@@ -48,23 +101,50 @@ pub struct ViewerState {
     pub search_match_idx: usize,
     /// Whether the search input box is visible.
     pub search_active: bool,
-    /// Start of the selected line range (1-indexed), or `None` if no selection.
-    pub selected_line_start: Option<usize>,
-    /// End of the selected line range (1-indexed), or `None` for a single-line
-    /// selection. Always >= `selected_line_start` when set.
-    pub selected_line_end: Option<usize>,
-    /// Timestamp (ms) of the last line-number click for double-click detection.
-    pub last_line_click_time: std::time::Instant,
-    /// The 1-indexed line number that was last clicked on.
-    pub last_line_click_line: usize,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self {
+            search_query: TextInput::new(),
+            search_matches: Vec::new(),
+            search_match_idx: 0,
+            search_active: false,
+        }
+    }
+}
+
+/// Unified diff view state.
+pub struct DiffViewState {
+    /// Whether the viewer is in unified diff mode.
+    pub diff_mode: bool,
+    /// Unified diff view entries (populated when entering diff mode).
+    pub diff_view_lines: Vec<UnifiedDiffEntry>,
+    /// Vertical scroll offset for the diff view.
+    pub diff_view_scroll: usize,
+    /// Cached max line number for diff view (avoids O(n) scan per frame).
+    pub diff_view_max_line_no: usize,
+}
+
+impl Default for DiffViewState {
+    fn default() -> Self {
+        Self {
+            diff_mode: false,
+            diff_view_lines: Vec::new(),
+            diff_view_scroll: 0,
+            diff_view_max_line_no: 0,
+        }
+    }
+}
+
+/// Explorer panel state (selections, scrolls).
+pub struct ExplorerState {
     /// Index of the selected diff file in the diff list.
     pub diff_list_selected: usize,
     /// Vertical scroll offset for the diff list.
     pub diff_list_scroll: usize,
     /// Whether the explorer panel focus is on the diff list (bottom half).
     pub explorer_focus_on_diff_list: bool,
-    /// Cached syntax-highlighted tokens per line (syntect output converted to ratatui styles).
-    pub highlighted_lines: Vec<Vec<(ratatui::style::Style, String)>>,
     /// Last known inner height of the explorer file-tree pane (updated during render).
     pub explorer_tree_height: usize,
     /// Last known inner height of the explorer diff-list pane (updated during render).
@@ -77,22 +157,44 @@ pub struct ViewerState {
     pub comment_list_scroll: usize,
     /// Line number (1-indexed) for comment preview triggered by single-clicking a comment marker.
     pub comment_preview_line: Option<usize>,
-    /// Line number (1-indexed) currently under the mouse cursor in the viewer gutter.
-    pub hover_line: Option<usize>,
-    /// Timestamp of the last file-tree click for double-click detection.
-    pub last_tree_click_time: std::time::Instant,
-    /// The tree index that was last clicked in the file tree.
-    pub last_tree_click_idx: usize,
-    /// Timestamp of the last comment-list click for double-click detection.
-    pub last_comment_click_time: std::time::Instant,
-    /// The index that was last clicked in the comment list.
-    pub last_comment_click_idx: usize,
-    /// Whether the viewer is in unified diff mode.
-    pub diff_mode: bool,
-    /// Unified diff view entries (populated when entering diff mode).
-    pub diff_view_lines: Vec<UnifiedDiffEntry>,
-    /// Vertical scroll offset for the diff view.
-    pub diff_view_scroll: usize,
+}
+
+impl Default for ExplorerState {
+    fn default() -> Self {
+        Self {
+            diff_list_selected: 0,
+            diff_list_scroll: 0,
+            explorer_focus_on_diff_list: false,
+            explorer_tree_height: 20,
+            explorer_diff_list_height: 20,
+            explorer_show_comments: false,
+            comment_list_selected: 0,
+            comment_list_scroll: 0,
+            comment_preview_line: None,
+        }
+    }
+}
+
+/// Line selection for comments.
+pub struct SelectionState {
+    /// Start of the selected line range (1-indexed), or `None` if no selection.
+    pub selected_line_start: Option<usize>,
+    /// End of the selected line range (1-indexed), or `None` for a single-line
+    /// selection. Always >= `selected_line_start` when set.
+    pub selected_line_end: Option<usize>,
+}
+
+impl Default for SelectionState {
+    fn default() -> Self {
+        Self {
+            selected_line_start: None,
+            selected_line_end: None,
+        }
+    }
+}
+
+/// Fuzzy filename search state.
+pub struct FilenameSearchState {
     /// Whether the filename search overlay is active.
     pub filename_search_active: bool,
     /// Current filename search query.
@@ -103,64 +205,99 @@ pub struct ViewerState {
     pub filename_search_selected: usize,
     /// Cached list of all file paths for filename search (populated on search start).
     pub filename_search_all_files: Vec<String>,
-    /// Media rendering state (images/videos displayed as ASCII art).
-    pub media_state: MediaState,
-    /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
-    cached_visible_indices: Option<Rc<Vec<usize>>>,
-    /// Gitignore matcher built from the worktree root. `Arc` so it can be
-    /// shared with background tree walks. `None` until the first tree load.
-    gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
 }
 
-impl Default for ViewerState {
+impl Default for FilenameSearchState {
     fn default() -> Self {
         Self {
-            file_tree: Vec::new(),
-            tree_selected: 0,
-            tree_scroll: 0,
-            file_content: Vec::new(),
-            file_scroll: 0,
-            h_scroll: 0,
-            current_file: None,
-            search_query: TextInput::new(),
-            search_matches: Vec::new(),
-            search_match_idx: 0,
-            search_active: false,
-            selected_line_start: None,
-            selected_line_end: None,
-            last_line_click_time: std::time::Instant::now(),
-            last_line_click_line: 0,
-            diff_list_selected: 0,
-            diff_list_scroll: 0,
-            explorer_focus_on_diff_list: false,
-            highlighted_lines: Vec::new(),
-            explorer_tree_height: 20,
-            explorer_diff_list_height: 20,
-            explorer_show_comments: false,
-            comment_list_selected: 0,
-            comment_list_scroll: 0,
-            comment_preview_line: None,
-            hover_line: None,
-            last_tree_click_time: std::time::Instant::now(),
-            last_tree_click_idx: usize::MAX,
-            last_comment_click_time: std::time::Instant::now(),
-            last_comment_click_idx: usize::MAX,
-            diff_mode: false,
-            diff_view_lines: Vec::new(),
-            diff_view_scroll: 0,
             filename_search_active: false,
             filename_search_query: TextInput::new(),
             filename_search_results: Vec::new(),
             filename_search_selected: 0,
             filename_search_all_files: Vec::new(),
+        }
+    }
+}
+
+/// Double-click tracking state.
+pub struct ClickTracker {
+    /// Line number (1-indexed) currently under the mouse cursor in the viewer gutter.
+    pub hover_line: Option<usize>,
+    /// Timestamp (ms) of the last line-number click for double-click detection.
+    pub last_line_click_time: std::time::Instant,
+    /// The 1-indexed line number that was last clicked on.
+    pub last_line_click_line: usize,
+    /// Timestamp of the last file-tree click for double-click detection.
+    pub last_tree_click_time: std::time::Instant,
+    /// The tree index that was last clicked in the file tree.
+    pub last_tree_click_idx: usize,
+    /// Timestamp of the last comment-list click for double-click detection.
+    pub last_comment_click_time: std::time::Instant,
+    /// The index that was last clicked in the comment list.
+    pub last_comment_click_idx: usize,
+}
+
+impl Default for ClickTracker {
+    fn default() -> Self {
+        Self {
+            hover_line: None,
+            last_line_click_time: std::time::Instant::now(),
+            last_line_click_line: 0,
+            last_tree_click_time: std::time::Instant::now(),
+            last_tree_click_idx: usize::MAX,
+            last_comment_click_time: std::time::Instant::now(),
+            last_comment_click_idx: usize::MAX,
+        }
+    }
+}
+
+// ── Main struct ──────────────────────────────────────────────────────
+
+/// All state owned by the Viewer mode.
+pub struct ViewerState {
+    /// File tree management.
+    pub tree: FileTreeState,
+    /// File content viewing.
+    pub content: FileContentState,
+    /// In-file search.
+    pub search: SearchState,
+    /// Unified diff view.
+    pub diff_view: DiffViewState,
+    /// Explorer panel state (selections, scrolls).
+    pub explorer: ExplorerState,
+    /// Line selection for comments.
+    pub selection: SelectionState,
+    /// Fuzzy filename search.
+    pub filename_search: FilenameSearchState,
+    /// Media rendering state (images/videos displayed as ASCII art).
+    pub media_state: MediaState,
+    /// Double-click tracking.
+    pub click: ClickTracker,
+}
+
+impl Default for ViewerState {
+    fn default() -> Self {
+        Self {
+            tree: FileTreeState::default(),
+            content: FileContentState::default(),
+            search: SearchState::default(),
+            diff_view: DiffViewState::default(),
+            explorer: ExplorerState::default(),
+            selection: SelectionState::default(),
+            filename_search: FilenameSearchState::default(),
             media_state: MediaState::default(),
-            cached_visible_indices: None,
-            gitignore: None,
+            click: ClickTracker::default(),
         }
     }
 }
 
 impl ViewerState {
+    /// Invalidate the cached diff annotations (call when diff data changes).
+    pub fn invalidate_diff_annotations(&mut self) {
+        self.content.cached_diff_annotations = None;
+        self.content.cached_diff_annotations_file = None;
+    }
+
     /// Build the file tree by walking the filesystem under `worktree_path`.
     ///
     /// Directories named `.git` are skipped. The tree is sorted so that
@@ -173,31 +310,31 @@ impl ViewerState {
     /// naturally resets to "no file selected".
     pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) {
         // Save state before clearing.
-        let prev_file = self.current_file.clone();
-        let prev_file_scroll = self.file_scroll;
-        let prev_h_scroll = self.h_scroll;
+        let prev_file = self.content.current_file.clone();
+        let prev_file_scroll = self.content.file_scroll;
+        let prev_h_scroll = self.content.h_scroll;
         let expanded_dirs: Vec<String> = self
-            .file_tree
+            .tree.file_tree
             .iter()
             .filter(|e| e.is_dir && e.is_expanded)
             .map(|e| e.path.clone())
             .collect();
 
         // Build (or rebuild) the gitignore matcher for this worktree.
-        self.gitignore = Some(Arc::new(Self::build_gitignore(worktree_path)));
+        self.tree.gitignore = Some(Arc::new(Self::build_gitignore(worktree_path)));
 
         // Rebuild the tree from disk.
-        self.file_tree.clear();
+        self.tree.file_tree.clear();
         self.invalidate_visible_cache();
-        Self::walk_dir(worktree_path, worktree_path, 0, &mut self.file_tree, self.gitignore.as_deref());
+        Self::walk_dir(worktree_path, worktree_path, 0, &mut self.tree.file_tree, self.tree.gitignore.as_deref());
 
         // Restore directory expansion state. For lazily-loaded dirs, also
         // load their children so the tree looks the same as before the refresh.
         let mut idx = 0;
-        while idx < self.file_tree.len() {
-            if self.file_tree[idx].is_dir && expanded_dirs.contains(&self.file_tree[idx].path) {
-                self.file_tree[idx].is_expanded = true;
-                if !self.file_tree[idx].children_loaded {
+        while idx < self.tree.file_tree.len() {
+            if self.tree.file_tree[idx].is_dir && expanded_dirs.contains(&self.tree.file_tree[idx].path) {
+                self.tree.file_tree[idx].is_expanded = true;
+                if !self.tree.file_tree[idx].children_loaded {
                     self.ensure_children_loaded(idx, worktree_path);
                 }
             }
@@ -211,27 +348,27 @@ impl ViewerState {
                 // Preserve diff mode state across tree refreshes so that
                 // file-watcher / periodic refreshes don't kick the user
                 // out of the unified diff view.
-                let was_diff_mode = self.diff_mode;
+                let was_diff_mode = self.diff_view.diff_mode;
                 let prev_diff_lines = if was_diff_mode {
-                    std::mem::take(&mut self.diff_view_lines)
+                    std::mem::take(&mut self.diff_view.diff_view_lines)
                 } else {
                     Vec::new()
                 };
-                let prev_diff_scroll = self.diff_view_scroll;
+                let prev_diff_scroll = self.diff_view.diff_view_scroll;
 
                 self.open_file(worktree_path, rel_path, tab_width);
-                self.file_scroll = prev_file_scroll;
-                self.h_scroll = prev_h_scroll;
+                self.content.file_scroll = prev_file_scroll;
+                self.content.h_scroll = prev_h_scroll;
 
                 if was_diff_mode {
-                    self.diff_mode = true;
-                    self.diff_view_lines = prev_diff_lines;
-                    self.diff_view_scroll = prev_diff_scroll;
+                    self.diff_view.diff_mode = true;
+                    self.diff_view.diff_view_lines = prev_diff_lines;
+                    self.diff_view.diff_view_scroll = prev_diff_scroll;
                 }
 
                 // Try to restore tree_selected to point at the file entry.
-                if let Some(idx) = self.file_tree.iter().position(|e| e.path == *rel_path) {
-                    self.tree_selected = idx;
+                if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == *rel_path) {
+                    self.tree.tree_selected = idx;
                 }
             }
             // If the file was deleted, we naturally stay at "no file selected".
@@ -241,15 +378,16 @@ impl ViewerState {
     /// Open (read) a file and store its lines in `file_content`.
     pub fn open_file(&mut self, worktree_path: &Path, relative_path: &str, tab_width: usize) {
         self.exit_diff_mode();
-        self.highlighted_lines.clear();
+        self.content.highlighted_lines.clear();
+        self.content.highlighted_cache_key = None;
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
         if media_state::is_media_file(relative_path) {
-            self.file_content.clear();
-            self.current_file = Some(relative_path.to_string());
-            self.file_scroll = 0;
-            self.h_scroll = 0;
+            self.content.file_content.clear();
+            self.content.current_file = Some(relative_path.to_string());
+            self.content.file_scroll = 0;
+            self.content.h_scroll = 0;
             // Actual rendering is triggered lazily during render (when panel
             // size is known). Clear the cache so it re-renders for the new file.
             self.media_state.clear();
@@ -261,28 +399,28 @@ impl ViewerState {
 
         match fs::read_to_string(&full) {
             Ok(text) => {
-                self.file_content = text.lines().map(|l| Self::expand_tabs(l, tab_width)).collect();
+                self.content.file_content = text.lines().map(|l| Self::expand_tabs(l, tab_width)).collect();
                 // If file is empty but not zero-length, show one empty line.
-                if self.file_content.is_empty() && !text.is_empty() {
-                    self.file_content.push(String::new());
+                if self.content.file_content.is_empty() && !text.is_empty() {
+                    self.content.file_content.push(String::new());
                 }
-                self.current_file = Some(relative_path.to_string());
-                self.file_scroll = 0;
-                self.h_scroll = 0;
+                self.content.current_file = Some(relative_path.to_string());
+                self.content.file_scroll = 0;
+                self.content.h_scroll = 0;
             }
             Err(e) => {
                 // Show error as file content so the user sees feedback.
-                self.file_content = vec![format!("Error reading file: {e}")];
-                self.current_file = Some(relative_path.to_string());
-                self.file_scroll = 0;
-                self.h_scroll = 0;
+                self.content.file_content = vec![format!("Error reading file: {e}")];
+                self.content.current_file = Some(relative_path.to_string());
+                self.content.file_scroll = 0;
+                self.content.h_scroll = 0;
             }
         }
     }
 
     /// Returns true if the current file is a media file.
     pub fn is_current_file_media(&self) -> bool {
-        self.current_file
+        self.content.current_file
             .as_deref()
             .map_or(false, media_state::is_media_file)
     }
@@ -290,7 +428,7 @@ impl ViewerState {
     /// Toggle expand / collapse of the directory at index `idx` in
     /// `file_tree`.
     pub fn toggle_dir(&mut self, idx: usize) {
-        if let Some(entry) = self.file_tree.get_mut(idx) {
+        if let Some(entry) = self.tree.file_tree.get_mut(idx) {
             if entry.is_dir {
                 entry.is_expanded = !entry.is_expanded;
                 self.invalidate_visible_cache();
@@ -301,7 +439,7 @@ impl ViewerState {
     /// Expand the directory at index `idx` (no-op if already expanded or if
     /// the entry is a file).
     pub fn expand_dir(&mut self, idx: usize) {
-        if let Some(entry) = self.file_tree.get_mut(idx) {
+        if let Some(entry) = self.tree.file_tree.get_mut(idx) {
             if entry.is_dir && !entry.is_expanded {
                 entry.is_expanded = true;
                 self.invalidate_visible_cache();
@@ -312,7 +450,7 @@ impl ViewerState {
     /// Collapse the directory at index `idx` (no-op if already collapsed or if
     /// the entry is a file).
     pub fn collapse_dir(&mut self, idx: usize) {
-        if let Some(entry) = self.file_tree.get_mut(idx) {
+        if let Some(entry) = self.tree.file_tree.get_mut(idx) {
             if entry.is_dir && entry.is_expanded {
                 entry.is_expanded = false;
                 self.invalidate_visible_cache();
@@ -323,7 +461,7 @@ impl ViewerState {
     /// Invalidate the cached visible indices. Must be called whenever the
     /// tree structure changes (expand/collapse, load children, reload tree).
     pub fn invalidate_visible_cache(&mut self) {
-        self.cached_visible_indices = None;
+        self.tree.cached_visible_indices = None;
     }
 
     /// Return indices into `file_tree` that are currently visible, taking
@@ -331,14 +469,14 @@ impl ViewerState {
     /// `invalidate_visible_cache()` is called, so repeated calls within
     /// the same frame are essentially free.
     pub fn visible_indices(&mut self) -> Rc<Vec<usize>> {
-        if let Some(ref cached) = self.cached_visible_indices {
+        if let Some(ref cached) = self.tree.cached_visible_indices {
             return Rc::clone(cached);
         }
 
-        let mut result = Vec::with_capacity(self.file_tree.len());
+        let mut result = Vec::with_capacity(self.tree.file_tree.len());
         let mut skip_depth: Option<usize> = None;
 
-        for (i, entry) in self.file_tree.iter().enumerate() {
+        for (i, entry) in self.tree.file_tree.iter().enumerate() {
             if let Some(sd) = skip_depth {
                 if entry.depth > sd {
                     continue;
@@ -355,74 +493,74 @@ impl ViewerState {
         }
 
         let rc = Rc::new(result);
-        self.cached_visible_indices = Some(Rc::clone(&rc));
+        self.tree.cached_visible_indices = Some(Rc::clone(&rc));
         rc
     }
 
     /// Execute a search over the file content and populate search_matches.
     pub fn execute_search(&mut self) {
-        self.search_matches.clear();
-        self.search_match_idx = 0;
+        self.search.search_matches.clear();
+        self.search.search_match_idx = 0;
 
-        if self.search_query.is_empty() {
+        if self.search.search_query.is_empty() {
             return;
         }
 
-        let query_lower = self.search_query.to_lowercase();
-        for (i, line) in self.file_content.iter().enumerate() {
+        let query_lower = self.search.search_query.to_lowercase();
+        for (i, line) in self.content.file_content.iter().enumerate() {
             if line.to_lowercase().contains(&query_lower) {
-                self.search_matches.push(i);
+                self.search.search_matches.push(i);
             }
         }
 
         // Jump to first match at or after current scroll.
-        if !self.search_matches.is_empty() {
-            self.search_match_idx = self
-                .search_matches
+        if !self.search.search_matches.is_empty() {
+            self.search.search_match_idx = self
+                .search.search_matches
                 .iter()
-                .position(|&line| line >= self.file_scroll)
+                .position(|&line| line >= self.content.file_scroll)
                 .unwrap_or(0);
-            self.file_scroll = self.search_matches[self.search_match_idx];
+            self.content.file_scroll = self.search.search_matches[self.search.search_match_idx];
         }
     }
 
     /// Jump to the next search match.
     pub fn next_search_match(&mut self) {
-        if self.search_matches.is_empty() {
+        if self.search.search_matches.is_empty() {
             return;
         }
-        self.search_match_idx = (self.search_match_idx + 1) % self.search_matches.len();
-        self.file_scroll = self.search_matches[self.search_match_idx];
+        self.search.search_match_idx = (self.search.search_match_idx + 1) % self.search.search_matches.len();
+        self.content.file_scroll = self.search.search_matches[self.search.search_match_idx];
     }
 
     /// Jump to the previous search match.
     pub fn prev_search_match(&mut self) {
-        if self.search_matches.is_empty() {
+        if self.search.search_matches.is_empty() {
             return;
         }
-        self.search_match_idx = if self.search_match_idx == 0 {
-            self.search_matches.len() - 1
+        self.search.search_match_idx = if self.search.search_match_idx == 0 {
+            self.search.search_matches.len() - 1
         } else {
-            self.search_match_idx - 1
+            self.search.search_match_idx - 1
         };
-        self.file_scroll = self.search_matches[self.search_match_idx];
+        self.content.file_scroll = self.search.search_matches[self.search.search_match_idx];
     }
 
     // -- Filename fuzzy search ------------------------------------------------
 
     /// Run fuzzy filename search over the cached file list and populate results.
     pub fn execute_filename_search(&mut self) {
-        self.filename_search_results.clear();
+        self.filename_search.filename_search_results.clear();
 
-        let query = self.filename_search_query.to_lowercase();
+        let query = self.filename_search.filename_search_query.to_lowercase();
 
-        for path in &self.filename_search_all_files {
+        for path in &self.filename_search.filename_search_all_files {
             let path_lower = path.to_lowercase();
             let name_lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
 
             // If query is empty, include all files with score 0.
             if query.is_empty() {
-                self.filename_search_results.push(ScoredFile {
+                self.filename_search.filename_search_results.push(ScoredFile {
                     path: path.clone(),
                     score: 0,
                 });
@@ -459,14 +597,14 @@ impl ViewerState {
                 score += 20;
             }
 
-            self.filename_search_results.push(ScoredFile {
+            self.filename_search.filename_search_results.push(ScoredFile {
                 path: path.clone(),
                 score,
             });
         }
 
         // Sort by score descending, then path ascending for stability.
-        self.filename_search_results.sort_by(|a, b| {
+        self.filename_search.filename_search_results.sort_by(|a, b| {
             b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path))
         });
     }
@@ -546,16 +684,33 @@ impl ViewerState {
     }
 
     /// Run syntect highlighting on `file_content` and cache the result.
+    ///
+    /// Computes a hash of `(current_file, file_content)` and skips
+    /// re-highlighting when the content has not changed since the last call.
     pub fn highlight_content(&mut self, syntax_set: &SyntaxSet, theme: &SyntectTheme) {
-        self.highlighted_lines.clear();
-
-        if self.file_content.is_empty() {
+        if self.content.file_content.is_empty() {
+            self.content.highlighted_lines.clear();
+            self.content.highlighted_cache_key = None;
             return;
         }
 
+        // Compute a cache key from the file path and content.
+        let hash = {
+            let mut hasher = DefaultHasher::new();
+            self.content.current_file.hash(&mut hasher);
+            self.content.file_content.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        if self.content.highlighted_cache_key == Some(hash) {
+            return; // Content unchanged — skip redundant highlighting.
+        }
+
+        self.content.highlighted_lines.clear();
+
         // Determine syntax from file extension.
         let ext = self
-            .current_file
+            .content.current_file
             .as_ref()
             .and_then(|p| Path::new(p).extension())
             .and_then(|e| e.to_str())
@@ -569,7 +724,7 @@ impl ViewerState {
 
         // Reconstruct the full text with newlines for syntect (it expects them).
         let full_text: String = self
-            .file_content
+            .content.file_content
             .iter()
             .map(|l| format!("{l}\n"))
             .collect();
@@ -579,7 +734,7 @@ impl ViewerState {
                 Ok(r) => r,
                 Err(_) => {
                     // Fallback: plain white.
-                    self.highlighted_lines.push(vec![(
+                    self.content.highlighted_lines.push(vec![(
                         ratatui::style::Style::default().fg(ratatui::style::Color::White),
                         line.trim_end_matches('\n').to_string(),
                     )]);
@@ -599,23 +754,25 @@ impl ViewerState {
                 })
                 .collect();
 
-            self.highlighted_lines.push(spans);
+            self.content.highlighted_lines.push(spans);
         }
+
+        self.content.highlighted_cache_key = Some(hash);
     }
 
     // -- Line selection helpers -----------------------------------------------
 
     /// Clear the current line selection.
     pub fn clear_selection(&mut self) {
-        self.selected_line_start = None;
-        self.selected_line_end = None;
+        self.selection.selected_line_start = None;
+        self.selection.selected_line_end = None;
     }
 
     /// Return the selected range as `(start, end)` (both 1-indexed, inclusive).
     /// Returns `None` if no line is selected.
     pub fn selected_range(&self) -> Option<(usize, usize)> {
-        self.selected_line_start.map(|start| {
-            let end = self.selected_line_end.unwrap_or(start);
+        self.selection.selected_line_start.map(|start| {
+            let end = self.selection.selected_line_end.unwrap_or(start);
             if start <= end {
                 (start, end)
             } else {
@@ -640,39 +797,39 @@ impl ViewerState {
     /// a range comment).
     pub fn click_line_number(&mut self, line_1indexed: usize) -> bool {
         let now = std::time::Instant::now();
-        let elapsed = now.duration_since(self.last_line_click_time);
+        let elapsed = now.duration_since(self.click.last_line_click_time);
         let is_double = elapsed.as_millis() < 400
-            && self.last_line_click_line == line_1indexed;
+            && self.click.last_line_click_line == line_1indexed;
 
-        self.last_line_click_time = now;
-        self.last_line_click_line = line_1indexed;
+        self.click.last_line_click_time = now;
+        self.click.last_line_click_line = line_1indexed;
 
         if is_double {
             // Double-click → select single line and signal comment creation.
-            self.selected_line_start = Some(line_1indexed);
-            self.selected_line_end = None;
+            self.selection.selected_line_start = Some(line_1indexed);
+            self.selection.selected_line_end = None;
             return true;
         }
 
         // Single click logic:
-        if self.selected_line_start.is_none() {
+        if self.selection.selected_line_start.is_none() {
             // First click — select start line (highlight).
-            self.selected_line_start = Some(line_1indexed);
-            self.selected_line_end = None;
+            self.selection.selected_line_start = Some(line_1indexed);
+            self.selection.selected_line_end = None;
             false
-        } else if self.selected_line_end.is_none() {
-            if self.selected_line_start == Some(line_1indexed) {
+        } else if self.selection.selected_line_end.is_none() {
+            if self.selection.selected_line_start == Some(line_1indexed) {
                 // Clicked the same line again (slow double-click) — keep selection.
                 false
             } else {
                 // Second click on a different line — set range and open comment.
-                self.selected_line_end = Some(line_1indexed);
+                self.selection.selected_line_end = Some(line_1indexed);
                 true
             }
         } else {
             // Already have a completed range — start a new selection.
-            self.selected_line_start = Some(line_1indexed);
-            self.selected_line_end = None;
+            self.selection.selected_line_start = Some(line_1indexed);
+            self.selection.selected_line_end = None;
             false
         }
     }
@@ -682,9 +839,9 @@ impl ViewerState {
     ///   prefix(1) + digits(gutter_width) + space(1) + '│'(1) + space(1)
     /// = gutter_width + 4
     pub fn gutter_total_width(&self) -> u16 {
-        let digit_w = if self.diff_mode {
+        let digit_w = if self.diff_view.diff_mode {
             let max_line_no = self
-                .diff_view_lines
+                .diff_view.diff_view_lines
                 .iter()
                 .filter_map(|entry| match entry {
                     crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
@@ -694,7 +851,7 @@ impl ViewerState {
                 .unwrap_or(0);
             digit_count(max_line_no)
         } else {
-            digit_count(self.file_content.len())
+            digit_count(self.content.file_content.len())
         };
         (digit_w + 4) as u16
     }
@@ -703,18 +860,18 @@ impl ViewerState {
 
     /// Build the unified diff view entries from a `FileDiff`.
     pub fn build_unified_diff_view(&mut self, file_diff: &FileDiff) {
-        self.diff_view_lines.clear();
+        self.diff_view.diff_view_lines.clear();
 
         for (hunk_idx, hunk) in file_diff.hunks.iter().enumerate() {
             // Add hunk separator between hunks (not before the first one).
             if hunk_idx > 0 {
-                self.diff_view_lines.push(UnifiedDiffEntry::HunkSeparator {
+                self.diff_view.diff_view_lines.push(UnifiedDiffEntry::HunkSeparator {
                     func_header: hunk.func_header.clone(),
                 });
             }
 
             for line in &hunk.lines {
-                self.diff_view_lines.push(UnifiedDiffEntry::Line {
+                self.diff_view.diff_view_lines.push(UnifiedDiffEntry::Line {
                     tag: line.tag,
                     new_line_no: line.new_line_no,
                     content: line.content.clone(),
@@ -723,9 +880,20 @@ impl ViewerState {
             }
         }
 
-        if !self.diff_view_lines.is_empty() {
-            self.diff_mode = true;
-            self.diff_view_scroll = 0;
+        // Cache the max line number to avoid O(n) scan per frame.
+        self.diff_view.diff_view_max_line_no = self
+            .diff_view.diff_view_lines
+            .iter()
+            .filter_map(|e| match e {
+                UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
+        if !self.diff_view.diff_view_lines.is_empty() {
+            self.diff_view.diff_mode = true;
+            self.diff_view.diff_view_scroll = 0;
         }
     }
 
@@ -734,8 +902,8 @@ impl ViewerState {
     /// In diff mode this scans `diff_view_lines`; otherwise it scans
     /// `file_content`. Returns 0 when there is nothing to display.
     pub fn max_content_width(&self) -> usize {
-        if self.diff_mode {
-            self.diff_view_lines
+        if self.diff_view.diff_mode {
+            self.diff_view.diff_view_lines
                 .iter()
                 .map(|entry| match entry {
                     UnifiedDiffEntry::Line { content, .. } => content.chars().count(),
@@ -746,7 +914,7 @@ impl ViewerState {
                 .max()
                 .unwrap_or(0)
         } else {
-            self.file_content
+            self.content.file_content
                 .iter()
                 .map(|line| line.chars().count())
                 .max()
@@ -760,14 +928,15 @@ impl ViewerState {
         let max_w = self.max_content_width();
         // Allow scrolling until only a few characters remain visible.
         let limit = max_w.saturating_sub(4);
-        self.h_scroll = (self.h_scroll + delta).min(limit);
+        self.content.h_scroll = (self.content.h_scroll + delta).min(limit);
     }
 
     /// Exit unified diff mode and reset related state.
     pub fn exit_diff_mode(&mut self) {
-        self.diff_mode = false;
-        self.diff_view_lines.clear();
-        self.diff_view_scroll = 0;
+        self.diff_view.diff_mode = false;
+        self.diff_view.diff_view_lines.clear();
+        self.diff_view.diff_view_scroll = 0;
+        self.diff_view.diff_view_max_line_no = 0;
     }
 
     // -- Tree reveal ----------------------------------------------------------
@@ -794,25 +963,25 @@ impl ViewerState {
             };
 
             // Find the entry with matching path.
-            let Some(idx) = self.file_tree.iter().position(|e| e.path == target_path) else {
+            let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == target_path) else {
                 return; // Entry not found — cannot reveal.
             };
 
             if is_last {
                 // Select the target file/dir.
-                self.tree_selected = idx;
+                self.tree.tree_selected = idx;
                 // Adjust scroll so the item is visible.
                 let visible = self.visible_indices();
                 if let Some(vis_pos) = visible.iter().position(|&vi| vi == idx) {
-                    let height = self.explorer_tree_height;
-                    if vis_pos < self.tree_scroll || vis_pos >= self.tree_scroll + height {
-                        self.tree_scroll = vis_pos.saturating_sub(height / 3);
+                    let height = self.explorer.explorer_tree_height;
+                    if vis_pos < self.tree.tree_scroll || vis_pos >= self.tree.tree_scroll + height {
+                        self.tree.tree_scroll = vis_pos.saturating_sub(height / 3);
                     }
                 }
             } else {
                 // Intermediate directory — ensure children are loaded and expand.
                 self.ensure_children_loaded(idx, worktree_root);
-                if let Some(entry) = self.file_tree.get_mut(idx) {
+                if let Some(entry) = self.tree.file_tree.get_mut(idx) {
                     if !entry.is_expanded {
                         entry.is_expanded = true;
                         self.invalidate_visible_cache();
@@ -880,7 +1049,7 @@ impl ViewerState {
     /// `file_tree`. No-op if the entry is not a directory or if children are
     /// already loaded.
     pub fn ensure_children_loaded(&mut self, idx: usize, worktree_root: &Path) {
-        let entry = match self.file_tree.get(idx) {
+        let entry = match self.tree.file_tree.get(idx) {
             Some(e) if e.is_dir && !e.children_loaded => e,
             _ => return,
         };
@@ -889,9 +1058,9 @@ impl ViewerState {
         let child_depth = entry.depth + 1;
 
         let mut children: Vec<FileTreeEntry> = Vec::new();
-        Self::read_dir_entries(worktree_root, &full_path, child_depth, &mut children, self.gitignore.as_deref());
+        Self::read_dir_entries(worktree_root, &full_path, child_depth, &mut children, self.tree.gitignore.as_deref());
 
-        self.file_tree[idx].children_loaded = true;
+        self.tree.file_tree[idx].children_loaded = true;
 
         if children.is_empty() {
             return;
@@ -901,11 +1070,11 @@ impl ViewerState {
         let count = children.len();
 
         // Adjust tree_selected if it's at or after the insertion point.
-        if self.tree_selected >= insert_pos {
-            self.tree_selected += count;
+        if self.tree.tree_selected >= insert_pos {
+            self.tree.tree_selected += count;
         }
 
-        self.file_tree.splice(insert_pos..insert_pos, children);
+        self.tree.file_tree.splice(insert_pos..insert_pos, children);
         self.invalidate_visible_cache();
     }
 
@@ -1000,8 +1169,8 @@ impl ViewerState {
     /// Populate the filename search cache by walking the entire filesystem
     /// tree under the given worktree root.
     pub fn populate_filename_search_cache(&mut self, worktree_root: &Path) {
-        self.filename_search_all_files.clear();
-        Self::collect_all_file_paths(worktree_root, worktree_root, 0, &mut self.filename_search_all_files, self.gitignore.as_deref());
+        self.filename_search.filename_search_all_files.clear();
+        Self::collect_all_file_paths(worktree_root, worktree_root, 0, &mut self.filename_search.filename_search_all_files, self.tree.gitignore.as_deref());
     }
 
     /// Recursively collect all file paths under `dir`, skipping the same

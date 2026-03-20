@@ -10,19 +10,19 @@ use super::explorer::open_viewer_comment_detail;
 /// Handle keys when the Viewer panel is focused.
 pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     // Clear comment preview on any key input.
-    app.viewer_state.comment_preview_line = None;
+    app.viewer_state.explorer.comment_preview_line = None;
 
     // Unified diff mode has its own navigation.
-    if app.viewer_state.diff_mode {
+    if app.viewer_state.diff_view.diff_mode {
         handle_viewer_diff_mode_key(app, key);
         return;
     }
 
-    let total = app.viewer_state.file_content.len();
+    let total = app.viewer_state.content.file_content.len();
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
     if let Some(Action::ExitToExplorer) = action {
-        if app.viewer_state.selected_line_start.is_some() {
+        if app.viewer_state.selection.selected_line_start.is_some() {
             app.viewer_state.clear_selection();
         } else {
             app.set_focus(crate::app::Focus::Explorer);
@@ -36,29 +36,29 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
 
     match action {
         Some(Action::NavigateDown) => {
-            if app.viewer_state.file_scroll + 1 < total {
-                app.viewer_state.file_scroll += 1;
+            if app.viewer_state.content.file_scroll + 1 < total {
+                app.viewer_state.content.file_scroll += 1;
             }
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.file_scroll = app.viewer_state.file_scroll.saturating_sub(1);
+            app.viewer_state.content.file_scroll = app.viewer_state.content.file_scroll.saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
-            app.viewer_state.file_scroll =
-                (app.viewer_state.file_scroll + 15).min(total.saturating_sub(1));
+            app.viewer_state.content.file_scroll =
+                (app.viewer_state.content.file_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.file_scroll = app.viewer_state.file_scroll.saturating_sub(15);
+            app.viewer_state.content.file_scroll = app.viewer_state.content.file_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
-            app.viewer_state.file_scroll = 0;
+            app.viewer_state.content.file_scroll = 0;
         }
         Some(Action::GoToBottom) => {
-            app.viewer_state.file_scroll = total.saturating_sub(1);
+            app.viewer_state.content.file_scroll = total.saturating_sub(1);
         }
         Some(Action::SearchInFile) => {
-            app.viewer_state.search_active = true;
-            app.viewer_state.search_query.clear();
+            app.viewer_state.search.search_active = true;
+            app.viewer_state.search.search_query.clear();
         }
         Some(Action::NextSearchMatch) => {
             app.viewer_state.next_search_match();
@@ -67,13 +67,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.prev_search_match();
         }
         Some(Action::ScrollLeft) => {
-            app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
+            app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
         }
         Some(Action::ScrollRight) => {
             app.viewer_state.scroll_right(4);
         }
         Some(Action::ScrollHome) => {
-            app.viewer_state.h_scroll = 0;
+            app.viewer_state.content.h_scroll = 0;
         }
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
@@ -84,11 +84,11 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
 
 /// Key handling for the viewer panel in unified diff mode.
 pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
-    let total = app.viewer_state.diff_view_lines.len();
+    let total = app.viewer_state.diff_view.diff_view_lines.len();
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
     if let Some(Action::ExitToExplorer) = action {
-        if app.viewer_state.selected_line_start.is_some() {
+        if app.viewer_state.selection.selected_line_start.is_some() {
             app.viewer_state.clear_selection();
         } else {
             app.viewer_state.exit_diff_mode();
@@ -103,36 +103,36 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
 
     match action {
         Some(Action::NavigateDown) => {
-            if app.viewer_state.diff_view_scroll + 1 < total {
-                app.viewer_state.diff_view_scroll += 1;
+            if app.viewer_state.diff_view.diff_view_scroll + 1 < total {
+                app.viewer_state.diff_view.diff_view_scroll += 1;
             }
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.diff_view_scroll =
-                app.viewer_state.diff_view_scroll.saturating_sub(1);
+            app.viewer_state.diff_view.diff_view_scroll =
+                app.viewer_state.diff_view.diff_view_scroll.saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
-            app.viewer_state.diff_view_scroll =
-                (app.viewer_state.diff_view_scroll + 15).min(total.saturating_sub(1));
+            app.viewer_state.diff_view.diff_view_scroll =
+                (app.viewer_state.diff_view.diff_view_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.diff_view_scroll =
-                app.viewer_state.diff_view_scroll.saturating_sub(15);
+            app.viewer_state.diff_view.diff_view_scroll =
+                app.viewer_state.diff_view.diff_view_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
-            app.viewer_state.diff_view_scroll = 0;
+            app.viewer_state.diff_view.diff_view_scroll = 0;
         }
         Some(Action::GoToBottom) => {
-            app.viewer_state.diff_view_scroll = total.saturating_sub(1);
+            app.viewer_state.diff_view.diff_view_scroll = total.saturating_sub(1);
         }
         Some(Action::ScrollLeft) => {
-            app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
+            app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
         }
         Some(Action::ScrollRight) => {
             app.viewer_state.scroll_right(4);
         }
         Some(Action::ScrollHome) => {
-            app.viewer_state.h_scroll = 0;
+            app.viewer_state.content.h_scroll = 0;
         }
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);

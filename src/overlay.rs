@@ -2,6 +2,9 @@
 //!
 //! Each overlay popup has its own state struct, extracted from the monolithic
 //! `App` struct to improve organization and reduce field count.
+//!
+//! The `ActiveOverlay` enum tracks which overlay is currently visible,
+//! replacing the previous `active: bool` field on each struct.
 
 use crate::app::Focus;
 use crate::background::BackgroundOp;
@@ -11,10 +14,27 @@ use crate::grep_search::{GrepMatch, GrepProgress};
 use crate::review_store::SessionHistory;
 use crate::text_input::TextInput;
 
+/// Which overlay is currently active (at most one at a time).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActiveOverlay {
+    #[default]
+    None,
+    SwitchBranch,
+    Grab,
+    Prune,
+    CherryPick,
+    History,
+    ResumeSession,
+    RepoSelector,
+    OpenRepo,
+    GrepSearch,
+    Help,
+    CommandPalette,
+}
+
 /// Switch-branch overlay state.
 #[derive(Default)]
 pub struct SwitchBranchOverlay {
-    pub active: bool,
     pub branches: Vec<String>,
     pub selected: usize,
     pub filter: TextInput,
@@ -24,7 +44,6 @@ pub struct SwitchBranchOverlay {
 /// Grab-branch overlay state.
 #[derive(Default)]
 pub struct GrabOverlay {
-    pub active: bool,
     pub branches: Vec<String>,
     pub selected: usize,
 }
@@ -33,7 +52,6 @@ pub struct GrabOverlay {
 /// Cherry-pick overlay state.
 #[derive(Default)]
 pub struct CherryPickOverlay {
-    pub active: bool,
     pub source_branch: String,
     pub commits: Vec<CommitInfo>,
     pub selected: usize,
@@ -43,7 +61,6 @@ pub struct CherryPickOverlay {
 /// Prune overlay state.
 #[derive(Default)]
 pub struct PruneOverlay {
-    pub active: bool,
     pub stale: Vec<String>,
 }
 
@@ -51,7 +68,6 @@ pub struct PruneOverlay {
 /// Resume-session overlay state.
 #[derive(Default)]
 pub struct ResumeSessionOverlay {
-    pub active: bool,
     pub sessions: Vec<ResumableSession>,
     pub selected: usize,
     pub filter: TextInput,
@@ -62,7 +78,6 @@ pub struct ResumeSessionOverlay {
 /// Grep full-text search overlay state.
 #[derive(Default)]
 pub struct GrepSearchOverlay {
-    pub active: bool,
     pub query: TextInput,
     pub results: Vec<GrepMatch>,
     pub selected: usize,
@@ -83,7 +98,6 @@ pub struct GrepSearchOverlay {
 /// Command palette overlay state.
 #[derive(Default)]
 pub struct CommandPaletteOverlay {
-    pub active: bool,
     pub filter: TextInput,
     pub selected: usize,
 }
@@ -92,7 +106,6 @@ pub struct CommandPaletteOverlay {
 /// Session history overlay state.
 #[derive(Default)]
 pub struct HistoryOverlay {
-    pub active: bool,
     pub records: Vec<SessionHistory>,
     pub selected: usize,
     pub search_query: TextInput,
@@ -103,7 +116,6 @@ pub struct HistoryOverlay {
 /// Repository selector overlay state.
 #[derive(Default)]
 pub struct RepoSelectorOverlay {
-    pub active: bool,
     pub selected: usize,
 }
 
@@ -111,22 +123,37 @@ pub struct RepoSelectorOverlay {
 /// Open-repository path input overlay state.
 #[derive(Default)]
 pub struct OpenRepoOverlay {
-    pub active: bool,
     pub buffer: TextInput,
 }
 
 
 /// Help overlay state.
 pub struct HelpOverlay {
-    pub active: bool,
     pub context: Focus,
 }
 
 impl Default for HelpOverlay {
     fn default() -> Self {
         Self {
-            active: false,
             context: Focus::Worktree,
         }
     }
+}
+
+/// Container for all overlay state, replacing individual overlay fields on App.
+#[derive(Default)]
+pub struct OverlayManager {
+    /// Which overlay is currently active.
+    pub active: ActiveOverlay,
+    pub switch_branch: SwitchBranchOverlay,
+    pub grab: GrabOverlay,
+    pub prune: PruneOverlay,
+    pub cherry_pick: CherryPickOverlay,
+    pub history: HistoryOverlay,
+    pub resume_session: ResumeSessionOverlay,
+    pub repo_selector: RepoSelectorOverlay,
+    pub open_repo: OpenRepoOverlay,
+    pub grep_search: GrepSearchOverlay,
+    pub help: HelpOverlay,
+    pub command_palette: CommandPaletteOverlay,
 }

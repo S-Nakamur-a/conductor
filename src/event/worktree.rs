@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::{App, Focus, StatusLevel, WorktreeListRow};
 use crate::git_engine;
 use crate::keymap::{Action, KeyContext};
+use crate::overlay::ActiveOverlay;
 
 /// Handle keys when the Worktree panel is focused.
 pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
@@ -72,8 +73,8 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
         Some(Action::SwitchBranch) => {
             app.set_status("Loading branches...".to_string(), StatusLevel::Info);
             app.load_switch_branches();
-            if !app.switch_branch.branches.is_empty() {
-                app.switch_branch.active = true;
+            if !app.overlays.switch_branch.branches.is_empty() {
+                app.overlays.active = ActiveOverlay::SwitchBranch;
                 app.status_message = None;
             } else if app.status_message.as_ref().is_some_and(|m| m.text == "Loading branches...") {
                 app.set_status("No remote branches found.".to_string(), StatusLevel::Warning);
@@ -84,10 +85,10 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 app.set_status("Already grabbing a branch. Ungrab first (G).".to_string(), StatusLevel::Warning);
             } else {
                 app.load_grab_branches();
-                if app.grab.branches.is_empty() {
+                if app.overlays.grab.branches.is_empty() {
                     app.set_status("No non-main worktrees to grab.".to_string(), StatusLevel::Warning);
                 } else {
-                    app.grab.active = true;
+                    app.overlays.active = ActiveOverlay::Grab;
                 }
             }
         }
@@ -107,8 +108,8 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                             if stale.is_empty() {
                                 app.set_status("No stale worktrees found.".to_string(), StatusLevel::Info);
                             } else {
-                                app.prune.stale = stale;
-                                app.prune.active = true;
+                                app.overlays.prune.stale = stale;
+                                app.overlays.active = ActiveOverlay::Prune;
                             }
                         }
                         Err(e) => {
@@ -149,7 +150,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             app.start_pull_worktree();
         }
         Some(Action::SessionHistory) => {
-            app.history.active = true;
+            app.overlays.active = ActiveOverlay::History;
             app.load_session_history();
         }
         Some(Action::RefreshWorktrees) => {
@@ -187,9 +188,9 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 .find(|w| w.branch != current_branch)
                 .map(|w| w.branch.clone());
             if let Some(branch) = source {
-                app.cherry_pick.source_branch = branch;
+                app.overlays.cherry_pick.source_branch = branch;
                 app.load_cherry_pick_commits();
-                app.cherry_pick.active = true;
+                app.overlays.active = ActiveOverlay::CherryPick;
             } else {
                 app.set_status("No other worktree branches available.".to_string(), StatusLevel::Warning);
             }

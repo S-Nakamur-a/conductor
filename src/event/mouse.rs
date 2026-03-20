@@ -11,55 +11,22 @@ use super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
 pub fn handle_mouse_event(
     app: &mut App,
     mouse: MouseEvent,
-    frame_area: ratatui::layout::Rect,
+    _frame_area: ratatui::layout::Rect,
 ) {
-    use ratatui::layout::{Constraint, Layout};
+    // Read layout from cache (computed during render).
+    let lc = &app.layout_cache;
+    let notif_area = lc.notif_area;
+    let main_area = lc.main_area;
 
-    // Compute layout regions — must match render_ui in main.rs.
-    let notif_height: u16 = if !app.terminal.cc_waiting_worktrees.is_empty()
-        { 1 } else { 0 };
-    let outer = Layout::vertical([
-        Constraint::Length(1), // title bar
-        Constraint::Length(notif_height), // notification bar
-        Constraint::Min(0),
-        Constraint::Length(1), // status bar
-    ])
-    .split(frame_area);
-    let notif_area = outer[1];
-    let main_area = outer[2];
+    let left_w = lc.columns[0].width;
+    let explorer_w = lc.columns[1].width;
+    let viewer_w = lc.columns[2].width;
+    let left_end = lc.columns[0].x + left_w;
+    let explorer_end = lc.columns[1].x + explorer_w;
+    let viewer_end = lc.columns[2].x + viewer_w;
 
-    let (left_w, explorer_w, viewer_w) = crate::accordion_widths(app.expanded_panel, main_area.width);
-
-    let left_end = main_area.x + left_w;
-    let explorer_end = left_end + explorer_w;
-    let viewer_end = explorer_end + viewer_w;
-
-    // Compute explorer panel's 50/50 vertical split — must match explorer_panel::render.
-    let explorer_v_split = Layout::vertical([
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-    ])
-    .split(ratatui::layout::Rect::new(
-        left_end,
-        main_area.y,
-        explorer_w,
-        main_area.height,
-    ));
-    let explorer_mid_y = explorer_v_split[1].y;
-
-    // Compute terminal panel's 80/20 vertical split — must match render_ui in main.rs.
-    let right_w = main_area.width.saturating_sub(left_w + explorer_w + viewer_w);
-    let terminal_v_split = Layout::vertical([
-        Constraint::Percentage(80),
-        Constraint::Percentage(20),
-    ])
-    .split(ratatui::layout::Rect::new(
-        viewer_end,
-        main_area.y,
-        right_w,
-        main_area.height,
-    ));
-    let terminal_split_y = terminal_v_split[1].y;
+    let explorer_mid_y = lc.explorer_mid_y;
+    let terminal_split_y = lc.terminal_split[1].y;
 
     let col = mouse.column;
     let row = mouse.row;
@@ -74,7 +41,7 @@ pub fn handle_mouse_event(
         MouseEventKind::ScrollLeft => {
             // Horizontal scroll — only affects viewer panel.
             if col >= explorer_end && col < viewer_end {
-                app.viewer_state.h_scroll = app.viewer_state.h_scroll.saturating_sub(4);
+                app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
             }
         }
         MouseEventKind::ScrollRight => {
@@ -84,7 +51,7 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // Notification bar click — check for badge clicks.
-            if notif_height > 0 && row == notif_area.y {
+            if notif_area.height > 0 && row == notif_area.y {
                 for (start_col, end_col, branch) in &app.notification_bar_badges {
                     if col >= *start_col && col < *end_col {
                         if let Some(wt_idx) =
@@ -194,25 +161,25 @@ pub fn handle_mouse_event(
 
                     // Determine if click is in top half (file tree) or bottom half (diff/comment list).
                     if row >= explorer_mid_y {
-                        app.viewer_state.explorer_focus_on_diff_list = true;
+                        app.viewer_state.explorer.explorer_focus_on_diff_list = true;
                         let inner_y = explorer_mid_y + 1; // inside border
                         if row >= inner_y {
                             let click_offset = (row - inner_y) as usize;
 
-                            if app.viewer_state.explorer_show_comments {
+                            if app.viewer_state.explorer.explorer_show_comments {
                                 // Comment list is displayed — handle comment selection.
-                                let idx = app.viewer_state.comment_list_scroll + click_offset;
+                                let idx = app.viewer_state.explorer.comment_list_scroll + click_offset;
                                 let row_count = app.review_state.comment_list_rows.len();
                                 if idx < row_count {
-                                    app.viewer_state.comment_list_selected = idx;
+                                    app.viewer_state.explorer.comment_list_selected = idx;
 
                                     // Double-click detection.
                                     let now = std::time::Instant::now();
-                                    let elapsed = now.duration_since(app.viewer_state.last_comment_click_time);
+                                    let elapsed = now.duration_since(app.viewer_state.click.last_comment_click_time);
                                     let is_double = elapsed.as_millis() < 400
-                                        && app.viewer_state.last_comment_click_idx == idx;
-                                    app.viewer_state.last_comment_click_time = now;
-                                    app.viewer_state.last_comment_click_idx = idx;
+                                        && app.viewer_state.click.last_comment_click_idx == idx;
+                                    app.viewer_state.click.last_comment_click_time = now;
+                                    app.viewer_state.click.last_comment_click_idx = idx;
 
                                     // Navigate to the comment's file location.
                                     if let Some(comment_idx) =
@@ -225,17 +192,17 @@ pub fn handle_mouse_event(
                                 }
                             } else {
                                 // Diff list is displayed — handle diff selection.
-                                let idx = app.viewer_state.diff_list_scroll + click_offset;
+                                let idx = app.viewer_state.explorer.diff_list_scroll + click_offset;
                                 if idx < app.diff_state.display_list.len() {
-                                    app.viewer_state.diff_list_selected = idx;
+                                    app.viewer_state.explorer.diff_list_selected = idx;
                                     // Single-click: toggle header or open file in Viewer.
                                     if app.diff_state.toggle_section(idx) {
                                         // Toggled a section header.
                                         let new_count = app.diff_state.display_list.len();
                                         if new_count > 0
-                                            && app.viewer_state.diff_list_selected >= new_count
+                                            && app.viewer_state.explorer.diff_list_selected >= new_count
                                         {
-                                            app.viewer_state.diff_list_selected = new_count - 1;
+                                            app.viewer_state.explorer.diff_list_selected = new_count - 1;
                                         }
                                     } else if let Some((file_diff, _section)) =
                                         app.diff_state.resolve_file(idx)
@@ -256,11 +223,11 @@ pub fn handle_mouse_event(
 
                                             // Build unified diff view.
                                             app.viewer_state.build_unified_diff_view(&file_diff_clone);
-                                            if let Some(pos) = app.viewer_state.diff_view_lines.iter().position(|e| {
+                                            if let Some(pos) = app.viewer_state.diff_view.diff_view_lines.iter().position(|e| {
                                                 matches!(e, crate::viewer::UnifiedDiffEntry::Line { tag, .. }
                                                     if *tag != crate::diff_state::DiffLineTag::Equal)
                                             }) {
-                                                app.viewer_state.diff_view_scroll = pos.saturating_sub(3);
+                                                app.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
                                             }
 
                                             app.set_focus(Focus::Viewer);
@@ -270,17 +237,17 @@ pub fn handle_mouse_event(
                             }
                         }
                     } else {
-                        app.viewer_state.explorer_focus_on_diff_list = false;
+                        app.viewer_state.explorer.explorer_focus_on_diff_list = false;
                         // Select the clicked file tree item.
                         let inner_y = main_area.y + 1; // inside border
                         if row >= inner_y {
                             let click_offset = (row - inner_y) as usize;
                             let visible = app.viewer_state.visible_indices();
-                            let idx = app.viewer_state.tree_scroll + click_offset;
+                            let idx = app.viewer_state.tree.tree_scroll + click_offset;
                             if let Some(&tree_idx) = visible.get(idx) {
-                                app.viewer_state.tree_selected = tree_idx;
+                                app.viewer_state.tree.tree_selected = tree_idx;
                                 // Single-click opens the file in Viewer (or toggles dir).
-                                if let Some(entry) = app.viewer_state.file_tree.get(tree_idx).cloned() {
+                                if let Some(entry) = app.viewer_state.tree.file_tree.get(tree_idx).cloned() {
                                     if entry.is_dir {
                                         // Lazy-load children before expanding.
                                         if !entry.is_expanded {
@@ -292,11 +259,11 @@ pub fn handle_mouse_event(
                                     } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                                         // Double-click detection.
                                         let now = std::time::Instant::now();
-                                        let elapsed = now.duration_since(app.viewer_state.last_tree_click_time);
+                                        let elapsed = now.duration_since(app.viewer_state.click.last_tree_click_time);
                                         let is_double = elapsed.as_millis() < 400
-                                            && app.viewer_state.last_tree_click_idx == tree_idx;
-                                        app.viewer_state.last_tree_click_time = now;
-                                        app.viewer_state.last_tree_click_idx = tree_idx;
+                                            && app.viewer_state.click.last_tree_click_idx == tree_idx;
+                                        app.viewer_state.click.last_tree_click_time = now;
+                                        app.viewer_state.click.last_tree_click_idx = tree_idx;
 
                                         let wt_path = wt.path.clone();
                                         let tab_width = app.config.viewer.tab_width;
@@ -327,39 +294,39 @@ pub fn handle_mouse_event(
 
                     if on_gutter {
                         // Detect clicks on viewer lines for comment selection.
-                        if app.viewer_state.diff_mode {
+                        if app.viewer_state.diff_view.diff_mode {
                             // Diff mode: resolve line number from diff_view_lines.
-                            let diff_total = app.viewer_state.diff_view_lines.len();
+                            let diff_total = app.viewer_state.diff_view.diff_view_lines.len();
                             if diff_total > 0 && row >= inner_y {
                                 let line_offset = (row - inner_y) as usize;
-                                let idx = app.viewer_state.diff_view_scroll + line_offset;
-                                if let Some(crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view_lines.get(idx) {
+                                let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
+                                if let Some(crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(line_1), tag, .. }) = app.viewer_state.diff_view.diff_view_lines.get(idx) {
                                     if *tag != crate::diff_state::DiffLineTag::Delete {
                                         let line_1 = *line_1;
                                         let has_comment = app.review_state.file_comments.contains_key(&line_1);
                                         // Show comment preview on single click if the line has a comment.
-                                        app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
+                                        app.viewer_state.explorer.comment_preview_line = if has_comment { Some(line_1) } else { None };
                                         let should_open = app.viewer_state.click_line_number(line_1);
                                         if should_open {
-                                            app.viewer_state.comment_preview_line = None;
+                                            app.viewer_state.explorer.comment_preview_line = None;
                                             open_viewer_comment(app);
                                         }
                                     }
                                 }
                             }
                         } else {
-                            let total_lines = app.viewer_state.file_content.len();
+                            let total_lines = app.viewer_state.content.file_content.len();
                             if total_lines > 0 && row >= inner_y {
                                 let line_offset = (row - inner_y) as usize;
-                                let line_1 = app.viewer_state.file_scroll + line_offset + 1;
+                                let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
 
                                 if line_1 <= total_lines {
                                     let has_comment = app.review_state.file_comments.contains_key(&line_1);
                                     // Show comment preview on single click if the line has a comment.
-                                    app.viewer_state.comment_preview_line = if has_comment { Some(line_1) } else { None };
+                                    app.viewer_state.explorer.comment_preview_line = if has_comment { Some(line_1) } else { None };
                                     let should_open = app.viewer_state.click_line_number(line_1);
                                     if should_open {
-                                        app.viewer_state.comment_preview_line = None;
+                                        app.viewer_state.explorer.comment_preview_line = None;
                                         open_viewer_comment(app);
                                     }
                                 }
@@ -411,22 +378,22 @@ pub fn handle_mouse_event(
             let inner_y = main_area.y + 1;
             if col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
                 let line_offset = (row - inner_y) as usize;
-                if app.viewer_state.diff_mode {
-                    let idx = app.viewer_state.diff_view_scroll + line_offset;
-                    app.viewer_state.hover_line = app.viewer_state.diff_view_lines.get(idx).and_then(|e| match e {
+                if app.viewer_state.diff_view.diff_mode {
+                    let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
+                    app.viewer_state.click.hover_line = app.viewer_state.diff_view.diff_view_lines.get(idx).and_then(|e| match e {
                         crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
                         _ => None,
                     });
                 } else {
-                    let line_1 = app.viewer_state.file_scroll + line_offset + 1;
-                    if line_1 <= app.viewer_state.file_content.len() {
-                        app.viewer_state.hover_line = Some(line_1);
+                    let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
+                    if line_1 <= app.viewer_state.content.file_content.len() {
+                        app.viewer_state.click.hover_line = Some(line_1);
                     } else {
-                        app.viewer_state.hover_line = None;
+                        app.viewer_state.click.hover_line = None;
                     }
                 }
             } else {
-                app.viewer_state.hover_line = None;
+                app.viewer_state.click.hover_line = None;
             }
         }
         _ => {}
@@ -471,64 +438,64 @@ fn handle_mouse_scroll(
             let file_count = app.diff_state.display_list.len();
             if file_count > 0 {
                 if delta > 0 {
-                    app.viewer_state.diff_list_scroll = app
+                    app.viewer_state.explorer.diff_list_scroll = app
                         .viewer_state
-                        .diff_list_scroll
+                        .explorer.diff_list_scroll
                         .saturating_add(delta.unsigned_abs() as usize)
                         .min(file_count.saturating_sub(1));
                 } else {
-                    app.viewer_state.diff_list_scroll = app
+                    app.viewer_state.explorer.diff_list_scroll = app
                         .viewer_state
-                        .diff_list_scroll
+                        .explorer.diff_list_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
         } else {
             // File tree scroll.
             let visible_count = app.viewer_state.visible_indices().len();
-            let page = app.viewer_state.explorer_tree_height.max(1);
+            let page = app.viewer_state.explorer.explorer_tree_height.max(1);
             let max_scroll = visible_count.saturating_sub(page);
             if delta > 0 {
-                app.viewer_state.tree_scroll = app
+                app.viewer_state.tree.tree_scroll = app
                     .viewer_state
-                    .tree_scroll
+                    .tree.tree_scroll
                     .saturating_add(delta.unsigned_abs() as usize)
                     .min(max_scroll);
             } else {
-                app.viewer_state.tree_scroll = app
+                app.viewer_state.tree.tree_scroll = app
                     .viewer_state
-                    .tree_scroll
+                    .tree.tree_scroll
                     .saturating_sub(delta.unsigned_abs() as usize);
             }
         }
     } else if col < viewer_end {
         // Viewer scroll.
-        if app.viewer_state.diff_mode {
+        if app.viewer_state.diff_view.diff_mode {
             // Unified diff view scroll.
-            let total = app.viewer_state.diff_view_lines.len();
+            let total = app.viewer_state.diff_view.diff_view_lines.len();
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.diff_view_scroll = (app.viewer_state.diff_view_scroll
+                    app.viewer_state.diff_view.diff_view_scroll = (app.viewer_state.diff_view.diff_view_scroll
                         + delta.unsigned_abs() as usize)
                         .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.diff_view_scroll = app
+                    app.viewer_state.diff_view.diff_view_scroll = app
                         .viewer_state
-                        .diff_view_scroll
+                        .diff_view.diff_view_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
         } else {
-            let total = app.viewer_state.file_content.len();
+            let total = app.viewer_state.content.file_content.len();
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.file_scroll = (app.viewer_state.file_scroll
+                    app.viewer_state.content.file_scroll = (app.viewer_state.content.file_scroll
                         + delta.unsigned_abs() as usize)
                         .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.file_scroll = app
+                    app.viewer_state.content.file_scroll = app
                         .viewer_state
-                        .file_scroll
+                        .content.file_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }

@@ -46,15 +46,20 @@ struct ScreenSnapshot {
 
 /// Take a point-in-time snapshot of the vt100 screen contents.
 ///
-/// Acquires and releases the parser lock as quickly as possible, extracting
-/// only the cell data needed for rendering into a local structure.
+/// Uses `try_lock` to avoid blocking when the PTY reader thread holds
+/// the mutex. Returns `None` if the lock is contended — the caller
+/// should reuse the previous cached render in that case.
 fn snapshot_screen(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,
     max_rows: u16,
     max_cols: u16,
-) -> ScreenSnapshot {
-    let mut parser = screen_arc.lock().unwrap_or_else(|e| e.into_inner());
+) -> Option<ScreenSnapshot> {
+    let mut parser = match screen_arc.try_lock() {
+        Ok(p) => p,
+        Err(std::sync::TryLockError::WouldBlock) => return None,
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+    };
 
     let is_alt_screen = parser.screen().alternate_screen();
     let effective_offset = if is_alt_screen { 0 } else { scroll_offset };
@@ -107,11 +112,11 @@ fn snapshot_screen(
     parser.set_scrollback(0);
 
     // Lock is dropped here when `parser` goes out of scope.
-    ScreenSnapshot {
+    Some(ScreenSnapshot {
         rows: snapshot_rows,
         effective_offset,
         cursor_position,
-    }
+    })
 }
 
 /// Build ratatui `Line`s from a vt100 PTY screen snapshot.
@@ -119,26 +124,28 @@ fn snapshot_screen(
 /// This is the expensive operation: it locks the vt100 parser mutex,
 /// copies cell data, then builds styled `Line` objects. The result can
 /// be cached in a [`PtyRenderCache`] and reused across frames.
+///
+/// Returns `None` if the vt100 parser mutex is currently held by the
+/// PTY reader thread. The caller should keep using the previous cache
+/// instead of blocking the main thread.
 pub fn build_pty_lines(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,
     max_rows: u16,
     max_cols: u16,
-) -> PtyRenderCache {
-    let snapshot = snapshot_screen(screen_arc, scroll_offset, max_rows, max_cols);
+) -> Option<PtyRenderCache> {
+    let snapshot = snapshot_screen(screen_arc, scroll_offset, max_rows, max_cols)?;
     let lines = lines_from_snapshot(&snapshot);
-    // Only expose cursor when not scrolled back; scrollback means we're viewing
-    // history and the cursor position is not meaningful for IME.
     let cursor_position = if snapshot.effective_offset == 0 {
         Some(snapshot.cursor_position)
     } else {
         None
     };
-    PtyRenderCache {
+    Some(PtyRenderCache {
         lines,
         effective_offset: snapshot.effective_offset,
         cursor_position,
-    }
+    })
 }
 
 /// Render previously built PTY lines from a [`PtyRenderCache`].

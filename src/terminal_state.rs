@@ -49,6 +49,10 @@ pub struct TerminalState {
     /// Deferred prompts: session index → prompt text.
     /// Written once the CC session becomes ready (waiting for input).
     pub deferred_prompts: HashMap<usize, String>,
+    /// Set when PTY reader thread produces new output for Claude terminal.
+    pub dirty_claude: bool,
+    /// Set when PTY reader thread produces new output for Shell terminal.
+    pub dirty_shell: bool,
 }
 
 impl TerminalState {
@@ -71,6 +75,8 @@ impl TerminalState {
             shell_blank_last_click: Instant::now(),
             needs_clear: false,
             deferred_prompts: HashMap::new(),
+            dirty_claude: true,
+            dirty_shell: true,
         }
     }
 }
