@@ -26,23 +26,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Record actual panel heights for scroll calculations in event handling.
     let tree_inner_height = chunks[0].height.saturating_sub(2) as usize;
     let diff_inner_height = chunks[1].height.saturating_sub(2) as usize;
-    app.viewer_state.explorer_tree_height = tree_inner_height.max(1);
-    app.viewer_state.explorer_diff_list_height = diff_inner_height.max(1);
+    app.viewer_state.explorer.explorer_tree_height = tree_inner_height.max(1);
+    app.viewer_state.explorer.explorer_diff_list_height = diff_inner_height.max(1);
 
     render_file_tree(frame, chunks[0], app, focused);
-    if app.viewer_state.explorer_show_comments {
+    if app.viewer_state.explorer.explorer_show_comments {
         render_comment_list(frame, chunks[1], app, focused);
     } else {
         render_diff_list(frame, chunks[1], app, focused);
     }
 
     // Show search input overlay.
-    if app.viewer_state.search_active {
-        render_search_box(frame, area, &app.viewer_state.search_query, &app.theme);
+    if app.viewer_state.search.search_active {
+        render_search_box(frame, area, &app.viewer_state.search.search_query, &app.theme);
     }
 
     // Show filename search overlay.
-    if app.viewer_state.filename_search_active {
+    if app.viewer_state.filename_search.filename_search_active {
         render_filename_search_overlay(frame, chunks[0], app);
     }
 }
@@ -72,7 +72,7 @@ fn indent_for_depth(depth: usize) -> std::borrow::Cow<'static, str> {
 
 /// Render the file tree (top half).
 fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused: bool) {
-    let tree_focused = panel_focused && !app.viewer_state.explorer_focus_on_diff_list;
+    let tree_focused = panel_focused && !app.viewer_state.explorer.explorer_focus_on_diff_list;
     let border_color = if tree_focused {
         app.theme.border_focused
     } else if panel_focused {
@@ -84,7 +84,7 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
     let visible = app.viewer_state.visible_indices();
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    let tree_selected = app.viewer_state.tree_selected;
+    let tree_selected = app.viewer_state.tree.tree_selected;
     let selected_vis_idx = visible
         .iter()
         .position(|&i| i == tree_selected)
@@ -110,7 +110,7 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
-    let scroll = app.viewer_state.tree_scroll;
+    let scroll = app.viewer_state.tree.tree_scroll;
 
     let items: Vec<ListItem> = visible
         .iter()
@@ -118,7 +118,7 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
         .skip(scroll)
         .take(inner_height)
         .filter_map(|(vis_idx, &tree_idx)| {
-            let entry = app.viewer_state.file_tree.get(tree_idx)?;
+            let entry = app.viewer_state.tree.file_tree.get(tree_idx)?;
             let indent = indent_for_depth(entry.depth);
 
             let label = if entry.is_dir {
@@ -172,8 +172,8 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
     use crate::diff_state::{DiffListEntry, DiffSection};
 
     let theme = &app.theme;
-    let vs = &app.viewer_state;
-    let diff_focused = panel_focused && vs.explorer_focus_on_diff_list;
+    let vs_explorer = &app.viewer_state.explorer;
+    let diff_focused = panel_focused && vs_explorer.explorer_focus_on_diff_list;
     let border_color = if diff_focused {
         theme.border_focused
     } else if panel_focused {
@@ -191,7 +191,7 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         .border_style(Style::default().fg(border_color));
 
     let inner_height = area.height.saturating_sub(2) as usize;
-    let scroll = vs.diff_list_scroll;
+    let scroll = vs_explorer.diff_list_scroll;
 
     let items: Vec<ListItem> = app
         .diff_state
@@ -213,12 +213,12 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                 };
                 let label = format!("{arrow} {label_text} ({count})");
 
-                let style = if idx == vs.diff_list_selected && diff_focused {
+                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
                     Style::default()
                         .fg(theme.selected_fg)
                         .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
-                } else if idx == vs.diff_list_selected {
+                } else if idx == vs_explorer.diff_list_selected {
                     Style::default()
                         .fg(theme.selected_fg_inactive)
                         .bg(theme.selected_bg_inactive)
@@ -241,12 +241,12 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                 let arrow = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
                 let label = format!("  {indent}{arrow} \u{1f4c1} {name}");
 
-                let style = if idx == vs.diff_list_selected && diff_focused {
+                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
                     Style::default()
                         .fg(theme.selected_fg)
                         .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
-                } else if idx == vs.diff_list_selected {
+                } else if idx == vs_explorer.diff_list_selected {
                     Style::default()
                         .fg(theme.selected_fg_inactive)
                         .bg(theme.selected_bg_inactive)
@@ -281,12 +281,12 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                     file_diff.added_lines, file_diff.deleted_lines
                 );
 
-                let style = if idx == vs.diff_list_selected && diff_focused {
+                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
                     Style::default()
                         .fg(theme.selected_fg)
                         .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
-                } else if idx == vs.diff_list_selected {
+                } else if idx == vs_explorer.diff_list_selected {
                     Style::default()
                         .fg(theme.selected_fg_inactive)
                         .bg(theme.selected_bg_inactive)
@@ -313,8 +313,8 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
     use crate::review_state::CommentListRow;
 
     let theme = &app.theme;
-    let vs = &app.viewer_state;
-    let list_focused = panel_focused && vs.explorer_focus_on_diff_list;
+    let vs_explorer = &app.viewer_state.explorer;
+    let list_focused = panel_focused && vs_explorer.explorer_focus_on_diff_list;
     let border_color = if list_focused {
         theme.border_focused
     } else if panel_focused {
@@ -338,7 +338,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         .border_style(Style::default().fg(border_color));
 
     let inner_height = area.height.saturating_sub(2) as usize;
-    let scroll = vs.comment_list_scroll;
+    let scroll = vs_explorer.comment_list_scroll;
 
     let items: Vec<ListItem> = app
         .review_state
@@ -405,12 +405,12 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                         .collect();
                     let label = format!("{prefix}{body}");
 
-                    let style = if row_idx == vs.comment_list_selected && list_focused {
+                    let style = if row_idx == vs_explorer.comment_list_selected && list_focused {
                         Style::default()
                             .fg(theme.selected_fg)
                             .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD)
-                    } else if row_idx == vs.comment_list_selected {
+                    } else if row_idx == vs_explorer.comment_list_selected {
                         Style::default()
                             .fg(theme.selected_fg_inactive)
                             .bg(theme.selected_bg_inactive)
@@ -446,12 +446,12 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                         .collect();
                     let label = format!("  \u{21b3} [{author_label}] {body}");
 
-                    let style = if row_idx == vs.comment_list_selected && list_focused {
+                    let style = if row_idx == vs_explorer.comment_list_selected && list_focused {
                         Style::default()
                             .fg(theme.selected_fg)
                             .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD)
-                    } else if row_idx == vs.comment_list_selected {
+                    } else if row_idx == vs_explorer.comment_list_selected {
                         Style::default()
                             .fg(theme.selected_fg_inactive)
                             .bg(theme.selected_bg_inactive)
@@ -493,7 +493,7 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::T
 
 /// Render the filename search overlay on top of the file tree area.
 fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let vs = &app.viewer_state;
+    let vs = &app.viewer_state.filename_search;
     let inner_width = area.width.saturating_sub(2);
     let inner_height = area.height.saturating_sub(2) as usize;
 

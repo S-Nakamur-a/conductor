@@ -772,7 +772,7 @@ impl App {
         }
         match focus {
             Focus::Explorer | Focus::Viewer => {
-                if self.viewer_state.file_tree.is_empty() {
+                if self.viewer_state.tree.file_tree.is_empty() {
                     self.refresh_viewer();
                 }
                 if self.diff_state.committed_files.is_empty() && self.diff_state.uncommitted_files.is_empty() {
@@ -1014,8 +1014,8 @@ impl App {
     }
 
     fn cmd_search_in_file(&mut self) {
-        self.viewer_state.search_active = true;
-        self.viewer_state.search_query.clear();
+        self.viewer_state.search.search_active = true;
+        self.viewer_state.search.search_query.clear();
         self.set_focus(Focus::Viewer);
     }
 
@@ -1025,8 +1025,8 @@ impl App {
     }
 
     fn cmd_show_review_comments(&mut self) {
-        self.viewer_state.explorer_show_comments = true;
-        self.viewer_state.explorer_focus_on_diff_list = true;
+        self.viewer_state.explorer.explorer_show_comments = true;
+        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
@@ -1057,19 +1057,19 @@ impl App {
     }
 
     fn cmd_show_diff_list(&mut self) {
-        self.viewer_state.explorer_show_comments = false;
-        self.viewer_state.explorer_focus_on_diff_list = true;
+        self.viewer_state.explorer.explorer_show_comments = false;
+        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
     fn cmd_show_comment_list(&mut self) {
-        self.viewer_state.explorer_show_comments = true;
-        self.viewer_state.explorer_focus_on_diff_list = true;
+        self.viewer_state.explorer.explorer_show_comments = true;
+        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
     fn cmd_add_review_comment(&mut self) {
-        if let Some(file_path) = self.viewer_state.current_file.clone() {
+        if let Some(file_path) = self.viewer_state.content.current_file.clone() {
             let location = if let Some((start, end)) = self.viewer_state.selected_range() {
                 if start == end {
                     format!("{file_path}:{start} ")
@@ -1077,7 +1077,7 @@ impl App {
                     format!("{file_path}:{start}-{end} ")
                 }
             } else {
-                let line = self.viewer_state.file_scroll + 1;
+                let line = self.viewer_state.content.file_scroll + 1;
                 format!("{file_path}:{line} ")
             };
             self.viewer_state.clear_selection();
@@ -1094,11 +1094,11 @@ impl App {
 
     fn cmd_view_comment_detail(&mut self) {
         // Try viewer context first (current line), then comment list context.
-        if self.viewer_state.current_file.is_some() {
+        if self.viewer_state.content.current_file.is_some() {
             let cursor_line = if let Some((start, _)) = self.viewer_state.selected_range() {
                 start
             } else {
-                self.viewer_state.file_scroll + 1
+                self.viewer_state.content.file_scroll + 1
             };
             if let Some(comments) = self.review_state.file_comments.get(&cursor_line) {
                 if !comments.is_empty() {
@@ -1125,8 +1125,8 @@ impl App {
     }
 
     fn cmd_delete_comment(&mut self) {
-        if self.viewer_state.explorer_show_comments
-            && self.viewer_state.explorer_focus_on_diff_list
+        if self.viewer_state.explorer.explorer_show_comments
+            && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
             self.delete_selected_review_comment();
@@ -1136,8 +1136,8 @@ impl App {
     }
 
     fn cmd_toggle_comment_resolve(&mut self) {
-        if self.viewer_state.explorer_show_comments
-            && self.viewer_state.explorer_focus_on_diff_list
+        if self.viewer_state.explorer.explorer_show_comments
+            && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
             self.toggle_selected_review_status();
@@ -1149,7 +1149,7 @@ impl App {
     fn cmd_edit_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.comment_list_selected);
+            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
         if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
             self.review_state.input_buffer.set_text(&comment.body);
             self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
@@ -1164,7 +1164,7 @@ impl App {
     fn cmd_reply_to_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.comment_list_selected);
+            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
         if let Some(idx) = comment_idx {
             self.review_state.input_buffer.clear();
             self.review_state.input_mode = crate::review_state::ReviewInputMode::ReplyingToComment;

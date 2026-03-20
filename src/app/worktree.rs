@@ -1302,12 +1302,12 @@ impl App {
     pub fn poll_worktree_switch_ops(&mut self) {
         // File tree result.
         if let Some(entries) = self.bg_file_tree_op.poll() {
-            self.viewer_state.file_tree = entries;
+            self.viewer_state.tree.file_tree = entries;
             self.viewer_state.invalidate_visible_cache();
             // Re-open the previously viewed file if it still exists.
             if let Some(wt) = self.worktrees.get(self.selected_worktree) {
                 let wt_path = wt.path.clone();
-                if let Some(ref rel_path) = self.viewer_state.current_file.clone() {
+                if let Some(ref rel_path) = self.viewer_state.content.current_file.clone() {
                     let full = wt_path.join(rel_path);
                     if full.is_file() {
                         let tab_width = self.config.viewer.tab_width;

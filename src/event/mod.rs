@@ -76,10 +76,10 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
         ActiveOverlay::None => {}
         other => return EffectiveOverlay::Active(other),
     }
-    if app.viewer_state.filename_search_active {
+    if app.viewer_state.filename_search.filename_search_active {
         return EffectiveOverlay::FilenameSearch;
     }
-    if app.viewer_state.search_active {
+    if app.viewer_state.search.search_active {
         return EffectiveOverlay::ViewerSearch;
     }
     if app.review_state.search_active {
@@ -296,10 +296,10 @@ pub fn handle_paste_event(app: &mut App, data: String) {
             || app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktreeBase
         {
             app.worktree_mgr.input_buffer.insert_str(&single_line);
-        } else if app.viewer_state.search_active {
-            app.viewer_state.search_query.insert_str(&single_line);
-        } else if app.viewer_state.filename_search_active {
-            app.viewer_state.filename_search_query.insert_str(&single_line);
+        } else if app.viewer_state.search.search_active {
+            app.viewer_state.search.search_query.insert_str(&single_line);
+        } else if app.viewer_state.filename_search.filename_search_active {
+            app.viewer_state.filename_search.filename_search_query.insert_str(&single_line);
         } else if app.review_state.search_active {
             app.review_state.search_query.insert_str(&single_line);
             app.review_state.apply_filter();
@@ -410,15 +410,15 @@ fn adjust_tree_scroll(app: &mut App) {
     let visible = app.viewer_state.visible_indices();
     let cur_vis = visible
         .iter()
-        .position(|&i| i == app.viewer_state.tree_selected)
+        .position(|&i| i == app.viewer_state.tree.tree_selected)
         .unwrap_or(0);
 
-    let page_size = app.viewer_state.explorer_tree_height.max(1);
+    let page_size = app.viewer_state.explorer.explorer_tree_height.max(1);
 
-    if cur_vis < app.viewer_state.tree_scroll {
-        app.viewer_state.tree_scroll = cur_vis;
-    } else if cur_vis >= app.viewer_state.tree_scroll + page_size {
-        app.viewer_state.tree_scroll = cur_vis.saturating_sub(page_size - 1);
+    if cur_vis < app.viewer_state.tree.tree_scroll {
+        app.viewer_state.tree.tree_scroll = cur_vis;
+    } else if cur_vis >= app.viewer_state.tree.tree_scroll + page_size {
+        app.viewer_state.tree.tree_scroll = cur_vis.saturating_sub(page_size - 1);
     }
 }
 
@@ -429,20 +429,20 @@ fn dismiss_overlays(app: &mut App) {
     app.review_state.input_mode = ReviewInputMode::Normal;
     app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
     app.overlays.active = ActiveOverlay::None;
-    app.viewer_state.filename_search_active = false;
-    app.viewer_state.search_active = false;
+    app.viewer_state.filename_search.filename_search_active = false;
+    app.viewer_state.search.search_active = false;
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
 }
 
 /// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.
 fn adjust_diff_list_scroll(app: &mut App) {
-    let selected = app.viewer_state.diff_list_selected;
-    let page_size = app.viewer_state.explorer_diff_list_height.max(1);
+    let selected = app.viewer_state.explorer.diff_list_selected;
+    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
 
-    if selected < app.viewer_state.diff_list_scroll {
-        app.viewer_state.diff_list_scroll = selected;
-    } else if selected >= app.viewer_state.diff_list_scroll + page_size {
-        app.viewer_state.diff_list_scroll = selected.saturating_sub(page_size - 1);
+    if selected < app.viewer_state.explorer.diff_list_scroll {
+        app.viewer_state.explorer.diff_list_scroll = selected;
+    } else if selected >= app.viewer_state.explorer.diff_list_scroll + page_size {
+        app.viewer_state.explorer.diff_list_scroll = selected.saturating_sub(page_size - 1);
     }
 }

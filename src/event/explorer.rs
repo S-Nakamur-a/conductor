@@ -11,7 +11,7 @@ use super::{adjust_diff_list_scroll, adjust_tree_scroll};
 
 /// Handle keys when the Explorer panel is focused.
 pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
-    if app.viewer_state.file_tree.is_empty() {
+    if app.viewer_state.tree.file_tree.is_empty() {
         app.refresh_viewer();
     }
 
@@ -19,20 +19,20 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
     let action = app.keymap.resolve(&key, KeyContext::Explorer);
     match action {
         Some(Action::ShowDiffList) => {
-            app.viewer_state.explorer_show_comments = false;
-            app.viewer_state.explorer_focus_on_diff_list = true;
+            app.viewer_state.explorer.explorer_show_comments = false;
+            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             return;
         }
         Some(Action::ShowCommentList) => {
-            app.viewer_state.explorer_show_comments = true;
-            app.viewer_state.explorer_focus_on_diff_list = true;
+            app.viewer_state.explorer.explorer_show_comments = true;
+            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             return;
         }
         _ => {}
     }
 
-    if app.viewer_state.explorer_focus_on_diff_list {
-        if app.viewer_state.explorer_show_comments {
+    if app.viewer_state.explorer.explorer_focus_on_diff_list {
+        if app.viewer_state.explorer.explorer_show_comments {
             handle_explorer_comment_list_key(app, key);
         } else {
             handle_explorer_diff_list_key(app, key);
@@ -47,23 +47,23 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
 
     let cur_vis = visible
         .iter()
-        .position(|&i| i == app.viewer_state.tree_selected)
+        .position(|&i| i == app.viewer_state.tree.tree_selected)
         .unwrap_or(0);
 
     match action {
         Some(Action::NavigateDown) => {
             if cur_vis + 1 < visible.len() {
-                app.viewer_state.tree_selected = visible[cur_vis + 1];
+                app.viewer_state.tree.tree_selected = visible[cur_vis + 1];
             }
         }
         Some(Action::NavigateUp) => {
             if cur_vis > 0 {
-                app.viewer_state.tree_selected = visible[cur_vis - 1];
+                app.viewer_state.tree.tree_selected = visible[cur_vis - 1];
             }
         }
         Some(Action::Select) => {
-            let idx = app.viewer_state.tree_selected;
-            if let Some(entry) = app.viewer_state.file_tree.get(idx).cloned() {
+            let idx = app.viewer_state.tree.tree_selected;
+            if let Some(entry) = app.viewer_state.tree.file_tree.get(idx).cloned() {
                 if entry.is_dir {
                     if !entry.is_expanded {
                         if let Some(wt) = app.worktrees.get(app.selected_worktree) {
@@ -82,8 +82,8 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::ExpandOrRight) => {
-            let idx = app.viewer_state.tree_selected;
-            if let Some(entry) = app.viewer_state.file_tree.get(idx) {
+            let idx = app.viewer_state.tree.tree_selected;
+            if let Some(entry) = app.viewer_state.tree.file_tree.get(idx) {
                 if entry.is_dir && !entry.is_expanded {
                     if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                         app.viewer_state.ensure_children_loaded(idx, &wt.path);
@@ -93,24 +93,24 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.expand_dir(idx);
         }
         Some(Action::CollapseOrLeft) => {
-            let idx = app.viewer_state.tree_selected;
+            let idx = app.viewer_state.tree.tree_selected;
             app.viewer_state.collapse_dir(idx);
         }
         Some(Action::GoToTop) => {
             if let Some(&first) = visible.first() {
-                app.viewer_state.tree_selected = first;
+                app.viewer_state.tree.tree_selected = first;
             }
         }
         Some(Action::GoToBottom) => {
             if let Some(&last) = visible.last() {
-                app.viewer_state.tree_selected = last;
+                app.viewer_state.tree.tree_selected = last;
             }
         }
         Some(Action::SearchFilename) => {
-            app.viewer_state.filename_search_active = true;
-            app.viewer_state.filename_search_query.clear();
-            app.viewer_state.filename_search_results.clear();
-            app.viewer_state.filename_search_selected = 0;
+            app.viewer_state.filename_search.filename_search_active = true;
+            app.viewer_state.filename_search.filename_search_query.clear();
+            app.viewer_state.filename_search.filename_search_results.clear();
+            app.viewer_state.filename_search.filename_search_selected = 0;
             if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                 app.viewer_state.populate_filename_search_cache(&wt.path);
             }
@@ -130,37 +130,37 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
 
     match action {
         Some(Action::ExitSubPanel) => {
-            app.viewer_state.explorer_focus_on_diff_list = false;
+            app.viewer_state.explorer.explorer_focus_on_diff_list = false;
         }
         Some(Action::NavigateDown) => {
-            if count > 0 && app.viewer_state.diff_list_selected + 1 < count {
-                app.viewer_state.diff_list_selected += 1;
+            if count > 0 && app.viewer_state.explorer.diff_list_selected + 1 < count {
+                app.viewer_state.explorer.diff_list_selected += 1;
             }
         }
         Some(Action::NavigateUp) => {
-            if app.viewer_state.diff_list_selected > 0 {
-                app.viewer_state.diff_list_selected -= 1;
+            if app.viewer_state.explorer.diff_list_selected > 0 {
+                app.viewer_state.explorer.diff_list_selected -= 1;
             }
         }
         Some(Action::CollapseOrLeft) => {
-            let selected = app.viewer_state.diff_list_selected;
+            let selected = app.viewer_state.explorer.diff_list_selected;
             app.diff_state.collapse_section(selected);
             let new_count = app.diff_state.display_list.len();
-            if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
-                app.viewer_state.diff_list_selected = new_count - 1;
+            if new_count > 0 && app.viewer_state.explorer.diff_list_selected >= new_count {
+                app.viewer_state.explorer.diff_list_selected = new_count - 1;
             }
         }
         Some(Action::ExpandOrRight) => {
-            let selected = app.viewer_state.diff_list_selected;
+            let selected = app.viewer_state.explorer.diff_list_selected;
             app.diff_state.expand_section(selected);
         }
         Some(Action::Select) => {
-            let selected = app.viewer_state.diff_list_selected;
+            let selected = app.viewer_state.explorer.diff_list_selected;
             // Toggle section headers and directories on Enter.
             if app.diff_state.toggle_section(selected) {
                 let new_count = app.diff_state.display_list.len();
-                if new_count > 0 && app.viewer_state.diff_list_selected >= new_count {
-                    app.viewer_state.diff_list_selected = new_count - 1;
+                if new_count > 0 && app.viewer_state.explorer.diff_list_selected >= new_count {
+                    app.viewer_state.explorer.diff_list_selected = new_count - 1;
                 }
             } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(selected) {
                 let file_path = file_diff.path.clone();
@@ -175,11 +175,11 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
 
                     app.viewer_state.build_unified_diff_view(&file_diff_clone);
 
-                    if let Some(pos) = app.viewer_state.diff_view_lines.iter().position(|e| {
+                    if let Some(pos) = app.viewer_state.diff_view.diff_view_lines.iter().position(|e| {
                         matches!(e, crate::viewer::UnifiedDiffEntry::Line { tag, .. }
                             if *tag != crate::diff_state::DiffLineTag::Equal)
                     }) {
-                        app.viewer_state.diff_view_scroll = pos.saturating_sub(3);
+                        app.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
                     }
 
                     app.set_focus(Focus::Viewer);
@@ -187,11 +187,11 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::GoToTop) => {
-            app.viewer_state.diff_list_selected = 0;
+            app.viewer_state.explorer.diff_list_selected = 0;
         }
         Some(Action::GoToBottom) => {
             if count > 0 {
-                app.viewer_state.diff_list_selected = count - 1;
+                app.viewer_state.explorer.diff_list_selected = count - 1;
             }
         }
         _ => {}
@@ -208,7 +208,7 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
 
     match action {
         Some(Action::ExitSubPanel) => {
-            app.viewer_state.explorer_focus_on_diff_list = false;
+            app.viewer_state.explorer.explorer_focus_on_diff_list = false;
         }
         Some(Action::DeleteComment) => {
             if row_count > 0 {
@@ -223,7 +223,7 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
         Some(Action::EditComment) => {
             let comment_idx = app
                 .review_state
-                .selected_comment_idx(app.viewer_state.comment_list_selected);
+                .selected_comment_idx(app.viewer_state.explorer.comment_list_selected);
             if let Some(comment) = comment_idx.and_then(|idx| app.review_state.comments.get(idx)) {
                 app.review_state.input_buffer.set_text(&comment.body);
                 app.review_state.input_mode = ReviewInputMode::EditingComment;
@@ -236,7 +236,7 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
             if row_count > 0 {
                 let comment_idx = app
                     .review_state
-                    .selected_comment_idx(app.viewer_state.comment_list_selected);
+                    .selected_comment_idx(app.viewer_state.explorer.comment_list_selected);
                 if let Some(idx) = comment_idx {
                     app.review_state.input_buffer.clear();
                     app.review_state.input_mode = ReviewInputMode::ReplyingToComment;
@@ -247,25 +247,25 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::NavigateDown) => {
-            if row_count > 0 && app.viewer_state.comment_list_selected + 1 < row_count {
-                app.viewer_state.comment_list_selected += 1;
+            if row_count > 0 && app.viewer_state.explorer.comment_list_selected + 1 < row_count {
+                app.viewer_state.explorer.comment_list_selected += 1;
             }
         }
         Some(Action::NavigateUp) => {
-            if app.viewer_state.comment_list_selected > 0 {
-                app.viewer_state.comment_list_selected -= 1;
+            if app.viewer_state.explorer.comment_list_selected > 0 {
+                app.viewer_state.explorer.comment_list_selected -= 1;
             }
         }
         Some(Action::GoToTop) => {
-            app.viewer_state.comment_list_selected = 0;
+            app.viewer_state.explorer.comment_list_selected = 0;
         }
         Some(Action::GoToBottom) => {
             if row_count > 0 {
-                app.viewer_state.comment_list_selected = row_count - 1;
+                app.viewer_state.explorer.comment_list_selected = row_count - 1;
             }
         }
         Some(Action::CollapseOrLeft) => {
-            let visual = app.viewer_state.comment_list_selected;
+            let visual = app.viewer_state.explorer.comment_list_selected;
             match app.review_state.comment_list_rows.get(visual).cloned() {
                 Some(CommentListRow::Reply { comment_idx, .. }) => {
                     if let Some(parent_visual) = app
@@ -274,7 +274,7 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
                         .iter()
                         .position(|r| matches!(r, CommentListRow::Comment { comment_idx: ci } if *ci == comment_idx))
                     {
-                        app.viewer_state.comment_list_selected = parent_visual;
+                        app.viewer_state.explorer.comment_list_selected = parent_visual;
                     }
                     app.toggle_comment_expansion();
                 }
@@ -289,7 +289,7 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::Select) | Some(Action::ExpandOrRight) => {
-            let visual = app.viewer_state.comment_list_selected;
+            let visual = app.viewer_state.explorer.comment_list_selected;
             match app.review_state.comment_list_rows.get(visual).cloned() {
                 Some(CommentListRow::Comment { comment_idx }) => {
                     let has_replies = app
@@ -314,7 +314,7 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::ViewCommentDetail) => {
-            let visual = app.viewer_state.comment_list_selected;
+            let visual = app.viewer_state.explorer.comment_list_selected;
             if let Some(comment_idx) = app.review_state.selected_comment_idx(visual) {
                 app.review_state.comment_detail_idx = comment_idx;
                 app.review_state.comment_detail_scroll = 0;
@@ -335,12 +335,12 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
     }
 
     // Adjust scroll for comment list.
-    let selected = app.viewer_state.comment_list_selected;
-    let page_size = app.viewer_state.explorer_diff_list_height.max(1);
-    if selected < app.viewer_state.comment_list_scroll {
-        app.viewer_state.comment_list_scroll = selected;
-    } else if selected >= app.viewer_state.comment_list_scroll + page_size {
-        app.viewer_state.comment_list_scroll = selected.saturating_sub(page_size - 1);
+    let selected = app.viewer_state.explorer.comment_list_selected;
+    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
+    if selected < app.viewer_state.explorer.comment_list_scroll {
+        app.viewer_state.explorer.comment_list_scroll = selected;
+    } else if selected >= app.viewer_state.explorer.comment_list_scroll + page_size {
+        app.viewer_state.explorer.comment_list_scroll = selected.saturating_sub(page_size - 1);
     }
 }
 
@@ -356,9 +356,9 @@ pub(super) fn navigate_to_comment_with_focus(app: &mut App, comment_idx: usize, 
             let tab_width = app.config.viewer.tab_width;
             app.viewer_state.open_file(&wt_path, &file_path, tab_width);
             app.rehighlight_viewer();
-            app.viewer_state.file_scroll = line.saturating_sub(1);
-            app.viewer_state.selected_line_start = Some(line);
-            app.viewer_state.selected_line_end = None;
+            app.viewer_state.content.file_scroll = line.saturating_sub(1);
+            app.viewer_state.selection.selected_line_start = Some(line);
+            app.viewer_state.selection.selected_line_end = None;
             app.review_state.build_file_comment_cache(&file_path);
             if focus_viewer {
                 app.set_focus(Focus::Viewer);
@@ -369,7 +369,7 @@ pub(super) fn navigate_to_comment_with_focus(app: &mut App, comment_idx: usize, 
 
 /// Open the review comment input from the Viewer, pre-filling the location.
 pub(super) fn open_viewer_comment(app: &mut App) {
-    let file_path = match app.viewer_state.current_file.clone() {
+    let file_path = match app.viewer_state.content.current_file.clone() {
         Some(p) => p,
         None => return,
     };
@@ -381,7 +381,7 @@ pub(super) fn open_viewer_comment(app: &mut App) {
             format!("{file_path}:{start}-{end} ")
         }
     } else {
-        let line = app.viewer_state.file_scroll + 1;
+        let line = app.viewer_state.content.file_scroll + 1;
         format!("{file_path}:{line} ")
     };
 
@@ -399,7 +399,7 @@ pub(super) fn open_viewer_comment_detail(app: &mut App) {
     let cursor_line = if let Some((start, _)) = app.viewer_state.selected_range() {
         start
     } else {
-        app.viewer_state.file_scroll + 1
+        app.viewer_state.content.file_scroll + 1
     };
 
     // Find a comment on that line.

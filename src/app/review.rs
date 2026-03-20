@@ -12,7 +12,7 @@ impl App {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
             // Rebuild per-file cache for the currently viewed file.
-            if let Some(file_path) = self.viewer_state.current_file.clone() {
+            if let Some(file_path) = self.viewer_state.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);
             }
         }
@@ -92,7 +92,7 @@ impl App {
     pub fn delete_selected_review_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.comment_list_selected);
+            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
         let id = comment_idx
             .and_then(|idx| self.review_state.comments.get(idx))
             .map(|c| c.id.clone());
@@ -112,9 +112,9 @@ impl App {
             // Clamp selection to valid range after deletion (using virtual row count).
             let row_count = self.review_state.comment_list_rows.len();
             if row_count == 0 {
-                self.viewer_state.comment_list_selected = 0;
-            } else if self.viewer_state.comment_list_selected >= row_count {
-                self.viewer_state.comment_list_selected = row_count - 1;
+                self.viewer_state.explorer.comment_list_selected = 0;
+            } else if self.viewer_state.explorer.comment_list_selected >= row_count {
+                self.viewer_state.explorer.comment_list_selected = row_count - 1;
             }
         }
     }
@@ -123,7 +123,7 @@ impl App {
     pub fn toggle_selected_review_status(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.comment_list_selected);
+            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
         let id_and_status = comment_idx
             .and_then(|idx| self.review_state.comments.get(idx))
             .map(|c| (c.id.clone(), c.status));
@@ -153,7 +153,7 @@ impl App {
     pub fn add_reply_to_selected_comment(&mut self, body: &str) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.comment_list_selected);
+            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
         let review_id = comment_idx
             .and_then(|idx| self.review_state.comments.get(idx))
             .map(|c| c.id.clone());
@@ -190,7 +190,7 @@ impl App {
     pub fn toggle_comment_expansion(&mut self) {
         use crate::review_state::CommentListRow;
 
-        let visual = self.viewer_state.comment_list_selected;
+        let visual = self.viewer_state.explorer.comment_list_selected;
         let row = self.review_state.comment_list_rows.get(visual).cloned();
 
         let Some(CommentListRow::Comment { comment_idx }) = row else {
@@ -219,8 +219,8 @@ impl App {
             self.review_state.rebuild_comment_list_rows();
             // Clamp selection.
             let row_count = self.review_state.comment_list_rows.len();
-            if row_count > 0 && self.viewer_state.comment_list_selected >= row_count {
-                self.viewer_state.comment_list_selected = row_count - 1;
+            if row_count > 0 && self.viewer_state.explorer.comment_list_selected >= row_count {
+                self.viewer_state.explorer.comment_list_selected = row_count - 1;
             }
         } else {
             // Expand — load replies from DB if not cached.
