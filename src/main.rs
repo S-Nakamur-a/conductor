@@ -432,23 +432,33 @@ fn run_loop(
             }
         };
         if crossterm_poll(tick)? {
-            // Drain all pending crossterm events to batch rapid input and
-            // avoid one-event-per-frame bottlenecks.
+            // Drain pending events, but break after scroll events so intermediate
+            // frames are rendered (prevents "scroll warp" on fast flick gestures).
             loop {
+                let mut was_scroll = false;
                 match crossterm_read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
                         last_input_time = Instant::now();
                         handle_key_event(app, key);
                     }
-                    Event::Mouse(mouse) => { last_input_time = Instant::now(); handle_mouse_event(app, mouse, last_frame_area); }
+                    Event::Mouse(mouse) => {
+                        was_scroll = matches!(
+                            mouse.kind,
+                            crossterm::event::MouseEventKind::ScrollDown
+                                | crossterm::event::MouseEventKind::ScrollUp
+                        );
+                        last_input_time = Instant::now();
+                        handle_mouse_event(app, mouse, last_frame_area);
+                    }
                     Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
                 app.dirty.mark_all();
-                // Continue draining if more events are immediately available.
-                if !crossterm_poll(Duration::ZERO)? {
+                // After a scroll event, break immediately to render the
+                // intermediate frame. For other events, keep draining.
+                if was_scroll || !crossterm_poll(Duration::ZERO)? {
                     break;
                 }
             }
