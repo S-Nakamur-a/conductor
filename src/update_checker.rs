@@ -11,12 +11,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+/// A downloadable binary asset from a GitHub Release.
+#[derive(Debug, Clone)]
+pub struct ReleaseAsset {
+    pub name: String,
+    pub download_url: String,
+}
+
 /// Information about the latest available release.
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub latest_version: String,
     pub release_url: String,
     pub tarball_url: String,
+    /// Pre-built binary assets attached to the release.
+    pub assets: Vec<ReleaseAsset>,
+}
+
+/// Serializable form of [`ReleaseAsset`] for caching.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedAsset {
+    name: String,
+    download_url: String,
 }
 
 /// On-disk cache representation.
@@ -27,6 +43,8 @@ struct CacheEntry {
     release_url: String,
     #[serde(default)]
     tarball_url: String,
+    #[serde(default)]
+    assets: Vec<CachedAsset>,
 }
 
 /// Return the current crate version from `Cargo.toml`.
@@ -59,6 +77,14 @@ pub fn read_cache() -> Option<UpdateInfo> {
         latest_version: entry.latest_version,
         release_url: entry.release_url,
         tarball_url: entry.tarball_url,
+        assets: entry
+            .assets
+            .into_iter()
+            .map(|a| ReleaseAsset {
+                name: a.name,
+                download_url: a.download_url,
+            })
+            .collect(),
     })
 }
 
@@ -73,6 +99,14 @@ fn write_cache(info: &UpdateInfo) {
         latest_version: info.latest_version.clone(),
         release_url: info.release_url.clone(),
         tarball_url: info.tarball_url.clone(),
+        assets: info
+            .assets
+            .iter()
+            .map(|a| CachedAsset {
+                name: a.name.clone(),
+                download_url: a.download_url.clone(),
+            })
+            .collect(),
     };
     let Ok(json) = serde_json::to_string(&entry) else {
         return;
@@ -149,12 +183,35 @@ pub fn check_for_update() -> Option<UpdateInfo> {
     // Strip leading 'v' if present (e.g. "v0.3.0" → "0.3.0").
     let version = tag.strip_prefix('v').unwrap_or(tag).to_string();
 
-    log::debug!("latest release: {version} (current: {})", current_version());
+    // Parse binary assets from the release.
+    let assets = val
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    let name = a.get("name")?.as_str()?.to_string();
+                    let download_url = a
+                        .get("browser_download_url")?
+                        .as_str()?
+                        .to_string();
+                    Some(ReleaseAsset { name, download_url })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    log::debug!(
+        "latest release: {version} (current: {}), {} assets",
+        current_version(),
+        assets.len()
+    );
 
     let info = UpdateInfo {
         latest_version: version,
         release_url: html_url,
         tarball_url,
+        assets,
     };
     write_cache(&info);
     Some(info)
@@ -185,6 +242,31 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     };
 
     (lmaj, lmin, lpat) > (cmaj, cmin, cpat)
+}
+
+/// Return the Rust target triple for the current platform.
+///
+/// Maps `(std::env::consts::OS, std::env::consts::ARCH)` to the triple used
+/// in release asset names (e.g. `aarch64-apple-darwin`).
+pub fn current_target_triple() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        _ => None,
+    }
+}
+
+/// Find a pre-built binary asset matching the current platform.
+///
+/// Looks for an asset whose name contains the target triple and ends with
+/// `.tar.gz`.  Returns the download URL if found.
+pub fn find_binary_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
+    let triple = current_target_triple()?;
+    assets
+        .iter()
+        .find(|a| a.name.contains(triple) && a.name.ends_with(".tar.gz"))
 }
 
 // ---------------------------------------------------------------------------
@@ -240,5 +322,70 @@ mod tests {
         let v = current_version();
         let parts: Vec<&str> = v.split('.').collect();
         assert_eq!(parts.len(), 3, "CARGO_PKG_VERSION should be major.minor.patch");
+    }
+
+    #[test]
+    fn current_target_triple_returns_some() {
+        let triple = current_target_triple();
+        if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
+            assert!(triple.is_some(), "expected a target triple on this platform");
+        }
+    }
+
+    fn make_assets() -> Vec<ReleaseAsset> {
+        vec![
+            ReleaseAsset {
+                name: "conductor-0.28.0-x86_64-apple-darwin.tar.gz".to_string(),
+                download_url: "https://example.com/x86_64-apple-darwin.tar.gz".to_string(),
+            },
+            ReleaseAsset {
+                name: "conductor-0.28.0-aarch64-apple-darwin.tar.gz".to_string(),
+                download_url: "https://example.com/aarch64-apple-darwin.tar.gz".to_string(),
+            },
+            ReleaseAsset {
+                name: "conductor-0.28.0-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                download_url: "https://example.com/x86_64-unknown-linux-gnu.tar.gz".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn find_binary_asset_matches_current_platform() {
+        let assets = make_assets();
+        let found = find_binary_asset(&assets);
+        if current_target_triple().is_some() {
+            assert!(found.is_some());
+            let triple = current_target_triple().unwrap();
+            assert!(found.unwrap().name.contains(triple));
+        }
+    }
+
+    #[test]
+    fn find_binary_asset_no_match() {
+        let assets = vec![ReleaseAsset {
+            name: "conductor-0.28.0-s390x-unknown-linux-gnu.tar.gz".to_string(),
+            download_url: "https://example.com/s390x.tar.gz".to_string(),
+        }];
+        if current_target_triple().is_some() {
+            assert!(find_binary_asset(&assets).is_none());
+        }
+    }
+
+    #[test]
+    fn find_binary_asset_ignores_non_tar_gz() {
+        let triple = match current_target_triple() {
+            Some(t) => t,
+            None => return,
+        };
+        let assets = vec![ReleaseAsset {
+            name: format!("conductor-0.28.0-{triple}.zip"),
+            download_url: "https://example.com/zip".to_string(),
+        }];
+        assert!(find_binary_asset(&assets).is_none());
+    }
+
+    #[test]
+    fn find_binary_asset_empty() {
+        assert!(find_binary_asset(&[]).is_none());
     }
 }

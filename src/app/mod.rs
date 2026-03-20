@@ -1228,12 +1228,13 @@ impl App {
         let Some(ref info) = self.update_info else { return };
         let version = info.latest_version.clone();
         let tarball_url = info.tarball_url.clone();
+        let assets = info.assets.clone();
 
         self.update_state = UpdateState::InProgress;
         self.update_progress_message = "Preparing update...".to_string();
 
         self.update_op.start(move |tx| {
-            perform_update(&tx, &version, &tarball_url);
+            perform_update(&tx, &version, &tarball_url, &assets);
         });
     }
 
@@ -1438,15 +1439,160 @@ impl App {
 /// Run the update download-and-build in a background thread.
 ///
 /// Sends [`UpdateProgress`] messages via the channel to report status.
-fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url: &str) {
-    use std::process::Command;
-
+fn perform_update(
+    tx: &mpsc::Sender<UpdateProgress>,
+    version: &str,
+    tarball_url: &str,
+    assets: &[crate::update_checker::ReleaseAsset],
+) {
     let tmpdir = std::env::temp_dir().join(format!("conductor-update-{version}"));
     let _ = std::fs::remove_dir_all(&tmpdir);
     if std::fs::create_dir_all(&tmpdir).is_err() {
         let _ = tx.send(UpdateProgress::Error("Failed to create temp directory".to_string()));
         return;
     }
+
+    // Try pre-built binary first, then fall back to source build.
+    if try_binary_update(tx, version, assets, &tmpdir) {
+        let _ = std::fs::remove_dir_all(&tmpdir);
+        let _ = tx.send(UpdateProgress::Done(format!(
+            "v{version} installed successfully! Restarting..."
+        )));
+        return;
+    }
+
+    // Fallback: source build.
+    log::info!("no pre-built binary available, falling back to source build");
+    if try_source_update(tx, version, tarball_url, &tmpdir) {
+        let _ = std::fs::remove_dir_all(&tmpdir);
+        let _ = tx.send(UpdateProgress::Done(format!(
+            "v{version} installed successfully! Restarting..."
+        )));
+    } else {
+        let _ = std::fs::remove_dir_all(&tmpdir);
+    }
+}
+
+/// Attempt to install via pre-built binary. Returns `true` on success.
+fn try_binary_update(
+    tx: &mpsc::Sender<UpdateProgress>,
+    version: &str,
+    assets: &[crate::update_checker::ReleaseAsset],
+    tmpdir: &std::path::Path,
+) -> bool {
+    use std::process::Command;
+
+    let asset = match crate::update_checker::find_binary_asset(assets) {
+        Some(a) => a,
+        None => {
+            log::debug!("no matching binary asset for this platform");
+            return false;
+        }
+    };
+
+    let _ = tx.send(UpdateProgress::Status(format!(
+        "Downloading pre-built binary v{version}..."
+    )));
+
+    let archive = tmpdir.join(&asset.name);
+    let mut curl_args = vec![
+        "-fL".to_string(),
+        "--max-time".to_string(),
+        "120".to_string(),
+        "-o".to_string(),
+        archive.to_string_lossy().to_string(),
+    ];
+
+    // Use GITHUB_TOKEN if available.
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        curl_args.push("-H".to_string());
+        curl_args.push(format!("Authorization: token {token}"));
+    }
+
+    curl_args.push(asset.download_url.clone());
+
+    let dl = Command::new("curl")
+        .args(&curl_args)
+        .stdin(std::process::Stdio::null())
+        .output();
+    match dl {
+        Err(e) => {
+            log::warn!("binary download failed (curl): {e}");
+            return false;
+        }
+        Ok(out) if !out.status.success() => {
+            log::warn!("binary download failed (HTTP error)");
+            return false;
+        }
+        _ => {}
+    }
+
+    // Extract.
+    let _ = tx.send(UpdateProgress::Status("Extracting binary...".to_string()));
+    let extract = Command::new("tar")
+        .arg("xzf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(tmpdir)
+        .output();
+    match extract {
+        Err(e) => {
+            log::warn!("binary extraction failed: {e}");
+            return false;
+        }
+        Ok(out) if !out.status.success() => {
+            log::warn!("binary extraction failed (tar error)");
+            return false;
+        }
+        _ => {}
+    }
+
+    // The tar.gz contains the `conductor` binary at the top level.
+    let binary = tmpdir.join("conductor");
+    if !binary.exists() {
+        log::warn!("conductor binary not found in archive");
+        return false;
+    }
+
+    // Install to ~/.cargo/bin/ (same location as `cargo install`).
+    let install_dir = match dirs::home_dir() {
+        Some(h) => h.join(".cargo").join("bin"),
+        None => {
+            log::warn!("could not determine home directory");
+            return false;
+        }
+    };
+    if std::fs::create_dir_all(&install_dir).is_err() {
+        log::warn!("could not create install dir");
+        return false;
+    }
+
+    let dest = install_dir.join("conductor");
+    let _ = tx.send(UpdateProgress::Status("Installing binary...".to_string()));
+
+    if let Err(e) = std::fs::copy(&binary, &dest) {
+        log::warn!("failed to install binary: {e}");
+        return false;
+    }
+
+    // Ensure executable permission on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+    }
+
+    true
+}
+
+/// Attempt to install via source download + build. Returns `true` on success.
+fn try_source_update(
+    tx: &mpsc::Sender<UpdateProgress>,
+    version: &str,
+    tarball_url: &str,
+    tmpdir: &std::path::Path,
+) -> bool {
+    use std::process::Command;
 
     // Resolve tarball URL — if empty, re-fetch from API.
     let url = if tarball_url.is_empty() {
@@ -1455,8 +1601,7 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
             Some(info) if !info.tarball_url.is_empty() => info.tarball_url,
             _ => {
                 let _ = tx.send(UpdateProgress::Error("Could not find tarball URL".to_string()));
-                let _ = std::fs::remove_dir_all(&tmpdir);
-                return;
+                return false;
             }
         }
     } else {
@@ -1464,7 +1609,7 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
     };
 
     // Download.
-    let _ = tx.send(UpdateProgress::Status(format!("Downloading v{version}...")));
+    let _ = tx.send(UpdateProgress::Status(format!("Downloading source v{version}...")));
     let tarball = tmpdir.join("source.tar.gz");
     let dl = Command::new("curl")
         .args(["-sfL", "--max-time", "120", "-o"])
@@ -1475,14 +1620,12 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
     match dl {
         Err(e) => {
             let _ = tx.send(UpdateProgress::Error(format!("curl not found: {e}")));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
         Ok(out) if !out.status.success() => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let _ = tx.send(UpdateProgress::Error(format!("Download failed: {stderr}")));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
         _ => {}
     }
@@ -1491,25 +1634,23 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
     let _ = tx.send(UpdateProgress::Status("Extracting...".to_string()));
     let extract = Command::new("tar")
         .args(["xzf", "source.tar.gz"])
-        .current_dir(&tmpdir)
+        .current_dir(tmpdir)
         .output();
     match extract {
         Err(e) => {
             let _ = tx.send(UpdateProgress::Error(format!("tar not found: {e}")));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
         Ok(out) if !out.status.success() => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let _ = tx.send(UpdateProgress::Error(format!("Extraction failed: {stderr}")));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
         _ => {}
     }
 
     // Find the extracted directory (GitHub tarballs extract to owner-repo-hash/).
-    let src_dir = match std::fs::read_dir(&tmpdir) {
+    let src_dir = match std::fs::read_dir(tmpdir) {
         Ok(entries) => {
             let mut found = None;
             for entry in entries.flatten() {
@@ -1521,21 +1662,23 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
             match found {
                 Some(d) => d,
                 None => {
-                    let _ = tx.send(UpdateProgress::Error("No source directory found in tarball".to_string()));
-                    let _ = std::fs::remove_dir_all(&tmpdir);
-                    return;
+                    let _ = tx.send(UpdateProgress::Error(
+                        "No source directory found in tarball".to_string(),
+                    ));
+                    return false;
                 }
             }
         }
         Err(e) => {
             let _ = tx.send(UpdateProgress::Error(format!("Failed to read temp dir: {e}")));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
     };
 
     // Build & install.
-    let _ = tx.send(UpdateProgress::Status(format!("Building v{version}... (this may take a while)")));
+    let _ = tx.send(UpdateProgress::Status(format!(
+        "Building v{version}... (this may take a while)"
+    )));
     let build = Command::new("make")
         .arg("install")
         .current_dir(&src_dir)
@@ -1543,8 +1686,7 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
     match build {
         Err(e) => {
             let _ = tx.send(UpdateProgress::Error(format!("make not found: {e}")));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
         Ok(out) if !out.status.success() => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1554,15 +1696,11 @@ fn perform_update(tx: &mpsc::Sender<UpdateProgress>, version: &str, tarball_url:
                 format!("Build failed: {stderr}")
             };
             let _ = tx.send(UpdateProgress::Error(msg));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return;
+            return false;
         }
         _ => {}
     }
 
-    // Clean up.
-    let _ = std::fs::remove_dir_all(&tmpdir);
-
-    let _ = tx.send(UpdateProgress::Done(format!("v{version} installed successfully! Restarting...")));
+    true
 }
 
