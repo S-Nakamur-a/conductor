@@ -830,7 +830,8 @@ impl App {
         let query = self.overlays.grep_search.query.text().to_string();
         if query.is_empty() {
             // Clear everything immediately.
-            self.overlays.grep_search.results.clear();
+            self.overlays.grep_search.result_tree = Default::default();
+            self.overlays.grep_search.pending_matches.clear();
             self.overlays.grep_search.selected = 0;
             self.overlays.grep_search.scroll = 0;
             self.overlays.grep_search.running = false;
@@ -879,7 +880,8 @@ impl App {
         self.overlays.grep_search.bg_op_phase2.clear();
 
         // Reset results.
-        self.overlays.grep_search.results.clear();
+        self.overlays.grep_search.result_tree = Default::default();
+        self.overlays.grep_search.pending_matches.clear();
         self.overlays.grep_search.selected = 0;
         self.overlays.grep_search.scroll = 0;
         self.overlays.grep_search.running = true;
@@ -924,12 +926,15 @@ impl App {
 
     /// Poll for background grep search results.
     pub fn poll_grep_search(&mut self) {
+        let mut tree_dirty = false;
+
         // Poll phase1 / single-phase bg_op.
         let messages = self.overlays.grep_search.bg_op.poll_all();
         for msg in messages {
             match msg {
                 GrepProgress::Results(batch) => {
-                    self.overlays.grep_search.results.extend(batch);
+                    self.overlays.grep_search.pending_matches.extend(batch);
+                    tree_dirty = true;
                 }
                 GrepProgress::Done(total) => {
                     // If phase1 completed but phase2 is still running, keep running = true.
@@ -964,18 +969,17 @@ impl App {
                     GrepProgress::Results(batch) => {
                         if !got_phase2_results {
                             // Replace phase1 results with phase2 results.
-                            self.overlays.grep_search.results.clear();
+                            self.overlays.grep_search.pending_matches.clear();
                             self.overlays.grep_search.selected = 0;
                             self.overlays.grep_search.scroll = 0;
                             self.overlays.grep_search.phase1_active = false;
                             got_phase2_results = true;
                         }
-                        self.overlays.grep_search.results.extend(batch);
+                        self.overlays.grep_search.pending_matches.extend(batch);
+                        tree_dirty = true;
                     }
                     GrepProgress::Done(total) => {
                         if !got_phase2_results {
-                            // Phase2 done with no results — clear phase1 results too
-                            // only if phase1 also had no results; otherwise keep phase1.
                             self.overlays.grep_search.phase1_active = false;
                         }
                         self.overlays.grep_search.running = false;
@@ -996,6 +1000,12 @@ impl App {
                     }
                 }
             }
+        }
+
+        // Rebuild the tree when new results arrived.
+        if tree_dirty {
+            self.overlays.grep_search.result_tree =
+                crate::search_result_tree::SearchResultTree::build(&self.overlays.grep_search.pending_matches);
         }
     }
 

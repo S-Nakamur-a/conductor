@@ -1,4 +1,4 @@
-//! Grep (full-text search) overlay renderer.
+//! Grep (full-text search) overlay renderer — tree view.
 
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::search_result_tree::SearchTreeRow;
 use crate::text_input::TextInput;
 
 /// Set the terminal cursor position for IME at the cursor position within a
@@ -21,7 +22,7 @@ fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
 }
 
 /// Find the largest byte index `<= pos` that is a valid UTF-8 character
-/// boundary in `s`.  Equivalent to the nightly `str::floor_char_boundary`.
+/// boundary in `s`.
 fn floor_char_boundary(s: &str, pos: usize) -> usize {
     if pos >= s.len() {
         return s.len();
@@ -34,7 +35,7 @@ fn floor_char_boundary(s: &str, pos: usize) -> usize {
 }
 
 /// Render the grep search overlay.
-pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
 
     // 60% width, 70% height, centered.
@@ -54,7 +55,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     .split(popup_area);
 
     // ── Search bar ──────────────────────────────────────────────
-    let title = " Full-text Search (Enter: jump, Esc: close) ";
+    let title = " Full-text Search (Enter: jump, h/l: fold, Esc: close) ";
     let search_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -72,7 +73,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         app.overlays.grep_search.query.text_after_cursor(),
     );
 
-    let mode_width = regex_indicator.len() + 1 + case_indicator.len() + 1; // +spaces
+    let mode_width = regex_indicator.len() + 1 + case_indicator.len() + 1;
     let available_for_query = search_inner.width as usize;
 
     if available_for_query > mode_width + 3 {
@@ -89,7 +90,6 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         ];
         frame.render_widget(Paragraph::new(Line::from(spans)), search_inner);
 
-        // Set cursor position (after mode indicators + query text before cursor).
         let prefix_width = mode_width;
         let cursor_offset = app.overlays.grep_search.query.display_width_before_cursor();
         let cursor_x = search_inner.x + prefix_width as u16 + cursor_offset as u16;
@@ -106,42 +106,43 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     // ── Status line ─────────────────────────────────────────────
+    let total_matches = app.overlays.grep_search.result_tree.match_count();
     let status_text = if app.overlays.grep_search.running {
-        format!("  Searching... ({} matches so far)", app.overlays.grep_search.results.len())
-    } else if app.overlays.grep_search.results.is_empty() {
+        format!("  Searching... ({total_matches} matches so far)")
+    } else if total_matches == 0 {
         if app.overlays.grep_search.query.is_empty() {
             "  Start typing to search".to_string()
         } else if app.overlays.grep_search.debounce_deadline.is_some() {
-            // Debounce waiting — keep previous status or show nothing.
             String::new()
         } else {
             "  No matches found".to_string()
         }
     } else {
-        let total = app.overlays.grep_search.results.len();
-        let pos = if total > 0 { app.overlays.grep_search.selected + 1 } else { 0 };
-        format!("  {pos}/{total} matches  |  Ctrl+R: regex  Ctrl+I: case")
+        let rows_count = app.overlays.grep_search.result_tree.visible_rows().len();
+        let pos = if rows_count > 0 { app.overlays.grep_search.selected + 1 } else { 0 };
+        format!("  {pos}/{rows_count} rows ({total_matches} matches)  |  Ctrl+R: regex  Ctrl+I: case")
     };
     frame.render_widget(
         Paragraph::new(Span::styled(status_text, Style::default().fg(theme.muted))),
         chunks[1],
     );
 
-    // ── Results list ────────────────────────────────────────────
+    // ── Results tree ────────────────────────────────────────────
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));
     let list_inner = list_block.inner(chunks[2]);
     frame.render_widget(list_block, chunks[2]);
 
-    if app.overlays.grep_search.results.is_empty() {
+    let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
+    if rows.is_empty() {
         return;
     }
 
     let visible_height = list_inner.height as usize;
-    let selected = app.overlays.grep_search.selected;
+    let selected = app.overlays.grep_search.selected.min(rows.len().saturating_sub(1));
 
-    // Compute scroll offset to keep selected item visible.
+    // Compute scroll offset.
     let scroll = {
         let mut s = app.overlays.grep_search.scroll;
         if selected < s {
@@ -152,83 +153,118 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         }
         s
     };
-    // Note: we can't mutate app here, but the scroll tracking is done
-    // via the selected index which is sufficient for rendering.
+    app.overlays.grep_search.scroll = scroll;
 
     let inner_width = list_inner.width as usize;
+    let matches = app.overlays.grep_search.result_tree.matches();
 
-    let items: Vec<ListItem> = app
-        .overlays.grep_search.results
+    let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
         .skip(scroll)
         .take(visible_height)
-        .map(|(i, m)| {
+        .map(|(i, row)| {
             let is_selected = i == selected;
+            let indent_str = "  ".repeat(row_depth(row));
 
-            let location = format!("{}:{}", m.file_path, m.line_number);
-            let content = m.line_content.trim();
-            let sep = "  ";
+            let line = match row {
+                SearchTreeRow::Dir { name, expanded, match_count, .. } => {
+                    let arrow = if *expanded { "▼" } else { "▶" };
+                    let prefix = if is_selected { ">" } else { " " };
+                    Line::from(vec![
+                        Span::styled(format!("{prefix} {indent_str}"), Style::default().fg(theme.accent)),
+                        Span::styled(format!("{arrow} "), Style::default().fg(theme.muted)),
+                        Span::styled(
+                            format!("{name}/"),
+                            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({match_count} matches)"),
+                            Style::default().fg(theme.muted),
+                        ),
+                    ])
+                }
+                SearchTreeRow::File { name, match_count, expanded, .. } => {
+                    let arrow = if *expanded { "▼" } else { "▶" };
+                    let prefix = if is_selected { ">" } else { " " };
+                    let match_label = if *match_count == 1 { "match" } else { "matches" };
+                    Line::from(vec![
+                        Span::styled(format!("{prefix} {indent_str}"), Style::default().fg(theme.accent)),
+                        Span::styled(format!("{arrow} "), Style::default().fg(theme.muted)),
+                        Span::styled(
+                            name.clone(),
+                            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({match_count} {match_label})"),
+                            Style::default().fg(theme.muted),
+                        ),
+                    ])
+                }
+                SearchTreeRow::Match { match_index, .. } => {
+                    let prefix = if is_selected { ">" } else { " " };
+                    if let Some(m) = matches.get(*match_index) {
+                        let content = m.line_content.trim();
+                        let trim_offset = m.line_content.len() - m.line_content.trim_start().len();
+                        let location = format!("L{}", m.line_number);
 
-            let content_style = if is_selected {
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.fg)
+                        let max_content = inner_width
+                            .saturating_sub(indent_str.len() + 2 + location.len() + 3);
+
+                        let ms = m.match_start.saturating_sub(trim_offset);
+                        let me = m.match_end.saturating_sub(trim_offset).min(content.len());
+                        let safe_max = floor_char_boundary(content, max_content);
+
+                        let mut spans = vec![
+                            Span::styled(format!("{prefix} {indent_str}"), Style::default().fg(theme.accent)),
+                            Span::styled(
+                                format!("{location}: "),
+                                Style::default().fg(theme.muted),
+                            ),
+                        ];
+
+                        let content_style = if is_selected {
+                            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(theme.fg)
+                        };
+
+                        if ms < me && me <= content.len() && ms < safe_max {
+                            let before = &content[..ms];
+                            let me_clamped = me.min(safe_max);
+                            let matched = &content[ms..me_clamped];
+                            let after = if me_clamped < safe_max {
+                                &content[me_clamped..safe_max]
+                            } else {
+                                ""
+                            };
+                            spans.push(Span::styled(before.to_string(), content_style));
+                            spans.push(Span::styled(
+                                matched.to_string(),
+                                Style::default().bg(theme.accent).add_modifier(Modifier::BOLD),
+                            ));
+                            spans.push(Span::styled(after.to_string(), content_style));
+                            if content.len() > safe_max {
+                                spans.push(Span::styled("...", Style::default().fg(theme.muted)));
+                            }
+                        } else {
+                            let safe_trunc = floor_char_boundary(content, max_content.saturating_sub(3));
+                            let display = if content.len() > max_content && max_content > 3 {
+                                format!("{}...", &content[..safe_trunc])
+                            } else {
+                                content.to_string()
+                            };
+                            spans.push(Span::styled(display, content_style));
+                        }
+
+                        Line::from(spans)
+                    } else {
+                        Line::from(format!("{prefix} {indent_str}<invalid match>"))
+                    }
+                }
             };
 
-            let prefix = if is_selected { " > " } else { "   " };
-
-            // Calculate the trim offset so match positions stay correct.
-            let trim_offset = m.line_content.len() - m.line_content.trim_start().len();
-
-            // Build content spans with match highlighting.
-            let max_content = inner_width.saturating_sub(location.len() + sep.len() + 3);
-            let mut spans = vec![
-                Span::styled(prefix, Style::default().fg(theme.accent)),
-                Span::styled(location, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD)),
-                Span::styled(sep.to_string(), Style::default()),
-            ];
-
-            // Highlight the matched portion within the trimmed content.
-            let ms = m.match_start.saturating_sub(trim_offset);
-            let me = m.match_end.saturating_sub(trim_offset).min(content.len());
-
-            // Ensure max_content is at a valid UTF-8 character boundary
-            // to prevent panics when slicing multi-byte content.
-            let safe_max = floor_char_boundary(content, max_content);
-
-            if ms < me && me <= content.len() && ms < safe_max {
-                let before = &content[..ms];
-                let me_clamped = me.min(safe_max);
-                let matched = &content[ms..me_clamped];
-                let after = if me_clamped < safe_max {
-                    &content[me_clamped..safe_max]
-                } else {
-                    ""
-                };
-                spans.push(Span::styled(before.to_string(), content_style));
-                spans.push(Span::styled(
-                    matched.to_string(),
-                    Style::default().bg(theme.accent).add_modifier(Modifier::BOLD),
-                ));
-                spans.push(Span::styled(after.to_string(), content_style));
-                if content.len() > safe_max {
-                    spans.push(Span::styled("...", Style::default().fg(theme.muted)));
-                }
-            } else {
-                // Fallback: no highlight, just truncate.
-                let safe_trunc = floor_char_boundary(content, max_content.saturating_sub(3));
-                let display = if content.len() > max_content && max_content > 3 {
-                    format!("{}...", &content[..safe_trunc])
-                } else {
-                    content.to_string()
-                };
-                spans.push(Span::styled(display, content_style));
-            }
-
-            let item = ListItem::new(Line::from(spans));
+            let item = ListItem::new(line);
             if is_selected {
                 item.style(Style::default().bg(theme.selected_bg))
             } else {
@@ -243,4 +279,12 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
         state.select(Some(selected - scroll));
     }
     frame.render_stateful_widget(list, list_inner, &mut state);
+}
+
+fn row_depth(row: &SearchTreeRow) -> usize {
+    match row {
+        SearchTreeRow::Dir { depth, .. } => *depth,
+        SearchTreeRow::File { depth, .. } => *depth,
+        SearchTreeRow::Match { depth, .. } => *depth,
+    }
 }

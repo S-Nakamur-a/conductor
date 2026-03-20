@@ -1252,7 +1252,8 @@ impl App {
     fn cmd_search_full_text(&mut self) {
         self.overlays.active = ActiveOverlay::GrepSearch;
         self.overlays.grep_search.query.clear();
-        self.overlays.grep_search.results.clear();
+        self.overlays.grep_search.result_tree = Default::default();
+        self.overlays.grep_search.pending_matches.clear();
         self.overlays.grep_search.selected = 0;
         self.overlays.grep_search.scroll = 0;
         self.overlays.grep_search.running = false;
