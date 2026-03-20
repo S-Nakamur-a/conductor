@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, StatusLevel};
+use crate::terminal_link;
 
 /// Forward a key event to the PTY session at the given index.
 pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
@@ -180,5 +181,56 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_
         } else {
             app.expanded_panel = Some(target);
         }
+    }
+}
+
+/// Scan recent terminal output for file paths and open the first found in Viewer.
+///
+/// Triggered by `Ctrl+G` (or user-configured key). Scans the visible screen
+/// rows of the active PTY session, starting from the cursor row upward.
+pub(super) fn open_file_from_terminal_output(app: &mut App) {
+    let (session_idx, scroll_offset) = match app.focus {
+        Focus::TerminalClaude => (app.terminal.active_claude_session, app.terminal.scroll_claude),
+        Focus::TerminalShell => (app.terminal.active_shell_session, app.terminal.scroll_shell),
+        _ => return,
+    };
+
+    let Some(idx) = session_idx else {
+        app.set_status("No active terminal session".to_string(), StatusLevel::Warning);
+        return;
+    };
+
+    let Some(screen_arc) = app.terminal.pty_manager.get_screen(idx) else {
+        return;
+    };
+
+    let wt_path = app.selected_worktree_path();
+
+    // Lock the parser, set scrollback, scan rows from cursor upward.
+    let found = {
+        let mut parser = screen_arc.lock().unwrap_or_else(|e| e.into_inner());
+        parser.set_scrollback(scroll_offset);
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        let cursor_row = screen.cursor_position().0;
+
+        let mut result = None;
+        // Scan from cursor row upward to find the most recent file reference.
+        for offset in 0..rows {
+            let r = if cursor_row >= offset { cursor_row - offset } else { break };
+            let text = terminal_link::extract_row_text(screen, r, cols);
+            let links = terminal_link::detect_file_links(&text, &wt_path);
+            if let Some(link) = links.into_iter().next() {
+                result = Some((link.path.clone(), link.line));
+                break;
+            }
+        }
+        parser.set_scrollback(0);
+        result
+    };
+
+    match found {
+        Some((path, line)) => app.open_file_in_viewer(&path, line),
+        None => app.set_status("No file path found in terminal output".to_string(), StatusLevel::Warning),
     }
 }
