@@ -1819,6 +1819,15 @@ fn try_binary_update(
         let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
     }
 
+    // Remove macOS quarantine attribute so Gatekeeper won't kill the binary.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("xattr")
+            .args(["-cr"])
+            .arg(&dest)
+            .output();
+    }
+
     true
 }
 
