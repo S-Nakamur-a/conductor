@@ -152,17 +152,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             frame.render_widget(output_block, output_area);
 
             // Rebuild PTY snapshot only when new output arrives (dirty flag)
-            // or cache is empty. Avoids expensive vt100 mutex lock every frame.
+            // or cache is empty. Uses try_lock to avoid blocking when the
+            // PTY reader thread holds the vt100 mutex — keeps UI responsive.
             if app.terminal.cache_claude.lines.is_empty()
                 || (focused && app.terminal.dirty_claude)
             {
-                app.terminal.cache_claude = crate::ui::common::build_pty_lines(
+                if let Some(cache) = crate::ui::common::build_pty_lines(
                     &screen_arc,
                     app.terminal.scroll_claude,
                     inner.height,
                     inner.width,
-                );
-                app.terminal.dirty_claude = false;
+                ) {
+                    app.terminal.cache_claude = cache;
+                    app.terminal.dirty_claude = false;
+                }
+                // If try_lock failed (reader thread busy), keep using old cache.
             }
             crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_claude);
 
