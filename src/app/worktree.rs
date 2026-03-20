@@ -191,6 +191,9 @@ impl App {
     }
 
     /// Execute grab: checkout main to the selected worktree's branch.
+    ///
+    /// Also looks up the source worktree's latest Claude Code session and,
+    /// if found, auto-resumes it on the main worktree after grabbing.
     pub fn execute_grab(&mut self, branch_name: &str) {
         // Pre-check: already grabbing another branch
         if let Some(ref grabbed) = self.worktree_mgr.grabbed_branch {
@@ -221,19 +224,45 @@ impl App {
                 return;
             }
         };
+
+        // Look up the latest Claude Code session for the source worktree.
+        let claude_session = crate::claude_sessions::find_latest_sessions_for_paths(&[source_path.clone()])
+            .ok()
+            .and_then(|mut map| {
+                let canonical = std::fs::canonicalize(&source_path).unwrap_or_else(|_| source_path.clone());
+                map.remove(&canonical)
+            });
+        let session_id = claude_session.as_ref().map(|s| s.session_id.as_str());
+
         let selected_path = self.worktrees.get(self.selected_worktree).map(|w| w.path.clone());
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
-                match engine.grab_branch(&main_path, &source_path, branch_name) {
+                match engine.grab_branch(&main_path, &source_path, branch_name, session_id) {
                     Ok(()) => {
+                        let claude_session_id = claude_session.as_ref().map(|s| s.session_id.clone());
                         self.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
                             branch: branch_name.to_string(),
                             source_worktree: source_path,
+                            claude_session_id: claude_session_id.clone(),
                         });
-                        self.set_status(
-                            format!("Grabbed '{branch_name}' — main is now on this branch. Press Y to ungrab."),
-                            StatusLevel::Success,
-                        );
+
+                        // Auto-resume the Claude Code session on main worktree.
+                        let resume_msg = if let Some(ref session) = claude_session {
+                            match self.resume_claude_session_on_main(&session.session_id, &session.display) {
+                                Ok(_) => format!(
+                                    "Grabbed '{branch_name}' + resumed session {}. Press Y to ungrab.",
+                                    &session.session_id[..8.min(session.session_id.len())]
+                                ),
+                                Err(e) => {
+                                    log::warn!("grab: failed to resume session: {e}");
+                                    format!("Grabbed '{branch_name}' (session resume failed). Press Y to ungrab.")
+                                }
+                            }
+                        } else {
+                            format!("Grabbed '{branch_name}' — main is now on this branch. Press Y to ungrab.")
+                        };
+                        self.set_status(resume_msg, StatusLevel::Success);
+
                         self.refresh_worktrees();
                         if let Some(path) = selected_path {
                             self.select_worktree_by_path(&path);
@@ -248,6 +277,38 @@ impl App {
                 self.set_status(format!("Error: {e}"), StatusLevel::Error);
             }
         }
+    }
+
+    /// Resume a Claude Code session on the main worktree.
+    fn resume_claude_session_on_main(&mut self, session_id: &str, display: &str) -> anyhow::Result<usize> {
+        let main_wt = self.worktrees.iter().find(|w| w.is_main);
+        let (worktree_name, working_dir) = match main_wt {
+            Some(w) => (w.branch.clone(), w.path.clone()),
+            None => anyhow::bail!("main worktree not found"),
+        };
+
+        let label: String = display.chars().take(40).collect();
+        let label = if label.is_empty() {
+            format!("Resume:{}", &session_id[..8.min(session_id.len())])
+        } else {
+            label
+        };
+        let shell = self.config.general.shell.clone();
+        let (rows, cols) = self.terminal.size_claude;
+        let idx = self.terminal.pty_manager.spawn_session(
+            pty_manager::SessionKind::ClaudeCode,
+            &worktree_name,
+            &label,
+            &shell,
+            &working_dir,
+            rows,
+            cols,
+            Some(session_id),
+            &self.repo_path,
+        )?;
+        self.terminal.pty_manager.activate_session(idx);
+        self.terminal.active_claude_session = Some(idx);
+        Ok(idx)
     }
 
     /// Execute ungrab: return main to main branch, restore worktree to original branch.

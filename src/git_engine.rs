@@ -450,29 +450,35 @@ impl GitEngine {
     }
 
     /// Persist grab state to `$git_common_dir/wt-grab`.
-    /// Format matches the zsh `wt grab` helper: 3 lines —
-    /// branch name, worktree path, stash branch name.
+    /// Format: 3 mandatory lines (branch, worktree path, stash branch)
+    /// plus an optional 4th line (Claude Code session ID for resume).
     pub fn save_grab_state(
         &self,
         branch: &str,
         source_worktree_path: &Path,
         stash_branch: &str,
+        claude_session_id: Option<&str>,
     ) -> Result<()> {
         let grab_file = self.git_common_dir()?.join("wt-grab");
-        let content = format!(
+        let mut content = format!(
             "{}\n{}\n{}\n",
             branch,
             source_worktree_path.display(),
             stash_branch,
         );
+        if let Some(session_id) = claude_session_id {
+            content.push_str(session_id);
+            content.push('\n');
+        }
         std::fs::write(&grab_file, content)
             .with_context(|| format!("failed to write {}", grab_file.display()))
     }
 
     /// Load grab state from `$git_common_dir/wt-grab`.
-    /// Returns `(branch, source_worktree_path, stash_branch)` or `None`
-    /// if the file does not exist.
-    pub fn load_grab_state(&self) -> Result<Option<(String, PathBuf, String)>> {
+    /// Returns `(branch, source_worktree_path, stash_branch, claude_session_id)` or `None`
+    /// if the file does not exist. The 4th field (session ID) is optional.
+    #[allow(clippy::type_complexity)]
+    pub fn load_grab_state(&self) -> Result<Option<(String, PathBuf, String, Option<String>)>> {
         let grab_file = self.git_common_dir()?.join("wt-grab");
         if !grab_file.exists() {
             return Ok(None);
@@ -490,7 +496,10 @@ impl GitEngine {
         let stash_branch = lines.next()
             .ok_or_else(|| anyhow!("wt-grab: missing stash branch line"))?
             .to_string();
-        Ok(Some((branch, wt_path, stash_branch)))
+        let claude_session_id = lines.next()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Ok(Some((branch, wt_path, stash_branch, claude_session_id)))
     }
 
     /// Remove the `$git_common_dir/wt-grab` state file.
@@ -513,6 +522,7 @@ impl GitEngine {
         main_path: &Path,
         source_worktree_path: &Path,
         branch_name: &str,
+        claude_session_id: Option<&str>,
     ) -> Result<()> {
         if self.has_tracked_changes(main_path)? {
             anyhow::bail!("Main worktree has uncommitted tracked changes. Commit or stash first.");
@@ -545,7 +555,7 @@ impl GitEngine {
             .with_context(|| format!("failed to checkout '{branch_name}' in main worktree"))?;
 
         // Persist grab state for crash recovery and zsh `wt` compatibility.
-        self.save_grab_state(branch_name, source_worktree_path, &grab_branch_name)?;
+        self.save_grab_state(branch_name, source_worktree_path, &grab_branch_name, claude_session_id)?;
 
         Ok(())
     }
@@ -1671,5 +1681,79 @@ mod tests {
             GitEngine::remote_url_to_https_base("ssh://git@github.com/owner/repo.git"),
             Some("https://github.com/owner/repo".to_string()),
         );
+    }
+
+    /// Helper: create a temporary git repo and return its engine.
+    fn temp_repo_engine() -> (tempfile::TempDir, GitEngine) {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let repo = Repository::init(tmp.path()).expect("init repo");
+        {
+            let mut index = repo.index().unwrap();
+            let oid = index.write_tree().unwrap();
+            let tree = repo.find_tree(oid).unwrap();
+            let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[]).unwrap();
+        }
+        let engine = GitEngine::open(tmp.path()).expect("open temp repo");
+        (tmp, engine)
+    }
+
+    /// Test that grab state round-trips correctly without a session ID.
+    #[test]
+    fn grab_state_roundtrip_without_session() {
+        let (_tmp, engine) = temp_repo_engine();
+
+        let branch = "test-branch";
+        let wt_path = Path::new("/tmp/test-worktree");
+        let stash = "test-branch__grab";
+
+        engine.save_grab_state(branch, wt_path, stash, None).unwrap();
+        let loaded = engine.load_grab_state().unwrap().expect("should load state");
+
+        assert_eq!(loaded.0, branch);
+        assert_eq!(loaded.1, wt_path);
+        assert_eq!(loaded.2, stash);
+        assert_eq!(loaded.3, None);
+
+        engine.remove_grab_state().unwrap();
+    }
+
+    /// Test that grab state round-trips correctly with a session ID.
+    #[test]
+    fn grab_state_roundtrip_with_session() {
+        let (_tmp, engine) = temp_repo_engine();
+
+        let branch = "feature-x";
+        let wt_path = Path::new("/tmp/test-worktree-2");
+        let stash = "feature-x__grab";
+        let session_id = "abc12345-6789-0def-ghij-klmnopqrstuv";
+
+        engine.save_grab_state(branch, wt_path, stash, Some(session_id)).unwrap();
+        let loaded = engine.load_grab_state().unwrap().expect("should load state");
+
+        assert_eq!(loaded.0, branch);
+        assert_eq!(loaded.1, wt_path);
+        assert_eq!(loaded.2, stash);
+        assert_eq!(loaded.3, Some(session_id.to_string()));
+
+        engine.remove_grab_state().unwrap();
+    }
+
+    /// Test backward compatibility: loading a 3-line wt-grab file (no session ID).
+    #[test]
+    fn grab_state_load_legacy_format() {
+        let (_tmp, engine) = temp_repo_engine();
+
+        // Write a legacy 3-line file directly.
+        let grab_file = engine.git_common_dir().unwrap().join("wt-grab");
+        std::fs::write(&grab_file, "my-branch\n/tmp/wt\nmy-branch__grab\n").unwrap();
+
+        let loaded = engine.load_grab_state().unwrap().expect("should load state");
+        assert_eq!(loaded.0, "my-branch");
+        assert_eq!(loaded.1, Path::new("/tmp/wt"));
+        assert_eq!(loaded.2, "my-branch__grab");
+        assert_eq!(loaded.3, None);
+
+        engine.remove_grab_state().unwrap();
     }
 }
