@@ -304,7 +304,7 @@ pub fn handle_mouse_event(
                                 let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
                                 let line_text = &app.viewer_state.content.file_content[line_1 - 1];
                                 if let Some((symbol, _, _)) = crate::app::extract_symbol_at_column(line_text, content_col) {
-                                    handle_symbol_click_jump(app, &symbol);
+                                    handle_symbol_click_jump(app, &symbol, line_offset);
                                 }
                             }
                         }
@@ -627,7 +627,7 @@ fn handle_mouse_scroll(
 }
 
 /// Handle Cmd+Click jump-to-definition for a symbol in the viewer.
-fn handle_symbol_click_jump(app: &mut App, symbol: &str) {
+fn handle_symbol_click_jump(app: &mut App, symbol: &str, source_screen_row: usize) {
     use crate::app::StatusLevel;
 
     if !app.symbol_index.is_available() {
@@ -667,7 +667,7 @@ fn handle_symbol_click_jump(app: &mut App, symbol: &str) {
         1 => {
             let file = defs[0].file_path.clone();
             let line = defs[0].line;
-            app.jump_to_location(&file, line);
+            app.jump_to_location(&file, line, source_screen_row);
             app.set_status(format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"), StatusLevel::Success);
         }
         n => {

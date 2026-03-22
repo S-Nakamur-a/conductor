@@ -219,7 +219,7 @@ fn handle_go_to_definition(app: &mut App) {
             let def = &defs[0];
             let file = def.file_path.clone();
             let line = def.line;
-            app.jump_to_location(&file, line);
+            app.jump_to_location(&file, line, 0);
             app.set_status(format!("Jumped to definition of '{symbol}'"), StatusLevel::Success);
         }
         n => {
@@ -264,7 +264,7 @@ fn handle_go_to_implementation(app: &mut App) {
             let imp = &impls[0];
             let file = imp.file_path.clone();
             let line = imp.line;
-            app.jump_to_location(&file, line);
+            app.jump_to_location(&file, line, 0);
             app.set_status(format!("Jumped to implementation of '{symbol}'"), StatusLevel::Success);
         }
         n => {

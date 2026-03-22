@@ -74,6 +74,8 @@ pub struct FileContentState {
     pub cached_diff_annotations: Option<std::collections::HashMap<usize, (crate::diff_state::DiffLineTag, Vec<crate::diff_state::InlineSegment>)>>,
     /// The file path for which `cached_diff_annotations` was built.
     pub cached_diff_annotations_file: Option<String>,
+    /// Line number (1-indexed) highlighted from grep search result. Cleared on next file open.
+    pub grep_highlight_line: Option<usize>,
 }
 
 impl Default for FileContentState {
@@ -87,6 +89,7 @@ impl Default for FileContentState {
             highlighted_cache_key: None,
             cached_diff_annotations: None,
             cached_diff_annotations_file: None,
+            grep_highlight_line: None,
         }
     }
 }
@@ -399,6 +402,7 @@ impl ViewerState {
         self.exit_diff_mode();
         self.content.highlighted_lines.clear();
         self.content.highlighted_cache_key = None;
+        self.content.grep_highlight_line = None;
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
