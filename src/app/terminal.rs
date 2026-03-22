@@ -37,7 +37,7 @@ impl App {
             .iter()
             .find(|e| !used_emojis.contains(e))
             .unwrap_or(&INSTRUMENTS[used_emojis.len() % INSTRUMENTS.len()]);
-        let label = format!("CC:{}", emoji);
+        let label = format!("CC:{emoji}");
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
         let idx = self.terminal.pty_manager.spawn_session(

@@ -29,6 +29,7 @@ use crate::text_input::TextInput;
 // ── Sub-structs ──────────────────────────────────────────────────────
 
 /// File tree management state.
+#[derive(Default)]
 pub struct FileTreeState {
     /// Flattened file tree (directories + files, pre-order).
     pub file_tree: Vec<FileTreeEntry>,
@@ -43,19 +44,8 @@ pub struct FileTreeState {
     pub gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
 }
 
-impl Default for FileTreeState {
-    fn default() -> Self {
-        Self {
-            file_tree: Vec::new(),
-            tree_selected: 0,
-            tree_scroll: 0,
-            cached_visible_indices: None,
-            gitignore: None,
-        }
-    }
-}
-
 /// File content viewing state.
+#[derive(Default)]
 pub struct FileContentState {
     /// Lines of the currently open file.
     pub file_content: Vec<String>,
@@ -78,23 +68,8 @@ pub struct FileContentState {
     pub grep_highlight_line: Option<usize>,
 }
 
-impl Default for FileContentState {
-    fn default() -> Self {
-        Self {
-            file_content: Vec::new(),
-            file_scroll: 0,
-            h_scroll: 0,
-            current_file: None,
-            highlighted_lines: Vec::new(),
-            highlighted_cache_key: None,
-            cached_diff_annotations: None,
-            cached_diff_annotations_file: None,
-            grep_highlight_line: None,
-        }
-    }
-}
-
 /// In-file search state.
+#[derive(Default)]
 pub struct SearchState {
     /// Current search query (empty = no active search).
     pub search_query: TextInput,
@@ -106,18 +81,8 @@ pub struct SearchState {
     pub search_active: bool,
 }
 
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            search_query: TextInput::new(),
-            search_matches: Vec::new(),
-            search_match_idx: 0,
-            search_active: false,
-        }
-    }
-}
-
 /// Unified diff view state.
+#[derive(Default)]
 pub struct DiffViewState {
     /// Whether the viewer is in unified diff mode.
     pub diff_mode: bool,
@@ -127,17 +92,6 @@ pub struct DiffViewState {
     pub diff_view_scroll: usize,
     /// Cached max line number for diff view (avoids O(n) scan per frame).
     pub diff_view_max_line_no: usize,
-}
-
-impl Default for DiffViewState {
-    fn default() -> Self {
-        Self {
-            diff_mode: false,
-            diff_view_lines: Vec::new(),
-            diff_view_scroll: 0,
-            diff_view_max_line_no: 0,
-        }
-    }
 }
 
 /// Explorer panel state (selections, scrolls).
@@ -179,6 +133,7 @@ impl Default for ExplorerState {
 }
 
 /// Line selection for comments.
+#[derive(Default)]
 pub struct SelectionState {
     /// Start of the selected line range (1-indexed), or `None` if no selection.
     pub selected_line_start: Option<usize>,
@@ -187,16 +142,8 @@ pub struct SelectionState {
     pub selected_line_end: Option<usize>,
 }
 
-impl Default for SelectionState {
-    fn default() -> Self {
-        Self {
-            selected_line_start: None,
-            selected_line_end: None,
-        }
-    }
-}
-
 /// Fuzzy filename search state.
+#[derive(Default)]
 pub struct FilenameSearchState {
     /// Whether the filename search overlay is active.
     pub filename_search_active: bool,
@@ -210,22 +157,11 @@ pub struct FilenameSearchState {
     pub filename_search_all_files: Vec<String>,
 }
 
-impl Default for FilenameSearchState {
-    fn default() -> Self {
-        Self {
-            filename_search_active: false,
-            filename_search_query: TextInput::new(),
-            filename_search_results: Vec::new(),
-            filename_search_selected: 0,
-            filename_search_all_files: Vec::new(),
-        }
-    }
-}
-
 /// Symbol hover info for Cmd+hover underline.
 #[derive(Debug, Clone)]
 pub struct HoverSymbol {
     /// The symbol text (e.g. "AppState").
+    #[allow(dead_code)]
     pub text: String,
     /// Line number (1-indexed) where the symbol is located.
     pub line: usize,
@@ -276,6 +212,7 @@ impl Default for ClickTracker {
 // ── Main struct ──────────────────────────────────────────────────────
 
 /// All state owned by the Viewer mode.
+#[derive(Default)]
 pub struct ViewerState {
     /// File tree management.
     pub tree: FileTreeState,
@@ -297,23 +234,6 @@ pub struct ViewerState {
     pub click: ClickTracker,
     /// Whether 'g' was pressed and waiting for a second key (gd, gi, gr).
     pub pending_g_key: bool,
-}
-
-impl Default for ViewerState {
-    fn default() -> Self {
-        Self {
-            tree: FileTreeState::default(),
-            content: FileContentState::default(),
-            search: SearchState::default(),
-            diff_view: DiffViewState::default(),
-            explorer: ExplorerState::default(),
-            selection: SelectionState::default(),
-            filename_search: FilenameSearchState::default(),
-            media_state: MediaState::default(),
-            click: ClickTracker::default(),
-            pending_g_key: false,
-        }
-    }
 }
 
 impl ViewerState {
@@ -448,7 +368,7 @@ impl ViewerState {
     pub fn is_current_file_media(&self) -> bool {
         self.content.current_file
             .as_deref()
-            .map_or(false, media_state::is_media_file)
+            .is_some_and(media_state::is_media_file)
     }
 
     /// Toggle expand / collapse of the directory at index `idx` in

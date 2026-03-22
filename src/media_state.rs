@@ -225,7 +225,7 @@ fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'s
     }
 
     // Remove trailing empty lines.
-    while lines.last().map_or(false, |l| l.spans.is_empty()) {
+    while lines.last().is_some_and(|l| l.spans.is_empty()) {
         lines.pop();
     }
 

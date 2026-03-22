@@ -152,6 +152,7 @@ pub struct SymbolHint {
     /// 0-indexed start column in content.
     pub start_col: usize,
     /// 0-indexed end column (exclusive) in content.
+    #[allow(dead_code)]
     pub end_col: usize,
 }
 

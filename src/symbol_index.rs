@@ -26,6 +26,7 @@ pub enum SymbolKind {
     Macro,
     Static,
     Interface,
+    #[allow(dead_code)]
     Unknown,
 }
 
@@ -41,6 +42,7 @@ pub struct Symbol {
     /// 1-indexed line number.
     pub line: usize,
     /// 0-indexed column (if available).
+    #[allow(dead_code)]
     pub column: usize,
     /// Scope (e.g. parent struct/module name), if available.
     pub scope: Option<String>,
