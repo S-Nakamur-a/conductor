@@ -1226,10 +1226,9 @@ impl ViewerState {
         }
     }
 
-    /// Walk `dir` and append entries to `entries`. Only recurses into
-    /// directories that are auto-expanded (depth 0). Deeper directories
-    /// will have `children_loaded: false` and their contents are loaded
-    /// lazily when the user expands them.
+    /// Walk `dir` and append its immediate children to `entries`.
+    /// All directories start collapsed with `children_loaded: false`;
+    /// their contents are loaded lazily when the user expands them.
     pub fn walk_dir(
         root: &Path,
         dir: &Path,
@@ -1282,26 +1281,16 @@ impl ViewerState {
                 .to_string_lossy()
                 .to_string();
 
-            let auto_expand = depth == 0;
-
             let icon = if is_dir { "\u{1f4c1}" } else { file_icon(&name) };
             entries.push(FileTreeEntry {
                 path: rel_path,
                 name,
                 depth,
                 is_dir,
-                is_expanded: auto_expand,
+                is_expanded: false,
                 children_loaded: false,
                 icon,
             });
-
-            if is_dir && auto_expand {
-                let entry_idx = entries.len() - 1;
-                // Load only the immediate children (one level) for auto-expanded directories.
-                // Deeper levels are loaded lazily when the user expands them.
-                Self::read_dir_entries(root, &child_path, depth + 1, entries, gi);
-                entries[entry_idx].children_loaded = true;
-            }
         }
     }
 }
