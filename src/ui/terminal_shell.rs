@@ -132,8 +132,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // Rebuild PTY snapshot only when new output arrives (dirty flag)
             // or cache is empty. Uses try_lock to avoid blocking when the
             // PTY reader thread holds the vt100 mutex.
+            let scroll_changed =
+                app.terminal.cache_shell.effective_offset != app.terminal.scroll_shell;
             if app.terminal.cache_shell.lines.is_empty()
                 || (focused && app.terminal.dirty_shell)
+                || scroll_changed
             {
                 if let Some(cache) = crate::ui::common::build_pty_lines(
                     &screen_arc,
@@ -141,6 +144,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     inner.height,
                     inner.width,
                 ) {
+                    // Sync scroll offset with the actual clamped position from vt100
+                    // to prevent infinite rebuilds when scroll exceeds scrollback buffer.
+                    app.terminal.scroll_shell = cache.effective_offset;
                     app.terminal.cache_shell = cache;
                     app.terminal.dirty_shell = false;
                 }
