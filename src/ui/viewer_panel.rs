@@ -118,6 +118,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let line_1 = line_no + 1;
             let is_selected = vs.is_line_selected(line_1);
             let is_hovered = vs.click.hover_line == Some(line_1);
+            let is_gutter_hovered = vs.click.hover_gutter_line == Some(line_1);
             let is_in_pending_range = !is_selected && vs.selection.selected_line_start.is_some() && vs.selection.selected_line_end.is_none() && vs.click.hover_line.is_some() && {
                 let start = vs.selection.selected_line_start.unwrap();
                 let hover = vs.click.hover_line.unwrap();
@@ -151,6 +152,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     .fg(theme.search_current_fg)
                     .bg(theme.search_match_bg)
                     .add_modifier(Modifier::BOLD)
+            } else if is_gutter_hovered {
+                Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
             } else if is_hovered {
                 Style::default().fg(theme.gutter_hover_fg)
             } else if diff_tag == Some(DiffLineTag::Insert) {
@@ -396,6 +399,9 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     let is_hovered = new_line_no
                         .map(|n| vs.click.hover_line == Some(n))
                         .unwrap_or(false);
+                    let is_gutter_hovered = new_line_no
+                        .map(|n| vs.click.hover_gutter_line == Some(n))
+                        .unwrap_or(false);
                     let is_in_pending_range = !is_selected && new_line_no.is_some() && vs.selection.selected_line_start.is_some() && vs.selection.selected_line_end.is_none() && vs.click.hover_line.is_some() && {
                         let n = new_line_no.unwrap();
                         let start = vs.selection.selected_line_start.unwrap();
@@ -427,6 +433,8 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                         Style::default()
                             .fg(theme.gutter_selected_fg)
                             .bg(theme.gutter_pending_bg)
+                    } else if is_gutter_hovered {
+                        Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
                     } else if is_hovered {
                         Style::default().fg(theme.gutter_hover_fg)
                     } else {

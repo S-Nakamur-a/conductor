@@ -237,8 +237,10 @@ pub struct HoverSymbol {
 
 /// Double-click tracking state.
 pub struct ClickTracker {
-    /// Line number (1-indexed) currently under the mouse cursor in the viewer gutter.
+    /// Line number (1-indexed) currently under the mouse cursor in the viewer panel.
     pub hover_line: Option<usize>,
+    /// Line number (1-indexed) when the mouse cursor is specifically over the gutter (line-number area).
+    pub hover_gutter_line: Option<usize>,
     /// Symbol under the mouse cursor when Cmd/Ctrl is held (for underline + click-to-jump).
     pub hover_symbol: Option<HoverSymbol>,
     /// Timestamp (ms) of the last line-number click for double-click detection.
@@ -259,6 +261,7 @@ impl Default for ClickTracker {
     fn default() -> Self {
         Self {
             hover_line: None,
+            hover_gutter_line: None,
             hover_symbol: None,
             last_line_click_time: std::time::Instant::now(),
             last_line_click_line: 0,
