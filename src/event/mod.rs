@@ -254,6 +254,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     terminal::open_file_from_terminal_output(app);
                     return;
                 }
+                Action::CycleFocusForward => { app.cycle_focus_forward(); return; }
+                Action::CycleFocusBackward => { app.cycle_focus_backward(); return; }
                 _ => {} // Other global actions not intercepted in terminal
             }
         }
