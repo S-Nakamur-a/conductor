@@ -611,7 +611,15 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     let tab_width = app.config.viewer.tab_width;
                     app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
                     app.rehighlight_viewer();
-                    app.viewer_state.content.file_scroll = result.line_number.saturating_sub(1);
+                    // Show hit line ~5 lines from top instead of at the very top.
+                    let hit_0 = result.line_number.saturating_sub(1);
+                    let max = app.viewer_state.content.file_content.len().saturating_sub(1);
+                    app.viewer_state.content.file_scroll = result.line_number.saturating_sub(6).min(max);
+                    app.viewer_state.content.grep_highlight_line = Some(result.line_number);
+                    // Ensure scroll doesn't push the hit line off screen.
+                    if app.viewer_state.content.file_scroll > hit_0 {
+                        app.viewer_state.content.file_scroll = hit_0;
+                    }
                     app.set_focus(Focus::Viewer);
                 }
             } else {
@@ -1087,7 +1095,7 @@ pub(super) fn handle_references_key(app: &mut App, key: KeyEvent) {
             let selected = app.references_overlay.selected;
             if let Some(reference) = app.references_overlay.results.get(selected).cloned() {
                 app.references_overlay.active = false;
-                app.jump_to_location(&reference.file_path, reference.line);
+                app.jump_to_location(&reference.file_path, reference.line, 0);
             }
         }
         _ => {}
@@ -1125,10 +1133,12 @@ pub(super) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
                 .find(|h| h.label == input)
                 .cloned();
             // Dismiss hints.
+            let scroll = app.viewer_state.content.file_scroll;
             app.symbol_hint_overlay = Default::default();
             if let Some(hint) = matched {
                 // Build action overlay for this symbol.
-                open_symbol_action_overlay(app, &hint.symbol_name);
+                let screen_row = hint.line.saturating_sub(1).saturating_sub(scroll);
+                open_symbol_action_overlay(app, &hint.symbol_name, screen_row);
             }
         }
         _ => {
@@ -1138,7 +1148,8 @@ pub(super) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
 }
 
 /// Build and show the symbol action overlay for the given symbol.
-fn open_symbol_action_overlay(app: &mut App, symbol_name: &str) {
+/// `source_screen_row` is the screen row (0-indexed) where the symbol appeared.
+fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_row: usize) {
     use crate::overlay::{SymbolAction, SymbolActionOverlay};
 
     let mut actions = Vec::new();
@@ -1204,6 +1215,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str) {
         symbol_name: symbol_name.to_string(),
         actions,
         selected: 0,
+        source_screen_row,
     };
 }
 
@@ -1212,17 +1224,18 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str) {
 /// Handle key input in the symbol action overlay.
 pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
     let symbol = app.symbol_action_overlay.symbol_name.clone();
+    let screen_row = app.symbol_action_overlay.source_screen_row;
     match key.code {
         KeyCode::Esc => {
             app.symbol_action_overlay = Default::default();
         }
         KeyCode::Char('d') => {
             app.symbol_action_overlay = Default::default();
-            jump_to_symbol_definition(app, &symbol);
+            jump_to_symbol_definition(app, &symbol, screen_row);
         }
         KeyCode::Char('i') => {
             app.symbol_action_overlay = Default::default();
-            jump_to_symbol_implementation(app, &symbol);
+            jump_to_symbol_implementation(app, &symbol, screen_row);
         }
         KeyCode::Char('r') => {
             app.symbol_action_overlay = Default::default();
@@ -1233,8 +1246,8 @@ pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
             if let Some(action) = app.symbol_action_overlay.actions.get(idx).cloned() {
                 app.symbol_action_overlay = Default::default();
                 match action.key {
-                    'd' => jump_to_symbol_definition(app, &symbol),
-                    'i' => jump_to_symbol_implementation(app, &symbol),
+                    'd' => jump_to_symbol_definition(app, &symbol, screen_row),
+                    'i' => jump_to_symbol_implementation(app, &symbol, screen_row),
                     'r' => jump_to_symbol_references(app, &symbol),
                     _ => {}
                 }
@@ -1253,14 +1266,14 @@ pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn jump_to_symbol_definition(app: &mut App, symbol: &str) {
+fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
     let defs = app.symbol_index.find_definitions(symbol);
     match defs.len() {
         0 => {
             app.set_status(format!("No definition found for '{symbol}'"), crate::app::StatusLevel::Warning);
         }
         1 => {
-            app.jump_to_location(&defs[0].file_path, defs[0].line);
+            app.jump_to_location(&defs[0].file_path, defs[0].line, screen_row);
             app.set_status(format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
         }
         _ => {
@@ -1276,14 +1289,14 @@ fn jump_to_symbol_definition(app: &mut App, symbol: &str) {
     }
 }
 
-fn jump_to_symbol_implementation(app: &mut App, symbol: &str) {
+fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize) {
     let impls = app.symbol_index.find_implementations(symbol);
     match impls.len() {
         0 => {
             app.set_status(format!("No implementations found for '{symbol}'"), crate::app::StatusLevel::Warning);
         }
         1 => {
-            app.jump_to_location(&impls[0].file_path, impls[0].line);
+            app.jump_to_location(&impls[0].file_path, impls[0].line, screen_row);
             app.set_status(format!("Jumped to implementation of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
         }
         _ => {

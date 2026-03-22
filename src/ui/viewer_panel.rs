@@ -131,6 +131,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
             // Gutter (line number).
             let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
+            let is_grep_highlight = vs.content.grep_highlight_line == Some(line_1);
             let gutter_style = if is_selected {
                 Style::default()
                     .fg(theme.gutter_selected_fg)
@@ -140,6 +141,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 Style::default()
                     .fg(theme.gutter_selected_fg)
                     .bg(theme.gutter_pending_bg)
+            } else if is_grep_highlight {
+                Style::default()
+                    .fg(theme.search_current_fg)
+                    .bg(theme.search_match_bg)
+                    .add_modifier(Modifier::BOLD)
             } else if is_hovered {
                 Style::default().fg(theme.gutter_hover_fg)
             } else if diff_tag == Some(DiffLineTag::Insert) {

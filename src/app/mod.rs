@@ -897,7 +897,11 @@ impl App {
     }
 
     /// Jump to a file location, pushing the current position onto the history.
-    pub fn jump_to_location(&mut self, file_path: &str, line: usize) {
+    ///
+    /// `source_screen_row` is the screen row (0-indexed) where the source
+    /// symbol was displayed. The target line will be placed at the same row
+    /// so the user's eye position is preserved.
+    pub fn jump_to_location(&mut self, file_path: &str, line: usize, source_screen_row: usize) {
         // Save current location to history.
         if let Some(ref cur_file) = self.viewer_state.content.current_file.clone() {
             let loc = crate::jump_history::Location {
@@ -917,10 +921,11 @@ impl App {
             self.viewer_state.reveal_file_in_tree(file_path, &wt_path);
         }
 
-        // Scroll to the target line (0-indexed).
-        let target_scroll = line.saturating_sub(1);
+        // Scroll so the target line appears at the same screen row as the source symbol.
+        let target_0 = line.saturating_sub(1);
         let total = self.viewer_state.content.file_content.len();
-        self.viewer_state.content.file_scroll = target_scroll.min(total.saturating_sub(1));
+        let scroll = target_0.saturating_sub(source_screen_row).min(total.saturating_sub(1));
+        self.viewer_state.content.file_scroll = scroll;
         self.viewer_state.content.h_scroll = 0;
         self.set_focus(Focus::Viewer);
     }

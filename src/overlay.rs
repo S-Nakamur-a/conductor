@@ -185,6 +185,9 @@ pub struct SymbolActionOverlay {
     pub symbol_name: String,
     pub actions: Vec<SymbolAction>,
     pub selected: usize,
+    /// Screen row (0-indexed) of the source symbol, used to preserve vertical
+    /// position when jumping.
+    pub source_screen_row: usize,
 }
 
 /// Help overlay state.
