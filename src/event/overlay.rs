@@ -647,7 +647,7 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.selected -= 1;
             }
         }
-        KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+        KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
             // Collapse the current node (or parent if on a Match row).
             let selected = app.overlays.grep_search.selected;
             let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
@@ -694,7 +694,7 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 _ => {}
             }
         }
-        KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+        KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
             // Expand the current node.
             app.overlays.grep_search.result_tree.expand(app.overlays.grep_search.selected);
         }
