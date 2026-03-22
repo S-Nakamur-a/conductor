@@ -241,7 +241,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
                             spans.push(Span::styled(before.to_string(), content_style));
                             spans.push(Span::styled(
                                 matched.to_string(),
-                                Style::default().bg(theme.accent).add_modifier(Modifier::BOLD),
+                                Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg).add_modifier(Modifier::BOLD),
                             ));
                             spans.push(Span::styled(after.to_string(), content_style));
                             if content.len() > safe_max {
