@@ -71,6 +71,59 @@ impl JumpHistory {
     pub fn can_go_forward(&self) -> bool {
         !self.forward.is_empty()
     }
+
+    /// Build a breadcrumb trail for UI rendering.
+    ///
+    /// Returns `(entries, current_index)` where `entries` contains the back stack
+    /// + `current` + forward stack (in order), and `current_index` points to `current`.
+    ///
+    /// Only the most recent `max_visible` entries around the current position are returned;
+    /// if entries were trimmed from the front, a sentinel `None` is prepended.
+    pub fn breadcrumb_trail(
+        &self,
+        current: &Location,
+        max_visible: usize,
+    ) -> (Vec<Option<Location>>, usize) {
+        // Full trail: back (oldest→newest) + current + forward (reversed so oldest→newest).
+        let total = self.back.len() + 1 + self.forward.len();
+        let cur_idx = self.back.len(); // 0-indexed position of current
+
+        if total <= max_visible {
+            let mut entries: Vec<Option<Location>> = self.back.iter().cloned().map(Some).collect();
+            entries.push(Some(current.clone()));
+            for loc in self.forward.iter().rev() {
+                entries.push(Some(loc.clone()));
+            }
+            return (entries, cur_idx);
+        }
+
+        // Window: center around current, preferring showing more history (back).
+        let half = max_visible / 2;
+        let start = if cur_idx <= half {
+            0
+        } else if cur_idx + half >= total {
+            total.saturating_sub(max_visible)
+        } else {
+            cur_idx - half
+        };
+        let end = (start + max_visible).min(total);
+
+        let mut all: Vec<Location> = self.back.to_vec();
+        all.push(current.clone());
+        for loc in self.forward.iter().rev() {
+            all.push(loc.clone());
+        }
+
+        let mut entries: Vec<Option<Location>> = all[start..end].iter().cloned().map(Some).collect();
+        let mut adjusted_idx = cur_idx - start;
+
+        if start > 0 {
+            entries.insert(0, None); // sentinel for "…"
+            adjusted_idx += 1;
+        }
+
+        (entries, adjusted_idx)
+    }
 }
 
 impl Default for JumpHistory {
