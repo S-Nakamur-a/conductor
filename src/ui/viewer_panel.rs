@@ -93,7 +93,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let inner_height = area.height.saturating_sub(2) as usize;
+    // Build breadcrumb trail from jump history.
+    let breadcrumb_visible = build_breadcrumb_line(app);
+
+    // Account for breadcrumb bar height (1 row when visible).
+    let breadcrumb_height: u16 = if breadcrumb_visible.is_some() { 1 } else { 0 };
+    let inner_height = (area.height.saturating_sub(2 + breadcrumb_height)) as usize;
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // Diff annotations are cached in ViewerState (populated at function entry).
@@ -263,10 +268,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
+    // Prepend breadcrumb bar as the first line inside the block.
+    let mut all_lines = Vec::new();
+    if let Some(crumb_line) = breadcrumb_visible {
+        all_lines.push(crumb_line);
+    }
+    all_lines.extend(lines);
+
     // Clear the area first to avoid stale content when scrolling.
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    let paragraph = Paragraph::new(lines).block(block);
+    let paragraph = Paragraph::new(all_lines).block(block);
     frame.render_widget(paragraph, area);
 
     // Show selection hint overlay.
@@ -1130,6 +1142,66 @@ fn apply_hint_labels(
 
 /// Replace characters in the range `[start..end)` of the span list with `replacement` text
 /// in the given style.
+/// Build the breadcrumb `Line` from jump history + current position.
+/// Returns `None` when there are fewer than 2 entries (no navigation happened).
+fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
+    let current_file = app.viewer_state.content.current_file.as_ref()?;
+    let current = crate::jump_history::Location {
+        file_path: current_file.clone(),
+        line: app.viewer_state.content.file_scroll,
+        h_scroll: app.viewer_state.content.h_scroll,
+    };
+
+    let (entries, cur_idx) = app.jump_history.breadcrumb_trail(&current, 7);
+
+    // Don't show breadcrumb if there's only the current entry (no navigation).
+    let real_count = entries.iter().filter(|e| e.is_some()).count();
+    if real_count <= 1 {
+        return None;
+    }
+
+    let theme = &app.theme;
+    let separator = Span::styled(" \u{203a} ", Style::default().fg(theme.muted)); // " › "
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        if i > 0 {
+            spans.push(separator.clone());
+        }
+        match entry {
+            None => {
+                // Ellipsis sentinel for trimmed older entries.
+                spans.push(Span::styled("\u{2026}", Style::default().fg(theme.muted)));
+            }
+            Some(loc) => {
+                let label = breadcrumb_label(loc);
+                let style = if i == cur_idx {
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.muted)
+                };
+                spans.push(Span::styled(label, style));
+            }
+        }
+    }
+
+    // Prepend a small left-padding.
+    spans.insert(0, Span::raw(" "));
+    Some(Line::from(spans))
+}
+
+/// Format a location as a short breadcrumb label: `filename:line`.
+fn breadcrumb_label(loc: &crate::jump_history::Location) -> String {
+    let filename = loc
+        .file_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&loc.file_path);
+    format!("{}:{}", filename, loc.line + 1)
+}
+
 fn replace_span_range(
     spans: Vec<Span<'static>>,
     start: usize,
