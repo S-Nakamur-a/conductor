@@ -17,26 +17,48 @@ Output ONLY a JSON object with two fields:
 - "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
-/// Parse LLM raw output into `SmartGenResult`, stripping markdown fences if present.
+/// Parse LLM raw output into `SmartGenResult`, extracting JSON even if surrounded by text.
 fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
-    let json_str = raw
+    // Strip markdown fences first.
+    let stripped = raw
         .trim()
         .strip_prefix("```json")
         .or_else(|| raw.trim().strip_prefix("```"))
         .unwrap_or(raw.trim());
-    let json_str = json_str
+    let stripped = stripped
         .strip_suffix("```")
-        .unwrap_or(json_str)
+        .unwrap_or(stripped)
         .trim();
-    serde_json::from_str::<SmartGenResult>(json_str)
-        .map_err(|e| format!("JSON parse error: {e}\nRaw output: {raw}"))
+
+    // Try direct parse first.
+    if let Ok(result) = serde_json::from_str::<SmartGenResult>(stripped) {
+        return Ok(result);
+    }
+
+    // Fallback: find the first '{' and last '}' to extract a JSON object.
+    if let Some(start) = stripped.find('{') {
+        if let Some(end) = stripped.rfind('}') {
+            if start < end {
+                let json_str = &stripped[start..=end];
+                if let Ok(result) = serde_json::from_str::<SmartGenResult>(json_str) {
+                    return Ok(result);
+                }
+            }
+        }
+    }
+
+    Err(format!("JSON parse error: could not extract valid JSON\nRaw output: {raw}"))
 }
+
+const SMART_WORKTREE_JSON_SCHEMA: &str = r#"{"type":"object","properties":{"branch":{"type":"string"},"prompt":{"type":"string"}},"required":["branch","prompt"]}"#;
 
 /// Fallback: call `claude -p` CLI with the same system prompt and description.
 fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
     log::info!("Smart worktree: falling back to claude -p CLI");
     let output = std::process::Command::new("claude")
-        .args(["-p", "--output-format", "text"])
+        .args(["-p", "--output-format", "json"])
+        .arg("--json-schema")
+        .arg(SMART_WORKTREE_JSON_SCHEMA)
         .arg("--system-prompt")
         .arg(SMART_WORKTREE_SYSTEM_PROMPT)
         .arg(desc)
@@ -52,7 +74,13 @@ fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
     if stdout.trim().is_empty() {
         return Err("claude CLI returned empty output".to_string());
     }
-    Ok(stdout)
+
+    // --output-format json wraps output; extract structured_output field.
+    let wrapper: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse claude CLI JSON wrapper: {e}"))?;
+    let structured = wrapper.get("structured_output")
+        .ok_or_else(|| format!("claude CLI response missing structured_output field\nRaw: {stdout}"))?;
+    Ok(structured.to_string())
 }
 
 /// Run the LLM generation for smart worktree (branch name + prompt).
@@ -1514,4 +1542,47 @@ impl App {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_plain_json() {
+        let raw = r#"{"branch": "feature/add-login", "prompt": "Add login page"}"#;
+        let result = parse_smart_gen_result(raw).unwrap();
+        assert_eq!(result.branch, "feature/add-login");
+        assert_eq!(result.prompt, "Add login page");
+    }
+
+    #[test]
+    fn test_parse_markdown_fenced_json() {
+        let raw = "```json\n{\"branch\": \"fix/bug\", \"prompt\": \"Fix bug\"}\n```";
+        let result = parse_smart_gen_result(raw).unwrap();
+        assert_eq!(result.branch, "fix/bug");
+    }
+
+    #[test]
+    fn test_parse_json_with_surrounding_text() {
+        let raw = r#"Here is the result:
+{"branch": "feature/smart-parse", "prompt": "Implement smart parsing"}
+Hope this helps!"#;
+        let result = parse_smart_gen_result(raw).unwrap();
+        assert_eq!(result.branch, "feature/smart-parse");
+        assert_eq!(result.prompt, "Implement smart parsing");
+    }
+
+    #[test]
+    fn test_parse_json_with_preamble_only() {
+        let raw = r#"Now I have full understanding. The result is: {"branch": "fix/json-parse", "prompt": "Fix JSON parsing"}"#;
+        let result = parse_smart_gen_result(raw).unwrap();
+        assert_eq!(result.branch, "fix/json-parse");
+    }
+
+    #[test]
+    fn test_parse_no_json_returns_error() {
+        let raw = "This has no JSON at all";
+        assert!(parse_smart_gen_result(raw).is_err());
+    }
 }
