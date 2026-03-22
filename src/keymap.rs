@@ -712,6 +712,11 @@ fn normalize_raw(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyMod
             modifiers &= !KeyModifiers::SHIFT;
         }
     }
+    // BackTab already encodes Shift+Tab — strip the redundant SHIFT flag
+    // that crossterm's enhanced keyboard protocol may include.
+    if code == KeyCode::BackTab {
+        modifiers &= !KeyModifiers::SHIFT;
+    }
     // Strip state flags that aren't meaningful for binding lookup.
     modifiers &= KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER;
     (code, modifiers)
