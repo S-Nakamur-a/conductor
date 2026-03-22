@@ -902,6 +902,15 @@ impl App {
     /// symbol was displayed. The target line will be placed at the same row
     /// so the user's eye position is preserved.
     pub fn jump_to_location(&mut self, file_path: &str, line: usize, source_screen_row: usize) {
+        // Skip self-referencing jumps (destination == current position).
+        let target_line_0 = line.saturating_sub(1);
+        if let Some(ref cur_file) = self.viewer_state.content.current_file {
+            let current_line_0 = self.viewer_state.content.file_scroll + source_screen_row;
+            if cur_file == file_path && current_line_0 == target_line_0 {
+                return;
+            }
+        }
+
         // Save current location to history.
         if let Some(ref cur_file) = self.viewer_state.content.current_file.clone() {
             let loc = crate::jump_history::Location {
