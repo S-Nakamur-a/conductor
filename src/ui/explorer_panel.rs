@@ -5,7 +5,7 @@
 //! opens it in the Viewer panel.
 
 use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
@@ -496,6 +496,7 @@ fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::T
 
 /// Render the filename search overlay on top of the file tree area.
 fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App, suppress_cursor: bool) {
+    let theme = &app.theme;
     let vs = &app.viewer_state.filename_search;
     let inner_width = area.width.saturating_sub(2);
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -520,8 +521,8 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App, supp
     let query_truncated: String = query_text.chars().take(query_width).collect();
 
     let input_line = Line::from(vec![
-        Span::styled(query_truncated, Style::default().fg(Color::Yellow)),
-        Span::styled(counter, Style::default().fg(Color::DarkGray)),
+        Span::styled(query_truncated, Style::default().fg(theme.search_match_fg)),
+        Span::styled(counter, Style::default().fg(theme.muted)),
     ]);
     frame.render_widget(ratatui::widgets::Paragraph::new(input_line), input_area);
     if !suppress_cursor {
@@ -553,7 +554,7 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App, supp
         frame.render_widget(
             ratatui::widgets::Paragraph::new(Span::styled(
                 "No matches",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             )),
             no_match_area,
         );
@@ -574,11 +575,11 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App, supp
         let is_selected = scroll + vi == vs.filename_search_selected;
         let style = if is_selected {
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
+                .fg(theme.search_current_fg)
+                .bg(theme.search_match_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.fg)
         };
 
         // Truncate path to fit.
