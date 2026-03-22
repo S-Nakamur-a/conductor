@@ -7,7 +7,7 @@ mod terminal;
 mod review;
 mod worktree;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
@@ -375,6 +375,10 @@ pub struct App {
     pub symbol_hint_overlay: SymbolHintOverlay,
     pub symbol_action_overlay: SymbolActionOverlay,
     pub bg_symbol_index_op: BackgroundOp<Result<usize, String>>,
+
+    // ── New worktree badge ──────────────────────────────────────
+    /// Paths of worktrees recently created (for badge display). Cleared on selection.
+    pub new_worktree_paths: HashSet<PathBuf>,
 }
 
 /// Result of a background diff computation.
@@ -551,6 +555,7 @@ impl App {
             symbol_hint_overlay: SymbolHintOverlay::default(),
             symbol_action_overlay: SymbolActionOverlay::default(),
             bg_symbol_index_op: BackgroundOp::default(),
+            new_worktree_paths: HashSet::new(),
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
         app.refresh_worktrees();
