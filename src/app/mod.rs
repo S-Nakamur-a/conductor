@@ -896,6 +896,23 @@ impl App {
         extract_symbol_from_line(line)
     }
 
+    /// Check if the cursor is currently at (or very near) a definition site
+    /// for the given symbol. Returns `true` when the current file + line
+    /// matches one of the symbol's definition locations.
+    pub fn is_cursor_at_definition(&self, symbol: &str) -> bool {
+        let cur_file = match &self.viewer_state.content.current_file {
+            Some(f) => f,
+            None => return false,
+        };
+        // Cursor line is 1-indexed (file_scroll is 0-indexed).
+        let cursor_line = self.viewer_state.content.file_scroll + 1;
+        let defs = self.symbol_index.find_definitions(symbol);
+        defs.iter().any(|d| {
+            d.file_path == *cur_file
+                && (d.line as isize - cursor_line as isize).unsigned_abs() <= 2
+        })
+    }
+
     /// Jump to a file location, pushing the current position onto the history.
     ///
     /// `source_screen_row` is the screen row (0-indexed) where the source
