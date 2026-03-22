@@ -646,14 +646,8 @@ fn handle_symbol_click_jump(app: &mut App, symbol: &str, source_screen_row: usiz
 
     let defs = app.symbol_index.find_definitions(symbol);
 
-    // Check if we're already at the definition — if so, show references instead.
-    let cur_file = app.viewer_state.content.current_file.clone().unwrap_or_default();
-    let cur_line = app.viewer_state.content.file_scroll + 1; // approximate 1-indexed
-    let already_at_def = defs.len() == 1
-        && defs[0].file_path == cur_file
-        && (defs[0].line as isize - cur_line as isize).unsigned_abs() <= 2;
-
-    if already_at_def {
+    // Context-aware: if cursor is at the definition site, show references instead.
+    if app.is_cursor_at_definition(symbol) {
         // Already at definition — show references.
         let root = app.symbol_index.root();
         let refs = app.symbol_index.find_references(symbol, &root);

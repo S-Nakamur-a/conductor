@@ -1210,11 +1210,20 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
         return;
     }
 
+    // Context-aware default selection: if cursor is at the definition site,
+    // pre-select "Find references" so pressing Enter goes to references.
+    let at_def = app.is_cursor_at_definition(symbol_name);
+    let default_idx = if at_def {
+        actions.iter().position(|a| a.key == 'r').unwrap_or(0)
+    } else {
+        0
+    };
+
     app.symbol_action_overlay = SymbolActionOverlay {
         active: true,
         symbol_name: symbol_name.to_string(),
         actions,
-        selected: 0,
+        selected: default_idx,
         source_screen_row,
     };
 }

@@ -210,6 +210,27 @@ fn handle_go_to_definition(app: &mut App) {
         return;
     }
 
+    // Context-aware: if cursor is at a definition site, show references instead.
+    if app.is_cursor_at_definition(&symbol) {
+        let root = app.symbol_index.root();
+        let refs = app.symbol_index.find_references(&symbol, &root);
+        if refs.is_empty() {
+            app.set_status(format!("No references found for '{symbol}'"), StatusLevel::Warning);
+        } else {
+            let count = refs.len();
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = symbol.clone();
+            app.references_overlay.results = refs;
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+            app.set_status(
+                format!("At definition — showing {count} references for '{symbol}'"),
+                StatusLevel::Info,
+            );
+        }
+        return;
+    }
+
     let defs = app.symbol_index.find_definitions(&symbol);
     match defs.len() {
         0 => {
