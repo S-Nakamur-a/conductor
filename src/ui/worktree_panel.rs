@@ -257,10 +257,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         Style::default().fg(theme.success)
                     };
 
+                    let is_new = app.new_worktree_paths.contains(&wt.path);
+
                     let mut spans = vec![
                         Span::styled(format!(" {marker} "), marker_style),
                         Span::styled(wt.branch.clone(), branch_style),
                     ];
+
+                    if is_new {
+                        spans.push(Span::styled(
+                            " \u{1F331}",  // 🌱
+                            Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
+                        ));
+                    }
 
                     if is_grabbed {
                         spans.push(Span::styled(

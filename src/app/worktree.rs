@@ -579,6 +579,7 @@ impl App {
                         && p.branch == pending.branch)
                 });
 
+                self.new_worktree_paths.insert(path.clone());
                 self.record_stat("branches_created");
                 if let Some(store) = &self.review_store {
                     let _ = store.save_worktree_base_branch(&pending.branch, &pending.base_ref);
@@ -1206,6 +1207,11 @@ impl App {
     /// applied in `poll_worktree_switch_ops()`.
     pub fn on_worktree_changed(&mut self) {
         self.viewer_state = ViewerState::default();
+
+        // Clear "new" badge for the worktree the user just selected.
+        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+            self.new_worktree_paths.remove(&wt.path);
+        }
 
         // Reviews are fast (SQLite) — keep synchronous.
         self.refresh_reviews();
