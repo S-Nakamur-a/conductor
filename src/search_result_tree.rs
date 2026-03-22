@@ -258,11 +258,10 @@ impl SearchResultTree {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
             match row {
-                SearchTreeRow::Dir { name, depth, .. } => {
+                SearchTreeRow::Dir { name, depth, expanded, .. } => {
                     let path = self.resolve_dir_path(&rows, visible_idx, name, *depth);
-                    if let Some(exp) = self.dir_expanded.get_mut(&path) {
-                        *exp = !*exp;
-                    }
+                    let exp = self.dir_expanded.entry(path).or_insert(*expanded);
+                    *exp = !*exp;
                 }
                 SearchTreeRow::File { path, .. } => {
                     if let Some(exp) = self.file_expanded.get_mut(path) {
@@ -283,9 +282,7 @@ impl SearchResultTree {
                 SearchTreeRow::Dir { name, depth, expanded, .. } => {
                     if !expanded {
                         let path = self.resolve_dir_path(&rows, visible_idx, name, *depth);
-                        if let Some(exp) = self.dir_expanded.get_mut(&path) {
-                            *exp = true;
-                        }
+                        self.dir_expanded.insert(path, true);
                         self.invalidate_cache();
                     }
                 }
@@ -310,9 +307,7 @@ impl SearchResultTree {
                 SearchTreeRow::Dir { name, depth, expanded, .. } => {
                     if *expanded {
                         let path = self.resolve_dir_path(&rows, visible_idx, name, *depth);
-                        if let Some(exp) = self.dir_expanded.get_mut(&path) {
-                            *exp = false;
-                        }
+                        self.dir_expanded.insert(path, false);
                         self.invalidate_cache();
                     }
                 }
@@ -648,5 +643,39 @@ mod tests {
         // app.rs file should have 3 matches.
         let app_file = rows.iter().find(|r| matches!(r, SearchTreeRow::File { name, .. } if name == "app.rs"));
         assert!(matches!(app_file, Some(SearchTreeRow::File { match_count: 3, .. })));
+    }
+
+    #[test]
+    fn test_collapse_directory_only_dir() {
+        // Regression: directories that only contain subdirectories (no direct files)
+        // should still be collapsible.
+        let matches = vec![
+            make_match("src/ui/viewer.rs", 55, "search"),
+            make_match("src/ui/explorer.rs", 10, "search"),
+        ];
+
+        let mut tree = SearchResultTree::build(&matches);
+        let initial_count = tree.visible_rows().len();
+
+        // "src" is a directory-only dir (contains only "ui" subdir, no direct files).
+        let src_idx = tree
+            .visible_rows()
+            .iter()
+            .position(|r| matches!(r, SearchTreeRow::Dir { name, .. } if name == "src"))
+            .expect("src dir should exist");
+
+        // Collapsing src should hide everything underneath.
+        tree.collapse(src_idx);
+        let collapsed_count = tree.visible_rows().len();
+        assert!(
+            collapsed_count < initial_count,
+            "collapsing directory-only dir should hide children: before={initial_count}, after={collapsed_count}"
+        );
+        // Only the "src" dir row should remain.
+        assert_eq!(collapsed_count, 1);
+
+        // Re-expanding should restore all rows.
+        tree.expand(src_idx);
+        assert_eq!(tree.visible_rows().len(), initial_count);
     }
 }
