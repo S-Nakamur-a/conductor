@@ -447,18 +447,26 @@ pub fn handle_mouse_event(
             let inner_y = main_area.y + 1;
             if col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
                 let line_offset = (row - inner_y) as usize;
+                let inner_x = explorer_end + 1;
+                let gutter_w = app.viewer_state.gutter_total_width();
+                let on_gutter = col >= inner_x && col < inner_x + gutter_w;
+
                 if app.viewer_state.diff_view.diff_mode {
                     let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
-                    app.viewer_state.click.hover_line = app.viewer_state.diff_view.diff_view_lines.get(idx).and_then(|e| match e {
+                    let resolved = app.viewer_state.diff_view.diff_view_lines.get(idx).and_then(|e| match e {
                         crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
                         _ => None,
                     });
+                    app.viewer_state.click.hover_line = resolved;
+                    app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
                 } else {
                     let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
                     if line_1 <= app.viewer_state.content.file_content.len() {
                         app.viewer_state.click.hover_line = Some(line_1);
+                        app.viewer_state.click.hover_gutter_line = if on_gutter { Some(line_1) } else { None };
                     } else {
                         app.viewer_state.click.hover_line = None;
+                        app.viewer_state.click.hover_gutter_line = None;
                     }
                 }
 
@@ -501,6 +509,7 @@ pub fn handle_mouse_event(
                 }
             } else {
                 app.viewer_state.click.hover_line = None;
+                app.viewer_state.click.hover_gutter_line = None;
                 app.viewer_state.click.hover_symbol = None;
             }
         }
