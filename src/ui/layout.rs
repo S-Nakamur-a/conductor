@@ -161,7 +161,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             let full_path = app.selected_worktree_path().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
-            app.viewer_state.media_state.render_if_needed(&full_path, &rel_path, cols, rows);
+            app.viewer_state.media_state.render_if_needed(&full_path, rel_path, cols, rows);
         }
     }
     super::viewer_panel::render(frame, columns[2], app);

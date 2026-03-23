@@ -174,11 +174,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         // except navigation keys (focus switching is handled above in §0).
         if app.is_selected_worktree_grabbed() {
             // Allow Esc to leave terminal, but block everything else.
-            if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
-                match action {
-                    Action::LeaveTerminal => { app.set_focus(Focus::Explorer); }
-                    _ => {}
-                }
+            if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, KeyContext::Terminal) {
+                app.set_focus(Focus::Explorer);
             }
             return;
         }

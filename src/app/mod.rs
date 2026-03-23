@@ -107,6 +107,7 @@ pub enum WorktreeInputMode {
     /// Confirming worktree deletion (y/n).
     ConfirmingDelete,
     /// Confirming branch deletion after worktree removal (y/n/f).
+    #[allow(dead_code)]
     ConfirmingDeleteBranch,
     /// Confirming ungrab (y/n).
     ConfirmingUngrab,
@@ -208,12 +209,14 @@ pub struct DirtyPanels(u8);
 impl DirtyPanels {
     pub const WORKTREE: u8 = 0b0000_0001;
     pub const EXPLORER: u8 = 0b0000_0010;
+    #[allow(dead_code)]
     pub const VIEWER: u8   = 0b0000_0100;
     pub const TERMINAL: u8 = 0b0000_1000;
     pub const ALL: u8      = 0b0000_1111;
 
     pub fn mark(&mut self, bits: u8) { self.0 |= bits; }
     pub fn mark_all(&mut self) { self.0 = Self::ALL; }
+    #[allow(dead_code)]
     pub fn is_dirty(&self, bits: u8) -> bool { self.0 & bits != 0 }
     pub fn any(&self) -> bool { self.0 != 0 }
     pub fn clear(&mut self) { self.0 = 0; }
