@@ -62,15 +62,15 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
             let file_span = Span::styled(
                 format!("{}:{}", reference.file_path, reference.line),
                 Style::default()
-                    .fg(theme.accent)
+                    .fg(if is_selected { theme.selected_fg } else { theme.accent })
                     .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
             );
             let content_span = Span::styled(
                 format!("  {}", reference.content.trim()),
-                Style::default().fg(if is_selected { theme.fg } else { theme.muted }),
+                Style::default().fg(if is_selected { theme.selected_fg } else { theme.muted }),
             );
             let style = if is_selected {
-                Style::default().bg(theme.selected_bg).fg(theme.fg)
+                Style::default().bg(theme.selected_bg).fg(theme.selected_fg)
             } else {
                 Style::default()
             };
