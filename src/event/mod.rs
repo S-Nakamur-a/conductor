@@ -1,6 +1,7 @@
 //! Event handling — maps keyboard and mouse events to application actions.
 //!
-//! Focus-based dispatching: Tab / Shift+Tab cycle between panels.
+//! Focus-based dispatching: Tab / Shift+Tab cycle between non-terminal panels;
+//! Alt+h / Alt+l cycle between all panels including terminals.
 //! Overlay handlers (worktree input, cherry-pick, etc.) take priority.
 //! Terminal-focused panels forward keys to the active PTY session.
 
