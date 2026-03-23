@@ -869,8 +869,8 @@ impl App {
                 Focus::Worktree => "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
                 Focus::Explorer => "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
                 Focus::Viewer => "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
-                Focus::TerminalClaude => "Cmd+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
-                Focus::TerminalShell => "Cmd+1-5: jump | Ctrl+t: new shell | keys → PTY",
+                Focus::TerminalClaude => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY",
+                Focus::TerminalShell => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY",
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -879,8 +879,8 @@ impl App {
                 Focus::Worktree => "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
                 Focus::Explorer => "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
                 Focus::Viewer => "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
-                Focus::TerminalClaude => "Cmd+1-5: jump | Ctrl+n: new CC | Ctrl+p: palette | Ctrl+w: worktree | keys → PTY",
-                Focus::TerminalShell => "Cmd+1-5: jump | Ctrl+t: new shell | keys → PTY",
+                Focus::TerminalClaude => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY",
+                Focus::TerminalShell => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY",
             }
         }
     }

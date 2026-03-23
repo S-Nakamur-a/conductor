@@ -496,8 +496,13 @@ impl KeyMap {
         // ':' is bound per non-terminal context so it passes through to PTY
         // in terminal panels. Ctrl+P remains global for command palette access.
         self.bind_ctrl(Global, 'p', CommandPalette);
-        self.bind_key(Global, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(Global, KeyCode::BackTab, CycleFocusBackward);
+        // Alt+h / Alt+l — panel cycle that works everywhere, including terminal panels.
+        self.bind(Global, KeyCode::Char('h'), KeyModifiers::ALT, CycleFocusBackward);
+        self.bind(Global, KeyCode::Char('l'), KeyModifiers::ALT, CycleFocusForward);
+        // macOS Unicode fallback (Option+h='˙', Option+l='¬') for terminals that
+        // send Unicode instead of Alt modifier.
+        self.bind_char(Global, '˙', CycleFocusBackward);
+        self.bind_char(Global, '¬', CycleFocusForward);
         self.bind_ctrl(Global, 'w', FocusWorktree);
         self.bind_ctrl(Global, 'n', NewClaudeCode);
         self.bind_ctrl(Global, 't', NewShell);
@@ -526,6 +531,8 @@ impl KeyMap {
         self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
 
         // ── Worktree ─────────────────────────────────────────────
+        self.bind_key(Worktree, KeyCode::Tab, CycleFocusForward);
+        self.bind_key(Worktree, KeyCode::BackTab, CycleFocusBackward);
         self.bind_char(Worktree, 'j', NavigateDown);
         self.bind_key(Worktree, KeyCode::Down, NavigateDown);
         self.bind_char(Worktree, 'k', NavigateUp);
@@ -548,6 +555,8 @@ impl KeyMap {
         self.bind_char(Worktree, ':', CommandPalette);
 
         // ── Explorer (file tree) ─────────────────────────────────
+        self.bind_key(Explorer, KeyCode::Tab, CycleFocusForward);
+        self.bind_key(Explorer, KeyCode::BackTab, CycleFocusBackward);
         self.bind_char(Explorer, 'j', NavigateDown);
         self.bind_key(Explorer, KeyCode::Down, NavigateDown);
         self.bind_char(Explorer, 'k', NavigateUp);
@@ -565,6 +574,8 @@ impl KeyMap {
         self.bind_char(Explorer, ':', CommandPalette);
 
         // ── Explorer: diff list ──────────────────────────────────
+        self.bind_key(ExplorerDiffList, KeyCode::Tab, CycleFocusForward);
+        self.bind_key(ExplorerDiffList, KeyCode::BackTab, CycleFocusBackward);
         self.bind_char(ExplorerDiffList, 'j', NavigateDown);
         self.bind_key(ExplorerDiffList, KeyCode::Down, NavigateDown);
         self.bind_char(ExplorerDiffList, 'k', NavigateUp);
@@ -580,6 +591,8 @@ impl KeyMap {
         self.bind_char(ExplorerDiffList, ':', CommandPalette);
 
         // ── Explorer: comment list ───────────────────────────────
+        self.bind_key(ExplorerCommentList, KeyCode::Tab, CycleFocusForward);
+        self.bind_key(ExplorerCommentList, KeyCode::BackTab, CycleFocusBackward);
         self.bind_char(ExplorerCommentList, 'j', NavigateDown);
         self.bind_key(ExplorerCommentList, KeyCode::Down, NavigateDown);
         self.bind_char(ExplorerCommentList, 'k', NavigateUp);
@@ -601,6 +614,8 @@ impl KeyMap {
         self.bind_char(ExplorerCommentList, ':', CommandPalette);
 
         // ── Viewer ───────────────────────────────────────────────
+        self.bind_key(Viewer, KeyCode::Tab, CycleFocusForward);
+        self.bind_key(Viewer, KeyCode::BackTab, CycleFocusBackward);
         self.bind_char(Viewer, 'j', NavigateDown);
         self.bind_key(Viewer, KeyCode::Down, NavigateDown);
         self.bind_char(Viewer, 'k', NavigateUp);
@@ -624,6 +639,8 @@ impl KeyMap {
         self.bind_ctrl(Viewer, 'i', JumpForward);
 
         // ── Viewer: diff mode ────────────────────────────────────
+        self.bind_key(ViewerDiffMode, KeyCode::Tab, CycleFocusForward);
+        self.bind_key(ViewerDiffMode, KeyCode::BackTab, CycleFocusBackward);
         self.bind_char(ViewerDiffMode, 'j', NavigateDown);
         self.bind_key(ViewerDiffMode, KeyCode::Down, NavigateDown);
         self.bind_char(ViewerDiffMode, 'k', NavigateUp);
@@ -828,9 +845,13 @@ mod tests {
         let config = KeybindsConfig::default();
         let km = KeyMap::new(&config);
 
-        // Tab is only in Global — should be resolved from Worktree via fallback.
+        // Tab is bound per non-terminal context — resolves in Worktree but NOT in Terminal.
         let key_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
         assert_eq!(km.resolve(&key_tab, KeyContext::Worktree), Some(Action::CycleFocusForward));
+        assert_eq!(km.resolve(&key_tab, KeyContext::Terminal), None);
+        // Alt+l resolves globally (including Terminal fallback).
+        let key_alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
+        assert_eq!(km.resolve(&key_alt_l, KeyContext::Terminal), Some(Action::CycleFocusForward));
     }
 
     #[test]
