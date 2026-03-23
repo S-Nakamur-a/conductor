@@ -300,6 +300,7 @@ impl ViewerState {
                     Vec::new()
                 };
                 let prev_diff_scroll = self.diff_view.diff_view_scroll;
+                let prev_diff_max_line_no = self.diff_view.diff_view_max_line_no;
 
                 self.open_file(worktree_path, rel_path, tab_width);
                 self.content.file_scroll = prev_file_scroll;
@@ -309,6 +310,7 @@ impl ViewerState {
                     self.diff_view.diff_mode = true;
                     self.diff_view.diff_view_lines = prev_diff_lines;
                     self.diff_view.diff_view_scroll = prev_diff_scroll;
+                    self.diff_view.diff_view_max_line_no = prev_diff_max_line_no;
                 }
 
                 // Try to restore tree_selected to point at the file entry.
