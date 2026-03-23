@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, KeyEventKind, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, ModifierKeyCode,
+    PushKeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, poll as crossterm_poll, read as crossterm_read,
 };
 use crossterm::execute;
@@ -105,6 +106,7 @@ fn main() -> Result<()> {
             stdout,
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
             )
         )?;
     }
@@ -308,7 +310,20 @@ fn run_loop(
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
                         last_input_time = Instant::now();
-                        handle_key_event(app, key);
+                        // Alt key press — show panel overlay
+                        if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
+                            app.show_panel_overlay = true;
+                        } else {
+                            // Any non-Alt key dismisses the overlay
+                            app.show_panel_overlay = false;
+                            handle_key_event(app, key);
+                        }
+                    }
+                    Event::Key(key) if key.kind == KeyEventKind::Release => {
+                        // Alt key release — hide panel overlay
+                        if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
+                            app.show_panel_overlay = false;
+                        }
                     }
                     Event::Mouse(mouse) => {
                         last_input_time = Instant::now();
@@ -336,6 +351,7 @@ fn run_loop(
         if app.update_state != crate::app::UpdateState::Idle
             || app.overlays.grep_search.running
             || app.overlays.grep_search.debounce_deadline.is_some()
+            || app.show_panel_overlay
         {
             app.dirty.mark_all();
         }
