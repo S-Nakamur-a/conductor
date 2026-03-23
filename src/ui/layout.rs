@@ -172,6 +172,19 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::terminal_claude::render(frame, terminal_split[0], app);
     super::terminal_shell::render(frame, terminal_split[1], app);
 
+    // ── Panel number overlay (Alt key hold) ─────────────────────────
+    // Only show when no other overlay/modal is active.
+    if app.show_panel_overlay
+        && app.overlays.active == crate::overlay::ActiveOverlay::None
+        && app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::Normal
+        && app.review_state.input_mode == crate::review_state::ReviewInputMode::Normal
+        && app.update_state == crate::app::UpdateState::Idle
+        && !app.review_state.comment_detail_active
+        && app.worktree_mgr.skip_reason.is_none()
+    {
+        super::panel_overlay::render_panel_overlay(frame, app);
+    }
+
     // ── Overlays ────────────────────────────────────────────────────
     // These render on top of everything else when active.
 

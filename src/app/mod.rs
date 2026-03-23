@@ -382,6 +382,10 @@ pub struct App {
     // ── New worktree badge ──────────────────────────────────────
     /// Paths of worktrees recently created (for badge display). Cleared on selection.
     pub new_worktree_paths: HashSet<PathBuf>,
+
+    // ── Panel number overlay (Alt key hold) ─────────────────────
+    /// Whether to show the panel number overlay (true while Alt key is held).
+    pub show_panel_overlay: bool,
 }
 
 /// Result of a background diff computation.
@@ -559,6 +563,7 @@ impl App {
             symbol_action_overlay: SymbolActionOverlay::default(),
             bg_symbol_index_op: BackgroundOp::default(),
             new_worktree_paths: HashSet::new(),
+            show_panel_overlay: false,
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
         app.refresh_worktrees();
