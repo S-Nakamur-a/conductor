@@ -627,7 +627,11 @@ impl App {
                 if pending.auto_spawn {
                     // Temporarily select the new worktree so spawn_claude_code
                     // picks up the correct working directory.
-                    self.select_worktree_by_path(&path);
+                    // Use direct index assignment instead of select_worktree_by_path
+                    // to avoid on_worktree_changed() clearing the 🌱 new-worktree badge.
+                    if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
+                        self.selected_worktree = idx;
+                    }
                     match self.spawn_claude_code() {
                         Ok(idx) => {
                             if !pending.smart_prompt.is_empty() {
