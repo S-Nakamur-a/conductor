@@ -584,17 +584,56 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
     use crate::search_result_tree::SearchTreeRow;
 
+    // ── Keys handled regardless of input/result focus ────────────────
     match key.code {
         KeyCode::Esc => {
-            app.overlays.active = ActiveOverlay::None;
-            app.overlays.grep_search.running = false;
-            app.overlays.grep_search.bg_op.clear();
-            app.overlays.grep_search.bg_op_phase2.clear();
-            app.overlays.grep_search.debounce_deadline = None;
-            app.overlays.grep_search.phase1_active = false;
+            if !app.overlays.grep_search.input_focused {
+                // Return focus to input field instead of closing.
+                app.overlays.grep_search.input_focused = true;
+            } else {
+                app.overlays.active = ActiveOverlay::None;
+                app.overlays.grep_search.running = false;
+                app.overlays.grep_search.bg_op.clear();
+                app.overlays.grep_search.bg_op_phase2.clear();
+                app.overlays.grep_search.debounce_deadline = None;
+                app.overlays.grep_search.phase1_active = false;
+            }
+            return;
         }
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.overlays.grep_search.input_focused = !app.overlays.grep_search.input_focused;
+            return;
+        }
+        // Ctrl+r / Ctrl+i / Ctrl+v / Cmd+Backspace — always available.
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
+            app.schedule_grep_search();
+            return;
+        }
+        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.overlays.grep_search.case_sensitive = !app.overlays.grep_search.case_sensitive;
+            app.schedule_grep_search();
+            return;
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
+            app.overlays.grep_search.input_focused = true;
+            app.schedule_grep_search();
+            return;
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.overlays.grep_search.query.clear();
+            app.overlays.grep_search.input_focused = true;
+            app.schedule_grep_search();
+            return;
+        }
+        // Arrow Down from input moves focus to results.
+        KeyCode::Down if app.overlays.grep_search.input_focused => {
+            app.overlays.grep_search.input_focused = false;
+            return;
+        }
+        // Enter — jump to result or toggle expand (works in both modes).
         KeyCode::Enter => {
-            // Jump to the selected result — only if on a Match row.
             let selected = app.overlays.grep_search.selected;
             let result = app.overlays.grep_search.result_tree.get_match_at(selected).cloned();
             if let Some(result) = result {
@@ -611,29 +650,44 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     let tab_width = app.config.viewer.tab_width;
                     app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
                     app.rehighlight_viewer();
-                    // Show hit line ~5 lines from top instead of at the very top.
                     let hit_0 = result.line_number.saturating_sub(1);
                     let max = app.viewer_state.content.file_content.len().saturating_sub(1);
                     app.viewer_state.content.file_scroll = result.line_number.saturating_sub(6).min(max);
                     app.viewer_state.content.grep_highlight_line = Some(result.line_number);
-                    // Ensure scroll doesn't push the hit line off screen.
                     if app.viewer_state.content.file_scroll > hit_0 {
                         app.viewer_state.content.file_scroll = hit_0;
                     }
                     app.set_focus(Focus::Viewer);
                 }
             } else {
-                // On a Dir/File row: toggle expand/collapse.
                 app.overlays.grep_search.result_tree.toggle_expand(selected);
             }
+            return;
         }
+        _ => {}
+    }
+
+    // ── Input-focused mode: all keys go to the text input ────────────
+    if app.overlays.grep_search.input_focused {
+        if app.overlays.grep_search.query.handle_key(key) {
+            match key.code {
+                KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                    app.schedule_grep_search();
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+
+    // ── Result-focused mode: vim-style navigation ────────────────────
+    match key.code {
         KeyCode::Down | KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             let count = app.overlays.grep_search.result_tree.visible_rows().len();
             if count == 0 {
                 return;
             }
             let selected = app.overlays.grep_search.selected;
-            // If current row is a collapsed dir/file, skip to the next sibling.
             if app.overlays.grep_search.result_tree.is_collapsed(selected) {
                 if let Some(next) = app.overlays.grep_search.result_tree.next_sibling_index(selected) {
                     app.overlays.grep_search.selected = next;
@@ -648,7 +702,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
-            // Collapse the current node (or parent if on a Match row).
             let selected = app.overlays.grep_search.selected;
             let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
             match rows.get(selected) {
@@ -656,7 +709,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     app.overlays.grep_search.result_tree.collapse(selected);
                 }
                 Some(SearchTreeRow::Match { depth, .. }) => {
-                    // Find parent file/dir row.
                     let d = *depth;
                     for i in (0..selected).rev() {
                         let parent_depth = match &rows[i] {
@@ -674,7 +726,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     }
                 }
                 Some(SearchTreeRow::Dir { expanded: false, .. }) | Some(SearchTreeRow::File { expanded: false, .. }) => {
-                    // Already collapsed — move to parent dir.
                     let d = match &rows[selected] {
                         SearchTreeRow::Dir { depth, .. } => *depth,
                         SearchTreeRow::File { depth, .. } => *depth,
@@ -695,7 +746,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
-            // Expand the current node.
             app.overlays.grep_search.result_tree.expand(app.overlays.grep_search.selected);
         }
         KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -708,33 +758,20 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.selected = count - 1;
             }
         }
-        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            app.overlays.grep_search.query.clear();
-            app.schedule_grep_search();
-        }
-        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
-            app.schedule_grep_search();
-        }
-        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.grep_search.case_sensitive = !app.overlays.grep_search.case_sensitive;
-            app.schedule_grep_search();
-        }
-        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
-            app.schedule_grep_search();
-        }
-        _ => {
+        // Any other character key in result-focused mode: switch to input and type.
+        KeyCode::Char(_) => {
+            app.overlays.grep_search.input_focused = true;
             if app.overlays.grep_search.query.handle_key(key) {
-                // Text-modifying keys trigger a new search.
-                match key.code {
-                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                        app.schedule_grep_search();
-                    }
-                    _ => {}
-                }
+                app.schedule_grep_search();
             }
         }
+        KeyCode::Backspace | KeyCode::Delete => {
+            app.overlays.grep_search.input_focused = true;
+            if app.overlays.grep_search.query.handle_key(key) {
+                app.schedule_grep_search();
+            }
+        }
+        _ => {}
     }
 }
 

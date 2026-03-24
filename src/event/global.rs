@@ -83,6 +83,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.overlays.grep_search.bg_op_phase2.clear();
             app.overlays.grep_search.debounce_deadline = None;
             app.overlays.grep_search.phase1_active = false;
+            app.overlays.grep_search.input_focused = true;
             true
         }
         Action::TogglePanelExpand => {

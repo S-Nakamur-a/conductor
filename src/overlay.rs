@@ -95,6 +95,9 @@ pub struct GrepSearchOverlay {
     pub bg_op_phase2: BackgroundOp<GrepProgress>,
     /// Accumulates raw matches from background search, rebuilt into tree on completion.
     pub pending_matches: Vec<crate::grep_search::GrepMatch>,
+    /// Whether the query input field is focused (true) or the result list (false).
+    /// Defaults to true so the input field is focused when the overlay opens.
+    pub input_focused: bool,
 }
 
 
