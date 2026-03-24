@@ -5,7 +5,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Tabs};
 use ratatui::Frame;
 
 use crate::app::{App, Focus};
@@ -54,6 +54,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
+    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let panel_style = if focused {
+        Style::default().bg(theme.panel_bg_focused)
+    } else {
+        Style::default()
+    };
+
     if sessions.is_empty() {
         let block = if is_expanded {
             Block::default().title(" Claude Code ")
@@ -61,7 +68,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             Block::default()
                 .title(" Claude Code ")
                 .borders(Borders::ALL)
+                .border_type(border_type)
                 .border_style(Style::default().fg(border_color))
+                .style(panel_style)
         };
         let msg = Paragraph::new(" Enter / Click / Ctrl+n: new session")
             .style(Style::default().fg(theme.muted))
@@ -143,7 +152,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         Block::default()
             .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+            .border_type(border_type)
             .border_style(Style::default().fg(border_color))
+            .style(panel_style)
     };
 
     if let Some(active_idx) = app.terminal.active_claude_session {

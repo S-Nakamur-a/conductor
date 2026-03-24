@@ -7,7 +7,7 @@
 use ratatui::layout::{Alignment, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
@@ -67,11 +67,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         None => " (no file selected) ".to_string(),
     };
 
+    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let panel_style = if focused {
+        Style::default().bg(theme.panel_bg_focused)
+    } else {
+        Style::default()
+    };
+
     let block = Block::default()
         .title(title)
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
+        .border_type(border_type)
+        .border_style(Style::default().fg(border_color))
+        .style(panel_style);
 
     // Unified diff mode: delegate to dedicated renderer.
     if vs.diff_view.diff_mode && !vs.diff_view.diff_view_lines.is_empty() {
