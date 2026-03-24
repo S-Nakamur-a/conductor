@@ -55,11 +55,17 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
     .split(popup_area);
 
     // ── Search bar ──────────────────────────────────────────────
-    let title = " Full-text Search (Enter: jump, h/l: fold, Esc: close) ";
+    let input_focused = app.overlays.grep_search.input_focused;
+    let title = if input_focused {
+        " Full-text Search (Tab: results, ↓: results, Esc: close) "
+    } else {
+        " Full-text Search (Tab: input, Enter: jump, h/l: fold, Esc: input) "
+    };
+    let search_border_color = if input_focused { theme.border_focused } else { theme.border_unfocused };
     let search_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border_focused));
+        .border_style(Style::default().fg(search_border_color));
     let search_inner = search_block.inner(chunks[0]);
     frame.render_widget(search_block, chunks[0]);
 
@@ -90,19 +96,23 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
         ];
         frame.render_widget(Paragraph::new(Line::from(spans)), search_inner);
 
-        let prefix_width = mode_width;
-        let cursor_offset = app.overlays.grep_search.query.display_width_before_cursor();
-        let cursor_x = search_inner.x + prefix_width as u16 + cursor_offset as u16;
-        let cursor_y = search_inner.y;
-        if cursor_x < search_inner.x + search_inner.width && cursor_y < search_inner.y + search_inner.height {
-            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        if input_focused {
+            let prefix_width = mode_width;
+            let cursor_offset = app.overlays.grep_search.query.display_width_before_cursor();
+            let cursor_x = search_inner.x + prefix_width as u16 + cursor_offset as u16;
+            let cursor_y = search_inner.y;
+            if cursor_x < search_inner.x + search_inner.width && cursor_y < search_inner.y + search_inner.height {
+                frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+            }
         }
     } else {
         frame.render_widget(
             Paragraph::new(Span::styled(query_text, Style::default().fg(theme.fg))),
             search_inner,
         );
-        set_cursor_for_input(frame, search_inner, &app.overlays.grep_search.query);
+        if input_focused {
+            set_cursor_for_input(frame, search_inner, &app.overlays.grep_search.query);
+        }
     }
 
     // ── Status line ─────────────────────────────────────────────
@@ -128,9 +138,10 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
     );
 
     // ── Results tree ────────────────────────────────────────────
+    let list_border_color = if !input_focused { theme.border_focused } else { theme.border_unfocused };
     let list_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border_focused));
+        .border_style(Style::default().fg(list_border_color));
     let list_inner = list_block.inner(chunks[2]);
     frame.render_widget(list_block, chunks[2]);
 
@@ -241,7 +252,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
                             spans.push(Span::styled(before.to_string(), content_style));
                             spans.push(Span::styled(
                                 matched.to_string(),
-                                Style::default().bg(theme.accent).add_modifier(Modifier::BOLD),
+                                Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg).add_modifier(Modifier::BOLD),
                             ));
                             spans.push(Span::styled(after.to_string(), content_style));
                             if content.len() > safe_max {

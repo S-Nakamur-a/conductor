@@ -114,8 +114,7 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_
     // Each tab renders as: "[CC:🎹] [x]" — session label + " [x]" suffix.
     let tab_titles: Vec<String> = sessions
         .iter()
-        .enumerate()
-        .map(|(_, (_, label))| format!("[{}]", label))
+        .map(|(_, label)| format!("[{label}]"))
         .collect();
 
     let close_suffix = " [x]"; // 4 chars

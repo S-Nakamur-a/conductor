@@ -7,7 +7,7 @@
 use ratatui::layout::{Alignment, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
@@ -67,11 +67,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         None => " (no file selected) ".to_string(),
     };
 
+    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let panel_style = if focused {
+        Style::default().bg(theme.panel_bg_focused)
+    } else {
+        Style::default()
+    };
+
     let block = Block::default()
         .title(title)
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
+        .border_type(border_type)
+        .border_style(Style::default().fg(border_color))
+        .style(panel_style);
 
     // Unified diff mode: delegate to dedicated renderer.
     if vs.diff_view.diff_mode && !vs.diff_view.diff_view_lines.is_empty() {
@@ -93,7 +102,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let inner_height = area.height.saturating_sub(2) as usize;
+    // Build breadcrumb trail from jump history.
+    let breadcrumb_visible = build_breadcrumb_line(app);
+
+    // Account for breadcrumb bar height (1 row when visible).
+    let breadcrumb_height: u16 = if breadcrumb_visible.is_some() { 1 } else { 0 };
+    let inner_height = (area.height.saturating_sub(2 + breadcrumb_height)) as usize;
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // Diff annotations are cached in ViewerState (populated at function entry).
@@ -113,6 +127,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let line_1 = line_no + 1;
             let is_selected = vs.is_line_selected(line_1);
             let is_hovered = vs.click.hover_line == Some(line_1);
+            let is_gutter_hovered = vs.click.hover_gutter_line == Some(line_1);
             let is_in_pending_range = !is_selected && vs.selection.selected_line_start.is_some() && vs.selection.selected_line_end.is_none() && vs.click.hover_line.is_some() && {
                 let start = vs.selection.selected_line_start.unwrap();
                 let hover = vs.click.hover_line.unwrap();
@@ -131,6 +146,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
             // Gutter (line number).
             let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
+            let is_grep_highlight = vs.content.grep_highlight_line == Some(line_1);
             let gutter_style = if is_selected {
                 Style::default()
                     .fg(theme.gutter_selected_fg)
@@ -140,6 +156,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 Style::default()
                     .fg(theme.gutter_selected_fg)
                     .bg(theme.gutter_pending_bg)
+            } else if is_grep_highlight {
+                Style::default()
+                    .fg(theme.search_current_fg)
+                    .bg(theme.search_match_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_gutter_hovered {
+                Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
             } else if is_hovered {
                 Style::default().fg(theme.gutter_hover_fg)
             } else if diff_tag == Some(DiffLineTag::Insert) {
@@ -226,16 +249,48 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
             let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
+            // Apply underline to hover symbol (Cmd+hover for jump targets).
+            let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
+                if hs.line == line_1 {
+                    apply_underline_range(content_spans, hs.start_col, hs.end_col, vs.content.h_scroll, theme.accent)
+                } else {
+                    content_spans
+                }
+            } else {
+                content_spans
+            };
+
+            // Apply symbol hint labels (Vimium-style).
+            let content_spans = if app.symbol_hint_overlay.active {
+                let hints_on_line: Vec<_> = app.symbol_hint_overlay.hints.iter()
+                    .filter(|h| h.line == line_1)
+                    .collect();
+                if hints_on_line.is_empty() {
+                    content_spans
+                } else {
+                    apply_hint_labels(content_spans, &hints_on_line, &app.symbol_hint_overlay.input, vs.content.h_scroll, theme)
+                }
+            } else {
+                content_spans
+            };
+
             let mut spans = vec![gutter_span, badge];
             spans.extend(content_spans);
             Line::from(spans)
         })
         .collect();
 
+    // Prepend breadcrumb bar as the first line inside the block.
+    let mut all_lines = Vec::new();
+    if let Some(crumb_line) = breadcrumb_visible {
+        all_lines.push(crumb_line);
+    }
+    all_lines.extend(lines);
+
     // Clear the area first to avoid stale content when scrolling.
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    let paragraph = Paragraph::new(lines).block(block);
+    let paragraph = Paragraph::new(all_lines).block(block);
     frame.render_widget(paragraph, area);
 
     // Show selection hint overlay.
@@ -353,6 +408,9 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     let is_hovered = new_line_no
                         .map(|n| vs.click.hover_line == Some(n))
                         .unwrap_or(false);
+                    let is_gutter_hovered = new_line_no
+                        .map(|n| vs.click.hover_gutter_line == Some(n))
+                        .unwrap_or(false);
                     let is_in_pending_range = !is_selected && new_line_no.is_some() && vs.selection.selected_line_start.is_some() && vs.selection.selected_line_end.is_none() && vs.click.hover_line.is_some() && {
                         let n = new_line_no.unwrap();
                         let start = vs.selection.selected_line_start.unwrap();
@@ -384,6 +442,8 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                         Style::default()
                             .fg(theme.gutter_selected_fg)
                             .bg(theme.gutter_pending_bg)
+                    } else if is_gutter_hovered {
+                        Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
                     } else if is_hovered {
                         Style::default().fg(theme.gutter_hover_fg)
                     } else {
@@ -1005,4 +1065,198 @@ fn digit_count(n: usize) -> usize {
         val /= 10;
     }
     count
+}
+
+/// Apply underline + accent fg to spans within `[start_col..end_col)` of the original content.
+/// `h_scroll` is the horizontal scroll offset already applied to the spans.
+fn apply_underline_range(
+    spans: Vec<Span<'static>>,
+    start_col: usize,
+    end_col: usize,
+    h_scroll: usize,
+    accent: Color,
+) -> Vec<Span<'static>> {
+    // Convert original content cols to visible cols (after h_scroll).
+    let vis_start = start_col.saturating_sub(h_scroll);
+    let vis_end = end_col.saturating_sub(h_scroll);
+    if vis_start >= vis_end {
+        return spans;
+    }
+
+    let mut result = Vec::with_capacity(spans.len() + 4);
+    let mut pos: usize = 0;
+    for span in spans {
+        let span_len = span.content.chars().count();
+        let span_end = pos + span_len;
+
+        if span_end <= vis_start || pos >= vis_end {
+            // Entirely outside the underline range.
+            result.push(span);
+        } else {
+            // This span overlaps the underline range.
+            let rel_start = vis_start.saturating_sub(pos);
+            let rel_end = vis_end.saturating_sub(pos).min(span_len);
+
+            let chars: Vec<char> = span.content.chars().collect();
+
+            // Before underline.
+            if rel_start > 0 {
+                let before: String = chars[..rel_start].iter().collect();
+                result.push(Span::styled(before, span.style));
+            }
+            // Underline portion.
+            let underlined: String = chars[rel_start..rel_end].iter().collect();
+            result.push(Span::styled(
+                underlined,
+                span.style.fg(accent).add_modifier(Modifier::UNDERLINED),
+            ));
+            // After underline.
+            if rel_end < span_len {
+                let after: String = chars[rel_end..].iter().collect();
+                result.push(Span::styled(after, span.style));
+            }
+        }
+        pos = span_end;
+    }
+    result
+}
+
+/// Apply Vimium-style hint labels to spans, replacing the first 2 characters of each
+/// hinted symbol with the label text in accent color + bold.
+fn apply_hint_labels(
+    spans: Vec<Span<'static>>,
+    hints: &[&crate::overlay::SymbolHint],
+    input: &str,
+    h_scroll: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let mut result = spans;
+    // Process hints in reverse order so earlier replacements don't shift positions of later ones.
+    let mut sorted: Vec<&&crate::overlay::SymbolHint> = hints.iter().collect();
+    sorted.sort_by(|a, b| b.start_col.cmp(&a.start_col));
+
+    for hint in sorted {
+        let vis_start = hint.start_col.saturating_sub(h_scroll);
+        let label_len = hint.label.chars().count();
+        let vis_end = vis_start + label_len;
+
+        // Determine if this hint matches the current input.
+        let is_matching = input.is_empty() || hint.label.starts_with(input);
+        let label_style = if is_matching {
+            Style::default()
+                .fg(Color::Black)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted).bg(Color::Reset)
+        };
+
+        // Replace characters at vis_start..vis_end with the label.
+        result = replace_span_range(result, vis_start, vis_end, &hint.label, label_style);
+    }
+    result
+}
+
+/// Replace characters in the range `[start..end)` of the span list with `replacement` text
+/// in the given style.
+/// Build the breadcrumb `Line` from jump history + current position.
+/// Returns `None` when there are fewer than 2 entries (no navigation happened).
+fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
+    let current_file = app.viewer_state.content.current_file.as_ref()?;
+    let current = crate::jump_history::Location {
+        file_path: current_file.clone(),
+        line: app.viewer_state.content.file_scroll,
+        h_scroll: app.viewer_state.content.h_scroll,
+    };
+
+    let (entries, cur_idx) = app.jump_history.breadcrumb_trail(&current, 7);
+
+    // Don't show breadcrumb if there's only the current entry (no navigation).
+    let real_count = entries.iter().filter(|e| e.is_some()).count();
+    if real_count <= 1 {
+        return None;
+    }
+
+    let theme = &app.theme;
+    let separator = Span::styled(" \u{203a} ", Style::default().fg(theme.muted)); // " › "
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        if i > 0 {
+            spans.push(separator.clone());
+        }
+        match entry {
+            None => {
+                // Ellipsis sentinel for trimmed older entries.
+                spans.push(Span::styled("\u{2026}", Style::default().fg(theme.muted)));
+            }
+            Some(loc) => {
+                let label = breadcrumb_label(loc);
+                let style = if i == cur_idx {
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.muted)
+                };
+                spans.push(Span::styled(label, style));
+            }
+        }
+    }
+
+    // Prepend a small left-padding.
+    spans.insert(0, Span::raw(" "));
+    Some(Line::from(spans))
+}
+
+/// Format a location as a short breadcrumb label: `filename:line`.
+fn breadcrumb_label(loc: &crate::jump_history::Location) -> String {
+    let filename = loc
+        .file_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&loc.file_path);
+    format!("{}:{}", filename, loc.line + 1)
+}
+
+fn replace_span_range(
+    spans: Vec<Span<'static>>,
+    start: usize,
+    end: usize,
+    replacement: &str,
+    style: Style,
+) -> Vec<Span<'static>> {
+    let mut result = Vec::with_capacity(spans.len() + 4);
+    let mut pos: usize = 0;
+
+    for span in spans {
+        let span_len = span.content.chars().count();
+        let span_end = pos + span_len;
+
+        if span_end <= start || pos >= end {
+            // Entirely outside the replacement range.
+            result.push(span);
+        } else {
+            let chars: Vec<char> = span.content.chars().collect();
+            let rel_start = start.saturating_sub(pos);
+            let rel_end = end.saturating_sub(pos).min(span_len);
+
+            // Before replacement.
+            if rel_start > 0 {
+                let before: String = chars[..rel_start].iter().collect();
+                result.push(Span::styled(before, span.style));
+            }
+            // Replacement portion (only emit once, from the first overlapping span).
+            if pos <= start {
+                result.push(Span::styled(replacement.to_string(), style));
+            }
+            // After replacement.
+            if rel_end < span_len {
+                let after: String = chars[rel_end..].iter().collect();
+                result.push(Span::styled(after, span.style));
+            }
+        }
+        pos = span_end;
+    }
+    result
 }

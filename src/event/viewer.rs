@@ -18,29 +18,43 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── pending 'g' key for multi-key sequences (gd, gi, gr, gg) ──
+    // ── pending 'g' key — symbol hints are shown, waiting for second key ──
     if app.viewer_state.pending_g_key {
         app.viewer_state.pending_g_key = false;
         match key.code {
             KeyCode::Char('d') => {
+                app.symbol_hint_overlay = Default::default();
                 handle_go_to_definition(app);
                 return;
             }
             KeyCode::Char('i') => {
+                app.symbol_hint_overlay = Default::default();
                 handle_go_to_implementation(app);
                 return;
             }
             KeyCode::Char('r') => {
+                app.symbol_hint_overlay = Default::default();
                 handle_find_references(app);
                 return;
             }
             KeyCode::Char('g') => {
                 // gg = go to top
+                app.symbol_hint_overlay = Default::default();
                 app.viewer_state.content.file_scroll = 0;
                 return;
             }
+            KeyCode::Esc => {
+                app.symbol_hint_overlay = Default::default();
+                return;
+            }
+            KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                // First character of a hint label — enter hint input mode.
+                app.symbol_hint_overlay.input.push(c);
+                return;
+            }
             _ => {
-                // Unknown second key — ignore the g prefix.
+                // Unknown second key — dismiss hints.
+                app.symbol_hint_overlay = Default::default();
             }
         }
     }
@@ -78,8 +92,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.content.file_scroll = app.viewer_state.content.file_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
-            // 'g' sets pending_g_key for multi-key sequences (gd, gi, gr, gg).
+            // 'g' — show symbol hints and wait for second key (gd, gi, gr, gg, or hint label).
             app.viewer_state.pending_g_key = true;
+            // Build hints using an estimated viewer height (will be clipped by actual content).
+            let hints = app.build_symbol_hints(50);
+            app.symbol_hint_overlay.active = !hints.is_empty();
+            app.symbol_hint_overlay.hints = hints;
+            app.symbol_hint_overlay.input.clear();
         }
         Some(Action::GoToBottom) => {
             app.viewer_state.content.file_scroll = total.saturating_sub(1);
@@ -191,6 +210,27 @@ fn handle_go_to_definition(app: &mut App) {
         return;
     }
 
+    // Context-aware: if cursor is at a definition site, show references instead.
+    if app.is_cursor_at_definition(&symbol) {
+        let root = app.symbol_index.root();
+        let refs = app.symbol_index.find_references(&symbol, &root);
+        if refs.is_empty() {
+            app.set_status(format!("No references found for '{symbol}'"), StatusLevel::Warning);
+        } else {
+            let count = refs.len();
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = symbol.clone();
+            app.references_overlay.results = refs;
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+            app.set_status(
+                format!("At definition — showing {count} references for '{symbol}'"),
+                StatusLevel::Info,
+            );
+        }
+        return;
+    }
+
     let defs = app.symbol_index.find_definitions(&symbol);
     match defs.len() {
         0 => {
@@ -200,7 +240,7 @@ fn handle_go_to_definition(app: &mut App) {
             let def = &defs[0];
             let file = def.file_path.clone();
             let line = def.line;
-            app.jump_to_location(&file, line);
+            app.jump_to_location(&file, line, 0);
             app.set_status(format!("Jumped to definition of '{symbol}'"), StatusLevel::Success);
         }
         n => {
@@ -245,7 +285,7 @@ fn handle_go_to_implementation(app: &mut App) {
             let imp = &impls[0];
             let file = imp.file_path.clone();
             let line = imp.line;
-            app.jump_to_location(&file, line);
+            app.jump_to_location(&file, line, 0);
             app.set_status(format!("Jumped to implementation of '{symbol}'"), StatusLevel::Success);
         }
         n => {

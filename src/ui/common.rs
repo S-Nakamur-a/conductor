@@ -62,9 +62,12 @@ fn snapshot_screen(
     };
 
     let is_alt_screen = parser.screen().alternate_screen();
-    let effective_offset = if is_alt_screen { 0 } else { scroll_offset };
+    let requested_offset = if is_alt_screen { 0 } else { scroll_offset };
 
-    parser.set_scrollback(effective_offset);
+    parser.set_scrollback(requested_offset);
+    // vt100 internally clamps to the actual scrollback buffer length.
+    // Read back the effective offset so our cache reflects the real position.
+    let effective_offset = parser.screen().scrollback();
 
     let screen = parser.screen();
     let (rows, cols) = screen.size();

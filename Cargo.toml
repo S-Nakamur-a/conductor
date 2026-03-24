@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.33.1"
+version = "0.40.2"
 edition = "2024"
 
 [dependencies]
@@ -32,6 +32,10 @@ ignore = "0.4"
 aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-typescript = "0.23"
 
 [dev-dependencies]
 tempfile = "3"

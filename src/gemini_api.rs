@@ -89,6 +89,7 @@ struct ApiErrorDetail {
 /// - `user_message`: user message content
 /// - `model`: model ID (uses default if `None`)
 /// - `max_tokens`: max tokens to generate
+///
 /// Returns the text content from the first candidate's first part.
 pub fn call_messages_api(
     system_prompt: &str,
@@ -136,10 +137,10 @@ pub fn call_messages_api(
         if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body) {
             bail!("Gemini API error ({}): {}", status, err.error.message);
         }
-        bail!("Gemini API error ({}): {}", status, body);
+        bail!("Gemini API error ({status}): {body}");
     }
 
-    log::debug!("Gemini API raw HTTP body: {:?}", body);
+    log::debug!("Gemini API raw HTTP body: {body:?}");
 
     let resp: GenerateContentResponse =
         serde_json::from_str(&body).context("Failed to parse Gemini API response")?;

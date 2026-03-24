@@ -584,17 +584,56 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
     use crate::search_result_tree::SearchTreeRow;
 
+    // ── Keys handled regardless of input/result focus ────────────────
     match key.code {
         KeyCode::Esc => {
-            app.overlays.active = ActiveOverlay::None;
-            app.overlays.grep_search.running = false;
-            app.overlays.grep_search.bg_op.clear();
-            app.overlays.grep_search.bg_op_phase2.clear();
-            app.overlays.grep_search.debounce_deadline = None;
-            app.overlays.grep_search.phase1_active = false;
+            if !app.overlays.grep_search.input_focused {
+                // Return focus to input field instead of closing.
+                app.overlays.grep_search.input_focused = true;
+            } else {
+                app.overlays.active = ActiveOverlay::None;
+                app.overlays.grep_search.running = false;
+                app.overlays.grep_search.bg_op.clear();
+                app.overlays.grep_search.bg_op_phase2.clear();
+                app.overlays.grep_search.debounce_deadline = None;
+                app.overlays.grep_search.phase1_active = false;
+            }
+            return;
         }
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.overlays.grep_search.input_focused = !app.overlays.grep_search.input_focused;
+            return;
+        }
+        // Ctrl+r / Ctrl+i / Ctrl+v / Cmd+Backspace — always available.
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
+            app.schedule_grep_search();
+            return;
+        }
+        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.overlays.grep_search.case_sensitive = !app.overlays.grep_search.case_sensitive;
+            app.schedule_grep_search();
+            return;
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
+            app.overlays.grep_search.input_focused = true;
+            app.schedule_grep_search();
+            return;
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.overlays.grep_search.query.clear();
+            app.overlays.grep_search.input_focused = true;
+            app.schedule_grep_search();
+            return;
+        }
+        // Arrow Down from input moves focus to results.
+        KeyCode::Down if app.overlays.grep_search.input_focused => {
+            app.overlays.grep_search.input_focused = false;
+            return;
+        }
+        // Enter — jump to result or toggle expand (works in both modes).
         KeyCode::Enter => {
-            // Jump to the selected result — only if on a Match row.
             let selected = app.overlays.grep_search.selected;
             let result = app.overlays.grep_search.result_tree.get_match_at(selected).cloned();
             if let Some(result) = result {
@@ -611,21 +650,44 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     let tab_width = app.config.viewer.tab_width;
                     app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
                     app.rehighlight_viewer();
-                    app.viewer_state.content.file_scroll = result.line_number.saturating_sub(1);
+                    let hit_0 = result.line_number.saturating_sub(1);
+                    let max = app.viewer_state.content.file_content.len().saturating_sub(1);
+                    app.viewer_state.content.file_scroll = result.line_number.saturating_sub(6).min(max);
+                    app.viewer_state.content.grep_highlight_line = Some(result.line_number);
+                    if app.viewer_state.content.file_scroll > hit_0 {
+                        app.viewer_state.content.file_scroll = hit_0;
+                    }
                     app.set_focus(Focus::Viewer);
                 }
             } else {
-                // On a Dir/File row: toggle expand/collapse.
                 app.overlays.grep_search.result_tree.toggle_expand(selected);
             }
+            return;
         }
+        _ => {}
+    }
+
+    // ── Input-focused mode: all keys go to the text input ────────────
+    if app.overlays.grep_search.input_focused {
+        if app.overlays.grep_search.query.handle_key(key) {
+            match key.code {
+                KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
+                    app.schedule_grep_search();
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+
+    // ── Result-focused mode: vim-style navigation ────────────────────
+    match key.code {
         KeyCode::Down | KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             let count = app.overlays.grep_search.result_tree.visible_rows().len();
             if count == 0 {
                 return;
             }
             let selected = app.overlays.grep_search.selected;
-            // If current row is a collapsed dir/file, skip to the next sibling.
             if app.overlays.grep_search.result_tree.is_collapsed(selected) {
                 if let Some(next) = app.overlays.grep_search.result_tree.next_sibling_index(selected) {
                     app.overlays.grep_search.selected = next;
@@ -639,8 +701,7 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.selected -= 1;
             }
         }
-        KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
-            // Collapse the current node (or parent if on a Match row).
+        KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
             let selected = app.overlays.grep_search.selected;
             let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
             match rows.get(selected) {
@@ -648,7 +709,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     app.overlays.grep_search.result_tree.collapse(selected);
                 }
                 Some(SearchTreeRow::Match { depth, .. }) => {
-                    // Find parent file/dir row.
                     let d = *depth;
                     for i in (0..selected).rev() {
                         let parent_depth = match &rows[i] {
@@ -666,7 +726,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     }
                 }
                 Some(SearchTreeRow::Dir { expanded: false, .. }) | Some(SearchTreeRow::File { expanded: false, .. }) => {
-                    // Already collapsed — move to parent dir.
                     let d = match &rows[selected] {
                         SearchTreeRow::Dir { depth, .. } => *depth,
                         SearchTreeRow::File { depth, .. } => *depth,
@@ -686,8 +745,7 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 _ => {}
             }
         }
-        KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
-            // Expand the current node.
+        KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
             app.overlays.grep_search.result_tree.expand(app.overlays.grep_search.selected);
         }
         KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -700,33 +758,20 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.selected = count - 1;
             }
         }
-        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            app.overlays.grep_search.query.clear();
-            app.schedule_grep_search();
-        }
-        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
-            app.schedule_grep_search();
-        }
-        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.grep_search.case_sensitive = !app.overlays.grep_search.case_sensitive;
-            app.schedule_grep_search();
-        }
-        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
-            app.schedule_grep_search();
-        }
-        _ => {
+        // Any other character key in result-focused mode: switch to input and type.
+        KeyCode::Char(_) => {
+            app.overlays.grep_search.input_focused = true;
             if app.overlays.grep_search.query.handle_key(key) {
-                // Text-modifying keys trigger a new search.
-                match key.code {
-                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                        app.schedule_grep_search();
-                    }
-                    _ => {}
-                }
+                app.schedule_grep_search();
             }
         }
+        KeyCode::Backspace | KeyCode::Delete => {
+            app.overlays.grep_search.input_focused = true;
+            if app.overlays.grep_search.query.handle_key(key) {
+                app.schedule_grep_search();
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1087,7 +1132,7 @@ pub(super) fn handle_references_key(app: &mut App, key: KeyEvent) {
             let selected = app.references_overlay.selected;
             if let Some(reference) = app.references_overlay.results.get(selected).cloned() {
                 app.references_overlay.active = false;
-                app.jump_to_location(&reference.file_path, reference.line);
+                app.jump_to_location(&reference.file_path, reference.line, 0);
             }
         }
         _ => {}
@@ -1104,4 +1149,225 @@ fn adjust_references_scroll(app: &mut App) {
     } else if selected >= *scroll + visible {
         *scroll = selected.saturating_sub(visible - 1);
     }
+}
+
+// ── Symbol hint overlay ─────────────────────────────────────────────────
+
+/// Handle key input while the symbol hint overlay is waiting for the second label character.
+pub(super) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.symbol_hint_overlay = Default::default();
+        }
+        KeyCode::Char(c) if c.is_ascii_lowercase() => {
+            app.symbol_hint_overlay.input.push(c);
+            let input = app.symbol_hint_overlay.input.clone();
+            // Find matching hint.
+            let matched = app
+                .symbol_hint_overlay
+                .hints
+                .iter()
+                .find(|h| h.label == input)
+                .cloned();
+            // Dismiss hints.
+            let scroll = app.viewer_state.content.file_scroll;
+            app.symbol_hint_overlay = Default::default();
+            if let Some(hint) = matched {
+                // Build action overlay for this symbol.
+                let screen_row = hint.line.saturating_sub(1).saturating_sub(scroll);
+                open_symbol_action_overlay(app, &hint.symbol_name, screen_row);
+            }
+        }
+        _ => {
+            app.symbol_hint_overlay = Default::default();
+        }
+    }
+}
+
+/// Build and show the symbol action overlay for the given symbol.
+/// `source_screen_row` is the screen row (0-indexed) where the symbol appeared.
+fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_row: usize) {
+    use crate::overlay::{SymbolAction, SymbolActionOverlay};
+
+    let mut actions = Vec::new();
+
+    // Definitions.
+    let defs = app.symbol_index.find_definitions(symbol_name);
+    if defs.len() == 1 {
+        actions.push(SymbolAction {
+            key: 'd',
+            label: "Go to definition".to_string(),
+            file_path: defs[0].file_path.clone(),
+            line: defs[0].line,
+        });
+    } else if defs.len() > 1 {
+        actions.push(SymbolAction {
+            key: 'd',
+            label: format!("Go to definition ({} results)", defs.len()),
+            file_path: defs[0].file_path.clone(),
+            line: defs[0].line,
+        });
+    }
+
+    // Implementations.
+    let impls = app.symbol_index.find_implementations(symbol_name);
+    if impls.len() == 1 {
+        actions.push(SymbolAction {
+            key: 'i',
+            label: "Go to implementation".to_string(),
+            file_path: impls[0].file_path.clone(),
+            line: impls[0].line,
+        });
+    } else if impls.len() > 1 {
+        actions.push(SymbolAction {
+            key: 'i',
+            label: format!("Go to implementation ({} results)", impls.len()),
+            file_path: impls[0].file_path.clone(),
+            line: impls[0].line,
+        });
+    }
+
+    // References (always show — count requires file scan).
+    let root = app.symbol_index.root();
+    let refs = app.symbol_index.find_references(symbol_name, &root);
+    if !refs.is_empty() {
+        actions.push(SymbolAction {
+            key: 'r',
+            label: format!("Find references ({} refs)", refs.len()),
+            file_path: refs[0].file_path.clone(),
+            line: refs[0].line,
+        });
+    }
+
+    if actions.is_empty() {
+        app.set_status(
+            format!("No navigation targets for '{symbol_name}'"),
+            crate::app::StatusLevel::Warning,
+        );
+        return;
+    }
+
+    // Context-aware default selection: if cursor is at the definition site,
+    // pre-select "Find references" so pressing Enter goes to references.
+    let at_def = app.is_cursor_at_definition(symbol_name);
+    let default_idx = if at_def {
+        actions.iter().position(|a| a.key == 'r').unwrap_or(0)
+    } else {
+        0
+    };
+
+    app.symbol_action_overlay = SymbolActionOverlay {
+        active: true,
+        symbol_name: symbol_name.to_string(),
+        actions,
+        selected: default_idx,
+        source_screen_row,
+    };
+}
+
+// ── Symbol action overlay ───────────────────────────────────────────────
+
+/// Handle key input in the symbol action overlay.
+pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
+    let symbol = app.symbol_action_overlay.symbol_name.clone();
+    let screen_row = app.symbol_action_overlay.source_screen_row;
+    match key.code {
+        KeyCode::Esc => {
+            app.symbol_action_overlay = Default::default();
+        }
+        KeyCode::Char('d') => {
+            app.symbol_action_overlay = Default::default();
+            jump_to_symbol_definition(app, &symbol, screen_row);
+        }
+        KeyCode::Char('i') => {
+            app.symbol_action_overlay = Default::default();
+            jump_to_symbol_implementation(app, &symbol, screen_row);
+        }
+        KeyCode::Char('r') => {
+            app.symbol_action_overlay = Default::default();
+            jump_to_symbol_references(app, &symbol);
+        }
+        KeyCode::Enter => {
+            let idx = app.symbol_action_overlay.selected;
+            if let Some(action) = app.symbol_action_overlay.actions.get(idx).cloned() {
+                app.symbol_action_overlay = Default::default();
+                match action.key {
+                    'd' => jump_to_symbol_definition(app, &symbol, screen_row),
+                    'i' => jump_to_symbol_implementation(app, &symbol, screen_row),
+                    'r' => jump_to_symbol_references(app, &symbol),
+                    _ => {}
+                }
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let count = app.symbol_action_overlay.actions.len();
+            if app.symbol_action_overlay.selected + 1 < count {
+                app.symbol_action_overlay.selected += 1;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.symbol_action_overlay.selected = app.symbol_action_overlay.selected.saturating_sub(1);
+        }
+        _ => {}
+    }
+}
+
+fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
+    let defs = app.symbol_index.find_definitions(symbol);
+    match defs.len() {
+        0 => {
+            app.set_status(format!("No definition found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        }
+        1 => {
+            app.jump_to_location(&defs[0].file_path, defs[0].line, screen_row);
+            app.set_status(format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
+        }
+        _ => {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (definitions)");
+            app.references_overlay.results = defs.iter().map(|d| crate::symbol_index::Reference {
+                file_path: d.file_path.clone(), line: d.line,
+                content: format!("{:?} {}", d.kind, d.name),
+            }).collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+        }
+    }
+}
+
+fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize) {
+    let impls = app.symbol_index.find_implementations(symbol);
+    match impls.len() {
+        0 => {
+            app.set_status(format!("No implementations found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        }
+        1 => {
+            app.jump_to_location(&impls[0].file_path, impls[0].line, screen_row);
+            app.set_status(format!("Jumped to implementation of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
+        }
+        _ => {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (implementations)");
+            app.references_overlay.results = impls.iter().map(|d| crate::symbol_index::Reference {
+                file_path: d.file_path.clone(), line: d.line,
+                content: format!("{:?} {}", d.kind, d.name),
+            }).collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+        }
+    }
+}
+
+fn jump_to_symbol_references(app: &mut App, symbol: &str) {
+    let root = app.symbol_index.root();
+    let refs = app.symbol_index.find_references(symbol, &root);
+    if refs.is_empty() {
+        app.set_status(format!("No references found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        return;
+    }
+    app.references_overlay.active = true;
+    app.references_overlay.symbol_name = symbol.to_string();
+    app.references_overlay.results = refs;
+    app.references_overlay.selected = 0;
+    app.references_overlay.scroll = 0;
 }

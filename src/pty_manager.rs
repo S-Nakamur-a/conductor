@@ -620,6 +620,7 @@ impl PtyManager {
     /// The writer handle is used to respond to terminal queries such as
     /// cursor position reports (`CSI 6 n`), which many programs (fzf, shells)
     /// send to determine where to draw their UI.
+    #[allow(clippy::too_many_arguments)]
     fn reader_thread(
         mut reader: Box<dyn Read + Send>,
         buffer: Arc<Mutex<Vec<String>>>,

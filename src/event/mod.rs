@@ -1,6 +1,7 @@
 //! Event handling — maps keyboard and mouse events to application actions.
 //!
-//! Focus-based dispatching: Tab / Shift+Tab cycle between panels.
+//! Focus-based dispatching: Tab / Shift+Tab cycle between non-terminal panels;
+//! Alt+h / Alt+l cycle between all panels including terminals.
 //! Overlay handlers (worktree input, cherry-pick, etc.) take priority.
 //! Terminal-focused panels forward keys to the active PTY session.
 
@@ -155,6 +156,18 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // ── 1b2. Symbol action overlay (after hint selection) ──
+    if app.symbol_action_overlay.active {
+        handle_symbol_action_key(app, key);
+        return;
+    }
+
+    // ── 1b3. Symbol hint overlay input (second char of label) ──
+    if app.symbol_hint_overlay.active && !app.symbol_hint_overlay.input.is_empty() {
+        handle_symbol_hint_key(app, key);
+        return;
+    }
+
     // ── 1c. Terminal focus — intercept configurable keys, forward rest to PTY ─
 
     if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
@@ -162,11 +175,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         // except navigation keys (focus switching is handled above in §0).
         if app.is_selected_worktree_grabbed() {
             // Allow Esc to leave terminal, but block everything else.
-            if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
-                match action {
-                    Action::LeaveTerminal => { app.set_focus(Focus::Explorer); }
-                    _ => {}
-                }
+            if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, KeyContext::Terminal) {
+                app.set_focus(Focus::Explorer);
             }
             return;
         }
@@ -242,6 +252,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     terminal::open_file_from_terminal_output(app);
                     return;
                 }
+                Action::CycleFocusForward => { app.cycle_focus_forward(); return; }
+                Action::CycleFocusBackward => { app.cycle_focus_backward(); return; }
                 _ => {} // Other global actions not intercepted in terminal
             }
         }
@@ -308,6 +320,7 @@ pub fn handle_paste_event(app: &mut App, data: String) {
             app.worktree_mgr.input_buffer.insert_str(&single_line);
         } else if app.overlays.active == ActiveOverlay::GrepSearch {
             app.overlays.grep_search.query.insert_str(&single_line);
+            app.overlays.grep_search.input_focused = true;
             app.schedule_grep_search();
         } else if app.viewer_state.search.search_active {
             app.viewer_state.search.search_query.insert_str(&single_line);

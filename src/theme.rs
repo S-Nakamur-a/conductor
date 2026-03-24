@@ -71,6 +71,8 @@ pub struct Theme {
     pub gutter_selected_fg: Color,
     /// Foreground for gutter line numbers on hover (slightly brighter than muted).
     pub gutter_hover_fg: Color,
+    /// Background for gutter line numbers on hover (subtle highlight to indicate clickability).
+    pub gutter_hover_bg: Color,
     /// Background for gutter of pending range lines (dimmer than selected).
     pub gutter_pending_bg: Color,
     /// Background for pending range lines in the viewer (dimmer than selected).
@@ -113,6 +115,10 @@ pub struct Theme {
     pub comment_preview_bg: Color,
     /// Text color for reply content.
     pub reply_text: Color,
+
+    // ── Panel focus ─────────────────────────────────────────────────
+    /// Subtle background tint for focused panels.
+    pub panel_bg_focused: Color,
 }
 
 impl Theme {
@@ -180,6 +186,7 @@ impl Theme {
             gutter_selected_bg: Color::LightBlue,
             gutter_selected_fg: Color::Black,
             gutter_hover_fg: Color::Gray,
+            gutter_hover_bg: Color::Rgb(45, 45, 55),
             gutter_pending_bg: Color::Rgb(50, 70, 90),
             line_pending_bg: Color::Rgb(40, 40, 50),
 
@@ -201,6 +208,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(30, 30, 50),
             reply_text: Color::Rgb(180, 180, 200),
+
+            panel_bg_focused: Color::Rgb(30, 30, 46),
         }
     }
 
@@ -237,6 +246,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(98, 114, 164),
             gutter_selected_fg: Color::Rgb(40, 42, 54),
             gutter_hover_fg: Color::Rgb(98, 114, 164),
+            gutter_hover_bg: Color::Rgb(55, 58, 75),
             gutter_pending_bg: Color::Rgb(60, 65, 100),
             line_pending_bg: Color::Rgb(50, 52, 68),
 
@@ -258,6 +268,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(40, 42, 60),
             reply_text: Color::Rgb(189, 147, 249),
+
+            panel_bg_focused: Color::Rgb(50, 52, 68),
         }
     }
 
@@ -294,6 +306,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(129, 161, 193),
             gutter_selected_fg: Color::Rgb(46, 52, 64),
             gutter_hover_fg: Color::Rgb(76, 86, 106),
+            gutter_hover_bg: Color::Rgb(50, 56, 70),
             gutter_pending_bg: Color::Rgb(70, 85, 110),
             line_pending_bg: Color::Rgb(50, 58, 72),
 
@@ -315,6 +328,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(46, 52, 70),
             reply_text: Color::Rgb(129, 161, 193),
+
+            panel_bg_focused: Color::Rgb(55, 62, 78),
         }
     }
 
@@ -351,6 +366,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(38, 139, 210),
             gutter_selected_fg: Color::Rgb(0, 43, 54),
             gutter_hover_fg: Color::Rgb(88, 110, 117),
+            gutter_hover_bg: Color::Rgb(10, 55, 68),
             gutter_pending_bg: Color::Rgb(15, 75, 115),
             line_pending_bg: Color::Rgb(3, 48, 60),
 
@@ -372,6 +388,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(7, 54, 72),
             reply_text: Color::Rgb(108, 113, 196),
+
+            panel_bg_focused: Color::Rgb(12, 58, 70),
         }
     }
 
@@ -408,6 +426,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(122, 162, 247),
             gutter_selected_fg: Color::Rgb(26, 27, 38),
             gutter_hover_fg: Color::Rgb(86, 95, 137),
+            gutter_hover_bg: Color::Rgb(36, 40, 58),
             gutter_pending_bg: Color::Rgb(55, 72, 130),
             line_pending_bg: Color::Rgb(35, 38, 55),
 
@@ -429,6 +448,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(30, 32, 50),
             reply_text: Color::Rgb(125, 207, 255),
+
+            panel_bg_focused: Color::Rgb(33, 35, 52),
         }
     }
 
@@ -465,6 +486,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(131, 165, 152),
             gutter_selected_fg: Color::Rgb(40, 40, 40),
             gutter_hover_fg: Color::Rgb(102, 92, 84),
+            gutter_hover_bg: Color::Rgb(55, 52, 50),
             gutter_pending_bg: Color::Rgb(75, 95, 88),
             line_pending_bg: Color::Rgb(50, 48, 46),
 
@@ -486,6 +508,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(50, 48, 55),
             reply_text: Color::Rgb(131, 165, 152),
+
+            panel_bg_focused: Color::Rgb(45, 42, 40),
         }
     }
 
@@ -522,6 +546,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(196, 167, 231),
             gutter_selected_fg: Color::Rgb(25, 23, 36),
             gutter_hover_fg: Color::Rgb(110, 106, 134),
+            gutter_hover_bg: Color::Rgb(45, 42, 65),
             gutter_pending_bg: Color::Rgb(110, 90, 145),
             line_pending_bg: Color::Rgb(45, 42, 65),
 
@@ -543,6 +568,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(35, 33, 55),
             reply_text: Color::Rgb(196, 167, 231),
+
+            panel_bg_focused: Color::Rgb(38, 36, 56),
         }
     }
 
@@ -579,6 +606,7 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(127, 180, 202),
             gutter_selected_fg: Color::Rgb(22, 22, 29),
             gutter_hover_fg: Color::Rgb(84, 84, 109),
+            gutter_hover_bg: Color::Rgb(38, 38, 52),
             gutter_pending_bg: Color::Rgb(65, 100, 120),
             line_pending_bg: Color::Rgb(40, 40, 55),
 
@@ -600,6 +628,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(30, 30, 45),
             reply_text: Color::Rgb(127, 180, 202),
+
+            panel_bg_focused: Color::Rgb(30, 30, 42),
         }
     }
 }

@@ -6,7 +6,7 @@
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
@@ -62,6 +62,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         Style::default()
     };
+    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
 
     // ── Zone layout calculation ────────────────────────────────────
     // Zone 1: worktree + session list  — 40% (or more)
@@ -97,11 +98,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // ── Zone 1: Worktree list ─────────────────────────────────────
 
+    let panel_style = if focused {
+        Style::default().bg(theme.panel_bg_focused)
+    } else {
+        Style::default()
+    };
+
     let block = Block::default()
         .title(Span::styled(title, title_style))
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
+        .border_type(border_type)
+        .border_style(Style::default().fg(border_color))
+        .style(panel_style);
 
     // Pulse phase: ~1s cycle at 60fps (30 frames on, 30 frames off).
     let pulse_on = (app.ui_tick / 30) % 2 == 0;
@@ -237,10 +246,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         Style::default().fg(theme.fg)
                     };
 
-                    let status_text = if wt.is_clean {
-                        "\u{2713}".to_string()
+                    let status_spans: Vec<Span> = if wt.is_clean {
+                        vec![Span::styled(" \u{2713}", Style::default().fg(theme.muted))]
                     } else {
-                        format!("+{} ~{} -{}", wt.added, wt.modified, wt.deleted)
+                        let mut parts = Vec::new();
+                        if wt.added > 0 {
+                            parts.push(Span::styled(
+                                format!(" +{}", wt.added),
+                                if is_grabbed { Style::default().fg(theme.muted) } else { Style::default().fg(theme.success) },
+                            ));
+                        }
+                        if wt.modified > 0 {
+                            parts.push(Span::styled(
+                                format!(" ~{}", wt.modified),
+                                if is_grabbed { Style::default().fg(theme.muted) } else { Style::default().fg(theme.warning) },
+                            ));
+                        }
+                        if wt.deleted > 0 {
+                            parts.push(Span::styled(
+                                format!(" -{}", wt.deleted),
+                                if is_grabbed { Style::default().fg(theme.muted) } else { Style::default().fg(theme.error) },
+                            ));
+                        }
+                        parts
                     };
 
                     let branch_style = if is_grabbed {
@@ -257,10 +285,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         Style::default().fg(theme.success)
                     };
 
+                    let is_new = app.new_worktree_paths.contains(&wt.path);
+
                     let mut spans = vec![
                         Span::styled(format!(" {marker} "), marker_style),
                         Span::styled(wt.branch.clone(), branch_style),
                     ];
+
+                    if is_new {
+                        spans.push(Span::styled(
+                            " \u{1F331}",  // 🌱
+                            Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
+                        ));
+                    }
 
                     if is_grabbed {
                         spans.push(Span::styled(
@@ -300,14 +337,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         ));
                     }
 
-                    spans.push(Span::styled(
-                        format!(" {status_text}"),
-                        if is_grabbed || wt.is_clean {
-                            Style::default().fg(theme.muted)
-                        } else {
-                            Style::default().fg(Color::Magenta)
-                        },
-                    ));
+                    spans.extend(status_spans);
 
                     if !is_grabbed {
                         match (wt.ahead, wt.behind) {
@@ -465,13 +495,33 @@ fn render_detail(
             Span::styled("\u{2713} clean", Style::default().fg(theme.success)),
         ]
     } else {
-        vec![
-            Span::styled(" Status: ", Style::default().fg(theme.muted)),
-            Span::styled(
-                format!("+{} ~{} -{}", wt.added, wt.modified, wt.deleted),
-                Style::default().fg(Color::Magenta),
-            ),
-        ]
+        {
+            let mut spans = vec![Span::styled(" Status: ", Style::default().fg(theme.muted))];
+            let mut first = true;
+            if wt.added > 0 {
+                spans.push(Span::styled(
+                    format!("added: {}", wt.added),
+                    Style::default().fg(theme.success),
+                ));
+                first = false;
+            }
+            if wt.modified > 0 {
+                if !first { spans.push(Span::styled("  ", Style::default())); }
+                spans.push(Span::styled(
+                    format!("modified: {}", wt.modified),
+                    Style::default().fg(theme.warning),
+                ));
+                first = false;
+            }
+            if wt.deleted > 0 {
+                if !first { spans.push(Span::styled("  ", Style::default())); }
+                spans.push(Span::styled(
+                    format!("deleted: {}", wt.deleted),
+                    Style::default().fg(theme.error),
+                ));
+            }
+            spans
+        }
     };
     lines.push(Line::from(status_spans));
 

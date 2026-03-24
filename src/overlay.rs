@@ -95,6 +95,9 @@ pub struct GrepSearchOverlay {
     pub bg_op_phase2: BackgroundOp<GrepProgress>,
     /// Accumulates raw matches from background search, rebuilt into tree on completion.
     pub pending_matches: Vec<crate::grep_search::GrepMatch>,
+    /// Whether the query input field is focused (true) or the result list (false).
+    /// Defaults to true so the input field is focused when the overlay opens.
+    pub input_focused: bool,
 }
 
 
@@ -138,6 +141,57 @@ pub struct ReferencesOverlay {
     pub results: Vec<crate::symbol_index::Reference>,
     pub selected: usize,
     pub scroll: usize,
+}
+
+/// A single symbol hint shown during Vimium-style navigation.
+#[derive(Debug, Clone)]
+pub struct SymbolHint {
+    /// 2-character label (e.g. "aa", "ab").
+    pub label: String,
+    /// The symbol name (e.g. "AppState").
+    pub symbol_name: String,
+    /// 1-indexed line number.
+    pub line: usize,
+    /// 0-indexed start column in content.
+    pub start_col: usize,
+    /// 0-indexed end column (exclusive) in content.
+    #[allow(dead_code)]
+    pub end_col: usize,
+}
+
+/// Vimium-style symbol hint overlay — shown when `g` is pressed in Viewer.
+#[derive(Default)]
+pub struct SymbolHintOverlay {
+    pub active: bool,
+    /// All generated hints for visible symbols.
+    pub hints: Vec<SymbolHint>,
+    /// Characters typed so far for label matching (0-2 chars).
+    pub input: String,
+}
+
+/// An action available for a selected symbol.
+#[derive(Debug, Clone)]
+pub struct SymbolAction {
+    /// Key to press (e.g. 'd', 'i', 'r').
+    pub key: char,
+    /// Description (e.g. "Go to definition").
+    pub label: String,
+    /// Target file path.
+    pub file_path: String,
+    /// Target line number (1-indexed).
+    pub line: usize,
+}
+
+/// Action selection modal shown after picking a symbol hint.
+#[derive(Default)]
+pub struct SymbolActionOverlay {
+    pub active: bool,
+    pub symbol_name: String,
+    pub actions: Vec<SymbolAction>,
+    pub selected: usize,
+    /// Screen row (0-indexed) of the source symbol, used to preserve vertical
+    /// position when jumping.
+    pub source_screen_row: usize,
 }
 
 /// Help overlay state.

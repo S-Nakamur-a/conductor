@@ -161,7 +161,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             let full_path = app.selected_worktree_path().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
-            app.viewer_state.media_state.render_if_needed(&full_path, &rel_path, cols, rows);
+            app.viewer_state.media_state.render_if_needed(&full_path, rel_path, cols, rows);
         }
     }
     super::viewer_panel::render(frame, columns[2], app);
@@ -171,6 +171,19 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     super::terminal_claude::render(frame, terminal_split[0], app);
     super::terminal_shell::render(frame, terminal_split[1], app);
+
+    // ── Panel number overlay (Alt key hold) ─────────────────────────
+    // Only show when no other overlay/modal is active.
+    if app.show_panel_overlay
+        && app.overlays.active == crate::overlay::ActiveOverlay::None
+        && app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::Normal
+        && app.review_state.input_mode == crate::review_state::ReviewInputMode::Normal
+        && app.update_state == crate::app::UpdateState::Idle
+        && !app.review_state.comment_detail_active
+        && app.worktree_mgr.skip_reason.is_none()
+    {
+        super::panel_overlay::render_panel_overlay(frame, app);
+    }
 
     // ── Overlays ────────────────────────────────────────────────────
     // These render on top of everything else when active.
@@ -257,6 +270,11 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // ── References overlay (panel-level, not part of OverlayManager) ──
     if app.references_overlay.active {
         crate::ui::references::render_references_overlay(frame, main_area, app);
+    }
+
+    // ── Symbol action overlay (after hint selection) ──
+    if app.symbol_action_overlay.active {
+        crate::ui::symbol_action::render_symbol_action_overlay(frame, main_area, app);
     }
 
     // ── Skip reason modal ────────────────────────────────────────────

@@ -5,7 +5,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Tabs};
 use ratatui::Frame;
 
 use crate::app::{App, Focus};
@@ -54,6 +54,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
+    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let panel_style = if focused {
+        Style::default().bg(theme.panel_bg_focused)
+    } else {
+        Style::default()
+    };
+
     if sessions.is_empty() {
         let block = if is_expanded {
             Block::default().title(" Claude Code ")
@@ -61,7 +68,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             Block::default()
                 .title(" Claude Code ")
                 .borders(Borders::ALL)
+                .border_type(border_type)
                 .border_style(Style::default().fg(border_color))
+                .style(panel_style)
         };
         let msg = Paragraph::new(" Enter / Click / Ctrl+n: new session")
             .style(Style::default().fg(theme.muted))
@@ -143,7 +152,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         Block::default()
             .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+            .border_type(border_type)
             .border_style(Style::default().fg(border_color))
+            .style(panel_style)
     };
 
     if let Some(active_idx) = app.terminal.active_claude_session {
@@ -154,8 +165,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // Rebuild PTY snapshot only when new output arrives (dirty flag)
             // or cache is empty. Uses try_lock to avoid blocking when the
             // PTY reader thread holds the vt100 mutex — keeps UI responsive.
+            let scroll_changed =
+                app.terminal.cache_claude.effective_offset != app.terminal.scroll_claude;
             if app.terminal.cache_claude.lines.is_empty()
                 || (focused && app.terminal.dirty_claude)
+                || scroll_changed
             {
                 if let Some(cache) = crate::ui::common::build_pty_lines(
                     &screen_arc,
@@ -163,6 +177,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     inner.height,
                     inner.width,
                 ) {
+                    // Sync scroll offset with the actual clamped position from vt100
+                    // to prevent infinite rebuilds when scroll exceeds scrollback buffer.
+                    app.terminal.scroll_claude = cache.effective_offset;
                     app.terminal.cache_claude = cache;
                     app.terminal.dirty_claude = false;
                 }

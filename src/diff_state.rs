@@ -379,12 +379,13 @@ impl DiffState {
         }
 
         // Emit tree entries depth-first.
+        #[allow(clippy::too_many_arguments)]
         fn emit_dir(
             dir_path: &str,
             depth: usize,
             section: DiffSection,
             section_prefix: &str,
-            files: &[FileDiff],
+            _files: &[FileDiff],
             nodes: &BTreeMap<String, TreeNode>,
             collapsed_dirs: &HashSet<String>,
             display_list: &mut Vec<DiffListEntry>,
@@ -413,7 +414,7 @@ impl DiffState {
                         depth + 1,
                         section,
                         section_prefix,
-                        files,
+                        _files,
                         nodes,
                         collapsed_dirs,
                         display_list,

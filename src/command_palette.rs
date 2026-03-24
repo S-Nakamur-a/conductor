@@ -114,15 +114,15 @@ pub struct PaletteCommand {
 pub const COMMANDS: &[PaletteCommand] = &[
     // Navigation
     PaletteCommand { id: CommandId::FocusWorktree, label: "Focus: Worktree Panel",
-        category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "panel switch" },
+        category: CommandCategory::Navigation, keybinding: Some("Alt+h/l"), keywords: "panel switch" },
     PaletteCommand { id: CommandId::FocusExplorer, label: "Focus: Explorer Panel",
-        category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "panel files" },
+        category: CommandCategory::Navigation, keybinding: Some("Alt+h/l"), keywords: "panel files" },
     PaletteCommand { id: CommandId::FocusViewer, label: "Focus: Viewer Panel",
-        category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "panel file view" },
+        category: CommandCategory::Navigation, keybinding: Some("Alt+h/l"), keywords: "panel file view" },
     PaletteCommand { id: CommandId::FocusTerminalClaude, label: "Focus: Claude Code Terminal",
-        category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "terminal claude" },
+        category: CommandCategory::Navigation, keybinding: Some("Alt+h/l"), keywords: "terminal claude" },
     PaletteCommand { id: CommandId::FocusTerminalShell, label: "Focus: Shell Terminal",
-        category: CommandCategory::Navigation, keybinding: Some("Tab"), keywords: "terminal shell" },
+        category: CommandCategory::Navigation, keybinding: Some("Alt+h/l"), keywords: "terminal shell" },
     PaletteCommand { id: CommandId::TogglePanelExpand, label: "Toggle Panel Expand",
         category: CommandCategory::Navigation, keybinding: Some("Cmd+Space"), keywords: "resize maximize fullscreen" },
 

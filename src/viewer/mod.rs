@@ -29,6 +29,7 @@ use crate::text_input::TextInput;
 // ── Sub-structs ──────────────────────────────────────────────────────
 
 /// File tree management state.
+#[derive(Default)]
 pub struct FileTreeState {
     /// Flattened file tree (directories + files, pre-order).
     pub file_tree: Vec<FileTreeEntry>,
@@ -43,19 +44,8 @@ pub struct FileTreeState {
     pub gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
 }
 
-impl Default for FileTreeState {
-    fn default() -> Self {
-        Self {
-            file_tree: Vec::new(),
-            tree_selected: 0,
-            tree_scroll: 0,
-            cached_visible_indices: None,
-            gitignore: None,
-        }
-    }
-}
-
 /// File content viewing state.
+#[derive(Default)]
 pub struct FileContentState {
     /// Lines of the currently open file.
     pub file_content: Vec<String>,
@@ -74,24 +64,12 @@ pub struct FileContentState {
     pub cached_diff_annotations: Option<std::collections::HashMap<usize, (crate::diff_state::DiffLineTag, Vec<crate::diff_state::InlineSegment>)>>,
     /// The file path for which `cached_diff_annotations` was built.
     pub cached_diff_annotations_file: Option<String>,
-}
-
-impl Default for FileContentState {
-    fn default() -> Self {
-        Self {
-            file_content: Vec::new(),
-            file_scroll: 0,
-            h_scroll: 0,
-            current_file: None,
-            highlighted_lines: Vec::new(),
-            highlighted_cache_key: None,
-            cached_diff_annotations: None,
-            cached_diff_annotations_file: None,
-        }
-    }
+    /// Line number (1-indexed) highlighted from grep search result. Cleared on next file open.
+    pub grep_highlight_line: Option<usize>,
 }
 
 /// In-file search state.
+#[derive(Default)]
 pub struct SearchState {
     /// Current search query (empty = no active search).
     pub search_query: TextInput,
@@ -103,18 +81,8 @@ pub struct SearchState {
     pub search_active: bool,
 }
 
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            search_query: TextInput::new(),
-            search_matches: Vec::new(),
-            search_match_idx: 0,
-            search_active: false,
-        }
-    }
-}
-
 /// Unified diff view state.
+#[derive(Default)]
 pub struct DiffViewState {
     /// Whether the viewer is in unified diff mode.
     pub diff_mode: bool,
@@ -124,17 +92,6 @@ pub struct DiffViewState {
     pub diff_view_scroll: usize,
     /// Cached max line number for diff view (avoids O(n) scan per frame).
     pub diff_view_max_line_no: usize,
-}
-
-impl Default for DiffViewState {
-    fn default() -> Self {
-        Self {
-            diff_mode: false,
-            diff_view_lines: Vec::new(),
-            diff_view_scroll: 0,
-            diff_view_max_line_no: 0,
-        }
-    }
 }
 
 /// Explorer panel state (selections, scrolls).
@@ -176,6 +133,7 @@ impl Default for ExplorerState {
 }
 
 /// Line selection for comments.
+#[derive(Default)]
 pub struct SelectionState {
     /// Start of the selected line range (1-indexed), or `None` if no selection.
     pub selected_line_start: Option<usize>,
@@ -184,16 +142,8 @@ pub struct SelectionState {
     pub selected_line_end: Option<usize>,
 }
 
-impl Default for SelectionState {
-    fn default() -> Self {
-        Self {
-            selected_line_start: None,
-            selected_line_end: None,
-        }
-    }
-}
-
 /// Fuzzy filename search state.
+#[derive(Default)]
 pub struct FilenameSearchState {
     /// Whether the filename search overlay is active.
     pub filename_search_active: bool,
@@ -207,22 +157,28 @@ pub struct FilenameSearchState {
     pub filename_search_all_files: Vec<String>,
 }
 
-impl Default for FilenameSearchState {
-    fn default() -> Self {
-        Self {
-            filename_search_active: false,
-            filename_search_query: TextInput::new(),
-            filename_search_results: Vec::new(),
-            filename_search_selected: 0,
-            filename_search_all_files: Vec::new(),
-        }
-    }
+/// Symbol hover info for Cmd+hover underline.
+#[derive(Debug, Clone)]
+pub struct HoverSymbol {
+    /// The symbol text (e.g. "AppState").
+    #[allow(dead_code)]
+    pub text: String,
+    /// Line number (1-indexed) where the symbol is located.
+    pub line: usize,
+    /// Start column (0-indexed, in content characters before h_scroll).
+    pub start_col: usize,
+    /// End column (exclusive, 0-indexed).
+    pub end_col: usize,
 }
 
 /// Double-click tracking state.
 pub struct ClickTracker {
-    /// Line number (1-indexed) currently under the mouse cursor in the viewer gutter.
+    /// Line number (1-indexed) currently under the mouse cursor in the viewer panel.
     pub hover_line: Option<usize>,
+    /// Line number (1-indexed) when the mouse cursor is specifically over the gutter (line-number area).
+    pub hover_gutter_line: Option<usize>,
+    /// Symbol under the mouse cursor when Cmd/Ctrl is held (for underline + click-to-jump).
+    pub hover_symbol: Option<HoverSymbol>,
     /// Timestamp (ms) of the last line-number click for double-click detection.
     pub last_line_click_time: std::time::Instant,
     /// The 1-indexed line number that was last clicked on.
@@ -241,6 +197,8 @@ impl Default for ClickTracker {
     fn default() -> Self {
         Self {
             hover_line: None,
+            hover_gutter_line: None,
+            hover_symbol: None,
             last_line_click_time: std::time::Instant::now(),
             last_line_click_line: 0,
             last_tree_click_time: std::time::Instant::now(),
@@ -254,6 +212,7 @@ impl Default for ClickTracker {
 // ── Main struct ──────────────────────────────────────────────────────
 
 /// All state owned by the Viewer mode.
+#[derive(Default)]
 pub struct ViewerState {
     /// File tree management.
     pub tree: FileTreeState,
@@ -275,23 +234,6 @@ pub struct ViewerState {
     pub click: ClickTracker,
     /// Whether 'g' was pressed and waiting for a second key (gd, gi, gr).
     pub pending_g_key: bool,
-}
-
-impl Default for ViewerState {
-    fn default() -> Self {
-        Self {
-            tree: FileTreeState::default(),
-            content: FileContentState::default(),
-            search: SearchState::default(),
-            diff_view: DiffViewState::default(),
-            explorer: ExplorerState::default(),
-            selection: SelectionState::default(),
-            filename_search: FilenameSearchState::default(),
-            media_state: MediaState::default(),
-            click: ClickTracker::default(),
-            pending_g_key: false,
-        }
-    }
 }
 
 impl ViewerState {
@@ -358,6 +300,7 @@ impl ViewerState {
                     Vec::new()
                 };
                 let prev_diff_scroll = self.diff_view.diff_view_scroll;
+                let prev_diff_max_line_no = self.diff_view.diff_view_max_line_no;
 
                 self.open_file(worktree_path, rel_path, tab_width);
                 self.content.file_scroll = prev_file_scroll;
@@ -367,6 +310,7 @@ impl ViewerState {
                     self.diff_view.diff_mode = true;
                     self.diff_view.diff_view_lines = prev_diff_lines;
                     self.diff_view.diff_view_scroll = prev_diff_scroll;
+                    self.diff_view.diff_view_max_line_no = prev_diff_max_line_no;
                 }
 
                 // Try to restore tree_selected to point at the file entry.
@@ -383,6 +327,7 @@ impl ViewerState {
         self.exit_diff_mode();
         self.content.highlighted_lines.clear();
         self.content.highlighted_cache_key = None;
+        self.content.grep_highlight_line = None;
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
@@ -425,7 +370,7 @@ impl ViewerState {
     pub fn is_current_file_media(&self) -> bool {
         self.content.current_file
             .as_deref()
-            .map_or(false, media_state::is_media_file)
+            .is_some_and(media_state::is_media_file)
     }
 
     /// Toggle expand / collapse of the directory at index `idx` in
@@ -1210,10 +1155,9 @@ impl ViewerState {
         }
     }
 
-    /// Walk `dir` and append entries to `entries`. Only recurses into
-    /// directories that are auto-expanded (depth 0). Deeper directories
-    /// will have `children_loaded: false` and their contents are loaded
-    /// lazily when the user expands them.
+    /// Walk `dir` and append its immediate children to `entries`.
+    /// All directories start collapsed with `children_loaded: false`;
+    /// their contents are loaded lazily when the user expands them.
     pub fn walk_dir(
         root: &Path,
         dir: &Path,
@@ -1266,26 +1210,16 @@ impl ViewerState {
                 .to_string_lossy()
                 .to_string();
 
-            let auto_expand = depth == 0;
-
             let icon = if is_dir { "\u{1f4c1}" } else { file_icon(&name) };
             entries.push(FileTreeEntry {
                 path: rel_path,
                 name,
                 depth,
                 is_dir,
-                is_expanded: auto_expand,
+                is_expanded: false,
                 children_loaded: false,
                 icon,
             });
-
-            if is_dir && auto_expand {
-                let entry_idx = entries.len() - 1;
-                // Load only the immediate children (one level) for auto-expanded directories.
-                // Deeper levels are loaded lazily when the user expands them.
-                Self::read_dir_entries(root, &child_path, depth + 1, entries, gi);
-                entries[entry_idx].children_loaded = true;
-            }
         }
     }
 }

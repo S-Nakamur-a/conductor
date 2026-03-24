@@ -14,8 +14,8 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
     // Calculate popup dimensions: 70% width, 60% height, centered.
-    let popup_width = (area.width as f32 * 0.7).min(100.0).max(40.0) as u16;
-    let popup_height = (area.height as f32 * 0.6).min(40.0).max(10.0) as u16;
+    let popup_width = (area.width as f32 * 0.7).clamp(40.0, 100.0) as u16;
+    let popup_height = (area.height as f32 * 0.6).clamp(10.0, 40.0) as u16;
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -62,15 +62,15 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
             let file_span = Span::styled(
                 format!("{}:{}", reference.file_path, reference.line),
                 Style::default()
-                    .fg(theme.accent)
+                    .fg(if is_selected { theme.selected_fg } else { theme.accent })
                     .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
             );
             let content_span = Span::styled(
                 format!("  {}", reference.content.trim()),
-                Style::default().fg(if is_selected { theme.fg } else { theme.muted }),
+                Style::default().fg(if is_selected { theme.selected_fg } else { theme.muted }),
             );
             let style = if is_selected {
-                Style::default().bg(theme.selected_bg).fg(theme.fg)
+                Style::default().bg(theme.selected_bg).fg(theme.selected_fg)
             } else {
                 Style::default()
             };
