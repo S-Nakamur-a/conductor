@@ -106,19 +106,13 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
     };
 
     let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
-    let panel_style = if panel_focused {
-        Style::default().bg(theme.panel_bg_focused)
-    } else {
-        Style::default()
-    };
 
     let block = Block::default()
         .title(title)
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_type(border_type)
-        .border_style(Style::default().fg(border_color))
-        .style(panel_style);
+        .border_style(Style::default().fg(border_color));
 
     let scroll = app.viewer_state.tree.tree_scroll;
 
@@ -196,18 +190,12 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
     let title = format!(" Diff Files ({total}) ");
 
     let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
-    let panel_style = if panel_focused {
-        Style::default().bg(theme.panel_bg_focused)
-    } else {
-        Style::default()
-    };
 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_type(border_type)
-        .border_style(Style::default().fg(border_color))
-        .style(panel_style);
+        .border_style(Style::default().fg(border_color));
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.diff_list_scroll;
@@ -352,18 +340,12 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
     let title = format!(" Comments ({pending}/{total}) [Space:view Enter:expand e:edit R:reply] ");
 
     let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
-    let panel_style = if panel_focused {
-        Style::default().bg(theme.panel_bg_focused)
-    } else {
-        Style::default()
-    };
 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_type(border_type)
-        .border_style(Style::default().fg(border_color))
-        .style(panel_style);
+        .border_style(Style::default().fg(border_color));
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.comment_list_scroll;

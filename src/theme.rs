@@ -116,9 +116,6 @@ pub struct Theme {
     /// Text color for reply content.
     pub reply_text: Color,
 
-    // ── Panel focus ─────────────────────────────────────────────────
-    /// Subtle background tint for focused panels.
-    pub panel_bg_focused: Color,
 }
 
 impl Theme {
@@ -209,7 +206,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(30, 30, 50),
             reply_text: Color::Rgb(180, 180, 200),
 
-            panel_bg_focused: Color::Rgb(30, 30, 46),
         }
     }
 
@@ -269,7 +265,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(40, 42, 60),
             reply_text: Color::Rgb(189, 147, 249),
 
-            panel_bg_focused: Color::Rgb(50, 52, 68),
         }
     }
 
@@ -329,7 +324,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(46, 52, 70),
             reply_text: Color::Rgb(129, 161, 193),
 
-            panel_bg_focused: Color::Rgb(55, 62, 78),
         }
     }
 
@@ -389,7 +383,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(7, 54, 72),
             reply_text: Color::Rgb(108, 113, 196),
 
-            panel_bg_focused: Color::Rgb(12, 58, 70),
         }
     }
 
@@ -449,7 +442,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(30, 32, 50),
             reply_text: Color::Rgb(125, 207, 255),
 
-            panel_bg_focused: Color::Rgb(33, 35, 52),
         }
     }
 
@@ -509,7 +501,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(50, 48, 55),
             reply_text: Color::Rgb(131, 165, 152),
 
-            panel_bg_focused: Color::Rgb(45, 42, 40),
         }
     }
 
@@ -569,7 +560,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(35, 33, 55),
             reply_text: Color::Rgb(196, 167, 231),
 
-            panel_bg_focused: Color::Rgb(38, 36, 56),
         }
     }
 
@@ -629,7 +619,6 @@ impl Theme {
             comment_preview_bg: Color::Rgb(30, 30, 45),
             reply_text: Color::Rgb(127, 180, 202),
 
-            panel_bg_focused: Color::Rgb(30, 30, 42),
         }
     }
 }

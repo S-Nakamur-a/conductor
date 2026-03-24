@@ -98,19 +98,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // ── Zone 1: Worktree list ─────────────────────────────────────
 
-    let panel_style = if focused {
-        Style::default().bg(theme.panel_bg_focused)
-    } else {
-        Style::default()
-    };
-
     let block = Block::default()
         .title(Span::styled(title, title_style))
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_type(border_type)
-        .border_style(Style::default().fg(border_color))
-        .style(panel_style);
+        .border_style(Style::default().fg(border_color));
 
     // Pulse phase: ~1s cycle at 60fps (30 frames on, 30 frames off).
     let pulse_on = (app.ui_tick / 30) % 2 == 0;
