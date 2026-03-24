@@ -453,35 +453,58 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
 pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
-    let content_lines = app.overlays.grab.branches.len() as u16;
-    let popup_height = (content_lines + 2).min(14).min(area.height.saturating_sub(4));
+    let popup_height = 22_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    let block = Block::default()
-        .title(" Grab \u{2192} main (Enter: grab, Esc: cancel) ")
+    // Split into filter bar + list.
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(3),
+    ])
+    .split(popup_area);
+
+    // Filter bar.
+    let filter_block = Block::default()
+        .title(" Grab \u{2192} main (type to filter, Enter: grab, Esc: cancel) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.success));
 
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
+    let filter_inner = filter_block.inner(chunks[0]);
+    frame.render_widget(filter_block, chunks[0]);
 
-    if app.overlays.grab.branches.is_empty() {
-        let paragraph = Paragraph::new("  No branches to grab.")
+    let filter_text = format_input_with_cursor(&app.overlays.grab.filter);
+    let filter_para = Paragraph::new(Span::styled(
+        filter_text,
+        Style::default().fg(theme.fg),
+    ));
+    frame.render_widget(filter_para, filter_inner);
+    set_cursor_for_input(frame, filter_inner, &app.overlays.grab.filter);
+
+    // Branch list.
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.success));
+
+    let list_inner = list_block.inner(chunks[1]);
+    frame.render_widget(list_block, chunks[1]);
+
+    let filtered = app.filtered_grab_branches();
+    if filtered.is_empty() {
+        let paragraph = Paragraph::new("  No matching branches.")
             .style(Style::default().fg(theme.muted));
-        frame.render_widget(paragraph, inner);
+        frame.render_widget(paragraph, list_inner);
         return;
     }
 
-    let items: Vec<ListItem> = app
-        .overlays.grab.branches
+    let items: Vec<ListItem> = filtered
         .iter()
         .enumerate()
-        .map(|(i, branch)| {
-            let style = if i == app.overlays.grab.selected {
+        .map(|(vis_idx, (_orig_idx, branch))| {
+            let style = if vis_idx == app.overlays.grab.selected {
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD)
@@ -503,7 +526,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut state = ListState::default();
     state.select(Some(app.overlays.grab.selected));
-    frame.render_stateful_widget(list, inner, &mut state);
+    frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
 /// Render the prune confirmation overlay.

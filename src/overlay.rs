@@ -47,6 +47,7 @@ pub struct SwitchBranchOverlay {
 pub struct GrabOverlay {
     pub branches: Vec<String>,
     pub selected: usize,
+    pub filter: TextInput,
 }
 
 

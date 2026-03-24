@@ -184,6 +184,23 @@ impl TextInput {
         self.cursor = pos;
     }
 
+    /// Delete from the cursor position back to the start of the current line.
+    /// For single-line inputs this clears everything before the cursor.
+    /// For multi-line inputs this deletes back to the previous newline.
+    pub fn delete_to_line_start(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let line_start = if self.multiline {
+            let before = &self.buffer[..self.cursor];
+            before.rfind('\n').map_or(0, |pos| pos + 1)
+        } else {
+            0
+        };
+        self.buffer.drain(line_start..self.cursor);
+        self.cursor = line_start;
+    }
+
     /// Clear the buffer (Ctrl+A equivalent — select all then clear).
     pub fn select_all_and_clear(&mut self) {
         self.buffer.clear();
@@ -436,6 +453,39 @@ mod tests {
         assert_eq!(ti.cursor, 6); // back to "world"
         ti.move_word_left();
         assert_eq!(ti.cursor, 0); // back to start
+    }
+
+    #[test]
+    fn test_delete_to_line_start_single_line() {
+        let mut ti = TextInput::new();
+        ti.set_text("hello world");
+        // Cursor at end: deletes everything
+        ti.delete_to_line_start();
+        assert_eq!(ti.text(), "");
+
+        ti.set_text("hello world");
+        ti.move_left(); // before 'd'
+        ti.move_left(); // before 'l'
+        ti.move_left(); // before 'r'
+        ti.move_left(); // before 'o'
+        ti.move_left(); // before 'w'
+        ti.move_left(); // before ' '
+        ti.delete_to_line_start();
+        assert_eq!(ti.text(), " world");
+        assert_eq!(ti.cursor, 0);
+    }
+
+    #[test]
+    fn test_delete_to_line_start_multiline() {
+        let mut ti = TextInput::new_multiline();
+        ti.set_text("line1\nline2\nline3");
+        // Cursor at end of "line3"
+        ti.delete_to_line_start();
+        assert_eq!(ti.text(), "line1\nline2\n");
+
+        // Cursor now at the empty third line; no-op since at line start
+        ti.delete_to_line_start();
+        assert_eq!(ti.text(), "line1\nline2\n");
     }
 
     #[test]
