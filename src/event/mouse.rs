@@ -3,10 +3,30 @@
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::{App, Focus};
+use crate::overlay::ActiveOverlay;
 use crate::terminal_link;
 
 use super::explorer::{navigate_to_comment_with_focus, open_viewer_comment};
 use super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
+
+/// Returns true if any overlay/modal is active and should consume all mouse events,
+/// preventing them from reaching background panels.
+fn has_blocking_overlay(app: &App) -> bool {
+    use crate::app::{UpdateState, WorktreeInputMode};
+    use crate::review_state::ReviewInputMode;
+
+    app.worktree_mgr.skip_reason.is_some()
+        || app.update_state != UpdateState::Idle
+        || app.review_state.comment_detail_active
+        || app.review_state.input_mode != ReviewInputMode::Normal
+        || app.worktree_mgr.input_mode != WorktreeInputMode::Normal
+        || app.overlays.active != ActiveOverlay::None
+        || app.viewer_state.filename_search.filename_search_active
+        || app.review_state.search_active
+        || app.review_state.template_picker_active
+        || app.references_overlay.active
+        || app.symbol_action_overlay.active
+}
 
 /// Process a single mouse event, updating application state as needed.
 pub fn handle_mouse_event(
@@ -14,6 +34,12 @@ pub fn handle_mouse_event(
     mouse: MouseEvent,
     _frame_area: ratatui::layout::Rect,
 ) {
+    // When any overlay/modal is active, consume all mouse events to prevent
+    // them from reaching background panels (scroll, click, etc.).
+    if has_blocking_overlay(app) {
+        return;
+    }
+
     // Read layout from cache (computed during render).
     let lc = &app.layout_cache;
     let notif_area = lc.notif_area;

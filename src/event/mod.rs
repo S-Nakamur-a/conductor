@@ -320,6 +320,7 @@ pub fn handle_paste_event(app: &mut App, data: String) {
             app.worktree_mgr.input_buffer.insert_str(&single_line);
         } else if app.overlays.active == ActiveOverlay::GrepSearch {
             app.overlays.grep_search.query.insert_str(&single_line);
+            app.overlays.grep_search.input_focused = true;
             app.schedule_grep_search();
         } else if app.viewer_state.search.search_active {
             app.viewer_state.search.search_query.insert_str(&single_line);

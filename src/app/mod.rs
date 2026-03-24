@@ -1484,6 +1484,7 @@ impl App {
         self.overlays.grep_search.bg_op_phase2.clear();
         self.overlays.grep_search.debounce_deadline = None;
         self.overlays.grep_search.phase1_active = false;
+        self.overlays.grep_search.input_focused = true;
     }
 
     /// Show the update confirmation dialog.
