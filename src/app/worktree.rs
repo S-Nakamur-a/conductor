@@ -1047,6 +1047,19 @@ impl App {
         }
     }
 
+    pub fn filtered_grab_branches(&self) -> Vec<(usize, &String)> {
+        if self.overlays.grab.filter.is_empty() {
+            self.overlays.grab.branches.iter().enumerate().collect()
+        } else {
+            let filter_lower = self.overlays.grab.filter.to_lowercase();
+            self.overlays.grab.branches
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.to_lowercase().contains(&filter_lower))
+                .collect()
+        }
+    }
+
     /// Load branches available as base for worktree creation.
     /// Lists remote branches and pre-selects `origin/<main_branch>`.
     pub fn load_base_branches(&mut self) {
