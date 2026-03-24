@@ -55,11 +55,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
-    let panel_style = if focused {
-        Style::default().bg(theme.panel_bg_focused)
-    } else {
-        Style::default()
-    };
 
     if sessions.is_empty() {
         let block = if is_expanded {
@@ -70,7 +65,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 .borders(Borders::ALL)
                 .border_type(border_type)
                 .border_style(Style::default().fg(border_color))
-                .style(panel_style)
         };
         let msg = Paragraph::new(" Enter / Click / Ctrl+n: new session")
             .style(Style::default().fg(theme.muted))
@@ -154,7 +148,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
             .border_type(border_type)
             .border_style(Style::default().fg(border_color))
-            .style(panel_style)
     };
 
     if let Some(active_idx) = app.terminal.active_claude_session {

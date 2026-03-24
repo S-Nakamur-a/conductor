@@ -68,19 +68,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
-    let panel_style = if focused {
-        Style::default().bg(theme.panel_bg_focused)
-    } else {
-        Style::default()
-    };
 
     let block = Block::default()
         .title(title)
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_type(border_type)
-        .border_style(Style::default().fg(border_color))
-        .style(panel_style);
+        .border_style(Style::default().fg(border_color));
 
     // Unified diff mode: delegate to dedicated renderer.
     if vs.diff_view.diff_mode && !vs.diff_view.diff_view_lines.is_empty() {
