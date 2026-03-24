@@ -563,6 +563,7 @@ fn handle_mouse_scroll(
 
     if col < left_end {
         // Worktree panel scroll.
+        let prev_wt = app.selected_worktree;
         if delta > 0 {
             if !app.worktree_list_rows.is_empty() {
                 app.worktree_list_selected = (app.worktree_list_selected + 1)
@@ -572,6 +573,9 @@ fn handle_mouse_scroll(
         } else {
             app.worktree_list_selected = app.worktree_list_selected.saturating_sub(1);
             app.sync_selected_worktree();
+        }
+        if app.selected_worktree != prev_wt {
+            app.on_worktree_changed();
         }
     } else if col < explorer_end {
         // Explorer scroll.
