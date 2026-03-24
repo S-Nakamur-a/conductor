@@ -573,12 +573,22 @@ impl App {
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
             match engine.load_grab_state() {
                 Ok(Some((branch, source_worktree, _stash_branch, claude_session_id))) => {
-                    app.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
-                        branch,
-                        source_worktree,
-                        claude_session_id,
-                    });
-                    log::info!("Restored grab state from wt-grab file");
+                    if source_worktree.exists() {
+                        app.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
+                            branch,
+                            source_worktree,
+                            claude_session_id,
+                        });
+                        log::info!("Restored grab state from wt-grab file");
+                    } else {
+                        log::warn!(
+                            "Stale wt-grab: source worktree '{}' no longer exists, cleaning up",
+                            source_worktree.display()
+                        );
+                        if let Err(e) = engine.remove_grab_state() {
+                            log::warn!("failed to remove stale wt-grab: {e}");
+                        }
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => {
