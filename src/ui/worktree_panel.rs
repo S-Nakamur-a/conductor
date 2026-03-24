@@ -6,7 +6,7 @@
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
@@ -62,6 +62,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         Style::default()
     };
+    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
 
     // ── Zone layout calculation ────────────────────────────────────
     // Zone 1: worktree + session list  — 40% (or more)
@@ -97,11 +98,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // ── Zone 1: Worktree list ─────────────────────────────────────
 
+    let panel_style = if focused {
+        Style::default().bg(theme.panel_bg_focused)
+    } else {
+        Style::default()
+    };
+
     let block = Block::default()
         .title(Span::styled(title, title_style))
         .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
+        .border_type(border_type)
+        .border_style(Style::default().fg(border_color))
+        .style(panel_style);
 
     // Pulse phase: ~1s cycle at 60fps (30 frames on, 30 frames off).
     let pulse_on = (app.ui_tick / 30) % 2 == 0;
