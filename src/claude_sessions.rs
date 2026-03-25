@@ -167,9 +167,12 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         .collect();
     log::info!("find_latest_sessions: total history entries={}", entries.len());
 
-    // Track latest entry per path (later entries overwrite earlier ones).
+    // Track latest entry per path whose session file actually exists.
+    // We validate existence eagerly so that ghost entries (session file
+    // deleted but history entry remains) don't shadow valid older sessions.
     let mut best: HashMap<String, ClaudeHistoryEntry> = HashMap::new();
     let mut match_count = 0u32;
+    let mut skipped_missing = 0u32;
     for entry in entries {
         // Canonicalize the project path from the history entry for comparison.
         let entry_path = std::fs::canonicalize(&entry.project)
@@ -181,6 +184,12 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         }
         match_count += 1;
 
+        // Skip entries whose session file no longer exists on disk.
+        if !session_file_exists(&entry.session_id, &entry.project) {
+            skipped_missing += 1;
+            continue;
+        }
+
         // Keep the entry with the highest timestamp.
         let dominated = best
             .get(&entry_key)
@@ -189,16 +198,14 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
             best.insert(entry_key, entry);
         }
     }
-    log::info!("find_latest_sessions: matched {} history entries, {} unique paths", match_count, best.len());
+    log::info!(
+        "find_latest_sessions: matched {} history entries, {} skipped (file missing), {} valid unique paths",
+        match_count, skipped_missing, best.len()
+    );
 
-    // Convert to ResumableSession, validating that session files exist.
+    // Convert to ResumableSession.
     let mut result = HashMap::new();
     for (key, entry) in best {
-        if !session_file_exists(&entry.session_id, &entry.project) {
-            log::info!("find_latest_sessions: session file missing for id={} project={}", entry.session_id, entry.project);
-            continue;
-        }
-
         let project_name = Path::new(&entry.project)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
