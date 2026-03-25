@@ -254,13 +254,17 @@ impl App {
         };
 
         // Look up the latest Claude Code session for the source worktree.
+        log::info!("grab: looking up session for source_path={}", source_path.display());
         let claude_session = crate::claude_sessions::find_latest_sessions_for_paths(&[source_path.clone()])
             .ok()
             .and_then(|mut map| {
+                log::info!("grab: session map has {} entries: {:?}", map.len(), map.keys().collect::<Vec<_>>());
                 let canonical = std::fs::canonicalize(&source_path).unwrap_or_else(|_| source_path.clone());
+                log::info!("grab: canonical source_path={}", canonical.display());
                 map.remove(&canonical)
             });
         let session_id = claude_session.as_ref().map(|s| s.session_id.as_str());
+        log::info!("grab: found session={:?}", session_id);
 
         let selected_path = self.worktrees.get(self.selected_worktree).map(|w| w.path.clone());
         match git_engine::GitEngine::open(&self.repo_path) {

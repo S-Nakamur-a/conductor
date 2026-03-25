@@ -136,7 +136,10 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
 pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathBuf, ResumableSession>> {
     let history_path = match history_file_path() {
         Some(p) if p.exists() => p,
-        _ => return Ok(HashMap::new()),
+        _ => {
+            log::debug!("find_latest_sessions: history file not found");
+            return Ok(HashMap::new());
+        }
     };
 
     let content = std::fs::read_to_string(&history_path)?;
@@ -150,6 +153,7 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         .iter()
         .map(|p| {
             let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+            log::info!("find_latest_sessions: lookup key: raw={} canonical={}", p.display(), canonical.display());
             (canonical.to_string_lossy().to_string(), canonical)
         })
         .collect();
@@ -161,9 +165,11 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         .filter_map(|line| serde_json::from_str::<ClaudeHistoryEntry>(line).ok())
         .filter(|e| !e.session_id.is_empty())
         .collect();
+    log::info!("find_latest_sessions: total history entries={}", entries.len());
 
     // Track latest entry per path (later entries overwrite earlier ones).
     let mut best: HashMap<String, ClaudeHistoryEntry> = HashMap::new();
+    let mut match_count = 0u32;
     for entry in entries {
         // Canonicalize the project path from the history entry for comparison.
         let entry_path = std::fs::canonicalize(&entry.project)
@@ -173,6 +179,7 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         if !path_strs.contains_key(&entry_key) {
             continue;
         }
+        match_count += 1;
 
         // Keep the entry with the highest timestamp.
         let dominated = best
@@ -182,11 +189,13 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
             best.insert(entry_key, entry);
         }
     }
+    log::info!("find_latest_sessions: matched {} history entries, {} unique paths", match_count, best.len());
 
     // Convert to ResumableSession, validating that session files exist.
     let mut result = HashMap::new();
     for (key, entry) in best {
         if !session_file_exists(&entry.session_id, &entry.project) {
+            log::info!("find_latest_sessions: session file missing for id={} project={}", entry.session_id, entry.project);
             continue;
         }
 
@@ -197,6 +206,7 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         let time_ago = format_time_ago(now_ms, entry.timestamp);
 
         if let Some(canonical) = path_strs.get(&key) {
+            log::info!("find_latest_sessions: found session id={} for path={}", entry.session_id, key);
             result.insert(
                 canonical.clone(),
                 ResumableSession {
