@@ -40,10 +40,11 @@ fn history_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("history.jsonl"))
 }
 
-/// Encode a project path the way Claude does for its project directories.
-/// E.g. `/Users/foo/project` → `-Users-foo-project`.
+/// Encode a project path the way Claude Code does for its project directories.
+/// All `/` and `.` are replaced with `-`.
+/// E.g. `/Users/foo/github.com/proj` → `-Users-foo-github-com-proj`.
 fn encode_project_path(path: &str) -> String {
-    path.replace('/', "-")
+    path.replace('/', "-").replace('.', "-")
 }
 
 /// Check if a session JSONL file exists for the given session ID and project.
