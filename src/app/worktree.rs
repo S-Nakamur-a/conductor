@@ -270,9 +270,21 @@ impl App {
                         let claude_session_id = claude_session.as_ref().map(|s| s.session_id.clone());
                         self.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
                             branch: branch_name.to_string(),
-                            source_worktree: source_path,
+                            source_worktree: source_path.clone(),
                             claude_session_id: claude_session_id.clone(),
                         });
+
+                        // Migrate session files so `claude --resume` works from main cwd.
+                        if let Some(ref session) = claude_session {
+                            if let Err(e) = crate::claude_sessions::migrate_session(
+                                &session.session_id,
+                                &source_path,
+                                &main_path,
+                                &session.display,
+                            ) {
+                                log::warn!("grab: session migration failed: {e}");
+                            }
+                        }
 
                         // Auto-resume the Claude Code session on main worktree.
                         let resume_msg = if let Some(ref session) = claude_session {
@@ -366,6 +378,13 @@ impl App {
                     &main_branch,
                 ) {
                     Ok(()) => {
+                        // Clean up migrated session symlinks.
+                        if let Some(ref sid) = grabbed.claude_session_id {
+                            if let Err(e) = crate::claude_sessions::unmigrate_session(sid, &main_path) {
+                                log::warn!("ungrab: session unmigration failed: {e}");
+                            }
+                        }
+
                         let branch = grabbed.branch.clone();
                         self.worktree_mgr.grabbed_branch = None;
                         self.set_status(
