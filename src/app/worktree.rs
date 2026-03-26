@@ -292,7 +292,7 @@ impl App {
 
                         // Auto-resume the Claude Code session on main worktree.
                         let resume_msg = if let Some(ref session) = claude_session {
-                            match self.resume_claude_session_on_main(&session.session_id, &session.display) {
+                            match self.resume_claude_session_on_main(&session.session_id) {
                                 Ok(_) => format!(
                                     "Grabbed '{branch_name}' + resumed session {}. Press Y to ungrab.",
                                     &session.session_id[..8.min(session.session_id.len())]
@@ -324,19 +324,21 @@ impl App {
     }
 
     /// Resume a Claude Code session on the main worktree.
-    fn resume_claude_session_on_main(&mut self, session_id: &str, display: &str) -> anyhow::Result<usize> {
+    fn resume_claude_session_on_main(&mut self, session_id: &str) -> anyhow::Result<usize> {
         let main_wt = self.worktrees.iter().find(|w| w.is_main);
         let (worktree_name, working_dir) = match main_wt {
             Some(w) => (w.branch.clone(), w.path.clone()),
             None => anyhow::bail!("main worktree not found"),
         };
 
-        let label: String = display.chars().take(40).collect();
-        let label = if label.is_empty() {
-            format!("Resume:{}", &session_id[..8.min(session_id.len())])
-        } else {
-            label
-        };
+        // Use a short numbered label consistent with spawn_claude_code.
+        let cc_count = self
+            .terminal.pty_manager
+            .sessions()
+            .iter()
+            .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
+            .count();
+        let label = format!("CC:{}", cc_count + 1);
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
         let idx = self.terminal.pty_manager.spawn_session(

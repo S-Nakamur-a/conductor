@@ -7,37 +7,26 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use super::*;
 
-const INSTRUMENTS: &[&str] = &[
-    "\u{1f3b9}", // 🎹 Keyboard
-    "\u{1f3b8}", // 🎸 Guitar
-    "\u{1f3ba}", // 🎺 Trumpet
-    "\u{1f3bb}", // 🎻 Violin
-    "\u{1f941}", // 🥁 Drum
-    "\u{1f3b7}", // 🎷 Saxophone
-    "\u{1fa97}", // 🪗 Accordion
-    "\u{1fa95}", // 🪕 Banjo
-    "\u{1fa88}", // 🪈 Flute
-    "\u{1fa98}", // 🪘 Conga
-    "\u{1fa87}", // 🪇 Maracas
-    "\u{1f4ef}", // 📯 Postal Horn
+const SESSION_ICONS: &[&str] = &[
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
 ];
 
 impl App {
     /// Spawn a new Claude Code PTY session for the currently selected worktree.
     pub fn spawn_claude_code(&mut self) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
-        let used_emojis: Vec<&str> = self
+        let used_ids: Vec<&str> = self
             .terminal.pty_manager
             .sessions()
             .iter()
             .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
             .filter_map(|s| s.label.strip_prefix("CC:"))
             .collect();
-        let emoji = INSTRUMENTS
+        let id = SESSION_ICONS
             .iter()
-            .find(|e| !used_emojis.contains(e))
-            .unwrap_or(&INSTRUMENTS[used_emojis.len() % INSTRUMENTS.len()]);
-        let label = format!("CC:{emoji}");
+            .find(|e| !used_ids.contains(e))
+            .unwrap_or(&SESSION_ICONS[used_ids.len() % SESSION_ICONS.len()]);
+        let label = format!("CC:{id}");
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
         let idx = self.terminal.pty_manager.spawn_session(
