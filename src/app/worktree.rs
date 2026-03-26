@@ -11,10 +11,11 @@ use std::sync::mpsc;
 
 use super::*;
 
-const SMART_WORKTREE_SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name and a Claude Code prompt from a task description.
-Output ONLY a JSON object with two fields:
+const SMART_WORKTREE_SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name, a Claude Code prompt, and a session name from a task description.
+Output ONLY a JSON object with three fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
 - "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
+- "session_name": a short, descriptive session name (max 50 chars) for display in session lists. Write in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
 /// Parse LLM raw output into `SmartGenResult`, extracting JSON even if surrounded by text.
@@ -50,7 +51,7 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
     Err(format!("JSON parse error: could not extract valid JSON\nRaw output: {raw}"))
 }
 
-const SMART_WORKTREE_JSON_SCHEMA: &str = r#"{"type":"object","properties":{"branch":{"type":"string"},"prompt":{"type":"string"}},"required":["branch","prompt"]}"#;
+const SMART_WORKTREE_JSON_SCHEMA: &str = r#"{"type":"object","properties":{"branch":{"type":"string"},"prompt":{"type":"string"},"session_name":{"type":"string"}},"required":["branch","prompt","session_name"]}"#;
 
 /// Fallback: call `claude -p` CLI with the same system prompt and description.
 fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
@@ -136,6 +137,7 @@ impl App {
             worktree_path: None,
             auto_spawn: false,
             smart_prompt: String::new(),
+            session_name: None,
             delete_branch_after: false,
             description: String::new(),
             created_at: std::time::Instant::now(),
@@ -174,6 +176,7 @@ impl App {
             worktree_path: None,
             auto_spawn: false,
             smart_prompt: String::new(),
+            session_name: None,
             delete_branch_after: false,
             description: String::new(),
             created_at: std::time::Instant::now(),
@@ -351,6 +354,7 @@ impl App {
             cols,
             Some(session_id),
             &self.repo_path,
+            None,
         )?;
         self.terminal.pty_manager.activate_session(idx);
         self.terminal.active_claude_session = Some(idx);
@@ -657,7 +661,7 @@ impl App {
                     if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
                         self.selected_worktree = idx;
                     }
-                    match self.spawn_claude_code() {
+                    match self.spawn_claude_code_with_name(pending.session_name.as_deref()) {
                         Ok(idx) => {
                             if !pending.smart_prompt.is_empty() {
                                 self.terminal.deferred_prompts.insert(idx, pending.smart_prompt.clone());
@@ -704,12 +708,13 @@ impl App {
                 self.worktree_mgr.pending_worktrees.retain(|p| p.branch != *branch);
                 self.worktree_mgr.skip_reason = Some(reason.clone());
             }
-            WorktreeOpResult::SmartBranchResolved { ref description, ref branch, ref prompt } => {
-                // Update the pending entry: set branch name and prompt.
+            WorktreeOpResult::SmartBranchResolved { ref description, ref branch, ref prompt, ref session_name } => {
+                // Update the pending entry: set branch name, prompt, and session name.
                 for p in &mut self.worktree_mgr.pending_worktrees {
                     if p.op == PendingWorktreeOp::SmartCreating && p.description == *description {
                         p.branch = branch.clone();
                         p.smart_prompt = prompt.clone();
+                        p.session_name = session_name.clone();
                         break;
                     }
                 }
@@ -756,6 +761,7 @@ impl App {
             worktree_path: None,
             auto_spawn: true,
             smart_prompt: String::new(),
+            session_name: None,
             delete_branch_after: false,
             description: desc.clone(),
             created_at: std::time::Instant::now(),
@@ -794,6 +800,7 @@ impl App {
 
                 let branch = gen_result.branch.clone();
                 let prompt = gen_result.prompt.clone();
+                let session_name = gen_result.session_name.clone();
 
                 // Check cancellation before proceeding to Phase 2.
                 if cancel.load(Ordering::Relaxed) {
@@ -809,6 +816,7 @@ impl App {
                     description: desc.clone(),
                     branch: branch.clone(),
                     prompt: prompt.clone(),
+                    session_name: session_name.clone(),
                 });
 
                 // Phase 2: Create worktree.
@@ -819,6 +827,7 @@ impl App {
                     worktree_path: None,
                     auto_spawn: true,
                     smart_prompt: prompt,
+                    session_name,
                     delete_branch_after: false,
                     description: desc,
                     created_at: std::time::Instant::now(),
@@ -1177,6 +1186,7 @@ impl App {
             worktree_path: Some(wt_path.clone()),
             auto_spawn: false,
             smart_prompt: String::new(),
+            session_name: None,
             delete_branch_after,
             description: String::new(),
             created_at: std::time::Instant::now(),

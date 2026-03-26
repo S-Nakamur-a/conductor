@@ -14,6 +14,11 @@ const SESSION_ICONS: &[&str] = &[
 impl App {
     /// Spawn a new Claude Code PTY session for the currently selected worktree.
     pub fn spawn_claude_code(&mut self) -> anyhow::Result<usize> {
+        self.spawn_claude_code_with_name(None)
+    }
+
+    /// Spawn a new Claude Code PTY session with an optional `--name` flag.
+    pub fn spawn_claude_code_with_name(&mut self, session_name: Option<&str>) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let used_ids: Vec<&str> = self
             .terminal.pty_manager
@@ -39,6 +44,7 @@ impl App {
             cols,
             None,
             &self.repo_path,
+            session_name,
         )?;
         self.terminal.pty_manager.activate_session(idx);
         self.terminal.active_claude_session = Some(idx);
@@ -68,6 +74,7 @@ impl App {
             cols,
             None,
             &self.repo_path,
+            None,
         )?;
         self.terminal.pty_manager.activate_session(idx);
         self.terminal.active_shell_session = Some(idx);
@@ -231,6 +238,7 @@ impl App {
             cols,
             Some(session_id),
             &self.repo_path,
+            None,
         )?;
         self.terminal.pty_manager.activate_session(idx);
         self.terminal.active_claude_session = Some(idx);
@@ -291,6 +299,7 @@ impl App {
                         cols,
                         Some(grabbed_id),
                         &repo_path,
+                        None,
                     ) {
                         Ok(idx) => {
                             resumed_count += 1;
@@ -335,6 +344,7 @@ impl App {
                 cols,
                 Some(&session.session_id),
                 &repo_path,
+                None,
             ) {
                 Ok(idx) => {
                     resumed_count += 1;
