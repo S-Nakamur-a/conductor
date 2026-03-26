@@ -254,13 +254,17 @@ impl App {
         };
 
         // Look up the latest Claude Code session for the source worktree.
+        log::info!("grab: looking up session for source_path={}", source_path.display());
         let claude_session = crate::claude_sessions::find_latest_sessions_for_paths(&[source_path.clone()])
             .ok()
             .and_then(|mut map| {
+                log::info!("grab: session map has {} entries: {:?}", map.len(), map.keys().collect::<Vec<_>>());
                 let canonical = std::fs::canonicalize(&source_path).unwrap_or_else(|_| source_path.clone());
+                log::info!("grab: canonical source_path={}", canonical.display());
                 map.remove(&canonical)
             });
         let session_id = claude_session.as_ref().map(|s| s.session_id.as_str());
+        log::info!("grab: found session={:?}", session_id);
 
         let selected_path = self.worktrees.get(self.selected_worktree).map(|w| w.path.clone());
         match git_engine::GitEngine::open(&self.repo_path) {
@@ -270,13 +274,25 @@ impl App {
                         let claude_session_id = claude_session.as_ref().map(|s| s.session_id.clone());
                         self.worktree_mgr.grabbed_branch = Some(GrabbedBranch {
                             branch: branch_name.to_string(),
-                            source_worktree: source_path,
+                            source_worktree: source_path.clone(),
                             claude_session_id: claude_session_id.clone(),
                         });
 
+                        // Migrate session files so `claude --resume` works from main cwd.
+                        if let Some(ref session) = claude_session {
+                            if let Err(e) = crate::claude_sessions::migrate_session(
+                                &session.session_id,
+                                &source_path,
+                                &main_path,
+                                &session.display,
+                            ) {
+                                log::warn!("grab: session migration failed: {e}");
+                            }
+                        }
+
                         // Auto-resume the Claude Code session on main worktree.
                         let resume_msg = if let Some(ref session) = claude_session {
-                            match self.resume_claude_session_on_main(&session.session_id, &session.display) {
+                            match self.resume_claude_session_on_main(&session.session_id) {
                                 Ok(_) => format!(
                                     "Grabbed '{branch_name}' + resumed session {}. Press Y to ungrab.",
                                     &session.session_id[..8.min(session.session_id.len())]
@@ -308,19 +324,21 @@ impl App {
     }
 
     /// Resume a Claude Code session on the main worktree.
-    fn resume_claude_session_on_main(&mut self, session_id: &str, display: &str) -> anyhow::Result<usize> {
+    fn resume_claude_session_on_main(&mut self, session_id: &str) -> anyhow::Result<usize> {
         let main_wt = self.worktrees.iter().find(|w| w.is_main);
         let (worktree_name, working_dir) = match main_wt {
             Some(w) => (w.branch.clone(), w.path.clone()),
             None => anyhow::bail!("main worktree not found"),
         };
 
-        let label: String = display.chars().take(40).collect();
-        let label = if label.is_empty() {
-            format!("Resume:{}", &session_id[..8.min(session_id.len())])
-        } else {
-            label
-        };
+        // Use a short numbered label consistent with spawn_claude_code.
+        let cc_count = self
+            .terminal.pty_manager
+            .sessions()
+            .iter()
+            .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
+            .count();
+        let label = format!("CC:{}", cc_count + 1);
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
         let idx = self.terminal.pty_manager.spawn_session(
@@ -366,6 +384,13 @@ impl App {
                     &main_branch,
                 ) {
                     Ok(()) => {
+                        // Clean up migrated session symlinks.
+                        if let Some(ref sid) = grabbed.claude_session_id {
+                            if let Err(e) = crate::claude_sessions::unmigrate_session(sid, &main_path) {
+                                log::warn!("ungrab: session unmigration failed: {e}");
+                            }
+                        }
+
                         let branch = grabbed.branch.clone();
                         self.worktree_mgr.grabbed_branch = None;
                         self.set_status(

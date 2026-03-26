@@ -184,7 +184,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         ]
                     } else {
                         vec![
-                            Span::raw("     "),
+                            Span::raw("   \u{25b8} "), // ▸
                             Span::styled(display_label, label_style),
                         ]
                     };
