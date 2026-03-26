@@ -145,6 +145,7 @@ impl PtyManager {
     /// * `resume_session_id` — if `Some`, pass `--resume <id>` to the Claude CLI.
     /// * `repo_root` — the repository root path, used to set `CONDUCTOR_DB_PATH`
     ///   for Claude Code sessions so the MCP server can locate the database.
+    /// * `session_name` — if `Some`, pass `--name <name>` to the Claude CLI.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_session(
         &mut self,
@@ -157,6 +158,7 @@ impl PtyManager {
         cols: u16,
         resume_session_id: Option<&str>,
         repo_root: &Path,
+        session_name: Option<&str>,
     ) -> Result<usize> {
         // 1. Open a new PTY pair with the given size.
         let pair = self
@@ -176,6 +178,10 @@ impl PtyManager {
                 if let Some(resume_id) = resume_session_id {
                     c.arg("--resume");
                     c.arg(resume_id);
+                }
+                if let Some(name) = session_name {
+                    c.arg("--name");
+                    c.arg(name);
                 }
                 // Let the conductor MCP server find the review database.
                 let db_path = repo_root.join(".conductor").join("conductor.db");
