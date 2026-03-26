@@ -307,6 +307,12 @@ impl App {
                 }
             }
 
+            // Skip normal auto-resume for the main worktree unless explicitly
+            // opted in.  Grabbed sessions (handled above) are always resumed.
+            if wt.is_main && !self.config.general.auto_resume_main {
+                continue;
+            }
+
             let session = match sessions.get(&canonical) {
                 Some(s) => s,
                 None => continue,

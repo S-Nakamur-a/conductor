@@ -120,6 +120,12 @@ pub struct GeneralConfig {
     pub decoration: String,
     /// Automatically resume Claude Code sessions from the previous run on startup.
     pub auto_resume: bool,
+    /// Also auto-resume the session on the main worktree (only meaningful when
+    /// `auto_resume` is `true`).  Defaults to `false` because sessions accumulate
+    /// on the long-lived main worktree and reopening the latest one every launch
+    /// is usually not desired.  Grabbed sessions are always resumed regardless of
+    /// this setting.
+    pub auto_resume_main: bool,
 }
 
 impl Default for GeneralConfig {
@@ -132,6 +138,7 @@ impl Default for GeneralConfig {
             worktree_dir: None,
             decoration: String::from("aquarium"),
             auto_resume: true,
+            auto_resume_main: false,
         }
     }
 }
@@ -370,6 +377,8 @@ pub fn generate_default_config() -> String {
 # decoration = "aquarium"               # worktree panel decoration
 #                                       #   aquarium | space | garden | city | none
 # auto_resume = true                    # automatically resume Claude Code sessions on startup
+# auto_resume_main = false              # also resume on the main worktree (grabbed sessions
+#                                       #   are always resumed regardless of this setting)
 
 [terminal]
 # inactive_scrollback = 1000            # scrollback lines for background sessions
