@@ -301,12 +301,18 @@ pub fn migrate_session(
     Ok(true)
 }
 
-/// Remove symlinks created by `migrate_session`.
+/// Remove symlinks created by `migrate_session` and copy back any session
+/// data that Claude Code may have written as real files (replacing the
+/// original symlinks).
 ///
-/// Only removes the destination files if they are symlinks (not real files),
-/// to avoid accidentally deleting actual session data.
+/// When Claude Code atomically writes session files (temp + rename), the
+/// symlink is replaced with a real file.  In that case the latest
+/// conversation lives only in the *destination* directory.  We copy it back
+/// to the source so the session is complete when viewed from the original
+/// worktree.
 pub fn unmigrate_session(
     session_id: &str,
+    source_working_dir: &Path,
     dest_working_dir: &Path,
 ) -> Result<()> {
     let dst_dir = match projects_dir_for(dest_working_dir) {
@@ -314,20 +320,80 @@ pub fn unmigrate_session(
         None => return Ok(()),
     };
 
-    // Remove .jsonl symlink.
-    let dst_jsonl = dst_dir.join(format!("{session_id}.jsonl"));
-    if dst_jsonl.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-        std::fs::remove_file(&dst_jsonl)?;
-        log::info!("unmigrate_session: removed symlink {}", dst_jsonl.display());
+    let session_file = format!("{session_id}.jsonl");
+    let dst_jsonl = dst_dir.join(&session_file);
+
+    if let Ok(meta) = dst_jsonl.symlink_metadata() {
+        if meta.file_type().is_symlink() {
+            // Still a symlink — writes went through to the source file.
+            std::fs::remove_file(&dst_jsonl)?;
+            log::info!("unmigrate_session: removed symlink {}", dst_jsonl.display());
+        } else {
+            // Real file — Claude Code replaced the symlink.  Copy content
+            // back to the source project directory, then remove.
+            if let Some(src_dir) = projects_dir_for(source_working_dir) {
+                let src_jsonl = src_dir.join(&session_file);
+                std::fs::copy(&dst_jsonl, &src_jsonl)
+                    .with_context(|| format!(
+                        "copy back session {} -> {}",
+                        dst_jsonl.display(),
+                        src_jsonl.display(),
+                    ))?;
+                log::info!(
+                    "unmigrate_session: copied back real file {} -> {}",
+                    dst_jsonl.display(),
+                    src_jsonl.display(),
+                );
+            }
+            std::fs::remove_file(&dst_jsonl)?;
+            log::info!("unmigrate_session: removed real file {}", dst_jsonl.display());
+        }
     }
 
-    // Remove subagent directory symlink.
+    // Handle subagent directory: symlink → remove, real dir → copy back.
     let dst_subdir = dst_dir.join(session_id);
-    if dst_subdir.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-        std::fs::remove_file(&dst_subdir)?;
-        log::info!("unmigrate_session: removed symlink {}", dst_subdir.display());
+    if let Ok(meta) = dst_subdir.symlink_metadata() {
+        if meta.file_type().is_symlink() {
+            std::fs::remove_file(&dst_subdir)?;
+            log::info!("unmigrate_session: removed symlink {}", dst_subdir.display());
+        } else if meta.is_dir() {
+            if let Some(src_dir) = projects_dir_for(source_working_dir) {
+                let src_subdir = src_dir.join(session_id);
+                copy_dir_recursive(&dst_subdir, &src_subdir)
+                    .with_context(|| format!(
+                        "copy back subdir {} -> {}",
+                        dst_subdir.display(),
+                        src_subdir.display(),
+                    ))?;
+                log::info!(
+                    "unmigrate_session: copied back real subdir {} -> {}",
+                    dst_subdir.display(),
+                    src_subdir.display(),
+                );
+            }
+            std::fs::remove_dir_all(&dst_subdir)?;
+            log::info!("unmigrate_session: removed real subdir {}", dst_subdir.display());
+        }
     }
 
+    Ok(())
+}
+
+/// Recursively copy a directory tree, merging into the destination.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    if !dst.exists() {
+        std::fs::create_dir_all(dst)?;
+    }
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), &dst_path)?;
+        }
+    }
     Ok(())
 }
 

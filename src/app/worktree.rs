@@ -388,9 +388,14 @@ impl App {
                     &main_branch,
                 ) {
                     Ok(()) => {
-                        // Clean up migrated session symlinks.
+                        // Clean up migrated session files and copy back any
+                        // conversation data that Claude Code wrote as real files.
                         if let Some(ref sid) = grabbed.claude_session_id {
-                            if let Err(e) = crate::claude_sessions::unmigrate_session(sid, &main_path) {
+                            if let Err(e) = crate::claude_sessions::unmigrate_session(
+                                sid,
+                                &grabbed.source_worktree,
+                                &main_path,
+                            ) {
                                 log::warn!("ungrab: session unmigration failed: {e}");
                             }
                         }
