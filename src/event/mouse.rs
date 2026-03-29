@@ -53,6 +53,7 @@ pub fn handle_mouse_event(
     let viewer_end = lc.columns[2].x + viewer_w;
 
     let explorer_mid_y = lc.explorer_mid_y;
+    let terminal_claude_y = lc.terminal_split[0].y;
     let terminal_split_y = lc.terminal_split[1].y;
 
     let col = mouse.column;
@@ -435,7 +436,7 @@ pub fn handle_mouse_event(
                     if row < terminal_split_y {
                         app.set_focus(Focus::TerminalClaude);
                         // Click on tab bar (first row of Claude panel).
-                        if row == main_area.y {
+                        if row == terminal_claude_y {
                             handle_terminal_tab_click(app, col, terminal_x, true);
                         } else if app.current_worktree_claude_sessions().is_empty()
                         {
