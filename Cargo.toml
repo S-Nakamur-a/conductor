@@ -1,29 +1,29 @@
 [package]
 name = "conductor"
-version = "0.46.0"
+version = "0.47.0"
 edition = "2024"
 
 [dependencies]
 ratatui = "0.29"
 crossterm = "0.28"
-git2 = { version = "0.19", features = ["vendored-openssl"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+git2 = { version = "0.20", features = ["vendored-openssl"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
-syntect-tui = "3"
+syntect-tui = "3.0.6"
 similar = { version = "2", features = ["inline"] }
-toml = "0.8"
+toml = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-portable-pty = "0.8"
+portable-pty = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 dirs = "6"
 copypasta = "0.10"
 log = "0.4"
 env_logger = "0.11"
-notify = "7"
+notify = "8"
 unicode-width = "0.2"
 vt100 = "0.15"
 open = "5"
@@ -31,10 +31,10 @@ regex = "1"
 ignore = "0.4"
 aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-tree-sitter = "0.24"
-tree-sitter-rust = "0.23"
-tree-sitter-go = "0.23"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
 
 [dev-dependencies]
