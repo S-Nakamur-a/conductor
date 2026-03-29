@@ -24,6 +24,11 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         Action::CycleFocusBackward => { app.cycle_focus_backward(); true }
         Action::FocusWorktree => { app.set_focus(Focus::Worktree); true }
         Action::FocusExplorer => { app.set_focus(Focus::Explorer); true }
+        Action::FocusExplorerDiffList => {
+            app.set_focus(Focus::Explorer);
+            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            true
+        }
         Action::FocusViewer => { app.set_focus(Focus::Viewer); true }
         Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); true }
         Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); true }

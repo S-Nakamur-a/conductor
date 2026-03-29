@@ -174,7 +174,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // ── Panel number overlay (Alt key hold) ─────────────────────────
     // Only show when no other overlay/modal is active.
-    if app.show_panel_overlay
+    if app.show_panel_overlay()
         && app.overlays.active == crate::overlay::ActiveOverlay::None
         && app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::Normal
         && app.review_state.input_mode == crate::review_state::ReviewInputMode::Normal

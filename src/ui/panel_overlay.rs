@@ -15,37 +15,87 @@ struct PanelInfo {
     area: Rect,
     number: &'static str,
     label: &'static str,
-    focus: Focus,
+    is_focused: bool,
 }
 
 /// Render the panel number overlay on all panels.
 pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
     let columns = app.layout_cache.columns;
     let terminal_split = app.layout_cache.terminal_split;
+    let explorer_mid_y = app.layout_cache.explorer_mid_y;
+
+    // Split Explorer column (columns[1]) into top (file tree) and bottom (diff list).
+    let explorer_col = columns[1];
+    let explorer_top = Rect::new(
+        explorer_col.x,
+        explorer_col.y,
+        explorer_col.width,
+        explorer_mid_y.saturating_sub(explorer_col.y),
+    );
+    let explorer_bottom = Rect::new(
+        explorer_col.x,
+        explorer_mid_y,
+        explorer_col.width,
+        explorer_col.height.saturating_sub(explorer_top.height),
+    );
+
+    let is_explorer_focused = app.focus == Focus::Explorer;
+    let on_diff_list = app.viewer_state.explorer.explorer_focus_on_diff_list;
 
     let panels = [
-        PanelInfo { area: columns[0], number: "1", label: "Worktree", focus: Focus::Worktree },
-        PanelInfo { area: columns[1], number: "2", label: "Explorer", focus: Focus::Explorer },
-        PanelInfo { area: columns[2], number: "3", label: "Viewer", focus: Focus::Viewer },
-        PanelInfo { area: terminal_split[0], number: "4", label: "Claude", focus: Focus::TerminalClaude },
-        PanelInfo { area: terminal_split[1], number: "5", label: "Shell", focus: Focus::TerminalShell },
+        PanelInfo {
+            area: columns[0],
+            number: "1",
+            label: "Worktree",
+            is_focused: app.focus == Focus::Worktree,
+        },
+        PanelInfo {
+            area: explorer_top,
+            number: "2",
+            label: "Explorer",
+            is_focused: is_explorer_focused && !on_diff_list,
+        },
+        PanelInfo {
+            area: explorer_bottom,
+            number: "3",
+            label: "Diff List",
+            is_focused: is_explorer_focused && on_diff_list,
+        },
+        PanelInfo {
+            area: columns[2],
+            number: "4",
+            label: "Diff Viewer",
+            is_focused: app.focus == Focus::Viewer,
+        },
+        PanelInfo {
+            area: terminal_split[0],
+            number: "5",
+            label: "Claude",
+            is_focused: app.focus == Focus::TerminalClaude,
+        },
+        PanelInfo {
+            area: terminal_split[1],
+            number: "6",
+            label: "Shell",
+            is_focused: app.focus == Focus::TerminalShell,
+        },
     ];
 
     for panel in &panels {
         if panel.area.width < 3 || panel.area.height < 3 {
             continue;
         }
-        render_single_panel_overlay(frame, panel, app.focus == panel.focus, &app.theme);
+        render_single_panel_overlay(frame, panel, &app.theme);
     }
 }
 
 fn render_single_panel_overlay(
     frame: &mut Frame,
     panel: &PanelInfo,
-    is_focused: bool,
     theme: &crate::theme::Theme,
 ) {
     let area = panel.area;
+    let is_focused = panel.is_focused;
 
     // Clear the underlying content to avoid bleed-through.
     frame.render_widget(Clear, area);
