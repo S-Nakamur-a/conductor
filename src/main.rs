@@ -319,6 +319,17 @@ fn run_loop(
                             handle_key_event(app, key);
                         }
                     }
+                    Event::Key(key) if key.kind == KeyEventKind::Repeat => {
+                        // Forward repeat events to terminal panels so that
+                        // holding down arrow keys (and other keys) produces
+                        // continuous movement, just like a real terminal.
+                        last_input_time = Instant::now();
+                        if app.focus == crate::app::Focus::TerminalClaude
+                            || app.focus == crate::app::Focus::TerminalShell
+                        {
+                            handle_key_event(app, key);
+                        }
+                    }
                     Event::Key(key) if key.kind == KeyEventKind::Release => {
                         // Alt key release — hide panel overlay
                         if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
