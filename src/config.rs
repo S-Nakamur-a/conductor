@@ -35,8 +35,6 @@ pub struct Config {
     pub review: ReviewConfig,
     /// `[keybinds]` -- optional user key-bind overrides.
     pub keybinds: KeybindsConfig,
-    /// `[notification]` -- OS notification settings.
-    pub notification: NotificationConfig,
     /// `[ccusage]` -- Claude Code token usage display.
     pub ccusage: CcusageConfig,
     /// `[updates]` -- startup version check settings.
@@ -266,15 +264,6 @@ pub struct KeybindsConfig {
     pub terminal: HashMap<String, KeybindValue>,
 }
 
-/// `[notification]` section.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct NotificationConfig {
-    /// Automatically respond to CC permission prompts using PERMISSION.md rules.
-    /// Off by default — this feature can auto-approve tool execution.
-    pub auto_permission: bool,
-}
-
 /// `[ccusage]` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -319,15 +308,12 @@ impl Default for UpdatesConfig {
 pub struct ApiConfig {
     /// Model ID for the Gemini API.
     pub model: String,
-    /// Model ID used for permission judgment (lightweight tasks).
-    pub permission_model: String,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             model: String::from("gemini-2.5-flash"),
-            permission_model: String::from("gemini-2.5-flash"),
         }
     }
 }
@@ -417,9 +403,6 @@ pub fn generate_default_config() -> String {
 # [keybinds.viewer]
 # [keybinds.terminal]
 
-[notification]
-# auto_permission = false               # auto-respond to CC permission prompts using PERMISSION.md
-
 [ccusage]
 # enabled = false                       # token usage display in the title bar (requires ccusage)
 # poll_interval_secs = 120              # polling interval in seconds
@@ -430,7 +413,6 @@ pub fn generate_default_config() -> String {
 
 [api]
 # model = "gemini-2.5-flash"            # model for smart worktree generation (Gemini API)
-# permission_model = "gemini-2.5-flash" # model for permission judgment (Gemini API)
 "#,
     )
 }
