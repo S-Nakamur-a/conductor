@@ -8,11 +8,6 @@
       "name": "conductor",
       "source": "./plugins/conductor",
       "description": "Hooks, MCP tools, and commands for Claude Code sessions running inside Conductor TUI"
-    },
-    {
-      "name": "conductor-permission",
-      "source": "./plugins/conductor-permission",
-      "description": "PermissionRequest hook with osascript dialog and optional LLM auto-judgment (opt-in)"
     }
   ]
 }

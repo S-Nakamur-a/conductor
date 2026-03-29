@@ -741,12 +741,4 @@ impl App {
         self.terminal.cc_active_worktrees.remove(&working_dir);
     }
 
-    // ── Permission handling ─────────────────────────────────────────
-    // NOTE: Permission handling functions (start_permission_server,
-    // process_permission_judgments, respond_permission_request, etc.)
-    // have been moved to the plugin's hooks.
 }
-
-// NOTE: Permission handling functions (judge_permission, ask_user_permission,
-// apply_suggestion_to_settings, etc.) have been moved to the plugin's Python
-// script at plugins/conductor/hooks/scripts/permission-handler.py.

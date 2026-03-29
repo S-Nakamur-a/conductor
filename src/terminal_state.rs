@@ -2,9 +2,6 @@
 //!
 //! Groups all PTY-related fields previously scattered in `App` into a
 //! single `TerminalState` struct.
-//!
-//! Permission handling has been moved to the plugin's Python script
-//! (plugins/conductor/hooks/scripts/permission-handler.py).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
