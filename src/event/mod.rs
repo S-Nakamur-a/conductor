@@ -102,6 +102,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         match action {
             Action::FocusWorktree
             | Action::FocusExplorer
+            | Action::FocusExplorerDiffList
             | Action::FocusViewer
             | Action::FocusTerminalClaude
             | Action::FocusTerminalShell => {
@@ -187,6 +188,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 Action::LeaveTerminal => { app.set_focus(Focus::Explorer); return; }
                 Action::FocusWorktree => { app.set_focus(Focus::Worktree); return; }
                 Action::FocusExplorer => { app.set_focus(Focus::Explorer); return; }
+                Action::FocusExplorerDiffList => {
+                    app.set_focus(Focus::Explorer);
+                    app.viewer_state.explorer.explorer_focus_on_diff_list = true;
+                    return;
+                }
                 Action::FocusViewer => { app.set_focus(Focus::Viewer); return; }
                 Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); return; }
                 Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); return; }

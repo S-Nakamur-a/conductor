@@ -95,6 +95,7 @@ fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    log::debug!("keyboard_enhanced = {keyboard_enhanced}");
     execute!(
         stdout,
         EnterAlternateScreen,
@@ -107,6 +108,7 @@ fn main() -> Result<()> {
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                     | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
             )
         )?;
     }
@@ -296,6 +298,7 @@ fn run_loop(
                 crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
                 _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
                 _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
+                _ if app.alt_press_since.is_some() => TICK_RATE_ACTIVE,
                 _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
                 _ if decoration_active => DECORATION_TICK_INTERVAL,
                 _ => TICK_RATE_IDLE,
@@ -310,34 +313,39 @@ fn run_loop(
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
                         last_input_time = Instant::now();
-                        // Alt key press — show panel overlay
                         if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
-                            app.show_panel_overlay = true;
+                            // Alt-only press: start the hold timer (if not already running).
+                            if app.alt_press_since.is_none() {
+                                app.alt_press_since = Some(Instant::now());
+                            }
                         } else {
-                            // Any non-Alt key dismisses the overlay
-                            app.show_panel_overlay = false;
+                            // Any other key resets the Alt hold timer.
+                            app.alt_press_since = None;
                             handle_key_event(app, key);
                         }
                     }
                     Event::Key(key) if key.kind == KeyEventKind::Repeat => {
-                        // Forward repeat events to terminal panels so that
-                        // holding down arrow keys (and other keys) produces
-                        // continuous movement, just like a real terminal.
                         last_input_time = Instant::now();
-                        if app.focus == crate::app::Focus::TerminalClaude
-                            || app.focus == crate::app::Focus::TerminalShell
-                        {
-                            handle_key_event(app, key);
+                        // Alt repeat is fine — don't reset timer.
+                        if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
+                            // no-op: keep holding
+                        } else {
+                            app.alt_press_since = None;
+                            if app.focus == crate::app::Focus::TerminalClaude
+                                || app.focus == crate::app::Focus::TerminalShell
+                            {
+                                handle_key_event(app, key);
+                            }
                         }
                     }
                     Event::Key(key) if key.kind == KeyEventKind::Release => {
-                        // Alt key release — hide panel overlay
                         if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
-                            app.show_panel_overlay = false;
+                            app.alt_press_since = None;
                         }
                     }
                     Event::Mouse(mouse) => {
                         last_input_time = Instant::now();
+                        app.alt_press_since = None;
                         handle_mouse_event(app, mouse, last_frame_area);
                     }
                     Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
@@ -362,7 +370,7 @@ fn run_loop(
         if app.update_state != crate::app::UpdateState::Idle
             || app.overlays.grep_search.running
             || app.overlays.grep_search.debounce_deadline.is_some()
-            || app.show_panel_overlay
+            || app.alt_press_since.is_some()
         {
             app.dirty.mark_all();
         }

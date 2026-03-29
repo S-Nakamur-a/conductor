@@ -24,6 +24,7 @@ pub enum Action {
     CycleFocusBackward,
     FocusWorktree,
     FocusExplorer,
+    FocusExplorerDiffList,
     FocusViewer,
     FocusTerminalClaude,
     FocusTerminalShell,
@@ -115,6 +116,7 @@ impl Action {
             "cycle_focus_backward" => Some(Action::CycleFocusBackward),
             "focus_worktree" => Some(Action::FocusWorktree),
             "focus_explorer" => Some(Action::FocusExplorer),
+            "focus_explorer_diff_list" => Some(Action::FocusExplorerDiffList),
             "focus_viewer" => Some(Action::FocusViewer),
             "focus_terminal_claude" => Some(Action::FocusTerminalClaude),
             "focus_terminal_shell" => Some(Action::FocusTerminalShell),
@@ -190,6 +192,7 @@ impl Action {
             Action::CycleFocusBackward => "cycle_focus_backward",
             Action::FocusWorktree => "focus_worktree",
             Action::FocusExplorer => "focus_explorer",
+            Action::FocusExplorerDiffList => "focus_explorer_diff_list",
             Action::FocusViewer => "focus_viewer",
             Action::FocusTerminalClaude => "focus_terminal_claude",
             Action::FocusTerminalShell => "focus_terminal_shell",
@@ -510,23 +513,26 @@ impl KeyMap {
         self.bind_ctrl(Global, 'r', SwitchRepo);
         self.bind(Global, KeyCode::Char('1'), KeyModifiers::SUPER, FocusWorktree);
         self.bind(Global, KeyCode::Char('2'), KeyModifiers::SUPER, FocusExplorer);
-        self.bind(Global, KeyCode::Char('3'), KeyModifiers::SUPER, FocusViewer);
-        self.bind(Global, KeyCode::Char('4'), KeyModifiers::SUPER, FocusTerminalClaude);
-        self.bind(Global, KeyCode::Char('5'), KeyModifiers::SUPER, FocusTerminalShell);
+        self.bind(Global, KeyCode::Char('3'), KeyModifiers::SUPER, FocusExplorerDiffList);
+        self.bind(Global, KeyCode::Char('4'), KeyModifiers::SUPER, FocusViewer);
+        self.bind(Global, KeyCode::Char('5'), KeyModifiers::SUPER, FocusTerminalClaude);
+        self.bind(Global, KeyCode::Char('6'), KeyModifiers::SUPER, FocusTerminalShell);
         // Alt+number as fallback — Cmd+number is intercepted by most terminal emulators on macOS.
         // When terminal sends Alt as Esc prefix (e.g. iTerm2 "Option sends Esc+"):
         self.bind(Global, KeyCode::Char('1'), KeyModifiers::ALT, FocusWorktree);
         self.bind(Global, KeyCode::Char('2'), KeyModifiers::ALT, FocusExplorer);
-        self.bind(Global, KeyCode::Char('3'), KeyModifiers::ALT, FocusViewer);
-        self.bind(Global, KeyCode::Char('4'), KeyModifiers::ALT, FocusTerminalClaude);
-        self.bind(Global, KeyCode::Char('5'), KeyModifiers::ALT, FocusTerminalShell);
+        self.bind(Global, KeyCode::Char('3'), KeyModifiers::ALT, FocusExplorerDiffList);
+        self.bind(Global, KeyCode::Char('4'), KeyModifiers::ALT, FocusViewer);
+        self.bind(Global, KeyCode::Char('5'), KeyModifiers::ALT, FocusTerminalClaude);
+        self.bind(Global, KeyCode::Char('6'), KeyModifiers::ALT, FocusTerminalShell);
         // When macOS Option key produces Unicode (e.g. default Terminal.app / iTerm2 without Esc+ mode):
-        // Option+1='¡', Option+2='™', Option+3='£', Option+4='¢', Option+5='∞'
+        // Option+1='¡', Option+2='™', Option+3='£', Option+4='¢', Option+5='∞', Option+6='§'
         self.bind_char(Global, '¡', FocusWorktree);
         self.bind_char(Global, '™', FocusExplorer);
-        self.bind_char(Global, '£', FocusViewer);
-        self.bind_char(Global, '¢', FocusTerminalClaude);
-        self.bind_char(Global, '∞', FocusTerminalShell);
+        self.bind_char(Global, '£', FocusExplorerDiffList);
+        self.bind_char(Global, '¢', FocusViewer);
+        self.bind_char(Global, '∞', FocusTerminalClaude);
+        self.bind_char(Global, '§', FocusTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
         self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
 
@@ -723,9 +729,13 @@ fn normalize_key(key: &KeyEvent) -> (KeyCode, KeyModifiers) {
     normalize_raw(key.code, key.modifiers)
 }
 
-fn normalize_raw(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+fn normalize_raw(mut code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
     if let KeyCode::Char(c) = code {
-        if c.is_ascii_uppercase() {
+        if c.is_ascii_lowercase() && modifiers.contains(KeyModifiers::SHIFT) {
+            // Shift+lowercase → uppercase (REPORT_ALL_KEYS_AS_ESCAPE_CODES sends this).
+            code = KeyCode::Char(c.to_ascii_uppercase());
+            modifiers &= !KeyModifiers::SHIFT;
+        } else if c.is_ascii_uppercase() {
             modifiers &= !KeyModifiers::SHIFT;
         }
     }

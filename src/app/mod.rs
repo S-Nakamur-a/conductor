@@ -388,8 +388,10 @@ pub struct App {
     pub new_worktree_paths: HashSet<PathBuf>,
 
     // ── Panel number overlay (Alt key hold) ─────────────────────
-    /// Whether to show the panel number overlay (true while Alt key is held).
-    pub show_panel_overlay: bool,
+    /// Timestamp when Alt key was pressed (without any other key).
+    /// The overlay becomes visible after holding Alt for 1 second.
+    /// Reset on Alt release or any other key/mouse event.
+    pub alt_press_since: Option<std::time::Instant>,
 }
 
 /// Result of a background diff computation.
@@ -407,6 +409,13 @@ pub struct CcusageInfo {
 }
 
 impl App {
+    /// Returns `true` when the panel number overlay should be rendered.
+    /// Requires Alt to be held continuously for at least 1 second.
+    pub fn show_panel_overlay(&self) -> bool {
+        self.alt_press_since
+            .is_some_and(|since| since.elapsed() >= std::time::Duration::from_secs(1))
+    }
+
     /// Returns `true` when any overlay popup is visible on top of the main panels.
     ///
     /// Used by panel renderers to suppress cursor positioning so that the
@@ -567,7 +576,7 @@ impl App {
             symbol_action_overlay: SymbolActionOverlay::default(),
             bg_symbol_index_op: BackgroundOp::default(),
             new_worktree_paths: HashSet::new(),
-            show_panel_overlay: false,
+            alt_press_since: None,
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
         app.refresh_worktrees();
