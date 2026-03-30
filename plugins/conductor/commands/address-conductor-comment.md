@@ -8,7 +8,42 @@ Conductor でついたレビューコメント（pending）を取得し、Subage
 
 $ARGUMENTS
 
-## 手順
+## モード判定
+
+`$ARGUMENTS` が UUID 形式の文字列（comment ID）の場合は **単一コメントモード** で動作する。
+それ以外（空 or `all_branches` 等）の場合は **一括モード** で全 pending コメントを処理する。
+
+---
+
+## 単一コメントモード（comment ID 指定時）
+
+### 1. コメントのスレッドを取得
+
+`mcp__conductor__get_comment_thread` を呼び出し、指定された comment ID のコメント詳細と **全返信履歴（replies）** を取得する。
+
+返信がある場合は最新の返信内容を特に重視し、会話の流れを把握した上で対応する。
+
+### 2. コメントに対応
+
+コメントの kind に応じて直接対応する（Subagent は使わない）：
+
+- **suggest（変更提案）**:
+  1. 該当ファイルの該当行を Read で確認（前後50行程度のコンテキストも把握）
+  2. 提案内容（+ 返信履歴がある場合は最新の要望）に沿ってコードを修正（Edit）
+  3. `mcp__conductor__reply_to_comment` で対応内容を報告
+  4. ユーザに修正内容を確認してもらい、承認されれば `mcp__conductor__resolve_comment` で解決
+- **question（質問）**:
+  1. 該当ファイルの該当行と周辺コード・関連ファイルを調査
+  2. 返信履歴がある場合は最新のユーザー返信に回答
+  3. `mcp__conductor__reply_to_comment` で回答（resolve はしない — レビュアーが確認してから解決する）
+
+### 3. 結果を報告
+
+処理結果を簡潔に報告する。
+
+---
+
+## 一括モード（引数なし or オプション指定時）
 
 ### 1. Pending コメントを取得
 
@@ -19,8 +54,10 @@ MCP ツール `mcp__conductor__get_pending_comments` を呼び出す。
 
 ### 2. 各コメントのスレッドを取得
 
-各コメントに対して `mcp__conductor__get_comment_thread` を呼び出し、詳細と返信履歴を取得する。
+各コメントに対して `mcp__conductor__get_comment_thread` を呼び出し、コメント詳細と **全返信履歴（replies）** を取得する。
 これらは並列実行可能。
+
+**重要**: 返信履歴はコメント対応の文脈として不可欠。全返信を時系列で把握し、特に最新の返信内容に基づいて対応すること。Subagent にも全返信を渡すこと。
 
 ### 3. TodoWrite で一覧化
 

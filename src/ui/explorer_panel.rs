@@ -5,7 +5,7 @@
 //! opens it in the Viewer panel.
 
 use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
@@ -337,12 +337,19 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         .iter()
         .filter(|c| c.status == crate::review_store::CommentStatus::Pending)
         .count();
-    let title = format!(" Comments ({pending}/{total}) [Space:view Enter:expand e:edit R:reply] ");
+    let title = format!(" Comments ({pending}/{total}) ");
+    let ask_claude_label = " ✨ Ask Claude All ";
 
     let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
 
     let block = Block::default()
         .title(title)
+        .title_bottom(Line::from(vec![
+            Span::styled(
+                ask_claude_label,
+                Style::default().fg(Color::Rgb(180, 140, 255)),
+            ),
+        ]).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));

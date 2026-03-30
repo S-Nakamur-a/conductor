@@ -357,8 +357,7 @@ pub(super) fn navigate_to_comment_with_focus(app: &mut App, comment_idx: usize, 
             app.viewer_state.open_file(&wt_path, &file_path, tab_width);
             app.rehighlight_viewer();
             app.viewer_state.content.file_scroll = line.saturating_sub(1);
-            app.viewer_state.selection.selected_line_start = Some(line);
-            app.viewer_state.selection.selected_line_end = None;
+            app.viewer_state.selection = crate::viewer::LineSelection::Selected { start: line, end: line };
             app.review_state.build_file_comment_cache(&file_path);
             if focus_viewer {
                 app.set_focus(Focus::Viewer);

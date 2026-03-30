@@ -12,8 +12,6 @@ use ratatui::Frame;
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::media_state::MediaContent;
-use crate::review_state::ReviewInputMode;
-use crate::review_store::ReviewComment;
 use crate::theme::Theme;
 use crate::viewer::UnifiedDiffEntry;
 
@@ -22,6 +20,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    // Clear screen-row map so stale data isn't used in diff/media modes.
+    app.viewer_state.content.screen_row_map.clear();
+
     // Populate diff annotations cache before taking any shared borrows.
     ensure_diff_annotations_cached(app);
 
@@ -111,168 +112,223 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let comment_lines: std::collections::HashSet<usize> =
         app.review_state.file_comments.keys().copied().collect();
 
-    let lines: Vec<Line> = vs
+    // Collect the *end* lines of comments (last line of each range — where 💬 appears).
+    let comment_end_lines: std::collections::HashSet<usize> = app
+        .review_state
+        .comments
+        .iter()
+        .filter(|c| {
+            app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path)
+        })
+        .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
+        .collect();
+
+    // Build visible lines, inserting inline thread rows after comment lines.
+    let expanded_threads = &app.viewer_state.explorer.expanded_inline_threads;
+    let inline_reply_line = app.viewer_state.explorer.inline_reply_line;
+    let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
+    let mut screen_row_map: Vec<crate::viewer::ScreenRow> = Vec::with_capacity(inner_height);
+    let mut remaining = inner_height;
+
+    for (line_no, content) in vs
         .content.file_content
         .iter()
         .enumerate()
         .skip(vs.content.file_scroll)
-        .take(inner_height)
-        .map(|(line_no, content)| {
-            let line_1 = line_no + 1;
-            let is_selected = vs.is_line_selected(line_1);
-            let is_hovered = vs.click.hover_line == Some(line_1);
-            let is_gutter_hovered = vs.click.hover_gutter_line == Some(line_1);
-            let is_in_pending_range = !is_selected && vs.selection.selected_line_start.is_some() && vs.selection.selected_line_end.is_none() && vs.click.hover_line.is_some() && {
-                let start = vs.selection.selected_line_start.unwrap();
-                let hover = vs.click.hover_line.unwrap();
-                let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
-                line_1 >= lo && line_1 <= hi
-            };
+    {
+        if remaining == 0 {
+            break;
+        }
 
-            // Diff gutter marker.
-            let annotation = diff_annotations.get(&line_1);
-            let diff_tag = annotation.map(|(tag, _)| *tag);
-            let (gutter_prefix, gutter_bg) = match diff_tag {
-                Some(DiffLineTag::Insert) => ("+", Some(app.theme.diff_add_bg)),
-                Some(DiffLineTag::Delete) => ("-", None),
-                _ => (" ", None),
-            };
+        let line_1 = line_no + 1;
+        let is_selected = vs.is_line_selected(line_1);
+        let is_hovered = vs.click.hover_line == Some(line_1);
+        let is_gutter_hovered = vs.click.hover_gutter_line == Some(line_1);
+        let is_in_pending_range = !is_selected && vs.is_selection_pending() && vs.click.hover_line.is_some() && {
+            let start = match vs.selection { crate::viewer::LineSelection::Pending { start } => start, _ => 0 };
+            let hover = vs.click.hover_line.unwrap();
+            let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
+            line_1 >= lo && line_1 <= hi
+        };
 
-            // Gutter (line number).
-            let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
-            let is_grep_highlight = vs.content.grep_highlight_line == Some(line_1);
-            let gutter_style = if is_selected {
+        // Diff gutter marker.
+        let annotation = diff_annotations.get(&line_1);
+        let diff_tag = annotation.map(|(tag, _)| *tag);
+        let (gutter_prefix, gutter_bg) = match diff_tag {
+            Some(DiffLineTag::Insert) => ("+", Some(app.theme.diff_add_bg)),
+            Some(DiffLineTag::Delete) => ("-", None),
+            _ => (" ", None),
+        };
+
+        // Gutter (line number).
+        let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
+        let is_grep_highlight = vs.content.grep_highlight_line == Some(line_1);
+        let gutter_style = if is_selected {
+            Style::default()
+                .fg(theme.gutter_selected_fg)
+                .bg(theme.gutter_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_in_pending_range {
+            Style::default()
+                .fg(theme.gutter_selected_fg)
+                .bg(theme.gutter_pending_bg)
+        } else if is_grep_highlight {
+            Style::default()
+                .fg(theme.search_current_fg)
+                .bg(theme.search_match_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_gutter_hovered {
+            Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
+        } else if is_hovered {
+            Style::default().fg(theme.gutter_hover_fg)
+        } else if diff_tag == Some(DiffLineTag::Insert) {
+            Style::default().fg(theme.diff_add)
+        } else if diff_tag == Some(DiffLineTag::Delete) {
+            Style::default().fg(theme.diff_del)
+        } else {
+            Style::default().fg(theme.muted)
+        };
+        let gutter_span = Span::styled(num, gutter_style);
+
+        // Comment badge: 💬 on the last line of a comment range,
+        // │ on earlier lines in the range, 💬 (muted) on gutter hover.
+        let badge = if comment_end_lines.contains(&line_1) {
+            Span::styled("💬", Style::default().fg(theme.accent))
+        } else if comment_lines.contains(&line_1) {
+            Span::styled("│ ", Style::default().fg(theme.accent))
+        } else if is_gutter_hovered {
+            Span::styled("💬", Style::default().fg(theme.muted))
+        } else {
+            Span::raw("  ")
+        };
+
+        // Content styling.
+        let is_match = vs.search.search_matches.contains(&line_no);
+        let is_current_match =
+            vs.search.search_matches.get(vs.search.search_match_idx) == Some(&line_no);
+
+        let content_spans: Vec<Span> = if is_current_match {
+            vec![Span::styled(
+                content.to_string(),
+                Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg),
+            )]
+        } else if is_match {
+            vec![Span::styled(
+                content.to_string(),
                 Style::default()
-                    .fg(theme.gutter_selected_fg)
-                    .bg(theme.gutter_selected_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_in_pending_range {
-                Style::default()
-                    .fg(theme.gutter_selected_fg)
-                    .bg(theme.gutter_pending_bg)
-            } else if is_grep_highlight {
-                Style::default()
-                    .fg(theme.search_current_fg)
-                    .bg(theme.search_match_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_gutter_hovered {
-                Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
-            } else if is_hovered {
-                Style::default().fg(theme.gutter_hover_fg)
-            } else if diff_tag == Some(DiffLineTag::Insert) {
-                Style::default().fg(theme.diff_add)
-            } else if diff_tag == Some(DiffLineTag::Delete) {
-                Style::default().fg(theme.diff_del)
-            } else {
-                Style::default().fg(theme.muted)
-            };
-            let gutter_span = Span::styled(num, gutter_style);
+                    .fg(theme.search_match_fg)
+                    .add_modifier(Modifier::BOLD),
+            )]
+        } else if is_selected {
+            vec![Span::styled(
+                content.to_string(),
+                Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
+            )]
+        } else if is_in_pending_range {
+            vec![Span::styled(
+                content.to_string(),
+                Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
+            )]
+        } else if let Some((ann_tag, ann_segments)) = annotation {
+            if !ann_segments.is_empty() {
+                // Word-level diff: render each segment with appropriate background.
+                let (diff_bg, emphasis_bg) = match ann_tag {
+                    DiffLineTag::Insert => (app.theme.diff_add_bg, app.theme.diff_add_bg_emphasis),
+                    DiffLineTag::Delete => (app.theme.diff_del_bg, app.theme.diff_del_bg_emphasis),
+                    _ => (Color::Reset, Color::Reset),
+                };
 
-            // Comment badge.
-            let badge = if comment_lines.contains(&line_1) {
-                Span::styled("\u{25c6} ", Style::default().fg(theme.accent))
-            } else {
-                Span::raw("  ")
-            };
-
-            // Content styling.
-            let is_match = vs.search.search_matches.contains(&line_no);
-            let is_current_match =
-                vs.search.search_matches.get(vs.search.search_match_idx) == Some(&line_no);
-
-            let content_spans: Vec<Span> = if is_current_match {
-                vec![Span::styled(
-                    content.to_string(),
-                    Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg),
-                )]
-            } else if is_match {
-                vec![Span::styled(
-                    content.to_string(),
-                    Style::default()
-                        .fg(theme.search_match_fg)
-                        .add_modifier(Modifier::BOLD),
-                )]
-            } else if is_selected {
-                vec![Span::styled(
-                    content.to_string(),
-                    Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
-                )]
-            } else if is_in_pending_range {
-                vec![Span::styled(
-                    content.to_string(),
-                    Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
-                )]
-            } else if let Some((ann_tag, ann_segments)) = annotation {
-                if !ann_segments.is_empty() {
-                    // Word-level diff: render each segment with appropriate background.
-                    let (diff_bg, emphasis_bg) = match ann_tag {
-                        DiffLineTag::Insert => (app.theme.diff_add_bg, app.theme.diff_add_bg_emphasis),
-                        DiffLineTag::Delete => (app.theme.diff_del_bg, app.theme.diff_del_bg_emphasis),
-                        _ => (Color::Reset, Color::Reset),
-                    };
-
-                    if *ann_tag == DiffLineTag::Insert {
-                        vs.content.highlighted_lines.get(line_no)
-                            .filter(|t| !t.is_empty())
-                            .and_then(|tokens| merge_syntax_with_inline(
-                                ann_segments, tokens, diff_bg, emphasis_bg, tab_width,
-                            ))
-                            .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
-                    } else {
-                        render_inline_diff_spans(
-                            ann_segments,
-                            diff_bg,
-                            emphasis_bg,
-                            tab_width,
-                        )
-                    }
+                if *ann_tag == DiffLineTag::Insert {
+                    vs.content.highlighted_lines.get(line_no)
+                        .filter(|t| !t.is_empty())
+                        .and_then(|tokens| merge_syntax_with_inline(
+                            ann_segments, tokens, diff_bg, emphasis_bg, tab_width,
+                        ))
+                        .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
                 } else {
-                    // Line-level diff only: use syntax highlighting with diff bg.
-                    let diff_bg = match ann_tag {
-                        DiffLineTag::Insert => Some(app.theme.diff_add_bg),
-                        DiffLineTag::Delete => Some(app.theme.diff_del_bg),
-                        _ => None,
-                    };
-                    syntax_spans_for_line(vs, line_no, diff_bg)
+                    render_inline_diff_spans(
+                        ann_segments,
+                        diff_bg,
+                        emphasis_bg,
+                        tab_width,
+                    )
                 }
             } else {
-                syntax_spans_for_line(vs, line_no, gutter_bg)
-            };
+                // Line-level diff only: use syntax highlighting with diff bg.
+                let diff_bg = match ann_tag {
+                    DiffLineTag::Insert => Some(app.theme.diff_add_bg),
+                    DiffLineTag::Delete => Some(app.theme.diff_del_bg),
+                    _ => None,
+                };
+                syntax_spans_for_line(vs, line_no, diff_bg)
+            }
+        } else {
+            syntax_spans_for_line(vs, line_no, gutter_bg)
+        };
 
-            // Apply horizontal scroll to content spans, clipping to panel width.
-            let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
-            let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
+        // Apply horizontal scroll to content spans, clipping to panel width.
+        let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
+        let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
-            // Apply underline to hover symbol (Cmd+hover for jump targets).
-            let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
-                if hs.line == line_1 {
-                    apply_underline_range(content_spans, hs.start_col, hs.end_col, vs.content.h_scroll, theme.accent)
-                } else {
-                    content_spans
-                }
+        // Apply underline to hover symbol (Cmd+hover for jump targets).
+        let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
+            if hs.line == line_1 {
+                apply_underline_range(content_spans, hs.start_col, hs.end_col, vs.content.h_scroll, theme.accent)
             } else {
                 content_spans
-            };
+            }
+        } else {
+            content_spans
+        };
 
-            // Apply symbol hint labels (Vimium-style).
-            let content_spans = if app.symbol_hint_overlay.active {
-                let hints_on_line: Vec<_> = app.symbol_hint_overlay.hints.iter()
-                    .filter(|h| h.line == line_1)
-                    .collect();
-                if hints_on_line.is_empty() {
-                    content_spans
-                } else {
-                    apply_hint_labels(content_spans, &hints_on_line, &app.symbol_hint_overlay.input, vs.content.h_scroll, theme)
-                }
-            } else {
+        // Apply symbol hint labels (Vimium-style).
+        let content_spans = if app.symbol_hint_overlay.active {
+            let hints_on_line: Vec<_> = app.symbol_hint_overlay.hints.iter()
+                .filter(|h| h.line == line_1)
+                .collect();
+            if hints_on_line.is_empty() {
                 content_spans
-            };
+            } else {
+                apply_hint_labels(content_spans, &hints_on_line, &app.symbol_hint_overlay.input, vs.content.h_scroll, theme)
+            }
+        } else {
+            content_spans
+        };
 
-            let mut spans = vec![gutter_span, badge];
-            spans.extend(content_spans);
-            Line::from(spans)
-        })
-        .collect();
+        let mut spans = vec![gutter_span, badge];
+        spans.extend(content_spans);
+        lines.push(Line::from(spans));
+        screen_row_map.push(crate::viewer::ScreenRow::Code(line_1));
+        remaining -= 1;
+
+        // Inject inline thread rows below the LAST line of a comment range.
+        if remaining > 0 && expanded_threads.contains(&line_1) {
+            let reply_cid = if inline_reply_line == Some(line_1) {
+                app.viewer_state.explorer.inline_reply_comment_id.as_deref()
+            } else {
+                None
+            };
+            let thread_lines = build_inline_thread_lines(
+                line_1,
+                gutter_width,
+                area.width as usize,
+                &app.review_state,
+                reply_cid,
+                &app.viewer_state.explorer.inline_reply_buffer,
+                theme,
+            );
+            for (line, row_type) in thread_lines {
+                if remaining == 0 {
+                    break;
+                }
+                lines.push(line);
+                screen_row_map.push(row_type);
+                remaining -= 1;
+            }
+        }
+    }
+
+    // screen_row_map is stored into app after all borrows of vs are done (see below).
 
     // Prepend breadcrumb bar as the first line inside the block.
     let mut all_lines = Vec::new();
@@ -305,33 +361,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         frame.render_widget(hint_widget, hint_area);
     }
 
-    // Show comment preview overlay when the cursor line has comments.
-    if !vs.search.search_active && app.review_state.input_mode == ReviewInputMode::Normal {
-        let cursor_line = if let Some(line) = vs.explorer.comment_preview_line {
-            line
-        } else if let Some((start, _)) = vs.selected_range() {
-            start
-        } else {
-            vs.content.file_scroll + 1
-        };
-        if let Some(comments) = app.review_state.file_comments.get(&cursor_line) {
-            let has_selection = vs.selected_range().is_some();
-            render_comment_preview(
-                frame,
-                area,
-                comments,
-                cursor_line,
-                has_selection,
-                &app.review_state.reply_counts,
-                theme,
-            );
-        }
-    }
-
     // Show search input overlay (skip cursor positioning when a global overlay covers us).
     if vs.search.search_active {
         render_search_box(frame, area, &vs.search.search_query, theme, app.is_any_overlay_active());
     }
+
+    // Store the screen-row mapping for mouse event handling.
+    // Must be after all borrows of `vs` (&app.viewer_state) are dropped.
+    app.viewer_state.content.screen_row_map = screen_row_map;
 }
 
 /// Render the unified diff view (GitHub-style).
@@ -347,6 +384,17 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
     // Collect line numbers that have review comments.
     let comment_lines: std::collections::HashSet<usize> =
         app.review_state.file_comments.keys().copied().collect();
+
+    // Collect the *end* lines of comments (last line of each range).
+    let comment_end_lines: std::collections::HashSet<usize> = app
+        .review_state
+        .comments
+        .iter()
+        .filter(|c| {
+            app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path)
+        })
+        .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
+        .collect();
 
     let lines: Vec<Line> = vs
         .diff_view.diff_view_lines
@@ -441,9 +489,9 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     let is_gutter_hovered = new_line_no
                         .map(|n| vs.click.hover_gutter_line == Some(n))
                         .unwrap_or(false);
-                    let is_in_pending_range = !is_selected && new_line_no.is_some() && vs.selection.selected_line_start.is_some() && vs.selection.selected_line_end.is_none() && vs.click.hover_line.is_some() && {
+                    let is_in_pending_range = !is_selected && new_line_no.is_some() && vs.is_selection_pending() && vs.click.hover_line.is_some() && {
                         let n = new_line_no.unwrap();
-                        let start = vs.selection.selected_line_start.unwrap();
+                        let start = match vs.selection { crate::viewer::LineSelection::Pending { start } => start, _ => 0 };
                         let hover = vs.click.hover_line.unwrap();
                         let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
                         n >= lo && n <= hi
@@ -485,9 +533,14 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                     };
                     let gutter_span = Span::styled(num, gutter_style);
 
-                    // Comment badge (only for lines with new_line_no).
-                    let badge = if new_line_no.is_some_and(|n| comment_lines.contains(&n)) {
-                        Span::styled("\u{25c6} ", Style::default().fg(theme.accent))
+                    // Comment badge: 💬 on end lines, │ on earlier range lines,
+                    // 💬 (muted) on hovered gutter.
+                    let badge = if new_line_no.is_some_and(|n| comment_end_lines.contains(&n)) {
+                        Span::styled("💬", Style::default().fg(theme.accent))
+                    } else if new_line_no.is_some_and(|n| comment_lines.contains(&n)) {
+                        Span::styled("│ ", Style::default().fg(theme.accent))
+                    } else if is_gutter_hovered {
+                        Span::styled("💬", Style::default().fg(theme.muted))
                     } else {
                         Span::raw("  ")
                     };
@@ -624,36 +677,6 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
         frame.render_widget(hint_widget, hint_area);
     }
 
-    // Show comment preview overlay.
-    if !vs.search.search_active && app.review_state.input_mode == ReviewInputMode::Normal {
-        let cursor_line = if let Some(line) = vs.explorer.comment_preview_line {
-            line
-        } else if let Some((start, _)) = vs.selected_range() {
-            start
-        } else {
-            // Determine current line from diff_view_scroll position.
-            vs.diff_view.diff_view_lines.get(vs.diff_view.diff_view_scroll)
-                .and_then(|e| match e {
-                    UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
-                    _ => None,
-                })
-                .unwrap_or(0)
-        };
-        if cursor_line > 0 {
-            if let Some(comments) = app.review_state.file_comments.get(&cursor_line) {
-                let has_selection = vs.selected_range().is_some();
-                render_comment_preview(
-                    frame,
-                    area,
-                    comments,
-                    cursor_line,
-                    has_selection,
-                    &app.review_state.reply_counts,
-                    theme,
-                );
-            }
-        }
-    }
 }
 
 /// Render media file (image/video) as ASCII art in the viewer panel.
@@ -713,116 +736,229 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
     }
 }
 
-/// Render a comment preview overlay at the bottom of the viewer area.
-fn render_comment_preview(
-    frame: &mut Frame,
-    area: Rect,
-    comments: &[ReviewComment],
-    line: usize,
-    has_selection: bool,
-    reply_counts: &std::collections::HashMap<String, usize>,
-    theme: &Theme,
-) {
-    let max_comments: usize = 3;
-    let max_body_lines: usize = 3;
-    let width = area.width.saturating_sub(2);
-
-    // Pre-build all lines to know the exact height.
+/// Soft-wrap a string at word boundaries to fit within `max_width` columns.
+fn soft_wrap(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
     let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut col = 0;
+    for word in text.split_inclusive(|c: char| c.is_whitespace()) {
+        let wlen = unicode_width::UnicodeWidthStr::width(word);
+        if col + wlen > max_width && col > 0 {
+            lines.push(current.trim_end().to_string());
+            current = String::new();
+            col = 0;
+        }
+        current.push_str(word);
+        col += wlen;
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current.trim_end().to_string());
+    }
+    lines
+}
 
-    // Header line.
-    let count_label = if comments.len() == 1 {
-        "1 comment".to_string()
-    } else {
-        format!("{} comments", comments.len())
+/// Build inline thread rows for a comment at the given line.
+///
+/// Returns a vec of `Line`s representing the thread box:
+/// top border, each comment + replies + action icons, bottom border.
+fn build_inline_thread_lines<'a>(
+    line_1: usize,
+    gutter_width: usize,
+    panel_width: usize,
+    review_state: &crate::review_state::ReviewState,
+    reply_comment_id: Option<&str>,
+    reply_buffer: &crate::text_input::TextInput,
+    theme: &Theme,
+) -> Vec<(Line<'a>, crate::viewer::ScreenRow)> {
+    let comments = match review_state.file_comments.get(&line_1) {
+        Some(c) if !c.is_empty() => c,
+        _ => return Vec::new(),
     };
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!(" L{line} "),
-            Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg),
-        ),
-        Span::styled(
-            format!(" {count_label}"),
-            Style::default().fg(theme.muted),
-        ),
-        Span::styled(
-            "  Space: view thread",
-            Style::default().fg(theme.muted),
-        ),
-    ]));
 
-    // Comment bodies (multi-line preview).
-    for comment in comments.iter().take(max_comments) {
-        let kind_badge = crate::ui::review::kind_badge_span(comment.kind);
+    use crate::viewer::ScreenRow;
+    let mut out: Vec<(Line, ScreenRow)> = Vec::new();
+    let left_pad = gutter_width + 4 + 2; // gutter + badge
+    let gutter_pad: String = " ".repeat(left_pad);
+    let border_style = Style::default().fg(theme.accent);
+    let thread_bg = Style::default().bg(theme.comment_preview_bg);
+    let content_style = Style::default().fg(theme.fg).bg(theme.comment_preview_bg);
+    let muted_style = Style::default().fg(theme.muted).bg(theme.comment_preview_bg);
+    let info_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
+    // Box inner width (between │ and │).
+    let box_inner = panel_width.saturating_sub(left_pad + 4 + 2); // "  │ " left + " │" right
+    let wrap_width = box_inner.saturating_sub(6).max(20); // indent inside box
+
+    // Helper: make a bordered content line with left │, padded to full width.
+    let make_line = |spans: Vec<Span<'a>>| -> (Line<'a>, ScreenRow) {
+        let mut all = vec![
+            Span::styled(gutter_pad.clone(), thread_bg),
+            Span::styled("  │ ", border_style),
+        ];
+        all.extend(spans);
+        // Pad the line to panel_width so the background color fills the entire row.
+        let used: usize = all.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
+        let remaining = panel_width.saturating_sub(used + 2); // +2 for block borders
+        if remaining > 0 {
+            all.push(Span::styled(" ".repeat(remaining), thread_bg));
+        }
+        (Line::from(all).style(thread_bg), ScreenRow::ThreadContent)
+    };
+
+    // Helper: make a full-width border line with bg fill.
+    let make_border = |content: String| -> (Line<'a>, ScreenRow) {
+        let text = format!("{gutter_pad}{content}");
+        let used = unicode_width::UnicodeWidthStr::width(text.as_str());
+        let pad = panel_width.saturating_sub(used + 2);
+        let mut spans = vec![
+            Span::styled(gutter_pad.clone(), thread_bg),
+            Span::styled(content, border_style),
+        ];
+        if pad > 0 {
+            spans.push(Span::styled(" ".repeat(pad), thread_bg));
+        }
+        (Line::from(spans).style(thread_bg), ScreenRow::ThreadContent)
+    };
+
+    // Top border.
+    let top_fill = "─".repeat(box_inner.saturating_sub(1));
+    out.push(make_border(format!("  ┌{top_fill}┐")));
+
+    for (ci, comment) in comments.iter().enumerate() {
+        // Blank spacer line between comments in the same thread.
+        if ci > 0 {
+            out.push(make_line(vec![Span::styled("", content_style)]));
+        }
+
         let author_label = match comment.author {
             crate::review_store::Author::User => "you",
             crate::review_store::Author::Claude => "claude",
         };
 
-        // Reply count badge.
-        let reply_count = reply_counts.get(&comment.id).copied().unwrap_or(0);
-        let reply_badge = if reply_count > 0 {
-            Span::styled(
-                format!(" [{reply_count} replies]"),
-                Style::default().fg(theme.info),
-            )
+        // Comment body lines (with soft wrap). No kind badge / author icon.
+        let header_prefix_len = author_label.len() + 2; // "author: "
+        let first_line_wrap = wrap_width.saturating_sub(header_prefix_len).max(20);
+        let mut is_first = true;
+        for body_line in comment.body.split('\n') {
+            if is_first {
+                is_first = false;
+                let wrapped = soft_wrap(body_line, first_line_wrap);
+                for (wi, wline) in wrapped.iter().enumerate() {
+                    if wi == 0 {
+                        out.push(make_line(vec![
+                            Span::styled(format!("{author_label}: "), info_style),
+                            Span::styled(wline.clone(), content_style),
+                        ]));
+                    } else {
+                        out.push(make_line(vec![
+                            Span::styled(format!("  {wline}"), content_style),
+                        ]));
+                    }
+                }
+            } else {
+                let wrapped = soft_wrap(body_line, wrap_width);
+                for wline in &wrapped {
+                    out.push(make_line(vec![
+                        Span::styled(format!("  {wline}"), content_style),
+                    ]));
+                }
+            }
+        }
+
+        // Show replies if cached.
+        if let Some(replies) = review_state.cached_replies.get(&comment.id) {
+            for reply in replies {
+                let reply_author = match reply.author {
+                    crate::review_store::Author::User => "you",
+                    crate::review_store::Author::Claude => "claude",
+                };
+                let reply_header_len = reply_author.len() + 4; // "  author: "
+                let reply_first_wrap = wrap_width.saturating_sub(reply_header_len).max(20);
+                let mut is_first_reply_line = true;
+                for reply_line in reply.body.split('\n') {
+                    let w = if is_first_reply_line { reply_first_wrap } else { wrap_width };
+                    let wrapped = soft_wrap(reply_line, w);
+                    for (wi, wline) in wrapped.iter().enumerate() {
+                        if is_first_reply_line && wi == 0 {
+                            is_first_reply_line = false;
+                            out.push(make_line(vec![
+                                Span::styled(format!("  {reply_author}: "), info_style),
+                                Span::styled(wline.clone(), content_style),
+                            ]));
+                        } else {
+                            out.push(make_line(vec![
+                                Span::styled(format!("    {wline}"), content_style),
+                            ]));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Per-comment action icons row or active reply input.
+        let is_replying_to_this = reply_comment_id == Some(comment.id.as_str());
+        let action_row_type = ScreenRow::ThreadActions { comment_id: comment.id.clone() };
+        if is_replying_to_this {
+            let buf_text = reply_buffer.text().to_string();
+            let (line, _) = make_line(vec![
+                Span::styled("> ", Style::default().fg(theme.accent).bg(theme.comment_preview_bg)),
+                Span::styled(
+                    if buf_text.is_empty() { "Type reply...".to_string() } else { buf_text },
+                    content_style,
+                ),
+            ]);
+            out.push((line, action_row_type));
         } else {
-            Span::raw("")
-        };
+            // Clickable action icons: ↩ reply  ✔ resolve  x delete  ...  ✨ ask claude
+            let reply_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
+            let resolve_style = Style::default().fg(Color::Green).bg(theme.comment_preview_bg);
+            let delete_style = Style::default().fg(Color::Red).bg(theme.comment_preview_bg);
+            let claude_style = Style::default().fg(Color::Rgb(180, 140, 255)).bg(theme.comment_preview_bg);
+            let status_label = match comment.status {
+                crate::review_store::CommentStatus::Pending => "✔ resolve",
+                crate::review_store::CommentStatus::Resolved => "↺ unresolve",
+            };
 
-        // First line: kind badge + author + reply count.
-        lines.push(Line::from(vec![
-            kind_badge,
-            Span::styled(
-                format!("{author_label}: "),
-                Style::default().fg(theme.info),
-            ),
-            reply_badge,
-        ]));
+            // Build the left-side actions and right-side "✨ ask claude".
+            let left_actions = vec![
+                Span::styled("↩ reply", reply_style),
+                Span::styled("  ", muted_style),
+                Span::styled(status_label.to_string(), resolve_style),
+                Span::styled("  ", muted_style),
+                Span::styled("x delete", delete_style),
+            ];
+            let right_label = "✨ ask claude";
+            let right_label_w = unicode_width::UnicodeWidthStr::width(right_label);
 
-        // Body lines (up to max_body_lines).
-        let body_lines: Vec<&str> = comment.body.split('\n').collect();
-        let show_count = body_lines.len().min(max_body_lines);
-        let truncated = body_lines.len() > max_body_lines;
-        for body_line in body_lines.iter().take(show_count) {
-            let max_chars = (width as usize).saturating_sub(4); // "  " indent
-            let display: String = body_line.chars().take(max_chars).collect();
-            lines.push(Line::from(Span::styled(
-                format!("  {display}"),
-                Style::default().fg(theme.fg),
-            )));
-        }
-        if truncated {
-            lines.push(Line::from(Span::styled(
-                "  ...",
-                Style::default().fg(theme.muted),
-            )));
+            let left_w: usize = left_actions.iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
+            let prefix_w = left_pad + 4; // gutter_pad + "  │ "
+            let gap = panel_width.saturating_sub(prefix_w + left_w + right_label_w + 2 + 1);
+
+            let mut spans = vec![
+                Span::styled(gutter_pad.clone(), thread_bg),
+                Span::styled("  │ ", border_style),
+            ];
+            spans.extend(left_actions);
+            if gap > 0 {
+                spans.push(Span::styled(" ".repeat(gap), thread_bg));
+            }
+            spans.push(Span::styled(right_label.to_string(), claude_style));
+            spans.push(Span::styled(" ", thread_bg)); // trailing pad
+
+            let line = Line::from(spans).style(thread_bg);
+            out.push((line, action_row_type));
         }
     }
 
-    if comments.len() > max_comments {
-        lines.push(Line::from(Span::styled(
-            format!("  +{} more", comments.len() - max_comments),
-            Style::default().fg(theme.muted),
-        )));
-    }
+    // Bottom border.
+    let bot_fill = "─".repeat(box_inner.saturating_sub(1));
+    out.push(make_border(format!("  └{bot_fill}┘")));
 
-    let height = lines.len() as u16;
-
-    // Position above the selection hint overlay if a selection is active.
-    let offset_for_selection = if has_selection { 1_u16 } else { 0 };
-    let max_height = area.height.saturating_sub(2 + offset_for_selection);
-    let clamped_height = height.min(max_height);
-    let y = area
-        .y
-        .saturating_add(area.height)
-        .saturating_sub(clamped_height + 1 + offset_for_selection);
-    let preview_area = Rect::new(area.x + 1, y, width, clamped_height);
-
-    frame.render_widget(ratatui::widgets::Clear, preview_area);
-
-    let paragraph = Paragraph::new(lines).style(Style::default().bg(theme.comment_preview_bg));
-    frame.render_widget(paragraph, preview_area);
+    out
 }
 
 /// Ensure the diff annotations cache in `ViewerState` is populated for the
