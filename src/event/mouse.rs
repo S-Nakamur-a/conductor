@@ -338,6 +338,18 @@ pub fn handle_mouse_event(
                         return;
                     }
 
+                    // Click on ExpandableContext row (anywhere on the line) expands it.
+                    if app.viewer_state.diff_view.diff_mode && row >= inner_y {
+                        let line_offset = (row - inner_y) as usize;
+                        let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
+                        if matches!(
+                            app.viewer_state.diff_view.diff_view_lines.get(idx),
+                            Some(crate::viewer::UnifiedDiffEntry::ExpandableContext { .. })
+                        ) {
+                            app.viewer_state.expand_context_at(idx, false);
+                        }
+                    }
+
                     // Only trigger comment selection when clicking inside the
                     // line-number gutter (left-most columns).  Clicks on the
                     // code content area are treated as plain focus changes.

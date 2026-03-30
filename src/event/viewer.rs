@@ -190,6 +190,18 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
         }
+        Some(Action::ExpandContext) => {
+            // Expand 10 lines at the first visible ExpandableContext.
+            if let Some(idx) = app.viewer_state.find_visible_expandable(50) {
+                app.viewer_state.expand_context_at(idx, false);
+            }
+        }
+        Some(Action::ExpandAllContext) => {
+            // Expand all lines at the first visible ExpandableContext.
+            if let Some(idx) = app.viewer_state.find_visible_expandable(50) {
+                app.viewer_state.expand_context_at(idx, true);
+            }
+        }
         _ => {}
     }
 }
