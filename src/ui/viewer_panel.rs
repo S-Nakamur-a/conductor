@@ -390,6 +390,42 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
                         }
                     }
                 }
+                UnifiedDiffEntry::ExpandableContext {
+                    hidden_count,
+                    func_header,
+                    ..
+                } => {
+                    let width = area.width.saturating_sub(2) as usize;
+                    let expand_label = format!(" \u{2295} {hidden_count} lines hidden (Enter to expand) ");
+                    let label_style = Style::default().fg(theme.accent);
+                    match func_header {
+                        Some(header) => {
+                            let suffix = " ───";
+                            let used = expand_label.chars().count() + header.chars().count() + suffix.chars().count();
+                            let fill_len = width.saturating_sub(used);
+                            let fill: String = "─".repeat(fill_len);
+                            Line::from(vec![
+                                Span::styled(expand_label, label_style),
+                                Span::styled(
+                                    header.clone(),
+                                    Style::default().fg(theme.diff_section_header).add_modifier(Modifier::ITALIC),
+                                ),
+                                Span::styled(
+                                    format!("{suffix}{fill}"),
+                                    Style::default().fg(theme.muted),
+                                ),
+                            ])
+                        }
+                        None => {
+                            let fill_len = width.saturating_sub(expand_label.chars().count());
+                            let fill: String = "─".repeat(fill_len);
+                            Line::from(vec![
+                                Span::styled(expand_label, label_style),
+                                Span::styled(fill, Style::default().fg(theme.muted)),
+                            ])
+                        }
+                    }
+                }
                 UnifiedDiffEntry::Line {
                     tag,
                     new_line_no,
@@ -547,6 +583,18 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
 
                     let mut spans = vec![gutter_span, badge];
                     spans.extend(content_spans);
+
+                    // Extend background color to the end of the line for
+                    // Insert/Delete rows (GitHub-style block coloring).
+                    if let Some(bg) = diff_bg {
+                        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                        let panel_inner_w = area.width.saturating_sub(2) as usize;
+                        if used < panel_inner_w {
+                            let fill = " ".repeat(panel_inner_w - used);
+                            spans.push(Span::styled(fill, Style::default().bg(bg)));
+                        }
+                    }
+
                     Line::from(spans)
                 }
             }

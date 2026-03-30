@@ -101,6 +101,10 @@ pub enum Action {
     JumpBack,
     JumpForward,
 
+    // ── Diff context expansion ─────────────────────────────────
+    ExpandContext,
+    ExpandAllContext,
+
     // ── Panel layout ────────────────────────────────────────────
     TogglePanelExpand,
     TogglePanelOverlay,
@@ -177,6 +181,8 @@ impl Action {
             "find_references" => Some(Action::FindReferences),
             "jump_back" => Some(Action::JumpBack),
             "jump_forward" => Some(Action::JumpForward),
+            "expand_context" => Some(Action::ExpandContext),
+            "expand_all_context" => Some(Action::ExpandAllContext),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
             _ => None,
@@ -254,6 +260,8 @@ impl Action {
             Action::FindReferences => "find_references",
             Action::JumpBack => "jump_back",
             Action::JumpForward => "jump_forward",
+            Action::ExpandContext => "expand_context",
+            Action::ExpandAllContext => "expand_all_context",
             Action::TogglePanelExpand => "toggle_panel_expand",
             Action::TogglePanelOverlay => "toggle_panel_overlay",
         }
@@ -671,6 +679,8 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, '0', ScrollHome);
         self.bind_char(ViewerDiffMode, ' ', ViewCommentDetail);
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
+        self.bind_key(ViewerDiffMode, KeyCode::Enter, ExpandContext);
+        self.bind(ViewerDiffMode, KeyCode::Enter, KeyModifiers::SHIFT, ExpandAllContext);
         self.bind_char(ViewerDiffMode, ':', CommandPalette);
 
         // ── Overlay (shared popup navigation) ─────────────────────
