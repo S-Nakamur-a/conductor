@@ -9,6 +9,76 @@ use crate::terminal_link;
 use super::explorer::{navigate_to_comment_with_focus, open_viewer_comment};
 use super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
 
+/// Send all pending comments to Claude via /address-conductor-comment (no ID = bulk mode).
+fn ask_claude_all_comments(app: &mut App) {
+    let prompt = "/address-conductor-comment\n".to_string();
+    if let Some(idx) = app.terminal.active_claude_session {
+        if app.terminal.pty_manager.is_waiting_for_input(idx) {
+            let _ = app.terminal.pty_manager.write_chunked_to_session(idx, &prompt);
+        } else {
+            app.terminal.deferred_prompts.insert(idx, prompt);
+        }
+        app.set_focus(Focus::TerminalClaude);
+        app.set_status("Sent all comments to Claude".to_string(), crate::app::StatusLevel::Info);
+    } else {
+        app.set_status("No active Claude Code session".to_string(), crate::app::StatusLevel::Warning);
+    }
+}
+
+/// Resolve a screen row offset (relative to inner_y) to a 1-indexed file line
+/// number, accounting for inline thread rows. Falls back to simple arithmetic
+/// when no screen-row mapping is available.
+fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
+    let map = &app.viewer_state.content.screen_row_map;
+    if !map.is_empty() {
+        match map.get(screen_offset) {
+            Some(crate::viewer::ScreenRow::Code(line)) => Some(*line),
+            _ => None,
+        }
+    } else {
+        let line_1 = app.viewer_state.content.file_scroll + screen_offset + 1;
+        if line_1 <= app.viewer_state.content.file_content.len() {
+            Some(line_1)
+        } else {
+            None
+        }
+    }
+}
+
+/// Send a comment to the active Claude Code PTY via the address-conductor-comment skill.
+fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
+    let prompt = format!("/address-conductor-comment {comment_id}\n");
+
+    // Write to the active Claude Code session.
+    if let Some(idx) = app.terminal.active_claude_session {
+        if app.terminal.pty_manager.is_waiting_for_input(idx) {
+            let _ = app.terminal.pty_manager.write_chunked_to_session(idx, &prompt);
+        } else {
+            // Queue as deferred prompt.
+            app.terminal.deferred_prompts.insert(idx, prompt);
+        }
+        app.set_focus(Focus::TerminalClaude);
+        app.set_status(
+            "Sent comment to Claude".to_string(),
+            crate::app::StatusLevel::Info,
+        );
+    } else {
+        app.set_status(
+            "No active Claude Code session".to_string(),
+            crate::app::StatusLevel::Warning,
+        );
+    }
+}
+
+/// Resolve a screen row to a ThreadActions row, returning the comment_id.
+fn resolve_screen_action(app: &App, screen_offset: usize) -> Option<String> {
+    let map = &app.viewer_state.content.screen_row_map;
+    match map.get(screen_offset) {
+        Some(crate::viewer::ScreenRow::ThreadActions { comment_id }) => Some(comment_id.clone()),
+        _ => None,
+    }
+}
+
 /// Returns true if any overlay/modal is active and should consume all mouse events,
 /// preventing them from reaching background panels.
 fn has_blocking_overlay(app: &App) -> bool {
@@ -190,6 +260,19 @@ pub fn handle_mouse_event(
                     // Determine if click is in top half (file tree) or bottom half (diff/comment list).
                     if row >= explorer_mid_y {
                         app.viewer_state.explorer.explorer_focus_on_diff_list = true;
+
+                        // Check for click on bottom border "✨ Ask Claude All" button.
+                        let bottom_border_y = main_area.y + main_area.height.saturating_sub(1);
+                        if row == bottom_border_y && app.viewer_state.explorer.explorer_show_comments {
+                            // " ✨ Ask Claude All " is right-aligned, ~19 chars from right edge.
+                            let ask_label_w = 19_u16;
+                            let ask_start_col = explorer_end.saturating_sub(ask_label_w + 1);
+                            if col >= ask_start_col && col < explorer_end {
+                                ask_claude_all_comments(app);
+                                return;
+                            }
+                        }
+
                         let inner_y = explorer_mid_y + 1; // inside border
                         if row >= inner_y {
                             let click_offset = (row - inner_y) as usize;
@@ -324,14 +407,122 @@ pub fn handle_mouse_event(
                         let badge_w: u16 = 2;
                         let content_start_x = inner_x + gutter_w + badge_w;
                         if col >= content_start_x {
-                            let line_offset = (row - inner_y) as usize;
-                            let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
-                            let total_lines = app.viewer_state.content.file_content.len();
-                            if line_1 <= total_lines {
+                            let screen_offset = (row - inner_y) as usize;
+                            if let Some(line_1) = resolve_screen_line(app, screen_offset) {
                                 let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
                                 let line_text = &app.viewer_state.content.file_content[line_1 - 1];
                                 if let Some((symbol, _, _)) = crate::app::extract_symbol_at_column(line_text, content_col) {
-                                    handle_symbol_click_jump(app, &symbol, line_offset);
+                                    handle_symbol_click_jump(app, &symbol, screen_offset);
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // Handle clicks on thread action rows (💭 reply / ✅ resolve / 🗑 delete).
+                    if row >= inner_y && !app.viewer_state.diff_view.diff_mode {
+                        let screen_offset = (row - inner_y) as usize;
+                        if let Some(comment_id) = resolve_screen_action(app, screen_offset) {
+                            // Determine which action was clicked by column offset.
+                            // Action row layout: "  │ 💭 reply  ✅ resolve  🗑 delete"
+                            // Relative to content start (after "  │ "):
+                            let content_x = inner_x + gutter_w + 2 + 4; // gutter + badge + "  │ "
+                            let click_col = col.saturating_sub(content_x) as usize;
+                            // ↩ reply(0..8)  ✔ resolve(9..19)  x delete(20+)
+                            if click_col < 9 {
+                                // Reply: start inline reply for this comment.
+                                // Find which line this comment is on (end line).
+                                if let Some(comment) = app.review_state.comments.iter().find(|c| c.id == comment_id) {
+                                    let end_line = comment.line_end.unwrap_or(comment.line_start) as usize;
+                                    if !app.viewer_state.explorer.expanded_inline_threads.contains(&end_line) {
+                                        app.viewer_state.explorer.expanded_inline_threads.insert(end_line);
+                                    }
+                                    app.viewer_state.explorer.inline_reply_line = Some(end_line);
+                                    app.viewer_state.explorer.inline_reply_comment_id = Some(comment_id);
+                                    app.viewer_state.explorer.inline_reply_buffer.clear();
+                                }
+                            } else if click_col < 20 {
+                                // Resolve/unresolve.
+                                if let Some(store) = app.review_store.as_ref() {
+                                    let new_status = if let Some(c) = app.review_state.comments.iter().find(|c| c.id == comment_id) {
+                                        match c.status {
+                                            crate::review_store::CommentStatus::Pending => crate::review_store::CommentStatus::Resolved,
+                                            crate::review_store::CommentStatus::Resolved => crate::review_store::CommentStatus::Pending,
+                                        }
+                                    } else {
+                                        return;
+                                    };
+                                    let _ = store.update_review_status(&comment_id, new_status);
+                                    let wt = app.selected_worktree_branch();
+                                    app.review_state.load_comments(store, &wt);
+                                    if let Some(file) = app.viewer_state.content.current_file.clone() {
+                                        app.review_state.build_file_comment_cache(&file);
+                                    }
+                                }
+                            } else {
+                                // Check if click is on the right-side "✨ ask claude" button.
+                                // Detect by absolute column: within 15 cols of viewer right edge.
+                                let ask_claude_w = 15_u16;
+                                if col + ask_claude_w >= viewer_end {
+                                    // Ask Claude: send the comment to the active Claude PTY.
+                                    ask_claude_about_comment(app, &comment_id);
+                                } else {
+                                    // Delete.
+                                    if let Some(store) = app.review_store.as_ref() {
+                                        let _ = store.delete_review(&comment_id);
+                                        let wt = app.selected_worktree_branch();
+                                        app.review_state.load_comments(store, &wt);
+                                        if let Some(file) = app.viewer_state.content.current_file.clone() {
+                                            app.review_state.build_file_comment_cache(&file);
+                                        }
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    }
+
+                    // Detect clicks on the comment badge column (right of gutter).
+                    let badge_w: u16 = 2;
+                    let on_badge = col >= inner_x + gutter_w && col < inner_x + gutter_w + badge_w;
+
+                    // Badge click: toggle inline thread for the clicked line.
+                    if on_badge && row >= inner_y {
+                        let screen_offset = (row - inner_y) as usize;
+                        let line_1 = if app.viewer_state.diff_view.diff_mode {
+                            let idx = app.viewer_state.diff_view.diff_view_scroll + screen_offset;
+                            app.viewer_state.diff_view.diff_view_lines.get(idx).and_then(|e| match e {
+                                crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+                                _ => None,
+                            })
+                        } else {
+                            resolve_screen_line(app, screen_offset)
+                        };
+                        if let Some(line_1) = line_1 {
+                            if app.review_state.file_comments.contains_key(&line_1) {
+                                // Toggle inline thread expansion (same as Space key).
+                                let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
+                                if threads.contains(&line_1) {
+                                    threads.remove(&line_1);
+                                    if app.viewer_state.explorer.inline_reply_line == Some(line_1) {
+                                        app.viewer_state.explorer.inline_reply_line = None;
+                                        app.viewer_state.explorer.inline_reply_comment_id = None;
+                                        app.viewer_state.explorer.inline_reply_buffer.clear();
+                                    }
+                                } else {
+                                    threads.insert(line_1);
+                                    // Load replies if not cached.
+                                    if let Some(comments) = app.review_state.file_comments.get(&line_1) {
+                                        for comment in comments {
+                                            if !app.review_state.cached_replies.contains_key(&comment.id) {
+                                                if let Some(store) = app.review_store.as_ref() {
+                                                    if let Ok(replies) = store.get_replies(&comment.id) {
+                                                        app.review_state.cached_replies.insert(comment.id.clone(), replies);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -376,14 +567,13 @@ pub fn handle_mouse_event(
                                 }
                             }
                         } else {
-                            let total_lines = app.viewer_state.content.file_content.len();
-                            if total_lines > 0 && row >= inner_y {
-                                let line_offset = (row - inner_y) as usize;
-                                let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
+                            if row >= inner_y {
+                                let screen_offset = (row - inner_y) as usize;
+                                // Use screen-row mapping to handle inline thread rows.
+                                let line_1 = resolve_screen_line(app, screen_offset);
 
-                                if line_1 <= total_lines {
+                                if let Some(line_1) = line_1 {
                                     let has_comment = app.review_state.file_comments.contains_key(&line_1);
-                                    // Show comment preview on single click if the line has a comment.
                                     app.viewer_state.explorer.comment_preview_line = if has_comment { Some(line_1) } else { None };
                                     let should_open = app.viewer_state.click_line_number(line_1);
                                     if should_open {
@@ -499,14 +689,10 @@ pub fn handle_mouse_event(
                     app.viewer_state.click.hover_line = resolved;
                     app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
                 } else {
-                    let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
-                    if line_1 <= app.viewer_state.content.file_content.len() {
-                        app.viewer_state.click.hover_line = Some(line_1);
-                        app.viewer_state.click.hover_gutter_line = if on_gutter { Some(line_1) } else { None };
-                    } else {
-                        app.viewer_state.click.hover_line = None;
-                        app.viewer_state.click.hover_gutter_line = None;
-                    }
+                    // Use screen-row mapping for correct line resolution with inline threads.
+                    let resolved = resolve_screen_line(app, line_offset);
+                    app.viewer_state.click.hover_line = resolved;
+                    app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
                 }
 
                 // Cmd/Ctrl+hover: resolve symbol for underline display.
@@ -518,9 +704,7 @@ pub fn handle_mouse_event(
                     let badge_w: u16 = 2;
                     let content_start_x = inner_x + gutter_w + badge_w;
                     if col >= content_start_x {
-                        let line_1 = app.viewer_state.content.file_scroll + line_offset + 1;
-                        let total_lines = app.viewer_state.content.file_content.len();
-                        if line_1 <= total_lines {
+                        if let Some(line_1) = resolve_screen_line(app, line_offset) {
                             let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
                             let line_text = &app.viewer_state.content.file_content[line_1 - 1];
                             if let Some((symbol, start, end)) = crate::app::extract_symbol_at_column(line_text, content_col) {

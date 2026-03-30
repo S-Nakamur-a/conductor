@@ -100,6 +100,8 @@ pub enum Action {
     FindReferences,
     JumpBack,
     JumpForward,
+    ToggleInlineThread,
+    InlineReply,
 
     // ── Diff context expansion ─────────────────────────────────
     ExpandContext,
@@ -183,6 +185,8 @@ impl Action {
             "jump_forward" => Some(Action::JumpForward),
             "expand_context" => Some(Action::ExpandContext),
             "expand_all_context" => Some(Action::ExpandAllContext),
+            "toggle_inline_thread" => Some(Action::ToggleInlineThread),
+            "inline_reply" => Some(Action::InlineReply),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
             _ => None,
@@ -262,6 +266,8 @@ impl Action {
             Action::JumpForward => "jump_forward",
             Action::ExpandContext => "expand_context",
             Action::ExpandAllContext => "expand_all_context",
+            Action::ToggleInlineThread => "toggle_inline_thread",
+            Action::InlineReply => "inline_reply",
             Action::TogglePanelExpand => "toggle_panel_expand",
             Action::TogglePanelOverlay => "toggle_panel_overlay",
         }
@@ -655,7 +661,7 @@ impl KeyMap {
         self.bind_char(Viewer, '/', SearchInFile);
         self.bind_char(Viewer, 'n', NextSearchMatch);
         self.bind_char(Viewer, 'N', PrevSearchMatch);
-        self.bind_char(Viewer, ' ', ViewCommentDetail);
+        self.bind_char(Viewer, ' ', ToggleInlineThread);
         self.bind_key(Viewer, KeyCode::Esc, ExitToExplorer);
         self.bind_char(Viewer, ':', CommandPalette);
         self.bind_ctrl(Viewer, 'o', JumpBack);
@@ -677,7 +683,7 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, 'l', ScrollRight);
         self.bind_key(ViewerDiffMode, KeyCode::Right, ScrollRight);
         self.bind_char(ViewerDiffMode, '0', ScrollHome);
-        self.bind_char(ViewerDiffMode, ' ', ViewCommentDetail);
+        self.bind_char(ViewerDiffMode, ' ', ToggleInlineThread);
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
         self.bind_key(ViewerDiffMode, KeyCode::Enter, ExpandContext);
         self.bind(ViewerDiffMode, KeyCode::Enter, KeyModifiers::SHIFT, ExpandAllContext);

@@ -315,7 +315,9 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         // Dispatch paste data to the active overlay input buffer.
         let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
 
-        if app.review_state.input_mode != ReviewInputMode::Normal {
+        if app.viewer_state.explorer.inline_reply_line.is_some() {
+            app.viewer_state.explorer.inline_reply_buffer.insert_str(&single_line);
+        } else if app.review_state.input_mode != ReviewInputMode::Normal {
             // Review input is multiline.
             app.review_state.input_buffer.insert_str(&data);
         } else if app.worktree_mgr.input_mode == WorktreeInputMode::SmartDescription {

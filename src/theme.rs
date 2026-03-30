@@ -203,7 +203,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(40, 30, 0),
             status_bg_info: Color::Rgb(0, 20, 40),
 
-            comment_preview_bg: Color::Rgb(30, 30, 50),
+            comment_preview_bg: Color::Rgb(42, 42, 68),
             reply_text: Color::Rgb(180, 180, 200),
 
         }
@@ -262,7 +262,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(50, 40, 10),
             status_bg_info: Color::Rgb(15, 30, 50),
 
-            comment_preview_bg: Color::Rgb(40, 42, 60),
+            comment_preview_bg: Color::Rgb(52, 54, 76),
             reply_text: Color::Rgb(189, 147, 249),
 
         }
@@ -321,7 +321,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(45, 38, 15),
             status_bg_info: Color::Rgb(15, 30, 45),
 
-            comment_preview_bg: Color::Rgb(46, 52, 70),
+            comment_preview_bg: Color::Rgb(56, 62, 82),
             reply_text: Color::Rgb(129, 161, 193),
 
         }
@@ -380,7 +380,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(40, 30, 5),
             status_bg_info: Color::Rgb(5, 25, 45),
 
-            comment_preview_bg: Color::Rgb(7, 54, 72),
+            comment_preview_bg: Color::Rgb(15, 64, 84),
             reply_text: Color::Rgb(108, 113, 196),
 
         }
@@ -439,7 +439,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(45, 35, 12),
             status_bg_info: Color::Rgb(12, 25, 50),
 
-            comment_preview_bg: Color::Rgb(30, 32, 50),
+            comment_preview_bg: Color::Rgb(42, 44, 66),
             reply_text: Color::Rgb(125, 207, 255),
 
         }
@@ -498,7 +498,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(50, 38, 8),
             status_bg_info: Color::Rgb(15, 30, 30),
 
-            comment_preview_bg: Color::Rgb(50, 48, 55),
+            comment_preview_bg: Color::Rgb(62, 58, 68),
             reply_text: Color::Rgb(131, 165, 152),
 
         }
@@ -557,7 +557,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(45, 35, 15),
             status_bg_info: Color::Rgb(20, 18, 40),
 
-            comment_preview_bg: Color::Rgb(35, 33, 55),
+            comment_preview_bg: Color::Rgb(48, 44, 70),
             reply_text: Color::Rgb(196, 167, 231),
 
         }
@@ -616,7 +616,7 @@ impl Theme {
             status_bg_warning: Color::Rgb(42, 35, 10),
             status_bg_info: Color::Rgb(12, 28, 40),
 
-            comment_preview_bg: Color::Rgb(30, 30, 45),
+            comment_preview_bg: Color::Rgb(42, 42, 62),
             reply_text: Color::Rgb(127, 180, 202),
 
         }

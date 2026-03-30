@@ -22,6 +22,8 @@ use syntect::highlighting::Theme as SyntectTheme;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
+use std::collections::HashSet;
+
 use crate::diff_state::{DiffHunk, DiffLineTag, FileDiff};
 use crate::media_state::{self, MediaState};
 use crate::text_input::TextInput;
@@ -66,6 +68,20 @@ pub struct FileContentState {
     pub cached_diff_annotations_file: Option<String>,
     /// Line number (1-indexed) highlighted from grep search result. Cleared on next file open.
     pub grep_highlight_line: Option<usize>,
+    /// Screen-row mapping built during render. Used by mouse event handlers
+    /// to translate screen positions to file lines / thread actions.
+    pub screen_row_map: Vec<ScreenRow>,
+}
+
+/// What a screen row represents (for mouse click handling).
+#[derive(Debug, Clone)]
+pub enum ScreenRow {
+    /// A source code line (1-indexed line number).
+    Code(usize),
+    /// A thread content row (not clickable for line selection).
+    ThreadContent,
+    /// An action row with clickable buttons for a specific comment.
+    ThreadActions { comment_id: String },
 }
 
 /// In-file search state.
@@ -114,6 +130,14 @@ pub struct ExplorerState {
     pub comment_list_scroll: usize,
     /// Line number (1-indexed) for comment preview triggered by single-clicking a comment marker.
     pub comment_preview_line: Option<usize>,
+    /// Set of 1-indexed line numbers whose inline comment threads are expanded.
+    pub expanded_inline_threads: HashSet<usize>,
+    /// Line number where inline reply input is active (None = not replying).
+    pub inline_reply_line: Option<usize>,
+    /// Comment ID that the inline reply targets.
+    pub inline_reply_comment_id: Option<String>,
+    /// Text buffer for inline reply input.
+    pub inline_reply_buffer: TextInput,
 }
 
 impl Default for ExplorerState {
@@ -128,18 +152,30 @@ impl Default for ExplorerState {
             comment_list_selected: 0,
             comment_list_scroll: 0,
             comment_preview_line: None,
+            expanded_inline_threads: HashSet::new(),
+            inline_reply_line: None,
+            inline_reply_comment_id: None,
+            inline_reply_buffer: TextInput::new(),
         }
     }
 }
 
-/// Line selection for comments.
-#[derive(Default)]
-pub struct SelectionState {
-    /// Start of the selected line range (1-indexed), or `None` if no selection.
-    pub selected_line_start: Option<usize>,
-    /// End of the selected line range (1-indexed), or `None` for a single-line
-    /// selection. Always >= `selected_line_start` when set.
-    pub selected_line_end: Option<usize>,
+/// Line selection state for comments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineSelection {
+    /// No line is selected.
+    None,
+    /// First click done — start line set, waiting for second click to set end.
+    Pending { start: usize },
+    /// Range fully selected (start and end are 1-indexed, inclusive).
+    /// `start` may be > `end` — callers normalize via `selected_range()`.
+    Selected { start: usize, end: usize },
+}
+
+impl Default for LineSelection {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// Fuzzy filename search state.
@@ -225,7 +261,7 @@ pub struct ViewerState {
     /// Explorer panel state (selections, scrolls).
     pub explorer: ExplorerState,
     /// Line selection for comments.
-    pub selection: SelectionState,
+    pub selection: LineSelection,
     /// Fuzzy filename search.
     pub filename_search: FilenameSearchState,
     /// Media rendering state (images/videos displayed as ASCII art).
@@ -712,21 +748,19 @@ impl ViewerState {
 
     /// Clear the current line selection.
     pub fn clear_selection(&mut self) {
-        self.selection.selected_line_start = None;
-        self.selection.selected_line_end = None;
+        self.selection = LineSelection::None;
     }
 
-    /// Return the selected range as `(start, end)` (both 1-indexed, inclusive).
-    /// Returns `None` if no line is selected.
+    /// Return the selected range as `(start, end)` (both 1-indexed, inclusive,
+    /// normalized so start <= end). Returns `None` if no line is selected.
     pub fn selected_range(&self) -> Option<(usize, usize)> {
-        self.selection.selected_line_start.map(|start| {
-            let end = self.selection.selected_line_end.unwrap_or(start);
-            if start <= end {
-                (start, end)
-            } else {
-                (end, start)
+        match self.selection {
+            LineSelection::None => None,
+            LineSelection::Pending { start } => Some((start, start)),
+            LineSelection::Selected { start, end } => {
+                Some(if start <= end { (start, end) } else { (end, start) })
             }
-        })
+        }
     }
 
     /// Check whether a 1-indexed line number falls within the current
@@ -737,6 +771,12 @@ impl ViewerState {
         } else {
             false
         }
+    }
+
+    /// Whether the selection is in the pending state (first click done, waiting
+    /// for second).
+    pub fn is_selection_pending(&self) -> bool {
+        matches!(self.selection, LineSelection::Pending { .. })
     }
 
     /// Handle a click on a line in the viewer.  Returns `true` when the
@@ -754,31 +794,31 @@ impl ViewerState {
 
         if is_double {
             // Double-click → select single line and signal comment creation.
-            self.selection.selected_line_start = Some(line_1indexed);
-            self.selection.selected_line_end = None;
+            self.selection = LineSelection::Pending { start: line_1indexed };
             return true;
         }
 
-        // Single click logic:
-        if self.selection.selected_line_start.is_none() {
-            // First click — select start line (highlight).
-            self.selection.selected_line_start = Some(line_1indexed);
-            self.selection.selected_line_end = None;
-            false
-        } else if self.selection.selected_line_end.is_none() {
-            if self.selection.selected_line_start == Some(line_1indexed) {
-                // Clicked the same line again (slow double-click) — keep selection.
+        match self.selection {
+            LineSelection::None => {
+                // First click — select start line.
+                self.selection = LineSelection::Pending { start: line_1indexed };
                 false
-            } else {
-                // Second click on a different line — set range and open comment.
-                self.selection.selected_line_end = Some(line_1indexed);
-                true
             }
-        } else {
-            // Already have a completed range — start a new selection.
-            self.selection.selected_line_start = Some(line_1indexed);
-            self.selection.selected_line_end = None;
-            false
+            LineSelection::Pending { start } => {
+                if start == line_1indexed {
+                    // Clicked the same line again (slow double-click) — keep.
+                    false
+                } else {
+                    // Second click on a different line — set range and open comment.
+                    self.selection = LineSelection::Selected { start, end: line_1indexed };
+                    true
+                }
+            }
+            LineSelection::Selected { .. } => {
+                // Already have a completed range — start a new selection.
+                self.selection = LineSelection::Pending { start: line_1indexed };
+                false
+            }
         }
     }
 
