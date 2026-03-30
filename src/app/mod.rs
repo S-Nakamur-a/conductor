@@ -387,11 +387,12 @@ pub struct App {
     /// Paths of worktrees recently created (for badge display). Cleared on selection.
     pub new_worktree_paths: HashSet<PathBuf>,
 
-    // ── Panel number overlay (Alt key hold) ─────────────────────
-    /// Timestamp when Alt key was pressed (without any other key).
-    /// The overlay becomes visible after holding Alt for 1 second.
-    /// Reset on Alt release or any other key/mouse event.
-    pub alt_press_since: Option<std::time::Instant>,
+    // ── Panel number overlay (Alt+/ toggle) ─────────────────────
+    /// When true, panel number badges are rendered over each panel.
+    /// Toggled by Alt+/ and auto-dismissed after 2 seconds.
+    pub show_panel_number_overlay: bool,
+    /// Instant when the overlay was activated (for auto-dismiss timer).
+    pub panel_overlay_since: Option<std::time::Instant>,
 }
 
 /// Result of a background diff computation.
@@ -410,10 +411,30 @@ pub struct CcusageInfo {
 
 impl App {
     /// Returns `true` when the panel number overlay should be rendered.
-    /// Requires Alt to be held continuously for at least 1 second.
+    /// Activated by Alt+/ and auto-dismisses after 2 seconds.
     pub fn show_panel_overlay(&self) -> bool {
-        self.alt_press_since
-            .is_some_and(|since| since.elapsed() >= std::time::Duration::from_secs(1))
+        if !self.show_panel_number_overlay {
+            return false;
+        }
+        // Auto-dismiss after 2 seconds.
+        if let Some(since) = self.panel_overlay_since {
+            if since.elapsed() >= std::time::Duration::from_secs(2) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Toggle the panel number overlay on/off. When turning on, starts
+    /// the auto-dismiss timer.
+    pub fn toggle_panel_overlay(&mut self) {
+        if self.show_panel_overlay() {
+            self.show_panel_number_overlay = false;
+            self.panel_overlay_since = None;
+        } else {
+            self.show_panel_number_overlay = true;
+            self.panel_overlay_since = Some(std::time::Instant::now());
+        }
     }
 
     /// Returns `true` when any overlay popup is visible on top of the main panels.
@@ -576,7 +597,8 @@ impl App {
             symbol_action_overlay: SymbolActionOverlay::default(),
             bg_symbol_index_op: BackgroundOp::default(),
             new_worktree_paths: HashSet::new(),
-            alt_press_since: None,
+            show_panel_number_overlay: false,
+            panel_overlay_since: None,
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
         app.refresh_worktrees();

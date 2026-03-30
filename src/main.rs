@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, ModifierKeyCode,
+    Event, KeyEventKind, KeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, poll as crossterm_poll, read as crossterm_read,
 };
@@ -108,7 +108,6 @@ fn main() -> Result<()> {
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                     | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
             )
         )?;
     }
@@ -298,7 +297,7 @@ fn run_loop(
                 crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
                 _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
                 _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
-                _ if app.alt_press_since.is_some() => TICK_RATE_ACTIVE,
+                _ if app.show_panel_number_overlay => TICK_RATE_ACTIVE,
                 _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
                 _ if decoration_active => DECORATION_TICK_INTERVAL,
                 _ => TICK_RATE_IDLE,
@@ -313,39 +312,18 @@ fn run_loop(
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
                         last_input_time = Instant::now();
-                        if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
-                            // Alt-only press: start the hold timer (if not already running).
-                            if app.alt_press_since.is_none() {
-                                app.alt_press_since = Some(Instant::now());
-                            }
-                        } else {
-                            // Any other key resets the Alt hold timer.
-                            app.alt_press_since = None;
-                            handle_key_event(app, key);
-                        }
+                        handle_key_event(app, key);
                     }
                     Event::Key(key) if key.kind == KeyEventKind::Repeat => {
                         last_input_time = Instant::now();
-                        // Alt repeat is fine — don't reset timer.
-                        if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
-                            // no-op: keep holding
-                        } else {
-                            app.alt_press_since = None;
-                            if app.focus == crate::app::Focus::TerminalClaude
-                                || app.focus == crate::app::Focus::TerminalShell
-                            {
-                                handle_key_event(app, key);
-                            }
-                        }
-                    }
-                    Event::Key(key) if key.kind == KeyEventKind::Release => {
-                        if matches!(key.code, KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)) {
-                            app.alt_press_since = None;
+                        if app.focus == crate::app::Focus::TerminalClaude
+                            || app.focus == crate::app::Focus::TerminalShell
+                        {
+                            handle_key_event(app, key);
                         }
                     }
                     Event::Mouse(mouse) => {
                         last_input_time = Instant::now();
-                        app.alt_press_since = None;
                         handle_mouse_event(app, mouse, last_frame_area);
                     }
                     Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
@@ -370,7 +348,7 @@ fn run_loop(
         if app.update_state != crate::app::UpdateState::Idle
             || app.overlays.grep_search.running
             || app.overlays.grep_search.debounce_deadline.is_some()
-            || app.alt_press_since.is_some()
+            || app.show_panel_number_overlay
         {
             app.dirty.mark_all();
         }
@@ -387,6 +365,12 @@ fn run_loop(
                 if age >= STATUS_FADE_TICKS {
                     app.status_message = None;
                 }
+            }
+
+            // Auto-dismiss panel number overlay after timer expires.
+            if app.show_panel_number_overlay && !app.show_panel_overlay() {
+                app.show_panel_number_overlay = false;
+                app.panel_overlay_since = None;
             }
 
             terminal.draw(|frame| {

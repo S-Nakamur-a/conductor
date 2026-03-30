@@ -6,6 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, Focus, StatusLevel};
+use crate::keymap::{Action, KeyContext, KeyMap};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 #[allow(unused_imports)]
@@ -13,6 +14,43 @@ use crate::review_store::CommentKind;
 
 use super::clipboard_paste;
 use super::explorer::submit_new_comment;
+
+// ── Shared overlay list navigation ────────────────────────────────────
+
+/// Handle common list-navigation keys for overlay popups via the keymap.
+///
+/// Resolves the key against `KeyContext::Overlay` and adjusts `*selected`
+/// within `0..count`. Returns `true` if the key was consumed.
+fn overlay_list_nav(keymap: &KeyMap, key: &KeyEvent, selected: &mut usize, count: usize) -> bool {
+    let Some(action) = keymap.resolve(key, KeyContext::Overlay) else {
+        return false;
+    };
+    match action {
+        Action::NavigateDown => {
+            if count > 0 && *selected + 1 < count {
+                *selected += 1;
+            }
+            true
+        }
+        Action::NavigateUp => {
+            if *selected > 0 {
+                *selected -= 1;
+            }
+            true
+        }
+        Action::GoToTop => {
+            *selected = 0;
+            true
+        }
+        Action::GoToBottom => {
+            if count > 0 {
+                *selected = count - 1;
+            }
+            true
+        }
+        _ => false,
+    }
+}
 
 // ── Overlay: worktree input ─────────────────────────────────────────────
 
@@ -213,17 +251,11 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
     let count = app.overlays.cherry_pick.commits.len();
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.cherry_pick.selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if count > 0 && app.overlays.cherry_pick.selected + 1 < count {
-                app.overlays.cherry_pick.selected += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.overlays.cherry_pick.selected > 0 {
-                app.overlays.cherry_pick.selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             app.execute_cherry_pick();
             app.overlays.active = ActiveOverlay::None;
@@ -285,17 +317,12 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
     }
 
     let count = app.overlays.history.records.len();
+
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.history.selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if count > 0 && app.overlays.history.selected + 1 < count {
-                app.overlays.history.selected += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.overlays.history.selected > 0 {
-                app.overlays.history.selected -= 1;
-            }
-        }
         KeyCode::Esc => {
             app.overlays.active = ActiveOverlay::None;
             app.overlays.history.search_query.clear();
@@ -317,17 +344,11 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
     let filtered_count = app.filtered_resume_sessions().len();
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.resume_session.selected, filtered_count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if filtered_count > 0 && app.overlays.resume_session.selected + 1 < filtered_count {
-                app.overlays.resume_session.selected += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.overlays.resume_session.selected > 0 {
-                app.overlays.resume_session.selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             let filtered = app.filtered_resume_sessions();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.resume_session.selected) {
@@ -383,17 +404,12 @@ pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
 
 pub(super) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
     let count = app.repo_list.len();
+
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.repo_selector.selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if count > 0 && app.overlays.repo_selector.selected + 1 < count {
-                app.overlays.repo_selector.selected += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.overlays.repo_selector.selected > 0 {
-                app.overlays.repo_selector.selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             let selected = app.overlays.repo_selector.selected;
             app.overlays.active = ActiveOverlay::None;
@@ -435,19 +451,28 @@ pub(super) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
 // ── Overlay: comment detail ─────────────────────────────────────────────
 
 pub(super) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
+    // Handle scroll navigation via keymap.
+    if let Some(action) = app.keymap.resolve(&key, KeyContext::Overlay) {
+        match action {
+            Action::NavigateDown => {
+                if app.review_state.comment_detail_scroll < app.review_state.comment_detail_max_scroll {
+                    app.review_state.comment_detail_scroll += 1;
+                }
+                return;
+            }
+            Action::NavigateUp => {
+                if app.review_state.comment_detail_scroll > 0 {
+                    app.review_state.comment_detail_scroll -= 1;
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(' ') => {
             app.review_state.comment_detail_active = false;
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            if app.review_state.comment_detail_scroll < app.review_state.comment_detail_max_scroll {
-                app.review_state.comment_detail_scroll += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.review_state.comment_detail_scroll > 0 {
-                app.review_state.comment_detail_scroll -= 1;
-            }
         }
         KeyCode::Char('e') => {
             // Edit from the detail view.
@@ -537,17 +562,12 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.filename_search.filename_search_query.delete_to_line_start();
             app.viewer_state.filename_search.filename_search_selected = 0;
         }
-        KeyCode::Down => {
-            let count = app.viewer_state.filename_search.filename_search_results.len();
-            if count > 0 && app.viewer_state.filename_search.filename_search_selected + 1 < count {
-                app.viewer_state.filename_search.filename_search_selected += 1;
-            }
-        }
-        KeyCode::Up => {
-            if app.viewer_state.filename_search.filename_search_selected > 0 {
-                app.viewer_state.filename_search.filename_search_selected -= 1;
-            }
-        }
+        _ if overlay_list_nav(
+            &app.keymap,
+            &key,
+            &mut app.viewer_state.filename_search.filename_search_selected,
+            app.viewer_state.filename_search.filename_search_results.len(),
+        ) => {}
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             let count = app.viewer_state.filename_search.filename_search_results.len();
             if count > 0 && app.viewer_state.filename_search.filename_search_selected + 1 < count {
@@ -681,26 +701,46 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
     }
 
     // ── Result-focused mode: vim-style navigation ────────────────────
-    match key.code {
-        KeyCode::Down | KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let count = app.overlays.grep_search.result_tree.visible_rows().len();
-            if count == 0 {
+    if let Some(action) = app.keymap.resolve(&key, KeyContext::Overlay) {
+        match action {
+            Action::NavigateDown => {
+                let count = app.overlays.grep_search.result_tree.visible_rows().len();
+                if count == 0 {
+                    return;
+                }
+                let selected = app.overlays.grep_search.selected;
+                if app.overlays.grep_search.result_tree.is_collapsed(selected) {
+                    if let Some(next) = app.overlays.grep_search.result_tree.next_sibling_index(selected) {
+                        app.overlays.grep_search.selected = next;
+                    }
+                } else if selected + 1 < count {
+                    app.overlays.grep_search.selected = selected + 1;
+                }
                 return;
             }
-            let selected = app.overlays.grep_search.selected;
-            if app.overlays.grep_search.result_tree.is_collapsed(selected) {
-                if let Some(next) = app.overlays.grep_search.result_tree.next_sibling_index(selected) {
-                    app.overlays.grep_search.selected = next;
+            Action::NavigateUp => {
+                if app.overlays.grep_search.selected > 0 {
+                    app.overlays.grep_search.selected -= 1;
                 }
-            } else if selected + 1 < count {
-                app.overlays.grep_search.selected = selected + 1;
+                return;
             }
-        }
-        KeyCode::Up | KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if app.overlays.grep_search.selected > 0 {
-                app.overlays.grep_search.selected -= 1;
+            Action::GoToTop => {
+                app.overlays.grep_search.selected = 0;
+                app.overlays.grep_search.scroll = 0;
+                return;
             }
+            Action::GoToBottom => {
+                let count = app.overlays.grep_search.result_tree.visible_rows().len();
+                if count > 0 {
+                    app.overlays.grep_search.selected = count - 1;
+                }
+                return;
+            }
+            _ => {}
         }
+    }
+
+    match key.code {
         KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
             let selected = app.overlays.grep_search.selected;
             let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
@@ -747,16 +787,6 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
             app.overlays.grep_search.result_tree.expand(app.overlays.grep_search.selected);
-        }
-        KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.overlays.grep_search.selected = 0;
-            app.overlays.grep_search.scroll = 0;
-        }
-        KeyCode::Char('G') => {
-            let count = app.overlays.grep_search.result_tree.visible_rows().len();
-            if count > 0 {
-                app.overlays.grep_search.selected = count - 1;
-            }
         }
         // Any other character key in result-focused mode: switch to input and type.
         KeyCode::Char(_) => {
@@ -900,17 +930,11 @@ pub(super) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_review_template_key(app: &mut App, key: KeyEvent) {
     let count = app.review_state.templates.len();
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.review_state.template_selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if count > 0 && app.review_state.template_selected + 1 < count {
-                app.review_state.template_selected += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.review_state.template_selected > 0 {
-                app.review_state.template_selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             if let Some(tmpl) =
                 app.review_state.templates.get(app.review_state.template_selected)
@@ -950,17 +974,11 @@ pub(super) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_switch_branches();
     let count = filtered.len();
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.switch_branch.selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Down => {
-            if count > 0 && app.overlays.switch_branch.selected + 1 < count {
-                app.overlays.switch_branch.selected += 1;
-            }
-        }
-        KeyCode::Up => {
-            if app.overlays.switch_branch.selected > 0 {
-                app.overlays.switch_branch.selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             let filtered = app.filtered_switch_branches();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.switch_branch.selected) {
@@ -1003,17 +1021,11 @@ pub(super) fn handle_grab_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_grab_branches();
     let count = filtered.len();
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.grab.selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Down => {
-            if count > 0 && app.overlays.grab.selected + 1 < count {
-                app.overlays.grab.selected += 1;
-            }
-        }
-        KeyCode::Up => {
-            if app.overlays.grab.selected > 0 {
-                app.overlays.grab.selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             let filtered = app.filtered_grab_branches();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.grab.selected) {
@@ -1075,17 +1087,11 @@ pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
     let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
     let count = filtered.len();
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.command_palette.selected, count) {
+        return;
+    }
+
     match key.code {
-        KeyCode::Down => {
-            if count > 0 && app.overlays.command_palette.selected + 1 < count {
-                app.overlays.command_palette.selected += 1;
-            }
-        }
-        KeyCode::Up => {
-            if app.overlays.command_palette.selected > 0 {
-                app.overlays.command_palette.selected -= 1;
-            }
-        }
         KeyCode::Enter => {
             if let Some(scored) = filtered.get(app.overlays.command_palette.selected) {
                 let id = command_palette::COMMANDS[scored.index].id;
@@ -1130,27 +1136,14 @@ pub(super) fn handle_references_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if overlay_list_nav(&app.keymap, &key, &mut app.references_overlay.selected, count) {
+        adjust_references_scroll(app);
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
             app.references_overlay.active = false;
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            if app.references_overlay.selected + 1 < count {
-                app.references_overlay.selected += 1;
-                adjust_references_scroll(app);
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.references_overlay.selected = app.references_overlay.selected.saturating_sub(1);
-            adjust_references_scroll(app);
-        }
-        KeyCode::Char('g') => {
-            app.references_overlay.selected = 0;
-            app.references_overlay.scroll = 0;
-        }
-        KeyCode::Char('G') => {
-            app.references_overlay.selected = count.saturating_sub(1);
-            adjust_references_scroll(app);
         }
         KeyCode::Enter => {
             let selected = app.references_overlay.selected;
@@ -1293,6 +1286,12 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
 
 /// Handle key input in the symbol action overlay.
 pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
+    let count = app.symbol_action_overlay.actions.len();
+
+    if overlay_list_nav(&app.keymap, &key, &mut app.symbol_action_overlay.selected, count) {
+        return;
+    }
+
     let symbol = app.symbol_action_overlay.symbol_name.clone();
     let screen_row = app.symbol_action_overlay.source_screen_row;
     match key.code {
@@ -1322,15 +1321,6 @@ pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
                     _ => {}
                 }
             }
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let count = app.symbol_action_overlay.actions.len();
-            if app.symbol_action_overlay.selected + 1 < count {
-                app.symbol_action_overlay.selected += 1;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.symbol_action_overlay.selected = app.symbol_action_overlay.selected.saturating_sub(1);
         }
         _ => {}
     }

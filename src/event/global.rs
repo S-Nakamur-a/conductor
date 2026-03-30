@@ -99,6 +99,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             }
             true
         }
+        Action::TogglePanelOverlay => {
+            app.toggle_panel_overlay();
+            true
+        }
         _ => false, // Not a global action — let panel-specific handler try.
     }
 }
