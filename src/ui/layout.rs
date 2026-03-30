@@ -172,7 +172,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::terminal_claude::render(frame, terminal_split[0], app);
     super::terminal_shell::render(frame, terminal_split[1], app);
 
-    // ── Panel number overlay (Alt key hold) ─────────────────────────
+    // ── Panel number overlay (Alt+/ toggle) ──────────────────────────
     // Only show when no other overlay/modal is active.
     if app.show_panel_overlay()
         && app.overlays.active == crate::overlay::ActiveOverlay::None

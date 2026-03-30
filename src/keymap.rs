@@ -103,6 +103,7 @@ pub enum Action {
 
     // ── Panel layout ────────────────────────────────────────────
     TogglePanelExpand,
+    TogglePanelOverlay,
 }
 
 impl Action {
@@ -177,6 +178,7 @@ impl Action {
             "jump_back" => Some(Action::JumpBack),
             "jump_forward" => Some(Action::JumpForward),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
+            "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
             _ => None,
         }
     }
@@ -253,6 +255,7 @@ impl Action {
             Action::JumpBack => "jump_back",
             Action::JumpForward => "jump_forward",
             Action::TogglePanelExpand => "toggle_panel_expand",
+            Action::TogglePanelOverlay => "toggle_panel_overlay",
         }
     }
 }
@@ -271,6 +274,9 @@ pub enum KeyContext {
     Viewer,
     ViewerDiffMode,
     Terminal,
+    /// Shared navigation context for overlay popups (list/tree navigation).
+    /// Falls back to Global like other contexts.
+    Overlay,
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +541,9 @@ impl KeyMap {
         self.bind_char(Global, '§', FocusTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
         self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
+        self.bind(Global, KeyCode::Char('/'), KeyModifiers::ALT, TogglePanelOverlay);
+        // macOS Unicode fallback (Option+/ = '÷')
+        self.bind_char(Global, '÷', TogglePanelOverlay);
 
         // ── Worktree ─────────────────────────────────────────────
         self.bind_key(Worktree, KeyCode::Tab, CycleFocusForward);
@@ -664,6 +673,16 @@ impl KeyMap {
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
         self.bind_char(ViewerDiffMode, ':', CommandPalette);
 
+        // ── Overlay (shared popup navigation) ─────────────────────
+        self.bind_char(Overlay, 'j', NavigateDown);
+        self.bind_key(Overlay, KeyCode::Down, NavigateDown);
+        self.bind_char(Overlay, 'k', NavigateUp);
+        self.bind_key(Overlay, KeyCode::Up, NavigateUp);
+        self.bind_char(Overlay, 'g', GoToTop);
+        self.bind_char(Overlay, 'G', GoToBottom);
+        self.bind_key(Overlay, KeyCode::Enter, Select);
+        self.bind_key(Overlay, KeyCode::Esc, ExitSubPanel);
+
         // ── Terminal ─────────────────────────────────────────────
         self.bind(Terminal, KeyCode::Esc, KeyModifiers::CONTROL, LeaveTerminal);
         self.bind(Terminal, KeyCode::PageUp, KeyModifiers::SHIFT, ScrollbackUp);
@@ -682,6 +701,7 @@ impl KeyMap {
         self.apply_section_overrides(KeyContext::Explorer, &config.explorer);
         self.apply_section_overrides(KeyContext::Viewer, &config.viewer);
         self.apply_section_overrides(KeyContext::Terminal, &config.terminal);
+        self.apply_section_overrides(KeyContext::Overlay, &config.overlay);
     }
 
     fn apply_section_overrides(
@@ -732,7 +752,8 @@ fn normalize_key(key: &KeyEvent) -> (KeyCode, KeyModifiers) {
 fn normalize_raw(mut code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
     if let KeyCode::Char(c) = code {
         if c.is_ascii_lowercase() && modifiers.contains(KeyModifiers::SHIFT) {
-            // Shift+lowercase → uppercase (REPORT_ALL_KEYS_AS_ESCAPE_CODES sends this).
+            // Some terminals may send lowercase + SHIFT instead of uppercase.
+            // Normalise to uppercase without SHIFT for consistent lookup.
             code = KeyCode::Char(c.to_ascii_uppercase());
             modifiers &= !KeyModifiers::SHIFT;
         } else if c.is_ascii_uppercase() {

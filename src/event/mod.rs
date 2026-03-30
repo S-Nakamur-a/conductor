@@ -260,6 +260,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 }
                 Action::CycleFocusForward => { app.cycle_focus_forward(); return; }
                 Action::CycleFocusBackward => { app.cycle_focus_backward(); return; }
+                Action::TogglePanelOverlay => { app.toggle_panel_overlay(); return; }
                 _ => {} // Other global actions not intercepted in terminal
             }
         }

@@ -1,4 +1,4 @@
-//! Panel number overlay — drawn when Alt key is held.
+//! Panel number overlay — toggled via Alt+/, auto-dismisses after 2 seconds.
 //!
 //! Shows a large number centered on each panel to indicate the Alt+N shortcut.
 

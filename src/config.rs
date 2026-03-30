@@ -262,6 +262,7 @@ pub struct KeybindsConfig {
     pub explorer: HashMap<String, KeybindValue>,
     pub viewer: HashMap<String, KeybindValue>,
     pub terminal: HashMap<String, KeybindValue>,
+    pub overlay: HashMap<String, KeybindValue>,
 }
 
 /// `[ccusage]` section.
