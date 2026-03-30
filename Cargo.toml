@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.50.0"
+version = "0.50.1"
 edition = "2024"
 
 [dependencies]
@@ -36,6 +36,12 @@ tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
+
+[profile.dev]
+debug = "limited"
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [dev-dependencies]
 tempfile = "3"

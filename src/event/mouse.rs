@@ -9,9 +9,9 @@ use crate::terminal_link;
 use super::explorer::{navigate_to_comment_with_focus, open_viewer_comment};
 use super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
 
-/// Send all pending comments to Claude via /address-conductor-comment (no ID = bulk mode).
+/// Send all pending comments to Claude via /conductor:address-conductor-comment (no ID = bulk mode).
 fn ask_claude_all_comments(app: &mut App) {
-    let prompt = "/address-conductor-comment\n".to_string();
+    let prompt = "/conductor:address-conductor-comment\n".to_string();
     if let Some(idx) = app.terminal.active_claude_session {
         if app.terminal.pty_manager.is_waiting_for_input(idx) {
             let _ = app.terminal.pty_manager.write_chunked_to_session(idx, &prompt);
@@ -47,7 +47,7 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
 
 /// Send a comment to the active Claude Code PTY via the address-conductor-comment skill.
 fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
-    let prompt = format!("/address-conductor-comment {comment_id}\n");
+    let prompt = format!("/conductor:address-conductor-comment {comment_id}\n");
 
     // Write to the active Claude Code session.
     if let Some(idx) = app.terminal.active_claude_session {
