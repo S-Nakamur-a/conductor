@@ -55,7 +55,7 @@ const SMART_WORKTREE_JSON_SCHEMA: &str = r#"{"type":"object","properties":{"bran
 
 /// Fallback: call `claude -p` CLI with the same system prompt and description.
 fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
-    log::info!("Smart worktree: falling back to claude -p CLI");
+    log::info!("Smart worktree: using claude -p CLI");
     let output = std::process::Command::new("claude")
         .args(["-p", "--output-format", "json"])
         .arg("--json-schema")
@@ -86,25 +86,32 @@ fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
 
 /// Run the LLM generation for smart worktree (branch name + prompt).
 ///
-/// Tries the Gemini API first; if it fails, falls back to `claude -p` CLI.
+/// Provider selection (from `[api] provider`):
+/// - `"gemini"` (default): try Gemini API first; on error fall back to `claude -p` CLI.
+/// - `"claude"`: skip Gemini and call `claude -p` CLI directly.
+///
 /// Checks `cancel_token` before each call; the API calls are blocking.
-fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>, model: &str) -> Result<SmartGenResult, String> {
+fn run_smart_generation(desc: &str, cancel_token: &Arc<AtomicBool>, model: &str, provider: &str) -> Result<SmartGenResult, String> {
     if cancel_token.load(Ordering::Relaxed) {
         return Err("Cancelled".to_string());
     }
 
-    // Phase 1: Try Gemini API.
-    let raw = match crate::gemini_api::call_messages_api(SMART_WORKTREE_SYSTEM_PROMPT, desc, Some(model), 1024) {
-        Ok(raw) => raw,
-        Err(gemini_err) => {
-            log::warn!("Gemini API failed, falling back to claude CLI: {gemini_err}");
+    let raw = if provider.eq_ignore_ascii_case("claude") {
+        run_smart_generation_claude_cli(desc)?
+    } else {
+        // Phase 1: Try Gemini API.
+        match crate::gemini_api::call_messages_api(SMART_WORKTREE_SYSTEM_PROMPT, desc, Some(model), 1024) {
+            Ok(raw) => raw,
+            Err(gemini_err) => {
+                log::warn!("Gemini API failed, falling back to claude CLI: {gemini_err}");
 
-            if cancel_token.load(Ordering::Relaxed) {
-                return Err("Cancelled".to_string());
+                if cancel_token.load(Ordering::Relaxed) {
+                    return Err("Cancelled".to_string());
+                }
+
+                // Phase 1b: Fallback to claude -p CLI.
+                run_smart_generation_claude_cli(desc)?
             }
-
-            // Phase 1b: Fallback to claude -p CLI.
-            run_smart_generation_claude_cli(desc)?
         }
     };
 
@@ -777,6 +784,7 @@ impl App {
 
         let tx = self.worktree_op_sender();
         let api_model = self.config.api.model.clone();
+        let api_provider = self.config.api.provider.clone();
 
         let cancel = cancel_token;
         std::thread::spawn(move || {
@@ -784,7 +792,7 @@ impl App {
             let desc_panic = desc.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Phase 1: LLM generation.
-                let gen_result = match run_smart_generation(&desc, &cancel, &api_model) {
+                let gen_result = match run_smart_generation(&desc, &cancel, &api_model, &api_provider) {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = tx.send(WorktreeOpResult::SmartFailed {
