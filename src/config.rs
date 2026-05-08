@@ -309,12 +309,17 @@ impl Default for UpdatesConfig {
 pub struct ApiConfig {
     /// Model ID for the Gemini API.
     pub model: String,
+    /// Which LLM provider to use for smart worktree generation.
+    /// `"gemini"` (default): try Gemini first, fall back to claude CLI on error.
+    /// `"claude"`: skip Gemini and call claude CLI directly.
+    pub provider: String,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             model: String::from("gemini-2.5-flash"),
+            provider: String::from("gemini"),
         }
     }
 }
@@ -413,6 +418,7 @@ pub fn generate_default_config() -> String {
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
 
 [api]
+# provider = "gemini"                   # "gemini" (try Gemini, fall back to claude CLI) or "claude" (skip Gemini)
 # model = "gemini-2.5-flash"            # model for smart worktree generation (Gemini API)
 "#,
     )
