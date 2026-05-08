@@ -68,6 +68,33 @@ function currentBranch(): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// UI refresh signal
+// ---------------------------------------------------------------------------
+
+/**
+ * Write to the named pipe `.conductor/refresh.pipe` to trigger a UI refresh
+ * in the Conductor TUI.  Non-blocking and best-effort — silently ignores
+ * errors (pipe may not exist if TUI is not running).
+ */
+function signalUiRefresh(): void {
+  // Derive the pipe path from the DB path (sibling file in .conductor/).
+  try {
+    const dbPath = findDbPath();
+    const pipePath = path.join(path.dirname(dbPath), "refresh.pipe");
+
+    // Open with O_WRONLY | O_NONBLOCK (flag 0x0001 | 0x0004 on macOS,
+    // but we use fs constants).  If the pipe doesn't exist or no reader
+    // is attached, this will throw — which we silently catch.
+    const fd = fs.openSync(pipePath, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+    fs.writeSync(fd, "r");
+    fs.closeSync(fd);
+  } catch {
+    // Pipe not available — TUI is not running or pipe doesn't exist.
+    // This is expected and harmless.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -331,6 +358,8 @@ server.tool(
       "INSERT INTO review_replies (id, review_id, body, author) VALUES (?, ?, ?, 'claude')"
     ).run(id, resolvedId, body);
 
+    signalUiRefresh();
+
     return {
       content: [
         {
@@ -396,6 +425,8 @@ server.tool(
         isError: true,
       };
     }
+
+    signalUiRefresh();
 
     return {
       content: [
