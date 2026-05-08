@@ -13,6 +13,7 @@ mod config;
 mod diff_state;
 mod event;
 mod file_watcher;
+mod refresh_pipe;
 mod git_engine;
 mod grep_search;
 mod keymap;
@@ -199,6 +200,9 @@ fn run_loop(
 
     // Set up socket listener for CC state notifications (instant delivery).
     let cc_notify = crate::cc_notify::CcNotifyListener::new(&app.repo_path).ok();
+
+    // Set up named pipe for MCP-triggered review refresh.
+    let refresh_pipe = crate::refresh_pipe::RefreshPipe::new(&app.repo_path).ok();
 
     let mut last_frame_area = Rect::default();
     let mut last_claude_size: (u16, u16) = (0, 0);
@@ -497,6 +501,17 @@ fn run_loop(
             while let Some(event) = cc_notify.poll() {
                 app.handle_cc_notify(event);
                 app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
+            }
+        }
+
+        // MCP refresh pipe — reload review comments when MCP writes to the pipe.
+        if let Some(ref refresh_pipe) = refresh_pipe {
+            if refresh_pipe.poll().is_some() {
+                // Drain any extra events (coalesce multiple rapid writes).
+                while refresh_pipe.poll().is_some() {}
+                app.refresh_reviews();
+                app.dirty.mark_all();
+                log::debug!("refresh_pipe: reloaded reviews from MCP trigger");
             }
         }
 
