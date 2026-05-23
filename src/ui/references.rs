@@ -22,7 +22,11 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(Clear, popup_area);
 
-    let title = format!(" References: {} ({} results) ", overlay.symbol_name, overlay.results.len());
+    let title = format!(
+        " References: {} ({} results) ",
+        overlay.symbol_name,
+        overlay.results.len()
+    );
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -32,18 +36,13 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, popup_area);
 
     if overlay.results.is_empty() {
-        let msg = Paragraph::new("No references found.")
-            .style(Style::default().fg(theme.muted));
+        let msg = Paragraph::new("No references found.").style(Style::default().fg(theme.muted));
         frame.render_widget(msg, inner);
         return;
     }
 
     // Split inner area: list area + hint line at bottom.
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     let list_area = chunks[0];
     let hint_area = chunks[1];
@@ -62,12 +61,24 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
             let file_span = Span::styled(
                 format!("{}:{}", reference.file_path, reference.line),
                 Style::default()
-                    .fg(if is_selected { theme.selected_fg } else { theme.accent })
-                    .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                    .fg(if is_selected {
+                        theme.selected_fg
+                    } else {
+                        theme.accent
+                    })
+                    .add_modifier(if is_selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             );
             let content_span = Span::styled(
                 format!("  {}", reference.content.trim()),
-                Style::default().fg(if is_selected { theme.selected_fg } else { theme.muted }),
+                Style::default().fg(if is_selected {
+                    theme.selected_fg
+                } else {
+                    theme.muted
+                }),
             );
             let style = if is_selected {
                 Style::default().bg(theme.selected_bg).fg(theme.selected_fg)

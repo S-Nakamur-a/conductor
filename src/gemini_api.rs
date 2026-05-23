@@ -97,25 +97,27 @@ pub fn call_messages_api(
     model: Option<&str>,
     max_tokens: u32,
 ) -> Result<String> {
-    let api_key = std::env::var("GEMINI_API_KEY")
-        .context("GEMINI_API_KEY environment variable not set")?;
+    let api_key =
+        std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY environment variable not set")?;
 
     let model = model.unwrap_or(DEFAULT_MODEL);
     let url = format!("{API_BASE_URL}/{model}:generateContent?key={api_key}");
 
     let request_body = GenerateContentRequest {
         system_instruction: SystemInstruction {
-            parts: vec![Part { text: system_prompt.to_string() }],
+            parts: vec![Part {
+                text: system_prompt.to_string(),
+            }],
         },
         contents: vec![Content {
             role: "user",
-            parts: vec![Part { text: user_message.to_string() }],
+            parts: vec![Part {
+                text: user_message.to_string(),
+            }],
         }],
         generation_config: GenerationConfig {
             max_output_tokens: max_tokens,
-            thinking_config: ThinkingConfig {
-                thinking_budget: 0,
-            },
+            thinking_config: ThinkingConfig { thinking_budget: 0 },
         },
     };
 
@@ -131,7 +133,9 @@ pub fn call_messages_api(
         .context("Failed to send request to Gemini API")?;
 
     let status = response.status();
-    let body = response.text().context("Failed to read API response body")?;
+    let body = response
+        .text()
+        .context("Failed to read API response body")?;
 
     if !status.is_success() {
         if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body) {
@@ -145,12 +149,11 @@ pub fn call_messages_api(
     let resp: GenerateContentResponse =
         serde_json::from_str(&body).context("Failed to parse Gemini API response")?;
 
-    if let Some(candidates) = &resp.candidates {
-        if let Some(candidate) = candidates.first() {
-            if let Some(part) = candidate.content.parts.first() {
-                return Ok(part.text.clone());
-            }
-        }
+    if let Some(candidates) = &resp.candidates
+        && let Some(candidate) = candidates.first()
+        && let Some(part) = candidate.content.parts.first()
+    {
+        return Ok(part.text.clone());
     }
 
     bail!("No text content in Gemini API response")

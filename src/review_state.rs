@@ -18,7 +18,10 @@ pub enum CommentListRow {
     /// A top-level comment at the given index in `ReviewState::comments`.
     Comment { comment_idx: usize },
     /// A reply belonging to the comment at `comment_idx`.
-    Reply { comment_idx: usize, reply_idx: usize },
+    Reply {
+        comment_idx: usize,
+        reply_idx: usize,
+    },
 }
 
 /// The input mode the review panel is in.
@@ -153,15 +156,16 @@ impl ReviewState {
     pub fn rebuild_comment_list_rows(&mut self) {
         self.comment_list_rows.clear();
         for (comment_idx, comment) in self.comments.iter().enumerate() {
-            self.comment_list_rows.push(CommentListRow::Comment { comment_idx });
-            if self.expanded_comments.contains(&comment.id) {
-                if let Some(replies) = self.cached_replies.get(&comment.id) {
-                    for reply_idx in 0..replies.len() {
-                        self.comment_list_rows.push(CommentListRow::Reply {
-                            comment_idx,
-                            reply_idx,
-                        });
-                    }
+            self.comment_list_rows
+                .push(CommentListRow::Comment { comment_idx });
+            if self.expanded_comments.contains(&comment.id)
+                && let Some(replies) = self.cached_replies.get(&comment.id)
+            {
+                for reply_idx in 0..replies.len() {
+                    self.comment_list_rows.push(CommentListRow::Reply {
+                        comment_idx,
+                        reply_idx,
+                    });
                 }
             }
         }

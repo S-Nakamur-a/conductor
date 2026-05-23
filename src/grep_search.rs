@@ -93,7 +93,10 @@ pub fn run_search_files(
                     total += 1;
 
                     if batch.len() >= BATCH_SIZE {
-                        if tx.send(GrepProgress::Results(std::mem::take(&mut batch))).is_err() {
+                        if tx
+                            .send(GrepProgress::Results(std::mem::take(&mut batch)))
+                            .is_err()
+                        {
                             return;
                         }
                         batch = Vec::with_capacity(BATCH_SIZE);
@@ -198,7 +201,10 @@ pub fn run_search(
                     total += 1;
 
                     if batch.len() >= BATCH_SIZE {
-                        if tx.send(GrepProgress::Results(std::mem::take(&mut batch))).is_err() {
+                        if tx
+                            .send(GrepProgress::Results(std::mem::take(&mut batch)))
+                            .is_err()
+                        {
                             return; // receiver dropped (search cancelled)
                         }
                         batch = Vec::with_capacity(BATCH_SIZE);

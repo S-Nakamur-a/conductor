@@ -3,11 +3,11 @@
 //! Displays the list of worktrees with selection, status indicators,
 //! detail info, and an optional decoration zone (aquarium).
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, Focus, WorktreeListRow};
@@ -40,7 +40,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
     let focused = app.focus == Focus::Worktree;
-    let border_color = if focused { app.theme.border_focused } else { app.theme.border_unfocused };
+    let border_color = if focused {
+        app.theme.border_focused
+    } else {
+        app.theme.border_unfocused
+    };
 
     // Begin a scope so the `theme` borrow ends before the mutable zone-3 call.
     let theme = &app.theme;
@@ -58,11 +62,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         " Worktrees "
     };
     let title_style = if app.worktree_mgr.grabbed_branch.is_some() {
-        Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.waiting_primary)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
-    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let border_type = if focused {
+        BorderType::Thick
+    } else {
+        BorderType::Plain
+    };
 
     // ── Zone layout calculation ────────────────────────────────────
     // Zone 1: worktree + session list  — 40% (or more)
@@ -100,13 +110,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default()
         .title(Span::styled(title, title_style))
-        .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
+        .title_top(
+            Line::from(Span::styled(
+                expand_label,
+                Style::default().fg(expand_color),
+            ))
+            .alignment(Alignment::Right),
+        )
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
 
     // Pulse phase: ~1s cycle at 60fps (30 frames on, 30 frames off).
-    let pulse_on = (app.ui_tick / 30) % 2 == 0;
+    let pulse_on = (app.ui_tick / 30).is_multiple_of(2);
 
     // Determine the worktree path shown in the focused CC panel (if any)
     // so we can suppress blink for that worktree.
@@ -117,9 +133,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     // Check if this worktree is on a __grab branch (should be greyed out).
-    let is_grab_branch = |wt: &crate::git_engine::WorktreeInfo| -> bool {
-        wt.branch.ends_with("__grab")
-    };
+    let is_grab_branch =
+        |wt: &crate::git_engine::WorktreeInfo| -> bool { wt.branch.ends_with("__grab") };
 
     // Braille spinner frames for async operations.
     const BRAILLE_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -167,19 +182,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     };
                     let is_selected = row_idx == app.worktree_list_selected;
                     let label_style = if is_selected {
-                        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme.fg)
                     };
                     let is_active = session_active.get(&pty_idx).copied().unwrap_or(false);
                     let spans = if is_waiting {
                         vec![
-                            Span::styled("   \u{23f3} ", Style::default().fg(theme.waiting_primary)), // ⏳
+                            Span::styled(
+                                "   \u{23f3} ",
+                                Style::default().fg(theme.waiting_primary),
+                            ), // ⏳
                             Span::styled(display_label, label_style),
                         ]
                     } else if is_active {
                         vec![
-                            Span::styled(format!("   {spinner_frame} "), Style::default().fg(theme.accent)),
+                            Span::styled(
+                                format!("   {spinner_frame} "),
+                                Style::default().fg(theme.accent),
+                            ),
                             Span::styled(display_label, label_style),
                         ]
                     } else {
@@ -196,13 +219,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     let is_active = app.terminal.cc_active_worktrees.contains(&wt.path);
                     let is_grabbed = is_grab_branch(wt);
                     let is_pending_delete = app.is_worktree_pending_delete(&wt.path);
-                    let suppress_blink = is_waiting && focused_cc_wt.as_deref() == Some(wt.path.as_path());
+                    let suppress_blink =
+                        is_waiting && focused_cc_wt.as_deref() == Some(wt.path.as_path());
 
                     // Override marker and styles for pending-delete worktrees.
                     if is_pending_delete {
                         let spans = vec![
                             Span::styled(
-                                format!(" {spinner_frame}\u{1f5d1} "),  // 🗑
+                                format!(" {spinner_frame}\u{1f5d1} "), // 🗑
                                 Style::default().fg(theme.error),
                             ),
                             Span::styled(
@@ -227,7 +251,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         Style::default().fg(theme.muted)
                     } else if is_waiting && !suppress_blink {
                         Style::default()
-                            .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
+                            .fg(if pulse_on {
+                                theme.waiting_primary
+                            } else {
+                                theme.waiting_secondary
+                            })
                             .add_modifier(Modifier::BOLD)
                     } else if is_waiting {
                         Style::default().fg(theme.waiting_primary)
@@ -246,19 +274,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                         if wt.added > 0 {
                             parts.push(Span::styled(
                                 format!(" +{}", wt.added),
-                                if is_grabbed { Style::default().fg(theme.muted) } else { Style::default().fg(theme.success) },
+                                if is_grabbed {
+                                    Style::default().fg(theme.muted)
+                                } else {
+                                    Style::default().fg(theme.success)
+                                },
                             ));
                         }
                         if wt.modified > 0 {
                             parts.push(Span::styled(
                                 format!(" ~{}", wt.modified),
-                                if is_grabbed { Style::default().fg(theme.muted) } else { Style::default().fg(theme.warning) },
+                                if is_grabbed {
+                                    Style::default().fg(theme.muted)
+                                } else {
+                                    Style::default().fg(theme.warning)
+                                },
                             ));
                         }
                         if wt.deleted > 0 {
                             parts.push(Span::styled(
                                 format!(" -{}", wt.deleted),
-                                if is_grabbed { Style::default().fg(theme.muted) } else { Style::default().fg(theme.error) },
+                                if is_grabbed {
+                                    Style::default().fg(theme.muted)
+                                } else {
+                                    Style::default().fg(theme.error)
+                                },
                             ));
                         }
                         parts
@@ -267,9 +307,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     let branch_style = if is_grabbed {
                         Style::default().fg(theme.muted)
                     } else if is_waiting {
-                        Style::default()
-                            .fg(theme.fg)
-                            .add_modifier(Modifier::BOLD)
+                        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
                     } else if i == app.selected_worktree {
                         Style::default()
                             .fg(theme.accent)
@@ -287,29 +325,38 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
                     if is_new {
                         spans.push(Span::styled(
-                            " \u{1F331}",  // 🌱
-                            Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
+                            " \u{1F331}", // 🌱
+                            Style::default()
+                                .fg(theme.success)
+                                .add_modifier(Modifier::BOLD),
                         ));
                     }
 
                     if is_grabbed {
-                        spans.push(Span::styled(
-                            " (grabbed)",
-                            Style::default().fg(theme.muted),
-                        ));
+                        spans.push(Span::styled(" (grabbed)", Style::default().fg(theme.muted)));
                     }
 
                     if wt.is_main && app.worktree_mgr.grabbed_branch.is_some() {
                         spans.push(Span::styled(
-                            " \u{1f4e5}grabbed",  // 📥grabbed
-                            Style::default().fg(theme.waiting_primary).add_modifier(Modifier::BOLD),
+                            " \u{1f4e5}grabbed", // 📥grabbed
+                            Style::default()
+                                .fg(theme.waiting_primary)
+                                .add_modifier(Modifier::BOLD),
                         ));
                     }
 
                     if is_waiting && !is_grabbed {
                         let effective_pulse = !suppress_blink && pulse_on;
-                        let indicator = if effective_pulse { " \u{25c6}" } else { " \u{25c7}" };
-                        let indicator = if suppress_blink { " \u{25c6}" } else { indicator };
+                        let indicator = if effective_pulse {
+                            " \u{25c6}"
+                        } else {
+                            " \u{25c7}"
+                        };
+                        let indicator = if suppress_blink {
+                            " \u{25c6}"
+                        } else {
+                            indicator
+                        };
                         let indicator_fg = if suppress_blink || effective_pulse {
                             theme.waiting_primary
                         } else {
@@ -400,13 +447,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(theme.selected_bg_inactive)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(theme.selected_bg_inactive)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut state = ListState::default();
     state.select(Some(app.worktree_list_selected));
@@ -433,18 +478,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 /// Render the detail section: selected worktree info.
-fn render_detail(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    theme: &Theme,
-    border_color: Color,
-) {
+fn render_detail(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, border_color: Color) {
     let block = Block::default()
-        .title(Span::styled(
-            " Detail ",
-            Style::default().fg(theme.muted),
-        ))
+        .title(Span::styled(" Detail ", Style::default().fg(theme.muted)))
         .borders(Borders::TOP)
         .border_style(Style::default().fg(border_color));
 
@@ -466,7 +502,9 @@ fn render_detail(
         Span::styled(" Branch: ", Style::default().fg(theme.muted)),
         Span::styled(
             wt.branch.as_str(),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
     ]));
 
@@ -499,7 +537,9 @@ fn render_detail(
                 first = false;
             }
             if wt.modified > 0 {
-                if !first { spans.push(Span::styled("  ", Style::default())); }
+                if !first {
+                    spans.push(Span::styled("  ", Style::default()));
+                }
                 spans.push(Span::styled(
                     format!("modified: {}", wt.modified),
                     Style::default().fg(theme.warning),
@@ -507,7 +547,9 @@ fn render_detail(
                 first = false;
             }
             if wt.deleted > 0 {
-                if !first { spans.push(Span::styled("  ", Style::default())); }
+                if !first {
+                    spans.push(Span::styled("  ", Style::default()));
+                }
                 spans.push(Span::styled(
                     format!("deleted: {}", wt.deleted),
                     Style::default().fg(theme.error),
@@ -655,4 +697,3 @@ mod tests {
         assert_eq!(truncate_to_width("a日b本c", 4), "a日b...");
     }
 }
-

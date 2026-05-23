@@ -144,9 +144,13 @@ impl SymbolIndex {
             };
 
             match lang {
-                Lang::Rust => extract_rust_symbols(tree.root_node(), &source, &rel_path, &mut symbols),
+                Lang::Rust => {
+                    extract_rust_symbols(tree.root_node(), &source, &rel_path, &mut symbols)
+                }
                 Lang::Go => extract_go_symbols(tree.root_node(), &source, &rel_path, &mut symbols),
-                Lang::TypeScript | Lang::JavaScript => extract_ts_symbols(tree.root_node(), &source, &rel_path, &mut symbols),
+                Lang::TypeScript | Lang::JavaScript => {
+                    extract_ts_symbols(tree.root_node(), &source, &rel_path, &mut symbols)
+                }
             }
         }
 
@@ -163,8 +167,7 @@ impl SymbolIndex {
         data.symbols
             .iter()
             .filter(|s| {
-                s.name == name
-                    && !matches!(s.kind, SymbolKind::Field | SymbolKind::EnumVariant)
+                s.name == name && !matches!(s.kind, SymbolKind::Field | SymbolKind::EnumVariant)
             })
             .cloned()
             .collect()
@@ -175,10 +178,7 @@ impl SymbolIndex {
         let data = self.data.lock().unwrap();
         data.symbols
             .iter()
-            .filter(|s| {
-                s.kind == SymbolKind::Impl
-                    && s.scope.as_deref() == Some(name)
-            })
+            .filter(|s| s.kind == SymbolKind::Impl && s.scope.as_deref() == Some(name))
             .cloned()
             .collect()
     }
@@ -203,15 +203,30 @@ impl SymbolIndex {
                 continue;
             }
 
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !matches!(
                 ext,
-                "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "go" | "c" | "cpp"
-                    | "h" | "hpp" | "java" | "rb" | "swift" | "kt" | "scala"
-                    | "zig" | "toml" | "yaml" | "yml" | "json" | "md"
+                "rs" | "py"
+                    | "js"
+                    | "ts"
+                    | "jsx"
+                    | "tsx"
+                    | "go"
+                    | "c"
+                    | "cpp"
+                    | "h"
+                    | "hpp"
+                    | "java"
+                    | "rb"
+                    | "swift"
+                    | "kt"
+                    | "scala"
+                    | "zig"
+                    | "toml"
+                    | "yaml"
+                    | "yml"
+                    | "json"
+                    | "md"
             ) {
                 continue;
             }
@@ -275,7 +290,11 @@ enum Lang {
 // ── Tree-sitter AST walking ──────────────────────────────────────────
 
 /// Generic recursive AST walker that calls `visitor` for each node.
-fn walk_tree(node: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>,
+fn walk_tree(
+    node: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
     visitor: fn(tree_sitter::Node, &str, &str, &mut Vec<Symbol>),
 ) {
     visitor(node, source, file_path, symbols);
@@ -287,29 +306,47 @@ fn walk_tree(node: tree_sitter::Node, source: &str, file_path: &str, symbols: &m
 
 // ── Rust ──
 
-fn extract_rust_symbols(root: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>) {
+fn extract_rust_symbols(
+    root: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     walk_tree(root, source, file_path, symbols, visit_rust_node);
 }
 
-fn visit_rust_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>) {
+fn visit_rust_node(
+    node: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     match node.kind() {
         "function_item" | "function_signature_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Function, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Function, "name")
+            {
                 symbols.push(sym);
             }
         }
         "struct_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Struct, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Struct, "name")
+            {
                 symbols.push(sym);
             }
         }
         "enum_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Enum, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Enum, "name")
+            {
                 symbols.push(sym);
             }
         }
         "trait_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Trait, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Trait, "name")
+            {
                 symbols.push(sym);
             }
         }
@@ -322,43 +359,58 @@ fn visit_rust_node(node: tree_sitter::Node, source: &str, file_path: &str, symbo
                     name: format!("impl {type_name}"),
                     kind: SymbolKind::Impl,
                     file_path: file_path.to_string(),
-                    line, column,
+                    line,
+                    column,
                     scope: Some(type_name),
                 });
             }
         }
         "type_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Type, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Type, "name")
+            {
                 symbols.push(sym);
             }
         }
         "const_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Const, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Const, "name")
+            {
                 symbols.push(sym);
             }
         }
         "static_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Static, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Static, "name")
+            {
                 symbols.push(sym);
             }
         }
         "macro_definition" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Macro, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Macro, "name")
+            {
                 symbols.push(sym);
             }
         }
         "mod_item" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Module, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Module, "name")
+            {
                 symbols.push(sym);
             }
         }
         "enum_variant" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::EnumVariant, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::EnumVariant, "name")
+            {
                 symbols.push(sym);
             }
         }
         "field_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Field, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Field, "name")
+            {
                 symbols.push(sym);
             }
         }
@@ -368,19 +420,33 @@ fn visit_rust_node(node: tree_sitter::Node, source: &str, file_path: &str, symbo
 
 // ── Go ──
 
-fn extract_go_symbols(root: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>) {
+fn extract_go_symbols(
+    root: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     walk_tree(root, source, file_path, symbols, visit_go_node);
 }
 
-fn visit_go_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>) {
+fn visit_go_node(
+    node: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     match node.kind() {
         "function_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Function, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Function, "name")
+            {
                 symbols.push(sym);
             }
         }
         "method_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Method, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Method, "name")
+            {
                 symbols.push(sym);
             }
         }
@@ -388,9 +454,12 @@ fn visit_go_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols
             // type_declaration contains type_spec children.
         }
         "type_spec" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Type, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Type, "name")
+            {
                 // Check if it's a struct or interface.
-                let kind = node.child_by_field_name("type")
+                let kind = node
+                    .child_by_field_name("type")
                     .map(|t| match t.kind() {
                         "struct_type" => SymbolKind::Struct,
                         "interface_type" => SymbolKind::Interface,
@@ -401,12 +470,16 @@ fn visit_go_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols
             }
         }
         "const_spec" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Const, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Const, "name")
+            {
                 symbols.push(sym);
             }
         }
         "var_spec" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Static, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Static, "name")
+            {
                 symbols.push(sym);
             }
         }
@@ -416,39 +489,61 @@ fn visit_go_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols
 
 // ── TypeScript / JavaScript ──
 
-fn extract_ts_symbols(root: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>) {
+fn extract_ts_symbols(
+    root: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     walk_tree(root, source, file_path, symbols, visit_ts_node);
 }
 
-fn visit_ts_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols: &mut Vec<Symbol>) {
+fn visit_ts_node(
+    node: tree_sitter::Node,
+    source: &str,
+    file_path: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     match node.kind() {
         "function_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Function, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Function, "name")
+            {
                 symbols.push(sym);
             }
         }
         "class_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Struct, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Struct, "name")
+            {
                 symbols.push(sym);
             }
         }
         "interface_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Interface, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Interface, "name")
+            {
                 symbols.push(sym);
             }
         }
         "type_alias_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Type, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Type, "name")
+            {
                 symbols.push(sym);
             }
         }
         "enum_declaration" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Enum, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Enum, "name")
+            {
                 symbols.push(sym);
             }
         }
         "method_definition" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Method, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Method, "name")
+            {
                 symbols.push(sym);
             }
         }
@@ -456,7 +551,9 @@ fn visit_ts_node(node: tree_sitter::Node, source: &str, file_path: &str, symbols
             // const Foo = ... / let bar = ... — extract variable declarators.
         }
         "variable_declarator" => {
-            if let Some(sym) = extract_named_symbol(node, source, file_path, SymbolKind::Const, "name") {
+            if let Some(sym) =
+                extract_named_symbol(node, source, file_path, SymbolKind::Const, "name")
+            {
                 symbols.push(sym);
             }
         }
@@ -628,16 +725,14 @@ macro_rules! my_macro {
         let idx = SymbolIndex::new(PathBuf::from("/tmp"));
         {
             let mut data = idx.data.lock().unwrap();
-            data.symbols = vec![
-                Symbol {
-                    name: "impl MyStruct".to_string(),
-                    kind: SymbolKind::Impl,
-                    file_path: "lib.rs".to_string(),
-                    line: 10,
-                    column: 0,
-                    scope: Some("MyStruct".to_string()),
-                },
-            ];
+            data.symbols = vec![Symbol {
+                name: "impl MyStruct".to_string(),
+                kind: SymbolKind::Impl,
+                file_path: "lib.rs".to_string(),
+                line: 10,
+                column: 0,
+                scope: Some("MyStruct".to_string()),
+            }];
             data.available = true;
         }
         let impls = idx.find_implementations("MyStruct");

@@ -115,7 +115,6 @@ pub struct Theme {
     pub comment_preview_bg: Color,
     /// Text color for reply content.
     pub reply_text: Color,
-
 }
 
 impl Theme {
@@ -205,7 +204,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(42, 42, 68),
             reply_text: Color::Rgb(180, 180, 200),
-
         }
     }
 
@@ -264,7 +262,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(52, 54, 76),
             reply_text: Color::Rgb(189, 147, 249),
-
         }
     }
 
@@ -323,7 +320,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(56, 62, 82),
             reply_text: Color::Rgb(129, 161, 193),
-
         }
     }
 
@@ -382,7 +378,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(15, 64, 84),
             reply_text: Color::Rgb(108, 113, 196),
-
         }
     }
 
@@ -441,7 +436,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(42, 44, 66),
             reply_text: Color::Rgb(125, 207, 255),
-
         }
     }
 
@@ -500,7 +494,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(62, 58, 68),
             reply_text: Color::Rgb(131, 165, 152),
-
         }
     }
 
@@ -559,7 +552,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(48, 44, 70),
             reply_text: Color::Rgb(196, 167, 231),
-
         }
     }
 
@@ -618,7 +610,6 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(42, 42, 62),
             reply_text: Color::Rgb(127, 180, 202),
-
         }
     }
 }

@@ -89,11 +89,7 @@ pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
     }
 }
 
-fn render_single_panel_overlay(
-    frame: &mut Frame,
-    panel: &PanelInfo,
-    theme: &crate::theme::Theme,
-) {
+fn render_single_panel_overlay(frame: &mut Frame, panel: &PanelInfo, theme: &crate::theme::Theme) {
     let area = panel.area;
     let is_focused = panel.is_focused;
 
@@ -127,11 +123,18 @@ fn render_single_panel_overlay(
 
     // Build the number + label text, vertically centered.
     let number_style = Style::default()
-        .fg(if is_focused { Color::White } else { Color::Rgb(180, 180, 200) })
+        .fg(if is_focused {
+            Color::White
+        } else {
+            Color::Rgb(180, 180, 200)
+        })
         .add_modifier(Modifier::BOLD);
 
-    let label_style = Style::default()
-        .fg(if is_focused { Color::Rgb(200, 200, 220) } else { Color::Rgb(100, 100, 120) });
+    let label_style = Style::default().fg(if is_focused {
+        Color::Rgb(200, 200, 220)
+    } else {
+        Color::Rgb(100, 100, 120)
+    });
 
     let lines = vec![
         Line::from(Span::styled(panel.number, number_style)),

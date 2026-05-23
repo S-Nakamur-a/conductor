@@ -6,9 +6,7 @@ use crate::diff_state::{DiffLineTag, InlineSegment};
 #[derive(Debug, Clone)]
 pub enum UnifiedDiffEntry {
     /// A separator between hunks (used when no lines are hidden).
-    HunkSeparator {
-        func_header: Option<String>,
-    },
+    HunkSeparator { func_header: Option<String> },
     /// An expandable context block representing hidden lines between hunks.
     ExpandableContext {
         /// Number of currently hidden lines.

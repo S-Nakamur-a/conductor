@@ -123,8 +123,14 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 }
                 KeyCode::Enter => {
                     let filtered = app.filtered_base_branches();
-                    let base_ref = if let Some(&(original_idx, _)) = filtered.get(app.worktree_mgr.base_branch_selected) {
-                        app.worktree_mgr.base_branch_list.get(original_idx).cloned().unwrap_or_default()
+                    let base_ref = if let Some(&(original_idx, _)) =
+                        filtered.get(app.worktree_mgr.base_branch_selected)
+                    {
+                        app.worktree_mgr
+                            .base_branch_list
+                            .get(original_idx)
+                            .cloned()
+                            .unwrap_or_default()
                     } else if !app.worktree_mgr.base_branch_filter.is_empty() {
                         // No match — use the filter text as a raw ref.
                         app.worktree_mgr.base_branch_filter.text().to_string()
@@ -217,7 +223,8 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     app.worktree_mgr.input_buffer.set_text(&text);
                     app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
                     app.set_status(
-                        "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
+                        "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):"
+                            .to_string(),
                         StatusLevel::Info,
                     );
                 }
@@ -232,7 +239,9 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                     }
                 }
                 KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-                    app.worktree_mgr.smart_description_buffer.delete_to_line_start();
+                    app.worktree_mgr
+                        .smart_description_buffer
+                        .delete_to_line_start();
                 }
                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     clipboard_paste(app, |a| &mut a.worktree_mgr.smart_description_buffer, true);
@@ -251,7 +260,12 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
     let count = app.overlays.cherry_pick.commits.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.cherry_pick.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.overlays.cherry_pick.selected,
+        count,
+    ) {
         return;
     }
 
@@ -344,7 +358,12 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
     let filtered_count = app.filtered_resume_sessions().len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.resume_session.selected, filtered_count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.overlays.resume_session.selected,
+        filtered_count,
+    ) {
         return;
     }
 
@@ -352,12 +371,24 @@ pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             let filtered = app.filtered_resume_sessions();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.resume_session.selected) {
-                let Some(session) = app.overlays.resume_session.sessions.get(original_idx).cloned() else {
+                let Some(session) = app
+                    .overlays
+                    .resume_session
+                    .sessions
+                    .get(original_idx)
+                    .cloned()
+                else {
                     return;
                 };
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.resume_session.filter.clear();
-                app.set_status(format!("Resuming: {}...", session.display.chars().take(40).collect::<String>()), StatusLevel::Info);
+                app.set_status(
+                    format!(
+                        "Resuming: {}...",
+                        session.display.chars().take(40).collect::<String>()
+                    ),
+                    StatusLevel::Info,
+                );
                 match app.resume_claude_session(&session.session_id, &session.display) {
                     Ok(_) => {
                         app.status_message = None;
@@ -405,7 +436,12 @@ pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
     let count = app.repo_list.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.repo_selector.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.overlays.repo_selector.selected,
+        count,
+    ) {
         return;
     }
 
@@ -455,7 +491,9 @@ pub(super) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
     if let Some(action) = app.keymap.resolve(&key, KeyContext::Overlay) {
         match action {
             Action::NavigateDown => {
-                if app.review_state.comment_detail_scroll < app.review_state.comment_detail_max_scroll {
+                if app.review_state.comment_detail_scroll
+                    < app.review_state.comment_detail_max_scroll
+                {
                     app.review_state.comment_detail_scroll += 1;
                 }
                 return;
@@ -531,14 +569,21 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             app.viewer_state.filename_search.filename_search_active = false;
-            app.viewer_state.filename_search.filename_search_query.clear();
-            app.viewer_state.filename_search.filename_search_results.clear();
+            app.viewer_state
+                .filename_search
+                .filename_search_query
+                .clear();
+            app.viewer_state
+                .filename_search
+                .filename_search_results
+                .clear();
             app.viewer_state.filename_search.filename_search_selected = 0;
         }
         KeyCode::Enter => {
             if let Some(result) = app
                 .viewer_state
-                .filename_search.filename_search_results
+                .filename_search
+                .filename_search_results
                 .get(app.viewer_state.filename_search.filename_search_selected)
                 .cloned()
             {
@@ -549,27 +594,44 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
                     let wt_path = wt.path.clone();
                     app.viewer_state.reveal_file_in_tree(&result.path, &wt_path);
                     let tab_width = app.config.viewer.tab_width;
-                    app.viewer_state.open_file(&wt_path, &result.path, tab_width);
+                    app.viewer_state
+                        .open_file(&wt_path, &result.path, tab_width);
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&result.path);
                 }
             }
-            app.viewer_state.filename_search.filename_search_query.clear();
-            app.viewer_state.filename_search.filename_search_results.clear();
+            app.viewer_state
+                .filename_search
+                .filename_search_query
+                .clear();
+            app.viewer_state
+                .filename_search
+                .filename_search_results
+                .clear();
             app.viewer_state.filename_search.filename_search_selected = 0;
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            app.viewer_state.filename_search.filename_search_query.delete_to_line_start();
+            app.viewer_state
+                .filename_search
+                .filename_search_query
+                .delete_to_line_start();
             app.viewer_state.filename_search.filename_search_selected = 0;
         }
         _ if overlay_list_nav(
             &app.keymap,
             &key,
             &mut app.viewer_state.filename_search.filename_search_selected,
-            app.viewer_state.filename_search.filename_search_results.len(),
+            app.viewer_state
+                .filename_search
+                .filename_search_results
+                .len(),
         ) => {}
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let count = app.viewer_state.filename_search.filename_search_results.len();
+            let count = app
+                .viewer_state
+                .filename_search
+                .filename_search_results
+                .len();
             if count > 0 && app.viewer_state.filename_search.filename_search_selected + 1 < count {
                 app.viewer_state.filename_search.filename_search_selected += 1;
             }
@@ -580,12 +642,21 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            clipboard_paste(app, |a| &mut a.viewer_state.filename_search.filename_search_query, false);
+            clipboard_paste(
+                app,
+                |a| &mut a.viewer_state.filename_search.filename_search_query,
+                false,
+            );
             app.viewer_state.filename_search.filename_search_selected = 0;
             app.viewer_state.execute_filename_search();
         }
         _ => {
-            if app.viewer_state.filename_search.filename_search_query.handle_key(key) {
+            if app
+                .viewer_state
+                .filename_search
+                .filename_search_query
+                .handle_key(key)
+            {
                 // Text-modifying keys reset selection and re-run search.
                 match key.code {
                     KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
@@ -655,7 +726,12 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         // Enter — jump to result or toggle expand (works in both modes).
         KeyCode::Enter => {
             let selected = app.overlays.grep_search.selected;
-            let result = app.overlays.grep_search.result_tree.get_match_at(selected).cloned();
+            let result = app
+                .overlays
+                .grep_search
+                .result_tree
+                .get_match_at(selected)
+                .cloned();
             if let Some(result) = result {
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.grep_search.running = false;
@@ -666,13 +742,21 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
 
                 if let Some(wt) = app.worktrees.get(app.selected_worktree) {
                     let wt_path = wt.path.clone();
-                    app.viewer_state.reveal_file_in_tree(&result.file_path, &wt_path);
+                    app.viewer_state
+                        .reveal_file_in_tree(&result.file_path, &wt_path);
                     let tab_width = app.config.viewer.tab_width;
-                    app.viewer_state.open_file(&wt_path, &result.file_path, tab_width);
+                    app.viewer_state
+                        .open_file(&wt_path, &result.file_path, tab_width);
                     app.rehighlight_viewer();
                     let hit_0 = result.line_number.saturating_sub(1);
-                    let max = app.viewer_state.content.file_content.len().saturating_sub(1);
-                    app.viewer_state.content.file_scroll = result.line_number.saturating_sub(6).min(max);
+                    let max = app
+                        .viewer_state
+                        .content
+                        .file_content
+                        .len()
+                        .saturating_sub(1);
+                    app.viewer_state.content.file_scroll =
+                        result.line_number.saturating_sub(6).min(max);
                     app.viewer_state.content.grep_highlight_line = Some(result.line_number);
                     if app.viewer_state.content.file_scroll > hit_0 {
                         app.viewer_state.content.file_scroll = hit_0;
@@ -710,7 +794,12 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 }
                 let selected = app.overlays.grep_search.selected;
                 if app.overlays.grep_search.result_tree.is_collapsed(selected) {
-                    if let Some(next) = app.overlays.grep_search.result_tree.next_sibling_index(selected) {
+                    if let Some(next) = app
+                        .overlays
+                        .grep_search
+                        .result_tree
+                        .next_sibling_index(selected)
+                    {
                         app.overlays.grep_search.selected = next;
                     }
                 } else if selected + 1 < count {
@@ -741,11 +830,15 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
-        KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+        KeyCode::Left | KeyCode::Char('h')
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
             let selected = app.overlays.grep_search.selected;
             let rows = app.overlays.grep_search.result_tree.visible_rows().to_vec();
             match rows.get(selected) {
-                Some(SearchTreeRow::Dir { expanded: true, .. }) | Some(SearchTreeRow::File { expanded: true, .. }) => {
+                Some(SearchTreeRow::Dir { expanded: true, .. })
+                | Some(SearchTreeRow::File { expanded: true, .. }) => {
                     app.overlays.grep_search.result_tree.collapse(selected);
                 }
                 Some(SearchTreeRow::Match { depth, .. }) => {
@@ -756,16 +849,21 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                             SearchTreeRow::File { depth, .. } => Some(*depth),
                             _ => None,
                         };
-                        if let Some(pd) = parent_depth {
-                            if pd < d {
-                                app.overlays.grep_search.selected = i;
-                                app.overlays.grep_search.result_tree.collapse(i);
-                                break;
-                            }
+                        if let Some(pd) = parent_depth
+                            && pd < d
+                        {
+                            app.overlays.grep_search.selected = i;
+                            app.overlays.grep_search.result_tree.collapse(i);
+                            break;
                         }
                     }
                 }
-                Some(SearchTreeRow::Dir { expanded: false, .. }) | Some(SearchTreeRow::File { expanded: false, .. }) => {
+                Some(SearchTreeRow::Dir {
+                    expanded: false, ..
+                })
+                | Some(SearchTreeRow::File {
+                    expanded: false, ..
+                }) => {
                     let d = match &rows[selected] {
                         SearchTreeRow::Dir { depth, .. } => *depth,
                         SearchTreeRow::File { depth, .. } => *depth,
@@ -773,11 +871,11 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     };
                     if d > 0 {
                         for i in (0..selected).rev() {
-                            if let SearchTreeRow::Dir { depth, .. } = &rows[i] {
-                                if *depth < d {
-                                    app.overlays.grep_search.selected = i;
-                                    break;
-                                }
+                            if let SearchTreeRow::Dir { depth, .. } = &rows[i]
+                                && *depth < d
+                            {
+                                app.overlays.grep_search.selected = i;
+                                break;
                             }
                         }
                     }
@@ -785,8 +883,14 @@ pub(super) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 _ => {}
             }
         }
-        KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
-            app.overlays.grep_search.result_tree.expand(app.overlays.grep_search.selected);
+        KeyCode::Right | KeyCode::Char('l')
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.overlays
+                .grep_search
+                .result_tree
+                .expand(app.overlays.grep_search.selected);
         }
         // Any other character key in result-focused mode: switch to input and type.
         KeyCode::Char(_) => {
@@ -930,14 +1034,21 @@ pub(super) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_review_template_key(app: &mut App, key: KeyEvent) {
     let count = app.review_state.templates.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.review_state.template_selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.review_state.template_selected,
+        count,
+    ) {
         return;
     }
 
     match key.code {
         KeyCode::Enter => {
-            if let Some(tmpl) =
-                app.review_state.templates.get(app.review_state.template_selected)
+            if let Some(tmpl) = app
+                .review_state
+                .templates
+                .get(app.review_state.template_selected)
             {
                 app.review_state.input_buffer.set_text(&tmpl.body);
                 app.review_state.input_kind = tmpl.kind;
@@ -951,8 +1062,10 @@ pub(super) fn handle_review_template_key(app: &mut App, key: KeyEvent) {
             app.review_state.template_picker_active = false;
         }
         KeyCode::Delete => {
-            if let Some(tmpl) =
-                app.review_state.templates.get(app.review_state.template_selected)
+            if let Some(tmpl) = app
+                .review_state
+                .templates
+                .get(app.review_state.template_selected)
             {
                 let id = tmpl.id.clone();
                 app.delete_review_template(&id);
@@ -974,7 +1087,12 @@ pub(super) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_switch_branches();
     let count = filtered.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.switch_branch.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.overlays.switch_branch.selected,
+        count,
+    ) {
         return;
     }
 
@@ -982,7 +1100,13 @@ pub(super) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             let filtered = app.filtered_switch_branches();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.switch_branch.selected) {
-                let Some(branch) = app.overlays.switch_branch.branches.get(original_idx).cloned() else {
+                let Some(branch) = app
+                    .overlays
+                    .switch_branch
+                    .branches
+                    .get(original_idx)
+                    .cloned()
+                else {
                     return;
                 };
                 app.overlays.active = ActiveOverlay::None;
@@ -1087,7 +1211,12 @@ pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
     let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
     let count = filtered.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.command_palette.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.overlays.command_palette.selected,
+        count,
+    ) {
         return;
     }
 
@@ -1136,7 +1265,12 @@ pub(super) fn handle_references_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.references_overlay.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.references_overlay.selected,
+        count,
+    ) {
         adjust_references_scroll(app);
         return;
     }
@@ -1288,7 +1422,12 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
 pub(super) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
     let count = app.symbol_action_overlay.actions.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.symbol_action_overlay.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.symbol_action_overlay.selected,
+        count,
+    ) {
         return;
     }
 
@@ -1330,19 +1469,29 @@ fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
     let defs = app.symbol_index.find_definitions(symbol);
     match defs.len() {
         0 => {
-            app.set_status(format!("No definition found for '{symbol}'"), crate::app::StatusLevel::Warning);
+            app.set_status(
+                format!("No definition found for '{symbol}'"),
+                crate::app::StatusLevel::Warning,
+            );
         }
         1 => {
             app.jump_to_location(&defs[0].file_path, defs[0].line, screen_row);
-            app.set_status(format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
+            app.set_status(
+                format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"),
+                crate::app::StatusLevel::Success,
+            );
         }
         _ => {
             app.references_overlay.active = true;
             app.references_overlay.symbol_name = format!("{symbol} (definitions)");
-            app.references_overlay.results = defs.iter().map(|d| crate::symbol_index::Reference {
-                file_path: d.file_path.clone(), line: d.line,
-                content: format!("{:?} {}", d.kind, d.name),
-            }).collect();
+            app.references_overlay.results = defs
+                .iter()
+                .map(|d| crate::symbol_index::Reference {
+                    file_path: d.file_path.clone(),
+                    line: d.line,
+                    content: format!("{:?} {}", d.kind, d.name),
+                })
+                .collect();
             app.references_overlay.selected = 0;
             app.references_overlay.scroll = 0;
         }
@@ -1353,19 +1502,29 @@ fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize)
     let impls = app.symbol_index.find_implementations(symbol);
     match impls.len() {
         0 => {
-            app.set_status(format!("No implementations found for '{symbol}'"), crate::app::StatusLevel::Warning);
+            app.set_status(
+                format!("No implementations found for '{symbol}'"),
+                crate::app::StatusLevel::Warning,
+            );
         }
         1 => {
             app.jump_to_location(&impls[0].file_path, impls[0].line, screen_row);
-            app.set_status(format!("Jumped to implementation of '{symbol}' (Ctrl+O to go back)"), crate::app::StatusLevel::Success);
+            app.set_status(
+                format!("Jumped to implementation of '{symbol}' (Ctrl+O to go back)"),
+                crate::app::StatusLevel::Success,
+            );
         }
         _ => {
             app.references_overlay.active = true;
             app.references_overlay.symbol_name = format!("{symbol} (implementations)");
-            app.references_overlay.results = impls.iter().map(|d| crate::symbol_index::Reference {
-                file_path: d.file_path.clone(), line: d.line,
-                content: format!("{:?} {}", d.kind, d.name),
-            }).collect();
+            app.references_overlay.results = impls
+                .iter()
+                .map(|d| crate::symbol_index::Reference {
+                    file_path: d.file_path.clone(),
+                    line: d.line,
+                    content: format!("{:?} {}", d.kind, d.name),
+                })
+                .collect();
             app.references_overlay.selected = 0;
             app.references_overlay.scroll = 0;
         }
@@ -1376,7 +1535,10 @@ fn jump_to_symbol_references(app: &mut App, symbol: &str) {
     let root = app.symbol_index.root();
     let refs = app.symbol_index.find_references(symbol, &root);
     if refs.is_empty() {
-        app.set_status(format!("No references found for '{symbol}'"), crate::app::StatusLevel::Warning);
+        app.set_status(
+            format!("No references found for '{symbol}'"),
+            crate::app::StatusLevel::Warning,
+        );
         return;
     }
     app.references_overlay.active = true;

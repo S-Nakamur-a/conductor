@@ -56,7 +56,10 @@ pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
             let match_end = caps.get(caps.len() - 1).unwrap().end();
 
             // Skip if this region overlaps with an already-detected link.
-            if covered.iter().any(|&(s, e)| match_start < e && match_end > s) {
+            if covered
+                .iter()
+                .any(|&(s, e)| match_start < e && match_end > s)
+            {
                 continue;
             }
 

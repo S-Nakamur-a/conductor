@@ -4,13 +4,15 @@
 //! and a list of changed (diff) files in the bottom half. Enter on a file
 //! opens it in the Viewer panel.
 
+use crate::app::{App, Focus};
+use crate::viewer::file_icon;
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
-use ratatui::Frame;
-use crate::app::{App, Focus};
-use crate::viewer::file_icon;
+use ratatui::widgets::{
+    Block, BorderType, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 
 /// Render the explorer (file tree) panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -20,8 +22,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Explorer;
 
     // Split into top (file tree) and bottom (diff list).
-    let chunks = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
+    let chunks =
+        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
 
     // Record actual panel heights for scroll calculations in event handling.
     let tree_inner_height = chunks[0].height.saturating_sub(2) as usize;
@@ -39,7 +41,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Show search input overlay (skip cursor positioning when a global overlay covers us).
     let overlay_active = app.is_any_overlay_active();
     if app.viewer_state.search.search_active {
-        render_search_box(frame, area, &app.viewer_state.search.search_query, &app.theme, overlay_active);
+        render_search_box(
+            frame,
+            area,
+            &app.viewer_state.search.search_query,
+            &app.theme,
+            overlay_active,
+        );
     }
 
     // Show filename search overlay.
@@ -105,11 +113,21 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
         ("[<=>]", theme.border_unfocused)
     };
 
-    let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
+    let border_type = if panel_focused {
+        BorderType::Thick
+    } else {
+        BorderType::Plain
+    };
 
     let block = Block::default()
         .title(title)
-        .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
+        .title_top(
+            Line::from(Span::styled(
+                expand_label,
+                Style::default().fg(expand_color),
+            ))
+            .alignment(Alignment::Right),
+        )
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
@@ -161,9 +179,12 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
 
     // Render scrollbar when there are more items than fit in the panel.
     if visible.len() > inner_height {
-        let inner_area = area.inner(ratatui::layout::Margin { horizontal: 0, vertical: 1 });
-        let mut scrollbar_state = ScrollbarState::new(visible.len().saturating_sub(inner_height))
-            .position(scroll);
+        let inner_area = area.inner(ratatui::layout::Margin {
+            horizontal: 0,
+            vertical: 1,
+        });
+        let mut scrollbar_state =
+            ScrollbarState::new(visible.len().saturating_sub(inner_height)).position(scroll);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None);
@@ -189,7 +210,11 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
     let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
     let title = format!(" Diff Files ({total}) ");
 
-    let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
+    let border_type = if panel_focused {
+        BorderType::Thick
+    } else {
+        BorderType::Plain
+    };
 
     let block = Block::default()
         .title(title)
@@ -231,9 +256,7 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                         .bg(theme.selected_bg_inactive)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
-                        .fg(theme.info)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(theme.info).add_modifier(Modifier::BOLD)
                 };
 
                 ListItem::new(Span::styled(label, style))
@@ -275,11 +298,7 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                 };
                 let file_diff = &files[*file_index];
 
-                let filename = file_diff
-                    .path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&file_diff.path);
+                let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
 
                 let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
@@ -340,16 +359,21 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
     let title = format!(" Comments ({pending}/{total}) ");
     let ask_claude_label = " ✨ Ask Claude All ";
 
-    let border_type = if panel_focused { BorderType::Thick } else { BorderType::Plain };
+    let border_type = if panel_focused {
+        BorderType::Thick
+    } else {
+        BorderType::Plain
+    };
 
     let block = Block::default()
         .title(title)
-        .title_bottom(Line::from(vec![
-            Span::styled(
+        .title_bottom(
+            Line::from(vec![Span::styled(
                 ask_claude_label,
                 Style::default().fg(Color::Rgb(180, 140, 255)),
-            ),
-        ]).alignment(Alignment::Right))
+            )])
+            .alignment(Alignment::Right),
+        )
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
@@ -488,14 +512,24 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
 }
 
 /// Render a search input box at the bottom of the given area.
-fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &crate::theme::Theme, suppress_cursor: bool) {
+fn render_search_box(
+    frame: &mut Frame,
+    area: Rect,
+    query: &crate::text_input::TextInput,
+    theme: &crate::theme::Theme,
+    suppress_cursor: bool,
+) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
 
     frame.render_widget(ratatui::widgets::Clear, search_area);
 
-    let text = format!("/{}\u{2588}{}", query.text_before_cursor(), query.text_after_cursor());
+    let text = format!(
+        "/{}\u{2588}{}",
+        query.text_before_cursor(),
+        query.text_after_cursor()
+    );
     let paragraph = ratatui::widgets::Paragraph::new(Span::styled(
         text,
         Style::default().fg(theme.search_match_fg),
@@ -532,7 +566,11 @@ fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App, supp
     let query_width = inner_width.saturating_sub(counter.len() as u16 + 1) as usize;
 
     let query_input = &vs.filename_search_query;
-    let query_text = format!("/{}\u{2588}{}", query_input.text_before_cursor(), query_input.text_after_cursor());
+    let query_text = format!(
+        "/{}\u{2588}{}",
+        query_input.text_before_cursor(),
+        query_input.text_after_cursor()
+    );
     // Truncate display if needed.
     let query_truncated: String = query_text.chars().take(query_width).collect();
 

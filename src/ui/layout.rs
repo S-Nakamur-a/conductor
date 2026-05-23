@@ -69,9 +69,10 @@ impl LayoutCache {
         self.status_area = outer[3];
 
         let (left_w, explorer_w, viewer_w) = accordion_widths(expanded_panel, self.main_area.width);
-        let right_w = self.main_area.width.saturating_sub(
-            left_w.saturating_add(explorer_w).saturating_add(viewer_w),
-        );
+        let right_w = self
+            .main_area
+            .width
+            .saturating_sub(left_w.saturating_add(explorer_w).saturating_add(viewer_w));
 
         let cols = Layout::horizontal([
             Constraint::Length(left_w),
@@ -84,19 +85,15 @@ impl LayoutCache {
         self.columns = [cols[0], cols[1], cols[2], cols[3]];
 
         // Explorer 50/50 vertical split
-        let explorer_split = Layout::vertical([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(self.columns[1]);
+        let explorer_split =
+            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(self.columns[1]);
         self.explorer_mid_y = explorer_split[1].y;
 
         // Terminal 80/20 vertical split
-        let terminal_split = Layout::vertical([
-            Constraint::Percentage(80),
-            Constraint::Percentage(20),
-        ])
-        .split(self.columns[3]);
+        let terminal_split =
+            Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
+                .split(self.columns[3]);
         self.terminal_split = [terminal_split[0], terminal_split[1]];
 
         true
@@ -106,7 +103,10 @@ impl LayoutCache {
 /// Calculate accordion panel widths based on panel expansion state.
 ///
 /// Returns `(left_width, explorer_width, viewer_width)`. The right panel gets whatever remains.
-pub(crate) fn accordion_widths(expanded_panel: Option<crate::app::Focus>, total_width: u16) -> (u16, u16, u16) {
+pub(crate) fn accordion_widths(
+    expanded_panel: Option<crate::app::Focus>,
+    total_width: u16,
+) -> (u16, u16, u16) {
     use crate::app::Focus;
 
     match expanded_panel {
@@ -131,7 +131,8 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
 
     // Update layout cache (no-op if nothing changed).
-    app.layout_cache.update(area, app.expanded_panel, has_notifications);
+    app.layout_cache
+        .update(area, app.expanded_panel, has_notifications);
 
     let title_area = app.layout_cache.title_area;
     let notif_area = app.layout_cache.notif_area;
@@ -156,13 +157,15 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::explorer_panel::render(frame, columns[1], app);
 
     // ── Column 2: Viewer (file content) ─────────────────────────────
-    if app.viewer_state.is_current_file_media() {
-        if let Some(ref rel_path) = app.viewer_state.content.current_file.clone() {
-            let full_path = app.selected_worktree_path().join(rel_path);
-            let cols = columns[2].width;
-            let rows = columns[2].height;
-            app.viewer_state.media_state.render_if_needed(&full_path, rel_path, cols, rows);
-        }
+    if app.viewer_state.is_current_file_media()
+        && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
+    {
+        let full_path = app.selected_worktree_path().join(rel_path);
+        let cols = columns[2].width;
+        let rows = columns[2].height;
+        app.viewer_state
+            .media_state
+            .render_if_needed(&full_path, rel_path, cols, rows);
     }
     super::viewer_panel::render(frame, columns[2], app);
 
@@ -203,7 +206,13 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             super::dashboard::render_delete_branch_confirm_overlay(frame, main_area, app);
         }
         crate::app::WorktreeInputMode::ConfirmingUngrab => {
-            render_confirm_overlay(frame, main_area, app, " Confirm Ungrab ", ratatui::style::Color::Yellow);
+            render_confirm_overlay(
+                frame,
+                main_area,
+                app,
+                " Confirm Ungrab ",
+                ratatui::style::Color::Yellow,
+            );
         }
         crate::app::WorktreeInputMode::SmartDescription => {
             super::dashboard::render_smart_description_overlay(frame, main_area, app);
@@ -215,7 +224,12 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         super::review::render_input_overlay(frame, main_area, app);
     }
     if app.review_state.template_picker_active {
-        super::review::render_template_picker_overlay(frame, main_area, &app.review_state, &app.theme);
+        super::review::render_template_picker_overlay(
+            frame,
+            main_area,
+            &app.review_state,
+            &app.theme,
+        );
     }
     if app.review_state.comment_detail_active {
         super::review::render_comment_detail_overlay(frame, main_area, app);
@@ -261,7 +275,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::app::UpdateState::Confirming => {
             super::dashboard::render_update_confirm_overlay(frame, main_area, app);
         }
-        crate::app::UpdateState::InProgress | crate::app::UpdateState::Restarting | crate::app::UpdateState::Failed => {
+        crate::app::UpdateState::InProgress
+        | crate::app::UpdateState::Restarting
+        | crate::app::UpdateState::Failed => {
             super::dashboard::render_update_progress_overlay(frame, main_area, app);
         }
         crate::app::UpdateState::Idle => {}
@@ -290,12 +306,24 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         .map(|w| w.branch.as_str())
         .unwrap_or("");
     super::common::render_status_bar(frame, status_area, app);
-    super::common::render_worktree_label(frame, status_area, _worktree_branch, &app.repo_path, &app.theme);
+    super::common::render_worktree_label(
+        frame,
+        status_area,
+        _worktree_branch,
+        &app.repo_path,
+        &app.theme,
+    );
 }
 
 /// Render a small confirmation overlay for worktree deletion.
 fn render_confirming_delete_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    render_confirm_overlay(frame, area, app, " Confirm Delete ", ratatui::style::Color::Red);
+    render_confirm_overlay(
+        frame,
+        area,
+        app,
+        " Confirm Delete ",
+        ratatui::style::Color::Red,
+    );
 }
 
 /// Generic small confirmation overlay with a customizable title and border color.
@@ -333,11 +361,7 @@ fn render_confirm_overlay(
 }
 
 /// Render a skip-reason informational popup.
-fn render_skip_reason_overlay(
-    frame: &mut Frame,
-    area: Rect,
-    reason: &str,
-) {
+fn render_skip_reason_overlay(frame: &mut Frame, area: Rect, reason: &str) {
     let popup_height = 5_u16;
     let popup_width = area.width.saturating_sub(8).min(60);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -364,8 +388,7 @@ fn render_skip_reason_overlay(
             ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
         )),
     ];
-    let paragraph = ratatui::widgets::Paragraph::new(text)
-        .wrap(ratatui::widgets::Wrap { trim: true });
+    let paragraph =
+        ratatui::widgets::Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(paragraph, inner);
 }
-

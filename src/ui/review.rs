@@ -2,33 +2,35 @@
 //!
 //! These are rendered as overlays on top of the main layout when active.
 
-use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 use crate::app::App;
 use crate::review_state::{ReviewInputMode, ReviewState};
 use crate::review_store::CommentKind;
 use crate::theme::Theme;
+use ratatui::Frame;
+use ratatui::layout::{Position, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 /// Emoji icon for a comment kind.
 pub fn kind_icon(kind: CommentKind) -> &'static str {
     match kind {
         CommentKind::Suggest => "\u{1f4a1}", // 💡
-        CommentKind::Question => "\u{2753}",  // ❓
+        CommentKind::Question => "\u{2753}", // ❓
     }
 }
 
 /// Styled span for a comment kind badge.
 pub fn kind_badge_span(kind: CommentKind) -> Span<'static> {
     match kind {
-        CommentKind::Suggest => {
-            Span::styled(format!("{} ", kind_icon(kind)), Style::default().fg(Color::Green))
-        }
-        CommentKind::Question => {
-            Span::styled(format!("{} ", kind_icon(kind)), Style::default().fg(Color::Magenta))
-        }
+        CommentKind::Suggest => Span::styled(
+            format!("{} ", kind_icon(kind)),
+            Style::default().fg(Color::Green),
+        ),
+        CommentKind::Question => Span::styled(
+            format!("{} ", kind_icon(kind)),
+            Style::default().fg(Color::Magenta),
+        ),
     }
 }
 
@@ -52,9 +54,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
             let icon = kind_icon(app.review_state.input_kind);
             format!(" {icon} New {kind_label} (Tab: toggle | Shift+Enter: newline) ")
         }
-        ReviewInputMode::EditingComment => {
-            " Edit Comment (Shift+Enter: newline) ".to_string()
-        }
+        ReviewInputMode::EditingComment => " Edit Comment (Shift+Enter: newline) ".to_string(),
         ReviewInputMode::ReplyingToComment => {
             " Reply to Comment (Shift+Enter: newline) ".to_string()
         }
@@ -72,24 +72,24 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
 
     // When replying, show a preview of the parent comment's first line.
-    if app.review_state.input_mode == ReviewInputMode::ReplyingToComment {
-        if let Some(parent) = app.review_state.comments.get(app.review_state.selected) {
-            let first_line = parent.body.lines().next().unwrap_or("");
-            let max_len = inner.width.saturating_sub(4) as usize;
-            let preview = if first_line.chars().count() > max_len {
-                let truncated: String = first_line.chars().take(max_len).collect();
-                format!("\u{258e} {truncated}\u{2026}")
-            } else {
-                format!("\u{258e} {first_line}")
-            };
-            lines.push(Line::from(Span::styled(
-                preview,
-                Style::default()
-                    .fg(theme.muted)
-                    .add_modifier(Modifier::ITALIC),
-            )));
-            lines.push(Line::from(""));
-        }
+    if app.review_state.input_mode == ReviewInputMode::ReplyingToComment
+        && let Some(parent) = app.review_state.comments.get(app.review_state.selected)
+    {
+        let first_line = parent.body.lines().next().unwrap_or("");
+        let max_len = inner.width.saturating_sub(4) as usize;
+        let preview = if first_line.chars().count() > max_len {
+            let truncated: String = first_line.chars().take(max_len).collect();
+            format!("\u{258e} {truncated}\u{2026}")
+        } else {
+            format!("\u{258e} {first_line}")
+        };
+        lines.push(Line::from(Span::styled(
+            preview,
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::ITALIC),
+        )));
+        lines.push(Line::from(""));
     }
 
     // Build multi-line display with block cursor at the cursor position.
@@ -102,7 +102,12 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     );
     let input_lines: Vec<Line> = display
         .split('\n')
-        .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(theme.fg))))
+        .map(|line| {
+            Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.fg),
+            ))
+        })
         .collect();
 
     lines.extend(input_lines);
@@ -133,7 +138,12 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Render a centered popup for the comment template picker.
-pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &ReviewState, theme: &Theme) {
+pub fn render_template_picker_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    state: &ReviewState,
+    theme: &Theme,
+) {
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
     let popup_height = 15_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -165,8 +175,7 @@ pub fn render_template_picker_overlay(frame: &mut Frame, area: Rect, state: &Rev
 
         let badge = kind_badge_span(tmpl.kind);
 
-        let max_body_len =
-            (popup_width as usize).saturating_sub(tmpl.name.chars().count() + 10);
+        let max_body_len = (popup_width as usize).saturating_sub(tmpl.name.chars().count() + 10);
         let body_preview: String = tmpl.body.chars().take(max_body_len).collect();
         let body_preview = body_preview.replace('\n', " ");
 
@@ -206,7 +215,11 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
 
     frame.render_widget(Clear, popup_area);
 
-    let comment = match app.review_state.comments.get(app.review_state.comment_detail_idx) {
+    let comment = match app
+        .review_state
+        .comments
+        .get(app.review_state.comment_detail_idx)
+    {
         Some(c) => c,
         None => return,
     };
@@ -221,7 +234,9 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         crate::review_store::CommentStatus::Resolved => "\u{2713} Resolved",
     };
 
-    let title = format!(" {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, Del: delete) ");
+    let title = format!(
+        " {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, Del: delete) "
+    );
 
     let block = Block::default()
         .title(title)
@@ -250,12 +265,10 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         crate::review_store::Author::User => "You",
         crate::review_store::Author::Claude => "Claude",
     };
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!(" by {author_label}"),
-            Style::default().fg(theme.info),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        format!(" by {author_label}"),
+        Style::default().fg(theme.info),
+    )]));
 
     // Separator.
     let sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
@@ -274,41 +287,37 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
 
     // Replies section.
     let replies = app.review_state.cached_replies.get(&comment.id);
-    if let Some(replies) = replies {
-        if !replies.is_empty() {
-            lines.push(Line::from(Span::raw("")));
-            let reply_sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
-            lines.push(Line::from(Span::styled(
-                format!(" {reply_sep}"),
-                Style::default().fg(theme.muted),
-            )));
-            lines.push(Line::from(Span::styled(
-                format!(" \u{1f4ac} Replies ({})", replies.len()), // 💬
-                Style::default()
-                    .fg(theme.info)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(Span::raw("")));
+    if let Some(replies) = replies
+        && !replies.is_empty()
+    {
+        lines.push(Line::from(Span::raw("")));
+        let reply_sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
+        lines.push(Line::from(Span::styled(
+            format!(" {reply_sep}"),
+            Style::default().fg(theme.muted),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(" \u{1f4ac} Replies ({})", replies.len()), // 💬
+            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::raw("")));
 
-            for reply in replies {
-                let r_author = match reply.author {
-                    crate::review_store::Author::User => "You",
-                    crate::review_store::Author::Claude => "Claude",
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  \u{21b3} [{r_author}] "),
-                        Style::default().fg(theme.info),
-                    ),
-                ]));
-                for reply_line in reply.body.split('\n') {
-                    lines.push(Line::from(Span::styled(
-                        format!("    {reply_line}"),
-                        Style::default().fg(theme.reply_text),
-                    )));
-                }
-                lines.push(Line::from(Span::raw("")));
+        for reply in replies {
+            let r_author = match reply.author {
+                crate::review_store::Author::User => "You",
+                crate::review_store::Author::Claude => "Claude",
+            };
+            lines.push(Line::from(vec![Span::styled(
+                format!("  \u{21b3} [{r_author}] "),
+                Style::default().fg(theme.info),
+            )]));
+            for reply_line in reply.body.split('\n') {
+                lines.push(Line::from(Span::styled(
+                    format!("    {reply_line}"),
+                    Style::default().fg(theme.reply_text),
+                )));
             }
+            lines.push(Line::from(Span::raw("")));
         }
     }
 
@@ -343,14 +352,26 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     // Scroll indicator on the bottom border.
     if total_lines > visible_height {
         let current = app.review_state.comment_detail_scroll;
-        let indicator = format!(" [{}/{} j/k:scroll] ", current + visible_height.min(total_lines), total_lines);
+        let indicator = format!(
+            " [{}/{} j/k:scroll] ",
+            current + visible_height.min(total_lines),
+            total_lines
+        );
         let indicator_span = Span::styled(indicator, Style::default().fg(theme.muted));
-        let indicator_x = popup_area.x + popup_area.width.saturating_sub(indicator_span.width() as u16 + 2);
+        let indicator_x = popup_area.x
+            + popup_area
+                .width
+                .saturating_sub(indicator_span.width() as u16 + 2);
         let indicator_y = popup_area.y + popup_area.height - 1;
         if indicator_x > popup_area.x && indicator_y < area.y + area.height {
             frame.render_widget(
                 indicator_span,
-                Rect::new(indicator_x, indicator_y, popup_area.width.saturating_sub(2), 1),
+                Rect::new(
+                    indicator_x,
+                    indicator_y,
+                    popup_area.width.saturating_sub(2),
+                    1,
+                ),
             );
         }
     }

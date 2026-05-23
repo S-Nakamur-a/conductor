@@ -11,8 +11,8 @@ use crate::background::BackgroundOp;
 use crate::claude_sessions::ResumableSession;
 use crate::git_engine::CommitInfo;
 use crate::grep_search::GrepProgress;
-use crate::search_result_tree::SearchResultTree;
 use crate::review_store::SessionHistory;
+use crate::search_result_tree::SearchResultTree;
 use crate::text_input::TextInput;
 
 /// Which overlay is currently active (at most one at a time).
@@ -41,7 +41,6 @@ pub struct SwitchBranchOverlay {
     pub filter: TextInput,
 }
 
-
 /// Grab-branch overlay state.
 #[derive(Default)]
 pub struct GrabOverlay {
@@ -49,7 +48,6 @@ pub struct GrabOverlay {
     pub selected: usize,
     pub filter: TextInput,
 }
-
 
 /// Cherry-pick overlay state.
 #[derive(Default)]
@@ -59,13 +57,11 @@ pub struct CherryPickOverlay {
     pub selected: usize,
 }
 
-
 /// Prune overlay state.
 #[derive(Default)]
 pub struct PruneOverlay {
     pub stale: Vec<String>,
 }
-
 
 /// Resume-session overlay state.
 #[derive(Default)]
@@ -75,7 +71,6 @@ pub struct ResumeSessionOverlay {
     pub filter: TextInput,
     pub all_projects: bool,
 }
-
 
 /// Grep full-text search overlay state.
 #[derive(Default)]
@@ -101,14 +96,12 @@ pub struct GrepSearchOverlay {
     pub input_focused: bool,
 }
 
-
 /// Command palette overlay state.
 #[derive(Default)]
 pub struct CommandPaletteOverlay {
     pub filter: TextInput,
     pub selected: usize,
 }
-
 
 /// Session history overlay state.
 #[derive(Default)]
@@ -119,20 +112,17 @@ pub struct HistoryOverlay {
     pub search_active: bool,
 }
 
-
 /// Repository selector overlay state.
 #[derive(Default)]
 pub struct RepoSelectorOverlay {
     pub selected: usize,
 }
 
-
 /// Open-repository path input overlay state.
 #[derive(Default)]
 pub struct OpenRepoOverlay {
     pub buffer: TextInput,
 }
-
 
 /// Code navigation: references overlay state (for `gr` — Find References).
 #[derive(Default)]

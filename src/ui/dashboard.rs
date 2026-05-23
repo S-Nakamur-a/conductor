@@ -3,14 +3,14 @@
 //!
 //! These are rendered as overlays on top of the main 3-column layout.
 
+use crate::app::{App, UpdateState};
+use crate::text_input::TextInput;
+use crate::theme::Theme;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-use ratatui::Frame;
-use crate::app::{App, UpdateState};
-use crate::text_input::TextInput;
-use crate::theme::Theme;
 
 /// Set the terminal cursor position for IME at the cursor position within a
 /// single-line `TextInput`.
@@ -25,7 +25,11 @@ fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
 
 /// Format a single-line `TextInput` with a block cursor at the cursor position.
 fn format_input_with_cursor(buffer: &TextInput) -> String {
-    format!("{}\u{2588}{}", buffer.text_before_cursor(), buffer.text_after_cursor())
+    format!(
+        "{}\u{2588}{}",
+        buffer.text_before_cursor(),
+        buffer.text_after_cursor()
+    )
 }
 
 /// Render the session history viewer overlay.
@@ -34,21 +38,14 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, area);
 
     let (content_area, search_area) = if app.overlays.history.search_active {
-        let chunks = Layout::vertical([
-            Constraint::Min(3),
-            Constraint::Length(3),
-        ])
-        .split(area);
+        let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(3)]).split(area);
         (chunks[0], Some(chunks[1]))
     } else {
         (area, None)
     };
 
-    let panes = Layout::horizontal([
-        Constraint::Percentage(30),
-        Constraint::Percentage(70),
-    ])
-    .split(content_area);
+    let panes = Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(content_area);
 
     // Left pane: history record list.
     let list_block = Block::default()
@@ -63,7 +60,9 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(paragraph, panes[0]);
     } else {
         let items: Vec<ListItem> = app
-            .overlays.history.records
+            .overlays
+            .history
+            .records
             .iter()
             .enumerate()
             .map(|(i, record)| {
@@ -91,23 +90,18 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
                         format!("   {} ", record.worktree),
                         Style::default().fg(theme.success),
                     ),
-                    Span::styled(
-                        record.saved_at.clone(),
-                        Style::default().fg(theme.muted),
-                    ),
+                    Span::styled(record.saved_at.clone(), Style::default().fg(theme.muted)),
                 ]);
 
                 ListItem::new(vec![line, detail_line])
             })
             .collect();
 
-        let list = List::new(items)
-            .block(list_block)
-            .highlight_style(
-                Style::default()
-                    .bg(theme.selected_bg_inactive)
-                    .add_modifier(Modifier::BOLD),
-            );
+        let list = List::new(items).block(list_block).highlight_style(
+            Style::default()
+                .bg(theme.selected_bg_inactive)
+                .add_modifier(Modifier::BOLD),
+        );
 
         let mut state = ListState::default();
         state.select(Some(app.overlays.history.selected));
@@ -120,7 +114,12 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.info));
 
-    let output_text = if let Some(record) = app.overlays.history.records.get(app.overlays.history.selected) {
+    let output_text = if let Some(record) = app
+        .overlays
+        .history
+        .records
+        .get(app.overlays.history.selected)
+    {
         record.output_text.clone()
     } else {
         String::from("No record selected.")
@@ -143,10 +142,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(search_block, search_rect);
 
         let input_text = format_input_with_cursor(&app.overlays.history.search_query);
-        let paragraph = Paragraph::new(Span::styled(
-            input_text,
-            Style::default().fg(theme.fg),
-        ));
+        let paragraph = Paragraph::new(Span::styled(input_text, Style::default().fg(theme.fg)));
         frame.render_widget(paragraph, inner);
         set_cursor_for_input(frame, inner, &app.overlays.history.search_query);
     }
@@ -172,10 +168,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, popup_area);
 
     let input_text = format_input_with_cursor(&app.worktree_mgr.input_buffer);
-    let paragraph = Paragraph::new(Span::styled(
-        input_text,
-        Style::default().fg(theme.fg),
-    ));
+    let paragraph = Paragraph::new(Span::styled(input_text, Style::default().fg(theme.fg)));
     frame.render_widget(paragraph, inner);
     set_cursor_for_input(frame, inner, &app.worktree_mgr.input_buffer);
 }
@@ -212,7 +205,9 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let items: Vec<ListItem> = app
-        .overlays.cherry_pick.commits
+        .overlays
+        .cherry_pick
+        .commits
         .iter()
         .enumerate()
         .map(|(i, commit)| {
@@ -229,10 +224,7 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
                     format!(" [{}] ", commit.short_oid),
                     Style::default().fg(theme.info),
                 ),
-                Span::styled(
-                    commit.message.clone(),
-                    style,
-                ),
+                Span::styled(commit.message.clone(), style),
                 Span::styled(
                     format!(" ({}, {})", commit.author, commit.time_ago),
                     Style::default().fg(theme.muted),
@@ -243,12 +235,11 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(theme.selected_bg_inactive)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(theme.selected_bg_inactive)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut state = ListState::default();
     state.select(Some(app.overlays.cherry_pick.selected));
@@ -261,7 +252,9 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
     let content_lines = app.repo_list.len() as u16;
-    let popup_height = (content_lines + 2).min(12).min(area.height.saturating_sub(4));
+    let popup_height = (content_lines + 2)
+        .min(12)
+        .min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -277,8 +270,8 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, popup_area);
 
     if app.repo_list.is_empty() {
-        let paragraph = Paragraph::new("  No repositories configured.")
-            .style(Style::default().fg(theme.muted));
+        let paragraph =
+            Paragraph::new("  No repositories configured.").style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, inner);
         return;
     }
@@ -318,10 +311,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
                     },
                 ),
                 Span::styled(name, style),
-                Span::styled(
-                    format!("  {full_path}"),
-                    Style::default().fg(theme.muted),
-                ),
+                Span::styled(format!("  {full_path}"), Style::default().fg(theme.muted)),
             ]);
 
             ListItem::new(line)
@@ -360,11 +350,8 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, popup_area);
 
     let input_text = format_input_with_cursor(&app.overlays.open_repo.buffer);
-    let paragraph = Paragraph::new(Span::styled(
-        input_text,
-        Style::default().fg(theme.fg),
-    ))
-    .wrap(ratatui::widgets::Wrap { trim: false });
+    let paragraph = Paragraph::new(Span::styled(input_text, Style::default().fg(theme.fg)))
+        .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);
     set_cursor_for_input(frame, inner, &app.overlays.open_repo.buffer);
 }
@@ -381,11 +368,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     // Split into filter bar + list.
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-    ])
-    .split(popup_area);
+    let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
     // Filter bar.
     let filter_block = Block::default()
@@ -397,10 +380,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(filter_block, chunks[0]);
 
     let filter_text = format_input_with_cursor(&app.overlays.switch_branch.filter);
-    let filter_para = Paragraph::new(Span::styled(
-        filter_text,
-        Style::default().fg(theme.fg),
-    ));
+    let filter_para = Paragraph::new(Span::styled(filter_text, Style::default().fg(theme.fg)));
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.overlays.switch_branch.filter);
 
@@ -414,8 +394,8 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let filtered = app.filtered_switch_branches();
     if filtered.is_empty() {
-        let paragraph = Paragraph::new("  No matching branches.")
-            .style(Style::default().fg(theme.muted));
+        let paragraph =
+            Paragraph::new("  No matching branches.").style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, list_inner);
         return;
     }
@@ -431,10 +411,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(theme.fg)
             };
-            ListItem::new(Line::from(Span::styled(
-                format!("  {branch}"),
-                style,
-            )))
+            ListItem::new(Line::from(Span::styled(format!("  {branch}"), style)))
         })
         .collect();
 
@@ -461,11 +438,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     // Split into filter bar + list.
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-    ])
-    .split(popup_area);
+    let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
     // Filter bar.
     let filter_block = Block::default()
@@ -477,10 +450,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(filter_block, chunks[0]);
 
     let filter_text = format_input_with_cursor(&app.overlays.grab.filter);
-    let filter_para = Paragraph::new(Span::styled(
-        filter_text,
-        Style::default().fg(theme.fg),
-    ));
+    let filter_para = Paragraph::new(Span::styled(filter_text, Style::default().fg(theme.fg)));
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.overlays.grab.filter);
 
@@ -494,8 +464,8 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let filtered = app.filtered_grab_branches();
     if filtered.is_empty() {
-        let paragraph = Paragraph::new("  No matching branches.")
-            .style(Style::default().fg(theme.muted));
+        let paragraph =
+            Paragraph::new("  No matching branches.").style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, list_inner);
         return;
     }
@@ -511,10 +481,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(theme.fg)
             };
-            ListItem::new(Line::from(Span::styled(
-                format!("  {branch}"),
-                style,
-            )))
+            ListItem::new(Line::from(Span::styled(format!("  {branch}"), style)))
         })
         .collect();
 
@@ -551,7 +518,10 @@ pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            format!("  Found {} stale worktree(s):", app.overlays.prune.stale.len()),
+            format!(
+                "  Found {} stale worktree(s):",
+                app.overlays.prune.stale.len()
+            ),
             Style::default().fg(theme.accent),
         )),
         Line::from(""),
@@ -580,11 +550,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     // Split into filter bar + list.
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-    ])
-    .split(popup_area);
+    let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
     // Filter bar.
     let title = format!(
@@ -600,10 +566,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
     frame.render_widget(filter_block, chunks[0]);
 
     let filter_text = format_input_with_cursor(&app.worktree_mgr.base_branch_filter);
-    let filter_para = Paragraph::new(Span::styled(
-        filter_text,
-        Style::default().fg(theme.fg),
-    ));
+    let filter_para = Paragraph::new(Span::styled(filter_text, Style::default().fg(theme.fg)));
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.worktree_mgr.base_branch_filter);
 
@@ -620,10 +583,12 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
         let hint = if app.worktree_mgr.base_branch_filter.is_empty() {
             "  No branches found.".to_string()
         } else {
-            format!("  No matches. Enter will use '{}' as base ref.", app.worktree_mgr.base_branch_filter)
+            format!(
+                "  No matches. Enter will use '{}' as base ref.",
+                app.worktree_mgr.base_branch_filter
+            )
         };
-        let paragraph = Paragraph::new(hint)
-            .style(Style::default().fg(theme.muted));
+        let paragraph = Paragraph::new(hint).style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, list_inner);
         return;
     }
@@ -639,10 +604,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
             } else {
                 Style::default().fg(theme.fg)
             };
-            ListItem::new(Line::from(Span::styled(
-                format!("  {branch}"),
-                style,
-            )))
+            ListItem::new(Line::from(Span::styled(format!("  {branch}"), style)))
         })
         .collect();
 
@@ -699,11 +661,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     // Split into filter bar + list.
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-    ])
-    .split(popup_area);
+    let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
     // Filter bar.
     let scope_label = if app.overlays.resume_session.all_projects {
@@ -711,9 +669,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "this repo"
     };
-    let title = format!(
-        " Resume CC (Tab: {scope_label}, Enter: resume, Esc: cancel) "
-    );
+    let title = format!(" Resume CC (Tab: {scope_label}, Enter: resume, Esc: cancel) ");
     let filter_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -723,10 +679,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(filter_block, chunks[0]);
 
     let filter_text = format_input_with_cursor(&app.overlays.resume_session.filter);
-    let filter_para = Paragraph::new(Span::styled(
-        filter_text,
-        Style::default().fg(theme.fg),
-    ));
+    let filter_para = Paragraph::new(Span::styled(filter_text, Style::default().fg(theme.fg)));
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.overlays.resume_session.filter);
 
@@ -740,8 +693,8 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let filtered = app.filtered_resume_sessions();
     if filtered.is_empty() {
-        let paragraph = Paragraph::new("  No matching sessions.")
-            .style(Style::default().fg(theme.muted));
+        let paragraph =
+            Paragraph::new("  No matching sessions.").style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, list_inner);
         return;
     }
@@ -816,7 +769,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
 
     let chunks = Layout::vertical([
         Constraint::Length(3), // Search bar
-        Constraint::Min(3),   // Command list
+        Constraint::Min(3),    // Command list
     ])
     .split(popup_area);
 
@@ -830,10 +783,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
 
     let search_text = format_input_with_cursor(&app.overlays.command_palette.filter);
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            search_text,
-            Style::default().fg(theme.fg),
-        )),
+        Paragraph::new(Span::styled(search_text, Style::default().fg(theme.fg))),
         search_inner,
     );
     set_cursor_for_input(frame, search_inner, &app.overlays.command_palette.filter);
@@ -848,8 +798,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
     if filtered.is_empty() {
         frame.render_widget(
-            Paragraph::new("  No matching commands.")
-                .style(Style::default().fg(theme.muted)),
+            Paragraph::new("  No matching commands.").style(Style::default().fg(theme.muted)),
             list_inner,
         );
         return;
@@ -880,10 +829,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
                     Style::default().fg(theme.accent),
                 ),
                 Span::styled(cmd.label, style),
-                Span::styled(
-                    format!("  {kb:>12}"),
-                    Style::default().fg(theme.muted),
-                ),
+                Span::styled(format!("  {kb:>12}"), Style::default().fg(theme.muted)),
             ]);
             ListItem::new(line)
         })
@@ -911,8 +857,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     // Tab bar showing which panel's help is displayed.
-    let tabs = Layout::vertical([Constraint::Length(1), Constraint::Min(3)])
-        .split(popup_area);
+    let tabs = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(popup_area);
 
     let tab_labels = [
         ("1:Worktree", Focus::Worktree),
@@ -941,8 +886,8 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let tab_line = Paragraph::new(Line::from(tab_spans))
-        .style(Style::default().bg(theme.titlebar_bg));
+    let tab_line =
+        Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(theme.titlebar_bg));
     frame.render_widget(tab_line, tabs[0]);
 
     // Main content block.
@@ -955,8 +900,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, tabs[1]);
 
     let lines = help_lines_for(app, app.overlays.help.context, theme);
-    let paragraph = Paragraph::new(lines)
-        .wrap(ratatui::widgets::Wrap { trim: false });
+    let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);
 }
 
@@ -965,9 +909,7 @@ fn help_section(lines: &mut Vec<Line<'static>>, title: &'static str, theme: &The
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         title,
-        Style::default()
-            .fg(theme.info)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
     )));
 }
 
@@ -1003,94 +945,419 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
 
     // Global section always shown.
     help_section(&mut lines, "Global", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::NewClaudeCode), "New Claude Code session", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::NewShell), "New Shell session", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CommandPalette), "Command palette", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::FocusWorktree), "Jump to Worktree panel", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::OpenRepo), "Open repository by path", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::SwitchRepo), "Switch repository", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::SearchFullText), "Full-text search (grep)", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CycleFocusForward), "Cycle panel focus forward", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::CycleFocusBackward), "Cycle panel focus backward", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::Quit), "Quit application", theme);
-    help_key_dyn(&mut lines, fmt_keys(app, KeyContext::Global, Action::ShowHelp), "Toggle this help", theme);
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::NewClaudeCode),
+        "New Claude Code session",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::NewShell),
+        "New Shell session",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::CommandPalette),
+        "Command palette",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::FocusWorktree),
+        "Jump to Worktree panel",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::OpenRepo),
+        "Open repository by path",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::SwitchRepo),
+        "Switch repository",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::SearchFullText),
+        "Full-text search (grep)",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::CycleFocusForward),
+        "Cycle panel focus forward",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::CycleFocusBackward),
+        "Cycle panel focus backward",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::Quit),
+        "Quit application",
+        theme,
+    );
+    help_key_dyn(
+        &mut lines,
+        fmt_keys(app, KeyContext::Global, Action::ShowHelp),
+        "Toggle this help",
+        theme,
+    );
 
     match focus {
         Focus::Worktree => {
             let ctx = KeyContext::Worktree;
             help_section(&mut lines, "Worktree Panel", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateDown), "Navigate down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateUp), "Navigate up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::Select), "Select worktree -> Explorer", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::CreateWorktree), "Create new worktree", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::DeleteWorktree), "Delete selected worktree", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SwitchBranch), "Switch (checkout remote branch)", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::GrabBranch), "Grab (checkout branch on main)", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::UngrabBranch), "Ungrab (restore main branch)", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::CherryPick), "Cherry-pick from other branch", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PruneWorktrees), "Prune stale worktrees", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::MergeToMain), "Merge branch into main", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::RefreshWorktrees), "Refresh worktree list", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ResetMainToOrigin), "Reset main to origin/main", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PullWorktree), "Pull worktree", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SessionHistory), "Session history viewer", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::OpenPullRequest), "Open pull request in browser", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NavigateDown),
+                "Navigate down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NavigateUp),
+                "Navigate up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::Select),
+                "Select worktree -> Explorer",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::CreateWorktree),
+                "Create new worktree",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::DeleteWorktree),
+                "Delete selected worktree",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::SwitchBranch),
+                "Switch (checkout remote branch)",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::GrabBranch),
+                "Grab (checkout branch on main)",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::UngrabBranch),
+                "Ungrab (restore main branch)",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::CherryPick),
+                "Cherry-pick from other branch",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::PruneWorktrees),
+                "Prune stale worktrees",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::MergeToMain),
+                "Merge branch into main",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::RefreshWorktrees),
+                "Refresh worktree list",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ResetMainToOrigin),
+                "Reset main to origin/main",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::PullWorktree),
+                "Pull worktree",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::SessionHistory),
+                "Session history viewer",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::OpenPullRequest),
+                "Open pull request in browser",
+                theme,
+            );
         }
         Focus::Explorer => {
             let ctx = KeyContext::Explorer;
             help_section(&mut lines, "Explorer Panel (File Tree)", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateDown), "Navigate down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateUp), "Navigate up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ExpandOrRight), "Expand directory", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::CollapseOrLeft), "Collapse directory", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::Select), "Open file -> Viewer", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ShowDiffList), "Switch to Diff list", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ShowCommentList), "Show review comments", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SearchFilename), "Search filename", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NavigateDown),
+                "Navigate down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NavigateUp),
+                "Navigate up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ExpandOrRight),
+                "Expand directory",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::CollapseOrLeft),
+                "Collapse directory",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::Select),
+                "Open file -> Viewer",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ShowDiffList),
+                "Switch to Diff list",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ShowCommentList),
+                "Show review comments",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::SearchFilename),
+                "Search filename",
+                theme,
+            );
 
             let ctx2 = KeyContext::ExplorerDiffList;
             help_section(&mut lines, "Explorer Panel (Diff List)", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::NavigateDown), "Navigate down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::NavigateUp), "Navigate up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::Select), "Open diff file -> Viewer", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx2, Action::ExitSubPanel), "Back to file tree", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx2, Action::NavigateDown),
+                "Navigate down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx2, Action::NavigateUp),
+                "Navigate up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx2, Action::Select),
+                "Open diff file -> Viewer",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx2, Action::ExitSubPanel),
+                "Back to file tree",
+                theme,
+            );
 
             let ctx3 = KeyContext::ExplorerCommentList;
             help_section(&mut lines, "Explorer Panel (Comments)", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::NavigateDown), "Navigate down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::NavigateUp), "Navigate up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::GoToTop), "Jump to top", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::GoToBottom), "Jump to bottom", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::Select), "Expand/collapse or jump", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::CollapseOrLeft), "Collapse thread", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::EditComment), "Edit selected comment", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::DeleteComment), "Delete selected comment", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::ToggleResolve), "Toggle resolve/pending", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::ReplyToComment), "Reply to comment", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx3, Action::ExitSubPanel), "Back to file tree", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::NavigateDown),
+                "Navigate down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::NavigateUp),
+                "Navigate up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::GoToTop),
+                "Jump to top",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::GoToBottom),
+                "Jump to bottom",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::Select),
+                "Expand/collapse or jump",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::CollapseOrLeft),
+                "Collapse thread",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::EditComment),
+                "Edit selected comment",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::DeleteComment),
+                "Delete selected comment",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::ToggleResolve),
+                "Toggle resolve/pending",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::ReplyToComment),
+                "Reply to comment",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx3, Action::ExitSubPanel),
+                "Back to file tree",
+                theme,
+            );
         }
         Focus::Viewer => {
             let ctx = KeyContext::Viewer;
             help_section(&mut lines, "Viewer Panel", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateDown), "Scroll down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NavigateUp), "Scroll up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollHalfPageDown), "Scroll half-page down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollHalfPageUp), "Scroll half-page up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::GoToTop), "Jump to top", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::GoToBottom), "Jump to bottom", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SearchInFile), "Search in file", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::NextSearchMatch), "Next search match", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::PrevSearchMatch), "Previous search match", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ExitToExplorer), "Back to Explorer", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NavigateDown),
+                "Scroll down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NavigateUp),
+                "Scroll up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ScrollHalfPageDown),
+                "Scroll half-page down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ScrollHalfPageUp),
+                "Scroll half-page up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::GoToTop),
+                "Jump to top",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::GoToBottom),
+                "Jump to bottom",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::SearchInFile),
+                "Search in file",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::NextSearchMatch),
+                "Next search match",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::PrevSearchMatch),
+                "Previous search match",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ExitToExplorer),
+                "Back to Explorer",
+                theme,
+            );
         }
         Focus::TerminalClaude | Focus::TerminalShell => {
             let ctx = KeyContext::Terminal;
             help_section(&mut lines, "Terminal Panel", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::LeaveTerminal), "Leave terminal -> Explorer", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollbackUp), "Scroll up", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollbackDown), "Scroll down", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::ScrollbackTop), "Scroll to top", theme);
-            help_key_dyn(&mut lines, fmt_keys(app, ctx, Action::SnapToLive), "Snap to live", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::LeaveTerminal),
+                "Leave terminal -> Explorer",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ScrollbackUp),
+                "Scroll up",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ScrollbackDown),
+                "Scroll down",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::ScrollbackTop),
+                "Scroll to top",
+                theme,
+            );
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::SnapToLive),
+                "Snap to live",
+                theme,
+            );
 
             help_section(&mut lines, "Note", theme);
             lines.push(Line::from(Span::styled(
@@ -1133,17 +1400,17 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     frame.render_widget(block, popup_area);
 
     // Split: text area + help hint
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     // Render multi-line text with block cursor.
     let display = format!(
         "{}\u{2588}{}",
-        app.worktree_mgr.smart_description_buffer.text_before_cursor(),
-        app.worktree_mgr.smart_description_buffer.text_after_cursor()
+        app.worktree_mgr
+            .smart_description_buffer
+            .text_before_cursor(),
+        app.worktree_mgr
+            .smart_description_buffer
+            .text_after_cursor()
     );
     let paragraph = Paragraph::new(display)
         .style(Style::default().fg(theme.fg))
@@ -1151,7 +1418,11 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     frame.render_widget(paragraph, chunks[0]);
     {
         let (row, _col) = app.worktree_mgr.smart_description_buffer.cursor_row_col();
-        let cursor_x = chunks[0].x + app.worktree_mgr.smart_description_buffer.display_width_before_cursor() as u16;
+        let cursor_x = chunks[0].x
+            + app
+                .worktree_mgr
+                .smart_description_buffer
+                .display_width_before_cursor() as u16;
         let cursor_y = chunks[0].y + row as u16;
         if cursor_x < chunks[0].x + chunks[0].width && cursor_y < chunks[0].y + chunks[0].height {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
@@ -1160,13 +1431,33 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
 
     // Help hint.
     let hint = Line::from(vec![
-        Span::styled("Shift+Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Shift+Enter",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(": newline  ", Style::default().fg(theme.muted)),
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(": generate  ", Style::default().fg(theme.muted)),
-        Span::styled("Tab", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Tab",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(": manual  ", Style::default().fg(theme.muted)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Esc",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(": cancel", Style::default().fg(theme.muted)),
     ]);
     frame.render_widget(Paragraph::new(hint), chunks[1]);
@@ -1203,9 +1494,19 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme.fg),
         )),
         Line::from(vec![
-            Span::styled(" y", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " y",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(": はい / ", Style::default().fg(theme.muted)),
-            Span::styled("n", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "n",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(": いいえ", Style::default().fg(theme.muted)),
         ]),
     ];
@@ -1238,7 +1539,10 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let braille = ['\u{2801}', '\u{2802}', '\u{2804}', '\u{2840}', '\u{2880}', '\u{2820}', '\u{2810}', '\u{2808}'];
+    let braille = [
+        '\u{2801}', '\u{2802}', '\u{2804}', '\u{2840}', '\u{2880}', '\u{2820}', '\u{2810}',
+        '\u{2808}',
+    ];
     let idx = (app.ui_tick / 4) as usize % braille.len();
 
     let mut lines = Vec::new();
@@ -1257,10 +1561,7 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
         let spinner = braille[idx];
         lines.push(Line::from(vec![
             Span::styled(format!(" {spinner} "), Style::default().fg(theme.accent)),
-            Span::styled(
-                &app.update_progress_message,
-                Style::default().fg(theme.fg),
-            ),
+            Span::styled(&app.update_progress_message, Style::default().fg(theme.fg)),
         ]));
         if app.update_state == UpdateState::InProgress {
             lines.push(Line::from(""));

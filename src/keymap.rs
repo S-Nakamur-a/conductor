@@ -356,10 +356,10 @@ pub fn parse_key_chord(s: &str) -> Result<(KeyCode, KeyModifiers)> {
 
     // Normalise: uppercase single char → remove explicit SHIFT
     // (crossterm delivers 'G' with SHIFT set, but we store without it)
-    if let KeyCode::Char(c) = code {
-        if c.is_ascii_uppercase() {
-            modifiers &= !KeyModifiers::SHIFT;
-        }
+    if let KeyCode::Char(c) = code
+        && c.is_ascii_uppercase()
+    {
+        modifiers &= !KeyModifiers::SHIFT;
     }
 
     Ok((code, modifiers))
@@ -470,19 +470,18 @@ impl KeyMap {
         let normalized = normalize_key(key);
 
         // First try the specific context.
-        if context != KeyContext::Global {
-            if let Some(map) = self.bindings.get(&context) {
-                if let Some(action) = map.get(&normalized) {
-                    return Some(*action);
-                }
-            }
+        if context != KeyContext::Global
+            && let Some(map) = self.bindings.get(&context)
+            && let Some(action) = map.get(&normalized)
+        {
+            return Some(*action);
         }
 
         // Fall back to global.
-        if let Some(map) = self.bindings.get(&KeyContext::Global) {
-            if let Some(action) = map.get(&normalized) {
-                return Some(*action);
-            }
+        if let Some(map) = self.bindings.get(&KeyContext::Global)
+            && let Some(action) = map.get(&normalized)
+        {
+            return Some(*action);
         }
 
         None
@@ -502,12 +501,12 @@ impl KeyMap {
         }
 
         // Also check global bindings for global actions.
-        if context != KeyContext::Global {
-            if let Some(map) = self.bindings.get(&KeyContext::Global) {
-                for ((code, mods), a) in map {
-                    if *a == action {
-                        keys.push(format_key_chord(code, mods));
-                    }
+        if context != KeyContext::Global
+            && let Some(map) = self.bindings.get(&KeyContext::Global)
+        {
+            for ((code, mods), a) in map {
+                if *a == action {
+                    keys.push(format_key_chord(code, mods));
                 }
             }
         }
@@ -519,7 +518,13 @@ impl KeyMap {
 
     // ── Binding insertion helpers ─────────────────────────────────
 
-    fn bind(&mut self, context: KeyContext, code: KeyCode, modifiers: KeyModifiers, action: Action) {
+    fn bind(
+        &mut self,
+        context: KeyContext,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        action: Action,
+    ) {
         let normalized = normalize_raw(code, modifiers);
         self.bindings
             .entry(context)
@@ -553,8 +558,18 @@ impl KeyMap {
         // in terminal panels. Ctrl+P remains global for command palette access.
         self.bind_ctrl(Global, 'p', CommandPalette);
         // Alt+h / Alt+l — panel cycle that works everywhere, including terminal panels.
-        self.bind(Global, KeyCode::Char('h'), KeyModifiers::ALT, CycleFocusBackward);
-        self.bind(Global, KeyCode::Char('l'), KeyModifiers::ALT, CycleFocusForward);
+        self.bind(
+            Global,
+            KeyCode::Char('h'),
+            KeyModifiers::ALT,
+            CycleFocusBackward,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('l'),
+            KeyModifiers::ALT,
+            CycleFocusForward,
+        );
         // macOS Unicode fallback (Option+h='˙', Option+l='¬') for terminals that
         // send Unicode instead of Alt modifier.
         self.bind_char(Global, '˙', CycleFocusBackward);
@@ -564,20 +579,60 @@ impl KeyMap {
         self.bind_ctrl(Global, 't', NewShell);
         self.bind_ctrl(Global, 'o', OpenRepo);
         self.bind_ctrl(Global, 'r', SwitchRepo);
-        self.bind(Global, KeyCode::Char('1'), KeyModifiers::SUPER, FocusWorktree);
-        self.bind(Global, KeyCode::Char('2'), KeyModifiers::SUPER, FocusExplorer);
-        self.bind(Global, KeyCode::Char('3'), KeyModifiers::SUPER, FocusExplorerDiffList);
+        self.bind(
+            Global,
+            KeyCode::Char('1'),
+            KeyModifiers::SUPER,
+            FocusWorktree,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            FocusExplorer,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('3'),
+            KeyModifiers::SUPER,
+            FocusExplorerDiffList,
+        );
         self.bind(Global, KeyCode::Char('4'), KeyModifiers::SUPER, FocusViewer);
-        self.bind(Global, KeyCode::Char('5'), KeyModifiers::SUPER, FocusTerminalClaude);
-        self.bind(Global, KeyCode::Char('6'), KeyModifiers::SUPER, FocusTerminalShell);
+        self.bind(
+            Global,
+            KeyCode::Char('5'),
+            KeyModifiers::SUPER,
+            FocusTerminalClaude,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('6'),
+            KeyModifiers::SUPER,
+            FocusTerminalShell,
+        );
         // Alt+number as fallback — Cmd+number is intercepted by most terminal emulators on macOS.
         // When terminal sends Alt as Esc prefix (e.g. iTerm2 "Option sends Esc+"):
         self.bind(Global, KeyCode::Char('1'), KeyModifiers::ALT, FocusWorktree);
         self.bind(Global, KeyCode::Char('2'), KeyModifiers::ALT, FocusExplorer);
-        self.bind(Global, KeyCode::Char('3'), KeyModifiers::ALT, FocusExplorerDiffList);
+        self.bind(
+            Global,
+            KeyCode::Char('3'),
+            KeyModifiers::ALT,
+            FocusExplorerDiffList,
+        );
         self.bind(Global, KeyCode::Char('4'), KeyModifiers::ALT, FocusViewer);
-        self.bind(Global, KeyCode::Char('5'), KeyModifiers::ALT, FocusTerminalClaude);
-        self.bind(Global, KeyCode::Char('6'), KeyModifiers::ALT, FocusTerminalShell);
+        self.bind(
+            Global,
+            KeyCode::Char('5'),
+            KeyModifiers::ALT,
+            FocusTerminalClaude,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('6'),
+            KeyModifiers::ALT,
+            FocusTerminalShell,
+        );
         // When macOS Option key produces Unicode (e.g. default Terminal.app / iTerm2 without Esc+ mode):
         // Option+1='¡', Option+2='™', Option+3='£', Option+4='¢', Option+5='∞', Option+6='§'
         self.bind_char(Global, '¡', FocusWorktree);
@@ -597,8 +652,18 @@ impl KeyMap {
         self.bind_key(Global, KeyCode::F(6), FocusExpandTerminalClaude);
         self.bind_key(Global, KeyCode::F(7), FocusExpandTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
-        self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
-        self.bind(Global, KeyCode::Char('/'), KeyModifiers::ALT, TogglePanelOverlay);
+        self.bind(
+            Global,
+            KeyCode::Char(' '),
+            KeyModifiers::SUPER,
+            TogglePanelExpand,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('/'),
+            KeyModifiers::ALT,
+            TogglePanelOverlay,
+        );
         // macOS Unicode fallback (Option+/ = '÷')
         self.bind_char(Global, '÷', TogglePanelOverlay);
 
@@ -734,7 +799,12 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, ' ', ToggleInlineThread);
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
         self.bind_key(ViewerDiffMode, KeyCode::Enter, ExpandContext);
-        self.bind(ViewerDiffMode, KeyCode::Enter, KeyModifiers::SHIFT, ExpandAllContext);
+        self.bind(
+            ViewerDiffMode,
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+            ExpandAllContext,
+        );
         self.bind_char(ViewerDiffMode, ':', CommandPalette);
 
         // ── Overlay (shared popup navigation) ─────────────────────
@@ -750,10 +820,20 @@ impl KeyMap {
         // ── Terminal ─────────────────────────────────────────────
         self.bind(Terminal, KeyCode::Esc, KeyModifiers::CONTROL, LeaveTerminal);
         self.bind(Terminal, KeyCode::PageUp, KeyModifiers::SHIFT, ScrollbackUp);
-        self.bind(Terminal, KeyCode::PageDown, KeyModifiers::SHIFT, ScrollbackDown);
+        self.bind(
+            Terminal,
+            KeyCode::PageDown,
+            KeyModifiers::SHIFT,
+            ScrollbackDown,
+        );
         self.bind(Terminal, KeyCode::Home, KeyModifiers::SHIFT, ScrollbackTop);
         self.bind(Terminal, KeyCode::End, KeyModifiers::SHIFT, SnapToLive);
-        self.bind(Terminal, KeyCode::Char('g'), KeyModifiers::CONTROL, OpenFileFromTerminal);
+        self.bind(
+            Terminal,
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+            OpenFileFromTerminal,
+        );
     }
 
     /// Apply user overrides from config. For each overridden action,
@@ -830,7 +910,8 @@ fn normalize_raw(mut code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, Ke
         modifiers &= !KeyModifiers::SHIFT;
     }
     // Strip state flags that aren't meaningful for binding lookup.
-    modifiers &= KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER;
+    modifiers &=
+        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER;
     (code, modifiers)
 }
 
@@ -926,13 +1007,22 @@ mod tests {
         assert_eq!(km.resolve(&key_q, KeyContext::Global), Some(Action::Quit));
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
-        assert_eq!(km.resolve(&key_j, KeyContext::Worktree), Some(Action::NavigateDown));
+        assert_eq!(
+            km.resolve(&key_j, KeyContext::Worktree),
+            Some(Action::NavigateDown)
+        );
 
         let key_ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
-        assert_eq!(km.resolve(&key_ctrl_n, KeyContext::Global), Some(Action::NewClaudeCode));
+        assert_eq!(
+            km.resolve(&key_ctrl_n, KeyContext::Global),
+            Some(Action::NewClaudeCode)
+        );
 
         let key_ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
-        assert_eq!(km.resolve(&key_ctrl_esc, KeyContext::Terminal), Some(Action::LeaveTerminal));
+        assert_eq!(
+            km.resolve(&key_ctrl_esc, KeyContext::Terminal),
+            Some(Action::LeaveTerminal)
+        );
     }
 
     #[test]
@@ -942,11 +1032,17 @@ mod tests {
 
         // Tab is bound per non-terminal context — resolves in Worktree but NOT in Terminal.
         let key_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-        assert_eq!(km.resolve(&key_tab, KeyContext::Worktree), Some(Action::CycleFocusForward));
+        assert_eq!(
+            km.resolve(&key_tab, KeyContext::Worktree),
+            Some(Action::CycleFocusForward)
+        );
         assert_eq!(km.resolve(&key_tab, KeyContext::Terminal), None);
         // Alt+l resolves globally (including Terminal fallback).
         let key_alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
-        assert_eq!(km.resolve(&key_alt_l, KeyContext::Terminal), Some(Action::CycleFocusForward));
+        assert_eq!(
+            km.resolve(&key_alt_l, KeyContext::Terminal),
+            Some(Action::CycleFocusForward)
+        );
     }
 
     #[test]
@@ -956,9 +1052,15 @@ mod tests {
 
         // 'g' in Worktree = GrabBranch, in Global = not bound.
         let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty());
-        assert_eq!(km.resolve(&key_g, KeyContext::Worktree), Some(Action::GrabBranch));
+        assert_eq!(
+            km.resolve(&key_g, KeyContext::Worktree),
+            Some(Action::GrabBranch)
+        );
         // In Explorer, 'g' = GoToTop.
-        assert_eq!(km.resolve(&key_g, KeyContext::Explorer), Some(Action::GoToTop));
+        assert_eq!(
+            km.resolve(&key_g, KeyContext::Explorer),
+            Some(Action::GoToTop)
+        );
     }
 
     #[test]
@@ -973,15 +1075,24 @@ mod tests {
 
         // 'j' should no longer be NavigateDown in worktree.
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
-        assert_ne!(km.resolve(&key_j, KeyContext::Worktree), Some(Action::NavigateDown));
+        assert_ne!(
+            km.resolve(&key_j, KeyContext::Worktree),
+            Some(Action::NavigateDown)
+        );
 
         // 'n' should now be NavigateDown.
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
-        assert_eq!(km.resolve(&key_n, KeyContext::Worktree), Some(Action::NavigateDown));
+        assert_eq!(
+            km.resolve(&key_n, KeyContext::Worktree),
+            Some(Action::NavigateDown)
+        );
 
         // Down arrow should still work.
         let key_down = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
-        assert_eq!(km.resolve(&key_down, KeyContext::Worktree), Some(Action::NavigateDown));
+        assert_eq!(
+            km.resolve(&key_down, KeyContext::Worktree),
+            Some(Action::NavigateDown)
+        );
     }
 
     #[test]

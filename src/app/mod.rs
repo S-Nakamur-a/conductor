@@ -3,14 +3,14 @@
 //! This module defines the top-level application state, the unified panel
 //! layout focus model, and transitions between panels.
 
-mod terminal;
 mod review;
+mod terminal;
 mod worktree;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 use crate::background::BackgroundOp;
 
@@ -20,19 +20,19 @@ use syntect::parsing::SyntaxSet;
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
-use crate::jump_history::JumpHistory;
-use crate::overlay::{ReferencesOverlay, SymbolHintOverlay, SymbolActionOverlay};
-use crate::symbol_index::SymbolIndex;
 use crate::grep_search::GrepProgress;
+use crate::jump_history::JumpHistory;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
+use crate::overlay::{ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
 use crate::pty_manager;
 use crate::review_state::ReviewState;
-use crate::terminal_state::TerminalState;
 use crate::review_store::{self, Author, CommentKind, ReviewStore};
-use crate::worktree_ops::WorktreeManager;
+use crate::symbol_index::SymbolIndex;
+use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
 use crate::viewer::ViewerState;
+use crate::worktree_ops::WorktreeManager;
 
 /// The severity/type of a status message, used for styling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,23 +56,31 @@ pub struct StatusMessage {
 
 impl StatusMessage {
     pub fn new(text: String, level: StatusLevel, tick: u64) -> Self {
-        Self { text, level, created_at_tick: tick }
+        Self {
+            text,
+            level,
+            created_at_tick: tick,
+        }
     }
 
     /// Return the icon prefix for this message level.
     pub fn icon(&self) -> &'static str {
         match self.level {
             StatusLevel::Success => "\u{2713} ", // ✓
-            StatusLevel::Error   => "\u{2717} ", // ✗
+            StatusLevel::Error => "\u{2717} ",   // ✗
             StatusLevel::Warning => "\u{26A1} ", // ⚡
-            StatusLevel::Info    => "\u{2139} ", // ℹ
+            StatusLevel::Info => "\u{2139} ",    // ℹ
         }
     }
 }
 
 impl From<String> for StatusMessage {
     fn from(text: String) -> Self {
-        Self { text, level: StatusLevel::Info, created_at_tick: 0 }
+        Self {
+            text,
+            level: StatusLevel::Info,
+            created_at_tick: 0,
+        }
     }
 }
 
@@ -148,15 +156,37 @@ pub struct PendingWorktree {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum WorktreeOpResult {
-    Created { path: PathBuf, pending: PendingWorktree },
-    CreateFailed { error: String, pending: PendingWorktree },
-    Deleted { branch: String },
-    DeleteFailed { error: String, branch: String },
-    Skipped { branch: String, reason: String },
+    Created {
+        path: PathBuf,
+        pending: PendingWorktree,
+    },
+    CreateFailed {
+        error: String,
+        pending: PendingWorktree,
+    },
+    Deleted {
+        branch: String,
+    },
+    DeleteFailed {
+        error: String,
+        branch: String,
+    },
+    Skipped {
+        branch: String,
+        reason: String,
+    },
     /// Smart worktree: LLM resolved a branch name (for UI update).
-    SmartBranchResolved { description: String, branch: String, prompt: String, session_name: Option<String> },
+    SmartBranchResolved {
+        description: String,
+        branch: String,
+        prompt: String,
+        session_name: Option<String>,
+    },
     /// Smart worktree: entire operation failed.
-    SmartFailed { description: String, error: String },
+    SmartFailed {
+        description: String,
+        error: String,
+    },
 }
 
 /// Result from the smart worktree LLM generation.
@@ -167,7 +197,6 @@ pub struct SmartGenResult {
     #[serde(default)]
     pub session_name: Option<String>,
 }
-
 
 /// Info about a grabbed branch (branch checkout swap with main).
 #[derive(Debug, Clone)]
@@ -214,16 +243,52 @@ impl DirtyPanels {
     pub const WORKTREE: u8 = 0b0000_0001;
     pub const EXPLORER: u8 = 0b0000_0010;
     #[allow(dead_code)]
-    pub const VIEWER: u8   = 0b0000_0100;
+    pub const VIEWER: u8 = 0b0000_0100;
     pub const TERMINAL: u8 = 0b0000_1000;
-    pub const ALL: u8      = 0b0000_1111;
+    pub const ALL: u8 = 0b0000_1111;
 
-    pub fn mark(&mut self, bits: u8) { self.0 |= bits; }
-    pub fn mark_all(&mut self) { self.0 = Self::ALL; }
+    pub fn mark(&mut self, bits: u8) {
+        self.0 |= bits;
+    }
+    pub fn mark_all(&mut self) {
+        self.0 = Self::ALL;
+    }
     #[allow(dead_code)]
-    pub fn is_dirty(&self, bits: u8) -> bool { self.0 & bits != 0 }
-    pub fn any(&self) -> bool { self.0 != 0 }
-    pub fn clear(&mut self) { self.0 = 0; }
+    pub fn is_dirty(&self, bits: u8) -> bool {
+        self.0 & bits != 0
+    }
+    pub fn any(&self) -> bool {
+        self.0 != 0
+    }
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+}
+
+/// Background operations driven by the 60fps event loop, grouped so that `App`
+/// does not carry a separate flat field per async task. Each op is polled from
+/// the main loop (or worktree-switch handlers) and writes its result back into
+/// the relevant `App` state.
+#[derive(Default)]
+pub struct BackgroundOps {
+    /// Background update check (latest release lookup).
+    pub update_check: BackgroundOp<Option<crate::update_checker::UpdateInfo>>,
+    /// Background ccusage (token/cost) fetch.
+    pub ccusage: BackgroundOp<CcusageInfo>,
+    /// Background branch list fetch (switch-branch overlay).
+    pub branch: BackgroundOp<Vec<String>>,
+    /// Background pull operation.
+    pub pull: BackgroundOp<Result<String, String>>,
+    /// Background `gh pr view` lookup.
+    pub pr_url: BackgroundOp<Option<String>>,
+    /// Background diff computation (worktree switch).
+    pub diff: BackgroundOp<BgDiffResult>,
+    /// Background file tree walk (worktree switch).
+    pub file_tree: BackgroundOp<Vec<crate::viewer::FileTreeEntry>>,
+    /// Background branch details computation (worktree switch).
+    pub branch_details: BackgroundOp<git_engine::BranchDetails>,
+    /// Background symbol index build.
+    pub symbol_index: BackgroundOp<Result<usize, String>>,
 }
 
 /// Top-level application state shared across all UI panels.
@@ -298,7 +363,6 @@ pub struct App {
     /// Selected index within `worktree_list_rows`.
     pub worktree_list_selected: usize,
 
-
     // ── Gamification (session stats + streak) ────────────────────
     /// ID of the current stats session (for gamification tracking).
     pub stats_session_id: Option<String>,
@@ -314,12 +378,6 @@ pub struct App {
     // ── Update check ───────────────────────────────────────────
     /// Latest release info when a newer version is available.
     pub update_info: Option<crate::update_checker::UpdateInfo>,
-    /// Background update check operation.
-    pub bg_update_check_op: BackgroundOp<Option<crate::update_checker::UpdateInfo>>,
-
-    // ── ccusage background op ────────────────────────────────────
-    /// Background ccusage fetch operation.
-    pub bg_ccusage_op: BackgroundOp<CcusageInfo>,
 
     // ── Update & restart ──────────────────────────────────────
     /// Current state of the update flow.
@@ -337,15 +395,6 @@ pub struct App {
     /// Column range (start, end) of the update badge in the title bar.
     pub update_badge_cols: Option<(u16, u16)>,
 
-    // ── Background fetch for switch-branch overlay ──────────────
-    /// Background branch list fetch.
-    pub bg_branch_op: BackgroundOp<Vec<String>>,
-
-    // ── Background pull ────────────────────────────────────────
-    /// Background pull operation.
-    pub bg_pull_op: BackgroundOp<Result<String, String>>,
-
-
     /// System clipboard context for Ctrl+V paste support.
     pub clipboard: Option<copypasta::ClipboardContext>,
 
@@ -355,18 +404,8 @@ pub struct App {
     // ── Branch details (worktree detail panel) ────────────────────
     /// Computed branch lineage and PR info for the selected worktree.
     pub branch_details: git_engine::BranchDetails,
-    /// Background `gh pr view` lookup.
-    pub bg_pr_url_op: BackgroundOp<Option<String>>,
     /// Whether the `gh` CLI is available on this system.
     pub gh_available: bool,
-
-    // ── Background worktree-switch operations ────────────────────
-    /// Background diff computation.
-    pub bg_diff_op: BackgroundOp<BgDiffResult>,
-    /// Background file tree walk.
-    pub bg_file_tree_op: BackgroundOp<Vec<crate::viewer::FileTreeEntry>>,
-    /// Background branch details computation.
-    pub bg_branch_details_op: BackgroundOp<git_engine::BranchDetails>,
 
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
@@ -381,7 +420,9 @@ pub struct App {
     pub references_overlay: ReferencesOverlay,
     pub symbol_hint_overlay: SymbolHintOverlay,
     pub symbol_action_overlay: SymbolActionOverlay,
-    pub bg_symbol_index_op: BackgroundOp<Result<usize, String>>,
+
+    // ── Background operations (polled by the event loop) ─────────
+    pub bg: BackgroundOps,
 
     // ── New worktree badge ──────────────────────────────────────
     /// Paths of worktrees recently created (for badge display). Cleared on selection.
@@ -417,10 +458,10 @@ impl App {
             return false;
         }
         // Auto-dismiss after 2 seconds.
-        if let Some(since) = self.panel_overlay_since {
-            if since.elapsed() >= std::time::Duration::from_secs(2) {
-                return false;
-            }
+        if let Some(since) = self.panel_overlay_since
+            && since.elapsed() >= std::time::Duration::from_secs(2)
+        {
+            return false;
         }
         true
     }
@@ -475,7 +516,9 @@ impl App {
             match ThemeSet::get_theme(path) {
                 Ok(theme) => theme,
                 Err(e) => {
-                    log::warn!("failed to load syntax theme file {path}: {e}; falling back to built-in theme");
+                    log::warn!(
+                        "failed to load syntax theme file {path}: {e}; falling back to built-in theme"
+                    );
                     let name = match config.viewer.theme.as_str() {
                         "catppuccin-mocha" => "base16-mocha.dark",
                         "dracula" => "base16-eighties.dark",
@@ -483,7 +526,10 @@ impl App {
                         "solarized-dark" => "Solarized (dark)",
                         _ => "base16-mocha.dark",
                     };
-                    ts.themes.get(name).cloned().unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
+                    ts.themes
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
                 }
             }
         } else {
@@ -494,7 +540,10 @@ impl App {
                 "solarized-dark" => "Solarized (dark)",
                 _ => "base16-mocha.dark",
             };
-            ts.themes.get(syntect_theme_name).cloned().unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
+            ts.themes
+                .get(syntect_theme_name)
+                .cloned()
+                .unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
         };
 
         // Build the list of known repositories: current repo first, then extras from config.
@@ -506,13 +555,15 @@ impl App {
         }
 
         // Initialize gamification stats session.
-        let stats_session_id = review_store.as_ref().and_then(|store| {
-            store.start_stats_session().ok()
-        });
+        let stats_session_id = review_store
+            .as_ref()
+            .and_then(|store| store.start_stats_session().ok());
         if let Some(store) = &review_store {
             let _ = store.increment_daily_stat("sessions_used");
         }
-        let today_stats = review_store.as_ref().and_then(|store| store.get_today_stats().ok());
+        let today_stats = review_store
+            .as_ref()
+            .and_then(|store| store.get_today_stats().ok());
 
         let keymap = KeyMap::new(&config.keybinds);
         let theme = Theme::from_name(&config.viewer.theme);
@@ -569,8 +620,6 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             update_info: None,
-            bg_update_check_op: BackgroundOp::default(),
-            bg_ccusage_op: BackgroundOp::default(),
             update_state: UpdateState::Idle,
             update_op: BackgroundOp::default(),
             update_progress_message: String::new(),
@@ -578,16 +627,10 @@ impl App {
             startup_args: std::env::args().skip(1).collect(),
             should_restart: false,
             update_badge_cols: None,
-            bg_branch_op: BackgroundOp::default(),
-            bg_pull_op: BackgroundOp::default(),
             clipboard: copypasta::ClipboardContext::new().ok(),
             decoration_states: Default::default(),
             branch_details: Default::default(),
-            bg_pr_url_op: BackgroundOp::default(),
             gh_available: Self::check_gh_available(),
-            bg_diff_op: BackgroundOp::default(),
-            bg_file_tree_op: BackgroundOp::default(),
-            bg_branch_details_op: BackgroundOp::default(),
             pending_auto_resume: auto_resume,
             layout_cache: Default::default(),
             symbol_index: SymbolIndex::new(PathBuf::new()),
@@ -595,7 +638,7 @@ impl App {
             references_overlay: ReferencesOverlay::default(),
             symbol_hint_overlay: SymbolHintOverlay::default(),
             symbol_action_overlay: SymbolActionOverlay::default(),
-            bg_symbol_index_op: BackgroundOp::default(),
+            bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
             show_panel_number_overlay: false,
             panel_overlay_since: None,
@@ -669,12 +712,16 @@ impl App {
         self.selected_worktree = 0;
         self.refresh_worktrees();
         self.viewer_state = ViewerState::default();
-        self.diff_state = DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
+        self.diff_state =
+            DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
         self.refresh_reviews();
         self.terminal.active_claude_session = None;
         self.terminal.active_shell_session = None;
 
-        self.set_status(format!("Switched to repository: {}", self.main_repo_name), StatusLevel::Success);
+        self.set_status(
+            format!("Switched to repository: {}", self.main_repo_name),
+            StatusLevel::Success,
+        );
     }
 
     /// Open a repository from an arbitrary filesystem path.
@@ -694,7 +741,10 @@ impl App {
         let canonical = expanded.canonicalize().unwrap_or(expanded);
 
         if !canonical.is_dir() {
-            self.set_status(format!("Not a directory: {}", canonical.display()), StatusLevel::Error);
+            self.set_status(
+                format!("Not a directory: {}", canonical.display()),
+                StatusLevel::Error,
+            );
             return;
         }
 
@@ -717,7 +767,8 @@ impl App {
                 self.selected_worktree = 0;
                 self.refresh_worktrees();
                 self.viewer_state = ViewerState::default();
-                self.diff_state = DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
+                self.diff_state =
+                    DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
                 self.refresh_reviews();
                 self.terminal.active_claude_session = None;
                 self.terminal.active_shell_session = None;
@@ -737,10 +788,16 @@ impl App {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| canonical.display().to_string());
-                self.set_status(format!("Opened repository: {repo_name}"), StatusLevel::Success);
+                self.set_status(
+                    format!("Opened repository: {repo_name}"),
+                    StatusLevel::Success,
+                );
             }
             Err(e) => {
-                self.set_status(format!("Not a git repository: {} ({e})", canonical.display()), StatusLevel::Error);
+                self.set_status(
+                    format!("Not a git repository: {} ({e})", canonical.display()),
+                    StatusLevel::Error,
+                );
             }
         }
     }
@@ -773,22 +830,23 @@ impl App {
                             }
                         }
                         self.worktrees = worktrees;
-                        if !self.worktrees.is_empty() && self.selected_worktree >= self.worktrees.len()
+                        if !self.worktrees.is_empty()
+                            && self.selected_worktree >= self.worktrees.len()
                         {
                             self.selected_worktree = self.worktrees.len() - 1;
                         }
                         // Detect commits by HEAD oid changes.
                         for wt in &self.worktrees {
-                            if let Ok(wt_engine) = git_engine::GitEngine::open(&wt.path) {
-                                if let Ok(head_oid) = wt_engine.head_oid_string() {
-                                    if let Some(old) = self.worktree_heads.get(&wt.branch) {
-                                        if old != &head_oid {
-                                            self.record_stat("commits_made");
-                                            changed = true;
-                                        }
-                                    }
-                                    self.worktree_heads.insert(wt.branch.clone(), head_oid);
+                            if let Ok(wt_engine) = git_engine::GitEngine::open(&wt.path)
+                                && let Ok(head_oid) = wt_engine.head_oid_string()
+                            {
+                                if let Some(old) = self.worktree_heads.get(&wt.branch)
+                                    && old != &head_oid
+                                {
+                                    self.record_stat("commits_made");
+                                    changed = true;
                                 }
+                                self.worktree_heads.insert(wt.branch.clone(), head_oid);
                             }
                         }
                     }
@@ -866,7 +924,8 @@ impl App {
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             let path = wt.path.clone();
             let tab_width = self.config.viewer.tab_width;
-            self.diff_state.load_diff(&path, &base_branch, word_diff, tab_width);
+            self.diff_state
+                .load_diff(&path, &base_branch, word_diff, tab_width);
             self.viewer_state.invalidate_diff_annotations();
         }
     }
@@ -890,7 +949,9 @@ impl App {
                 if self.viewer_state.tree.file_tree.is_empty() {
                     self.refresh_viewer();
                 }
-                if self.diff_state.committed_files.is_empty() && self.diff_state.uncommitted_files.is_empty() {
+                if self.diff_state.committed_files.is_empty()
+                    && self.diff_state.uncommitted_files.is_empty()
+                {
                     self.refresh_diff();
                 }
             }
@@ -926,21 +987,41 @@ impl App {
         #[cfg(target_os = "macos")]
         {
             match self.focus {
-                Focus::Worktree => "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
-                Focus::Explorer => "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
-                Focus::Viewer => "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
-                Focus::TerminalClaude => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY",
-                Focus::TerminalShell => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY",
+                Focus::Worktree => {
+                    "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune"
+                }
+                Focus::Explorer => {
+                    "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list"
+                }
+                Focus::Viewer => {
+                    "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment"
+                }
+                Focus::TerminalClaude => {
+                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY"
+                }
+                Focus::TerminalShell => {
+                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY"
+                }
             }
         }
         #[cfg(not(target_os = "macos"))]
         {
             match self.focus {
-                Focus::Worktree => "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune",
-                Focus::Explorer => "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list",
-                Focus::Viewer => "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment",
-                Focus::TerminalClaude => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY",
-                Focus::TerminalShell => "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY",
+                Focus::Worktree => {
+                    "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune"
+                }
+                Focus::Explorer => {
+                    "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list"
+                }
+                Focus::Viewer => {
+                    "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment"
+                }
+                Focus::TerminalClaude => {
+                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY"
+                }
+                Focus::TerminalShell => {
+                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY"
+                }
             }
         }
     }
@@ -976,8 +1057,7 @@ impl App {
         let cursor_line = self.viewer_state.content.file_scroll + 1;
         let defs = self.symbol_index.find_definitions(symbol);
         defs.iter().any(|d| {
-            d.file_path == *cur_file
-                && (d.line as isize - cursor_line as isize).unsigned_abs() <= 2
+            d.file_path == *cur_file && (d.line as isize - cursor_line as isize).unsigned_abs() <= 2
         })
     }
 
@@ -1018,7 +1098,9 @@ impl App {
         // Scroll so the target line appears at the same screen row as the source symbol.
         let target_0 = line.saturating_sub(1);
         let total = self.viewer_state.content.file_content.len();
-        let scroll = target_0.saturating_sub(source_screen_row).min(total.saturating_sub(1));
+        let scroll = target_0
+            .saturating_sub(source_screen_row)
+            .min(total.saturating_sub(1));
         self.viewer_state.content.file_scroll = scroll;
         self.viewer_state.content.h_scroll = 0;
         self.set_focus(Focus::Viewer);
@@ -1039,9 +1121,11 @@ impl App {
             if let Some(wt) = self.worktrees.get(self.selected_worktree) {
                 let wt_path = wt.path.clone();
                 let tab_width = self.config.viewer.tab_width;
-                self.viewer_state.open_file(&wt_path, &loc.file_path, tab_width);
+                self.viewer_state
+                    .open_file(&wt_path, &loc.file_path, tab_width);
                 self.rehighlight_viewer();
-                self.viewer_state.reveal_file_in_tree(&loc.file_path, &wt_path);
+                self.viewer_state
+                    .reveal_file_in_tree(&loc.file_path, &wt_path);
             }
             let total = self.viewer_state.content.file_content.len();
             self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
@@ -1064,9 +1148,11 @@ impl App {
             if let Some(wt) = self.worktrees.get(self.selected_worktree) {
                 let wt_path = wt.path.clone();
                 let tab_width = self.config.viewer.tab_width;
-                self.viewer_state.open_file(&wt_path, &loc.file_path, tab_width);
+                self.viewer_state
+                    .open_file(&wt_path, &loc.file_path, tab_width);
                 self.rehighlight_viewer();
-                self.viewer_state.reveal_file_in_tree(&loc.file_path, &wt_path);
+                self.viewer_state
+                    .reveal_file_in_tree(&loc.file_path, &wt_path);
             }
             let total = self.viewer_state.content.file_content.len();
             self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
@@ -1077,7 +1163,7 @@ impl App {
     /// Start building the symbol index in the background.
     pub fn start_symbol_index_build(&mut self) {
         let index = self.symbol_index.clone();
-        self.bg_symbol_index_op.start(move |tx| {
+        self.bg.symbol_index.start(move |tx| {
             let result = match index.build() {
                 Ok(count) => Ok(count),
                 Err(e) => Err(e.to_string()),
@@ -1155,11 +1241,18 @@ impl App {
         let wt_path = self.selected_worktree_path();
         let tab_width = self.config.viewer.tab_width;
 
-        self.viewer_state.open_file(&wt_path, relative_path, tab_width);
-        self.viewer_state.reveal_file_in_tree(relative_path, &wt_path);
+        self.viewer_state
+            .open_file(&wt_path, relative_path, tab_width);
+        self.viewer_state
+            .reveal_file_in_tree(relative_path, &wt_path);
 
         if let Some(ln) = line {
-            let max = self.viewer_state.content.file_content.len().saturating_sub(1);
+            let max = self
+                .viewer_state
+                .content
+                .file_content
+                .len()
+                .saturating_sub(1);
             self.viewer_state.content.file_scroll = (ln.saturating_sub(1)).min(max);
         }
 
@@ -1190,7 +1283,9 @@ impl App {
             CommandId::GrabBranch => self.cmd_grab_branch(),
             CommandId::PruneWorktrees => self.cmd_prune_worktrees(),
             CommandId::MergeToMain => self.cmd_merge_to_main(),
-            CommandId::RefreshWorktrees => { let _ = self.refresh_worktrees(); }
+            CommandId::RefreshWorktrees => {
+                let _ = self.refresh_worktrees();
+            }
             CommandId::ResetMainToOrigin => self.cmd_reset_main_to_origin(),
             CommandId::CherryPick => self.cmd_cherry_pick(),
             CommandId::NewClaudeCode => self.cmd_new_claude_code(),
@@ -1200,7 +1295,9 @@ impl App {
             CommandId::SearchInFile => self.cmd_search_in_file(),
             CommandId::ToggleHelp => self.cmd_toggle_help(),
             CommandId::ShowReviewComments => self.cmd_show_review_comments(),
-            CommandId::ShowReviewTemplates => { self.review_state.template_picker_active = true; }
+            CommandId::ShowReviewTemplates => {
+                self.review_state.template_picker_active = true;
+            }
             CommandId::SessionHistory => self.cmd_session_history(),
             CommandId::OpenRepo => self.cmd_open_repo(),
             CommandId::SwitchRepo => self.cmd_switch_repo(),
@@ -1234,13 +1331,18 @@ impl App {
     fn cmd_create_worktree(&mut self) {
         self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
         self.worktree_mgr.input_buffer.clear();
-        self.set_status_info("New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string());
+        self.set_status_info(
+            "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
+        );
     }
 
     fn cmd_delete_worktree(&mut self) {
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             if wt.is_main {
-                self.set_status("Cannot delete the main worktree.".to_string(), StatusLevel::Warning);
+                self.set_status(
+                    "Cannot delete the main worktree.".to_string(),
+                    StatusLevel::Warning,
+                );
             } else {
                 let branch = wt.branch.clone();
                 self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingDelete;
@@ -1260,7 +1362,10 @@ impl App {
 
     fn cmd_grab_branch(&mut self) {
         if self.worktree_mgr.grabbed_branch.is_some() {
-            self.set_status("Already grabbing a branch. Ungrab first (Y).".to_string(), StatusLevel::Warning);
+            self.set_status(
+                "Already grabbing a branch. Ungrab first (Y).".to_string(),
+                StatusLevel::Warning,
+            );
         } else {
             self.load_grab_branches();
             if self.overlays.grab.branches.is_empty() {
@@ -1291,7 +1396,10 @@ impl App {
     fn cmd_merge_to_main(&mut self) {
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             if wt.is_main {
-                self.set_status("Cannot merge main into itself.".to_string(), StatusLevel::Warning);
+                self.set_status(
+                    "Cannot merge main into itself.".to_string(),
+                    StatusLevel::Warning,
+                );
             } else {
                 let branch = wt.branch.clone();
                 let main_branch = self.config.general.main_branch.clone();
@@ -1325,7 +1433,9 @@ impl App {
 
     fn cmd_cherry_pick(&mut self) {
         let current_branch = self.selected_worktree_branch();
-        let source = self.worktrees.iter()
+        let source = self
+            .worktrees
+            .iter()
             .find(|w| w.branch != current_branch)
             .map(|w| w.branch.clone());
         if let Some(branch) = source {
@@ -1339,7 +1449,10 @@ impl App {
 
     fn cmd_new_claude_code(&mut self) {
         if let Err(e) = self.spawn_claude_code() {
-            self.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
+            self.set_status(
+                format!("Failed to start Claude Code: {e}"),
+                StatusLevel::Error,
+            );
         }
         self.set_focus(Focus::TerminalClaude);
     }
@@ -1380,7 +1493,10 @@ impl App {
 
     fn cmd_open_repo(&mut self) {
         self.overlays.active = ActiveOverlay::OpenRepo;
-        self.overlays.open_repo.buffer.set_text(&self.repo_path.display().to_string());
+        self.overlays
+            .open_repo
+            .buffer
+            .set_text(&self.repo_path.display().to_string());
     }
 
     fn cmd_switch_repo(&mut self) {
@@ -1392,10 +1508,16 @@ impl App {
 
     fn cmd_ungrab_branch(&mut self) {
         if self.worktree_mgr.grabbed_branch.is_none() {
-            self.set_status("Not grabbing — nothing to ungrab.".to_string(), StatusLevel::Warning);
+            self.set_status(
+                "Not grabbing — nothing to ungrab.".to_string(),
+                StatusLevel::Warning,
+            );
         } else {
             self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingUngrab;
-            self.set_status("Ungrab? Main will return to main branch. (y/n)".to_string(), StatusLevel::Warning);
+            self.set_status(
+                "Ungrab? Main will return to main branch. (y/n)".to_string(),
+                StatusLevel::Warning,
+            );
         }
     }
 
@@ -1443,28 +1565,35 @@ impl App {
             } else {
                 self.viewer_state.content.file_scroll + 1
             };
-            if let Some(comments) = self.review_state.file_comments.get(&cursor_line) {
-                if !comments.is_empty() {
-                    let target_id = &comments[0].id;
-                    if let Some(idx) = self.review_state.comments.iter().position(|c| c.id == *target_id) {
-                        let cid = target_id.clone();
-                        if !self.review_state.cached_replies.contains_key(&cid) {
-                            if let Some(store) = self.review_store.as_ref() {
-                                if let Ok(replies) = store.get_replies(&cid) {
-                                    self.review_state.cached_replies.insert(cid, replies);
-                                }
-                            }
-                        }
-                        self.review_state.comment_detail_idx = idx;
-                        self.review_state.comment_detail_scroll = 0;
-                        self.review_state.comment_detail_active = true;
-                        self.set_focus(Focus::Viewer);
-                        return;
+            if let Some(comments) = self.review_state.file_comments.get(&cursor_line)
+                && !comments.is_empty()
+            {
+                let target_id = &comments[0].id;
+                if let Some(idx) = self
+                    .review_state
+                    .comments
+                    .iter()
+                    .position(|c| c.id == *target_id)
+                {
+                    let cid = target_id.clone();
+                    if !self.review_state.cached_replies.contains_key(&cid)
+                        && let Some(store) = self.review_store.as_ref()
+                        && let Ok(replies) = store.get_replies(&cid)
+                    {
+                        self.review_state.cached_replies.insert(cid, replies);
                     }
+                    self.review_state.comment_detail_idx = idx;
+                    self.review_state.comment_detail_scroll = 0;
+                    self.review_state.comment_detail_active = true;
+                    self.set_focus(Focus::Viewer);
+                    return;
                 }
             }
         }
-        self.set_status("No comment on current line.".to_string(), StatusLevel::Warning);
+        self.set_status(
+            "No comment on current line.".to_string(),
+            StatusLevel::Warning,
+        );
     }
 
     fn cmd_delete_comment(&mut self) {
@@ -1549,7 +1678,9 @@ impl App {
 
     /// Kick off the background update thread.
     pub fn start_update_download(&mut self) {
-        let Some(ref info) = self.update_info else { return };
+        let Some(ref info) = self.update_info else {
+            return;
+        };
         let version = info.latest_version.clone();
         let tarball_url = info.tarball_url.clone();
         let assets = info.assets.clone();
@@ -1597,16 +1728,19 @@ impl App {
         self.poll_worktree_ops();
 
         // ccusage
-        if let Some(info) = self.bg_ccusage_op.poll() {
+        if let Some(info) = self.bg.ccusage.poll() {
             self.ccusage_info = Some(info);
         }
 
         // symbol index
-        if let Some(result) = self.bg_symbol_index_op.poll() {
+        if let Some(result) = self.bg.symbol_index.poll() {
             match result {
                 Ok(count) => {
                     log::info!("Symbol index built: {count} symbols");
-                    self.set_status(format!("Symbol index ready ({count} symbols)"), StatusLevel::Success);
+                    self.set_status(
+                        format!("Symbol index ready ({count} symbols)"),
+                        StatusLevel::Success,
+                    );
                 }
                 Err(msg) => {
                     log::warn!("Symbol index build failed: {msg}");
@@ -1615,13 +1749,13 @@ impl App {
         }
 
         // update check
-        if let Some(Some(info)) = self.bg_update_check_op.poll() {
-            if crate::update_checker::is_newer(
+        if let Some(Some(info)) = self.bg.update_check.poll()
+            && crate::update_checker::is_newer(
                 &info.latest_version,
                 crate::update_checker::current_version(),
-            ) {
-                self.update_info = Some(info);
-            }
+            )
+        {
+            self.update_info = Some(info);
         }
     }
 
@@ -1660,7 +1794,6 @@ impl App {
         };
         self.set_focus(prev);
     }
-
 
     // ── Public accessor helpers ─────────────────────────────────────
 
@@ -1740,13 +1873,18 @@ impl App {
             // Find sessions belonging to this worktree.
             if let Some((_, _, sessions)) = groups.iter().find(|(wt_idx, _, _)| *wt_idx == i) {
                 for (pty_idx, _label) in sessions {
-                    rows.push(WorktreeListRow::Session { wt_idx: i, pty_idx: *pty_idx });
+                    rows.push(WorktreeListRow::Session {
+                        wt_idx: i,
+                        pty_idx: *pty_idx,
+                    });
                 }
             }
         }
         self.worktree_list_rows = rows;
         // Clamp selected index.
-        if !self.worktree_list_rows.is_empty() && self.worktree_list_selected >= self.worktree_list_rows.len() {
+        if !self.worktree_list_rows.is_empty()
+            && self.worktree_list_selected >= self.worktree_list_rows.len()
+        {
             self.worktree_list_selected = self.worktree_list_rows.len() - 1;
         }
     }
@@ -1785,7 +1923,9 @@ fn perform_update(
     let tmpdir = std::env::temp_dir().join(format!("conductor-update-{version}"));
     let _ = std::fs::remove_dir_all(&tmpdir);
     if std::fs::create_dir_all(&tmpdir).is_err() {
-        let _ = tx.send(UpdateProgress::Error("Failed to create temp directory".to_string()));
+        let _ = tx.send(UpdateProgress::Error(
+            "Failed to create temp directory".to_string(),
+        ));
         return;
     }
 
@@ -1922,10 +2062,7 @@ fn try_binary_update(
     // Remove macOS quarantine attribute so Gatekeeper won't kill the binary.
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("xattr")
-            .args(["-cr"])
-            .arg(&dest)
-            .output();
+        let _ = Command::new("xattr").args(["-cr"]).arg(&dest).output();
     }
 
     true
@@ -1942,11 +2079,15 @@ fn try_source_update(
 
     // Resolve tarball URL — if empty, re-fetch from API.
     let url = if tarball_url.is_empty() {
-        let _ = tx.send(UpdateProgress::Status("Fetching release info...".to_string()));
+        let _ = tx.send(UpdateProgress::Status(
+            "Fetching release info...".to_string(),
+        ));
         match crate::update_checker::check_for_update() {
             Some(info) if !info.tarball_url.is_empty() => info.tarball_url,
             _ => {
-                let _ = tx.send(UpdateProgress::Error("Could not find tarball URL".to_string()));
+                let _ = tx.send(UpdateProgress::Error(
+                    "Could not find tarball URL".to_string(),
+                ));
                 return false;
             }
         }
@@ -1955,7 +2096,9 @@ fn try_source_update(
     };
 
     // Download.
-    let _ = tx.send(UpdateProgress::Status(format!("Downloading source v{version}...")));
+    let _ = tx.send(UpdateProgress::Status(format!(
+        "Downloading source v{version}..."
+    )));
     let tarball = tmpdir.join("source.tar.gz");
     let dl = Command::new("curl")
         .args(["-sfL", "--max-time", "120", "-o"])
@@ -1989,7 +2132,9 @@ fn try_source_update(
         }
         Ok(out) if !out.status.success() => {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            let _ = tx.send(UpdateProgress::Error(format!("Extraction failed: {stderr}")));
+            let _ = tx.send(UpdateProgress::Error(format!(
+                "Extraction failed: {stderr}"
+            )));
             return false;
         }
         _ => {}
@@ -2016,7 +2161,9 @@ fn try_source_update(
             }
         }
         Err(e) => {
-            let _ = tx.send(UpdateProgress::Error(format!("Failed to read temp dir: {e}")));
+            let _ = tx.send(UpdateProgress::Error(format!(
+                "Failed to read temp dir: {e}"
+            )));
             return false;
         }
     };
@@ -2069,12 +2216,44 @@ pub fn extract_symbol_from_line(line: &str) -> Option<String> {
 pub fn is_rust_keyword(word: &str) -> bool {
     matches!(
         word,
-        "as" | "async" | "await" | "break" | "const" | "continue" | "crate"
-            | "dyn" | "else" | "enum" | "extern" | "false" | "fn" | "for"
-            | "if" | "impl" | "in" | "let" | "loop" | "match" | "mod"
-            | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-            | "static" | "struct" | "super" | "trait" | "true" | "type"
-            | "unsafe" | "use" | "where" | "while" | "yield"
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "yield"
     )
 }
 

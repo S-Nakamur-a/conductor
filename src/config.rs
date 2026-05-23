@@ -43,7 +43,6 @@ pub struct Config {
     pub api: ApiConfig,
 }
 
-
 impl Config {
     /// Load configuration from `~/.config/conductor/config.toml`.
     ///
@@ -58,10 +57,10 @@ impl Config {
             Ok(config)
         } else {
             // Generate a default config file with comments.
-            if let Some(parent) = config_path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    log::warn!("failed to create config directory: {e}");
-                }
+            if let Some(parent) = config_path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                log::warn!("failed to create config directory: {e}");
             }
             let default_content = generate_default_config();
             if let Err(e) = std::fs::write(&config_path, &default_content) {
@@ -78,12 +77,7 @@ impl Config {
         if let Some(ref repo) = self.general.repo {
             self.general.repo = Some(expand_tilde(repo));
         }
-        self.general.repos = self
-            .general
-            .repos
-            .iter()
-            .map(|p| expand_tilde(p))
-            .collect();
+        self.general.repos = self.general.repos.iter().map(|p| expand_tilde(p)).collect();
         if let Some(ref wt_dir) = self.general.worktree_dir {
             self.general.worktree_dir = Some(expand_tilde(wt_dir));
         }
@@ -345,10 +339,10 @@ fn default_shell() -> String {
 /// Expand a leading `~` to the user's home directory.
 fn expand_tilde(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
-    if s.starts_with('~') {
-        if let Some(home) = dirs::home_dir() {
-            return PathBuf::from(s.replacen('~', &home.to_string_lossy(), 1));
-        }
+    if s.starts_with('~')
+        && let Some(home) = dirs::home_dir()
+    {
+        return PathBuf::from(s.replacen('~', &home.to_string_lossy(), 1));
     }
     path.to_path_buf()
 }
@@ -473,8 +467,7 @@ mod tests {
 
     #[test]
     fn diff_view_serde() {
-        let cfg: DiffConfig =
-            toml::from_str(r#"default_view = "side-by-side""#).expect("parse");
+        let cfg: DiffConfig = toml::from_str(r#"default_view = "side-by-side""#).expect("parse");
         assert_eq!(cfg.default_view, DiffView::SideBySide);
     }
 
@@ -494,20 +487,22 @@ mod tests {
 
     #[test]
     fn ccusage_config_parse() {
-        let cfg: CcusageConfig =
-            toml::from_str(r#"enabled = true
-poll_interval_secs = 60"#)
-                .expect("parse");
+        let cfg: CcusageConfig = toml::from_str(
+            r#"enabled = true
+poll_interval_secs = 60"#,
+        )
+        .expect("parse");
         assert!(cfg.enabled);
         assert_eq!(cfg.poll_interval_secs, 60);
     }
 
     #[test]
     fn updates_config_parse() {
-        let cfg: UpdatesConfig =
-            toml::from_str(r#"check_on_startup = false
-check_interval_secs = 3600"#)
-                .expect("parse");
+        let cfg: UpdatesConfig = toml::from_str(
+            r#"check_on_startup = false
+check_interval_secs = 3600"#,
+        )
+        .expect("parse");
         assert!(!cfg.check_on_startup);
         assert_eq!(cfg.check_interval_secs, 3600);
     }

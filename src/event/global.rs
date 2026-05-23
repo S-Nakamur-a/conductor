@@ -8,7 +8,10 @@ use crate::overlay::ActiveOverlay;
 /// Returns `true` if the action was handled.
 pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
     match action {
-        Action::Quit => { app.quit(); true }
+        Action::Quit => {
+            app.quit();
+            true
+        }
         Action::ShowHelp => {
             app.overlays.help.context = app.focus;
             app.overlays.active = ActiveOverlay::Help;
@@ -20,32 +23,71 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.overlays.command_palette.selected = 0;
             true
         }
-        Action::CycleFocusForward => { app.cycle_focus_forward(); true }
-        Action::CycleFocusBackward => { app.cycle_focus_backward(); true }
-        Action::FocusWorktree => { app.set_focus(Focus::Worktree); true }
-        Action::FocusExplorer => { app.set_focus(Focus::Explorer); true }
+        Action::CycleFocusForward => {
+            app.cycle_focus_forward();
+            true
+        }
+        Action::CycleFocusBackward => {
+            app.cycle_focus_backward();
+            true
+        }
+        Action::FocusWorktree => {
+            app.set_focus(Focus::Worktree);
+            true
+        }
+        Action::FocusExplorer => {
+            app.set_focus(Focus::Explorer);
+            true
+        }
         Action::FocusExplorerDiffList => {
             app.set_focus(Focus::Explorer);
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             true
         }
-        Action::FocusViewer => { app.set_focus(Focus::Viewer); true }
-        Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); true }
-        Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); true }
-        Action::FocusExpandWorktree => { app.focus_and_expand(Focus::Worktree); true }
-        Action::FocusExpandExplorer => { app.focus_and_expand(Focus::Explorer); true }
+        Action::FocusViewer => {
+            app.set_focus(Focus::Viewer);
+            true
+        }
+        Action::FocusTerminalClaude => {
+            app.set_focus(Focus::TerminalClaude);
+            true
+        }
+        Action::FocusTerminalShell => {
+            app.set_focus(Focus::TerminalShell);
+            true
+        }
+        Action::FocusExpandWorktree => {
+            app.focus_and_expand(Focus::Worktree);
+            true
+        }
+        Action::FocusExpandExplorer => {
+            app.focus_and_expand(Focus::Explorer);
+            true
+        }
         Action::FocusExpandExplorerDiffList => {
             app.focus_and_expand(Focus::Explorer);
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             true
         }
-        Action::FocusExpandViewer => { app.focus_and_expand(Focus::Viewer); true }
-        Action::FocusExpandTerminalClaude => { app.focus_and_expand(Focus::TerminalClaude); true }
-        Action::FocusExpandTerminalShell => { app.focus_and_expand(Focus::TerminalShell); true }
+        Action::FocusExpandViewer => {
+            app.focus_and_expand(Focus::Viewer);
+            true
+        }
+        Action::FocusExpandTerminalClaude => {
+            app.focus_and_expand(Focus::TerminalClaude);
+            true
+        }
+        Action::FocusExpandTerminalShell => {
+            app.focus_and_expand(Focus::TerminalShell);
+            true
+        }
         Action::NewClaudeCode => {
             app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
             if let Err(e) = app.spawn_claude_code() {
-                app.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
+                app.set_status(
+                    format!("Failed to start Claude Code: {e}"),
+                    StatusLevel::Error,
+                );
                 log::warn!("failed to spawn Claude Code session: {e}");
             } else {
                 app.status_message = None;
@@ -70,7 +112,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         }
         Action::OpenRepo => {
             app.overlays.active = ActiveOverlay::OpenRepo;
-            app.overlays.open_repo.buffer.set_text(&app.repo_path.display().to_string());
+            app.overlays
+                .open_repo
+                .buffer
+                .set_text(&app.repo_path.display().to_string());
             true
         }
         Action::SwitchRepo => {

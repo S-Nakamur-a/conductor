@@ -14,14 +14,10 @@ use ratatui::text::{Line, Span};
 use aa_media::renderer::{Mode, Renderer};
 
 /// File extensions recognized as images.
-const IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp",
-];
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 /// File extensions recognized as videos.
-const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "webm", "avi", "mov", "mkv",
-];
+const VIDEO_EXTENSIONS: &[&str] = &["mp4", "webm", "avi", "mov", "mkv"];
 
 /// Check whether a file path has a media (image or video) extension.
 pub fn is_media_file(path: &str) -> bool {

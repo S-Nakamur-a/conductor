@@ -2,11 +2,11 @@
 //!
 //! Displays session tabs and the PTY output of the active Claude Code session.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Tabs};
-use ratatui::Frame;
 
 use crate::app::{App, Focus};
 
@@ -17,13 +17,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let theme = &app.theme;
     let focused = app.focus == Focus::TerminalClaude;
-    let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
+    let border_color = if focused {
+        theme.border_focused
+    } else {
+        theme.border_unfocused
+    };
 
     let is_grabbed = app.is_selected_worktree_grabbed();
 
     let sessions = app.current_worktree_claude_sessions();
 
-    let is_expanded = matches!(app.expanded_panel, Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell));
+    let is_expanded = matches!(
+        app.expanded_panel,
+        Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
+    );
 
     // If the selected worktree is grabbed, show a locked overlay instead of sessions.
     if is_grabbed {
@@ -54,7 +61,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let border_type = if focused {
+        BorderType::Thick
+    } else {
+        BorderType::Plain
+    };
 
     if sessions.is_empty() {
         let block = if is_expanded {
@@ -74,11 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Layout: session tabs (1 row) + PTY output (fill).
-    let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .split(area);
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
 
     // Session tabs.
     let mut selected_tab: usize = 0;
@@ -93,14 +100,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let label = format!("[{}]", session.label);
             let is_active = Some(*global_idx) == app.terminal.active_claude_session;
             let suppress_blink = focused;
-            let pulse_on = (app.ui_tick / 30) % 2 == 0;
+            let pulse_on = (app.ui_tick / 30).is_multiple_of(2);
             let label_style = if is_waiting {
                 if suppress_blink {
                     // Static style when this panel is focused on this session.
                     Style::default().fg(theme.waiting_primary)
                 } else {
                     Style::default()
-                        .fg(if pulse_on { theme.waiting_primary } else { theme.waiting_secondary })
+                        .fg(if pulse_on {
+                            theme.waiting_primary
+                        } else {
+                            theme.waiting_secondary
+                        })
                         .add_modifier(Modifier::BOLD)
                 }
             } else {
@@ -120,13 +131,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Add [+] and [<=>] tabs.
     let mut titles = tab_titles;
-    titles.push(Line::from(Span::styled("[+]", Style::default().fg(theme.success))));
+    titles.push(Line::from(Span::styled(
+        "[+]",
+        Style::default().fg(theme.success),
+    )));
     let (expand_label, expand_color) = if is_expanded {
         ("[>=<]", theme.border_focused)
     } else {
         ("[<=>]", theme.border_unfocused)
     };
-    titles.push(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))));
+    titles.push(Line::from(Span::styled(
+        expand_label,
+        Style::default().fg(expand_color),
+    )));
 
     let tabs = Tabs::new(titles)
         .select(selected_tab)
@@ -160,35 +177,35 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // PTY reader thread holds the vt100 mutex — keeps UI responsive.
             let scroll_changed =
                 app.terminal.cache_claude.effective_offset != app.terminal.scroll_claude;
-            if app.terminal.cache_claude.lines.is_empty()
+            if (app.terminal.cache_claude.lines.is_empty()
                 || (focused && app.terminal.dirty_claude)
-                || scroll_changed
-            {
-                if let Some(cache) = crate::ui::common::build_pty_lines(
+                || scroll_changed)
+                && let Some(cache) = crate::ui::common::build_pty_lines(
                     &screen_arc,
                     app.terminal.scroll_claude,
                     inner.height,
                     inner.width,
-                ) {
-                    // Sync scroll offset with the actual clamped position from vt100
-                    // to prevent infinite rebuilds when scroll exceeds scrollback buffer.
-                    app.terminal.scroll_claude = cache.effective_offset;
-                    app.terminal.cache_claude = cache;
-                    app.terminal.dirty_claude = false;
-                }
-                // If try_lock failed (reader thread busy), keep using old cache.
+                )
+            {
+                // Sync scroll offset with the actual clamped position from vt100
+                // to prevent infinite rebuilds when scroll exceeds scrollback buffer.
+                app.terminal.scroll_claude = cache.effective_offset;
+                app.terminal.cache_claude = cache;
+                app.terminal.dirty_claude = false;
             }
+            // If try_lock failed (reader thread busy), keep using old cache.
             crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_claude);
 
             // Set cursor position for IME when focused, not scrolled back,
             // and no overlay is covering this panel.
-            if focused && !app.is_any_overlay_active() {
-                if let Some((row, col)) = app.terminal.cache_claude.cursor_position {
-                    let cursor_x = inner.x + col;
-                    let cursor_y = inner.y + row;
-                    if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {
-                        frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
-                    }
+            if focused
+                && !app.is_any_overlay_active()
+                && let Some((row, col)) = app.terminal.cache_claude.cursor_position
+            {
+                let cursor_x = inner.x + col;
+                let cursor_y = inner.y + row;
+                if cursor_x < inner.x + inner.width && cursor_y < inner.y + inner.height {
+                    frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
                 }
             }
         } else {

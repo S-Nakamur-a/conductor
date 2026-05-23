@@ -49,7 +49,12 @@ pub fn file_icon(name: &str) -> &'static str {
     }
 
     // By extension.
-    match name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+    match name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("rs") => "🦀",
         Some("py") => "🐍",
         Some("js") | Some("mjs") | Some("cjs") => "🟨",
