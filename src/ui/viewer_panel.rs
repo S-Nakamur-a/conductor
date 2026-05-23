@@ -1051,23 +1051,32 @@ fn merge_syntax_with_inline(
     tab_width: usize,
 ) -> Option<Vec<Span<'static>>> {
     // Build expanded text and per-byte emphasis flag from inline segments.
+    // Tabs are expanded with a *shared* column counter across segments so the
+    // result matches the column-correct expansion of the syntax tokens below.
     let mut expanded_text = String::new();
     let mut byte_emphasis: Vec<bool> = Vec::new();
 
+    let mut col = 0;
     for seg in segments {
         let trimmed = seg.text.trim_end_matches('\n').trim_end_matches('\r');
-        let expanded = expand_tabs(trimmed, tab_width);
+        let expanded = expand_tabs_at(trimmed, tab_width, &mut col);
         byte_emphasis.resize(byte_emphasis.len() + expanded.len(), seg.emphasized);
         expanded_text.push_str(&expanded);
     }
 
-    // Build per-byte fg style from syntax tokens.
+    // Build per-byte fg style from syntax tokens. The syntax cache stores raw
+    // (un-expanded) tabs, so expand them here too — using the same shared
+    // column counter — otherwise any line containing a tab would fail the
+    // equality check below and silently lose its syntax + emphasis colouring.
     let mut syntax_text = String::new();
     let mut byte_fg: Vec<Style> = Vec::new();
 
+    let mut col = 0;
     for (style, text) in syntax_tokens {
-        byte_fg.resize(byte_fg.len() + text.len(), *style);
-        syntax_text.push_str(text);
+        let trimmed = text.trim_end_matches('\n').trim_end_matches('\r');
+        let expanded = expand_tabs_at(trimmed, tab_width, &mut col);
+        byte_fg.resize(byte_fg.len() + expanded.len(), *style);
+        syntax_text.push_str(&expanded);
     }
 
     // The texts must match after tab expansion; bail out otherwise.
@@ -1114,18 +1123,27 @@ fn expand_tabs(line: &str, tab_width: usize) -> String {
     if !line.contains('\t') {
         return line.to_string();
     }
-    let mut result = String::with_capacity(line.len());
     let mut col = 0;
-    for ch in line.chars() {
+    expand_tabs_at(line, tab_width, &mut col)
+}
+
+/// Expand tabs starting from column `col`, advancing `col` past the piece.
+///
+/// Threading a shared `col` across consecutive pieces of one line keeps tab
+/// stops column-correct, so two different tokenisations of the same line
+/// (word-diff segments vs. syntax tokens) expand to identical text.
+fn expand_tabs_at(piece: &str, tab_width: usize, col: &mut usize) -> String {
+    let mut result = String::with_capacity(piece.len());
+    for ch in piece.chars() {
         if ch == '\t' {
-            let spaces = tab_width - (col % tab_width);
+            let spaces = tab_width - (*col % tab_width);
             for _ in 0..spaces {
                 result.push(' ');
             }
-            col += spaces;
+            *col += spaces;
         } else {
             result.push(ch);
-            col += 1;
+            *col += 1;
         }
     }
     result
@@ -1437,4 +1455,52 @@ fn replace_span_range(
         pos = span_end;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seg(text: &str, emphasized: bool) -> InlineSegment {
+        InlineSegment { text: text.to_string(), emphasized }
+    }
+
+    #[test]
+    fn merge_handles_tabbed_lines() {
+        // A line "\tlet x" highlighted as two syntax tokens carrying a raw tab.
+        // The word-diff segments expand the tab; the syntax tokens must be
+        // expanded the same way or the merge silently drops to plain rendering.
+        let segments = vec![seg("\tlet ", false), seg("x", true)];
+        let syntax_tokens = vec![
+            (Style::default().fg(Color::Red), "\t".to_string()),
+            (Style::default().fg(Color::Blue), "let x".to_string()),
+        ];
+        let merged = merge_syntax_with_inline(
+            &segments,
+            &syntax_tokens,
+            Color::Rgb(0, 40, 0),
+            Color::Rgb(0, 80, 0),
+            4,
+        );
+        // Before the tab fix this returned None (texts mismatched on the tab).
+        let spans = merged.expect("tabbed line should merge, not fall back to plain");
+        let joined: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "    let x"); // tab expanded to 4 spaces at column 0
+    }
+
+    #[test]
+    fn merge_bails_on_text_mismatch() {
+        // Genuinely different text (not just tabs) must still bail out so the
+        // caller can fall back to plain rendering.
+        let segments = vec![seg("foo", false)];
+        let syntax_tokens = vec![(Style::default(), "bar".to_string())];
+        let merged = merge_syntax_with_inline(
+            &segments,
+            &syntax_tokens,
+            Color::Rgb(0, 40, 0),
+            Color::Rgb(0, 80, 0),
+            4,
+        );
+        assert!(merged.is_none());
+    }
 }
