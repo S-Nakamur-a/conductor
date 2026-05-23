@@ -128,7 +128,7 @@ interface ReviewReply {
 
 const server = new McpServer({
   name: "conductor",
-  version: "0.1.0",
+  version: "0.3.0",
 });
 
 let db: Database.Database;
@@ -433,6 +433,134 @@ server.tool(
         {
           type: "text" as const,
           text: `Comment ${resolvedId.slice(0, 8)} marked as resolved.`,
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: create_comment
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "create_comment",
+  "Leave an inline self-review comment on a specific file and line range in the current branch's diff. Author is automatically set to 'claude' and the comment appears inline in the Conductor diff view. " +
+    "Use this SPARINGLY and with high signal: flag ONLY what a human reviewer genuinely needs to know — non-obvious or tricky logic, deliberate tradeoffs, decisions worth a second look, or places you are unsure about. " +
+    "Do NOT narrate routine changes or restate what the diff already makes obvious; a flood of low-value comments defeats the purpose. Prefer a handful of important notes over many.",
+  {
+    file_path: z
+      .string()
+      .describe("Repo-relative file path the comment attaches to (e.g. src/foo.rs)"),
+    line_start: z
+      .number()
+      .int()
+      .positive()
+      .describe("1-based line number the comment starts on"),
+    line_end: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        "1-based end line for a multi-line range; omit for a single-line comment"
+      ),
+    body: z.string().min(1).describe("The comment text"),
+    kind: z
+      .enum(["suggest", "question"])
+      .optional()
+      .describe(
+        "'suggest' (default) for a note/observation/tradeoff; 'question' when you want the human to answer something"
+      ),
+  },
+  async ({ file_path, line_start, line_end, body, kind }) => {
+    const d = getDb();
+
+    if (line_end !== undefined && line_end < line_start) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Invalid range: line_end (${line_end}) is before line_start (${line_start}).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Comments are rendered inline keyed on the file path. An absolute or
+    // dot-prefixed path won't match the repo-relative key the TUI uses, so the
+    // comment would insert successfully but never appear — fail loudly instead.
+    if (path.isAbsolute(file_path)) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `file_path must be repo-relative (e.g. src/foo.rs), got absolute path: ${file_path}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    const relPath = file_path.replace(/^\.\//, "");
+
+    // Comments are keyed to a branch/worktree. The Rust side stores the
+    // worktree's branch name in both the `worktree` and `branch` columns
+    // (see add_review in review_store.rs), and uses the symbolic ref "HEAD"
+    // as commit_ref — mirror that exactly so the comment shows up in the TUI.
+    // A detached HEAD reports the literal "HEAD", which is not a usable key.
+    const branch = currentBranch();
+    if (!branch || branch === "HEAD") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Cannot determine the current git branch (detached HEAD?); a comment must be attached to a branch.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const id = crypto.randomUUID();
+    try {
+      d.prepare(
+        `INSERT INTO reviews
+           (id, worktree, file_path, line_start, line_end, kind, body, commit_ref, author, branch)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'HEAD', 'claude', ?)`
+      ).run(
+        id,
+        branch,
+        relPath,
+        line_start,
+        line_end ?? null,
+        kind ?? "suggest",
+        body,
+        branch
+      );
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to create comment: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    signalUiRefresh();
+
+    const loc = line_end
+      ? `${relPath}:${line_start}-${line_end}`
+      : `${relPath}:${line_start}`;
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Comment created (id: ${id.slice(0, 8)}) at ${loc} on branch "${branch}".`,
         },
       ],
     };

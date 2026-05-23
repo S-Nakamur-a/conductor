@@ -28,6 +28,13 @@ pub enum Action {
     FocusViewer,
     FocusTerminalClaude,
     FocusTerminalShell,
+    // Jump to a panel AND expand it to full width in one action.
+    FocusExpandWorktree,
+    FocusExpandExplorer,
+    FocusExpandExplorerDiffList,
+    FocusExpandViewer,
+    FocusExpandTerminalClaude,
+    FocusExpandTerminalShell,
     NewClaudeCode,
     NewShell,
     OpenRepo,
@@ -103,6 +110,12 @@ pub enum Action {
     ToggleInlineThread,
     InlineReply,
 
+    // ── Diff navigation ─────────────────────────────────────────
+    NextHunk,
+    PrevHunk,
+    NextComment,
+    PrevComment,
+
     // ── Diff context expansion ─────────────────────────────────
     ExpandContext,
     ExpandAllContext,
@@ -127,6 +140,12 @@ impl Action {
             "focus_viewer" => Some(Action::FocusViewer),
             "focus_terminal_claude" => Some(Action::FocusTerminalClaude),
             "focus_terminal_shell" => Some(Action::FocusTerminalShell),
+            "focus_expand_worktree" => Some(Action::FocusExpandWorktree),
+            "focus_expand_explorer" => Some(Action::FocusExpandExplorer),
+            "focus_expand_explorer_diff_list" => Some(Action::FocusExpandExplorerDiffList),
+            "focus_expand_viewer" => Some(Action::FocusExpandViewer),
+            "focus_expand_terminal_claude" => Some(Action::FocusExpandTerminalClaude),
+            "focus_expand_terminal_shell" => Some(Action::FocusExpandTerminalShell),
             "new_claude_code" => Some(Action::NewClaudeCode),
             "new_shell" => Some(Action::NewShell),
             "open_repo" => Some(Action::OpenRepo),
@@ -183,6 +202,10 @@ impl Action {
             "find_references" => Some(Action::FindReferences),
             "jump_back" => Some(Action::JumpBack),
             "jump_forward" => Some(Action::JumpForward),
+            "next_hunk" => Some(Action::NextHunk),
+            "prev_hunk" => Some(Action::PrevHunk),
+            "next_comment" => Some(Action::NextComment),
+            "prev_comment" => Some(Action::PrevComment),
             "expand_context" => Some(Action::ExpandContext),
             "expand_all_context" => Some(Action::ExpandAllContext),
             "toggle_inline_thread" => Some(Action::ToggleInlineThread),
@@ -208,6 +231,12 @@ impl Action {
             Action::FocusViewer => "focus_viewer",
             Action::FocusTerminalClaude => "focus_terminal_claude",
             Action::FocusTerminalShell => "focus_terminal_shell",
+            Action::FocusExpandWorktree => "focus_expand_worktree",
+            Action::FocusExpandExplorer => "focus_expand_explorer",
+            Action::FocusExpandExplorerDiffList => "focus_expand_explorer_diff_list",
+            Action::FocusExpandViewer => "focus_expand_viewer",
+            Action::FocusExpandTerminalClaude => "focus_expand_terminal_claude",
+            Action::FocusExpandTerminalShell => "focus_expand_terminal_shell",
             Action::NewClaudeCode => "new_claude_code",
             Action::NewShell => "new_shell",
             Action::OpenRepo => "open_repo",
@@ -264,6 +293,10 @@ impl Action {
             Action::FindReferences => "find_references",
             Action::JumpBack => "jump_back",
             Action::JumpForward => "jump_forward",
+            Action::NextHunk => "next_hunk",
+            Action::PrevHunk => "prev_hunk",
+            Action::NextComment => "next_comment",
+            Action::PrevComment => "prev_comment",
             Action::ExpandContext => "expand_context",
             Action::ExpandAllContext => "expand_all_context",
             Action::ToggleInlineThread => "toggle_inline_thread",
@@ -553,6 +586,16 @@ impl KeyMap {
         self.bind_char(Global, '¢', FocusViewer);
         self.bind_char(Global, '∞', FocusTerminalClaude);
         self.bind_char(Global, '§', FocusTerminalShell);
+        // Jump to a panel AND maximize it in one stroke, from anywhere (including
+        // terminal panels). F-keys are chosen because they reach the app reliably
+        // through Alacritty/Ghostty and tmux, where Cmd/Super combos often do not.
+        // F2..F7 mirror the Cmd/Alt+1..6 focus order (F1 left for help convention).
+        self.bind_key(Global, KeyCode::F(2), FocusExpandWorktree);
+        self.bind_key(Global, KeyCode::F(3), FocusExpandExplorer);
+        self.bind_key(Global, KeyCode::F(4), FocusExpandExplorerDiffList);
+        self.bind_key(Global, KeyCode::F(5), FocusExpandViewer);
+        self.bind_key(Global, KeyCode::F(6), FocusExpandTerminalClaude);
+        self.bind_key(Global, KeyCode::F(7), FocusExpandTerminalShell);
         self.bind_ctrl(Global, 'g', SearchFullText);
         self.bind(Global, KeyCode::Char(' '), KeyModifiers::SUPER, TogglePanelExpand);
         self.bind(Global, KeyCode::Char('/'), KeyModifiers::ALT, TogglePanelOverlay);
@@ -683,6 +726,11 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, 'l', ScrollRight);
         self.bind_key(ViewerDiffMode, KeyCode::Right, ScrollRight);
         self.bind_char(ViewerDiffMode, '0', ScrollHome);
+        // Jump between changes (hunks) and between review comments.
+        self.bind_char(ViewerDiffMode, ']', NextHunk);
+        self.bind_char(ViewerDiffMode, '[', PrevHunk);
+        self.bind_char(ViewerDiffMode, '}', NextComment);
+        self.bind_char(ViewerDiffMode, '{', PrevComment);
         self.bind_char(ViewerDiffMode, ' ', ToggleInlineThread);
         self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
         self.bind_key(ViewerDiffMode, KeyCode::Enter, ExpandContext);
