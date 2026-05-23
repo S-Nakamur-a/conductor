@@ -155,7 +155,7 @@ pub fn build_pty_lines(
 /// Render previously built PTY lines from a [`PtyRenderCache`].
 ///
 /// This is cheap: it just clones the cached `Line` data into a `Paragraph`.
-pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache) {
+pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache, theme: &Theme) {
     let paragraph = Paragraph::new(cache.lines.clone());
     frame.render_widget(paragraph, area);
 
@@ -165,7 +165,7 @@ pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache) 
                 " ↑ scrollback ({} lines — Shift+End to return) ",
                 cache.effective_offset
             ),
-            Style::default().fg(Color::Black).bg(Color::Yellow),
+            Style::default().fg(theme.selected_fg).bg(theme.accent),
         ));
         frame.render_widget(Paragraph::new(indicator), Rect { height: 1, ..area });
     }
@@ -308,7 +308,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             spans.push(sep.clone());
             spans.push(Span::styled(
                 format!("{} reviews", stats.reviews_created),
-                Style::default().fg(Color::Magenta).bg(bar_bg),
+                Style::default().fg(theme.warning).bg(bar_bg),
             ));
         }
         if let Some(ref info) = app.ccusage_info {
@@ -322,7 +322,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             spans.push(sep.clone());
             spans.push(Span::styled(
                 format!("${:.2}", info.total_cost),
-                Style::default().fg(Color::LightGreen).bg(bar_bg),
+                Style::default().fg(theme.success).bg(bar_bg),
             ));
         }
         // Track the update badge text for position calculation.
@@ -336,8 +336,8 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             spans.push(Span::styled(
                 badge,
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
+                    .fg(theme.selected_fg)
+                    .bg(theme.warning)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -405,13 +405,15 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
                 .map(|p| p.as_path());
 
     // Orange-tinted background for the notification bar.
-    let pulse_on = (app.ui_tick / 20).is_multiple_of(2);
+    // Breathing pulse: a smooth triangle wave rather than a hard on/off blink,
+    // so the bar gently rises and falls instead of flickering in the periphery.
+    let cycle = 56u64;
+    let phase = (app.ui_tick % cycle) as f64 / cycle as f64;
+    let breath = 1.0 - (2.0 * phase - 1.0).abs(); // 0.0 → 1.0 → 0.0
     let bar_bg = if all_suppressed {
         Theme::darken(theme.waiting_primary, 0.17)
-    } else if pulse_on {
-        Theme::darken(theme.waiting_primary, 0.20)
     } else {
-        Theme::darken(theme.waiting_primary, 0.14)
+        Theme::darken(theme.waiting_primary, 0.14 + 0.06 * breath)
     };
 
     // Fill background.
@@ -455,12 +457,8 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         .collect();
     waiting.sort_by(|a, b| a.1.cmp(&b.1));
 
-    // Badge colors: pulsing vs static (for focused session).
-    let badge_bg_pulse = if pulse_on {
-        theme.waiting_secondary
-    } else {
-        Theme::darken(theme.waiting_secondary, 0.90)
-    };
+    // Badge colors: breathing vs static (for focused session).
+    let badge_bg_pulse = Theme::darken(theme.waiting_secondary, 0.85 + 0.15 * breath);
     let badge_bg_static = theme.waiting_secondary;
 
     let sep_style = Style::default()

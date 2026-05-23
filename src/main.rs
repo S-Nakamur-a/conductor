@@ -64,6 +64,10 @@ const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
 /// Fixed interval for decoration animation updates (~10fps), independent of main tick rate.
 const DECORATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
+/// Interval for the "Claude is waiting" notification breathing pulse (~12fps).
+/// Drives redraws while a session waits, independent of decoration/PTY activity,
+/// so the pulse keeps breathing even when the user is focused elsewhere.
+const PULSE_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// Interval for refreshing unfocused terminal panels (~2fps).
 /// Balances visibility of background PTY output with CPU usage.
 const UNFOCUSED_TERMINAL_REFRESH: Duration = Duration::from_millis(500);
@@ -267,6 +271,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
+    timers.register("pulse", PULSE_TICK_INTERVAL);
 
     // Maximum time to spend draining events before rendering a frame.
     // Prevents input starvation during rapid scroll (trackpad inertia
@@ -304,6 +309,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
                 _ if app.show_panel_number_overlay => TICK_RATE_ACTIVE,
                 _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
+                _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
                 _ if decoration_active => DECORATION_TICK_INTERVAL,
                 _ => TICK_RATE_IDLE,
             }
@@ -404,7 +410,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         let input_active = last_input_time.elapsed() < ACTIVITY_TIMEOUT;
         for name in timers.check_due() {
             match name {
-                "decoration" => {
+                // Calm mode: only advance the decoration while the worktree panel
+                // is focused, so it never moves in the user's periphery during
+                // review/terminal work. It freezes in place otherwise and resumes
+                // when focus returns.
+                "decoration" if app.focus == crate::app::Focus::Worktree => {
                     let left_w = app.layout_cache.columns[0].width;
                     let panel_h = app.layout_cache.main_area.height;
                     let list_h = (app.worktrees.len() as u16 + 2).max(5);
@@ -413,6 +423,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
                         app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
                     }
+                }
+                // Drive notification-bar breathing while any session waits,
+                // regardless of focus or whether decoration is animating.
+                "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
+                    app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
                 }
                 "unfocused_terminal" => {
                     match app.focus {

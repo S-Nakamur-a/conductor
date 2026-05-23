@@ -86,8 +86,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         BorderType::Plain
     };
 
+    let title_style = if focused {
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
     let block = Block::default()
-        .title(title)
+        .title(Span::styled(title, title_style))
         .title_top(
             Line::from(Span::styled(
                 expand_label,
@@ -294,9 +299,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                                 tab_width,
                             )
                         })
-                        .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
+                        .unwrap_or_else(|| {
+                            syntax_spans_for_line(vs, line_no, Some(diff_bg), theme.fg)
+                        })
                 } else {
-                    render_inline_diff_spans(ann_segments, diff_bg, emphasis_bg, tab_width)
+                    render_inline_diff_spans(
+                        ann_segments,
+                        diff_bg,
+                        emphasis_bg,
+                        theme.fg,
+                        tab_width,
+                    )
                 }
             } else {
                 // Line-level diff only: use syntax highlighting with diff bg.
@@ -305,10 +318,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     DiffLineTag::Delete => Some(app.theme.diff_del_bg),
                     _ => None,
                 };
-                syntax_spans_for_line(vs, line_no, diff_bg)
+                syntax_spans_for_line(vs, line_no, diff_bg, theme.fg)
             }
         } else {
-            syntax_spans_for_line(vs, line_no, gutter_bg)
+            syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg)
         };
 
         // Apply horizontal scroll to content spans, clipping to panel width.
@@ -661,6 +674,7 @@ fn render_diff_content_line(
                                 inline_segments,
                                 diff_bg.unwrap_or(Color::Reset),
                                 emphasis_bg.unwrap_or(Color::Reset),
+                                theme.fg,
                                 tab_width,
                             )
                         })
@@ -669,6 +683,7 @@ fn render_diff_content_line(
                         inline_segments,
                         diff_bg.unwrap_or(Color::Reset),
                         emphasis_bg.unwrap_or(Color::Reset),
+                        theme.fg,
                         tab_width,
                     )
                 }
@@ -677,11 +692,12 @@ fn render_diff_content_line(
                 inline_segments,
                 diff_bg.unwrap_or(Color::Reset),
                 emphasis_bg.unwrap_or(Color::Reset),
+                theme.fg,
                 tab_width,
             ),
             DiffLineTag::Equal => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, None)
+                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -695,7 +711,7 @@ fn render_diff_content_line(
         match tag {
             DiffLineTag::Insert => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, diff_bg)
+                    syntax_spans_for_line(vs, line_no - 1, diff_bg, theme.fg)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -715,7 +731,7 @@ fn render_diff_content_line(
             }
             DiffLineTag::Equal => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, None)
+                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -881,7 +897,7 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
         }
         MediaContent::Error(msg) => {
             let error = Paragraph::new(msg)
-                .style(Style::default().fg(Color::Red))
+                .style(Style::default().fg(theme.error))
                 .block(block);
             frame.render_widget(error, area);
         }
@@ -1089,9 +1105,11 @@ fn build_inline_thread_lines<'a>(
             // Clickable action icons: ↩ reply  ✔ resolve  x delete  ...  ✨ ask claude
             let reply_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
             let resolve_style = Style::default()
-                .fg(Color::Green)
+                .fg(theme.success)
                 .bg(theme.comment_preview_bg);
-            let delete_style = Style::default().fg(Color::Red).bg(theme.comment_preview_bg);
+            let delete_style = Style::default()
+                .fg(theme.error)
+                .bg(theme.comment_preview_bg);
             let claude_style = Style::default()
                 .fg(Color::Rgb(180, 140, 255))
                 .bg(theme.comment_preview_bg);
@@ -1197,12 +1215,14 @@ fn ensure_diff_annotations_cached(app: &mut App) {
     app.viewer_state.content.cached_diff_annotations_file = current_file;
 }
 
-/// Render intra-line diff segments with emphasis highlighting (plain white fg).
-/// Used for Delete lines where syntax tokens are unavailable.
+/// Render intra-line diff segments with emphasis highlighting.
+/// Used for Delete lines where syntax tokens are unavailable; `fg` is the
+/// plain text color (the active theme's foreground).
 fn render_inline_diff_spans(
     segments: &[InlineSegment],
     diff_bg: Color,
     emphasis_bg: Color,
+    fg: Color,
     tab_width: usize,
 ) -> Vec<Span<'static>> {
     segments
@@ -1213,7 +1233,7 @@ fn render_inline_diff_spans(
                 seg.text.trim_end_matches('\n').trim_end_matches('\r'),
                 tab_width,
             );
-            Span::styled(text, Style::default().fg(Color::White).bg(bg))
+            Span::styled(text, Style::default().fg(fg).bg(bg))
         })
         .collect()
 }
@@ -1367,6 +1387,7 @@ fn syntax_spans_for_line(
     vs: &crate::viewer::ViewerState,
     line_no: usize,
     diff_bg: Option<Color>,
+    fg: Color,
 ) -> Vec<Span<'static>> {
     if let Some(tokens) = vs.content.highlighted_lines.get(line_no) {
         tokens
@@ -1382,14 +1403,14 @@ fn syntax_spans_for_line(
             })
             .collect()
     } else {
-        // Fallback: plain white text.
+        // Fallback: plain text in the theme foreground.
         let text = vs
             .content
             .file_content
             .get(line_no)
             .cloned()
             .unwrap_or_default();
-        vec![Span::styled(text, Style::default().fg(Color::White))]
+        vec![Span::styled(text, Style::default().fg(fg))]
     }
 }
 
@@ -1530,7 +1551,7 @@ fn apply_hint_labels(
         let is_matching = input.is_empty() || hint.label.starts_with(input);
         let label_style = if is_matching {
             Style::default()
-                .fg(Color::Black)
+                .fg(theme.selected_fg)
                 .bg(theme.accent)
                 .add_modifier(Modifier::BOLD)
         } else {

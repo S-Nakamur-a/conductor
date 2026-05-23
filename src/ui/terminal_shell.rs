@@ -61,11 +61,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     if sessions.is_empty() {
+        let title_style = if focused {
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted)
+        };
         let block = if is_expanded {
-            Block::default().title(" Shell ")
+            Block::default().title(Span::styled(" Shell ", title_style))
         } else {
             Block::default()
-                .title(" Shell ")
+                .title(Span::styled(" Shell ", title_style))
                 .borders(Borders::ALL)
                 .border_type(border_type)
                 .border_style(Style::default().fg(border_color))
@@ -164,7 +169,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 app.terminal.cache_shell = cache;
                 app.terminal.dirty_shell = false;
             }
-            crate::ui::common::render_pty_cached(frame, inner, &app.terminal.cache_shell);
+            crate::ui::common::render_pty_cached(
+                frame,
+                inner,
+                &app.terminal.cache_shell,
+                &app.theme,
+            );
 
             // Set cursor position for IME when focused, not scrolled back,
             // and no overlay is covering this panel.

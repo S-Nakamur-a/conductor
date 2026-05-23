@@ -115,6 +115,13 @@ pub struct Theme {
     pub comment_preview_bg: Color,
     /// Text color for reply content.
     pub reply_text: Color,
+
+    // ── Panel surface ────────────────────────────────────────────────
+    /// Subtle background filled behind the currently focused list panel
+    /// (worktree / explorer) to lift it out of the surrounding columns.
+    /// A gentle step above each theme's base so focus reads in peripheral
+    /// vision without straining the eye on long sessions.
+    pub panel_focused_bg: Color,
 }
 
 impl Theme {
@@ -148,62 +155,70 @@ impl Theme {
 
     // ── Built-in themes ──────────────────────────────────────────────
 
-    /// Default theme — matches the original hardcoded colors exactly.
+    /// Default theme — the official Catppuccin Mocha palette.
+    ///
+    /// Palette reference (https://catppuccin.com/palette): Base #1e1e2e,
+    /// Mantle #181825, Surface0 #313244, Surface1 #45475a, Surface2 #585b70,
+    /// Overlay0 #6c7086, Overlay1 #7f849c, Text #cdd6f4, Subtext0 #a6adc8,
+    /// Mauve #cba6f7, Blue #89b4fa, Sky #89dceb, Green #a6e3a1, Red #f38ba8,
+    /// Yellow #f9e2af, Peach #fab387.
     fn catppuccin_mocha() -> Self {
         Self {
-            fg: Color::White,
-            accent: Color::Yellow,
-            muted: Color::DarkGray,
-            success: Color::Green,
-            error: Color::Red,
-            warning: Color::Yellow,
-            info: Color::Cyan,
+            fg: Color::Rgb(205, 214, 244),      // Text
+            accent: Color::Rgb(203, 166, 247),  // Mauve
+            muted: Color::Rgb(69, 71, 90),      // Surface1
+            success: Color::Rgb(166, 227, 161), // Green
+            error: Color::Rgb(243, 139, 168),   // Red
+            warning: Color::Rgb(249, 226, 175), // Yellow
+            info: Color::Rgb(137, 220, 235),    // Sky
 
-            diff_add: Color::Green,
-            diff_add_bg: Color::Rgb(0, 40, 0),
-            diff_del: Color::Red,
-            diff_del_bg: Color::Rgb(40, 0, 0),
-            diff_add_bg_emphasis: Color::Rgb(0, 80, 0),
-            diff_del_bg_emphasis: Color::Rgb(80, 0, 0),
-            diff_section_header: Color::Gray,
+            diff_add: Color::Rgb(166, 227, 161),
+            diff_add_bg: Color::Rgb(31, 46, 38),
+            diff_del: Color::Rgb(243, 139, 168),
+            diff_del_bg: Color::Rgb(49, 33, 42),
+            diff_add_bg_emphasis: Color::Rgb(45, 72, 52),
+            diff_del_bg_emphasis: Color::Rgb(78, 44, 56),
+            diff_section_header: Color::Rgb(127, 132, 156), // Overlay1
 
-            border_focused: Color::Yellow,
-            border_unfocused: Color::DarkGray,
-            border_secondary: Color::White,
+            border_focused: Color::Rgb(203, 166, 247), // Mauve
+            border_unfocused: Color::Rgb(69, 71, 90),  // Surface1
+            border_secondary: Color::Rgb(88, 91, 112), // Surface2
 
-            selected_bg: Color::Yellow,
-            selected_fg: Color::Black,
-            selected_bg_inactive: Color::DarkGray,
-            selected_fg_inactive: Color::Black,
+            selected_bg: Color::Rgb(203, 166, 247), // Mauve
+            selected_fg: Color::Rgb(30, 30, 46),    // Base
+            selected_bg_inactive: Color::Rgb(69, 71, 90), // Surface1
+            selected_fg_inactive: Color::Rgb(205, 214, 244), // Text
 
-            line_selected_bg: Color::DarkGray,
-            line_selected_fg: Color::White,
+            line_selected_bg: Color::Rgb(49, 50, 68), // Surface0
+            line_selected_fg: Color::Rgb(205, 214, 244), // Text
 
-            gutter_selected_bg: Color::LightBlue,
-            gutter_selected_fg: Color::Black,
-            gutter_hover_fg: Color::Gray,
-            gutter_hover_bg: Color::Rgb(45, 45, 55),
-            gutter_pending_bg: Color::Rgb(50, 70, 90),
-            line_pending_bg: Color::Rgb(40, 40, 50),
+            gutter_selected_bg: Color::Rgb(137, 180, 250), // Blue
+            gutter_selected_fg: Color::Rgb(30, 30, 46),    // Base
+            gutter_hover_fg: Color::Rgb(127, 132, 156),    // Overlay1
+            gutter_hover_bg: Color::Rgb(40, 41, 56),
+            gutter_pending_bg: Color::Rgb(54, 64, 98),
+            line_pending_bg: Color::Rgb(40, 41, 58),
 
-            hint: Color::Gray,
-            search_match_fg: Color::Yellow,
-            search_match_bg: Color::Yellow,
-            search_current_fg: Color::Black,
+            hint: Color::Rgb(108, 112, 134),            // Overlay0
+            search_match_fg: Color::Rgb(249, 226, 175), // Yellow
+            search_match_bg: Color::Rgb(249, 226, 175), // Yellow
+            search_current_fg: Color::Rgb(30, 30, 46),  // Base
 
-            waiting_primary: Color::Rgb(255, 165, 0),
-            waiting_secondary: Color::Rgb(200, 120, 0),
+            waiting_primary: Color::Rgb(250, 179, 135), // Peach
+            waiting_secondary: Color::Rgb(200, 140, 100),
 
-            titlebar_bg: Color::DarkGray,
-            dir_fg: Color::Gray,
+            titlebar_bg: Color::Rgb(24, 24, 37), // Mantle
+            dir_fg: Color::Rgb(108, 112, 134),   // Overlay0
 
-            status_bg_success: Color::Rgb(0, 30, 0),
-            status_bg_error: Color::Rgb(40, 0, 0),
-            status_bg_warning: Color::Rgb(40, 30, 0),
-            status_bg_info: Color::Rgb(0, 20, 40),
+            status_bg_success: Color::Rgb(25, 40, 30),
+            status_bg_error: Color::Rgb(48, 28, 36),
+            status_bg_warning: Color::Rgb(46, 40, 26),
+            status_bg_info: Color::Rgb(24, 36, 48),
 
-            comment_preview_bg: Color::Rgb(42, 42, 68),
-            reply_text: Color::Rgb(180, 180, 200),
+            comment_preview_bg: Color::Rgb(49, 50, 68), // Surface0
+            reply_text: Color::Rgb(166, 173, 200),      // Subtext0
+
+            panel_focused_bg: Color::Rgb(40, 41, 58), // between Base and Surface0
         }
     }
 
@@ -262,6 +277,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(52, 54, 76),
             reply_text: Color::Rgb(189, 147, 249),
+
+            panel_focused_bg: Color::Rgb(50, 52, 66),
         }
     }
 
@@ -320,6 +337,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(56, 62, 82),
             reply_text: Color::Rgb(129, 161, 193),
+
+            panel_focused_bg: Color::Rgb(56, 62, 78),
         }
     }
 
@@ -378,6 +397,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(15, 64, 84),
             reply_text: Color::Rgb(108, 113, 196),
+
+            panel_focused_bg: Color::Rgb(8, 52, 64),
         }
     }
 
@@ -436,6 +457,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(42, 44, 66),
             reply_text: Color::Rgb(125, 207, 255),
+
+            panel_focused_bg: Color::Rgb(36, 38, 52),
         }
     }
 
@@ -494,6 +517,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(62, 58, 68),
             reply_text: Color::Rgb(131, 165, 152),
+
+            panel_focused_bg: Color::Rgb(58, 55, 52),
         }
     }
 
@@ -552,6 +577,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(48, 44, 70),
             reply_text: Color::Rgb(196, 167, 231),
+
+            panel_focused_bg: Color::Rgb(38, 35, 52),
         }
     }
 
@@ -610,6 +637,8 @@ impl Theme {
 
             comment_preview_bg: Color::Rgb(42, 42, 62),
             reply_text: Color::Rgb(127, 180, 202),
+
+            panel_focused_bg: Color::Rgb(34, 34, 46),
         }
     }
 }

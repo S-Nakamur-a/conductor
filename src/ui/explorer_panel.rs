@@ -119,8 +119,13 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
         BorderType::Plain
     };
 
+    let title_style = if tree_focused {
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
     let block = Block::default()
-        .title(title)
+        .title(Span::styled(title, title_style))
         .title_top(
             Line::from(Span::styled(
                 expand_label,
@@ -216,8 +221,13 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         BorderType::Plain
     };
 
+    let title_style = if diff_focused {
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
     let block = Block::default()
-        .title(title)
+        .title(Span::styled(title, title_style))
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
@@ -365,8 +375,13 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         BorderType::Plain
     };
 
+    let title_style = if list_focused {
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
     let block = Block::default()
-        .title(title)
+        .title(Span::styled(title, title_style))
         .title_bottom(
             Line::from(vec![Span::styled(
                 ask_claude_label,
