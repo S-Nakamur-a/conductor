@@ -73,8 +73,9 @@ impl GitEngine {
     /// This works whether `path` points at the main worktree, a linked
     /// worktree, or any subdirectory inside either.
     pub fn open(path: &Path) -> Result<Self> {
-        let repo = Repository::discover(path)
-            .with_context(|| format!("failed to discover git repository from {}", path.display()))?;
+        let repo = Repository::discover(path).with_context(|| {
+            format!("failed to discover git repository from {}", path.display())
+        })?;
         Ok(Self { repo })
     }
 
@@ -96,7 +97,10 @@ impl GitEngine {
         match self.worktree_info_at(&main_path, true) {
             Ok(info) => infos.push(info),
             Err(e) => {
-                log::warn!("failed to inspect main worktree at {}: {e}", main_path.display());
+                log::warn!(
+                    "failed to inspect main worktree at {}: {e}",
+                    main_path.display()
+                );
             }
         }
 
@@ -135,7 +139,9 @@ impl GitEngine {
     /// Strip common branch prefixes (feature/, fix/, etc.) to derive a
     /// short directory name.
     pub fn strip_branch_prefix(branch: &str) -> &str {
-        for prefix in &["feature/", "fix/", "bugfix/", "hotfix/", "release/", "chore/"] {
+        for prefix in &[
+            "feature/", "fix/", "bugfix/", "hotfix/", "release/", "chore/",
+        ] {
             if let Some(rest) = branch.strip_prefix(prefix) {
                 return rest;
             }
@@ -168,8 +174,9 @@ impl GitEngine {
             parent.join(format!("{repo_name}-worktrees"))
         };
         if !base.exists() {
-            std::fs::create_dir_all(&base)
-                .with_context(|| format!("failed to create worktrees base dir: {}", base.display()))?;
+            std::fs::create_dir_all(&base).with_context(|| {
+                format!("failed to create worktrees base dir: {}", base.display())
+            })?;
         }
         Ok(base)
     }
@@ -216,8 +223,10 @@ impl GitEngine {
         let main_dir = self.main_worktree_path()?;
         let mut child = std::process::Command::new("git")
             .args([
-                "worktree", "add",
-                "-b", branch_name,
+                "worktree",
+                "add",
+                "-b",
+                branch_name,
                 &wt_path.display().to_string(),
                 base_ref,
             ])
@@ -226,7 +235,9 @@ impl GitEngine {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .context("failed to run `git worktree add`")?;
-        let status = child.wait().context("failed to wait for `git worktree add`")?;
+        let status = child
+            .wait()
+            .context("failed to wait for `git worktree add`")?;
         if !status.success() {
             // Safe to read stderr: if git failed, post-checkout hook didn't run,
             // so no background processes hold the pipe open.
@@ -293,8 +304,11 @@ impl GitEngine {
         let main_dir = self.main_worktree_path()?;
         let mut child = std::process::Command::new("git")
             .args([
-                "worktree", "add",
-                "--track", "-b", local_branch,
+                "worktree",
+                "add",
+                "--track",
+                "-b",
+                local_branch,
                 &wt_path.display().to_string(),
                 remote_branch,
             ])
@@ -303,7 +317,9 @@ impl GitEngine {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .context("failed to run `git worktree add`")?;
-        let status = child.wait().context("failed to wait for `git worktree add`")?;
+        let status = child
+            .wait()
+            .context("failed to wait for `git worktree add`")?;
         if !status.success() {
             let mut stderr_buf = String::new();
             if let Some(mut stderr) = child.stderr.take() {
@@ -321,17 +337,21 @@ impl GitEngine {
     /// Delete a local branch by name. If `force` is true, uses -D (deletes
     /// even if not fully merged).
     pub fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
-        let mut branch = self.repo.find_branch(name, git2::BranchType::Local)
+        let mut branch = self
+            .repo
+            .find_branch(name, git2::BranchType::Local)
             .with_context(|| format!("branch '{name}' not found"))?;
         if force {
             // Force-delete: just delete the reference directly.
             let ref_name = format!("refs/heads/{name}");
             if let Ok(mut reference) = self.repo.find_reference(&ref_name) {
-                reference.delete()
+                reference
+                    .delete()
                     .with_context(|| format!("failed to force-delete branch '{name}'"))?;
             }
         } else {
-            branch.delete()
+            branch
+                .delete()
                 .with_context(|| format!("failed to delete branch '{name}' (not fully merged?)"))?;
         }
         Ok(())
@@ -340,9 +360,12 @@ impl GitEngine {
     /// Forcefully remove a worktree even if dirty.
     #[allow(dead_code)]
     pub fn remove_worktree_force(&self, worktree_path: &Path) -> Result<()> {
-        let name = self.find_worktree_name_by_path(worktree_path)
+        let name = self
+            .find_worktree_name_by_path(worktree_path)
             .with_context(|| format!("no worktree found for path {}", worktree_path.display()))?;
-        let wt = self.repo.find_worktree(&name)
+        let wt = self
+            .repo
+            .find_worktree(&name)
             .with_context(|| format!("worktree '{name}' not found"))?;
 
         let wt_path = wt.path().to_path_buf();
@@ -352,8 +375,9 @@ impl GitEngine {
             git2::WorktreePruneOptions::new()
                 .working_tree(true)
                 .valid(true)
-                .locked(true)
-        )).with_context(|| format!("failed to force-prune worktree '{name}'"))?;
+                .locked(true),
+        ))
+        .with_context(|| format!("failed to force-prune worktree '{name}'"))?;
 
         // Remove directory.
         if wt_path.exists() {
@@ -371,10 +395,10 @@ impl GitEngine {
         let mut stale = Vec::new();
         if let Ok(names) = self.repo.worktrees() {
             for name in names.iter().flatten() {
-                if let Ok(wt) = self.repo.find_worktree(name) {
-                    if wt.validate().is_err() {
-                        stale.push(name.to_string());
-                    }
+                if let Ok(wt) = self.repo.find_worktree(name)
+                    && wt.validate().is_err()
+                {
+                    stale.push(name.to_string());
                 }
             }
         }
@@ -383,13 +407,13 @@ impl GitEngine {
 
     /// Prune a single stale worktree entry.
     pub fn prune_stale_worktree(&self, name: &str) -> Result<()> {
-        let wt = self.repo.find_worktree(name)
+        let wt = self
+            .repo
+            .find_worktree(name)
             .with_context(|| format!("worktree '{name}' not found"))?;
 
-        wt.prune(Some(
-            git2::WorktreePruneOptions::new()
-                .working_tree(true)
-        )).with_context(|| format!("failed to prune stale worktree '{name}'"))?;
+        wt.prune(Some(git2::WorktreePruneOptions::new().working_tree(true)))
+            .with_context(|| format!("failed to prune stale worktree '{name}'"))?;
 
         Ok(())
     }
@@ -402,7 +426,7 @@ impl GitEngine {
             let _ = wt.prune(Some(
                 git2::WorktreePruneOptions::new()
                     .valid(true)
-                    .working_tree(true)
+                    .working_tree(true),
             ));
         }
     }
@@ -439,8 +463,8 @@ impl GitEngine {
         // Check for .git/worktrees/<name>/commondir which points to the shared .git/.
         let commondir_file = git_dir.join("commondir");
         if commondir_file.exists() {
-            let content = std::fs::read_to_string(&commondir_file)
-                .context("failed to read commondir")?;
+            let content =
+                std::fs::read_to_string(&commondir_file).context("failed to read commondir")?;
             let relative = content.trim();
             let resolved = git_dir.join(relative);
             return Ok(resolved.canonicalize().unwrap_or(resolved));
@@ -486,17 +510,21 @@ impl GitEngine {
         let content = std::fs::read_to_string(&grab_file)
             .with_context(|| format!("failed to read {}", grab_file.display()))?;
         let mut lines = content.lines();
-        let branch = lines.next()
+        let branch = lines
+            .next()
             .ok_or_else(|| anyhow!("wt-grab: missing branch line"))?
             .to_string();
         let wt_path = PathBuf::from(
-            lines.next()
+            lines
+                .next()
                 .ok_or_else(|| anyhow!("wt-grab: missing worktree path line"))?,
         );
-        let stash_branch = lines.next()
+        let stash_branch = lines
+            .next()
             .ok_or_else(|| anyhow!("wt-grab: missing stash branch line"))?
             .to_string();
-        let claude_session_id = lines.next()
+        let claude_session_id = lines
+            .next()
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
         Ok(Some((branch, wt_path, stash_branch, claude_session_id)))
@@ -536,26 +564,37 @@ impl GitEngine {
         let grab_branch_name = format!("{branch_name}__grab");
 
         // Create __grab branch on source worktree and checkout it.
-        let source_repo = Repository::open(source_worktree_path)
-            .with_context(|| format!("cannot open worktree at {}", source_worktree_path.display()))?;
+        let source_repo = Repository::open(source_worktree_path).with_context(|| {
+            format!("cannot open worktree at {}", source_worktree_path.display())
+        })?;
         let head_commit = source_repo.head()?.peel_to_commit()?;
-        source_repo.branch(&grab_branch_name, &head_commit, false)
+        source_repo
+            .branch(&grab_branch_name, &head_commit, false)
             .with_context(|| format!("failed to create branch '{grab_branch_name}'"))?;
-        source_repo.set_head(&format!("refs/heads/{grab_branch_name}"))
+        source_repo
+            .set_head(&format!("refs/heads/{grab_branch_name}"))
             .with_context(|| format!("failed to set HEAD to '{grab_branch_name}'"))?;
-        source_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+        source_repo
+            .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .context("failed to checkout __grab branch")?;
 
         // Checkout main worktree to the original branch.
         let main_repo = Repository::open(main_path)
             .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
-        main_repo.set_head(&format!("refs/heads/{branch_name}"))
+        main_repo
+            .set_head(&format!("refs/heads/{branch_name}"))
             .with_context(|| format!("failed to set main HEAD to '{branch_name}'"))?;
-        main_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+        main_repo
+            .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .with_context(|| format!("failed to checkout '{branch_name}' in main worktree"))?;
 
         // Persist grab state for crash recovery and zsh `wt` compatibility.
-        self.save_grab_state(branch_name, source_worktree_path, &grab_branch_name, claude_session_id)?;
+        self.save_grab_state(
+            branch_name,
+            source_worktree_path,
+            &grab_branch_name,
+            claude_session_id,
+        )?;
 
         Ok(())
     }
@@ -588,26 +627,31 @@ impl GitEngine {
         {
             let main_repo = Repository::open(main_path)
                 .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
-            main_repo.set_head(&format!("refs/heads/{main_branch}"))
+            main_repo
+                .set_head(&format!("refs/heads/{main_branch}"))
                 .with_context(|| format!("failed to set main HEAD to '{main_branch}'"))?;
             let head_commit = main_repo.head()?.peel_to_commit()?;
-            main_repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)
+            main_repo
+                .reset(head_commit.as_object(), git2::ResetType::Hard, None)
                 .with_context(|| format!("failed to reset main worktree to '{main_branch}'"))?;
         }
 
         // Checkout source worktree back to original branch.
-        let source_repo = Repository::open(source_worktree_path)
-            .with_context(|| format!("cannot open worktree at {}", source_worktree_path.display()))?;
-        source_repo.set_head(&format!("refs/heads/{branch_name}"))
+        let source_repo = Repository::open(source_worktree_path).with_context(|| {
+            format!("cannot open worktree at {}", source_worktree_path.display())
+        })?;
+        source_repo
+            .set_head(&format!("refs/heads/{branch_name}"))
             .with_context(|| format!("failed to set HEAD to '{branch_name}'"))?;
         let head_commit = source_repo.head()?.peel_to_commit()?;
-        source_repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)
+        source_repo
+            .reset(head_commit.as_object(), git2::ResetType::Hard, None)
             .with_context(|| format!("failed to reset worktree to '{branch_name}'"))?;
 
         // Delete the temporary __grab branch.
         let grab_branch_name = format!("{branch_name}__grab");
-        if let Ok(mut grab_branch) = source_repo
-            .find_branch(&grab_branch_name, git2::BranchType::Local)
+        if let Ok(mut grab_branch) =
+            source_repo.find_branch(&grab_branch_name, git2::BranchType::Local)
         {
             let _ = grab_branch.delete();
         }
@@ -666,10 +710,7 @@ impl GitEngine {
         main_branch: &str,
         candidates: &[String],
     ) -> Option<String> {
-        let reflog = self
-            .repo
-            .reflog(&format!("refs/heads/{branch}"))
-            .ok()?;
+        let reflog = self.repo.reflog(&format!("refs/heads/{branch}")).ok()?;
 
         if reflog.is_empty() {
             return None;
@@ -764,10 +805,10 @@ impl GitEngine {
     /// Resolve a branch name to its OID, trying local first then origin remote.
     fn resolve_branch_oid(&self, name: &str) -> Option<git2::Oid> {
         // Try local branch first.
-        if let Ok(branch) = self.repo.find_branch(name, git2::BranchType::Local) {
-            if let Some(oid) = branch.get().target() {
-                return Some(oid);
-            }
+        if let Ok(branch) = self.repo.find_branch(name, git2::BranchType::Local)
+            && let Some(oid) = branch.get().target()
+        {
+            return Some(oid);
         }
         // Try origin/<name>.
         let remote_ref = format!("refs/remotes/origin/{name}");
@@ -800,10 +841,9 @@ impl GitEngine {
 
             if let Some(parent) =
                 self.detect_parent_branch(candidate, main_branch, &inner_candidates)
+                && parent == branch
             {
-                if parent == branch {
-                    derived.push(candidate.clone());
-                }
+                derived.push(candidate.clone());
             }
         }
 
@@ -868,7 +908,10 @@ impl GitEngine {
         use std::time::Duration;
 
         let cwd = self.repo.workdir().unwrap_or(self.repo.path());
-        log::debug!("fetch_origin: running `git fetch --prune origin` in {}", cwd.display());
+        log::debug!(
+            "fetch_origin: running `git fetch --prune origin` in {}",
+            cwd.display()
+        );
         let mut child = Command::new("git")
             .args(["fetch", "--prune", "origin"])
             .current_dir(cwd)
@@ -887,7 +930,9 @@ impl GitEngine {
                 Ok(Some(status)) => {
                     // Process exited.
                     if !status.success() {
-                        let stderr = child.stderr.take()
+                        let stderr = child
+                            .stderr
+                            .take()
                             .map(|mut s| {
                                 let mut buf = String::new();
                                 std::io::Read::read_to_string(&mut s, &mut buf).ok();
@@ -920,9 +965,12 @@ impl GitEngine {
     /// This prunes the worktree entry and optionally removes the directory.
     /// Cannot remove the main worktree.
     pub fn remove_worktree(&self, worktree_path: &Path) -> Result<()> {
-        let name = self.find_worktree_name_by_path(worktree_path)
+        let name = self
+            .find_worktree_name_by_path(worktree_path)
             .with_context(|| format!("no worktree found for path {}", worktree_path.display()))?;
-        let wt = self.repo.find_worktree(&name)
+        let wt = self
+            .repo
+            .find_worktree(&name)
             .with_context(|| format!("worktree '{name}' not found"))?;
 
         let wt_path = wt.path().to_path_buf();
@@ -933,20 +981,20 @@ impl GitEngine {
             wt.prune(Some(
                 git2::WorktreePruneOptions::new()
                     .working_tree(true)
-                    .valid(true)
-            )).with_context(|| format!("failed to prune worktree '{name}'"))?;
+                    .valid(true),
+            ))
+            .with_context(|| format!("failed to prune worktree '{name}'"))?;
         } else {
             // Worktree is already invalid (e.g. directory deleted) — just prune
-            wt.prune(Some(
-                git2::WorktreePruneOptions::new()
-                    .working_tree(true)
-            )).with_context(|| format!("failed to prune worktree '{name}'"))?;
+            wt.prune(Some(git2::WorktreePruneOptions::new().working_tree(true)))
+                .with_context(|| format!("failed to prune worktree '{name}'"))?;
         }
 
         // Remove the directory if it still exists
         if wt_path.exists() {
-            std::fs::remove_dir_all(&wt_path)
-                .with_context(|| format!("failed to remove worktree directory {}", wt_path.display()))?;
+            std::fs::remove_dir_all(&wt_path).with_context(|| {
+                format!("failed to remove worktree directory {}", wt_path.display())
+            })?;
         }
 
         Ok(())
@@ -980,10 +1028,7 @@ impl GitEngine {
         let upstream = local_branch
             .upstream()
             .with_context(|| format!("No upstream configured for '{branch_name}'"))?;
-        let upstream_name = upstream
-            .name()?
-            .unwrap_or("unknown")
-            .to_string();
+        let upstream_name = upstream.name()?.unwrap_or("unknown").to_string();
 
         // Fetch from origin (updates all remote refs).
         self.fetch_origin()?;
@@ -995,7 +1040,9 @@ impl GitEngine {
         // Resolve upstream OID after fetch.
         let upstream_ref = wt_repo
             .find_reference(&format!("refs/remotes/{upstream_name}"))
-            .with_context(|| format!("upstream ref 'refs/remotes/{upstream_name}' not found after fetch"))?;
+            .with_context(|| {
+                format!("upstream ref 'refs/remotes/{upstream_name}' not found after fetch")
+            })?;
         let upstream_oid = upstream_ref
             .peel_to_commit()
             .context("upstream ref is not a commit")?
@@ -1066,25 +1113,31 @@ impl GitEngine {
         // Record ORIG_HEAD for safety
         let head = main_repo.head().context("no HEAD on main worktree")?;
         let head_commit = head.peel_to_commit().context("HEAD is not a commit")?;
-        main_repo.reference(
-            "refs/original/ORIG_HEAD",
-            head_commit.id(),
-            true,
-            "conductor: save ORIG_HEAD before merge",
-        ).ok(); // best-effort
+        main_repo
+            .reference(
+                "refs/original/ORIG_HEAD",
+                head_commit.id(),
+                true,
+                "conductor: save ORIG_HEAD before merge",
+            )
+            .ok(); // best-effort
 
         // Find the branch to merge
-        let branch_ref = main_repo.find_branch(branch_name, git2::BranchType::Local)
+        let branch_ref = main_repo
+            .find_branch(branch_name, git2::BranchType::Local)
             .with_context(|| format!("branch '{branch_name}' not found"))?;
         let branch_commit_oid = branch_ref.get().peel_to_commit()?.id();
-        let branch_annotated = main_repo.find_annotated_commit(branch_commit_oid)
+        let branch_annotated = main_repo
+            .find_annotated_commit(branch_commit_oid)
             .context("failed to find annotated commit for branch")?;
 
         // Perform merge analysis
         let (analysis, _preference) = main_repo.merge_analysis(&[&branch_annotated])?;
 
         if analysis.is_up_to_date() {
-            return Ok(format!("{main_branch} is already up-to-date with {branch_name}."));
+            return Ok(format!(
+                "{main_branch} is already up-to-date with {branch_name}."
+            ));
         }
 
         if analysis.is_fast_forward() {
@@ -1095,10 +1148,10 @@ impl GitEngine {
                 &format!("conductor: fast-forward merge {branch_name} into {main_branch}"),
             )?;
             // Update HEAD / working directory
-            main_repo.checkout_head(Some(
-                git2::build::CheckoutBuilder::new().force()
-            ))?;
-            return Ok(format!("Fast-forward merged {branch_name} into {main_branch}."));
+            main_repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
+            return Ok(format!(
+                "Fast-forward merged {branch_name} into {main_branch}."
+            ));
         }
 
         if analysis.is_normal() {
@@ -1107,7 +1160,8 @@ impl GitEngine {
             // and recommend the user do it manually.
             return Ok(format!(
                 "Cannot fast-forward. Manual merge needed: cd {} && git merge {}",
-                main_path.display(), branch_name
+                main_path.display(),
+                branch_name
             ));
         }
 
@@ -1123,40 +1177,53 @@ impl GitEngine {
             .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
 
         // Record ORIG_HEAD for safety
-        if let Ok(head) = main_repo.head() {
-            if let Ok(commit) = head.peel_to_commit() {
-                main_repo.reference(
+        if let Ok(head) = main_repo.head()
+            && let Ok(commit) = head.peel_to_commit()
+        {
+            main_repo
+                .reference(
                     "refs/original/ORIG_HEAD",
                     commit.id(),
                     true,
                     "conductor: save ORIG_HEAD before reset",
-                ).ok();
-            }
+                )
+                .ok();
         }
 
         // Find origin/<main_branch>
         let remote_ref_name = format!("refs/remotes/origin/{main_branch}");
-        let remote_ref = main_repo.find_reference(&remote_ref_name)
-            .with_context(|| format!("remote ref '{remote_ref_name}' not found. Have you fetched?"))?;
-        let remote_commit = remote_ref.peel_to_commit()
+        let remote_ref = main_repo
+            .find_reference(&remote_ref_name)
+            .with_context(|| {
+                format!("remote ref '{remote_ref_name}' not found. Have you fetched?")
+            })?;
+        let remote_commit = remote_ref
+            .peel_to_commit()
             .context("remote ref does not point to a commit")?;
 
         // Reset to the remote commit
         let obj = remote_commit.as_object();
-        main_repo.reset(obj, git2::ResetType::Hard, None)
+        main_repo
+            .reset(obj, git2::ResetType::Hard, None)
             .context("failed to hard reset")?;
 
-        Ok(format!("Reset {main_branch} to origin/{main_branch} (commit {}).",
-            &remote_commit.id().to_string()[..8]))
+        Ok(format!(
+            "Reset {main_branch} to origin/{main_branch} (commit {}).",
+            &remote_commit.id().to_string()[..8]
+        ))
     }
 
     // ── Cherry-pick helpers ───────────────────────────────────────────
 
     /// List up to `limit` commits from the given branch, newest first.
     pub fn list_branch_commits(&self, branch_name: &str, limit: usize) -> Result<Vec<CommitInfo>> {
-        let branch = self.repo.find_branch(branch_name, git2::BranchType::Local)
+        let branch = self
+            .repo
+            .find_branch(branch_name, git2::BranchType::Local)
             .with_context(|| format!("branch '{branch_name}' not found"))?;
-        let commit = branch.get().peel_to_commit()
+        let commit = branch
+            .get()
+            .peel_to_commit()
             .with_context(|| format!("cannot resolve branch '{branch_name}' to a commit"))?;
 
         let mut revwalk = self.repo.revwalk()?;
@@ -1176,7 +1243,8 @@ impl GitEngine {
             let full_oid = oid.to_string();
             let short_oid = full_oid[..8.min(full_oid.len())].to_string();
 
-            let message = c.message()
+            let message = c
+                .message()
                 .unwrap_or("")
                 .lines()
                 .next()
@@ -1210,13 +1278,18 @@ impl GitEngine {
     /// On success, creates a new commit with the original message and returns
     /// a success description. If conflicts arise, aborts and returns an error
     /// message.
-    pub fn cherry_pick_to_worktree(&self, worktree_path: &Path, commit_oid_str: &str) -> Result<String> {
+    pub fn cherry_pick_to_worktree(
+        &self,
+        worktree_path: &Path,
+        commit_oid_str: &str,
+    ) -> Result<String> {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open worktree repo at {}", worktree_path.display()))?;
 
         let oid = git2::Oid::from_str(commit_oid_str)
             .with_context(|| format!("invalid OID: {commit_oid_str}"))?;
-        let commit = repo.find_commit(oid)
+        let commit = repo
+            .find_commit(oid)
             .with_context(|| format!("commit {commit_oid_str} not found"))?;
 
         // Perform the cherry-pick (applies changes to index and workdir).
@@ -1244,7 +1317,8 @@ impl GitEngine {
         let head_commit = repo.head()?.peel_to_commit()?;
 
         let original_message = commit.message().unwrap_or("cherry-picked commit");
-        let sig = repo.signature()
+        let sig = repo
+            .signature()
             .or_else(|_| git2::Signature::now("Conductor", "conductor@localhost"))
             .context("cannot create signature")?;
 
@@ -1261,12 +1335,10 @@ impl GitEngine {
         repo.cleanup_state()?;
 
         let short = &commit_oid_str[..8.min(commit_oid_str.len())];
-        let msg_first_line = commit.message()
-            .unwrap_or("")
-            .lines()
-            .next()
-            .unwrap_or("");
-        Ok(format!("Cherry-picked {short} \"{msg_first_line}\" successfully."))
+        let msg_first_line = commit.message().unwrap_or("").lines().next().unwrap_or("");
+        Ok(format!(
+            "Cherry-picked {short} \"{msg_first_line}\" successfully."
+        ))
     }
 
     // ── Internal helpers ─────────────────────────────────────────────
@@ -1276,15 +1348,19 @@ impl GitEngine {
     fn resolve_ref_to_commit(&self, refspec: &str) -> Result<git2::Commit<'_>> {
         // Try as a direct reference first (e.g. "refs/remotes/origin/main").
         if let Ok(reference) = self.repo.find_reference(&format!("refs/remotes/{refspec}")) {
-            return reference.peel_to_commit()
+            return reference
+                .peel_to_commit()
                 .with_context(|| format!("ref '{refspec}' does not point to a commit"));
         }
         if let Ok(reference) = self.repo.find_reference(&format!("refs/heads/{refspec}")) {
-            return reference.peel_to_commit()
+            return reference
+                .peel_to_commit()
                 .with_context(|| format!("ref '{refspec}' does not point to a commit"));
         }
         // Try revparse as a fallback.
-        let obj = self.repo.revparse_single(refspec)
+        let obj = self
+            .repo
+            .revparse_single(refspec)
             .with_context(|| format!("cannot resolve '{refspec}'"))?;
         obj.peel_to_commit()
             .with_context(|| format!("'{refspec}' does not point to a commit"))
@@ -1298,17 +1374,15 @@ impl GitEngine {
     /// `<main>/.git/worktrees/<name>/`.
     pub fn main_worktree_path(&self) -> Result<PathBuf> {
         let git_dir = self.repo.path(); // linked: <main>/.git/worktrees/<name>/
-                                         // main:   <main>/.git/
+        // main:   <main>/.git/
 
         // If git_dir is inside .git/worktrees/, walk up to the main repo root.
-        if let Some(worktrees_dir) = git_dir.parent() {
-            if worktrees_dir.file_name() == Some("worktrees".as_ref()) {
-                if let Some(dot_git) = worktrees_dir.parent() {
-                    if let Some(main_repo) = dot_git.parent() {
-                        return Ok(main_repo.to_path_buf());
-                    }
-                }
-            }
+        if let Some(worktrees_dir) = git_dir.parent()
+            && worktrees_dir.file_name() == Some("worktrees".as_ref())
+            && let Some(dot_git) = worktrees_dir.parent()
+            && let Some(main_repo) = dot_git.parent()
+        {
+            return Ok(main_repo.to_path_buf());
         }
 
         // Normal (non-bare) repository.
@@ -1334,10 +1408,10 @@ impl GitEngine {
     fn find_worktree_name_by_path(&self, target: &Path) -> Option<String> {
         let names = self.repo.worktrees().ok()?;
         for name in names.iter().flatten() {
-            if let Ok(wt) = self.repo.find_worktree(name) {
-                if wt.path() == target {
-                    return Some(name.to_string());
-                }
+            if let Ok(wt) = self.repo.find_worktree(name)
+                && wt.path() == target
+            {
+                return Some(name.to_string());
             }
         }
         None
@@ -1347,9 +1421,7 @@ impl GitEngine {
     /// libgit2 name.
     fn linked_worktree_info(&self, name: &str) -> Result<WorktreeInfo> {
         let wt = self.repo.find_worktree(name)?;
-        let wt_path = wt
-            .path()
-            .to_path_buf();
+        let wt_path = wt.path().to_path_buf();
 
         self.worktree_info_at(&wt_path, false)
     }
@@ -1439,12 +1511,11 @@ impl GitEngine {
 
     /// Get the current branch name, or `"HEAD (detached)"` if detached.
     fn current_branch_name(repo: &Repository) -> String {
-        if let Ok(head) = repo.head() {
-            if head.is_branch() {
-                if let Some(name) = head.shorthand() {
-                    return name.to_string();
-                }
-            }
+        if let Ok(head) = repo.head()
+            && head.is_branch()
+            && let Some(name) = head.shorthand()
+        {
+            return name.to_string();
         }
         "HEAD (detached)".to_string()
     }
@@ -1467,7 +1538,11 @@ impl GitEngine {
             // Index changes
             if s.intersects(git2::Status::INDEX_NEW) {
                 added += 1;
-            } else if s.intersects(git2::Status::INDEX_MODIFIED | git2::Status::INDEX_RENAMED | git2::Status::INDEX_TYPECHANGE) {
+            } else if s.intersects(
+                git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            ) {
                 modified += 1;
             } else if s.intersects(git2::Status::INDEX_DELETED) {
                 deleted += 1;
@@ -1477,7 +1552,9 @@ impl GitEngine {
             // file is counted at most once.
             else if s.intersects(git2::Status::WT_NEW) {
                 added += 1;
-            } else if s.intersects(git2::Status::WT_MODIFIED | git2::Status::WT_RENAMED | git2::Status::WT_TYPECHANGE) {
+            } else if s.intersects(
+                git2::Status::WT_MODIFIED | git2::Status::WT_RENAMED | git2::Status::WT_TYPECHANGE,
+            ) {
                 modified += 1;
             } else if s.intersects(git2::Status::WT_DELETED) {
                 deleted += 1;
@@ -1486,7 +1563,6 @@ impl GitEngine {
 
         Ok((added, modified, deleted))
     }
-
 }
 
 /// Return a list of recently modified file paths (relative to worktree root).
@@ -1510,63 +1586,59 @@ pub fn recently_modified_files(worktree_path: &Path, limit: usize) -> Result<Vec
             if result.len() >= limit {
                 break;
             }
-            if let Some(path) = entry.path() {
-                if seen.insert(path.to_string()) {
-                    result.push(path.to_string());
-                }
+            if let Some(path) = entry.path()
+                && seen.insert(path.to_string())
+            {
+                result.push(path.to_string());
             }
         }
     }
 
     // 2. Files changed in recent commits (walk up to 10 commits).
-    if result.len() < limit {
-        if let Ok(head) = repo.head() {
-            if let Some(oid) = head.target() {
-                if let Ok(mut revwalk) = repo.revwalk() {
-                    let _ = revwalk.push(oid);
-                    revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME).ok();
+    if result.len() < limit
+        && let Ok(head) = repo.head()
+        && let Some(oid) = head.target()
+        && let Ok(mut revwalk) = repo.revwalk()
+    {
+        let _ = revwalk.push(oid);
+        revwalk
+            .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+            .ok();
 
-                    let mut commit_count = 0;
-                    for rev_oid in revwalk {
-                        if commit_count >= 10 || result.len() >= limit {
-                            break;
-                        }
-                        let rev_oid = match rev_oid {
-                            Ok(o) => o,
-                            Err(_) => continue,
-                        };
-                        let commit = match repo.find_commit(rev_oid) {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        };
-                        let tree = match commit.tree() {
-                            Ok(t) => t,
-                            Err(_) => continue,
-                        };
+        let mut commit_count = 0;
+        for rev_oid in revwalk {
+            if commit_count >= 10 || result.len() >= limit {
+                break;
+            }
+            let rev_oid = match rev_oid {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let commit = match repo.find_commit(rev_oid) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let tree = match commit.tree() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
 
-                        // Diff against first parent (or empty tree for root commit).
-                        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
-                        if let Ok(diff) = repo.diff_tree_to_tree(
-                            parent_tree.as_ref(),
-                            Some(&tree),
-                            None,
-                        ) {
-                            for delta in diff.deltas() {
-                                if result.len() >= limit {
-                                    break;
-                                }
-                                if let Some(path) = delta.new_file().path() {
-                                    let s = path.to_string_lossy().to_string();
-                                    if seen.insert(s.clone()) {
-                                        result.push(s);
-                                    }
-                                }
-                            }
+            // Diff against first parent (or empty tree for root commit).
+            let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+            if let Ok(diff) = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) {
+                for delta in diff.deltas() {
+                    if result.len() >= limit {
+                        break;
+                    }
+                    if let Some(path) = delta.new_file().path() {
+                        let s = path.to_string_lossy().to_string();
+                        if seen.insert(s.clone()) {
+                            result.push(s);
                         }
-                        commit_count += 1;
                     }
                 }
             }
+            commit_count += 1;
         }
     }
 
@@ -1616,7 +1688,8 @@ mod tests {
             let oid = index.write_tree().unwrap();
             let tree = repo.find_tree(oid).unwrap();
             let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[]).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[])
+                .unwrap();
         }
 
         // Create a linked worktree.
@@ -1628,7 +1701,8 @@ mod tests {
             "test-branch",
             &wt_path,
             Some(git2::WorktreeAddOptions::new().reference(Some(&branch_ref))),
-        ).expect("create linked worktree");
+        )
+        .expect("create linked worktree");
 
         // Open from the linked worktree and verify main_worktree_path().
         let engine = GitEngine::open(&wt_path).expect("open from linked worktree");
@@ -1637,7 +1711,10 @@ mod tests {
         // Canonicalize both paths for comparison (temp dirs may use symlinks).
         let expected = main_repo_path.canonicalize().unwrap();
         let actual = main_path.canonicalize().unwrap();
-        assert_eq!(actual, expected, "main_worktree_path() should return main repo, not linked worktree");
+        assert_eq!(
+            actual, expected,
+            "main_worktree_path() should return main repo, not linked worktree"
+        );
     }
 
     /// Verify that `main_worktree_path()` works from the main repo too.
@@ -1648,7 +1725,10 @@ mod tests {
         let main_path = engine.main_worktree_path().expect("main_worktree_path()");
         // The main worktree path should exist and contain a .git directory.
         assert!(main_path.exists(), "main worktree path should exist");
-        assert!(main_path.join(".git").exists(), "main worktree should contain .git");
+        assert!(
+            main_path.join(".git").exists(),
+            "main worktree should contain .git"
+        );
     }
 
     #[test]
@@ -1692,7 +1772,8 @@ mod tests {
             let oid = index.write_tree().unwrap();
             let tree = repo.find_tree(oid).unwrap();
             let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[]).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+                .unwrap();
         }
         let engine = GitEngine::open(tmp.path()).expect("open temp repo");
         (tmp, engine)
@@ -1707,8 +1788,13 @@ mod tests {
         let wt_path = Path::new("/tmp/test-worktree");
         let stash = "test-branch__grab";
 
-        engine.save_grab_state(branch, wt_path, stash, None).unwrap();
-        let loaded = engine.load_grab_state().unwrap().expect("should load state");
+        engine
+            .save_grab_state(branch, wt_path, stash, None)
+            .unwrap();
+        let loaded = engine
+            .load_grab_state()
+            .unwrap()
+            .expect("should load state");
 
         assert_eq!(loaded.0, branch);
         assert_eq!(loaded.1, wt_path);
@@ -1728,8 +1814,13 @@ mod tests {
         let stash = "feature-x__grab";
         let session_id = "abc12345-6789-0def-ghij-klmnopqrstuv";
 
-        engine.save_grab_state(branch, wt_path, stash, Some(session_id)).unwrap();
-        let loaded = engine.load_grab_state().unwrap().expect("should load state");
+        engine
+            .save_grab_state(branch, wt_path, stash, Some(session_id))
+            .unwrap();
+        let loaded = engine
+            .load_grab_state()
+            .unwrap()
+            .expect("should load state");
 
         assert_eq!(loaded.0, branch);
         assert_eq!(loaded.1, wt_path);
@@ -1748,7 +1839,10 @@ mod tests {
         let grab_file = engine.git_common_dir().unwrap().join("wt-grab");
         std::fs::write(&grab_file, "my-branch\n/tmp/wt\nmy-branch__grab\n").unwrap();
 
-        let loaded = engine.load_grab_state().unwrap().expect("should load state");
+        let loaded = engine
+            .load_grab_state()
+            .unwrap()
+            .expect("should load state");
         assert_eq!(loaded.0, "my-branch");
         assert_eq!(loaded.1, Path::new("/tmp/wt"));
         assert_eq!(loaded.2, "my-branch__grab");

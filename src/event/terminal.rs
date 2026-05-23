@@ -12,7 +12,11 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
         return;
     };
 
-    if let Err(e) = app.terminal.pty_manager.write_to_session(session_idx, &data) {
+    if let Err(e) = app
+        .terminal
+        .pty_manager
+        .write_to_session(session_idx, &data)
+    {
         log::warn!("failed to write to PTY session: {e}");
     } else {
         // Snap to live view when the user types into the terminal.
@@ -82,23 +86,31 @@ fn key_event_to_ansi(key: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::Esc => vec![0x1b],
 
         // ── Arrow keys ───────────────────────────────────────────
-        KeyCode::Up    => arrow_with_modifiers(b'A', &mods),
-        KeyCode::Down  => arrow_with_modifiers(b'B', &mods),
+        KeyCode::Up => arrow_with_modifiers(b'A', &mods),
+        KeyCode::Down => arrow_with_modifiers(b'B', &mods),
         KeyCode::Right => arrow_with_modifiers(b'C', &mods),
-        KeyCode::Left  => arrow_with_modifiers(b'D', &mods),
+        KeyCode::Left => arrow_with_modifiers(b'D', &mods),
 
         // ── Home / End ───────────────────────────────────────────
         KeyCode::Home => {
             let p = xterm_modifier_param(&mods);
-            if p == 1 { b"\x1b[H".to_vec() } else { format!("\x1b[1;{p}H").into_bytes() }
+            if p == 1 {
+                b"\x1b[H".to_vec()
+            } else {
+                format!("\x1b[1;{p}H").into_bytes()
+            }
         }
         KeyCode::End => {
             let p = xterm_modifier_param(&mods);
-            if p == 1 { b"\x1b[F".to_vec() } else { format!("\x1b[1;{p}F").into_bytes() }
+            if p == 1 {
+                b"\x1b[F".to_vec()
+            } else {
+                format!("\x1b[1;{p}F").into_bytes()
+            }
         }
 
         // ── Page Up / Down ───────────────────────────────────────
-        KeyCode::PageUp   => tilde_key_with_modifiers(5, &mods),
+        KeyCode::PageUp => tilde_key_with_modifiers(5, &mods),
         KeyCode::PageDown => tilde_key_with_modifiers(6, &mods),
 
         // ── Insert ───────────────────────────────────────────────
@@ -119,7 +131,9 @@ fn char_with_modifiers(c: char, mods: KeyModifiers) -> Vec<u8> {
     if mods.contains(KeyModifiers::CONTROL) {
         if c.is_ascii_lowercase() || c.is_ascii_uppercase() {
             // Ctrl+letter → control byte (Ctrl+A = 0x01, ..., Ctrl+Z = 0x1a).
-            let ctrl_byte = (c.to_ascii_lowercase() as u8).wrapping_sub(b'a').wrapping_add(1);
+            let ctrl_byte = (c.to_ascii_lowercase() as u8)
+                .wrapping_sub(b'a')
+                .wrapping_add(1);
             if mods.contains(KeyModifiers::ALT) {
                 vec![0x1b, ctrl_byte]
             } else {
@@ -174,7 +188,10 @@ pub(super) fn spawn_terminal_session(app: &mut App) {
         Focus::TerminalClaude => {
             app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
             if let Err(e) = app.spawn_claude_code() {
-                app.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
+                app.set_status(
+                    format!("Failed to start Claude Code: {e}"),
+                    StatusLevel::Error,
+                );
                 log::warn!("failed to spawn Claude Code session: {e}");
             } else {
                 app.status_message = None;
@@ -195,7 +212,12 @@ pub(super) fn spawn_terminal_session(app: &mut App) {
 
 /// Handle a click on a terminal tab bar.
 /// `is_claude` is `true` for Claude panel, `false` for Shell panel.
-pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_x: u16, is_claude: bool) {
+pub(super) fn handle_terminal_tab_click(
+    app: &mut App,
+    click_col: u16,
+    tab_area_x: u16,
+    is_claude: bool,
+) {
     // Collect session info (global index + label) to avoid borrow issues.
     let sessions: Vec<(usize, String)> = if is_claude {
         app.current_worktree_claude_sessions()
@@ -265,7 +287,10 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_
     if relative_x >= x && relative_x < x + 3 {
         if is_claude {
             if let Err(e) = app.spawn_claude_code() {
-                app.set_status(format!("Failed to start Claude Code: {e}"), StatusLevel::Error);
+                app.set_status(
+                    format!("Failed to start Claude Code: {e}"),
+                    StatusLevel::Error,
+                );
             }
         } else if let Err(e) = app.spawn_shell() {
             app.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
@@ -277,7 +302,11 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_
 
     // Check [<=>] toggle.
     if relative_x >= x && relative_x < x + 5 {
-        let target = if is_claude { Focus::TerminalClaude } else { Focus::TerminalShell };
+        let target = if is_claude {
+            Focus::TerminalClaude
+        } else {
+            Focus::TerminalShell
+        };
         if app.expanded_panel.is_some() {
             app.expanded_panel = None;
         } else {
@@ -292,13 +321,19 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, tab_area_
 /// rows of the active PTY session, starting from the cursor row upward.
 pub(super) fn open_file_from_terminal_output(app: &mut App) {
     let (session_idx, scroll_offset) = match app.focus {
-        Focus::TerminalClaude => (app.terminal.active_claude_session, app.terminal.scroll_claude),
+        Focus::TerminalClaude => (
+            app.terminal.active_claude_session,
+            app.terminal.scroll_claude,
+        ),
         Focus::TerminalShell => (app.terminal.active_shell_session, app.terminal.scroll_shell),
         _ => return,
     };
 
     let Some(idx) = session_idx else {
-        app.set_status("No active terminal session".to_string(), StatusLevel::Warning);
+        app.set_status(
+            "No active terminal session".to_string(),
+            StatusLevel::Warning,
+        );
         return;
     };
 
@@ -319,7 +354,11 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
         let mut result = None;
         // Scan from cursor row upward to find the most recent file reference.
         for offset in 0..rows {
-            let r = if cursor_row >= offset { cursor_row - offset } else { break };
+            let r = if cursor_row >= offset {
+                cursor_row - offset
+            } else {
+                break;
+            };
             let text = terminal_link::extract_row_text(screen, r, cols);
             let links = terminal_link::detect_file_links(&text, &wt_path);
             if let Some(link) = links.into_iter().next() {
@@ -333,7 +372,10 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
 
     match found {
         Some((path, line)) => app.open_file_in_viewer(&path, line),
-        None => app.set_status("No file path found in terminal output".to_string(), StatusLevel::Warning),
+        None => app.set_status(
+            "No file path found in terminal output".to_string(),
+            StatusLevel::Warning,
+        ),
     }
 }
 
@@ -348,9 +390,15 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
 /// Returns 1 when no modifiers are set.
 fn xterm_modifier_param(modifiers: &KeyModifiers) -> u8 {
     let mut param: u8 = 1;
-    if modifiers.contains(KeyModifiers::SHIFT)   { param += 1; }
-    if modifiers.contains(KeyModifiers::ALT)     { param += 2; }
-    if modifiers.contains(KeyModifiers::CONTROL) { param += 4; }
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        param += 1;
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        param += 2;
+    }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        param += 4;
+    }
     // Note: SUPER (Cmd) has special handling per-key, not encoded here.
     param
 }
@@ -387,7 +435,10 @@ fn arrow_with_modifiers(dir: u8, modifiers: &KeyModifiers) -> Vec<u8> {
 /// Special case: Alt+Delete → ESC + d (word-forward delete).
 fn tilde_key_with_modifiers(num: u8, modifiers: &KeyModifiers) -> Vec<u8> {
     // Alt+Delete → word-forward delete (readline convention).
-    if num == 3 && modifiers.contains(KeyModifiers::ALT) && !modifiers.contains(KeyModifiers::CONTROL) {
+    if num == 3
+        && modifiers.contains(KeyModifiers::ALT)
+        && !modifiers.contains(KeyModifiers::CONTROL)
+    {
         return vec![0x1b, b'd'];
     }
 
@@ -403,19 +454,19 @@ fn tilde_key_with_modifiers(num: u8, modifiers: &KeyModifiers) -> Vec<u8> {
 fn f_key_to_ansi(n: u8, modifiers: &KeyModifiers) -> Vec<u8> {
     // Map function key number to the SS3/CSI code.
     let (prefix, code) = match n {
-        1  => ("O", 'P'),
-        2  => ("O", 'Q'),
-        3  => ("O", 'R'),
-        4  => ("O", 'S'),
-        5  => ("[15", '~'),
-        6  => ("[17", '~'),
-        7  => ("[18", '~'),
-        8  => ("[19", '~'),
-        9  => ("[20", '~'),
+        1 => ("O", 'P'),
+        2 => ("O", 'Q'),
+        3 => ("O", 'R'),
+        4 => ("O", 'S'),
+        5 => ("[15", '~'),
+        6 => ("[17", '~'),
+        7 => ("[18", '~'),
+        8 => ("[19", '~'),
+        9 => ("[20", '~'),
         10 => ("[21", '~'),
         11 => ("[23", '~'),
         12 => ("[24", '~'),
-        _  => return vec![],
+        _ => return vec![],
     };
 
     let param = xterm_modifier_param(modifiers);

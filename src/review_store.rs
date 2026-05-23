@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -414,10 +414,9 @@ impl ReviewStore {
 
     /// Delete a review comment by id.
     pub fn delete_review(&self, id: &str) -> Result<()> {
-        let changed = self.conn.execute(
-            "DELETE FROM reviews WHERE id = ?1",
-            params![id],
-        )?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM reviews WHERE id = ?1", params![id])?;
         if changed == 0 {
             anyhow::bail!("review not found: {id}");
         }
@@ -450,11 +449,7 @@ impl ReviewStore {
 
     /// Return reviews for a specific file within a worktree.
     #[allow(dead_code)]
-    pub fn reviews_for_file(
-        &self,
-        worktree: &str,
-        file_path: &str,
-    ) -> Result<Vec<ReviewComment>> {
+    pub fn reviews_for_file(&self, worktree: &str, file_path: &str) -> Result<Vec<ReviewComment>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
                     commit_ref, author, branch, created_at, updated_at
@@ -496,7 +491,7 @@ impl ReviewStore {
                         3,
                         rusqlite::types::Type::Text,
                         format!("unknown Author: {other}").into(),
-                    ))
+                    ));
                 }
             };
             Ok(ReviewReply {
@@ -545,9 +540,9 @@ impl ReviewStore {
 
     /// Return all comment templates, ordered by creation time.
     pub fn list_templates(&self) -> Result<Vec<CommentTemplate>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, body, kind FROM comment_templates ORDER BY created_at",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, body, kind FROM comment_templates ORDER BY created_at")?;
 
         let rows = stmt.query_map([], |row| {
             let kind_str: String = row.get(3)?;
@@ -559,7 +554,7 @@ impl ReviewStore {
                         3,
                         rusqlite::types::Type::Text,
                         format!("unknown CommentKind: {other}").into(),
-                    ))
+                    ));
                 }
             };
             Ok(CommentTemplate {
@@ -579,10 +574,9 @@ impl ReviewStore {
 
     /// Delete a comment template by id.
     pub fn delete_template(&self, id: &str) -> Result<()> {
-        let changed = self.conn.execute(
-            "DELETE FROM comment_templates WHERE id = ?1",
-            params![id],
-        )?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM comment_templates WHERE id = ?1", params![id])?;
         if changed == 0 {
             anyhow::bail!("template not found: {id}");
         }
@@ -650,9 +644,9 @@ impl ReviewStore {
 
     /// Retrieve the persisted base branch for a worktree branch.
     pub fn get_worktree_base_branch(&self, branch: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT base_branch FROM worktree_metadata WHERE branch = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT base_branch FROM worktree_metadata WHERE branch = ?1")?;
         let result = stmt
             .query_row(params![branch], |row| row.get::<_, String>(0))
             .ok();
@@ -661,9 +655,9 @@ impl ReviewStore {
 
     /// Retrieve all branches whose base_branch equals the given branch (direct children).
     pub fn get_worktree_children(&self, base: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT branch FROM worktree_metadata WHERE base_branch = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT branch FROM worktree_metadata WHERE base_branch = ?1")?;
         let rows = stmt.query_map(params![base], |row| row.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
@@ -762,10 +756,8 @@ impl ReviewStore {
     /// Start a new stats-tracking session. Returns the session ID.
     pub fn start_stats_session(&self) -> Result<String> {
         let id = Uuid::new_v4().to_string();
-        self.conn.execute(
-            "INSERT INTO session_stats (id) VALUES (?1)",
-            params![id],
-        )?;
+        self.conn
+            .execute("INSERT INTO session_stats (id) VALUES (?1)", params![id])?;
         Ok(id)
     }
 
@@ -776,9 +768,7 @@ impl ReviewStore {
             _ => anyhow::bail!("invalid session stat field: {field}"),
         };
         self.conn.execute(
-            &format!(
-                "UPDATE session_stats SET {valid_field} = {valid_field} + 1 WHERE id = ?1"
-            ),
+            &format!("UPDATE session_stats SET {valid_field} = {valid_field} + 1 WHERE id = ?1"),
             params![session_id],
         )?;
         Ok(())
@@ -860,7 +850,7 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
                 5,
                 rusqlite::types::Type::Text,
                 format!("unknown CommentKind: {other}").into(),
-            ))
+            ));
         }
     };
 
@@ -872,7 +862,7 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
                 7,
                 rusqlite::types::Type::Text,
                 format!("unknown CommentStatus: {other}").into(),
-            ))
+            ));
         }
     };
 
@@ -884,7 +874,7 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
                 9,
                 rusqlite::types::Type::Text,
                 format!("unknown Author: {other}").into(),
-            ))
+            ));
         }
     };
 
@@ -936,7 +926,17 @@ mod tests {
         let store = test_store();
 
         let review = store
-            .add_review("wt1", "src/main.rs", 42, None, CommentKind::Suggest, "use guard clause", "abc123", Author::User, None)
+            .add_review(
+                "wt1",
+                "src/main.rs",
+                42,
+                None,
+                CommentKind::Suggest,
+                "use guard clause",
+                "abc123",
+                Author::User,
+                None,
+            )
             .unwrap();
 
         assert_eq!(review.worktree, "wt1");
@@ -970,7 +970,17 @@ mod tests {
         let store = test_store();
 
         let review = store
-            .add_review("wt1", "src/app.rs", 5, None, CommentKind::Suggest, "original", "abc", Author::User, None)
+            .add_review(
+                "wt1",
+                "src/app.rs",
+                5,
+                None,
+                CommentKind::Suggest,
+                "original",
+                "abc",
+                Author::User,
+                None,
+            )
             .unwrap();
 
         store.update_review_body(&review.id, "edited").unwrap();
@@ -1009,7 +1019,13 @@ mod tests {
             .save_session_history("sess-2", "wt1", "SH:1", "shell", "ls -la\ntotal 42")
             .unwrap();
         store
-            .save_session_history("sess-3", "wt2", "CC:2", "claude_code", "Error: file not found")
+            .save_session_history(
+                "sess-3",
+                "wt2",
+                "CC:2",
+                "claude_code",
+                "Error: file not found",
+            )
             .unwrap();
 
         // List returns all three (newest first).
@@ -1045,9 +1061,15 @@ mod tests {
 
         let review = store
             .add_review(
-                "wt1", "src/main.rs", 10, Some(20),
-                CommentKind::Suggest, "refactor this block",
-                "abc", Author::Claude, Some("feature/x"),
+                "wt1",
+                "src/main.rs",
+                10,
+                Some(20),
+                CommentKind::Suggest,
+                "refactor this block",
+                "abc",
+                Author::Claude,
+                Some("feature/x"),
             )
             .unwrap();
 
@@ -1059,9 +1081,15 @@ mod tests {
         // Single-line (line_end = None)
         let r2 = store
             .add_review(
-                "wt1", "src/main.rs", 5, None,
-                CommentKind::Question, "why?",
-                "abc", Author::User, None,
+                "wt1",
+                "src/main.rs",
+                5,
+                None,
+                CommentKind::Question,
+                "why?",
+                "abc",
+                Author::User,
+                None,
             )
             .unwrap();
         assert_eq!(r2.line_start, 5);
@@ -1075,7 +1103,17 @@ mod tests {
         let store = test_store();
 
         let review = store
-            .add_review("wt1", "src/main.rs", 42, None, CommentKind::Suggest, "fix this", "abc", Author::Claude, None)
+            .add_review(
+                "wt1",
+                "src/main.rs",
+                42,
+                None,
+                CommentKind::Suggest,
+                "fix this",
+                "abc",
+                Author::Claude,
+                None,
+            )
             .unwrap();
 
         // Initially no replies.
@@ -1086,7 +1124,9 @@ mod tests {
         assert!(counts.is_empty());
 
         // Add a user reply.
-        store.add_reply(&review.id, "I'll fix it", Author::User).unwrap();
+        store
+            .add_reply(&review.id, "I'll fix it", Author::User)
+            .unwrap();
 
         let replies = store.get_replies(&review.id).unwrap();
         assert_eq!(replies.len(), 1);
@@ -1095,7 +1135,9 @@ mod tests {
         assert_eq!(replies[0].review_id, review.id);
 
         // Add another reply (from Claude).
-        store.add_reply(&review.id, "Thanks!", Author::Claude).unwrap();
+        store
+            .add_reply(&review.id, "Thanks!", Author::Claude)
+            .unwrap();
 
         let replies = store.get_replies(&review.id).unwrap();
         assert_eq!(replies.len(), 2);
@@ -1114,10 +1156,22 @@ mod tests {
         let store = test_store();
 
         let review = store
-            .add_review("wt1", "src/app.rs", 10, None, CommentKind::Question, "why?", "abc", Author::User, None)
+            .add_review(
+                "wt1",
+                "src/app.rs",
+                10,
+                None,
+                CommentKind::Question,
+                "why?",
+                "abc",
+                Author::User,
+                None,
+            )
             .unwrap();
 
-        store.add_reply(&review.id, "because reasons", Author::Claude).unwrap();
+        store
+            .add_reply(&review.id, "because reasons", Author::Claude)
+            .unwrap();
         assert_eq!(store.get_replies(&review.id).unwrap().len(), 1);
 
         // Deleting the review should cascade-delete the replies.
@@ -1149,7 +1203,11 @@ mod tests {
         let store = test_store();
         assert!(store.increment_daily_stat("invalid_field").is_err());
         assert!(store.increment_daily_stat("").is_err());
-        assert!(store.increment_daily_stat("reviews_created; DROP TABLE daily_stats").is_err());
+        assert!(
+            store
+                .increment_daily_stat("reviews_created; DROP TABLE daily_stats")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1192,10 +1250,13 @@ mod tests {
         // Insert activity for today and the previous 4 days.
         for i in 0..5 {
             let date = today - chrono::Duration::days(i);
-            store.conn.execute(
-                "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
-                rusqlite::params![date.format("%Y-%m-%d").to_string()],
-            ).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
+                    rusqlite::params![date.format("%Y-%m-%d").to_string()],
+                )
+                .unwrap();
         }
 
         let streak = store.calculate_streak().unwrap();
@@ -1210,17 +1271,23 @@ mod tests {
         // Today and yesterday have activity.
         for i in 0..2 {
             let date = today - chrono::Duration::days(i);
-            store.conn.execute(
-                "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
-                rusqlite::params![date.format("%Y-%m-%d").to_string()],
-            ).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
+                    rusqlite::params![date.format("%Y-%m-%d").to_string()],
+                )
+                .unwrap();
         }
         // Skip day -2, add day -3 (should not count).
         let old_date = today - chrono::Duration::days(3);
-        store.conn.execute(
-            "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
-            rusqlite::params![old_date.format("%Y-%m-%d").to_string()],
-        ).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
+                rusqlite::params![old_date.format("%Y-%m-%d").to_string()],
+            )
+            .unwrap();
 
         let streak = store.calculate_streak().unwrap();
         assert_eq!(streak.consecutive_days, 2);
@@ -1234,10 +1301,13 @@ mod tests {
         // Activity only yesterday and the day before — no today.
         for i in 1..3 {
             let date = today - chrono::Duration::days(i);
-            store.conn.execute(
-                "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
-                rusqlite::params![date.format("%Y-%m-%d").to_string()],
-            ).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO daily_stats (date, reviews_created) VALUES (?1, 1)",
+                    rusqlite::params![date.format("%Y-%m-%d").to_string()],
+                )
+                .unwrap();
         }
 
         let streak = store.calculate_streak().unwrap();
@@ -1250,7 +1320,9 @@ mod tests {
     fn session_stats_lifecycle() {
         let store = test_store();
         let sid = store.start_stats_session().unwrap();
-        store.increment_session_stat(&sid, "reviews_created").unwrap();
+        store
+            .increment_session_stat(&sid, "reviews_created")
+            .unwrap();
         store.increment_session_stat(&sid, "commits_made").unwrap();
         store.increment_session_stat(&sid, "commits_made").unwrap();
         let snap = store.end_stats_session(&sid).unwrap();
@@ -1283,7 +1355,9 @@ mod tests {
         let s1 = store.start_stats_session().unwrap();
         let s2 = store.start_stats_session().unwrap();
 
-        store.increment_session_stat(&s1, "reviews_created").unwrap();
+        store
+            .increment_session_stat(&s1, "reviews_created")
+            .unwrap();
         store.increment_session_stat(&s2, "commits_made").unwrap();
         store.increment_session_stat(&s2, "commits_made").unwrap();
 

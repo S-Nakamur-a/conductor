@@ -9,7 +9,7 @@ use std::io::Read;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -44,7 +44,9 @@ impl RefreshPipe {
 
         // Create the FIFO.
         let path_cstr = std::ffi::CString::new(
-            pipe_path.to_str().ok_or_else(|| anyhow::anyhow!("non-UTF-8 path"))?,
+            pipe_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path"))?,
         )?;
         // SAFETY: mkfifo is a standard POSIX call; path_cstr is valid and
         // null-terminated.  Mode 0o660 gives owner+group read/write.
@@ -80,11 +82,7 @@ impl RefreshPipe {
         self.rx.try_recv().ok()
     }
 
-    fn read_loop(
-        pipe_path: PathBuf,
-        tx: mpsc::Sender<RefreshEvent>,
-        shutdown: Arc<AtomicBool>,
-    ) {
+    fn read_loop(pipe_path: PathBuf, tx: mpsc::Sender<RefreshEvent>, shutdown: Arc<AtomicBool>) {
         // We loop re-opening the pipe because a FIFO returns EOF when all
         // writers close.  After each EOF we re-open to wait for the next
         // writer.
@@ -92,16 +90,13 @@ impl RefreshPipe {
             // Open the FIFO for reading (blocking until a writer connects).
             // We use raw libc::open because Rust's File::open does not
             // support O_NONBLOCK at open time on FIFOs.
-            let path_cstr = match std::ffi::CString::new(
-                pipe_path.to_string_lossy().as_ref(),
-            ) {
+            let path_cstr = match std::ffi::CString::new(pipe_path.to_string_lossy().as_ref()) {
                 Ok(c) => c,
                 Err(_) => break,
             };
 
             // SAFETY: standard POSIX open; path_cstr is valid and null-terminated.
-            let fd: RawFd =
-                unsafe { libc::open(path_cstr.as_ptr(), libc::O_RDONLY) };
+            let fd: RawFd = unsafe { libc::open(path_cstr.as_ptr(), libc::O_RDONLY) };
             if fd < 0 {
                 // Pipe was removed (shutdown or cleanup).
                 break;
@@ -148,7 +143,9 @@ impl RefreshPipe {
         }
 
         let path_cstr = std::ffi::CString::new(
-            pipe_path.to_str().ok_or_else(|| anyhow::anyhow!("non-UTF-8 path"))?,
+            pipe_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path"))?,
         )?;
         let ret = unsafe { libc::mkfifo(path_cstr.as_ptr(), 0o660) };
         if ret != 0 {
@@ -184,17 +181,12 @@ impl Drop for RefreshPipe {
 
         // Unblock the reader by opening the pipe for writing briefly.
         if self.pipe_path.exists() {
-            let path_cstr = std::ffi::CString::new(
-                self.pipe_path.to_string_lossy().as_ref(),
-            );
+            let path_cstr = std::ffi::CString::new(self.pipe_path.to_string_lossy().as_ref());
             if let Ok(cstr) = path_cstr {
                 // SAFETY: standard POSIX open with O_WRONLY | O_NONBLOCK.
                 // O_NONBLOCK prevents blocking if no reader exists.
                 unsafe {
-                    let fd = libc::open(
-                        cstr.as_ptr(),
-                        libc::O_WRONLY | libc::O_NONBLOCK,
-                    );
+                    let fd = libc::open(cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK);
                     if fd >= 0 {
                         libc::close(fd);
                     }
@@ -216,11 +208,9 @@ mod tests {
 
     /// Write to the FIFO the same way the MCP server does (O_WRONLY | O_NONBLOCK).
     fn write_to_pipe(pipe_path: &Path) {
-        let path_cstr =
-            std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
+        let path_cstr = std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
         unsafe {
-            let fd =
-                libc::open(path_cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK);
+            let fd = libc::open(path_cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK);
             assert!(fd >= 0, "failed to open pipe for writing");
             let mut file = std::fs::File::from_raw_fd(fd);
             file.write_all(b"r").unwrap();

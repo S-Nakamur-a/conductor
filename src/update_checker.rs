@@ -54,7 +54,11 @@ pub fn current_version() -> &'static str {
 
 /// Return the cache file path: `~/.cache/conductor/update-check.json`.
 fn cache_path() -> Option<PathBuf> {
-    Some(dirs::cache_dir()?.join("conductor").join("update-check.json"))
+    Some(
+        dirs::cache_dir()?
+            .join("conductor")
+            .join("update-check.json"),
+    )
 }
 
 /// Current Unix timestamp in seconds.
@@ -191,10 +195,7 @@ pub fn check_for_update() -> Option<UpdateInfo> {
             arr.iter()
                 .filter_map(|a| {
                     let name = a.get("name")?.as_str()?.to_string();
-                    let download_url = a
-                        .get("browser_download_url")?
-                        .as_str()?
-                        .to_string();
+                    let download_url = a.get("browser_download_url")?.as_str()?.to_string();
                     Some(ReleaseAsset { name, download_url })
                 })
                 .collect::<Vec<_>>()
@@ -321,14 +322,21 @@ mod tests {
     fn current_version_is_valid() {
         let v = current_version();
         let parts: Vec<&str> = v.split('.').collect();
-        assert_eq!(parts.len(), 3, "CARGO_PKG_VERSION should be major.minor.patch");
+        assert_eq!(
+            parts.len(),
+            3,
+            "CARGO_PKG_VERSION should be major.minor.patch"
+        );
     }
 
     #[test]
     fn current_target_triple_returns_some() {
         let triple = current_target_triple();
         if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
-            assert!(triple.is_some(), "expected a target triple on this platform");
+            assert!(
+                triple.is_some(),
+                "expected a target triple on this platform"
+            );
         }
     }
 

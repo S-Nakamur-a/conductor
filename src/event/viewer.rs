@@ -86,20 +86,20 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     }
 
     match action {
-        Some(Action::NavigateDown) => {
-            if app.viewer_state.content.file_scroll + 1 < total {
-                app.viewer_state.content.file_scroll += 1;
-            }
+        Some(Action::NavigateDown) if app.viewer_state.content.file_scroll + 1 < total => {
+            app.viewer_state.content.file_scroll += 1;
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.content.file_scroll = app.viewer_state.content.file_scroll.saturating_sub(1);
+            app.viewer_state.content.file_scroll =
+                app.viewer_state.content.file_scroll.saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
             app.viewer_state.content.file_scroll =
                 (app.viewer_state.content.file_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.content.file_scroll = app.viewer_state.content.file_scroll.saturating_sub(15);
+            app.viewer_state.content.file_scroll =
+                app.viewer_state.content.file_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
             // 'g' — show symbol hints and wait for second key (gd, gi, gr, gg, or hint label).
@@ -171,22 +171,26 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     }
 
     match action {
-        Some(Action::NavigateDown) => {
-            if app.viewer_state.diff_view.diff_view_scroll + 1 < total {
-                app.viewer_state.diff_view.diff_view_scroll += 1;
-            }
+        Some(Action::NavigateDown) if app.viewer_state.diff_view.diff_view_scroll + 1 < total => {
+            app.viewer_state.diff_view.diff_view_scroll += 1;
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.diff_view.diff_view_scroll =
-                app.viewer_state.diff_view.diff_view_scroll.saturating_sub(1);
+            app.viewer_state.diff_view.diff_view_scroll = app
+                .viewer_state
+                .diff_view
+                .diff_view_scroll
+                .saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
             app.viewer_state.diff_view.diff_view_scroll =
                 (app.viewer_state.diff_view.diff_view_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.diff_view.diff_view_scroll =
-                app.viewer_state.diff_view.diff_view_scroll.saturating_sub(15);
+            app.viewer_state.diff_view.diff_view_scroll = app
+                .viewer_state
+                .diff_view
+                .diff_view_scroll
+                .saturating_sub(15);
         }
         Some(Action::GoToTop) => {
             app.viewer_state.diff_view.diff_view_scroll = 0;
@@ -196,16 +200,14 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::NextHunk) => {
             let lines = &app.viewer_state.diff_view.diff_view_lines;
-            if let Some(idx) =
-                next_change_block(lines, app.viewer_state.diff_view.diff_view_scroll)
+            if let Some(idx) = next_change_block(lines, app.viewer_state.diff_view.diff_view_scroll)
             {
                 app.viewer_state.diff_view.diff_view_scroll = idx;
             }
         }
         Some(Action::PrevHunk) => {
             let lines = &app.viewer_state.diff_view.diff_view_lines;
-            if let Some(idx) =
-                prev_change_block(lines, app.viewer_state.diff_view.diff_view_scroll)
+            if let Some(idx) = prev_change_block(lines, app.viewer_state.diff_view.diff_view_scroll)
             {
                 app.viewer_state.diff_view.diff_view_scroll = idx;
             }
@@ -298,10 +300,15 @@ fn prev_change_block(lines: &[UnifiedDiffEntry], from: usize) -> Option<usize> {
 /// sits inside a fold is still reachable (the jump lands on the fold to expand).
 fn entry_has_comment<V>(entry: &UnifiedDiffEntry, comments: &HashMap<usize, V>) -> bool {
     match entry {
-        UnifiedDiffEntry::Line { new_line_no: Some(n), .. } => comments.contains_key(n),
-        UnifiedDiffEntry::ExpandableContext { new_line_start, new_line_end, .. } => {
-            (*new_line_start..=*new_line_end).any(|l| comments.contains_key(&l))
-        }
+        UnifiedDiffEntry::Line {
+            new_line_no: Some(n),
+            ..
+        } => comments.contains_key(n),
+        UnifiedDiffEntry::ExpandableContext {
+            new_line_start,
+            new_line_end,
+            ..
+        } => (*new_line_start..=*new_line_end).any(|l| comments.contains_key(&l)),
         _ => false,
     }
 }
@@ -321,7 +328,9 @@ fn prev_comment_line<V>(
     comments: &HashMap<usize, V>,
     from: usize,
 ) -> Option<usize> {
-    (0..from).rev().find(|&i| entry_has_comment(&lines[i], comments))
+    (0..from)
+        .rev()
+        .find(|&i| entry_has_comment(&lines[i], comments))
 }
 
 // ── Inline thread helpers ────────────────────────────────────────────
@@ -353,12 +362,13 @@ fn toggle_inline_thread(app: &mut App) {
         // Load replies if not cached.
         if let Some(comments) = app.review_state.file_comments.get(&cursor_line) {
             for comment in comments {
-                if !app.review_state.cached_replies.contains_key(&comment.id) {
-                    if let Some(store) = app.review_store.as_ref() {
-                        if let Ok(replies) = store.get_replies(&comment.id) {
-                            app.review_state.cached_replies.insert(comment.id.clone(), replies);
-                        }
-                    }
+                if !app.review_state.cached_replies.contains_key(&comment.id)
+                    && let Some(store) = app.review_store.as_ref()
+                    && let Ok(replies) = store.get_replies(&comment.id)
+                {
+                    app.review_state
+                        .cached_replies
+                        .insert(comment.id.clone(), replies);
                 }
             }
         }
@@ -383,16 +393,25 @@ fn start_inline_reply(app: &mut App) {
     };
 
     // Auto-expand the thread if not already expanded.
-    if !app.viewer_state.explorer.expanded_inline_threads.contains(&cursor_line) {
-        app.viewer_state.explorer.expanded_inline_threads.insert(cursor_line);
+    if !app
+        .viewer_state
+        .explorer
+        .expanded_inline_threads
+        .contains(&cursor_line)
+    {
+        app.viewer_state
+            .explorer
+            .expanded_inline_threads
+            .insert(cursor_line);
         // Load replies if not cached.
         for comment in comments {
-            if !app.review_state.cached_replies.contains_key(&comment.id) {
-                if let Some(store) = app.review_store.as_ref() {
-                    if let Ok(replies) = store.get_replies(&comment.id) {
-                        app.review_state.cached_replies.insert(comment.id.clone(), replies);
-                    }
-                }
+            if !app.review_state.cached_replies.contains_key(&comment.id)
+                && let Some(store) = app.review_store.as_ref()
+                && let Ok(replies) = store.get_replies(&comment.id)
+            {
+                app.review_state
+                    .cached_replies
+                    .insert(comment.id.clone(), replies);
             }
         }
     }
@@ -431,7 +450,12 @@ fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
             if app.viewer_state.explorer.inline_reply_line.is_none() {
                 return;
             }
-            let body = app.viewer_state.explorer.inline_reply_buffer.text().to_string();
+            let body = app
+                .viewer_state
+                .explorer
+                .inline_reply_buffer
+                .text()
+                .to_string();
             if body.trim().is_empty() {
                 app.viewer_state.explorer.inline_reply_line = None;
                 app.viewer_state.explorer.inline_reply_comment_id = None;
@@ -479,7 +503,10 @@ fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
             app.viewer_state.explorer.inline_reply_buffer.clear();
         }
         KeyCode::Backspace => {
-            app.viewer_state.explorer.inline_reply_buffer.delete_backward();
+            app.viewer_state
+                .explorer
+                .inline_reply_buffer
+                .delete_backward();
         }
         KeyCode::Char(c) => {
             app.viewer_state.explorer.inline_reply_buffer.insert_char(c);
@@ -500,7 +527,10 @@ fn handle_go_to_definition(app: &mut App) {
     };
 
     if !app.symbol_index.is_available() {
-        app.set_status("Symbol index not ready yet".to_string(), StatusLevel::Warning);
+        app.set_status(
+            "Symbol index not ready yet".to_string(),
+            StatusLevel::Warning,
+        );
         return;
     }
 
@@ -509,7 +539,10 @@ fn handle_go_to_definition(app: &mut App) {
         let root = app.symbol_index.root();
         let refs = app.symbol_index.find_references(&symbol, &root);
         if refs.is_empty() {
-            app.set_status(format!("No references found for '{symbol}'"), StatusLevel::Warning);
+            app.set_status(
+                format!("No references found for '{symbol}'"),
+                StatusLevel::Warning,
+            );
         } else {
             let count = refs.len();
             app.references_overlay.active = true;
@@ -528,14 +561,20 @@ fn handle_go_to_definition(app: &mut App) {
     let defs = app.symbol_index.find_definitions(&symbol);
     match defs.len() {
         0 => {
-            app.set_status(format!("No definition found for '{symbol}'"), StatusLevel::Warning);
+            app.set_status(
+                format!("No definition found for '{symbol}'"),
+                StatusLevel::Warning,
+            );
         }
         1 => {
             let def = &defs[0];
             let file = def.file_path.clone();
             let line = def.line;
             app.jump_to_location(&file, line, 0);
-            app.set_status(format!("Jumped to definition of '{symbol}'"), StatusLevel::Success);
+            app.set_status(
+                format!("Jumped to definition of '{symbol}'"),
+                StatusLevel::Success,
+            );
         }
         n => {
             // Multiple definitions — show in references overlay.
@@ -551,7 +590,10 @@ fn handle_go_to_definition(app: &mut App) {
                 .collect();
             app.references_overlay.selected = 0;
             app.references_overlay.scroll = 0;
-            app.set_status(format!("{n} definitions found for '{symbol}'"), StatusLevel::Info);
+            app.set_status(
+                format!("{n} definitions found for '{symbol}'"),
+                StatusLevel::Info,
+            );
         }
     }
 }
@@ -566,21 +608,30 @@ fn handle_go_to_implementation(app: &mut App) {
     };
 
     if !app.symbol_index.is_available() {
-        app.set_status("Symbol index not ready yet".to_string(), StatusLevel::Warning);
+        app.set_status(
+            "Symbol index not ready yet".to_string(),
+            StatusLevel::Warning,
+        );
         return;
     }
 
     let impls = app.symbol_index.find_implementations(&symbol);
     match impls.len() {
         0 => {
-            app.set_status(format!("No implementations found for '{symbol}'"), StatusLevel::Warning);
+            app.set_status(
+                format!("No implementations found for '{symbol}'"),
+                StatusLevel::Warning,
+            );
         }
         1 => {
             let imp = &impls[0];
             let file = imp.file_path.clone();
             let line = imp.line;
             app.jump_to_location(&file, line, 0);
-            app.set_status(format!("Jumped to implementation of '{symbol}'"), StatusLevel::Success);
+            app.set_status(
+                format!("Jumped to implementation of '{symbol}'"),
+                StatusLevel::Success,
+            );
         }
         n => {
             app.references_overlay.active = true;
@@ -595,7 +646,10 @@ fn handle_go_to_implementation(app: &mut App) {
                 .collect();
             app.references_overlay.selected = 0;
             app.references_overlay.scroll = 0;
-            app.set_status(format!("{n} implementations found for '{symbol}'"), StatusLevel::Info);
+            app.set_status(
+                format!("{n} implementations found for '{symbol}'"),
+                StatusLevel::Info,
+            );
         }
     }
 }
@@ -613,7 +667,10 @@ fn handle_find_references(app: &mut App) {
     let refs = app.symbol_index.find_references(&symbol, &root);
 
     if refs.is_empty() {
-        app.set_status(format!("No references found for '{symbol}'"), StatusLevel::Warning);
+        app.set_status(
+            format!("No references found for '{symbol}'"),
+            StatusLevel::Warning,
+        );
         return;
     }
 
@@ -636,9 +693,15 @@ mod tests {
             inline_segments: Vec::new(),
         }
     }
-    fn eq() -> UnifiedDiffEntry { ln(DiffLineTag::Equal) }
-    fn ins() -> UnifiedDiffEntry { ln(DiffLineTag::Insert) }
-    fn del() -> UnifiedDiffEntry { ln(DiffLineTag::Delete) }
+    fn eq() -> UnifiedDiffEntry {
+        ln(DiffLineTag::Equal)
+    }
+    fn ins() -> UnifiedDiffEntry {
+        ln(DiffLineTag::Insert)
+    }
+    fn del() -> UnifiedDiffEntry {
+        ln(DiffLineTag::Delete)
+    }
     fn sep() -> UnifiedDiffEntry {
         UnifiedDiffEntry::HunkSeparator { func_header: None }
     }
@@ -710,10 +773,10 @@ mod tests {
     fn comment_navigation() {
         let comments: HashMap<usize, ()> = [(5, ()), (8, ())].into_iter().collect();
         let v = vec![
-            line_no(DiffLineTag::Equal, 4),   // 0: no comment
-            line_no(DiffLineTag::Insert, 5),  // 1: commented
-            del_no_line(),                    // 2: delete, never commented
-            line_no(DiffLineTag::Equal, 8),   // 3: commented
+            line_no(DiffLineTag::Equal, 4),  // 0: no comment
+            line_no(DiffLineTag::Insert, 5), // 1: commented
+            del_no_line(),                   // 2: delete, never commented
+            line_no(DiffLineTag::Equal, 8),  // 3: commented
         ];
         assert_eq!(next_comment_line(&v, &comments, 0), Some(1));
         assert_eq!(next_comment_line(&v, &comments, 1), Some(3));

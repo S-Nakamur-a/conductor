@@ -3,13 +3,11 @@
 //! This module contains methods for spawning and managing Claude Code and Shell
 //! PTY sessions, permission auto-response, and related helpers.
 
+use super::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use super::*;
 
-const SESSION_ICONS: &[&str] = &[
-    "1", "2", "3", "4", "5", "6", "7", "8", "9",
-];
+const SESSION_ICONS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 impl App {
     /// Spawn a new Claude Code PTY session for the currently selected worktree.
@@ -18,13 +16,19 @@ impl App {
     }
 
     /// Spawn a new Claude Code PTY session with an optional `--name` flag.
-    pub fn spawn_claude_code_with_name(&mut self, session_name: Option<&str>) -> anyhow::Result<usize> {
+    pub fn spawn_claude_code_with_name(
+        &mut self,
+        session_name: Option<&str>,
+    ) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let used_ids: Vec<&str> = self
-            .terminal.pty_manager
+            .terminal
+            .pty_manager
             .sessions()
             .iter()
-            .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode)
+            .filter(|s| {
+                s.working_dir == working_dir && s.kind == pty_manager::SessionKind::ClaudeCode
+            })
             .filter_map(|s| s.label.strip_prefix("CC:"))
             .collect();
         let id = SESSION_ICONS
@@ -56,7 +60,8 @@ impl App {
     pub fn spawn_shell(&mut self) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let sh_count = self
-            .terminal.pty_manager
+            .terminal
+            .pty_manager
             .sessions()
             .iter()
             .filter(|s| s.working_dir == working_dir && s.kind == pty_manager::SessionKind::Shell)
@@ -101,9 +106,12 @@ impl App {
         self.terminal.deferred_prompts.extend(shifted);
 
         // Adjust active session indices.
-        for a in [&mut self.terminal.active_claude_session, &mut self.terminal.active_shell_session]
-            .into_iter()
-            .flatten()
+        for a in [
+            &mut self.terminal.active_claude_session,
+            &mut self.terminal.active_shell_session,
+        ]
+        .into_iter()
+        .flatten()
         {
             if *a == global_idx {
                 *a = usize::MAX; // mark for clear
@@ -155,7 +163,13 @@ impl App {
                 self.terminal.deferred_prompts.extend(shifted);
 
                 // Adjust active session indices.
-                for a in [&mut self.terminal.active_claude_session, &mut self.terminal.active_shell_session].into_iter().flatten() {
+                for a in [
+                    &mut self.terminal.active_claude_session,
+                    &mut self.terminal.active_shell_session,
+                ]
+                .into_iter()
+                .flatten()
+                {
                     if *a == idx {
                         *a = usize::MAX; // mark for clear
                     } else if *a > idx {
@@ -200,12 +214,21 @@ impl App {
     }
 
     /// Return the filtered list of resume sessions based on the current filter string.
-    pub fn filtered_resume_sessions(&self) -> Vec<(usize, &crate::claude_sessions::ResumableSession)> {
+    pub fn filtered_resume_sessions(
+        &self,
+    ) -> Vec<(usize, &crate::claude_sessions::ResumableSession)> {
         if self.overlays.resume_session.filter.is_empty() {
-            self.overlays.resume_session.sessions.iter().enumerate().collect()
+            self.overlays
+                .resume_session
+                .sessions
+                .iter()
+                .enumerate()
+                .collect()
         } else {
             let filter_lower = self.overlays.resume_session.filter.to_lowercase();
-            self.overlays.resume_session.sessions
+            self.overlays
+                .resume_session
+                .sessions
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| {
@@ -218,7 +241,11 @@ impl App {
     }
 
     /// Resume a Claude Code session by its session ID.
-    pub fn resume_claude_session(&mut self, session_id: &str, display: &str) -> anyhow::Result<usize> {
+    pub fn resume_claude_session(
+        &mut self,
+        session_id: &str,
+        display: &str,
+    ) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let label: String = display.chars().take(40).collect();
         let label = if label.is_empty() {
@@ -273,7 +300,10 @@ impl App {
         // If we have a grabbed branch with a session ID, use it for the main worktree
         // instead of whatever auto-resume would normally find (since the session was
         // created in the source worktree, not the main worktree).
-        let grabbed_session_for_main = self.worktree_mgr.grabbed_branch.as_ref()
+        let grabbed_session_for_main = self
+            .worktree_mgr
+            .grabbed_branch
+            .as_ref()
             .and_then(|g| g.claude_session_id.clone());
 
         let selected_wt_path = self.selected_worktree_path();
@@ -286,34 +316,34 @@ impl App {
             let canonical = std::fs::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
 
             // For main worktree with a grabbed session, prefer the grabbed session ID.
-            if wt.is_main {
-                if let Some(ref grabbed_id) = grabbed_session_for_main {
-                    let label = format!("Resume:{}", &grabbed_id[..8.min(grabbed_id.len())]);
-                    match self.terminal.pty_manager.spawn_session(
-                        pty_manager::SessionKind::ClaudeCode,
-                        &wt.branch,
-                        &label,
-                        &shell,
-                        &wt.path,
-                        rows,
-                        cols,
-                        Some(grabbed_id),
-                        &repo_path,
-                        None,
-                    ) {
-                        Ok(idx) => {
-                            resumed_count += 1;
-                            if wt.path == selected_wt_path {
-                                self.terminal.pty_manager.activate_session(idx);
-                                self.terminal.active_claude_session = Some(idx);
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("auto-resume: failed to resume grabbed session for main: {e}");
+            if wt.is_main
+                && let Some(ref grabbed_id) = grabbed_session_for_main
+            {
+                let label = format!("Resume:{}", &grabbed_id[..8.min(grabbed_id.len())]);
+                match self.terminal.pty_manager.spawn_session(
+                    pty_manager::SessionKind::ClaudeCode,
+                    &wt.branch,
+                    &label,
+                    &shell,
+                    &wt.path,
+                    rows,
+                    cols,
+                    Some(grabbed_id),
+                    &repo_path,
+                    None,
+                ) {
+                    Ok(idx) => {
+                        resumed_count += 1;
+                        if wt.path == selected_wt_path {
+                            self.terminal.pty_manager.activate_session(idx);
+                            self.terminal.active_claude_session = Some(idx);
                         }
                     }
-                    continue;
+                    Err(e) => {
+                        log::warn!("auto-resume: failed to resume grabbed session for main: {e}");
+                    }
                 }
+                continue;
             }
 
             // Skip normal auto-resume for the main worktree unless explicitly
@@ -329,7 +359,10 @@ impl App {
 
             let label: String = session.display.chars().take(40).collect();
             let label = if label.is_empty() {
-                format!("Resume:{}", &session.session_id[..8.min(session.session_id.len())])
+                format!(
+                    "Resume:{}",
+                    &session.session_id[..8.min(session.session_id.len())]
+                )
             } else {
                 label
             };
@@ -355,7 +388,10 @@ impl App {
                     }
                 }
                 Err(e) => {
-                    log::warn!("auto-resume: failed to spawn session for {}: {e}", wt.branch);
+                    log::warn!(
+                        "auto-resume: failed to spawn session for {}: {e}",
+                        wt.branch
+                    );
                 }
             }
         }
@@ -372,11 +408,14 @@ impl App {
     /// belonging to the currently selected worktree.
     pub fn current_worktree_claude_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
-        self.terminal.pty_manager
+        self.terminal
+            .pty_manager
             .sessions()
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode)
+            .filter(|(_, s)| {
+                s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode
+            })
             .collect()
     }
 
@@ -384,7 +423,8 @@ impl App {
     /// belonging to the currently selected worktree.
     pub fn current_worktree_shell_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
-        self.terminal.pty_manager
+        self.terminal
+            .pty_manager
             .sessions()
             .iter()
             .enumerate()
@@ -409,14 +449,24 @@ impl App {
         let right_w = cols[3].width;
         if right_w > border_cols {
             let right_cols = right_w.saturating_sub(border_cols);
-            let claude_pty_rows = self.layout_cache.terminal_split[0].height.saturating_sub(border_rows);
-            let shell_pty_rows = self.layout_cache.terminal_split[1].height.saturating_sub(border_rows);
+            let claude_pty_rows = self.layout_cache.terminal_split[0]
+                .height
+                .saturating_sub(border_rows);
+            let shell_pty_rows = self.layout_cache.terminal_split[1]
+                .height
+                .saturating_sub(border_rows);
 
-            if (claude_pty_rows, right_cols) != *last_claude_size && claude_pty_rows > 0 && right_cols > 0 {
+            if (claude_pty_rows, right_cols) != *last_claude_size
+                && claude_pty_rows > 0
+                && right_cols > 0
+            {
                 *last_claude_size = (claude_pty_rows, right_cols);
                 self.update_claude_terminal_size(claude_pty_rows, right_cols);
             }
-            if (shell_pty_rows, right_cols) != *last_shell_size && shell_pty_rows > 0 && right_cols > 0 {
+            if (shell_pty_rows, right_cols) != *last_shell_size
+                && shell_pty_rows > 0
+                && right_cols > 0
+            {
                 *last_shell_size = (shell_pty_rows, right_cols);
                 self.update_shell_terminal_size(shell_pty_rows, right_cols);
             }
@@ -473,7 +523,9 @@ impl App {
         if head_changed || status_changed {
             log::debug!(
                 "Change detected for worktree '{}': head_changed={}, status_changed={}",
-                wt.branch, head_changed, status_changed,
+                wt.branch,
+                head_changed,
+                status_changed,
             );
             self.refresh_diff();
             self.refresh_viewer();
@@ -504,9 +556,10 @@ impl App {
         };
 
         // Verify a CC session exists for this worktree.
-        let has_session = self.terminal.pty_manager.sessions().iter().any(|s| {
-            s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == wt_path
-        });
+        let has_session =
+            self.terminal.pty_manager.sessions().iter().any(|s| {
+                s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == wt_path
+            });
         if !has_session {
             return;
         }
@@ -516,20 +569,19 @@ impl App {
                 self.terminal.cc_active_worktrees.remove(&wt_path);
 
                 // Check ack suppression.
-                if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(&wt_path) {
-                    if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
-                        s.kind == pty_manager::SessionKind::ClaudeCode
-                            && s.working_dir == wt_path
-                    }) {
-                        let current = *session
-                            .last_output_time
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        if current == ack_time {
-                            return; // Suppressed — no new output since ack.
-                        }
-                        self.terminal.cc_waiting_ack_time.remove(&wt_path);
+                if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(&wt_path)
+                    && let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
+                        s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == wt_path
+                    })
+                {
+                    let current = *session
+                        .last_output_time
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if current == ack_time {
+                        return; // Suppressed — no new output since ack.
                     }
+                    self.terminal.cc_waiting_ack_time.remove(&wt_path);
                 }
 
                 // Focus suppression: if user is focused on this terminal, auto-ack.
@@ -581,24 +633,25 @@ impl App {
             .join(".conductor");
 
         // Helper: scan a signal directory and collect matching worktree paths.
-        let scan_signal_dir = |dir_name: &str, worktrees: &[crate::git_engine::WorktreeInfo]| -> HashSet<PathBuf> {
-            let mut result = HashSet::new();
-            let signal_dir = conductor_dir.join(dir_name);
-            if let Ok(entries) = std::fs::read_dir(&signal_dir) {
-                for entry in entries.flatten() {
-                    let filename = entry.file_name().to_string_lossy().to_string();
-                    let signal_path: PathBuf = PathBuf::from(filename.replace("__", "/"));
-                    let signal_normalized: PathBuf = signal_path.components().collect();
-                    for wt in worktrees {
-                        let wt_normalized: PathBuf = wt.path.components().collect();
-                        if wt_normalized == signal_normalized {
-                            result.insert(wt.path.clone());
+        let scan_signal_dir =
+            |dir_name: &str, worktrees: &[crate::git_engine::WorktreeInfo]| -> HashSet<PathBuf> {
+                let mut result = HashSet::new();
+                let signal_dir = conductor_dir.join(dir_name);
+                if let Ok(entries) = std::fs::read_dir(&signal_dir) {
+                    for entry in entries.flatten() {
+                        let filename = entry.file_name().to_string_lossy().to_string();
+                        let signal_path: PathBuf = PathBuf::from(filename.replace("__", "/"));
+                        let signal_normalized: PathBuf = signal_path.components().collect();
+                        for wt in worktrees {
+                            let wt_normalized: PathBuf = wt.path.components().collect();
+                            if wt_normalized == signal_normalized {
+                                result.insert(wt.path.clone());
+                            }
                         }
                     }
                 }
-            }
-            result
-        };
+                result
+            };
 
         let mut new_waiting = scan_signal_dir("cc-waiting", &self.worktrees);
         let mut new_active = scan_signal_dir("cc-active", &self.worktrees);
@@ -625,14 +678,15 @@ impl App {
             // Record ack so the notification is not re-triggered by the
             // PTY pattern-match source until new output arrives.
             if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
-                s.kind == pty_manager::SessionKind::ClaudeCode
-                    && s.working_dir == current_wt_path
+                s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == current_wt_path
             }) {
                 let t = *session
                     .last_output_time
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                self.terminal.cc_waiting_ack_time.insert(current_wt_path.clone(), t);
+                self.terminal
+                    .cc_waiting_ack_time
+                    .insert(current_wt_path.clone(), t);
             }
         }
 
@@ -642,8 +696,7 @@ impl App {
         new_waiting.retain(|wt_path| {
             if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(wt_path) {
                 if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
-                    s.kind == pty_manager::SessionKind::ClaudeCode
-                        && s.working_dir == *wt_path
+                    s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == *wt_path
                 }) {
                     let current = *session
                         .last_output_time
@@ -665,14 +718,19 @@ impl App {
         for wt_path in &new_waiting {
             if !self.terminal.cc_waiting_worktrees.contains(wt_path) {
                 // Resolve display name from worktree list.
-                let display_name = self.worktrees.iter()
+                let display_name = self
+                    .worktrees
+                    .iter()
                     .find(|w| &w.path == wt_path)
                     .map(|w| w.branch.clone())
                     .unwrap_or_else(|| "?".to_string());
                 // Newly waiting — notify if user is not focused on that terminal.
                 let skip_notify = is_terminal_focused && *wt_path == current_wt_path;
                 if !skip_notify {
-                    self.set_status(format!("CC waiting for input: {display_name}"), StatusLevel::Info);
+                    self.set_status(
+                        format!("CC waiting for input: {display_name}"),
+                        StatusLevel::Info,
+                    );
                 }
             }
         }
@@ -704,7 +762,10 @@ impl App {
             .collect();
         for idx in ready {
             if let Some(prompt) = self.terminal.deferred_prompts.remove(&idx) {
-                let _ = self.terminal.pty_manager.write_chunked_to_session(idx, &prompt);
+                let _ = self
+                    .terminal
+                    .pty_manager
+                    .write_chunked_to_session(idx, &prompt);
             }
         }
     }
@@ -726,7 +787,9 @@ impl App {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let working_dir = session.working_dir.clone();
-        self.terminal.cc_waiting_ack_time.insert(working_dir.clone(), last_output);
+        self.terminal
+            .cc_waiting_ack_time
+            .insert(working_dir.clone(), last_output);
 
         let conductor_dir = git_engine::GitEngine::open(&self.repo_path)
             .and_then(|e| e.main_worktree_path())
@@ -740,5 +803,4 @@ impl App {
         self.terminal.cc_waiting_worktrees.remove(&working_dir);
         self.terminal.cc_active_worktrees.remove(&working_dir);
     }
-
 }

@@ -5,11 +5,11 @@
 //! `render_*` (drawing) function.  The top-level [`tick_decoration`] and
 //! [`render_decoration`] dispatch to the active mode.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::theme::Theme;
 
@@ -270,7 +270,7 @@ pub fn tick_aquarium(
     }
 
     // Move fish every 3rd tick for a relaxed pace.
-    if ui_tick % 3 == 0 {
+    if ui_tick.is_multiple_of(3) {
         let max_x = width.saturating_sub(2) as f32;
         let usable_height = height.saturating_sub(1);
         for fish in &mut state.fish {
@@ -284,7 +284,7 @@ pub fn tick_aquarium(
                 fish.direction = -1;
             }
             // Occasionally change vertical position.
-            if ui_tick % 15 == 0 && usable_height > 2 {
+            if ui_tick.is_multiple_of(15) && usable_height > 2 {
                 let raw = fish.y as i16 + fish.direction as i16;
                 let new_y = (raw.max(0) as u16).min(usable_height.saturating_sub(2));
                 fish.y = new_y;
@@ -293,7 +293,7 @@ pub fn tick_aquarium(
     }
 
     // Float bubbles upward every 2nd tick.
-    if ui_tick % 2 == 0 {
+    if ui_tick.is_multiple_of(2) {
         for bubble in &mut state.bubbles {
             bubble.y -= 0.3;
         }
@@ -306,7 +306,7 @@ pub fn tick_aquarium(
         DecorationActivity::Calm => 12,
         DecorationActivity::Active => 5,
     };
-    if ui_tick % spawn_chance == 0 && state.bubbles.len() < 8 {
+    if ui_tick.is_multiple_of(spawn_chance) && state.bubbles.len() < 8 {
         let x = ((ui_tick * 7 + 3) % width as u64) as u16;
         let y = height.saturating_sub(2) as f32;
         state.bubbles.push(Bubble { x, y });
@@ -467,7 +467,7 @@ fn tick_space(
     }
 
     // Move planets slowly.
-    if tick % 5 == 0 {
+    if tick.is_multiple_of(5) {
         let max_x = width.saturating_sub(2) as f32;
         for planet in &mut state.planets {
             planet.x += planet.speed * planet.direction as f32;
@@ -495,7 +495,7 @@ fn tick_space(
         DecorationActivity::Calm => (25_u64, 1_usize),
         DecorationActivity::Active => (10, 3),
     };
-    if tick % spawn_interval == 0 && state.shooting_stars.len() < max_shooting {
+    if tick.is_multiple_of(spawn_interval) && state.shooting_stars.len() < max_shooting {
         let x = 0.0_f32;
         let y = (pseudo_random(tick, 42) % height.saturating_sub(2) as u64) as f32;
         state.shooting_stars.push(ShootingStar { x, y });
@@ -667,7 +667,7 @@ fn tick_garden(
     let max_y = height.saturating_sub(2) as f32;
 
     // Move butterflies every 2nd tick.
-    if tick % 2 == 0 {
+    if tick.is_multiple_of(2) {
         for (i, bf) in state.butterflies.iter_mut().enumerate() {
             bf.x += bf.dx;
             bf.y += bf.dy;
@@ -698,7 +698,7 @@ fn tick_garden(
     }
 
     // Birds — fly horizontally and leave the area.
-    if tick % 2 == 0 {
+    if tick.is_multiple_of(2) {
         for bird in &mut state.birds {
             bird.x += bird.speed * bird.direction as f32;
         }
@@ -712,7 +712,7 @@ fn tick_garden(
         DecorationActivity::Calm => 2_usize,
         DecorationActivity::Active => 4,
     };
-    if tick % 20 == 0 && state.butterflies.len() < target_count {
+    if tick.is_multiple_of(20) && state.butterflies.len() < target_count {
         let r = pseudo_random(tick, 55);
         let x = (r % width as u64) as f32;
         let y = (r >> 8) % max_y.max(1.0) as u64;
@@ -725,10 +725,10 @@ fn tick_garden(
     }
 
     // Active mode: spawn a bird occasionally.
-    if activity == DecorationActivity::Active && tick % 30 == 0 && state.birds.len() < 2 {
+    if activity == DecorationActivity::Active && tick.is_multiple_of(30) && state.birds.len() < 2 {
         let r = pseudo_random(tick, 77);
         let y = ((r % height.saturating_sub(2) as u64) as u16).min(height / 2);
-        let from_left = r % 2 == 0;
+        let from_left = r.is_multiple_of(2);
         state.birds.push(Bird {
             x: if from_left { 0.0 } else { max_x },
             y,
@@ -905,7 +905,7 @@ fn tick_city(
     let max_x = width.saturating_sub(2) as f32;
 
     // Move cars every 2nd tick.
-    if tick % 2 == 0 {
+    if tick.is_multiple_of(2) {
         for car in &mut state.cars {
             car.x += car.speed * car.direction as f32;
             // Wrap around.
@@ -924,9 +924,9 @@ fn tick_city(
     };
 
     // Spawn cars to reach the target.
-    if tick % 15 == 0 && state.cars.len() < target_cars {
+    if tick.is_multiple_of(15) && state.cars.len() < target_cars {
         let r = pseudo_random(tick, 33);
-        let from_left = r % 2 == 0;
+        let from_left = r.is_multiple_of(2);
         let emoji = CAR_EMOJIS[(r >> 4) as usize % CAR_EMOJIS.len()];
         let speed = match activity {
             DecorationActivity::Calm => 0.4,
@@ -941,7 +941,7 @@ fn tick_city(
     }
 
     // Remove excess cars gradually.
-    if state.cars.len() > target_cars && tick % 20 == 0 {
+    if state.cars.len() > target_cars && tick.is_multiple_of(20) {
         // Remove the last car.
         state.cars.pop();
     }
@@ -1003,7 +1003,10 @@ mod tests {
 
     #[test]
     fn mode_from_str_known_values() {
-        assert_eq!(DecorationMode::from_str("aquarium"), DecorationMode::Aquarium);
+        assert_eq!(
+            DecorationMode::from_str("aquarium"),
+            DecorationMode::Aquarium
+        );
         assert_eq!(DecorationMode::from_str("space"), DecorationMode::Space);
         assert_eq!(DecorationMode::from_str("garden"), DecorationMode::Garden);
         assert_eq!(DecorationMode::from_str("city"), DecorationMode::City);
@@ -1012,7 +1015,10 @@ mod tests {
 
     #[test]
     fn mode_from_str_defaults_to_aquarium() {
-        assert_eq!(DecorationMode::from_str("unknown"), DecorationMode::Aquarium);
+        assert_eq!(
+            DecorationMode::from_str("unknown"),
+            DecorationMode::Aquarium
+        );
         assert_eq!(DecorationMode::from_str(""), DecorationMode::Aquarium);
     }
 
@@ -1218,24 +1224,59 @@ mod tests {
         let mut states = DecorationStates::default();
 
         // Tick each mode and verify the corresponding state got initialized.
-        tick_decoration(&mut states, 0, 20, 6, DecorationActivity::Calm, DecorationMode::Aquarium);
+        tick_decoration(
+            &mut states,
+            0,
+            20,
+            6,
+            DecorationActivity::Calm,
+            DecorationMode::Aquarium,
+        );
         assert!(states.aquarium.initialized);
         assert!(!states.space.initialized);
 
-        tick_decoration(&mut states, 0, 20, 6, DecorationActivity::Calm, DecorationMode::Space);
+        tick_decoration(
+            &mut states,
+            0,
+            20,
+            6,
+            DecorationActivity::Calm,
+            DecorationMode::Space,
+        );
         assert!(states.space.initialized);
 
-        tick_decoration(&mut states, 0, 20, 6, DecorationActivity::Calm, DecorationMode::Garden);
+        tick_decoration(
+            &mut states,
+            0,
+            20,
+            6,
+            DecorationActivity::Calm,
+            DecorationMode::Garden,
+        );
         assert!(states.garden.initialized);
 
-        tick_decoration(&mut states, 0, 20, 6, DecorationActivity::Calm, DecorationMode::City);
+        tick_decoration(
+            &mut states,
+            0,
+            20,
+            6,
+            DecorationActivity::Calm,
+            DecorationMode::City,
+        );
         assert!(states.city.initialized);
     }
 
     #[test]
     fn tick_decoration_none_is_noop() {
         let mut states = DecorationStates::default();
-        tick_decoration(&mut states, 0, 20, 6, DecorationActivity::Calm, DecorationMode::None);
+        tick_decoration(
+            &mut states,
+            0,
+            20,
+            6,
+            DecorationActivity::Calm,
+            DecorationMode::None,
+        );
         assert!(!states.aquarium.initialized);
         assert!(!states.space.initialized);
         assert!(!states.garden.initialized);

@@ -99,14 +99,14 @@ fn try_lock() -> Option<PathBuf> {
     }
     // Stale lock guard: if the lock file is older than 60 seconds, a previous
     // process likely crashed without cleaning up. Remove it so we can proceed.
-    if let Ok(meta) = fs::metadata(&path) {
-        if let Ok(modified) = meta.modified() {
-            let age = SystemTime::now()
-                .duration_since(modified)
-                .unwrap_or_default();
-            if age.as_secs() > 60 {
-                let _ = fs::remove_file(&path);
-            }
+    if let Ok(meta) = fs::metadata(&path)
+        && let Ok(modified) = meta.modified()
+    {
+        let age = SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_default();
+        if age.as_secs() > 60 {
+            let _ = fs::remove_file(&path);
         }
     }
     // create_new: atomic O_CREAT|O_EXCL — fails if another process holds the lock.

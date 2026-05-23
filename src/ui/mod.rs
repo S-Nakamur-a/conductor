@@ -7,11 +7,11 @@ use crate::theme::Theme;
 
 pub mod common;
 pub mod decoration;
-pub mod worktree_panel;
 pub mod explorer_panel;
-pub mod viewer_panel;
 pub mod terminal_claude;
 pub mod terminal_shell;
+pub mod viewer_panel;
+pub mod worktree_panel;
 
 // Top-level layout orchestration (render_ui, accordion_widths).
 pub mod layout;
@@ -19,10 +19,10 @@ pub mod layout;
 // Overlay renderers (used from layout::render_ui overlays).
 pub mod dashboard;
 pub mod grep_search;
+pub mod panel_overlay;
 pub mod references;
 pub mod review;
 pub mod symbol_action;
-pub mod panel_overlay;
 
 /// Shared read-only context extracted from `App` for UI rendering.
 ///

@@ -211,13 +211,24 @@ impl DiffState {
     ///
     /// Computes both committed (merge-base..HEAD) and uncommitted (HEAD vs
     /// workdir+index) diffs.
-    pub fn load_diff(&mut self, worktree_path: &Path, base_branch: &str, word_diff: bool, tab_width: usize) {
+    pub fn load_diff(
+        &mut self,
+        worktree_path: &Path,
+        base_branch: &str,
+        word_diff: bool,
+        tab_width: usize,
+    ) {
         self.base_branch = base_branch.to_string();
         self.error = None;
 
         // Compute committed diff.
-        match Self::compute_diff_range(worktree_path, base_branch, DiffRange::Committed, word_diff, tab_width)
-        {
+        match Self::compute_diff_range(
+            worktree_path,
+            base_branch,
+            DiffRange::Committed,
+            word_diff,
+            tab_width,
+        ) {
             Ok(mut files) => {
                 files.sort_by(|a, b| a.path.cmp(&b.path));
                 self.committed_files = files;
@@ -491,9 +502,7 @@ impl DiffState {
                 self.rebuild_display_list();
                 true
             }
-            Some(DiffListEntry::Directory {
-                section, path, ..
-            }) => {
+            Some(DiffListEntry::Directory { section, path, .. }) => {
                 let key = Self::dir_collapse_key(*section, path);
                 if self.collapsed_dirs.contains(&key) {
                     self.collapsed_dirs.remove(&key);
@@ -508,6 +517,11 @@ impl DiffState {
     }
 
     /// Collapse the section or directory at the given display index.
+    // The inner `if` must NOT be collapsed into a match guard: the next arm's
+    // `match entry { Directory => unreachable!() }` relies on this arm matching
+    // *all* `Directory` entries. Guarding would let already-collapsed dirs fall
+    // through and panic.
+    #[allow(clippy::collapsible_match)]
     pub fn collapse_section(&mut self, display_idx: usize) {
         match self.display_list.get(display_idx) {
             Some(DiffListEntry::Directory {
@@ -544,6 +558,9 @@ impl DiffState {
     }
 
     /// Expand the section or directory at the given display index.
+    // See `collapse_section`: the inner `if` must stay out of the match guard,
+    // otherwise already-expanded dirs fall through to the `unreachable!()` arm.
+    #[allow(clippy::collapsible_match)]
     pub fn expand_section(&mut self, display_idx: usize) {
         match self.display_list.get(display_idx) {
             Some(DiffListEntry::Directory {
@@ -849,15 +866,15 @@ impl DiffState {
                                 .collect();
 
                             // Build content by joining segment texts.
-                            let content: String = segments.iter()
+                            let content: String = segments
+                                .iter()
                                 .map(|s| s.text.trim_end_matches('\n').trim_end_matches('\r'))
                                 .collect::<Vec<_>>()
                                 .join("");
                             let content = Self::expand_tabs(&content, tab_width);
 
                             let has_emphasis = segments.iter().any(|s| s.emphasized);
-                            let inline_segments =
-                                if has_emphasis { segments } else { Vec::new() };
+                            let inline_segments = if has_emphasis { segments } else { Vec::new() };
 
                             hunk_lines.push(DiffLine {
                                 tag,
@@ -994,8 +1011,7 @@ impl DiffState {
     /// new_path are equal when compared case-insensitively but differ in their
     /// exact bytes.  Returns `false` if either path is absent.
     fn is_case_only_rename(delta: &git2::DiffDelta<'_>) -> bool {
-        if let (Some(old_path), Some(new_path)) =
-            (delta.old_file().path(), delta.new_file().path())
+        if let (Some(old_path), Some(new_path)) = (delta.old_file().path(), delta.new_file().path())
         {
             let old_s = old_path.to_string_lossy();
             let new_s = new_path.to_string_lossy();
@@ -1161,5 +1177,37 @@ mod tests {
             !files.is_empty(),
             "case rename with content change should NOT be filtered out"
         );
+    }
+
+    /// Regression: collapsing an already-collapsed directory (or expanding an
+    /// already-expanded one) must be a no-op, not a panic. A `clippy --fix`
+    /// collapsible_match auto-fix once turned the inner `if` into a match guard,
+    /// which let these cases fall through to the `unreachable!()` arm.
+    #[test]
+    fn collapse_already_collapsed_dir_does_not_panic() {
+        use super::*;
+        let mut ds = DiffState::new("main", DiffViewMode::Unified);
+        ds.display_list = vec![DiffListEntry::Directory {
+            section: DiffSection::Committed,
+            path: "src".to_string(),
+            name: "src".to_string(),
+            depth: 0,
+            collapsed: true,
+        }];
+        ds.collapse_section(0); // must not panic
+    }
+
+    #[test]
+    fn expand_already_expanded_dir_does_not_panic() {
+        use super::*;
+        let mut ds = DiffState::new("main", DiffViewMode::Unified);
+        ds.display_list = vec![DiffListEntry::Directory {
+            section: DiffSection::Committed,
+            path: "src".to_string(),
+            name: "src".to_string(),
+            depth: 0,
+            collapsed: false,
+        }];
+        ds.expand_section(0); // must not panic
     }
 }

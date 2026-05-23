@@ -52,14 +52,12 @@ impl App {
                 branch.as_deref(),
             ) {
                 Ok(_) => {
-                    self.review_state.status_message =
-                        Some("Comment added.".to_string());
+                    self.review_state.status_message = Some("Comment added.".to_string());
                     self.record_stat("reviews_created");
                 }
                 Err(e) => {
                     log::warn!("failed to add review comment: {e}");
-                    self.review_state.status_message =
-                        Some(format!("Error: {e}"));
+                    self.review_state.status_message = Some(format!("Error: {e}"));
                 }
             }
             self.review_state.load_comments(store, &wt);
@@ -70,21 +68,16 @@ impl App {
 
     /// Update the body of the currently selected review comment.
     pub fn update_selected_review_body(&mut self, new_body: &str) {
-        let id = self
-            .review_state
-            .selected_comment()
-            .map(|c| c.id.clone());
+        let id = self.review_state.selected_comment().map(|c| c.id.clone());
 
         if let (Some(store), Some(id)) = (&self.review_store, id) {
             match store.update_review_body(&id, new_body) {
                 Ok(()) => {
-                    self.review_state.status_message =
-                        Some("Comment updated.".to_string());
+                    self.review_state.status_message = Some("Comment updated.".to_string());
                 }
                 Err(e) => {
                     log::warn!("failed to update review body: {e}");
-                    self.review_state.status_message =
-                        Some(format!("Error: {e}"));
+                    self.review_state.status_message = Some(format!("Error: {e}"));
                 }
             }
             let wt = self.selected_worktree_branch();
@@ -104,11 +97,19 @@ impl App {
         if let (Some(store), Some(id)) = (&self.review_store, id) {
             match store.delete_review(&id) {
                 Ok(()) => {
-                    self.status_message = Some(StatusMessage::new("Comment deleted.".to_string(), StatusLevel::Success, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        "Comment deleted.".to_string(),
+                        StatusLevel::Success,
+                        self.ui_tick,
+                    ));
                 }
                 Err(e) => {
                     log::warn!("failed to delete review comment: {e}");
-                    self.status_message = Some(StatusMessage::new(format!("Error: {e}"), StatusLevel::Error, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        format!("Error: {e}"),
+                        StatusLevel::Error,
+                        self.ui_tick,
+                    ));
                 }
             }
             let wt = self.selected_worktree_branch();
@@ -141,11 +142,19 @@ impl App {
             match store.update_review_status(&id, new_status) {
                 Ok(()) => {
                     let label = new_status.as_str();
-                    self.status_message = Some(StatusMessage::new(format!("Comment marked as {label}."), StatusLevel::Success, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        format!("Comment marked as {label}."),
+                        StatusLevel::Success,
+                        self.ui_tick,
+                    ));
                 }
                 Err(e) => {
                     log::warn!("failed to update review status: {e}");
-                    self.status_message = Some(StatusMessage::new(format!("Error: {e}"), StatusLevel::Error, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        format!("Error: {e}"),
+                        StatusLevel::Error,
+                        self.ui_tick,
+                    ));
                 }
             }
             let wt = self.selected_worktree_branch();
@@ -165,11 +174,19 @@ impl App {
         if let (Some(store), Some(review_id)) = (&self.review_store, review_id) {
             match store.add_reply(&review_id, body, Author::User) {
                 Ok(()) => {
-                    self.status_message = Some(StatusMessage::new("Reply added.".to_string(), StatusLevel::Success, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        "Reply added.".to_string(),
+                        StatusLevel::Success,
+                        self.ui_tick,
+                    ));
                 }
                 Err(e) => {
                     log::warn!("failed to add reply: {e}");
-                    self.status_message = Some(StatusMessage::new(format!("Error: {e}"), StatusLevel::Error, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        format!("Error: {e}"),
+                        StatusLevel::Error,
+                        self.ui_tick,
+                    ));
                 }
             }
             // Invalidate cached replies and reload.
@@ -177,11 +194,11 @@ impl App {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
             // Reload replies for this comment if it was expanded.
-            if self.review_state.expanded_comments.contains(&review_id) {
-                if let Ok(replies) = store.get_replies(&review_id) {
-                    self.review_state.cached_replies.insert(review_id, replies);
-                    self.review_state.rebuild_comment_list_rows();
-                }
+            if self.review_state.expanded_comments.contains(&review_id)
+                && let Ok(replies) = store.get_replies(&review_id)
+            {
+                self.review_state.cached_replies.insert(review_id, replies);
+                self.review_state.rebuild_comment_list_rows();
             }
         }
     }
@@ -228,19 +245,19 @@ impl App {
             }
         } else {
             // Expand — load replies from DB if not cached.
-            if !self.review_state.cached_replies.contains_key(&comment_id) {
-                if let Some(store) = &self.review_store {
-                    match store.get_replies(&comment_id) {
-                        Ok(replies) => {
-                            self.review_state
-                                .cached_replies
-                                .insert(comment_id.clone(), replies);
-                        }
-                        Err(e) => {
-                            log::warn!("failed to load replies: {e}");
-                            self.set_status(format!("Error loading replies: {e}"), StatusLevel::Error);
-                            return;
-                        }
+            if !self.review_state.cached_replies.contains_key(&comment_id)
+                && let Some(store) = &self.review_store
+            {
+                match store.get_replies(&comment_id) {
+                    Ok(replies) => {
+                        self.review_state
+                            .cached_replies
+                            .insert(comment_id.clone(), replies);
+                    }
+                    Err(e) => {
+                        log::warn!("failed to load replies: {e}");
+                        self.set_status(format!("Error loading replies: {e}"), StatusLevel::Error);
+                        return;
                     }
                 }
             }
@@ -304,12 +321,17 @@ impl App {
 
     pub fn save_current_session_history(&mut self) {
         // Try the active Claude session first, then Shell.
-        let active_idx = self.terminal.active_claude_session
+        let active_idx = self
+            .terminal
+            .active_claude_session
             .or(self.terminal.active_shell_session);
         let active_idx = match active_idx {
             Some(idx) => idx,
             None => {
-                self.set_status("No active PTY session to save.".to_string(), StatusLevel::Warning);
+                self.set_status(
+                    "No active PTY session to save.".to_string(),
+                    StatusLevel::Warning,
+                );
                 return;
             }
         };
@@ -335,7 +357,11 @@ impl App {
         if let Some(store) = &self.review_store {
             match store.save_session_history(&session_id, &worktree, &label, kind, &output) {
                 Ok(()) => {
-                    self.status_message = Some(StatusMessage::new("Session history saved.".to_string(), StatusLevel::Success, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        "Session history saved.".to_string(),
+                        StatusLevel::Success,
+                        self.ui_tick,
+                    ));
                     if self.overlays.active == ActiveOverlay::History {
                         match store.list_session_history(50) {
                             Ok(records) => {
@@ -350,7 +376,11 @@ impl App {
                 }
                 Err(e) => {
                     log::warn!("failed to save session history: {e}");
-                    self.status_message = Some(StatusMessage::new(format!("Error saving history: {e}"), StatusLevel::Error, self.ui_tick));
+                    self.status_message = Some(StatusMessage::new(
+                        format!("Error saving history: {e}"),
+                        StatusLevel::Error,
+                        self.ui_tick,
+                    ));
                 }
             }
         }

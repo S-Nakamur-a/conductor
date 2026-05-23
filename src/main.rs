@@ -1,28 +1,28 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
-mod gemini_api;
 mod app;
 mod background;
 mod cc_notify;
 mod ccusage_cache;
-mod jump_history;
-mod symbol_index;
 mod claude_sessions;
 mod command_palette;
 mod config;
 mod diff_state;
 mod event;
 mod file_watcher;
-mod refresh_pipe;
+mod gemini_api;
 mod git_engine;
 mod grep_search;
+mod jump_history;
 mod keymap;
 mod media_state;
 mod overlay;
 mod pty_manager;
+mod refresh_pipe;
 mod review_state;
 mod review_store;
 mod search_result_tree;
+mod symbol_index;
 mod terminal_link;
 mod terminal_state;
 mod text_input;
@@ -38,9 +38,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, KeyEventKind, KeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, poll as crossterm_poll, read as crossterm_read,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags, poll as crossterm_poll, read as crossterm_read,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -119,7 +118,11 @@ fn main() -> Result<()> {
     let repo_path = match std::env::args().nth(1) {
         Some(path) => {
             let p = std::path::PathBuf::from(&path);
-            if p.is_absolute() { p } else { std::env::current_dir()?.join(p) }
+            if p.is_absolute() {
+                p
+            } else {
+                std::env::current_dir()?.join(p)
+            }
         }
         None => std::env::current_dir()?,
     };
@@ -161,27 +164,27 @@ fn main() -> Result<()> {
     }
 
     // ── Session summary (gamification) ──────────────────────────────
-    if let (Some(store), Some(session_id)) = (&app.review_store, &app.stats_session_id) {
-        if let Ok(stats) = store.end_stats_session(session_id) {
-            let total = stats.reviews_created + stats.branches_created + stats.commits_made;
-            if total > 0 {
-                println!("\n--- Conductor Session Summary ---");
-                if stats.reviews_created > 0 {
-                    println!("  Reviews created:  {}", stats.reviews_created);
-                }
-                if stats.branches_created > 0 {
-                    println!("  Branches created: {}", stats.branches_created);
-                }
-                if stats.commits_made > 0 {
-                    println!("  Commits made:     {}", stats.commits_made);
-                }
-                if let Ok(streak) = store.calculate_streak() {
-                    if streak.consecutive_days > 0 {
-                        println!("  Current streak:   {} day(s)", streak.consecutive_days);
-                    }
-                }
-                println!("---------------------------------\n");
+    if let (Some(store), Some(session_id)) = (&app.review_store, &app.stats_session_id)
+        && let Ok(stats) = store.end_stats_session(session_id)
+    {
+        let total = stats.reviews_created + stats.branches_created + stats.commits_made;
+        if total > 0 {
+            println!("\n--- Conductor Session Summary ---");
+            if stats.reviews_created > 0 {
+                println!("  Reviews created:  {}", stats.reviews_created);
             }
+            if stats.branches_created > 0 {
+                println!("  Branches created: {}", stats.branches_created);
+            }
+            if stats.commits_made > 0 {
+                println!("  Commits made:     {}", stats.commits_made);
+            }
+            if let Ok(streak) = store.calculate_streak()
+                && streak.consecutive_days > 0
+            {
+                println!("  Current streak:   {} day(s)", streak.consecutive_days);
+            }
+            println!("---------------------------------\n");
         }
     }
 
@@ -189,10 +192,7 @@ fn main() -> Result<()> {
 }
 
 /// Drive the draw → poll → handle cycle until the user quits.
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<()> {
+fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     // Set up file watcher for auto-refresh.
     let watch_paths: Vec<std::path::PathBuf> =
         app.worktrees.iter().map(|w| w.path.clone()).collect();
@@ -233,10 +233,8 @@ fn run_loop(
     let ccusage_enabled = app.config.ccusage.enabled;
 
     // On startup: immediately show whatever is in the cache.
-    if ccusage_enabled {
-        if let Some(info) = ccusage_cache::read_any() {
-            app.ccusage_info = Some(info);
-        }
+    if ccusage_enabled && let Some(info) = ccusage_cache::read_any() {
+        app.ccusage_info = Some(info);
     }
     // Schedule the first freshness check immediately.
     if ccusage_enabled {
@@ -252,14 +250,14 @@ fn run_loop(
 
     if update_check_enabled {
         // Show badge immediately from cache while the background fetch runs.
-        if let Some(cached) = update_checker::read_cache() {
-            if update_checker::is_newer(&cached.latest_version, update_checker::current_version()) {
-                app.update_info = Some(cached);
-            }
+        if let Some(cached) = update_checker::read_cache()
+            && update_checker::is_newer(&cached.latest_version, update_checker::current_version())
+        {
+            app.update_info = Some(cached);
         }
         // Always fetch the latest release info in the background so we
         // never miss a new version due to stale cache data.
-        app.bg_update_check_op.start(|tx| {
+        app.bg.update_check.start(|tx| {
             let _ = tx.send(update_checker::check_for_update());
         });
     }
@@ -285,8 +283,9 @@ fn run_loop(
     // ══════════════════════════════════════════════════════════════
     loop {
         // ── 1. Wait for an event ─────────────────────────────────
-        let decoration_active = crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
-            .has_animation();
+        let decoration_active =
+            crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
+                .has_animation();
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
         if pty_dirty {
             app.terminal.dirty_claude = true;
@@ -298,7 +297,9 @@ fn run_loop(
             Duration::ZERO
         } else {
             match app.focus {
-                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => TICK_RATE_TERMINAL,
+                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => {
+                    TICK_RATE_TERMINAL
+                }
                 _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
                 _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
                 _ if app.show_panel_number_overlay => TICK_RATE_ACTIVE,
@@ -330,7 +331,10 @@ fn run_loop(
                         last_input_time = Instant::now();
                         handle_mouse_event(app, mouse, last_frame_area);
                     }
-                    Event::Paste(data) => { last_input_time = Instant::now(); handle_paste_event(app, data); }
+                    Event::Paste(data) => {
+                        last_input_time = Instant::now();
+                        handle_paste_event(app, data);
+                    }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -428,18 +432,22 @@ fn run_loop(
                 // Expensive I/O timers — skip during active input to avoid scroll freezes.
                 "worktree_poll" if !input_active => {
                     if app.refresh_worktrees() {
-                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER);
+                        app.dirty.mark(
+                            crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER,
+                        );
                     }
                     app.check_diff_viewer_staleness();
                 }
-                "pty_cleanup" if !input_active => {
-                    if app.cleanup_dead_sessions() {
-                        app.dirty.mark(crate::app::DirtyPanels::TERMINAL | crate::app::DirtyPanels::WORKTREE);
-                    }
+                "pty_cleanup" if !input_active && app.cleanup_dead_sessions() => {
+                    app.dirty.mark(
+                        crate::app::DirtyPanels::TERMINAL | crate::app::DirtyPanels::WORKTREE,
+                    );
                 }
                 "cc_waiting" if !input_active => {
                     if app.check_cc_waiting_state() {
-                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
+                        app.dirty.mark(
+                            crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL,
+                        );
                     }
                     app.flush_deferred_prompts();
                 }
@@ -454,7 +462,7 @@ fn run_loop(
                 }
                 "ccusage" => {
                     let max_age = ccusage_poll_secs;
-                    app.bg_ccusage_op.start(move |tx| {
+                    app.bg.ccusage.start(move |tx| {
                         let info = ccusage_cache::read_if_fresh(max_age)
                             .or_else(ccusage_cache::fetch_and_cache);
                         if let Some(info) = info {
@@ -463,7 +471,7 @@ fn run_loop(
                     });
                 }
                 "update_check" => {
-                    app.bg_update_check_op.start(|tx| {
+                    app.bg.update_check.start(|tx| {
                         let _ = tx.send(update_checker::check_for_update());
                     });
                 }
@@ -479,20 +487,19 @@ fn run_loop(
                 }
                 fs_pending = true;
             }
-            if fs_pending {
-                if let Some(t) = fs_first_seen {
-                    if t.elapsed() >= FS_DEBOUNCE {
-                        fs_pending = false;
-                        fs_first_seen = None;
-                        app.refresh_worktrees();
-                        app.refresh_viewer();
-                        app.refresh_diff();
-                        if !app.bg_symbol_index_op.is_running() {
-                            app.start_symbol_index_build();
-                        }
-                        app.dirty.mark_all();
-                    }
+            if fs_pending
+                && let Some(t) = fs_first_seen
+                && t.elapsed() >= FS_DEBOUNCE
+            {
+                fs_pending = false;
+                fs_first_seen = None;
+                app.refresh_worktrees();
+                app.refresh_viewer();
+                app.refresh_diff();
+                if !app.bg.symbol_index.is_running() {
+                    app.start_symbol_index_build();
                 }
+                app.dirty.mark_all();
             }
         }
 
@@ -500,25 +507,28 @@ fn run_loop(
         if let Some(ref cc_notify) = cc_notify {
             while let Some(event) = cc_notify.poll() {
                 app.handle_cc_notify(event);
-                app.dirty.mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
+                app.dirty
+                    .mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
             }
         }
 
         // MCP refresh pipe — reload review comments when MCP writes to the pipe.
-        if let Some(ref refresh_pipe) = refresh_pipe {
-            if refresh_pipe.poll().is_some() {
-                // Drain any extra events (coalesce multiple rapid writes).
-                while refresh_pipe.poll().is_some() {}
-                app.refresh_reviews();
-                app.dirty.mark_all();
-                log::debug!("refresh_pipe: reloaded reviews from MCP trigger");
-            }
+        if let Some(ref refresh_pipe) = refresh_pipe
+            && refresh_pipe.poll().is_some()
+        {
+            // Drain any extra events (coalesce multiple rapid writes).
+            while refresh_pipe.poll().is_some() {}
+            app.refresh_reviews();
+            app.dirty.mark_all();
+            log::debug!("refresh_pipe: reloaded reviews from MCP trigger");
         }
 
         // Poll all background operations.
         app.poll_all_background_ops();
 
-        if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch && app.check_grep_debounce() {
+        if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch
+            && app.check_grep_debounce()
+        {
             app.dirty.mark_all();
         }
 
@@ -533,4 +543,3 @@ fn run_loop(
         }
     }
 }
-

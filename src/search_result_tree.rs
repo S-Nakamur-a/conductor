@@ -61,7 +61,6 @@ struct DirNode {
     files: BTreeMap<String, Vec<usize>>, // filename → match indices
 }
 
-
 impl SearchResultTree {
     /// Build the tree from a flat list of grep matches.
     pub fn build(matches: &[GrepMatch]) -> Self {
@@ -138,9 +137,13 @@ impl SearchResultTree {
 
             if segments.is_empty() {
                 // Root-level files (no directory).
-                tree.entry(String::new()).or_default().push((dir_path.clone(), dir_node));
+                tree.entry(String::new())
+                    .or_default()
+                    .push((dir_path.clone(), dir_node));
             } else {
-                tree.entry(dir_path.clone()).or_default().push((dir_path.clone(), dir_node));
+                tree.entry(dir_path.clone())
+                    .or_default()
+                    .push((dir_path.clone(), dir_node));
             }
         }
 
@@ -179,10 +182,10 @@ impl SearchResultTree {
 
                 if expanded {
                     // Render files directly in this directory.
-                    if child.is_leaf_dir {
-                        if let Some(dir_node) = self.dirs.get(&child_path) {
-                            self.render_files(dir_node, &child_path, rows, depth + 1);
-                        }
+                    if child.is_leaf_dir
+                        && let Some(dir_node) = self.dirs.get(&child_path)
+                    {
+                        self.render_files(dir_node, &child_path, rows, depth + 1);
                     }
                     // Render subdirectories.
                     if child.has_subdirs() {
@@ -195,8 +198,16 @@ impl SearchResultTree {
         // Render files directly in this node (if it's a leaf dir in self.dirs).
         if node.is_leaf_dir {
             // Root node has path "" but root-level files are stored under key ".".
-            let lookup_key = if node.path.is_empty() { "." } else { &node.path };
-            let file_path_key = if node.path.is_empty() { ".".to_string() } else { node.path.clone() };
+            let lookup_key = if node.path.is_empty() {
+                "."
+            } else {
+                &node.path
+            };
+            let file_path_key = if node.path.is_empty() {
+                ".".to_string()
+            } else {
+                node.path.clone()
+            };
             if let Some(dir_node) = self.dirs.get(lookup_key) {
                 self.render_files(dir_node, &file_path_key, rows, depth);
             }
@@ -258,7 +269,12 @@ impl SearchResultTree {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
             match row {
-                SearchTreeRow::Dir { name, depth, expanded, .. } => {
+                SearchTreeRow::Dir {
+                    name,
+                    depth,
+                    expanded,
+                    ..
+                } => {
                     let path = self.resolve_dir_path(&rows, visible_idx, name, *depth);
                     let exp = self.dir_expanded.entry(path).or_insert(*expanded);
                     *exp = !*exp;
@@ -279,7 +295,12 @@ impl SearchResultTree {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
             match row {
-                SearchTreeRow::Dir { name, depth, expanded, .. } => {
+                SearchTreeRow::Dir {
+                    name,
+                    depth,
+                    expanded,
+                    ..
+                } => {
                     if !expanded {
                         let path = self.resolve_dir_path(&rows, visible_idx, name, *depth);
                         self.dir_expanded.insert(path, true);
@@ -304,7 +325,12 @@ impl SearchResultTree {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
             match row {
-                SearchTreeRow::Dir { name, depth, expanded, .. } => {
+                SearchTreeRow::Dir {
+                    name,
+                    depth,
+                    expanded,
+                    ..
+                } => {
                     if *expanded {
                         let path = self.resolve_dir_path(&rows, visible_idx, name, *depth);
                         self.dir_expanded.insert(path, false);
@@ -377,11 +403,10 @@ impl SearchResultTree {
                 depth: parent_depth,
                 ..
             } = &rows[i]
+                && *parent_depth == target_depth - 1
             {
-                if *parent_depth == target_depth - 1 {
-                    segments.push(parent_name.clone());
-                    target_depth = *parent_depth;
-                }
+                segments.push(parent_name.clone());
+                target_depth = *parent_depth;
             }
         }
 
@@ -637,12 +662,22 @@ mod tests {
         let rows = tree.visible_rows();
 
         // src/ dir should have 4 matches total.
-        let src_dir = rows.iter().find(|r| matches!(r, SearchTreeRow::Dir { name, .. } if name == "src"));
-        assert!(matches!(src_dir, Some(SearchTreeRow::Dir { match_count: 4, .. })));
+        let src_dir = rows
+            .iter()
+            .find(|r| matches!(r, SearchTreeRow::Dir { name, .. } if name == "src"));
+        assert!(matches!(
+            src_dir,
+            Some(SearchTreeRow::Dir { match_count: 4, .. })
+        ));
 
         // app.rs file should have 3 matches.
-        let app_file = rows.iter().find(|r| matches!(r, SearchTreeRow::File { name, .. } if name == "app.rs"));
-        assert!(matches!(app_file, Some(SearchTreeRow::File { match_count: 3, .. })));
+        let app_file = rows
+            .iter()
+            .find(|r| matches!(r, SearchTreeRow::File { name, .. } if name == "app.rs"));
+        assert!(matches!(
+            app_file,
+            Some(SearchTreeRow::File { match_count: 3, .. })
+        ));
     }
 
     #[test]

@@ -7,11 +7,11 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
@@ -87,7 +87,8 @@ fn snapshot_screen(
         let cursor = screen.cursor_position();
         log::debug!(
             "ALT_SCREEN render: has_content={has_content}, size=({rows},{cols}), area=({max_rows},{max_cols}) cursor=({},{})",
-            cursor.0, cursor.1,
+            cursor.0,
+            cursor.1,
         );
     }
 
@@ -160,7 +161,10 @@ pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache) 
 
     if cache.effective_offset > 0 {
         let indicator = Line::from(Span::styled(
-            format!(" ↑ scrollback ({} lines — Shift+End to return) ", cache.effective_offset),
+            format!(
+                " ↑ scrollback ({} lines — Shift+End to return) ",
+                cache.effective_offset
+            ),
             Style::default().fg(Color::Black).bg(Color::Yellow),
         ));
         frame.render_widget(Paragraph::new(indicator), Rect { height: 1, ..area });
@@ -185,7 +189,10 @@ fn lines_from_snapshot(snapshot: &ScreenSnapshot) -> Vec<Line<'static>> {
             let style = cell.style;
 
             if style != current_style && !current_text.is_empty() {
-                spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
+                spans.push(Span::styled(
+                    std::mem::take(&mut current_text),
+                    current_style,
+                ));
                 current_style = style;
             }
             if ch.is_empty() {
@@ -267,10 +274,16 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     let line = Line::from(vec![
         Span::styled(
             &badge_text,
-            Style::default().fg(conductor_fg).bg(conductor_bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(conductor_fg)
+                .bg(conductor_bg)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(wt_name, Style::default().fg(branch_fg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            wt_name,
+            Style::default().fg(branch_fg).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" │ ", Style::default().fg(theme.muted)),
         Span::styled(wt_path, Style::default().fg(theme.dir_fg)),
     ]);
@@ -373,19 +386,26 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
     let theme = &app.theme;
 
     // Determine the worktree path shown in the focused CC panel (if any).
-    let focused_cc_wt: Option<std::path::PathBuf> = if app.focus == crate::app::Focus::TerminalClaude {
-        Some(app.selected_worktree_path())
-    } else {
-        None
-    };
+    let focused_cc_wt: Option<std::path::PathBuf> =
+        if app.focus == crate::app::Focus::TerminalClaude {
+            Some(app.selected_worktree_path())
+        } else {
+            None
+        };
 
     // Suppress the entire bar pulse when the only waiting session(s) are all focused.
     let all_suppressed = focused_cc_wt.is_some()
         && app.terminal.cc_waiting_worktrees.len() == 1
-        && focused_cc_wt.as_deref() == app.terminal.cc_waiting_worktrees.iter().next().map(|p| p.as_path());
+        && focused_cc_wt.as_deref()
+            == app
+                .terminal
+                .cc_waiting_worktrees
+                .iter()
+                .next()
+                .map(|p| p.as_path());
 
     // Orange-tinted background for the notification bar.
-    let pulse_on = (app.ui_tick / 20) % 2 == 0;
+    let pulse_on = (app.ui_tick / 20).is_multiple_of(2);
     let bar_bg = if all_suppressed {
         Theme::darken(theme.waiting_primary, 0.17)
     } else if pulse_on {
@@ -408,16 +428,31 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         .bg(bar_bg)
         .add_modifier(Modifier::BOLD);
     let prefix_area = Rect::new(area.x, area.y, prefix.len() as u16, 1);
-    frame.render_widget(Paragraph::new(Span::styled(prefix, prefix_style)), prefix_area);
+    frame.render_widget(
+        Paragraph::new(Span::styled(prefix, prefix_style)),
+        prefix_area,
+    );
 
     // Collect waiting worktrees sorted by branch name.
-    let mut waiting: Vec<(&PathBuf, String)> = app.terminal.cc_waiting_worktrees.iter().map(|p| {
-        let name = app.worktrees.iter()
-            .find(|w| &w.path == p)
-            .map(|w| w.branch.clone())
-            .unwrap_or_else(|| p.file_name().and_then(|f| f.to_str()).unwrap_or("?").to_string());
-        (p, name)
-    }).collect();
+    let mut waiting: Vec<(&PathBuf, String)> = app
+        .terminal
+        .cc_waiting_worktrees
+        .iter()
+        .map(|p| {
+            let name = app
+                .worktrees
+                .iter()
+                .find(|w| &w.path == p)
+                .map(|w| w.branch.clone())
+                .unwrap_or_else(|| {
+                    p.file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("?")
+                        .to_string()
+                });
+            (p, name)
+        })
+        .collect();
     waiting.sort_by(|a, b| a.1.cmp(&b.1));
 
     // Badge colors: pulsing vs static (for focused session).
@@ -451,14 +486,21 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
         // Suppress blinking for the badge matching the focused CC session.
         let suppress = focused_cc_wt.as_deref() == Some(path.as_path());
-        let bg = if suppress { badge_bg_static } else { badge_bg_pulse };
+        let bg = if suppress {
+            badge_bg_static
+        } else {
+            badge_bg_pulse
+        };
         let badge_style = Style::default()
             .fg(Color::Black)
             .bg(bg)
             .add_modifier(Modifier::BOLD);
 
         let badge_area = Rect::new(x, area.y, w, 1);
-        frame.render_widget(Paragraph::new(Span::styled(&badge_str, badge_style)), badge_area);
+        frame.render_widget(
+            Paragraph::new(Span::styled(&badge_str, badge_style)),
+            badge_area,
+        );
 
         // Record position for click handling.
         app.notification_bar_badges.push((x, x + w, name.clone()));
@@ -471,7 +513,9 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
     let hint_w = UnicodeWidthStr::width(hint) as u16;
     if x + hint_w < area.x + area.width {
         let hint_area = Rect::new(x + 1, area.y, hint_w, 1);
-        let hint_style = Style::default().fg(Theme::darken(theme.waiting_primary, 0.47)).bg(bar_bg);
+        let hint_style = Style::default()
+            .fg(Theme::darken(theme.waiting_primary, 0.47))
+            .bg(bar_bg);
         frame.render_widget(Paragraph::new(Span::styled(hint, hint_style)), hint_area);
     }
 
@@ -490,9 +534,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
         // Color based on level.
         let fg_color = match msg.level {
             StatusLevel::Success => theme.success,
-            StatusLevel::Error   => theme.error,
+            StatusLevel::Error => theme.error,
             StatusLevel::Warning => theme.warning,
-            StatusLevel::Info    => theme.info,
+            StatusLevel::Info => theme.info,
         };
 
         // Flash background for the first ~500ms (30 ticks).
@@ -500,9 +544,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
             if (age / 5) % 2 == 0 {
                 match msg.level {
                     StatusLevel::Success => theme.status_bg_success,
-                    StatusLevel::Error   => theme.status_bg_error,
+                    StatusLevel::Error => theme.status_bg_error,
                     StatusLevel::Warning => theme.status_bg_warning,
-                    StatusLevel::Info    => theme.status_bg_info,
+                    StatusLevel::Info => theme.status_bg_info,
                 }
             } else {
                 Color::Reset
@@ -549,7 +593,8 @@ pub fn render_worktree_label(
 
     let branch_part = worktree_branch;
     let repo_part = format!("[{repo_name}]");
-    let total_width = UnicodeWidthStr::width(branch_part) + 1 + UnicodeWidthStr::width(repo_part.as_str());
+    let total_width =
+        UnicodeWidthStr::width(branch_part) + 1 + UnicodeWidthStr::width(repo_part.as_str());
 
     if total_width as u16 + 1 > row_area.width {
         return;

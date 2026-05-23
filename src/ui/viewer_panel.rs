@@ -4,16 +4,16 @@
 //! have been modified (according to diff_state) are highlighted inline.
 //! Review comments are shown as inline badges.
 
-use ratatui::layout::{Alignment, Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 use crate::app::{App, Focus};
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::media_state::MediaContent;
 use crate::theme::Theme;
 use crate::viewer::UnifiedDiffEntry;
+use ratatui::Frame;
+use ratatui::layout::{Alignment, Position, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 /// Render the viewer (file content) panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -30,7 +30,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
     let focused = app.focus == Focus::Viewer;
-    let border_color = if focused { theme.border_focused } else { theme.border_unfocused };
+    let border_color = if focused {
+        theme.border_focused
+    } else {
+        theme.border_unfocused
+    };
 
     let is_expanded = app.expanded_panel == Some(Focus::Viewer);
     let (expand_label, expand_color) = if is_expanded {
@@ -59,7 +63,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             if raw.len() > max_title_len && max_title_len > 4 {
                 // Truncate with ellipsis: " …<tail> "
                 let inner_max = max_title_len.saturating_sub(2); // leading/trailing spaces
-                let tail: String = raw.trim().chars().rev().take(inner_max.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect();
+                let tail: String = raw
+                    .trim()
+                    .chars()
+                    .rev()
+                    .take(inner_max.saturating_sub(1))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
                 format!(" \u{2026}{tail} ")
             } else {
                 raw
@@ -68,11 +80,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         None => " (no file selected) ".to_string(),
     };
 
-    let border_type = if focused { BorderType::Thick } else { BorderType::Plain };
+    let border_type = if focused {
+        BorderType::Thick
+    } else {
+        BorderType::Plain
+    };
 
     let block = Block::default()
         .title(title)
-        .title_top(Line::from(Span::styled(expand_label, Style::default().fg(expand_color))).alignment(Alignment::Right))
+        .title_top(
+            Line::from(Span::styled(
+                expand_label,
+                Style::default().fg(expand_color),
+            ))
+            .alignment(Alignment::Right),
+        )
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
@@ -106,7 +128,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // Diff annotations are cached in ViewerState (populated at function entry).
-    let diff_annotations = app.viewer_state.content.cached_diff_annotations.as_ref().unwrap();
+    let diff_annotations = app
+        .viewer_state
+        .content
+        .cached_diff_annotations
+        .as_ref()
+        .unwrap();
 
     // Collect line numbers that have review comments (from in-memory cache).
     let comment_lines: std::collections::HashSet<usize> =
@@ -117,9 +144,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .review_state
         .comments
         .iter()
-        .filter(|c| {
-            app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path)
-        })
+        .filter(|c| app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path))
         .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
         .collect();
 
@@ -131,7 +156,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut remaining = inner_height;
 
     for (line_no, content) in vs
-        .content.file_content
+        .content
+        .file_content
         .iter()
         .enumerate()
         .skip(vs.content.file_scroll)
@@ -144,12 +170,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         let is_selected = vs.is_line_selected(line_1);
         let is_hovered = vs.click.hover_line == Some(line_1);
         let is_gutter_hovered = vs.click.hover_gutter_line == Some(line_1);
-        let is_in_pending_range = !is_selected && vs.is_selection_pending() && vs.click.hover_line.is_some() && {
-            let start = match vs.selection { crate::viewer::LineSelection::Pending { start } => start, _ => 0 };
-            let hover = vs.click.hover_line.unwrap();
-            let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
-            line_1 >= lo && line_1 <= hi
-        };
+        let is_in_pending_range =
+            !is_selected && vs.is_selection_pending() && vs.click.hover_line.is_some() && {
+                let start = match vs.selection {
+                    crate::viewer::LineSelection::Pending { start } => start,
+                    _ => 0,
+                };
+                let hover = vs.click.hover_line.unwrap();
+                let (lo, hi) = if start <= hover {
+                    (start, hover)
+                } else {
+                    (hover, start)
+                };
+                line_1 >= lo && line_1 <= hi
+            };
 
         // Diff gutter marker.
         let annotation = diff_annotations.get(&line_1);
@@ -178,7 +212,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 .bg(theme.search_match_bg)
                 .add_modifier(Modifier::BOLD)
         } else if is_gutter_hovered {
-            Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
+            Style::default()
+                .fg(theme.gutter_hover_fg)
+                .bg(theme.gutter_hover_bg)
         } else if is_hovered {
             Style::default().fg(theme.gutter_hover_fg)
         } else if diff_tag == Some(DiffLineTag::Insert) {
@@ -210,7 +246,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         let content_spans: Vec<Span> = if is_current_match {
             vec![Span::styled(
                 content.to_string(),
-                Style::default().fg(theme.search_current_fg).bg(theme.search_match_bg),
+                Style::default()
+                    .fg(theme.search_current_fg)
+                    .bg(theme.search_match_bg),
             )]
         } else if is_match {
             vec![Span::styled(
@@ -222,12 +260,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         } else if is_selected {
             vec![Span::styled(
                 content.to_string(),
-                Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
+                Style::default()
+                    .bg(theme.line_selected_bg)
+                    .fg(theme.line_selected_fg),
             )]
         } else if is_in_pending_range {
             vec![Span::styled(
                 content.to_string(),
-                Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
+                Style::default()
+                    .bg(theme.line_pending_bg)
+                    .fg(theme.line_selected_fg),
             )]
         } else if let Some((ann_tag, ann_segments)) = annotation {
             if !ann_segments.is_empty() {
@@ -239,19 +281,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 };
 
                 if *ann_tag == DiffLineTag::Insert {
-                    vs.content.highlighted_lines.get(line_no)
+                    vs.content
+                        .highlighted_lines
+                        .get(line_no)
                         .filter(|t| !t.is_empty())
-                        .and_then(|tokens| merge_syntax_with_inline(
-                            ann_segments, tokens, diff_bg, emphasis_bg, tab_width,
-                        ))
+                        .and_then(|tokens| {
+                            merge_syntax_with_inline(
+                                ann_segments,
+                                tokens,
+                                diff_bg,
+                                emphasis_bg,
+                                tab_width,
+                            )
+                        })
                         .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg)))
                 } else {
-                    render_inline_diff_spans(
-                        ann_segments,
-                        diff_bg,
-                        emphasis_bg,
-                        tab_width,
-                    )
+                    render_inline_diff_spans(ann_segments, diff_bg, emphasis_bg, tab_width)
                 }
             } else {
                 // Line-level diff only: use syntax highlighting with diff bg.
@@ -273,7 +318,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // Apply underline to hover symbol (Cmd+hover for jump targets).
         let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
             if hs.line == line_1 {
-                apply_underline_range(content_spans, hs.start_col, hs.end_col, vs.content.h_scroll, theme.accent)
+                apply_underline_range(
+                    content_spans,
+                    hs.start_col,
+                    hs.end_col,
+                    vs.content.h_scroll,
+                    theme.accent,
+                )
             } else {
                 content_spans
             }
@@ -283,13 +334,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
         // Apply symbol hint labels (Vimium-style).
         let content_spans = if app.symbol_hint_overlay.active {
-            let hints_on_line: Vec<_> = app.symbol_hint_overlay.hints.iter()
+            let hints_on_line: Vec<_> = app
+                .symbol_hint_overlay
+                .hints
+                .iter()
                 .filter(|h| h.line == line_1)
                 .collect();
             if hints_on_line.is_empty() {
                 content_spans
             } else {
-                apply_hint_labels(content_spans, &hints_on_line, &app.symbol_hint_overlay.input, vs.content.h_scroll, theme)
+                apply_hint_labels(
+                    content_spans,
+                    &hints_on_line,
+                    &app.symbol_hint_overlay.input,
+                    vs.content.h_scroll,
+                    theme,
+                )
             }
         } else {
             content_spans
@@ -356,14 +416,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         frame.render_widget(ratatui::widgets::Clear, hint_area);
         let hint_widget = Paragraph::new(Span::styled(
             hint,
-            Style::default().fg(theme.gutter_selected_fg).bg(theme.gutter_selected_bg),
+            Style::default()
+                .fg(theme.gutter_selected_fg)
+                .bg(theme.gutter_selected_bg),
         ));
         frame.render_widget(hint_widget, hint_area);
     }
 
     // Show search input overlay (skip cursor positioning when a global overlay covers us).
     if vs.search.search_active {
-        render_search_box(frame, area, &vs.search.search_query, theme, app.is_any_overlay_active());
+        render_search_box(
+            frame,
+            area,
+            &vs.search.search_query,
+            theme,
+            app.is_any_overlay_active(),
+        );
     }
 
     // Store the screen-row mapping for mouse event handling.
@@ -371,7 +439,314 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.viewer_state.content.screen_row_map = screen_row_map;
 }
 
+/// Build the display line for a hunk separator (a collapsed gap between hunks),
+/// optionally annotated with the enclosing function header.
+fn render_hunk_separator(
+    func_header: &Option<String>,
+    width: usize,
+    theme: &Theme,
+) -> Line<'static> {
+    match func_header {
+        Some(header) => {
+            let prefix = " ··· ";
+            let suffix = " ───";
+            // Fill the rest with ─
+            let header_display = format!("{prefix}{header}{suffix}");
+            let fill_len = width.saturating_sub(header_display.chars().count());
+            let fill: String = "─".repeat(fill_len);
+            Line::from(vec![
+                Span::styled(prefix, Style::default().fg(theme.muted)),
+                Span::styled(
+                    header.clone(),
+                    Style::default()
+                        .fg(theme.diff_section_header)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(format!("{suffix}{fill}"), Style::default().fg(theme.muted)),
+            ])
+        }
+        None => {
+            let sep = format!("{:─<width$}", " ··· ", width = width,);
+            Line::from(Span::styled(sep, Style::default().fg(theme.muted)))
+        }
+    }
+}
+
+/// Build the display line for an expandable context block, showing how many
+/// lines are hidden and an optional function header.
+fn render_expandable_context(
+    hidden_count: usize,
+    func_header: &Option<String>,
+    width: usize,
+    theme: &Theme,
+) -> Line<'static> {
+    let expand_label = format!(" \u{2295} {hidden_count} lines hidden (Enter to expand) ");
+    let label_style = Style::default().fg(theme.accent);
+    match func_header {
+        Some(header) => {
+            let suffix = " ───";
+            let used =
+                expand_label.chars().count() + header.chars().count() + suffix.chars().count();
+            let fill_len = width.saturating_sub(used);
+            let fill: String = "─".repeat(fill_len);
+            Line::from(vec![
+                Span::styled(expand_label, label_style),
+                Span::styled(
+                    header.clone(),
+                    Style::default()
+                        .fg(theme.diff_section_header)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(format!("{suffix}{fill}"), Style::default().fg(theme.muted)),
+            ])
+        }
+        None => {
+            let fill_len = width.saturating_sub(expand_label.chars().count());
+            let fill: String = "─".repeat(fill_len);
+            Line::from(vec![
+                Span::styled(expand_label, label_style),
+                Span::styled(fill, Style::default().fg(theme.muted)),
+            ])
+        }
+    }
+}
+
 /// Render the unified diff view (GitHub-style).
+/// Shared per-frame context for rendering a single unified-diff content line.
+struct DiffLineRenderCtx<'a> {
+    vs: &'a crate::viewer::ViewerState,
+    theme: &'a Theme,
+    gutter_width: usize,
+    tab_width: usize,
+    area_width: u16,
+    comment_lines: &'a std::collections::HashSet<usize>,
+    comment_end_lines: &'a std::collections::HashSet<usize>,
+}
+
+/// Build the display line for a single diff content line (context / addition /
+/// deletion), including the gutter, comment badge, syntax/word-diff styled
+/// content, and GitHub-style full-width background fill.
+fn render_diff_content_line(
+    tag: &DiffLineTag,
+    new_line_no: &Option<usize>,
+    content: &str,
+    inline_segments: &[InlineSegment],
+    ctx: &DiffLineRenderCtx,
+) -> Line<'static> {
+    let vs = ctx.vs;
+    let theme = ctx.theme;
+    let gutter_width = ctx.gutter_width;
+    let tab_width = ctx.tab_width;
+
+    let is_selected = new_line_no.map(|n| vs.is_line_selected(n)).unwrap_or(false);
+    let is_hovered = new_line_no
+        .map(|n| vs.click.hover_line == Some(n))
+        .unwrap_or(false);
+    let is_gutter_hovered = new_line_no
+        .map(|n| vs.click.hover_gutter_line == Some(n))
+        .unwrap_or(false);
+    let is_in_pending_range = !is_selected
+        && new_line_no.is_some()
+        && vs.is_selection_pending()
+        && vs.click.hover_line.is_some()
+        && {
+            let n = new_line_no.unwrap();
+            let start = match vs.selection {
+                crate::viewer::LineSelection::Pending { start } => start,
+                _ => 0,
+            };
+            let hover = vs.click.hover_line.unwrap();
+            let (lo, hi) = if start <= hover {
+                (start, hover)
+            } else {
+                (hover, start)
+            };
+            n >= lo && n <= hi
+        };
+
+    // Gutter marker.
+    let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
+        DiffLineTag::Insert => (
+            "+",
+            Some(theme.diff_add_bg),
+            Some(theme.diff_add_bg_emphasis),
+        ),
+        DiffLineTag::Delete => (
+            "-",
+            Some(theme.diff_del_bg),
+            Some(theme.diff_del_bg_emphasis),
+        ),
+        DiffLineTag::Equal => (" ", None, None),
+    };
+
+    // Line number (blank for Delete lines).
+    let line_num_str = match new_line_no {
+        Some(n) => format!("{n:>gutter_width$}"),
+        None => " ".repeat(gutter_width),
+    };
+
+    let num = format!("{gutter_prefix}{line_num_str} \u{2502} ");
+    let gutter_style = if is_selected {
+        Style::default()
+            .fg(theme.gutter_selected_fg)
+            .bg(theme.gutter_selected_bg)
+            .add_modifier(Modifier::BOLD)
+    } else if is_in_pending_range {
+        Style::default()
+            .fg(theme.gutter_selected_fg)
+            .bg(theme.gutter_pending_bg)
+    } else if is_gutter_hovered {
+        Style::default()
+            .fg(theme.gutter_hover_fg)
+            .bg(theme.gutter_hover_bg)
+    } else if is_hovered {
+        Style::default().fg(theme.gutter_hover_fg)
+    } else {
+        match tag {
+            DiffLineTag::Insert => Style::default().fg(theme.diff_add),
+            DiffLineTag::Delete => Style::default().fg(theme.diff_del),
+            DiffLineTag::Equal => Style::default().fg(theme.muted),
+        }
+    };
+    let gutter_span = Span::styled(num, gutter_style);
+
+    // Comment badge: 💬 on end lines, │ on earlier range lines,
+    // 💬 (muted) on hovered gutter.
+    let badge = if new_line_no.is_some_and(|n| ctx.comment_end_lines.contains(&n)) {
+        Span::styled("💬", Style::default().fg(theme.accent))
+    } else if new_line_no.is_some_and(|n| ctx.comment_lines.contains(&n)) {
+        Span::styled("│ ", Style::default().fg(theme.accent))
+    } else if is_gutter_hovered {
+        Span::styled("💬", Style::default().fg(theme.muted))
+    } else {
+        Span::raw("  ")
+    };
+
+    // Content styling.
+    let content_spans: Vec<Span> = if is_selected {
+        vec![Span::styled(
+            content.to_string(),
+            Style::default()
+                .bg(theme.line_selected_bg)
+                .fg(theme.line_selected_fg),
+        )]
+    } else if is_in_pending_range {
+        vec![Span::styled(
+            content.to_string(),
+            Style::default()
+                .bg(theme.line_pending_bg)
+                .fg(theme.line_selected_fg),
+        )]
+    } else if !inline_segments.is_empty() {
+        match tag {
+            DiffLineTag::Insert => {
+                // Try syntax highlighting + word-diff merge.
+                if let Some(line_no) = new_line_no {
+                    let idx = line_no - 1;
+                    vs.content
+                        .highlighted_lines
+                        .get(idx)
+                        .filter(|t| !t.is_empty())
+                        .and_then(|tokens| {
+                            merge_syntax_with_inline(
+                                inline_segments,
+                                tokens,
+                                diff_bg.unwrap_or(Color::Reset),
+                                emphasis_bg.unwrap_or(Color::Reset),
+                                tab_width,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            render_inline_diff_spans(
+                                inline_segments,
+                                diff_bg.unwrap_or(Color::Reset),
+                                emphasis_bg.unwrap_or(Color::Reset),
+                                tab_width,
+                            )
+                        })
+                } else {
+                    render_inline_diff_spans(
+                        inline_segments,
+                        diff_bg.unwrap_or(Color::Reset),
+                        emphasis_bg.unwrap_or(Color::Reset),
+                        tab_width,
+                    )
+                }
+            }
+            DiffLineTag::Delete => render_inline_diff_spans(
+                inline_segments,
+                diff_bg.unwrap_or(Color::Reset),
+                emphasis_bg.unwrap_or(Color::Reset),
+                tab_width,
+            ),
+            DiffLineTag::Equal => {
+                if let Some(line_no) = new_line_no {
+                    syntax_spans_for_line(vs, line_no - 1, None)
+                } else {
+                    vec![Span::styled(
+                        content.to_string(),
+                        Style::default().fg(theme.fg),
+                    )]
+                }
+            }
+        }
+    } else {
+        // No inline segments — use syntax highlighting or plain.
+        match tag {
+            DiffLineTag::Insert => {
+                if let Some(line_no) = new_line_no {
+                    syntax_spans_for_line(vs, line_no - 1, diff_bg)
+                } else {
+                    vec![Span::styled(
+                        content.to_string(),
+                        Style::default()
+                            .fg(theme.fg)
+                            .bg(diff_bg.unwrap_or(Color::Reset)),
+                    )]
+                }
+            }
+            DiffLineTag::Delete => {
+                vec![Span::styled(
+                    content.to_string(),
+                    Style::default()
+                        .fg(theme.fg)
+                        .bg(diff_bg.unwrap_or(Color::Reset)),
+                )]
+            }
+            DiffLineTag::Equal => {
+                if let Some(line_no) = new_line_no {
+                    syntax_spans_for_line(vs, line_no - 1, None)
+                } else {
+                    vec![Span::styled(
+                        content.to_string(),
+                        Style::default().fg(theme.fg),
+                    )]
+                }
+            }
+        }
+    };
+
+    // Apply horizontal scroll, clipping to panel width.
+    let content_max_w = (ctx.area_width as usize).saturating_sub(gutter_width + 8);
+    let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
+
+    let mut spans = vec![gutter_span, badge];
+    spans.extend(content_spans);
+
+    // Extend background color to the end of the line for
+    // Insert/Delete rows (GitHub-style block coloring).
+    if let Some(bg) = diff_bg {
+        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        let panel_inner_w = ctx.area_width.saturating_sub(2) as usize;
+        if used < panel_inner_w {
+            let fill = " ".repeat(panel_inner_w - used);
+            spans.push(Span::styled(fill, Style::default().bg(bg)));
+        }
+    }
+
+    Line::from(spans)
+}
+
 fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
     let theme = &app.theme;
     let vs = &app.viewer_state;
@@ -390,267 +765,45 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
         .review_state
         .comments
         .iter()
-        .filter(|c| {
-            app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path)
-        })
+        .filter(|c| app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path))
         .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
         .collect();
 
+    let line_ctx = DiffLineRenderCtx {
+        vs,
+        theme,
+        gutter_width,
+        tab_width,
+        area_width: area.width,
+        comment_lines: &comment_lines,
+        comment_end_lines: &comment_end_lines,
+    };
+
     let lines: Vec<Line> = vs
-        .diff_view.diff_view_lines
+        .diff_view
+        .diff_view_lines
         .iter()
         .skip(vs.diff_view.diff_view_scroll)
         .take(inner_height)
-        .map(|entry| {
-            match entry {
-                UnifiedDiffEntry::HunkSeparator { func_header } => {
-                    let width = area.width.saturating_sub(2) as usize;
-                    match func_header {
-                        Some(header) => {
-                            let prefix = " ··· ";
-                            let suffix = " ───";
-                            // Fill the rest with ─
-                            let header_display = format!("{prefix}{header}{suffix}");
-                            let fill_len = width.saturating_sub(header_display.chars().count());
-                            let fill: String = "─".repeat(fill_len);
-                            Line::from(vec![
-                                Span::styled(prefix, Style::default().fg(theme.muted)),
-                                Span::styled(
-                                    header.clone(),
-                                    Style::default().fg(theme.diff_section_header).add_modifier(Modifier::ITALIC),
-                                ),
-                                Span::styled(
-                                    format!("{suffix}{fill}"),
-                                    Style::default().fg(theme.muted),
-                                ),
-                            ])
-                        }
-                        None => {
-                            let sep = format!(
-                                "{:─<width$}",
-                                " ··· ",
-                                width = width,
-                            );
-                            Line::from(Span::styled(
-                                sep,
-                                Style::default().fg(theme.muted),
-                            ))
-                        }
-                    }
-                }
-                UnifiedDiffEntry::ExpandableContext {
-                    hidden_count,
-                    func_header,
-                    ..
-                } => {
-                    let width = area.width.saturating_sub(2) as usize;
-                    let expand_label = format!(" \u{2295} {hidden_count} lines hidden (Enter to expand) ");
-                    let label_style = Style::default().fg(theme.accent);
-                    match func_header {
-                        Some(header) => {
-                            let suffix = " ───";
-                            let used = expand_label.chars().count() + header.chars().count() + suffix.chars().count();
-                            let fill_len = width.saturating_sub(used);
-                            let fill: String = "─".repeat(fill_len);
-                            Line::from(vec![
-                                Span::styled(expand_label, label_style),
-                                Span::styled(
-                                    header.clone(),
-                                    Style::default().fg(theme.diff_section_header).add_modifier(Modifier::ITALIC),
-                                ),
-                                Span::styled(
-                                    format!("{suffix}{fill}"),
-                                    Style::default().fg(theme.muted),
-                                ),
-                            ])
-                        }
-                        None => {
-                            let fill_len = width.saturating_sub(expand_label.chars().count());
-                            let fill: String = "─".repeat(fill_len);
-                            Line::from(vec![
-                                Span::styled(expand_label, label_style),
-                                Span::styled(fill, Style::default().fg(theme.muted)),
-                            ])
-                        }
-                    }
-                }
-                UnifiedDiffEntry::Line {
-                    tag,
-                    new_line_no,
-                    content,
-                    inline_segments,
-                } => {
-                    let is_selected = new_line_no
-                        .map(|n| vs.is_line_selected(n))
-                        .unwrap_or(false);
-                    let is_hovered = new_line_no
-                        .map(|n| vs.click.hover_line == Some(n))
-                        .unwrap_or(false);
-                    let is_gutter_hovered = new_line_no
-                        .map(|n| vs.click.hover_gutter_line == Some(n))
-                        .unwrap_or(false);
-                    let is_in_pending_range = !is_selected && new_line_no.is_some() && vs.is_selection_pending() && vs.click.hover_line.is_some() && {
-                        let n = new_line_no.unwrap();
-                        let start = match vs.selection { crate::viewer::LineSelection::Pending { start } => start, _ => 0 };
-                        let hover = vs.click.hover_line.unwrap();
-                        let (lo, hi) = if start <= hover { (start, hover) } else { (hover, start) };
-                        n >= lo && n <= hi
-                    };
-
-                    // Gutter marker.
-                    let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
-                        DiffLineTag::Insert => ("+", Some(app.theme.diff_add_bg), Some(app.theme.diff_add_bg_emphasis)),
-                        DiffLineTag::Delete => ("-", Some(app.theme.diff_del_bg), Some(app.theme.diff_del_bg_emphasis)),
-                        DiffLineTag::Equal => (" ", None, None),
-                    };
-
-                    // Line number (blank for Delete lines).
-                    let line_num_str = match new_line_no {
-                        Some(n) => format!("{n:>gutter_width$}"),
-                        None => " ".repeat(gutter_width),
-                    };
-
-                    let num = format!("{gutter_prefix}{line_num_str} \u{2502} ");
-                    let gutter_style = if is_selected {
-                        Style::default()
-                            .fg(theme.gutter_selected_fg)
-                            .bg(theme.gutter_selected_bg)
-                            .add_modifier(Modifier::BOLD)
-                    } else if is_in_pending_range {
-                        Style::default()
-                            .fg(theme.gutter_selected_fg)
-                            .bg(theme.gutter_pending_bg)
-                    } else if is_gutter_hovered {
-                        Style::default().fg(theme.gutter_hover_fg).bg(theme.gutter_hover_bg)
-                    } else if is_hovered {
-                        Style::default().fg(theme.gutter_hover_fg)
-                    } else {
-                        match tag {
-                            DiffLineTag::Insert => Style::default().fg(theme.diff_add),
-                            DiffLineTag::Delete => Style::default().fg(theme.diff_del),
-                            DiffLineTag::Equal => Style::default().fg(theme.muted),
-                        }
-                    };
-                    let gutter_span = Span::styled(num, gutter_style);
-
-                    // Comment badge: 💬 on end lines, │ on earlier range lines,
-                    // 💬 (muted) on hovered gutter.
-                    let badge = if new_line_no.is_some_and(|n| comment_end_lines.contains(&n)) {
-                        Span::styled("💬", Style::default().fg(theme.accent))
-                    } else if new_line_no.is_some_and(|n| comment_lines.contains(&n)) {
-                        Span::styled("│ ", Style::default().fg(theme.accent))
-                    } else if is_gutter_hovered {
-                        Span::styled("💬", Style::default().fg(theme.muted))
-                    } else {
-                        Span::raw("  ")
-                    };
-
-                    // Content styling.
-                    let content_spans: Vec<Span> = if is_selected {
-                        vec![Span::styled(
-                            content.clone(),
-                            Style::default().bg(theme.line_selected_bg).fg(theme.line_selected_fg),
-                        )]
-                    } else if is_in_pending_range {
-                        vec![Span::styled(
-                            content.clone(),
-                            Style::default().bg(theme.line_pending_bg).fg(theme.line_selected_fg),
-                        )]
-                    } else if !inline_segments.is_empty() {
-                        match tag {
-                            DiffLineTag::Insert => {
-                                // Try syntax highlighting + word-diff merge.
-                                if let Some(line_no) = new_line_no {
-                                    let idx = line_no - 1;
-                                    vs.content.highlighted_lines.get(idx)
-                                        .filter(|t| !t.is_empty())
-                                        .and_then(|tokens| merge_syntax_with_inline(
-                                            inline_segments, tokens,
-                                            diff_bg.unwrap_or(Color::Reset),
-                                            emphasis_bg.unwrap_or(Color::Reset),
-                                            tab_width,
-                                        ))
-                                        .unwrap_or_else(|| render_inline_diff_spans(
-                                            inline_segments,
-                                            diff_bg.unwrap_or(Color::Reset),
-                                            emphasis_bg.unwrap_or(Color::Reset),
-                                            tab_width,
-                                        ))
-                                } else {
-                                    render_inline_diff_spans(
-                                        inline_segments,
-                                        diff_bg.unwrap_or(Color::Reset),
-                                        emphasis_bg.unwrap_or(Color::Reset),
-                                        tab_width,
-                                    )
-                                }
-                            }
-                            DiffLineTag::Delete => {
-                                render_inline_diff_spans(
-                                    inline_segments,
-                                    diff_bg.unwrap_or(Color::Reset),
-                                    emphasis_bg.unwrap_or(Color::Reset),
-                                    tab_width,
-                                )
-                            }
-                            DiffLineTag::Equal => {
-                                if let Some(line_no) = new_line_no {
-                                    syntax_spans_for_line(vs, line_no - 1, None)
-                                } else {
-                                    vec![Span::styled(content.clone(), Style::default().fg(theme.fg))]
-                                }
-                            }
-                        }
-                    } else {
-                        // No inline segments — use syntax highlighting or plain.
-                        match tag {
-                            DiffLineTag::Insert => {
-                                if let Some(line_no) = new_line_no {
-                                    syntax_spans_for_line(vs, line_no - 1, diff_bg)
-                                } else {
-                                    vec![Span::styled(
-                                        content.clone(),
-                                        Style::default().fg(theme.fg).bg(diff_bg.unwrap_or(Color::Reset)),
-                                    )]
-                                }
-                            }
-                            DiffLineTag::Delete => {
-                                vec![Span::styled(
-                                    content.clone(),
-                                    Style::default().fg(theme.fg).bg(diff_bg.unwrap_or(Color::Reset)),
-                                )]
-                            }
-                            DiffLineTag::Equal => {
-                                if let Some(line_no) = new_line_no {
-                                    syntax_spans_for_line(vs, line_no - 1, None)
-                                } else {
-                                    vec![Span::styled(content.clone(), Style::default().fg(theme.fg))]
-                                }
-                            }
-                        }
-                    };
-
-                    // Apply horizontal scroll, clipping to panel width.
-                    let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
-                    let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
-
-                    let mut spans = vec![gutter_span, badge];
-                    spans.extend(content_spans);
-
-                    // Extend background color to the end of the line for
-                    // Insert/Delete rows (GitHub-style block coloring).
-                    if let Some(bg) = diff_bg {
-                        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-                        let panel_inner_w = area.width.saturating_sub(2) as usize;
-                        if used < panel_inner_w {
-                            let fill = " ".repeat(panel_inner_w - used);
-                            spans.push(Span::styled(fill, Style::default().bg(bg)));
-                        }
-                    }
-
-                    Line::from(spans)
-                }
+        .map(|entry| match entry {
+            UnifiedDiffEntry::HunkSeparator { func_header } => {
+                let width = area.width.saturating_sub(2) as usize;
+                render_hunk_separator(func_header, width, theme)
             }
+            UnifiedDiffEntry::ExpandableContext {
+                hidden_count,
+                func_header,
+                ..
+            } => {
+                let width = area.width.saturating_sub(2) as usize;
+                render_expandable_context(*hidden_count, func_header, width, theme)
+            }
+            UnifiedDiffEntry::Line {
+                tag,
+                new_line_no,
+                content,
+                inline_segments,
+            } => render_diff_content_line(tag, new_line_no, content, inline_segments, &line_ctx),
         })
         .collect();
 
@@ -672,11 +825,12 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) 
         frame.render_widget(ratatui::widgets::Clear, hint_area);
         let hint_widget = Paragraph::new(Span::styled(
             hint,
-            Style::default().fg(theme.gutter_selected_fg).bg(theme.gutter_selected_bg),
+            Style::default()
+                .fg(theme.gutter_selected_fg)
+                .bg(theme.gutter_selected_bg),
         ));
         frame.render_widget(hint_widget, hint_area);
     }
-
 }
 
 /// Render media file (image/video) as ASCII art in the viewer panel.
@@ -693,7 +847,11 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
                 .block(block);
             frame.render_widget(loading, area);
         }
-        MediaContent::Rendered { lines, dimensions, file_size } => {
+        MediaContent::Rendered {
+            lines,
+            dimensions,
+            file_size,
+        } => {
             frame.render_widget(ratatui::widgets::Clear, area);
 
             let inner = block.inner(area);
@@ -717,14 +875,8 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
             } else {
                 format!("{file_size} B")
             };
-            let info = format!(
-                " {}x{} | {} ",
-                dimensions.0, dimensions.1, size_str,
-            );
-            let info_widget = Paragraph::new(Span::styled(
-                info,
-                Style::default().fg(theme.muted),
-            ));
+            let info = format!(" {}x{} | {} ", dimensions.0, dimensions.1, size_str,);
+            let info_widget = Paragraph::new(Span::styled(info, Style::default().fg(theme.muted)));
             frame.render_widget(info_widget, info_area);
         }
         MediaContent::Error(msg) => {
@@ -785,7 +937,9 @@ fn build_inline_thread_lines<'a>(
     let border_style = Style::default().fg(theme.accent);
     let thread_bg = Style::default().bg(theme.comment_preview_bg);
     let content_style = Style::default().fg(theme.fg).bg(theme.comment_preview_bg);
-    let muted_style = Style::default().fg(theme.muted).bg(theme.comment_preview_bg);
+    let muted_style = Style::default()
+        .fg(theme.muted)
+        .bg(theme.comment_preview_bg);
     let info_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
     // Box inner width (between │ and │).
     let box_inner = panel_width.saturating_sub(left_pad + 4 + 2); // "  │ " left + " │" right
@@ -799,7 +953,10 @@ fn build_inline_thread_lines<'a>(
         ];
         all.extend(spans);
         // Pad the line to panel_width so the background color fills the entire row.
-        let used: usize = all.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
+        let used: usize = all
+            .iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
         let remaining = panel_width.saturating_sub(used + 2); // +2 for block borders
         if remaining > 0 {
             all.push(Span::styled(" ".repeat(remaining), thread_bg));
@@ -852,17 +1009,19 @@ fn build_inline_thread_lines<'a>(
                             Span::styled(wline.clone(), content_style),
                         ]));
                     } else {
-                        out.push(make_line(vec![
-                            Span::styled(format!("  {wline}"), content_style),
-                        ]));
+                        out.push(make_line(vec![Span::styled(
+                            format!("  {wline}"),
+                            content_style,
+                        )]));
                     }
                 }
             } else {
                 let wrapped = soft_wrap(body_line, wrap_width);
                 for wline in &wrapped {
-                    out.push(make_line(vec![
-                        Span::styled(format!("  {wline}"), content_style),
-                    ]));
+                    out.push(make_line(vec![Span::styled(
+                        format!("  {wline}"),
+                        content_style,
+                    )]));
                 }
             }
         }
@@ -878,7 +1037,11 @@ fn build_inline_thread_lines<'a>(
                 let reply_first_wrap = wrap_width.saturating_sub(reply_header_len).max(20);
                 let mut is_first_reply_line = true;
                 for reply_line in reply.body.split('\n') {
-                    let w = if is_first_reply_line { reply_first_wrap } else { wrap_width };
+                    let w = if is_first_reply_line {
+                        reply_first_wrap
+                    } else {
+                        wrap_width
+                    };
                     let wrapped = soft_wrap(reply_line, w);
                     for (wi, wline) in wrapped.iter().enumerate() {
                         if is_first_reply_line && wi == 0 {
@@ -888,9 +1051,10 @@ fn build_inline_thread_lines<'a>(
                                 Span::styled(wline.clone(), content_style),
                             ]));
                         } else {
-                            out.push(make_line(vec![
-                                Span::styled(format!("    {wline}"), content_style),
-                            ]));
+                            out.push(make_line(vec![Span::styled(
+                                format!("    {wline}"),
+                                content_style,
+                            )]));
                         }
                     }
                 }
@@ -899,13 +1063,24 @@ fn build_inline_thread_lines<'a>(
 
         // Per-comment action icons row or active reply input.
         let is_replying_to_this = reply_comment_id == Some(comment.id.as_str());
-        let action_row_type = ScreenRow::ThreadActions { comment_id: comment.id.clone() };
+        let action_row_type = ScreenRow::ThreadActions {
+            comment_id: comment.id.clone(),
+        };
         if is_replying_to_this {
             let buf_text = reply_buffer.text().to_string();
             let (line, _) = make_line(vec![
-                Span::styled("> ", Style::default().fg(theme.accent).bg(theme.comment_preview_bg)),
                 Span::styled(
-                    if buf_text.is_empty() { "Type reply...".to_string() } else { buf_text },
+                    "> ",
+                    Style::default()
+                        .fg(theme.accent)
+                        .bg(theme.comment_preview_bg),
+                ),
+                Span::styled(
+                    if buf_text.is_empty() {
+                        "Type reply...".to_string()
+                    } else {
+                        buf_text
+                    },
                     content_style,
                 ),
             ]);
@@ -913,9 +1088,13 @@ fn build_inline_thread_lines<'a>(
         } else {
             // Clickable action icons: ↩ reply  ✔ resolve  x delete  ...  ✨ ask claude
             let reply_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
-            let resolve_style = Style::default().fg(Color::Green).bg(theme.comment_preview_bg);
+            let resolve_style = Style::default()
+                .fg(Color::Green)
+                .bg(theme.comment_preview_bg);
             let delete_style = Style::default().fg(Color::Red).bg(theme.comment_preview_bg);
-            let claude_style = Style::default().fg(Color::Rgb(180, 140, 255)).bg(theme.comment_preview_bg);
+            let claude_style = Style::default()
+                .fg(Color::Rgb(180, 140, 255))
+                .bg(theme.comment_preview_bg);
             let status_label = match comment.status {
                 crate::review_store::CommentStatus::Pending => "✔ resolve",
                 crate::review_store::CommentStatus::Resolved => "↺ unresolve",
@@ -932,7 +1111,8 @@ fn build_inline_thread_lines<'a>(
             let right_label = "✨ ask claude";
             let right_label_w = unicode_width::UnicodeWidthStr::width(right_label);
 
-            let left_w: usize = left_actions.iter()
+            let left_w: usize = left_actions
+                .iter()
                 .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                 .sum();
             let prefix_w = left_pad + 4; // gutter_pad + "  │ "
@@ -979,21 +1159,22 @@ fn ensure_diff_annotations_cached(app: &mut App) {
     let mut annotations = std::collections::HashMap::new();
 
     if let Some(ref current) = current_file {
-        let insert_annotations =
-            |file_diff: &FileDiff,
-             map: &mut std::collections::HashMap<usize, (DiffLineTag, Vec<InlineSegment>)>| {
-                for hunk in &file_diff.hunks {
-                    for line in &hunk.lines {
-                        if line.tag == DiffLineTag::Insert {
-                            if let Some(n) = line.new_line_no {
-                                map.entry(n).or_insert_with(|| {
-                                    (DiffLineTag::Insert, line.inline_segments.clone())
-                                });
-                            }
-                        }
+        let insert_annotations = |file_diff: &FileDiff,
+                                  map: &mut std::collections::HashMap<
+            usize,
+            (DiffLineTag, Vec<InlineSegment>),
+        >| {
+            for hunk in &file_diff.hunks {
+                for line in &hunk.lines {
+                    if line.tag == DiffLineTag::Insert
+                        && let Some(n) = line.new_line_no
+                    {
+                        map.entry(n)
+                            .or_insert_with(|| (DiffLineTag::Insert, line.inline_segments.clone()));
                     }
                 }
-            };
+            }
+        };
 
         // Uncommitted first (takes priority in the viewer).
         for file_diff in &app.diff_state.uncommitted_files {
@@ -1032,10 +1213,7 @@ fn render_inline_diff_spans(
                 seg.text.trim_end_matches('\n').trim_end_matches('\r'),
                 tab_width,
             );
-            Span::styled(
-                text,
-                Style::default().fg(Color::White).bg(bg),
-            )
+            Span::styled(text, Style::default().fg(Color::White).bg(bg))
         })
         .collect()
 }
@@ -1109,10 +1287,7 @@ fn merge_syntax_with_inline(
             i += 1;
         }
 
-        result.push(Span::styled(
-            expanded_text[start..i].to_string(),
-            fg.bg(bg),
-        ));
+        result.push(Span::styled(expanded_text[start..i].to_string(), fg.bg(bg)));
     }
 
     Some(result)
@@ -1149,14 +1324,24 @@ fn expand_tabs_at(piece: &str, tab_width: usize, col: &mut usize) -> String {
     result
 }
 
-fn render_search_box(frame: &mut Frame, area: Rect, query: &crate::text_input::TextInput, theme: &Theme, suppress_cursor: bool) {
+fn render_search_box(
+    frame: &mut Frame,
+    area: Rect,
+    query: &crate::text_input::TextInput,
+    theme: &Theme,
+    suppress_cursor: bool,
+) {
     let height = 1_u16;
     let y = area.y + area.height.saturating_sub(height + 1);
     let search_area = Rect::new(area.x + 1, y, area.width.saturating_sub(2), height);
 
     frame.render_widget(ratatui::widgets::Clear, search_area);
 
-    let text = format!("/{}\u{2588}{}", query.text_before_cursor(), query.text_after_cursor());
+    let text = format!(
+        "/{}\u{2588}{}",
+        query.text_before_cursor(),
+        query.text_after_cursor()
+    );
     let paragraph = Paragraph::new(Span::styled(
         text,
         Style::default().fg(theme.search_match_fg),
@@ -1199,7 +1384,8 @@ fn syntax_spans_for_line(
     } else {
         // Fallback: plain white text.
         let text = vs
-            .content.file_content
+            .content
+            .file_content
             .get(line_no)
             .cloned()
             .unwrap_or_default();
@@ -1209,7 +1395,11 @@ fn syntax_spans_for_line(
 
 /// Skip `offset` characters from the beginning of a sequence of `Span`s and
 /// truncate to at most `max_width` characters, preserving per-span styling.
-fn h_scroll_spans(spans: Vec<Span<'static>>, offset: usize, max_width: usize) -> Vec<Span<'static>> {
+fn h_scroll_spans(
+    spans: Vec<Span<'static>>,
+    offset: usize,
+    max_width: usize,
+) -> Vec<Span<'static>> {
     let mut remaining_skip = offset;
     let mut remaining_width = max_width;
     let mut result: Vec<Span<'static>> = Vec::new();
@@ -1329,7 +1519,7 @@ fn apply_hint_labels(
     let mut result = spans;
     // Process hints in reverse order so earlier replacements don't shift positions of later ones.
     let mut sorted: Vec<&&crate::overlay::SymbolHint> = hints.iter().collect();
-    sorted.sort_by(|a, b| b.start_col.cmp(&a.start_col));
+    sorted.sort_by_key(|h| std::cmp::Reverse(h.start_col));
 
     for hint in sorted {
         let vis_start = hint.start_col.saturating_sub(h_scroll);
@@ -1407,11 +1597,7 @@ fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
 
 /// Format a location as a short breadcrumb label: `filename:line`.
 fn breadcrumb_label(loc: &crate::jump_history::Location) -> String {
-    let filename = loc
-        .file_path
-        .rsplit('/')
-        .next()
-        .unwrap_or(&loc.file_path);
+    let filename = loc.file_path.rsplit('/').next().unwrap_or(&loc.file_path);
     format!("{}:{}", filename, loc.line + 1)
 }
 
@@ -1462,7 +1648,15 @@ mod tests {
     use super::*;
 
     fn seg(text: &str, emphasized: bool) -> InlineSegment {
-        InlineSegment { text: text.to_string(), emphasized }
+        InlineSegment {
+            text: text.to_string(),
+            emphasized,
+        }
+    }
+
+    /// Concatenate all span contents of a line into a single string.
+    fn line_text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     #[test]
@@ -1502,5 +1696,46 @@ mod tests {
             4,
         );
         assert!(merged.is_none());
+    }
+
+    #[test]
+    fn hunk_separator_with_header_includes_header() {
+        let theme = Theme::default();
+        let line = render_hunk_separator(&Some("fn foo()".to_string()), 40, &theme);
+        let text = line_text(&line);
+        assert!(text.starts_with(" ··· "));
+        assert!(text.contains("fn foo()"));
+        // 3 spans: prefix, header, suffix+fill.
+        assert_eq!(line.spans.len(), 3);
+    }
+
+    #[test]
+    fn hunk_separator_without_header_is_single_fill() {
+        let theme = Theme::default();
+        let line = render_hunk_separator(&None, 20, &theme);
+        let text = line_text(&line);
+        assert!(text.starts_with(" ··· "));
+        // Padded with the fill character up to the requested width.
+        assert_eq!(text.chars().count(), 20);
+        assert_eq!(line.spans.len(), 1);
+    }
+
+    #[test]
+    fn expandable_context_reports_hidden_count() {
+        let theme = Theme::default();
+        let line = render_expandable_context(7, &None, 50, &theme);
+        let text = line_text(&line);
+        assert!(text.contains("7 lines hidden"));
+        assert!(text.contains("Enter to expand"));
+    }
+
+    #[test]
+    fn expandable_context_with_header_includes_header() {
+        let theme = Theme::default();
+        let line = render_expandable_context(3, &Some("impl Bar".to_string()), 60, &theme);
+        let text = line_text(&line);
+        assert!(text.contains("3 lines hidden"));
+        assert!(text.contains("impl Bar"));
+        assert_eq!(line.spans.len(), 3);
     }
 }

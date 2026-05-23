@@ -44,7 +44,7 @@ fn history_file_path() -> Option<PathBuf> {
 /// All `/` and `.` are replaced with `-`.
 /// E.g. `/Users/foo/github.com/proj` → `-Users-foo-github-com-proj`.
 fn encode_project_path(path: &str) -> String {
-    path.replace('/', "-").replace('.', "-")
+    path.replace(['/', '.'], "-")
 }
 
 /// Check if a session JSONL file exists for the given session ID and project.
@@ -134,7 +134,9 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
 ///
 /// Reads `history.jsonl` once and returns a map from worktree path to its latest
 /// valid session. Only sessions whose JSONL file still exists on disk are included.
-pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathBuf, ResumableSession>> {
+pub fn find_latest_sessions_for_paths(
+    paths: &[PathBuf],
+) -> Result<HashMap<PathBuf, ResumableSession>> {
     let history_path = match history_file_path() {
         Some(p) if p.exists() => p,
         _ => {
@@ -154,7 +156,11 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         .iter()
         .map(|p| {
             let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-            log::info!("find_latest_sessions: lookup key: raw={} canonical={}", p.display(), canonical.display());
+            log::info!(
+                "find_latest_sessions: lookup key: raw={} canonical={}",
+                p.display(),
+                canonical.display()
+            );
             (canonical.to_string_lossy().to_string(), canonical)
         })
         .collect();
@@ -166,7 +172,10 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         .filter_map(|line| serde_json::from_str::<ClaudeHistoryEntry>(line).ok())
         .filter(|e| !e.session_id.is_empty())
         .collect();
-    log::info!("find_latest_sessions: total history entries={}", entries.len());
+    log::info!(
+        "find_latest_sessions: total history entries={}",
+        entries.len()
+    );
 
     // Track latest entry per path whose session file actually exists.
     // We validate existence eagerly so that ghost entries (session file
@@ -176,8 +185,8 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
     let mut skipped_missing = 0u32;
     for entry in entries {
         // Canonicalize the project path from the history entry for comparison.
-        let entry_path = std::fs::canonicalize(&entry.project)
-            .unwrap_or_else(|_| PathBuf::from(&entry.project));
+        let entry_path =
+            std::fs::canonicalize(&entry.project).unwrap_or_else(|_| PathBuf::from(&entry.project));
         let entry_key = entry_path.to_string_lossy().to_string();
 
         if !path_strs.contains_key(&entry_key) {
@@ -201,7 +210,9 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
     }
     log::info!(
         "find_latest_sessions: matched {} history entries, {} skipped (file missing), {} valid unique paths",
-        match_count, skipped_missing, best.len()
+        match_count,
+        skipped_missing,
+        best.len()
     );
 
     // Convert to ResumableSession.
@@ -214,7 +225,11 @@ pub fn find_latest_sessions_for_paths(paths: &[PathBuf]) -> Result<HashMap<PathB
         let time_ago = format_time_ago(now_ms, entry.timestamp);
 
         if let Some(canonical) = path_strs.get(&key) {
-            log::info!("find_latest_sessions: found session id={} for path={}", entry.session_id, key);
+            log::info!(
+                "find_latest_sessions: found session id={} for path={}",
+                entry.session_id,
+                key
+            );
             result.insert(
                 canonical.clone(),
                 ResumableSession {
@@ -266,7 +281,10 @@ pub fn migrate_session(
     let session_file = format!("{session_id}.jsonl");
     let src_jsonl = src_dir.join(&session_file);
     if !src_jsonl.exists() {
-        log::warn!("migrate_session: source file not found: {}", src_jsonl.display());
+        log::warn!(
+            "migrate_session: source file not found: {}",
+            src_jsonl.display()
+        );
         return Ok(false);
     }
 
@@ -278,8 +296,9 @@ pub fn migrate_session(
     // Symlink the .jsonl file.
     let dst_jsonl = dst_dir.join(&session_file);
     if !dst_jsonl.exists() {
-        std::os::unix::fs::symlink(&src_jsonl, &dst_jsonl)
-            .with_context(|| format!("symlink {} -> {}", dst_jsonl.display(), src_jsonl.display()))?;
+        std::os::unix::fs::symlink(&src_jsonl, &dst_jsonl).with_context(|| {
+            format!("symlink {} -> {}", dst_jsonl.display(), src_jsonl.display())
+        })?;
         log::info!("migrate_session: symlinked {}", dst_jsonl.display());
     }
 
@@ -288,8 +307,13 @@ pub fn migrate_session(
     if src_subdir.is_dir() {
         let dst_subdir = dst_dir.join(session_id);
         if !dst_subdir.exists() {
-            std::os::unix::fs::symlink(&src_subdir, &dst_subdir)
-                .with_context(|| format!("symlink {} -> {}", dst_subdir.display(), src_subdir.display()))?;
+            std::os::unix::fs::symlink(&src_subdir, &dst_subdir).with_context(|| {
+                format!(
+                    "symlink {} -> {}",
+                    dst_subdir.display(),
+                    src_subdir.display()
+                )
+            })?;
             log::info!("migrate_session: symlinked subdir {}", dst_subdir.display());
         }
     }
@@ -333,12 +357,13 @@ pub fn unmigrate_session(
             // back to the source project directory, then remove.
             if let Some(src_dir) = projects_dir_for(source_working_dir) {
                 let src_jsonl = src_dir.join(&session_file);
-                std::fs::copy(&dst_jsonl, &src_jsonl)
-                    .with_context(|| format!(
+                std::fs::copy(&dst_jsonl, &src_jsonl).with_context(|| {
+                    format!(
                         "copy back session {} -> {}",
                         dst_jsonl.display(),
                         src_jsonl.display(),
-                    ))?;
+                    )
+                })?;
                 log::info!(
                     "unmigrate_session: copied back real file {} -> {}",
                     dst_jsonl.display(),
@@ -346,7 +371,10 @@ pub fn unmigrate_session(
                 );
             }
             std::fs::remove_file(&dst_jsonl)?;
-            log::info!("unmigrate_session: removed real file {}", dst_jsonl.display());
+            log::info!(
+                "unmigrate_session: removed real file {}",
+                dst_jsonl.display()
+            );
         }
     }
 
@@ -355,16 +383,20 @@ pub fn unmigrate_session(
     if let Ok(meta) = dst_subdir.symlink_metadata() {
         if meta.file_type().is_symlink() {
             std::fs::remove_file(&dst_subdir)?;
-            log::info!("unmigrate_session: removed symlink {}", dst_subdir.display());
+            log::info!(
+                "unmigrate_session: removed symlink {}",
+                dst_subdir.display()
+            );
         } else if meta.is_dir() {
             if let Some(src_dir) = projects_dir_for(source_working_dir) {
                 let src_subdir = src_dir.join(session_id);
-                copy_dir_recursive(&dst_subdir, &src_subdir)
-                    .with_context(|| format!(
+                copy_dir_recursive(&dst_subdir, &src_subdir).with_context(|| {
+                    format!(
                         "copy back subdir {} -> {}",
                         dst_subdir.display(),
                         src_subdir.display(),
-                    ))?;
+                    )
+                })?;
                 log::info!(
                     "unmigrate_session: copied back real subdir {} -> {}",
                     dst_subdir.display(),
@@ -372,7 +404,10 @@ pub fn unmigrate_session(
                 );
             }
             std::fs::remove_dir_all(&dst_subdir)?;
-            log::info!("unmigrate_session: removed real subdir {}", dst_subdir.display());
+            log::info!(
+                "unmigrate_session: removed real subdir {}",
+                dst_subdir.display()
+            );
         }
     }
 
@@ -400,8 +435,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 /// Append a single entry to `~/.claude/history.jsonl`.
 fn append_history_entry(session_id: &str, project_path: &Path, display: &str) -> Result<()> {
     use std::io::Write;
-    let history_path = history_file_path()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine history file path"))?;
+    let history_path =
+        history_file_path().ok_or_else(|| anyhow::anyhow!("cannot determine history file path"))?;
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -114,7 +114,8 @@ impl JumpHistory {
             all.push(loc.clone());
         }
 
-        let mut entries: Vec<Option<Location>> = all[start..end].iter().cloned().map(Some).collect();
+        let mut entries: Vec<Option<Location>> =
+            all[start..end].iter().cloned().map(Some).collect();
         let mut adjusted_idx = cur_idx - start;
 
         if start > 0 {

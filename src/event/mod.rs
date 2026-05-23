@@ -20,12 +20,12 @@ use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
+use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
 use self::overlay::*;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
-use self::worktree::handle_worktree_key;
-use self::explorer::handle_explorer_key;
 use self::viewer::handle_viewer_key;
+use self::worktree::handle_worktree_key;
 
 // ── Effective overlay ───────────────────────────────────────────────────
 
@@ -129,10 +129,22 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             }
             return;
         }
-        EffectiveOverlay::UpdateState => { handle_update_key(app, key); return; }
-        EffectiveOverlay::CommentDetail => { handle_comment_detail_key(app, key); return; }
-        EffectiveOverlay::ReviewInput => { handle_review_input_key(app, key); return; }
-        EffectiveOverlay::WorktreeInput => { handle_worktree_input_key(app, key); return; }
+        EffectiveOverlay::UpdateState => {
+            handle_update_key(app, key);
+            return;
+        }
+        EffectiveOverlay::CommentDetail => {
+            handle_comment_detail_key(app, key);
+            return;
+        }
+        EffectiveOverlay::ReviewInput => {
+            handle_review_input_key(app, key);
+            return;
+        }
+        EffectiveOverlay::WorktreeInput => {
+            handle_worktree_input_key(app, key);
+            return;
+        }
         EffectiveOverlay::Active(overlay) => {
             match overlay {
                 ActiveOverlay::SwitchBranch => handle_switch_branch_key(app, key),
@@ -150,10 +162,22 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             }
             return;
         }
-        EffectiveOverlay::FilenameSearch => { handle_filename_search_key(app, key); return; }
-        EffectiveOverlay::ViewerSearch => { handle_viewer_search_key(app, key); return; }
-        EffectiveOverlay::ReviewSearch => { handle_review_search_key(app, key); return; }
-        EffectiveOverlay::ReviewTemplate => { handle_review_template_key(app, key); return; }
+        EffectiveOverlay::FilenameSearch => {
+            handle_filename_search_key(app, key);
+            return;
+        }
+        EffectiveOverlay::ViewerSearch => {
+            handle_viewer_search_key(app, key);
+            return;
+        }
+        EffectiveOverlay::ReviewSearch => {
+            handle_review_search_key(app, key);
+            return;
+        }
+        EffectiveOverlay::ReviewTemplate => {
+            handle_review_template_key(app, key);
+            return;
+        }
         EffectiveOverlay::None => {} // Fall through to panel dispatch.
     }
 
@@ -191,17 +215,35 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         // Check terminal-specific and global bindings first.
         if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
             match action {
-                Action::LeaveTerminal => { app.set_focus(Focus::Explorer); return; }
-                Action::FocusWorktree => { app.set_focus(Focus::Worktree); return; }
-                Action::FocusExplorer => { app.set_focus(Focus::Explorer); return; }
+                Action::LeaveTerminal => {
+                    app.set_focus(Focus::Explorer);
+                    return;
+                }
+                Action::FocusWorktree => {
+                    app.set_focus(Focus::Worktree);
+                    return;
+                }
+                Action::FocusExplorer => {
+                    app.set_focus(Focus::Explorer);
+                    return;
+                }
                 Action::FocusExplorerDiffList => {
                     app.set_focus(Focus::Explorer);
                     app.viewer_state.explorer.explorer_focus_on_diff_list = true;
                     return;
                 }
-                Action::FocusViewer => { app.set_focus(Focus::Viewer); return; }
-                Action::FocusTerminalClaude => { app.set_focus(Focus::TerminalClaude); return; }
-                Action::FocusTerminalShell => { app.set_focus(Focus::TerminalShell); return; }
+                Action::FocusViewer => {
+                    app.set_focus(Focus::Viewer);
+                    return;
+                }
+                Action::FocusTerminalClaude => {
+                    app.set_focus(Focus::TerminalClaude);
+                    return;
+                }
+                Action::FocusTerminalShell => {
+                    app.set_focus(Focus::TerminalShell);
+                    return;
+                }
                 Action::CommandPalette => {
                     app.overlays.active = ActiveOverlay::CommandPalette;
                     app.overlays.command_palette.filter.clear();
@@ -264,9 +306,18 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     terminal::open_file_from_terminal_output(app);
                     return;
                 }
-                Action::CycleFocusForward => { app.cycle_focus_forward(); return; }
-                Action::CycleFocusBackward => { app.cycle_focus_backward(); return; }
-                Action::TogglePanelOverlay => { app.toggle_panel_overlay(); return; }
+                Action::CycleFocusForward => {
+                    app.cycle_focus_forward();
+                    return;
+                }
+                Action::CycleFocusBackward => {
+                    app.cycle_focus_backward();
+                    return;
+                }
+                Action::TogglePanelOverlay => {
+                    app.toggle_panel_overlay();
+                    return;
+                }
                 _ => {} // Other global actions not intercepted in terminal
             }
         }
@@ -294,10 +345,10 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::TerminalClaude | Focus::TerminalShell => unreachable!(),
     };
 
-    if let Some(action) = app.keymap.resolve(&key, context) {
-        if dispatch_global_action(app, action) {
-            return;
-        }
+    if let Some(action) = app.keymap.resolve(&key, context)
+        && dispatch_global_action(app, action)
+    {
+        return;
     }
 
     // ── 3. Focus-specific keybindings ────────────────────────────────
@@ -322,7 +373,10 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
 
         if app.viewer_state.explorer.inline_reply_line.is_some() {
-            app.viewer_state.explorer.inline_reply_buffer.insert_str(&single_line);
+            app.viewer_state
+                .explorer
+                .inline_reply_buffer
+                .insert_str(&single_line);
         } else if app.review_state.input_mode != ReviewInputMode::Normal {
             // Review input is multiline.
             app.review_state.input_buffer.insert_str(&data);
@@ -338,9 +392,15 @@ pub fn handle_paste_event(app: &mut App, data: String) {
             app.overlays.grep_search.input_focused = true;
             app.schedule_grep_search();
         } else if app.viewer_state.search.search_active {
-            app.viewer_state.search.search_query.insert_str(&single_line);
+            app.viewer_state
+                .search
+                .search_query
+                .insert_str(&single_line);
         } else if app.viewer_state.filename_search.filename_search_active {
-            app.viewer_state.filename_search.filename_search_query.insert_str(&single_line);
+            app.viewer_state
+                .filename_search
+                .filename_search_query
+                .insert_str(&single_line);
         } else if app.review_state.search_active {
             app.review_state.search_query.insert_str(&single_line);
             app.review_state.apply_filter();

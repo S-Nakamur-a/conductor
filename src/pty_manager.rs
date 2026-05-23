@@ -50,7 +50,6 @@ pub struct PtySession {
     pub is_active: bool,
 
     // -- PTY handles -------------------------------------------------------
-
     /// The master end of the PTY; used for resize operations.
     master: Box<dyn portable_pty::MasterPty + Send>,
     /// Writer handle for sending input to the PTY.
@@ -61,24 +60,20 @@ pub struct PtySession {
     child: Box<dyn portable_pty::Child + Send + Sync>,
 
     // -- Output buffer (shared with the reader thread) ---------------------
-
     /// Lines of captured output, shared with the background reader thread.
     output_buffer: Arc<Mutex<Vec<String>>>,
     /// Current maximum number of lines to retain.
     max_buffer_lines: usize,
 
     // -- vt100 terminal emulator -------------------------------------------
-
     /// A vt100 parser that processes raw PTY bytes for proper terminal rendering.
     screen: Arc<Mutex<vt100::Parser>>,
 
     // -- Input waiting detection ------------------------------------------
-
     /// Timestamp of the last PTY output received. Shared with the reader thread.
     pub last_output_time: Arc<Mutex<Instant>>,
 
     // -- Alternate screen detection ----------------------------------------
-
     /// Set to `true` by the reader thread when a transition *into* alternate
     /// screen mode is detected.  The main loop can check this flag and send
     /// a no-op resize (SIGWINCH) to nudge the child into re-rendering.
@@ -215,8 +210,11 @@ impl PtyManager {
         let max_buffer_lines = self.inactive_scrollback;
 
         // 5b. Create the vt100 parser with the same size as the PTY.
-        let screen: Arc<Mutex<vt100::Parser>> =
-            Arc::new(Mutex::new(vt100::Parser::new(rows, cols, self.inactive_scrollback)));
+        let screen: Arc<Mutex<vt100::Parser>> = Arc::new(Mutex::new(vt100::Parser::new(
+            rows,
+            cols,
+            self.inactive_scrollback,
+        )));
 
         // 6. Spawn a background thread that continuously reads PTY output.
         let buffer_clone = Arc::clone(&output_buffer);
@@ -290,16 +288,9 @@ impl PtyManager {
             .sessions
             .get_mut(idx)
             .context("Session index out of bounds")?;
-        let mut writer = session
-            .writer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        writer
-            .write_all(data)
-            .context("Failed to write to PTY")?;
-        writer
-            .flush()
-            .context("Failed to flush PTY writer")?;
+        let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
+        writer.write_all(data).context("Failed to write to PTY")?;
+        writer.flush().context("Failed to flush PTY writer")?;
         Ok(())
     }
 
@@ -318,10 +309,7 @@ impl PtyManager {
             .sessions
             .get_mut(idx)
             .context("Session index out of bounds")?;
-        let mut writer = session
-            .writer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
         // Write the payload in small chunks (no bracketed paste markers).
         let data = text.as_bytes();
@@ -349,10 +337,7 @@ impl PtyManager {
             .sessions
             .get_mut(idx)
             .context("Session index out of bounds")?;
-        let mut writer = session
-            .writer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
         // Begin bracketed paste mode.
         writer
@@ -681,11 +666,7 @@ impl PtyManager {
                         if cpr_count > 0 {
                             let cursor = parser.screen().cursor_position();
                             // Terminal coordinates are 1-based.
-                            let response = format!(
-                                "\x1b[{};{}R",
-                                cursor.0 + 1,
-                                cursor.1 + 1,
-                            );
+                            let response = format!("\x1b[{};{}R", cursor.0 + 1, cursor.1 + 1,);
                             log::debug!(
                                 "CPR: responding to {} query(ies) with cursor ({}, {})",
                                 cpr_count,
@@ -703,7 +684,9 @@ impl PtyManager {
                         // Detect transition into alternate screen mode.
                         let is_alt = parser.screen().alternate_screen();
                         if is_alt && !prev_alt_screen {
-                            log::debug!("ALT_SCREEN reader: entered alternate screen, chunk_size={n}");
+                            log::debug!(
+                                "ALT_SCREEN reader: entered alternate screen, chunk_size={n}"
+                            );
                             alt_screen_entered.store(true, Ordering::Relaxed);
                         }
                         prev_alt_screen = is_alt;
@@ -717,7 +700,10 @@ impl PtyManager {
                     while let Some(pos) = partial.find('\n') {
                         let line: String = partial.drain(..=pos).collect();
                         // Trim the trailing '\n' (and optional '\r').
-                        let line = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
+                        let line = line
+                            .trim_end_matches('\n')
+                            .trim_end_matches('\r')
+                            .to_string();
                         Self::push_line(&buffer, &buffer_limit, line);
                     }
                 }
@@ -730,11 +716,7 @@ impl PtyManager {
     }
 
     /// Push a single line into the shared buffer, enforcing the current limit.
-    fn push_line(
-        buffer: &Arc<Mutex<Vec<String>>>,
-        buffer_limit: &Arc<Mutex<usize>>,
-        line: String,
-    ) {
+    fn push_line(buffer: &Arc<Mutex<Vec<String>>>, buffer_limit: &Arc<Mutex<usize>>, line: String) {
         let limit = {
             let l = buffer_limit.lock().unwrap_or_else(|e| e.into_inner());
             *l
@@ -762,9 +744,5 @@ fn count_csi_dsr(bytes: &[u8]) -> usize {
     if bytes.len() < 4 {
         return 0;
     }
-    bytes
-        .windows(4)
-        .filter(|w| *w == b"\x1b[6n")
-        .count()
+    bytes.windows(4).filter(|w| *w == b"\x1b[6n").count()
 }
-
