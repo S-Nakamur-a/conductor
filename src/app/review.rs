@@ -35,6 +35,10 @@ impl App {
             .map(|w| w.branch.clone());
 
         if let Some(store) = &self.review_store {
+            // Invariant: a comment's `worktree` column stores the branch name,
+            // `commit_ref` is the symbolic "HEAD", and `branch` is the same
+            // branch. The MCP `create_comment` tool (plugins/.../mcp) is a
+            // sibling writer that mirrors this exactly — keep the two in sync.
             let wt = self.selected_worktree_branch();
             match store.add_review(
                 &wt,

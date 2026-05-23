@@ -906,6 +906,16 @@ impl App {
         self.focus = focus;
     }
 
+    /// Focus a panel and expand it to full width in a single action.
+    ///
+    /// `set_focus` clears `expanded_panel` whenever focus moves to a panel the
+    /// current expansion wouldn't cover, so the expansion is set *after*
+    /// focusing to keep `focus` and `expanded_panel` consistent.
+    pub fn focus_and_expand(&mut self, focus: Focus) {
+        self.set_focus(focus);
+        self.expanded_panel = Some(focus);
+    }
+
     /// Request the application to quit.
     pub fn quit(&mut self) {
         self.should_quit = true;
