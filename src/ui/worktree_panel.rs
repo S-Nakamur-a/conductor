@@ -65,8 +65,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Style::default()
             .fg(theme.waiting_primary)
             .add_modifier(Modifier::BOLD)
+    } else if focused {
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(theme.muted)
     };
     let border_type = if focused {
         BorderType::Thick

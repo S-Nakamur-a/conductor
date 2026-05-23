@@ -124,7 +124,7 @@ fn render_single_panel_overlay(frame: &mut Frame, panel: &PanelInfo, theme: &cra
     // Build the number + label text, vertically centered.
     let number_style = Style::default()
         .fg(if is_focused {
-            Color::White
+            theme.fg
         } else {
             Color::Rgb(180, 180, 200)
         })

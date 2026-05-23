@@ -8,7 +8,7 @@ use crate::review_store::CommentKind;
 use crate::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -21,15 +21,15 @@ pub fn kind_icon(kind: CommentKind) -> &'static str {
 }
 
 /// Styled span for a comment kind badge.
-pub fn kind_badge_span(kind: CommentKind) -> Span<'static> {
+pub fn kind_badge_span(kind: CommentKind, theme: &Theme) -> Span<'static> {
     match kind {
         CommentKind::Suggest => Span::styled(
             format!("{} ", kind_icon(kind)),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.success),
         ),
         CommentKind::Question => Span::styled(
             format!("{} ", kind_icon(kind)),
-            Style::default().fg(Color::Magenta),
+            Style::default().fg(theme.info),
         ),
     }
 }
@@ -173,7 +173,7 @@ pub fn render_template_picker_overlay(
     for (i, tmpl) in state.templates.iter().enumerate() {
         let is_selected = i == state.template_selected;
 
-        let badge = kind_badge_span(tmpl.kind);
+        let badge = kind_badge_span(tmpl.kind, theme);
 
         let max_body_len = (popup_width as usize).saturating_sub(tmpl.name.chars().count() + 10);
         let body_preview: String = tmpl.body.chars().take(max_body_len).collect();

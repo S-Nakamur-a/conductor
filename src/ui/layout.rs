@@ -150,6 +150,23 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // ── Accordion column widths (from cache) ───────────────────────
     let columns = app.layout_cache.columns;
 
+    // ── Focused-panel surface ───────────────────────────────────────
+    // Lift the focused list panel (worktree / explorer) out of its
+    // neighbours with a subtle surface fill, so the active column reads
+    // at a glance in peripheral vision. Painted before the panels so
+    // their (bg-transparent) content draws on top; viewer is left alone
+    // as a reading pane and the terminal keeps its own PTY background.
+    let focused_surface_col = match app.focus {
+        crate::app::Focus::Worktree => Some(0),
+        crate::app::Focus::Explorer => Some(1),
+        _ => None,
+    };
+    if let Some(col) = focused_surface_col {
+        let fill = ratatui::widgets::Block::default()
+            .style(ratatui::style::Style::default().bg(app.theme.panel_focused_bg));
+        frame.render_widget(fill, columns[col]);
+    }
+
     // ── Column 0: Worktree panel ────────────────────────────────────
     super::worktree_panel::render(frame, columns[0], app);
 
@@ -206,13 +223,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             super::dashboard::render_delete_branch_confirm_overlay(frame, main_area, app);
         }
         crate::app::WorktreeInputMode::ConfirmingUngrab => {
-            render_confirm_overlay(
-                frame,
-                main_area,
-                app,
-                " Confirm Ungrab ",
-                ratatui::style::Color::Yellow,
-            );
+            render_confirm_overlay(frame, main_area, app, " Confirm Ungrab ", app.theme.warning);
         }
         crate::app::WorktreeInputMode::SmartDescription => {
             super::dashboard::render_smart_description_overlay(frame, main_area, app);
@@ -295,7 +306,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // ── Skip reason modal ────────────────────────────────────────────
     if let Some(ref reason) = app.worktree_mgr.skip_reason {
-        render_skip_reason_overlay(frame, main_area, reason);
+        render_skip_reason_overlay(frame, main_area, reason, &app.theme);
     }
 
     // ── Status bar ──────────────────────────────────────────────────
@@ -317,13 +328,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
 /// Render a small confirmation overlay for worktree deletion.
 fn render_confirming_delete_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    render_confirm_overlay(
-        frame,
-        area,
-        app,
-        " Confirm Delete ",
-        ratatui::style::Color::Red,
-    );
+    render_confirm_overlay(frame, area, app, " Confirm Delete ", app.theme.error);
 }
 
 /// Generic small confirmation overlay with a customizable title and border color.
@@ -354,14 +359,19 @@ fn render_confirm_overlay(
 
         let paragraph = ratatui::widgets::Paragraph::new(ratatui::text::Span::styled(
             msg.as_str(),
-            ratatui::style::Style::default().fg(ratatui::style::Color::Yellow),
+            ratatui::style::Style::default().fg(app.theme.fg),
         ));
         frame.render_widget(paragraph, inner);
     }
 }
 
 /// Render a skip-reason informational popup.
-fn render_skip_reason_overlay(frame: &mut Frame, area: Rect, reason: &str) {
+fn render_skip_reason_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    reason: &str,
+    theme: &crate::theme::Theme,
+) {
     let popup_height = 5_u16;
     let popup_width = area.width.saturating_sub(8).min(60);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -373,7 +383,7 @@ fn render_skip_reason_overlay(frame: &mut Frame, area: Rect, reason: &str) {
     let block = ratatui::widgets::Block::default()
         .title(" Skipped ")
         .borders(ratatui::widgets::Borders::ALL)
-        .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow));
+        .border_style(ratatui::style::Style::default().fg(theme.warning));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
@@ -381,11 +391,11 @@ fn render_skip_reason_overlay(frame: &mut Frame, area: Rect, reason: &str) {
     let text = vec![
         ratatui::text::Line::from(ratatui::text::Span::styled(
             reason,
-            ratatui::style::Style::default().fg(ratatui::style::Color::Yellow),
+            ratatui::style::Style::default().fg(theme.warning),
         )),
         ratatui::text::Line::from(ratatui::text::Span::styled(
             "(Esc) 閉じる",
-            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+            ratatui::style::Style::default().fg(theme.muted),
         )),
     ];
     let paragraph =
