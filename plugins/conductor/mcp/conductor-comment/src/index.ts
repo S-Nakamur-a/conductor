@@ -128,7 +128,7 @@ interface ReviewReply {
 
 const server = new McpServer({
   name: "conductor",
-  version: "0.3.0",
+  version: "0.4.0",
 });
 
 let db: Database.Database;
@@ -443,11 +443,15 @@ server.tool(
 // Tool: create_comment
 // ---------------------------------------------------------------------------
 
+// Above this many unresolved self-review comments on one branch, the success
+// message adds a nudge so the author notices the density is getting high.
+// A soft signal, not a hard cap — tuned by feel, adjust as usage shows.
+const SELF_REVIEW_SOFT_LIMIT = 5;
+
 server.tool(
   "create_comment",
-  "Leave an inline self-review comment on a specific file and line range in the current branch's diff. Author is automatically set to 'claude' and the comment appears inline in the Conductor diff view. " +
-    "Use this SPARINGLY and with high signal: flag ONLY what a human reviewer genuinely needs to know — non-obvious or tricky logic, deliberate tradeoffs, decisions worth a second look, or places you are unsure about. " +
-    "Do NOT narrate routine changes or restate what the diff already makes obvious; a flood of low-value comments defeats the purpose. Prefer a handful of important notes over many.",
+  "Leave an inline self-review comment on a file/line range in the current branch's diff. Author is set to 'claude' and it appears inline in the Conductor diff view. " +
+    "High-signal, low-frequency tool: flag only what a human reviewer genuinely needs — tricky logic, deliberate tradeoffs, or spots you are unsure about — not routine changes the diff already makes obvious.",
   {
     file_path: z
       .string()
@@ -556,11 +560,28 @@ server.tool(
       ? `${relPath}:${line_start}-${line_end}`
       : `${relPath}:${line_start}`;
 
+    // Running count of unresolved self-review comments on this branch. Surfaced
+    // back to the author so it can observe its own comment density and self-pace
+    // — a far stronger restraint than a static "use sparingly" instruction. The
+    // count only colours into a nudge once it's high (see SELF_REVIEW_SOFT_LIMIT).
+    const selfReviewCount = (
+      d
+        .prepare(
+          "SELECT COUNT(*) AS n FROM reviews WHERE author = 'claude' AND status = 'pending' AND (branch = ? OR worktree = ?)"
+        )
+        .get(branch, branch) as { n: number }
+    ).n;
+
+    const densityNudge =
+      selfReviewCount > SELF_REVIEW_SOFT_LIMIT
+        ? " — that's a lot; make sure each one is genuinely high-signal before adding more"
+        : "";
+
     return {
       content: [
         {
           type: "text" as const,
-          text: `Comment created (id: ${id.slice(0, 8)}) at ${loc} on branch "${branch}".`,
+          text: `Comment created (id: ${id.slice(0, 8)}) at ${loc} on branch "${branch}". (${selfReviewCount} unresolved self-review comment(s) now on this branch${densityNudge}.)`,
         },
       ],
     };
