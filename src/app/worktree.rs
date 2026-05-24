@@ -51,78 +51,23 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
 
 const SMART_WORKTREE_JSON_SCHEMA: &str = r#"{"type":"object","properties":{"branch":{"type":"string"},"prompt":{"type":"string"},"session_name":{"type":"string"}},"required":["branch","prompt","session_name"]}"#;
 
-/// Fallback: call `claude -p` CLI with the same system prompt and description.
-fn run_smart_generation_claude_cli(desc: &str) -> Result<String, String> {
-    log::info!("Smart worktree: using claude -p CLI");
-    let output = std::process::Command::new("claude")
-        .args(["-p", "--output-format", "json"])
-        .arg("--json-schema")
-        .arg(SMART_WORKTREE_JSON_SCHEMA)
-        .arg("--system-prompt")
-        .arg(SMART_WORKTREE_SYSTEM_PROMPT)
-        .arg(desc)
-        .output()
-        .map_err(|e| format!("Failed to run claude CLI: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("claude CLI failed ({}): {stderr}", output.status));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    if stdout.trim().is_empty() {
-        return Err("claude CLI returned empty output".to_string());
-    }
-
-    // --output-format json wraps output; extract structured_output field.
-    let wrapper: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse claude CLI JSON wrapper: {e}"))?;
-    let structured = wrapper.get("structured_output").ok_or_else(|| {
-        format!("claude CLI response missing structured_output field\nRaw: {stdout}")
-    })?;
-    Ok(structured.to_string())
-}
-
 /// Run the LLM generation for smart worktree (branch name + prompt).
 ///
-/// Provider selection (from `[api] provider`):
-/// - `"gemini"` (default): try Gemini API first; on error fall back to `claude -p` CLI.
-/// - `"claude"`: skip Gemini and call `claude -p` CLI directly.
-///
-/// Checks `cancel_token` before each call; the API calls are blocking.
+/// The provider is selected from `[api]` config and built via [`crate::ai_caller`];
+/// this function owns the prompt, the output schema, and the parsing — the provider
+/// only returns raw text. Checks `cancel_token` before and after the (blocking) call.
 fn run_smart_generation(
     desc: &str,
     cancel_token: &Arc<AtomicBool>,
-    model: &str,
-    provider: &str,
+    api: &crate::config::ApiConfig,
 ) -> Result<SmartGenResult, String> {
     if cancel_token.load(Ordering::Relaxed) {
         return Err("Cancelled".to_string());
     }
 
-    let raw = if provider.eq_ignore_ascii_case("claude") {
-        run_smart_generation_claude_cli(desc)?
-    } else {
-        // Phase 1: Try Gemini API.
-        match crate::gemini_api::call_messages_api(
-            SMART_WORKTREE_SYSTEM_PROMPT,
-            desc,
-            Some(model),
-            1024,
-        ) {
-            Ok(raw) => raw,
-            Err(gemini_err) => {
-                log::warn!("Gemini API failed, falling back to claude CLI: {gemini_err}");
-
-                if cancel_token.load(Ordering::Relaxed) {
-                    return Err("Cancelled".to_string());
-                }
-
-                // Phase 1b: Fallback to claude -p CLI.
-                run_smart_generation_claude_cli(desc)?
-            }
-        }
-    };
+    let caller =
+        crate::ai_caller::build_caller(api, Some(SMART_WORKTREE_JSON_SCHEMA.to_string()))?;
+    let raw = caller.complete(SMART_WORKTREE_SYSTEM_PROMPT, desc, cancel_token)?;
 
     if cancel_token.load(Ordering::Relaxed) {
         return Err("Cancelled".to_string());
@@ -887,8 +832,7 @@ impl App {
         );
 
         let tx = self.worktree_op_sender();
-        let api_model = self.config.api.model.clone();
-        let api_provider = self.config.api.provider.clone();
+        let api = self.config.api.clone();
 
         let cancel = cancel_token;
         std::thread::spawn(move || {
@@ -897,7 +841,7 @@ impl App {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Phase 1: LLM generation.
                 let gen_result =
-                    match run_smart_generation(&desc, &cancel, &api_model, &api_provider) {
+                    match run_smart_generation(&desc, &cancel, &api) {
                         Ok(r) => r,
                         Err(e) => {
                             let _ = tx.send(WorktreeOpResult::SmartFailed {
