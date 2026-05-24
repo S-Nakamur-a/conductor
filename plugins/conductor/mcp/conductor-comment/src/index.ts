@@ -128,7 +128,7 @@ interface ReviewReply {
 
 const server = new McpServer({
   name: "conductor",
-  version: "0.4.0",
+  version: "0.5.0",
 });
 
 let db: Database.Database;
@@ -508,10 +508,11 @@ server.tool(
     }
     const relPath = file_path.replace(/^\.\//, "");
 
-    // Comments are keyed to a branch/worktree. The Rust side stores the
-    // worktree's branch name in both the `worktree` and `branch` columns
-    // (see add_review in review_store.rs), and uses the symbolic ref "HEAD"
-    // as commit_ref — mirror that exactly so the comment shows up in the TUI.
+    // Comments are keyed to a branch/worktree: the same branch name goes in
+    // both the `worktree` and `branch` columns. We no longer mirror the Rust
+    // side's commit_ref — the schema defaults it to 'HEAD' (reviews table, v4
+    // migration), and a CHECK enforces worktree = branch, so this writer just
+    // supplies the branch and lets the schema own the rest.
     // A detached HEAD reports the literal "HEAD", which is not a usable key.
     const branch = currentBranch();
     if (!branch || branch === "HEAD") {
@@ -530,8 +531,8 @@ server.tool(
     try {
       d.prepare(
         `INSERT INTO reviews
-           (id, worktree, file_path, line_start, line_end, kind, body, commit_ref, author, branch)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'HEAD', 'claude', ?)`
+           (id, worktree, file_path, line_start, line_end, kind, body, author, branch)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'claude', ?)`
       ).run(
         id,
         branch,

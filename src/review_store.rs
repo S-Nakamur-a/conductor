@@ -352,6 +352,65 @@ impl ReviewStore {
             .context("failed to migrate to v3 (worktree_metadata)")?;
         }
 
+        if version < 4 {
+            // Move two facts that were previously duplicated by every writer
+            // (the Rust TUI and the sibling Node MCP server) into the schema
+            // itself, so neither side has to mirror the other:
+            //   * `commit_ref` defaults to 'HEAD' — writers may now omit it.
+            //   * `worktree = branch` is enforced by a CHECK, turning a silent
+            //     shared assumption into a guarded contract. Legacy rows created
+            //     before the `branch` column existed have branch IS NULL, which
+            //     the CHECK deliberately permits.
+            // SQLite can neither add a DEFAULT to an existing column nor add a
+            // table-level CHECK in place, so the table is rebuilt. FK
+            // enforcement is disabled for the swap (review_replies references
+            // reviews by name and ids are preserved, so integrity holds).
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")
+                .context("failed to disable foreign keys for v4 migration")?;
+            conn.execute_batch(
+                "
+                BEGIN;
+
+                CREATE TABLE reviews_new (
+                    id          TEXT PRIMARY KEY,
+                    worktree    TEXT NOT NULL,
+                    file_path   TEXT NOT NULL,
+                    line_start  INTEGER NOT NULL,
+                    line_end    INTEGER,
+                    kind        TEXT NOT NULL CHECK (kind IN ('suggest', 'question')),
+                    body        TEXT NOT NULL,
+                    status      TEXT NOT NULL DEFAULT 'pending'
+                                  CHECK (status IN ('pending', 'resolved')),
+                    commit_ref  TEXT NOT NULL DEFAULT 'HEAD',
+                    author      TEXT NOT NULL DEFAULT 'user'
+                                  CHECK (author IN ('user', 'claude')),
+                    branch      TEXT,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    CHECK (branch IS NULL OR worktree = branch)
+                );
+
+                INSERT INTO reviews_new
+                    (id, worktree, file_path, line_start, line_end, kind, body,
+                     status, commit_ref, author, branch, created_at, updated_at)
+                SELECT
+                     id, worktree, file_path, line_start, line_end, kind, body,
+                     status, commit_ref, author, branch, created_at, updated_at
+                FROM reviews;
+
+                DROP TABLE reviews;
+                ALTER TABLE reviews_new RENAME TO reviews;
+
+                PRAGMA user_version = 4;
+
+                COMMIT;
+                ",
+            )
+            .context("failed to migrate to v4 (commit_ref default, worktree=branch check)")?;
+            conn.execute_batch("PRAGMA foreign_keys = ON;")
+                .context("failed to re-enable foreign keys after v4 migration")?;
+        }
+
         Ok(Self { conn })
     }
 
@@ -1026,6 +1085,55 @@ mod tests {
     }
 
     #[test]
+    fn v4_commit_ref_defaults_to_head() {
+        let store = test_store();
+        // Insert omitting commit_ref — the v4 schema default should fill it,
+        // which is what lets the Node MCP writer stop mirroring 'HEAD'.
+        store
+            .conn
+            .execute(
+                "INSERT INTO reviews (id, worktree, file_path, line_start, kind, body, branch)
+                 VALUES ('r1', 'feat/x', 'src/main.rs', 1, 'suggest', 'note', 'feat/x')",
+                [],
+            )
+            .unwrap();
+        let reviews = store.reviews_for_worktree("feat/x").unwrap();
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].commit_ref, "HEAD");
+    }
+
+    #[test]
+    fn v4_check_rejects_worktree_branch_mismatch() {
+        let store = test_store();
+        // worktree != branch (both non-null) must violate the CHECK so a
+        // drifting writer fails loudly instead of inserting an unreachable row.
+        let result = store.conn.execute(
+            "INSERT INTO reviews (id, worktree, file_path, line_start, kind, body, commit_ref, branch)
+             VALUES ('r1', 'feat/x', 'src/main.rs', 1, 'suggest', 'note', 'HEAD', 'feat/y')",
+            [],
+        );
+        assert!(result.is_err(), "worktree != branch should violate the CHECK");
+    }
+
+    #[test]
+    fn v4_check_allows_null_branch() {
+        let store = test_store();
+        // Legacy rows created before the `branch` column existed have branch
+        // IS NULL; the CHECK must keep permitting them.
+        store
+            .conn
+            .execute(
+                "INSERT INTO reviews (id, worktree, file_path, line_start, kind, body, commit_ref, branch)
+                 VALUES ('r1', 'wt1', 'src/main.rs', 1, 'suggest', 'note', 'HEAD', NULL)",
+                [],
+            )
+            .unwrap();
+        let reviews = store.reviews_for_worktree("wt1").unwrap();
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].branch, None);
+    }
+
+    #[test]
     fn update_body() {
         let store = test_store();
 
@@ -1169,9 +1277,11 @@ mod tests {
     fn line_range_and_author() {
         let store = test_store();
 
+        // worktree and branch carry the same branch name (the v4 CHECK enforces
+        // this); the comment column stores it in both.
         let review = store
             .add_review(
-                "wt1",
+                "feature/x",
                 "src/main.rs",
                 10,
                 Some(20),
