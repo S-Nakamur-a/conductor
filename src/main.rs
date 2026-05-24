@@ -95,6 +95,28 @@ fn main() -> Result<()> {
     // ── Initialise logging (honour RUST_LOG env var) ─────────────────
     env_logger::init();
 
+    // ── Fast-path CLI flags (must not touch the terminal) ────────────
+    // `--version` also doubles as the updater's verification probe: before
+    // swapping in a freshly downloaded binary, the updater spawns it with
+    // `--version` and checks it exits cleanly. Keep this branch above the
+    // terminal setup so it never enters raw mode or the alternate screen.
+    if let Some(arg) = std::env::args().nth(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("conductor {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                println!(
+                    "conductor {}\n\nUsage: conductor [REPO_PATH]\n\n  REPO_PATH    Git repository to open (defaults to the current directory)\n\nOptions:\n  -V, --version    Print version and exit\n  -h, --help       Print this help and exit",
+                    env!("CARGO_PKG_VERSION")
+                );
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     // ── Set up crossterm terminal ────────────────────────────────────
     enable_raw_mode()?;
     let mut stdout = io::stdout();

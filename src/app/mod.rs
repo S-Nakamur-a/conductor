@@ -1813,14 +1813,13 @@ impl App {
             return;
         };
         let version = info.latest_version.clone();
-        let tarball_url = info.tarball_url.clone();
         let assets = info.assets.clone();
 
         self.update_state = UpdateState::InProgress;
         self.update_progress_message = "Preparing update...".to_string();
 
         self.update_op.start(move |tx| {
-            perform_update(&tx, &version, &tarball_url, &assets);
+            perform_update(&tx, &version, &assets);
         });
     }
 
@@ -2048,7 +2047,6 @@ impl App {
 fn perform_update(
     tx: &mpsc::Sender<UpdateProgress>,
     version: &str,
-    tarball_url: &str,
     assets: &[crate::update_checker::ReleaseAsset],
 ) {
     let tmpdir = std::env::temp_dir().join(format!("conductor-update-{version}"));
@@ -2060,24 +2058,22 @@ fn perform_update(
         return;
     }
 
-    // Try pre-built binary first, then fall back to source build.
-    if try_binary_update(tx, version, assets, &tmpdir) {
-        let _ = std::fs::remove_dir_all(&tmpdir);
-        let _ = tx.send(UpdateProgress::Done(format!(
-            "v{version} installed successfully! Restarting..."
-        )));
-        return;
-    }
+    let installed = try_binary_update(tx, version, assets, &tmpdir);
+    let _ = std::fs::remove_dir_all(&tmpdir);
 
-    // Fallback: source build.
-    log::info!("no pre-built binary available, falling back to source build");
-    if try_source_update(tx, version, tarball_url, &tmpdir) {
-        let _ = std::fs::remove_dir_all(&tmpdir);
+    if installed {
         let _ = tx.send(UpdateProgress::Done(format!(
             "v{version} installed successfully! Restarting..."
         )));
     } else {
-        let _ = std::fs::remove_dir_all(&tmpdir);
+        // Deliberately no in-app source build: compiling inside the TUI is
+        // slow and fragile, and anyone able to build from source can run the
+        // command themselves. Point them at the manual path instead.
+        let _ = tx.send(UpdateProgress::Error(
+            "Could not install the pre-built binary. Update manually with \
+             `cargo install --path .` or download a binary from the releases page."
+                .to_string(),
+        ));
     }
 }
 
@@ -2156,176 +2152,109 @@ fn try_binary_update(
     }
 
     // The tar.gz contains the `conductor` binary at the top level.
-    let binary = tmpdir.join("conductor");
-    if !binary.exists() {
+    let new_binary = tmpdir.join("conductor");
+    if !new_binary.exists() {
         log::warn!("conductor binary not found in archive");
         return false;
     }
 
-    // Install to ~/.cargo/bin/ (same location as `cargo install`).
-    let install_dir = match dirs::home_dir() {
-        Some(h) => h.join(".cargo").join("bin"),
-        None => {
-            log::warn!("could not determine home directory");
+    // Install over the *currently running* executable, resolved to its real
+    // path. Guessing `~/.cargo/bin/conductor` would silently update the wrong
+    // file when conductor was launched from elsewhere (Homebrew prefix,
+    // /usr/local/bin, a symlink), leaving the user's actual binary untouched.
+    let dest = match std::env::current_exe().and_then(|p| p.canonicalize()) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("could not resolve current executable: {e}");
             return false;
         }
     };
-    if std::fs::create_dir_all(&install_dir).is_err() {
-        log::warn!("could not create install dir");
+    let Some(dest_dir) = dest.parent().map(|d| d.to_path_buf()) else {
+        log::warn!("executable has no parent directory");
         return false;
-    }
+    };
 
-    let dest = install_dir.join("conductor");
+    // Stage the new binary in the *same directory* as `dest` so the final swap
+    // can be an atomic rename(2). A cross-filesystem rename fails with EXDEV
+    // and would silently degrade to a copy, which is exactly the bug we avoid.
+    let staged = dest_dir.join(format!(".conductor-update-{}", std::process::id()));
+    let _ = std::fs::remove_file(&staged);
     let _ = tx.send(UpdateProgress::Status("Installing binary...".to_string()));
-
-    if let Err(e) = std::fs::copy(&binary, &dest) {
-        log::warn!("failed to install binary: {e}");
+    if let Err(e) = std::fs::copy(&new_binary, &staged) {
+        log::warn!("failed to stage binary: {e}");
         return false;
     }
 
-    // Ensure executable permission on Unix.
+    // Executable permission on the staged file (set before the swap).
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
     }
 
-    // Remove macOS quarantine attribute so Gatekeeper won't kill the binary.
+    // Strip the macOS quarantine xattr so Gatekeeper won't block it. (The code
+    // signature itself is embedded in the Mach-O, not an xattr; this only
+    // clears `com.apple.quarantine`.)
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("xattr").args(["-cr"]).arg(&dest).output();
+        let _ = Command::new("xattr").args(["-cr"]).arg(&staged).output();
     }
+
+    // Verify the staged binary actually launches before swapping it in — this
+    // catches corrupt/truncated downloads. (It does NOT exercise the
+    // in-place-overwrite SIGKILL; that class is prevented structurally by the
+    // atomic rename below, since `staged` is a brand-new inode.)
+    if !verify_runnable(&staged) {
+        log::warn!("staged binary failed to launch; aborting install");
+        let _ = std::fs::remove_file(&staged);
+        return false;
+    }
+
+    // Back up the current binary, then atomically swap in the new one.
+    // `rename(2)` rebinds the path to a fresh inode, so the still-running
+    // process keeps executing from the old (now-unlinked) inode and the next
+    // `exec` sees a clean, validly-signed file. Overwriting `dest` in place
+    // (the previous `fs::copy`) corrupted the running binary's code-signing
+    // state on macOS arm64 and got it SIGKILLed on every subsequent launch.
+    let backup = dest_dir.join(".conductor.bak");
+    let _ = std::fs::remove_file(&backup);
+    if let Err(e) = std::fs::rename(&dest, &backup) {
+        log::warn!("failed to back up current binary: {e}");
+        let _ = std::fs::remove_file(&staged);
+        return false;
+    }
+    if let Err(e) = std::fs::rename(&staged, &dest) {
+        log::warn!("failed to install new binary: {e}; rolling back");
+        let _ = std::fs::rename(&backup, &dest);
+        let _ = std::fs::remove_file(&staged);
+        return false;
+    }
+    // Success — the new binary is verified and in place; discard the backup.
+    let _ = std::fs::remove_file(&backup);
 
     true
 }
 
-/// Attempt to install via source download + build. Returns `true` on success.
-fn try_source_update(
-    tx: &mpsc::Sender<UpdateProgress>,
-    version: &str,
-    tarball_url: &str,
-    tmpdir: &std::path::Path,
-) -> bool {
-    use std::process::Command;
-
-    // Resolve tarball URL — if empty, re-fetch from API.
-    let url = if tarball_url.is_empty() {
-        let _ = tx.send(UpdateProgress::Status(
-            "Fetching release info...".to_string(),
-        ));
-        match crate::update_checker::check_for_update() {
-            Some(info) if !info.tarball_url.is_empty() => info.tarball_url,
-            _ => {
-                let _ = tx.send(UpdateProgress::Error(
-                    "Could not find tarball URL".to_string(),
-                ));
-                return false;
-            }
-        }
-    } else {
-        tarball_url.to_string()
-    };
-
-    // Download.
-    let _ = tx.send(UpdateProgress::Status(format!(
-        "Downloading source v{version}..."
-    )));
-    let tarball = tmpdir.join("source.tar.gz");
-    let dl = Command::new("curl")
-        .args(["-sfL", "--max-time", "120", "-o"])
-        .arg(&tarball)
-        .arg(&url)
-        .stdin(std::process::Stdio::null())
-        .output();
-    match dl {
+/// Spawn `path --version` and report whether it exits successfully.
+///
+/// Used as a pre-install smoke test: a freshly downloaded binary that can't
+/// even print its version (corrupt download, wrong arch, bad signature) must
+/// not replace the working one.
+fn verify_runnable(path: &std::path::Path) -> bool {
+    use std::process::{Command, Stdio};
+    match Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
         Err(e) => {
-            let _ = tx.send(UpdateProgress::Error(format!("curl not found: {e}")));
-            return false;
+            log::warn!("failed to spawn staged binary for verification: {e}");
+            false
         }
-        Ok(out) if !out.status.success() => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let _ = tx.send(UpdateProgress::Error(format!("Download failed: {stderr}")));
-            return false;
-        }
-        _ => {}
     }
-
-    // Extract.
-    let _ = tx.send(UpdateProgress::Status("Extracting...".to_string()));
-    let extract = Command::new("tar")
-        .args(["xzf", "source.tar.gz"])
-        .current_dir(tmpdir)
-        .output();
-    match extract {
-        Err(e) => {
-            let _ = tx.send(UpdateProgress::Error(format!("tar not found: {e}")));
-            return false;
-        }
-        Ok(out) if !out.status.success() => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let _ = tx.send(UpdateProgress::Error(format!(
-                "Extraction failed: {stderr}"
-            )));
-            return false;
-        }
-        _ => {}
-    }
-
-    // Find the extracted directory (GitHub tarballs extract to owner-repo-hash/).
-    let src_dir = match std::fs::read_dir(tmpdir) {
-        Ok(entries) => {
-            let mut found = None;
-            for entry in entries.flatten() {
-                if entry.path().is_dir() && entry.file_name() != "source.tar.gz" {
-                    found = Some(entry.path());
-                    break;
-                }
-            }
-            match found {
-                Some(d) => d,
-                None => {
-                    let _ = tx.send(UpdateProgress::Error(
-                        "No source directory found in tarball".to_string(),
-                    ));
-                    return false;
-                }
-            }
-        }
-        Err(e) => {
-            let _ = tx.send(UpdateProgress::Error(format!(
-                "Failed to read temp dir: {e}"
-            )));
-            return false;
-        }
-    };
-
-    // Build & install.
-    let _ = tx.send(UpdateProgress::Status(format!(
-        "Building v{version}... (this may take a while)"
-    )));
-    let build = Command::new("make")
-        .arg("install")
-        .current_dir(&src_dir)
-        .output();
-    match build {
-        Err(e) => {
-            let _ = tx.send(UpdateProgress::Error(format!("make not found: {e}")));
-            return false;
-        }
-        Ok(out) if !out.status.success() => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let msg = if stderr.len() > 200 {
-                format!("Build failed: ...{}", &stderr[stderr.len() - 200..])
-            } else {
-                format!("Build failed: {stderr}")
-            };
-            let _ = tx.send(UpdateProgress::Error(msg));
-            return false;
-        }
-        _ => {}
-    }
-
-    true
 }
 
 // ── Free functions for symbol extraction ──────────────────────────────
