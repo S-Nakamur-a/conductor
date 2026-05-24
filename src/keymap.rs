@@ -633,6 +633,47 @@ impl KeyMap {
             KeyModifiers::ALT,
             FocusTerminalShell,
         );
+        // Option+Shift+1..6 — jump to a panel AND maximize it in one stroke.
+        // "Add Shift to the focus chord to also maximize." Under the kitty keyboard
+        // protocol (active when the terminal supports it) these arrive as a clean
+        // SHIFT|ALT + digit, so no Unicode fallbacks are needed. Chosen over
+        // Cmd+Shift+digit because macOS steals Cmd+Shift+3/4/5/6 for screenshots.
+        self.bind(
+            Global,
+            KeyCode::Char('1'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            FocusExpandWorktree,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('2'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            FocusExpandExplorer,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('3'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            FocusExpandExplorerDiffList,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('4'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            FocusExpandViewer,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('5'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            FocusExpandTerminalClaude,
+        );
+        self.bind(
+            Global,
+            KeyCode::Char('6'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            FocusExpandTerminalShell,
+        );
         // When macOS Option key produces Unicode (e.g. default Terminal.app / iTerm2 without Esc+ mode):
         // Option+1='¡', Option+2='™', Option+3='£', Option+4='¢', Option+5='∞', Option+6='§'
         self.bind_char(Global, '¡', FocusWorktree);
@@ -1128,5 +1169,48 @@ mod tests {
         let (code, mods) = normalize_key(&key);
         assert_eq!(code, KeyCode::Char('G'));
         assert_eq!(mods, KeyModifiers::empty());
+    }
+
+    #[test]
+    fn test_normalize_keeps_shift_for_digits() {
+        // SHIFT must NOT be stripped for digit keys, so Option+Shift+digit
+        // (SHIFT|ALT) stays distinct from plain Option+digit (ALT).
+        let key = KeyEvent::new(
+            KeyCode::Char('1'),
+            KeyModifiers::SHIFT | KeyModifiers::ALT,
+        );
+        let (code, mods) = normalize_key(&key);
+        assert_eq!(code, KeyCode::Char('1'));
+        assert_eq!(mods, KeyModifiers::SHIFT | KeyModifiers::ALT);
+    }
+
+    #[test]
+    fn test_option_shift_digit_resolves_to_focus_expand() {
+        let config = KeybindsConfig::default();
+        let km = KeyMap::new(&config);
+
+        // Option+Shift+1..6 jump to a panel AND maximize it.
+        let cases = [
+            ('1', Action::FocusExpandWorktree),
+            ('2', Action::FocusExpandExplorer),
+            ('3', Action::FocusExpandExplorerDiffList),
+            ('4', Action::FocusExpandViewer),
+            ('5', Action::FocusExpandTerminalClaude),
+            ('6', Action::FocusExpandTerminalShell),
+        ];
+        for (c, action) in cases {
+            let key = KeyEvent::new(
+                KeyCode::Char(c),
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
+            );
+            assert_eq!(km.resolve(&key, KeyContext::Terminal), Some(action));
+        }
+
+        // Plain Option+digit still resolves to focus-only (no maximize).
+        let key_alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&key_alt_1, KeyContext::Global),
+            Some(Action::FocusWorktree)
+        );
     }
 }
