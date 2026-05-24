@@ -303,10 +303,20 @@ impl Default for UpdatesConfig {
 pub struct ApiConfig {
     /// Model ID for the Gemini API.
     pub model: String,
-    /// Which LLM provider to use for smart worktree generation.
-    /// `"gemini"` (default): try Gemini first, fall back to claude CLI on error.
-    /// `"claude"`: skip Gemini and call claude CLI directly.
+    /// Which LLM provider to use for smart worktree generation. Each provider stands
+    /// alone; a failure surfaces to the user rather than falling back to another.
+    /// `"gemini"` (default): the Gemini HTTP API.
+    /// `"claude"`: the `claude -p` CLI.
+    /// `"command"`: a user-supplied external command (see `command`).
     pub provider: String,
+    /// External command to run when `provider = "command"`.
+    ///
+    /// argv form (`["ollama", "run", "llama3"]`); run directly without a shell.
+    /// Conductor writes the prompt to the command's stdin and reads the completion
+    /// from stdout — see the "External LLM Command Protocol" in `ai_caller.rs`.
+    pub command: Vec<String>,
+    /// Wall-clock timeout (seconds) for the `command` provider. `0` disables it.
+    pub command_timeout_secs: u64,
 }
 
 impl Default for ApiConfig {
@@ -314,6 +324,8 @@ impl Default for ApiConfig {
         Self {
             model: String::from("gemini-2.5-flash"),
             provider: String::from("gemini"),
+            command: Vec::new(),
+            command_timeout_secs: 60,
         }
     }
 }
@@ -412,8 +424,10 @@ pub fn generate_default_config() -> String {
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
 
 [api]
-# provider = "gemini"                   # "gemini" (try Gemini, fall back to claude CLI) or "claude" (skip Gemini)
+# provider = "gemini"                   # "gemini" (Gemini API), "claude" (claude -p CLI), or "command" (external) — no fallback between them
 # model = "gemini-2.5-flash"            # model for smart worktree generation (Gemini API)
+# command = ["ollama", "run", "llama3"] # external command for provider = "command" (prompt on stdin, completion on stdout)
+# command_timeout_secs = 60             # wall-clock timeout for the command provider (0 = no timeout)
 "#,
     )
 }

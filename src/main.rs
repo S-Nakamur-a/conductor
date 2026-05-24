@@ -1,5 +1,6 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
+mod ai_caller;
 mod app;
 mod background;
 mod cc_notify;
