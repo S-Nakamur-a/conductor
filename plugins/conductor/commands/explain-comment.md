@@ -32,10 +32,10 @@ $ARGUMENTS
 
 ### 3. 説明コメントを追加
 
-各箇所に対して `mcp__plugin_general_code-comment__add_comment` を使用してコメントを追加する。
+各箇所に対して `mcp__conductor__create_comment` を使用してコメントを追加する。
 
 ```
-mcp__plugin_general_code-comment__add_comment:
+mcp__conductor__create_comment:
   file_path: <対象ファイルの相対パス>
   line_start: <開始行番号>
   line_end: <終了行番号（省略可）>
@@ -84,6 +84,6 @@ mcp__plugin_general_code-comment__add_comment:
 
 ## 重要
 
-- コメントはコードファイルに直接書き込むのではなく、**Conductor の code comment 機能**（`mcp__plugin_general_code-comment__add_comment`）を使って追加する
+- コメントはコードファイルに直接書き込むのではなく、**Conductor の code comment 機能**（`mcp__conductor__create_comment`）を使って追加する
 - 追加されたコメントは Conductor の Viewer パネルで 💬 マークとして表示される
-- conductor 独自の MCP ツール（`mcp__plugin_conductor_conductor__reply_to_comment` 等）も利用可能な場合は活用してよい
+- 関連する MCP ツール（`mcp__conductor__reply_to_comment` 等）も必要に応じて活用してよい
