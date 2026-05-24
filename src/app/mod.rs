@@ -209,6 +209,17 @@ pub struct GrabbedBranch {
     pub claude_session_id: Option<String>,
 }
 
+/// A pending view restore: open this file and scroll to this line once the
+/// file tree for the current worktree is loaded. Used to restore where the
+/// user was after a restart (or when switching back to a worktree).
+#[derive(Debug, Clone)]
+pub struct PendingViewRestore {
+    /// Worktree-relative path of the file to re-open.
+    pub file: String,
+    /// Top visible line (0-based) to scroll to.
+    pub scroll: usize,
+}
+
 /// State of the in-app update flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateState {
@@ -410,6 +421,15 @@ pub struct App {
     // ── Auto-resume Claude sessions ─────────────────────────────
     /// Whether auto-resume should run on the next frame (one-shot).
     pub pending_auto_resume: bool,
+
+    // ── View state restore (persist where the user was) ─────────
+    /// Branch of the worktree whose viewer state is currently loaded in
+    /// memory. Tracks the "owner" of `viewer_state` so it can be persisted
+    /// before we switch away. `None` until the first worktree is loaded.
+    pub current_view_branch: Option<String>,
+    /// A saved file+scroll to restore once the file tree is available
+    /// (one-shot; consumed by [`App::consume_pending_view_restore`]).
+    pub pending_view_restore: Option<PendingViewRestore>,
 
     /// Cached layout rectangles (recomputed when frame size or expansion state changes).
     pub layout_cache: crate::ui::layout::LayoutCache,
@@ -632,6 +652,8 @@ impl App {
             branch_details: Default::default(),
             gh_available: Self::check_gh_available(),
             pending_auto_resume: auto_resume,
+            current_view_branch: None,
+            pending_view_restore: None,
             layout_cache: Default::default(),
             symbol_index: SymbolIndex::new(PathBuf::new()),
             jump_history: JumpHistory::new(),
@@ -645,6 +667,9 @@ impl App {
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
         app.refresh_worktrees();
+        // Restore the previously selected worktree + its open file/scroll so a
+        // restart (e.g. after an update) lands the user where they left off.
+        app.restore_selected_worktree_and_view();
         app.refresh_reviews();
 
         // Restore grab state from $git_common_dir/wt-grab if it exists.
@@ -683,6 +708,8 @@ impl App {
         if index >= self.repo_list.len() {
             return;
         }
+        // Persist the outgoing repo's view before swapping the store.
+        self.persist_view_state();
         self.repo_list_index = index;
         self.repo_path = self.repo_list[index].clone();
 
@@ -714,6 +741,8 @@ impl App {
         self.viewer_state = ViewerState::default();
         self.diff_state =
             DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
+        // Restore the new repo's last selected worktree + open file/scroll.
+        self.restore_selected_worktree_and_view();
         self.refresh_reviews();
         self.terminal.active_claude_session = None;
         self.terminal.active_shell_session = None;
@@ -904,8 +933,110 @@ impl App {
             let path = wt.path.clone();
             let tab_width = self.config.viewer.tab_width;
             self.viewer_state.load_file_tree(&path, tab_width);
+            // Startup restore: this is the lazy (synchronous) tree-load path
+            // (e.g. first time the viewer is focused), so re-open any pending
+            // file here. The async worktree-switch path does this in
+            // `poll_worktree_switch_ops`.
+            self.consume_pending_view_restore();
             self.rehighlight_viewer();
         }
+    }
+
+    /// Restore the previously selected worktree and seed its saved view
+    /// (open file + scroll) for the current repo. Safe to call when nothing
+    /// was persisted — it just leaves the defaults in place.
+    ///
+    /// Used at startup and when switching repos. The worktree list is already
+    /// populated synchronously by [`App::refresh_worktrees`], so the selection
+    /// is restored without a frame of flicker. The file itself is restored
+    /// lazily once its tree loads (see [`App::consume_pending_view_restore`]).
+    pub fn restore_selected_worktree_and_view(&mut self) {
+        // Restore which worktree was selected (fall back to current on miss).
+        let saved_branch = self
+            .review_store
+            .as_ref()
+            .and_then(|s| s.get_selected_worktree().ok().flatten());
+        if let Some(branch) = saved_branch
+            && let Some(idx) = self.worktrees.iter().position(|w| w.branch == branch)
+        {
+            self.selected_worktree = idx;
+        }
+
+        // Point the worktree-list cursor at the restored worktree.
+        self.rebuild_worktree_list_rows();
+        let sel = self.selected_worktree;
+        if let Some(pos) = self
+            .worktree_list_rows
+            .iter()
+            .position(|r| matches!(r, WorktreeListRow::Worktree(i) if *i == sel))
+        {
+            self.worktree_list_selected = pos;
+        }
+
+        // Track the loaded worktree and seed its saved file/scroll.
+        let branch = self.selected_worktree_branch();
+        self.pending_view_restore = None;
+        if branch.is_empty() {
+            self.current_view_branch = None;
+            return;
+        }
+        self.current_view_branch = Some(branch.clone());
+        if let Some(store) = &self.review_store
+            && let Ok(Some((Some(file), line))) = store.get_view_state(&branch)
+        {
+            self.pending_view_restore = Some(PendingViewRestore {
+                file,
+                scroll: line.max(0) as usize,
+            });
+        }
+    }
+
+    /// Persist the in-memory view (open file + scroll) for `branch`.
+    ///
+    /// If a restore is still pending (the user never opened the viewer for this
+    /// worktree this session), the unconsumed pending value is written back
+    /// unchanged so we don't clobber the saved state with an empty view.
+    fn save_view_for(&self, branch: &str) {
+        let Some(store) = &self.review_store else {
+            return;
+        };
+        let (file, line) = match &self.pending_view_restore {
+            Some(r) => (Some(r.file.clone()), r.scroll as i64),
+            None => (
+                self.viewer_state.content.current_file.clone(),
+                self.viewer_state.content.file_scroll as i64,
+            ),
+        };
+        let _ = store.save_view_state(branch, file.as_deref(), line);
+    }
+
+    /// Save the current worktree's view and selection. Called before exit /
+    /// restart and before switching repos.
+    pub fn persist_view_state(&self) {
+        if let Some(branch) = &self.current_view_branch {
+            self.save_view_for(branch);
+            if let Some(store) = &self.review_store {
+                let _ = store.set_selected_worktree(branch);
+            }
+        }
+    }
+
+    /// Consume a one-shot [`PendingViewRestore`]: open the saved file and
+    /// scroll to the saved line. No-op if nothing is pending or the file no
+    /// longer exists. The scroll target is clamped to the file length so a
+    /// shrunken file doesn't leave a blank viewer.
+    pub fn consume_pending_view_restore(&mut self) {
+        let Some(restore) = self.pending_view_restore.take() else {
+            return;
+        };
+        let wt_path = self.selected_worktree_path();
+        if !wt_path.join(&restore.file).is_file() {
+            return;
+        }
+        let tab_width = self.config.viewer.tab_width;
+        self.viewer_state.open_file(&wt_path, &restore.file, tab_width);
+        let max = self.viewer_state.content.file_content.len().saturating_sub(1);
+        self.viewer_state.content.file_scroll = restore.scroll.min(max);
     }
 
     /// Run syntect highlighting on the currently loaded file content.

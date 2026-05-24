@@ -1442,7 +1442,33 @@ impl App {
     /// dispatched to background threads so the UI stays responsive. Results are
     /// applied in `poll_worktree_switch_ops()`.
     pub fn on_worktree_changed(&mut self) {
+        // Persist the outgoing worktree's view before we wipe it.
+        if let Some(outgoing) = self.current_view_branch.clone() {
+            self.save_view_for(&outgoing);
+        }
+
         self.viewer_state = ViewerState::default();
+
+        // Track the worktree now being loaded and seed its saved file/scroll
+        // so it gets re-opened once the file tree arrives.
+        let new_branch = self.selected_worktree_branch();
+        self.pending_view_restore = None;
+        self.current_view_branch = if new_branch.is_empty() {
+            None
+        } else {
+            Some(new_branch.clone())
+        };
+        if let Some(store) = &self.review_store {
+            if !new_branch.is_empty() {
+                let _ = store.set_selected_worktree(&new_branch);
+            }
+            if let Ok(Some((Some(file), line))) = store.get_view_state(&new_branch) {
+                self.pending_view_restore = Some(crate::app::PendingViewRestore {
+                    file,
+                    scroll: line.max(0) as usize,
+                });
+            }
+        }
 
         // Clear "new" badge for the worktree the user just selected.
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
@@ -1627,17 +1653,9 @@ impl App {
         if let Some(entries) = self.bg.file_tree.poll() {
             self.viewer_state.tree.file_tree = entries;
             self.viewer_state.invalidate_visible_cache();
-            // Re-open the previously viewed file if it still exists.
-            if let Some(wt) = self.worktrees.get(self.selected_worktree) {
-                let wt_path = wt.path.clone();
-                if let Some(ref rel_path) = self.viewer_state.content.current_file.clone() {
-                    let full = wt_path.join(rel_path);
-                    if full.is_file() {
-                        let tab_width = self.config.viewer.tab_width;
-                        self.viewer_state.open_file(&wt_path, rel_path, tab_width);
-                    }
-                }
-            }
+            // Restore the previously viewed file + scroll for this worktree now
+            // that its file tree is available (one-shot).
+            self.consume_pending_view_restore();
             self.rehighlight_viewer();
         }
 

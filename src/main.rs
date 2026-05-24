@@ -156,6 +156,11 @@ fn main() -> Result<()> {
     )?;
     terminal.show_cursor()?;
 
+    // ── Persist view state (covers both normal quit and update-restart) ─
+    // Must run before the `exec` below: `exec` replaces the process image, so
+    // no Drop or later code would execute on the restart path.
+    app.persist_view_state();
+
     // ── Restart if update was installed ───────────────────────────────
     if app.should_restart {
         println!("Restarting Conductor...");
