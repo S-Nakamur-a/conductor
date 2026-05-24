@@ -29,37 +29,14 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  create-release:
+  # Build every platform binary FIRST and stash each as a workflow artifact.
+  # Nothing is published yet — no tag, no GitHub Release. If any target fails,
+  # the `release` job below never runs, so a half-built version is never
+  # advertised to the in-app updater.
+  build:
     needs: check-version
     if: needs.check-version.outputs.version_changed == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create and push tag
-        run: |
-          git tag "v${{ needs.check-version.outputs.version }}"
-          git push origin "v${{ needs.check-version.outputs.version }}"
-
-      - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.check-version.outputs.version }}
-          name: v${{ needs.check-version.outputs.version }}
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build-and-upload:
-    needs: [check-version, create-release]
-    if: needs.check-version.outputs.version_changed == 'true'
-    permissions:
-      contents: write
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
@@ -69,7 +46,6 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
-    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,15 +57,57 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../conductor-${{ needs.check-version.outputs.version }}-${{ matrix.target }}.tar.gz conductor
+          cd "target/${TARGET}/release"
+          tar czf "../../../conductor-${VERSION}-${TARGET}.tar.gz" conductor
           cd ../../..
 
-      - name: Upload release asset
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: conductor-${{ matrix.target }}
+          path: conductor-${{ needs.check-version.outputs.version }}-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publish atomically: only after ALL binaries built successfully. This single
+  # step creates the tag, the GitHub Release, attaches every asset, and marks it
+  # `latest`. Because `/releases/latest` only surfaces this version once it
+  # exists, the in-app updater always finds a matching pre-built binary and never
+  # falls back to the slow source build.
+  release:
+    needs: [check-version, build]
+    if: needs.check-version.outputs.version_changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify all platform binaries are present
+        run: |
+          count=$(ls dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ')
+          echo "found $count binary tarball(s):"
+          ls -l dist/ || true
+          if [ "$count" -ne 3 ]; then
+            echo "::error::expected 3 platform binaries, found $count — refusing to publish an incomplete release"
+            exit 1
+          fi
+
+      - name: Create GitHub Release (tag + assets, atomically)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
-          files: conductor-${{ needs.check-version.outputs.version }}-${{ matrix.target }}.tar.gz
+          name: v${{ needs.check-version.outputs.version }}
+          generate_release_notes: true
+          make_latest: true
+          files: dist/*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
