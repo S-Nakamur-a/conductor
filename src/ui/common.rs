@@ -604,10 +604,139 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
         let span = Span::styled(display_text, style);
         frame.render_widget(Paragraph::new(span), area);
     } else {
-        // Default keybinding hint text.
-        let hint = app.status_bar_text();
+        // Default keybinding hint text, derived live from the keymap so it
+        // never drifts from the actual bindings (including user overrides).
+        let hint = status_bar_hint(app.focus, &app.keymap);
         let span = Span::styled(hint, Style::default().fg(theme.hint));
         frame.render_widget(Paragraph::new(span), area);
+    }
+}
+
+/// Build the footer keybinding hint for the focused panel from the live keymap.
+///
+/// Each panel has an ordered list of `(label, actions)`; for each entry we show
+/// one representative chord per action (joined by `/`), e.g. `j/k: nav`. Entries
+/// whose actions are all unbound are dropped, so the hint can never advertise a
+/// key that does nothing.
+fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::KeyMap) -> String {
+    use crate::app::Focus;
+    use crate::keymap::Action;
+
+    // (label, actions whose representative chords are shown joined by '/').
+    let entries: &[(&str, &[Action])] = match focus {
+        Focus::Worktree => &[
+            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("panel", &[Action::CycleFocusForward]),
+            ("open", &[Action::Select]),
+            ("new", &[Action::CreateWorktree]),
+            ("switch", &[Action::SwitchBranch]),
+            ("grab", &[Action::GrabBranch]),
+        ],
+        Focus::Explorer => &[
+            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("panel", &[Action::CycleFocusForward]),
+            ("open", &[Action::Select]),
+            ("fold", &[Action::CollapseOrLeft, Action::ExpandOrRight]),
+            ("diff", &[Action::ShowDiffList]),
+            ("search", &[Action::SearchFilename]),
+        ],
+        Focus::Viewer => &[
+            ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
+            ("panel", &[Action::CycleFocusForward]),
+            ("search", &[Action::SearchInFile]),
+            ("thread", &[Action::ToggleInlineThread]),
+            ("back", &[Action::ExitToExplorer]),
+        ],
+        Focus::TerminalClaude => &[
+            ("leave", &[Action::LeaveTerminal]),
+            ("panel", &[Action::CycleFocusForward]),
+            ("new CC", &[Action::NewClaudeCode]),
+            ("palette", &[Action::CommandPalette]),
+        ],
+        Focus::TerminalShell => &[
+            ("leave", &[Action::LeaveTerminal]),
+            ("panel", &[Action::CycleFocusForward]),
+            ("new shell", &[Action::NewShell]),
+            ("palette", &[Action::CommandPalette]),
+        ],
+    };
+
+    let context = focus.key_context();
+    let mut parts: Vec<String> = Vec::new();
+    for (label, actions) in entries {
+        let chords: Vec<String> = actions
+            .iter()
+            .filter_map(|a| representative_chord(keymap, context, *a))
+            .collect();
+        if !chords.is_empty() {
+            parts.push(format!("{}: {label}", chords.join("/")));
+        }
+    }
+
+    // Terminals forward everything else to the PTY — set that expectation.
+    if matches!(focus, Focus::TerminalClaude | Focus::TerminalShell) {
+        parts.push("keys → terminal".to_string());
+    }
+
+    parts.join(" | ")
+}
+
+/// The single chord best suited to show a user for `action` in `context`:
+/// shortest, ASCII-only. The macOS Option-glyph fallbacks (`¬`, `˙`, …) and
+/// other non-ASCII chords round-trip through the keymap but are meaningless on
+/// screen, so a plain chord is preferred whenever one exists.
+fn representative_chord(
+    keymap: &crate::keymap::KeyMap,
+    context: crate::keymap::KeyContext,
+    action: crate::keymap::Action,
+) -> Option<String> {
+    keymap
+        .keys_for_action(context, action)
+        .into_iter()
+        .filter(|c| c.is_ascii())
+        .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+}
+
+#[cfg(test)]
+mod status_bar_tests {
+    use super::status_bar_hint;
+    use crate::app::Focus;
+    use crate::keymap::{Action, KeyContext, KeyMap};
+
+    fn keymap() -> KeyMap {
+        KeyMap::new(&toml::Table::new())
+    }
+
+    #[test]
+    fn representative_chord_prefers_short_ascii_over_unicode() {
+        let km = keymap();
+        // cycle_focus_backward is bound to alt+h AND the macOS glyph '˙'; the
+        // glyph must never be shown.
+        let chord = super::representative_chord(&km, KeyContext::Global, Action::CycleFocusBackward);
+        assert_eq!(chord, Some("alt+h".to_string()));
+
+        // nav prefers the bare 'j' over the 'down' alias.
+        let nav = super::representative_chord(&km, KeyContext::Worktree, Action::NavigateDown);
+        assert_eq!(nav, Some("j".to_string()));
+    }
+
+    #[test]
+    fn worktree_footer_is_truthful_and_has_no_unicode() {
+        let hint = status_bar_hint(Focus::Worktree, &keymap());
+        assert!(hint.contains("j/k: nav"), "{hint}");
+        assert!(hint.contains("tab: panel"), "{hint}");
+        assert!(hint.contains("w: new"), "{hint}");
+        // The old hardcoded lie must be gone, and no fallback glyphs leak in.
+        assert!(!hint.contains("Cmd+1-5"), "{hint}");
+        assert!(hint.is_ascii(), "footer must be ASCII-only: {hint}");
+    }
+
+    #[test]
+    fn terminal_footer_notes_passthrough_and_leave_key() {
+        let hint = status_bar_hint(Focus::TerminalClaude, &keymap());
+        assert!(hint.contains("keys → terminal"), "{hint}");
+        // leave_terminal is ctrl+esc, not a bare Esc.
+        assert!(hint.contains("ctrl+esc: leave"), "{hint}");
     }
 }
 

@@ -6,7 +6,6 @@
 //! Every field carries a serde default so the config file can be empty or
 //! partially specified.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -33,8 +32,10 @@ pub struct Config {
     pub diff: DiffConfig,
     /// `[review]` -- code-review prompt settings.
     pub review: ReviewConfig,
-    /// `[keybinds]` -- optional user key-bind overrides.
-    pub keybinds: KeybindsConfig,
+    /// `[keybinds]` -- optional user key-bind overrides, in keymap-config's
+    /// key→action TOML schema (`[keybinds.keys]`, `[keybinds.layers.<name>]`).
+    /// Kept as a raw table and handed to `keymap::KeyMap`, which owns the schema.
+    pub keybinds: toml::Table,
     /// `[ccusage]` -- Claude Code token usage display.
     pub ccusage: CcusageConfig,
     /// `[updates]` -- startup version check settings.
@@ -236,29 +237,6 @@ pub enum PromptAction {
     SendToSession,
 }
 
-/// A keybind value: either a single key chord or multiple alternatives.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum KeybindValue {
-    Single(String),
-    Multiple(Vec<String>),
-}
-
-/// `[keybinds]` section.
-///
-/// Per-context key-bind overrides. Keys are action names (e.g. `"navigate_down"`),
-/// values are key chord strings (e.g. `"j"` or `["j", "down"]`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct KeybindsConfig {
-    pub global: HashMap<String, KeybindValue>,
-    pub worktree: HashMap<String, KeybindValue>,
-    pub explorer: HashMap<String, KeybindValue>,
-    pub viewer: HashMap<String, KeybindValue>,
-    pub terminal: HashMap<String, KeybindValue>,
-    pub overlay: HashMap<String, KeybindValue>,
-}
-
 /// `[ccusage]` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -401,19 +379,30 @@ pub fn generate_default_config() -> String {
 # prompt_action = "clipboard"           # clipboard | send_to_session
 
 [keybinds]
-# Per-context key-bind overrides. Keys are action names, values are a key chord
-# string or an array of alternatives.
+# Key-bind overrides, in key→action form. Each entry maps a key chord to an
+# action name. Your bindings LAYER OVER the built-in defaults per-chord: a chord
+# you bind here overrides the default for that exact chord, and every default
+# you do not touch keeps working. (Note: you can rebind a default chord to a
+# different action, but there is no way to fully un-bind a default key — you can
+# only shadow it.)
 #
-# [keybinds.global]
-# quit = "q"
+# [keybinds.keys] is the global layer (active everywhere). Each
+# [keybinds.layers.<context>] table is a per-panel layer. Context names:
+# worktree, explorer, explorer_diff_list, explorer_comment_list, viewer,
+# viewer_diff_mode, terminal, overlay.
 #
-# [keybinds.worktree]
-# navigate_down = ["j", "down"]
-# create_worktree = "w"
+# Key grammar: modifiers ctrl/alt/shift/super joined with '+', then the key.
+# A single char is verbatim and case-sensitive (e.g. "G" is Shift+g). Back-tab
+# is "shift+tab". Named keys: enter, esc, tab, space, up/down/left/right, home,
+# end, pageup, pagedown, delete, f1..f24.
 #
-# [keybinds.explorer]
-# [keybinds.viewer]
-# [keybinds.terminal]
+# [keybinds.keys]
+# "ctrl+q" = "quit"
+#
+# [keybinds.layers.worktree]
+# "j" = "navigate_down"
+# "down" = "navigate_down"
+# "w" = "create_worktree"
 
 [ccusage]
 # enabled = false                       # token usage display in the title bar (requires ccusage)
@@ -523,29 +512,31 @@ check_interval_secs = 3600"#,
 
     #[test]
     fn keybinds_parse() {
+        // The [keybinds] section is captured as a raw table (key→action schema)
+        // and handed to keymap::KeyMap, which owns parsing.
         let toml_str = r#"
-[global]
-quit = "q"
+[keybinds.keys]
+"ctrl+q" = "quit"
 
-[worktree]
-navigate_down = ["j", "down"]
-create_worktree = "w"
+[keybinds.layers.worktree]
+"j" = "navigate_down"
+"w" = "create_worktree"
 "#;
-        let kb: KeybindsConfig = toml::from_str(toml_str).expect("parse keybinds");
-        match kb.global.get("quit").unwrap() {
-            KeybindValue::Single(s) => assert_eq!(s, "q"),
-            _ => panic!("expected Single"),
-        }
-        match kb.worktree.get("navigate_down").unwrap() {
-            KeybindValue::Multiple(v) => {
-                assert_eq!(v, &vec!["j".to_string(), "down".to_string()]);
-            }
-            _ => panic!("expected Multiple"),
-        }
-        match kb.worktree.get("create_worktree").unwrap() {
-            KeybindValue::Single(s) => assert_eq!(s, "w"),
-            _ => panic!("expected Single"),
-        }
+        let cfg: Config = toml::from_str(toml_str).expect("parse config");
+        let keys = cfg.keybinds.get("keys").and_then(|v| v.as_table()).unwrap();
+        assert_eq!(keys.get("ctrl+q").and_then(|v| v.as_str()), Some("quit"));
+
+        let worktree = cfg
+            .keybinds
+            .get("layers")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("worktree"))
+            .and_then(|v| v.as_table())
+            .unwrap();
+        assert_eq!(
+            worktree.get("j").and_then(|v| v.as_str()),
+            Some("navigate_down")
+        );
     }
 
     #[test]

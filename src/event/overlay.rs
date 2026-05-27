@@ -25,6 +25,35 @@ fn overlay_list_nav(keymap: &KeyMap, key: &KeyEvent, selected: &mut usize, count
     let Some(action) = keymap.resolve(key, KeyContext::Overlay) else {
         return false;
     };
+    apply_list_nav(action, selected, count)
+}
+
+/// Would this key event produce a literal character for a text field? A bare
+/// printable char (no Ctrl/Alt/Super) is typed input. SHIFT is intentionally
+/// NOT disqualifying: `Shift+G` is a literal `G` to type into a filter.
+fn is_text_input_key(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char(_))
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
+/// List navigation for overlays that ALSO have a text filter (command palette,
+/// filename search, …). A bare printable key falls through to the filter, so
+/// only non-text keys (arrows, PageUp/Down) navigate — `j`/`k`/`g` get typed.
+fn filterable_overlay_list_nav(
+    keymap: &KeyMap,
+    key: &KeyEvent,
+    selected: &mut usize,
+    count: usize,
+) -> bool {
+    if is_text_input_key(key) {
+        return false;
+    }
+    overlay_list_nav(keymap, key, selected, count)
+}
+
+fn apply_list_nav(action: Action, selected: &mut usize, count: usize) -> bool {
     match action {
         Action::NavigateDown => {
             if count > 0 && *selected + 1 < count {
@@ -332,7 +361,7 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
 
     let count = app.overlays.history.records.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.history.selected, count) {
+    if filterable_overlay_list_nav(&app.keymap, &key, &mut app.overlays.history.selected, count) {
         return;
     }
 
@@ -358,7 +387,7 @@ pub(super) fn handle_history_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
     let filtered_count = app.filtered_resume_sessions().len();
 
-    if overlay_list_nav(
+    if filterable_overlay_list_nav(
         &app.keymap,
         &key,
         &mut app.overlays.resume_session.selected,
@@ -617,7 +646,7 @@ pub(super) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
                 .delete_to_line_start();
             app.viewer_state.filename_search.filename_search_selected = 0;
         }
-        _ if overlay_list_nav(
+        _ if filterable_overlay_list_nav(
             &app.keymap,
             &key,
             &mut app.viewer_state.filename_search.filename_search_selected,
@@ -1087,7 +1116,7 @@ pub(super) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_switch_branches();
     let count = filtered.len();
 
-    if overlay_list_nav(
+    if filterable_overlay_list_nav(
         &app.keymap,
         &key,
         &mut app.overlays.switch_branch.selected,
@@ -1145,7 +1174,7 @@ pub(super) fn handle_grab_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_grab_branches();
     let count = filtered.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.grab.selected, count) {
+    if filterable_overlay_list_nav(&app.keymap, &key, &mut app.overlays.grab.selected, count) {
         return;
     }
 
@@ -1211,7 +1240,7 @@ pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
     let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
     let count = filtered.len();
 
-    if overlay_list_nav(
+    if filterable_overlay_list_nav(
         &app.keymap,
         &key,
         &mut app.overlays.command_palette.selected,
@@ -1546,4 +1575,35 @@ fn jump_to_symbol_references(app: &mut App, symbol: &str) {
     app.references_overlay.results = refs;
     app.references_overlay.selected = 0;
     app.references_overlay.scroll = 0;
+}
+
+#[cfg(test)]
+mod nav_guard_tests {
+    use super::is_text_input_key;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn bare_printable_char_is_text_input() {
+        // In a filterable overlay these must be typed, not treated as navigation.
+        for c in ['j', 'k', 'g', 'G'] {
+            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty());
+            assert!(is_text_input_key(&key), "{c:?} should be text input");
+        }
+        // Shift is not disqualifying: Shift+G is a literal 'G' to type.
+        let shift_g = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
+        assert!(is_text_input_key(&shift_g));
+    }
+
+    #[test]
+    fn modified_and_named_keys_are_not_text_input() {
+        // These should still drive list navigation in a filterable overlay.
+        let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        let alt_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT);
+        let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
+        assert!(!is_text_input_key(&ctrl_n));
+        assert!(!is_text_input_key(&alt_j));
+        assert!(!is_text_input_key(&up));
+        assert!(!is_text_input_key(&down));
+    }
 }

@@ -103,6 +103,21 @@ pub enum Focus {
     TerminalShell,
 }
 
+impl Focus {
+    /// The base keymap context for this panel. Both terminals share the
+    /// `Terminal` context (sub-modes like diff/comment lists are tracked
+    /// separately by the panels themselves).
+    pub fn key_context(self) -> crate::keymap::KeyContext {
+        use crate::keymap::KeyContext;
+        match self {
+            Focus::Worktree => KeyContext::Worktree,
+            Focus::Explorer => KeyContext::Explorer,
+            Focus::Viewer => KeyContext::Viewer,
+            Focus::TerminalClaude | Focus::TerminalShell => KeyContext::Terminal,
+        }
+    }
+}
+
 /// Input mode for worktree operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeInputMode {
@@ -585,7 +600,7 @@ impl App {
             .as_ref()
             .and_then(|store| store.get_today_stats().ok());
 
-        let keymap = KeyMap::new(&config.keybinds);
+        let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
         let theme = Theme::from_name(&config.viewer.theme);
         let auto_resume = config.general.auto_resume;
 
@@ -666,6 +681,24 @@ impl App {
             panel_overlay_since: None,
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
+
+        // Surface keybind config problems: a TUI hides stdout, so a silent
+        // log::warn! would never reach the user whose customizations were
+        // dropped. Log each, flash one consolidated line on startup.
+        if !keybind_warnings.is_empty() {
+            for w in &keybind_warnings {
+                log::warn!("keybind config: {w}");
+            }
+            let msg = match keybind_warnings.as_slice() {
+                [one] => format!("Keybind config: {one}"),
+                many => format!(
+                    "Keybind config: {} issues ignored (see log; run with RUST_LOG=warn)",
+                    many.len()
+                ),
+            };
+            app.set_status(msg, StatusLevel::Warning);
+        }
+
         app.refresh_worktrees();
         // Restore the previously selected worktree + its open file/scroll so a
         // restart (e.g. after an update) lands the user where they left off.
@@ -1111,50 +1144,6 @@ impl App {
     /// Request the application to quit.
     pub fn quit(&mut self) {
         self.should_quit = true;
-    }
-
-    /// Return a help text string describing the keybindings for the current focus.
-    pub fn status_bar_text(&self) -> &'static str {
-        #[cfg(target_os = "macos")]
-        {
-            match self.focus {
-                Focus::Worktree => {
-                    "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune"
-                }
-                Focus::Explorer => {
-                    "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list"
-                }
-                Focus::Viewer => {
-                    "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment"
-                }
-                Focus::TerminalClaude => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY"
-                }
-                Focus::TerminalShell => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY"
-                }
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            match self.focus {
-                Focus::Worktree => {
-                    "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune"
-                }
-                Focus::Explorer => {
-                    "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list"
-                }
-                Focus::Viewer => {
-                    "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment"
-                }
-                Focus::TerminalClaude => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY"
-                }
-                Focus::TerminalShell => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY"
-                }
-            }
-        }
     }
 
     /// Set a styled status message.
