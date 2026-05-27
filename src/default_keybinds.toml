@@ -1,0 +1,236 @@
+# Default keybindings, in keymap-config's key→action TOML schema.
+#
+# This file is embedded at compile time (include_str!) and parsed by
+# `keymap_config::from_str`. The bare `[keys]` table is the global layer;
+# each `[layers.<name>]` table is a per-context layer. User bindings from
+# `~/.config/conductor/config.toml` ([keybinds.keys] / [keybinds.layers.*])
+# are layered ON TOP of these per-chord — a user chord overrides the default
+# for that exact chord, while every default the user did not touch stays live.
+#
+# Key-string grammar (see keymap-core's KeyInput::FromStr): modifiers
+# `ctrl`/`alt`/`shift`/`super` (aliases: control, opt/option, cmd/win/meta)
+# joined with `+`, then the key. A single character is written verbatim and is
+# case-sensitive (`G` is Shift+g as most terminals deliver it). Back-tab is
+# `shift+tab`. Named keys: enter, esc, tab, space, up/down/left/right, home,
+# end, pageup, pagedown, delete, f1..f24.
+
+# ── Global ──────────────────────────────────────────────────────────────────
+[keys]
+"q" = "quit"
+"Q" = "quit"
+"?" = "show_help"
+# ':' is bound per non-terminal layer so it passes through to the PTY in
+# terminal panels. Ctrl+P stays global for command-palette access anywhere.
+"ctrl+p" = "command_palette"
+# Alt+h / Alt+l — panel cycle that works everywhere, including terminals.
+"alt+h" = "cycle_focus_backward"
+"alt+l" = "cycle_focus_forward"
+# macOS Unicode fallback (Option+h='˙', Option+l='¬') for terminals that send
+# Unicode instead of an Alt modifier. These are US-layout Option glyphs.
+"˙" = "cycle_focus_backward"
+"¬" = "cycle_focus_forward"
+"ctrl+w" = "focus_worktree"
+"ctrl+n" = "new_claude_code"
+"ctrl+t" = "new_shell"
+"ctrl+o" = "open_repo"
+"ctrl+r" = "switch_repo"
+"super+1" = "focus_worktree"
+"super+2" = "focus_explorer"
+"super+3" = "focus_explorer_diff_list"
+"super+4" = "focus_viewer"
+"super+5" = "focus_terminal_claude"
+"super+6" = "focus_terminal_shell"
+# Alt+number fallback — Cmd+number is intercepted by most macOS terminals.
+"alt+1" = "focus_worktree"
+"alt+2" = "focus_explorer"
+"alt+3" = "focus_explorer_diff_list"
+"alt+4" = "focus_viewer"
+"alt+5" = "focus_terminal_claude"
+"alt+6" = "focus_terminal_shell"
+# Option+Shift+1..6 — jump to a panel AND maximize it in one stroke. Under the
+# kitty keyboard protocol these arrive as a clean SHIFT|ALT + digit.
+"alt+shift+1" = "focus_expand_worktree"
+"alt+shift+2" = "focus_expand_explorer"
+"alt+shift+3" = "focus_expand_explorer_diff_list"
+"alt+shift+4" = "focus_expand_viewer"
+"alt+shift+5" = "focus_expand_terminal_claude"
+"alt+shift+6" = "focus_expand_terminal_shell"
+# macOS Option-produces-Unicode fallback (US layout): Option+1='¡' … Option+6='§'.
+"¡" = "focus_worktree"
+"™" = "focus_explorer"
+"£" = "focus_explorer_diff_list"
+"¢" = "focus_viewer"
+"∞" = "focus_terminal_claude"
+"§" = "focus_terminal_shell"
+"ctrl+g" = "search_full_text"
+"super+space" = "toggle_panel_expand"
+"alt+/" = "toggle_panel_overlay"
+# macOS Unicode fallback (Option+/ = '÷', US layout).
+"÷" = "toggle_panel_overlay"
+
+# ── Worktree ──────────────────────────────────────────────────────────────────
+[layers.worktree]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"enter" = "select"
+"w" = "create_worktree"
+"x" = "delete_worktree"
+"delete" = "delete_worktree"
+"s" = "switch_branch"
+"g" = "grab_branch"
+"G" = "ungrab_branch"
+"P" = "prune_worktrees"
+"m" = "merge_to_main"
+"r" = "refresh_worktrees"
+"R" = "reset_main_to_origin"
+"p" = "cherry_pick"
+"u" = "pull_worktree"
+"H" = "session_history"
+"v" = "open_pull_request"
+":" = "command_palette"
+
+# ── Explorer (file tree) ───────────────────────────────────────────────────────
+[layers.explorer]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"enter" = "select"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"d" = "show_diff_list"
+"c" = "show_comment_list"
+"/" = "search_filename"
+":" = "command_palette"
+
+# ── Explorer: diff list ─────────────────────────────────────────────────────────
+[layers.explorer_diff_list]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"enter" = "select"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Explorer: comment list ──────────────────────────────────────────────────────
+[layers.explorer_comment_list]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"enter" = "select"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"x" = "delete_comment"
+"delete" = "delete_comment"
+"r" = "toggle_resolve"
+"e" = "edit_comment"
+"R" = "reply_to_comment"
+"space" = "view_comment_detail"
+"esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Viewer (file content) ───────────────────────────────────────────────────────
+[layers.viewer]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"ctrl+d" = "scroll_half_page_down"
+"ctrl+u" = "scroll_half_page_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "scroll_left"
+"left" = "scroll_left"
+"l" = "scroll_right"
+"right" = "scroll_right"
+"0" = "scroll_home"
+"/" = "search_in_file"
+"n" = "next_search_match"
+"N" = "prev_search_match"
+# Fuzzy filename jump — usable even when the viewer is maximized and the file
+# tree is hidden, so files can be switched without un-maximizing.
+"ctrl+f" = "search_filename"
+"c" = "add_comment"
+"space" = "toggle_inline_thread"
+"esc" = "exit_to_explorer"
+":" = "command_palette"
+"ctrl+o" = "jump_back"
+"ctrl+i" = "jump_forward"
+
+# ── Viewer: diff mode ────────────────────────────────────────────────────────────
+[layers.viewer_diff_mode]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"ctrl+d" = "scroll_half_page_down"
+"ctrl+u" = "scroll_half_page_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "scroll_left"
+"left" = "scroll_left"
+"l" = "scroll_right"
+"right" = "scroll_right"
+"0" = "scroll_home"
+"ctrl+f" = "search_filename"
+# Jump between changes (hunks) and between review comments.
+"]" = "next_hunk"
+"[" = "prev_hunk"
+"}" = "next_comment"
+"{" = "prev_comment"
+"c" = "add_comment"
+"space" = "toggle_inline_thread"
+"esc" = "exit_to_explorer"
+"enter" = "expand_context"
+"shift+enter" = "expand_all_context"
+":" = "command_palette"
+
+# ── Overlay (shared popup navigation) ──────────────────────────────────────────
+[layers.overlay]
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"enter" = "select"
+"esc" = "exit_sub_panel"
+
+# ── Terminal ──────────────────────────────────────────────────────────────────
+[layers.terminal]
+"ctrl+esc" = "leave_terminal"
+"shift+pageup" = "scrollback_up"
+"shift+pagedown" = "scrollback_down"
+"shift+home" = "scrollback_top"
+"shift+end" = "snap_to_live"
+"ctrl+g" = "open_file_from_terminal"

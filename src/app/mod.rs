@@ -103,6 +103,21 @@ pub enum Focus {
     TerminalShell,
 }
 
+impl Focus {
+    /// The base keymap context for this panel. Both terminals share the
+    /// `Terminal` context (sub-modes like diff/comment lists are tracked
+    /// separately by the panels themselves).
+    pub fn key_context(self) -> crate::keymap::KeyContext {
+        use crate::keymap::KeyContext;
+        match self {
+            Focus::Worktree => KeyContext::Worktree,
+            Focus::Explorer => KeyContext::Explorer,
+            Focus::Viewer => KeyContext::Viewer,
+            Focus::TerminalClaude | Focus::TerminalShell => KeyContext::Terminal,
+        }
+    }
+}
+
 /// Input mode for worktree operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeInputMode {
@@ -119,6 +134,8 @@ pub enum WorktreeInputMode {
     ConfirmingDeleteBranch,
     /// Confirming ungrab (y/n).
     ConfirmingUngrab,
+    /// Confirming a hard reset of main to origin (y/n) — discards local commits.
+    ConfirmingReset,
     /// Smart Worktree: typing a multi-line task description.
     SmartDescription,
 }
@@ -585,7 +602,7 @@ impl App {
             .as_ref()
             .and_then(|store| store.get_today_stats().ok());
 
-        let keymap = KeyMap::new(&config.keybinds);
+        let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
         let theme = Theme::from_name(&config.viewer.theme);
         let auto_resume = config.general.auto_resume;
 
@@ -666,6 +683,24 @@ impl App {
             panel_overlay_since: None,
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
+
+        // Surface keybind config problems: a TUI hides stdout, so a silent
+        // log::warn! would never reach the user whose customizations were
+        // dropped. Log each, flash one consolidated line on startup.
+        if !keybind_warnings.is_empty() {
+            for w in &keybind_warnings {
+                log::warn!("keybind config: {w}");
+            }
+            let msg = match keybind_warnings.as_slice() {
+                [one] => format!("Keybind config: {one}"),
+                many => format!(
+                    "Keybind config: {} issues ignored (see log; run with RUST_LOG=warn)",
+                    many.len()
+                ),
+            };
+            app.set_status(msg, StatusLevel::Warning);
+        }
+
         app.refresh_worktrees();
         // Restore the previously selected worktree + its open file/scroll so a
         // restart (e.g. after an update) lands the user where they left off.
@@ -1113,50 +1148,6 @@ impl App {
         self.should_quit = true;
     }
 
-    /// Return a help text string describing the keybindings for the current focus.
-    pub fn status_bar_text(&self) -> &'static str {
-        #[cfg(target_os = "macos")]
-        {
-            match self.focus {
-                Focus::Worktree => {
-                    "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune"
-                }
-                Focus::Explorer => {
-                    "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list"
-                }
-                Focus::Viewer => {
-                    "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment"
-                }
-                Focus::TerminalClaude => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY"
-                }
-                Focus::TerminalShell => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY"
-                }
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            match self.focus {
-                Focus::Worktree => {
-                    "Cmd+1-5: jump | Tab: next | q: quit | j/k: nav | w/W: new/del | s: switch | g: grab | G: ungrab | P: prune"
-                }
-                Focus::Explorer => {
-                    "Cmd+1-5: jump | Tab: next panel | j/k: navigate | Enter: open file | h/l: collapse/expand | d: diff list"
-                }
-                Focus::Viewer => {
-                    "Cmd+1-5: jump | Tab: next panel | Esc: back to explorer | j/k: scroll | /: search | c: comment"
-                }
-                Focus::TerminalClaude => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+n: new CC | Ctrl+p: palette | keys → PTY"
-                }
-                Focus::TerminalShell => {
-                    "Cmd+1-5: jump | Alt+h/l: panel | Ctrl+t: new shell | keys → PTY"
-                }
-            }
-        }
-    }
-
     /// Set a styled status message.
     pub fn set_status(&mut self, text: String, level: StatusLevel) {
         self.status_message = Some(StatusMessage::new(text, level, self.ui_tick));
@@ -1419,6 +1410,7 @@ impl App {
             }
             CommandId::ResetMainToOrigin => self.cmd_reset_main_to_origin(),
             CommandId::CherryPick => self.cmd_cherry_pick(),
+            CommandId::PullWorktree => self.start_pull_worktree(),
             CommandId::NewClaudeCode => self.cmd_new_claude_code(),
             CommandId::NewShell => self.cmd_new_shell(),
             CommandId::ResumeClaudeSession => self.cmd_resume_claude_session(),
@@ -1494,7 +1486,7 @@ impl App {
     fn cmd_grab_branch(&mut self) {
         if self.worktree_mgr.grabbed_branch.is_some() {
             self.set_status(
-                "Already grabbing a branch. Ungrab first (Y).".to_string(),
+                "Already grabbing a branch. Ungrab first (G).".to_string(),
                 StatusLevel::Warning,
             );
         } else {
@@ -1548,7 +1540,21 @@ impl App {
         }
     }
 
-    fn cmd_reset_main_to_origin(&mut self) {
+    /// Ask before resetting main — this discards local commits, so it must not
+    /// fire on a bare keystroke (`R` sits next to `r` refresh). The actual reset
+    /// runs in [`perform_reset_main_to_origin`](Self::perform_reset_main_to_origin)
+    /// once confirmed. Both the `R` key and the palette enter through here.
+    pub fn cmd_reset_main_to_origin(&mut self) {
+        let main_branch = self.config.general.main_branch.clone();
+        self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingReset;
+        self.set_status_info(format!(
+            "Reset '{main_branch}' to origin? Discards local commits on it. (y/n)"
+        ));
+    }
+
+    /// Perform the hard reset of main to its origin tracking branch. Call only
+    /// after the user confirms (see [`cmd_reset_main_to_origin`](Self::cmd_reset_main_to_origin)).
+    pub fn perform_reset_main_to_origin(&mut self) {
         let main_branch = self.config.general.main_branch.clone();
         match crate::git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
@@ -1664,7 +1670,7 @@ impl App {
         self.set_focus(Focus::Explorer);
     }
 
-    fn cmd_add_review_comment(&mut self) {
+    pub fn cmd_add_review_comment(&mut self) {
         if let Some(file_path) = self.viewer_state.content.current_file.clone() {
             let location = if let Some((start, end)) = self.viewer_state.selected_range() {
                 if start == end {

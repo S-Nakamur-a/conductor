@@ -348,18 +348,21 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let drain_deadline = Instant::now() + MAX_DRAIN;
             loop {
                 match crossterm_read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        log::debug!("key: code={:?} mods={:?}", key.code, key.modifiers);
+                    // Treat auto-repeat (held key) the same as a press, so holding
+                    // j/k/up/down scrolls or navigates continuously. Repeat events
+                    // only arrive under the kitty keyboard protocol; without it,
+                    // terminals deliver auto-repeat as a stream of Press events.
+                    Event::Key(key)
+                        if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat =>
+                    {
+                        log::debug!(
+                            "key: code={:?} mods={:?} kind={:?}",
+                            key.code,
+                            key.modifiers,
+                            key.kind
+                        );
                         last_input_time = Instant::now();
                         handle_key_event(app, key);
-                    }
-                    Event::Key(key) if key.kind == KeyEventKind::Repeat => {
-                        last_input_time = Instant::now();
-                        if app.focus == crate::app::Focus::TerminalClaude
-                            || app.focus == crate::app::Focus::TerminalShell
-                        {
-                            handle_key_event(app, key);
-                        }
                     }
                     Event::Mouse(mouse) => {
                         last_input_time = Instant::now();

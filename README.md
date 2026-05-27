@@ -135,19 +135,19 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 # prompt_action = "clipboard"           # clipboard | send_to_session
 
 [keybinds]
-# Per-context key-bind overrides. Keys are action names, values are a key chord
-# string or an array of alternatives.
+# Key-bind overrides, in key->action form (powered by keymap-rs). Each entry
+# maps a key chord to an action name and LAYERS OVER the built-in defaults
+# per-chord. [keybinds.keys] is the global layer; each [keybinds.layers.<name>]
+# is a per-panel layer (worktree, explorer, explorer_diff_list,
+# explorer_comment_list, viewer, viewer_diff_mode, terminal, overlay).
 #
-# [keybinds.global]
-# quit = "q"
+# [keybinds.keys]
+# "ctrl+q" = "quit"
 #
-# [keybinds.worktree]
-# navigate_down = ["j", "down"]
-# create_worktree = "w"
-#
-# [keybinds.explorer]
-# [keybinds.viewer]
-# [keybinds.terminal]
+# [keybinds.layers.worktree]
+# "j" = "navigate_down"
+# "down" = "navigate_down"
+# "w" = "create_worktree"
 
 [notification]
 

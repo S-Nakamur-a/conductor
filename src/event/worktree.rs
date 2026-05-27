@@ -187,21 +187,8 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             app.refresh_worktrees();
         }
         Some(Action::ResetMainToOrigin) => {
-            let main_branch = app.config.general.main_branch.clone();
-            match git_engine::GitEngine::open(&app.repo_path) {
-                Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
-                    Ok(msg) => {
-                        app.set_status(msg, StatusLevel::Success);
-                        app.refresh_worktrees();
-                    }
-                    Err(e) => {
-                        app.set_status(format!("Reset error: {e}"), StatusLevel::Error);
-                    }
-                },
-                Err(e) => {
-                    app.set_status(format!("Error: {e}"), StatusLevel::Error);
-                }
-            }
+            // Confirm first — this discards local commits.
+            app.cmd_reset_main_to_origin();
         }
         Some(Action::OpenPullRequest) => {
             app.open_pr_in_browser();

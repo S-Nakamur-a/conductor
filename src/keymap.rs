@@ -2,13 +2,19 @@
 //!
 //! Provides a `KeyMap` that resolves `KeyEvent` → `Action` for a given
 //! `KeyContext`, with user overrides from `config.toml`.
+//!
+//! The lookup engine is [`keymap-core`](keymap_core): each `KeyContext` is a
+//! [`Keymap<Action>`] *layer*, and resolution is `resolve_layered([context,
+//! global], …)` — the context layer wins, missing chords fall through to the
+//! global layer, and a total miss returns `None` ("pass through to the PTY").
+//! Default bindings are authored in `default_keybinds.toml` (embedded at compile
+//! time) and parsed by [`keymap-config`](keymap_config); user bindings from
+//! `[keybinds]` in `config.toml` are layered on top per-chord.
 
 use std::collections::HashMap;
 
-use anyhow::{Result, bail};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-use crate::config::{KeybindValue, KeybindsConfig};
+use crossterm::event::KeyEvent;
+use keymap_core::{Keymap, resolve_layered};
 
 // ---------------------------------------------------------------------------
 // Action — every customisable user action
@@ -102,9 +108,6 @@ pub enum Action {
     SearchFullText,
 
     // ── Code navigation ─────────────────────────────────────────
-    GoToDefinition,
-    GoToImplementation,
-    FindReferences,
     JumpBack,
     JumpForward,
     ToggleInlineThread,
@@ -197,9 +200,6 @@ impl Action {
             "open_file_from_terminal" => Some(Action::OpenFileFromTerminal),
             "update_and_restart" => Some(Action::UpdateAndRestart),
             "search_full_text" => Some(Action::SearchFullText),
-            "go_to_definition" => Some(Action::GoToDefinition),
-            "go_to_implementation" => Some(Action::GoToImplementation),
-            "find_references" => Some(Action::FindReferences),
             "jump_back" => Some(Action::JumpBack),
             "jump_forward" => Some(Action::JumpForward),
             "next_hunk" => Some(Action::NextHunk),
@@ -288,9 +288,6 @@ impl Action {
             Action::OpenFileFromTerminal => "open_file_from_terminal",
             Action::UpdateAndRestart => "update_and_restart",
             Action::SearchFullText => "search_full_text",
-            Action::GoToDefinition => "go_to_definition",
-            Action::GoToImplementation => "go_to_implementation",
-            Action::FindReferences => "find_references",
             Action::JumpBack => "jump_back",
             Action::JumpForward => "jump_forward",
             Action::NextHunk => "next_hunk",
@@ -308,7 +305,7 @@ impl Action {
 }
 
 // ---------------------------------------------------------------------------
-// KeyContext — determines which binding table to consult
+// KeyContext — selects which layer to consult
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -326,188 +323,192 @@ pub enum KeyContext {
     Overlay,
 }
 
-// ---------------------------------------------------------------------------
-// Key chord parsing
-// ---------------------------------------------------------------------------
+/// The non-global contexts, each backed by a named `[layers.<name>]` table.
+const PANEL_CONTEXTS: [KeyContext; 8] = [
+    KeyContext::Worktree,
+    KeyContext::Explorer,
+    KeyContext::ExplorerDiffList,
+    KeyContext::ExplorerCommentList,
+    KeyContext::Viewer,
+    KeyContext::ViewerDiffMode,
+    KeyContext::Terminal,
+    KeyContext::Overlay,
+];
 
-/// Parse a key chord string like `"ctrl+shift+a"`, `"enter"`, `"G"`, `"f1"`.
-pub fn parse_key_chord(s: &str) -> Result<(KeyCode, KeyModifiers)> {
-    let s = s.trim();
-    if s.is_empty() {
-        bail!("empty key chord");
-    }
-
-    let parts: Vec<&str> = s.split('+').collect();
-    let mut modifiers = KeyModifiers::empty();
-
-    // All parts except the last are modifiers.
-    for &part in &parts[..parts.len() - 1] {
-        match part.to_lowercase().as_str() {
-            "ctrl" | "control" => modifiers |= KeyModifiers::CONTROL,
-            "alt" => modifiers |= KeyModifiers::ALT,
-            "shift" => modifiers |= KeyModifiers::SHIFT,
-            "super" | "cmd" | "meta" => modifiers |= KeyModifiers::SUPER,
-            other => bail!("unknown modifier: {other}"),
+impl KeyContext {
+    /// The keymap-config layer name backing this context. `Global` lives in the
+    /// bare `[keys]` table, which keymap-config exposes as the `GLOBAL_LAYER`.
+    fn layer_name(self) -> &'static str {
+        match self {
+            KeyContext::Global => keymap_config::GLOBAL_LAYER,
+            KeyContext::Worktree => "worktree",
+            KeyContext::Explorer => "explorer",
+            KeyContext::ExplorerDiffList => "explorer_diff_list",
+            KeyContext::ExplorerCommentList => "explorer_comment_list",
+            KeyContext::Viewer => "viewer",
+            KeyContext::ViewerDiffMode => "viewer_diff_mode",
+            KeyContext::Terminal => "terminal",
+            KeyContext::Overlay => "overlay",
         }
     }
-
-    let key_part = parts[parts.len() - 1];
-    let code = parse_key_name(key_part)?;
-
-    // Normalise: uppercase single char → remove explicit SHIFT
-    // (crossterm delivers 'G' with SHIFT set, but we store without it)
-    if let KeyCode::Char(c) = code
-        && c.is_ascii_uppercase()
-    {
-        modifiers &= !KeyModifiers::SHIFT;
-    }
-
-    Ok((code, modifiers))
 }
 
-fn parse_key_name(s: &str) -> Result<KeyCode> {
-    // Single character
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() == 1 {
-        return Ok(KeyCode::Char(chars[0]));
-    }
+// ---------------------------------------------------------------------------
+// KeybindWarning — survivable problems found while building the keymap
+// ---------------------------------------------------------------------------
 
-    // Named keys (case-insensitive)
-    match s.to_lowercase().as_str() {
-        "enter" | "return" => Ok(KeyCode::Enter),
-        "esc" | "escape" => Ok(KeyCode::Esc),
-        "tab" => Ok(KeyCode::Tab),
-        "backtab" => Ok(KeyCode::BackTab),
-        "backspace" => Ok(KeyCode::Backspace),
-        "delete" | "del" => Ok(KeyCode::Delete),
-        "up" => Ok(KeyCode::Up),
-        "down" => Ok(KeyCode::Down),
-        "left" => Ok(KeyCode::Left),
-        "right" => Ok(KeyCode::Right),
-        "home" => Ok(KeyCode::Home),
-        "end" => Ok(KeyCode::End),
-        "pageup" => Ok(KeyCode::PageUp),
-        "pagedown" => Ok(KeyCode::PageDown),
-        "space" => Ok(KeyCode::Char(' ')),
-        "f1" => Ok(KeyCode::F(1)),
-        "f2" => Ok(KeyCode::F(2)),
-        "f3" => Ok(KeyCode::F(3)),
-        "f4" => Ok(KeyCode::F(4)),
-        "f5" => Ok(KeyCode::F(5)),
-        "f6" => Ok(KeyCode::F(6)),
-        "f7" => Ok(KeyCode::F(7)),
-        "f8" => Ok(KeyCode::F(8)),
-        "f9" => Ok(KeyCode::F(9)),
-        "f10" => Ok(KeyCode::F(10)),
-        "f11" => Ok(KeyCode::F(11)),
-        "f12" => Ok(KeyCode::F(12)),
-        _ => bail!("unknown key name: {s}"),
-    }
+/// A non-fatal problem found while loading user keybindings. Conductor's own
+/// type so the public surface does not depend on `keymap_config::Warning`
+/// (which is `#[non_exhaustive]` and carries sequence concepts Conductor does
+/// not use).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeybindWarning {
+    /// An action name in the config was not recognized; the binding was skipped.
+    UnknownAction { key: String, action: String },
+    /// Two keys resolved to the same chord within one layer; the last one won.
+    Conflict { chord: String },
+    /// A `[keybinds.layers.<name>]` table used a layer name with no matching
+    /// context; its bindings were ignored.
+    UnknownLayer { layer: String },
+    /// The `[keybinds]` config could not be parsed at all (malformed, or the
+    /// pre-0.x `[keybinds.<context>]` action→key format). User overrides were
+    /// ignored and the built-in defaults are used.
+    InvalidConfig { detail: String },
 }
 
-/// Format a `(KeyCode, KeyModifiers)` pair back to a human-readable string.
-fn format_key_chord(code: &KeyCode, modifiers: &KeyModifiers) -> String {
-    let mut parts = Vec::new();
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        parts.push("Ctrl".to_string());
+impl std::fmt::Display for KeybindWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeybindWarning::UnknownAction { key, action } => {
+                write!(f, "unknown keybind action {action:?} for key {key:?}")
+            }
+            KeybindWarning::Conflict { chord } => {
+                write!(
+                    f,
+                    "keybind chord {chord:?} is bound more than once in one layer"
+                )
+            }
+            KeybindWarning::UnknownLayer { layer } => {
+                write!(f, "unknown keybind layer {layer:?}")
+            }
+            KeybindWarning::InvalidConfig { detail } => {
+                write!(f, "could not parse [keybinds] config: {detail}")
+            }
+        }
     }
-    if modifiers.contains(KeyModifiers::ALT) {
-        parts.push("Alt".to_string());
-    }
-    if modifiers.contains(KeyModifiers::SHIFT) {
-        parts.push("Shift".to_string());
-    }
-    if modifiers.contains(KeyModifiers::SUPER) {
-        parts.push("Cmd".to_string());
-    }
-
-    let key_name = match code {
-        KeyCode::Char(' ') => "Space".to_string(),
-        KeyCode::Char(c) => c.to_string(),
-        KeyCode::Enter => "Enter".to_string(),
-        KeyCode::Esc => "Esc".to_string(),
-        KeyCode::Tab => "Tab".to_string(),
-        KeyCode::BackTab => "BackTab".to_string(),
-        KeyCode::Backspace => "Backspace".to_string(),
-        KeyCode::Delete => "Del".to_string(),
-        KeyCode::Up => "Up".to_string(),
-        KeyCode::Down => "Down".to_string(),
-        KeyCode::Left => "Left".to_string(),
-        KeyCode::Right => "Right".to_string(),
-        KeyCode::Home => "Home".to_string(),
-        KeyCode::End => "End".to_string(),
-        KeyCode::PageUp => "PageUp".to_string(),
-        KeyCode::PageDown => "PageDown".to_string(),
-        KeyCode::F(n) => format!("F{n}"),
-        _ => "?".to_string(),
-    };
-    parts.push(key_name);
-    parts.join("+")
 }
 
 // ---------------------------------------------------------------------------
 // KeyMap
 // ---------------------------------------------------------------------------
 
+/// Embedded default bindings (keymap-config key→action TOML). See the file for
+/// the schema; it is the reference for what users can write under `[keybinds]`.
+const DEFAULT_KEYBINDS: &str = include_str!("default_keybinds.toml");
+
 pub struct KeyMap {
-    bindings: HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
+    /// One effective layer per non-global context (defaults overlaid by user
+    /// bindings, per-chord).
+    contexts: HashMap<KeyContext, Keymap<Action>>,
+    /// The effective global layer, consulted last for every context.
+    global: Keymap<Action>,
 }
 
 impl KeyMap {
-    /// Build a new KeyMap with defaults, then apply user overrides.
-    pub fn new(config: &KeybindsConfig) -> Self {
-        let mut km = Self {
-            bindings: HashMap::new(),
-        };
-        km.load_defaults();
-        km.apply_overrides(config);
-        km
+    /// Build a `KeyMap` from defaults plus the user's `[keybinds]` config table,
+    /// discarding any warnings. See [`KeyMap::with_warnings`] to inspect them.
+    #[allow(dead_code)] // convenience constructor; the app uses `with_warnings`.
+    pub fn new(user: &toml::Table) -> Self {
+        Self::with_warnings(user).0
     }
 
-    /// Resolve a key event to an action in the given context.
-    /// Falls back to `KeyContext::Global` if no match in the specific context.
-    pub fn resolve(&self, key: &KeyEvent, context: KeyContext) -> Option<Action> {
-        let normalized = normalize_key(key);
+    /// Build a `KeyMap`, returning any non-fatal problems found in the user's
+    /// config so the caller can surface them (the app flashes them on startup).
+    pub fn with_warnings(user: &toml::Table) -> (Self, Vec<KeybindWarning>) {
+        let mut warnings = Vec::new();
 
-        // First try the specific context.
-        if context != KeyContext::Global
-            && let Some(map) = self.bindings.get(&context)
-            && let Some(action) = map.get(&normalized)
-        {
-            return Some(*action);
+        // 1. Embedded defaults. Authored in-repo, so any warning is a build bug:
+        //    fail loudly in debug, and never surface to the user.
+        let defaults = keymap_config::from_str(DEFAULT_KEYBINDS, Action::from_str)
+            .expect("embedded default keybinds must be valid TOML");
+        debug_assert!(
+            defaults.warnings.is_empty(),
+            "default keybinds produced warnings: {:?}",
+            defaults.warnings
+        );
+        for w in &defaults.warnings {
+            log::error!("default keybinds produced a warning (bug): {w:?}");
         }
 
-        // Fall back to global.
-        if let Some(map) = self.bindings.get(&KeyContext::Global)
-            && let Some(action) = map.get(&normalized)
-        {
-            return Some(*action);
-        }
+        // 2. Seed every layer from the defaults.
+        let mut global = layer_or_default(&defaults, KeyContext::Global);
+        let mut contexts: HashMap<KeyContext, Keymap<Action>> = PANEL_CONTEXTS
+            .iter()
+            .map(|&ctx| (ctx, layer_or_default(&defaults, ctx)))
+            .collect();
 
-        None
-    }
+        // 3. Parse user overrides and overlay them per-chord (user wins).
+        if let Some(user_build) = parse_user_keybinds(user, &mut warnings) {
+            collect_warnings(&user_build.warnings, &mut warnings);
 
-    /// Get the display strings for all keys bound to an action in a context.
-    pub fn keys_for_action(&self, context: KeyContext, action: Action) -> Vec<String> {
-        let mut keys = Vec::new();
-
-        // Check context-specific bindings.
-        if let Some(map) = self.bindings.get(&context) {
-            for ((code, mods), a) in map {
-                if *a == action {
-                    keys.push(format_key_chord(code, mods));
+            for (name, user_layer) in &user_build.layers {
+                let target = if name == keymap_config::GLOBAL_LAYER {
+                    Some(&mut global)
+                } else {
+                    match PANEL_CONTEXTS.iter().find(|c| c.layer_name() == name) {
+                        Some(&ctx) => contexts.get_mut(&ctx),
+                        None => {
+                            // keymap-config always inserts an empty GLOBAL_LAYER;
+                            // only warn on a genuinely unrecognized named layer.
+                            if !user_layer.is_empty() {
+                                warnings.push(KeybindWarning::UnknownLayer {
+                                    layer: name.clone(),
+                                });
+                            }
+                            None
+                        }
+                    }
+                };
+                if let Some(target) = target {
+                    for (input, action) in user_layer.iter() {
+                        target.bind(*input, *action);
+                    }
                 }
             }
         }
 
-        // Also check global bindings for global actions.
-        if context != KeyContext::Global
-            && let Some(map) = self.bindings.get(&KeyContext::Global)
-        {
-            for ((code, mods), a) in map {
+        (KeyMap { contexts, global }, warnings)
+    }
+
+    /// Resolve a key event to an action in the given context. The context layer
+    /// is consulted first, then the global layer; an unmappable key event or a
+    /// total miss yields `None` (the caller passes the key through).
+    pub fn resolve(&self, key: &KeyEvent, context: KeyContext) -> Option<Action> {
+        let input = keymap_core::KeyInput::try_from(*key).ok()?;
+        let resolved = match self.contexts.get(&context) {
+            Some(layer) => resolve_layered([layer, &self.global], &input),
+            None => resolve_layered([&self.global], &input),
+        };
+        resolved.copied()
+    }
+
+    /// Display strings for every key bound to an action in a context (context
+    /// layer plus the global layer), for the help screen. Strings are
+    /// keymap-core canonical form (e.g. `"ctrl+d"`, `"down"`, `"G"`), which
+    /// round-trips back through the config grammar.
+    pub fn keys_for_action(&self, context: KeyContext, action: Action) -> Vec<String> {
+        let mut keys = Vec::new();
+
+        if let Some(layer) = self.contexts.get(&context) {
+            for (input, a) in layer.iter() {
                 if *a == action {
-                    keys.push(format_key_chord(code, mods));
+                    keys.push(input.to_string());
                 }
+            }
+        }
+        for (input, a) in self.global.iter() {
+            if *a == action {
+                keys.push(input.to_string());
             }
         }
 
@@ -516,449 +517,100 @@ impl KeyMap {
         keys
     }
 
-    // ── Binding insertion helpers ─────────────────────────────────
-
-    fn bind(
-        &mut self,
-        context: KeyContext,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-        action: Action,
-    ) {
-        let normalized = normalize_raw(code, modifiers);
-        self.bindings
-            .entry(context)
-            .or_default()
-            .insert(normalized, action);
-    }
-
-    fn bind_char(&mut self, context: KeyContext, c: char, action: Action) {
-        self.bind(context, KeyCode::Char(c), KeyModifiers::empty(), action);
-    }
-
-    fn bind_key(&mut self, context: KeyContext, code: KeyCode, action: Action) {
-        self.bind(context, code, KeyModifiers::empty(), action);
-    }
-
-    fn bind_ctrl(&mut self, context: KeyContext, c: char, action: Action) {
-        self.bind(context, KeyCode::Char(c), KeyModifiers::CONTROL, action);
-    }
-
-    // ── Default bindings (mirrors current event.rs hardcoded keys) ──
-
-    fn load_defaults(&mut self) {
-        use Action::*;
-        use KeyContext::*;
-
-        // ── Global ───────────────────────────────────────────────
-        self.bind_char(Global, 'q', Quit);
-        self.bind_char(Global, 'Q', Quit);
-        self.bind_char(Global, '?', ShowHelp);
-        // ':' is bound per non-terminal context so it passes through to PTY
-        // in terminal panels. Ctrl+P remains global for command palette access.
-        self.bind_ctrl(Global, 'p', CommandPalette);
-        // Alt+h / Alt+l — panel cycle that works everywhere, including terminal panels.
-        self.bind(
-            Global,
-            KeyCode::Char('h'),
-            KeyModifiers::ALT,
-            CycleFocusBackward,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('l'),
-            KeyModifiers::ALT,
-            CycleFocusForward,
-        );
-        // macOS Unicode fallback (Option+h='˙', Option+l='¬') for terminals that
-        // send Unicode instead of Alt modifier.
-        self.bind_char(Global, '˙', CycleFocusBackward);
-        self.bind_char(Global, '¬', CycleFocusForward);
-        self.bind_ctrl(Global, 'w', FocusWorktree);
-        self.bind_ctrl(Global, 'n', NewClaudeCode);
-        self.bind_ctrl(Global, 't', NewShell);
-        self.bind_ctrl(Global, 'o', OpenRepo);
-        self.bind_ctrl(Global, 'r', SwitchRepo);
-        self.bind(
-            Global,
-            KeyCode::Char('1'),
-            KeyModifiers::SUPER,
-            FocusWorktree,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('2'),
-            KeyModifiers::SUPER,
-            FocusExplorer,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('3'),
-            KeyModifiers::SUPER,
-            FocusExplorerDiffList,
-        );
-        self.bind(Global, KeyCode::Char('4'), KeyModifiers::SUPER, FocusViewer);
-        self.bind(
-            Global,
-            KeyCode::Char('5'),
-            KeyModifiers::SUPER,
-            FocusTerminalClaude,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('6'),
-            KeyModifiers::SUPER,
-            FocusTerminalShell,
-        );
-        // Alt+number as fallback — Cmd+number is intercepted by most terminal emulators on macOS.
-        // When terminal sends Alt as Esc prefix (e.g. iTerm2 "Option sends Esc+"):
-        self.bind(Global, KeyCode::Char('1'), KeyModifiers::ALT, FocusWorktree);
-        self.bind(Global, KeyCode::Char('2'), KeyModifiers::ALT, FocusExplorer);
-        self.bind(
-            Global,
-            KeyCode::Char('3'),
-            KeyModifiers::ALT,
-            FocusExplorerDiffList,
-        );
-        self.bind(Global, KeyCode::Char('4'), KeyModifiers::ALT, FocusViewer);
-        self.bind(
-            Global,
-            KeyCode::Char('5'),
-            KeyModifiers::ALT,
-            FocusTerminalClaude,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('6'),
-            KeyModifiers::ALT,
-            FocusTerminalShell,
-        );
-        // Option+Shift+1..6 — jump to a panel AND maximize it in one stroke.
-        // "Add Shift to the focus chord to also maximize." Under the kitty keyboard
-        // protocol (active when the terminal supports it) these arrive as a clean
-        // SHIFT|ALT + digit, so no Unicode fallbacks are needed. Chosen over
-        // Cmd+Shift+digit because macOS steals Cmd+Shift+3/4/5/6 for screenshots.
-        self.bind(
-            Global,
-            KeyCode::Char('1'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-            FocusExpandWorktree,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('2'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-            FocusExpandExplorer,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('3'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-            FocusExpandExplorerDiffList,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('4'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-            FocusExpandViewer,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('5'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-            FocusExpandTerminalClaude,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('6'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-            FocusExpandTerminalShell,
-        );
-        // When macOS Option key produces Unicode (e.g. default Terminal.app / iTerm2 without Esc+ mode):
-        // Option+1='¡', Option+2='™', Option+3='£', Option+4='¢', Option+5='∞', Option+6='§'
-        self.bind_char(Global, '¡', FocusWorktree);
-        self.bind_char(Global, '™', FocusExplorer);
-        self.bind_char(Global, '£', FocusExplorerDiffList);
-        self.bind_char(Global, '¢', FocusViewer);
-        self.bind_char(Global, '∞', FocusTerminalClaude);
-        self.bind_char(Global, '§', FocusTerminalShell);
-        // Jump to a panel AND maximize it in one stroke, from anywhere (including
-        // terminal panels). F-keys are chosen because they reach the app reliably
-        // through Alacritty/Ghostty and tmux, where Cmd/Super combos often do not.
-        // F2..F7 mirror the Cmd/Alt+1..6 focus order (F1 left for help convention).
-        self.bind_key(Global, KeyCode::F(2), FocusExpandWorktree);
-        self.bind_key(Global, KeyCode::F(3), FocusExpandExplorer);
-        self.bind_key(Global, KeyCode::F(4), FocusExpandExplorerDiffList);
-        self.bind_key(Global, KeyCode::F(5), FocusExpandViewer);
-        self.bind_key(Global, KeyCode::F(6), FocusExpandTerminalClaude);
-        self.bind_key(Global, KeyCode::F(7), FocusExpandTerminalShell);
-        self.bind_ctrl(Global, 'g', SearchFullText);
-        self.bind(
-            Global,
-            KeyCode::Char(' '),
-            KeyModifiers::SUPER,
-            TogglePanelExpand,
-        );
-        self.bind(
-            Global,
-            KeyCode::Char('/'),
-            KeyModifiers::ALT,
-            TogglePanelOverlay,
-        );
-        // macOS Unicode fallback (Option+/ = '÷')
-        self.bind_char(Global, '÷', TogglePanelOverlay);
-
-        // ── Worktree ─────────────────────────────────────────────
-        self.bind_key(Worktree, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(Worktree, KeyCode::BackTab, CycleFocusBackward);
-        self.bind_char(Worktree, 'j', NavigateDown);
-        self.bind_key(Worktree, KeyCode::Down, NavigateDown);
-        self.bind_char(Worktree, 'k', NavigateUp);
-        self.bind_key(Worktree, KeyCode::Up, NavigateUp);
-        self.bind_key(Worktree, KeyCode::Enter, Select);
-        self.bind_char(Worktree, 'w', CreateWorktree);
-        self.bind_char(Worktree, 'x', DeleteWorktree);
-        self.bind_key(Worktree, KeyCode::Delete, DeleteWorktree);
-        self.bind_char(Worktree, 's', SwitchBranch);
-        self.bind_char(Worktree, 'g', GrabBranch);
-        self.bind_char(Worktree, 'G', UngrabBranch);
-        self.bind_char(Worktree, 'P', PruneWorktrees);
-        self.bind_char(Worktree, 'm', MergeToMain);
-        self.bind_char(Worktree, 'r', RefreshWorktrees);
-        self.bind_char(Worktree, 'R', ResetMainToOrigin);
-        self.bind_char(Worktree, 'p', CherryPick);
-        self.bind_char(Worktree, 'u', PullWorktree);
-        self.bind_char(Worktree, 'H', SessionHistory);
-        self.bind_char(Worktree, 'v', OpenPullRequest);
-        self.bind_char(Worktree, ':', CommandPalette);
-
-        // ── Explorer (file tree) ─────────────────────────────────
-        self.bind_key(Explorer, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(Explorer, KeyCode::BackTab, CycleFocusBackward);
-        self.bind_char(Explorer, 'j', NavigateDown);
-        self.bind_key(Explorer, KeyCode::Down, NavigateDown);
-        self.bind_char(Explorer, 'k', NavigateUp);
-        self.bind_key(Explorer, KeyCode::Up, NavigateUp);
-        self.bind_char(Explorer, 'l', ExpandOrRight);
-        self.bind_key(Explorer, KeyCode::Right, ExpandOrRight);
-        self.bind_char(Explorer, 'h', CollapseOrLeft);
-        self.bind_key(Explorer, KeyCode::Left, CollapseOrLeft);
-        self.bind_key(Explorer, KeyCode::Enter, Select);
-        self.bind_char(Explorer, 'g', GoToTop);
-        self.bind_char(Explorer, 'G', GoToBottom);
-        self.bind_char(Explorer, 'd', ShowDiffList);
-        self.bind_char(Explorer, 'c', ShowCommentList);
-        self.bind_char(Explorer, '/', SearchFilename);
-        self.bind_char(Explorer, ':', CommandPalette);
-
-        // ── Explorer: diff list ──────────────────────────────────
-        self.bind_key(ExplorerDiffList, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(ExplorerDiffList, KeyCode::BackTab, CycleFocusBackward);
-        self.bind_char(ExplorerDiffList, 'j', NavigateDown);
-        self.bind_key(ExplorerDiffList, KeyCode::Down, NavigateDown);
-        self.bind_char(ExplorerDiffList, 'k', NavigateUp);
-        self.bind_key(ExplorerDiffList, KeyCode::Up, NavigateUp);
-        self.bind_char(ExplorerDiffList, 'h', CollapseOrLeft);
-        self.bind_key(ExplorerDiffList, KeyCode::Left, CollapseOrLeft);
-        self.bind_char(ExplorerDiffList, 'l', ExpandOrRight);
-        self.bind_key(ExplorerDiffList, KeyCode::Right, ExpandOrRight);
-        self.bind_key(ExplorerDiffList, KeyCode::Enter, Select);
-        self.bind_char(ExplorerDiffList, 'g', GoToTop);
-        self.bind_char(ExplorerDiffList, 'G', GoToBottom);
-        self.bind_key(ExplorerDiffList, KeyCode::Esc, ExitSubPanel);
-        self.bind_char(ExplorerDiffList, ':', CommandPalette);
-
-        // ── Explorer: comment list ───────────────────────────────
-        self.bind_key(ExplorerCommentList, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(ExplorerCommentList, KeyCode::BackTab, CycleFocusBackward);
-        self.bind_char(ExplorerCommentList, 'j', NavigateDown);
-        self.bind_key(ExplorerCommentList, KeyCode::Down, NavigateDown);
-        self.bind_char(ExplorerCommentList, 'k', NavigateUp);
-        self.bind_key(ExplorerCommentList, KeyCode::Up, NavigateUp);
-        self.bind_char(ExplorerCommentList, 'g', GoToTop);
-        self.bind_char(ExplorerCommentList, 'G', GoToBottom);
-        self.bind_char(ExplorerCommentList, 'h', CollapseOrLeft);
-        self.bind_key(ExplorerCommentList, KeyCode::Left, CollapseOrLeft);
-        self.bind_key(ExplorerCommentList, KeyCode::Enter, Select);
-        self.bind_char(ExplorerCommentList, 'l', ExpandOrRight);
-        self.bind_key(ExplorerCommentList, KeyCode::Right, ExpandOrRight);
-        self.bind_char(ExplorerCommentList, 'x', DeleteComment);
-        self.bind_key(ExplorerCommentList, KeyCode::Delete, DeleteComment);
-        self.bind_char(ExplorerCommentList, 'r', ToggleResolve);
-        self.bind_char(ExplorerCommentList, 'e', EditComment);
-        self.bind_char(ExplorerCommentList, 'R', ReplyToComment);
-        self.bind_char(ExplorerCommentList, ' ', ViewCommentDetail);
-        self.bind_key(ExplorerCommentList, KeyCode::Esc, ExitSubPanel);
-        self.bind_char(ExplorerCommentList, ':', CommandPalette);
-
-        // ── Viewer ───────────────────────────────────────────────
-        self.bind_key(Viewer, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(Viewer, KeyCode::BackTab, CycleFocusBackward);
-        self.bind_char(Viewer, 'j', NavigateDown);
-        self.bind_key(Viewer, KeyCode::Down, NavigateDown);
-        self.bind_char(Viewer, 'k', NavigateUp);
-        self.bind_key(Viewer, KeyCode::Up, NavigateUp);
-        self.bind_ctrl(Viewer, 'd', ScrollHalfPageDown);
-        self.bind_ctrl(Viewer, 'u', ScrollHalfPageUp);
-        self.bind_char(Viewer, 'g', GoToTop);
-        self.bind_char(Viewer, 'G', GoToBottom);
-        self.bind_char(Viewer, 'h', ScrollLeft);
-        self.bind_key(Viewer, KeyCode::Left, ScrollLeft);
-        self.bind_char(Viewer, 'l', ScrollRight);
-        self.bind_key(Viewer, KeyCode::Right, ScrollRight);
-        self.bind_char(Viewer, '0', ScrollHome);
-        self.bind_char(Viewer, '/', SearchInFile);
-        self.bind_char(Viewer, 'n', NextSearchMatch);
-        self.bind_char(Viewer, 'N', PrevSearchMatch);
-        // Fuzzy filename jump — usable even when the viewer is maximized and the
-        // file tree is hidden, so you can switch files without un-maximizing.
-        self.bind_ctrl(Viewer, 'f', SearchFilename);
-        self.bind_char(Viewer, ' ', ToggleInlineThread);
-        self.bind_key(Viewer, KeyCode::Esc, ExitToExplorer);
-        self.bind_char(Viewer, ':', CommandPalette);
-        self.bind_ctrl(Viewer, 'o', JumpBack);
-        self.bind_ctrl(Viewer, 'i', JumpForward);
-
-        // ── Viewer: diff mode ────────────────────────────────────
-        self.bind_key(ViewerDiffMode, KeyCode::Tab, CycleFocusForward);
-        self.bind_key(ViewerDiffMode, KeyCode::BackTab, CycleFocusBackward);
-        self.bind_char(ViewerDiffMode, 'j', NavigateDown);
-        self.bind_key(ViewerDiffMode, KeyCode::Down, NavigateDown);
-        self.bind_char(ViewerDiffMode, 'k', NavigateUp);
-        self.bind_key(ViewerDiffMode, KeyCode::Up, NavigateUp);
-        self.bind_ctrl(ViewerDiffMode, 'd', ScrollHalfPageDown);
-        self.bind_ctrl(ViewerDiffMode, 'u', ScrollHalfPageUp);
-        self.bind_char(ViewerDiffMode, 'g', GoToTop);
-        self.bind_char(ViewerDiffMode, 'G', GoToBottom);
-        self.bind_char(ViewerDiffMode, 'h', ScrollLeft);
-        self.bind_key(ViewerDiffMode, KeyCode::Left, ScrollLeft);
-        self.bind_char(ViewerDiffMode, 'l', ScrollRight);
-        self.bind_key(ViewerDiffMode, KeyCode::Right, ScrollRight);
-        self.bind_char(ViewerDiffMode, '0', ScrollHome);
-        // Fuzzy filename jump — same as the file viewer, available in diff mode too.
-        self.bind_ctrl(ViewerDiffMode, 'f', SearchFilename);
-        // Jump between changes (hunks) and between review comments.
-        self.bind_char(ViewerDiffMode, ']', NextHunk);
-        self.bind_char(ViewerDiffMode, '[', PrevHunk);
-        self.bind_char(ViewerDiffMode, '}', NextComment);
-        self.bind_char(ViewerDiffMode, '{', PrevComment);
-        self.bind_char(ViewerDiffMode, ' ', ToggleInlineThread);
-        self.bind_key(ViewerDiffMode, KeyCode::Esc, ExitToExplorer);
-        self.bind_key(ViewerDiffMode, KeyCode::Enter, ExpandContext);
-        self.bind(
-            ViewerDiffMode,
-            KeyCode::Enter,
-            KeyModifiers::SHIFT,
-            ExpandAllContext,
-        );
-        self.bind_char(ViewerDiffMode, ':', CommandPalette);
-
-        // ── Overlay (shared popup navigation) ─────────────────────
-        self.bind_char(Overlay, 'j', NavigateDown);
-        self.bind_key(Overlay, KeyCode::Down, NavigateDown);
-        self.bind_char(Overlay, 'k', NavigateUp);
-        self.bind_key(Overlay, KeyCode::Up, NavigateUp);
-        self.bind_char(Overlay, 'g', GoToTop);
-        self.bind_char(Overlay, 'G', GoToBottom);
-        self.bind_key(Overlay, KeyCode::Enter, Select);
-        self.bind_key(Overlay, KeyCode::Esc, ExitSubPanel);
-
-        // ── Terminal ─────────────────────────────────────────────
-        self.bind(Terminal, KeyCode::Esc, KeyModifiers::CONTROL, LeaveTerminal);
-        self.bind(Terminal, KeyCode::PageUp, KeyModifiers::SHIFT, ScrollbackUp);
-        self.bind(
-            Terminal,
-            KeyCode::PageDown,
-            KeyModifiers::SHIFT,
-            ScrollbackDown,
-        );
-        self.bind(Terminal, KeyCode::Home, KeyModifiers::SHIFT, ScrollbackTop);
-        self.bind(Terminal, KeyCode::End, KeyModifiers::SHIFT, SnapToLive);
-        self.bind(
-            Terminal,
-            KeyCode::Char('g'),
-            KeyModifiers::CONTROL,
-            OpenFileFromTerminal,
-        );
-    }
-
-    /// Apply user overrides from config. For each overridden action,
-    /// remove all existing bindings for that action in the context,
-    /// then insert the new key(s).
-    fn apply_overrides(&mut self, config: &KeybindsConfig) {
-        self.apply_section_overrides(KeyContext::Global, &config.global);
-        self.apply_section_overrides(KeyContext::Worktree, &config.worktree);
-        self.apply_section_overrides(KeyContext::Explorer, &config.explorer);
-        self.apply_section_overrides(KeyContext::Viewer, &config.viewer);
-        self.apply_section_overrides(KeyContext::Terminal, &config.terminal);
-        self.apply_section_overrides(KeyContext::Overlay, &config.overlay);
-    }
-
-    fn apply_section_overrides(
-        &mut self,
-        context: KeyContext,
-        overrides: &HashMap<String, KeybindValue>,
-    ) {
-        for (action_name, value) in overrides {
-            let Some(action) = Action::from_str(action_name) else {
-                log::warn!("unknown keybind action: {action_name}");
-                continue;
-            };
-
-            // Remove all existing bindings for this action in this context.
-            if let Some(map) = self.bindings.get_mut(&context) {
-                map.retain(|_, a| *a != action);
+    /// Keys bound to `action` in `context`'s OWN layer only — unlike
+    /// [`keys_for_action`](Self::keys_for_action), this does NOT fold in the
+    /// global layer. Lets a caller tell "bound in this panel" from "bound
+    /// globally and merely reachable here" (used to scope the command palette).
+    pub fn keys_in_layer(&self, context: KeyContext, action: Action) -> Vec<String> {
+        let layer = if context == KeyContext::Global {
+            &self.global
+        } else {
+            match self.contexts.get(&context) {
+                Some(layer) => layer,
+                None => return Vec::new(),
             }
+        };
+        let mut keys: Vec<String> = layer
+            .iter()
+            .filter(|(_, a)| **a == action)
+            .map(|(input, _)| input.to_string())
+            .collect();
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+}
 
-            // Parse and insert the new key(s).
-            let keys: Vec<&str> = match value {
-                KeybindValue::Single(s) => vec![s.as_str()],
-                KeybindValue::Multiple(v) => v.iter().map(|s| s.as_str()).collect(),
-            };
+/// Clone the layer for `ctx` out of a build, or an empty layer if absent.
+fn layer_or_default(build: &keymap_config::BuildOutput<Action>, ctx: KeyContext) -> Keymap<Action> {
+    build
+        .layers
+        .get(ctx.layer_name())
+        .cloned()
+        .unwrap_or_default()
+}
 
-            for key_str in keys {
-                match parse_key_chord(key_str) {
-                    Ok((code, mods)) => {
-                        self.bind(context, code, mods, action);
-                    }
-                    Err(e) => {
-                        log::warn!("invalid key chord '{key_str}' for action '{action_name}': {e}");
-                    }
-                }
-            }
+/// Parse the user's `[keybinds]` table into keymap-config layers. Returns
+/// `None` (no overrides) when the table is empty or cannot be parsed; a parse
+/// failure is recorded as a [`KeybindWarning::InvalidConfig`] so the app can
+/// tell the user their customizations were ignored.
+fn parse_user_keybinds(
+    user: &toml::Table,
+    warnings: &mut Vec<KeybindWarning>,
+) -> Option<keymap_config::BuildOutput<Action>> {
+    if user.is_empty() {
+        return None;
+    }
+
+    // keymap-config parses a standalone document; re-emit just the [keybinds]
+    // subtree as TOML text. (Conductor's `toml` and keymap-config's may differ
+    // in version, so the interface between them is text, not types.)
+    let toml_text = match toml::to_string(user) {
+        Ok(text) => text,
+        Err(e) => {
+            warnings.push(KeybindWarning::InvalidConfig {
+                detail: e.to_string(),
+            });
+            return None;
+        }
+    };
+
+    match keymap_config::from_str(&toml_text, Action::from_str) {
+        Ok(build) => Some(build),
+        Err(e) => {
+            warnings.push(KeybindWarning::InvalidConfig {
+                detail: format!(
+                    "{e} (note: the keybind format is now key→action under \
+                     [keybinds.keys] / [keybinds.layers.*]; the old \
+                     [keybinds.<context>] action→key tables are no longer read)"
+                ),
+            });
+            None
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Key normalisation
-// ---------------------------------------------------------------------------
-
-/// Normalise a KeyEvent for lookup: strip SHIFT from uppercase ASCII chars.
-fn normalize_key(key: &KeyEvent) -> (KeyCode, KeyModifiers) {
-    normalize_raw(key.code, key.modifiers)
-}
-
-fn normalize_raw(mut code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
-    if let KeyCode::Char(c) = code {
-        if c.is_ascii_lowercase() && modifiers.contains(KeyModifiers::SHIFT) {
-            // Some terminals may send lowercase + SHIFT instead of uppercase.
-            // Normalise to uppercase without SHIFT for consistent lookup.
-            code = KeyCode::Char(c.to_ascii_uppercase());
-            modifiers &= !KeyModifiers::SHIFT;
-        } else if c.is_ascii_uppercase() {
-            modifiers &= !KeyModifiers::SHIFT;
+/// Translate the keymap-config warnings Conductor cares about into its own
+/// warning type, dropping sequence-related variants it does not use.
+fn collect_warnings(from: &[keymap_config::Warning], into: &mut Vec<KeybindWarning>) {
+    for w in from {
+        match w {
+            keymap_config::Warning::UnknownAction { key, action } => {
+                into.push(KeybindWarning::UnknownAction {
+                    key: key.clone(),
+                    action: action.clone(),
+                });
+            }
+            keymap_config::Warning::Conflict { chord, .. } => {
+                into.push(KeybindWarning::Conflict {
+                    chord: chord.clone(),
+                });
+            }
+            // PrefixShadow / EmptySequence / SequenceShadow concern sequences,
+            // which Conductor does not use. `Warning` is #[non_exhaustive].
+            _ => {}
         }
     }
-    // BackTab already encodes Shift+Tab — strip the redundant SHIFT flag
-    // that crossterm's enhanced keyboard protocol may include.
-    if code == KeyCode::BackTab {
-        modifiers &= !KeyModifiers::SHIFT;
-    }
-    // Strip state flags that aren't meaningful for binding lookup.
-    modifiers &=
-        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER;
-    (code, modifiers)
 }
 
 // ---------------------------------------------------------------------------
@@ -968,87 +620,30 @@ fn normalize_raw(mut code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, Ke
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    #[test]
-    fn test_parse_key_chord_simple_char() {
-        let (code, mods) = parse_key_chord("j").unwrap();
-        assert_eq!(code, KeyCode::Char('j'));
-        assert_eq!(mods, KeyModifiers::empty());
+    fn default_keymap() -> KeyMap {
+        KeyMap::new(&toml::Table::new())
     }
 
     #[test]
-    fn test_parse_key_chord_uppercase() {
-        let (code, mods) = parse_key_chord("G").unwrap();
-        assert_eq!(code, KeyCode::Char('G'));
-        // Shift is stripped for uppercase chars.
-        assert_eq!(mods, KeyModifiers::empty());
+    fn defaults_build_without_warnings() {
+        let (_km, warnings) = KeyMap::with_warnings(&toml::Table::new());
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 
     #[test]
-    fn test_parse_key_chord_ctrl() {
-        let (code, mods) = parse_key_chord("ctrl+d").unwrap();
-        assert_eq!(code, KeyCode::Char('d'));
-        assert_eq!(mods, KeyModifiers::CONTROL);
+    fn every_default_action_name_resolves() {
+        // Guards against a typo in default_keybinds.toml: an unknown action name
+        // would surface as a warning when the defaults are parsed.
+        let build = keymap_config::from_str(DEFAULT_KEYBINDS, Action::from_str).unwrap();
+        assert!(build.warnings.is_empty(), "{:?}", build.warnings);
     }
 
     #[test]
-    fn test_parse_key_chord_ctrl_esc() {
-        let (code, mods) = parse_key_chord("ctrl+esc").unwrap();
-        assert_eq!(code, KeyCode::Esc);
-        assert_eq!(mods, KeyModifiers::CONTROL);
-    }
+    fn critical_defaults_resolve() {
+        let km = default_keymap();
 
-    #[test]
-    fn test_parse_key_chord_special_keys() {
-        assert_eq!(parse_key_chord("enter").unwrap().0, KeyCode::Enter);
-        assert_eq!(parse_key_chord("tab").unwrap().0, KeyCode::Tab);
-        assert_eq!(parse_key_chord("space").unwrap().0, KeyCode::Char(' '));
-        assert_eq!(parse_key_chord("delete").unwrap().0, KeyCode::Delete);
-        assert_eq!(parse_key_chord("up").unwrap().0, KeyCode::Up);
-        assert_eq!(parse_key_chord("f1").unwrap().0, KeyCode::F(1));
-    }
-
-    #[test]
-    fn test_parse_key_chord_alt_number() {
-        let (code, mods) = parse_key_chord("alt+1").unwrap();
-        assert_eq!(code, KeyCode::Char('1'));
-        assert_eq!(mods, KeyModifiers::ALT);
-    }
-
-    #[test]
-    fn test_parse_key_chord_shift_pageup() {
-        let (code, mods) = parse_key_chord("shift+pageup").unwrap();
-        assert_eq!(code, KeyCode::PageUp);
-        assert_eq!(mods, KeyModifiers::SHIFT);
-    }
-
-    #[test]
-    fn test_parse_key_chord_error() {
-        assert!(parse_key_chord("").is_err());
-        assert!(parse_key_chord("foobar").is_err());
-    }
-
-    #[test]
-    fn test_parse_key_chord_super() {
-        let (code, mods) = parse_key_chord("super+space").unwrap();
-        assert_eq!(code, KeyCode::Char(' '));
-        assert_eq!(mods, KeyModifiers::SUPER);
-
-        let (code, mods) = parse_key_chord("cmd+a").unwrap();
-        assert_eq!(code, KeyCode::Char('a'));
-        assert_eq!(mods, KeyModifiers::SUPER);
-
-        let (code, mods) = parse_key_chord("meta+b").unwrap();
-        assert_eq!(code, KeyCode::Char('b'));
-        assert_eq!(mods, KeyModifiers::SUPER);
-    }
-
-    #[test]
-    fn test_default_bindings_complete() {
-        let config = KeybindsConfig::default();
-        let km = KeyMap::new(&config);
-
-        // Check a few critical defaults.
         let key_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
         assert_eq!(km.resolve(&key_q, KeyContext::Global), Some(Action::Quit));
 
@@ -1064,6 +659,7 @@ mod tests {
             Some(Action::NewClaudeCode)
         );
 
+        // Ctrl+Esc leaves the terminal.
         let key_ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
         assert_eq!(
             km.resolve(&key_ctrl_esc, KeyContext::Terminal),
@@ -1072,18 +668,19 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_context_fallback() {
-        let config = KeybindsConfig::default();
-        let km = KeyMap::new(&config);
+    fn context_falls_back_to_global() {
+        let km = default_keymap();
 
-        // Tab is bound per non-terminal context — resolves in Worktree but NOT in Terminal.
+        // Tab is bound per non-terminal context — resolves in Worktree but NOT
+        // in Terminal (terminal layer has no Tab, neither does global).
         let key_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
         assert_eq!(
             km.resolve(&key_tab, KeyContext::Worktree),
             Some(Action::CycleFocusForward)
         );
         assert_eq!(km.resolve(&key_tab, KeyContext::Terminal), None);
-        // Alt+l resolves globally (including Terminal fallback).
+
+        // Alt+l resolves globally, including from the Terminal context.
         let key_alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
         assert_eq!(
             km.resolve(&key_alt_l, KeyContext::Terminal),
@@ -1092,17 +689,15 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_context_shadows_global() {
-        let config = KeybindsConfig::default();
-        let km = KeyMap::new(&config);
+    fn context_shadows_are_per_context() {
+        let km = default_keymap();
 
-        // 'g' in Worktree = GrabBranch, in Global = not bound.
+        // 'g' = GrabBranch in Worktree, GoToTop in Explorer.
         let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty());
         assert_eq!(
             km.resolve(&key_g, KeyContext::Worktree),
             Some(Action::GrabBranch)
         );
-        // In Explorer, 'g' = GoToTop.
         assert_eq!(
             km.resolve(&key_g, KeyContext::Explorer),
             Some(Action::GoToTop)
@@ -1110,60 +705,147 @@ mod tests {
     }
 
     #[test]
-    fn test_user_override_replaces_default() {
-        let mut config = KeybindsConfig::default();
-        config.worktree.insert(
-            "navigate_down".to_string(),
-            KeybindValue::Multiple(vec!["n".to_string(), "down".to_string()]),
+    fn shift_g_resolves_uppercase_binding() {
+        let km = default_keymap();
+        // A normal terminal delivers Shift+g as the resolved glyph 'G' + SHIFT;
+        // keymap-core folds the redundant SHIFT, matching the "G" binding.
+        let key = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
+        assert_eq!(
+            km.resolve(&key, KeyContext::Worktree),
+            Some(Action::UngrabBranch)
         );
+    }
 
-        let km = KeyMap::new(&config);
-
-        // 'j' should no longer be NavigateDown in worktree.
-        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
-        assert_ne!(
-            km.resolve(&key_j, KeyContext::Worktree),
-            Some(Action::NavigateDown)
+    #[test]
+    fn shift_tab_is_cycle_backward() {
+        let km = default_keymap();
+        // BackTab and Tab+SHIFT both normalize to Tab+SHIFT in keymap-core.
+        let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&backtab, KeyContext::Worktree),
+            Some(Action::CycleFocusBackward)
         );
+        let shift_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
+        assert_eq!(
+            km.resolve(&shift_tab, KeyContext::Worktree),
+            Some(Action::CycleFocusBackward)
+        );
+    }
 
-        // 'n' should now be NavigateDown.
+    #[test]
+    fn user_override_adds_a_chord() {
+        // Bind "n" -> navigate_down in the worktree layer.
+        let mut layer = toml::Table::new();
+        layer.insert(
+            "n".to_string(),
+            toml::Value::String("navigate_down".to_string()),
+        );
+        let mut layers = toml::Table::new();
+        layers.insert("worktree".to_string(), toml::Value::Table(layer));
+        let mut user = toml::Table::new();
+        user.insert("layers".to_string(), toml::Value::Table(layers));
+
+        let (km, warnings) = KeyMap::with_warnings(&user);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // 'n' now navigates down …
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
         assert_eq!(
             km.resolve(&key_n, KeyContext::Worktree),
             Some(Action::NavigateDown)
         );
-
-        // Down arrow should still work.
-        let key_down = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
+        // … and the default 'j' still works (layering, not replacement).
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
         assert_eq!(
-            km.resolve(&key_down, KeyContext::Worktree),
+            km.resolve(&key_j, KeyContext::Worktree),
             Some(Action::NavigateDown)
         );
     }
 
     #[test]
-    fn test_action_from_str_roundtrip() {
-        let actions = [
-            Action::Quit,
-            Action::NavigateDown,
-            Action::LeaveTerminal,
-            Action::AddComment,
-            Action::ScrollHalfPageDown,
-        ];
-        for action in actions {
-            let s = action.as_str();
-            let parsed = Action::from_str(s);
-            assert_eq!(parsed, Some(action), "roundtrip failed for {s}");
-        }
+    fn user_override_shadows_a_default_chord() {
+        // Rebind "g" -> go_to_top in worktree (default is grab_branch).
+        let mut layer = toml::Table::new();
+        layer.insert("g".to_string(), toml::Value::String("go_to_top".to_string()));
+        let mut layers = toml::Table::new();
+        layers.insert("worktree".to_string(), toml::Value::Table(layer));
+        let mut user = toml::Table::new();
+        user.insert("layers".to_string(), toml::Value::Table(layers));
+
+        let km = KeyMap::new(&user);
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&key_g, KeyContext::Worktree),
+            Some(Action::GoToTop)
+        );
     }
 
     #[test]
-    fn test_ctrl_f_jumps_to_filename_search_in_viewer() {
-        let config = KeybindsConfig::default();
-        let km = KeyMap::new(&config);
+    fn user_unknown_action_is_warned() {
+        let mut keys = toml::Table::new();
+        keys.insert(
+            "ctrl+z".to_string(),
+            toml::Value::String("frobnicate".to_string()),
+        );
+        let mut user = toml::Table::new();
+        user.insert("keys".to_string(), toml::Value::Table(keys));
 
-        // Ctrl+f opens the fuzzy filename jump from the viewer, so files can be
-        // switched without un-maximizing it.
+        let (_km, warnings) = KeyMap::with_warnings(&user);
+        assert!(
+            warnings.iter().any(|w| matches!(
+                w,
+                KeybindWarning::UnknownAction { action, .. } if action == "frobnicate"
+            )),
+            "expected UnknownAction, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_format_is_reported_not_silent() {
+        // Old schema: [keybinds.worktree] navigate_down = "j" — a top-level
+        // table named "worktree" rather than "keys"/"layers".
+        let mut wt = toml::Table::new();
+        wt.insert(
+            "navigate_down".to_string(),
+            toml::Value::String("j".to_string()),
+        );
+        let mut user = toml::Table::new();
+        user.insert("worktree".to_string(), toml::Value::Table(wt));
+
+        let (_km, warnings) = KeyMap::with_warnings(&user);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, KeybindWarning::InvalidConfig { .. })),
+            "expected InvalidConfig, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn option_shift_digit_is_focus_expand() {
+        let km = default_keymap();
+        // Option+Shift+digit (ALT|SHIFT) maximizes; plain Option+digit (ALT)
+        // only focuses. keymap-core keeps SHIFT because ALT is also held.
+        let cases = [
+            ('1', Action::FocusExpandWorktree),
+            ('4', Action::FocusExpandViewer),
+            ('6', Action::FocusExpandTerminalShell),
+        ];
+        for (c, action) in cases {
+            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT | KeyModifiers::SHIFT);
+            assert_eq!(km.resolve(&key, KeyContext::Terminal), Some(action));
+        }
+
+        let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&alt_1, KeyContext::Global),
+            Some(Action::FocusWorktree)
+        );
+    }
+
+    #[test]
+    fn ctrl_f_is_filename_search_in_viewer() {
+        let km = default_keymap();
         let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
         assert_eq!(
             km.resolve(&key, KeyContext::Viewer),
@@ -1176,64 +858,194 @@ mod tests {
     }
 
     #[test]
-    fn test_keys_for_action() {
-        let config = KeybindsConfig::default();
-        let km = KeyMap::new(&config);
-
+    fn keys_for_action_lists_canonical_strings() {
+        let km = default_keymap();
         let keys = km.keys_for_action(KeyContext::Worktree, Action::NavigateDown);
-        assert!(keys.contains(&"j".to_string()));
-        assert!(keys.contains(&"Down".to_string()));
+        assert!(keys.contains(&"j".to_string()), "{keys:?}");
+        assert!(keys.contains(&"down".to_string()), "{keys:?}");
     }
 
     #[test]
-    fn test_normalize_shift_uppercase() {
-        // Simulates crossterm sending 'G' with SHIFT modifier.
-        let key = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
-        let (code, mods) = normalize_key(&key);
-        assert_eq!(code, KeyCode::Char('G'));
-        assert_eq!(mods, KeyModifiers::empty());
-    }
-
-    #[test]
-    fn test_normalize_keeps_shift_for_digits() {
-        // SHIFT must NOT be stripped for digit keys, so Option+Shift+digit
-        // (SHIFT|ALT) stays distinct from plain Option+digit (ALT).
-        let key = KeyEvent::new(
-            KeyCode::Char('1'),
-            KeyModifiers::SHIFT | KeyModifiers::ALT,
-        );
-        let (code, mods) = normalize_key(&key);
-        assert_eq!(code, KeyCode::Char('1'));
-        assert_eq!(mods, KeyModifiers::SHIFT | KeyModifiers::ALT);
-    }
-
-    #[test]
-    fn test_option_shift_digit_resolves_to_focus_expand() {
-        let config = KeybindsConfig::default();
-        let km = KeyMap::new(&config);
-
-        // Option+Shift+1..6 jump to a panel AND maximize it.
-        let cases = [
-            ('1', Action::FocusExpandWorktree),
-            ('2', Action::FocusExpandExplorer),
-            ('3', Action::FocusExpandExplorerDiffList),
-            ('4', Action::FocusExpandViewer),
-            ('5', Action::FocusExpandTerminalClaude),
-            ('6', Action::FocusExpandTerminalShell),
+    fn action_from_str_as_str_roundtrip() {
+        let actions = [
+            Action::Quit,
+            Action::NavigateDown,
+            Action::LeaveTerminal,
+            Action::AddComment,
+            Action::ScrollHalfPageDown,
         ];
-        for (c, action) in cases {
-            let key = KeyEvent::new(
-                KeyCode::Char(c),
-                KeyModifiers::ALT | KeyModifiers::SHIFT,
-            );
-            assert_eq!(km.resolve(&key, KeyContext::Terminal), Some(action));
+        for action in actions {
+            assert_eq!(Action::from_str(action.as_str()), Some(action));
         }
+    }
 
-        // Plain Option+digit still resolves to focus-only (no maximize).
-        let key_alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
+    #[test]
+    fn lowercase_char_with_shift_is_not_recased() {
+        // Behavior divergence from the old hand-rolled normalizer, locked in:
+        // keymap-core trusts the glyph and only drops a redundant sole SHIFT, so
+        // 'g'+SHIFT stays Char('g') and hits the bare 'g' binding (GrabBranch) —
+        // it is NOT re-cased to 'G' (UngrabBranch). A terminal that delivers the
+        // resolved glyph 'G' (the common case) still hits UngrabBranch; see
+        // `shift_g_resolves_uppercase_binding`.
+        let km = default_keymap();
+        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::SHIFT);
         assert_eq!(
-            km.resolve(&key_alt_1, KeyContext::Global),
+            km.resolve(&key, KeyContext::Worktree),
+            Some(Action::GrabBranch)
+        );
+    }
+
+    #[test]
+    fn macos_unicode_fallback_chords_resolve() {
+        // These glyphs are otherwise undetectable-by-eye in the TOML; this proves
+        // the file→keymap-config→keymap-core→crossterm path survives multi-byte
+        // chars for both the plain-Option and Shift-Option families.
+        let km = default_keymap();
+        let cases = [
+            ('˙', Action::CycleFocusBackward),
+            ('¬', Action::CycleFocusForward),
+            ('¡', Action::FocusWorktree),
+            ('§', Action::FocusTerminalShell),
+            ('÷', Action::TogglePanelOverlay),
+        ];
+        for (glyph, action) in cases {
+            let key = KeyEvent::new(KeyCode::Char(glyph), KeyModifiers::empty());
+            assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "glyph {glyph:?}");
+        }
+    }
+
+    #[test]
+    fn alt_digit_and_alt_shift_digit_stay_distinct() {
+        // The "keep SHIFT when another modifier is held" rule must keep these
+        // apart, or focus and focus-expand would collapse into one another.
+        let km = default_keymap();
+        let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
+        let alt_shift_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(
+            km.resolve(&alt_1, KeyContext::Global),
             Some(Action::FocusWorktree)
+        );
+        assert_eq!(
+            km.resolve(&alt_shift_1, KeyContext::Global),
+            Some(Action::FocusExpandWorktree)
+        );
+    }
+
+    #[test]
+    fn enter_and_shift_enter_distinct_in_diff_mode() {
+        // SHIFT discrimination on a named key, in one layer.
+        let km = default_keymap();
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        let shift_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(
+            km.resolve(&enter, KeyContext::ViewerDiffMode),
+            Some(Action::ExpandContext)
+        );
+        assert_eq!(
+            km.resolve(&shift_enter, KeyContext::ViewerDiffMode),
+            Some(Action::ExpandAllContext)
+        );
+    }
+
+    #[test]
+    fn keys_for_action_uses_lowercase_canonical_form() {
+        // The help screen renders these verbatim; pin the casing that changed
+        // from the old "Ctrl+d" to keymap-core's canonical "ctrl+d".
+        let km = default_keymap();
+        let keys = km.keys_for_action(KeyContext::Viewer, Action::ScrollHalfPageDown);
+        assert_eq!(keys, vec!["ctrl+d".to_string()]);
+    }
+
+    #[test]
+    fn unmappable_key_event_passes_through() {
+        // A key with no neutral representation (CapsLock) fails KeyInput::try_from
+        // and must resolve to None ("pass through"), never panic.
+        let km = default_keymap();
+        let key = KeyEvent::new(KeyCode::CapsLock, KeyModifiers::empty());
+        assert_eq!(km.resolve(&key, KeyContext::Terminal), None);
+    }
+
+    #[test]
+    fn in_layer_conflict_is_warned() {
+        // Two spellings of the same chord in one layer: keymap-config reports a
+        // Conflict and the last binding wins.
+        let mut keys = toml::Table::new();
+        keys.insert("ctrl+x".to_string(), toml::Value::String("quit".to_string()));
+        keys.insert(
+            "control+x".to_string(),
+            toml::Value::String("show_help".to_string()),
+        );
+        let mut user = toml::Table::new();
+        user.insert("keys".to_string(), toml::Value::Table(keys));
+
+        let (km, warnings) = KeyMap::with_warnings(&user);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, KeybindWarning::Conflict { .. })),
+            "expected Conflict, got {warnings:?}"
+        );
+        // Whichever won, ctrl+x must resolve to one of the two contenders.
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        let resolved = km.resolve(&key, KeyContext::Global);
+        assert!(
+            matches!(resolved, Some(Action::Quit) | Some(Action::ShowHelp)),
+            "got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn viewer_c_is_add_comment() {
+        let km = default_keymap();
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&key, KeyContext::Viewer),
+            Some(Action::AddComment)
+        );
+        assert_eq!(
+            km.resolve(&key, KeyContext::ViewerDiffMode),
+            Some(Action::AddComment)
+        );
+    }
+
+    #[test]
+    fn removed_lsp_actions_no_longer_parse() {
+        // Unwired actions were dropped from the vocabulary so binding them
+        // warns (UnknownAction) instead of silently doing nothing.
+        assert_eq!(Action::from_str("go_to_definition"), None);
+        assert_eq!(Action::from_str("go_to_implementation"), None);
+        assert_eq!(Action::from_str("find_references"), None);
+    }
+
+    #[test]
+    fn f_keys_are_unbound_after_cleanup() {
+        let km = default_keymap();
+        for n in 2..=7 {
+            let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::empty());
+            assert_eq!(km.resolve(&key, KeyContext::Global), None, "F{n}");
+        }
+    }
+
+    #[test]
+    fn unknown_layer_with_bindings_is_warned() {
+        // Guards the empty-GLOBAL_LAYER suppression: a non-empty unrecognized
+        // layer name must warn (an empty one, always injected, must not).
+        let mut layer = toml::Table::new();
+        layer.insert(
+            "j".to_string(),
+            toml::Value::String("navigate_down".to_string()),
+        );
+        let mut layers = toml::Table::new();
+        layers.insert("bogus".to_string(), toml::Value::Table(layer));
+        let mut user = toml::Table::new();
+        user.insert("layers".to_string(), toml::Value::Table(layers));
+
+        let (_km, warnings) = KeyMap::with_warnings(&user);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, KeybindWarning::UnknownLayer { layer } if layer == "bogus")),
+            "expected UnknownLayer, got {warnings:?}"
         );
     }
 }

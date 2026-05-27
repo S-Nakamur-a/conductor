@@ -148,6 +148,9 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
         }
+        Some(Action::AddComment) => {
+            app.cmd_add_review_comment();
+        }
         Some(Action::JumpBack) => {
             app.jump_back();
         }
@@ -262,6 +265,9 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::ViewCommentDetail) => {
             open_viewer_comment_detail(app);
+        }
+        Some(Action::AddComment) => {
+            app.cmd_add_review_comment();
         }
         Some(Action::ExpandContext) => {
             // Expand 10 lines at the first visible ExpandableContext.

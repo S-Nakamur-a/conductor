@@ -889,7 +889,12 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let list_inner = list_block.inner(chunks[1]);
     frame.render_widget(list_block, chunks[1]);
 
-    let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
+    let context = app.focus.key_context();
+    let filtered = command_palette::filter_commands(
+        &app.overlays.command_palette.filter,
+        &app.keymap,
+        context,
+    );
     if filtered.is_empty() {
         frame.render_widget(
             Paragraph::new("  No matching commands.").style(Style::default().fg(theme.muted)),
@@ -898,40 +903,71 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         return;
     }
 
-    // Build list items with keybinding hints
-    let items: Vec<ListItem> = filtered
-        .iter()
-        .enumerate()
-        .map(|(i, scored)| {
-            let cmd = &command_palette::COMMANDS[scored.index];
-            let style = if i == app.overlays.command_palette.selected {
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.fg)
-            };
+    let current_label = match app.focus {
+        crate::app::Focus::Worktree => "Worktree",
+        crate::app::Focus::Explorer => "Explorer",
+        crate::app::Focus::Viewer => "Viewer",
+        crate::app::Focus::TerminalClaude => "Claude Code",
+        crate::app::Focus::TerminalShell => "Shell",
+    };
+    let scope_header = |scope: command_palette::CommandScope| match scope {
+        command_palette::CommandScope::Current => current_label,
+        command_palette::CommandScope::Global => "Global",
+        command_palette::CommandScope::Other => "Other",
+    };
 
-            let kb = cmd.keybinding.unwrap_or("");
-            let line = Line::from(vec![
-                Span::styled(
-                    if i == app.overlays.command_palette.selected {
-                        " > "
-                    } else {
-                        "   "
-                    },
-                    Style::default().fg(theme.accent),
-                ),
-                Span::styled(cmd.label, style),
-                Span::styled(format!("  {kb:>12}"), Style::default().fg(theme.muted)),
-            ]);
-            ListItem::new(line)
-        })
-        .collect();
+    // Interleave non-selectable scope headers between the (selectable) command
+    // rows. `selected` indexes the command rows only, so track the visual row
+    // index of the selected command to drive the highlight.
+    let selected = app.overlays.command_palette.selected;
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut selected_row: Option<usize> = None;
+    let mut last_scope: Option<command_palette::CommandScope> = None;
+
+    for (cmd_idx, scored) in filtered.iter().enumerate() {
+        if last_scope != Some(scored.scope) {
+            items.push(ListItem::new(Line::from(Span::styled(
+                format!("  {}", scope_header(scored.scope)),
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD | Modifier::DIM),
+            ))));
+            last_scope = Some(scored.scope);
+        }
+
+        let cmd = &command_palette::COMMANDS[scored.index];
+        let is_selected = cmd_idx == selected;
+        if is_selected {
+            selected_row = Some(items.len());
+        }
+        let style = if is_selected {
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+
+        // Live keybinding from the keymap for the focused context (blank for
+        // palette-only commands and commands not bound in this context).
+        let kb = cmd
+            .action
+            .and_then(|a| crate::ui::common::representative_chord(&app.keymap, context, a))
+            .unwrap_or_default();
+        let line = Line::from(vec![
+            Span::styled(
+                if is_selected { " > " } else { "   " },
+                Style::default().fg(theme.accent),
+            ),
+            Span::styled(cmd.label, style),
+            Span::styled(format!("  {kb:>12}"), Style::default().fg(theme.muted)),
+        ]);
+        items.push(ListItem::new(line));
+    }
 
     let list = List::new(items);
     let mut state = ListState::default();
-    state.select(Some(app.overlays.command_palette.selected));
+    state.select(selected_row);
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
