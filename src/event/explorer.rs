@@ -103,20 +103,7 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::SearchFilename) => {
-            app.viewer_state.filename_search.filename_search_active = true;
-            app.viewer_state
-                .filename_search
-                .filename_search_query
-                .clear();
-            app.viewer_state
-                .filename_search
-                .filename_search_results
-                .clear();
-            app.viewer_state.filename_search.filename_search_selected = 0;
-            if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                app.viewer_state.populate_filename_search_cache(&wt.path);
-            }
-            app.viewer_state.execute_filename_search();
+            super::open_filename_search(app);
         }
         _ => {}
     }

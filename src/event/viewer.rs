@@ -81,6 +81,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Fuzzy filename jump — handled before the empty-buffer guard so it works
+    // even when no file is open, and keeps the viewer maximized after jumping.
+    if let Some(Action::SearchFilename) = action {
+        super::open_filename_search(app);
+        return;
+    }
+
     if total == 0 {
         return;
     }
@@ -163,6 +170,12 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.exit_diff_mode();
             app.set_focus(crate::app::Focus::Explorer);
         }
+        return;
+    }
+
+    // Fuzzy filename jump — also reachable from the maximized diff viewer.
+    if let Some(Action::SearchFilename) = action {
+        super::open_filename_search(app);
         return;
     }
 
