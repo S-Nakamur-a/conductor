@@ -810,6 +810,9 @@ impl KeyMap {
         self.bind_char(Viewer, '/', SearchInFile);
         self.bind_char(Viewer, 'n', NextSearchMatch);
         self.bind_char(Viewer, 'N', PrevSearchMatch);
+        // Fuzzy filename jump — usable even when the viewer is maximized and the
+        // file tree is hidden, so you can switch files without un-maximizing.
+        self.bind_ctrl(Viewer, 'f', SearchFilename);
         self.bind_char(Viewer, ' ', ToggleInlineThread);
         self.bind_key(Viewer, KeyCode::Esc, ExitToExplorer);
         self.bind_char(Viewer, ':', CommandPalette);
@@ -832,6 +835,8 @@ impl KeyMap {
         self.bind_char(ViewerDiffMode, 'l', ScrollRight);
         self.bind_key(ViewerDiffMode, KeyCode::Right, ScrollRight);
         self.bind_char(ViewerDiffMode, '0', ScrollHome);
+        // Fuzzy filename jump — same as the file viewer, available in diff mode too.
+        self.bind_ctrl(ViewerDiffMode, 'f', SearchFilename);
         // Jump between changes (hunks) and between review comments.
         self.bind_char(ViewerDiffMode, ']', NextHunk);
         self.bind_char(ViewerDiffMode, '[', PrevHunk);
@@ -1150,6 +1155,24 @@ mod tests {
             let parsed = Action::from_str(s);
             assert_eq!(parsed, Some(action), "roundtrip failed for {s}");
         }
+    }
+
+    #[test]
+    fn test_ctrl_f_jumps_to_filename_search_in_viewer() {
+        let config = KeybindsConfig::default();
+        let km = KeyMap::new(&config);
+
+        // Ctrl+f opens the fuzzy filename jump from the viewer, so files can be
+        // switched without un-maximizing it.
+        let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&key, KeyContext::Viewer),
+            Some(Action::SearchFilename)
+        );
+        assert_eq!(
+            km.resolve(&key, KeyContext::ViewerDiffMode),
+            Some(Action::SearchFilename)
+        );
     }
 
     #[test]

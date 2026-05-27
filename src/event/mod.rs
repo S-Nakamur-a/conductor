@@ -523,6 +523,23 @@ fn adjust_tree_scroll(app: &mut App) {
     }
 }
 
+/// Open the fuzzy filename-search modal and seed it with the current
+/// worktree's file list. Triggerable from both the Explorer (file tree) and
+/// the Viewer, so files can be switched even while the viewer is maximized.
+pub(super) fn open_filename_search(app: &mut App) {
+    app.viewer_state.filename_search.filename_search_active = true;
+    app.viewer_state.filename_search.filename_search_query.clear();
+    app.viewer_state
+        .filename_search
+        .filename_search_results
+        .clear();
+    app.viewer_state.filename_search.filename_search_selected = 0;
+    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+        app.viewer_state.populate_filename_search_cache(&wt.path);
+    }
+    app.viewer_state.execute_filename_search();
+}
+
 /// Dismiss all active overlays so that focus-switching keys work globally.
 fn dismiss_overlays(app: &mut App) {
     app.worktree_mgr.skip_reason = None;

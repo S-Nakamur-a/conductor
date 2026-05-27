@@ -282,6 +282,11 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             super::dashboard::render_help_overlay(frame, main_area, app);
         }
     }
+    // Fuzzy filename-search ("jump to file") modal — rendered at the top level
+    // so it works even when the explorer column is collapsed (viewer maximized).
+    if app.viewer_state.filename_search.filename_search_active {
+        super::dashboard::render_filename_search_overlay(frame, main_area, app);
+    }
     match app.update_state {
         crate::app::UpdateState::Confirming => {
             super::dashboard::render_update_confirm_overlay(frame, main_area, app);
