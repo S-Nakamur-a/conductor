@@ -234,12 +234,47 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     )
 }
 
-/// Generate badge background and branch text colors from a repository name.
+/// Relative luminance of an sRGB color per WCAG 2.1 (SC 1.4.3, D65).
 ///
-/// Uses a hash of the name to pick a hue, then produces two colors:
+/// Channels are 0-255. Each is normalized to 0-1, gamma-expanded to linear
+/// light, then combined with the standard luminance coefficients.
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    fn linearize(c: u8) -> f64 {
+        let c = c as f64 / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+}
+
+/// Pick black or white text for the best WCAG contrast against the given
+/// background. The badge is for identifying the repository at a glance, so we
+/// always take the higher-contrast option rather than failing when neither
+/// candidate clears the 4.5:1 guideline. Explicit RGB (not named ANSI colors)
+/// keeps the rendered result aligned with the luminance computation.
+fn readable_fg_on(r: u8, g: u8, b: u8) -> Color {
+    let bg = relative_luminance(r, g, b);
+    // Contrast ratio (L1 + 0.05) / (L2 + 0.05); black has L=0, white has L=1.
+    let contrast = |fg: f64| (bg.max(fg) + 0.05) / (bg.min(fg) + 0.05);
+    if contrast(0.0) >= contrast(1.0) {
+        Color::Rgb(0, 0, 0)
+    } else {
+        Color::Rgb(255, 255, 255)
+    }
+}
+
+/// Generate badge background, badge text, and branch text colors from a
+/// repository name.
+///
+/// Uses a hash of the name to pick a hue, then produces three colors:
 /// - Badge background: muted (S=0.6, L=0.45)
+/// - Badge text: black or white, whichever contrasts better with the
+///   background (hues vary widely in perceived luminance at a fixed lightness)
 /// - Branch text: brighter (S=0.7, L=0.75)
-fn name_to_color(name: &str) -> (Color, Color) {
+fn name_to_color(name: &str) -> (Color, Color, Color) {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     name.hash(&mut hasher);
     let hash = hasher.finish();
@@ -247,7 +282,8 @@ fn name_to_color(name: &str) -> (Color, Color) {
 
     let (br, bg, bb) = hsl_to_rgb(hue, 0.6, 0.45);
     let (tr, tg, tb) = hsl_to_rgb(hue, 0.7, 0.75);
-    (Color::Rgb(br, bg, bb), Color::Rgb(tr, tg, tb))
+    let badge_fg = readable_fg_on(br, bg, bb);
+    (Color::Rgb(br, bg, bb), badge_fg, Color::Rgb(tr, tg, tb))
 }
 
 /// Render the title bar at the top showing worktree name and working directory.
@@ -264,11 +300,11 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         .map(|w| w.path.display().to_string())
         .unwrap_or_else(|| app.repo_path.display().to_string());
 
-    let (badge_bg, branch_fg) = name_to_color(&app.main_repo_name);
+    let (badge_bg, badge_fg, branch_fg) = name_to_color(&app.main_repo_name);
 
     let bar_bg = theme.titlebar_bg;
     let conductor_bg = badge_bg;
-    let conductor_fg = Color::Black;
+    let conductor_fg = badge_fg;
 
     let badge_text = format!(" {} ", app.main_repo_name);
     let line = Line::from(vec![
@@ -651,5 +687,59 @@ fn format_tokens(tokens: u64) -> String {
         format!("{:.1}K", tokens as f64 / 1_000.0)
     } else {
         format!("{tokens}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Contrast ratio between two relative-luminance values per WCAG 2.1.
+    fn contrast_ratio(l1: f64, l2: f64) -> f64 {
+        (l1.max(l2) + 0.05) / (l1.min(l2) + 0.05)
+    }
+
+    #[test]
+    fn relative_luminance_endpoints() {
+        assert!(relative_luminance(0, 0, 0).abs() < 1e-9);
+        assert!((relative_luminance(255, 255, 255) - 1.0).abs() < 1e-9);
+        // Green contributes far more luminance than blue at full intensity.
+        assert!(relative_luminance(0, 255, 0) > relative_luminance(0, 0, 255));
+    }
+
+    #[test]
+    fn readable_fg_matches_higher_contrast_choice() {
+        // Bright background → black text wins.
+        assert_eq!(readable_fg_on(255, 255, 0), Color::Rgb(0, 0, 0));
+        // Dark background → white text wins.
+        assert_eq!(readable_fg_on(20, 20, 120), Color::Rgb(255, 255, 255));
+    }
+
+    /// Across every hue the badge can take, the chosen text color must beat the
+    /// rejected one — guaranteeing the project name never collides with its
+    /// background, whether the badge lands light or dark.
+    #[test]
+    fn badge_fg_is_always_the_more_readable_choice() {
+        for hue in 0..360 {
+            let (r, g, b) = hsl_to_rgb(hue as f64, 0.6, 0.45);
+            let bg = relative_luminance(r, g, b);
+            let fg = readable_fg_on(r, g, b);
+            let (chosen, rejected) = match fg {
+                Color::Rgb(0, 0, 0) => (0.0, 1.0),
+                Color::Rgb(255, 255, 255) => (1.0, 0.0),
+                other => panic!("unexpected fg {other:?} at hue {hue}"),
+            };
+            assert!(
+                contrast_ratio(bg, chosen) >= contrast_ratio(bg, rejected),
+                "hue {hue}: chosen fg has worse contrast than the alternative",
+            );
+            // Sanity: the badge stays comfortably above the 3:1 large-text /
+            // UI-component floor for every hue.
+            assert!(
+                contrast_ratio(bg, chosen) >= 3.0,
+                "hue {hue}: contrast {:.2} fell below 3:1",
+                contrast_ratio(bg, chosen),
+            );
+        }
     }
 }
