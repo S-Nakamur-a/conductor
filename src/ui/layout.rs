@@ -225,6 +225,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::app::WorktreeInputMode::ConfirmingUngrab => {
             render_confirm_overlay(frame, main_area, app, " Confirm Ungrab ", app.theme.warning);
         }
+        crate::app::WorktreeInputMode::ConfirmingReset => {
+            render_confirm_overlay(frame, main_area, app, " Confirm Reset ", app.theme.error);
+        }
         crate::app::WorktreeInputMode::SmartDescription => {
             super::dashboard::render_smart_description_overlay(frame, main_area, app);
         }

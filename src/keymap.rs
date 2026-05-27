@@ -108,9 +108,6 @@ pub enum Action {
     SearchFullText,
 
     // ── Code navigation ─────────────────────────────────────────
-    GoToDefinition,
-    GoToImplementation,
-    FindReferences,
     JumpBack,
     JumpForward,
     ToggleInlineThread,
@@ -203,9 +200,6 @@ impl Action {
             "open_file_from_terminal" => Some(Action::OpenFileFromTerminal),
             "update_and_restart" => Some(Action::UpdateAndRestart),
             "search_full_text" => Some(Action::SearchFullText),
-            "go_to_definition" => Some(Action::GoToDefinition),
-            "go_to_implementation" => Some(Action::GoToImplementation),
-            "find_references" => Some(Action::FindReferences),
             "jump_back" => Some(Action::JumpBack),
             "jump_forward" => Some(Action::JumpForward),
             "next_hunk" => Some(Action::NextHunk),
@@ -294,9 +288,6 @@ impl Action {
             Action::OpenFileFromTerminal => "open_file_from_terminal",
             Action::UpdateAndRestart => "update_and_restart",
             Action::SearchFullText => "search_full_text",
-            Action::GoToDefinition => "go_to_definition",
-            Action::GoToImplementation => "go_to_implementation",
-            Action::FindReferences => "find_references",
             Action::JumpBack => "jump_back",
             Action::JumpForward => "jump_forward",
             Action::NextHunk => "next_hunk",
@@ -1001,6 +992,38 @@ mod tests {
             matches!(resolved, Some(Action::Quit) | Some(Action::ShowHelp)),
             "got {resolved:?}"
         );
+    }
+
+    #[test]
+    fn viewer_c_is_add_comment() {
+        let km = default_keymap();
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&key, KeyContext::Viewer),
+            Some(Action::AddComment)
+        );
+        assert_eq!(
+            km.resolve(&key, KeyContext::ViewerDiffMode),
+            Some(Action::AddComment)
+        );
+    }
+
+    #[test]
+    fn removed_lsp_actions_no_longer_parse() {
+        // Unwired actions were dropped from the vocabulary so binding them
+        // warns (UnknownAction) instead of silently doing nothing.
+        assert_eq!(Action::from_str("go_to_definition"), None);
+        assert_eq!(Action::from_str("go_to_implementation"), None);
+        assert_eq!(Action::from_str("find_references"), None);
+    }
+
+    #[test]
+    fn f_keys_are_unbound_after_cleanup() {
+        let km = default_keymap();
+        for n in 2..=7 {
+            let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::empty());
+            assert_eq!(km.resolve(&key, KeyContext::Global), None, "F{n}");
+        }
     }
 
     #[test]

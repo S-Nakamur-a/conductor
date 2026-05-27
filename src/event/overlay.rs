@@ -233,6 +233,16 @@ pub(super) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
                 app.set_status("Ungrab cancelled.".to_string(), StatusLevel::Warning);
             }
         },
+        WorktreeInputMode::ConfirmingReset => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
+                app.perform_reset_main_to_origin();
+            }
+            _ => {
+                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
+                app.set_status("Reset cancelled.".to_string(), StatusLevel::Warning);
+            }
+        },
         WorktreeInputMode::SmartDescription => {
             // Shift+Enter inserts a newline (multi-line editing).
             if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {

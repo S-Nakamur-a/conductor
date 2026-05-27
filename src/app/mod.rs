@@ -134,6 +134,8 @@ pub enum WorktreeInputMode {
     ConfirmingDeleteBranch,
     /// Confirming ungrab (y/n).
     ConfirmingUngrab,
+    /// Confirming a hard reset of main to origin (y/n) — discards local commits.
+    ConfirmingReset,
     /// Smart Worktree: typing a multi-line task description.
     SmartDescription,
 }
@@ -1538,7 +1540,21 @@ impl App {
         }
     }
 
-    fn cmd_reset_main_to_origin(&mut self) {
+    /// Ask before resetting main — this discards local commits, so it must not
+    /// fire on a bare keystroke (`R` sits next to `r` refresh). The actual reset
+    /// runs in [`perform_reset_main_to_origin`](Self::perform_reset_main_to_origin)
+    /// once confirmed. Both the `R` key and the palette enter through here.
+    pub fn cmd_reset_main_to_origin(&mut self) {
+        let main_branch = self.config.general.main_branch.clone();
+        self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingReset;
+        self.set_status_info(format!(
+            "Reset '{main_branch}' to origin? Discards local commits on it. (y/n)"
+        ));
+    }
+
+    /// Perform the hard reset of main to its origin tracking branch. Call only
+    /// after the user confirms (see [`cmd_reset_main_to_origin`](Self::cmd_reset_main_to_origin)).
+    pub fn perform_reset_main_to_origin(&mut self) {
         let main_branch = self.config.general.main_branch.clone();
         match crate::git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
@@ -1654,7 +1670,7 @@ impl App {
         self.set_focus(Focus::Explorer);
     }
 
-    fn cmd_add_review_comment(&mut self) {
+    pub fn cmd_add_review_comment(&mut self) {
         if let Some(file_path) = self.viewer_state.content.current_file.clone() {
             let location = if let Some((start, end)) = self.viewer_state.selected_range() {
                 if start == end {

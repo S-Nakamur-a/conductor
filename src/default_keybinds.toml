@@ -62,14 +62,6 @@
 "¢" = "focus_viewer"
 "∞" = "focus_terminal_claude"
 "§" = "focus_terminal_shell"
-# F2..F7 — jump-and-maximize from anywhere; F-keys reach the app reliably
-# through Alacritty/Ghostty and tmux where Cmd/Super combos often do not.
-"f2" = "focus_expand_worktree"
-"f3" = "focus_expand_explorer"
-"f4" = "focus_expand_explorer_diff_list"
-"f5" = "focus_expand_viewer"
-"f6" = "focus_expand_terminal_claude"
-"f7" = "focus_expand_terminal_shell"
 "ctrl+g" = "search_full_text"
 "super+space" = "toggle_panel_expand"
 "alt+/" = "toggle_panel_overlay"
@@ -186,6 +178,7 @@
 # Fuzzy filename jump — usable even when the viewer is maximized and the file
 # tree is hidden, so files can be switched without un-maximizing.
 "ctrl+f" = "search_filename"
+"c" = "add_comment"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
 ":" = "command_palette"
@@ -215,6 +208,7 @@
 "[" = "prev_hunk"
 "}" = "next_comment"
 "{" = "prev_comment"
+"c" = "add_comment"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
 "enter" = "expand_context"
