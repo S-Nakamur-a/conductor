@@ -268,14 +268,12 @@ pub(super) fn handle_terminal_tab_click(
                 }
                 return;
             }
-            // Otherwise, activate the session.
-            app.terminal.pty_manager.activate_session(global_idx);
+            // Otherwise, switch to the session (resets scroll + render cache
+            // so the panel re-renders the newly selected session).
             if is_claude {
-                app.terminal.active_claude_session = Some(global_idx);
-                app.terminal.scroll_claude = 0;
+                app.terminal.switch_claude_session(global_idx);
             } else {
-                app.terminal.active_shell_session = Some(global_idx);
-                app.terminal.scroll_shell = 0;
+                app.terminal.switch_shell_session(global_idx);
             }
             return;
         }

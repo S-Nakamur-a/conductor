@@ -350,8 +350,7 @@ impl App {
             &self.repo_path,
             None,
         )?;
-        self.terminal.pty_manager.activate_session(idx);
-        self.terminal.active_claude_session = Some(idx);
+        self.terminal.switch_claude_session(idx);
         Ok(idx)
     }
 
