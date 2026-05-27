@@ -76,4 +76,93 @@ impl TerminalState {
             dirty_shell: true,
         }
     }
+
+    /// Switch the Claude panel to display the session at `idx`.
+    ///
+    /// Marks the PTY session active, records it as the active Claude session,
+    /// and resets the panel's scroll offset and render cache. Clearing the
+    /// cache is essential: it is a single buffer shared across sessions, so
+    /// without this the panel would keep rendering the previous session's
+    /// content until some other trigger (scroll, new output) happened to
+    /// rebuild it. See `ui::terminal_claude` for the rebuild condition.
+    pub fn switch_claude_session(&mut self, idx: usize) {
+        self.pty_manager.activate_session(idx);
+        self.active_claude_session = Some(idx);
+        self.scroll_claude = 0;
+        self.cache_claude = PtyRenderCache::default();
+    }
+
+    /// Switch the Shell panel to display the session at `idx`.
+    ///
+    /// Shell-side counterpart of [`Self::switch_claude_session`]; same cache
+    /// invalidation rationale applies.
+    pub fn switch_shell_session(&mut self, idx: usize) {
+        self.pty_manager.activate_session(idx);
+        self.active_shell_session = Some(idx);
+        self.scroll_shell = 0;
+        self.cache_shell = PtyRenderCache::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::text::Line;
+
+    /// Seed a render cache so we can prove `switch_*` clears it. Mirrors the
+    /// stale state that caused the panel-not-syncing bug: a non-empty cache
+    /// left over from a previously displayed session.
+    fn stale_cache() -> PtyRenderCache {
+        PtyRenderCache {
+            lines: vec![Line::from("previous session output")],
+            effective_offset: 7,
+            cursor_position: Some((3, 4)),
+        }
+    }
+
+    #[test]
+    fn switch_claude_session_resets_scroll_and_cache() {
+        let mut term = TerminalState::new(1000, 100);
+        term.scroll_claude = 42;
+        term.cache_claude = stale_cache();
+
+        // No sessions exist; activate_session is a tolerant no-op, so this
+        // exercises the panel-state reset in isolation.
+        term.switch_claude_session(0);
+
+        assert_eq!(term.active_claude_session, Some(0));
+        assert_eq!(term.scroll_claude, 0);
+        assert!(
+            term.cache_claude.lines.is_empty(),
+            "cache must be cleared so the render guard rebuilds for the new session"
+        );
+        assert_eq!(term.cache_claude.effective_offset, 0);
+    }
+
+    #[test]
+    fn switch_shell_session_resets_scroll_and_cache() {
+        let mut term = TerminalState::new(1000, 100);
+        term.scroll_shell = 42;
+        term.cache_shell = stale_cache();
+
+        term.switch_shell_session(2);
+
+        assert_eq!(term.active_shell_session, Some(2));
+        assert_eq!(term.scroll_shell, 0);
+        assert!(term.cache_shell.lines.is_empty());
+        assert_eq!(term.cache_shell.effective_offset, 0);
+    }
+
+    #[test]
+    fn switch_claude_session_leaves_shell_panel_untouched() {
+        let mut term = TerminalState::new(1000, 100);
+        term.scroll_shell = 5;
+        term.cache_shell = stale_cache();
+
+        term.switch_claude_session(0);
+
+        // Switching the Claude panel must not disturb the Shell panel's state.
+        assert_eq!(term.scroll_shell, 5);
+        assert!(!term.cache_shell.lines.is_empty());
+    }
 }

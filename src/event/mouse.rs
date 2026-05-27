@@ -424,8 +424,7 @@ fn handle_worktree_column_click(app: &mut App, row: u16, geom: &ClickGeometry) {
         match app.worktree_list_rows[item_row] {
             crate::app::WorktreeListRow::Session { pty_idx, .. } => {
                 app.on_worktree_changed();
-                app.terminal.active_claude_session = Some(pty_idx);
-                app.terminal.pty_manager.activate_session(pty_idx);
+                app.terminal.switch_claude_session(pty_idx);
                 // Single click: keep focus on worktree panel.
                 // Double click: move focus to terminal.
                 if is_double {

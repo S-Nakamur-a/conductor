@@ -50,8 +50,7 @@ impl App {
             &self.repo_path,
             session_name,
         )?;
-        self.terminal.pty_manager.activate_session(idx);
-        self.terminal.active_claude_session = Some(idx);
+        self.terminal.switch_claude_session(idx);
         self.rebuild_worktree_list_rows();
         Ok(idx)
     }
@@ -81,8 +80,7 @@ impl App {
             &self.repo_path,
             None,
         )?;
-        self.terminal.pty_manager.activate_session(idx);
-        self.terminal.active_shell_session = Some(idx);
+        self.terminal.switch_shell_session(idx);
         Ok(idx)
     }
 
@@ -121,17 +119,37 @@ impl App {
         }
 
         // Clear invalidated indices and fall back to next available session.
+        // The closed session was the displayed one, so the fallback target's
+        // content differs — switch through the helper to reset scroll and the
+        // render cache (otherwise the panel would show the closed session's
+        // stale output). When no session remains, clear the cache directly.
         if self.terminal.active_claude_session == Some(usize::MAX) {
-            self.terminal.active_claude_session = self
+            match self
                 .current_worktree_claude_sessions()
                 .first()
-                .map(|(idx, _)| *idx);
+                .map(|(idx, _)| *idx)
+            {
+                Some(idx) => self.terminal.switch_claude_session(idx),
+                None => {
+                    self.terminal.active_claude_session = None;
+                    self.terminal.scroll_claude = 0;
+                    self.terminal.cache_claude = Default::default();
+                }
+            }
         }
         if self.terminal.active_shell_session == Some(usize::MAX) {
-            self.terminal.active_shell_session = self
+            match self
                 .current_worktree_shell_sessions()
                 .first()
-                .map(|(idx, _)| *idx);
+                .map(|(idx, _)| *idx)
+            {
+                Some(idx) => self.terminal.switch_shell_session(idx),
+                None => {
+                    self.terminal.active_shell_session = None;
+                    self.terminal.scroll_shell = 0;
+                    self.terminal.cache_shell = Default::default();
+                }
+            }
         }
         self.rebuild_worktree_list_rows();
     }
@@ -267,8 +285,7 @@ impl App {
             &self.repo_path,
             None,
         )?;
-        self.terminal.pty_manager.activate_session(idx);
-        self.terminal.active_claude_session = Some(idx);
+        self.terminal.switch_claude_session(idx);
         Ok(idx)
     }
 
@@ -335,8 +352,7 @@ impl App {
                     Ok(idx) => {
                         resumed_count += 1;
                         if wt.path == selected_wt_path {
-                            self.terminal.pty_manager.activate_session(idx);
-                            self.terminal.active_claude_session = Some(idx);
+                            self.terminal.switch_claude_session(idx);
                         }
                     }
                     Err(e) => {
@@ -381,10 +397,9 @@ impl App {
             ) {
                 Ok(idx) => {
                     resumed_count += 1;
-                    // Only activate + set active_claude_session for the currently selected worktree.
+                    // Only switch to this session for the currently selected worktree.
                     if wt.path == selected_wt_path {
-                        self.terminal.pty_manager.activate_session(idx);
-                        self.terminal.active_claude_session = Some(idx);
+                        self.terminal.switch_claude_session(idx);
                     }
                 }
                 Err(e) => {
