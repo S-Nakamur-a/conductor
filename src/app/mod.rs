@@ -1408,6 +1408,7 @@ impl App {
             }
             CommandId::ResetMainToOrigin => self.cmd_reset_main_to_origin(),
             CommandId::CherryPick => self.cmd_cherry_pick(),
+            CommandId::PullWorktree => self.start_pull_worktree(),
             CommandId::NewClaudeCode => self.cmd_new_claude_code(),
             CommandId::NewShell => self.cmd_new_shell(),
             CommandId::ResumeClaudeSession => self.cmd_resume_claude_session(),
@@ -1483,7 +1484,7 @@ impl App {
     fn cmd_grab_branch(&mut self) {
         if self.worktree_mgr.grabbed_branch.is_some() {
             self.set_status(
-                "Already grabbing a branch. Ungrab first (Y).".to_string(),
+                "Already grabbing a branch. Ungrab first (G).".to_string(),
                 StatusLevel::Warning,
             );
         } else {

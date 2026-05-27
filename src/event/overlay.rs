@@ -1237,7 +1237,11 @@ pub(super) fn handle_prune_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
     use crate::command_palette;
 
-    let filtered = command_palette::filter_commands(&app.overlays.command_palette.filter);
+    let filtered = command_palette::filter_commands(
+        &app.overlays.command_palette.filter,
+        &app.keymap,
+        app.focus.key_context(),
+    );
     let count = filtered.len();
 
     if filterable_overlay_list_nav(

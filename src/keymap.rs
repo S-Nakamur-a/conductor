@@ -525,6 +525,29 @@ impl KeyMap {
         keys.dedup();
         keys
     }
+
+    /// Keys bound to `action` in `context`'s OWN layer only — unlike
+    /// [`keys_for_action`](Self::keys_for_action), this does NOT fold in the
+    /// global layer. Lets a caller tell "bound in this panel" from "bound
+    /// globally and merely reachable here" (used to scope the command palette).
+    pub fn keys_in_layer(&self, context: KeyContext, action: Action) -> Vec<String> {
+        let layer = if context == KeyContext::Global {
+            &self.global
+        } else {
+            match self.contexts.get(&context) {
+                Some(layer) => layer,
+                None => return Vec::new(),
+            }
+        };
+        let mut keys: Vec<String> = layer
+            .iter()
+            .filter(|(_, a)| **a == action)
+            .map(|(input, _)| input.to_string())
+            .collect();
+        keys.sort();
+        keys.dedup();
+        keys
+    }
 }
 
 /// Clone the layer for `ctx` out of a build, or an empty layer if absent.

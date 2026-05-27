@@ -685,7 +685,7 @@ fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::KeyMap) -> 
 /// shortest, ASCII-only. The macOS Option-glyph fallbacks (`¬`, `˙`, …) and
 /// other non-ASCII chords round-trip through the keymap but are meaningless on
 /// screen, so a plain chord is preferred whenever one exists.
-fn representative_chord(
+pub(crate) fn representative_chord(
     keymap: &crate::keymap::KeyMap,
     context: crate::keymap::KeyContext,
     action: crate::keymap::Action,
