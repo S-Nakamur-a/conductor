@@ -1087,10 +1087,19 @@ fn build_inline_thread_lines<'a>(
     reply_buffer: &crate::text_input::TextInput,
     theme: &Theme,
 ) -> Vec<(Line<'a>, crate::viewer::ScreenRow)> {
-    let comments = match review_state.file_comments.get(&line_1) {
+    let all_comments = match review_state.file_comments.get(&line_1) {
         Some(c) if !c.is_empty() => c,
         _ => return Vec::new(),
     };
+    // Only unresolved comments are expanded inline; resolved ones keep their
+    // gutter badge but are not shown in the thread box.
+    let comments: Vec<&crate::review_store::ReviewComment> = all_comments
+        .iter()
+        .filter(|c| c.status != crate::review_store::CommentStatus::Resolved)
+        .collect();
+    if comments.is_empty() {
+        return Vec::new();
+    }
 
     use crate::viewer::ScreenRow;
     let mut out: Vec<(Line, ScreenRow)> = Vec::new();

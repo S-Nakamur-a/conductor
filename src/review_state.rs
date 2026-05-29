@@ -225,7 +225,10 @@ impl ReviewState {
     /// Build the per-file comment cache from in-memory comments.
     ///
     /// Filters `self.comments` by `file_path` and maps each line in the
-    /// comment's range to a vec of comments covering that line.
+    /// comment's range to a vec of comments covering that line. Resolved
+    /// comments are kept here so their badge still appears in the gutter;
+    /// the inline thread expansion (see `build_inline_thread_lines`) is what
+    /// hides resolved comments.
     pub fn build_file_comment_cache(&mut self, file_path: &str) {
         self.file_comments.clear();
         self.file_comments_path = Some(file_path.to_string());
@@ -260,5 +263,45 @@ impl ReviewState {
                 self.template_selected = 0;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::review_store::{Author, CommentKind, CommentStatus, ReviewComment};
+
+    fn comment(id: &str, line: u32, status: CommentStatus) -> ReviewComment {
+        ReviewComment {
+            id: id.to_string(),
+            worktree: "wt".to_string(),
+            file_path: "src/main.rs".to_string(),
+            line_start: line,
+            line_end: None,
+            kind: CommentKind::Suggest,
+            body: "body".to_string(),
+            status,
+            commit_ref: "abc".to_string(),
+            author: Author::User,
+            branch: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn build_file_comment_cache_keeps_resolved_for_badges() {
+        let mut state = ReviewState::new();
+        state.comments = vec![
+            comment("c1", 10, CommentStatus::Pending),
+            comment("c2", 20, CommentStatus::Resolved),
+        ];
+
+        state.build_file_comment_cache("src/main.rs");
+
+        // Both lines keep a cache entry so the gutter badge still appears;
+        // resolved comments are only hidden from the inline thread expansion.
+        assert!(state.file_comments.contains_key(&10));
+        assert!(state.file_comments.contains_key(&20));
     }
 }
