@@ -138,9 +138,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_grab_branch =
         |wt: &crate::git_engine::WorktreeInfo| -> bool { wt.branch.ends_with("__grab") };
 
-    // Braille spinner frames for async operations.
-    const BRAILLE_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let spinner_frame = BRAILLE_SPINNER[(app.ui_tick as usize / 4) % BRAILLE_SPINNER.len()];
+    // Braille spinner frame for async operations.
+    let spinner_frame = super::common::spinner_frame(app.ui_tick);
 
     // Pre-compute session data for inline display.
     let session_groups = app.all_cc_sessions_by_worktree();

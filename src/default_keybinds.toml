@@ -29,6 +29,11 @@
 # Unicode instead of an Alt modifier. These are US-layout Option glyphs.
 "˙" = "cycle_focus_backward"
 "¬" = "cycle_focus_forward"
+# Ctrl+Tab / Ctrl+Shift+Tab — switch the selected worktree (next/prev) from
+# anywhere, browser-tab style. The worktree strip follows the selection. This
+# is separate from Tab's panel-focus cycle.
+"ctrl+tab" = "next_worktree"
+"ctrl+shift+tab" = "prev_worktree"
 "ctrl+w" = "focus_worktree"
 "ctrl+n" = "new_claude_code"
 "ctrl+t" = "new_shell"

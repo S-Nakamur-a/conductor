@@ -453,6 +453,13 @@ pub struct App {
     /// Clickable regions of the worktree bar, recorded during render and read by
     /// the mouse handler (worktree select / delete / add).
     pub wtbar_hits: Vec<crate::ui::worktree_bar::WtbarHit>,
+    /// Index of the first worktree chip shown in the bar (horizontal scroll
+    /// position). Adjusted by wheel/arrow paging and re-clamped each render.
+    pub wtbar_scroll: usize,
+    /// When set, the next bar render pans `wtbar_scroll` just enough to keep the
+    /// selected worktree's chip visible. Set when the selection changes so a
+    /// jump always reveals its chip, without disturbing free scrolling otherwise.
+    pub wtbar_reveal_selected: bool,
 
     // ── Code navigation (symbol index + jump history) ───────────
     pub symbol_index: SymbolIndex,
@@ -676,6 +683,8 @@ impl App {
             pending_view_restore: None,
             layout_cache: Default::default(),
             wtbar_hits: Vec::new(),
+            wtbar_scroll: 0,
+            wtbar_reveal_selected: false,
             symbol_index: SymbolIndex::new(PathBuf::new()),
             jump_history: JumpHistory::new(),
             references_overlay: ReferencesOverlay::default(),
@@ -1416,6 +1425,8 @@ impl App {
             CommandId::FocusViewer => self.set_focus(Focus::Viewer),
             CommandId::FocusTerminalClaude => self.set_focus(Focus::TerminalClaude),
             CommandId::FocusTerminalShell => self.set_focus(Focus::TerminalShell),
+            CommandId::NextWorktree => self.select_next_worktree(),
+            CommandId::PrevWorktree => self.select_prev_worktree(),
             CommandId::TogglePanelExpand => self.cmd_toggle_panel_expand(),
             CommandId::CreateWorktree => self.cmd_create_worktree(),
             CommandId::DeleteWorktree => self.cmd_delete_worktree(),
