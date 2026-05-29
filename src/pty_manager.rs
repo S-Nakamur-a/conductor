@@ -294,6 +294,52 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Translate a mouse-wheel scroll into arrow-key presses for a session
+    /// that is showing the **alternate screen** (e.g. pagers like `less`,
+    /// `bat`, `man`).
+    ///
+    /// The alternate screen has no scrollback of its own, so the local
+    /// scrollback offset is meaningless there — the user must scroll the
+    /// child program instead. This mirrors the "alternate-scroll" behavior
+    /// of tmux / iTerm2: each wheel notch becomes `lines` Up/Down arrow
+    /// presses sent to the child.
+    ///
+    /// Returns `true` if the scroll was handled by injecting arrow keys, in
+    /// which case the caller must **not** also adjust the local scrollback
+    /// offset. Returns `false` when the session is not on the alternate
+    /// screen, or when the child has enabled mouse reporting (in which case
+    /// it captures the wheel itself and synthesizing arrows would fight it).
+    pub fn scroll_alt_screen_session(&mut self, idx: usize, lines: usize, up: bool) -> bool {
+        // Read the relevant terminal modes, then drop the session/parser
+        // borrow before writing (write_to_session needs &mut self).
+        let (is_alt, app_cursor, mouse_on) = {
+            let Some(session) = self.sessions.get(idx) else {
+                return false;
+            };
+            let parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
+            let screen = parser.screen();
+            (
+                screen.alternate_screen(),
+                screen.application_cursor(),
+                screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None,
+            )
+        };
+
+        if !is_alt || mouse_on {
+            return false;
+        }
+
+        let arrow = scroll_arrow_sequence(up, app_cursor);
+        let mut buf = Vec::with_capacity(arrow.len() * lines);
+        for _ in 0..lines {
+            buf.extend_from_slice(arrow);
+        }
+        if let Err(e) = self.write_to_session(idx, &buf) {
+            log::warn!("failed to inject scroll arrows to PTY session: {e}");
+        }
+        true
+    }
+
     /// Send a large text payload to the PTY as regular typed input (no
     /// bracketed paste) using chunked writes to avoid hitting the kernel's
     /// PTY input buffer limit (typically 4096 bytes on macOS / Linux).
@@ -745,4 +791,36 @@ fn count_csi_dsr(bytes: &[u8]) -> usize {
         return 0;
     }
     bytes.windows(4).filter(|w| *w == b"\x1b[6n").count()
+}
+
+/// Return the escape sequence for an Up/Down arrow key press used to scroll a
+/// pager on the alternate screen.
+///
+/// `up` selects Up (`true`) vs Down (`false`). `app_cursor` honors DECCKM
+/// (application cursor keys mode): when set, terminals send SS3 (`ESC O`)
+/// sequences; otherwise CSI (`ESC [`). Pagers like `less` enable application
+/// cursor mode and bind the SS3 forms, so respecting it is necessary for the
+/// arrow keys to register reliably across programs.
+fn scroll_arrow_sequence(up: bool, app_cursor: bool) -> &'static [u8] {
+    match (up, app_cursor) {
+        (true, true) => b"\x1bOA",   // Up   (SS3)
+        (true, false) => b"\x1b[A",  // Up   (CSI)
+        (false, true) => b"\x1bOB",  // Down (SS3)
+        (false, false) => b"\x1b[B", // Down (CSI)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrow_sequence_honors_decckm_and_direction() {
+        // Application cursor keys mode → SS3 (ESC O); note the letter O (0x4f).
+        assert_eq!(scroll_arrow_sequence(true, true), b"\x1bOA");
+        assert_eq!(scroll_arrow_sequence(false, true), b"\x1bOB");
+        // Normal mode → CSI (ESC [).
+        assert_eq!(scroll_arrow_sequence(true, false), b"\x1b[A");
+        assert_eq!(scroll_arrow_sequence(false, false), b"\x1b[B");
+    }
 }
