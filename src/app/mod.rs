@@ -886,6 +886,10 @@ impl App {
     /// nothing is different.
     pub fn refresh_worktrees(&mut self) -> bool {
         let mut changed = false;
+        // Remember which branch is selected *before* we replace the list, so we
+        // can pin the selection to it by identity afterwards (the list order can
+        // shift when worktrees are added/removed).
+        let prev_selected_branch = self.selected_worktree_branch();
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
                 match engine.list_worktrees() {
@@ -907,10 +911,18 @@ impl App {
                             }
                         }
                         self.worktrees = worktrees;
-                        if !self.worktrees.is_empty()
-                            && self.selected_worktree >= self.worktrees.len()
-                        {
-                            self.selected_worktree = self.worktrees.len() - 1;
+                        // Preserve the selection by *branch identity*, not list
+                        // position: indices shift when worktrees are added or
+                        // removed. Re-finding the branch keeps the selection
+                        // pinned to the same worktree instead of silently sliding
+                        // onto a neighbour. Only when the branch is gone (its
+                        // worktree was removed) do we fall back to clamping.
+                        if let Some(idx) = reselect_worktree_index(
+                            &self.worktrees,
+                            &prev_selected_branch,
+                            self.selected_worktree,
+                        ) {
+                            self.selected_worktree = idx;
                         }
                         // Detect commits by HEAD oid changes.
                         for wt in &self.worktrees {
@@ -944,6 +956,14 @@ impl App {
             }
         }
         self.rebuild_worktree_list_rows();
+        // If the selected worktree's branch changed out from under us (its
+        // worktree was removed, so the selection fell back to another branch —
+        // often the main worktree), reload the review state. Otherwise the
+        // previous branch's change summary and comments linger and get shown
+        // against the wrong branch (e.g. a merged PR's summary on `main`).
+        if self.selected_worktree_branch() != prev_selected_branch {
+            self.refresh_reviews();
+        }
         changed
     }
 
@@ -2352,6 +2372,33 @@ pub fn is_rust_keyword(word: &str) -> bool {
     )
 }
 
+/// Pick the worktree index to keep selected after the worktree list is
+/// refreshed.
+///
+/// The list order is not stable across refreshes — adding or removing a
+/// worktree shifts every index after it. Selecting purely by the old index
+/// would silently re-point the selection at a *different* branch, which then
+/// shows that branch's review data (including the change summary) against the
+/// wrong worktree. So we re-pin by branch identity first; only when the
+/// previously selected branch is gone do we clamp the old index into range.
+///
+/// Returns `None` when there are no worktrees (nothing to select).
+fn reselect_worktree_index(
+    worktrees: &[git_engine::WorktreeInfo],
+    prev_branch: &str,
+    old_index: usize,
+) -> Option<usize> {
+    if worktrees.is_empty() {
+        return None;
+    }
+    if !prev_branch.is_empty()
+        && let Some(idx) = worktrees.iter().position(|w| w.branch == prev_branch)
+    {
+        return Some(idx);
+    }
+    Some(old_index.min(worktrees.len() - 1))
+}
+
 /// Extract the symbol (identifier) at a specific column in a line.
 /// Returns `(symbol_text, start_col, end_col)` where cols are 0-indexed character offsets.
 pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize, usize)> {
@@ -2390,6 +2437,56 @@ pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wt(branch: &str) -> git_engine::WorktreeInfo {
+        git_engine::WorktreeInfo {
+            path: std::path::PathBuf::from(format!("/tmp/{branch}")),
+            branch: branch.to_string(),
+            is_main: branch == "main",
+            added: 0,
+            modified: 0,
+            deleted: 0,
+            is_clean: true,
+            ahead: None,
+            behind: None,
+        }
+    }
+
+    #[test]
+    fn reselect_pins_to_branch_when_order_shifts() {
+        // Selection points at "feat-b" (index 2). A new worktree inserted
+        // earlier shifts indices; the selection must follow "feat-b", not stay
+        // at index 2 (which now holds a different branch).
+        let after = [wt("main"), wt("feat-a"), wt("feat-aa"), wt("feat-b")];
+        assert_eq!(reselect_worktree_index(&after, "feat-b", 2), Some(3));
+    }
+
+    #[test]
+    fn reselect_falls_back_when_branch_removed() {
+        // "feat-a" (index 1) was removed; only "main" remains. The stale index 1
+        // is out of range and must clamp to the last valid index (main).
+        let after = [wt("main")];
+        assert_eq!(reselect_worktree_index(&after, "feat-a", 1), Some(0));
+    }
+
+    #[test]
+    fn reselect_keeps_index_when_branch_unchanged() {
+        let after = [wt("main"), wt("feat-a")];
+        assert_eq!(reselect_worktree_index(&after, "feat-a", 1), Some(1));
+    }
+
+    #[test]
+    fn reselect_returns_none_for_empty_list() {
+        assert_eq!(reselect_worktree_index(&[], "main", 0), None);
+    }
+
+    #[test]
+    fn reselect_clamps_when_prev_branch_empty() {
+        // No previously selected branch (e.g. first load): just keep the index
+        // in range.
+        let after = [wt("main"), wt("feat-a")];
+        assert_eq!(reselect_worktree_index(&after, "", 5), Some(1));
+    }
 
     #[test]
     fn test_extract_symbol_at_column_basic() {
