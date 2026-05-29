@@ -411,6 +411,29 @@ impl ReviewStore {
                 .context("failed to re-enable foreign keys after v4 migration")?;
         }
 
+        if version < 5 {
+            // Branch-level change summary — the "what & why" of the whole diff,
+            // the PR-description counterpart to the line-anchored `reviews`. Kept
+            // in its own table rather than `worktree_metadata` because that table
+            // requires a non-null base_branch the MCP writer doesn't know; here a
+            // single INSERT OR REPLACE keyed on branch is enough.
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS change_summary (
+                    branch      TEXT PRIMARY KEY,
+                    body        TEXT NOT NULL,
+                    author      TEXT NOT NULL DEFAULT 'claude'
+                                  CHECK (author IN ('user', 'claude')),
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                PRAGMA user_version = 5;
+                ",
+            )
+            .context("failed to migrate to v5 (change_summary)")?;
+        }
+
         Ok(Self { conn })
     }
 
@@ -713,6 +736,43 @@ impl ReviewStore {
         let mut stmt = self
             .conn
             .prepare("SELECT base_branch FROM worktree_metadata WHERE branch = ?1")?;
+        let result = stmt
+            .query_row(params![branch], |row| row.get::<_, String>(0))
+            .ok();
+        Ok(result)
+    }
+
+    // -- Change summary -----------------------------------------------------
+
+    /// Persist (or replace) the branch-level change summary — the "what & why"
+    /// of the whole diff, shown as a banner above the diff and reusable as a PR
+    /// body. `updated_at` is bumped on every write; `created_at` is preserved on
+    /// replace via the COALESCE against the existing row.
+    ///
+    /// Currently the MCP `set_change_summary` tool is the live writer (raw SQL,
+    /// sibling process); this canonical Rust writer documents the upsert contract
+    /// and backs a future in-TUI summary editor.
+    #[allow(dead_code)]
+    pub fn save_change_summary(&self, branch: &str, body: &str, author: Author) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO change_summary (branch, body, author, created_at, updated_at)
+             VALUES (?1, ?2, ?3,
+                     COALESCE((SELECT created_at FROM change_summary WHERE branch = ?1), datetime('now')),
+                     datetime('now'))
+             ON CONFLICT(branch) DO UPDATE SET
+                 body = excluded.body,
+                 author = excluded.author,
+                 updated_at = datetime('now')",
+            params![branch, body, author.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve the change summary for a branch, if one has been written.
+    pub fn get_change_summary(&self, branch: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT body FROM change_summary WHERE branch = ?1")?;
         let result = stmt
             .query_row(params![branch], |row| row.get::<_, String>(0))
             .ok();
@@ -1082,6 +1142,34 @@ mod tests {
         // No reviews for a different file
         let reviews = store.reviews_for_file("wt1", "src/lib.rs").unwrap();
         assert!(reviews.is_empty());
+    }
+
+    #[test]
+    fn change_summary_save_get_and_replace() {
+        let store = test_store();
+
+        // Absent until written.
+        assert_eq!(store.get_change_summary("feat/x").unwrap(), None);
+
+        store
+            .save_change_summary("feat/x", "Refactor the parser for clarity.", Author::Claude)
+            .unwrap();
+        assert_eq!(
+            store.get_change_summary("feat/x").unwrap().as_deref(),
+            Some("Refactor the parser for clarity.")
+        );
+
+        // Replacing keeps the same key and overwrites the body (PK upsert).
+        store
+            .save_change_summary("feat/x", "Updated summary.", Author::User)
+            .unwrap();
+        assert_eq!(
+            store.get_change_summary("feat/x").unwrap().as_deref(),
+            Some("Updated summary.")
+        );
+
+        // Independent per branch.
+        assert_eq!(store.get_change_summary("feat/y").unwrap(), None);
     }
 
     #[test]

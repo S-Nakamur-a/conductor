@@ -73,6 +73,9 @@ pub enum Action {
     // ── Explorer panel ───────────────────────────────────────────
     ShowDiffList,
     ShowCommentList,
+    /// Open the full-screen comment-list modal (overview of all comments on the
+    /// branch, with jump-to-location).
+    OpenCommentList,
     SearchFilename,
     DeleteComment,
     ToggleResolve,
@@ -118,6 +121,10 @@ pub enum Action {
     PrevHunk,
     NextComment,
     PrevComment,
+    /// Jump to the next/previous changed file in the diff list (GitHub-style
+    /// "next file" — the lightweight substitute for cross-file scrolling).
+    NextChangedFile,
+    PrevChangedFile,
 
     // ── Diff context expansion ─────────────────────────────────
     ExpandContext,
@@ -175,6 +182,7 @@ impl Action {
             "open_pull_request" => Some(Action::OpenPullRequest),
             "show_diff_list" => Some(Action::ShowDiffList),
             "show_comment_list" => Some(Action::ShowCommentList),
+            "open_comment_list" => Some(Action::OpenCommentList),
             "search_filename" => Some(Action::SearchFilename),
             "delete_comment" => Some(Action::DeleteComment),
             "toggle_resolve" => Some(Action::ToggleResolve),
@@ -205,6 +213,8 @@ impl Action {
             "next_hunk" => Some(Action::NextHunk),
             "prev_hunk" => Some(Action::PrevHunk),
             "next_comment" => Some(Action::NextComment),
+            "next_changed_file" => Some(Action::NextChangedFile),
+            "prev_changed_file" => Some(Action::PrevChangedFile),
             "prev_comment" => Some(Action::PrevComment),
             "expand_context" => Some(Action::ExpandContext),
             "expand_all_context" => Some(Action::ExpandAllContext),
@@ -263,6 +273,7 @@ impl Action {
             Action::OpenPullRequest => "open_pull_request",
             Action::ShowDiffList => "show_diff_list",
             Action::ShowCommentList => "show_comment_list",
+            Action::OpenCommentList => "open_comment_list",
             Action::SearchFilename => "search_filename",
             Action::DeleteComment => "delete_comment",
             Action::ToggleResolve => "toggle_resolve",
@@ -294,6 +305,8 @@ impl Action {
             Action::PrevHunk => "prev_hunk",
             Action::NextComment => "next_comment",
             Action::PrevComment => "prev_comment",
+            Action::NextChangedFile => "next_changed_file",
+            Action::PrevChangedFile => "prev_changed_file",
             Action::ExpandContext => "expand_context",
             Action::ExpandAllContext => "expand_all_context",
             Action::ToggleInlineThread => "toggle_inline_thread",

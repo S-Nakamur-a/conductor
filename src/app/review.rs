@@ -15,6 +15,117 @@ impl App {
             if let Some(file_path) = self.viewer_state.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);
             }
+            // Keep the diff list's SUMMARY pseudo-file in sync with whether this
+            // branch has a change summary. Only rebuild when it actually flips,
+            // so we don't disturb the display list on every reload.
+            let has_summary = self.review_state.change_summary.is_some();
+            if self.diff_state.has_summary != has_summary {
+                self.diff_state.has_summary = has_summary;
+                self.diff_state.rebuild_display_list();
+                // If the summary vanished while its pseudo-file was open, leave
+                // the now-orphaned summary view so the Viewer and the list agree.
+                if !has_summary && self.viewer_state.is_summary() {
+                    self.viewer_state.exit_diff_mode();
+                }
+            }
+        }
+    }
+
+    /// Open the diff file currently selected in the diff list (the entry at
+    /// `diff_list_selected`) into the Viewer. Shared by the file-jump keys; a
+    /// no-op if the selected entry isn't a file.
+    pub fn open_diff_file_at_selected(&mut self) {
+        let idx = self.viewer_state.explorer.diff_list_selected;
+        let (file_path, file_diff_clone) = match self.diff_state.resolve_file(idx) {
+            Some((f, _)) => (f.path.clone(), f.clone()),
+            None => return,
+        };
+        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+            return;
+        };
+        let wt_path = wt.path.clone();
+        let tab_width = self.config.viewer.tab_width;
+        self.viewer_state.open_file(&wt_path, &file_path, tab_width);
+        self.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
+        self.rehighlight_viewer();
+        self.review_state.build_file_comment_cache(&file_path);
+        self.expand_threads_for_file(&file_path);
+        self.viewer_state.build_unified_diff_view(&file_diff_clone);
+        // Land on the first review comment if the file has any (so the reviewer
+        // sees it immediately — answers "jump to the file's first comment"),
+        // otherwise on the first change.
+        let first_comment_line = self
+            .review_state
+            .comments
+            .iter()
+            .filter(|c| c.file_path == file_path)
+            .map(|c| c.line_start as usize)
+            .min();
+        let target = first_comment_line
+            .and_then(|line| {
+                self.viewer_state
+                    .diff_view
+                    .diff_view_lines
+                    .iter()
+                    .position(|e| matches!(e, crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(n), .. } if *n == line))
+            })
+            .or_else(|| {
+                self.viewer_state
+                    .diff_view
+                    .diff_view_lines
+                    .iter()
+                    .position(|e| {
+                        matches!(e, crate::viewer::UnifiedDiffEntry::Line { tag, .. }
+                            if *tag != crate::diff_state::DiffLineTag::Equal)
+                    })
+            });
+        if let Some(pos) = target {
+            self.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
+        }
+    }
+
+    /// Jump to the next (or previous) changed file in the diff list and open it.
+    /// Skips non-file rows (section headers, directories, the SUMMARY entry).
+    /// The lightweight substitute for GitHub-style cross-file scrolling.
+    pub fn jump_to_changed_file(&mut self, forward: bool) {
+        use crate::diff_state::DiffListEntry;
+        let len = self.diff_state.display_list.len();
+        // Clamp the cursor: a stale `diff_list_selected` (e.g. after the list
+        // shrank on refresh) must never index past the list in the backward
+        // scan below, or `display_list[i]` panics.
+        let cur = self.viewer_state.explorer.diff_list_selected.min(len);
+        let target = if forward {
+            (cur + 1..len)
+                .find(|&i| matches!(self.diff_state.display_list[i], DiffListEntry::File { .. }))
+        } else {
+            (0..cur)
+                .rev()
+                .find(|&i| matches!(self.diff_state.display_list[i], DiffListEntry::File { .. }))
+        };
+        if let Some(idx) = target {
+            self.viewer_state.explorer.diff_list_selected = idx;
+            self.open_diff_file_at_selected();
+        }
+    }
+
+    /// Default-expand the inline comment threads for a freshly opened file, so
+    /// review comments are visible at a glance instead of starting collapsed.
+    /// Only the opened file's threads are expanded (not every file's), matching
+    /// "the selected file's comments are open by default". The user can still
+    /// collapse individual threads afterward.
+    pub fn expand_threads_for_file(&mut self, file_path: &str) {
+        let lines: Vec<usize> = self
+            .review_state
+            .comments
+            .iter()
+            .filter(|c| c.file_path == file_path)
+            .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
+            .collect();
+        for line in lines {
+            self.viewer_state
+                .explorer
+                .expanded_inline_threads
+                .insert(line);
         }
     }
 

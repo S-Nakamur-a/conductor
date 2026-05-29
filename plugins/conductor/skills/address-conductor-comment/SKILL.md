@@ -1,5 +1,7 @@
 ---
-description: "Pending なレビューコメントを取得し、Subagent で並列処理して解決する"
+name: address-conductor-comment
+description: "Conductor でついた Pending なレビューコメントを取得し、Subagent で並列処理して解決する。"
+disable-model-invocation: true
 ---
 
 # Conductor Resolve

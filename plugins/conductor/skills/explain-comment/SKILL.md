@@ -1,5 +1,7 @@
 ---
-description: "コードに説明コメントを追加する"
+name: explain-comment
+description: "指定されたファイルまたは範囲のコードを読み込み、重要な部分に Conductor の説明コメント（question 形式）を追加する。"
+disable-model-invocation: true
 ---
 
 # Explain Comment

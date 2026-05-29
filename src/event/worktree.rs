@@ -9,8 +9,13 @@ use crate::overlay::ActiveOverlay;
 
 /// Handle keys when the Worktree panel is focused.
 pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
-    // Esc cancels any pending smart worktree creation.
-    if key.code == KeyCode::Esc && app.cancel_smart_worktrees() {
+    // Esc cancels any pending smart worktree creation; otherwise it closes the
+    // worktree switcher modal (this handler now backs that modal).
+    if key.code == KeyCode::Esc {
+        if app.cancel_smart_worktrees() {
+            return;
+        }
+        app.overlays.active = ActiveOverlay::None;
         return;
     }
 
@@ -38,6 +43,8 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::Select) => {
+            // Selecting commits the choice and closes the switcher modal.
+            app.overlays.active = ActiveOverlay::None;
             match app
                 .worktree_list_rows
                 .get(app.worktree_list_selected)

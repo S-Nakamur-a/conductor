@@ -1,9 +1,10 @@
 //! Explorer panel key handling (file tree, diff list, comment list).
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Focus};
 use crate::keymap::{Action, KeyContext};
+use crate::overlay::ActiveOverlay;
 use crate::review_state::{CommentListRow, ReviewInputMode};
 use crate::review_store::{Author, CommentKind};
 
@@ -143,40 +144,24 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::Select) => {
             let selected = app.viewer_state.explorer.diff_list_selected;
+            // The SUMMARY pseudo-file opens the branch change summary full-panel.
+            if matches!(
+                app.diff_state.display_list.get(selected),
+                Some(crate::diff_state::DiffListEntry::Summary {})
+            ) {
+                app.viewer_state.enter_summary_view();
+                app.set_focus(Focus::Viewer);
+            }
             // Toggle section headers and directories on Enter.
-            if app.diff_state.toggle_section(selected) {
+            else if app.diff_state.toggle_section(selected) {
                 let new_count = app.diff_state.display_list.len();
                 if new_count > 0 && app.viewer_state.explorer.diff_list_selected >= new_count {
                     app.viewer_state.explorer.diff_list_selected = new_count - 1;
                 }
-            } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(selected) {
-                let file_path = file_diff.path.clone();
-                let file_diff_clone = file_diff.clone();
-                if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                    let wt_path = wt.path.clone();
-                    let tab_width = app.config.viewer.tab_width;
-                    app.viewer_state.open_file(&wt_path, &file_path, tab_width);
-                    app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
-                    app.rehighlight_viewer();
-                    app.review_state.build_file_comment_cache(&file_path);
-
-                    app.viewer_state.build_unified_diff_view(&file_diff_clone);
-
-                    if let Some(pos) =
-                        app.viewer_state
-                            .diff_view
-                            .diff_view_lines
-                            .iter()
-                            .position(|e| {
-                                matches!(e, crate::viewer::UnifiedDiffEntry::Line { tag, .. }
-                            if *tag != crate::diff_state::DiffLineTag::Equal)
-                            })
-                    {
-                        app.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
-                    }
-
-                    app.set_focus(Focus::Viewer);
-                }
+            } else if app.diff_state.resolve_file(selected).is_some() {
+                // `diff_list_selected` already points at this row.
+                app.open_diff_file_at_selected();
+                app.set_focus(Focus::Viewer);
             }
         }
         Some(Action::GoToTop) => {
@@ -196,6 +181,37 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
     let row_count = app.review_state.comment_list_rows.len();
     let action = app.keymap.resolve(&key, KeyContext::ExplorerCommentList);
+
+    // When this backs the full-screen comment-list modal, Esc closes it and
+    // selecting a comment jumps to it and then closes the modal.
+    let in_modal = app.overlays.active == ActiveOverlay::CommentList;
+    if in_modal && key.code == KeyCode::Esc {
+        app.overlays.active = ActiveOverlay::None;
+        return;
+    }
+    // Close the modal only when Select actually jumps to a location — a Select
+    // on a comment that has replies just expands its thread in place, so we
+    // must keep the modal open in that case.
+    let close_after = in_modal
+        && matches!(action, Some(Action::Select))
+        && {
+            let visual = app.viewer_state.explorer.comment_list_selected;
+            match app.review_state.comment_list_rows.get(visual) {
+                Some(CommentListRow::Comment { comment_idx }) => {
+                    let has_replies = app
+                        .review_state
+                        .comments
+                        .get(*comment_idx)
+                        .and_then(|c| app.review_state.reply_counts.get(&c.id))
+                        .copied()
+                        .unwrap_or(0)
+                        > 0;
+                    !has_replies
+                }
+                Some(CommentListRow::Reply { .. }) => true,
+                None => false,
+            }
+        };
 
     match action {
         Some(Action::ExitSubPanel) => {
@@ -312,6 +328,10 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
             }
         }
         _ => {}
+    }
+
+    if close_after {
+        app.overlays.active = ActiveOverlay::None;
     }
 
     // Adjust scroll for comment list.
