@@ -592,14 +592,14 @@ server.tool(
 server.tool(
   "set_change_summary",
   "Set the branch-level change summary — the 'what & why' of the whole diff (the PR-description counterpart to line-anchored comments). " +
-    "It renders as a fixed banner above the diff in the Conductor Viewer. Write one overview describing the overall intent of the change and the rationale for the files being touched; calling it again replaces the previous summary. " +
+    "It renders as a fixed, Markdown-formatted banner above the diff in the Conductor Viewer. Write one overview describing the overall intent of the change and the rationale for the files being touched; calling it again replaces the previous summary. " +
     "Use this for the high-level narrative, and create_comment for specific line-level notes.",
   {
     body: z
       .string()
       .min(1)
       .describe(
-        "The change summary text. A concise overview of what the change does and why; may span multiple lines."
+        "The change summary in Markdown. It is rendered with headings (#), lists (-, 1.), block quotes (>), inline code (`x`), bold/italic (**/*), and fenced code blocks (```lang) that get syntax highlighting in the Conductor Viewer. Note: `_` does not produce emphasis (so snake_case stays intact). Write a concise overview of what the change does and why; may span multiple lines."
       ),
   },
   async ({ body }) => {
