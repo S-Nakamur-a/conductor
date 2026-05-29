@@ -13,7 +13,7 @@ mod terminal;
 mod viewer;
 mod worktree;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, Focus, UpdateState, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
@@ -93,13 +93,67 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
     EffectiveOverlay::None
 }
 
+/// True when a text-entry field is currently focused and expects printable
+/// characters to be inserted as literal text — every input target enumerated in
+/// [`handle_paste_event`]. Kept in lockstep with that function: a destination
+/// added there must be added here too. Notably this is `false` for the
+/// `WorktreeInputMode::Confirming*` y/n sub-modes, which are NOT text entry.
+fn is_text_input_active(app: &App) -> bool {
+    if app.viewer_state.explorer.inline_reply_line.is_some()
+        || app.review_state.input_mode != ReviewInputMode::Normal
+        || app.review_state.search_active
+        || app.viewer_state.search.search_active
+        || app.viewer_state.filename_search.filename_search_active
+    {
+        return true;
+    }
+    if matches!(
+        app.worktree_mgr.input_mode,
+        WorktreeInputMode::CreatingWorktree
+            | WorktreeInputMode::CreatingWorktreeBase
+            | WorktreeInputMode::SmartDescription
+    ) {
+        return true;
+    }
+    matches!(
+        app.overlays.active,
+        ActiveOverlay::GrepSearch
+            | ActiveOverlay::SwitchBranch
+            | ActiveOverlay::CommandPalette
+            | ActiveOverlay::OpenRepo
+            | ActiveOverlay::History
+            | ActiveOverlay::ResumeSession
+    )
+}
+
+/// True when `key` is a printable character carrying no command modifier
+/// (Ctrl/Alt/Super). A lone Shift still counts as "bare" — `Shift+a` is just
+/// `A`. Such a key is indistinguishable from typed text, so it must never be
+/// hijacked as a global accelerator while a text field is focused. This is what
+/// stops the macOS Option-glyph focus fallbacks (`¡ ™ £ ¢ ∞ §` …) from stealing
+/// focus mid-IME-input.
+fn is_bare_printable(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char(_))
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
 // Re-export public API.
 pub use self::mouse::handle_mouse_event;
 
 /// Process a single key event, updating application state as needed.
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
-    // ── 0. Global focus-switching — always available, even over overlays ──
-    if let Some(action) = app.keymap.resolve(&key, KeyContext::Global) {
+    // ── 0. Global focus-switching — available even over overlays, EXCEPT a
+    // bare printable key while a text field is focused, which must reach the
+    // text buffer. The global layer binds macOS Option-glyph fallbacks (bare
+    // '¡ ™ £ ¢ ∞ § ÷ ˙ ¬') to focus actions; those glyphs are indistinguishable
+    // from typed text, so during IME / multi-byte input they would otherwise
+    // steal focus (e.g. '∞' jumping to the Claude panel). Modifier-carrying
+    // chords (alt+1, ctrl+w, super+1, alt+h …) still switch focus over a modal.
+    if !(is_text_input_active(app) && is_bare_printable(&key))
+        && let Some(action) = app.keymap.resolve(&key, KeyContext::Global)
+    {
         match action {
             Action::FocusWorktree
             | Action::FocusExplorer
@@ -566,5 +620,57 @@ fn adjust_diff_list_scroll(app: &mut App) {
         app.viewer_state.explorer.diff_list_scroll = selected;
     } else if selected >= app.viewer_state.explorer.diff_list_scroll + page_size {
         app.viewer_state.explorer.diff_list_scroll = selected.saturating_sub(page_size - 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, mods)
+    }
+
+    #[test]
+    fn bare_chars_are_printable_text() {
+        // Plain ASCII, a kana, and a macOS Option-glyph fallback are all "bare"
+        // and must be treated as typed text, never a global accelerator.
+        for c in ['a', 'あ', '∞', '¡', '§', '÷'] {
+            assert!(
+                is_bare_printable(&key(KeyCode::Char(c), KeyModifiers::empty())),
+                "{c:?} should be bare printable",
+            );
+        }
+    }
+
+    #[test]
+    fn shift_only_still_counts_as_bare() {
+        // Shift+a is just 'A' — still text, not a command.
+        assert!(is_bare_printable(&key(
+            KeyCode::Char('A'),
+            KeyModifiers::SHIFT
+        )));
+    }
+
+    #[test]
+    fn modifier_chords_are_not_bare() {
+        // Command-bearing chords must still reach the global focus switcher.
+        for m in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        ] {
+            assert!(!is_bare_printable(&key(KeyCode::Char('1'), m)));
+        }
+    }
+
+    #[test]
+    fn named_keys_are_not_bare_printable() {
+        // Enter/Esc/Tab are not Char, so they keep flowing to global/overlay.
+        for code in [KeyCode::Enter, KeyCode::Esc, KeyCode::Tab] {
+            assert!(!is_bare_printable(&key(code, KeyModifiers::empty())));
+        }
     }
 }
