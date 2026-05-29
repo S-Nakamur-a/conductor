@@ -771,43 +771,6 @@ fn render_diff_content_line(
     Line::from(spans)
 }
 
-/// Word-wrap text to `width` columns, preserving author line breaks and
-/// hard-splitting tokens longer than the width. Blank source lines are kept as
-/// empty rows (paragraph spacing). No truncation — returns every wrapped row.
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut wrapped: Vec<String> = Vec::new();
-    for raw_line in text.lines() {
-        if raw_line.trim().is_empty() {
-            wrapped.push(String::new());
-            continue;
-        }
-        let mut cur = String::new();
-        for word in raw_line.split_whitespace() {
-            // Hard-wrap a single token longer than the width.
-            let mut word = word;
-            while word.chars().count() > width {
-                let head: String = word.chars().take(width).collect();
-                if !cur.is_empty() {
-                    wrapped.push(std::mem::take(&mut cur));
-                }
-                wrapped.push(head);
-                word = &word[word.char_indices().nth(width).map(|(i, _)| i).unwrap_or(word.len())..];
-            }
-            let sep = if cur.is_empty() { 0 } else { 1 };
-            if cur.chars().count() + sep + word.chars().count() > width {
-                wrapped.push(std::mem::take(&mut cur));
-            }
-            if !cur.is_empty() {
-                cur.push(' ');
-            }
-            cur.push_str(word);
-        }
-        wrapped.push(cur);
-    }
-    wrapped
-}
-
 /// Render the full change summary as a dedicated, scrollable, full-panel view —
 /// the "SUMMARY" pseudo-file. This is the PR-description counterpart to the
 /// line-anchored review comments; it gets the whole panel (no truncation) and
@@ -860,9 +823,17 @@ fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, focused: bo
                 )));
             }
         } else {
-            for row in wrap_text(summary, inner_width.saturating_sub(1)) {
-                lines.push(Line::from(Span::styled(row, Style::default().fg(theme.fg))));
-            }
+            // Render the summary as Markdown: headings/lists/quotes are
+            // decorated and fenced code blocks are syntax-highlighted. Plain
+            // text (no Markdown syntax) renders as ordinary paragraphs, so
+            // existing summaries are unaffected.
+            lines = crate::ui::markdown::render_markdown(
+                summary,
+                inner_width.saturating_sub(1),
+                theme,
+                &app.syntax_set,
+                &app.syntect_theme,
+            );
         }
         (block, lines)
     };
@@ -1842,29 +1813,6 @@ fn replace_span_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn wrap_text_handles_edges() {
-        // Empty input yields no rows (the summary view handles "" separately);
-        // a whitespace-only line collapses to a single blank row.
-        assert!(wrap_text("", 10).is_empty());
-        assert_eq!(wrap_text("   ", 10), vec![""]);
-
-        // A token longer than the width is hard-split into width-sized chunks.
-        let rows = wrap_text(&"a".repeat(12), 5);
-        assert_eq!(rows, vec!["aaaaa", "aaaaa", "aa"]);
-
-        // width == 0 is treated as 1 (no panic, no zero-width slicing).
-        assert_eq!(wrap_text("ab", 0), vec!["a", "b"]);
-
-        // Multibyte hard-wrap slices on char boundaries (no panic).
-        let rows = wrap_text("ありがとう", 2);
-        assert!(rows.iter().all(|r| r.chars().count() <= 2));
-        assert_eq!(rows.concat(), "ありがとう");
-
-        // Author line breaks are preserved; blank lines kept as spacing.
-        assert_eq!(wrap_text("a\n\nb", 10), vec!["a", "", "b"]);
-    }
 
     fn seg(text: &str, emphasized: bool) -> InlineSegment {
         InlineSegment {
