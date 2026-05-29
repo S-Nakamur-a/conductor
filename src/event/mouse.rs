@@ -223,6 +223,19 @@ fn handle_notification_bar_click(
     true
 }
 
+/// How many chips a single wheel tick scrolls the worktree strip: a screenful
+/// minus one chip of overlap (at least 1). The visible count is read back from
+/// the `Select` regions recorded by the last render.
+fn wtbar_page_step(app: &App) -> usize {
+    use crate::ui::worktree_bar::WtbarAction;
+    let visible = app
+        .wtbar_hits
+        .iter()
+        .filter(|h| matches!(h.action, WtbarAction::Select(_)))
+        .count();
+    visible.saturating_sub(1).max(1)
+}
+
 /// Handle a left click on the worktree bar: select (jump to the worktree and
 /// its Claude session), delete (with confirmation), or add. Returns `true` if
 /// the click landed on the bar row (and was thus consumed).
@@ -249,6 +262,12 @@ fn handle_wtbar_click(
             app.selected_worktree = i;
             app.on_worktree_changed();
             app.set_focus(Focus::TerminalClaude);
+        }
+        Some(WtbarAction::ScrollLeft) => {
+            app.wtbar_scroll = app.wtbar_scroll.saturating_sub(1);
+        }
+        Some(WtbarAction::ScrollRight) => {
+            app.wtbar_scroll = app.wtbar_scroll.saturating_add(1);
         }
         Some(WtbarAction::Add) => {
             app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
@@ -350,6 +369,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     };
 
     match mouse.kind {
+        MouseEventKind::ScrollDown if wtbar_area.height > 0 && row == wtbar_area.y => {
+            // Wheel over the worktree strip pages it sideways by ~a screenful
+            // (one chip of overlap) so trackpad bursts and wheel detents both
+            // move a useful amount without skipping chips.
+            app.wtbar_scroll = app.wtbar_scroll.saturating_add(wtbar_page_step(app));
+        }
+        MouseEventKind::ScrollUp if wtbar_area.height > 0 && row == wtbar_area.y => {
+            app.wtbar_scroll = app.wtbar_scroll.saturating_sub(wtbar_page_step(app));
+        }
         MouseEventKind::ScrollDown => {
             handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, terminal_split_y, 3);
         }

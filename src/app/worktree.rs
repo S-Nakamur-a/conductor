@@ -1384,7 +1384,39 @@ impl App {
     /// Heavy operations (file tree walk, diff computation, branch details) are
     /// dispatched to background threads so the UI stays responsive. Results are
     /// applied in `poll_worktree_switch_ops()`.
+    /// Switch the selection to the next worktree, wrapping around. Mirrors a
+    /// click on the strip (updates views + active sessions via
+    /// `on_worktree_changed`, which also makes the strip follow), but keeps the
+    /// current panel focus rather than jumping to the terminal. No-op with ≤1
+    /// worktree.
+    pub fn select_next_worktree(&mut self) {
+        let n = self.worktrees.len();
+        if n <= 1 {
+            return;
+        }
+        self.selected_worktree = (self.selected_worktree + 1) % n;
+        self.on_worktree_changed();
+    }
+
+    /// Switch the selection to the previous worktree, wrapping around. See
+    /// [`Self::select_next_worktree`].
+    pub fn select_prev_worktree(&mut self) {
+        let n = self.worktrees.len();
+        if n <= 1 {
+            return;
+        }
+        self.selected_worktree = (self.selected_worktree + n - 1) % n;
+        self.on_worktree_changed();
+    }
+
     pub fn on_worktree_changed(&mut self) {
+        // Reveal the newly selected worktree's chip in the bar on the next
+        // render (width-dependent panning happens there, where the area is known).
+        // This is only safe to set on *user-initiated* selection changes: if a
+        // background event ever drives selection while the user is free-scrolling
+        // the strip to peek elsewhere, setting this would yank the bar back.
+        self.wtbar_reveal_selected = true;
+
         // Persist the outgoing worktree's view before we wipe it.
         if let Some(outgoing) = self.current_view_branch.clone() {
             self.save_view_for(&outgoing);

@@ -16,6 +16,16 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
+/// Braille spinner frames for in-progress (async) operations.
+const BRAILLE_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// The current spinner frame for the given UI tick. Advances roughly every
+/// four frames so the animation reads as a steady spin. Shared by every panel
+/// that shows an async-operation spinner so they stay in sync.
+pub fn spinner_frame(ui_tick: u64) -> &'static str {
+    BRAILLE_SPINNER[(ui_tick as usize / 4) % BRAILLE_SPINNER.len()]
+}
+
 /// Cached PTY render output to avoid expensive vt100 snapshots every frame.
 ///
 /// When a terminal panel is not focused, we reuse the previously built

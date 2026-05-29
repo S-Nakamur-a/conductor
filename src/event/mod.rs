@@ -317,6 +317,14 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     app.cycle_focus_backward();
                     return;
                 }
+                Action::NextWorktree => {
+                    app.select_next_worktree();
+                    return;
+                }
+                Action::PrevWorktree => {
+                    app.select_prev_worktree();
+                    return;
+                }
                 Action::TogglePanelOverlay => {
                     app.toggle_panel_overlay();
                     return;

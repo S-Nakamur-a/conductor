@@ -37,6 +37,14 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.cycle_focus_backward();
             true
         }
+        Action::NextWorktree => {
+            app.select_next_worktree();
+            true
+        }
+        Action::PrevWorktree => {
+            app.select_prev_worktree();
+            true
+        }
         Action::FocusWorktree => {
             app.set_focus(Focus::Worktree);
             true

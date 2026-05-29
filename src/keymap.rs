@@ -28,6 +28,10 @@ pub enum Action {
     CommandPalette,
     CycleFocusForward,
     CycleFocusBackward,
+    /// Switch the selected worktree to the next/previous one, from any panel
+    /// (the worktree strip follows the selection). Distinct from focus cycling.
+    NextWorktree,
+    PrevWorktree,
     FocusWorktree,
     FocusExplorer,
     FocusExplorerDiffList,
@@ -144,6 +148,8 @@ impl Action {
             "command_palette" => Some(Action::CommandPalette),
             "cycle_focus_forward" => Some(Action::CycleFocusForward),
             "cycle_focus_backward" => Some(Action::CycleFocusBackward),
+            "next_worktree" => Some(Action::NextWorktree),
+            "prev_worktree" => Some(Action::PrevWorktree),
             "focus_worktree" => Some(Action::FocusWorktree),
             "focus_explorer" => Some(Action::FocusExplorer),
             "focus_explorer_diff_list" => Some(Action::FocusExplorerDiffList),
@@ -235,6 +241,8 @@ impl Action {
             Action::CommandPalette => "command_palette",
             Action::CycleFocusForward => "cycle_focus_forward",
             Action::CycleFocusBackward => "cycle_focus_backward",
+            Action::NextWorktree => "next_worktree",
+            Action::PrevWorktree => "prev_worktree",
             Action::FocusWorktree => "focus_worktree",
             Action::FocusExplorer => "focus_explorer",
             Action::FocusExplorerDiffList => "focus_explorer_diff_list",
@@ -742,6 +750,35 @@ mod tests {
         assert_eq!(
             km.resolve(&shift_tab, KeyContext::Worktree),
             Some(Action::CycleFocusBackward)
+        );
+    }
+
+    #[test]
+    fn ctrl_tab_switches_worktree() {
+        let km = default_keymap();
+        // Global layer, so it resolves in every non-terminal context. Ctrl+Tab
+        // jumps worktrees while plain Tab still cycles panel focus.
+        let ctrl_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_tab, KeyContext::Explorer),
+            Some(Action::NextWorktree)
+        );
+        let plain_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&plain_tab, KeyContext::Explorer),
+            Some(Action::CycleFocusForward)
+        );
+        // Ctrl+Shift+Tab and Ctrl+BackTab both normalize to Ctrl+Shift+Tab.
+        let ctrl_shift_tab =
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert_eq!(
+            km.resolve(&ctrl_shift_tab, KeyContext::Explorer),
+            Some(Action::PrevWorktree)
+        );
+        let ctrl_backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_backtab, KeyContext::Explorer),
+            Some(Action::PrevWorktree)
         );
     }
 

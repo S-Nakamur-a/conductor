@@ -16,6 +16,8 @@ pub enum CommandId {
     FocusViewer,
     FocusTerminalClaude,
     FocusTerminalShell,
+    NextWorktree,
+    PrevWorktree,
     TogglePanelExpand,
 
     // Worktree
@@ -174,6 +176,20 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Navigation,
         action: Some(Action::FocusTerminalShell),
         keywords: "terminal shell",
+    },
+    PaletteCommand {
+        id: CommandId::NextWorktree,
+        label: "Next Worktree",
+        category: CommandCategory::Navigation,
+        action: Some(Action::NextWorktree),
+        keywords: "worktree switch next cycle tab",
+    },
+    PaletteCommand {
+        id: CommandId::PrevWorktree,
+        label: "Previous Worktree",
+        category: CommandCategory::Navigation,
+        action: Some(Action::PrevWorktree),
+        keywords: "worktree switch previous cycle tab",
     },
     PaletteCommand {
         id: CommandId::TogglePanelExpand,
