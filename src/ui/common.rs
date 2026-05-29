@@ -341,22 +341,30 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         let sep = Span::styled(" | ", Style::default().fg(theme.muted).bg(bar_bg));
         let mut spans: Vec<Span> = Vec::new();
 
-        if let Some(ref stats) = app.today_stats {
-            spans.push(Span::styled(
-                format!("{} branches", stats.branches_created),
-                Style::default().fg(theme.info).bg(bar_bg),
-            ));
-            spans.push(sep.clone());
-            spans.push(Span::styled(
-                format!("{} commits", stats.commits_made),
-                Style::default().fg(theme.success).bg(bar_bg),
-            ));
-            spans.push(sep.clone());
-            spans.push(Span::styled(
-                format!("{} reviews", stats.reviews_created),
-                Style::default().fg(theme.warning).bg(bar_bg),
-            ));
-        }
+        // Workspace overview: worktree count, running Claude Code sessions,
+        // and the current Conductor version.
+        let worktree_count = app.worktrees.len();
+        let claude_session_count = app
+            .terminal
+            .pty_manager
+            .sessions()
+            .iter()
+            .filter(|s| s.kind == crate::pty_manager::SessionKind::ClaudeCode)
+            .count();
+        spans.push(Span::styled(
+            format!("{} worktrees", worktree_count),
+            Style::default().fg(theme.info).bg(bar_bg),
+        ));
+        spans.push(sep.clone());
+        spans.push(Span::styled(
+            format!("{} sessions", claude_session_count),
+            Style::default().fg(theme.success).bg(bar_bg),
+        ));
+        spans.push(sep.clone());
+        spans.push(Span::styled(
+            format!("v{}", crate::update_checker::current_version()),
+            Style::default().fg(theme.warning).bg(bar_bg),
+        ));
         if let Some(ref info) = app.ccusage_info {
             if !spans.is_empty() {
                 spans.push(sep.clone());
