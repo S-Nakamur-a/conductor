@@ -1092,14 +1092,33 @@ fn handle_mouse_scroll(
     } else {
         // Terminal panels (right column).
         let abs_delta = delta.unsigned_abs() as usize;
+        // ScrollUp (delta < 0) moves toward older content / into history.
+        let up = delta < 0;
+        let session_idx = if row < terminal_split_y {
+            app.terminal.active_claude_session
+        } else {
+            app.terminal.active_shell_session
+        };
+
+        // Pagers (less/bat/man) run on the alternate screen, which has no
+        // scrollback — translate the wheel into arrow keys for the child
+        // instead of bumping the (ignored) local scrollback offset.
+        if let Some(idx) = session_idx
+            && app
+                .terminal
+                .pty_manager
+                .scroll_alt_screen_session(idx, abs_delta, up)
+        {
+            return;
+        }
+
         if row < terminal_split_y {
-            if delta < 0 {
-                // ScrollUp = scroll into history.
+            if up {
                 app.terminal.scroll_claude = app.terminal.scroll_claude.saturating_add(abs_delta);
             } else {
                 app.terminal.scroll_claude = app.terminal.scroll_claude.saturating_sub(abs_delta);
             }
-        } else if delta < 0 {
+        } else if up {
             app.terminal.scroll_shell = app.terminal.scroll_shell.saturating_add(abs_delta);
         } else {
             app.terminal.scroll_shell = app.terminal.scroll_shell.saturating_sub(abs_delta);
