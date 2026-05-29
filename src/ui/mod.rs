@@ -11,6 +11,7 @@ pub mod explorer_panel;
 pub mod terminal_claude;
 pub mod terminal_shell;
 pub mod viewer_panel;
+pub mod worktree_bar;
 pub mod worktree_panel;
 
 // Top-level layout orchestration (render_ui, accordion_widths).

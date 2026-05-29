@@ -223,6 +223,69 @@ fn handle_notification_bar_click(
     true
 }
 
+/// Handle a left click on the worktree bar: select (jump to the worktree and
+/// its Claude session), delete (with confirmation), or add. Returns `true` if
+/// the click landed on the bar row (and was thus consumed).
+fn handle_wtbar_click(
+    app: &mut App,
+    col: u16,
+    row: u16,
+    wtbar_area: ratatui::layout::Rect,
+) -> bool {
+    if wtbar_area.height == 0 || row != wtbar_area.y {
+        return false;
+    }
+    use crate::app::{StatusLevel, WorktreeInputMode};
+    use crate::ui::worktree_bar::WtbarAction;
+
+    let action = app
+        .wtbar_hits
+        .iter()
+        .find(|h| col >= h.x0 && col < h.x1)
+        .map(|h| h.action);
+
+    match action {
+        Some(WtbarAction::Select(i)) if i < app.worktrees.len() => {
+            app.selected_worktree = i;
+            app.on_worktree_changed();
+            app.set_focus(Focus::TerminalClaude);
+        }
+        Some(WtbarAction::Add) => {
+            app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
+            app.worktree_mgr.input_buffer.clear();
+            app.set_status(
+                "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
+                StatusLevel::Info,
+            );
+        }
+        Some(WtbarAction::Delete(i)) => {
+            if let Some(wt) = app.worktrees.get(i) {
+                if wt.is_main {
+                    app.set_status(
+                        "Cannot delete the main worktree.".to_string(),
+                        StatusLevel::Error,
+                    );
+                } else if app.is_worktree_pending_delete(&wt.path) {
+                    app.set_status(
+                        "Worktree is already being deleted.".to_string(),
+                        StatusLevel::Warning,
+                    );
+                } else {
+                    let branch = wt.branch.clone();
+                    app.selected_worktree = i;
+                    app.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingDelete;
+                    app.set_status(
+                        format!("Delete worktree '{branch}'? (y/n)"),
+                        StatusLevel::Warning,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+    true
+}
+
 /// Handle a left click on the title bar (above the main area). Clicking the
 /// update badge starts the update flow. Returns `true` if the click was on the
 /// title bar (and thus consumed).
@@ -256,6 +319,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // Read layout from cache (computed during render).
     let lc = &app.layout_cache;
     let notif_area = lc.notif_area;
+    let wtbar_area = lc.wtbar_area;
     let main_area = lc.main_area;
 
     let left_w = lc.columns[0].width;
@@ -302,8 +366,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 app.viewer_state.scroll_right(4);
             }
         MouseEventKind::Down(MouseButton::Left) => {
-            // Notification bar / title bar clicks are handled (and consumed) first.
+            // Notification / worktree / title bar clicks are consumed first.
+            // The worktree bar must be checked before the title bar: the latter
+            // treats every row above `main_area` as "title" and would otherwise
+            // swallow the worktree strip's row.
             if handle_notification_bar_click(app, col, row, notif_area) {
+                return;
+            }
+            if handle_wtbar_click(app, col, row, wtbar_area) {
                 return;
             }
             if handle_title_bar_click(app, col, row, main_area) {
@@ -342,20 +412,12 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 let gutter_w = app.viewer_state.gutter_total_width();
                 let on_gutter = col >= inner_x && col < inner_x + gutter_w;
 
-                if app.viewer_state.diff_view.diff_mode {
-                    let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
-                    let resolved = app.viewer_state.diff_view.diff_view_lines.get(idx).and_then(|e| match e {
-                        crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
-                        _ => None,
-                    });
-                    app.viewer_state.click.hover_line = resolved;
-                    app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
-                } else {
-                    // Use screen-row mapping for correct line resolution with inline threads.
-                    let resolved = resolve_screen_line(app, line_offset);
-                    app.viewer_state.click.hover_line = resolved;
-                    app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
-                }
+                // Both diff and file-content views now populate `screen_row_map`
+                // (the diff view injects inline comment threads), so a single
+                // screen-row lookup resolves the hovered line in both modes.
+                let resolved = resolve_screen_line(app, line_offset);
+                app.viewer_state.click.hover_line = resolved;
+                app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
 
                 // Cmd/Ctrl+hover: resolve symbol for underline display.
                 let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
@@ -509,8 +571,16 @@ fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickG
                 let idx = app.viewer_state.explorer.diff_list_scroll + click_offset;
                 if idx < app.diff_state.display_list.len() {
                     app.viewer_state.explorer.diff_list_selected = idx;
+                    // Single-click: SUMMARY pseudo-file opens the change summary.
+                    if matches!(
+                        app.diff_state.display_list.get(idx),
+                        Some(crate::diff_state::DiffListEntry::Summary {})
+                    ) {
+                        app.viewer_state.enter_summary_view();
+                        app.set_focus(Focus::Viewer);
+                    }
                     // Single-click: toggle header or open file in Viewer.
-                    if app.diff_state.toggle_section(idx) {
+                    else if app.diff_state.toggle_section(idx) {
                         // Toggled a section header.
                         let new_count = app.diff_state.display_list.len();
                         if new_count > 0
@@ -518,34 +588,11 @@ fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickG
                         {
                             app.viewer_state.explorer.diff_list_selected = new_count - 1;
                         }
-                    } else if let Some((file_diff, _section)) = app.diff_state.resolve_file(idx) {
-                        let file_path = file_diff.path.clone();
-                        let file_diff_clone = file_diff.clone();
-                        if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-                            let wt_path = wt.path.clone();
-                            let tab_width = app.config.viewer.tab_width;
-                            app.viewer_state.open_file(&wt_path, &file_path, tab_width);
-                            app.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
-                            app.rehighlight_viewer();
-                            app.review_state.build_file_comment_cache(&file_path);
-
-                            // Build unified diff view.
-                            app.viewer_state.build_unified_diff_view(&file_diff_clone);
-                            if let Some(pos) = app
-                                .viewer_state
-                                .diff_view
-                                .diff_view_lines
-                                .iter()
-                                .position(|e| {
-                                    matches!(e, crate::viewer::UnifiedDiffEntry::Line { tag, .. }
-                                    if *tag != crate::diff_state::DiffLineTag::Equal)
-                                })
-                            {
-                                app.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
-                            }
-
-                            app.set_focus(Focus::Viewer);
-                        }
+                    } else if app.diff_state.resolve_file(idx).is_some() {
+                        // `diff_list_selected` already points at this row; the
+                        // shared opener lands on the first comment if any.
+                        app.open_diff_file_at_selected();
+                        app.set_focus(Focus::Viewer);
                     }
                 }
             }
@@ -638,7 +685,8 @@ fn handle_viewer_column_click(
     }
 
     // Handle clicks on thread action rows (💭 reply / ✅ resolve / 🗑 delete).
-    if row >= inner_y && !app.viewer_state.diff_view.diff_mode {
+    // Works in both diff and file-content views (both populate screen_row_map).
+    if row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(comment_id) = resolve_screen_action(app, screen_offset) {
             // Determine which action was clicked by column offset.
@@ -726,26 +774,14 @@ fn handle_viewer_column_click(
     let badge_w: u16 = 2;
     let on_badge = col >= inner_x + gutter_w && col < inner_x + gutter_w + badge_w;
 
-    // Badge click: toggle inline thread for the clicked line.
+    // Badge click: toggle the inline comment thread for the clicked line. Both
+    // the diff and file-content views render threads inline, so a single
+    // screen-row lookup works for either.
     if on_badge && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
-        let line_1 = if app.viewer_state.diff_view.diff_mode {
-            let idx = app.viewer_state.diff_view.diff_view_scroll + screen_offset;
-            app.viewer_state
-                .diff_view
-                .diff_view_lines
-                .get(idx)
-                .and_then(|e| match e {
-                    crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
-                    _ => None,
-                })
-        } else {
-            resolve_screen_line(app, screen_offset)
-        };
-        if let Some(line_1) = line_1
+        if let Some(line_1) = resolve_screen_line(app, screen_offset)
             && app.review_state.file_comments.contains_key(&line_1)
         {
-            // Toggle inline thread expansion (same as Space key).
             let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
             if threads.contains(&line_1) {
                 threads.remove(&line_1);
@@ -756,7 +792,6 @@ fn handle_viewer_column_click(
                 }
             } else {
                 threads.insert(line_1);
-                // Load replies if not cached.
                 if let Some(comments) = app.review_state.file_comments.get(&line_1) {
                     for comment in comments {
                         if !app.review_state.cached_replies.contains_key(&comment.id)
@@ -774,14 +809,22 @@ fn handle_viewer_column_click(
         return;
     }
 
-    // Click on ExpandableContext row (anywhere on the line) expands it.
+    // Click on an ExpandableContext row expands it. Inline threads shift screen
+    // rows, so map the row back to its diff entry via the entry map.
     if app.viewer_state.diff_view.diff_mode && row >= inner_y {
-        let line_offset = (row - inner_y) as usize;
-        let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
-        if matches!(
-            app.viewer_state.diff_view.diff_view_lines.get(idx),
-            Some(crate::viewer::UnifiedDiffEntry::ExpandableContext { .. })
-        ) {
+        let screen_offset = (row - inner_y) as usize;
+        if let Some(idx) = app
+            .viewer_state
+            .diff_view
+            .screen_entry_map
+            .get(screen_offset)
+            .copied()
+            .flatten()
+            && matches!(
+                app.viewer_state.diff_view.diff_view_lines.get(idx),
+                Some(crate::viewer::UnifiedDiffEntry::ExpandableContext { .. })
+            )
+        {
             app.viewer_state.expand_context_at(idx, false);
         }
     }
@@ -789,51 +832,20 @@ fn handle_viewer_column_click(
     // Only trigger comment selection when clicking inside the
     // line-number gutter (left-most columns).  Clicks on the
     // code content area are treated as plain focus changes.
-    if on_gutter {
-        // Detect clicks on viewer lines for comment selection.
-        if app.viewer_state.diff_view.diff_mode {
-            // Diff mode: resolve line number from diff_view_lines.
-            let diff_total = app.viewer_state.diff_view.diff_view_lines.len();
-            if diff_total > 0 && row >= inner_y {
-                let line_offset = (row - inner_y) as usize;
-                let idx = app.viewer_state.diff_view.diff_view_scroll + line_offset;
-                if let Some(crate::viewer::UnifiedDiffEntry::Line {
-                    new_line_no: Some(line_1),
-                    tag,
-                    ..
-                }) = app.viewer_state.diff_view.diff_view_lines.get(idx)
-                    && *tag != crate::diff_state::DiffLineTag::Delete
-                {
-                    let line_1 = *line_1;
-                    let has_comment = app.review_state.file_comments.contains_key(&line_1);
-                    // Show comment preview on single click if the line has a comment.
-                    app.viewer_state.explorer.comment_preview_line =
-                        if has_comment { Some(line_1) } else { None };
-                    let should_open = app.viewer_state.click_line_number(line_1);
-                    if should_open {
-                        app.viewer_state.explorer.comment_preview_line = None;
-                        open_viewer_comment(app);
-                    }
-                }
+    if on_gutter && row >= inner_y {
+        let screen_offset = (row - inner_y) as usize;
+        // Screen-row mapping handles inline thread rows and both view modes
+        // (deletion lines have no new-line number, so they resolve to None).
+        if let Some(line_1) = resolve_screen_line(app, screen_offset) {
+            let has_comment = app.review_state.file_comments.contains_key(&line_1);
+            app.viewer_state.explorer.comment_preview_line =
+                if has_comment { Some(line_1) } else { None };
+            let should_open = app.viewer_state.click_line_number(line_1);
+            if should_open {
+                app.viewer_state.explorer.comment_preview_line = None;
+                open_viewer_comment(app);
             }
-        } else {
-            if row >= inner_y {
-                let screen_offset = (row - inner_y) as usize;
-                // Use screen-row mapping to handle inline thread rows.
-                let line_1 = resolve_screen_line(app, screen_offset);
-
-                if let Some(line_1) = line_1 {
-                    let has_comment = app.review_state.file_comments.contains_key(&line_1);
-                    app.viewer_state.explorer.comment_preview_line =
-                        if has_comment { Some(line_1) } else { None };
-                    let should_open = app.viewer_state.click_line_number(line_1);
-                    if should_open {
-                        app.viewer_state.explorer.comment_preview_line = None;
-                        open_viewer_comment(app);
-                    }
-                }
-            }
-        } // end non-diff-mode
+        }
     }
 }
 

@@ -41,9 +41,9 @@ In a Claude Code session, run:
 ```
 
 This sets up:
-- **MCP server** — review comment DB integration
+- **MCP server** — review comment DB integration, including self-review comments and a branch-level change summary
 - **Hooks** — waiting-state detection for Claude Code sessions
-- **Commands** — `/address-conductor-comment` for resolving review comments
+- **Skills** — `/self-review` (review your own diff and leave inline comments + a change summary), `/address-conductor-comment` (resolve review comments), `/explain-comment` (annotate code)
 
 ## Usage
 

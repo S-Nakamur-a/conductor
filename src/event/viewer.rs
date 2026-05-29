@@ -22,6 +22,12 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     // Clear comment preview on any key input.
     app.viewer_state.explorer.comment_preview_line = None;
 
+    // Summary pseudo-file view has its own (simple) scroll navigation.
+    if app.viewer_state.is_summary() {
+        handle_viewer_summary_mode_key(app, key);
+        return;
+    }
+
     // Unified diff mode has its own navigation.
     if app.viewer_state.diff_view.diff_mode {
         handle_viewer_diff_mode_key(app, key);
@@ -162,6 +168,40 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
 }
 
 /// Key handling for the viewer panel in unified diff mode.
+/// Navigate the summary pseudo-file view: scroll, jump to ends, or exit back to
+/// the Explorer. Reuses the diff-mode key context so j/k/d/u/g/G/Esc behave the
+/// same as everywhere else.
+pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) {
+    let total = app.viewer_state.summary_total_lines;
+    let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
+
+    match action {
+        Some(Action::ExitToExplorer) => {
+            app.viewer_state.exit_diff_mode(); // also clears show_summary
+            app.set_focus(crate::app::Focus::Explorer);
+        }
+        Some(Action::SearchFilename) => super::open_filename_search(app),
+        Some(Action::NavigateDown) if app.viewer_state.summary_scroll + 1 < total => {
+            app.viewer_state.summary_scroll += 1;
+        }
+        Some(Action::NavigateUp) => {
+            app.viewer_state.summary_scroll = app.viewer_state.summary_scroll.saturating_sub(1);
+        }
+        Some(Action::ScrollHalfPageDown) => {
+            app.viewer_state.summary_scroll =
+                (app.viewer_state.summary_scroll + 15).min(total.saturating_sub(1));
+        }
+        Some(Action::ScrollHalfPageUp) => {
+            app.viewer_state.summary_scroll = app.viewer_state.summary_scroll.saturating_sub(15);
+        }
+        Some(Action::GoToTop) => app.viewer_state.summary_scroll = 0,
+        Some(Action::GoToBottom) => {
+            app.viewer_state.summary_scroll = total.saturating_sub(1);
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     let total = app.viewer_state.diff_view.diff_view_lines.len();
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
@@ -179,6 +219,16 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     // Fuzzy filename jump — also reachable from the maximized diff viewer.
     if let Some(Action::SearchFilename) = action {
         super::open_filename_search(app);
+        return;
+    }
+
+    // Jump to the next/previous changed file (GitHub-style "next file").
+    if let Some(Action::NextChangedFile) = action {
+        app.jump_to_changed_file(true);
+        return;
+    }
+    if let Some(Action::PrevChangedFile) = action {
+        app.jump_to_changed_file(false);
         return;
     }
 

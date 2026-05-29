@@ -31,6 +31,12 @@ pub enum ActiveOverlay {
     GrepSearch,
     Help,
     CommandPalette,
+    /// Worktree switcher — the modal that replaced the left worktree column.
+    /// Reuses the existing worktree list state and `handle_worktree_key`.
+    WorktreeSwitcher,
+    /// Full-screen comment list — overview of all review comments on the branch
+    /// with jump-to-location. Reuses the comment list state + handler.
+    CommentList,
 }
 
 /// Switch-branch overlay state.

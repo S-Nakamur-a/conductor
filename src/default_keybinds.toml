@@ -110,6 +110,7 @@
 "G" = "go_to_bottom"
 "d" = "show_diff_list"
 "c" = "show_comment_list"
+"C" = "open_comment_list"
 "/" = "search_filename"
 ":" = "command_palette"
 
@@ -179,6 +180,7 @@
 # tree is hidden, so files can be switched without un-maximizing.
 "ctrl+f" = "search_filename"
 "c" = "add_comment"
+"C" = "open_comment_list"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
 ":" = "command_palette"
@@ -208,6 +210,9 @@
 "[" = "prev_hunk"
 "}" = "next_comment"
 "{" = "prev_comment"
+# Jump to the next/previous changed file (GitHub-style "next file").
+"J" = "next_changed_file"
+"K" = "prev_changed_file"
 "c" = "add_comment"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"

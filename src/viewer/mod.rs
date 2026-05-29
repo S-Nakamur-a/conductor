@@ -116,6 +116,11 @@ pub struct DiffViewState {
     pub diff_view_scroll: usize,
     /// Cached max line number for diff view (avoids O(n) scan per frame).
     pub diff_view_max_line_no: usize,
+    /// Maps each rendered screen row (within the diff viewport) back to its
+    /// index in `diff_view_lines`, or `None` for injected inline-thread rows.
+    /// Written during render; used by mouse handling (e.g. expand-context)
+    /// since inserted thread rows break the simple scroll+offset arithmetic.
+    pub screen_entry_map: Vec<Option<usize>>,
 }
 
 /// Explorer panel state (selections, scrolls).
@@ -273,6 +278,15 @@ pub struct ViewerState {
     pub click: ClickTracker,
     /// Whether 'g' was pressed and waiting for a second key (gd, gi, gr).
     pub pending_g_key: bool,
+    /// Whether the viewer is showing the branch change-summary pseudo-file
+    /// (the "SUMMARY" entry) instead of file content / diff. Mutually exclusive
+    /// with `diff_view.diff_mode`; see `enter_summary_view` / `exit_summary_view`.
+    pub show_summary: bool,
+    /// Vertical scroll offset within the summary view.
+    pub summary_scroll: usize,
+    /// Total wrapped line count of the summary view, written during render and
+    /// read by the key handler to clamp `summary_scroll`.
+    pub summary_total_lines: usize,
 }
 
 impl ViewerState {
@@ -1039,12 +1053,30 @@ impl ViewerState {
         self.content.h_scroll = (self.content.h_scroll + delta).min(limit);
     }
 
-    /// Exit unified diff mode and reset related state.
+    /// Exit unified diff mode and reset related state. Also leaves the summary
+    /// pseudo-file view — every file-open path funnels through here, so this is
+    /// the single place that guarantees `show_summary` and `diff_mode` are never
+    /// both set.
     pub fn exit_diff_mode(&mut self) {
         self.diff_view.diff_mode = false;
         self.diff_view.diff_view_lines.clear();
         self.diff_view.diff_view_scroll = 0;
         self.diff_view.diff_view_max_line_no = 0;
+        self.show_summary = false;
+        self.summary_scroll = 0;
+    }
+
+    /// Whether the viewer is currently showing the summary pseudo-file.
+    pub fn is_summary(&self) -> bool {
+        self.show_summary
+    }
+
+    /// Enter the summary pseudo-file view, leaving any diff/file content. Kept
+    /// mutually exclusive with diff mode via `exit_diff_mode`.
+    pub fn enter_summary_view(&mut self) {
+        self.exit_diff_mode();
+        self.show_summary = true;
+        self.summary_scroll = 0;
     }
 
     /// Expand hidden context lines at the given index in `diff_view_lines`.

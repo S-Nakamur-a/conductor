@@ -1,6 +1,6 @@
 {
   "name": "conductor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Hooks, MCP tools, and commands for Claude Code sessions running inside Conductor TUI",
   "author": {
     "name": "S-Nakamur-a"

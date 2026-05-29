@@ -21,6 +21,7 @@ use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
 use self::explorer::handle_explorer_key;
+use self::explorer::handle_explorer_comment_list_key;
 use self::global::dispatch_global_action;
 use self::overlay::*;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
@@ -158,6 +159,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 ActiveOverlay::GrepSearch => handle_grep_search_key(app, key),
                 ActiveOverlay::Help => handle_help_key(app, key),
                 ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
+                ActiveOverlay::WorktreeSwitcher => handle_worktree_key(app, key),
+                ActiveOverlay::CommentList => handle_explorer_comment_list_key(app, key),
                 ActiveOverlay::None => unreachable!(),
             }
             return;

@@ -49,31 +49,30 @@ pub enum DiffSection {
 /// An entry in the flattened display list shown in the explorer panel.
 #[derive(Debug, Clone)]
 pub enum DiffListEntry {
-    /// A collapsible section header.
-    SectionHeader {
-        section: DiffSection,
-        count: usize,
-        collapsed: bool,
-    },
-    /// A directory node in the tree (collapsible).
+    /// A directory node in the merged change tree (collapsible).
     Directory {
-        section: DiffSection,
         /// The directory path (e.g. "src/ui").
         path: String,
         /// Display name (last component).
         name: String,
-        /// Nesting depth (0 = top-level within a section).
+        /// Nesting depth (0 = top-level).
         depth: usize,
         /// Whether this directory is collapsed.
         collapsed: bool,
     },
-    /// A file within a section.
+    /// A changed file. `section` records its origin (committed vs uncommitted)
+    /// both for the row's C/U marker and to resolve back into the right list.
     File {
         section: DiffSection,
         file_index: usize,
-        /// Nesting depth (0 = top-level file within a section).
+        /// Nesting depth (0 = top-level file).
         depth: usize,
     },
+    /// The branch change-summary pseudo-file, pinned at the very top of the
+    /// list. Selecting it opens the full summary in the Viewer. Struct-variant
+    /// form so future metadata (e.g. freshness) can be added without breaking
+    /// existing match arms.
+    Summary {},
 }
 
 // ---------------------------------------------------------------------------
@@ -171,11 +170,7 @@ pub struct DiffState {
     pub uncommitted_files: Vec<FileDiff>,
     /// Flattened display list for the explorer panel.
     pub display_list: Vec<DiffListEntry>,
-    /// Whether the Committed section is collapsed.
-    pub committed_collapsed: bool,
-    /// Whether the Uncommitted section is collapsed.
-    pub uncommitted_collapsed: bool,
-    /// Set of collapsed directory paths (keyed by "section:path").
+    /// Set of collapsed directory paths (keyed by plain repo-relative path).
     pub collapsed_dirs: HashSet<String>,
     /// Vertical scroll offset inside the diff content pane.
     pub scroll: usize,
@@ -185,6 +180,11 @@ pub struct DiffState {
     pub base_branch: String,
     /// Human-readable error message if the diff could not be loaded.
     pub error: Option<String>,
+    /// Whether the current branch has a change summary. When `true`, a
+    /// `DiffListEntry::Summary` pseudo-file is pinned at the top of the display
+    /// list. Synced by the App from `ReviewState::change_summary` (the diff
+    /// model can't reach review state directly, so it caches just this flag).
+    pub has_summary: bool,
 }
 
 impl DiffState {
@@ -194,13 +194,12 @@ impl DiffState {
             committed_files: Vec::new(),
             uncommitted_files: Vec::new(),
             display_list: Vec::new(),
-            committed_collapsed: false,
-            uncommitted_collapsed: false,
             collapsed_dirs: HashSet::new(),
             scroll: 0,
             view_mode,
             base_branch: base_branch.to_string(),
             error: None,
+            has_summary: false,
         };
         state.rebuild_display_list();
         state
@@ -265,113 +264,106 @@ impl DiffState {
         self.scroll = 0;
     }
 
-    /// Rebuild the flattened display list from the current file lists and
-    /// collapse states, organizing files into a directory tree structure.
+    /// Rebuild the flattened display list, merging committed and uncommitted
+    /// changes into a single directory tree. Files keep their origin
+    /// (`DiffSection`) for the C/U marker and resolution; directories are merged
+    /// across origins so `src/` appears once even with both kinds of change.
     pub fn rebuild_display_list(&mut self) {
         self.display_list.clear();
 
-        // Committed section.
-        self.display_list.push(DiffListEntry::SectionHeader {
-            section: DiffSection::Committed,
-            count: self.committed_files.len(),
-            collapsed: self.committed_collapsed,
-        });
-        if !self.committed_collapsed {
-            Self::build_tree_entries(
-                DiffSection::Committed,
-                &self.committed_files,
-                &self.collapsed_dirs,
-                &mut self.display_list,
-            );
+        // Change-summary pseudo-file, pinned at the very top when present.
+        if self.has_summary {
+            self.display_list.push(DiffListEntry::Summary {});
         }
 
-        // Uncommitted section.
-        self.display_list.push(DiffListEntry::SectionHeader {
-            section: DiffSection::Uncommitted,
-            count: self.uncommitted_files.len(),
-            collapsed: self.uncommitted_collapsed,
-        });
-        if !self.uncommitted_collapsed {
-            Self::build_tree_entries(
-                DiffSection::Uncommitted,
-                &self.uncommitted_files,
-                &self.collapsed_dirs,
-                &mut self.display_list,
-            );
-        }
+        Self::build_tree_entries(
+            &self.committed_files,
+            &self.uncommitted_files,
+            &self.collapsed_dirs,
+            &mut self.display_list,
+        );
     }
 
-    /// Build tree entries for a section's files, grouping by directory.
+    /// Build one directory tree over both origins' files. A file that changed
+    /// in both committed and uncommitted form appears twice (once per origin)
+    /// under the same merged directory node, distinguished by its marker.
     fn build_tree_entries(
-        section: DiffSection,
-        files: &[FileDiff],
+        committed: &[FileDiff],
+        uncommitted: &[FileDiff],
         collapsed_dirs: &HashSet<String>,
         display_list: &mut Vec<DiffListEntry>,
     ) {
-        // Build a sorted set of directory paths and map files to their parents.
-        let section_prefix = match section {
-            DiffSection::Committed => "c:",
-            DiffSection::Uncommitted => "u:",
-        };
+        // A leaf of the merged tree: which origin list + index it resolves to.
+        struct Leaf {
+            section: DiffSection,
+            index: usize,
+            path: String,
+        }
+        let mut leaves: Vec<Leaf> = Vec::with_capacity(committed.len() + uncommitted.len());
+        for (i, f) in committed.iter().enumerate() {
+            leaves.push(Leaf {
+                section: DiffSection::Committed,
+                index: i,
+                path: f.path.clone(),
+            });
+        }
+        for (i, f) in uncommitted.iter().enumerate() {
+            leaves.push(Leaf {
+                section: DiffSection::Uncommitted,
+                index: i,
+                path: f.path.clone(),
+            });
+        }
+        // Group siblings together; stable so committed precedes uncommitted at
+        // the same path.
+        leaves.sort_by(|a, b| a.path.cmp(&b.path));
 
-        // Collect all unique directory paths.
+        // Collect directory paths and the leaf indices living directly in each.
         let mut dir_set: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        let mut top_level_files: Vec<usize> = Vec::new();
-
-        for (i, file) in files.iter().enumerate() {
-            if let Some(slash_pos) = file.path.rfind('/') {
-                let dir = &file.path[..slash_pos];
-                dir_set.entry(dir.to_string()).or_default().push(i);
+        let mut top_level: Vec<usize> = Vec::new();
+        for (li, leaf) in leaves.iter().enumerate() {
+            if let Some(slash) = leaf.path.rfind('/') {
+                dir_set
+                    .entry(leaf.path[..slash].to_string())
+                    .or_default()
+                    .push(li);
             } else {
-                top_level_files.push(i);
+                top_level.push(li);
             }
         }
 
-        // Build a tree structure using recursive insertion.
-        // We'll use a simple approach: collect all directory paths, sort them,
-        // and emit entries in depth-first order.
-
-        // First, ensure all parent directories exist in the set.
+        // Ensure all ancestor directories exist as nodes.
         let all_dirs: Vec<String> = dir_set.keys().cloned().collect();
         for dir in &all_dirs {
             let mut current = dir.as_str();
-            while let Some(slash_pos) = current.rfind('/') {
-                let parent = &current[..slash_pos];
+            while let Some(slash) = current.rfind('/') {
+                let parent = &current[..slash];
                 dir_set.entry(parent.to_string()).or_default();
                 current = parent;
             }
         }
 
-        // Build a map of direct children for each directory.
-        // Root children are dirs whose path contains no '/'.
         struct TreeNode {
             child_dirs: Vec<String>,
-            files: Vec<usize>,
+            leaves: Vec<usize>,
         }
-
         let mut nodes: BTreeMap<String, TreeNode> = BTreeMap::new();
-
-        // Initialize all directory nodes.
         for dir_path in dir_set.keys() {
             nodes.entry(dir_path.clone()).or_insert_with(|| TreeNode {
                 child_dirs: Vec::new(),
-                files: Vec::new(),
+                leaves: Vec::new(),
             });
         }
-
-        // Assign files to their direct parent dirs.
-        for (dir_path, file_indices) in &dir_set {
+        for (dir_path, leaf_indices) in &dir_set {
             if let Some(node) = nodes.get_mut(dir_path) {
-                node.files = file_indices.clone();
+                node.leaves = leaf_indices.clone();
             }
         }
-
-        // Assign child dirs to their parents.
         let dir_paths: Vec<String> = nodes.keys().cloned().collect();
         let mut root_dirs: Vec<String> = Vec::new();
         for dir_path in &dir_paths {
-            if let Some(slash_pos) = dir_path.rfind('/') {
-                let parent = &dir_path[..slash_pos];
+            if let Some(slash) = dir_path.rfind('/') {
+                let parent = &dir_path[..slash];
                 if let Some(parent_node) = nodes.get_mut(parent) {
                     parent_node.child_dirs.push(dir_path.clone());
                 } else {
@@ -381,85 +373,52 @@ impl DiffState {
                 root_dirs.push(dir_path.clone());
             }
         }
-
-        // Sort children.
         root_dirs.sort();
         for node in nodes.values_mut() {
             node.child_dirs.sort();
-            node.files.sort();
+            // `leaves` already in path/origin order from the global sort.
         }
 
-        // Emit tree entries depth-first.
-        #[allow(clippy::too_many_arguments)]
         fn emit_dir(
             dir_path: &str,
             depth: usize,
-            section: DiffSection,
-            section_prefix: &str,
-            _files: &[FileDiff],
+            leaves: &[Leaf],
             nodes: &BTreeMap<String, TreeNode>,
             collapsed_dirs: &HashSet<String>,
             display_list: &mut Vec<DiffListEntry>,
         ) {
             let name = dir_path.rsplit('/').next().unwrap_or(dir_path).to_string();
-            let collapse_key = format!("{section_prefix}{dir_path}");
-            let is_collapsed = collapsed_dirs.contains(&collapse_key);
-
+            let is_collapsed = collapsed_dirs.contains(dir_path);
             display_list.push(DiffListEntry::Directory {
-                section,
                 path: dir_path.to_string(),
                 name,
                 depth,
                 collapsed: is_collapsed,
             });
-
             if is_collapsed {
                 return;
             }
-
             if let Some(node) = nodes.get(dir_path) {
-                // Emit child directories first, then files.
                 for child_dir in &node.child_dirs {
-                    emit_dir(
-                        child_dir,
-                        depth + 1,
-                        section,
-                        section_prefix,
-                        _files,
-                        nodes,
-                        collapsed_dirs,
-                        display_list,
-                    );
+                    emit_dir(child_dir, depth + 1, leaves, nodes, collapsed_dirs, display_list);
                 }
-                for &file_idx in &node.files {
+                for &li in &node.leaves {
                     display_list.push(DiffListEntry::File {
-                        section,
-                        file_index: file_idx,
+                        section: leaves[li].section,
+                        file_index: leaves[li].index,
                         depth: depth + 1,
                     });
                 }
             }
         }
 
-        // Emit root directories first.
         for dir_path in &root_dirs {
-            emit_dir(
-                dir_path,
-                0,
-                section,
-                section_prefix,
-                files,
-                &nodes,
-                collapsed_dirs,
-                display_list,
-            );
+            emit_dir(dir_path, 0, &leaves, &nodes, collapsed_dirs, display_list);
         }
-
-        // Emit top-level files (those with no directory).
-        for &file_idx in &top_level_files {
+        for &li in &top_level {
             display_list.push(DiffListEntry::File {
-                section,
-                file_index: file_idx,
+                section: leaves[li].section,
+                file_index: leaves[li].index,
                 depth: 0,
             });
         }
@@ -481,128 +440,50 @@ impl DiffState {
                 };
                 files.get(*file_index).map(|f| (f, *section))
             }
-            DiffListEntry::SectionHeader { .. } | DiffListEntry::Directory { .. } => None,
+            DiffListEntry::Directory { .. } | DiffListEntry::Summary {} => None,
         }
     }
 
-    /// Toggle the collapsed state of the section or directory at the given display index.
-    ///
-    /// Returns `true` if a toggle was performed (section header or directory).
+    /// Toggle the collapsed state of the directory at the given display index.
+    /// Returns `true` if a directory was toggled (so the caller knows the list
+    /// changed). Non-directory rows (files, the summary) are a no-op.
     pub fn toggle_section(&mut self, display_idx: usize) -> bool {
-        match self.display_list.get(display_idx) {
-            Some(DiffListEntry::SectionHeader { section, .. }) => {
-                match section {
-                    DiffSection::Committed => {
-                        self.committed_collapsed = !self.committed_collapsed;
-                    }
-                    DiffSection::Uncommitted => {
-                        self.uncommitted_collapsed = !self.uncommitted_collapsed;
-                    }
-                }
-                self.rebuild_display_list();
-                true
+        if let Some(DiffListEntry::Directory { path, .. }) = self.display_list.get(display_idx) {
+            let key = path.clone();
+            if self.collapsed_dirs.contains(&key) {
+                self.collapsed_dirs.remove(&key);
+            } else {
+                self.collapsed_dirs.insert(key);
             }
-            Some(DiffListEntry::Directory { section, path, .. }) => {
-                let key = Self::dir_collapse_key(*section, path);
-                if self.collapsed_dirs.contains(&key) {
-                    self.collapsed_dirs.remove(&key);
-                } else {
-                    self.collapsed_dirs.insert(key);
-                }
-                self.rebuild_display_list();
-                true
-            }
-            _ => false,
+            self.rebuild_display_list();
+            true
+        } else {
+            false
         }
     }
 
-    /// Collapse the section or directory at the given display index.
-    // The inner `if` must NOT be collapsed into a match guard: the next arm's
-    // `match entry { Directory => unreachable!() }` relies on this arm matching
-    // *all* `Directory` entries. Guarding would let already-collapsed dirs fall
-    // through and panic.
-    #[allow(clippy::collapsible_match)]
+    /// Collapse the directory at the given display index (no-op for other rows).
     pub fn collapse_section(&mut self, display_idx: usize) {
-        match self.display_list.get(display_idx) {
-            Some(DiffListEntry::Directory {
-                section,
-                path,
-                collapsed,
-                ..
-            }) => {
-                if !collapsed {
-                    let key = Self::dir_collapse_key(*section, path);
-                    self.collapsed_dirs.insert(key);
-                    self.rebuild_display_list();
-                }
-            }
-            Some(entry) => {
-                let section = match entry {
-                    DiffListEntry::SectionHeader { section, .. } => Some(*section),
-                    DiffListEntry::File { section, .. } => Some(*section),
-                    DiffListEntry::Directory { .. } => unreachable!(),
-                };
-                if let Some(section) = section {
-                    let collapsed = match section {
-                        DiffSection::Committed => &mut self.committed_collapsed,
-                        DiffSection::Uncommitted => &mut self.uncommitted_collapsed,
-                    };
-                    if !*collapsed {
-                        *collapsed = true;
-                        self.rebuild_display_list();
-                    }
-                }
-            }
-            None => {}
+        if let Some(DiffListEntry::Directory { path, collapsed, .. }) =
+            self.display_list.get(display_idx)
+            && !collapsed
+        {
+            let key = path.clone();
+            self.collapsed_dirs.insert(key);
+            self.rebuild_display_list();
         }
     }
 
-    /// Expand the section or directory at the given display index.
-    // See `collapse_section`: the inner `if` must stay out of the match guard,
-    // otherwise already-expanded dirs fall through to the `unreachable!()` arm.
-    #[allow(clippy::collapsible_match)]
+    /// Expand the directory at the given display index (no-op for other rows).
     pub fn expand_section(&mut self, display_idx: usize) {
-        match self.display_list.get(display_idx) {
-            Some(DiffListEntry::Directory {
-                section,
-                path,
-                collapsed,
-                ..
-            }) => {
-                if *collapsed {
-                    let key = Self::dir_collapse_key(*section, path);
-                    self.collapsed_dirs.remove(&key);
-                    self.rebuild_display_list();
-                }
-            }
-            Some(entry) => {
-                let section = match entry {
-                    DiffListEntry::SectionHeader { section, .. } => Some(*section),
-                    DiffListEntry::File { section, .. } => Some(*section),
-                    DiffListEntry::Directory { .. } => unreachable!(),
-                };
-                if let Some(section) = section {
-                    let collapsed = match section {
-                        DiffSection::Committed => &mut self.committed_collapsed,
-                        DiffSection::Uncommitted => &mut self.uncommitted_collapsed,
-                    };
-                    if *collapsed {
-                        *collapsed = false;
-                        self.rebuild_display_list();
-                    }
-                }
-            }
-            None => {}
+        if let Some(DiffListEntry::Directory { path, collapsed, .. }) =
+            self.display_list.get(display_idx)
+            && *collapsed
+        {
+            let key = path.clone();
+            self.collapsed_dirs.remove(&key);
+            self.rebuild_display_list();
         }
-    }
-
-    /// Build the collapse key for a directory in a given section.
-    fn dir_collapse_key(section: DiffSection, path: &str) -> String {
-        let prefix = match section {
-            DiffSection::Committed => "c:",
-            DiffSection::Uncommitted => "u:",
-        };
-        format!("{prefix}{path}")
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
@@ -1188,7 +1069,6 @@ mod tests {
         use super::*;
         let mut ds = DiffState::new("main", DiffViewMode::Unified);
         ds.display_list = vec![DiffListEntry::Directory {
-            section: DiffSection::Committed,
             path: "src".to_string(),
             name: "src".to_string(),
             depth: 0,
@@ -1202,7 +1082,6 @@ mod tests {
         use super::*;
         let mut ds = DiffState::new("main", DiffViewMode::Unified);
         ds.display_list = vec![DiffListEntry::Directory {
-            section: DiffSection::Committed,
             path: "src".to_string(),
             name: "src".to_string(),
             depth: 0,

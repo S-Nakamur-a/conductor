@@ -85,6 +85,11 @@ pub struct ReviewState {
     pub comment_detail_max_scroll: usize,
     /// Index of the comment being viewed in the detail modal.
     pub comment_detail_idx: usize,
+
+    /// Branch-level change summary (the "what & why" of the whole diff), loaded
+    /// alongside comments and rendered as a banner above the diff. `None` when
+    /// the current branch has no summary written.
+    pub change_summary: Option<String>,
 }
 
 impl ReviewState {
@@ -113,6 +118,7 @@ impl ReviewState {
             comment_detail_scroll: 0,
             comment_detail_max_scroll: 0,
             comment_detail_idx: 0,
+            change_summary: None,
         }
     }
 
@@ -142,6 +148,14 @@ impl ReviewState {
             Err(e) => {
                 log::warn!("failed to load reply counts: {e}");
                 self.reply_counts.clear();
+            }
+        }
+        // Load the branch-level change summary for this worktree.
+        match store.get_change_summary(worktree) {
+            Ok(summary) => self.change_summary = summary,
+            Err(e) => {
+                log::warn!("failed to load change summary: {e}");
+                self.change_summary = None;
             }
         }
         // Clean up expansion state for comments that no longer exist.

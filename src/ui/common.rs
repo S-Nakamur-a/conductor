@@ -412,6 +412,11 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 /// Render the notification bar showing CC waiting badges.
 /// Returns the height consumed (0 if no notifications, 1 if shown).
 /// Records badge positions in `app.notification_bar_badges` for click handling.
+///
+/// Retained but no longer wired: the CC-waiting notification bar was replaced
+/// by the worktree monitor strip (which highlights the waiting worktree). Kept
+/// for now to keep the diff focused; safe to delete in a follow-up cleanup.
+#[allow(dead_code)]
 pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> u16 {
     app.notification_bar_badges.clear();
 

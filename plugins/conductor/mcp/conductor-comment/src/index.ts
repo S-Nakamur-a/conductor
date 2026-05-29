@@ -128,7 +128,7 @@ interface ReviewReply {
 
 const server = new McpServer({
   name: "conductor",
-  version: "0.5.0",
+  version: "0.6.0",
 });
 
 let db: Database.Database;
@@ -585,6 +585,141 @@ server.tool(
           text: `Comment created (id: ${id.slice(0, 8)}) at ${loc} on branch "${branch}". (${selfReviewCount} unresolved self-review comment(s) now on this branch${densityNudge}.)`,
         },
       ],
+    };
+  }
+);
+
+server.tool(
+  "set_change_summary",
+  "Set the branch-level change summary — the 'what & why' of the whole diff (the PR-description counterpart to line-anchored comments). " +
+    "It renders as a fixed banner above the diff in the Conductor Viewer. Write one overview describing the overall intent of the change and the rationale for the files being touched; calling it again replaces the previous summary. " +
+    "Use this for the high-level narrative, and create_comment for specific line-level notes.",
+  {
+    body: z
+      .string()
+      .min(1)
+      .describe(
+        "The change summary text. A concise overview of what the change does and why; may span multiple lines."
+      ),
+  },
+  async ({ body }) => {
+    const d = getDb();
+
+    const branch = currentBranch();
+    if (!branch || branch === "HEAD") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Cannot determine the current git branch (detached HEAD?); a change summary must be attached to a branch.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Defensive: the table is created by the Rust TUI's v5 migration, but the
+    // MCP server may run against a DB an older binary hasn't migrated yet.
+    // Mirror the Rust schema so a fresh write never fails on a missing table.
+    d.exec(
+      `CREATE TABLE IF NOT EXISTS change_summary (
+         branch      TEXT PRIMARY KEY,
+         body        TEXT NOT NULL,
+         author      TEXT NOT NULL DEFAULT 'claude'
+                       CHECK (author IN ('user', 'claude')),
+         created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+       )`
+    );
+
+    try {
+      d.prepare(
+        `INSERT INTO change_summary (branch, body, author, created_at, updated_at)
+         VALUES (@branch, @body, 'claude',
+                 COALESCE((SELECT created_at FROM change_summary WHERE branch = @branch), datetime('now')),
+                 datetime('now'))
+         ON CONFLICT(branch) DO UPDATE SET
+           body = excluded.body,
+           author = 'claude',
+           updated_at = datetime('now')`
+      ).run({ branch, body });
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to set change summary: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    signalUiRefresh();
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Change summary set for branch "${branch}" (${body.length} chars). It now shows as a banner above the diff.`,
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_change_summary",
+  "Get the branch-level change summary (the 'what & why' overview set by set_change_summary) for the current branch, or a specified branch. " +
+    "Useful for reusing the summary as a PR description body.",
+  {
+    branch: z
+      .string()
+      .optional()
+      .describe(
+        "Branch to read the summary for. Omit to use the current git branch."
+      ),
+  },
+  async ({ branch }) => {
+    const d = getDb();
+
+    const target = branch ?? currentBranch();
+    if (!target || target === "HEAD") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Cannot determine the current git branch (detached HEAD?); specify a branch explicitly.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // The table may not exist yet if no summary has ever been written (older
+    // DB not migrated, or never used). Treat "no table" the same as "no row".
+    let row: { body: string } | undefined;
+    try {
+      row = d
+        .prepare("SELECT body FROM change_summary WHERE branch = ?")
+        .get(target) as { body: string } | undefined;
+    } catch {
+      row = undefined;
+    }
+
+    if (!row) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `No change summary set for branch "${target}".`,
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [{ type: "text" as const, text: row.body }],
     };
   }
 );

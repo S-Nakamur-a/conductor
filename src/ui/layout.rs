@@ -22,6 +22,8 @@ pub struct LayoutCache {
     pub title_area: Rect,
     /// Notification bar area.
     pub notif_area: Rect,
+    /// Worktree monitor strip area (full-width, between notif and main).
+    pub wtbar_area: Rect,
     /// Main content area (between title and status bars).
     pub main_area: Rect,
     /// Status bar area.
@@ -53,11 +55,17 @@ impl LayoutCache {
         self.expanded_panel = expanded_panel;
         self.has_notifications = has_notifications;
 
-        let notif_height: u16 = if has_notifications { 1 } else { 0 };
+        // The notification bar is gone — Claude-waiting state is now shown by
+        // the worktree strip (the waiting worktree is highlighted there).
+        let notif_height: u16 = 0;
+        // The worktree monitor strip is hidden while a panel is maximized, to
+        // give the expanded panel the full height.
+        let wtbar_height: u16 = if expanded_panel.is_some() { 0 } else { 1 };
 
         let outer = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(notif_height),
+            Constraint::Length(wtbar_height),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -65,8 +73,9 @@ impl LayoutCache {
 
         self.title_area = outer[0];
         self.notif_area = outer[1];
-        self.main_area = outer[2];
-        self.status_area = outer[3];
+        self.wtbar_area = outer[2];
+        self.main_area = outer[3];
+        self.status_area = outer[4];
 
         let (left_w, explorer_w, viewer_w) = accordion_widths(expanded_panel, self.main_area.width);
         let right_w = self
@@ -115,12 +124,13 @@ pub(crate) fn accordion_widths(
         Some(Focus::Viewer) => (0, 0, total_width),
         Some(Focus::TerminalClaude | Focus::TerminalShell) => (0, 0, 0),
         None => {
-            // Default proportions.
+            // Default proportions. The worktree column is gone (its status now
+            // lives in the top strip), so it gets width 0 and the freed space
+            // goes to the explorer and viewer review panes.
             let min_col = 3_u16;
-            let left = ((total_width as u32 * 15 / 100) as u16).max(min_col);
-            let explorer = ((total_width as u32 * 20 / 100) as u16).max(min_col);
-            let viewer = ((total_width as u32 * 30 / 100) as u16).max(min_col);
-            (left, explorer, viewer)
+            let explorer = ((total_width as u32 * 24 / 100) as u16).max(min_col);
+            let viewer = ((total_width as u32 * 38 / 100) as u16).max(min_col);
+            (0, explorer, viewer)
         }
     }
 }
@@ -135,17 +145,16 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         .update(area, app.expanded_panel, has_notifications);
 
     let title_area = app.layout_cache.title_area;
-    let notif_area = app.layout_cache.notif_area;
+    let wtbar_area = app.layout_cache.wtbar_area;
     let main_area = app.layout_cache.main_area;
     let status_area = app.layout_cache.status_area;
 
     // ── Title bar ───────────────────────────────────────────────────
     super::common::render_title_bar(frame, title_area, app);
 
-    // ── Notification bar (CC waiting) ───────────────────────────────
-    if has_notifications {
-        super::common::render_notification_bar(frame, notif_area, app);
-    }
+    // ── Worktree monitor strip (replaces the old left column and the
+    //    former CC-waiting notification bar) ─────────────────────────
+    super::worktree_bar::render(frame, wtbar_area, app);
 
     // ── Accordion column widths (from cache) ───────────────────────
     let columns = app.layout_cache.columns;
@@ -157,7 +166,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // their (bg-transparent) content draws on top; viewer is left alone
     // as a reading pane and the terminal keeps its own PTY background.
     let focused_surface_col = match app.focus {
-        crate::app::Focus::Worktree => Some(0),
         crate::app::Focus::Explorer => Some(1),
         _ => None,
     };
@@ -167,8 +175,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         frame.render_widget(fill, columns[col]);
     }
 
-    // ── Column 0: Worktree panel ────────────────────────────────────
-    super::worktree_panel::render(frame, columns[0], app);
+    // ── Column 0 (worktree) is gone — its status is in the top strip. ──
 
     // ── Column 1: Explorer (file tree + diff list) ──────────────────
     super::explorer_panel::render(frame, columns[1], app);
@@ -283,6 +290,12 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         }
         crate::overlay::ActiveOverlay::Help => {
             super::dashboard::render_help_overlay(frame, main_area, app);
+        }
+        crate::overlay::ActiveOverlay::WorktreeSwitcher => {
+            super::worktree_bar::render_switcher_overlay(frame, main_area, app);
+        }
+        crate::overlay::ActiveOverlay::CommentList => {
+            super::explorer_panel::render_comment_list_overlay(frame, main_area, app);
         }
     }
     // Fuzzy filename-search ("jump to file") modal — rendered at the top level

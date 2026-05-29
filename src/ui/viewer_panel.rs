@@ -23,6 +23,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Clear screen-row map so stale data isn't used in diff/media modes.
     app.viewer_state.content.screen_row_map.clear();
 
+    // Summary pseudo-file: the branch change summary gets the whole panel.
+    // Checked before any shared borrows so the renderer can take `&mut App`.
+    if app.viewer_state.is_summary() {
+        let focused = app.focus == Focus::Viewer;
+        render_summary_view(frame, area, app, focused);
+        return;
+    }
+
     // Populate diff annotations cache before taking any shared borrows.
     ensure_diff_annotations_cached(app);
 
@@ -763,72 +771,239 @@ fn render_diff_content_line(
     Line::from(spans)
 }
 
-fn render_diff_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
-    let theme = &app.theme;
-    let vs = &app.viewer_state;
-    let tab_width = app.config.viewer.tab_width;
+/// Word-wrap text to `width` columns, preserving author line breaks and
+/// hard-splitting tokens longer than the width. Blank source lines are kept as
+/// empty rows (paragraph spacing). No truncation — returns every wrapped row.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut wrapped: Vec<String> = Vec::new();
+    for raw_line in text.lines() {
+        if raw_line.trim().is_empty() {
+            wrapped.push(String::new());
+            continue;
+        }
+        let mut cur = String::new();
+        for word in raw_line.split_whitespace() {
+            // Hard-wrap a single token longer than the width.
+            let mut word = word;
+            while word.chars().count() > width {
+                let head: String = word.chars().take(width).collect();
+                if !cur.is_empty() {
+                    wrapped.push(std::mem::take(&mut cur));
+                }
+                wrapped.push(head);
+                word = &word[word.char_indices().nth(width).map(|(i, _)| i).unwrap_or(word.len())..];
+            }
+            let sep = if cur.is_empty() { 0 } else { 1 };
+            if cur.chars().count() + sep + word.chars().count() > width {
+                wrapped.push(std::mem::take(&mut cur));
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+        wrapped.push(cur);
+    }
+    wrapped
+}
+
+/// Render the full change summary as a dedicated, scrollable, full-panel view —
+/// the "SUMMARY" pseudo-file. This is the PR-description counterpart to the
+/// line-anchored review comments; it gets the whole panel (no truncation) and
+/// reuses the same j/k scroll the diff/file views use.
+fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
+    let inner_width = area.width.saturating_sub(2) as usize;
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    // Use cached max line number (computed in build_unified_diff_view).
-    let gutter_width = digit_count(vs.diff_view.diff_view_max_line_no);
+    let (block, lines): (Block, Vec<Line>) = {
+        let theme = &app.theme;
+        let border_color = if focused {
+            theme.border_focused
+        } else {
+            theme.border_unfocused
+        };
+        let border_type = if focused {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        };
+        let title_style = if focused {
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted)
+        };
+        let block = Block::default()
+            .title(Span::styled(" \u{25A3} SUMMARY ", title_style))
+            .borders(Borders::ALL)
+            .border_type(border_type)
+            .border_style(Style::default().fg(border_color));
 
-    // Collect line numbers that have review comments.
-    let comment_lines: std::collections::HashSet<usize> =
-        app.review_state.file_comments.keys().copied().collect();
+        let summary = app
+            .review_state
+            .change_summary
+            .as_deref()
+            .unwrap_or("")
+            .trim();
 
-    // Collect the *end* lines of comments (last line of each range).
-    let comment_end_lines: std::collections::HashSet<usize> = app
-        .review_state
-        .comments
-        .iter()
-        .filter(|c| app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path))
-        .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
-        .collect();
-
-    let line_ctx = DiffLineRenderCtx {
-        vs,
-        theme,
-        gutter_width,
-        tab_width,
-        area_width: area.width,
-        comment_lines: &comment_lines,
-        comment_end_lines: &comment_end_lines,
+        let mut lines: Vec<Line> = Vec::new();
+        if summary.is_empty() {
+            for (text, _) in [
+                ("(no change summary on this branch)", ()),
+                ("", ()),
+                ("Write one with the conductor `set_change_summary` MCP tool", ()),
+                ("(e.g. via the /self-review skill).", ()),
+            ] {
+                lines.push(Line::from(Span::styled(
+                    text,
+                    Style::default().fg(theme.muted),
+                )));
+            }
+        } else {
+            for row in wrap_text(summary, inner_width.saturating_sub(1)) {
+                lines.push(Line::from(Span::styled(row, Style::default().fg(theme.fg))));
+            }
+        }
+        (block, lines)
     };
 
-    let lines: Vec<Line> = vs
-        .diff_view
-        .diff_view_lines
-        .iter()
-        .skip(vs.diff_view.diff_view_scroll)
-        .take(inner_height)
-        .map(|entry| match entry {
-            UnifiedDiffEntry::HunkSeparator { func_header } => {
-                let width = area.width.saturating_sub(2) as usize;
-                render_hunk_separator(func_header, width, theme)
-            }
-            UnifiedDiffEntry::ExpandableContext {
-                hidden_count,
-                func_header,
-                ..
-            } => {
-                let width = area.width.saturating_sub(2) as usize;
-                render_expandable_context(*hidden_count, func_header, width, theme)
-            }
-            UnifiedDiffEntry::Line {
-                tag,
-                new_line_no,
-                content,
-                inline_segments,
-            } => render_diff_content_line(tag, new_line_no, content, inline_segments, &line_ctx),
-        })
-        .collect();
+    // Record the total so the key handler can clamp scrolling, and write the
+    // clamped scroll back so navigation stays responsive if the summary shrank.
+    app.viewer_state.summary_total_lines = lines.len();
+    let scroll = app
+        .viewer_state
+        .summary_scroll
+        .min(lines.len().saturating_sub(1));
+    app.viewer_state.summary_scroll = scroll;
+    let visible: Vec<Line> = lines.into_iter().skip(scroll).take(inner_height).collect();
 
     frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(Paragraph::new(visible).block(block), area);
+}
 
+fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
+    let inner_height = area.height.saturating_sub(2) as usize;
+
+    // Build the visible rows plus the screen-row → comment / entry maps. Inline
+    // comment threads are injected after the last line of each commented range
+    // (so review comments are visible right in the diff, expanded by default).
+    let (lines, screen_row_map, screen_entry_map) = {
+        let theme = &app.theme;
+        let vs = &app.viewer_state;
+        let tab_width = app.config.viewer.tab_width;
+        let gutter_width = digit_count(vs.diff_view.diff_view_max_line_no);
+
+        // Line numbers that have review comments (for the current file).
+        let comment_lines: std::collections::HashSet<usize> =
+            app.review_state.file_comments.keys().copied().collect();
+        let comment_end_lines: std::collections::HashSet<usize> = app
+            .review_state
+            .comments
+            .iter()
+            .filter(|c| vs.content.current_file.as_deref() == Some(&*c.file_path))
+            .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
+            .collect();
+        let expanded = &vs.explorer.expanded_inline_threads;
+        let inline_reply_line = vs.explorer.inline_reply_line;
+
+        let line_ctx = DiffLineRenderCtx {
+            vs,
+            theme,
+            gutter_width,
+            tab_width,
+            area_width: area.width,
+            comment_lines: &comment_lines,
+            comment_end_lines: &comment_end_lines,
+        };
+
+        let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
+        let mut srm: Vec<crate::viewer::ScreenRow> = Vec::with_capacity(inner_height);
+        let mut entry_map: Vec<Option<usize>> = Vec::with_capacity(inner_height);
+        let mut remaining = inner_height;
+        let scroll = vs.diff_view.diff_view_scroll;
+
+        for (offset, entry) in vs.diff_view.diff_view_lines.iter().enumerate().skip(scroll) {
+            if remaining == 0 {
+                break;
+            }
+            let (line, new_no) = match entry {
+                UnifiedDiffEntry::HunkSeparator { func_header } => {
+                    let width = area.width.saturating_sub(2) as usize;
+                    (render_hunk_separator(func_header, width, theme), None)
+                }
+                UnifiedDiffEntry::ExpandableContext {
+                    hidden_count,
+                    func_header,
+                    ..
+                } => {
+                    let width = area.width.saturating_sub(2) as usize;
+                    (
+                        render_expandable_context(*hidden_count, func_header, width, theme),
+                        None,
+                    )
+                }
+                UnifiedDiffEntry::Line {
+                    tag,
+                    new_line_no,
+                    content,
+                    inline_segments,
+                } => (
+                    render_diff_content_line(tag, new_line_no, content, inline_segments, &line_ctx),
+                    *new_line_no,
+                ),
+            };
+            lines.push(line);
+            srm.push(match new_no {
+                Some(n) => crate::viewer::ScreenRow::Code(n),
+                None => crate::viewer::ScreenRow::ThreadContent,
+            });
+            entry_map.push(Some(offset));
+            remaining -= 1;
+
+            // Inject the inline comment thread after the comment's last line.
+            if remaining > 0
+                && let Some(n) = new_no
+                && comment_end_lines.contains(&n)
+                && expanded.contains(&n)
+            {
+                let reply_cid = if inline_reply_line == Some(n) {
+                    vs.explorer.inline_reply_comment_id.as_deref()
+                } else {
+                    None
+                };
+                let thread = build_inline_thread_lines(
+                    n,
+                    gutter_width,
+                    area.width as usize,
+                    &app.review_state,
+                    reply_cid,
+                    &vs.explorer.inline_reply_buffer,
+                    theme,
+                );
+                for (l, rt) in thread {
+                    if remaining == 0 {
+                        break;
+                    }
+                    lines.push(l);
+                    srm.push(rt);
+                    entry_map.push(None);
+                    remaining -= 1;
+                }
+            }
+        }
+        (lines, srm, entry_map)
+    };
+
+    app.viewer_state.content.screen_row_map = screen_row_map;
+    app.viewer_state.diff_view.screen_entry_map = screen_entry_map;
+
+    frame.render_widget(ratatui::widgets::Clear, area);
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 
     // Show selection hint overlay.
+    let theme = &app.theme;
+    let vs = &app.viewer_state;
     if let Some((start, end)) = vs.selected_range() {
         let hint = if start == end {
             format!(" L{start} selected \u{2502} c: comment  Esc: clear ")
@@ -1667,6 +1842,29 @@ fn replace_span_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_text_handles_edges() {
+        // Empty input yields no rows (the summary view handles "" separately);
+        // a whitespace-only line collapses to a single blank row.
+        assert!(wrap_text("", 10).is_empty());
+        assert_eq!(wrap_text("   ", 10), vec![""]);
+
+        // A token longer than the width is hard-split into width-sized chunks.
+        let rows = wrap_text(&"a".repeat(12), 5);
+        assert_eq!(rows, vec!["aaaaa", "aaaaa", "aa"]);
+
+        // width == 0 is treated as 1 (no panic, no zero-width slicing).
+        assert_eq!(wrap_text("ab", 0), vec!["a", "b"]);
+
+        // Multibyte hard-wrap slices on char boundaries (no panic).
+        let rows = wrap_text("ありがとう", 2);
+        assert!(rows.iter().all(|r| r.chars().count() <= 2));
+        assert_eq!(rows.concat(), "ありがとう");
+
+        // Author line breaks are preserved; blank lines kept as spacing.
+        assert_eq!(wrap_text("a\n\nb", 10), vec!["a", "", "b"]);
+    }
 
     fn seg(text: &str, emphasized: bool) -> InlineSegment {
         InlineSegment {

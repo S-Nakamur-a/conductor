@@ -23,6 +23,12 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.overlays.command_palette.selected = 0;
             true
         }
+        Action::OpenCommentList => {
+            app.viewer_state.explorer.comment_list_selected = 0;
+            app.viewer_state.explorer.comment_list_scroll = 0;
+            app.overlays.active = ActiveOverlay::CommentList;
+            true
+        }
         Action::CycleFocusForward => {
             app.cycle_focus_forward();
             true

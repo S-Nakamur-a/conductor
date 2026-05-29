@@ -212,7 +212,7 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
     };
 
     let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
-    let title = format!(" Diff Files ({total}) ");
+    let title = format!(" Changed files ({total}) ");
 
     let border_type = if panel_focused {
         BorderType::Thick
@@ -242,34 +242,6 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         .skip(scroll)
         .take(inner_height)
         .map(|(idx, entry)| match entry {
-            DiffListEntry::SectionHeader {
-                section,
-                count,
-                collapsed,
-            } => {
-                let arrow = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
-                let label_text = match section {
-                    DiffSection::Committed => "Committed",
-                    DiffSection::Uncommitted => "Uncommitted",
-                };
-                let label = format!("{arrow} {label_text} ({count})");
-
-                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
-                    Style::default()
-                        .fg(theme.selected_fg)
-                        .bg(theme.selected_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else if idx == vs_explorer.diff_list_selected {
-                    Style::default()
-                        .fg(theme.selected_fg_inactive)
-                        .bg(theme.selected_bg_inactive)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.info).add_modifier(Modifier::BOLD)
-                };
-
-                ListItem::new(Span::styled(label, style))
-            }
             DiffListEntry::Directory {
                 name,
                 depth,
@@ -311,8 +283,14 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
                 let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
+                // Origin marker: C = committed (in HEAD), U = uncommitted
+                // (working tree). A file changed both ways appears twice.
+                let marker = match section {
+                    DiffSection::Committed => "C",
+                    DiffSection::Uncommitted => "U",
+                };
                 let label = format!(
-                    "  {indent}{icon} {filename} +{} -{}",
+                    "  {indent}{marker} {icon} {filename} +{} -{}",
                     file_diff.added_lines, file_diff.deleted_lines
                 );
 
@@ -334,13 +312,77 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                     Style::default().fg(theme.fg)
                 };
 
-                ListItem::new(Span::styled(label, style))
+                // GitHub-style comment badge: 💬N for files with review comments,
+                // coloured by whether any are still unresolved.
+                let mut spans = vec![Span::styled(label, style)];
+                if let Some(badge) = comment_badge(app, &file_diff.path, theme) {
+                    spans.push(badge);
+                }
+                ListItem::new(Line::from(spans))
+            }
+            DiffListEntry::Summary {} => {
+                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
+                    Style::default()
+                        .fg(theme.selected_fg)
+                        .bg(theme.selected_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else if idx == vs_explorer.diff_list_selected {
+                    Style::default()
+                        .fg(theme.selected_fg_inactive)
+                        .bg(theme.selected_bg_inactive)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                };
+                ListItem::new(Span::styled("  \u{25A3} SUMMARY", style))
             }
         })
         .collect();
 
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
+}
+
+/// Build a GitHub-style comment-count badge (e.g. ` 💬3`) for a file path, or
+/// `None` when the file has no review comments. Unresolved comments colour the
+/// badge with the accent; an all-resolved file uses muted.
+fn comment_badge<'a>(app: &App, file_path: &str, theme: &crate::theme::Theme) -> Option<Span<'a>> {
+    use crate::review_store::CommentStatus;
+    let mut total = 0usize;
+    let mut unresolved = 0usize;
+    for c in app.review_state.comments.iter().filter(|c| c.file_path == file_path) {
+        total += 1;
+        if c.status == CommentStatus::Pending {
+            unresolved += 1;
+        }
+    }
+    if total == 0 {
+        return None;
+    }
+    let color = if unresolved > 0 {
+        theme.accent
+    } else {
+        theme.muted
+    };
+    Some(Span::styled(
+        format!("  \u{1f4ac}{total}"),
+        Style::default().fg(color),
+    ))
+}
+
+/// Render the comment list as a centered full-screen modal (the `C` overlay) —
+/// an overview of every review comment on the branch with jump-to-location.
+/// Reuses the same comment-list rendering as the explorer bottom pane.
+pub fn render_comment_list_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    // Clamp lower bounds to `area` so a tiny terminal can't make min > max
+    // (which would panic in `u16::clamp`).
+    let w = ((area.width as u32 * 70 / 100) as u16).clamp(24.min(area.width), area.width);
+    let h = ((area.height as u32 * 80 / 100) as u16).clamp(6.min(area.height), area.height);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    let popup = Rect::new(x, y, w, h);
+    frame.render_widget(ratatui::widgets::Clear, popup);
+    render_comment_list(frame, popup, app, true);
 }
 
 /// Render the comment list (bottom half, when toggled via `c`).

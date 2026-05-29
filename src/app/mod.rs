@@ -450,6 +450,9 @@ pub struct App {
 
     /// Cached layout rectangles (recomputed when frame size or expansion state changes).
     pub layout_cache: crate::ui::layout::LayoutCache,
+    /// Clickable regions of the worktree bar, recorded during render and read by
+    /// the mouse handler (worktree select / delete / add).
+    pub wtbar_hits: Vec<crate::ui::worktree_bar::WtbarHit>,
 
     // ── Code navigation (symbol index + jump history) ───────────
     pub symbol_index: SymbolIndex,
@@ -623,7 +626,7 @@ impl App {
 
         let mut app = Self {
             dirty: DirtyPanels(DirtyPanels::ALL),
-            focus: Focus::Worktree,
+            focus: Focus::Explorer,
             overlays: OverlayManager::default(),
             repo_path,
             main_repo_name,
@@ -672,6 +675,7 @@ impl App {
             current_view_branch: None,
             pending_view_restore: None,
             layout_cache: Default::default(),
+            wtbar_hits: Vec::new(),
             symbol_index: SymbolIndex::new(PathBuf::new()),
             jump_history: JumpHistory::new(),
             references_overlay: ReferencesOverlay::default(),
@@ -1098,6 +1102,16 @@ impl App {
 
     /// Set focus to a panel, lazily loading data when first needed.
     pub fn set_focus(&mut self, focus: Focus) {
+        // The worktree column became a monitor strip + switcher modal, so
+        // "focus the worktree" now opens that modal and leaves focus where it
+        // was. This is the single chokepoint every worktree trigger funnels
+        // through (Tab no longer reaches Worktree, super+1/`w`/palette/click all
+        // call set_focus(Worktree)).
+        if focus == Focus::Worktree {
+            self.overlays.active = crate::overlay::ActiveOverlay::WorktreeSwitcher;
+            return;
+        }
+
         // Collapse expanded panel when focus moves to a panel that would have zero width.
         if let Some(expanded) = self.expanded_panel {
             let dominated = match expanded {
@@ -1140,7 +1154,11 @@ impl App {
     /// focusing to keep `focus` and `expanded_panel` consistent.
     pub fn focus_and_expand(&mut self, focus: Focus) {
         self.set_focus(focus);
-        self.expanded_panel = Some(focus);
+        // Worktree no longer has a column to expand — `set_focus` opened the
+        // switcher modal instead, so marking it expanded would blank the layout.
+        if focus != Focus::Worktree {
+            self.expanded_panel = Some(focus);
+        }
     }
 
     /// Request the application to quit.
@@ -1909,12 +1927,13 @@ impl App {
 
     /// Cycle focus forward: Worktree → Explorer → Viewer → TerminalClaude → TerminalShell → Worktree
     pub fn cycle_focus_forward(&mut self) {
+        // Worktree is no longer a focusable column (it became the top strip +
+        // switcher modal), so it's excluded from the Tab cycle.
         let next = match self.focus {
-            Focus::Worktree => Focus::Explorer,
+            Focus::Worktree | Focus::TerminalShell => Focus::Explorer,
             Focus::Explorer => Focus::Viewer,
             Focus::Viewer => Focus::TerminalClaude,
             Focus::TerminalClaude => Focus::TerminalShell,
-            Focus::TerminalShell => Focus::Worktree,
         };
         self.set_focus(next);
     }
@@ -1922,8 +1941,7 @@ impl App {
     /// Cycle focus backward.
     pub fn cycle_focus_backward(&mut self) {
         let prev = match self.focus {
-            Focus::Worktree => Focus::TerminalShell,
-            Focus::Explorer => Focus::Worktree,
+            Focus::Worktree | Focus::Explorer => Focus::TerminalShell,
             Focus::Viewer => Focus::Explorer,
             Focus::TerminalClaude => Focus::Viewer,
             Focus::TerminalShell => Focus::TerminalClaude,
