@@ -263,122 +263,16 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
 
-        // Check terminal-specific and global bindings first.
-        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal) {
-            match action {
-                Action::LeaveTerminal => {
-                    app.set_focus(Focus::Explorer);
-                    return;
-                }
-                Action::FocusWorktree => {
-                    app.set_focus(Focus::Worktree);
-                    return;
-                }
-                Action::FocusExplorer => {
-                    app.set_focus(Focus::Explorer);
-                    return;
-                }
-                Action::FocusExplorerDiffList => {
-                    app.set_focus(Focus::Explorer);
-                    app.viewer_state.explorer.explorer_focus_on_diff_list = true;
-                    return;
-                }
-                Action::FocusViewer => {
-                    app.set_focus(Focus::Viewer);
-                    return;
-                }
-                Action::FocusTerminalClaude => {
-                    app.set_focus(Focus::TerminalClaude);
-                    return;
-                }
-                Action::FocusTerminalShell => {
-                    app.set_focus(Focus::TerminalShell);
-                    return;
-                }
-                Action::CommandPalette => {
-                    app.overlays.active = ActiveOverlay::CommandPalette;
-                    app.overlays.command_palette.filter.clear();
-                    app.overlays.command_palette.selected = 0;
-                    return;
-                }
-                Action::ScrollbackUp => {
-                    let page = match app.focus {
-                        Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
-                        Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
-                        _ => unreachable!(),
-                    };
-                    let scroll = match app.focus {
-                        Focus::TerminalClaude => &mut app.terminal.scroll_claude,
-                        Focus::TerminalShell => &mut app.terminal.scroll_shell,
-                        _ => unreachable!(),
-                    };
-                    *scroll = scroll.saturating_add(page.max(1));
-                    return;
-                }
-                Action::ScrollbackDown => {
-                    let page = match app.focus {
-                        Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
-                        Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
-                        _ => unreachable!(),
-                    };
-                    let scroll = match app.focus {
-                        Focus::TerminalClaude => &mut app.terminal.scroll_claude,
-                        Focus::TerminalShell => &mut app.terminal.scroll_shell,
-                        _ => unreachable!(),
-                    };
-                    *scroll = scroll.saturating_sub(page.max(1));
-                    return;
-                }
-                Action::ScrollbackTop => {
-                    match app.focus {
-                        Focus::TerminalClaude => app.terminal.scroll_claude = 1000,
-                        Focus::TerminalShell => app.terminal.scroll_shell = 1000,
-                        _ => unreachable!(),
-                    }
-                    return;
-                }
-                Action::SnapToLive => {
-                    match app.focus {
-                        Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-                        Focus::TerminalShell => app.terminal.scroll_shell = 0,
-                        _ => unreachable!(),
-                    }
-                    return;
-                }
-                Action::TogglePanelExpand => {
-                    if app.expanded_panel == Some(app.focus) {
-                        app.expanded_panel = None;
-                    } else {
-                        app.expanded_panel = Some(app.focus);
-                    }
-                    return;
-                }
-                Action::OpenFileFromTerminal => {
-                    terminal::open_file_from_terminal_output(app);
-                    return;
-                }
-                Action::CycleFocusForward => {
-                    app.cycle_focus_forward();
-                    return;
-                }
-                Action::CycleFocusBackward => {
-                    app.cycle_focus_backward();
-                    return;
-                }
-                Action::NextWorktree => {
-                    app.select_next_worktree();
-                    return;
-                }
-                Action::PrevWorktree => {
-                    app.select_prev_worktree();
-                    return;
-                }
-                Action::TogglePanelOverlay => {
-                    app.toggle_panel_overlay();
-                    return;
-                }
-                _ => {} // Other global actions not intercepted in terminal
-            }
+        // Resolve via the keymap (terminal layer + global fallback, already
+        // filtered to actions that fire in the terminal). Terminal-only actions
+        // need terminal state; everything else reuses the shared global
+        // dispatch. A miss falls through to the PTY below — the keymap is the
+        // single source of truth for what the terminal steals from the inner
+        // program (no hand-maintained allowlist).
+        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
+            && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
+        {
+            return;
         }
 
         // Forward all remaining keys to the active PTY session.
@@ -418,6 +312,57 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Viewer => handle_viewer_key(app, key),
         Focus::TerminalClaude | Focus::TerminalShell => unreachable!(),
     }
+}
+
+/// Handle the terminal-only actions (scrollback, leave, open-file) that need
+/// terminal state and have no meaning in any other panel, so they cannot route
+/// through `dispatch_global_action`. Returns `true` if handled; `false` for any
+/// other action (which the caller then sends to `dispatch_global_action`).
+/// Only called while a terminal panel is focused, so the `unreachable!()` arms
+/// hold.
+fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
+    match action {
+        Action::LeaveTerminal => app.set_focus(Focus::Explorer),
+        Action::ScrollbackUp => {
+            let page = match app.focus {
+                Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
+                Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
+                _ => unreachable!(),
+            };
+            let scroll = match app.focus {
+                Focus::TerminalClaude => &mut app.terminal.scroll_claude,
+                Focus::TerminalShell => &mut app.terminal.scroll_shell,
+                _ => unreachable!(),
+            };
+            *scroll = scroll.saturating_add(page.max(1));
+        }
+        Action::ScrollbackDown => {
+            let page = match app.focus {
+                Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
+                Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
+                _ => unreachable!(),
+            };
+            let scroll = match app.focus {
+                Focus::TerminalClaude => &mut app.terminal.scroll_claude,
+                Focus::TerminalShell => &mut app.terminal.scroll_shell,
+                _ => unreachable!(),
+            };
+            *scroll = scroll.saturating_sub(page.max(1));
+        }
+        Action::ScrollbackTop => match app.focus {
+            Focus::TerminalClaude => app.terminal.scroll_claude = 1000,
+            Focus::TerminalShell => app.terminal.scroll_shell = 1000,
+            _ => unreachable!(),
+        },
+        Action::SnapToLive => match app.focus {
+            Focus::TerminalClaude => app.terminal.scroll_claude = 0,
+            Focus::TerminalShell => app.terminal.scroll_shell = 0,
+            _ => unreachable!(),
+        },
+        Action::OpenFileFromTerminal => terminal::open_file_from_terminal_output(app),
+        _ => return false,
+    }
+    true
 }
 
 // ── Paste event handling ────────────────────────────────────────────────

@@ -304,6 +304,41 @@ impl Action {
             Action::TogglePanelOverlay => "toggle_panel_overlay",
         }
     }
+
+    /// Whether this action is intercepted while a terminal panel (PTY) is
+    /// focused. `false` (the default) means the chord is forwarded to the inner
+    /// program (shell / Claude Code), so Conductor never steals a key the
+    /// program needs — `ctrl+r` reverse-search, `ctrl+q`/XON, etc. Only the
+    /// focus/navigation/scrollback actions listed here are stolen back. This is
+    /// the single source of truth for terminal interception: both [`KeyMap::resolve`]
+    /// and [`KeyMap::keys_for_action`] honor it, so resolution == behavior ==
+    /// the rendered help, with no hand-maintained allowlist in the dispatcher.
+    fn fires_in_terminal(self) -> bool {
+        matches!(
+            self,
+            // Terminal-only actions (meaningful only with a terminal focused).
+            Action::LeaveTerminal
+                | Action::ScrollbackUp
+                | Action::ScrollbackDown
+                | Action::ScrollbackTop
+                | Action::SnapToLive
+                | Action::OpenFileFromTerminal
+                // Global focus/navigation that stays useful over a PTY.
+                | Action::FocusWorktree
+                | Action::FocusExplorer
+                | Action::FocusExplorerDiffList
+                | Action::FocusViewer
+                | Action::FocusTerminalClaude
+                | Action::FocusTerminalShell
+                | Action::CommandPalette
+                | Action::CycleFocusForward
+                | Action::CycleFocusBackward
+                | Action::NextWorktree
+                | Action::PrevWorktree
+                | Action::TogglePanelExpand
+                | Action::TogglePanelOverlay
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -485,13 +520,23 @@ impl KeyMap {
     /// Resolve a key event to an action in the given context. The context layer
     /// is consulted first, then the global layer; an unmappable key event or a
     /// total miss yields `None` (the caller passes the key through).
+    ///
+    /// In the terminal context, an action that does not [fire in the
+    /// terminal](Action::fires_in_terminal) resolves to `None` so the chord
+    /// reaches the PTY — the global fallback stays, but globally-bound actions
+    /// the terminal shouldn't steal (quit, switch-repo, …) are filtered here
+    /// rather than by an allowlist in the dispatcher.
     pub fn resolve(&self, key: &KeyEvent, context: KeyContext) -> Option<Action> {
         let input = keymap_core::KeyInput::try_from(*key).ok()?;
         let resolved = match self.contexts.get(&context) {
             Some(layer) => resolve_layered([layer, &self.global], &input),
             None => resolve_layered([&self.global], &input),
         };
-        resolved.copied()
+        let action = resolved.copied()?;
+        if context == KeyContext::Terminal && !action.fires_in_terminal() {
+            return None;
+        }
+        Some(action)
     }
 
     /// Display strings for every key bound to an action in a context (context
@@ -499,6 +544,12 @@ impl KeyMap {
     /// keymap-core canonical form (e.g. `"ctrl+d"`, `"down"`, `"G"`), which
     /// round-trips back through the config grammar.
     pub fn keys_for_action(&self, context: KeyContext, action: Action) -> Vec<String> {
+        // Keep the rendered help honest with `resolve`: in the terminal context,
+        // a globally-bound action that doesn't fire there has no working chord.
+        if context == KeyContext::Terminal && !action.fires_in_terminal() {
+            return Vec::new();
+        }
+
         let mut keys = Vec::new();
 
         if let Some(layer) = self.contexts.get(&context) {
@@ -685,6 +736,81 @@ mod tests {
         ];
         for (key, action) in cases {
             assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn terminal_intercepts_only_firing_actions() {
+        let km = default_keymap();
+
+        // Quit (ctrl+q) is global but does NOT fire in the terminal — the chord
+        // reaches the PTY instead of killing the app (so the inner program keeps
+        // ctrl+q / XON). Same for switch_repo (ctrl+r → shell reverse-search).
+        let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ctrl_q, KeyContext::Global), Some(Action::Quit));
+        assert_eq!(km.resolve(&ctrl_q, KeyContext::Terminal), None);
+        let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ctrl_r, KeyContext::Global), Some(Action::SwitchRepo));
+        assert_eq!(km.resolve(&ctrl_r, KeyContext::Terminal), None);
+
+        // Focus/navigation chords ARE stolen back from the PTY.
+        let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_p, KeyContext::Terminal),
+            Some(Action::CommandPalette)
+        );
+        let alt_next = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&alt_next, KeyContext::Terminal),
+            Some(Action::NextWorktree)
+        );
+        let ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_esc, KeyContext::Terminal),
+            Some(Action::LeaveTerminal)
+        );
+
+        // Rendered help stays honest with resolution: no chord is advertised for
+        // Quit in the terminal, but terminal-firing actions keep theirs.
+        assert!(km.keys_for_action(KeyContext::Terminal, Action::Quit).is_empty());
+        assert!(
+            !km.keys_for_action(KeyContext::Terminal, Action::LeaveTerminal)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn terminal_usable_actions_all_resolve_in_terminal() {
+        // Every action classified as firing in the terminal must actually have a
+        // chord that resolves there — guards against adding a variant to
+        // `fires_in_terminal` but forgetting to bind it (or vice versa).
+        let km = default_keymap();
+        let usable = [
+            Action::LeaveTerminal,
+            Action::ScrollbackUp,
+            Action::ScrollbackDown,
+            Action::ScrollbackTop,
+            Action::SnapToLive,
+            Action::OpenFileFromTerminal,
+            Action::FocusWorktree,
+            Action::FocusExplorer,
+            Action::FocusExplorerDiffList,
+            Action::FocusViewer,
+            Action::FocusTerminalClaude,
+            Action::FocusTerminalShell,
+            Action::CommandPalette,
+            Action::CycleFocusForward,
+            Action::CycleFocusBackward,
+            Action::NextWorktree,
+            Action::PrevWorktree,
+            Action::TogglePanelExpand,
+            Action::TogglePanelOverlay,
+        ];
+        for a in usable {
+            assert!(
+                !km.keys_for_action(KeyContext::Terminal, a).is_empty(),
+                "{a:?} should have a working chord in the terminal"
+            );
         }
     }
 
