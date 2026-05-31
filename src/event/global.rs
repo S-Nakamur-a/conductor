@@ -70,31 +70,6 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.set_focus(Focus::TerminalShell);
             true
         }
-        Action::FocusExpandWorktree => {
-            app.focus_and_expand(Focus::Worktree);
-            true
-        }
-        Action::FocusExpandExplorer => {
-            app.focus_and_expand(Focus::Explorer);
-            true
-        }
-        Action::FocusExpandExplorerDiffList => {
-            app.focus_and_expand(Focus::Explorer);
-            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
-            true
-        }
-        Action::FocusExpandViewer => {
-            app.focus_and_expand(Focus::Viewer);
-            true
-        }
-        Action::FocusExpandTerminalClaude => {
-            app.focus_and_expand(Focus::TerminalClaude);
-            true
-        }
-        Action::FocusExpandTerminalShell => {
-            app.focus_and_expand(Focus::TerminalShell);
-            true
-        }
         Action::NewClaudeCode => {
             app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
             if let Err(e) = app.spawn_claude_code() {

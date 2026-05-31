@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "conductor"
-version = "0.66.0"
+version = "0.67.0"
 dependencies = [
  "aa-media",
  "anyhow",
@@ -1476,7 +1476,8 @@ dependencies = [
 [[package]]
 name = "keymap-config"
 version = "0.1.0"
-source = "git+https://github.com/S-Nakamur-a/keymap-rs?rev=6c1f899b077f42ecb5963e04cef7cafc5062b72c#6c1f899b077f42ecb5963e04cef7cafc5062b72c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b15e6204ea0b1b5ba246ca0a6329e3b6a280c31edcde88356a60a08ca94dbd1c"
 dependencies = [
  "keymap-core",
  "keymap-seq",
@@ -1487,7 +1488,8 @@ dependencies = [
 [[package]]
 name = "keymap-core"
 version = "0.1.0"
-source = "git+https://github.com/S-Nakamur-a/keymap-rs?rev=6c1f899b077f42ecb5963e04cef7cafc5062b72c#6c1f899b077f42ecb5963e04cef7cafc5062b72c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed80e88c3dfed328c5bed357859bff1b3378f3a65fddb09a53c00de082b972b9"
 dependencies = [
  "crossterm",
 ]
@@ -1495,7 +1497,8 @@ dependencies = [
 [[package]]
 name = "keymap-seq"
 version = "0.1.0"
-source = "git+https://github.com/S-Nakamur-a/keymap-rs?rev=6c1f899b077f42ecb5963e04cef7cafc5062b72c#6c1f899b077f42ecb5963e04cef7cafc5062b72c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d41a33152c0ff29cc7b48a00c1c17002f219120fe79f46ab94d855215ecd7cd9"
 dependencies = [
  "keymap-core",
 ]

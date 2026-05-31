@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.66.0"
+version = "0.67.0"
 edition = "2024"
 
 [dependencies]
@@ -37,8 +37,8 @@ tree-sitter-rust = "0.24"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
 libc = "0.2"
-keymap-core = { git = "https://github.com/S-Nakamur-a/keymap-rs", rev = "6c1f899b077f42ecb5963e04cef7cafc5062b72c", features = ["crossterm"] }
-keymap-config = { git = "https://github.com/S-Nakamur-a/keymap-rs", rev = "6c1f899b077f42ecb5963e04cef7cafc5062b72c" }
+keymap-core = { version = "0.1", features = ["crossterm"] }
+keymap-config = "0.1"
 
 [profile.dev]
 debug = "limited"

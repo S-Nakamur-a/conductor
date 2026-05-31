@@ -38,13 +38,6 @@ pub enum Action {
     FocusViewer,
     FocusTerminalClaude,
     FocusTerminalShell,
-    // Jump to a panel AND expand it to full width in one action.
-    FocusExpandWorktree,
-    FocusExpandExplorer,
-    FocusExpandExplorerDiffList,
-    FocusExpandViewer,
-    FocusExpandTerminalClaude,
-    FocusExpandTerminalShell,
     NewClaudeCode,
     NewShell,
     OpenRepo,
@@ -156,12 +149,6 @@ impl Action {
             "focus_viewer" => Some(Action::FocusViewer),
             "focus_terminal_claude" => Some(Action::FocusTerminalClaude),
             "focus_terminal_shell" => Some(Action::FocusTerminalShell),
-            "focus_expand_worktree" => Some(Action::FocusExpandWorktree),
-            "focus_expand_explorer" => Some(Action::FocusExpandExplorer),
-            "focus_expand_explorer_diff_list" => Some(Action::FocusExpandExplorerDiffList),
-            "focus_expand_viewer" => Some(Action::FocusExpandViewer),
-            "focus_expand_terminal_claude" => Some(Action::FocusExpandTerminalClaude),
-            "focus_expand_terminal_shell" => Some(Action::FocusExpandTerminalShell),
             "new_claude_code" => Some(Action::NewClaudeCode),
             "new_shell" => Some(Action::NewShell),
             "open_repo" => Some(Action::OpenRepo),
@@ -249,12 +236,6 @@ impl Action {
             Action::FocusViewer => "focus_viewer",
             Action::FocusTerminalClaude => "focus_terminal_claude",
             Action::FocusTerminalShell => "focus_terminal_shell",
-            Action::FocusExpandWorktree => "focus_expand_worktree",
-            Action::FocusExpandExplorer => "focus_expand_explorer",
-            Action::FocusExpandExplorerDiffList => "focus_expand_explorer_diff_list",
-            Action::FocusExpandViewer => "focus_expand_viewer",
-            Action::FocusExpandTerminalClaude => "focus_expand_terminal_claude",
-            Action::FocusExpandTerminalShell => "focus_expand_terminal_shell",
             Action::NewClaudeCode => "new_claude_code",
             Action::NewShell => "new_shell",
             Action::OpenRepo => "open_repo",
@@ -322,6 +303,41 @@ impl Action {
             Action::TogglePanelExpand => "toggle_panel_expand",
             Action::TogglePanelOverlay => "toggle_panel_overlay",
         }
+    }
+
+    /// Whether this action is intercepted while a terminal panel (PTY) is
+    /// focused. `false` (the default) means the chord is forwarded to the inner
+    /// program (shell / Claude Code), so Conductor never steals a key the
+    /// program needs — `ctrl+r` reverse-search, `ctrl+q`/XON, etc. Only the
+    /// focus/navigation/scrollback actions listed here are stolen back. This is
+    /// the single source of truth for terminal interception: both [`KeyMap::resolve`]
+    /// and [`KeyMap::keys_for_action`] honor it, so resolution == behavior ==
+    /// the rendered help, with no hand-maintained allowlist in the dispatcher.
+    fn fires_in_terminal(self) -> bool {
+        matches!(
+            self,
+            // Terminal-only actions (meaningful only with a terminal focused).
+            Action::LeaveTerminal
+                | Action::ScrollbackUp
+                | Action::ScrollbackDown
+                | Action::ScrollbackTop
+                | Action::SnapToLive
+                | Action::OpenFileFromTerminal
+                // Global focus/navigation that stays useful over a PTY.
+                | Action::FocusWorktree
+                | Action::FocusExplorer
+                | Action::FocusExplorerDiffList
+                | Action::FocusViewer
+                | Action::FocusTerminalClaude
+                | Action::FocusTerminalShell
+                | Action::CommandPalette
+                | Action::CycleFocusForward
+                | Action::CycleFocusBackward
+                | Action::NextWorktree
+                | Action::PrevWorktree
+                | Action::TogglePanelExpand
+                | Action::TogglePanelOverlay
+        )
     }
 }
 
@@ -504,13 +520,23 @@ impl KeyMap {
     /// Resolve a key event to an action in the given context. The context layer
     /// is consulted first, then the global layer; an unmappable key event or a
     /// total miss yields `None` (the caller passes the key through).
+    ///
+    /// In the terminal context, an action that does not [fire in the
+    /// terminal](Action::fires_in_terminal) resolves to `None` so the chord
+    /// reaches the PTY — the global fallback stays, but globally-bound actions
+    /// the terminal shouldn't steal (quit, switch-repo, …) are filtered here
+    /// rather than by an allowlist in the dispatcher.
     pub fn resolve(&self, key: &KeyEvent, context: KeyContext) -> Option<Action> {
         let input = keymap_core::KeyInput::try_from(*key).ok()?;
         let resolved = match self.contexts.get(&context) {
             Some(layer) => resolve_layered([layer, &self.global], &input),
             None => resolve_layered([&self.global], &input),
         };
-        resolved.copied()
+        let action = resolved.copied()?;
+        if context == KeyContext::Terminal && !action.fires_in_terminal() {
+            return None;
+        }
+        Some(action)
     }
 
     /// Display strings for every key bound to an action in a context (context
@@ -518,6 +544,12 @@ impl KeyMap {
     /// keymap-core canonical form (e.g. `"ctrl+d"`, `"down"`, `"G"`), which
     /// round-trips back through the config grammar.
     pub fn keys_for_action(&self, context: KeyContext, action: Action) -> Vec<String> {
+        // Keep the rendered help honest with `resolve`: in the terminal context,
+        // a globally-bound action that doesn't fire there has no working chord.
+        if context == KeyContext::Terminal && !action.fires_in_terminal() {
+            return Vec::new();
+        }
+
         let mut keys = Vec::new();
 
         if let Some(layer) = self.contexts.get(&context) {
@@ -665,8 +697,12 @@ mod tests {
     fn critical_defaults_resolve() {
         let km = default_keymap();
 
+        // Quit moved to ctrl+q; bare q is unbound (passes through) so it can no
+        // longer kill the app by accident.
+        let key_ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&key_ctrl_q, KeyContext::Global), Some(Action::Quit));
         let key_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
-        assert_eq!(km.resolve(&key_q, KeyContext::Global), Some(Action::Quit));
+        assert_eq!(km.resolve(&key_q, KeyContext::Global), None);
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
         assert_eq!(
@@ -686,6 +722,96 @@ mod tests {
             km.resolve(&key_ctrl_esc, KeyContext::Terminal),
             Some(Action::LeaveTerminal)
         );
+    }
+
+    #[test]
+    fn worktree_switch_and_zoom_aliases_resolve() {
+        // alt+]/alt+[ are the kitty-protocol-free aliases for ctrl+tab worktree
+        // switching; alt+m zooms the focused panel (replacing alt+shift+digit).
+        let km = default_keymap();
+        let cases = [
+            (KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT), Action::NextWorktree),
+            (KeyEvent::new(KeyCode::Char('['), KeyModifiers::ALT), Action::PrevWorktree),
+            (KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT), Action::TogglePanelExpand),
+        ];
+        for (key, action) in cases {
+            assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn terminal_intercepts_only_firing_actions() {
+        let km = default_keymap();
+
+        // Quit (ctrl+q) is global but does NOT fire in the terminal — the chord
+        // reaches the PTY instead of killing the app (so the inner program keeps
+        // ctrl+q / XON). Same for switch_repo (ctrl+r → shell reverse-search).
+        let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ctrl_q, KeyContext::Global), Some(Action::Quit));
+        assert_eq!(km.resolve(&ctrl_q, KeyContext::Terminal), None);
+        let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ctrl_r, KeyContext::Global), Some(Action::SwitchRepo));
+        assert_eq!(km.resolve(&ctrl_r, KeyContext::Terminal), None);
+
+        // Focus/navigation chords ARE stolen back from the PTY.
+        let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_p, KeyContext::Terminal),
+            Some(Action::CommandPalette)
+        );
+        let alt_next = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&alt_next, KeyContext::Terminal),
+            Some(Action::NextWorktree)
+        );
+        let ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_esc, KeyContext::Terminal),
+            Some(Action::LeaveTerminal)
+        );
+
+        // Rendered help stays honest with resolution: no chord is advertised for
+        // Quit in the terminal, but terminal-firing actions keep theirs.
+        assert!(km.keys_for_action(KeyContext::Terminal, Action::Quit).is_empty());
+        assert!(
+            !km.keys_for_action(KeyContext::Terminal, Action::LeaveTerminal)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn terminal_usable_actions_all_resolve_in_terminal() {
+        // Every action classified as firing in the terminal must actually have a
+        // chord that resolves there — guards against adding a variant to
+        // `fires_in_terminal` but forgetting to bind it (or vice versa).
+        let km = default_keymap();
+        let usable = [
+            Action::LeaveTerminal,
+            Action::ScrollbackUp,
+            Action::ScrollbackDown,
+            Action::ScrollbackTop,
+            Action::SnapToLive,
+            Action::OpenFileFromTerminal,
+            Action::FocusWorktree,
+            Action::FocusExplorer,
+            Action::FocusExplorerDiffList,
+            Action::FocusViewer,
+            Action::FocusTerminalClaude,
+            Action::FocusTerminalShell,
+            Action::CommandPalette,
+            Action::CycleFocusForward,
+            Action::CycleFocusBackward,
+            Action::NextWorktree,
+            Action::PrevWorktree,
+            Action::TogglePanelExpand,
+            Action::TogglePanelOverlay,
+        ];
+        for a in usable {
+            assert!(
+                !km.keys_for_action(KeyContext::Terminal, a).is_empty(),
+                "{a:?} should have a working chord in the terminal"
+            );
+        }
     }
 
     #[test]
@@ -713,16 +839,51 @@ mod tests {
     fn context_shadows_are_per_context() {
         let km = default_keymap();
 
-        // 'g' = GrabBranch in Worktree, GoToTop in Explorer.
-        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty());
+        // 'c' = CherryPick in Worktree, ShowCommentList in Explorer.
+        let key_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
         assert_eq!(
-            km.resolve(&key_g, KeyContext::Worktree),
-            Some(Action::GrabBranch)
+            km.resolve(&key_c, KeyContext::Worktree),
+            Some(Action::CherryPick)
         );
         assert_eq!(
-            km.resolve(&key_g, KeyContext::Explorer),
-            Some(Action::GoToTop)
+            km.resolve(&key_c, KeyContext::Explorer),
+            Some(Action::ShowCommentList)
         );
+    }
+
+    #[test]
+    fn worktree_git_action_keys_resolve() {
+        // The intentional 0.67 remap of the worktree panel's git actions to
+        // more mnemonic chords. Pins the new bindings against silent regression.
+        let km = default_keymap();
+        let cases = [
+            (KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty()), Action::PullWorktree),
+            (KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()), Action::CherryPick),
+            (KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()), Action::OpenPullRequest),
+            // 'X' arrives as the resolved glyph 'X' + redundant SHIFT, which
+            // keymap-core folds to match the "X" binding (cf. shift_g test).
+            (KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT), Action::PruneWorktrees),
+            // g/G are now go_to_top/bottom here too (was grab/ungrab), matching
+            // every other panel; grab/ungrab moved to b/B ("branch", do/undo).
+            (KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty()), Action::GoToTop),
+            (KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT), Action::GoToBottom),
+            (KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()), Action::GrabBranch),
+            (KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT), Action::UngrabBranch),
+        ];
+        for (key, action) in cases {
+            assert_eq!(km.resolve(&key, KeyContext::Worktree), Some(action), "{key:?}");
+        }
+
+        // The keys vacated by the remap are now unbound in the worktree panel
+        // (no global fallback for bare u/v/P) — a deliberate no-op, not a
+        // surprise reassignment.
+        for key in [
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT),
+        ] {
+            assert_eq!(km.resolve(&key, KeyContext::Worktree), None, "{key:?}");
+        }
     }
 
     #[test]
@@ -733,7 +894,7 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
         assert_eq!(
             km.resolve(&key, KeyContext::Worktree),
-            Some(Action::UngrabBranch)
+            Some(Action::GoToBottom)
         );
     }
 
@@ -872,28 +1033,6 @@ mod tests {
     }
 
     #[test]
-    fn option_shift_digit_is_focus_expand() {
-        let km = default_keymap();
-        // Option+Shift+digit (ALT|SHIFT) maximizes; plain Option+digit (ALT)
-        // only focuses. keymap-core keeps SHIFT because ALT is also held.
-        let cases = [
-            ('1', Action::FocusExpandWorktree),
-            ('4', Action::FocusExpandViewer),
-            ('6', Action::FocusExpandTerminalShell),
-        ];
-        for (c, action) in cases {
-            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT | KeyModifiers::SHIFT);
-            assert_eq!(km.resolve(&key, KeyContext::Terminal), Some(action));
-        }
-
-        let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
-        assert_eq!(
-            km.resolve(&alt_1, KeyContext::Global),
-            Some(Action::FocusWorktree)
-        );
-    }
-
-    #[test]
     fn ctrl_f_is_filename_search_in_viewer() {
         let km = default_keymap();
         let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
@@ -933,15 +1072,15 @@ mod tests {
     fn lowercase_char_with_shift_is_not_recased() {
         // Behavior divergence from the old hand-rolled normalizer, locked in:
         // keymap-core trusts the glyph and only drops a redundant sole SHIFT, so
-        // 'g'+SHIFT stays Char('g') and hits the bare 'g' binding (GrabBranch) —
-        // it is NOT re-cased to 'G' (UngrabBranch). A terminal that delivers the
-        // resolved glyph 'G' (the common case) still hits UngrabBranch; see
+        // 'g'+SHIFT stays Char('g') and hits the bare 'g' binding (GoToTop) — it
+        // is NOT re-cased to 'G' (GoToBottom). A terminal that delivers the
+        // resolved glyph 'G' (the common case) still hits GoToBottom; see
         // `shift_g_resolves_uppercase_binding`.
         let km = default_keymap();
         let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::SHIFT);
         assert_eq!(
             km.resolve(&key, KeyContext::Worktree),
-            Some(Action::GrabBranch)
+            Some(Action::GoToTop)
         );
     }
 
@@ -965,9 +1104,11 @@ mod tests {
     }
 
     #[test]
-    fn alt_digit_and_alt_shift_digit_stay_distinct() {
-        // The "keep SHIFT when another modifier is held" rule must keep these
-        // apart, or focus and focus-expand would collapse into one another.
+    fn alt_shift_digit_does_not_fold_into_alt_digit() {
+        // The "keep SHIFT when another modifier is held" rule: alt+1 focuses the
+        // worktree, but alt+shift+1 must NOT drop the SHIFT and collapse onto it.
+        // alt+shift+digit is now unbound (focus+expand was removed), so a correct
+        // resolver returns None rather than folding to FocusWorktree.
         let km = default_keymap();
         let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
         let alt_shift_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT | KeyModifiers::SHIFT);
@@ -975,10 +1116,7 @@ mod tests {
             km.resolve(&alt_1, KeyContext::Global),
             Some(Action::FocusWorktree)
         );
-        assert_eq!(
-            km.resolve(&alt_shift_1, KeyContext::Global),
-            Some(Action::FocusExpandWorktree)
-        );
+        assert_eq!(km.resolve(&alt_shift_1, KeyContext::Global), None);
     }
 
     #[test]

@@ -16,8 +16,9 @@
 
 # ── Global ──────────────────────────────────────────────────────────────────
 [keys]
-"q" = "quit"
-"Q" = "quit"
+# Quit lives on ctrl+q (not bare q) so a stray q never kills the app. Note:
+# ctrl+q is XON in some terminals' flow control — verify it reaches the app.
+"ctrl+q" = "quit"
 "?" = "show_help"
 # ':' is bound per non-terminal layer so it passes through to the PTY in
 # terminal panels. Ctrl+P stays global for command-palette access anywhere.
@@ -34,6 +35,11 @@
 # is separate from Tab's panel-focus cycle.
 "ctrl+tab" = "next_worktree"
 "ctrl+shift+tab" = "prev_worktree"
+# Reliable worktree-switch aliases for terminals without the kitty protocol
+# (where ctrl+tab degrades to bare tab). ] / [ mirror the next/prev idiom used
+# for hunks in diff mode.
+"alt+]" = "next_worktree"
+"alt+[" = "prev_worktree"
 "ctrl+w" = "focus_worktree"
 "ctrl+n" = "new_claude_code"
 "ctrl+t" = "new_shell"
@@ -52,14 +58,8 @@
 "alt+4" = "focus_viewer"
 "alt+5" = "focus_terminal_claude"
 "alt+6" = "focus_terminal_shell"
-# Option+Shift+1..6 — jump to a panel AND maximize it in one stroke. Under the
-# kitty keyboard protocol these arrive as a clean SHIFT|ALT + digit.
-"alt+shift+1" = "focus_expand_worktree"
-"alt+shift+2" = "focus_expand_explorer"
-"alt+shift+3" = "focus_expand_explorer_diff_list"
-"alt+shift+4" = "focus_expand_viewer"
-"alt+shift+5" = "focus_expand_terminal_claude"
-"alt+shift+6" = "focus_expand_terminal_shell"
+# Focus a panel with alt/super+digit, then maximize it with alt+m (below) —
+# this replaces the old hard-to-press alt+shift+digit "focus+expand" combo.
 # macOS Option-produces-Unicode fallback (US layout): Option+1='¡' … Option+6='§'.
 "¡" = "focus_worktree"
 "™" = "focus_explorer"
@@ -69,6 +69,9 @@
 "§" = "focus_terminal_shell"
 "ctrl+g" = "search_full_text"
 "super+space" = "toggle_panel_expand"
+# alt+m — maximize/zoom the focused panel. Reliable everywhere (super+space's
+# Cmd is eaten by macOS/terminals); the easy half of "focus then zoom".
+"alt+m" = "toggle_panel_expand"
 "alt+/" = "toggle_panel_overlay"
 # macOS Unicode fallback (Option+/ = '÷', US layout).
 "÷" = "toggle_panel_overlay"
@@ -86,16 +89,21 @@
 "x" = "delete_worktree"
 "delete" = "delete_worktree"
 "s" = "switch_branch"
-"g" = "grab_branch"
-"G" = "ungrab_branch"
-"P" = "prune_worktrees"
+# g/G are go_to_top/bottom in every other panel; keep them consistent here too.
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+# Grab (checkout branch onto main) / ungrab (restore main) — b for "branch",
+# capital for the undo, mirroring the do/undo shift-pairing they had on g/G.
+"b" = "grab_branch"
+"B" = "ungrab_branch"
+"X" = "prune_worktrees"
 "m" = "merge_to_main"
 "r" = "refresh_worktrees"
 "R" = "reset_main_to_origin"
-"p" = "cherry_pick"
-"u" = "pull_worktree"
+"c" = "cherry_pick"
+"p" = "pull_worktree"
 "H" = "session_history"
-"v" = "open_pull_request"
+"o" = "open_pull_request"
 ":" = "command_palette"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
