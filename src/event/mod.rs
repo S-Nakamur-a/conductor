@@ -160,13 +160,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             | Action::FocusExplorerDiffList
             | Action::FocusViewer
             | Action::FocusTerminalClaude
-            | Action::FocusTerminalShell
-            | Action::FocusExpandWorktree
-            | Action::FocusExpandExplorer
-            | Action::FocusExpandExplorerDiffList
-            | Action::FocusExpandViewer
-            | Action::FocusExpandTerminalClaude
-            | Action::FocusExpandTerminalShell => {
+            | Action::FocusTerminalShell => {
                 dismiss_overlays(app);
                 dispatch_global_action(app, action);
                 return;
