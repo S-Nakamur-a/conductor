@@ -81,6 +81,7 @@ pub enum CommandId {
 
     // App
     UpdateAndRestart,
+    TogglePartyMode,
     Quit,
 }
 
@@ -444,6 +445,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::App,
         action: None,
         keywords: "update upgrade restart download version",
+    },
+    PaletteCommand {
+        id: CommandId::TogglePartyMode,
+        label: "🎉 Party Mode (secret)",
+        category: CommandCategory::App,
+        action: None,
+        keywords: "party rainbow fun secret celebration mode hidden festive disco",
     },
     PaletteCommand {
         id: CommandId::Quit,

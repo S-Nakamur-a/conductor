@@ -486,6 +486,13 @@ pub struct App {
     pub show_panel_number_overlay: bool,
     /// Instant when the overlay was activated (for auto-dismiss timer).
     pub panel_overlay_since: Option<std::time::Instant>,
+
+    // ── Party mode (hidden easter egg) ───────────────────────────
+    /// When true, the UI goes full party: the focused panel's border
+    /// glows in a flowing rainbow, syntax tokens turn rainbow, the title
+    /// bar shimmers, and confetti drifts across the screen. Toggled from
+    /// the command palette; not persisted (session-only secret).
+    pub party_mode: bool,
 }
 
 /// Result of a background diff computation.
@@ -700,6 +707,7 @@ impl App {
             new_worktree_paths: HashSet::new(),
             show_panel_number_overlay: false,
             panel_overlay_since: None,
+            party_mode: false,
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
 
@@ -1495,11 +1503,25 @@ impl App {
             CommandId::OpenPullRequest => self.open_pr_in_browser(),
             CommandId::UpdateAndRestart => self.cmd_update_and_restart(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
+            CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
             CommandId::Quit => self.should_quit = true,
         }
     }
 
     // ── Command palette handler methods ──────────────────────────────
+
+    /// Toggle the hidden party theme mode (rainbow borders, flashy syntax,
+    /// confetti). A flash message confirms the new state; the whole UI is
+    /// re-rendered so the effect appears/disappears immediately.
+    fn cmd_toggle_party_mode(&mut self) {
+        self.party_mode = !self.party_mode;
+        if self.party_mode {
+            self.set_status("🎉 Party mode ON! 🎉".to_string(), StatusLevel::Success);
+        } else {
+            self.set_status_info("Party mode off.".to_string());
+        }
+        self.dirty.mark_all();
+    }
 
     fn cmd_toggle_panel_expand(&mut self) {
         if self.expanded_panel == Some(self.focus) {

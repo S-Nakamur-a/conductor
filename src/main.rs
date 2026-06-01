@@ -491,6 +491,8 @@ fn run_loop(
                 _ if app.show_panel_number_overlay => TICK_RATE_ACTIVE,
                 _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
                 _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
+                // Party mode keeps animating even while idle.
+                _ if app.party_mode => PULSE_TICK_INTERVAL,
                 _ if decoration_active => DECORATION_TICK_INTERVAL,
                 _ => TICK_RATE_IDLE,
             }
@@ -622,6 +624,10 @@ fn run_loop(
                 // regardless of focus or whether decoration is animating.
                 "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
                     app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                }
+                // Drive party-mode animations (rainbow border, syntax, confetti).
+                "pulse" if app.party_mode => {
+                    app.dirty.mark_all();
                 }
                 "unfocused_terminal" => {
                     match app.focus {

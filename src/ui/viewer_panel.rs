@@ -34,6 +34,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Populate diff annotations cache before taking any shared borrows.
     ensure_diff_annotations_cached(app);
 
+    // Party-mode rainbow phase, advanced by the UI tick (None when off).
+    let party = app.party_mode.then_some(app.ui_tick as f64 * 4.0);
+
     let theme = &app.theme;
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
@@ -305,10 +308,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                                 diff_bg,
                                 emphasis_bg,
                                 tab_width,
+                                party,
                             )
                         })
                         .unwrap_or_else(|| {
-                            syntax_spans_for_line(vs, line_no, Some(diff_bg), theme.fg)
+                            syntax_spans_for_line(vs, line_no, Some(diff_bg), theme.fg, party)
                         })
                 } else {
                     render_inline_diff_spans(
@@ -326,10 +330,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     DiffLineTag::Delete => Some(app.theme.diff_del_bg),
                     _ => None,
                 };
-                syntax_spans_for_line(vs, line_no, diff_bg, theme.fg)
+                syntax_spans_for_line(vs, line_no, diff_bg, theme.fg, party)
             }
         } else {
-            syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg)
+            syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg, party)
         };
 
         // Apply horizontal scroll to content spans, clipping to panel width.
@@ -542,6 +546,8 @@ struct DiffLineRenderCtx<'a> {
     area_width: u16,
     comment_lines: &'a std::collections::HashSet<usize>,
     comment_end_lines: &'a std::collections::HashSet<usize>,
+    /// Party-mode rainbow phase (`None` when party mode is off).
+    party: Option<f64>,
 }
 
 /// Build the display line for a single diff content line (context / addition /
@@ -558,6 +564,7 @@ fn render_diff_content_line(
     let theme = ctx.theme;
     let gutter_width = ctx.gutter_width;
     let tab_width = ctx.tab_width;
+    let party = ctx.party;
 
     let is_selected = new_line_no.map(|n| vs.is_line_selected(n)).unwrap_or(false);
     let is_hovered = new_line_no
@@ -675,6 +682,7 @@ fn render_diff_content_line(
                                 diff_bg.unwrap_or(Color::Reset),
                                 emphasis_bg.unwrap_or(Color::Reset),
                                 tab_width,
+                                party,
                             )
                         })
                         .unwrap_or_else(|| {
@@ -705,7 +713,7 @@ fn render_diff_content_line(
             ),
             DiffLineTag::Equal => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg)
+                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg, party)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -719,7 +727,7 @@ fn render_diff_content_line(
         match tag {
             DiffLineTag::Insert => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, diff_bg, theme.fg)
+                    syntax_spans_for_line(vs, line_no - 1, diff_bg, theme.fg, party)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -739,7 +747,7 @@ fn render_diff_content_line(
             }
             DiffLineTag::Equal => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg)
+                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg, party)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -855,6 +863,9 @@ fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, focused: bo
 fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     let inner_height = area.height.saturating_sub(2) as usize;
 
+    // Party-mode rainbow phase (None when off); computed before borrowing.
+    let party = app.party_mode.then_some(app.ui_tick as f64 * 4.0);
+
     // Build the visible rows plus the screen-row → comment / entry maps. Inline
     // comment threads are injected after the last line of each commented range
     // (so review comments are visible right in the diff, expanded by default).
@@ -885,6 +896,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'
             area_width: area.width,
             comment_lines: &comment_lines,
             comment_end_lines: &comment_end_lines,
+            party,
         };
 
         let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
@@ -1402,6 +1414,7 @@ fn merge_syntax_with_inline(
     diff_bg: Color,
     emphasis_bg: Color,
     tab_width: usize,
+    party: Option<f64>,
 ) -> Option<Vec<Span<'static>>> {
     // Build expanded text and per-byte emphasis flag from inline segments.
     // Tabs are expanded with a *shared* column counter across segments so the
@@ -1463,6 +1476,14 @@ fn merge_syntax_with_inline(
         }
 
         result.push(Span::styled(expanded_text[start..i].to_string(), fg.bg(bg)));
+    }
+
+    // Party mode: recolour the merged tokens with a flowing rainbow while
+    // keeping their diff backgrounds intact.
+    if let Some(phase) = party {
+        for (idx, span) in result.iter_mut().enumerate() {
+            span.style.fg = Some(crate::ui::party::rainbow(phase + idx as f64 * 23.0));
+        }
     }
 
     Some(result)
@@ -1543,17 +1564,26 @@ fn syntax_spans_for_line(
     line_no: usize,
     diff_bg: Option<Color>,
     fg: Color,
+    party: Option<f64>,
 ) -> Vec<Span<'static>> {
     if let Some(tokens) = vs.content.highlighted_lines.get(line_no) {
         tokens
             .iter()
-            .map(|(style, text)| {
-                let s = if let Some(bg) = diff_bg {
+            .enumerate()
+            .map(|(idx, (style, text))| {
+                let mut s = if let Some(bg) = diff_bg {
                     // Keep token fg, override bg with diff colour.
                     style.bg(bg)
                 } else {
                     *style
                 };
+                // Party mode: recolour each token (boundaries preserved) with a
+                // flowing rainbow so the whole line goes flashy.
+                if let Some(phase) = party {
+                    s.fg = Some(crate::ui::party::rainbow(
+                        phase + line_no as f64 * 7.0 + idx as f64 * 23.0,
+                    ));
+                }
                 Span::styled(text.clone(), s)
             })
             .collect()
@@ -1565,7 +1595,11 @@ fn syntax_spans_for_line(
             .get(line_no)
             .cloned()
             .unwrap_or_default();
-        vec![Span::styled(text, Style::default().fg(fg))]
+        let color = match party {
+            Some(phase) => crate::ui::party::rainbow(phase + line_no as f64 * 7.0),
+            None => fg,
+        };
+        vec![Span::styled(text, Style::default().fg(color))]
     }
 }
 
@@ -1851,6 +1885,7 @@ mod tests {
             Color::Rgb(0, 40, 0),
             Color::Rgb(0, 80, 0),
             4,
+            None,
         );
         // Before the tab fix this returned None (texts mismatched on the tab).
         let spans = merged.expect("tabbed line should merge, not fall back to plain");
@@ -1870,6 +1905,7 @@ mod tests {
             Color::Rgb(0, 40, 0),
             Color::Rgb(0, 80, 0),
             4,
+            None,
         );
         assert!(merged.is_none());
     }
