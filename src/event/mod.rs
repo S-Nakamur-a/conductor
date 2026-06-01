@@ -13,15 +13,15 @@ mod terminal;
 mod viewer;
 mod worktree;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Focus, UpdateState, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
-use self::explorer::handle_explorer_key;
 use self::explorer::handle_explorer_comment_list_key;
+use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
 use self::overlay::*;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
@@ -126,32 +126,24 @@ fn is_text_input_active(app: &App) -> bool {
     )
 }
 
-/// True when `key` is a printable character carrying no command modifier
-/// (Ctrl/Alt/Super). A lone Shift still counts as "bare" — `Shift+a` is just
-/// `A`. Such a key is indistinguishable from typed text, so it must never be
-/// hijacked as a global accelerator while a text field is focused. This is what
-/// stops the macOS Option-glyph focus fallbacks (`¡ ™ £ ¢ ∞ §` …) from stealing
-/// focus mid-IME-input.
-fn is_bare_printable(key: &KeyEvent) -> bool {
-    matches!(key.code, KeyCode::Char(_))
-        && !key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-}
-
 // Re-export public API.
 pub use self::mouse::handle_mouse_event;
 
 /// Process a single key event, updating application state as needed.
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
-    // ── 0. Global focus-switching — available even over overlays, EXCEPT a
-    // bare printable key while a text field is focused, which must reach the
-    // text buffer. The global layer binds macOS Option-glyph fallbacks (bare
-    // '¡ ™ £ ¢ ∞ § ÷ ˙ ¬') to focus actions; those glyphs are indistinguishable
-    // from typed text, so during IME / multi-byte input they would otherwise
-    // steal focus (e.g. '∞' jumping to the Claude panel). Modifier-carrying
-    // chords (alt+1, ctrl+w, super+1, alt+h …) still switch focus over a modal.
-    if !(is_text_input_active(app) && is_bare_printable(&key))
+    // ── 0. Global focus-switching — available over non-text overlays (y/n
+    // confirms, list pickers), but NOT while a text field is focused. A focused
+    // text field is a modal grab: it owns every key, so the global focus layer
+    // is not consulted and chords can't pierce it (press Esc to leave first).
+    //
+    // This is what stops focus theft mid-IME-input. Under the kitty keyboard
+    // protocol, macOS reports Option-composed input with the ALT bit set, so a
+    // composed glyph ('∞' → Claude panel) or a Meta-mode digit ('alt+5') would
+    // otherwise resolve to a focus action and yank focus away while typing.
+    // Grabbing on `is_text_input_active` closes the whole category at once,
+    // without enumerating which key shapes a terminal might emit. Non-text
+    // overlays stay pierceable because `is_text_input_active` is false for them.
+    if !is_text_input_active(app)
         && let Some(action) = app.keymap.resolve(&key, KeyContext::Global)
     {
         match action {
@@ -532,7 +524,10 @@ fn adjust_tree_scroll(app: &mut App) {
 /// the Viewer, so files can be switched even while the viewer is maximized.
 pub(super) fn open_filename_search(app: &mut App) {
     app.viewer_state.filename_search.filename_search_active = true;
-    app.viewer_state.filename_search.filename_search_query.clear();
+    app.viewer_state
+        .filename_search
+        .filename_search_query
+        .clear();
     app.viewer_state
         .filename_search
         .filename_search_results
@@ -570,54 +565,7 @@ fn adjust_diff_list_scroll(app: &mut App) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
-        KeyEvent::new(code, mods)
-    }
-
-    #[test]
-    fn bare_chars_are_printable_text() {
-        // Plain ASCII, a kana, and a macOS Option-glyph fallback are all "bare"
-        // and must be treated as typed text, never a global accelerator.
-        for c in ['a', 'あ', '∞', '¡', '§', '÷'] {
-            assert!(
-                is_bare_printable(&key(KeyCode::Char(c), KeyModifiers::empty())),
-                "{c:?} should be bare printable",
-            );
-        }
-    }
-
-    #[test]
-    fn shift_only_still_counts_as_bare() {
-        // Shift+a is just 'A' — still text, not a command.
-        assert!(is_bare_printable(&key(
-            KeyCode::Char('A'),
-            KeyModifiers::SHIFT
-        )));
-    }
-
-    #[test]
-    fn modifier_chords_are_not_bare() {
-        // Command-bearing chords must still reach the global focus switcher.
-        for m in [
-            KeyModifiers::CONTROL,
-            KeyModifiers::ALT,
-            KeyModifiers::SUPER,
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-        ] {
-            assert!(!is_bare_printable(&key(KeyCode::Char('1'), m)));
-        }
-    }
-
-    #[test]
-    fn named_keys_are_not_bare_printable() {
-        // Enter/Esc/Tab are not Char, so they keep flowing to global/overlay.
-        for code in [KeyCode::Enter, KeyCode::Esc, KeyCode::Tab] {
-            assert!(!is_bare_printable(&key(code, KeyModifiers::empty())));
-        }
-    }
-}
+// NOTE: the focus-grab decision now lives in `is_text_input_active` (a function
+// of `App` state) gating §0 of `handle_key_event`. There is no cheap pure-fn
+// seam to unit-test it in isolation here — `App::new` does real git work — so it
+// is covered by manual/integration testing rather than a unit test in this file.
