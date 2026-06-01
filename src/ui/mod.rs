@@ -9,6 +9,7 @@ pub mod common;
 pub mod decoration;
 pub mod explorer_panel;
 pub mod markdown;
+pub mod party;
 pub mod terminal_claude;
 pub mod terminal_shell;
 pub mod viewer_panel;

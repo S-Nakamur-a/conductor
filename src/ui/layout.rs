@@ -345,6 +345,13 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         &app.repo_path,
         &app.theme,
     );
+
+    // ── Party mode (hidden) ──────────────────────────────────────────
+    // Post-process the finished frame so rainbow borders, a shimmering
+    // title bar, and confetti land on top of everything (including overlays).
+    if app.party_mode {
+        super::party::apply_party_effects(frame, app);
+    }
 }
 
 /// Render a small confirmation overlay for worktree deletion.
