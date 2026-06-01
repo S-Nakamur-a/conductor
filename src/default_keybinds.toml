@@ -194,6 +194,9 @@
 "ctrl+f" = "search_filename"
 "c" = "add_comment"
 "C" = "open_comment_list"
+# 'e' for "edit": hand off to $VISUAL/$EDITOR for a quick manual touch-up,
+# then drop back into the viewer (the file reloads on return).
+"e" = "open_in_editor"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
 ":" = "command_palette"
@@ -227,6 +230,9 @@
 "J" = "next_changed_file"
 "K" = "prev_changed_file"
 "c" = "add_comment"
+# 'e' for "edit": open the file under review in $VISUAL/$EDITOR for a quick
+# manual fix without leaving the diff workflow (reloads on return).
+"e" = "open_in_editor"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
 "enter" = "expand_context"

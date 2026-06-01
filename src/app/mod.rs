@@ -333,6 +333,11 @@ pub struct App {
     pub main_repo_name: String,
     /// Whether the application should quit on the next tick.
     pub should_quit: bool,
+    /// One-shot request to open a file in an external editor. Set during key
+    /// handling (which has no terminal access) and consumed by the main loop,
+    /// which suspends the TUI and runs `$EDITOR`. `take`n each iteration, so it
+    /// never re-fires — a request, not a persistent mode.
+    pub editor_request: Option<PathBuf>,
     /// Index of the currently selected worktree in the worktree list.
     pub selected_worktree: usize,
     /// Cached list of worktrees discovered in the repository.
@@ -638,6 +643,7 @@ impl App {
             repo_path,
             main_repo_name,
             should_quit: false,
+            editor_request: None,
             selected_worktree: 0,
             worktrees: Vec::new(),
             config,
@@ -990,6 +996,23 @@ impl App {
             mode,
         );
         true
+    }
+
+    /// Queue a request to open the file currently shown in the Viewer in an
+    /// external editor. Resolves the viewer's relative `current_file` against
+    /// the selected worktree; if no file is open, flashes a hint instead of
+    /// queuing. The main loop consumes [`editor_request`](Self::editor_request).
+    pub fn request_open_in_editor(&mut self) {
+        let target = self
+            .worktrees
+            .get(self.selected_worktree)
+            .and_then(|wt| {
+                editor_target(self.viewer_state.content.current_file.as_deref(), &wt.path)
+            });
+        match target {
+            Some(path) => self.editor_request = Some(path),
+            None => self.set_status("No file open to edit".to_string(), StatusLevel::Warning),
+        }
     }
 
     /// Reload the viewer file tree for the currently selected worktree.
@@ -2385,6 +2408,18 @@ fn reselect_worktree_index(
     Some(old_index.min(worktrees.len() - 1))
 }
 
+/// Resolve the absolute path to hand an external editor from the viewer's
+/// relative `current_file` and the worktree root. `None` (no file open, or an
+/// empty path) means "nothing to edit" — the caller flashes a hint rather than
+/// launching an editor on a bogus target.
+fn editor_target(current_file: Option<&str>, worktree_root: &std::path::Path) -> Option<PathBuf> {
+    let rel = current_file?;
+    if rel.is_empty() {
+        return None;
+    }
+    Some(worktree_root.join(rel))
+}
+
 /// Extract the symbol (identifier) at a specific column in a line.
 /// Returns `(symbol_text, start_col, end_col)` where cols are 0-indexed character offsets.
 pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize, usize)> {
@@ -2423,6 +2458,26 @@ pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_target_resolves_relative_against_worktree() {
+        let root = std::path::Path::new("/repo/wt");
+        assert_eq!(
+            editor_target(Some("src/main.rs"), root),
+            Some(PathBuf::from("/repo/wt/src/main.rs"))
+        );
+    }
+
+    #[test]
+    fn editor_target_is_none_when_no_file_open() {
+        // The load-bearing branch: no current file → no editor launch.
+        assert_eq!(editor_target(None, std::path::Path::new("/repo/wt")), None);
+    }
+
+    #[test]
+    fn editor_target_is_none_for_empty_path() {
+        assert_eq!(editor_target(Some(""), std::path::Path::new("/repo/wt")), None);
+    }
 
     fn wt(branch: &str) -> git_engine::WorktreeInfo {
         git_engine::WorktreeInfo {

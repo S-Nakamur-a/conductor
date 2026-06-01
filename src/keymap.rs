@@ -92,6 +92,9 @@ pub enum Action {
     PrevSearchMatch,
     AddComment,
     ExitToExplorer,
+    /// Open the file shown in the Viewer in an external editor ($VISUAL /
+    /// $EDITOR): suspend the TUI, run the editor, then restore and reload.
+    OpenInEditor,
 
     // ── Terminal panel ────────────────────────────────────────────
     LeaveTerminal,
@@ -193,6 +196,7 @@ impl Action {
             "prev_search_match" => Some(Action::PrevSearchMatch),
             "add_comment" => Some(Action::AddComment),
             "exit_to_explorer" => Some(Action::ExitToExplorer),
+            "open_in_editor" => Some(Action::OpenInEditor),
             "leave_terminal" => Some(Action::LeaveTerminal),
             "scrollback_up" => Some(Action::ScrollbackUp),
             "scrollback_down" => Some(Action::ScrollbackDown),
@@ -280,6 +284,7 @@ impl Action {
             Action::PrevSearchMatch => "prev_search_match",
             Action::AddComment => "add_comment",
             Action::ExitToExplorer => "exit_to_explorer",
+            Action::OpenInEditor => "open_in_editor",
             Action::LeaveTerminal => "leave_terminal",
             Action::ScrollbackUp => "scrollback_up",
             Action::ScrollbackDown => "scrollback_down",
