@@ -119,27 +119,10 @@ fn main() -> Result<()> {
     }
 
     // ── Set up crossterm terminal ────────────────────────────────────
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
     let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
     log::debug!("keyboard_enhanced = {keyboard_enhanced}");
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        crossterm::event::EnableMouseCapture,
-        crossterm::event::EnableBracketedPaste,
-    )?;
-    if keyboard_enhanced {
-        execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-            )
-        )?;
-    }
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    enter_tui(terminal.backend_mut(), keyboard_enhanced)?;
 
     // ── Create application state ─────────────────────────────────────
     let repo_path = match std::env::args().nth(1) {
@@ -163,21 +146,14 @@ fn main() -> Result<()> {
     app.start_symbol_index_build();
 
     // ── Main event loop ──────────────────────────────────────────────
-    let result = run_loop(&mut terminal, &mut app);
+    let result = run_loop(&mut terminal, &mut app, keyboard_enhanced);
 
     // ── Restore terminal (always, even on error) ─────────────────────
-    if keyboard_enhanced {
-        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
-    }
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture,
-        crossterm::event::DisableBracketedPaste,
-        SetTitle(""),
-    )?;
-    terminal.show_cursor()?;
+    // Best-effort: attempt every restore step even if an earlier one errors,
+    // so a failure mid-teardown can't strand the user in a half-restored tty.
+    let _ = leave_tui(terminal.backend_mut(), keyboard_enhanced);
+    let _ = execute!(terminal.backend_mut(), SetTitle(""));
+    let _ = terminal.show_cursor();
 
     // ── Persist view state (covers both normal quit and update-restart) ─
     // Must run before the `exec` below: `exec` replaces the process image, so
@@ -223,8 +199,185 @@ fn main() -> Result<()> {
     result
 }
 
+// ── Terminal mode setup / teardown ───────────────────────────────────────
+//
+// `enter_tui` and `leave_tui` are exact inverses, with the enhancement-flag
+// push/pop bracketing the raw-mode + alternate-screen + mouse/paste capture so
+// suspend → restore round-trips cleanly. Keeping both in one place is what lets
+// `main`'s startup/shutdown and the editor-suspend guard share the *same*
+// symmetric sequence — a stray flag added to one but not the other would leave
+// the terminal subtly broken on return.
+
+/// Enter the full-screen TUI terminal mode (raw mode, alternate screen, mouse
+/// and bracketed-paste capture, and — when supported — the kitty keyboard
+/// enhancement flags).
+fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()> {
+    enable_raw_mode()?;
+    execute!(
+        w,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableBracketedPaste,
+    )?;
+    if keyboard_enhanced {
+        execute!(
+            w,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )?;
+    }
+    Ok(())
+}
+
+/// Leave the full-screen TUI terminal mode, returning the terminal to the
+/// cooked / normal-screen baseline. The exact inverse of [`enter_tui`].
+fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()> {
+    if keyboard_enhanced {
+        execute!(w, PopKeyboardEnhancementFlags)?;
+    }
+    disable_raw_mode()?;
+    execute!(
+        w,
+        LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste,
+    )?;
+    Ok(())
+}
+
+/// RAII guard that suspends the TUI so an external full-screen program (vim,
+/// emacs, …) can own the real controlling terminal, then restores it on drop.
+///
+/// Constructing it (`suspend`) tears the TUI down to the baseline; dropping it
+/// re-enters TUI mode. Because the restore lives in `Drop`, it runs even if the
+/// child process errors, the closure panics, or the caller returns early — the
+/// user can never be stranded in a blind (raw-mode, alternate-screen) terminal.
+struct SuspendedTui<'a> {
+    terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
+    keyboard_enhanced: bool,
+}
+
+impl<'a> SuspendedTui<'a> {
+    /// Tear the TUI down to the cooked / normal-screen baseline and show the
+    /// cursor, handing the real tty to whatever runs next.
+    fn suspend(
+        terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
+        keyboard_enhanced: bool,
+    ) -> io::Result<Self> {
+        leave_tui(terminal.backend_mut(), keyboard_enhanced)?;
+        terminal.show_cursor()?;
+        Ok(Self {
+            terminal,
+            keyboard_enhanced,
+        })
+    }
+}
+
+impl Drop for SuspendedTui<'_> {
+    fn drop(&mut self) {
+        if let Err(e) = enter_tui(self.terminal.backend_mut(), self.keyboard_enhanced) {
+            log::warn!("failed to restore the TUI after suspending for an editor: {e}");
+        }
+        // Repaint from scratch: the editor scribbled over the alternate screen.
+        let _ = self.terminal.clear();
+    }
+}
+
+/// Resolve the external editor command line from `$VISUAL` / `$EDITOR`, falling
+/// back to `fallback`. Empty or whitespace-only values are ignored so a stray
+/// `EDITOR=""` doesn't produce an empty command. The chosen value is split on
+/// whitespace into program + arguments (so `"code -w"` works); an editor whose
+/// *path* contains spaces is intentionally not supported (no shell-style
+/// quoting — see the daisy design note: editor-flavor handling is out of scope).
+fn resolve_editor_command(visual: Option<&str>, editor: Option<&str>, fallback: &str) -> Vec<String> {
+    let chosen = [visual, editor]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or(fallback);
+    let parts: Vec<String> = chosen.split_whitespace().map(str::to_string).collect();
+    if parts.is_empty() {
+        vec![fallback.to_string()]
+    } else {
+        parts
+    }
+}
+
+/// Suspend the TUI, launch `$EDITOR` on `path`, then restore the TUI and
+/// actively reload the just-edited file so the change is visible immediately
+/// (rather than waiting for the debounced file watcher).
+fn launch_external_editor(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    keyboard_enhanced: bool,
+    app: &mut App,
+    path: &std::path::Path,
+) {
+    use crate::app::StatusLevel;
+
+    let argv = resolve_editor_command(
+        std::env::var("VISUAL").ok().as_deref(),
+        std::env::var("EDITOR").ok().as_deref(),
+        "vi",
+    );
+    // `resolve_editor_command` never returns an empty vec.
+    let (program, args) = argv.split_first().expect("editor command is non-empty");
+
+    // Scope the guard so the TUI is restored before we touch `app` for the
+    // status flash / reload below.
+    let outcome = {
+        let _guard = match SuspendedTui::suspend(terminal, keyboard_enhanced) {
+            Ok(guard) => guard,
+            Err(e) => {
+                app.set_status(
+                    format!("Could not leave the TUI to launch an editor: {e}"),
+                    StatusLevel::Error,
+                );
+                return;
+            }
+        };
+        std::process::Command::new(program)
+            .args(args)
+            .arg(path)
+            .status()
+    };
+
+    match outcome {
+        Ok(status) if status.success() => {
+            app.set_status(format!("Edited {}", path.display()), StatusLevel::Success);
+        }
+        Ok(_) => {
+            app.set_status(
+                format!("Editor exited without success ({})", path.display()),
+                StatusLevel::Info,
+            );
+        }
+        Err(e) => {
+            app.set_status(
+                format!("Failed to launch editor '{program}': {e}"),
+                StatusLevel::Error,
+            );
+        }
+    }
+
+    // Full repaint + active reload of the file we just edited, so the change is
+    // visible immediately instead of waiting for the debounced file watcher.
+    // Mirrors the watcher's own refresh pair so the unified-diff view updates
+    // too when editing from diff mode.
+    app.terminal.needs_clear = true;
+    app.refresh_viewer();
+    app.refresh_diff();
+    app.dirty.mark_all();
+}
+
 /// Drive the draw → poll → handle cycle until the user quits.
-fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    keyboard_enhanced: bool,
+) -> Result<()> {
     // Set up file watcher for auto-refresh.
     let watch_paths: Vec<std::path::PathBuf> =
         app.worktrees.iter().map(|w| w.path.clone()).collect();
@@ -381,6 +534,16 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     break;
                 }
             }
+        }
+
+        // ── 2b. External editor — suspend the TUI, run $EDITOR, restore ──
+        // Consumed as a one-shot request set during key handling (the handler
+        // has no terminal access). Runs synchronously: the main loop blocks
+        // while the editor owns the tty, which is exactly the git-commit-style
+        // hand-off we want, and means background PTYs can't be resized from
+        // under us mid-edit.
+        if let Some(path) = app.editor_request.take() {
+            launch_external_editor(terminal, keyboard_enhanced, app, &path);
         }
 
         // ── 3. RENDER — immediately after events for lowest latency ──
@@ -587,5 +750,64 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         if app.should_quit {
             return Ok(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_editor_command;
+
+    #[test]
+    fn falls_back_when_both_unset() {
+        assert_eq!(resolve_editor_command(None, None, "vi"), vec!["vi"]);
+    }
+
+    #[test]
+    fn visual_takes_precedence_over_editor() {
+        assert_eq!(
+            resolve_editor_command(Some("vim"), Some("nano"), "vi"),
+            vec!["vim"]
+        );
+    }
+
+    #[test]
+    fn editor_used_when_visual_unset() {
+        assert_eq!(resolve_editor_command(None, Some("nano"), "vi"), vec!["nano"]);
+    }
+
+    #[test]
+    fn splits_program_and_arguments() {
+        assert_eq!(
+            resolve_editor_command(Some("code -w"), None, "vi"),
+            vec!["code", "-w"]
+        );
+        // tabs and runs of spaces collapse the same way.
+        assert_eq!(
+            resolve_editor_command(Some("code\t-w  -n"), None, "vi"),
+            vec!["code", "-w", "-n"]
+        );
+    }
+
+    #[test]
+    fn empty_or_whitespace_values_are_ignored() {
+        // Empty / whitespace-only VISUAL must not become an empty command; it
+        // is skipped so a stray VISUAL=\"\" still lets EDITOR (or the fallback) win.
+        assert_eq!(resolve_editor_command(Some(""), None, "vi"), vec!["vi"]);
+        assert_eq!(resolve_editor_command(Some("   "), None, "vi"), vec!["vi"]);
+        assert_eq!(
+            resolve_editor_command(Some(""), Some("nano"), "vi"),
+            vec!["nano"]
+        );
+        assert_eq!(resolve_editor_command(Some("  vim  "), None, "vi"), vec!["vim"]);
+    }
+
+    #[test]
+    fn naive_split_does_not_honor_quotes() {
+        // Documented limitation: no shell-style quoting. A quoted argument is
+        // split on its inner spaces. This pins the intentional behavior.
+        assert_eq!(
+            resolve_editor_command(Some("vim -c 'set ft=rust'"), None, "vi"),
+            vec!["vim", "-c", "'set", "ft=rust'"]
+        );
     }
 }
