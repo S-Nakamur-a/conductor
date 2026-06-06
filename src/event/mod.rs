@@ -359,12 +359,24 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
 
 // ── Paste event handling ────────────────────────────────────────────────
 
-/// Handle a bracketed paste event. When the terminal panel is focused,
-/// forward the entire pasted text to the PTY in one write, wrapped with
-/// bracketed-paste escape sequences so the shell/application treats it as
-/// a single paste rather than individual keystrokes.
+/// Handle a bracketed paste event. A text-input overlay/modal takes the paste
+/// first (so IME-committed multi-byte text reaches the input field rather than a
+/// terminal sitting behind the modal); otherwise, when a terminal panel is
+/// focused, the entire pasted text is forwarded to the PTY in one write, wrapped
+/// with bracketed-paste escape sequences so the shell/application treats it as a
+/// single paste rather than individual keystrokes.
 pub fn handle_paste_event(app: &mut App, data: String) {
-    if app.focus != Focus::TerminalClaude && app.focus != Focus::TerminalShell {
+    // A text-input overlay/modal owns paste regardless of which panel holds
+    // focus underneath it — the same modal grab that §0 of `handle_key_event`
+    // applies to key events. This matters because macOS terminals deliver
+    // IME-committed multi-byte text (kana/kanji, especially 2+ chars or a
+    // conversion) as a bracketed paste, not as individual key events. Gating on
+    // focus alone would forward that paste into the focused Claude/Shell PTY
+    // sitting behind the modal, so typed Japanese would vanish from the input
+    // field and surface in the terminal instead. Half-width ASCII is unaffected
+    // because it arrives as ordinary key events. Kept in lockstep with
+    // `is_text_input_active`: every destination below is enumerated there.
+    if is_text_input_active(app) {
         // Dispatch paste data to the active overlay input buffer.
         let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
 
