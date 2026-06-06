@@ -97,7 +97,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     // Hand off to an external editor — before the empty-buffer guard so a
     // missing file flashes a hint instead of silently doing nothing.
     if let Some(Action::OpenInEditor) = action {
-        app.request_open_in_editor();
+        app.open_in_editor();
         return;
     }
 
@@ -242,7 +242,7 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     // Hand off the file under review to an external editor for a quick manual
     // fix — before the empty-buffer guard, so it also works on an empty diff.
     if let Some(Action::OpenInEditor) = action {
-        app.request_open_in_editor();
+        app.open_in_editor();
         return;
     }
 

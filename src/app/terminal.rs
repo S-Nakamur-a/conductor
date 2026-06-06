@@ -118,6 +118,16 @@ impl App {
             }
         }
 
+        // Keep the embedded editor's session index valid when a lower-indexed
+        // session is removed out from under it. The editor itself is never
+        // closed through this path (it's torn down by `exit_editor`), so it can
+        // only be shifted, never invalidated.
+        if let Some(editor) = self.editor.as_mut()
+            && editor.session_idx > global_idx
+        {
+            editor.session_idx -= 1;
+        }
+
         // Clear invalidated indices and fall back to next available session.
         // The closed session was the displayed one, so the fallback target's
         // content differs — switch through the helper to reset scroll and the
@@ -165,10 +175,23 @@ impl App {
 
         // Walk backwards so removals don't shift indices we haven't checked yet.
         for idx in (0..count).rev() {
+            // The editor's own session is owned by `poll_editor_exit` (which
+            // restores the layout and reloads the file); never reap it here.
+            if self.editor.as_ref().is_some_and(|e| e.session_idx == idx) {
+                continue;
+            }
             if !self.terminal.pty_manager.is_session_alive(idx) {
                 log::info!("removing dead PTY session at index {idx}");
                 self.terminal.pty_manager.remove_session(idx);
                 removed_any = true;
+
+                // Shift the editor's session index when a lower-indexed session
+                // is reaped beneath it.
+                if let Some(editor) = self.editor.as_mut()
+                    && editor.session_idx > idx
+                {
+                    editor.session_idx -= 1;
+                }
 
                 // Adjust deferred prompts.
                 self.terminal.deferred_prompts.remove(&idx);
@@ -484,6 +507,17 @@ impl App {
             {
                 *last_shell_size = (shell_pty_rows, right_cols);
                 self.update_shell_terminal_size(shell_pty_rows, right_cols);
+            }
+        }
+
+        // Keep the embedded editor PTY sized to its (merged Explorer+Viewer)
+        // region. Computed from the cached layout, so it tracks panel resizes
+        // and the maximize toggle.
+        if let Some(idx) = self.editor.as_ref().map(|e| e.session_idx) {
+            let size = self.editor_pty_size();
+            if size != self.terminal.size_editor && size.0 > 0 && size.1 > 0 {
+                self.terminal.size_editor = size;
+                self.terminal.pty_manager.resize_session(idx, size.0, size.1);
             }
         }
     }

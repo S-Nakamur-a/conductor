@@ -462,6 +462,7 @@ impl App {
         let kind = match session.kind {
             pty_manager::SessionKind::ClaudeCode => "claude_code",
             pty_manager::SessionKind::Shell => "shell",
+            pty_manager::SessionKind::Editor => "editor",
         };
         let output = self.terminal.pty_manager.get_output(active_idx).join("\n");
 

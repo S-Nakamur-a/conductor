@@ -22,6 +22,9 @@ pub struct TerminalState {
     pub size_claude: (u16, u16),
     /// Last known terminal content area size (rows, cols) for Shell PTY.
     pub size_shell: (u16, u16),
+    /// Last applied content area size (rows, cols) for the embedded editor PTY.
+    /// Tracked separately so `sync_pty_sizes` only resizes on an actual change.
+    pub size_editor: (u16, u16),
     /// Scrollback offset for the Claude Code terminal (0 = live view).
     pub scroll_claude: usize,
     /// Scrollback offset for the Shell terminal (0 = live view).
@@ -61,6 +64,7 @@ impl TerminalState {
             active_shell_session: None,
             size_claude: (24, 80),
             size_shell: (6, 80),
+            size_editor: (24, 80),
             scroll_claude: 0,
             scroll_shell: 0,
             cache_claude: Default::default(),

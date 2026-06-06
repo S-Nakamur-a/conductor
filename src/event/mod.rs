@@ -242,26 +242,32 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── 1c. Terminal focus — intercept configurable keys, forward rest to PTY ─
+    // ── 1c. PTY focus — intercept configurable keys, forward rest to PTY ─
+    // Covers the Claude/Shell terminals and the embedded editor: each forwards
+    // unstolen keys to its inner program, using its own keymap context.
 
-    if app.focus == Focus::TerminalClaude || app.focus == Focus::TerminalShell {
+    if app.focus.is_pty() {
+        let pty_context = app.focus.key_context();
+
         // If the selected worktree is grabbed, block all terminal input
         // except navigation keys (focus switching is handled above in §0).
+        // (The editor never opens on a grabbed worktree, so this only guards
+        // the Claude/Shell terminals in practice.)
         if app.is_selected_worktree_grabbed() {
             // Allow Esc to leave terminal, but block everything else.
-            if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, KeyContext::Terminal) {
+            if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, pty_context) {
                 app.set_focus(Focus::Explorer);
             }
             return;
         }
 
-        // Resolve via the keymap (terminal layer + global fallback, already
+        // Resolve via the keymap (panel layer + global fallback, already
         // filtered to actions that fire in the terminal). Terminal-only actions
         // need terminal state; everything else reuses the shared global
         // dispatch. A miss falls through to the PTY below — the keymap is the
-        // single source of truth for what the terminal steals from the inner
+        // single source of truth for what the panel steals from the inner
         // program (no hand-maintained allowlist).
-        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
+        if let Some(action) = app.keymap.resolve(&key, pty_context)
             && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
         {
             return;
@@ -271,11 +277,12 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         let session_idx = match app.focus {
             Focus::TerminalClaude => app.terminal.active_claude_session,
             Focus::TerminalShell => app.terminal.active_shell_session,
+            Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
             _ => unreachable!(),
         };
         if let Some(idx) = session_idx {
             forward_key_to_pty(app, idx, key);
-        } else if key.code == KeyCode::Enter {
+        } else if key.code == KeyCode::Enter && app.focus != Focus::Editor {
             spawn_terminal_session(app);
         }
         return;
@@ -287,7 +294,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Worktree => KeyContext::Worktree,
         Focus::Explorer => KeyContext::Explorer,
         Focus::Viewer => KeyContext::Viewer,
-        Focus::TerminalClaude | Focus::TerminalShell => unreachable!(),
+        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
     };
 
     if let Some(action) = app.keymap.resolve(&key, context)
@@ -302,7 +309,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Worktree => handle_worktree_key(app, key),
         Focus::Explorer => handle_explorer_key(app, key),
         Focus::Viewer => handle_viewer_key(app, key),
-        Focus::TerminalClaude | Focus::TerminalShell => unreachable!(),
+        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
     }
 }
 
@@ -314,7 +321,21 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 /// hold.
 fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     match action {
-        Action::LeaveTerminal => app.set_focus(Focus::Explorer),
+        Action::LeaveTerminal => {
+            // While the editor panel is open, Ctrl+Esc toggles between it and
+            // Claude (the editor stays open so you can chat and return); from
+            // the editor itself it steps over to Claude. Otherwise it leaves a
+            // terminal back to the Explorer as before.
+            let target = if app.editor.is_some() {
+                match app.focus {
+                    Focus::Editor => Focus::TerminalClaude,
+                    _ => Focus::Editor,
+                }
+            } else {
+                Focus::Explorer
+            };
+            app.set_focus(target);
+        }
         Action::ScrollbackUp => {
             let page = match app.focus {
                 Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,

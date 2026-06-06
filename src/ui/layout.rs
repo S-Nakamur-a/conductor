@@ -122,6 +122,11 @@ pub(crate) fn accordion_widths(
         Some(Focus::Worktree) => (total_width, 0, 0),
         Some(Focus::Explorer) => (0, total_width, 0),
         Some(Focus::Viewer) => (0, 0, total_width),
+        // The maximized editor takes the whole width via the explorer slot;
+        // `render_ui` unions the explorer+viewer columns into one editor area,
+        // so giving the explorer slot the full width (viewer 0) yields a
+        // full-screen editor with the terminal column collapsed.
+        Some(Focus::Editor) => (0, total_width, 0),
         Some(Focus::TerminalClaude | Focus::TerminalShell) => (0, 0, 0),
         None => {
             // Default proportions. The worktree column is gone (its status now
@@ -132,6 +137,21 @@ pub(crate) fn accordion_widths(
             let viewer = ((total_width as u32 * 38 / 100) as u16).max(min_col);
             (0, explorer, viewer)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accordion_widths;
+    use crate::app::Focus;
+
+    #[test]
+    fn maximized_editor_takes_full_width_via_explorer_slot() {
+        // render_ui unions the explorer+viewer columns into the editor area, so
+        // the maximized editor puts all width on the explorer slot (viewer 0),
+        // collapsing the terminal column to zero remaining.
+        let (left, explorer, viewer) = accordion_widths(Some(Focus::Editor), 120);
+        assert_eq!((left, explorer, viewer), (0, 120, 0));
     }
 }
 
@@ -166,7 +186,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // their (bg-transparent) content draws on top; viewer is left alone
     // as a reading pane and the terminal keeps its own PTY background.
     let focused_surface_col = match app.focus {
-        crate::app::Focus::Explorer => Some(1),
+        crate::app::Focus::Explorer if app.editor.is_none() => Some(1),
         _ => None,
     };
     if let Some(col) = focused_surface_col {
@@ -177,21 +197,35 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // ── Column 0 (worktree) is gone — its status is in the top strip. ──
 
-    // ── Column 1: Explorer (file tree + diff list) ──────────────────
-    super::explorer_panel::render(frame, columns[1], app);
+    if app.editor.is_some() {
+        // The embedded editor replaces the Explorer + Viewer columns with one
+        // merged PTY panel (the terminal column stays put). When maximized,
+        // accordion_widths gives the explorer slot the full width and the
+        // viewer slot zero, so the union below is the whole main area.
+        let region = Rect {
+            x: columns[1].x,
+            y: columns[1].y,
+            width: columns[1].width.saturating_add(columns[2].width),
+            height: columns[1].height,
+        };
+        super::editor_panel::render(frame, region, app);
+    } else {
+        // ── Column 1: Explorer (file tree + diff list) ──────────────────
+        super::explorer_panel::render(frame, columns[1], app);
 
-    // ── Column 2: Viewer (file content) ─────────────────────────────
-    if app.viewer_state.is_current_file_media()
-        && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
-    {
-        let full_path = app.selected_worktree_path().join(rel_path);
-        let cols = columns[2].width;
-        let rows = columns[2].height;
-        app.viewer_state
-            .media_state
-            .render_if_needed(&full_path, rel_path, cols, rows);
+        // ── Column 2: Viewer (file content) ─────────────────────────────
+        if app.viewer_state.is_current_file_media()
+            && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
+        {
+            let full_path = app.selected_worktree_path().join(rel_path);
+            let cols = columns[2].width;
+            let rows = columns[2].height;
+            app.viewer_state
+                .media_state
+                .render_if_needed(&full_path, rel_path, cols, rows);
+        }
+        super::viewer_panel::render(frame, columns[2], app);
     }
-    super::viewer_panel::render(frame, columns[2], app);
 
     // ── Column 3: Terminal split (Claude 80% / Shell 20%) ───────────
     let terminal_split = app.layout_cache.terminal_split;

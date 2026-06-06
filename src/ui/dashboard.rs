@@ -909,6 +909,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         crate::app::Focus::Viewer => "Viewer",
         crate::app::Focus::TerminalClaude => "Claude Code",
         crate::app::Focus::TerminalShell => "Shell",
+        crate::app::Focus::Editor => "Editor",
     };
     let scope_header = |scope: command_palette::CommandScope| match scope {
         command_palette::CommandScope::Current => current_label,
@@ -1506,6 +1507,25 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
             )));
             lines.push(Line::from(Span::styled(
                 "  Use mouse click to switch panels without leaving.",
+                Style::default().fg(theme.muted),
+            )));
+        }
+        Focus::Editor => {
+            let ctx = KeyContext::Editor;
+            help_section(&mut lines, "Editor Panel", theme);
+            help_key_dyn(
+                &mut lines,
+                fmt_keys(app, ctx, Action::LeaveTerminal),
+                "Step over to Claude (editor stays open)",
+                theme,
+            );
+            help_section(&mut lines, "Note", theme);
+            lines.push(Line::from(Span::styled(
+                "  All other keys go to the editor (vim/emacs). Quit it",
+                Style::default().fg(theme.muted),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  (e.g. :q) to close the panel and reload the file.",
                 Style::default().fg(theme.muted),
             )));
         }
