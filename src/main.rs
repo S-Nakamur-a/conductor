@@ -146,7 +146,7 @@ fn main() -> Result<()> {
     app.start_symbol_index_build();
 
     // ── Main event loop ──────────────────────────────────────────────
-    let result = run_loop(&mut terminal, &mut app, keyboard_enhanced);
+    let result = run_loop(&mut terminal, &mut app);
 
     // ── Restore terminal (always, even on error) ─────────────────────
     // Best-effort: attempt every restore step even if an earlier one errors,
@@ -247,136 +247,10 @@ fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     Ok(())
 }
 
-/// RAII guard that suspends the TUI so an external full-screen program (vim,
-/// emacs, …) can own the real controlling terminal, then restores it on drop.
-///
-/// Constructing it (`suspend`) tears the TUI down to the baseline; dropping it
-/// re-enters TUI mode. Because the restore lives in `Drop`, it runs even if the
-/// child process errors, the closure panics, or the caller returns early — the
-/// user can never be stranded in a blind (raw-mode, alternate-screen) terminal.
-struct SuspendedTui<'a> {
-    terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
-    keyboard_enhanced: bool,
-}
-
-impl<'a> SuspendedTui<'a> {
-    /// Tear the TUI down to the cooked / normal-screen baseline and show the
-    /// cursor, handing the real tty to whatever runs next.
-    fn suspend(
-        terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
-        keyboard_enhanced: bool,
-    ) -> io::Result<Self> {
-        leave_tui(terminal.backend_mut(), keyboard_enhanced)?;
-        terminal.show_cursor()?;
-        Ok(Self {
-            terminal,
-            keyboard_enhanced,
-        })
-    }
-}
-
-impl Drop for SuspendedTui<'_> {
-    fn drop(&mut self) {
-        if let Err(e) = enter_tui(self.terminal.backend_mut(), self.keyboard_enhanced) {
-            log::warn!("failed to restore the TUI after suspending for an editor: {e}");
-        }
-        // Repaint from scratch: the editor scribbled over the alternate screen.
-        let _ = self.terminal.clear();
-    }
-}
-
-/// Resolve the external editor command line from `$VISUAL` / `$EDITOR`, falling
-/// back to `fallback`. Empty or whitespace-only values are ignored so a stray
-/// `EDITOR=""` doesn't produce an empty command. The chosen value is split on
-/// whitespace into program + arguments (so `"code -w"` works); an editor whose
-/// *path* contains spaces is intentionally not supported (no shell-style
-/// quoting — see the daisy design note: editor-flavor handling is out of scope).
-fn resolve_editor_command(visual: Option<&str>, editor: Option<&str>, fallback: &str) -> Vec<String> {
-    let chosen = [visual, editor]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .unwrap_or(fallback);
-    let parts: Vec<String> = chosen.split_whitespace().map(str::to_string).collect();
-    if parts.is_empty() {
-        vec![fallback.to_string()]
-    } else {
-        parts
-    }
-}
-
-/// Suspend the TUI, launch `$EDITOR` on `path`, then restore the TUI and
-/// actively reload the just-edited file so the change is visible immediately
-/// (rather than waiting for the debounced file watcher).
-fn launch_external_editor(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    keyboard_enhanced: bool,
-    app: &mut App,
-    path: &std::path::Path,
-) {
-    use crate::app::StatusLevel;
-
-    let argv = resolve_editor_command(
-        std::env::var("VISUAL").ok().as_deref(),
-        std::env::var("EDITOR").ok().as_deref(),
-        "vi",
-    );
-    // `resolve_editor_command` never returns an empty vec.
-    let (program, args) = argv.split_first().expect("editor command is non-empty");
-
-    // Scope the guard so the TUI is restored before we touch `app` for the
-    // status flash / reload below.
-    let outcome = {
-        let _guard = match SuspendedTui::suspend(terminal, keyboard_enhanced) {
-            Ok(guard) => guard,
-            Err(e) => {
-                app.set_status(
-                    format!("Could not leave the TUI to launch an editor: {e}"),
-                    StatusLevel::Error,
-                );
-                return;
-            }
-        };
-        std::process::Command::new(program)
-            .args(args)
-            .arg(path)
-            .status()
-    };
-
-    match outcome {
-        Ok(status) if status.success() => {
-            app.set_status(format!("Edited {}", path.display()), StatusLevel::Success);
-        }
-        Ok(_) => {
-            app.set_status(
-                format!("Editor exited without success ({})", path.display()),
-                StatusLevel::Info,
-            );
-        }
-        Err(e) => {
-            app.set_status(
-                format!("Failed to launch editor '{program}': {e}"),
-                StatusLevel::Error,
-            );
-        }
-    }
-
-    // Full repaint + active reload of the file we just edited, so the change is
-    // visible immediately instead of waiting for the debounced file watcher.
-    // Mirrors the watcher's own refresh pair so the unified-diff view updates
-    // too when editing from diff mode.
-    app.terminal.needs_clear = true;
-    app.refresh_viewer();
-    app.refresh_diff();
-    app.dirty.mark_all();
-}
-
 /// Drive the draw → poll → handle cycle until the user quits.
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    keyboard_enhanced: bool,
 ) -> Result<()> {
     // Set up file watcher for auto-refresh.
     let watch_paths: Vec<std::path::PathBuf> =
@@ -476,16 +350,26 @@ fn run_loop(
         if pty_dirty {
             app.terminal.dirty_claude = true;
             app.terminal.dirty_shell = true;
+            if let Some(editor) = app.editor.as_mut() {
+                editor.dirty = true;
+            }
             app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
+            // The editor occupies the Explorer/Viewer columns, so its repaint
+            // rides the EXPLORER/VIEWER dirty bits rather than TERMINAL.
+            if app.editor.is_some() {
+                app.dirty.mark(
+                    crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER,
+                );
+            }
         }
 
         let tick = if app.dirty.any() || pty_dirty {
             Duration::ZERO
         } else {
             match app.focus {
-                crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell => {
-                    TICK_RATE_TERMINAL
-                }
+                crate::app::Focus::TerminalClaude
+                | crate::app::Focus::TerminalShell
+                | crate::app::Focus::Editor => TICK_RATE_TERMINAL,
                 _ if app.update_state != crate::app::UpdateState::Idle => TICK_RATE_ACTIVE,
                 _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
                 _ if app.show_panel_number_overlay => TICK_RATE_ACTIVE,
@@ -538,14 +422,12 @@ fn run_loop(
             }
         }
 
-        // ── 2b. External editor — suspend the TUI, run $EDITOR, restore ──
-        // Consumed as a one-shot request set during key handling (the handler
-        // has no terminal access). Runs synchronously: the main loop blocks
-        // while the editor owns the tty, which is exactly the git-commit-style
-        // hand-off we want, and means background PTYs can't be resized from
-        // under us mid-edit.
-        if let Some(path) = app.editor_request.take() {
-            launch_external_editor(terminal, keyboard_enhanced, app, &path);
+        // ── 2b. Embedded editor lifecycle — close the panel once $EDITOR exits ──
+        // The editor runs as an in-panel PTY (not a TUI suspend), so its exit is
+        // detected here every iteration: when the child is gone we tear the panel
+        // down, restore the Explorer/Viewer layout, and reload the edited file.
+        if app.poll_editor_exit() {
+            app.dirty.mark_all();
         }
 
         // ── 3. RENDER — immediately after events for lowest latency ──
@@ -759,61 +641,3 @@ fn run_loop(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::resolve_editor_command;
-
-    #[test]
-    fn falls_back_when_both_unset() {
-        assert_eq!(resolve_editor_command(None, None, "vi"), vec!["vi"]);
-    }
-
-    #[test]
-    fn visual_takes_precedence_over_editor() {
-        assert_eq!(
-            resolve_editor_command(Some("vim"), Some("nano"), "vi"),
-            vec!["vim"]
-        );
-    }
-
-    #[test]
-    fn editor_used_when_visual_unset() {
-        assert_eq!(resolve_editor_command(None, Some("nano"), "vi"), vec!["nano"]);
-    }
-
-    #[test]
-    fn splits_program_and_arguments() {
-        assert_eq!(
-            resolve_editor_command(Some("code -w"), None, "vi"),
-            vec!["code", "-w"]
-        );
-        // tabs and runs of spaces collapse the same way.
-        assert_eq!(
-            resolve_editor_command(Some("code\t-w  -n"), None, "vi"),
-            vec!["code", "-w", "-n"]
-        );
-    }
-
-    #[test]
-    fn empty_or_whitespace_values_are_ignored() {
-        // Empty / whitespace-only VISUAL must not become an empty command; it
-        // is skipped so a stray VISUAL=\"\" still lets EDITOR (or the fallback) win.
-        assert_eq!(resolve_editor_command(Some(""), None, "vi"), vec!["vi"]);
-        assert_eq!(resolve_editor_command(Some("   "), None, "vi"), vec!["vi"]);
-        assert_eq!(
-            resolve_editor_command(Some(""), Some("nano"), "vi"),
-            vec!["nano"]
-        );
-        assert_eq!(resolve_editor_command(Some("  vim  "), None, "vi"), vec!["vim"]);
-    }
-
-    #[test]
-    fn naive_split_does_not_honor_quotes() {
-        // Documented limitation: no shell-style quoting. A quoted argument is
-        // split on its inner spaces. This pins the intentional behavior.
-        assert_eq!(
-            resolve_editor_command(Some("vim -c 'set ft=rust'"), None, "vi"),
-            vec!["vim", "-c", "'set", "ft=rust'"]
-        );
-    }
-}

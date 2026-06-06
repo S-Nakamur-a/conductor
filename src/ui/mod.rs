@@ -7,6 +7,7 @@ use crate::theme::Theme;
 
 pub mod common;
 pub mod decoration;
+pub mod editor_panel;
 pub mod explorer_panel;
 pub mod markdown;
 pub mod party;

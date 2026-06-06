@@ -28,6 +28,11 @@ pub enum SessionKind {
     ClaudeCode,
     /// An interactive shell session (e.g. bash, zsh, fish).
     Shell,
+    /// A one-shot external editor (`$VISUAL` / `$EDITOR`) launched on a single
+    /// file. Unlike the persistent Claude/Shell panels this is transient: it
+    /// lives only while the user edits, and is torn down when the editor process
+    /// exits. Excluded from the Claude-output scanner (waiting/active detection).
+    Editor,
 }
 
 // ---------------------------------------------------------------------------
@@ -155,19 +160,9 @@ impl PtyManager {
         repo_root: &Path,
         session_name: Option<&str>,
     ) -> Result<usize> {
-        // 1. Open a new PTY pair with the given size.
-        let pair = self
-            .pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .context("Failed to open PTY pair")?;
-
-        // 2. Build the command depending on the session kind.
-        let mut cmd = match kind {
+        // Build the command depending on the session kind, then hand off to the
+        // shared spawn path.
+        let cmd = match kind {
             SessionKind::ClaudeCode => {
                 let mut c = CommandBuilder::new("claude");
                 if let Some(resume_id) = resume_session_id {
@@ -184,7 +179,62 @@ impl PtyManager {
                 c
             }
             SessionKind::Shell => CommandBuilder::new(shell_path),
+            SessionKind::Editor => {
+                unreachable!("editor sessions are spawned via spawn_editor_session")
+            }
         };
+        self.finish_spawn(kind, worktree, label, working_dir, rows, cols, cmd)
+    }
+
+    /// Spawn an external editor (`$VISUAL` / `$EDITOR`) on a single `file` as a
+    /// transient PTY session. `program` + `args` is the resolved editor command
+    /// line (already split into program and arguments); `file` is appended as
+    /// the final argument.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_editor_session(
+        &mut self,
+        worktree: &str,
+        label: &str,
+        working_dir: &PathBuf,
+        rows: u16,
+        cols: u16,
+        program: &str,
+        args: &[String],
+        file: &Path,
+    ) -> Result<usize> {
+        let mut cmd = CommandBuilder::new(program);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.arg(file);
+        self.finish_spawn(SessionKind::Editor, worktree, label, working_dir, rows, cols, cmd)
+    }
+
+    /// Shared tail of the spawn path: open the PTY pair, wire the reader thread
+    /// and vt100 parser, and push the session. `cmd` is the fully built command
+    /// (its working directory is set here).
+    #[allow(clippy::too_many_arguments)]
+    fn finish_spawn(
+        &mut self,
+        kind: SessionKind,
+        worktree: &str,
+        label: &str,
+        working_dir: &PathBuf,
+        rows: u16,
+        cols: u16,
+        mut cmd: CommandBuilder,
+    ) -> Result<usize> {
+        // 1. Open a new PTY pair with the given size.
+        let pair = self
+            .pty_system
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .context("Failed to open PTY pair")?;
+
         cmd.cwd(working_dir);
 
         // 3. Spawn the child process on the slave end.

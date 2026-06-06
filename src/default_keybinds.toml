@@ -143,6 +143,7 @@
 "g" = "go_to_top"
 "G" = "go_to_bottom"
 "esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
 
 # ── Explorer: comment list ──────────────────────────────────────────────────────
@@ -167,6 +168,7 @@
 "R" = "reply_to_comment"
 "space" = "view_comment_detail"
 "esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
 
 # ── Viewer (file content) ───────────────────────────────────────────────────────
@@ -199,6 +201,10 @@
 "e" = "open_in_editor"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
+# Ctrl+Esc is the app-wide "leave focus" chord (it is the only way out of the
+# PTY panels, where bare Esc is forwarded to the inner program). Bound here too
+# so the same chord works everywhere; bare Esc still works in this panel.
+"ctrl+esc" = "exit_to_explorer"
 ":" = "command_palette"
 "ctrl+o" = "jump_back"
 "ctrl+i" = "jump_forward"
@@ -235,6 +241,7 @@
 "e" = "open_in_editor"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
+"ctrl+esc" = "exit_to_explorer"
 "enter" = "expand_context"
 "shift+enter" = "expand_all_context"
 ":" = "command_palette"
@@ -249,6 +256,7 @@
 "G" = "go_to_bottom"
 "enter" = "select"
 "esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
 
 # ── Terminal ──────────────────────────────────────────────────────────────────
 [layers.terminal]
@@ -258,3 +266,12 @@
 "shift+home" = "scrollback_top"
 "shift+end" = "snap_to_live"
 "ctrl+g" = "open_file_from_terminal"
+
+# ── Editor (embedded vim/emacs PTY) ───────────────────────────────────────────
+# Almost everything is forwarded to the inner editor — Esc (vim mode changes),
+# Ctrl+G, Shift+PageUp, etc. all reach the program. Only "leave focus" is stolen
+# back, on Ctrl+Esc, matching the terminal panel. (Ctrl+Esc requires the kitty
+# keyboard protocol; on terminals without it, quit the editor with `:q` — the
+# process exit closes the panel automatically. alt+l / alt+h also step away.)
+[layers.editor]
+"ctrl+esc" = "leave_terminal"

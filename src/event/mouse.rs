@@ -413,6 +413,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
+            // The embedded editor occupies the merged Explorer+Viewer region; a
+            // click anywhere in it just (re)focuses the editor — the Explorer and
+            // Viewer panels behind it are hidden, so their click handlers must
+            // not run. Clicks on the terminal column still fall through.
+            if app.editor.is_some() && col >= left_end && col < viewer_end {
+                app.set_focus(Focus::Editor);
+                return;
+            }
+
             // Check for [<=>] expand button clicks on the top border row.
             if row == main_area.y
                 && let Some(target) = geom.expand_button_at(col) {
@@ -993,6 +1002,20 @@ fn handle_mouse_scroll(
     delta: i32,
 ) {
     if row < main_area.y || row >= main_area.y + main_area.height {
+        return;
+    }
+
+    // The editor occupies the merged Explorer+Viewer region. Translate the wheel
+    // into arrow keys for the inner program (it runs on the alternate screen);
+    // never scroll the hidden Explorer/Viewer state beneath it.
+    if app.editor.is_some() && col >= left_end && col < viewer_end {
+        if let Some(idx) = app.editor.as_ref().map(|e| e.session_idx) {
+            app.terminal.pty_manager.scroll_alt_screen_session(
+                idx,
+                delta.unsigned_abs() as usize,
+                delta < 0,
+            );
+        }
         return;
     }
 

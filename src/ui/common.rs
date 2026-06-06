@@ -682,6 +682,11 @@ fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::KeyMap) -> 
             ("new shell", &[Action::NewShell]),
             ("palette", &[Action::CommandPalette]),
         ],
+        Focus::Editor => &[
+            ("Claude", &[Action::LeaveTerminal]),
+            ("zoom", &[Action::TogglePanelExpand]),
+            ("panel", &[Action::CycleFocusForward]),
+        ],
     };
 
     let context = focus.key_context();

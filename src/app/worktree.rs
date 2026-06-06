@@ -1410,6 +1410,11 @@ impl App {
     }
 
     pub fn on_worktree_changed(&mut self) {
+        // An embedded editor belongs to the worktree it was opened on; leaving
+        // that worktree would strand it editing the wrong tree, so close it
+        // first. The view reload below covers the new worktree.
+        self.discard_editor_on_worktree_change();
+
         // Reveal the newly selected worktree's chip in the bar on the next
         // render (width-dependent panning happens there, where the area is known).
         // This is only safe to set on *user-initiated* selection changes: if a

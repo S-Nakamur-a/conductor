@@ -360,13 +360,18 @@ pub enum KeyContext {
     Viewer,
     ViewerDiffMode,
     Terminal,
+    /// The embedded editor panel. Like `Terminal`, almost every chord is
+    /// forwarded to the inner program (vim/emacs) — its own layer binds only the
+    /// "leave focus" chord; the rest fall through to the global layer (filtered
+    /// to terminal-firing actions) or to the PTY.
+    Editor,
     /// Shared navigation context for overlay popups (list/tree navigation).
     /// Falls back to Global like other contexts.
     Overlay,
 }
 
 /// The non-global contexts, each backed by a named `[layers.<name>]` table.
-const PANEL_CONTEXTS: [KeyContext; 8] = [
+const PANEL_CONTEXTS: [KeyContext; 9] = [
     KeyContext::Worktree,
     KeyContext::Explorer,
     KeyContext::ExplorerDiffList,
@@ -374,6 +379,7 @@ const PANEL_CONTEXTS: [KeyContext; 8] = [
     KeyContext::Viewer,
     KeyContext::ViewerDiffMode,
     KeyContext::Terminal,
+    KeyContext::Editor,
     KeyContext::Overlay,
 ];
 
@@ -390,6 +396,7 @@ impl KeyContext {
             KeyContext::Viewer => "viewer",
             KeyContext::ViewerDiffMode => "viewer_diff_mode",
             KeyContext::Terminal => "terminal",
+            KeyContext::Editor => "editor",
             KeyContext::Overlay => "overlay",
         }
     }
@@ -538,7 +545,12 @@ impl KeyMap {
             None => resolve_layered([&self.global], &input),
         };
         let action = resolved.copied()?;
-        if context == KeyContext::Terminal && !action.fires_in_terminal() {
+        // The editor panel forwards keys to its PTY exactly like the terminal,
+        // so it honors the same "only steal terminal-firing actions" filter —
+        // everything else (Esc, Ctrl+G, …) reaches vim/emacs untouched.
+        if matches!(context, KeyContext::Terminal | KeyContext::Editor)
+            && !action.fires_in_terminal()
+        {
             return None;
         }
         Some(action)
@@ -549,9 +561,12 @@ impl KeyMap {
     /// keymap-core canonical form (e.g. `"ctrl+d"`, `"down"`, `"G"`), which
     /// round-trips back through the config grammar.
     pub fn keys_for_action(&self, context: KeyContext, action: Action) -> Vec<String> {
-        // Keep the rendered help honest with `resolve`: in the terminal context,
-        // a globally-bound action that doesn't fire there has no working chord.
-        if context == KeyContext::Terminal && !action.fires_in_terminal() {
+        // Keep the rendered help honest with `resolve`: in the terminal and
+        // editor contexts, a globally-bound action that doesn't fire there has
+        // no working chord.
+        if matches!(context, KeyContext::Terminal | KeyContext::Editor)
+            && !action.fires_in_terminal()
+        {
             return Vec::new();
         }
 
@@ -817,6 +832,64 @@ mod tests {
                 "{a:?} should have a working chord in the terminal"
             );
         }
+    }
+
+    #[test]
+    fn editor_context_steals_only_leave_and_globals() {
+        // The embedded editor forwards almost everything to vim/emacs. It steals
+        // back only Ctrl+Esc (leave) and the terminal-firing global chords; keys
+        // the editor needs — Esc, Ctrl+G, Shift+PageUp — pass through (None).
+        let km = default_keymap();
+
+        let ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_esc, KeyContext::Editor),
+            Some(Action::LeaveTerminal)
+        );
+
+        // Bare Esc → vim mode changes; must not be stolen.
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        assert_eq!(km.resolve(&esc, KeyContext::Editor), None);
+
+        // Ctrl+G is open_file_from_terminal in the *terminal* layer and
+        // search_full_text globally — neither fires in the editor, so it reaches
+        // the inner program instead of being intercepted.
+        let ctrl_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ctrl_g, KeyContext::Editor), None);
+
+        // Scrollback lives only in the terminal layer, so it does not leak into
+        // the editor.
+        let shift_pgup = KeyEvent::new(KeyCode::PageUp, KeyModifiers::SHIFT);
+        assert_eq!(km.resolve(&shift_pgup, KeyContext::Editor), None);
+
+        // Global focus/zoom chords still work over the editor.
+        let alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&alt_l, KeyContext::Editor),
+            Some(Action::CycleFocusForward)
+        );
+        let alt_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&alt_m, KeyContext::Editor),
+            Some(Action::TogglePanelExpand)
+        );
+    }
+
+    #[test]
+    fn ctrl_esc_is_additive_in_viewer() {
+        // The app-wide "leave focus" chord is bound in non-PTY panels too, but
+        // additively: bare Esc keeps working alongside it.
+        let km = default_keymap();
+        let ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&ctrl_esc, KeyContext::Viewer),
+            Some(Action::ExitToExplorer)
+        );
+        assert_eq!(
+            km.resolve(&esc, KeyContext::Viewer),
+            Some(Action::ExitToExplorer)
+        );
     }
 
     #[test]
