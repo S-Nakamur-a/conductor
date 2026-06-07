@@ -35,6 +35,18 @@ fn register_double_click_on(
     register_double_click(last, now) && same_idx
 }
 
+/// Open the new-worktree creation dialog. Shared by the worktree bar's `[+]`
+/// button and its blank-area double-click so the two entry points can't drift.
+fn start_worktree_creation(app: &mut App) {
+    use crate::app::{StatusLevel, WorktreeInputMode};
+    app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
+    app.worktree_mgr.input_buffer.clear();
+    app.set_status(
+        "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
+        StatusLevel::Info,
+    );
+}
+
 /// Send all pending comments to Claude via /conductor:address-conductor-comment (no ID = bulk mode).
 fn ask_claude_all_comments(app: &mut App) {
     let prompt = "/conductor:address-conductor-comment\n".to_string();
@@ -269,14 +281,7 @@ fn handle_wtbar_click(
         Some(WtbarAction::ScrollRight) => {
             app.wtbar_scroll = app.wtbar_scroll.saturating_add(1);
         }
-        Some(WtbarAction::Add) => {
-            app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
-            app.worktree_mgr.input_buffer.clear();
-            app.set_status(
-                "New branch name (Tab: Smart Mode, Enter to continue, Esc to cancel):".to_string(),
-                StatusLevel::Info,
-            );
-        }
+        Some(WtbarAction::Add) => start_worktree_creation(app),
         Some(WtbarAction::Delete(i)) => {
             if let Some(wt) = app.worktrees.get(i) {
                 if wt.is_main {
@@ -300,7 +305,19 @@ fn handle_wtbar_click(
                 }
             }
         }
-        _ => {}
+        // Blank area of the bar: a double-click acts as the `[+]` button. A
+        // single click has nothing to do (the bar holds no focus), so it is
+        // just consumed.
+        None => {
+            if register_double_click(
+                &mut app.worktree_mgr.wtbar_blank_last_click,
+                std::time::Instant::now(),
+            ) {
+                start_worktree_creation(app);
+            }
+        }
+        // Stale/out-of-range `Select` hit from a prior render: ignore.
+        Some(WtbarAction::Select(_)) => {}
     }
     true
 }

@@ -16,6 +16,11 @@ pub struct WorktreeManager {
     pub input_buffer: TextInput,
     /// Timestamp of the last click on worktree blank space (for double-click detection).
     pub blank_last_click: std::time::Instant,
+    /// Timestamp of the last click on the worktree bar's blank area (for
+    /// double-click-to-create detection). Kept separate from `blank_last_click`
+    /// so a click on the column's blank space and one on the bar's blank space
+    /// can't falsely combine into a double-click.
+    pub wtbar_blank_last_click: std::time::Instant,
     /// Timestamp of the last click on a worktree list item (for double-click detection).
     pub item_last_click: std::time::Instant,
     /// Index of the last clicked worktree list item.
@@ -54,6 +59,7 @@ impl Default for WorktreeManager {
             input_mode: WorktreeInputMode::Normal,
             input_buffer: TextInput::new(),
             blank_last_click: std::time::Instant::now(),
+            wtbar_blank_last_click: std::time::Instant::now(),
             item_last_click: std::time::Instant::now(),
             item_last_click_idx: usize::MAX,
             pending_branch: String::new(),
