@@ -525,27 +525,45 @@ impl App {
     /// Update the terminal content area size for Claude PTY sessions and resize them.
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_claude = (rows, cols);
-        let wt_path = self.selected_worktree_path();
-        let count = self.terminal.pty_manager.session_count();
-        for idx in 0..count {
-            let s = &self.terminal.pty_manager.sessions()[idx];
-            if s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode {
-                self.terminal.pty_manager.resize_session(idx, rows, cols);
-            }
+        if self.resize_sessions_of_kind(pty_manager::SessionKind::ClaudeCode, rows, cols) {
+            // The grid was rebuilt at a new width, so any scrollback offset is
+            // stale. Snap back to the live view and force a re-render.
+            self.terminal.scroll_claude = 0;
+            self.terminal.cache_claude = Default::default();
+            self.terminal.dirty_claude = true;
         }
     }
 
     /// Update the terminal content area size for Shell PTY sessions and resize them.
     pub fn update_shell_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_shell = (rows, cols);
+        if self.resize_sessions_of_kind(pty_manager::SessionKind::Shell, rows, cols) {
+            // The grid was rebuilt at a new width, so any scrollback offset is
+            // stale. Snap back to the live view and force a re-render.
+            self.terminal.scroll_shell = 0;
+            self.terminal.cache_shell = Default::default();
+            self.terminal.dirty_shell = true;
+        }
+    }
+
+    /// Resize every session of `kind` for the selected worktree to (rows, cols).
+    /// Returns `true` if any session reflowed (a width change rebuilt its grid).
+    fn resize_sessions_of_kind(
+        &mut self,
+        kind: pty_manager::SessionKind,
+        rows: u16,
+        cols: u16,
+    ) -> bool {
         let wt_path = self.selected_worktree_path();
         let count = self.terminal.pty_manager.session_count();
+        let mut reflowed = false;
         for idx in 0..count {
             let s = &self.terminal.pty_manager.sessions()[idx];
-            if s.working_dir == wt_path && s.kind == pty_manager::SessionKind::Shell {
-                self.terminal.pty_manager.resize_session(idx, rows, cols);
+            if s.working_dir == wt_path && s.kind == kind {
+                reflowed |= self.terminal.pty_manager.resize_session(idx, rows, cols);
             }
         }
+        reflowed
     }
 
     // ── Lightweight change-detection polling ─────────────────────────────
