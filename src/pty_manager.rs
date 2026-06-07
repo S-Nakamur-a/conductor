@@ -222,6 +222,24 @@ impl PtyManager {
             cmd.arg(a);
         }
         cmd.arg(file);
+
+        // Ensure the editor sees a UTF-8 locale. `CommandBuilder` inherits the
+        // parent environment, so when Conductor is launched without a UTF-8
+        // locale (a bare login shell, cron, an SSH session forwarding `LANG=C`,
+        // …) the editor inherits that too — and terminal editors like vim then
+        // fall back to `encoding=latin1`, mangling full-width / multi-byte input.
+        let (locale_sets, locale_removes) = utf8_locale_overrides(
+            std::env::var("LC_ALL").ok().as_deref(),
+            std::env::var("LC_CTYPE").ok().as_deref(),
+            std::env::var("LANG").ok().as_deref(),
+        );
+        for (key, value) in &locale_sets {
+            cmd.env(key, value);
+        }
+        for key in &locale_removes {
+            cmd.env_remove(key);
+        }
+
         self.finish_spawn(SessionKind::Editor, worktree, label, working_dir, rows, cols, cmd)
     }
 
@@ -429,10 +447,13 @@ impl PtyManager {
         let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
         // Write the payload in small chunks (no bracketed paste markers).
-        let data = text.as_bytes();
-        for chunk in data.chunks(CHUNK_SIZE) {
+        // Chunk on UTF-8 character boundaries: a chunk that ends mid-character
+        // would be flushed (and, at the chunk limit, followed by a delay) with a
+        // truncated multi-byte sequence, which the receiving application can
+        // mis-decode — corrupting full-width / multi-byte input.
+        for chunk in utf8_chunks(text, CHUNK_SIZE) {
             writer
-                .write_all(chunk)
+                .write_all(chunk.as_bytes())
                 .context("Failed to write chunk to PTY")?;
             writer.flush().context("Failed to flush PTY writer")?;
             if chunk.len() == CHUNK_SIZE {
@@ -462,11 +483,13 @@ impl PtyManager {
             .context("Failed to write paste-start to PTY")?;
         writer.flush().context("Failed to flush PTY writer")?;
 
-        // Write the payload in small chunks.
-        let data = text.as_bytes();
-        for chunk in data.chunks(CHUNK_SIZE) {
+        // Write the payload in small chunks. Split on UTF-8 character
+        // boundaries so a flushed chunk never ends with a truncated multi-byte
+        // sequence (see `utf8_chunks`) — otherwise full-width / multi-byte text
+        // split across the 1 KiB boundary can be mis-decoded by the receiver.
+        for chunk in utf8_chunks(text, CHUNK_SIZE) {
             writer
-                .write_all(chunk)
+                .write_all(chunk.as_bytes())
                 .context("Failed to write chunk to PTY")?;
             writer.flush().context("Failed to flush PTY writer")?;
             if chunk.len() == CHUNK_SIZE {
@@ -952,6 +975,82 @@ impl PtyManager {
 // Free helper functions
 // ---------------------------------------------------------------------------
 
+/// Decide the locale-environment overrides needed so a spawned editor treats its
+/// I/O as UTF-8, given the inherited `LC_ALL` / `LC_CTYPE` / `LANG` values.
+///
+/// Terminal editors derive their character encoding from the locale: vim, for
+/// instance, falls back to `encoding=latin1` when no UTF-8 locale is active,
+/// which garbles full-width / multi-byte (e.g. Japanese) text on input *and*
+/// when reading the file back.
+///
+/// Returns `(sets, removes)`: environment variables to set, and variables to
+/// remove, on the child command. When a UTF-8 locale is already active the
+/// user's setting is respected and both lists are empty.
+fn utf8_locale_overrides(
+    lc_all: Option<&str>,
+    lc_ctype: Option<&str>,
+    lang: Option<&str>,
+) -> (Vec<(&'static str, &'static str)>, Vec<&'static str>) {
+    fn denotes_utf8(value: &str) -> bool {
+        let value = value.to_ascii_lowercase();
+        value.contains("utf-8") || value.contains("utf8")
+    }
+    // An empty value (`LANG=`) is equivalent to the variable being unset.
+    fn active(value: Option<&str>) -> Option<&str> {
+        value.filter(|s| !s.is_empty())
+    }
+
+    // POSIX precedence: LC_ALL overrides LC_CTYPE, which overrides LANG.
+    let effective = active(lc_all).or(active(lc_ctype)).or(active(lang));
+    if effective.is_some_and(denotes_utf8) {
+        return (Vec::new(), Vec::new());
+    }
+
+    // `C.UTF-8` is a locale-neutral UTF-8 locale: it exists on modern Linux and
+    // is parsed by vim into `encoding=utf-8` on macOS even though it is not a
+    // separately installed locale there. We set only `LC_CTYPE` (the category
+    // that governs character encoding) to avoid changing the editor's message
+    // language. A non-UTF-8 `LC_ALL` would shadow that, so drop it when present.
+    let mut removes = Vec::new();
+    if active(lc_all).is_some() {
+        removes.push("LC_ALL");
+    }
+    (vec![("LC_CTYPE", "C.UTF-8")], removes)
+}
+
+/// Split `text` into consecutive sub-slices each at most `max` **bytes** long,
+/// never cutting through a multi-byte UTF-8 character.
+///
+/// The PTY writers chunk large payloads (with a flush, and a small delay at the
+/// chunk limit, between chunks) to stay under the kernel's PTY input buffer.
+/// Splitting the raw byte slice at a fixed offset can land in the middle of a
+/// multi-byte character; the receiving application then sees a truncated
+/// sequence and may render a replacement / garbage glyph. Backing each split off
+/// to the nearest character boundary keeps full-width / multi-byte input intact.
+fn utf8_chunks(text: &str, max: usize) -> Vec<&str> {
+    assert!(max > 0, "chunk size must be positive");
+    let mut chunks = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut end = max.min(rest.len());
+        // Back off until `end` lands on a character boundary (it always does at
+        // `rest.len()`, so this terminates).
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        // Defensive: only reachable if `max` is smaller than the first
+        // character (never the case for the 1 KiB chunk size used here). Emit
+        // that whole character so we always make forward progress.
+        if end == 0 {
+            end = rest.chars().next().map_or(rest.len(), char::len_utf8);
+        }
+        let (chunk, tail) = rest.split_at(end);
+        chunks.push(chunk);
+        rest = tail;
+    }
+    chunks
+}
+
 /// Count the number of Cursor Position Report requests (`CSI 6 n` = `\x1b[6n`)
 /// in a byte slice.  Programs send this to ask the terminal "where is the
 /// cursor?" and expect a `CSI row ; col R` response.
@@ -1109,5 +1208,110 @@ mod tests {
         assert!(contents.contains("normal-after"), "got: {contents:?}");
         // Alt-screen content does not bleed into the normal grid.
         assert!(!contents.contains("ALT-CONTENT"), "got: {contents:?}");
+    }
+
+    #[test]
+    fn utf8_chunks_never_splits_a_multibyte_char() {
+        // Each kana is 3 bytes in UTF-8. With max=4, a naive byte split would
+        // cut the second character; utf8_chunks must keep every char intact.
+        let text = "あいうえお"; // 5 chars × 3 bytes = 15 bytes
+        let chunks = utf8_chunks(text, 4);
+        // Reassembling the chunks must reproduce the input exactly...
+        assert_eq!(chunks.concat(), text);
+        // ...and every chunk must be valid (one whole 3-byte char fits in 4).
+        for chunk in &chunks {
+            assert_eq!(chunk.chars().count(), 1);
+            assert!(chunk.len() <= 4);
+        }
+    }
+
+    #[test]
+    fn utf8_chunks_preserves_mixed_and_ascii_text() {
+        let text = "abc日本語def";
+        // A chunk size that lands mid-character on a naive split.
+        let chunks = utf8_chunks(text, 5);
+        assert_eq!(chunks.concat(), text);
+        for chunk in &chunks {
+            assert!(chunk.len() <= 5);
+            // No chunk boundary fell inside a character: re-parsing is lossless.
+            assert!(std::str::from_utf8(chunk.as_bytes()).is_ok());
+        }
+    }
+
+    #[test]
+    fn utf8_chunks_handles_char_wider_than_max() {
+        // Defensive path: a single char larger than `max` is emitted whole
+        // rather than looping forever.
+        let chunks = utf8_chunks("あ", 1); // 'あ' is 3 bytes
+        assert_eq!(chunks, vec!["あ"]);
+    }
+
+    #[test]
+    fn utf8_chunks_empty_input_yields_no_chunks() {
+        assert!(utf8_chunks("", 1024).is_empty());
+    }
+
+    // ── utf8_locale_overrides ────────────────────────────────────────────
+
+    #[test]
+    fn locale_unset_everywhere_forces_utf8() {
+        // The load-bearing case: a stripped environment makes vim default to
+        // latin1, which garbles full-width input. We inject a UTF-8 LC_CTYPE.
+        let (sets, removes) = utf8_locale_overrides(None, None, None);
+        assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
+        assert!(removes.is_empty());
+    }
+
+    #[test]
+    fn locale_empty_values_are_treated_as_unset() {
+        // macOS commonly leaves LANG/LC_ALL empty; an empty value must not be
+        // mistaken for an active non-UTF-8 locale.
+        let (sets, removes) = utf8_locale_overrides(Some(""), Some(""), Some(""));
+        assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
+        assert!(removes.is_empty());
+    }
+
+    #[test]
+    fn locale_existing_utf8_is_respected() {
+        // LC_CTYPE=UTF-8 (the macOS Terminal default) already yields utf-8.
+        assert_eq!(
+            utf8_locale_overrides(None, Some("UTF-8"), None),
+            (Vec::new(), Vec::new())
+        );
+        // A full UTF-8 locale in LANG is honored too.
+        assert_eq!(
+            utf8_locale_overrides(None, None, Some("en_US.UTF-8")),
+            (Vec::new(), Vec::new())
+        );
+        // Case-insensitive and the `utf8` spelling both count.
+        assert_eq!(
+            utf8_locale_overrides(None, None, Some("ja_JP.utf8")),
+            (Vec::new(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn locale_lc_all_takes_precedence_for_detection() {
+        // A UTF-8 LC_ALL wins even if LANG is a non-UTF-8 locale.
+        assert_eq!(
+            utf8_locale_overrides(Some("C.UTF-8"), None, Some("C")),
+            (Vec::new(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn locale_non_utf8_lc_all_is_dropped_so_lc_ctype_can_win() {
+        // LC_ALL shadows LC_CTYPE, so a non-UTF-8 LC_ALL must be removed for the
+        // injected LC_CTYPE to take effect.
+        let (sets, removes) = utf8_locale_overrides(Some("C"), Some("C"), Some("C"));
+        assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
+        assert_eq!(removes, vec!["LC_ALL"]);
+    }
+
+    #[test]
+    fn locale_non_utf8_lang_without_lc_all_keeps_lc_all_untouched() {
+        let (sets, removes) = utf8_locale_overrides(None, None, Some("C"));
+        assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
+        assert!(removes.is_empty());
     }
 }
