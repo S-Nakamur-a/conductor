@@ -29,7 +29,7 @@ cd conductor
 make install
 ```
 
-`make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`) and installs MCP server dependencies (`npm install`).
+`make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`) and installs MCP server dependencies (`npm ci`).
 
 ### 2. Install the Claude Code plugin
 
@@ -61,22 +61,46 @@ make dev
 ## Layout
 
 ```
-Worktree | Explorer | Viewer | Terminal (Claude Code / Shell)
+┌────────────────────────────────────────────────────────┐
+│ Title bar                                               │
+├────────────────────────────────────────────────────────┤
+│ Worktree monitor strip (full width)                     │
+├──────────────┬──────────────┬──────────────────────────┤
+│              │              │ Claude Code              │
+│  Explorer    │   Viewer     ├──────────────────────────┤
+│ (tree + diff)│ (file/diff)  │ Shell                    │
+├──────────────┴──────────────┴──────────────────────────┤
+│ Status bar                                              │
+└────────────────────────────────────────────────────────┘
 ```
+
+The main area is a three-column accordion — **Explorer | Viewer | Terminal** —
+with focus-driven widths. The worktree list is no longer a column: every
+worktree (branch, dirty count, ahead/behind, and Claude Code waiting/active
+state) is shown in the full-width **worktree monitor strip** along the top, so
+multiple parallel sessions can be watched at a glance. Click a worktree to jump
+to it, `[+]` to create one, or open the switcher modal for the full list/detail
+view.
+
+- **Explorer** column is split 50/50: file tree (top) and diff / comment list (bottom).
+- **Terminal** column is split 80/20: Claude Code (top) and Shell (bottom).
+- Any panel can be maximized (`Alt+m`) to take the full main area.
 
 ### Keybindings
 
-- **Tab** — cycle focus between panels
-- **j/k** — navigate up/down
-- **h/l** — collapse/expand
-- **g/G** — jump to top/bottom
-- **/** — search
-- **?** — show help
-- **Esc** — back / close overlay
+- **Tab / Shift+Tab** — cycle panel focus (non-terminal panels)
+- **Alt+h / Alt+l** — cycle panel focus from anywhere, including terminals
+- **Alt+1…6** (or **⌘+1…6**) — focus a specific panel
+- **Alt+m** — maximize / restore the focused panel
+- **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) — switch the selected worktree
+- **Ctrl+n** — new Claude Code session · **Ctrl+t** — new shell
+- **j/k** — navigate up/down · **h/l** — collapse/expand · **g/G** — top/bottom
+- **/** — search · **Ctrl+g** — full-text (grep) search
+- **?** — show help · **Esc** — back / close overlay · **Ctrl+q** — quit
 
 ### Command Palette
 
-**Ctrl+.** (any panel, including terminal) or **:** (non-terminal panels) to open the command palette. All available commands are listed and fuzzy-searchable — worktree operations, terminal management, diff toggles, review comments, etc.
+**Ctrl+p** (any panel, including terminals) or **:** (non-terminal panels) opens the command palette. All available commands are listed and fuzzy-searchable — worktree operations, terminal management, diff toggles, review comments, etc.
 
 ## MCP Server
 
@@ -111,6 +135,8 @@ main_branch = "main"                    # main/trunk branch name (default: "main
 decoration = "aquarium"                 # worktree panel decoration
                                         #   aquarium | space | garden | city | none
 # auto_resume = true                    # automatically resume Claude Code sessions on startup
+# auto_resume_main = false              # also resume the session on the main worktree
+                                        #   (grabbed sessions are always resumed regardless)
 
 [terminal]
 # inactive_scrollback = 1000            # scrollback lines for background sessions
@@ -139,7 +165,7 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 # maps a key chord to an action name and LAYERS OVER the built-in defaults
 # per-chord. [keybinds.keys] is the global layer; each [keybinds.layers.<name>]
 # is a per-panel layer (worktree, explorer, explorer_diff_list,
-# explorer_comment_list, viewer, viewer_diff_mode, terminal, overlay).
+# explorer_comment_list, viewer, viewer_diff_mode, terminal, editor, overlay).
 #
 # [keybinds.keys]
 # "ctrl+q" = "quit"
@@ -149,8 +175,6 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 # "down" = "navigate_down"
 # "w" = "create_worktree"
 
-[notification]
-
 [ccusage]
 # enabled = false                       # token usage display in the title bar (requires ccusage)
 # poll_interval_secs = 120              # polling interval in seconds
@@ -158,6 +182,16 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 [updates]
 # check_on_startup = true               # check for new versions on startup
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
+
+[api]
+# LLM provider for smart-worktree generation (turn a task description into a
+# branch name + initial Claude Code prompt). Each provider stands alone — a
+# failure surfaces to the user rather than falling back to another.
+# provider = "gemini"                   # "gemini" (Gemini API) | "claude" (claude -p CLI) | "command" (external)
+# model = "gemini-2.5-flash"            # model used by the "gemini" provider
+# command = ["ollama", "run", "llama3"] # external command for provider = "command"
+                                        #   (prompt on stdin, completion on stdout)
+# command_timeout_secs = 60             # wall-clock timeout for the command provider (0 = no timeout)
 ```
 
 ## Data Paths
