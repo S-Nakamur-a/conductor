@@ -27,31 +27,42 @@ Node.js MCP server that exposes review DB tools to Claude Code sessions.
 
 ### Application Structure
 
-Single-struct state model: `App` in `app.rs` holds all application state as flat fields. No ECS or component architecture.
+Single-struct state model: `App` in `app/` (`app/mod.rs`, with logic split across `app/review.rs`, `app/terminal.rs`, `app/worktree.rs`) holds all application state as flat fields. No ECS or component architecture.
 
 **Main loop** (`main.rs`): 60fps event loop — polls crossterm events at 16ms, handles keys/mouse, checks file watcher, refreshes worktrees periodically (3s), scans Claude Code PTY output for file-change patterns.
 
-**Event dispatch** (`event.rs`): Overlay modes (worktree input, cherry-pick, branch switch, review input, etc.) take absolute priority and consume all keys. Otherwise, the `Focus` enum routes input to the focused panel. Terminal panels forward all keys except Esc directly to PTY.
+**Event dispatch** (`event/`, dispatched from `event/mod.rs` into per-context submodules `global`/`explorer`/`viewer`/`terminal`/`worktree`/`overlay`/`mouse`): Overlay modes (worktree input, cherry-pick, branch switch, review input, etc.) take absolute priority and consume all keys. Otherwise, the `Focus` enum routes input to the focused panel. Terminal panels forward all keys except Esc directly to PTY.
 
-### Four-Column Layout
+### Layout
 
 ```
-Worktree | Explorer | Viewer | Terminal (Claude Code / Shell)
+Title bar
+Worktree monitor strip (full width)
+Explorer | Viewer | Terminal (Claude Code / Shell)
+Status bar
 ```
 
-- Worktree column shrinks when not focused
-- Terminal column is split 80/20 vertically (Claude Code top, Shell bottom)
+- The worktree list is **not** a column: it lives in a full-width monitor strip
+  along the top (`ui/worktree_bar.rs`), showing every worktree's branch, dirty
+  count, ahead/behind, and Claude Code waiting/active state. Hidden while a panel
+  is maximized.
+- The main area is a three-column accordion (`ui/layout.rs`): Explorer | Viewer |
+  Terminal, with focus-driven widths. Any panel can be maximized (`Alt+m`).
+- Explorer column is split 50/50 (file tree top, diff/comment list bottom).
+- Terminal column is split 80/20 vertically (Claude Code top, Shell bottom).
+- When the embedded editor is active (`Focus::Editor`), it merges the
+  Explorer+Viewer columns into one PTY panel.
 - Tab cycles focus; panel-specific vim-style keys (j/k, h/l, g/G, /)
 
 ### Key Modules
 
 | Module | Role |
 |--------|------|
-| `app.rs` | All application state and business logic methods |
-| `event.rs` | Keyboard/mouse event dispatch based on Focus and overlay state |
+| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`) |
+| `event/` | Keyboard/mouse event dispatch based on Focus and overlay state (per-context submodules) |
 | `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
 | `diff_state.rs` | Diff data model (file diffs, hunks, lines) using `similar` crate |
-| `viewer_state.rs` | File tree model and file content buffer |
+| `viewer/` | File tree model (`file_tree.rs`) and file content buffer (`file_view.rs`) |
 | `review_store.rs` | SQLite persistence (`.conductor/conductor.db`) for reviews, sessions, templates, history |
 | `pty_manager.rs` | PTY session management — spawn, read/write, resize; vt100 parser for rendering; output scanner for Claude Code |
 | `file_watcher.rs` | Filesystem change detection via `notify` crate, debounced at 500ms |
