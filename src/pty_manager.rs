@@ -6,6 +6,7 @@
 //! Each session is backed by a real pseudo-terminal, with a background reader
 //! thread that captures output into a bounded line buffer.
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +17,14 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use uuid::Uuid;
+
+/// Maximum number of raw PTY output bytes retained per session for
+/// reflow-on-resize. When the terminal width changes, vt100 cannot reflow
+/// existing content, so the parser is rebuilt by replaying this byte history
+/// at the new width. The cap is sized to comfortably exceed the vt100
+/// scrollback (a few thousand lines), so eviction only ever drops content
+/// already scrolled out of reach. Old bytes are trimmed at line boundaries.
+const MAX_RAW_HISTORY_BYTES: usize = 2 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // SessionKind
@@ -73,6 +82,12 @@ pub struct PtySession {
     // -- vt100 terminal emulator -------------------------------------------
     /// A vt100 parser that processes raw PTY bytes for proper terminal rendering.
     screen: Arc<Mutex<vt100::Parser>>,
+    /// Append-only (bounded) history of raw PTY output bytes, shared with the
+    /// reader thread. Used to rebuild the vt100 parser at a new width on
+    /// resize, since vt100 itself does not reflow existing content. Always
+    /// accessed while holding the `screen` lock so appends stay atomic with
+    /// `parser.process` and consistent with `resize_session`'s rebuild.
+    raw_history: Arc<Mutex<VecDeque<u8>>>,
 
     // -- Input waiting detection ------------------------------------------
     /// Timestamp of the last PTY output received. Shared with the reader thread.
@@ -266,9 +281,13 @@ impl PtyManager {
             self.inactive_scrollback,
         )));
 
+        // 5c. Raw byte history for reflow-on-resize.
+        let raw_history: Arc<Mutex<VecDeque<u8>>> = Arc::new(Mutex::new(VecDeque::new()));
+
         // 6. Spawn a background thread that continuously reads PTY output.
         let buffer_clone = Arc::clone(&output_buffer);
         let screen_clone = Arc::clone(&screen);
+        let raw_history_clone = Arc::clone(&raw_history);
         // We store max_buffer_lines in the session, but the reader thread
         // needs its own reference. We use a separate Arc<Mutex<usize>> so
         // that set_active() can dynamically adjust the limit.
@@ -294,6 +313,7 @@ impl PtyManager {
                     buffer_clone,
                     buffer_limit_for_thread,
                     screen_clone,
+                    raw_history_clone,
                     last_output_time_for_thread,
                     alt_screen_entered_for_thread,
                     writer_for_thread,
@@ -316,6 +336,7 @@ impl PtyManager {
             output_buffer,
             max_buffer_lines,
             screen,
+            raw_history,
             last_output_time,
             alt_screen_entered,
             alt_screen_nudge_until: None,
@@ -498,19 +519,55 @@ impl PtyManager {
     }
 
     /// Resize both the real PTY and the vt100 parser for the session at `idx`.
-    pub fn resize_session(&mut self, idx: usize, rows: u16, cols: u16) {
-        if let Some(session) = self.sessions.get(idx) {
-            // Resize the real PTY.
-            let _ = session.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            });
-            // Resize the vt100 parser.
-            let mut parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
+    ///
+    /// Returns `true` when the vt100 parser was rebuilt by replaying the raw
+    /// byte history (i.e. content was reflowed at a new width). A rows-only
+    /// change returns `false`, as vt100 handles that without losing wrapping.
+    ///
+    /// vt100's `set_size` does not reflow: on a column change it clears each
+    /// row's wrap flag and truncates/pads rows in place, so previously wrapped
+    /// lines stay wrapped at the old width. To make old content follow the new
+    /// width, we rebuild the parser from the recorded raw byte stream, which
+    /// re-wraps as it is re-parsed.
+    pub fn resize_session(&mut self, idx: usize, rows: u16, cols: u16) -> bool {
+        // vt100::Parser::new requires non-zero dimensions; clamp defensively so
+        // the function is robust regardless of caller discipline.
+        let rows = rows.max(1);
+        let cols = cols.max(1);
+        let scrollback = self.inactive_scrollback;
+        let Some(session) = self.sessions.get(idx) else {
+            return false;
+        };
+
+        // Resize the real PTY (delivers SIGWINCH so the child re-renders its
+        // live region).
+        let _ = session.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+
+        let mut parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
+        let old_cols = parser.screen().size().1;
+
+        if old_cols == cols {
+            // Width unchanged — only the row count differs. vt100 handles this
+            // correctly in place, no reflow needed.
             parser.set_size(rows, cols);
+            return false;
         }
+
+        // Width changed — rebuild the parser at the new width by replaying the
+        // raw byte history. Holding the `screen` lock keeps this consistent
+        // with the reader thread, which appends to `raw_history` and processes
+        // into the parser under the same lock.
+        let history = session
+            .raw_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *parser = Self::rebuild_parser(&history, rows, cols, scrollback);
+        true
     }
 
     /// Activate a session without deactivating any other session.
@@ -713,6 +770,7 @@ impl PtyManager {
         buffer: Arc<Mutex<Vec<String>>>,
         buffer_limit: Arc<Mutex<usize>>,
         screen: Arc<Mutex<vt100::Parser>>,
+        raw_history: Arc<Mutex<VecDeque<u8>>>,
         last_output_time: Arc<Mutex<Instant>>,
         alt_screen_entered: Arc<AtomicBool>,
         writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -753,6 +811,19 @@ impl PtyManager {
                     {
                         let mut parser = screen.lock().unwrap_or_else(|e| e.into_inner());
                         parser.process(bytes);
+
+                        // Record the same bytes for reflow-on-resize. Done under
+                        // the `screen` lock so the recorded stream stays exactly
+                        // in sync with what the parser has processed, and so a
+                        // concurrent `resize_session` rebuild sees a consistent
+                        // history. The inner scope releases the history guard
+                        // before the CPR / alt-screen work below.
+                        {
+                            let mut history =
+                                raw_history.lock().unwrap_or_else(|e| e.into_inner());
+                            history.extend(bytes.iter().copied());
+                            Self::trim_raw_history(&mut history, MAX_RAW_HISTORY_BYTES);
+                        }
 
                         // Respond to Cursor Position Report requests (CSI 6 n).
                         // Programs like fzf, zsh, and bash send this to
@@ -809,6 +880,54 @@ impl PtyManager {
                 }
             }
         }
+    }
+
+    /// Trim the raw byte history down to at most `cap` bytes, dropping from the
+    /// front. After reaching the cap, try to drop up to the next newline so the
+    /// retained history starts at a clean line boundary — this avoids replaying
+    /// a half-line that would render incorrectly after a reflow rebuild.
+    ///
+    /// The newline search is bounded: an escape-sequence-heavy TUI stream can
+    /// have very few newlines, and an unbounded search would either cost an
+    /// O(n) scan on every append or (if it kept popping) drain the whole buffer
+    /// to empty. If no newline is found nearby, the bytes are kept as-is — a
+    /// slightly imperfect first line is far better than a blank screen.
+    fn trim_raw_history(history: &mut VecDeque<u8>, cap: usize) {
+        if history.len() <= cap {
+            return;
+        }
+        let excess = history.len() - cap;
+        for _ in 0..excess {
+            history.pop_front();
+        }
+        // Align to just after the next newline, if one is within the window.
+        const ALIGN_SCAN_LIMIT: usize = 8 * 1024;
+        if let Some(pos) = history
+            .iter()
+            .take(ALIGN_SCAN_LIMIT)
+            .position(|&b| b == b'\n')
+        {
+            for _ in 0..=pos {
+                history.pop_front();
+            }
+        }
+    }
+
+    /// Build a fresh vt100 parser of the given size by replaying the recorded
+    /// raw byte history, re-wrapping content at the new width. This is the core
+    /// of `resize_session`'s reflow path, factored out so it can be unit-tested
+    /// without spawning a real PTY.
+    fn rebuild_parser(
+        history: &VecDeque<u8>,
+        rows: u16,
+        cols: u16,
+        scrollback: usize,
+    ) -> vt100::Parser {
+        let mut parser = vt100::Parser::new(rows, cols, scrollback);
+        let (front, back) = history.as_slices();
+        parser.process(front);
+        parser.process(back);
+        parser
     }
 
     /// Push a single line into the shared buffer, enforcing the current limit.
@@ -872,5 +991,123 @@ mod tests {
         // Normal mode → CSI (ESC [).
         assert_eq!(scroll_arrow_sequence(true, false), b"\x1b[A");
         assert_eq!(scroll_arrow_sequence(false, false), b"\x1b[B");
+    }
+
+    #[test]
+    fn trim_raw_history_keeps_under_cap_and_aligns_to_line() {
+        let mut history: VecDeque<u8> = b"aaaa\nbbbb\ncccc\ndddd\n".iter().copied().collect();
+        // Cap below current length forces a trim.
+        PtyManager::trim_raw_history(&mut history, 10);
+        let remaining: Vec<u8> = history.iter().copied().collect();
+        // Must be at or under the cap...
+        assert!(remaining.len() <= 10, "len={}", remaining.len());
+        // ...and resume at a clean line boundary (no leading partial line).
+        let text = String::from_utf8(remaining).unwrap();
+        for line in text.split_inclusive('\n') {
+            if line.ends_with('\n') {
+                // Every retained complete line is one of the originals.
+                assert!(["aaaa\n", "bbbb\n", "cccc\n", "dddd\n"].contains(&line));
+            }
+        }
+        // The oldest content ("aaaa") must have been dropped.
+        assert!(!text.contains("aaaa"));
+    }
+
+    #[test]
+    fn trim_raw_history_noop_when_within_cap() {
+        let mut history: VecDeque<u8> = b"hello\n".iter().copied().collect();
+        PtyManager::trim_raw_history(&mut history, 1024);
+        assert_eq!(history.iter().copied().collect::<Vec<u8>>(), b"hello\n");
+    }
+
+    #[test]
+    fn trim_raw_history_noop_when_cap_equals_len() {
+        let mut history: VecDeque<u8> = b"abcd\n".iter().copied().collect();
+        let len = history.len();
+        PtyManager::trim_raw_history(&mut history, len);
+        assert_eq!(history.len(), len);
+    }
+
+    #[test]
+    fn trim_raw_history_empty_is_safe() {
+        let mut history: VecDeque<u8> = VecDeque::new();
+        PtyManager::trim_raw_history(&mut history, 0);
+        assert!(history.is_empty());
+    }
+
+    /// A buffer over cap with NO newline must NOT be drained to empty — a blank
+    /// terminal on resize is far worse than a slightly imperfect first line.
+    /// (This is the failure mode of escape-sequence-heavy TUI output.)
+    #[test]
+    fn trim_raw_history_keeps_bytes_when_no_newline() {
+        let mut history: VecDeque<u8> = std::iter::repeat_n(b'x', 100).collect();
+        PtyManager::trim_raw_history(&mut history, 10);
+        assert!(!history.is_empty(), "history was drained to empty");
+        assert!(history.len() <= 10);
+        assert!(history.iter().all(|&b| b == b'x'));
+    }
+
+    /// Replaying the raw byte stream into a fresh parser at a new width must
+    /// reflow content that originally wrapped at the old width — this is the
+    /// core of `resize_session`'s column-change path. (vt100's own `set_size`
+    /// does not reflow, which is the bug this whole change fixes.)
+    #[test]
+    fn replay_reflows_to_new_width() {
+        // A single 12-char logical line, no explicit newline.
+        let stream = b"ABCDEFGHIJKL";
+
+        // Narrow parser (cols=4): the line wraps across 3 physical rows, but
+        // vt100 tracks the wrap so it is still one logical line.
+        let mut narrow = vt100::Parser::new(10, 4, 100);
+        narrow.process(stream);
+        assert_eq!(narrow.screen().contents().trim_end(), "ABCDEFGHIJKL");
+
+        // vt100's set_size does NOT reflow: widening clears the wrap flags, so
+        // the three physical rows become three separate logical lines instead
+        // of re-joining and re-wrapping at the new width. This is the bug.
+        narrow.set_size(10, 12);
+        assert_eq!(
+            narrow.screen().contents().trim_end(),
+            "ABCD\nEFGH\nIJKL",
+            "set_size unexpectedly reflowed — the bug may be fixed upstream",
+        );
+
+        // Replaying the same stream via rebuild_parser at the wide width
+        // reflows correctly: the line fits on one row.
+        let history: VecDeque<u8> = stream.iter().copied().collect();
+        let wide = PtyManager::rebuild_parser(&history, 10, 12, 100);
+        assert_eq!(wide.screen().contents().trim_end(), "ABCDEFGHIJKL");
+    }
+
+    #[test]
+    fn rebuild_parser_handles_empty_history() {
+        let history: VecDeque<u8> = VecDeque::new();
+        let parser = PtyManager::rebuild_parser(&history, 5, 20, 100);
+        assert_eq!(parser.screen().contents().trim_end(), "");
+    }
+
+    /// Replaying a stream that enters and exits the alternate screen must
+    /// reconstruct the correct final (normal-screen) state, since alt-screen
+    /// transitions are pure byte sequences in the stream.
+    #[test]
+    fn rebuild_parser_reconstructs_alt_screen_roundtrip() {
+        // normal text, enter alt screen, draw, exit alt screen, more normal text
+        let mut stream: Vec<u8> = Vec::new();
+        stream.extend_from_slice(b"normal-before\r\n");
+        stream.extend_from_slice(b"\x1b[?1049h"); // enter alt screen
+        stream.extend_from_slice(b"ALT-CONTENT");
+        stream.extend_from_slice(b"\x1b[?1049l"); // exit alt screen
+        stream.extend_from_slice(b"normal-after");
+
+        let history: VecDeque<u8> = stream.iter().copied().collect();
+        let parser = PtyManager::rebuild_parser(&history, 6, 40, 100);
+
+        // Back on the normal screen after the roundtrip.
+        assert!(!parser.screen().alternate_screen());
+        let contents = parser.screen().contents();
+        assert!(contents.contains("normal-before"), "got: {contents:?}");
+        assert!(contents.contains("normal-after"), "got: {contents:?}");
+        // Alt-screen content does not bleed into the normal grid.
+        assert!(!contents.contains("ALT-CONTENT"), "got: {contents:?}");
     }
 }
