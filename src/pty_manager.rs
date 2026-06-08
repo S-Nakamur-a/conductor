@@ -87,7 +87,15 @@ pub struct PtySession {
     /// resize, since vt100 itself does not reflow existing content. Always
     /// accessed while holding the `screen` lock so appends stay atomic with
     /// `parser.process` and consistent with `resize_session`'s rebuild.
-    raw_history: Arc<Mutex<VecDeque<u8>>>,
+    ///
+    /// `None` for sessions that cannot benefit from replay-based reflow.
+    /// Replay only re-wraps content that relied on terminal autowrap (soft
+    /// wrapping) — e.g. ordinary shell output. In-place-repaint apps like
+    /// Claude Code lay out every line with absolute cursor-column escapes and
+    /// hard line breaks baked at the current width, so replaying their bytes at
+    /// a new width reproduces the identical old-width layout — no reflow, just
+    /// wasted memory and CPU. Those sessions skip recording entirely.
+    raw_history: Option<Arc<Mutex<VecDeque<u8>>>>,
 
     // -- Input waiting detection ------------------------------------------
     /// Timestamp of the last PTY output received. Shared with the reader thread.
@@ -299,13 +307,18 @@ impl PtyManager {
             self.inactive_scrollback,
         )));
 
-        // 5c. Raw byte history for reflow-on-resize.
-        let raw_history: Arc<Mutex<VecDeque<u8>>> = Arc::new(Mutex::new(VecDeque::new()));
+        // 5c. Raw byte history for reflow-on-resize. Only recorded for sessions
+        // whose output can actually be reflowed by replay (see `raw_history`
+        // field docs): ordinary shells, which rely on terminal autowrap. Claude
+        // and the transient editor repaint in place at a fixed width, so replay
+        // would cost memory without ever reflowing — skip it for them.
+        let raw_history: Option<Arc<Mutex<VecDeque<u8>>>> = matches!(kind, SessionKind::Shell)
+            .then(|| Arc::new(Mutex::new(VecDeque::new())));
 
         // 6. Spawn a background thread that continuously reads PTY output.
         let buffer_clone = Arc::clone(&output_buffer);
         let screen_clone = Arc::clone(&screen);
-        let raw_history_clone = Arc::clone(&raw_history);
+        let raw_history_clone = raw_history.clone();
         // We store max_buffer_lines in the session, but the reader thread
         // needs its own reference. We use a separate Arc<Mutex<usize>> so
         // that set_active() can dynamically adjust the limit.
@@ -544,14 +557,18 @@ impl PtyManager {
     /// Resize both the real PTY and the vt100 parser for the session at `idx`.
     ///
     /// Returns `true` when the vt100 parser was rebuilt by replaying the raw
-    /// byte history (i.e. content was reflowed at a new width). A rows-only
-    /// change returns `false`, as vt100 handles that without losing wrapping.
+    /// byte history (i.e. content was reflowed at a new width). Rows-only
+    /// changes, and sessions that don't record a raw history, return `false`.
     ///
     /// vt100's `set_size` does not reflow: on a column change it clears each
     /// row's wrap flag and truncates/pads rows in place, so previously wrapped
-    /// lines stay wrapped at the old width. To make old content follow the new
-    /// width, we rebuild the parser from the recorded raw byte stream, which
-    /// re-wraps as it is re-parsed.
+    /// lines stay wrapped at the old width. To make old (autowrapped) content
+    /// follow the new width, we rebuild the parser from the recorded raw byte
+    /// stream, which re-wraps as it is re-parsed. Only sessions with a
+    /// `raw_history` (shells — see the field docs) take this path; everything
+    /// else falls back to `set_size`, which is exactly what a real terminal
+    /// does for in-place-repaint apps like Claude Code (they repaint their
+    /// current frame on the SIGWINCH the PTY resize delivers).
     pub fn resize_session(&mut self, idx: usize, rows: u16, cols: u16) -> bool {
         // vt100::Parser::new requires non-zero dimensions; clamp defensively so
         // the function is robust regardless of caller discipline.
@@ -574,9 +591,11 @@ impl PtyManager {
         let mut parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
         let old_cols = parser.screen().size().1;
 
-        if old_cols == cols {
-            // Width unchanged — only the row count differs. vt100 handles this
-            // correctly in place, no reflow needed.
+        // Reflow only applies on a width change, and only for sessions that
+        // record a raw history. A rows-only change, or a session that opts out
+        // of recording (Claude, editor), is handled in place by `set_size`.
+        let reflow = old_cols != cols && session.raw_history.is_some();
+        if !reflow {
             parser.set_size(rows, cols);
             return false;
         }
@@ -587,6 +606,8 @@ impl PtyManager {
         // into the parser under the same lock.
         let history = session
             .raw_history
+            .as_ref()
+            .expect("reflow implies raw_history is Some")
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *parser = Self::rebuild_parser(&history, rows, cols, scrollback);
@@ -793,7 +814,7 @@ impl PtyManager {
         buffer: Arc<Mutex<Vec<String>>>,
         buffer_limit: Arc<Mutex<usize>>,
         screen: Arc<Mutex<vt100::Parser>>,
-        raw_history: Arc<Mutex<VecDeque<u8>>>,
+        raw_history: Option<Arc<Mutex<VecDeque<u8>>>>,
         last_output_time: Arc<Mutex<Instant>>,
         alt_screen_entered: Arc<AtomicBool>,
         writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -835,13 +856,15 @@ impl PtyManager {
                         let mut parser = screen.lock().unwrap_or_else(|e| e.into_inner());
                         parser.process(bytes);
 
-                        // Record the same bytes for reflow-on-resize. Done under
-                        // the `screen` lock so the recorded stream stays exactly
-                        // in sync with what the parser has processed, and so a
-                        // concurrent `resize_session` rebuild sees a consistent
-                        // history. The inner scope releases the history guard
-                        // before the CPR / alt-screen work below.
-                        {
+                        // Record the same bytes for reflow-on-resize, but only
+                        // for sessions that opted into a raw history (shells).
+                        // Done under the `screen` lock so the recorded stream
+                        // stays exactly in sync with what the parser has
+                        // processed, and so a concurrent `resize_session`
+                        // rebuild sees a consistent history. The inner scope
+                        // releases the history guard before the CPR / alt-screen
+                        // work below.
+                        if let Some(raw_history) = &raw_history {
                             let mut history =
                                 raw_history.lock().unwrap_or_else(|e| e.into_inner());
                             history.extend(bytes.iter().copied());
