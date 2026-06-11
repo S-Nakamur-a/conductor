@@ -220,9 +220,15 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             let full_path = app.selected_worktree_path().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
+            // Tier B: pixel-quality rendering via the graphics protocol.
+            let picker = if app.rich_tier.has_graphics() {
+                app.rich_picker
+            } else {
+                None
+            };
             app.viewer_state
                 .media_state
-                .render_if_needed(&full_path, rel_path, cols, rows);
+                .render_if_needed(&full_path, rel_path, cols, rows, picker);
         }
         super::viewer_panel::render(frame, columns[2], app);
     }
@@ -379,6 +385,15 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         &app.repo_path,
         &app.theme,
     );
+
+    // ── Rich mode (Tier A) ───────────────────────────────────────────
+    // Post-process the finished frame with the gradient breathing border
+    // and Claude-waiting glow. Skipped while party mode is active: party
+    // finds the focused border by colour equality with `border_focused`,
+    // which the gradient would break.
+    if app.rich_tier.is_rich() && !app.party_mode {
+        super::rich::apply_rich_effects(frame, app);
+    }
 
     // ── Party mode (hidden) ──────────────────────────────────────────
     // Post-process the finished frame so rainbow borders, a shimmering

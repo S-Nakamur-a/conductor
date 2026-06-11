@@ -24,6 +24,7 @@ mod review_state;
 mod review_store;
 mod search_result_tree;
 mod symbol_index;
+mod term_caps;
 mod terminal_link;
 mod terminal_state;
 mod text_input;
@@ -141,6 +142,55 @@ fn main() -> Result<()> {
     // ── Set terminal window title ────────────────────────────────────
     let window_title = format!("conductor - {}", app.main_repo_name);
     execute!(io::stdout(), SetTitle(&window_title))?;
+
+    // ── Rich mode capability detection ───────────────────────────────
+    // Runs after entering the alternate screen but before the event loop
+    // starts reading stdin: the graphics probe (when it runs) must read the
+    // terminal's query response from stdin itself, or the crossterm event
+    // loop would swallow it.
+    {
+        let caps = term_caps::TermCaps::detect_from_env();
+        let mode = app.config.rich.mode.clone();
+        // `auto` probes only when env hints a graphics terminal (keeps startup
+        // instant on unknown terminals); `force` always probes so it works as
+        // an escape hatch on terminals the hint list doesn't know about.
+        let probed = if mode == "force" || (mode != "off" && caps.graphics_likely) {
+            match ratatui_image::picker::Picker::from_query_stdio() {
+                Ok(picker) => Some(picker),
+                Err(e) => {
+                    log::warn!("graphics protocol probe failed: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let protocol = probed.map(|p| p.protocol_type());
+        app.rich_tier = term_caps::resolve_rich_tier(&mode, &caps, protocol);
+        app.rich_tier_available = app.rich_tier;
+        if app.rich_tier.has_graphics() {
+            app.rich_picker = probed;
+        }
+        log::info!(
+            "rich mode: tier={:?} terminal={:?} protocol={:?}",
+            app.rich_tier,
+            caps.terminal_name,
+            protocol
+        );
+        if app.rich_tier.is_rich() {
+            let label = match (app.rich_tier.has_graphics(), caps.terminal_name.as_deref()) {
+                (true, Some(name)) => format!("✨ Rich mode — {name} graphics detected"),
+                (true, None) => String::from("✨ Rich mode — terminal graphics detected"),
+                (false, Some(name)) => format!("✨ Rich mode — {name} truecolor"),
+                (false, None) => String::from("✨ Rich mode — truecolor"),
+            };
+            app.status_message = Some(app::StatusMessage::new(
+                label,
+                app::StatusLevel::Info,
+                app.ui_tick,
+            ));
+        }
+    }
 
     // ── Build symbol index in background ─────────────────────────────
     app.start_symbol_index_build();

@@ -20,9 +20,9 @@ use crate::app::App;
 
 /// Convert HSL (h: 0-360, s: 0-1, l: 0-1) to an RGB [`Color`].
 ///
-/// Local copy (the equivalent in `common.rs` is private); party mode only ever
-/// needs full-saturation rainbow colours.
-fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
+/// Local copy (the equivalent in `common.rs` is private); shared with the
+/// rich-mode effects in `rich.rs`. Pass `h` already normalized to 0-360.
+pub(crate) fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h2 = h / 60.0;
     let x = c * (1.0 - (h2 % 2.0 - 1.0).abs());
@@ -52,7 +52,8 @@ pub fn rainbow(phase: f64) -> Color {
 
 /// Whether `s` begins with a box-drawing glyph (U+2500..=U+257F) — i.e. a panel
 /// border character. Used to target borders without touching text content.
-fn is_border_glyph(s: &str) -> bool {
+/// Shared with the rich-mode effects in `rich.rs`.
+pub(crate) fn is_border_glyph(s: &str) -> bool {
     matches!(s.chars().next(), Some(c) if ('\u{2500}'..='\u{257F}').contains(&c))
 }
 
@@ -133,6 +134,18 @@ fn draw_confetti(buf: &mut ratatui::buffer::Buffer, area: Rect, tick: f64) {
         let glyph = SPARKLES[(rx as usize >> 4) % SPARKLES.len()];
 
         if let Some(cell) = buf.cell_mut((x, y)) {
+            // Leave graphics-protocol cells alone: rich mode's pixel image
+            // preview marks its area with Unicode placeholder characters
+            // (plane-16 private use); overwriting one would punch a hole in
+            // the image until the next full repaint.
+            if cell
+                .symbol()
+                .chars()
+                .next()
+                .is_some_and(|c| c >= '\u{100000}')
+            {
+                continue;
+            }
             cell.set_symbol(glyph);
             cell.fg = rainbow(tick * 9.0 + i as f64 * 47.0);
             cell.modifier.insert(Modifier::BOLD);

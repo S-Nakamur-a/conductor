@@ -15,6 +15,50 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
+/// Shared definition of the inline-thread action row.
+///
+/// The renderer ([`build_inline_thread_lines`]) and the mouse hit-testing in
+/// `event/mouse.rs` must agree on where each action sits; both derive their
+/// layout from these constants so a label change cannot silently break
+/// click targets.
+pub(crate) mod thread_actions {
+    pub const REPLY: &str = "\u{21a9} reply"; // ↩ reply
+    pub const RESOLVE: &str = "\u{2713} resolve"; // ✓ resolve
+    pub const UNRESOLVE: &str = "\u{21ba} unresolve"; // ↺ unresolve
+    pub const DELETE: &str = "\u{2717} delete"; // ✗ delete
+    pub const ASK_CLAUDE: &str = "\u{2728} ask claude"; // ✨ ask claude
+    /// Columns of spacing between actions.
+    pub const GAP: usize = 2;
+
+    fn w(s: &str) -> usize {
+        unicode_width::UnicodeWidthStr::width(s)
+    }
+
+    /// Width the status (resolve/unresolve) slot is padded to, so the delete
+    /// action starts at a stable column regardless of the current status.
+    pub fn status_slot_width() -> usize {
+        w(RESOLVE).max(w(UNRESOLVE))
+    }
+
+    /// Clicks left of this column (relative to the action-row content start)
+    /// hit "reply".
+    pub fn reply_end() -> usize {
+        w(REPLY) + GAP
+    }
+
+    /// Clicks in `reply_end()..resolve_end()` hit "resolve"/"unresolve";
+    /// clicks at or beyond it hit "delete" (or "ask claude" on the far right).
+    pub fn resolve_end() -> usize {
+        reply_end() + status_slot_width() + GAP
+    }
+
+    /// Display width of the right-aligned "ask claude" button, for hit-testing
+    /// against the panel's right edge.
+    pub fn ask_claude_width() -> usize {
+        w(ASK_CLAUDE)
+    }
+}
+
 /// Render the viewer (file content) panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
@@ -1041,17 +1085,29 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
             let paragraph = Paragraph::new(visible_lines);
             frame.render_widget(paragraph, media_area);
 
-            // Info bar: dimensions + file size.
-            let size_str = if file_size >= 1_048_576 {
-                format!("{:.1} MB", file_size as f64 / 1_048_576.0)
-            } else if file_size >= 1024 {
-                format!("{:.1} KB", file_size as f64 / 1024.0)
-            } else {
-                format!("{file_size} B")
-            };
-            let info = format!(" {}x{} | {} ", dimensions.0, dimensions.1, size_str,);
-            let info_widget = Paragraph::new(Span::styled(info, Style::default().fg(theme.muted)));
-            frame.render_widget(info_widget, info_area);
+            render_media_info_bar(frame, info_area, dimensions, file_size, theme);
+        }
+        MediaContent::Pixel {
+            protocol,
+            dimensions,
+            file_size,
+        } => {
+            frame.render_widget(ratatui::widgets::Clear, area);
+
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+
+            // Reserve last line for info bar.
+            let media_height = inner.height.saturating_sub(1);
+            let media_area = Rect::new(inner.x, inner.y, inner.width, media_height);
+            let info_area = Rect::new(inner.x, inner.y + media_height, inner.width, 1);
+
+            // Pixel-quality image via the terminal graphics protocol. The
+            // escape payload is embedded in the buffer cells, so ratatui's
+            // diffing only re-transmits it when the cells actually change.
+            frame.render_widget(ratatui_image::Image::new(protocol.as_ref()), media_area);
+
+            render_media_info_bar(frame, info_area, dimensions, file_size, theme);
         }
         MediaContent::Error(msg) => {
             let error = Paragraph::new(msg)
@@ -1060,6 +1116,26 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
             frame.render_widget(error, area);
         }
     }
+}
+
+/// Render the media info bar (dimensions + file size) under the image.
+fn render_media_info_bar(
+    frame: &mut Frame,
+    info_area: Rect,
+    dimensions: (u32, u32),
+    file_size: u64,
+    theme: &crate::theme::Theme,
+) {
+    let size_str = if file_size >= 1_048_576 {
+        format!("{:.1} MB", file_size as f64 / 1_048_576.0)
+    } else if file_size >= 1024 {
+        format!("{:.1} KB", file_size as f64 / 1024.0)
+    } else {
+        format!("{file_size} B")
+    };
+    let info = format!(" {}x{} | {} ", dimensions.0, dimensions.1, size_str);
+    let info_widget = Paragraph::new(Span::styled(info, Style::default().fg(theme.muted)));
+    frame.render_widget(info_widget, info_area);
 }
 
 /// Soft-wrap a string at word boundaries to fit within `max_width` columns.
@@ -1126,7 +1202,9 @@ fn build_inline_thread_lines<'a>(
     let info_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
     // Box inner width (between │ and │).
     let box_inner = panel_width.saturating_sub(left_pad + 4 + 2); // "  │ " left + " │" right
-    let wrap_width = box_inner.saturating_sub(6).max(20); // indent inside box
+    // Indent inside the box, but never wider than the box itself (a fixed
+    // floor of 20 used to overflow the border on narrow panels).
+    let wrap_width = box_inner.saturating_sub(6).max(10).min(box_inner.max(1));
 
     // Helper: make a bordered content line with left │, padded to full width.
     let make_line = |spans: Vec<Span<'a>>| -> (Line<'a>, ScreenRow) {
@@ -1177,9 +1255,17 @@ fn build_inline_thread_lines<'a>(
             crate::review_store::Author::Claude => "claude",
         };
 
-        // Comment body lines (with soft wrap). No kind badge / author icon.
-        let header_prefix_len = author_label.len() + 2; // "author: "
-        let first_line_wrap = wrap_width.saturating_sub(header_prefix_len).max(20);
+        // Kind badge (💡/❓) before the author, so suggest vs question reads at
+        // a glance like in the comment list and detail modal.
+        let kind = crate::ui::review::kind_icon(comment.kind);
+        let author_bold = info_style.add_modifier(Modifier::BOLD);
+
+        // Comment body lines (with soft wrap).
+        let header_prefix_len = author_label.len() + 2 + 3; // "icon author: "
+        let first_line_wrap = wrap_width
+            .saturating_sub(header_prefix_len)
+            .max(10)
+            .min(wrap_width.max(1));
         let mut is_first = true;
         for body_line in comment.body.split('\n') {
             if is_first {
@@ -1188,7 +1274,8 @@ fn build_inline_thread_lines<'a>(
                 for (wi, wline) in wrapped.iter().enumerate() {
                     if wi == 0 {
                         out.push(make_line(vec![
-                            Span::styled(format!("{author_label}: "), info_style),
+                            Span::styled(format!("{kind} "), content_style),
+                            Span::styled(format!("{author_label}: "), author_bold),
                             Span::styled(wline.clone(), content_style),
                         ]));
                     } else {
@@ -1217,7 +1304,10 @@ fn build_inline_thread_lines<'a>(
                     crate::review_store::Author::Claude => "claude",
                 };
                 let reply_header_len = reply_author.len() + 4; // "  author: "
-                let reply_first_wrap = wrap_width.saturating_sub(reply_header_len).max(20);
+                let reply_first_wrap = wrap_width
+                    .saturating_sub(reply_header_len)
+                    .max(10)
+                    .min(wrap_width.max(1));
                 let mut is_first_reply_line = true;
                 for reply_line in reply.body.split('\n') {
                     let w = if is_first_reply_line {
@@ -1230,7 +1320,10 @@ fn build_inline_thread_lines<'a>(
                         if is_first_reply_line && wi == 0 {
                             is_first_reply_line = false;
                             out.push(make_line(vec![
-                                Span::styled(format!("  {reply_author}: "), info_style),
+                                Span::styled(
+                                    format!("  {reply_author}: "),
+                                    info_style.add_modifier(Modifier::BOLD),
+                                ),
                                 Span::styled(wline.clone(), content_style),
                             ]));
                         } else {
@@ -1269,7 +1362,9 @@ fn build_inline_thread_lines<'a>(
             ]);
             out.push((line, action_row_type));
         } else {
-            // Clickable action icons: ↩ reply  ✔ resolve  x delete  ...  ✨ ask claude
+            // Clickable action row. Labels and hit ranges both come from the
+            // shared `thread_actions` module so the mouse handler stays in
+            // sync with what is drawn here.
             let reply_style = Style::default().fg(theme.info).bg(theme.comment_preview_bg);
             let resolve_style = Style::default()
                 .fg(theme.success)
@@ -1281,35 +1376,42 @@ fn build_inline_thread_lines<'a>(
                 .fg(Color::Rgb(180, 140, 255))
                 .bg(theme.comment_preview_bg);
             let status_label = match comment.status {
-                crate::review_store::CommentStatus::Pending => "✔ resolve",
-                crate::review_store::CommentStatus::Resolved => "↺ unresolve",
+                crate::review_store::CommentStatus::Pending => thread_actions::RESOLVE,
+                crate::review_store::CommentStatus::Resolved => thread_actions::UNRESOLVE,
             };
+            // Pad the status slot to a constant width so "delete" starts at a
+            // stable column regardless of resolve/unresolve being shown.
+            let status_pad = thread_actions::status_slot_width()
+                .saturating_sub(unicode_width::UnicodeWidthStr::width(status_label));
 
-            // Build the left-side actions and right-side "✨ ask claude".
+            let gap = " ".repeat(thread_actions::GAP);
             let left_actions = vec![
-                Span::styled("↩ reply", reply_style),
-                Span::styled("  ", muted_style),
-                Span::styled(status_label.to_string(), resolve_style),
-                Span::styled("  ", muted_style),
-                Span::styled("x delete", delete_style),
+                Span::styled(thread_actions::REPLY, reply_style),
+                Span::styled(gap.clone(), muted_style),
+                Span::styled(
+                    format!("{status_label}{}", " ".repeat(status_pad)),
+                    resolve_style,
+                ),
+                Span::styled(gap, muted_style),
+                Span::styled(thread_actions::DELETE, delete_style),
             ];
-            let right_label = "✨ ask claude";
-            let right_label_w = unicode_width::UnicodeWidthStr::width(right_label);
+            let right_label = thread_actions::ASK_CLAUDE;
+            let right_label_w = thread_actions::ask_claude_width();
 
             let left_w: usize = left_actions
                 .iter()
                 .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                 .sum();
             let prefix_w = left_pad + 4; // gutter_pad + "  │ "
-            let gap = panel_width.saturating_sub(prefix_w + left_w + right_label_w + 2 + 1);
+            let fill = panel_width.saturating_sub(prefix_w + left_w + right_label_w + 2 + 1);
 
             let mut spans = vec![
                 Span::styled(gutter_pad.clone(), thread_bg),
                 Span::styled("  │ ", border_style),
             ];
             spans.extend(left_actions);
-            if gap > 0 {
-                spans.push(Span::styled(" ".repeat(gap), thread_bg));
+            if fill > 0 {
+                spans.push(Span::styled(" ".repeat(fill), thread_bg));
             }
             spans.push(Span::styled(right_label.to_string(), claude_style));
             spans.push(Span::styled(" ", thread_bg)); // trailing pad

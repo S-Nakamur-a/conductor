@@ -1,15 +1,25 @@
 //! Media rendering state for the viewer panel.
 //!
-//! Handles loading images via the `image` crate, rendering them to ANSI
-//! strings via `aa_media::Renderer`, and converting the output to ratatui
-//! `Line`s for display in the viewer panel.
+//! Handles loading images via the `image` crate and rendering them for the
+//! viewer panel through one of two paths:
+//!
+//! - **Halfblocks** (default): ANSI strings via `aa_media::Renderer`,
+//!   converted to ratatui `Line`s. Works in any truecolor terminal.
+//! - **Pixel** (rich mode Tier B): a `ratatui_image` graphics-protocol
+//!   payload (kitty/iTerm2/sixel) built once per (file, panel size) in the
+//!   background thread. The encoded escape data rides ratatui's normal cell
+//!   diffing, so an unchanged image is never re-transmitted.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use ratatui_image::Resize;
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::Protocol;
 
 use aa_media::renderer::{Mode, Renderer};
 
@@ -57,6 +67,16 @@ pub enum MediaContent {
         /// File size in bytes.
         file_size: u64,
     },
+    /// Pixel-quality graphics-protocol payload (rich mode Tier B).
+    /// `Arc` because [`Protocol`] is not `Clone` and the render path clones
+    /// the content out of the mutex each frame.
+    Pixel {
+        protocol: Arc<Protocol>,
+        /// Image dimensions (width x height pixels).
+        dimensions: (u32, u32),
+        /// File size in bytes.
+        file_size: u64,
+    },
     /// Rendering failed; show this error message.
     Error(String),
 }
@@ -67,6 +87,9 @@ pub struct MediaState {
     pub rendered_path: Option<String>,
     /// The terminal size (cols, rows) used for the last render.
     pub rendered_size: (u16, u16),
+    /// Whether the last render used the pixel (graphics-protocol) path, so
+    /// toggling rich mode at runtime invalidates the cache.
+    pub rendered_pixel: bool,
     /// Shared render result, updated by the background thread.
     pub content: Arc<Mutex<MediaContent>>,
 }
@@ -76,6 +99,7 @@ impl Default for MediaState {
         Self {
             rendered_path: None,
             rendered_size: (0, 0),
+            rendered_pixel: false,
             content: Arc::new(Mutex::new(MediaContent::Loading)),
         }
     }
@@ -84,25 +108,41 @@ impl Default for MediaState {
 impl MediaState {
     /// Start rendering a media file in a background thread.
     ///
-    /// If the file and size haven't changed, this is a no-op (cached result
-    /// is reused).
-    pub fn render_if_needed(&mut self, full_path: &Path, rel_path: &str, cols: u16, rows: u16) {
+    /// When `picker` is `Some` (rich mode Tier B), the image is encoded as a
+    /// graphics-protocol payload; otherwise it falls back to halfblock ANSI.
+    /// If the file, size, and render path haven't changed, this is a no-op
+    /// (cached result is reused).
+    pub fn render_if_needed(
+        &mut self,
+        full_path: &Path,
+        rel_path: &str,
+        cols: u16,
+        rows: u16,
+        picker: Option<Picker>,
+    ) {
         let size = (cols, rows);
 
-        // Use cached result if file and size haven't changed.
-        if self.rendered_path.as_deref() == Some(rel_path) && self.rendered_size == size {
+        // Use cached result if file, size, and render path haven't changed.
+        if self.rendered_path.as_deref() == Some(rel_path)
+            && self.rendered_size == size
+            && self.rendered_pixel == picker.is_some()
+        {
             return;
         }
 
         self.rendered_path = Some(rel_path.to_string());
         self.rendered_size = size;
+        self.rendered_pixel = picker.is_some();
         *self.content.lock().unwrap() = MediaContent::Loading;
 
         let path = full_path.to_path_buf();
         let content = Arc::clone(&self.content);
 
         thread::spawn(move || {
-            let result = render_image_to_lines(&path, cols, rows);
+            let result = match picker {
+                Some(mut picker) => render_image_to_pixels(&path, &mut picker, cols, rows),
+                None => render_image_to_lines(&path, cols, rows),
+            };
             *content.lock().unwrap() = result;
         });
     }
@@ -111,6 +151,38 @@ impl MediaState {
     pub fn clear(&mut self) {
         self.rendered_path = None;
         self.rendered_size = (0, 0);
+        self.rendered_pixel = false;
+    }
+}
+
+/// Render an image file to a graphics-protocol payload (rich mode Tier B).
+///
+/// The protocol data is sized for the viewer's media area: panel size minus
+/// borders and the info line, mirroring the halfblock path's layout.
+fn render_image_to_pixels(path: &Path, picker: &mut Picker, cols: u16, rows: u16) -> MediaContent {
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+    let img = match image::open(path) {
+        Ok(img) => img,
+        Err(e) => return MediaContent::Error(format!("Failed to load image: {e}")),
+    };
+    let dimensions = (img.width(), img.height());
+
+    let avail_cols = cols.saturating_sub(2);
+    let avail_rows = rows.saturating_sub(3); // borders + info line
+    let area = Rect::new(0, 0, avail_cols, avail_rows);
+
+    match picker.new_protocol(
+        img,
+        area,
+        Resize::Fit(Some(image::imageops::FilterType::Triangle)),
+    ) {
+        Ok(protocol) => MediaContent::Pixel {
+            protocol: Arc::new(protocol),
+            dimensions,
+            file_size,
+        },
+        Err(e) => MediaContent::Error(format!("Graphics render error: {e}")),
     }
 }
 

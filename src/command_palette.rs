@@ -82,6 +82,7 @@ pub enum CommandId {
     // App
     UpdateAndRestart,
     TogglePartyMode,
+    ToggleRichMode,
     Quit,
 }
 
@@ -452,6 +453,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::App,
         action: None,
         keywords: "party rainbow fun secret celebration mode hidden festive disco",
+    },
+    PaletteCommand {
+        id: CommandId::ToggleRichMode,
+        label: "✨ Toggle Rich Mode",
+        category: CommandCategory::App,
+        action: None,
+        keywords: "rich mode graphics gradient border glow visual effects truecolor",
     },
     PaletteCommand {
         id: CommandId::Quit,

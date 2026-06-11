@@ -336,7 +336,9 @@ impl Theme {
             status_bg_info: Color::Rgb(15, 30, 45),
 
             comment_preview_bg: Color::Rgb(56, 62, 82),
-            reply_text: Color::Rgb(129, 161, 193),
+            // nord15 (aurora purple): distinct from `info` (129,161,193), which
+            // styles reply *authors* — identical colours made them merge.
+            reply_text: Color::Rgb(180, 142, 173),
 
             panel_focused_bg: Color::Rgb(56, 62, 78),
         }

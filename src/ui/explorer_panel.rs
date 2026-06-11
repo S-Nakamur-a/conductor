@@ -408,7 +408,9 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         .filter(|c| c.status == crate::review_store::CommentStatus::Pending)
         .count();
     let title = format!(" Comments ({pending}/{total}) ");
-    let ask_claude_label = " ✨ Ask Claude All ";
+    // Bulk-send button for the whole list — distinct from the per-comment
+    // "ask claude" action defined in `viewer_panel::thread_actions`.
+    const ASK_CLAUDE_ALL_LABEL: &str = " ✨ Ask Claude All ";
 
     let border_type = if panel_focused {
         BorderType::Thick
@@ -421,11 +423,15 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
     } else {
         Style::default().fg(theme.muted)
     };
-    let block = Block::default()
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let scroll = vs_explorer.comment_list_scroll;
+    let total_rows = app.review_state.comment_list_rows.len();
+
+    let mut block = Block::default()
         .title(Span::styled(title, title_style))
         .title_bottom(
             Line::from(vec![Span::styled(
-                ask_claude_label,
+                ASK_CLAUDE_ALL_LABEL,
                 Style::default().fg(Color::Rgb(180, 140, 255)),
             )])
             .alignment(Alignment::Right),
@@ -434,8 +440,15 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
 
-    let inner_height = area.height.saturating_sub(2) as usize;
-    let scroll = vs_explorer.comment_list_scroll;
+    // Scroll position indicator (only when the list overflows).
+    if total_rows > inner_height {
+        let first = scroll + 1;
+        let last = (scroll + inner_height).min(total_rows);
+        block = block.title_bottom(Line::from(Span::styled(
+            format!(" {first}-{last}/{total_rows} "),
+            Style::default().fg(theme.muted),
+        )));
+    }
 
     let items: Vec<ListItem> = app
         .review_state
@@ -448,12 +461,11 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
             match row {
                 CommentListRow::Comment { comment_idx } => {
                     let comment = app.review_state.comments.get(*comment_idx)?;
+                    let resolved =
+                        comment.status == crate::review_store::CommentStatus::Resolved;
 
                     let kind_badge = crate::ui::review::kind_icon(comment.kind);
-                    let status_marker = match comment.status {
-                        crate::review_store::CommentStatus::Pending => "\u{25cb}", // ○
-                        crate::review_store::CommentStatus::Resolved => "\u{2713}", // ✓
-                    };
+                    let status_marker = if resolved { "\u{2713}" } else { "\u{25cb}" };
 
                     let filename = comment
                         .file_path
@@ -466,6 +478,7 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                     } else {
                         format!("L{}", comment.line_start)
                     };
+                    let location = format!("{filename}:{line_range}");
 
                     let reply_count = app
                         .review_state
@@ -473,13 +486,15 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                         .get(&comment.id)
                         .copied()
                         .unwrap_or(0);
-                    let reply_badge = if reply_count > 0 {
-                        format!("({reply_count}\u{21a9}) ")
+                    // Reply count rides at the end of the row, out of the way
+                    // of the location + body the eye scans for.
+                    let reply_suffix = if reply_count > 0 {
+                        format!(" \u{21a9}{reply_count}")
                     } else {
                         String::new()
                     };
 
-                    // Expansion indicator.
+                    // Expansion indicator (only meaningful when replies exist).
                     let expand_indicator = if reply_count > 0 {
                         if app.review_state.expanded_comments.contains(&comment.id) {
                             "\u{25bc} " // ▼
@@ -490,35 +505,73 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                         "  "
                     };
 
-                    let prefix = format!(
-                        "{expand_indicator}{status_marker} {kind_badge} {reply_badge}{filename}:{line_range} "
-                    );
-                    let max_body = (area.width as usize).saturating_sub(prefix.len() + 2);
-                    let body: String = comment
-                        .body
-                        .replace('\n', " ")
-                        .chars()
-                        .take(max_body)
-                        .collect();
-                    let label = format!("{prefix}{body}");
-
-                    let style = if row_idx == vs_explorer.comment_list_selected && list_focused {
-                        Style::default()
-                            .fg(theme.selected_fg)
-                            .bg(theme.selected_bg)
-                            .add_modifier(Modifier::BOLD)
-                    } else if row_idx == vs_explorer.comment_list_selected {
-                        Style::default()
-                            .fg(theme.selected_fg_inactive)
-                            .bg(theme.selected_bg_inactive)
-                            .add_modifier(Modifier::BOLD)
-                    } else if comment.status == crate::review_store::CommentStatus::Resolved {
-                        Style::default().fg(theme.muted)
+                    // First body line only; collapsing newlines to spaces hid
+                    // the fact that a comment had structure. `+N` marks it.
+                    let first_line = comment.body.lines().next().unwrap_or("");
+                    let extra_lines = comment.body.lines().count().saturating_sub(1);
+                    let more_suffix = if extra_lines > 0 {
+                        format!(" +{extra_lines}")
                     } else {
-                        Style::default().fg(theme.fg)
+                        String::new()
                     };
 
-                    Some(ListItem::new(Span::styled(label, style)))
+                    let fixed = format!("{expand_indicator}{status_marker} {kind_badge} {location} ");
+                    let max_body = (area.width as usize).saturating_sub(
+                        unicode_width::UnicodeWidthStr::width(fixed.as_str())
+                            + unicode_width::UnicodeWidthStr::width(more_suffix.as_str())
+                            + unicode_width::UnicodeWidthStr::width(reply_suffix.as_str())
+                            + 2, // block borders
+                    );
+                    let body: String = first_line.chars().take(max_body).collect();
+
+                    let selected = row_idx == vs_explorer.comment_list_selected;
+                    let item = if selected {
+                        // Selected rows keep a uniform highlight for legibility.
+                        let style = if list_focused {
+                            Style::default()
+                                .fg(theme.selected_fg)
+                                .bg(theme.selected_bg)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(theme.selected_fg_inactive)
+                                .bg(theme.selected_bg_inactive)
+                                .add_modifier(Modifier::BOLD)
+                        };
+                        ListItem::new(Span::styled(
+                            format!("{fixed}{body}{more_suffix}{reply_suffix}"),
+                            style,
+                        ))
+                    } else {
+                        // Unselected rows use semantic colours so status and
+                        // location recede and the body dominates the scan.
+                        // Resolved rows recede *entirely* (marker included):
+                        // a bright ✓ over a muted body would pull the eye to
+                        // exactly the rows that no longer need attention.
+                        let marker_style = if resolved {
+                            Style::default().fg(theme.muted)
+                        } else {
+                            Style::default().fg(theme.warning)
+                        };
+                        let dim = Style::default().fg(theme.muted);
+                        let body_style = if resolved {
+                            Style::default().fg(theme.muted)
+                        } else {
+                            Style::default().fg(theme.fg)
+                        };
+                        ListItem::new(Line::from(vec![
+                            Span::styled(expand_indicator.to_string(), dim),
+                            Span::styled(status_marker.to_string(), marker_style),
+                            Span::raw(" "),
+                            crate::ui::review::kind_badge_span(comment.kind, theme),
+                            Span::styled(location, dim),
+                            Span::raw(" "),
+                            Span::styled(body, body_style),
+                            Span::styled(more_suffix, dim),
+                            Span::styled(reply_suffix, dim),
+                        ]))
+                    };
+                    Some(item)
                 }
                 CommentListRow::Reply {
                     comment_idx,
@@ -533,31 +586,51 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
                         crate::review_store::Author::Claude => "Claude",
                     };
 
-                    let max_body =
-                        (area.width as usize).saturating_sub(author_label.len() + 10);
-                    let body: String = reply
-                        .body
-                        .replace('\n', " ")
-                        .chars()
-                        .take(max_body)
-                        .collect();
-                    let label = format!("  \u{21b3} [{author_label}] {body}");
-
-                    let style = if row_idx == vs_explorer.comment_list_selected && list_focused {
-                        Style::default()
-                            .fg(theme.selected_fg)
-                            .bg(theme.selected_bg)
-                            .add_modifier(Modifier::BOLD)
-                    } else if row_idx == vs_explorer.comment_list_selected {
-                        Style::default()
-                            .fg(theme.selected_fg_inactive)
-                            .bg(theme.selected_bg_inactive)
-                            .add_modifier(Modifier::BOLD)
+                    // "    ↳ " indent (6) + author + " " (1) + block borders (2).
+                    let reply_prefix_w =
+                        6 + unicode_width::UnicodeWidthStr::width(author_label) + 1;
+                    let max_body = (area.width as usize).saturating_sub(reply_prefix_w + 2);
+                    let first_line = reply.body.lines().next().unwrap_or("");
+                    let extra_lines = reply.body.lines().count().saturating_sub(1);
+                    let more_suffix = if extra_lines > 0 {
+                        format!(" +{extra_lines}")
                     } else {
-                        Style::default().fg(theme.reply_text)
+                        String::new()
                     };
+                    let body: String = first_line.chars().take(max_body).collect();
 
-                    Some(ListItem::new(Span::styled(label, style)))
+                    let selected = row_idx == vs_explorer.comment_list_selected;
+                    let item = if selected {
+                        let style = if list_focused {
+                            Style::default()
+                                .fg(theme.selected_fg)
+                                .bg(theme.selected_bg)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(theme.selected_fg_inactive)
+                                .bg(theme.selected_bg_inactive)
+                                .add_modifier(Modifier::BOLD)
+                        };
+                        ListItem::new(Span::styled(
+                            format!("    \u{21b3} {author_label} {body}{more_suffix}"),
+                            style,
+                        ))
+                    } else {
+                        // Deeper indent + bold author make the thread
+                        // structure visible without reading the text.
+                        ListItem::new(Line::from(vec![
+                            Span::styled(
+                                format!("    \u{21b3} {author_label} "),
+                                Style::default()
+                                    .fg(theme.info)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(body, Style::default().fg(theme.reply_text)),
+                            Span::styled(more_suffix, Style::default().fg(theme.muted)),
+                        ]))
+                    };
+                    Some(item)
                 }
             }
         })
