@@ -528,6 +528,24 @@ pub struct App {
     /// bar shimmers, and confetti drifts across the screen. Toggled from
     /// the command palette; not persisted (session-only secret).
     pub party_mode: bool,
+
+    // ── Rich mode (terminal graphics tiers) ──────────────────────
+    /// Resolved rich-mode tier, decided once at startup from config +
+    /// terminal capability detection (see `term_caps`). Tier A drives the
+    /// gradient border/title effects; Tier B additionally enables
+    /// graphics-protocol image previews.
+    pub rich_tier: crate::term_caps::RichTier,
+    /// Graphics-protocol picker for Tier B image rendering.
+    /// `Some` only when `rich_tier` is `TierB`.
+    pub rich_picker: Option<ratatui_image::picker::Picker>,
+    /// The tier detection resolved at startup, kept so the runtime toggle
+    /// can restore it after switching rich mode off.
+    pub rich_tier_available: crate::term_caps::RichTier,
+    /// Wall-clock anchor for rich-mode animations. Phases derive from
+    /// elapsed time (not `ui_tick`) so animation speed is independent of
+    /// the redraw rate, which varies from ~2fps (idle pulses) to ~60fps
+    /// (active input).
+    pub rich_epoch: std::time::Instant,
 }
 
 /// Result of a background diff computation.
@@ -743,6 +761,10 @@ impl App {
             show_panel_number_overlay: false,
             panel_overlay_since: None,
             party_mode: false,
+            rich_tier: crate::term_caps::RichTier::Off,
+            rich_picker: None,
+            rich_tier_available: crate::term_caps::RichTier::Off,
+            rich_epoch: std::time::Instant::now(),
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
 
@@ -1680,6 +1702,7 @@ impl App {
             CommandId::UpdateAndRestart => self.cmd_update_and_restart(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
             CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
+            CommandId::ToggleRichMode => self.cmd_toggle_rich_mode(),
             CommandId::Quit => self.should_quit = true,
         }
     }
@@ -1695,6 +1718,25 @@ impl App {
             self.set_status("🎉 Party mode ON! 🎉".to_string(), StatusLevel::Success);
         } else {
             self.set_status_info("Party mode off.".to_string());
+        }
+        self.dirty.mark_all();
+    }
+
+    /// Toggle rich mode between off and the tier detected at startup. On
+    /// terminals where detection found nothing, toggling on falls back to
+    /// Tier A (same behaviour as `[rich] mode = "force"`).
+    fn cmd_toggle_rich_mode(&mut self) {
+        use crate::term_caps::RichTier;
+        if self.rich_tier.is_rich() {
+            self.rich_tier = RichTier::Off;
+            self.set_status_info("Rich mode off.".to_string());
+        } else {
+            self.rich_tier = if self.rich_tier_available.is_rich() {
+                self.rich_tier_available
+            } else {
+                RichTier::TierA
+            };
+            self.set_status("✨ Rich mode ON".to_string(), StatusLevel::Success);
         }
         self.dirty.mark_all();
     }

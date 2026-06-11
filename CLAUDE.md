@@ -68,6 +68,7 @@ Status bar
 | `file_watcher.rs` | Filesystem change detection via `notify` crate, debounced at 500ms |
 | `config.rs` | Config loading from `~/.config/conductor/config.toml` |
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
+| `term_caps.rs` | Rich-mode terminal capability detection (truecolor / graphics protocol tiers) |
 
 ### UI Modules (`src/ui/`)
 

@@ -238,10 +238,12 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         " {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, Del: delete) "
     );
 
+    // border_focused (not info): every review modal — input, template picker,
+    // detail — shares the focused-border colour so they read as one family.
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.info));
+        .border_style(Style::default().fg(theme.border_focused));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
@@ -256,19 +258,20 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     } else {
         format!("{}:{}", comment.file_path, comment.line_start)
     };
-    lines.push(Line::from(vec![
-        Span::styled(" \u{1f4cd} ", Style::default().fg(theme.accent)), // 📍
-        Span::styled(line_range, Style::default().fg(theme.accent)),
-    ]));
-
+    // Location and author share one header line: the author matters less
+    // than the body, so it rides along in muted instead of claiming a line.
     let author_label = match comment.author {
         crate::review_store::Author::User => "You",
         crate::review_store::Author::Claude => "Claude",
     };
-    lines.push(Line::from(vec![Span::styled(
-        format!(" by {author_label}"),
-        Style::default().fg(theme.info),
-    )]));
+    lines.push(Line::from(vec![
+        Span::styled(" \u{1f4cd} ", Style::default().fg(theme.accent)), // 📍
+        Span::styled(line_range, Style::default().fg(theme.accent)),
+        Span::styled(
+            format!(" \u{b7} {author_label}"),
+            Style::default().fg(theme.muted),
+        ),
+    ]));
 
     // Separator.
     let sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
@@ -308,8 +311,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 crate::review_store::Author::Claude => "Claude",
             };
             lines.push(Line::from(vec![Span::styled(
-                format!("  \u{21b3} [{r_author}] "),
-                Style::default().fg(theme.info),
+                format!("  \u{21b3} {r_author}"),
+                Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
             )]));
             for reply_line in reply.body.split('\n') {
                 lines.push(Line::from(Span::styled(
@@ -326,7 +329,13 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     let total_lines: usize = lines
         .iter()
         .map(|line| {
-            let line_len: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            // Display width (not byte length) — multibyte bodies otherwise
+            // overestimate wrapping and leave dead scroll range.
+            let line_len: usize = line
+                .spans
+                .iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
             if content_width > 0 && line_len > content_width {
                 line_len.div_ceil(content_width)
             } else {

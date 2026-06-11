@@ -42,6 +42,8 @@ pub struct Config {
     pub updates: UpdatesConfig,
     /// `[api]` -- Gemini API settings.
     pub api: ApiConfig,
+    /// `[rich]` -- rich mode (terminal graphics) settings.
+    pub rich: RichConfig,
 }
 
 impl Config {
@@ -308,6 +310,23 @@ impl Default for ApiConfig {
     }
 }
 
+/// `[rich]` section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RichConfig {
+    /// Rich mode activation: `"auto"` (detect terminal capabilities),
+    /// `"off"` (never), or `"force"` (enable Tier A even without truecolor).
+    pub mode: String,
+}
+
+impl Default for RichConfig {
+    fn default() -> Self {
+        Self {
+            mode: String::from("auto"),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -411,6 +430,12 @@ pub fn generate_default_config() -> String {
 [updates]
 # check_on_startup = true               # check for new versions on startup
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
+
+[rich]
+# mode = "auto"                         # rich mode (gradient borders, pixel-quality images)
+#                                       #   auto  - detect terminal capabilities (default)
+#                                       #   off   - plain rendering everywhere
+#                                       #   force - enable even when detection fails
 
 [api]
 # provider = "gemini"                   # "gemini" (Gemini API), "claude" (claude -p CLI), or "command" (external) — no fallback between them

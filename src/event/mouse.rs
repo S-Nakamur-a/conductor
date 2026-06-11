@@ -738,18 +738,20 @@ fn handle_viewer_column_click(
         return;
     }
 
-    // Handle clicks on thread action rows (💭 reply / ✅ resolve / 🗑 delete).
+    // Handle clicks on thread action rows (reply / resolve / delete / ask).
     // Works in both diff and file-content views (both populate screen_row_map).
     if row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(comment_id) = resolve_screen_action(app, screen_offset) {
-            // Determine which action was clicked by column offset.
-            // Action row layout: "  │ 💭 reply  ✅ resolve  🗑 delete"
-            // Relative to content start (after "  │ "):
-            let content_x = inner_x + gutter_w + 2 + 4; // gutter + badge + "  │ "
+            use crate::ui::viewer_panel::thread_actions;
+            // Determine which action was clicked by column offset, using the
+            // same layout constants the renderer draws the row with.
+            // Offset equivalence with the renderer: gutter_total_width() is
+            // digits+4, and the renderer indents digits + 6 (left_pad) + 4
+            // ("  │ ") = digits + 10 = gutter_total_width() + 2 + 4.
+            let content_x = inner_x + gutter_w + 2 + 4;
             let click_col = col.saturating_sub(content_x) as usize;
-            // ↩ reply(0..8)  ✔ resolve(9..19)  x delete(20+)
-            if click_col < 9 {
+            if click_col < thread_actions::reply_end() {
                 // Reply: start inline reply for this comment.
                 // Find which line this comment is on (end line).
                 if let Some(comment) = app
@@ -774,7 +776,7 @@ fn handle_viewer_column_click(
                     app.viewer_state.explorer.inline_reply_comment_id = Some(comment_id);
                     app.viewer_state.explorer.inline_reply_buffer.clear();
                 }
-            } else if click_col < 20 {
+            } else if click_col < thread_actions::resolve_end() {
                 // Resolve/unresolve.
                 if let Some(store) = app.review_store.as_ref() {
                     let new_status = if let Some(c) = app
@@ -802,9 +804,9 @@ fn handle_viewer_column_click(
                     }
                 }
             } else {
-                // Check if click is on the right-side "✨ ask claude" button.
-                // Detect by absolute column: within 15 cols of viewer right edge.
-                let ask_claude_w = 15_u16;
+                // Check if click is on the right-side "ask claude" button.
+                // Detect by absolute column: within its width of the right edge.
+                let ask_claude_w = thread_actions::ask_claude_width() as u16 + 2;
                 if col + ask_claude_w >= viewer_end {
                     // Ask Claude: send the comment to the active Claude PTY.
                     ask_claude_about_comment(app, &comment_id);
