@@ -1,13 +1,15 @@
-//! Rich mode Tier A effects — gradient breathing borders.
+//! Rich mode Tier A effects — rotating gradient borders.
 //!
 //! Post-processes the rendered frame buffer (same pattern as `party.rs`)
 //! when [`crate::term_caps::RichTier`] is Tier A or higher:
 //!
 //! 1. **Focused-panel border gradient** — the focused border's glyphs are
-//!    recoloured with a theme-derived gradient (a hue sweep around
-//!    `border_focused`) that slowly flows along the border and breathes in
-//!    brightness. Slow and low-saturation on purpose: it marks focus without
-//!    shouting. Unfocused borders are left untouched.
+//!    recoloured with a theme-derived conic gradient (a hue sweep around
+//!    `border_focused`) that slowly rotates around the panel, like a CSS
+//!    `conic-gradient` glow. Lightness only ever dips *below* the theme
+//!    colour, so the border never washes out to white. Slow and
+//!    low-saturation on purpose: it marks focus without shouting. Unfocused
+//!    borders are left untouched.
 //! 2. **Claude-waiting glow** — when the selected worktree's Claude session
 //!    waits for input, the Claude panel's border breathes in the theme's
 //!    waiting colours. Faster and warmer than the focus gradient so the two
@@ -37,15 +39,19 @@ use crate::app::App;
 
 use super::party::{hsl_to_rgb, is_border_glyph};
 
-/// Breathing period of the focus gradient, in seconds. Ursula's perception
-/// window is 4–6s: slower stops reading as "breathing", faster becomes
-/// distracting for an ambient cue.
-const FOCUS_BREATH_PERIOD_SECS: f64 = 6.0;
+/// Seconds for one full revolution of the focus gradient around the panel.
+/// Ursula's perception window is 4–6s: slower stops reading as motion,
+/// faster becomes distracting for an ambient cue.
+const FOCUS_ROTATE_PERIOD_SECS: f64 = 6.0;
 /// Hue sweep amplitude (degrees either side of `border_focused`'s hue).
 const FOCUS_HUE_SWEEP: f64 = 24.0;
-/// How fast the gradient wave drifts along the border (degrees per second;
-/// with the 9°-per-column wave below this is a gentle ~4.4 columns/second).
-const FOCUS_FLOW_DEG_PER_SEC: f64 = 40.0;
+/// How far lightness dips below the theme colour at the gradient's trough
+/// (fraction of the theme lightness). The crest is the theme colour itself,
+/// so the gradient darkens but never brightens toward white.
+const FOCUS_LIGHTNESS_DIP: f64 = 0.30;
+/// Terminal cells are roughly twice as tall as wide; scale the y distance
+/// so the rotation reads as circular instead of squashed.
+const CELL_ASPECT: f64 = 2.0;
 /// Breathing period of the waiting glow, in seconds — deliberately faster
 /// than the focus breath so "Claude needs you" reads as urgent where "this
 /// panel has focus" reads as ambient.
@@ -61,41 +67,71 @@ pub fn apply_rich_effects(frame: &mut Frame, app: &App) {
     apply_waiting_glow(frame, app, t);
 }
 
-/// Recolour every focused-border glyph with the flowing, breathing gradient.
+/// Recolour every focused-border glyph with the rotating conic gradient.
 ///
 /// Like party mode, glyphs are found by colour equality with
 /// `border_focused`: only the focused panel paints its border in that colour,
 /// so the match automatically scopes the effect (including overlays that
 /// deliberately use the focused colour).
+///
+/// The gradient's centre is the bounding box of the matched glyphs (i.e. the
+/// focused panel's rectangle), so the bright crest visibly orbits the panel
+/// rather than sweeping diagonally across the screen.
 fn apply_focus_gradient(frame: &mut Frame, app: &App, t: f64) {
     let focused = app.theme.border_focused;
     let Some((h, s, l)) = rgb_to_hsl(focused) else {
         return;
     };
 
-    let breath = 0.5 + 0.5 * (t * TAU / FOCUS_BREATH_PERIOD_SECS).sin();
-    // Swing lightness around the theme's own value (0.82x..1.18x) so the
-    // border visibly "breathes" while staying in the theme's neighbourhood.
-    let lightness = (l * (0.82 + 0.36 * breath)).min(0.95);
-
     let area = frame.area();
     let buf = frame.buffer_mut();
+
+    // Pass 1: bounding box of the focused-border glyphs → gradient centre.
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (u16::MAX, u16::MAX, 0u16, 0u16);
     for y in area.y..area.y.saturating_add(area.height) {
         for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell((x, y))
+                && cell.fg == focused
+                && is_border_glyph(cell.symbol())
+            {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    if min_x > max_x {
+        return; // no focused border on screen
+    }
+    let cx = (min_x as f64 + max_x as f64) / 2.0;
+    let cy = (min_y as f64 + max_y as f64) / 2.0;
+
+    // Pass 2: conic gradient around the centre, rotating with time.
+    let rotation = t * TAU / FOCUS_ROTATE_PERIOD_SECS;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
             if let Some(cell) = buf.cell_mut((x, y))
                 && cell.fg == focused
                 && is_border_glyph(cell.symbol())
             {
-                // A long sine wave (≈40 columns) drifting slowly along the
-                // border, sweeping the hue ±FOCUS_HUE_SWEEP around the theme.
-                let flow = (x as f64 * 9.0 + y as f64 * 18.0 - t * FOCUS_FLOW_DEG_PER_SEC)
-                    .to_radians()
-                    .sin();
-                let hue = (h + flow * FOCUS_HUE_SWEEP).rem_euclid(360.0);
+                let angle = ((y as f64 - cy) * CELL_ASPECT).atan2(x as f64 - cx);
+                let (hue, lightness) = conic_gradient_hsl(h, l, angle - rotation);
                 cell.fg = hsl_to_rgb(hue, s, lightness);
             }
         }
     }
+}
+
+/// Hue and lightness of the focus gradient at `phase` radians around the
+/// panel. The crest (`sin(phase)` = 1) is the theme colour itself; the trough
+/// dips `FOCUS_LIGHTNESS_DIP` darker, so the gradient never brightens past
+/// the theme and never washes out to white.
+fn conic_gradient_hsl(h: f64, l: f64, phase: f64) -> (f64, f64) {
+    let wave = phase.sin();
+    let hue = (h + wave * FOCUS_HUE_SWEEP).rem_euclid(360.0);
+    let lightness = l * (1.0 - FOCUS_LIGHTNESS_DIP * (0.5 - 0.5 * wave));
+    (hue, lightness)
 }
 
 /// Make the Claude panel's border breathe in the waiting colours while the
@@ -274,19 +310,35 @@ mod tests {
     #[test]
     fn focus_gradient_stays_near_theme_hue() {
         // The gradient must never wander far from the theme's hue: sample a
-        // full breath+flow cycle and check the hue distance.
+        // full revolution and check the hue distance.
         let theme = crate::theme::Theme::from_name("catppuccin-mocha");
         let (h0, _, _) = rgb_to_hsl(theme.border_focused).unwrap();
-        for step in 0..200 {
-            let t = step as f64 * 0.1; // 20 seconds in 100ms steps
-            let flow = (10.0 * 9.0 + 5.0 * 18.0 - t * FOCUS_FLOW_DEG_PER_SEC)
-                .to_radians()
-                .sin();
-            let hue = (h0 + flow * FOCUS_HUE_SWEEP).rem_euclid(360.0);
+        for step in 0..360 {
+            let phase = (step as f64).to_radians();
+            let (hue, _) = conic_gradient_hsl(h0, 0.8, phase);
             let dist = (hue - h0).abs().min(360.0 - (hue - h0).abs());
             assert!(
                 dist <= FOCUS_HUE_SWEEP + 0.001,
-                "hue drifted {dist}° at t={t}"
+                "hue drifted {dist}° at phase={phase}"
+            );
+        }
+    }
+
+    #[test]
+    fn focus_gradient_never_brightens_past_theme() {
+        // The old breathing effect pushed lightness above the theme colour
+        // and washed the border out to white; the rotating gradient must only
+        // ever darken.
+        for step in 0..360 {
+            let phase = (step as f64).to_radians();
+            let (_, lightness) = conic_gradient_hsl(260.0, 0.8, phase);
+            assert!(
+                lightness <= 0.8 + 1e-9,
+                "lightness {lightness} exceeded theme at phase={phase}"
+            );
+            assert!(
+                lightness >= 0.8 * (1.0 - FOCUS_LIGHTNESS_DIP) - 1e-9,
+                "lightness {lightness} dipped past the trough at phase={phase}"
             );
         }
     }
