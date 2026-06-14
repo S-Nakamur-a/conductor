@@ -1216,18 +1216,22 @@ impl App {
     ///
     /// Preserves the currently open file and scroll position so that
     /// file-watcher refreshes don't disrupt the user's view.
-    pub fn refresh_viewer(&mut self) {
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
-            let path = wt.path.clone();
-            let tab_width = self.config.viewer.tab_width;
-            self.viewer_state.load_file_tree(&path, tab_width);
-            // Startup restore: this is the lazy (synchronous) tree-load path
-            // (e.g. first time the viewer is focused), so re-open any pending
-            // file here. The async worktree-switch path does this in
-            // `poll_worktree_switch_ops`.
-            self.consume_pending_view_restore();
-            self.rehighlight_viewer();
-        }
+    ///
+    /// Returns `true` when the file tree's visible entries changed. Uses
+    /// [`Self::selected_worktree_path`], which falls back to `repo_path` when
+    /// there is no worktree, so the Explorer still shows the current folder's
+    /// contents in a plain (non-git) directory.
+    pub fn refresh_viewer(&mut self) -> bool {
+        let path = self.selected_worktree_path();
+        let tab_width = self.config.viewer.tab_width;
+        let changed = self.viewer_state.load_file_tree(&path, tab_width);
+        // Startup restore: this is the lazy (synchronous) tree-load path
+        // (e.g. first time the viewer is focused), so re-open any pending
+        // file here. The async worktree-switch path does this in
+        // `poll_worktree_switch_ops`.
+        self.consume_pending_view_restore();
+        self.rehighlight_viewer();
+        changed
     }
 
     /// Restore the previously selected worktree and seed its saved view
