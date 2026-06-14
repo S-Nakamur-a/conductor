@@ -168,7 +168,7 @@ impl Default for ExplorerState {
             expanded_inline_threads: HashSet::new(),
             inline_reply_line: None,
             inline_reply_comment_id: None,
-            inline_reply_buffer: TextInput::new(),
+            inline_reply_buffer: TextInput::new_multiline(),
         }
     }
 }
@@ -914,17 +914,13 @@ impl ViewerState {
     /// = gutter_width + 4
     pub fn gutter_total_width(&self) -> u16 {
         let digit_w = if self.diff_view.diff_mode {
-            let max_line_no = self
-                .diff_view
-                .diff_view_lines
-                .iter()
-                .filter_map(|entry| match entry {
-                    crate::viewer::UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
-                    _ => None,
-                })
-                .max()
-                .unwrap_or(0);
-            digit_count(max_line_no)
+            // Must match the renderer's gutter width exactly, or mouse hit-testing
+            // (badge/thread toggles, symbol jumps) drifts off by a column. The
+            // renderer uses `diff_view_max_line_no`, which also counts the
+            // `new_line_end` of collapsed (ExpandableContext) regions — those can
+            // out-digit every *visible* line, so recomputing from `Line` entries
+            // alone here would under-count and shift every click target left.
+            digit_count(self.diff_view.diff_view_max_line_no)
         } else {
             digit_count(self.content.file_content.len())
         };

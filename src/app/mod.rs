@@ -411,6 +411,9 @@ pub struct App {
     pub syntax_set: SyntaxSet,
     /// Active syntect highlighting theme.
     pub syntect_theme: syntect::highlighting::Theme,
+    /// Per-id cache of rendered Markdown (comment/reply bodies), so the inline
+    /// thread box doesn't re-parse/highlight every frame.
+    pub markdown_cache: crate::ui::markdown::MarkdownCache,
 
     /// Which panel is currently expanded to 100% (via the [<=>] button).
     /// `None` means no panel is expanded (default layout).
@@ -722,6 +725,7 @@ impl App {
             repo_list_index: 0,
             syntax_set,
             syntect_theme,
+            markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             expanded_panel: None,
             ui_tick: 0,
             decoration_tick: 0,
@@ -1974,22 +1978,20 @@ impl App {
 
     pub fn cmd_add_review_comment(&mut self) {
         if let Some(file_path) = self.viewer_state.content.current_file.clone() {
-            let location = if let Some((start, end)) = self.viewer_state.selected_range() {
-                if start == end {
-                    format!("{file_path}:{start} ")
-                } else {
-                    format!("{file_path}:{start}-{end} ")
-                }
+            // Anchor the comment to the selected range (or the top visible line),
+            // then open a body-only inline compose box at that line — no
+            // `file:line` prefix to type, GitHub-style.
+            let (start, end) = if let Some((start, end)) = self.viewer_state.selected_range() {
+                (start as u32, if start == end { None } else { Some(end as u32) })
             } else {
-                let line = self.viewer_state.content.file_scroll + 1;
-                format!("{file_path}:{line} ")
+                ((self.viewer_state.content.file_scroll + 1) as u32, None)
             };
             self.viewer_state.clear_selection();
-            self.review_state.input_buffer.set_text(&location);
+            self.review_state.input_anchor = Some((file_path, start, end));
+            self.review_state.input_buffer.clear();
             self.review_state.input_kind = crate::review_store::CommentKind::Suggest;
             self.review_state.input_mode = crate::review_state::ReviewInputMode::AddingComment;
-            self.review_state.status_message =
-                Some("Add comment: [s:|q:]file:line body".to_string());
+            self.review_state.status_message = None;
             self.set_focus(Focus::Viewer);
         } else {
             self.set_status("No file open in viewer.".to_string(), StatusLevel::Warning);

@@ -111,10 +111,25 @@ pub struct Theme {
     pub status_bg_info: Color,
 
     // ── Comment overlays ─────────────────────────────────────────────
-    /// Background for comment preview popups.
+    /// Background for comment preview popups — also the inline-thread surface
+    /// for **Claude**-authored comments and replies (the neutral default).
     pub comment_preview_bg: Color,
+    /// Inline-thread surface for **user**-authored comments and replies. A
+    /// distinct tint from `comment_preview_bg` so "who wrote this" reads at a
+    /// glance without parsing the byline.
+    pub comment_user_bg: Color,
     /// Text color for reply content.
     pub reply_text: Color,
+
+    // ── Markdown ─────────────────────────────────────────────────────
+    /// Background for rendered code — fenced blocks and inline `code` — in
+    /// Markdown (change summary, comment bodies). A shaded "card" a step darker
+    /// than each theme's base so code reads as inset, GitHub-style, regardless
+    /// of the surface drawn behind it.
+    pub code_bg: Color,
+    /// Foreground for inline `code` chips. A soft pink, distinct from the
+    /// heading/accent colours, so code references read as code at a glance.
+    pub code_fg: Color,
 
     // ── Panel surface ────────────────────────────────────────────────
     /// Subtle background filled behind the currently focused list panel
@@ -216,7 +231,11 @@ impl Theme {
             status_bg_info: Color::Rgb(24, 36, 48),
 
             comment_preview_bg: Color::Rgb(49, 50, 68), // Surface0
+            comment_user_bg: Color::Rgb(40, 56, 58),    // teal-leaning surface
             reply_text: Color::Rgb(166, 173, 200),      // Subtext0
+
+            code_bg: Color::Rgb(17, 17, 27), // Crust
+            code_fg: Color::Rgb(245, 194, 231), // Pink
 
             panel_focused_bg: Color::Rgb(40, 41, 58), // between Base and Surface0
         }
@@ -276,7 +295,11 @@ impl Theme {
             status_bg_info: Color::Rgb(15, 30, 50),
 
             comment_preview_bg: Color::Rgb(52, 54, 76),
+            comment_user_bg: Color::Rgb(44, 64, 60),
             reply_text: Color::Rgb(189, 147, 249),
+
+            code_bg: Color::Rgb(33, 34, 44),
+            code_fg: Color::Rgb(255, 159, 212), // soft pink
 
             panel_focused_bg: Color::Rgb(50, 52, 66),
         }
@@ -338,7 +361,11 @@ impl Theme {
             comment_preview_bg: Color::Rgb(56, 62, 82),
             // nord15 (aurora purple): distinct from `info` (129,161,193), which
             // styles reply *authors* — identical colours made them merge.
+            comment_user_bg: Color::Rgb(48, 66, 68),
             reply_text: Color::Rgb(180, 142, 173),
+
+            code_bg: Color::Rgb(40, 45, 56),
+            code_fg: Color::Rgb(212, 150, 180), // muted pink
 
             panel_focused_bg: Color::Rgb(56, 62, 78),
         }
@@ -398,7 +425,11 @@ impl Theme {
             status_bg_info: Color::Rgb(5, 25, 45),
 
             comment_preview_bg: Color::Rgb(15, 64, 84),
+            comment_user_bg: Color::Rgb(15, 74, 64),
             reply_text: Color::Rgb(108, 113, 196),
+
+            code_bg: Color::Rgb(0, 33, 42), // base03, a step under base
+            code_fg: Color::Rgb(211, 54, 130), // magenta
 
             panel_focused_bg: Color::Rgb(8, 52, 64),
         }
@@ -458,7 +489,11 @@ impl Theme {
             status_bg_info: Color::Rgb(12, 25, 50),
 
             comment_preview_bg: Color::Rgb(42, 44, 66),
+            comment_user_bg: Color::Rgb(36, 56, 58),
             reply_text: Color::Rgb(125, 207, 255),
+
+            code_bg: Color::Rgb(22, 22, 32),
+            code_fg: Color::Rgb(247, 140, 180), // pink
 
             panel_focused_bg: Color::Rgb(36, 38, 52),
         }
@@ -518,7 +553,11 @@ impl Theme {
             status_bg_info: Color::Rgb(15, 30, 30),
 
             comment_preview_bg: Color::Rgb(62, 58, 68),
+            comment_user_bg: Color::Rgb(52, 64, 54),
             reply_text: Color::Rgb(131, 165, 152),
+
+            code_bg: Color::Rgb(29, 32, 33), // bg0_h
+            code_fg: Color::Rgb(211, 134, 155), // purple-pink
 
             panel_focused_bg: Color::Rgb(58, 55, 52),
         }
@@ -578,7 +617,11 @@ impl Theme {
             status_bg_info: Color::Rgb(20, 18, 40),
 
             comment_preview_bg: Color::Rgb(48, 44, 70),
+            comment_user_bg: Color::Rgb(40, 60, 62),
             reply_text: Color::Rgb(196, 167, 231),
+
+            code_bg: Color::Rgb(20, 18, 30),
+            code_fg: Color::Rgb(235, 159, 188), // rose pink
 
             panel_focused_bg: Color::Rgb(38, 35, 52),
         }
@@ -638,7 +681,11 @@ impl Theme {
             status_bg_info: Color::Rgb(12, 28, 40),
 
             comment_preview_bg: Color::Rgb(42, 42, 62),
+            comment_user_bg: Color::Rgb(38, 56, 56),
             reply_text: Color::Rgb(127, 180, 202),
+
+            code_bg: Color::Rgb(18, 18, 24), // sumiInk0
+            code_fg: Color::Rgb(210, 126, 153), // sakura pink
 
             panel_focused_bg: Color::Rgb(34, 34, 46),
         }

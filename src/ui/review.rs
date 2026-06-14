@@ -280,12 +280,21 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         Style::default().fg(theme.muted),
     )));
 
-    // Comment body (full, multi-line).
-    for body_line in comment.body.split('\n') {
-        lines.push(Line::from(Span::styled(
-            format!(" {body_line}"),
-            Style::default().fg(theme.fg),
-        )));
+    // Comment body, rendered as GitHub-style Markdown (same renderer as the
+    // SUMMARY view and the inline thread box): headings, lists, fenced code
+    // cards, inline `code`, links, tables. Indented one column to clear the
+    // popup border.
+    let body_md = crate::ui::markdown::render_markdown(
+        &comment.body,
+        inner_width.saturating_sub(1),
+        theme,
+        &app.syntax_set,
+        &app.syntect_theme,
+    );
+    for line in body_md {
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(line.spans);
+        lines.push(Line::from(spans));
     }
 
     // Replies section.
@@ -314,11 +323,18 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 format!("  \u{21b3} {r_author}"),
                 Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
             )]));
-            for reply_line in reply.body.split('\n') {
-                lines.push(Line::from(Span::styled(
-                    format!("    {reply_line}"),
-                    Style::default().fg(theme.reply_text),
-                )));
+            // Reply body Markdown, indented under its byline.
+            let reply_md = crate::ui::markdown::render_markdown(
+                &reply.body,
+                inner_width.saturating_sub(4),
+                theme,
+                &app.syntax_set,
+                &app.syntect_theme,
+            );
+            for line in reply_md {
+                let mut spans = vec![Span::raw("    ")];
+                spans.extend(line.spans);
+                lines.push(Line::from(spans));
             }
             lines.push(Line::from(Span::raw("")));
         }

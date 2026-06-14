@@ -1,6 +1,6 @@
 //! Viewer panel key handling.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use std::collections::HashMap;
 
@@ -521,6 +521,12 @@ fn start_inline_reply(app: &mut App) {
 
 /// Handle keys in inline reply input mode.
 fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
+    // Shift+Enter inserts a newline; plain Enter submits — same convention as
+    // the comment compose modal, so the inline reply is a real multi-line form.
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
+        app.viewer_state.explorer.inline_reply_buffer.insert_char('\n');
+        return;
+    }
     match key.code {
         KeyCode::Esc => {
             // Cancel reply.
@@ -585,16 +591,19 @@ fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
             app.viewer_state.explorer.inline_reply_comment_id = None;
             app.viewer_state.explorer.inline_reply_buffer.clear();
         }
-        KeyCode::Backspace => {
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
             app.viewer_state
                 .explorer
                 .inline_reply_buffer
-                .delete_backward();
+                .delete_to_line_start();
         }
-        KeyCode::Char(c) => {
-            app.viewer_state.explorer.inline_reply_buffer.insert_char(c);
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            super::clipboard_paste(app, |a| &mut a.viewer_state.explorer.inline_reply_buffer, true);
         }
-        _ => {}
+        _ => {
+            // Full editing (chars, arrows, Home/End, word-move, Backspace/Delete).
+            app.viewer_state.explorer.inline_reply_buffer.handle_key(key);
+        }
     }
 }
 
