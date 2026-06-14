@@ -399,11 +399,11 @@ pub fn generate_default_config() -> String {
 
 [keybinds]
 # Key-bind overrides, in key→action form. Each entry maps a key chord to an
-# action name. Your bindings LAYER OVER the built-in defaults per-chord: a chord
-# you bind here overrides the default for that exact chord, and every default
-# you do not touch keeps working. (Note: you can rebind a default chord to a
-# different action, but there is no way to fully un-bind a default key — you can
-# only shadow it.)
+# action name. Your bindings are MERGED OVER the built-in defaults per-chord: a
+# chord you bind here overrides the default for that exact chord, and every
+# default you do not touch keeps working. To fully remove a default key (not
+# just shadow it), set the chord to `false` — a tombstone, e.g.
+# `"ctrl+q" = false`.
 #
 # [keybinds.keys] is the global layer (active everywhere). Each
 # [keybinds.layers.<context>] table is a per-panel layer. Context names:
@@ -417,6 +417,7 @@ pub fn generate_default_config() -> String {
 #
 # [keybinds.keys]
 # "ctrl+q" = "quit"
+# "ctrl+r" = false          # remove a default binding entirely
 #
 # [keybinds.layers.worktree]
 # "j" = "navigate_down"

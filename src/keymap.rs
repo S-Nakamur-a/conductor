@@ -3,18 +3,30 @@
 //! Provides a `KeyMap` that resolves `KeyEvent` → `Action` for a given
 //! `KeyContext`, with user overrides from `config.toml`.
 //!
-//! The lookup engine is [`keymap-core`](keymap_core): each `KeyContext` is a
-//! [`Keymap<Action>`] *layer*, and resolution is `resolve_layered([context,
-//! global], …)` — the context layer wins, missing chords fall through to the
-//! global layer, and a total miss returns `None` ("pass through to the PTY").
-//! Default bindings are authored in `default_keybinds.toml` (embedded at compile
-//! time) and parsed by [`keymap-config`](keymap_config); user bindings from
-//! `[keybinds]` in `config.toml` are layered on top per-chord.
-
-use std::collections::HashMap;
+//! The engine is [`keymap-suite`](keymap_suite), the one-import facade over
+//! `keymap-core`/`keymap-config`/`keymap-seq`. We follow its design directly:
+//!
+//! * **Loaded once, owned whole.** [`KeyMap`] holds one [`Loaded<Action>`] — the
+//!   facade's TOML-build result — whose `layers` map is keyed by name. Each
+//!   `KeyContext` names one layer; `Global` is the bare `[keys]` table
+//!   ([`keymap_suite::GLOBAL_LAYER`]).
+//! * **The caller assembles the active chain.** Per key event we hand
+//!   `resolve_layered([context_layer, global], …)` to the library — the context
+//!   layer wins, misses fall through to global, and a total miss returns `None`
+//!   ("pass through to the PTY"). The library never tracks our focus/mode; that
+//!   stack is ours, exactly as the suite intends.
+//! * **Defaults ⊕ user via [`merge`](keymap_suite::merge).** Defaults are
+//!   authored in `default_keybinds.toml` (embedded at compile time); user
+//!   bindings from `[keybinds]` are an *overlay* merged on top. A user chord
+//!   overrides the default for that exact chord; `"<chord>" = false` is a
+//!   tombstone that removes a default. We surface only genuine problems as
+//!   [`KeybindWarning`]s — override/unbind notes are informational, not warnings.
+//! * **Help is the reverse of resolution.** [`KeyMap::keys_for_action`] uses the
+//!   facade's [`keys_for_action`](keymap_suite::keys_for_action) so the rendered
+//!   shortcuts can never drift from what actually resolves.
 
 use crossterm::event::KeyEvent;
-use keymap_core::{Keymap, resolve_layered};
+use keymap_suite::{KeyInput, Keymap, Loaded, resolve_layered};
 
 // ---------------------------------------------------------------------------
 // Action — every customisable user action
@@ -384,11 +396,11 @@ const PANEL_CONTEXTS: [KeyContext; 9] = [
 ];
 
 impl KeyContext {
-    /// The keymap-config layer name backing this context. `Global` lives in the
-    /// bare `[keys]` table, which keymap-config exposes as the `GLOBAL_LAYER`.
+    /// The keymap-suite layer name backing this context. `Global` lives in the
+    /// bare `[keys]` table, which the suite exposes as the `GLOBAL_LAYER`.
     fn layer_name(self) -> &'static str {
         match self {
-            KeyContext::Global => keymap_config::GLOBAL_LAYER,
+            KeyContext::Global => keymap_suite::GLOBAL_LAYER,
             KeyContext::Worktree => "worktree",
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerDiffList => "explorer_diff_list",
@@ -407,7 +419,7 @@ impl KeyContext {
 // ---------------------------------------------------------------------------
 
 /// A non-fatal problem found while loading user keybindings. Conductor's own
-/// type so the public surface does not depend on `keymap_config::Warning`
+/// type so the public surface does not depend on `keymap_suite::Warning`
 /// (which is `#[non_exhaustive]` and carries sequence concepts Conductor does
 /// not use).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -451,16 +463,17 @@ impl std::fmt::Display for KeybindWarning {
 // KeyMap
 // ---------------------------------------------------------------------------
 
-/// Embedded default bindings (keymap-config key→action TOML). See the file for
+/// Embedded default bindings (keymap-suite key→action TOML). See the file for
 /// the schema; it is the reference for what users can write under `[keybinds]`.
 const DEFAULT_KEYBINDS: &str = include_str!("default_keybinds.toml");
 
 pub struct KeyMap {
-    /// One effective layer per non-global context (defaults overlaid by user
-    /// bindings, per-chord).
-    contexts: HashMap<KeyContext, Keymap<Action>>,
-    /// The effective global layer, consulted last for every context.
-    global: Keymap<Action>,
+    /// The merged keymap: defaults (`default_keybinds.toml`) with the user's
+    /// `[keybinds]` overlaid via [`keymap_suite::merge`]. Its `layers` map is
+    /// keyed by layer name; [`KeyContext::layer_name`] selects one per event and
+    /// `global()` is consulted last. Holding the facade's own `Loaded` value
+    /// (rather than re-bucketing it) is the suite's intended shape.
+    loaded: Loaded<Action>,
 }
 
 impl KeyMap {
@@ -476,9 +489,9 @@ impl KeyMap {
     pub fn with_warnings(user: &toml::Table) -> (Self, Vec<KeybindWarning>) {
         let mut warnings = Vec::new();
 
-        // 1. Embedded defaults. Authored in-repo, so any warning is a build bug:
-        //    fail loudly in debug, and never surface to the user.
-        let defaults = keymap_config::from_str(DEFAULT_KEYBINDS, Action::from_str)
+        // 1. Embedded defaults — the merge base. Authored in-repo, so any
+        //    warning is a build bug: fail loudly in debug, never reach the user.
+        let defaults = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_str)
             .expect("embedded default keybinds must be valid TOML");
         debug_assert!(
             defaults.warnings.is_empty(),
@@ -489,44 +502,35 @@ impl KeyMap {
             log::error!("default keybinds produced a warning (bug): {w:?}");
         }
 
-        // 2. Seed every layer from the defaults.
-        let mut global = layer_or_default(&defaults, KeyContext::Global);
-        let mut contexts: HashMap<KeyContext, Keymap<Action>> = PANEL_CONTEXTS
-            .iter()
-            .map(|&ctx| (ctx, layer_or_default(&defaults, ctx)))
-            .collect();
-
-        // 3. Parse user overrides and overlay them per-chord (user wins).
-        if let Some(user_build) = parse_user_keybinds(user, &mut warnings) {
-            collect_warnings(&user_build.warnings, &mut warnings);
-
-            for (name, user_layer) in &user_build.layers {
-                let target = if name == keymap_config::GLOBAL_LAYER {
-                    Some(&mut global)
-                } else {
-                    match PANEL_CONTEXTS.iter().find(|c| c.layer_name() == name) {
-                        Some(&ctx) => contexts.get_mut(&ctx),
-                        None => {
-                            // keymap-config always inserts an empty GLOBAL_LAYER;
-                            // only warn on a genuinely unrecognized named layer.
-                            if !user_layer.is_empty() {
-                                warnings.push(KeybindWarning::UnknownLayer {
-                                    layer: name.clone(),
-                                });
-                            }
-                            None
-                        }
-                    }
-                };
-                if let Some(target) = target {
-                    for (input, action) in user_layer.iter() {
-                        target.bind(*input, *action);
-                    }
-                }
+        // 2. Parse the user's `[keybinds]` overlay and merge it onto the
+        //    defaults. `merge` does the per-chord override and applies any
+        //    `= false` tombstones; we keep only real problems as warnings (its
+        //    override/unbind notes are informational, not warnings).
+        let loaded = match parse_user_keybinds(user, &mut warnings) {
+            Some(overlay) => {
+                warn_unknown_layers(&overlay, &mut warnings);
+                let merged = keymap_suite::merge(defaults, overlay);
+                collect_warnings(&merged.output.warnings, &mut warnings);
+                merged.output
             }
-        }
+            None => defaults,
+        };
 
-        (KeyMap { contexts, global }, warnings)
+        (KeyMap { loaded }, warnings)
+    }
+
+    /// The active layer chain for `context`: the context's own layer first (when
+    /// it has one and is not `Global`), then the always-on global layer. This is
+    /// the per-event stack the suite asks the caller to assemble.
+    fn chain(&self, context: KeyContext) -> Vec<&Keymap<Action>> {
+        let global = self.loaded.global();
+        if context == KeyContext::Global {
+            return vec![global];
+        }
+        match self.loaded.layers.get(context.layer_name()) {
+            Some(layer) => vec![layer, global],
+            None => vec![global],
+        }
     }
 
     /// Resolve a key event to an action in the given context. The context layer
@@ -539,12 +543,8 @@ impl KeyMap {
     /// the terminal shouldn't steal (quit, switch-repo, …) are filtered here
     /// rather than by an allowlist in the dispatcher.
     pub fn resolve(&self, key: &KeyEvent, context: KeyContext) -> Option<Action> {
-        let input = keymap_core::KeyInput::try_from(*key).ok()?;
-        let resolved = match self.contexts.get(&context) {
-            Some(layer) => resolve_layered([layer, &self.global], &input),
-            None => resolve_layered([&self.global], &input),
-        };
-        let action = resolved.copied()?;
+        let input = KeyInput::try_from(*key).ok()?;
+        let action = resolve_layered(self.chain(context).iter().copied(), &input).copied()?;
         // The editor panel forwards keys to its PTY exactly like the terminal,
         // so it honors the same "only steal terminal-firing actions" filter —
         // everything else (Esc, Ctrl+G, …) reaches vim/emacs untouched.
@@ -570,20 +570,14 @@ impl KeyMap {
             return Vec::new();
         }
 
-        let mut keys = Vec::new();
-
-        if let Some(layer) = self.contexts.get(&context) {
-            for (input, a) in layer.iter() {
-                if *a == action {
-                    keys.push(input.to_string());
-                }
-            }
-        }
-        for (input, a) in self.global.iter() {
-            if *a == action {
-                keys.push(input.to_string());
-            }
-        }
+        // The reverse of resolution, over the same chain `resolve` consults, so
+        // the rendered help can never advertise a chord that would not fire.
+        let mut keys: Vec<String> = self
+            .chain(context)
+            .iter()
+            .flat_map(|layer| keymap_suite::keys_for_action(layer, &action))
+            .map(|input| input.to_string())
+            .collect();
 
         keys.sort();
         keys.dedup();
@@ -596,17 +590,16 @@ impl KeyMap {
     /// globally and merely reachable here" (used to scope the command palette).
     pub fn keys_in_layer(&self, context: KeyContext, action: Action) -> Vec<String> {
         let layer = if context == KeyContext::Global {
-            &self.global
+            self.loaded.global()
         } else {
-            match self.contexts.get(&context) {
+            match self.loaded.layers.get(context.layer_name()) {
                 Some(layer) => layer,
                 None => return Vec::new(),
             }
         };
-        let mut keys: Vec<String> = layer
-            .iter()
-            .filter(|(_, a)| **a == action)
-            .map(|(input, _)| input.to_string())
+        let mut keys: Vec<String> = keymap_suite::keys_for_action(layer, &action)
+            .into_iter()
+            .map(|input| input.to_string())
             .collect();
         keys.sort();
         keys.dedup();
@@ -614,30 +607,38 @@ impl KeyMap {
     }
 }
 
-/// Clone the layer for `ctx` out of a build, or an empty layer if absent.
-fn layer_or_default(build: &keymap_config::BuildOutput<Action>, ctx: KeyContext) -> Keymap<Action> {
-    build
-        .layers
-        .get(ctx.layer_name())
-        .cloned()
-        .unwrap_or_default()
+/// Warn about any user `[keybinds.layers.<name>]` whose name matches no
+/// [`KeyContext`] — its bindings are merged but never consulted. The empty
+/// `GLOBAL_LAYER` the loader always injects is skipped, so only a genuinely
+/// unrecognized, non-empty named layer warns.
+fn warn_unknown_layers(overlay: &Loaded<Action>, warnings: &mut Vec<KeybindWarning>) {
+    for (name, layer) in &overlay.layers {
+        if name == keymap_suite::GLOBAL_LAYER || layer.is_empty() {
+            continue;
+        }
+        if PANEL_CONTEXTS.iter().all(|c| c.layer_name() != name) {
+            warnings.push(KeybindWarning::UnknownLayer {
+                layer: name.clone(),
+            });
+        }
+    }
 }
 
-/// Parse the user's `[keybinds]` table into keymap-config layers. Returns
+/// Parse the user's `[keybinds]` table into a keymap-suite overlay. Returns
 /// `None` (no overrides) when the table is empty or cannot be parsed; a parse
 /// failure is recorded as a [`KeybindWarning::InvalidConfig`] so the app can
 /// tell the user their customizations were ignored.
 fn parse_user_keybinds(
     user: &toml::Table,
     warnings: &mut Vec<KeybindWarning>,
-) -> Option<keymap_config::BuildOutput<Action>> {
+) -> Option<Loaded<Action>> {
     if user.is_empty() {
         return None;
     }
 
-    // keymap-config parses a standalone document; re-emit just the [keybinds]
-    // subtree as TOML text. (Conductor's `toml` and keymap-config's may differ
-    // in version, so the interface between them is text, not types.)
+    // keymap-suite parses a standalone document; re-emit just the [keybinds]
+    // subtree as TOML text. (Conductor's `toml` and the suite's may differ in
+    // version, so the interface between them is text, not types.)
     let toml_text = match toml::to_string(user) {
         Ok(text) => text,
         Err(e) => {
@@ -648,7 +649,7 @@ fn parse_user_keybinds(
         }
     };
 
-    match keymap_config::from_str(&toml_text, Action::from_str) {
+    match keymap_suite::from_toml_str(&toml_text, Action::from_str) {
         Ok(build) => Some(build),
         Err(e) => {
             warnings.push(KeybindWarning::InvalidConfig {
@@ -663,18 +664,18 @@ fn parse_user_keybinds(
     }
 }
 
-/// Translate the keymap-config warnings Conductor cares about into its own
+/// Translate the keymap-suite warnings Conductor cares about into its own
 /// warning type, dropping sequence-related variants it does not use.
-fn collect_warnings(from: &[keymap_config::Warning], into: &mut Vec<KeybindWarning>) {
+fn collect_warnings(from: &[keymap_suite::Warning], into: &mut Vec<KeybindWarning>) {
     for w in from {
         match w {
-            keymap_config::Warning::UnknownAction { key, action } => {
+            keymap_suite::Warning::UnknownAction { key, action } => {
                 into.push(KeybindWarning::UnknownAction {
                     key: key.clone(),
                     action: action.clone(),
                 });
             }
-            keymap_config::Warning::Conflict { chord, .. } => {
+            keymap_suite::Warning::Conflict { chord, .. } => {
                 into.push(KeybindWarning::Conflict {
                     chord: chord.clone(),
                 });
@@ -709,7 +710,7 @@ mod tests {
     fn every_default_action_name_resolves() {
         // Guards against a typo in default_keybinds.toml: an unknown action name
         // would surface as a warning when the defaults are parsed.
-        let build = keymap_config::from_str(DEFAULT_KEYBINDS, Action::from_str).unwrap();
+        let build = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_str).unwrap();
         assert!(build.warnings.is_empty(), "{:?}", build.warnings);
     }
 
@@ -1067,6 +1068,45 @@ mod tests {
             km.resolve(&key_g, KeyContext::Worktree),
             Some(Action::GoToTop)
         );
+    }
+
+    #[test]
+    fn user_tombstone_unbinds_a_default_chord() {
+        // `"ctrl+q" = false` removes the default Quit binding outright (the
+        // keymap-suite `merge` tombstone), so the chord passes through instead of
+        // being shadowed by another action. This is a no-op warning-wise.
+        let mut keys = toml::Table::new();
+        keys.insert("ctrl+q".to_string(), toml::Value::Boolean(false));
+        let mut user = toml::Table::new();
+        user.insert("keys".to_string(), toml::Value::Table(keys));
+
+        let (km, warnings) = KeyMap::with_warnings(&user);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ctrl_q, KeyContext::Global), None);
+        // A default the tombstone did not touch still resolves.
+        let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        assert_eq!(
+            km.resolve(&ctrl_n, KeyContext::Global),
+            Some(Action::NewClaudeCode)
+        );
+    }
+
+    #[test]
+    fn user_tombstone_in_panel_layer_unbinds() {
+        // Tombstones work in a named layer too: drop worktree 'c' (cherry-pick).
+        let mut layer = toml::Table::new();
+        layer.insert("c".to_string(), toml::Value::Boolean(false));
+        let mut layers = toml::Table::new();
+        layers.insert("worktree".to_string(), toml::Value::Table(layer));
+        let mut user = toml::Table::new();
+        user.insert("layers".to_string(), toml::Value::Table(layers));
+
+        let (km, warnings) = KeyMap::with_warnings(&user);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let key_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
+        assert_eq!(km.resolve(&key_c, KeyContext::Worktree), None);
     }
 
     #[test]
