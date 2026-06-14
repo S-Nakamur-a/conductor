@@ -1,11 +1,13 @@
-# Default keybindings, in keymap-config's key→action TOML schema.
+# Default keybindings, in keymap-suite's key→action TOML schema.
 #
 # This file is embedded at compile time (include_str!) and parsed by
-# `keymap_config::from_str`. The bare `[keys]` table is the global layer;
+# `keymap_suite::from_toml_str`. The bare `[keys]` table is the global layer;
 # each `[layers.<name>]` table is a per-context layer. User bindings from
 # `~/.config/conductor/config.toml` ([keybinds.keys] / [keybinds.layers.*])
-# are layered ON TOP of these per-chord — a user chord overrides the default
+# are merged ON TOP of these per-chord — a user chord overrides the default
 # for that exact chord, while every default the user did not touch stays live.
+# To *remove* a default without replacing it, set the chord to `false` (a
+# tombstone), e.g. `"ctrl+q" = false` under [keybinds.keys].
 #
 # Key-string grammar (see keymap-core's KeyInput::FromStr): modifiers
 # `ctrl`/`alt`/`shift`/`super` (aliases: control, opt/option, cmd/win/meta)
