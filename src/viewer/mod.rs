@@ -306,7 +306,10 @@ impl ViewerState {
     /// expansion state so that file-watcher refreshes don't disrupt the
     /// user's view. If the previously open file was deleted, the viewer
     /// naturally resets to "no file selected".
-    pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) {
+    ///
+    /// Returns `true` when the set of visible entries changed, so callers can
+    /// skip a repaint when a periodic refresh found nothing new.
+    pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) -> bool {
         // Save state before clearing.
         let prev_file = self.content.current_file.clone();
         let prev_file_scroll = self.content.file_scroll;
@@ -318,6 +321,15 @@ impl ViewerState {
             .filter(|e| e.is_dir && e.is_expanded)
             .map(|e| e.path.clone())
             .collect();
+        // Remember the cursor's entry and the full path set so we can restore
+        // the cursor and detect whether the rebuilt tree actually changed.
+        let prev_selected_path = self
+            .tree
+            .file_tree
+            .get(self.tree.tree_selected)
+            .map(|e| e.path.clone());
+        let prev_paths: Vec<String> =
+            self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
 
         // Build (or rebuild) the gitignore matcher for this worktree.
         self.tree.gitignore = Some(Arc::new(Self::build_gitignore(worktree_path)));
@@ -382,6 +394,29 @@ impl ViewerState {
             }
             // If the file was deleted, we naturally stay at "no file selected".
         }
+
+        // Keep the tree cursor anchored across rebuilds. When a file is open the
+        // block above already pointed the cursor at it; otherwise restore the
+        // previously selected entry so watcher/periodic refreshes don't snap the
+        // cursor back to the top.
+        let anchored_to_open_file = prev_file.as_ref().is_some_and(|f| {
+            self.tree.file_tree.get(self.tree.tree_selected).map(|e| &e.path) == Some(f)
+        });
+        if !anchored_to_open_file
+            && let Some(path) = prev_selected_path
+            && let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == path)
+        {
+            self.tree.tree_selected = idx;
+        }
+        if self.tree.tree_selected >= self.tree.file_tree.len() {
+            self.tree.tree_selected = self.tree.file_tree.len().saturating_sub(1);
+        }
+
+        self.tree
+            .file_tree
+            .iter()
+            .map(|e| &e.path)
+            .ne(prev_paths.iter())
     }
 
     /// Open (read) a file and store its lines in `file_content`.

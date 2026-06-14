@@ -297,15 +297,28 @@ fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     Ok(())
 }
 
+/// Paths the file watcher should monitor: every worktree's path, or — when
+/// there are no worktrees (e.g. a plain non-git directory) — the repo path
+/// itself, so the Explorer still auto-refreshes on file changes there.
+fn watch_paths_for(app: &App) -> Vec<std::path::PathBuf> {
+    if app.worktrees.is_empty() {
+        vec![app.repo_path.clone()]
+    } else {
+        app.worktrees.iter().map(|w| w.path.clone()).collect()
+    }
+}
+
 /// Drive the draw → poll → handle cycle until the user quits.
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<()> {
-    // Set up file watcher for auto-refresh.
-    let watch_paths: Vec<std::path::PathBuf> =
-        app.worktrees.iter().map(|w| w.path.clone()).collect();
-    let file_watcher = crate::file_watcher::FileWatcher::new(&watch_paths).ok();
+    // Set up file watcher for auto-refresh. The watched set is rebuilt later
+    // (in the worktree_poll timer) whenever it changes — e.g. the user runs
+    // `git init` in a plain folder, or adds/removes a worktree — so newly
+    // created files keep showing up instead of going unnoticed.
+    let mut current_watch_paths = watch_paths_for(app);
+    let mut file_watcher = crate::file_watcher::FileWatcher::new(&current_watch_paths).ok();
 
     // Set up socket listener for CC state notifications (instant delivery).
     let cc_notify = crate::cc_notify::CcNotifyListener::new(&app.repo_path).ok();
@@ -581,6 +594,24 @@ fn run_loop(
                     if app.refresh_worktrees() {
                         app.dirty.mark(
                             crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER,
+                        );
+                    }
+                    // Rebuild the file watcher if the set of paths to watch
+                    // changed (e.g. `git init` created the first worktree, or a
+                    // worktree was added/removed). Without this the watcher would
+                    // keep monitoring a stale set and miss new files.
+                    let desired = watch_paths_for(app);
+                    if desired != current_watch_paths {
+                        current_watch_paths = desired;
+                        file_watcher =
+                            crate::file_watcher::FileWatcher::new(&current_watch_paths).ok();
+                    }
+                    // Periodic fallback: re-walk the file tree so newly created
+                    // files appear even if a watcher event was missed. Cheap
+                    // (lazy child loading) and only repaints when it changed.
+                    if app.refresh_viewer() {
+                        app.dirty.mark(
+                            crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER,
                         );
                     }
                     app.check_diff_viewer_staleness();
