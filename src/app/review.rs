@@ -114,11 +114,17 @@ impl App {
     /// "the selected file's comments are open by default". The user can still
     /// collapse individual threads afterward.
     pub fn expand_threads_for_file(&mut self, file_path: &str) {
+        // Only auto-expand lines with at least one *unresolved* comment.
+        // Resolved comments are collapsed by default (their gutter badge still
+        // shows, and clicking it opens the thread on demand).
         let lines: Vec<usize> = self
             .review_state
             .comments
             .iter()
-            .filter(|c| c.file_path == file_path)
+            .filter(|c| {
+                c.file_path == file_path
+                    && c.status != crate::review_store::CommentStatus::Resolved
+            })
             .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
             .collect();
         for line in lines {

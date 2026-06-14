@@ -280,9 +280,22 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         }
         crate::app::WorktreeInputMode::Normal => {}
     }
-    // Review input overlays (not part of ActiveOverlay enum).
+    // Review input overlays (not part of ActiveOverlay enum). A new comment with
+    // an anchor renders as an inline compose box in the viewer instead of this
+    // modal, so suppress the modal in that case.
     if app.review_state.input_mode != crate::review_state::ReviewInputMode::Normal {
-        super::review::render_input_overlay(frame, main_area, app);
+        let inline_new_comment = app.review_state.input_mode
+            == crate::review_state::ReviewInputMode::AddingComment
+            && app
+                .review_state
+                .input_anchor
+                .as_ref()
+                .is_some_and(|(f, _, _)| {
+                    Some(f.as_str()) == app.viewer_state.content.current_file.as_deref()
+                });
+        if !inline_new_comment {
+            super::review::render_input_overlay(frame, main_area, app);
+        }
     }
     if app.review_state.template_picker_active {
         super::review::render_template_picker_overlay(

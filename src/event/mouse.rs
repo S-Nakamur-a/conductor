@@ -826,43 +826,52 @@ fn handle_viewer_column_click(
         }
     }
 
-    // Detect clicks on the comment badge column (right of gutter).
+    // Click anywhere in the left margin (line-number gutter + comment badge) of
+    // a *commented* line toggles its inline thread. A generous hit target so it
+    // works regardless of landing exactly on the 2-cell 💬 glyph, whose width
+    // and column can drift with the terminal/font. Non-commented lines fall
+    // through to the gutter selection path below.
     let badge_w: u16 = 2;
-    let on_badge = col >= inner_x + gutter_w && col < inner_x + gutter_w + badge_w;
-
-    // Badge click: toggle the inline comment thread for the clicked line. Both
-    // the diff and file-content views render threads inline, so a single
-    // screen-row lookup works for either.
-    if on_badge && row >= inner_y {
+    let on_margin = col >= inner_x && col < inner_x + gutter_w + badge_w;
+    if on_margin && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
-        if let Some(line_1) = resolve_screen_line(app, screen_offset)
-            && app.review_state.file_comments.contains_key(&line_1)
-        {
-            let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
-            if threads.contains(&line_1) {
-                threads.remove(&line_1);
-                if app.viewer_state.explorer.inline_reply_line == Some(line_1) {
-                    app.viewer_state.explorer.inline_reply_line = None;
-                    app.viewer_state.explorer.inline_reply_comment_id = None;
-                    app.viewer_state.explorer.inline_reply_buffer.clear();
-                }
-            } else {
-                threads.insert(line_1);
-                if let Some(comments) = app.review_state.file_comments.get(&line_1) {
-                    for comment in comments {
-                        if !app.review_state.cached_replies.contains_key(&comment.id)
-                            && let Some(store) = app.review_store.as_ref()
-                            && let Ok(replies) = store.get_replies(&comment.id)
-                        {
-                            app.review_state
-                                .cached_replies
-                                .insert(comment.id.clone(), replies);
+        if let Some(line_1) = resolve_screen_line(app, screen_offset) {
+            // Defensively refresh the per-file comment cache if it's stale (e.g.
+            // a comment was created via MCP while a different file was current),
+            // so the badge and the toggle gate agree.
+            if app.review_state.file_comments_path.as_deref()
+                != app.viewer_state.content.current_file.as_deref()
+                && let Some(f) = app.viewer_state.content.current_file.clone()
+            {
+                app.review_state.build_file_comment_cache(&f);
+            }
+            if app.review_state.file_comments.contains_key(&line_1) {
+                let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
+                if threads.contains(&line_1) {
+                    threads.remove(&line_1);
+                    if app.viewer_state.explorer.inline_reply_line == Some(line_1) {
+                        app.viewer_state.explorer.inline_reply_line = None;
+                        app.viewer_state.explorer.inline_reply_comment_id = None;
+                        app.viewer_state.explorer.inline_reply_buffer.clear();
+                    }
+                } else {
+                    threads.insert(line_1);
+                    if let Some(comments) = app.review_state.file_comments.get(&line_1) {
+                        for comment in comments {
+                            if !app.review_state.cached_replies.contains_key(&comment.id)
+                                && let Some(store) = app.review_store.as_ref()
+                                && let Ok(replies) = store.get_replies(&comment.id)
+                            {
+                                app.review_state
+                                    .cached_replies
+                                    .insert(comment.id.clone(), replies);
+                            }
                         }
                     }
                 }
+                return;
             }
         }
-        return;
     }
 
     // Click on an ExpandableContext row expands it. Inline threads shift screen

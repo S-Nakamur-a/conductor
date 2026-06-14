@@ -992,6 +992,7 @@ pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             app.review_state.input_buffer.clear();
+            app.review_state.input_anchor = None;
             app.review_state.input_mode = ReviewInputMode::Normal;
             app.review_state.status_message = None;
         }
@@ -999,7 +1000,28 @@ pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             let buffer = app.review_state.input_buffer.text().to_string();
             match app.review_state.input_mode {
                 ReviewInputMode::AddingComment => {
-                    submit_new_comment(app, &buffer);
+                    // Inline compose: anchor known, buffer is body-only. Falls
+                    // back to the legacy `file:line body` parse when no anchor
+                    // (template picker / command palette entry points).
+                    if let Some((file, start, end)) = app.review_state.input_anchor.take() {
+                        let body = buffer.trim();
+                        if body.is_empty() {
+                            app.review_state.status_message =
+                                Some("Comment body is empty.".to_string());
+                        } else {
+                            let kind = app.review_state.input_kind;
+                            app.add_review_comment(
+                                &file,
+                                start,
+                                end,
+                                kind,
+                                body,
+                                crate::review_store::Author::User,
+                            );
+                        }
+                    } else {
+                        submit_new_comment(app, &buffer);
+                    }
                 }
                 ReviewInputMode::EditingComment => {
                     if !buffer.is_empty() {

@@ -49,6 +49,12 @@ pub struct ReviewState {
     pub input_buffer: TextInput,
     /// The kind of comment being created (Suggest or Question).
     pub input_kind: CommentKind,
+    /// Target of an in-progress **new** comment: `(file_path, line_start,
+    /// line_end)`. When set (during `AddingComment`), the compose box renders
+    /// inline at that line and the buffer holds only the body — no `file:line`
+    /// prefix. `None` falls back to the legacy prefix-in-buffer parse path
+    /// (template picker / command palette entry points).
+    pub input_anchor: Option<(String, u32, Option<u32>)>,
     /// Optional flash message displayed at the bottom of the panel.
     pub status_message: Option<String>,
     /// Current search/filter query for comments.
@@ -101,6 +107,7 @@ impl ReviewState {
             input_mode: ReviewInputMode::Normal,
             input_buffer: TextInput::new_multiline(),
             input_kind: CommentKind::Suggest,
+            input_anchor: None,
             status_message: None,
             search_query: TextInput::new(),
             search_active: false,

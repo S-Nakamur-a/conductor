@@ -23,6 +23,14 @@
 //!   than with box-drawing — borders are too width-hungry for the narrow
 //!   summary column. Over-wide cells truncate with `…`. A future refinement
 //!   could fall back to a `key: value` list when even truncation can't fit.
+//! - **Headings** colour and bold their text; H1/H2 also get a full-width
+//!   underline rule, echoing GitHub's bottom border on top-level sections.
+//! - **Code — fenced and inline `code`** sits on a shaded `code_bg` "card"
+//!   (the background carries the signal, not a lone accent colour). A fenced
+//!   block fills every row edge-to-edge with that card colour, padded above and
+//!   below, the way GitHub frames a code block. Callers rendering onto a tinted
+//!   surface (the comment thread box) use [`apply_background`] to fill the
+//!   non-code gaps so the whole block shares one background.
 //!
 //! Design notes:
 //! - **Backward compatible.** Plain text containing no Markdown syntax flows
@@ -112,13 +120,123 @@ pub fn render_markdown(
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut out: Vec<Line<'static>> = Vec::new();
+    // Track whether the previous block was blank so headings get one (and only
+    // one) blank line of breathing room above them — GitHub-style section
+    // separation that makes the structure scannable at a glance.
+    let mut prev_blank = true;
     for block in parse_blocks(text) {
+        if matches!(block, MdBlock::Heading { .. }) && !prev_blank {
+            out.push(Line::from(""));
+        }
+        prev_blank = matches!(block, MdBlock::Blank);
         out.extend(render_block(&block, width, theme, syntax_set, syntect_theme));
     }
     if out.is_empty() {
         out.push(Line::from(""));
     }
     out
+}
+
+/// Caches [`render_markdown`] output per stable id, so comment/reply bodies in
+/// the inline thread box aren't re-parsed/highlighted every frame (the diff is
+/// re-rendered at 60fps). Stores the **background-agnostic** lines — callers
+/// apply [`apply_background`] afterwards (cheap) — and invalidates an entry when
+/// its body or wrap width changes, or the whole cache when the theme changes.
+#[derive(Default)]
+pub struct MarkdownCache {
+    entries: std::cell::RefCell<std::collections::HashMap<String, CacheEntry>>,
+    theme_fp: std::cell::Cell<u64>,
+}
+
+struct CacheEntry {
+    body: String,
+    width: usize,
+    lines: Vec<Line<'static>>,
+}
+
+impl MarkdownCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Cached lines for `key` when body/width/theme are unchanged, else render
+    /// and store. Returned lines carry no explicit background.
+    pub fn render(
+        &self,
+        key: &str,
+        body: &str,
+        width: usize,
+        theme: &Theme,
+        syntax_set: &SyntaxSet,
+        syntect_theme: &SyntectTheme,
+    ) -> Vec<Line<'static>> {
+        // A theme switch changes colours baked into the cached spans, so drop
+        // every entry when the theme fingerprint moves.
+        let fp = theme_fingerprint(theme);
+        if self.theme_fp.get() != fp {
+            self.entries.borrow_mut().clear();
+            self.theme_fp.set(fp);
+        }
+        if let Some(e) = self.entries.borrow().get(key)
+            && e.body == body
+            && e.width == width
+        {
+            return e.lines.clone();
+        }
+        let lines = render_markdown(body, width, theme, syntax_set, syntect_theme);
+        self.entries.borrow_mut().insert(
+            key.to_string(),
+            CacheEntry {
+                body: body.to_string(),
+                width,
+                lines: lines.clone(),
+            },
+        );
+        lines
+    }
+}
+
+/// Fold the theme colours that affect Markdown rendering into one number, so a
+/// theme change is detectable without storing the whole theme per entry.
+fn theme_fingerprint(theme: &Theme) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for c in [
+        theme.fg,
+        theme.accent,
+        theme.info,
+        theme.muted,
+        theme.success,
+        theme.warning,
+        theme.hint,
+        theme.border_secondary,
+        theme.code_bg,
+        theme.code_fg,
+    ] {
+        let bits = match c {
+            Color::Rgb(r, g, b) => ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+            _ => u32::MAX,
+        };
+        bits.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Paint `bg` behind every span that doesn't already carry its own background.
+///
+/// [`render_markdown`] leaves ordinary text with no background (so it sits on
+/// whatever surface is drawn behind it) but gives code its own `code_bg` card.
+/// Callers that render markdown onto a tinted surface — e.g. the comment thread
+/// box's `comment_preview_bg` — use this to fill the gaps so the whole block
+/// shares one background, while code cards keep their distinct shade.
+pub fn apply_background(lines: &mut [Line<'static>], bg: Color) {
+    for line in lines {
+        for span in &mut line.spans {
+            if span.style.bg.is_none() {
+                span.style = span.style.bg(bg);
+            }
+        }
+    }
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────
@@ -381,10 +499,38 @@ fn render_block(
             Style::default().fg(theme.muted),
         ))],
         MdBlock::Heading { level, text } => {
-            let color = if *level <= 2 { theme.accent } else { theme.info };
+            // Distinct colour per depth so the heading level reads at a glance
+            // (not just "bold text"): H1 accent, H2 info, H3 success, then warm
+            // and muted for the rarely-used deep levels.
+            let color = match level {
+                1 => theme.accent,
+                2 => theme.info,
+                3 => theme.success,
+                4 => theme.warning,
+                _ => theme.hint,
+            };
             let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+            // A thin left colour bar (heavy box-drawing vertical) anchors the
+            // heading to its colour and makes sections pop out of the body text
+            // without the heaviness of a solid block.
+            let bar = Span::styled(
+                "\u{2503} ".to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            );
+            let cont = Span::styled("  ".to_string(), Style::default());
+            let inner = width.saturating_sub(2).max(1);
             let cells = spans_to_cells(&inline_spans(text, style, theme));
-            wrap_cells(&cells, width, false)
+            let mut out = with_prefix(wrap_cells(&cells, inner, false), bar, cont);
+            // GitHub draws a bottom border under H1/H2; mirror that with a
+            // full-width rule tinted toward the heading colour so the section
+            // reads as one coloured block.
+            if *level <= 2 {
+                out.push(Line::from(Span::styled(
+                    "\u{2500}".repeat(width),
+                    Style::default().fg(Theme::darken(color, 0.55)),
+                )));
+            }
+            out
         }
         MdBlock::Paragraph(text) => {
             let cells = spans_to_cells(&inline_spans(text, Style::default().fg(theme.fg), theme));
@@ -442,8 +588,11 @@ fn render_block(
     }
 }
 
-/// Highlight a fenced code block with syntect and wrap it under a left gutter
-/// bar. Code is hard-wrapped (not word-wrapped) so nothing is hidden.
+/// Highlight a fenced code block with syntect and lay it out as a shaded
+/// "card" — every row filled to the full width with `theme.code_bg` and inset
+/// by one column on each side, the way GitHub frames a code block. Code is
+/// hard-wrapped (not word-wrapped) so nothing is hidden, and a blank padded row
+/// above and below gives the card vertical breathing room.
 fn render_code_block(
     lang: Option<&str>,
     lines: &[String],
@@ -452,15 +601,19 @@ fn render_code_block(
     syntax_set: &SyntaxSet,
     syntect_theme: &SyntectTheme,
 ) -> Vec<Line<'static>> {
+    // One column of inset on each side of the code; content wraps in between.
     let inner = width.saturating_sub(2).max(1);
+    let code_bg = theme.code_bg;
     let syntax = lang
         .and_then(|l| syntax_set.find_syntax_by_token(l))
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
     let mut highlighter = HighlightLines::new(syntax, syntect_theme);
-    let bar = Span::styled("\u{258F} ".to_string(), Style::default().fg(theme.muted));
-    let fallback = Style::default().fg(theme.fg);
+    let fallback = Style::default().fg(theme.fg).bg(code_bg);
 
-    let mut out = Vec::new();
+    // A full-width blank row in the card colour (top/bottom padding).
+    let pad_row = || Line::from(Span::styled(" ".repeat(width), Style::default().bg(code_bg)));
+
+    let mut out = vec![pad_row()];
     for raw in lines {
         // Expand tabs so display-width math (and thus wrapping) stays correct.
         let expanded = raw.replace('\t', "    ");
@@ -469,9 +622,11 @@ fn render_code_block(
             Ok(ranges) => ranges
                 .into_iter()
                 .map(|(style, piece)| {
+                    // Force the card background under every token so the whole
+                    // block reads as one surface regardless of syntect's theme.
                     let st = syntect_tui::translate_style(style)
                         .unwrap_or_default()
-                        .bg(Color::Reset);
+                        .bg(code_bg);
                     Span::styled(piece.trim_end_matches('\n').to_string(), st)
                 })
                 .filter(|s| !s.content.is_empty())
@@ -484,9 +639,32 @@ fn render_code_block(
         } else {
             wrap_cells(&cells, inner, true)
         };
-        out.extend(with_prefix(wrapped, bar.clone(), bar.clone()));
+        // Frame each wrapped row: left inset, content, right pad — all in the
+        // card colour so the background fills edge to edge.
+        for line in wrapped {
+            out.push(frame_code_row(line, width, code_bg));
+        }
     }
+    out.push(pad_row());
     out
+}
+
+/// Wrap one already-wrapped code row in the card: a leading inset space, the
+/// row's spans, then trailing padding — every cell carrying `code_bg` so the
+/// row fills `width` columns of solid card colour.
+fn frame_code_row(line: Line<'static>, width: usize, code_bg: Color) -> Line<'static> {
+    let inset = Style::default().bg(code_bg);
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 2);
+    spans.push(Span::styled(" ".to_string(), inset));
+    let mut used = 1usize;
+    for span in line.spans {
+        used += display_width(&span.content);
+        spans.push(span);
+    }
+    if used < width {
+        spans.push(Span::styled(" ".repeat(width - used), inset));
+    }
+    Line::from(spans)
 }
 
 // ── Inline parsing ───────────────────────────────────────────────────
@@ -495,7 +673,11 @@ fn render_code_block(
 /// `[text](url)` links out of `text`, styling the rest with `base`.
 /// Unmatched/space-flanked delimiters stay literal.
 fn inline_spans(text: &str, base: Style, theme: &Theme) -> Vec<Span<'static>> {
-    let code_style = Style::default().fg(theme.warning);
+    // Inline `code`: a pink foreground on a shaded card, with one space of
+    // padding inside the card on each side (`[ code ]`, GitHub-style) so it
+    // reads as a distinct chip and not just tinted text. The padding spaces
+    // carry the card colour too.
+    let code_style = Style::default().fg(theme.code_fg).bg(theme.code_bg);
     let chars: Vec<char> = text.chars().collect();
     let n = chars.len();
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -511,7 +693,12 @@ fn inline_spans(text: &str, base: Style, theme: &Theme) -> Vec<Span<'static>> {
                 && j > i + 1
             {
                 flush(&mut buf, &mut spans, base);
-                spans.push(Span::styled(collect(&chars, i + 1, j), code_style));
+                // Pad with NBSP (not a regular space) so the wrapper never
+                // breaks the chip at its padding — it only wraps on 0x20.
+                spans.push(Span::styled(
+                    format!("\u{a0}{}\u{a0}", collect(&chars, i + 1, j)),
+                    code_style,
+                ));
                 i = j + 1;
                 continue;
             }
@@ -1232,8 +1419,16 @@ mod tests {
         );
 
         let spans = inline_spans("use `git` now", base, &theme);
-        assert!(spans.iter().any(|s| s.content == "git"));
-        assert_eq!(joined(&spans), "use git now");
+        // Inline code is padded with NBSP into a pink-on-card chip; match on the
+        // trimmed content rather than the exact padded string.
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.content.trim_matches('\u{a0}') == "git"
+                    && s.style.fg == Some(theme.code_fg)
+                    && s.style.bg == Some(theme.code_bg))
+        );
+        assert_eq!(joined(&spans), "use \u{a0}git\u{a0} now");
     }
 
     #[test]
@@ -1609,12 +1804,111 @@ mod tests {
     }
 
     #[test]
-    fn code_block_is_highlighted_and_gutter_prefixed() {
-        let lines = render("```rust\nlet x = 1;\n```", 40);
-        assert!(!lines.is_empty());
-        // Gutter bar prefixes each code line.
-        assert!(line_text(&lines[0]).starts_with('\u{258F}'));
-        // syntect splits the line into multiple styled spans.
-        assert!(lines[0].spans.len() > 2);
+    fn code_block_is_highlighted_and_carded() {
+        let (theme, ss, st) = fixtures();
+        let lines = render_markdown("```rust\nlet x = 1;\n```", 40, &theme, &ss, &st);
+        // Padding rows above and below the code, each filled to full width with
+        // the card background.
+        assert!(lines.len() >= 3);
+        for edge in [&lines[0], &lines[lines.len() - 1]] {
+            assert!(display_width(&line_text(edge)) == 40, "pad row fills width");
+            assert!(
+                edge.spans.iter().all(|s| s.style.bg == Some(theme.code_bg)),
+                "pad row carries the card background"
+            );
+        }
+        // The content row sits between the pads: card background under every
+        // span, and syntect splits it into multiple styled spans.
+        let content = &lines[1];
+        assert!(line_text(content).contains("let x = 1;"));
+        assert!(content.spans.iter().all(|s| s.style.bg == Some(theme.code_bg)));
+        assert!(content.spans.len() > 2);
+        // The whole card fills the width edge to edge.
+        assert_eq!(display_width(&line_text(content)), 40);
+    }
+
+    #[test]
+    fn inline_code_sits_on_card_background() {
+        let (theme, _, _) = fixtures();
+        let base = Style::default().fg(theme.fg);
+        let spans = inline_spans("run `cargo test` now", base, &theme);
+        let code = spans
+            .iter()
+            .find(|s| s.content.trim_matches('\u{a0}') == "cargo test")
+            .unwrap();
+        assert_eq!(code.style.bg, Some(theme.code_bg));
+    }
+
+    #[test]
+    fn top_level_headings_get_an_underline_rule() {
+        // H1/H2 render their text plus a full-width rule; H3+ do not.
+        let h1 = render("# Title", 20);
+        assert_eq!(h1.len(), 2, "heading + rule");
+        assert!(line_text(&h1[1]).chars().all(|c| c == '\u{2500}'));
+        assert_eq!(display_width(&line_text(&h1[1])), 20);
+
+        let h3 = render("### Sub", 20);
+        assert_eq!(h3.len(), 1, "no rule under H3");
+    }
+
+    #[test]
+    fn headings_get_a_colour_bar_and_level_colour() {
+        let (theme, _, _) = fixtures();
+        // The first span of a heading is the solid colour bar; its colour and
+        // the heading text's colour track the level.
+        for (src, color) in [
+            ("# H1", theme.accent),
+            ("## H2", theme.info),
+            ("### H3", theme.success),
+        ] {
+            let lines = render(src, 30);
+            let bar = &lines[0].spans[0];
+            assert_eq!(bar.content.as_ref(), "\u{2503} ");
+            assert_eq!(bar.style.fg, Some(color), "bar colour for {src:?}");
+            // The text after the bar carries the same level colour, bolded.
+            let text = &lines[0].spans[1];
+            assert_eq!(text.style.fg, Some(color));
+            assert!(text.style.add_modifier.contains(Modifier::BOLD));
+        }
+    }
+
+    #[test]
+    fn apply_background_fills_only_bare_spans() {
+        let (theme, ss, st) = fixtures();
+        let mut lines =
+            render_markdown("text with `code`", 40, &theme, &ss, &st);
+        let bg = theme.comment_preview_bg;
+        apply_background(&mut lines, bg);
+        for line in &lines {
+            for span in &line.spans {
+                // Plain text gains the tint; the inline-code card keeps its own.
+                assert!(span.style.bg == Some(bg) || span.style.bg == Some(theme.code_bg));
+            }
+        }
+    }
+
+    #[test]
+    fn markdown_cache_matches_fresh_and_invalidates_on_change() {
+        let (theme, ss, st) = fixtures();
+        let cache = MarkdownCache::new();
+        let texts = |ls: &[Line]| ls.iter().map(line_text).collect::<Vec<_>>();
+
+        // Cached output equals a fresh render.
+        let fresh = render_markdown("a `b` c", 30, &theme, &ss, &st);
+        let first = cache.render("id1", "a `b` c", 30, &theme, &ss, &st);
+        assert_eq!(texts(&fresh), texts(&first));
+
+        // A cache hit (same id/body/width) returns the same content.
+        let second = cache.render("id1", "a `b` c", 30, &theme, &ss, &st);
+        assert_eq!(texts(&first), texts(&second));
+
+        // Changing the body re-renders (different output under the same id).
+        let changed = cache.render("id1", "totally different text", 30, &theme, &ss, &st);
+        assert_ne!(texts(&first), texts(&changed));
+
+        // Changing the width re-wraps.
+        let narrow = cache.render("id2", "the quick brown fox jumps", 8, &theme, &ss, &st);
+        let wide = cache.render("id2", "the quick brown fox jumps", 40, &theme, &ss, &st);
+        assert_ne!(narrow.len(), wide.len());
     }
 }
