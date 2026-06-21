@@ -804,8 +804,15 @@ impl App {
     pub fn start_smart_worktree_async(&mut self, description: &str) {
         let desc = description.to_string();
         let main_branch = self.config.general.main_branch.clone();
-        let base_ref = format!("origin/{main_branch}");
         let repo_path = self.repo_path.clone();
+        // Resolve to a ref that actually exists: origin/<main> if there is a
+        // remote, otherwise the local <main> branch (or HEAD). Without this,
+        // worktree creation fails with "invalid reference: origin/main" in a
+        // local-only repo and the smart worktree never materializes.
+        let base_ref = match git_engine::GitEngine::open(&repo_path) {
+            Ok(engine) => engine.resolve_base_ref(&main_branch),
+            Err(_) => format!("origin/{main_branch}"),
+        };
         let wt_dir = self.config.general.worktree_dir.clone();
 
         let cancel_token = Arc::new(AtomicBool::new(false));
@@ -1187,18 +1194,28 @@ impl App {
     pub fn load_base_branches(&mut self) {
         match git_engine::GitEngine::open(&self.repo_path) {
             Ok(engine) => {
-                match engine.list_remote_branches() {
+                // Prefer remote-tracking branches; fall back to local branches
+                // when the repo has no remote (e.g. a local-only project),
+                // otherwise the picker would be empty and nothing is selectable.
+                let branches = match engine.list_remote_branches() {
+                    Ok(remote) if !remote.is_empty() => Ok(remote),
+                    Ok(_) => engine.list_local_branches(),
+                    Err(e) => Err(e),
+                };
+                match branches {
                     Ok(branches) => {
                         self.worktree_mgr.base_branch_list = branches;
                         self.worktree_mgr.base_branch_selected = 0;
                         self.worktree_mgr.base_branch_filter.clear();
-                        // Pre-select origin/<main_branch> if it exists.
-                        let default_base = format!("origin/{}", self.config.general.main_branch);
+                        // Pre-select origin/<main_branch>, or the local
+                        // <main_branch> when there is no remote.
+                        let main_branch = self.config.general.main_branch.clone();
+                        let remote_base = format!("origin/{main_branch}");
                         if let Some(pos) = self
                             .worktree_mgr
                             .base_branch_list
                             .iter()
-                            .position(|b| b == &default_base)
+                            .position(|b| b == &remote_base || b == &main_branch)
                         {
                             self.worktree_mgr.base_branch_selected = pos;
                         }
