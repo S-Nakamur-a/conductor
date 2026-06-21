@@ -272,6 +272,24 @@ impl GitEngine {
         Ok(names)
     }
 
+    /// Resolve the best existing starting ref for a new worktree branching off
+    /// `main_branch`.
+    ///
+    /// Prefers the remote-tracking branch `origin/<main_branch>`, falls back to
+    /// the local branch `<main_branch>`, then to `HEAD`. The returned ref is
+    /// guaranteed to resolve, so `git worktree add ... <ref>` won't fail with an
+    /// "invalid reference" error in a repo that has no remote.
+    pub fn resolve_base_ref(&self, main_branch: &str) -> String {
+        let remote = format!("origin/{main_branch}");
+        if self.repo.revparse_single(&remote).is_ok() {
+            return remote;
+        }
+        if self.repo.revparse_single(main_branch).is_ok() {
+            return main_branch.to_string();
+        }
+        String::from("HEAD")
+    }
+
     /// Create a worktree from a remote branch (wt switch equivalent).
     ///
     /// `remote_branch` should be like "origin/feature-x".
