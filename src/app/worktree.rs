@@ -1509,9 +1509,8 @@ impl App {
             {
                 let path = wt_path.clone();
                 self.bg.file_tree.start(move |tx| {
-                    let gi = ViewerState::build_gitignore(&path);
                     let mut entries = Vec::new();
-                    ViewerState::walk_dir(&path, &path, 0, &mut entries, Some(&gi));
+                    ViewerState::walk_dir(&path, &path, 0, &mut entries);
                     let _ = tx.send(entries);
                 });
             }
