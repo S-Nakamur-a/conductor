@@ -15,7 +15,6 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::Theme as SyntectTheme;
@@ -41,9 +40,6 @@ pub struct FileTreeState {
     pub tree_scroll: usize,
     /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
     pub cached_visible_indices: Option<Rc<Vec<usize>>>,
-    /// Gitignore matcher built from the worktree root. `Arc` so it can be
-    /// shared with background tree walks. `None` until the first tree load.
-    pub gitignore: Option<Arc<ignore::gitignore::Gitignore>>,
 }
 
 /// File content viewing state.
@@ -331,19 +327,10 @@ impl ViewerState {
         let prev_paths: Vec<String> =
             self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
 
-        // Build (or rebuild) the gitignore matcher for this worktree.
-        self.tree.gitignore = Some(Arc::new(Self::build_gitignore(worktree_path)));
-
         // Rebuild the tree from disk.
         self.tree.file_tree.clear();
         self.invalidate_visible_cache();
-        Self::walk_dir(
-            worktree_path,
-            worktree_path,
-            0,
-            &mut self.tree.file_tree,
-            self.tree.gitignore.as_deref(),
-        );
+        Self::walk_dir(worktree_path, worktree_path, 0, &mut self.tree.file_tree);
 
         // Restore directory expansion state. For lazily-loaded dirs, also
         // load their children so the tree looks the same as before the refresh.
@@ -1367,13 +1354,7 @@ impl ViewerState {
         let child_depth = entry.depth + 1;
 
         let mut children: Vec<FileTreeEntry> = Vec::new();
-        Self::read_dir_entries(
-            worktree_root,
-            &full_path,
-            child_depth,
-            &mut children,
-            self.tree.gitignore.as_deref(),
-        );
+        Self::read_dir_entries(worktree_root, &full_path, child_depth, &mut children);
 
         self.tree.file_tree[idx].children_loaded = true;
 
@@ -1393,40 +1374,10 @@ impl ViewerState {
         self.invalidate_visible_cache();
     }
 
-    /// Build a gitignore matcher from the worktree root's `.gitignore`.
-    /// Only reads the root-level `.gitignore` — nested `.gitignore` files
-    /// are intentionally skipped because `GitignoreBuilder::add()` applies
-    /// their patterns globally (not scoped to the subdirectory), which can
-    /// cause false positives (e.g. `vendor/.gitignore` containing `*`).
-    pub fn build_gitignore(worktree_root: &Path) -> ignore::gitignore::Gitignore {
-        let mut builder = ignore::gitignore::GitignoreBuilder::new(worktree_root);
-        let root_gi = worktree_root.join(".gitignore");
-        if root_gi.is_file() {
-            let _ = builder.add(&root_gi);
-        }
-        builder
-            .build()
-            .unwrap_or_else(|_| ignore::gitignore::Gitignore::empty())
-    }
-
-    /// Check if a path should be ignored by gitignore rules.
-    fn is_gitignored(gi: Option<&ignore::gitignore::Gitignore>, path: &Path, is_dir: bool) -> bool {
-        match gi {
-            Some(gi) => gi.matched(path, is_dir).is_ignore(),
-            None => false,
-        }
-    }
-
     /// Read the immediate children of `dir` and append them to `entries`.
     /// Does not recurse — children directories will have
     /// `children_loaded: false`.
-    fn read_dir_entries(
-        root: &Path,
-        dir: &Path,
-        depth: usize,
-        entries: &mut Vec<FileTreeEntry>,
-        gi: Option<&ignore::gitignore::Gitignore>,
-    ) {
+    fn read_dir_entries(root: &Path, dir: &Path, depth: usize, entries: &mut Vec<FileTreeEntry>) {
         if depth > Self::MAX_DEPTH {
             return;
         }
@@ -1454,11 +1405,6 @@ impl ViewerState {
             let is_dir = child_path.is_dir();
 
             if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-
-            // Skip gitignored paths.
-            if Self::is_gitignored(gi, &child_path, is_dir) {
                 continue;
             }
 
@@ -1494,7 +1440,6 @@ impl ViewerState {
             worktree_root,
             0,
             &mut self.filename_search.filename_search_all_files,
-            self.tree.gitignore.as_deref(),
         );
     }
 
@@ -1502,13 +1447,7 @@ impl ViewerState {
     /// directories as `walk_dir` / `SKIP_DIRS`.  Only file paths (not
     /// directories) are appended to `paths`, stored as relative paths from
     /// `root`.
-    fn collect_all_file_paths(
-        root: &Path,
-        dir: &Path,
-        depth: usize,
-        paths: &mut Vec<String>,
-        gi: Option<&ignore::gitignore::Gitignore>,
-    ) {
+    fn collect_all_file_paths(root: &Path, dir: &Path, depth: usize, paths: &mut Vec<String>) {
         if depth > Self::MAX_DEPTH {
             return;
         }
@@ -1522,16 +1461,13 @@ impl ViewerState {
             if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            if Self::is_gitignored(gi, &child_path, is_dir) {
-                continue;
-            }
             let rel_path = child_path
                 .strip_prefix(root)
                 .unwrap_or(&child_path)
                 .to_string_lossy()
                 .to_string();
             if is_dir {
-                Self::collect_all_file_paths(root, &child_path, depth + 1, paths, gi);
+                Self::collect_all_file_paths(root, &child_path, depth + 1, paths);
             } else {
                 paths.push(rel_path);
             }
@@ -1541,13 +1477,7 @@ impl ViewerState {
     /// Walk `dir` and append its immediate children to `entries`.
     /// All directories start collapsed with `children_loaded: false`;
     /// their contents are loaded lazily when the user expands them.
-    pub fn walk_dir(
-        root: &Path,
-        dir: &Path,
-        depth: usize,
-        entries: &mut Vec<FileTreeEntry>,
-        gi: Option<&ignore::gitignore::Gitignore>,
-    ) {
+    pub fn walk_dir(root: &Path, dir: &Path, depth: usize, entries: &mut Vec<FileTreeEntry>) {
         if depth > Self::MAX_DEPTH {
             return;
         }
@@ -1577,11 +1507,6 @@ impl ViewerState {
 
             // Skip known heavy directories.
             if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-
-            // Skip gitignored paths.
-            if Self::is_gitignored(gi, &child_path, is_dir) {
                 continue;
             }
 
@@ -1621,4 +1546,75 @@ fn digit_count(n: usize) -> usize {
         val /= 10;
     }
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// The explorer must list files purely from the filesystem, independent of
+    /// git state. A directory ignored by `.gitignore` (i.e. not under git
+    /// management) and the files nested inside it must still be reachable.
+    #[test]
+    fn walk_includes_gitignored_directories_and_recurses() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+
+        // A `.gitignore` that excludes `generated/` (and `*.log`) from git
+        // management. `generated` is deliberately NOT one of the heavy
+        // `SKIP_DIRS`, so the only reason it could be hidden would be gitignore.
+        fs::write(root.join(".gitignore"), "/generated\n*.log\n").unwrap();
+        fs::create_dir_all(root.join("generated/sub")).unwrap();
+        fs::write(root.join("generated/out.txt"), "x").unwrap();
+        fs::write(root.join("generated/sub/inner.txt"), "x").unwrap();
+        fs::write(root.join("generated/debug.log"), "x").unwrap();
+
+        // Top-level walk must surface the gitignored directory itself.
+        let mut top = Vec::new();
+        ViewerState::walk_dir(root, root, 0, &mut top);
+        assert!(
+            top.iter().any(|e| e.name == "generated" && e.is_dir),
+            "gitignored directory should still be listed: {:?}",
+            top.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+
+        // Expanding it must reveal nested files, including gitignored ones.
+        let mut children = Vec::new();
+        ViewerState::read_dir_entries(root, &root.join("generated"), 1, &mut children);
+        let names: Vec<&str> = children.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"out.txt"), "files: {names:?}");
+        assert!(names.contains(&"sub"), "files: {names:?}");
+        assert!(
+            names.contains(&"debug.log"),
+            "gitignored file should be listed: {names:?}"
+        );
+
+        // And recursion continues one level deeper.
+        let mut deep = Vec::new();
+        ViewerState::read_dir_entries(root, &root.join("generated/sub"), 2, &mut deep);
+        assert!(
+            deep.iter().any(|e| e.name == "inner.txt"),
+            "deep files: {:?}",
+            deep.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    /// Heavy build/dependency directories are still skipped — that guard is a
+    /// performance concern, not a git-management one.
+    #[test]
+    fn walk_still_skips_heavy_dirs() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+
+        let mut top = Vec::new();
+        ViewerState::walk_dir(root, root, 0, &mut top);
+        assert!(top.iter().any(|e| e.name == "src"));
+        assert!(
+            !top.iter().any(|e| e.name == "node_modules"),
+            "node_modules should be skipped"
+        );
+    }
 }
