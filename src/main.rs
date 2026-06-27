@@ -143,6 +143,26 @@ fn main() -> Result<()> {
     let window_title = format!("conductor - {}", app.main_repo_name);
     execute!(io::stdout(), SetTitle(&window_title))?;
 
+    // ── OSC11 background auto-detection ──────────────────────────────
+    // The query must run while in raw mode and before the event loop starts
+    // reading stdin (same requirement as the graphics-protocol probe below).
+    // `auto_theme_for_background` handles the "only when unconfigured" guard
+    // and the light/dark threshold, so main.rs stays free of inline logic.
+    if let Some(lum) = term_caps::query_background_luminance() {
+        let configured = app.config.ui.theme.as_deref();
+        if let Some(theme) = term_caps::auto_theme_for_background(lum, configured) {
+            // Session-only (persist=false); user can override via theme picker.
+            app.set_theme(theme, false);
+            log::info!(
+                "OSC11 auto-detected light background (luminance={lum:.2}): switched to {theme}"
+            );
+        } else {
+            log::info!(
+                "OSC11 auto-detected background (luminance={lum:.2}): keeping current theme"
+            );
+        }
+    }
+
     // ── Rich mode capability detection ───────────────────────────────
     // Runs after entering the alternate screen but before the event loop
     // starts reading stdin: the graphics probe (when it runs) must read the

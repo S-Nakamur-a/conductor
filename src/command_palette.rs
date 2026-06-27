@@ -84,6 +84,9 @@ pub enum CommandId {
     TogglePartyMode,
     ToggleRichMode,
     Quit,
+
+    // UI
+    SwitchTheme,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -467,6 +470,14 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::App,
         action: Some(Action::Quit),
         keywords: "exit close",
+    },
+    // UI
+    PaletteCommand {
+        id: CommandId::SwitchTheme,
+        label: "Switch Theme",
+        category: CommandCategory::View,
+        action: Some(Action::OpenThemePicker),
+        keywords: "theme color light dark appearance palette catppuccin solarized github",
     },
 ];
 

@@ -145,6 +145,10 @@ pub enum Action {
     // ── Panel layout ────────────────────────────────────────────
     TogglePanelExpand,
     TogglePanelOverlay,
+
+    // ── UI ──────────────────────────────────────────────────────
+    /// Open the theme picker overlay to switch the UI color theme at runtime.
+    OpenThemePicker,
 }
 
 impl Action {
@@ -231,6 +235,7 @@ impl Action {
             "inline_reply" => Some(Action::InlineReply),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
+            "open_theme_picker" => Some(Action::OpenThemePicker),
             _ => None,
         }
     }
@@ -319,6 +324,7 @@ impl Action {
             Action::InlineReply => "inline_reply",
             Action::TogglePanelExpand => "toggle_panel_expand",
             Action::TogglePanelOverlay => "toggle_panel_overlay",
+            Action::OpenThemePicker => "open_theme_picker",
         }
     }
 

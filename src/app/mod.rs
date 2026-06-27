@@ -383,6 +383,10 @@ pub struct App {
     pub keymap: KeyMap,
     /// UI color theme.
     pub theme: Theme,
+    /// Active theme name — the canonical key used to resolve `theme`.
+    /// Kept in sync by `set_theme`; used to find the current selection in the
+    /// theme picker and to build the config layer when persisting.
+    pub theme_name: String,
     /// State for the Explorer/Viewer panel (file tree + file content).
     pub viewer_state: ViewerState,
     /// State for the Diff data (used for inline highlights in Viewer).
@@ -681,7 +685,14 @@ impl App {
             .and_then(|store| store.get_today_stats().ok());
 
         let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
-        let theme = Theme::from_name(&config.viewer.theme);
+        // [ui] theme takes precedence; fall back to [viewer] theme for compatibility.
+        let theme_name = config
+            .ui
+            .theme
+            .as_deref()
+            .unwrap_or(&config.viewer.theme)
+            .to_string();
+        let theme = Theme::from_name(&theme_name);
         let auto_resume = config.general.auto_resume;
 
         // Derive the main repo display name from the main worktree path.
@@ -712,6 +723,7 @@ impl App {
             config,
             keymap,
             theme,
+            theme_name,
             viewer_state: ViewerState::default(),
             diff_state,
             review_store,
@@ -1428,6 +1440,26 @@ impl App {
         self.set_status(text, StatusLevel::Info);
     }
 
+    /// Switch the active UI theme at runtime.
+    ///
+    /// When `persist` is `true`, the selection is written to the config file
+    /// (`~/.config/conductor/config.toml`) so it survives restarts. A write
+    /// failure is non-fatal: it is logged and surfaced as a warning flash.
+    pub fn set_theme(&mut self, name: &str, persist: bool) {
+        self.theme = Theme::from_name(name);
+        self.theme_name = name.to_string();
+        self.config.ui.theme = Some(name.to_string());
+        if persist
+            && let Err(e) = crate::config::persist_ui_theme(name)
+        {
+            log::warn!("failed to persist theme '{name}': {e}");
+            self.set_status(
+                format!("Theme saved in session but could not write config: {e}"),
+                StatusLevel::Warning,
+            );
+        }
+    }
+
     // ── Code navigation helpers ────────────────────────────────────
 
     /// Extract the symbol under the cursor from the current viewer line.
@@ -1712,7 +1744,29 @@ impl App {
             CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
             CommandId::ToggleRichMode => self.cmd_toggle_rich_mode(),
             CommandId::Quit => self.should_quit = true,
+            CommandId::SwitchTheme => self.cmd_open_theme_picker(),
         }
+    }
+
+    /// Open the theme picker overlay.
+    ///
+    /// Captures `theme_name` as the revert target so Esc can restore the theme
+    /// that was active when the picker opened (even after live-preview moves).
+    pub fn cmd_open_theme_picker(&mut self) {
+        let themes: Vec<String> = crate::theme::Theme::all_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let selected = themes
+            .iter()
+            .position(|t| t == &self.theme_name)
+            .unwrap_or(0);
+        self.overlays.theme_picker = crate::overlay::ThemePickerOverlay {
+            themes,
+            selected,
+            original: self.theme_name.clone(),
+        };
+        self.overlays.active = ActiveOverlay::ThemePicker;
     }
 
     // ── Command palette handler methods ──────────────────────────────

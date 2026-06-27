@@ -17,6 +17,8 @@
 //! the crossterm event loop starts reading stdin, or the query response would
 //! be swallowed as input events.
 
+use std::io::Write;
+
 use ratatui_image::picker::ProtocolType;
 
 /// Resolved rich-mode tier for this session.
@@ -150,6 +152,148 @@ pub fn resolve_rich_tier(
     }
 }
 
+/// Query the terminal for its background color via OSC 11 and return the
+/// relative luminance (0.0 = black, 1.0 = white, linear scale).
+///
+/// **How it works:** sends `ESC ] 11 ; ? ST` to stdout while in raw mode, then
+/// polls fd 0 (stdin) on the **main thread** with `libc::poll` and a 150 ms
+/// deadline. Reading happens only when the fd is reported readable, so the call
+/// never blocks longer than the deadline. The response is drained completely
+/// before returning so no bytes leak into the subsequent graphics-protocol probe
+/// (`Picker::from_query_stdio`).
+///
+/// **tmux:** when `TERM` starts with `"tmux"` or `TERM_PROGRAM == "tmux"`,
+/// the passthrough is typically disabled and no response arrives; the function
+/// returns `None` immediately without sending the query.
+///
+/// Returns `None` when the terminal does not respond within the timeout or the
+/// response cannot be parsed.
+pub fn query_background_luminance() -> Option<f64> {
+    // Skip when running inside tmux (passthrough usually disabled).
+    let term = std::env::var("TERM").unwrap_or_default();
+    let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+    if term.starts_with("tmux") || term_program.eq_ignore_ascii_case("tmux") {
+        return None;
+    }
+
+    // Send the OSC 11 query to stdout. Raw mode is already active and the
+    // crossterm event loop has not started yet, so there is no concurrent reader.
+    {
+        let mut stdout = std::io::stdout().lock();
+        // OSC 11 query: ESC ] 11 ; ? ST  (ST = ESC \)
+        if stdout.write_all(b"\x1b]11;?\x1b\\").is_err() {
+            return None;
+        }
+        if stdout.flush().is_err() {
+            return None;
+        }
+    }
+
+    // Read the response on the main thread using libc::poll so we never block
+    // longer than the deadline even on terminals that don't support OSC 11.
+    const TIMEOUT_MS: i32 = 150;
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(TIMEOUT_MS as u64);
+
+    let mut buf: Vec<u8> = Vec::with_capacity(64);
+    loop {
+        // Compute remaining time for this poll call.
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .map(|d| d.as_millis().min(TIMEOUT_MS as u128) as i32)
+            .unwrap_or(0);
+        if remaining <= 0 {
+            return None; // Timed out.
+        }
+
+        // SAFETY: poll is a simple syscall with a plain-old-data pollfd struct.
+        let ready = unsafe {
+            let mut pfd = libc::pollfd {
+                fd: libc::STDIN_FILENO,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            libc::poll(&mut pfd, 1, remaining)
+        };
+
+        if ready <= 0 {
+            return None; // Timeout or error.
+        }
+
+        // Read one byte at a time to detect the OSC terminator precisely.
+        let mut byte = [0u8; 1];
+        // SAFETY: reading one byte from fd 0 (stdin) which we know is readable.
+        let n = unsafe {
+            libc::read(
+                libc::STDIN_FILENO,
+                byte.as_mut_ptr().cast::<libc::c_void>(),
+                1,
+            )
+        };
+        if n <= 0 {
+            return None;
+        }
+        buf.push(byte[0]);
+
+        // OSC terminators: ST (ESC \) or BEL (0x07).
+        let ended = buf.ends_with(b"\x1b\\") || buf.ends_with(b"\x07");
+        if ended {
+            return std::str::from_utf8(&buf)
+                .ok()
+                .and_then(parse_osc11_luminance);
+        }
+
+        // Bail if the response grows unreasonably large.
+        if buf.len() > 256 {
+            return None;
+        }
+    }
+}
+
+/// Choose a theme name based on the terminal background luminance.
+///
+/// Returns `Some(name)` only when the caller should switch themes automatically:
+/// - `configured` is `None` (user has not pinned a theme in the config), and
+/// - `lum > 0.5` (light background detected).
+///
+/// Returns `None` when a theme is already configured, or the background is dark
+/// (keep whatever theme is already active).
+pub fn auto_theme_for_background(lum: f64, configured: Option<&str>) -> Option<&'static str> {
+    if configured.is_some() {
+        return None; // Explicit config always wins.
+    }
+    if lum > 0.5 {
+        Some("catppuccin-latte")
+    } else {
+        None // Dark background — keep the default dark theme.
+    }
+}
+
+/// Parse `ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST` and return the relative luminance.
+///
+/// Each channel is a 4-hex-digit value (0000–FFFF); we use the high byte (first
+/// two hex digits) for the luminance calculation, matching common practice.
+fn parse_osc11_luminance(response: &str) -> Option<f64> {
+    // Strip the OSC prefix and suffix, then extract the rgb:…/…/… part.
+    let inner = response
+        .trim_start_matches('\x1b')
+        .trim_start_matches(']')
+        .trim_end_matches('\x1b')
+        .trim_end_matches('\\')
+        .trim_end_matches('\x07');
+    // Expected: "11;rgb:RRRR/GGGG/BBBB"
+    let rgb_part = inner.strip_prefix("11;rgb:")?;
+    let parts: Vec<&str> = rgb_part.split('/').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    // Each part is a 4-digit hex value; take the first two digits (high byte).
+    let r = u8::from_str_radix(parts[0].get(..2)?, 16).ok()? as f64 / 255.0;
+    let g = u8::from_str_radix(parts[1].get(..2)?, 16).ok()? as f64 / 255.0;
+    let b = u8::from_str_radix(parts[2].get(..2)?, 16).ok()? as f64 / 255.0;
+    Some(0.299 * r + 0.587 * g + 0.114 * b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,5 +393,92 @@ mod tests {
         assert!(RichTier::TierB.is_rich());
         assert!(!RichTier::TierA.has_graphics());
         assert!(RichTier::TierB.has_graphics());
+    }
+
+    // auto_theme_for_background pure-function tests.
+
+    #[test]
+    fn auto_theme_configured_always_returns_none() {
+        // User has pinned a theme — auto-detection must not override it.
+        assert!(super::auto_theme_for_background(0.9, Some("dracula")).is_none());
+        assert!(super::auto_theme_for_background(0.9, Some("catppuccin-mocha")).is_none());
+        assert!(super::auto_theme_for_background(0.1, Some("github-light")).is_none());
+    }
+
+    #[test]
+    fn auto_theme_light_background_selects_latte() {
+        // Light background (luminance > 0.5) with no configured theme.
+        let t = super::auto_theme_for_background(0.9, None);
+        assert_eq!(t, Some("catppuccin-latte"));
+        // Exactly on the threshold (0.5) counts as dark.
+        assert!(super::auto_theme_for_background(0.5, None).is_none());
+        // Just above threshold.
+        let t2 = super::auto_theme_for_background(0.501, None);
+        assert_eq!(t2, Some("catppuccin-latte"));
+    }
+
+    #[test]
+    fn auto_theme_dark_background_returns_none() {
+        assert!(super::auto_theme_for_background(0.1, None).is_none());
+        assert!(super::auto_theme_for_background(0.0, None).is_none());
+        assert!(super::auto_theme_for_background(0.499, None).is_none());
+    }
+
+    // OSC11 parser tests (no terminal I/O needed).
+
+    #[test]
+    fn parse_osc11_black_background() {
+        // Black background: all channels 0x00.
+        let lum = super::parse_osc11_luminance("\x1b]11;rgb:0000/0000/0000\x1b\\");
+        assert!(lum.is_some());
+        assert!((lum.unwrap() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_osc11_white_background() {
+        // White background: all channels 0xFF.
+        let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
+        assert!(lum.is_some());
+        assert!((lum.unwrap() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_osc11_catppuccin_mocha_bg() {
+        // Catppuccin Mocha base: #1e1e2e → 0x1e1e ≈ 30, 0x1e1e ≈ 30, 0x2e2e ≈ 46
+        let lum = super::parse_osc11_luminance("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\");
+        assert!(lum.is_some());
+        let v = lum.unwrap();
+        // Expect a dark background — luminance well below 0.5.
+        assert!(v < 0.2, "expected dark bg, got {v}");
+    }
+
+    #[test]
+    fn parse_osc11_malformed_returns_none() {
+        assert!(super::parse_osc11_luminance("garbage").is_none());
+        assert!(super::parse_osc11_luminance("\x1b]11;rgb:ZZ/GG/HH\x1b\\").is_none());
+        assert!(super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff\x1b\\").is_none());
+    }
+
+    // additional parser coverage.
+
+    #[test]
+    fn parse_osc11_bel_terminator() {
+        // Some terminals (e.g. old xterm) use BEL (0x07) as the OSC terminator.
+        let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x07");
+        assert!(lum.is_some());
+        assert!((lum.unwrap() - 1.0).abs() < 0.01, "white bg via BEL terminator");
+    }
+
+    #[test]
+    fn parse_osc11_8bit_channels() {
+        // Some terminals reply with 8-bit (2-digit) channel values: `rgb:RR/GG/BB`.
+        // The parser reads the first two hex digits, so this is handled naturally.
+        let lum = super::parse_osc11_luminance("\x1b]11;rgb:ff/ff/ff\x1b\\");
+        assert!(lum.is_some());
+        assert!((lum.unwrap() - 1.0).abs() < 0.01, "white bg via 8-bit channels");
+
+        let dark = super::parse_osc11_luminance("\x1b]11;rgb:1e/1e/2e\x1b\\");
+        assert!(dark.is_some());
+        assert!(dark.unwrap() < 0.2, "dark bg via 8-bit channels");
     }
 }

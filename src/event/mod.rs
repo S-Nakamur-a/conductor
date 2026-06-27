@@ -201,6 +201,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
                 ActiveOverlay::WorktreeSwitcher => handle_worktree_key(app, key),
                 ActiveOverlay::CommentList => handle_explorer_comment_list_key(app, key),
+                ActiveOverlay::ThemePicker => handle_theme_picker_key(app, key),
                 ActiveOverlay::None => unreachable!(),
             }
             return;
