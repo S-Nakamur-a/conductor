@@ -1596,6 +1596,52 @@ fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize)
     }
 }
 
+// ── Overlay: theme picker ────────────────────────────────────────────────
+
+/// Handle keys for the theme picker overlay.
+///
+/// Up/Down (or j/k) browse the list with live preview — each movement calls
+/// `set_theme(name, false)` so the UI updates immediately without persisting.
+/// Enter confirms and persists the selected theme; Esc reverts to the theme
+/// that was active when the picker was opened.
+pub(super) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) {
+    let count = app.overlays.theme_picker.themes.len();
+
+    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.theme_picker.selected, count) {
+        // Live preview: apply the newly highlighted theme without persisting.
+        let name = app
+            .overlays
+            .theme_picker
+            .themes
+            .get(app.overlays.theme_picker.selected)
+            .cloned()
+            .unwrap_or_default();
+        app.set_theme(&name, false);
+        return;
+    }
+
+    match key.code {
+        KeyCode::Enter => {
+            let name = app
+                .overlays
+                .theme_picker
+                .themes
+                .get(app.overlays.theme_picker.selected)
+                .cloned()
+                .unwrap_or_default();
+            app.overlays.active = ActiveOverlay::None;
+            app.set_theme(&name, true);
+            app.set_status(format!("Theme: {name}"), StatusLevel::Success);
+        }
+        KeyCode::Esc => {
+            let orig = app.overlays.theme_picker.original.clone();
+            app.overlays.active = ActiveOverlay::None;
+            app.set_theme(&orig, false);
+        }
+        _ => {}
+    }
+}
+
 fn jump_to_symbol_references(app: &mut App, symbol: &str) {
     let root = app.symbol_index.root();
     let refs = app.symbol_index.find_references(symbol, &root);

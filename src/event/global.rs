@@ -147,6 +147,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.toggle_panel_overlay();
             true
         }
+        Action::OpenThemePicker => {
+            app.cmd_open_theme_picker();
+            true
+        }
         _ => false, // Not a global action — let panel-specific handler try.
     }
 }

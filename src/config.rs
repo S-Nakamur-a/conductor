@@ -44,6 +44,9 @@ pub struct Config {
     pub api: ApiConfig,
     /// `[rich]` -- rich mode (terminal graphics) settings.
     pub rich: RichConfig,
+    /// `[ui]` -- UI appearance settings (theme, etc.).
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 impl Config {
@@ -327,6 +330,16 @@ impl Default for RichConfig {
     }
 }
 
+/// `[ui]` section — UI appearance overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    /// UI color theme name. When `None`, falls back to `[viewer] theme` for
+    /// backward compatibility. Light theme options: `catppuccin-latte`,
+    /// `solarized-light`, `github-light`. Dark: see `Theme::all_names()`.
+    pub theme: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -443,8 +456,110 @@ pub fn generate_default_config() -> String {
 # model = "gemini-2.5-flash"            # model for smart worktree generation (Gemini API)
 # command = ["ollama", "run", "llama3"] # external command for provider = "command" (prompt on stdin, completion on stdout)
 # command_timeout_secs = 60             # wall-clock timeout for the command provider (0 = no timeout)
+
+[ui]
+# theme = "catppuccin-mocha"            # UI color theme (overrides [viewer] theme when set)
+#                                       #   dark:  catppuccin-mocha | dracula | nord | solarized-dark
+#                                       #          tokyo-night | gruvbox | rose-pine | kanagawa
+#                                       #   light: catppuccin-latte | solarized-light | github-light
+#                                       # Light themes work best on terminals with a light/white background.
+#                                       # When unset, conductor auto-detects a light background via OSC 11
+#                                       # and switches to catppuccin-latte for that session (no file write).
 "#,
     )
+}
+
+/// Persist a theme selection to `~/.config/conductor/config.toml`.
+///
+/// Uses text-based minimal editing to preserve existing comments and structure:
+/// - If the `[ui]` section already has an uncommented `theme = ...` line, it is
+///   replaced in place.
+/// - If the `[ui]` section exists but has no uncommented `theme` line (e.g. only
+///   comments), the line is inserted immediately after the `[ui]` header.
+/// - If no `[ui]` section exists, `\n[ui]\ntheme = "..."\n` is appended.
+pub fn persist_ui_theme(name: &str) -> Result<()> {
+    let path = config_file_path();
+    let contents = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        // Config file doesn't exist yet; generate defaults and proceed.
+        generate_default_config()
+    };
+    let updated = upsert_ui_theme(&contents, name);
+    std::fs::write(&path, updated)?;
+    Ok(())
+}
+
+/// Pure function: upsert `theme = "<name>"` in the `[ui]` section of a
+/// config file string, preserving all comments and surrounding content.
+///
+/// Extracted as a testable helper so file I/O in `persist_ui_theme` can be
+/// tested independently. Called transitively via `set_theme`.
+/// Return `true` when `line` is a `[ui]` TOML section header, possibly followed
+/// by whitespace and/or an inline comment (e.g. `[ui]  # colors`).
+/// Sub-sections like `[ui.fonts]` are deliberately excluded.
+fn is_ui_section_header(line: &str) -> bool {
+    let trimmed = line.trim();
+    // Must start with exactly `[ui]` (not `[ui.something]`).
+    if !trimmed.starts_with("[ui]") {
+        return false;
+    }
+    // After `[ui]` only whitespace and/or a `#` comment may follow.
+    let after = trimmed["[ui]".len()..].trim_start();
+    after.is_empty() || after.starts_with('#')
+}
+
+fn upsert_ui_theme(contents: &str, name: &str) -> String {
+    let theme_line = format!("theme = \"{name}\"");
+    let lines: Vec<&str> = contents.lines().collect();
+
+    // Locate the [ui] section header.
+    // Match `[ui]` with optional trailing whitespace/comment, e.g. `[ui]  # colors`,
+    // but NOT sub-sections like `[ui.colors]`.
+    let ui_start = lines.iter().position(|l| is_ui_section_header(l));
+
+    if let Some(ui_idx) = ui_start {
+        // End of section = next bare `[...]` header (not a comment).
+        let ui_end = lines[ui_idx + 1..]
+            .iter()
+            .position(|l| {
+                let t = l.trim();
+                t.starts_with('[') && !t.starts_with('#')
+            })
+            .map(|i| ui_idx + 1 + i)
+            .unwrap_or(lines.len());
+
+        // Look for an existing uncommented `theme = ...` key within the section.
+        let existing_theme_idx = lines[ui_idx + 1..ui_end]
+            .iter()
+            .position(|l| {
+                let t = l.trim();
+                !t.starts_with('#') && (t.starts_with("theme =") || t.starts_with("theme="))
+            })
+            .map(|i| ui_idx + 1 + i);
+
+        let mut result_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        if let Some(idx) = existing_theme_idx {
+            result_lines[idx] = theme_line;
+        } else {
+            // No uncommented theme line in the section — insert right after [ui].
+            result_lines.insert(ui_idx + 1, theme_line);
+        }
+
+        let mut result = result_lines.join("\n");
+        if contents.ends_with('\n') {
+            result.push('\n');
+        }
+        result
+    } else {
+        // No [ui] section at all — append one.
+        let mut result = contents.to_string();
+        if !result.ends_with('\n') && !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(&format!("\n[ui]\n{theme_line}\n"));
+        result
+    }
 }
 
 /// Default review prompt template (Japanese).
@@ -574,5 +689,112 @@ check_interval_secs = 3600"#,
         assert_eq!(cfg.terminal.inactive_scrollback, 1000);
         assert_eq!(cfg.viewer.tab_width, 2);
         assert!(cfg.updates.check_on_startup);
+    }
+
+    #[test]
+    fn ui_config_default_has_no_theme() {
+        let cfg = Config::default();
+        assert!(cfg.ui.theme.is_none());
+    }
+
+    #[test]
+    fn ui_config_round_trips_through_toml() {
+        let toml_str = r#"[ui]
+theme = "catppuccin-latte"
+"#;
+        let cfg: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(cfg.ui.theme.as_deref(), Some("catppuccin-latte"));
+
+        // Serialize and deserialize again.
+        let serialized = toml::to_string_pretty(&cfg).expect("serialize");
+        let cfg2: Config = toml::from_str(&serialized).expect("round-trip");
+        assert_eq!(cfg2.ui.theme.as_deref(), Some("catppuccin-latte"));
+    }
+
+    #[test]
+    fn upsert_ui_theme_appends_when_no_ui_section() {
+        let contents = "[general]\nmain_branch = \"main\"\n";
+        let result = upsert_ui_theme(contents, "nord");
+        assert!(result.contains("[ui]"));
+        assert!(result.contains("theme = \"nord\""));
+        // Original content preserved.
+        assert!(result.contains("[general]"));
+    }
+
+    #[test]
+    fn upsert_ui_theme_replaces_existing_theme_line() {
+        let contents = "[ui]\ntheme = \"dracula\"\n";
+        let result = upsert_ui_theme(contents, "github-light");
+        assert_eq!(
+            result,
+            "[ui]\ntheme = \"github-light\"\n",
+            "existing theme line must be replaced in place"
+        );
+    }
+
+    #[test]
+    fn upsert_ui_theme_inserts_after_ui_header_when_only_comments() {
+        let contents = "[ui]\n# theme = \"catppuccin-mocha\"\n";
+        let result = upsert_ui_theme(contents, "catppuccin-latte");
+        // Should have the new line inserted after [ui], before the comment.
+        assert!(result.contains("theme = \"catppuccin-latte\""));
+        // Comment must be preserved.
+        assert!(result.contains("# theme = \"catppuccin-mocha\""));
+    }
+
+    #[test]
+    fn upsert_ui_theme_preserves_other_sections_after_ui() {
+        let contents = "[viewer]\ntheme = \"dracula\"\n\n[ui]\n# theme placeholder\n\n[general]\n";
+        let result = upsert_ui_theme(contents, "nord");
+        assert!(result.contains("theme = \"nord\""));
+        assert!(result.contains("[viewer]"));
+        assert!(result.contains("[general]"));
+    }
+
+    #[test]
+    fn upsert_ui_theme_trailing_newline_preserved() {
+        let with_newline = "[ui]\ntheme = \"dracula\"\n";
+        let without_newline = "[ui]\ntheme = \"dracula\"";
+        assert!(upsert_ui_theme(with_newline, "nord").ends_with('\n'));
+        assert!(!upsert_ui_theme(without_newline, "nord").ends_with('\n'));
+    }
+
+    // inline-comment [ui] header detection.
+
+    #[test]
+    fn upsert_ui_theme_handles_inline_comment_on_ui_header() {
+        // `[ui]  # color settings` must be recognised as the [ui] section.
+        let contents = "[general]\n\n[ui]  # color settings\ntheme = \"dracula\"\n";
+        let result = upsert_ui_theme(contents, "nord");
+        assert_eq!(
+            result.matches("[ui]").count(),
+            1,
+            "must not append a duplicate [ui] section"
+        );
+        assert!(result.contains("theme = \"nord\""));
+    }
+
+    #[test]
+    fn upsert_ui_theme_does_not_match_ui_subsection() {
+        // `[ui.colors]` is NOT the `[ui]` section; a new `[ui]` block must be appended.
+        let contents = "[ui.colors]\nfoo = \"bar\"\n";
+        let result = upsert_ui_theme(contents, "nord");
+        assert!(
+            result.contains("[ui]\n"),
+            "a new [ui] section should be appended, not matched"
+        );
+        // The subsection must still be present.
+        assert!(result.contains("[ui.colors]"));
+    }
+
+    #[test]
+    fn is_ui_section_header_cases() {
+        assert!(super::is_ui_section_header("[ui]"));
+        assert!(super::is_ui_section_header("[ui]  "));
+        assert!(super::is_ui_section_header("[ui]  # comment"));
+        assert!(super::is_ui_section_header("  [ui]"));
+        assert!(!super::is_ui_section_header("[ui.sub]"));
+        assert!(!super::is_ui_section_header("[ui.colors]"));
+        assert!(!super::is_ui_section_header("[viewer]"));
     }
 }

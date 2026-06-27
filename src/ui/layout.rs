@@ -179,22 +179,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // ── Accordion column widths (from cache) ───────────────────────
     let columns = app.layout_cache.columns;
 
-    // ── Focused-panel surface ───────────────────────────────────────
-    // Lift the focused list panel (worktree / explorer) out of its
-    // neighbours with a subtle surface fill, so the active column reads
-    // at a glance in peripheral vision. Painted before the panels so
-    // their (bg-transparent) content draws on top; viewer is left alone
-    // as a reading pane and the terminal keeps its own PTY background.
-    let focused_surface_col = match app.focus {
-        crate::app::Focus::Explorer if app.editor.is_none() => Some(1),
-        _ => None,
-    };
-    if let Some(col) = focused_surface_col {
-        let fill = ratatui::widgets::Block::default()
-            .style(ratatui::style::Style::default().bg(app.theme.panel_focused_bg));
-        frame.render_widget(fill, columns[col]);
-    }
-
     // ── Column 0 (worktree) is gone — its status is in the top strip. ──
 
     if app.editor.is_some() {
@@ -349,6 +333,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         }
         crate::overlay::ActiveOverlay::CommentList => {
             super::explorer_panel::render_comment_list_overlay(frame, main_area, app);
+        }
+        crate::overlay::ActiveOverlay::ThemePicker => {
+            super::theme_picker::render_theme_picker_overlay(frame, main_area, app);
         }
     }
     // Fuzzy filename-search ("jump to file") modal — rendered at the top level

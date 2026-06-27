@@ -312,7 +312,9 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
 
     let (badge_bg, badge_fg, branch_fg) = name_to_color(&app.main_repo_name);
 
-    let bar_bg = theme.titlebar_bg;
+    // Use Color::Reset so the terminal's own background (including any
+    // background image) shows through the title bar.
+    let bar_bg = Color::Reset;
     let conductor_bg = badge_bg;
     let conductor_fg = badge_fg;
 

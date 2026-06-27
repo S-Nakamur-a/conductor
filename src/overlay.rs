@@ -37,6 +37,20 @@ pub enum ActiveOverlay {
     /// Full-screen comment list — overview of all review comments on the branch
     /// with jump-to-location. Reuses the comment list state + handler.
     CommentList,
+    /// Theme picker — Up/Down to browse, live preview on each move, Enter to
+    /// persist, Esc to revert to the theme that was active when the picker opened.
+    ThemePicker,
+}
+
+/// Theme picker overlay state.
+#[derive(Default)]
+pub struct ThemePickerOverlay {
+    /// All available theme names in display order (see `Theme::all_names`).
+    pub themes: Vec<String>,
+    /// Currently highlighted index within `themes`.
+    pub selected: usize,
+    /// The `theme_name` active when the picker was opened — used to revert on Esc.
+    pub original: String,
 }
 
 /// Switch-branch overlay state.
@@ -220,4 +234,5 @@ pub struct OverlayManager {
     pub grep_search: GrepSearchOverlay,
     pub help: HelpOverlay,
     pub command_palette: CommandPaletteOverlay,
+    pub theme_picker: ThemePickerOverlay,
 }

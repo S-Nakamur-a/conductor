@@ -8,6 +8,16 @@ use ratatui::style::Color;
 /// A color theme for the application.
 #[derive(Debug, Clone)]
 pub struct Theme {
+    // ── Meta ─────────────────────────────────────────────────────────
+    /// The canonical name of this theme (matches the key used in `from_name`
+    /// and returned by `all_names`). Primarily used to detect registration
+    /// drift between `from_name` and `all_names` at test time.
+    #[allow(dead_code)]
+    pub name: &'static str,
+    /// Whether this is a light (true) or dark (false) background theme.
+    /// Used by OSC 11 auto-detection and by the theme-picker light/dark tag.
+    pub light: bool,
+
     // ── Core ─────────────────────────────────────────────────────────
     /// Foreground color for normal text.
     pub fg: Color,
@@ -132,10 +142,11 @@ pub struct Theme {
     pub code_fg: Color,
 
     // ── Panel surface ────────────────────────────────────────────────
-    /// Subtle background filled behind the currently focused list panel
-    /// (worktree / explorer) to lift it out of the surrounding columns.
-    /// A gentle step above each theme's base so focus reads in peripheral
-    /// vision without straining the eye on long sessions.
+    /// Subtle background for the focused list panel (worktree / explorer).
+    /// Retained in the struct for theme compatibility; the layout.rs surface
+    /// fill was removed in the transparency sweep so the terminal background
+    /// shows through instead.
+    #[allow(dead_code)]
     pub panel_focused_bg: Color,
 }
 
@@ -151,8 +162,29 @@ impl Theme {
             "gruvbox" => Self::gruvbox(),
             "rose-pine" => Self::rose_pine(),
             "kanagawa" => Self::kanagawa(),
+            "catppuccin-latte" => Self::catppuccin_latte(),
+            "solarized-light" => Self::solarized_light(),
+            "github-light" => Self::github_light(),
             _ => Self::default(),
         }
+    }
+
+    /// All built-in theme names in display order: dark themes first, then light.
+    /// Used by the theme-picker UI and OSC11 auto-detection switch.
+    pub fn all_names() -> &'static [&'static str] {
+        &[
+            "catppuccin-mocha",
+            "dracula",
+            "nord",
+            "solarized-dark",
+            "tokyo-night",
+            "gruvbox",
+            "rose-pine",
+            "kanagawa",
+            "catppuccin-latte",
+            "solarized-light",
+            "github-light",
+        ]
     }
 
     /// Darken an RGB color by the given factor (0.0 = black, 1.0 = unchanged).
@@ -179,6 +211,8 @@ impl Theme {
     /// Yellow #f9e2af, Peach #fab387.
     fn catppuccin_mocha() -> Self {
         Self {
+            name: "catppuccin-mocha",
+            light: false,
             fg: Color::Rgb(205, 214, 244),      // Text
             accent: Color::Rgb(203, 166, 247),  // Mauve
             muted: Color::Rgb(69, 71, 90),      // Surface1
@@ -243,6 +277,8 @@ impl Theme {
 
     fn dracula() -> Self {
         Self {
+            name: "dracula",
+            light: false,
             fg: Color::Rgb(248, 248, 242),
             accent: Color::Rgb(255, 121, 198),
             muted: Color::Rgb(68, 71, 90),
@@ -307,6 +343,8 @@ impl Theme {
 
     fn nord() -> Self {
         Self {
+            name: "nord",
+            light: false,
             fg: Color::Rgb(216, 222, 233),
             accent: Color::Rgb(136, 192, 208),
             muted: Color::Rgb(59, 66, 82),
@@ -373,6 +411,8 @@ impl Theme {
 
     fn solarized_dark() -> Self {
         Self {
+            name: "solarized-dark",
+            light: false,
             fg: Color::Rgb(131, 148, 150),
             accent: Color::Rgb(181, 137, 0),
             muted: Color::Rgb(0, 43, 54),
@@ -437,6 +477,8 @@ impl Theme {
 
     fn tokyo_night() -> Self {
         Self {
+            name: "tokyo-night",
+            light: false,
             fg: Color::Rgb(192, 202, 245),
             accent: Color::Rgb(122, 162, 247),
             muted: Color::Rgb(59, 66, 97),
@@ -501,6 +543,8 @@ impl Theme {
 
     fn gruvbox() -> Self {
         Self {
+            name: "gruvbox",
+            light: false,
             fg: Color::Rgb(235, 219, 178),
             accent: Color::Rgb(250, 189, 47),
             muted: Color::Rgb(60, 56, 54),
@@ -565,6 +609,8 @@ impl Theme {
 
     fn rose_pine() -> Self {
         Self {
+            name: "rose-pine",
+            light: false,
             fg: Color::Rgb(224, 222, 244),
             accent: Color::Rgb(235, 188, 186),
             muted: Color::Rgb(57, 53, 82),
@@ -629,6 +675,8 @@ impl Theme {
 
     fn kanagawa() -> Self {
         Self {
+            name: "kanagawa",
+            light: false,
             fg: Color::Rgb(220, 215, 186),
             accent: Color::Rgb(127, 180, 202),
             muted: Color::Rgb(54, 54, 70),
@@ -690,10 +738,304 @@ impl Theme {
             panel_focused_bg: Color::Rgb(34, 34, 46),
         }
     }
+
+    /// Catppuccin Latte — the official light variant of Catppuccin.
+    ///
+    /// Palette reference (https://catppuccin.com/palette): Base #eff1f5,
+    /// Mantle #e6e9ef, Surface0 #ccd0da, Surface1 #bcc0cc, Surface2 #acb0be,
+    /// Overlay0 #9ca0b0, Overlay1 #8c8fa1, Text #4c4f69, Subtext0 #6c6f85,
+    /// Mauve #8839ef, Blue #1e66f5, Sky #04a5e5, Green #40a02b, Red #d20f39,
+    /// Yellow #df8e1d, Peach #fe640b, Pink #ea76cb.
+    fn catppuccin_latte() -> Self {
+        Self {
+            name: "catppuccin-latte",
+            light: true,
+            fg: Color::Rgb(76, 79, 105),       // Text
+            accent: Color::Rgb(136, 57, 239),  // Mauve
+            muted: Color::Rgb(188, 192, 204),  // Surface1
+            success: Color::Rgb(64, 160, 43),  // Green
+            error: Color::Rgb(210, 15, 57),    // Red
+            warning: Color::Rgb(223, 142, 29), // Yellow
+            info: Color::Rgb(4, 165, 229),     // Sky
+
+            diff_add: Color::Rgb(64, 160, 43),
+            diff_add_bg: Color::Rgb(220, 245, 210),
+            diff_del: Color::Rgb(210, 15, 57),
+            diff_del_bg: Color::Rgb(252, 220, 228),
+            diff_add_bg_emphasis: Color::Rgb(196, 236, 182),
+            diff_del_bg_emphasis: Color::Rgb(248, 196, 210),
+            diff_section_header: Color::Rgb(140, 143, 161), // Overlay1
+
+            border_focused: Color::Rgb(136, 57, 239), // Mauve
+            border_unfocused: Color::Rgb(188, 192, 204), // Surface1
+            border_secondary: Color::Rgb(172, 176, 190), // Surface2
+
+            selected_bg: Color::Rgb(136, 57, 239),  // Mauve
+            selected_fg: Color::Rgb(239, 241, 245), // Base (near-white)
+            selected_bg_inactive: Color::Rgb(204, 208, 218), // Surface0
+            selected_fg_inactive: Color::Rgb(76, 79, 105),   // Text
+
+            line_selected_bg: Color::Rgb(204, 208, 218), // Surface0
+            line_selected_fg: Color::Rgb(76, 79, 105),   // Text
+
+            gutter_selected_bg: Color::Rgb(30, 102, 245), // Blue
+            gutter_selected_fg: Color::Rgb(239, 241, 245), // Base
+            gutter_hover_fg: Color::Rgb(140, 143, 161),   // Overlay1
+            gutter_hover_bg: Color::Rgb(224, 227, 236),   // between Base and Surface0
+            gutter_pending_bg: Color::Rgb(189, 211, 252), // light blue
+            line_pending_bg: Color::Rgb(236, 240, 252),   // very light blue
+
+            hint: Color::Rgb(156, 160, 176),            // Overlay0
+            search_match_fg: Color::Rgb(223, 142, 29),  // Yellow
+            search_match_bg: Color::Rgb(252, 238, 190), // light yellow
+            search_current_fg: Color::Rgb(76, 79, 105), // Text
+
+            waiting_primary: Color::Rgb(254, 100, 11),  // Peach
+            waiting_secondary: Color::Rgb(212, 82, 9),
+
+            titlebar_bg: Color::Rgb(230, 233, 239), // Mantle
+            dir_fg: Color::Rgb(156, 160, 176),      // Overlay0
+
+            status_bg_success: Color::Rgb(210, 240, 200),
+            status_bg_error: Color::Rgb(252, 212, 220),
+            status_bg_warning: Color::Rgb(252, 232, 196),
+            status_bg_info: Color::Rgb(208, 232, 252),
+
+            comment_preview_bg: Color::Rgb(204, 208, 218), // Surface0
+            comment_user_bg: Color::Rgb(196, 228, 220),    // teal-tinted light
+            reply_text: Color::Rgb(108, 111, 133),         // Subtext0
+
+            code_bg: Color::Rgb(230, 233, 239),  // Mantle
+            code_fg: Color::Rgb(234, 118, 203),  // Pink
+
+            panel_focused_bg: Color::Rgb(220, 223, 232), // between Base and Surface0
+        }
+    }
+
+    /// Solarized Light — Ethan Schoonover's light variant.
+    ///
+    /// Palette reference (https://ethanschoonover.com/solarized/): base3 #fdf6e3,
+    /// base2 #eee8d5, base1 #93a1a1, base0 #839496, base00 #657b83,
+    /// base01 #586e75, yellow #b58900, orange #cb4b16, red #dc322f,
+    /// magenta #d33682, violet #6c71c4, blue #268bd2, cyan #2aa198, green #859900.
+    fn solarized_light() -> Self {
+        Self {
+            name: "solarized-light",
+            light: true,
+            fg: Color::Rgb(101, 123, 131),     // base00 — body text
+            accent: Color::Rgb(38, 139, 210),  // blue
+            muted: Color::Rgb(147, 161, 161),  // base1 — medium gray for separators
+            success: Color::Rgb(133, 153, 0),  // green
+            error: Color::Rgb(220, 50, 47),    // red
+            warning: Color::Rgb(181, 137, 0),  // yellow
+            info: Color::Rgb(42, 161, 152),    // cyan
+
+            diff_add: Color::Rgb(133, 153, 0),
+            diff_add_bg: Color::Rgb(232, 244, 210),
+            diff_del: Color::Rgb(220, 50, 47),
+            diff_del_bg: Color::Rgb(252, 228, 224),
+            diff_add_bg_emphasis: Color::Rgb(212, 236, 184),
+            diff_del_bg_emphasis: Color::Rgb(248, 206, 200),
+            diff_section_header: Color::Rgb(147, 161, 161), // base1
+
+            border_focused: Color::Rgb(38, 139, 210),  // blue
+            border_unfocused: Color::Rgb(147, 161, 161), // base1
+            border_secondary: Color::Rgb(131, 148, 150), // base0
+
+            selected_bg: Color::Rgb(38, 139, 210),   // blue
+            selected_fg: Color::Rgb(253, 246, 227),  // base3 (lightest)
+            selected_bg_inactive: Color::Rgb(238, 232, 213), // base2
+            selected_fg_inactive: Color::Rgb(101, 123, 131), // base00
+
+            line_selected_bg: Color::Rgb(238, 232, 213), // base2
+            line_selected_fg: Color::Rgb(101, 123, 131), // base00
+
+            gutter_selected_bg: Color::Rgb(42, 161, 152), // cyan
+            gutter_selected_fg: Color::Rgb(253, 246, 227), // base3
+            gutter_hover_fg: Color::Rgb(131, 148, 150),   // base0
+            gutter_hover_bg: Color::Rgb(245, 238, 218),   // between base3 and base2
+            gutter_pending_bg: Color::Rgb(196, 224, 244), // light blue
+            line_pending_bg: Color::Rgb(240, 248, 253),   // very light blue
+
+            hint: Color::Rgb(131, 148, 150),             // base0
+            search_match_fg: Color::Rgb(181, 137, 0),    // yellow
+            search_match_bg: Color::Rgb(253, 240, 184),  // light yellow
+            search_current_fg: Color::Rgb(253, 246, 227), // base3
+
+            waiting_primary: Color::Rgb(203, 75, 22),   // orange
+            waiting_secondary: Color::Rgb(160, 60, 18),
+
+            titlebar_bg: Color::Rgb(238, 232, 213), // base2
+            dir_fg: Color::Rgb(131, 148, 150),      // base0
+
+            status_bg_success: Color::Rgb(220, 240, 192),
+            status_bg_error: Color::Rgb(252, 224, 220),
+            status_bg_warning: Color::Rgb(252, 232, 192),
+            status_bg_info: Color::Rgb(208, 232, 248),
+
+            comment_preview_bg: Color::Rgb(238, 232, 213), // base2
+            comment_user_bg: Color::Rgb(216, 236, 232),    // teal-tinted light
+            reply_text: Color::Rgb(88, 110, 117),          // base01
+
+            code_bg: Color::Rgb(228, 222, 200),  // slightly darker than base2
+            code_fg: Color::Rgb(211, 54, 130),   // magenta
+
+            panel_focused_bg: Color::Rgb(232, 226, 208), // between base3 and base2
+        }
+    }
+
+    /// GitHub Light — inspired by GitHub's web UI color system.
+    ///
+    /// Palette reference (https://primer.style/primitives/colors): bg #ffffff,
+    /// fg #24292f, blue #0969da, green #1a7f37, red #cf222e,
+    /// amber #9a6700, border #d0d7de, neutral #6e7781.
+    fn github_light() -> Self {
+        Self {
+            name: "github-light",
+            light: true,
+            fg: Color::Rgb(36, 41, 47),         // fg.default
+            accent: Color::Rgb(9, 105, 218),    // accent.fg
+            muted: Color::Rgb(208, 215, 222),   // border.default — visible separator on white
+            success: Color::Rgb(26, 127, 55),   // success.fg
+            error: Color::Rgb(207, 34, 46),     // danger.fg
+            warning: Color::Rgb(154, 103, 0),   // attention.fg (amber)
+            info: Color::Rgb(9, 105, 218),      // accent.fg
+
+            diff_add: Color::Rgb(26, 127, 55),
+            diff_add_bg: Color::Rgb(230, 255, 237),  // GitHub addition bg
+            diff_del: Color::Rgb(207, 34, 46),
+            diff_del_bg: Color::Rgb(255, 235, 233),  // GitHub deletion bg
+            diff_add_bg_emphasis: Color::Rgb(204, 255, 220), // stronger addition
+            diff_del_bg_emphasis: Color::Rgb(255, 193, 186), // stronger deletion
+            diff_section_header: Color::Rgb(110, 119, 129),  // fg.muted
+
+            border_focused: Color::Rgb(9, 105, 218),    // accent.fg
+            border_unfocused: Color::Rgb(208, 215, 222), // border.default
+            border_secondary: Color::Rgb(175, 184, 193), // border.muted
+
+            selected_bg: Color::Rgb(9, 105, 218),    // accent.fg
+            selected_fg: Color::Rgb(255, 255, 255),  // white
+            selected_bg_inactive: Color::Rgb(234, 238, 242), // neutral.subtle
+            selected_fg_inactive: Color::Rgb(36, 41, 47),    // fg.default
+
+            line_selected_bg: Color::Rgb(234, 238, 242), // neutral.subtle
+            line_selected_fg: Color::Rgb(36, 41, 47),    // fg.default
+
+            gutter_selected_bg: Color::Rgb(9, 105, 218),  // accent.fg
+            gutter_selected_fg: Color::Rgb(255, 255, 255), // white
+            gutter_hover_fg: Color::Rgb(110, 119, 129),   // fg.muted
+            gutter_hover_bg: Color::Rgb(246, 248, 250),   // canvas.subtle
+            gutter_pending_bg: Color::Rgb(182, 212, 251), // accent.subtle darker
+            line_pending_bg: Color::Rgb(240, 245, 255),   // very light blue
+
+            hint: Color::Rgb(110, 119, 129),            // fg.muted
+            search_match_fg: Color::Rgb(154, 103, 0),   // attention.fg
+            search_match_bg: Color::Rgb(255, 248, 197), // attention.subtle
+            search_current_fg: Color::Rgb(36, 41, 47),  // fg.default
+
+            waiting_primary: Color::Rgb(225, 111, 36),  // orange
+            waiting_secondary: Color::Rgb(184, 92, 30),
+
+            titlebar_bg: Color::Rgb(246, 248, 250), // canvas.subtle
+            dir_fg: Color::Rgb(110, 119, 129),      // fg.muted
+
+            status_bg_success: Color::Rgb(218, 251, 225),
+            status_bg_error: Color::Rgb(255, 228, 225),
+            status_bg_warning: Color::Rgb(255, 248, 197),
+            status_bg_info: Color::Rgb(221, 244, 255),
+
+            comment_preview_bg: Color::Rgb(246, 248, 250), // canvas.subtle
+            comment_user_bg: Color::Rgb(232, 245, 241),    // teal-tinted light
+            reply_text: Color::Rgb(110, 119, 129),         // fg.muted
+
+            code_bg: Color::Rgb(246, 248, 250),  // canvas.subtle — GitHub inline code bg
+            code_fg: Color::Rgb(149, 56, 0),     // brown-red for inline code
+
+            panel_focused_bg: Color::Rgb(240, 243, 246), // between white and canvas.subtle
+        }
+    }
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self::catppuccin_mocha()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_name_light_themes_have_light_true() {
+        assert!(Theme::from_name("catppuccin-latte").light);
+        assert!(Theme::from_name("solarized-light").light);
+        assert!(Theme::from_name("github-light").light);
+    }
+
+    #[test]
+    fn from_name_dark_themes_have_light_false() {
+        assert!(!Theme::from_name("catppuccin-mocha").light);
+        assert!(!Theme::from_name("dracula").light);
+        assert!(!Theme::from_name("nord").light);
+        assert!(!Theme::from_name("solarized-dark").light);
+        assert!(!Theme::from_name("tokyo-night").light);
+        assert!(!Theme::from_name("gruvbox").light);
+        assert!(!Theme::from_name("rose-pine").light);
+        assert!(!Theme::from_name("kanagawa").light);
+    }
+
+    #[test]
+    fn all_names_contains_all_eleven_themes() {
+        let names = Theme::all_names();
+        assert_eq!(names.len(), 11);
+        assert!(names.contains(&"catppuccin-mocha"));
+        assert!(names.contains(&"dracula"));
+        assert!(names.contains(&"nord"));
+        assert!(names.contains(&"solarized-dark"));
+        assert!(names.contains(&"tokyo-night"));
+        assert!(names.contains(&"gruvbox"));
+        assert!(names.contains(&"rose-pine"));
+        assert!(names.contains(&"kanagawa"));
+        assert!(names.contains(&"catppuccin-latte"));
+        assert!(names.contains(&"solarized-light"));
+        assert!(names.contains(&"github-light"));
+    }
+
+    #[test]
+    fn all_names_dark_before_light() {
+        let names = Theme::all_names();
+        let last_dark = names
+            .iter()
+            .rposition(|n| !Theme::from_name(n).light)
+            .expect("at least one dark theme");
+        let first_light = names
+            .iter()
+            .position(|n| Theme::from_name(n).light)
+            .expect("at least one light theme");
+        assert!(last_dark < first_light, "dark themes must precede light themes");
+    }
+
+    #[test]
+    fn unknown_name_falls_back_to_default() {
+        // Unknown names return the default (catppuccin-mocha), which is dark.
+        let theme = Theme::from_name("does-not-exist");
+        assert!(!theme.light);
+    }
+
+    /// Every name in `all_names()` must round-trip through `from_name` and
+    /// return the same canonical `name` field. A mismatch means a theme was
+    /// registered in one list but omitted or renamed in the other.
+    #[test]
+    fn all_names_round_trip_through_from_name() {
+        for &n in Theme::all_names() {
+            let theme = Theme::from_name(n);
+            assert_eq!(
+                theme.name, n,
+                "Theme::from_name(\"{n}\").name == \"{}\", expected \"{n}\" — \
+                 check that from_name has a match arm for this theme",
+                theme.name
+            );
+        }
     }
 }

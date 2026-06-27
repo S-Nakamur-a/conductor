@@ -77,6 +77,10 @@
 "alt+/" = "toggle_panel_overlay"
 # macOS Unicode fallback (Option+/ = '÷', US layout).
 "÷" = "toggle_panel_overlay"
+# Alt+t — open the theme picker (t for "theme").
+# macOS Unicode fallback (Option+t = '†', dagger, US layout).
+"alt+t" = "open_theme_picker"
+"†" = "open_theme_picker"
 
 # ── Worktree ──────────────────────────────────────────────────────────────────
 [layers.worktree]

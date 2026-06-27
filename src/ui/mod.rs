@@ -28,6 +28,7 @@ pub mod panel_overlay;
 pub mod references;
 pub mod review;
 pub mod symbol_action;
+pub mod theme_picker;
 
 /// Shared read-only context extracted from `App` for UI rendering.
 ///
