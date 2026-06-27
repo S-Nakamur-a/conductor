@@ -159,6 +159,17 @@ impl MarkdownCache {
         Self::default()
     }
 
+    /// Clear all cached entries.
+    ///
+    /// Called by `App::apply_appearance` after the syntect theme is replaced so
+    /// that the next render re-highlights code blocks with the new theme. The
+    /// cache fingerprint only tracks the UI theme colour palette; a syntect-only
+    /// change (e.g. `[viewer] syntax_theme_file`) would otherwise leave stale
+    /// highlighted spans in the cache.
+    pub fn clear(&self) {
+        self.entries.borrow_mut().clear();
+    }
+
     /// Cached lines for `key` when body/width/theme are unchanged, else render
     /// and store. Returned lines carry no explicit background.
     pub fn render(

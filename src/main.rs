@@ -8,6 +8,7 @@ mod ccusage_cache;
 mod claude_sessions;
 mod command_palette;
 mod config;
+mod config_watcher;
 mod diff_state;
 mod event;
 mod file_watcher;
@@ -340,6 +341,13 @@ fn run_loop(
     let mut current_watch_paths = watch_paths_for(app);
     let mut file_watcher = crate::file_watcher::FileWatcher::new(&current_watch_paths).ok();
 
+    // Set up a dedicated watcher for the conductor config file. Separate from
+    // the worktree file watcher: the worktree watcher is rebuilt each time the
+    // worktree set changes, which would break config monitoring if they shared
+    // the same watcher instance.
+    let config_watcher =
+        crate::config_watcher::ConfigWatcher::new(&crate::config::config_file_path()).ok();
+
     // Set up socket listener for CC state notifications (instant delivery).
     let cc_notify = crate::cc_notify::CcNotifyListener::new(&app.repo_path).ok();
 
@@ -356,6 +364,12 @@ fn run_loop(
     const FS_DEBOUNCE: Duration = Duration::from_millis(500);
     let mut fs_pending = false;
     let mut fs_first_seen: Option<Instant> = None;
+
+    // Separate debounce for config-file changes. Shorter than FS_DEBOUNCE and
+    // isolated so worktree-poll rebuilds don't reset it.
+    const CONFIG_DEBOUNCE: Duration = Duration::from_millis(300);
+    let mut cfg_pending = false;
+    let mut cfg_first_seen: Option<Instant> = None;
 
     // Periodic timers — consolidated into a single registry.
     let mut timers = timer::TimerRegistry::new();
@@ -698,6 +712,26 @@ fn run_loop(
                     app.start_symbol_index_build();
                 }
                 app.dirty.mark_all();
+            }
+        }
+
+        // Config file change events (debounced). Shorter debounce than FS events
+        // because the two event streams are independent — a worktree-poll rebuild
+        // must not reset the config debounce timer.
+        if let Some(ref watcher) = config_watcher {
+            while watcher.poll().is_some() {
+                if !cfg_pending {
+                    cfg_first_seen = Some(Instant::now());
+                }
+                cfg_pending = true;
+            }
+            if cfg_pending
+                && let Some(t) = cfg_first_seen
+                && t.elapsed() >= CONFIG_DEBOUNCE
+            {
+                cfg_pending = false;
+                cfg_first_seen = None;
+                app.reload_appearance_config();
             }
         }
 

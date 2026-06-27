@@ -569,6 +569,18 @@ pub struct CcusageInfo {
     pub total_cost: f64,
 }
 
+/// Resolve the active UI theme name from config.
+///
+/// `[ui] theme` takes precedence; when absent, `[viewer] theme` is used for
+/// backward compatibility with configs that predate the `[ui]` section.
+fn resolve_theme_name(cfg: &config::Config) -> String {
+    cfg.ui
+        .theme
+        .as_deref()
+        .unwrap_or(&cfg.viewer.theme)
+        .to_string()
+}
+
 impl App {
     /// Returns `true` when the panel number overlay should be rendered.
     /// Activated by Alt+/ and auto-dismisses after 2 seconds.
@@ -631,39 +643,7 @@ impl App {
         // Initialize syntect syntax set and theme.
         let syntax_set = two_face::syntax::extra_newlines();
         let ts = ThemeSet::load_defaults();
-        let syntect_theme = if let Some(ref path) = config.viewer.syntax_theme_file {
-            match ThemeSet::get_theme(path) {
-                Ok(theme) => theme,
-                Err(e) => {
-                    log::warn!(
-                        "failed to load syntax theme file {path}: {e}; falling back to built-in theme"
-                    );
-                    let name = match config.viewer.theme.as_str() {
-                        "catppuccin-mocha" => "base16-mocha.dark",
-                        "dracula" => "base16-eighties.dark",
-                        "nord" => "base16-ocean.dark",
-                        "solarized-dark" => "Solarized (dark)",
-                        _ => "base16-mocha.dark",
-                    };
-                    ts.themes
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
-                }
-            }
-        } else {
-            let syntect_theme_name = match config.viewer.theme.as_str() {
-                "catppuccin-mocha" => "base16-mocha.dark",
-                "dracula" => "base16-eighties.dark",
-                "nord" => "base16-ocean.dark",
-                "solarized-dark" => "Solarized (dark)",
-                _ => "base16-mocha.dark",
-            };
-            ts.themes
-                .get(syntect_theme_name)
-                .cloned()
-                .unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
-        };
+        let syntect_theme = config::syntect_theme_for(&config.viewer, &ts);
 
         // Build the list of known repositories: current repo first, then extras from config.
         let mut repo_list = vec![repo_path.clone()];
@@ -685,13 +665,7 @@ impl App {
             .and_then(|store| store.get_today_stats().ok());
 
         let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
-        // [ui] theme takes precedence; fall back to [viewer] theme for compatibility.
-        let theme_name = config
-            .ui
-            .theme
-            .as_deref()
-            .unwrap_or(&config.viewer.theme)
-            .to_string();
+        let theme_name = resolve_theme_name(&config);
         let theme = Theme::from_name(&theme_name);
         let auto_resume = config.general.auto_resume;
 
@@ -1457,6 +1431,125 @@ impl App {
                 format!("Theme saved in session but could not write config: {e}"),
                 StatusLevel::Warning,
             );
+        }
+    }
+
+    // ── Live config reload ─────────────────────────────────────────
+
+    /// Apply appearance (live-reloadable) fields from `new` to the running app.
+    ///
+    /// Only the fields classified as LIVE are copied; restart-required fields
+    /// (shell, scrollback limits, API settings, etc.) are intentionally left
+    /// untouched so that `refresh_diff`, which reads `config.general.main_branch`
+    /// on every call, never sees a stale or transitional value.
+    ///
+    /// ## LIVE fields applied here
+    /// - `ui.theme` / `viewer.theme` → theme + theme_name + syntect rebuild
+    /// - `viewer.syntax_theme_file`  → syntect rebuild (same path as theme)
+    /// - `viewer.tab_width`          → config copy + refresh_viewer + refresh_diff
+    /// - `diff.word_diff`            → config copy + refresh_diff
+    /// - `diff.default_view`         → diff_state.view_mode + refresh_diff
+    /// - `general.decoration`        → config copy (drawn directly each frame)
+    /// - `layout.*`                  → config copy; LayoutCache auto-invalidates
+    ///
+    /// `viewer.word_wrap` is copied into config via `adopt_appearance` but is not
+    /// in `AppearanceSnapshot` and has no rendering effect until the render path
+    /// is implemented.
+    pub fn apply_appearance(&mut self, new: &config::Config) {
+        // ── UI / syntax theme ──────────────────────────────────────
+        let new_theme_name = resolve_theme_name(new);
+        if new_theme_name != self.theme_name {
+            self.theme = Theme::from_name(&new_theme_name);
+            self.theme_name = new_theme_name;
+        }
+
+        // Rebuild syntect theme when either the viewer theme or the custom
+        // theme file changes (the two are bundled into a single re-construction
+        // so there is never a half-updated state).
+        let ts = ThemeSet::load_defaults();
+        self.syntect_theme = config::syntect_theme_for(&new.viewer, &ts);
+
+        // Clear the Markdown cache so code blocks inside review comments pick
+        // up the new syntect theme. The cache fingerprints the UI colour palette
+        // only; a syntax-only change would otherwise leave stale highlighted spans.
+        self.markdown_cache.clear();
+
+        // ── Diff view mode ──────────────────────────────────────────
+        // Apply view_mode directly. `diff_state.view_mode` is written only in
+        // `DiffState::new` and here — there is no runtime interactive toggle —
+        // so overwriting it is safe.
+        self.diff_state.view_mode = crate::diff_state::DiffViewMode::from(new.diff.default_view);
+
+        // Copy all live config fields (no-op for restart-required fields).
+        // LayoutCache keyed on layout proportions detects changes automatically
+        // and recomputes on the next frame; no explicit invalidation needed.
+        self.config.adopt_appearance(new);
+
+        // Refresh the viewer file tree + diff to pick up tab_width / word_diff.
+        // refresh_viewer calls rehighlight_viewer unconditionally, so the new
+        // syntect theme is applied to the open file as part of this call.
+        self.refresh_viewer();
+        self.refresh_diff();
+
+        // Trigger a full redraw.
+        self.dirty.mark_all();
+    }
+
+    /// Reload the config file and apply any appearance changes.
+    ///
+    /// 1. Guards against the config file being absent (e.g., a remove event from
+    ///    a delete-then-write atomic save): skips loading to avoid `Config::load()`
+    ///    writing a default file and clobbering the user's in-progress edits.
+    /// 2. Loads `~/.config/conductor/config.toml`; on parse error, flashes an
+    ///    error message and returns without modifying the running config.
+    /// 3. Computes whether appearance fields and/or restart-required fields changed.
+    ///    True no-op (neither changed) → returns silently, which is also the guard
+    ///    that absorbs the self-write loop from the in-app theme picker.
+    /// 4. If restart-required fields changed, flashes a warning.
+    /// 5. If appearance fields changed, calls `apply_appearance` and (when no
+    ///    restart warning was issued) flashes an info confirmation.
+    pub fn reload_appearance_config(&mut self) {
+        // Guard: skip if the file was just deleted (remove event from an atomic
+        // editor save). Config::load() on a missing file would write defaults and
+        // return Config::default(), clobbering the user's work.
+        if !config::config_file_path().exists() {
+            return;
+        }
+
+        let new = match config::Config::load() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("config reload: failed to parse config file: {e}");
+                self.set_status(
+                    format!("Config error — kept previous settings: {e}"),
+                    StatusLevel::Error,
+                );
+                return;
+            }
+        };
+
+        let appearance_changed = new.appearance_snapshot() != self.config.appearance_snapshot();
+        let restart_changed = config::has_restart_changes(&self.config, &new);
+
+        // True no-op: nothing changed. This absorbs the FS event from the in-app
+        // theme picker (ui.theme is appearance-only, so both flags are false when
+        // the picker persists a theme that the running config already reflects).
+        if !appearance_changed && !restart_changed {
+            return;
+        }
+
+        if restart_changed {
+            self.set_status(
+                String::from("Config updated — some changes require a restart to take effect"),
+                StatusLevel::Warning,
+            );
+        }
+
+        if appearance_changed {
+            self.apply_appearance(&new);
+            if !restart_changed {
+                self.set_status_info(String::from("Config reloaded"));
+            }
         }
     }
 
