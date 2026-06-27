@@ -18,6 +18,12 @@ pub struct LayoutCache {
     pub expanded_panel: Option<crate::app::Focus>,
     /// Whether notification bar was visible (cache key).
     pub has_notifications: bool,
+    /// Explorer column width % used when computing this cache (cache key).
+    pub explorer_width_pct: u16,
+    /// Viewer column width % used when computing this cache (cache key).
+    pub viewer_width_pct: u16,
+    /// Claude Code area height % within the terminal column (cache key).
+    pub terminal_split_pct: u16,
     /// Title bar area.
     pub title_area: Rect,
     /// Notification bar area.
@@ -43,10 +49,14 @@ impl LayoutCache {
         frame_area: Rect,
         expanded_panel: Option<crate::app::Focus>,
         has_notifications: bool,
+        layout: &crate::config::LayoutConfig,
     ) -> bool {
         if self.frame_area == frame_area
             && self.expanded_panel == expanded_panel
             && self.has_notifications == has_notifications
+            && self.explorer_width_pct == layout.explorer_width_pct
+            && self.viewer_width_pct == layout.viewer_width_pct
+            && self.terminal_split_pct == layout.terminal_split_pct
         {
             return false;
         }
@@ -54,6 +64,9 @@ impl LayoutCache {
         self.frame_area = frame_area;
         self.expanded_panel = expanded_panel;
         self.has_notifications = has_notifications;
+        self.explorer_width_pct = layout.explorer_width_pct;
+        self.viewer_width_pct = layout.viewer_width_pct;
+        self.terminal_split_pct = layout.terminal_split_pct;
 
         // The notification bar is gone — Claude-waiting state is now shown by
         // the worktree strip (the waiting worktree is highlighted there).
@@ -77,7 +90,12 @@ impl LayoutCache {
         self.main_area = outer[3];
         self.status_area = outer[4];
 
-        let (left_w, explorer_w, viewer_w) = accordion_widths(expanded_panel, self.main_area.width);
+        let (left_w, explorer_w, viewer_w) = accordion_widths(
+            expanded_panel,
+            self.main_area.width,
+            layout.explorer_width_pct,
+            layout.viewer_width_pct,
+        );
         let right_w = self
             .main_area
             .width
@@ -99,10 +117,14 @@ impl LayoutCache {
                 .split(self.columns[1]);
         self.explorer_mid_y = explorer_split[1].y;
 
-        // Terminal 80/20 vertical split
-        let terminal_split =
-            Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
-                .split(self.columns[3]);
+        // Terminal vertical split: Claude Code gets `terminal_split_pct`%,
+        // shell gets the remainder.
+        let shell_pct = 100u16.saturating_sub(layout.terminal_split_pct);
+        let terminal_split = Layout::vertical([
+            Constraint::Percentage(layout.terminal_split_pct),
+            Constraint::Percentage(shell_pct),
+        ])
+        .split(self.columns[3]);
         self.terminal_split = [terminal_split[0], terminal_split[1]];
 
         true
@@ -111,10 +133,14 @@ impl LayoutCache {
 
 /// Calculate accordion panel widths based on panel expansion state.
 ///
-/// Returns `(left_width, explorer_width, viewer_width)`. The right panel gets whatever remains.
+/// Returns `(left_width, explorer_width, viewer_width)`. The right panel gets
+/// whatever remains. `explorer_pct` and `viewer_pct` are the configured
+/// percentages (0–100) used only in the default (non-maximized) layout.
 pub(crate) fn accordion_widths(
     expanded_panel: Option<crate::app::Focus>,
     total_width: u16,
+    explorer_pct: u16,
+    viewer_pct: u16,
 ) -> (u16, u16, u16) {
     use crate::app::Focus;
 
@@ -133,8 +159,9 @@ pub(crate) fn accordion_widths(
             // lives in the top strip), so it gets width 0 and the freed space
             // goes to the explorer and viewer review panes.
             let min_col = 3_u16;
-            let explorer = ((total_width as u32 * 24 / 100) as u16).max(min_col);
-            let viewer = ((total_width as u32 * 38 / 100) as u16).max(min_col);
+            let explorer =
+                ((total_width as u32 * explorer_pct as u32 / 100) as u16).max(min_col);
+            let viewer = ((total_width as u32 * viewer_pct as u32 / 100) as u16).max(min_col);
             (0, explorer, viewer)
         }
     }
@@ -142,16 +169,118 @@ pub(crate) fn accordion_widths(
 
 #[cfg(test)]
 mod tests {
-    use super::accordion_widths;
+    use ratatui::layout::Rect;
+
+    use super::{LayoutCache, accordion_widths};
     use crate::app::Focus;
+    use crate::config::LayoutConfig;
+
+    /// Build a minimal LayoutConfig with the given proportions.
+    fn layout(explorer: u16, viewer: u16, terminal: u16) -> LayoutConfig {
+        LayoutConfig {
+            explorer_width_pct: explorer,
+            viewer_width_pct: viewer,
+            terminal_split_pct: terminal,
+        }
+    }
+
+    /// A non-zero Rect large enough to produce non-trivial layout splits.
+    fn rect(w: u16, h: u16) -> Rect {
+        Rect::new(0, 0, w, h)
+    }
+
+    // ── LayoutCache::update ──────────────────────────────────────────
+
+    #[test]
+    fn layout_cache_update_returns_true_first_call() {
+        let mut cache = LayoutCache::default();
+        let changed = cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
+        assert!(changed, "first update must recompute");
+    }
+
+    #[test]
+    fn layout_cache_update_returns_false_on_identical_second_call() {
+        let mut cache = LayoutCache::default();
+        let cfg = layout(24, 38, 80);
+        cache.update(rect(200, 50), None, false, &cfg);
+        let changed = cache.update(rect(200, 50), None, false, &cfg);
+        assert!(!changed, "identical inputs must not recompute");
+    }
+
+    #[test]
+    fn layout_cache_invalidates_on_frame_area_change() {
+        let mut cache = LayoutCache::default();
+        let cfg = layout(24, 38, 80);
+        cache.update(rect(200, 50), None, false, &cfg);
+        let changed = cache.update(rect(201, 50), None, false, &cfg);
+        assert!(changed, "frame_area change must invalidate");
+    }
+
+    #[test]
+    fn layout_cache_invalidates_on_explorer_pct_change() {
+        let mut cache = LayoutCache::default();
+        cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
+        let changed = cache.update(rect(200, 50), None, false, &layout(30, 38, 80));
+        assert!(changed, "explorer_width_pct change must invalidate");
+    }
+
+    #[test]
+    fn layout_cache_invalidates_on_viewer_pct_change() {
+        let mut cache = LayoutCache::default();
+        cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
+        let changed = cache.update(rect(200, 50), None, false, &layout(24, 42, 80));
+        assert!(changed, "viewer_width_pct change must invalidate");
+    }
+
+    #[test]
+    fn layout_cache_invalidates_on_terminal_split_change() {
+        let mut cache = LayoutCache::default();
+        cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
+        let changed = cache.update(rect(200, 50), None, false, &layout(24, 38, 70));
+        assert!(changed, "terminal_split_pct change must invalidate");
+    }
+
+    // ── accordion_widths: abnormal percentages ───────────────────────
+
+    #[test]
+    fn accordion_widths_does_not_panic_on_large_percentages() {
+        // Percentages exceeding 100 must not panic (Percentage constraint clamps).
+        let _ = accordion_widths(None, 200, 240, 0);
+        let _ = accordion_widths(None, 100, 60, 60);
+    }
+
+    #[test]
+    fn terminal_split_pct_over_100_does_not_panic() {
+        // terminal_split_pct > 100 makes shell_pct saturate to 0; must not panic.
+        let mut cache = LayoutCache::default();
+        let _ = cache.update(rect(200, 50), None, false, &layout(24, 38, 200));
+    }
 
     #[test]
     fn maximized_editor_takes_full_width_via_explorer_slot() {
         // render_ui unions the explorer+viewer columns into the editor area, so
         // the maximized editor puts all width on the explorer slot (viewer 0),
         // collapsing the terminal column to zero remaining.
-        let (left, explorer, viewer) = accordion_widths(Some(Focus::Editor), 120);
+        let (left, explorer, viewer) = accordion_widths(Some(Focus::Editor), 120, 24, 38);
         assert_eq!((left, explorer, viewer), (0, 120, 0));
+    }
+
+    #[test]
+    fn default_layout_uses_configured_percentages() {
+        // With default percentages (24/38) and 200-column terminal.
+        let (left, explorer, viewer) = accordion_widths(None, 200, 24, 38);
+        assert_eq!(left, 0, "worktree column is always hidden");
+        assert_eq!(explorer, 48, "200 * 24 / 100 = 48");
+        assert_eq!(viewer, 76, "200 * 38 / 100 = 76");
+    }
+
+    #[test]
+    fn custom_percentages_are_respected() {
+        // Wider explorer (30%) and narrower viewer (30%).
+        let (left, explorer, viewer) = accordion_widths(None, 100, 30, 30);
+        assert_eq!(left, 0);
+        assert_eq!(explorer, 30);
+        assert_eq!(viewer, 30);
     }
 }
 
@@ -161,8 +290,10 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
 
     // Update layout cache (no-op if nothing changed).
+    // Disjoint field borrows: `app.layout_cache` mutably, `app.config.layout`
+    // immutably — Rust allows this because they are separate struct fields.
     app.layout_cache
-        .update(area, app.expanded_panel, has_notifications);
+        .update(area, app.expanded_panel, has_notifications, &app.config.layout);
 
     let title_area = app.layout_cache.title_area;
     let wtbar_area = app.layout_cache.wtbar_area;

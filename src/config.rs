@@ -47,6 +47,9 @@ pub struct Config {
     /// `[ui]` -- UI appearance settings (theme, etc.).
     #[serde(default)]
     pub ui: UiConfig,
+    /// `[layout]` -- panel proportion overrides.
+    #[serde(default)]
+    pub layout: LayoutConfig,
 }
 
 impl Config {
@@ -330,6 +333,35 @@ impl Default for RichConfig {
     }
 }
 
+/// `[layout]` section — panel proportion overrides.
+///
+/// Values are percentages (0–100). The worktree column is always 0-width
+/// (the worktree monitor lives in the top strip); the terminal column gets
+/// whatever width remains after explorer and viewer. These proportions apply
+/// only in the default (non-maximized) layout; maximizing a panel overrides
+/// them as before.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutConfig {
+    /// Explorer column width as a percentage of the total frame width.
+    pub explorer_width_pct: u16,
+    /// Viewer column width as a percentage of the total frame width.
+    pub viewer_width_pct: u16,
+    /// Claude Code area height as a percentage of the terminal column height.
+    /// The shell area receives the remainder.
+    pub terminal_split_pct: u16,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            explorer_width_pct: 24,
+            viewer_width_pct: 38,
+            terminal_split_pct: 80,
+        }
+    }
+}
+
 /// `[ui]` section — UI appearance overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -341,16 +373,166 @@ pub struct UiConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Snapshot types
+// ---------------------------------------------------------------------------
+
+/// A point-in-time capture of all "live-reloadable" (appearance) fields.
+///
+/// Equality is used as an idempotency guard in `App::reload_appearance_config`:
+/// when the snapshot matches the running state, no work is done, which naturally
+/// absorbs the self-write loop from the in-app theme picker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppearanceSnapshot {
+    pub ui_theme: Option<String>,
+    pub viewer_theme: String,
+    pub viewer_syntax_theme_file: Option<String>,
+    pub viewer_tab_width: usize,
+    // viewer.word_wrap is intentionally absent — the rendering path is not yet
+    // implemented, so saving word_wrap should not trigger a "Config reloaded"
+    // flash or any visual change. Re-add here when the render path is wired.
+    pub diff_word_diff: bool,
+    pub diff_default_view: DiffView,
+    pub general_decoration: String,
+    pub layout_explorer_width_pct: u16,
+    pub layout_viewer_width_pct: u16,
+    pub layout_terminal_split_pct: u16,
+}
+
+impl Config {
+    /// Capture a snapshot of the appearance (live-reloadable) fields.
+    pub fn appearance_snapshot(&self) -> AppearanceSnapshot {
+        AppearanceSnapshot {
+            ui_theme: self.ui.theme.clone(),
+            viewer_theme: self.viewer.theme.clone(),
+            viewer_syntax_theme_file: self.viewer.syntax_theme_file.clone(),
+            viewer_tab_width: self.viewer.tab_width,
+            diff_word_diff: self.diff.word_diff,
+            diff_default_view: self.diff.default_view,
+            general_decoration: self.general.decoration.clone(),
+            layout_explorer_width_pct: self.layout.explorer_width_pct,
+            layout_viewer_width_pct: self.layout.viewer_width_pct,
+            layout_terminal_split_pct: self.layout.terminal_split_pct,
+        }
+    }
+
+    /// Copy all live-reloadable appearance fields from `new` into `self`.
+    ///
+    /// Only the fields tracked by [`AppearanceSnapshot`] (plus `viewer.word_wrap`
+    /// which is tracked in config but not yet in the snapshot) are updated;
+    /// restart-required fields (shell, scrollback, API settings, keybinds, etc.)
+    /// are intentionally left untouched. Called by `App::apply_appearance` before
+    /// rebuilding derived state (syntect theme, diff, layout cache, etc.).
+    pub fn adopt_appearance(&mut self, new: &Config) {
+        self.ui.theme = new.ui.theme.clone();
+        self.viewer.theme = new.viewer.theme.clone();
+        self.viewer.syntax_theme_file = new.viewer.syntax_theme_file.clone();
+        self.viewer.tab_width = new.viewer.tab_width;
+        // word_wrap: copy into config so it persists, but not in AppearanceSnapshot
+        // because the rendering path is not yet implemented.
+        self.viewer.word_wrap = new.viewer.word_wrap;
+        self.diff.word_diff = new.diff.word_diff;
+        self.diff.default_view = new.diff.default_view;
+        self.general.decoration = new.general.decoration.clone();
+        self.layout = new.layout.clone();
+    }
+}
+
+/// Return `true` when `new` differs from `old` in any restart-required field.
+///
+/// Restart-required fields are those NOT covered by `AppearanceSnapshot`:
+/// `general.{repo, repos, worktree_dir, shell, main_branch, auto_resume,
+/// auto_resume_main}`, `terminal.{active_scrollback, inactive_scrollback}`,
+/// `rich.mode`, `api.*`, `updates.*`, `ccusage.*`, `review.*`, `keybinds`.
+pub fn has_restart_changes(old: &Config, new: &Config) -> bool {
+    old.general.shell != new.general.shell
+        || old.general.repo != new.general.repo
+        || old.general.repos != new.general.repos
+        || old.general.worktree_dir != new.general.worktree_dir
+        || old.general.main_branch != new.general.main_branch
+        || old.general.auto_resume != new.general.auto_resume
+        || old.general.auto_resume_main != new.general.auto_resume_main
+        || old.terminal.inactive_scrollback != new.terminal.inactive_scrollback
+        || old.terminal.active_scrollback != new.terminal.active_scrollback
+        || old.rich.mode != new.rich.mode
+        || old.api.model != new.api.model
+        || old.api.provider != new.api.provider
+        || old.api.command != new.api.command
+        || old.api.command_timeout_secs != new.api.command_timeout_secs
+        || old.updates.check_on_startup != new.updates.check_on_startup
+        || old.updates.check_interval_secs != new.updates.check_interval_secs
+        || old.ccusage.enabled != new.ccusage.enabled
+        || old.ccusage.poll_interval_secs != new.ccusage.poll_interval_secs
+        || old.review.prompt_template != new.review.prompt_template
+        || old.review.prompt_action != new.review.prompt_action
+        || old.keybinds != new.keybinds
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Return the canonical path to the configuration file.
-fn config_file_path() -> PathBuf {
+pub fn config_file_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
         .join("conductor")
         .join("config.toml")
+}
+
+/// Resolve the syntect syntax-highlighting theme for a given viewer config.
+///
+/// When `viewer.syntax_theme_file` is set, the file is loaded directly
+/// (falling back to a built-in theme on error). Otherwise, the built-in
+/// syntect theme that best matches `viewer.theme` is returned.
+///
+/// The mapping from conductor UI theme names to syntect names covers the four
+/// original dark themes; all other names fall back to `base16-mocha.dark`
+/// (the same drift that existed before this helper was extracted — expanding
+/// the mapping table is out of scope here).
+pub fn syntect_theme_for(
+    viewer: &ViewerConfig,
+    ts: &syntect::highlighting::ThemeSet,
+) -> syntect::highlighting::Theme {
+    // Map the conductor viewer theme name to the corresponding syntect key.
+    // Dark themes map to matching dark syntect themes; light themes map to
+    // light syntect built-ins so code blocks remain readable on a light UI.
+    let builtin_name = |theme: &str| -> &str {
+        match theme {
+            // Dark themes
+            "catppuccin-mocha" => "base16-mocha.dark",
+            "dracula" => "base16-eighties.dark",
+            "nord" => "base16-ocean.dark",
+            "solarized-dark" => "Solarized (dark)",
+            // Light themes — map to light syntect built-ins to preserve
+            // readability on a light background.
+            "catppuccin-latte" => "base16-ocean.light",
+            "solarized-light" => "Solarized (light)",
+            "github-light" => "InspiredGitHub",
+            _ => "base16-mocha.dark",
+        }
+    };
+    let fallback = || {
+        let name = builtin_name(&viewer.theme);
+        ts.themes
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| ts.themes["base16-mocha.dark"].clone())
+    };
+
+    if let Some(ref path) = viewer.syntax_theme_file {
+        match syntect::highlighting::ThemeSet::get_theme(path) {
+            Ok(theme) => theme,
+            Err(e) => {
+                log::warn!(
+                    "failed to load syntax theme file {path}: {e}; falling back to built-in theme"
+                );
+                fallback()
+            }
+        }
+    } else {
+        fallback()
+    }
 }
 
 /// Detect the user's shell from `$SHELL`, falling back to `/bin/sh`.
@@ -374,6 +556,8 @@ pub fn generate_default_config() -> String {
     String::from(
         r#"# Conductor configuration file
 # All fields are optional with sensible defaults.
+# Appearance settings (theme, viewer, diff, decoration, layout) take effect
+# immediately on file save — no restart required. All other settings need a restart.
 
 [general]
 # repo = "/path/to/default/repo"       # default repository to open on startup
@@ -465,6 +649,15 @@ pub fn generate_default_config() -> String {
 #                                       # Light themes work best on terminals with a light/white background.
 #                                       # When unset, conductor auto-detects a light background via OSC 11
 #                                       # and switches to catppuccin-latte for that session (no file write).
+
+[layout]
+# explorer_width_pct = 24               # explorer column width % (default: 24)
+# viewer_width_pct = 38                 # viewer column width % (default: 38)
+#                                       # terminal column gets the remaining width
+# terminal_split_pct = 80              # Claude Code area height % within terminal column (default: 80)
+#                                       # shell area receives the remainder
+#                                       # These proportions apply in the default layout only;
+#                                       # maximizing a panel (Alt+m) overrides them temporarily.
 "#,
     )
 }
@@ -490,11 +683,6 @@ pub fn persist_ui_theme(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Pure function: upsert `theme = "<name>"` in the `[ui]` section of a
-/// config file string, preserving all comments and surrounding content.
-///
-/// Extracted as a testable helper so file I/O in `persist_ui_theme` can be
-/// tested independently. Called transitively via `set_theme`.
 /// Return `true` when `line` is a `[ui]` TOML section header, possibly followed
 /// by whitespace and/or an inline comment (e.g. `[ui]  # colors`).
 /// Sub-sections like `[ui.fonts]` are deliberately excluded.
@@ -509,6 +697,11 @@ fn is_ui_section_header(line: &str) -> bool {
     after.is_empty() || after.starts_with('#')
 }
 
+/// Pure function: upsert `theme = "<name>"` in the `[ui]` section of a
+/// config file string, preserving all comments and surrounding content.
+///
+/// Extracted as a testable helper so file I/O in `persist_ui_theme` can be
+/// tested independently. Called transitively via `set_theme`.
 fn upsert_ui_theme(contents: &str, name: &str) -> String {
     let theme_line = format!("theme = \"{name}\"");
     let lines: Vec<&str> = contents.lines().collect();
@@ -796,5 +989,353 @@ theme = "catppuccin-latte"
         assert!(!super::is_ui_section_header("[ui.sub]"));
         assert!(!super::is_ui_section_header("[ui.colors]"));
         assert!(!super::is_ui_section_header("[viewer]"));
+    }
+
+    #[test]
+    fn layout_config_defaults() {
+        let cfg = LayoutConfig::default();
+        assert_eq!(cfg.explorer_width_pct, 24);
+        assert_eq!(cfg.viewer_width_pct, 38);
+        assert_eq!(cfg.terminal_split_pct, 80);
+    }
+
+    #[test]
+    fn layout_config_round_trips_through_toml() {
+        let toml_str = r#"[layout]
+explorer_width_pct = 30
+viewer_width_pct = 40
+terminal_split_pct = 75
+"#;
+        let cfg: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(cfg.layout.explorer_width_pct, 30);
+        assert_eq!(cfg.layout.viewer_width_pct, 40);
+        assert_eq!(cfg.layout.terminal_split_pct, 75);
+
+        let serialized = toml::to_string_pretty(&cfg).expect("serialize");
+        let cfg2: Config = toml::from_str(&serialized).expect("round-trip");
+        assert_eq!(cfg2.layout.explorer_width_pct, 30);
+        assert_eq!(cfg2.layout.viewer_width_pct, 40);
+        assert_eq!(cfg2.layout.terminal_split_pct, 75);
+    }
+
+    #[test]
+    fn layout_config_empty_toml_gives_defaults() {
+        let cfg: Config = toml::from_str("").expect("empty toml");
+        assert_eq!(cfg.layout.explorer_width_pct, 24);
+        assert_eq!(cfg.layout.viewer_width_pct, 38);
+        assert_eq!(cfg.layout.terminal_split_pct, 80);
+    }
+
+    #[test]
+    fn appearance_snapshot_includes_layout() {
+        let mut cfg = Config::default();
+        cfg.layout.explorer_width_pct = 30;
+        let snap = cfg.appearance_snapshot();
+        assert_eq!(snap.layout_explorer_width_pct, 30);
+        assert_eq!(snap.layout_viewer_width_pct, 38);
+        assert_eq!(snap.layout_terminal_split_pct, 80);
+    }
+
+    // ── adopt_appearance / appearance_snapshot invariants / has_restart_changes ──
+
+    /// AC4 往復不変条件: adopt_appearance 後に snapshot が new と一致すること。
+    /// AppearanceSnapshot に足してadopt_appearance のコピーに足し忘れた場合を検出する。
+    #[test]
+    fn adopt_appearance_round_trip_invariant() {
+        let mut cur = Config::default();
+        let mut new = Config::default();
+        // Change every live field to a non-default value.
+        new.ui.theme = Some(String::from("dracula"));
+        new.viewer.theme = String::from("dracula");
+        new.viewer.syntax_theme_file = Some(String::from("/tmp/custom.tmTheme"));
+        new.viewer.tab_width = 4;        // default is 2
+        new.viewer.word_wrap = true;     // default is false
+        new.diff.word_diff = false;      // default is true
+        new.diff.default_view = DiffView::SideBySide; // default is Unified
+        new.general.decoration = String::from("space");
+        new.layout.explorer_width_pct = 30;
+        new.layout.viewer_width_pct = 42;
+        new.layout.terminal_split_pct = 70;
+
+        cur.adopt_appearance(&new);
+
+        assert_eq!(
+            cur.appearance_snapshot(),
+            new.appearance_snapshot(),
+            "adopt_appearance must copy all snapshot-tracked live fields"
+        );
+    }
+
+    /// snapshot 等価: 同一 config は等価。
+    #[test]
+    fn appearance_snapshot_equal_for_identical_configs() {
+        let cfg = Config::default();
+        assert_eq!(cfg.appearance_snapshot(), cfg.appearance_snapshot());
+    }
+
+    /// snapshot 不等価: 各 live フィールドを 1 つ変えると != になること。
+    #[test]
+    fn appearance_snapshot_detects_each_live_field_change() {
+        let base = Config::default();
+
+        let mut c = base.clone();
+        c.ui.theme = Some(String::from("dracula"));
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "ui.theme");
+
+        let mut c = base.clone();
+        c.viewer.theme = String::from("nord");
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "viewer.theme");
+
+        let mut c = base.clone();
+        c.viewer.syntax_theme_file = Some(String::from("/custom.tmTheme"));
+        assert_ne!(
+            c.appearance_snapshot(),
+            base.appearance_snapshot(),
+            "viewer.syntax_theme_file"
+        );
+
+        let mut c = base.clone();
+        c.viewer.tab_width = 4; // default is 2
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "viewer.tab_width");
+
+        let mut c = base.clone();
+        c.diff.word_diff = false; // default is true
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "diff.word_diff");
+
+        let mut c = base.clone();
+        c.diff.default_view = DiffView::SideBySide; // default is Unified
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "diff.default_view");
+
+        let mut c = base.clone();
+        c.general.decoration = String::from("space");
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "general.decoration");
+
+        let mut c = base.clone();
+        c.layout.explorer_width_pct = 30;
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "layout.explorer_width_pct");
+
+        let mut c = base.clone();
+        c.layout.viewer_width_pct = 42;
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "layout.viewer_width_pct");
+
+        let mut c = base.clone();
+        c.layout.terminal_split_pct = 70;
+        assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "layout.terminal_split_pct");
+    }
+
+    /// has_restart_changes: live フィールドのみ変えたら false。
+    #[test]
+    fn has_restart_changes_false_for_live_only_diff() {
+        let old = Config::default();
+        let mut new = Config::default();
+        new.ui.theme = Some(String::from("dracula"));
+        new.viewer.theme = String::from("nord");
+        new.viewer.tab_width = 4;        // default is 2
+        new.diff.word_diff = false;      // default is true
+        new.general.decoration = String::from("space");
+        new.layout.explorer_width_pct = 30;
+        assert!(!has_restart_changes(&old, &new));
+    }
+
+    /// has_restart_changes: 各 restart フィールドを 1 つ変えたら true。
+    #[test]
+    fn has_restart_changes_true_for_each_restart_field() {
+        let base = Config::default();
+
+        let mut c = base.clone();
+        c.general.shell = String::from("/bin/fish");
+        assert!(has_restart_changes(&base, &c), "general.shell");
+
+        let mut c = base.clone();
+        c.general.main_branch = String::from("master");
+        assert!(has_restart_changes(&base, &c), "general.main_branch");
+
+        let mut c = base.clone();
+        c.general.repo = Some(PathBuf::from("/other/repo"));
+        assert!(has_restart_changes(&base, &c), "general.repo");
+
+        let mut c = base.clone();
+        c.general.auto_resume = false; // default is true
+        assert!(has_restart_changes(&base, &c), "general.auto_resume");
+
+        let mut c = base.clone();
+        c.general.auto_resume_main = true;
+        assert!(has_restart_changes(&base, &c), "general.auto_resume_main");
+
+        let mut c = base.clone();
+        c.terminal.active_scrollback = 99999;
+        assert!(has_restart_changes(&base, &c), "terminal.active_scrollback");
+
+        let mut c = base.clone();
+        c.api.provider = String::from("claude"); // default is "gemini"
+        assert!(has_restart_changes(&base, &c), "api.provider");
+
+        let mut c = base.clone();
+        c.ccusage.enabled = true;
+        assert!(has_restart_changes(&base, &c), "ccusage.enabled");
+    }
+
+    /// Partition test: すべてのフィールドが live か restart のどちらかに必ず属する。
+    /// フィールドを 1 つ変えた new で snapshot != か has_restart_changes が必ず true になること。
+    #[test]
+    fn every_field_is_either_live_or_restart() {
+        let base = Config::default();
+
+        // general
+        {
+            let mut c = base.clone();
+            c.general.repo = Some(PathBuf::from("/p"));
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.repo");
+        }
+        {
+            let mut c = base.clone();
+            c.general.main_branch = String::from("master");
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.main_branch");
+        }
+        {
+            let mut c = base.clone();
+            c.general.shell = String::from("/bin/fish");
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.shell");
+        }
+        {
+            let mut c = base.clone();
+            c.general.repos = vec![PathBuf::from("/p")];
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.repos");
+        }
+        {
+            let mut c = base.clone();
+            c.general.worktree_dir = Some(PathBuf::from("/wt"));
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.worktree_dir");
+        }
+        {
+            let mut c = base.clone();
+            c.general.decoration = String::from("space");
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.decoration");
+        }
+        {
+            let mut c = base.clone();
+            c.general.auto_resume = false; // default is true
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.auto_resume");
+        }
+        {
+            let mut c = base.clone();
+            c.general.auto_resume_main = true;
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.auto_resume_main");
+        }
+        // terminal
+        {
+            let mut c = base.clone();
+            c.terminal.active_scrollback = 9999;
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "terminal.active_scrollback");
+        }
+        // viewer (live)
+        {
+            let mut c = base.clone();
+            c.viewer.theme = String::from("nord");
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "viewer.theme");
+        }
+        {
+            let mut c = base.clone();
+            c.viewer.tab_width = 4; // default is 2
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "viewer.tab_width");
+        }
+        // diff (live)
+        {
+            let mut c = base.clone();
+            c.diff.word_diff = false; // default is true
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "diff.word_diff");
+        }
+        // api
+        {
+            let mut c = base.clone();
+            c.api.provider = String::from("claude"); // default is "gemini"
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "api.provider");
+        }
+        // ccusage
+        {
+            let mut c = base.clone();
+            c.ccusage.enabled = true;
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "ccusage.enabled");
+        }
+        // layout (live)
+        {
+            let mut c = base.clone();
+            c.layout.explorer_width_pct = 30;
+            assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "layout.explorer_width_pct");
+        }
+    }
+
+    /// Helper: estimate background luminance of a syntect theme (0–255 range).
+    fn theme_bg_luma(theme: &syntect::highlighting::Theme) -> f32 {
+        theme
+            .settings
+            .background
+            .map(|c| 0.299 * c.r as f32 + 0.587 * c.g as f32 + 0.114 * c.b as f32)
+            .unwrap_or(0.0)
+    }
+
+    /// syntect_theme_for: dark UI テーマは暗い syntect テーマを返すこと。
+    #[test]
+    fn syntect_theme_for_dark_themes_return_dark_syntect() {
+        let ts = syntect::highlighting::ThemeSet::load_defaults();
+        let viewer_with = |theme: &str| ViewerConfig {
+            theme: theme.to_string(),
+            syntax_theme_file: None,
+            ..Default::default()
+        };
+
+        for name in &["catppuccin-mocha", "dracula", "nord", "solarized-dark"] {
+            let theme = syntect_theme_for(&viewer_with(name), &ts);
+            assert!(
+                theme_bg_luma(&theme) < 128.0,
+                "dark conductor theme '{name}' must map to a dark syntect theme (luma={:.0})",
+                theme_bg_luma(&theme)
+            );
+        }
+    }
+
+    /// syntect_theme_for: ライトテーマがライト系 syntect テーマを返すこと。
+    #[test]
+    fn syntect_theme_for_light_themes_use_light_syntect() {
+        let ts = syntect::highlighting::ThemeSet::load_defaults();
+        let viewer_with = |theme: &str| ViewerConfig {
+            theme: theme.to_string(),
+            syntax_theme_file: None,
+            ..Default::default()
+        };
+
+        // Light UI themes must map to light syntect built-ins.
+        for name in &["catppuccin-latte", "solarized-light", "github-light"] {
+            let theme = syntect_theme_for(&viewer_with(name), &ts);
+            assert!(
+                theme_bg_luma(&theme) >= 128.0,
+                "light conductor theme '{name}' must map to a light syntect theme (luma={:.0})",
+                theme_bg_luma(&theme)
+            );
+        }
+    }
+
+    /// syntect_theme_for: 未知テーマ名はパニックせず mocha フォールバック。
+    #[test]
+    fn syntect_theme_for_unknown_falls_back_without_panic() {
+        let ts = syntect::highlighting::ThemeSet::load_defaults();
+        let viewer = ViewerConfig {
+            theme: String::from("nonexistent-theme-xyz"),
+            syntax_theme_file: None,
+            ..Default::default()
+        };
+        let _ = syntect_theme_for(&viewer, &ts); // must not panic
+    }
+
+    /// syntect_theme_for: 存在しないパスの syntax_theme_file はパニックしないこと。
+    #[test]
+    fn syntect_theme_for_missing_theme_file_falls_back_without_panic() {
+        let ts = syntect::highlighting::ThemeSet::load_defaults();
+        let viewer = ViewerConfig {
+            theme: String::from("catppuccin-mocha"),
+            syntax_theme_file: Some(String::from("/nonexistent/path/theme.tmTheme")),
+            ..Default::default()
+        };
+        let _ = syntect_theme_for(&viewer, &ts); // must not panic
     }
 }
