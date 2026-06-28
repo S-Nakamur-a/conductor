@@ -74,6 +74,11 @@
 # alt+m — maximize/zoom the focused panel. Reliable everywhere (super+space's
 # Cmd is eaten by macOS/terminals); the easy half of "focus then zoom".
 "alt+m" = "toggle_panel_expand"
+# Resize the Claude/Shell vertical split at runtime (the Shell starts small).
+# Ctrl+Alt+Up grows the Shell (divider up); Ctrl+Alt+Down shrinks it. These fire
+# even with the Shell (a terminal) focused, so you can resize while typing in it.
+"ctrl+alt+up" = "grow_shell"
+"ctrl+alt+down" = "shrink_shell"
 "alt+/" = "toggle_panel_overlay"
 # macOS Unicode fallback (Option+/ = '÷', US layout).
 "÷" = "toggle_panel_overlay"

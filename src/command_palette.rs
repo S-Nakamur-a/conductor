@@ -19,6 +19,8 @@ pub enum CommandId {
     NextWorktree,
     PrevWorktree,
     TogglePanelExpand,
+    GrowShell,
+    ShrinkShell,
 
     // Worktree
     CreateWorktree,
@@ -202,6 +204,20 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Navigation,
         action: Some(Action::TogglePanelExpand),
         keywords: "resize maximize fullscreen",
+    },
+    PaletteCommand {
+        id: CommandId::GrowShell,
+        label: "Layout: Grow Shell Area",
+        category: CommandCategory::Navigation,
+        action: Some(Action::GrowShell),
+        keywords: "resize terminal shell split bigger taller",
+    },
+    PaletteCommand {
+        id: CommandId::ShrinkShell,
+        label: "Layout: Shrink Shell Area",
+        category: CommandCategory::Navigation,
+        action: Some(Action::ShrinkShell),
+        keywords: "resize terminal shell split smaller shorter claude",
     },
     // Worktree
     PaletteCommand {

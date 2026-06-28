@@ -655,7 +655,8 @@ pub fn generate_default_config() -> String {
 # viewer_width_pct = 38                 # viewer column width % (default: 38)
 #                                       # terminal column gets the remaining width
 # terminal_split_pct = 80              # Claude Code area height % within terminal column (default: 80)
-#                                       # shell area receives the remainder
+#                                       # shell area receives the remainder; the initial split only —
+#                                       # adjust it live with Ctrl+Alt+Up / Ctrl+Alt+Down (grow/shrink shell)
 #                                       # These proportions apply in the default layout only;
 #                                       # maximizing a panel (Alt+m) overrides them temporarily.
 "#,

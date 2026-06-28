@@ -50,13 +50,14 @@ impl LayoutCache {
         expanded_panel: Option<crate::app::Focus>,
         has_notifications: bool,
         layout: &crate::config::LayoutConfig,
+        terminal_split_pct: u16,
     ) -> bool {
         if self.frame_area == frame_area
             && self.expanded_panel == expanded_panel
             && self.has_notifications == has_notifications
             && self.explorer_width_pct == layout.explorer_width_pct
             && self.viewer_width_pct == layout.viewer_width_pct
-            && self.terminal_split_pct == layout.terminal_split_pct
+            && self.terminal_split_pct == terminal_split_pct
         {
             return false;
         }
@@ -66,7 +67,9 @@ impl LayoutCache {
         self.has_notifications = has_notifications;
         self.explorer_width_pct = layout.explorer_width_pct;
         self.viewer_width_pct = layout.viewer_width_pct;
-        self.terminal_split_pct = layout.terminal_split_pct;
+        // The terminal split is runtime-adjustable (grow/shrink shell), so it
+        // comes in as a parameter rather than straight from the config.
+        self.terminal_split_pct = terminal_split_pct;
 
         // The notification bar is gone — Claude-waiting state is now shown by
         // the worktree strip (the waiting worktree is highlighted there).
@@ -119,9 +122,9 @@ impl LayoutCache {
 
         // Terminal vertical split: Claude Code gets `terminal_split_pct`%,
         // shell gets the remainder.
-        let shell_pct = 100u16.saturating_sub(layout.terminal_split_pct);
+        let shell_pct = 100u16.saturating_sub(terminal_split_pct);
         let terminal_split = Layout::vertical([
-            Constraint::Percentage(layout.terminal_split_pct),
+            Constraint::Percentage(terminal_split_pct),
             Constraint::Percentage(shell_pct),
         ])
         .split(self.columns[3]);
@@ -194,7 +197,7 @@ mod tests {
     #[test]
     fn layout_cache_update_returns_true_first_call() {
         let mut cache = LayoutCache::default();
-        let changed = cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
+        let changed = cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
         assert!(changed, "first update must recompute");
     }
 
@@ -202,8 +205,8 @@ mod tests {
     fn layout_cache_update_returns_false_on_identical_second_call() {
         let mut cache = LayoutCache::default();
         let cfg = layout(24, 38, 80);
-        cache.update(rect(200, 50), None, false, &cfg);
-        let changed = cache.update(rect(200, 50), None, false, &cfg);
+        cache.update(rect(200, 50), None, false, &cfg, 80);
+        let changed = cache.update(rect(200, 50), None, false, &cfg, 80);
         assert!(!changed, "identical inputs must not recompute");
     }
 
@@ -211,32 +214,35 @@ mod tests {
     fn layout_cache_invalidates_on_frame_area_change() {
         let mut cache = LayoutCache::default();
         let cfg = layout(24, 38, 80);
-        cache.update(rect(200, 50), None, false, &cfg);
-        let changed = cache.update(rect(201, 50), None, false, &cfg);
+        cache.update(rect(200, 50), None, false, &cfg, 80);
+        let changed = cache.update(rect(201, 50), None, false, &cfg, 80);
         assert!(changed, "frame_area change must invalidate");
     }
 
     #[test]
     fn layout_cache_invalidates_on_explorer_pct_change() {
         let mut cache = LayoutCache::default();
-        cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
-        let changed = cache.update(rect(200, 50), None, false, &layout(30, 38, 80));
+        cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
+        let changed = cache.update(rect(200, 50), None, false, &layout(30, 38, 80), 80);
         assert!(changed, "explorer_width_pct change must invalidate");
     }
 
     #[test]
     fn layout_cache_invalidates_on_viewer_pct_change() {
         let mut cache = LayoutCache::default();
-        cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
-        let changed = cache.update(rect(200, 50), None, false, &layout(24, 42, 80));
+        cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
+        let changed = cache.update(rect(200, 50), None, false, &layout(24, 42, 80), 80);
         assert!(changed, "viewer_width_pct change must invalidate");
     }
 
     #[test]
     fn layout_cache_invalidates_on_terminal_split_change() {
+        // The terminal split now arrives as a runtime parameter (grow/shrink
+        // shell), so vary that argument rather than the config field.
         let mut cache = LayoutCache::default();
-        cache.update(rect(200, 50), None, false, &layout(24, 38, 80));
-        let changed = cache.update(rect(200, 50), None, false, &layout(24, 38, 70));
+        let cfg = layout(24, 38, 80);
+        cache.update(rect(200, 50), None, false, &cfg, 80);
+        let changed = cache.update(rect(200, 50), None, false, &cfg, 70);
         assert!(changed, "terminal_split_pct change must invalidate");
     }
 
@@ -253,7 +259,7 @@ mod tests {
     fn terminal_split_pct_over_100_does_not_panic() {
         // terminal_split_pct > 100 makes shell_pct saturate to 0; must not panic.
         let mut cache = LayoutCache::default();
-        let _ = cache.update(rect(200, 50), None, false, &layout(24, 38, 200));
+        let _ = cache.update(rect(200, 50), None, false, &layout(24, 38, 200), 200);
     }
 
     #[test]
@@ -292,8 +298,13 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // Update layout cache (no-op if nothing changed).
     // Disjoint field borrows: `app.layout_cache` mutably, `app.config.layout`
     // immutably — Rust allows this because they are separate struct fields.
-    app.layout_cache
-        .update(area, app.expanded_panel, has_notifications, &app.config.layout);
+    app.layout_cache.update(
+        area,
+        app.expanded_panel,
+        has_notifications,
+        &app.config.layout,
+        app.terminal_split_pct,
+    );
 
     let title_area = app.layout_cache.title_area;
     let wtbar_area = app.layout_cache.wtbar_area;

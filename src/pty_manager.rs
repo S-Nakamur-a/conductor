@@ -396,25 +396,39 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Translate a mouse-wheel scroll into arrow-key presses for a session
-    /// that is showing the **alternate screen** (e.g. pagers like `less`,
-    /// `bat`, `man`).
+    /// Forward a mouse-wheel scroll to a PTY session that owns the screen,
+    /// returning `true` when the scroll was handled (the caller must then **not**
+    /// adjust the local scrollback offset).
     ///
-    /// The alternate screen has no scrollback of its own, so the local
-    /// scrollback offset is meaningless there — the user must scroll the
-    /// child program instead. This mirrors the "alternate-scroll" behavior
-    /// of tmux / iTerm2: each wheel notch becomes `lines` Up/Down arrow
-    /// presses sent to the child.
+    /// Three cases, matching how tmux / iTerm2 behave:
     ///
-    /// Returns `true` if the scroll was handled by injecting arrow keys, in
-    /// which case the caller must **not** also adjust the local scrollback
-    /// offset. Returns `false` when the session is not on the alternate
-    /// screen, or when the child has enabled mouse reporting (in which case
-    /// it captures the wheel itself and synthesizing arrows would fight it).
-    pub fn scroll_alt_screen_session(&mut self, idx: usize, lines: usize, up: bool) -> bool {
+    /// 1. **Child requested mouse reporting** (vim/neovim with `mouse=`,
+    ///    `less --mouse`, fzf, …): forward the wheel as a properly encoded mouse
+    ///    event (SGR `1006` or legacy X10) at `col`/`row` so the application
+    ///    scrolls itself. This is the fix for full-screen apps where the wheel
+    ///    used to be swallowed entirely. Applies on both the normal and
+    ///    alternate screen — if the app turned mouse reporting on, it wants the
+    ///    event.
+    /// 2. **Alternate screen, no mouse reporting** (pagers like `less`, `bat`,
+    ///    `man`): the alternate screen has no scrollback of its own, so translate
+    ///    each wheel notch into `lines` Up/Down arrow presses sent to the child
+    ///    (the classic "alternate-scroll").
+    /// 3. **Normal screen, no mouse reporting**: not handled here — return
+    ///    `false` so the caller scrolls the panel's local scrollback buffer.
+    ///
+    /// `col` / `row` are 1-based coordinates within the PTY grid, used only for
+    /// the mouse-event encoding in case 1.
+    pub fn forward_scroll_to_session(
+        &mut self,
+        idx: usize,
+        lines: usize,
+        up: bool,
+        col: u16,
+        row: u16,
+    ) -> bool {
         // Read the relevant terminal modes, then drop the session/parser
         // borrow before writing (write_to_session needs &mut self).
-        let (is_alt, app_cursor, mouse_on) = {
+        let (is_alt, app_cursor, mouse_mode, mouse_encoding) = {
             let Some(session) = self.sessions.get(idx) else {
                 return false;
             };
@@ -423,14 +437,27 @@ impl PtyManager {
             (
                 screen.alternate_screen(),
                 screen.application_cursor(),
-                screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None,
+                screen.mouse_protocol_mode(),
+                screen.mouse_protocol_encoding(),
             )
         };
 
-        if !is_alt || mouse_on {
+        // Case 1: the child captures the wheel itself — hand it an encoded event.
+        if mouse_mode != vt100::MouseProtocolMode::None {
+            let seq = encode_mouse_wheel(up, col, row, mouse_encoding);
+            if let Err(e) = self.write_to_session(idx, &seq) {
+                log::warn!("failed to forward wheel event to PTY session: {e}");
+            }
+            return true;
+        }
+
+        // Case 3: ordinary screen with no mouse reporting → caller scrolls
+        // the local scrollback buffer.
+        if !is_alt {
             return false;
         }
 
+        // Case 2: alternate-screen pager → synthesize arrow keys.
         let arrow = scroll_arrow_sequence(up, app_cursor);
         let mut buf = Vec::with_capacity(arrow.len() * lines);
         for _ in 0..lines {
@@ -477,30 +504,57 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Send a large text payload to the PTY using bracketed paste mode and
+    /// Send a clipboard paste payload to the PTY, sanitizing it first and using
     /// chunked writes to avoid hitting the kernel's PTY input buffer limit
     /// (typically 4096 bytes on macOS / Linux).
+    ///
+    /// Two safety steps mirror what a well-behaved terminal does with a paste:
+    ///
+    /// 1. **Sanitize** (`sanitize_pasted_text`): clipboard content can carry
+    ///    ANSI escape sequences and other non-printable control bytes (copied
+    ///    from a colorized terminal, a web page, etc.). Forwarding those raw
+    ///    lets them move the cursor, change modes, or — worst — smuggle a
+    ///    `\x1b[201~` that ends bracketed paste early so the remainder runs as
+    ///    typed commands. We strip escape sequences and control characters,
+    ///    keeping only tabs and newlines (CR is normalized to LF).
+    /// 2. **Conditional bracketing**: the `\x1b[200~` / `\x1b[201~` markers are
+    ///    only emitted when the foreground application has actually enabled
+    ///    bracketed paste (DECSET 2004), exactly as a real terminal gates them.
+    ///    Wrapping unconditionally would dump literal `[200~` / `[201~` text
+    ///    into apps that never asked for it (a bare prompt, `cat`, …).
     pub fn write_paste_to_session(&mut self, idx: usize, text: &str) -> Result<()> {
         const CHUNK_SIZE: usize = 1024;
         const CHUNK_DELAY: Duration = Duration::from_millis(5);
+
+        let cleaned = sanitize_pasted_text(text);
 
         let session = self
             .sessions
             .get_mut(idx)
             .context("Session index out of bounds")?;
+
+        // Read the bracketed-paste mode flag under the screen lock, then drop it
+        // before taking the writer lock.
+        let bracketed = {
+            let parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
+            parser.screen().bracketed_paste()
+        };
+
         let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Begin bracketed paste mode.
-        writer
-            .write_all(b"\x1b[200~")
-            .context("Failed to write paste-start to PTY")?;
-        writer.flush().context("Failed to flush PTY writer")?;
+        // Begin bracketed paste mode (only if the app understands it).
+        if bracketed {
+            writer
+                .write_all(b"\x1b[200~")
+                .context("Failed to write paste-start to PTY")?;
+            writer.flush().context("Failed to flush PTY writer")?;
+        }
 
         // Write the payload in small chunks. Split on UTF-8 character
         // boundaries so a flushed chunk never ends with a truncated multi-byte
         // sequence (see `utf8_chunks`) — otherwise full-width / multi-byte text
         // split across the 1 KiB boundary can be mis-decoded by the receiver.
-        for chunk in utf8_chunks(text, CHUNK_SIZE) {
+        for chunk in utf8_chunks(&cleaned, CHUNK_SIZE) {
             writer
                 .write_all(chunk.as_bytes())
                 .context("Failed to write chunk to PTY")?;
@@ -511,10 +565,12 @@ impl PtyManager {
         }
 
         // End bracketed paste mode.
-        writer
-            .write_all(b"\x1b[201~")
-            .context("Failed to write paste-end to PTY")?;
-        writer.flush().context("Failed to flush PTY writer")?;
+        if bracketed {
+            writer
+                .write_all(b"\x1b[201~")
+                .context("Failed to write paste-end to PTY")?;
+            writer.flush().context("Failed to flush PTY writer")?;
+        }
 
         Ok(())
     }
@@ -545,6 +601,18 @@ impl PtyManager {
                 buf.clone()
             })
             .unwrap_or_default()
+    }
+
+    /// Whether the session at `idx` has application cursor keys mode (DECCKM)
+    /// enabled. Full-screen programs on the alternate screen — pagers (`less`,
+    /// `bat`), editors (`vim`) — commonly turn this on, after which they expect
+    /// the arrow keys as SS3 (`ESC O A`) and ignore the default CSI (`ESC [ A`)
+    /// form. Key forwarding consults this so the arrows actually drive them.
+    pub fn session_application_cursor(&self, idx: usize) -> bool {
+        self.sessions.get(idx).is_some_and(|s| {
+            let parser = s.screen.lock().unwrap_or_else(|e| e.into_inner());
+            parser.screen().application_cursor()
+        })
     }
 
     /// Get the vt100 screen parser for the session at the given index.
@@ -1074,6 +1142,116 @@ fn utf8_chunks(text: &str, max: usize) -> Vec<&str> {
     chunks
 }
 
+/// Sanitize clipboard text before it is written to a PTY as a paste.
+///
+/// Clipboard content frequently carries bytes that are unsafe to forward
+/// verbatim into a terminal's input stream:
+/// * **ANSI escape sequences** (copied from a colorized terminal, a TUI, a web
+///   page that styled its text): these move the cursor, switch modes, or — most
+///   dangerously — can contain a `\x1b[201~` that prematurely *ends* bracketed
+///   paste, after which the rest of the clipboard is interpreted as typed
+///   commands. Whole escape sequences are dropped.
+/// * **Other C0/C1 control characters and DEL**: forwarded raw they can ring
+///   bells, send signals (via the line discipline), or corrupt the input.
+///
+/// What is preserved: ordinary printable text, **tabs** (`\t`), and **newlines**
+/// (`\n`). Carriage returns are normalized — `\r\n` and lone `\r` both become a
+/// single `\n` — so multi-line pastes keep their line structure without
+/// injecting bare CRs.
+fn sanitize_pasted_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // ESC introduces an escape sequence — drop the whole thing.
+            '\u{1b}' => skip_escape_sequence(&mut chars),
+            '\t' | '\n' => out.push(c),
+            // Normalize CR / CRLF to a single LF.
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.push('\n');
+            }
+            // Drop every other control character (remaining C0, DEL, C1).
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Consume the remainder of an ANSI escape sequence whose introducing `ESC` has
+/// already been read from `chars`. Handles the common sequence shapes so that no
+/// stray bytes of a dropped sequence leak into the sanitized output:
+/// * `CSI` (`ESC [`) — parameters/intermediates up to a final byte `0x40..=0x7E`.
+/// * String sequences `OSC/DCS/SOS/PM/APC` (`ESC ] P X ^ _`) — up to `BEL` or
+///   the String Terminator `ESC \`.
+/// * `SS2/SS3` (`ESC N` / `ESC O`) — exactly one following byte.
+/// * Anything else (`ESC` + a single byte, e.g. `ESC 7`) — already consumed.
+fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars>) {
+    match chars.next() {
+        Some('[') => {
+            for c in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    break;
+                }
+            }
+        }
+        Some(']') | Some('P') | Some('X') | Some('^') | Some('_') => {
+            while let Some(c) = chars.next() {
+                if c == '\u{07}' {
+                    break;
+                }
+                if c == '\u{1b}' {
+                    if chars.peek() == Some(&'\\') {
+                        chars.next();
+                    }
+                    break;
+                }
+            }
+        }
+        Some('N') | Some('O') => {
+            // Single-shift: skip the one character it selects.
+            chars.next();
+        }
+        _ => {}
+    }
+}
+
+/// Encode a single mouse-wheel notch as the byte sequence a terminal sends to a
+/// child program that has enabled mouse reporting.
+///
+/// `up` selects wheel-up (xterm button 64) vs wheel-down (65). `col` / `row` are
+/// 1-based cell coordinates. The `encoding` follows the child's requested mode:
+/// SGR (`1006`, the modern default that has no 223-column limit) emits
+/// `CSI < b ; col ; row M`; otherwise the legacy X10 form `CSI M Cb Cx Cy` is
+/// used, with each value offset by 32 and clamped to one byte.
+fn encode_mouse_wheel(
+    up: bool,
+    col: u16,
+    row: u16,
+    encoding: vt100::MouseProtocolEncoding,
+) -> Vec<u8> {
+    let button: u16 = if up { 64 } else { 65 };
+    let col = col.max(1);
+    let row = row.max(1);
+    match encoding {
+        vt100::MouseProtocolEncoding::Sgr => {
+            format!("\x1b[<{button};{col};{row}M").into_bytes()
+        }
+        // Default (X10) and Utf8: CSI M Cb Cx Cy, each byte offset by 32.
+        // Values above 223 cannot be represented in the legacy form; clamp so
+        // we never emit a byte that wraps the coordinate.
+        _ => {
+            let cb = (32 + button).min(255) as u8;
+            let cx = (32 + col).min(255) as u8;
+            let cy = (32 + row).min(255) as u8;
+            vec![0x1b, b'[', b'M', cb, cx, cy]
+        }
+    }
+}
+
 /// Count the number of Cursor Position Report requests (`CSI 6 n` = `\x1b[6n`)
 /// in a byte slice.  Programs send this to ask the terminal "where is the
 /// cursor?" and expect a `CSI row ; col R` response.
@@ -1113,6 +1291,90 @@ mod tests {
         // Normal mode → CSI (ESC [).
         assert_eq!(scroll_arrow_sequence(true, false), b"\x1b[A");
         assert_eq!(scroll_arrow_sequence(false, false), b"\x1b[B");
+    }
+
+    // ── sanitize_pasted_text ─────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_keeps_plain_text_tabs_and_newlines() {
+        let input = "echo hello\tworld\nsecond line\n";
+        assert_eq!(sanitize_pasted_text(input), input);
+    }
+
+    #[test]
+    fn sanitize_normalizes_crlf_and_lone_cr_to_lf() {
+        assert_eq!(sanitize_pasted_text("a\r\nb\rc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn sanitize_strips_csi_escape_sequences() {
+        // SGR color codes around the word must be removed, leaving plain text.
+        let input = "\x1b[31mred\x1b[0m text";
+        assert_eq!(sanitize_pasted_text(input), "red text");
+    }
+
+    #[test]
+    fn sanitize_removes_embedded_bracketed_paste_end_marker() {
+        // The load-bearing security case: a clipboard that smuggles a paste-end
+        // marker (`\x1b[201~`) followed by a command must not be able to break
+        // out of bracketed paste. The whole CSI sequence (incl. the `~` final
+        // byte) is dropped, so no `201~` survives.
+        let input = "safe\x1b[201~rm -rf /\n";
+        let out = sanitize_pasted_text(input);
+        assert_eq!(out, "saferm -rf /\n");
+        assert!(!out.contains("201~"));
+        assert!(!out.contains('\x1b'));
+    }
+
+    #[test]
+    fn sanitize_strips_osc_string_sequence() {
+        // OSC (window title) terminated by BEL — the whole thing is removed.
+        let input = "before\x1b]0;evil title\x07after";
+        assert_eq!(sanitize_pasted_text(input), "beforeafter");
+    }
+
+    #[test]
+    fn sanitize_drops_bare_control_bytes_but_keeps_text() {
+        // NUL, BEL, backspace, DEL all dropped; surrounding text intact.
+        let input = "a\x00b\x07c\x08d\x7fe";
+        assert_eq!(sanitize_pasted_text(input), "abcde");
+    }
+
+    #[test]
+    fn sanitize_preserves_multibyte_text() {
+        let input = "こんにちは\tworld\n";
+        assert_eq!(sanitize_pasted_text(input), input);
+    }
+
+    // ── encode_mouse_wheel ───────────────────────────────────────────────
+
+    #[test]
+    fn encode_mouse_wheel_sgr_up_and_down() {
+        // SGR: wheel up = button 64, down = 65; coordinates inline, final 'M'.
+        assert_eq!(
+            encode_mouse_wheel(true, 5, 9, vt100::MouseProtocolEncoding::Sgr),
+            b"\x1b[<64;5;9M".to_vec()
+        );
+        assert_eq!(
+            encode_mouse_wheel(false, 1, 1, vt100::MouseProtocolEncoding::Sgr),
+            b"\x1b[<65;1;1M".to_vec()
+        );
+    }
+
+    #[test]
+    fn encode_mouse_wheel_x10_offsets_by_32() {
+        // Legacy X10: CSI M Cb Cx Cy with each value +32. Up = 64+32 = 96 = '`'.
+        let seq = encode_mouse_wheel(true, 2, 3, vt100::MouseProtocolEncoding::Default);
+        assert_eq!(seq, vec![0x1b, b'[', b'M', 96, 34, 35]);
+    }
+
+    #[test]
+    fn encode_mouse_wheel_clamps_coordinates_to_at_least_one() {
+        // 0 coordinates are clamped to 1 so the SGR form stays well-formed.
+        assert_eq!(
+            encode_mouse_wheel(true, 0, 0, vt100::MouseProtocolEncoding::Sgr),
+            b"\x1b[<64;1;1M".to_vec()
+        );
     }
 
     #[test]
