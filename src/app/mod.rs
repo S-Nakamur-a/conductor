@@ -684,48 +684,67 @@ impl App {
 
     // ── Reflow transcript view ────────────────────────────────────────────
 
-    /// Enter the reflow transcript view for the focused worktree's latest session.
+    /// Enter the reflow transcript view for the active Claude panel's session.
     ///
-    /// Resolves the focused worktree's working directory, looks up the most
-    /// recent Claude Code session via history, loads and parses the `.jsonl`
-    /// file, and activates the overlay. If no session is found or the log is
-    /// empty, a status flash is shown and the view stays inactive.
+    /// Resolves the session backing the currently displayed Claude panel (via
+    /// its pinned `claude_session_id`), loads and parses that `.jsonl` file, and
+    /// activates the overlay. Falls back to the selected worktree's most recent
+    /// session only when the panel has no tracked id. If no session is found or
+    /// the log is empty, a status flash is shown and the view stays inactive.
     pub fn open_reflow(&mut self) {
-        let working_dir = match self.worktrees.get(self.selected_worktree) {
-            Some(wt) => wt.path.clone(),
-            None => {
-                self.set_status(
-                    "No worktree selected for transcript view".to_string(),
-                    StatusLevel::Warning,
-                );
-                return;
-            }
-        };
+        // Prefer the session backing the *currently displayed* Claude panel. A
+        // worktree can host several Claude panels (CC:1, CC:2, …), so resolving
+        // "the worktree's latest session" would open whichever log was written
+        // most recently regardless of which panel is on screen — that is the
+        // cross-panel scroll bleed this view used to suffer from. The pinned
+        // per-session id (see `PtySession::claude_session_id`) ties the
+        // transcript to the panel the user is actually looking at.
+        let resolved = self
+            .terminal
+            .active_claude_session
+            .and_then(|idx| self.terminal.pty_manager.claude_session_ref(idx));
 
-        let canonical =
-            std::fs::canonicalize(&working_dir).unwrap_or_else(|_| working_dir.clone());
-        let session = match crate::claude_sessions::find_latest_sessions_for_paths(
-            std::slice::from_ref(&working_dir),
-        ) {
-            Ok(mut map) => map.remove(&canonical),
-            Err(e) => {
-                log::warn!("reflow: cannot look up session: {e}");
-                None
-            }
-        };
-        let session = match session {
-            Some(s) => s,
+        let (working_dir, session_id) = match resolved {
+            Some(pair) => pair,
             None => {
-                self.set_status(
-                    "No Claude session found for this worktree".to_string(),
-                    StatusLevel::Info,
-                );
-                return;
+                // Fallback for panels without a tracked id (e.g. sessions that
+                // predate id pinning): use the selected worktree's latest log.
+                let working_dir = match self.worktrees.get(self.selected_worktree) {
+                    Some(wt) => wt.path.clone(),
+                    None => {
+                        self.set_status(
+                            "No worktree selected for transcript view".to_string(),
+                            StatusLevel::Warning,
+                        );
+                        return;
+                    }
+                };
+                let canonical =
+                    std::fs::canonicalize(&working_dir).unwrap_or_else(|_| working_dir.clone());
+                let session = match crate::claude_sessions::find_latest_sessions_for_paths(
+                    std::slice::from_ref(&working_dir),
+                ) {
+                    Ok(mut map) => map.remove(&canonical),
+                    Err(e) => {
+                        log::warn!("reflow: cannot look up session: {e}");
+                        None
+                    }
+                };
+                match session {
+                    Some(s) => (working_dir, s.session_id),
+                    None => {
+                        self.set_status(
+                            "No Claude session found for this worktree".to_string(),
+                            StatusLevel::Info,
+                        );
+                        return;
+                    }
+                }
             }
         };
 
         let jsonl_path =
-            match crate::claude_sessions::session_jsonl_path(&working_dir, &session.session_id) {
+            match crate::claude_sessions::session_jsonl_path(&working_dir, &session_id) {
                 Some(p) => p,
                 None => {
                     self.set_status(
@@ -1562,13 +1581,16 @@ impl App {
                 self.expanded_panel = None;
             }
         }
-        // Leaving the Claude terminal while the reflow view is active orphans it:
-        // the keyboard gate checks `focus == TerminalClaude`, so Esc would stop
-        // working and the transcript would float invisibly behind other panels.
-        // Close it here so the panel always returns to a clean live-PTY state.
-        if self.reflow.active && focus != Focus::TerminalClaude {
-            self.close_reflow();
-        }
+        // Note: we deliberately do NOT close the reflow transcript here on a
+        // plain focus change. Both the key handler (`event`) and the renderer
+        // (`ui::terminal_claude`) gate reflow on `focus == TerminalClaude`, so
+        // while another panel is focused the transcript neither captures keys
+        // nor renders (the Claude panel falls back to the live PTY). Tearing it
+        // down here would also reset the scroll offset, snapping the user back to
+        // the live tail when they merely glanced at another panel. Reflow is
+        // still closed on the transitions where the transcript becomes stale —
+        // session switch (`switch_claude_session`) and worktree change
+        // (`on_worktree_changed`) — and by Esc/F4 in the reflow key handler.
 
         match focus {
             Focus::Explorer | Focus::Viewer => {
