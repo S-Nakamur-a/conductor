@@ -145,6 +145,10 @@ pub enum Action {
     // ── Panel layout ────────────────────────────────────────────
     TogglePanelExpand,
     TogglePanelOverlay,
+    /// Grow the Shell area (move the Claude/Shell divider up).
+    GrowShell,
+    /// Shrink the Shell area (move the Claude/Shell divider down).
+    ShrinkShell,
 
     // ── UI ──────────────────────────────────────────────────────
     /// Open the theme picker overlay to switch the UI color theme at runtime.
@@ -235,6 +239,8 @@ impl Action {
             "inline_reply" => Some(Action::InlineReply),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
+            "grow_shell" => Some(Action::GrowShell),
+            "shrink_shell" => Some(Action::ShrinkShell),
             "open_theme_picker" => Some(Action::OpenThemePicker),
             _ => None,
         }
@@ -324,6 +330,8 @@ impl Action {
             Action::InlineReply => "inline_reply",
             Action::TogglePanelExpand => "toggle_panel_expand",
             Action::TogglePanelOverlay => "toggle_panel_overlay",
+            Action::GrowShell => "grow_shell",
+            Action::ShrinkShell => "shrink_shell",
             Action::OpenThemePicker => "open_theme_picker",
         }
     }
@@ -360,6 +368,10 @@ impl Action {
                 | Action::PrevWorktree
                 | Action::TogglePanelExpand
                 | Action::TogglePanelOverlay
+                // Resizing the Claude/Shell split is most useful with the Shell
+                // (a terminal) focused, so these must fire over a PTY too.
+                | Action::GrowShell
+                | Action::ShrinkShell
         )
     }
 }

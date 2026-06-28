@@ -423,6 +423,12 @@ pub struct App {
     /// `None` means no panel is expanded (default layout).
     pub expanded_panel: Option<Focus>,
 
+    /// Runtime height percentage for the Claude Code area within the terminal
+    /// column (the Shell gets the remainder). Seeded from
+    /// `config.layout.terminal_split_pct` at startup and adjusted live by the
+    /// grow/shrink-shell actions; not persisted back to the config file.
+    pub terminal_split_pct: u16,
+
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
     /// Independent tick counter for decoration animation (incremented at fixed interval).
@@ -627,6 +633,9 @@ impl App {
     /// Create a new `App` rooted at the given repository path.
     pub fn new(repo_path: PathBuf) -> Self {
         let config = config::Config::load().unwrap_or_default();
+        // Snapshot the configured terminal split before `config` is moved into
+        // the struct; this seeds the runtime-adjustable `terminal_split_pct`.
+        let config_terminal_split_pct = config.layout.terminal_split_pct;
         let view_mode = DiffViewMode::from(config.diff.default_view);
         let diff_state = DiffState::new(&config.general.main_branch, view_mode);
 
@@ -713,6 +722,7 @@ impl App {
             syntect_theme,
             markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             expanded_panel: None,
+            terminal_split_pct: config_terminal_split_pct,
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
@@ -1796,6 +1806,8 @@ impl App {
             CommandId::NextWorktree => self.select_next_worktree(),
             CommandId::PrevWorktree => self.select_prev_worktree(),
             CommandId::TogglePanelExpand => self.cmd_toggle_panel_expand(),
+            CommandId::GrowShell => self.grow_shell(),
+            CommandId::ShrinkShell => self.shrink_shell(),
             CommandId::CreateWorktree => self.cmd_create_worktree(),
             CommandId::DeleteWorktree => self.cmd_delete_worktree(),
             CommandId::SwitchBranch => self.cmd_switch_branch(),
@@ -1902,6 +1914,45 @@ impl App {
         } else {
             self.expanded_panel = Some(self.focus);
         }
+    }
+
+    /// Grow the Shell area within the terminal column by one step (the Claude
+    /// area shrinks). Bound to the grow-shell action.
+    pub fn grow_shell(&mut self) {
+        self.adjust_terminal_split(-(Self::TERMINAL_SPLIT_STEP as i16));
+    }
+
+    /// Shrink the Shell area within the terminal column by one step (the Claude
+    /// area grows). Bound to the shrink-shell action.
+    pub fn shrink_shell(&mut self) {
+        self.adjust_terminal_split(Self::TERMINAL_SPLIT_STEP as i16);
+    }
+
+    /// Step (percentage points) each grow/shrink-shell action moves the
+    /// Claude/Shell divider.
+    const TERMINAL_SPLIT_STEP: u16 = 5;
+    /// Bounds for the runtime Claude-area percentage, leaving at least this much
+    /// for each of the two terminal panes so neither can vanish.
+    const TERMINAL_SPLIT_MIN: u16 = 20;
+    const TERMINAL_SPLIT_MAX: u16 = 80;
+
+    /// Adjust the runtime Claude-area height percentage by `delta` points,
+    /// clamped so both the Claude and Shell panes keep a usable minimum. A
+    /// positive `delta` enlarges the Claude pane (shrinks the Shell); negative
+    /// enlarges the Shell. Flashes the resulting split as a status message.
+    fn adjust_terminal_split(&mut self, delta: i16) {
+        let next = (self.terminal_split_pct as i16 + delta)
+            .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
+            as u16;
+        if next == self.terminal_split_pct {
+            return;
+        }
+        self.terminal_split_pct = next;
+        self.dirty.mark_all();
+        self.set_status_info(format!(
+            "Terminal split: Claude {next}% / Shell {}%",
+            100 - next
+        ));
     }
 
     fn cmd_create_worktree(&mut self) {

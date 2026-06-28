@@ -8,7 +8,15 @@ use crate::terminal_link;
 
 /// Forward a key event to the PTY session at the given index.
 pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
-    let Some(data) = key_event_to_ansi(&key) else {
+    // Programs that enable application cursor keys mode (DECCKM) — pagers like
+    // `less`/`bat`, editors like `vim` — expect arrow/Home/End as SS3 (`ESC O`)
+    // rather than CSI (`ESC [`); honor the session's current mode so the keys
+    // actually register (e.g. arrow-key scrolling in `bat`).
+    let app_cursor = app
+        .terminal
+        .pty_manager
+        .session_application_cursor(session_idx);
+    let Some(data) = key_event_to_ansi(&key, app_cursor) else {
         return;
     };
 
@@ -39,7 +47,7 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
 ///
 /// Returns `None` for key events that have no meaningful byte representation
 /// (e.g. bare modifier key presses like Shift alone).
-fn key_event_to_ansi(key: &KeyEvent) -> Option<Vec<u8>> {
+fn key_event_to_ansi(key: &KeyEvent, app_cursor: bool) -> Option<Vec<u8>> {
     let mods = key.modifiers;
     let data = match key.code {
         // ── Character keys ───────────────────────────────────────
@@ -86,16 +94,22 @@ fn key_event_to_ansi(key: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::Esc => vec![0x1b],
 
         // ── Arrow keys ───────────────────────────────────────────
-        KeyCode::Up => arrow_with_modifiers(b'A', &mods),
-        KeyCode::Down => arrow_with_modifiers(b'B', &mods),
-        KeyCode::Right => arrow_with_modifiers(b'C', &mods),
-        KeyCode::Left => arrow_with_modifiers(b'D', &mods),
+        KeyCode::Up => arrow_with_modifiers(b'A', &mods, app_cursor),
+        KeyCode::Down => arrow_with_modifiers(b'B', &mods, app_cursor),
+        KeyCode::Right => arrow_with_modifiers(b'C', &mods, app_cursor),
+        KeyCode::Left => arrow_with_modifiers(b'D', &mods, app_cursor),
 
         // ── Home / End ───────────────────────────────────────────
+        // DECCKM applies to the unmodified form: SS3 (`ESC O H`) when the
+        // application has application-cursor-keys mode on, CSI otherwise.
         KeyCode::Home => {
             let p = xterm_modifier_param(&mods);
             if p == 1 {
-                b"\x1b[H".to_vec()
+                if app_cursor {
+                    b"\x1bOH".to_vec()
+                } else {
+                    b"\x1b[H".to_vec()
+                }
             } else {
                 format!("\x1b[1;{p}H").into_bytes()
             }
@@ -103,7 +117,11 @@ fn key_event_to_ansi(key: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::End => {
             let p = xterm_modifier_param(&mods);
             if p == 1 {
-                b"\x1b[F".to_vec()
+                if app_cursor {
+                    b"\x1bOF".to_vec()
+                } else {
+                    b"\x1b[F".to_vec()
+                }
             } else {
                 format!("\x1b[1;{p}F").into_bytes()
             }
@@ -405,7 +423,13 @@ fn xterm_modifier_param(modifiers: &KeyModifiers) -> u8 {
 ///
 /// For Cmd (Super) on macOS, we map to the same behaviour as common
 /// terminals: Cmd+Left/Right → Home/End, Cmd+Up/Down → PageUp/PageDown.
-fn arrow_with_modifiers(dir: u8, modifiers: &KeyModifiers) -> Vec<u8> {
+///
+/// `app_cursor` reflects the target program's application-cursor-keys mode
+/// (DECCKM). When it is on and no modifiers are pressed, arrow keys are sent as
+/// SS3 (`ESC O A`) instead of CSI (`ESC [ A`) — what pagers/editors bind to
+/// (this is what makes arrow-key scrolling work in `less`/`bat`). With
+/// modifiers, xterm always uses the CSI `1;<param>` form regardless of DECCKM.
+fn arrow_with_modifiers(dir: u8, modifiers: &KeyModifiers, app_cursor: bool) -> Vec<u8> {
     // Cmd+Arrow → Home/End/PageUp/PageDown (macOS convention).
     if modifiers.contains(KeyModifiers::SUPER) {
         return match dir {
@@ -419,7 +443,11 @@ fn arrow_with_modifiers(dir: u8, modifiers: &KeyModifiers) -> Vec<u8> {
 
     let param = xterm_modifier_param(modifiers);
     if param == 1 {
-        vec![0x1b, b'[', dir]
+        if app_cursor {
+            vec![0x1b, b'O', dir]
+        } else {
+            vec![0x1b, b'[', dir]
+        }
     } else {
         format!("\x1b[1;{param}{}", dir as char).into_bytes()
     }
@@ -482,5 +510,48 @@ fn f_key_to_ansi(n: u8, modifiers: &KeyModifiers) -> Vec<u8> {
         } else {
             format!("\x1b[1;{param}{code}").into_bytes()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn arrows_use_csi_in_normal_cursor_mode() {
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Up), false), Some(b"\x1b[A".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Down), false), Some(b"\x1b[B".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Right), false), Some(b"\x1b[C".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Left), false), Some(b"\x1b[D".to_vec()));
+    }
+
+    #[test]
+    fn arrows_use_ss3_in_application_cursor_mode() {
+        // DECCKM on: pagers/editors (less, bat, vim) expect SS3 — this is what
+        // makes arrow-key scrolling register in `bat`.
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Up), true), Some(b"\x1bOA".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Down), true), Some(b"\x1bOB".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Right), true), Some(b"\x1bOC".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Left), true), Some(b"\x1bOD".to_vec()));
+    }
+
+    #[test]
+    fn home_end_honor_application_cursor_mode() {
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Home), false), Some(b"\x1b[H".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::End), false), Some(b"\x1b[F".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::Home), true), Some(b"\x1bOH".to_vec()));
+        assert_eq!(key_event_to_ansi(&key(KeyCode::End), true), Some(b"\x1bOF".to_vec()));
+    }
+
+    #[test]
+    fn modified_arrows_stay_csi_regardless_of_cursor_mode() {
+        // With a modifier, xterm uses the CSI `1;<param>` form even under DECCKM.
+        let shift_up = KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT);
+        assert_eq!(key_event_to_ansi(&shift_up, true), Some(b"\x1b[1;2A".to_vec()));
+        assert_eq!(key_event_to_ansi(&shift_up, false), Some(b"\x1b[1;2A".to_vec()));
     }
 }

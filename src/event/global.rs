@@ -147,6 +147,14 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.toggle_panel_overlay();
             true
         }
+        Action::GrowShell => {
+            app.grow_shell();
+            true
+        }
+        Action::ShrinkShell => {
+            app.shrink_shell();
+            true
+        }
         Action::OpenThemePicker => {
             app.cmd_open_theme_picker();
             true

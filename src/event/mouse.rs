@@ -1038,10 +1038,16 @@ fn handle_mouse_scroll(
     // never scroll the hidden Explorer/Viewer state beneath it.
     if app.editor.is_some() && col >= left_end && col < viewer_end {
         if let Some(idx) = app.editor.as_ref().map(|e| e.session_idx) {
-            app.terminal.pty_manager.scroll_alt_screen_session(
+            // PTY grid is 1-based; the merged editor region starts at left_end
+            // (left border) with content one cell in and one row down.
+            let pty_col = col.saturating_sub(left_end).max(1);
+            let pty_row = row.saturating_sub(main_area.y).max(1);
+            app.terminal.pty_manager.forward_scroll_to_session(
                 idx,
                 delta.unsigned_abs() as usize,
                 delta < 0,
+                pty_col,
+                pty_row,
             );
         }
         return;
@@ -1145,20 +1151,25 @@ fn handle_mouse_scroll(
         let abs_delta = delta.unsigned_abs() as usize;
         // ScrollUp (delta < 0) moves toward older content / into history.
         let up = delta < 0;
-        let session_idx = if row < terminal_split_y {
-            app.terminal.active_claude_session
+        let (session_idx, content_y) = if row < terminal_split_y {
+            (app.terminal.active_claude_session, main_area.y + 1)
         } else {
-            app.terminal.active_shell_session
+            (app.terminal.active_shell_session, terminal_split_y + 1)
         };
 
-        // Pagers (less/bat/man) run on the alternate screen, which has no
-        // scrollback — translate the wheel into arrow keys for the child
-        // instead of bumping the (ignored) local scrollback offset.
+        // Full-screen apps that own the screen handle the wheel themselves:
+        // apps with mouse reporting on (vim/neovim, `less --mouse`) get an
+        // encoded mouse event; alt-screen pagers without mouse reporting get
+        // arrow keys. Either way the local scrollback offset is left alone.
+        // PTY grid is 1-based; the terminal column starts at `viewer_end` (left
+        // border) and the panel content starts at `content_y`.
+        let pty_col = col.saturating_sub(viewer_end).max(1);
+        let pty_row = row.saturating_sub(content_y).saturating_add(1);
         if let Some(idx) = session_idx
             && app
                 .terminal
                 .pty_manager
-                .scroll_alt_screen_session(idx, abs_delta, up)
+                .forward_scroll_to_session(idx, abs_delta, up, pty_col, pty_row)
         {
             return;
         }
