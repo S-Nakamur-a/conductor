@@ -289,7 +289,7 @@ pub(super) fn handle_terminal_tab_click(
             // Otherwise, switch to the session (resets scroll + render cache
             // so the panel re-renders the newly selected session).
             if is_claude {
-                app.terminal.switch_claude_session(global_idx);
+                app.switch_claude_session(global_idx);
             } else {
                 app.terminal.switch_shell_session(global_idx);
             }

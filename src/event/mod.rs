@@ -9,6 +9,7 @@ mod explorer;
 mod global;
 mod mouse;
 mod overlay;
+pub mod reflow;
 mod terminal;
 mod viewer;
 mod worktree;
@@ -243,6 +244,13 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // ── 1b4. Reflow transcript view — consume all keys while active ──────────
+    // Must sit before the PTY-forward path so keys are not forwarded to Claude.
+    if app.reflow.active && app.focus == Focus::TerminalClaude {
+        handle_reflow_key(app, key);
+        return;
+    }
+
     // ── 1c. PTY focus — intercept configurable keys, forward rest to PTY ─
     // Covers the Claude/Shell terminals and the embedded editor: each forwards
     // unstolen keys to its inner program, using its own keymap context.
@@ -338,6 +346,16 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             app.set_focus(target);
         }
         Action::ScrollbackUp => {
+            // Intercept the first upward scroll on the live Claude terminal
+            // (scroll_claude == 0) to enter the infinite-scrollback reflow view
+            // instead of the limited vt100 scrollback buffer.
+            if app.focus == Focus::TerminalClaude
+                && app.terminal.scroll_claude == 0
+                && !app.reflow.active
+            {
+                app.open_reflow();
+                return true;
+            }
             let page = match app.focus {
                 Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
                 Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
@@ -363,11 +381,21 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             };
             *scroll = scroll.saturating_sub(page.max(1));
         }
-        Action::ScrollbackTop => match app.focus {
-            Focus::TerminalClaude => app.terminal.scroll_claude = 1000,
-            Focus::TerminalShell => app.terminal.scroll_shell = 1000,
-            _ => unreachable!(),
-        },
+        Action::ScrollbackTop => {
+            // Same hijack as ScrollbackUp: jump straight to reflow on Claude live view.
+            if app.focus == Focus::TerminalClaude
+                && app.terminal.scroll_claude == 0
+                && !app.reflow.active
+            {
+                app.open_reflow();
+                return true;
+            }
+            match app.focus {
+                Focus::TerminalClaude => app.terminal.scroll_claude = 1000,
+                Focus::TerminalShell => app.terminal.scroll_shell = 1000,
+                _ => unreachable!(),
+            }
+        }
         Action::SnapToLive => match app.focus {
             Focus::TerminalClaude => app.terminal.scroll_claude = 0,
             Focus::TerminalShell => app.terminal.scroll_shell = 0,
@@ -377,6 +405,90 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
         _ => return false,
     }
     true
+}
+
+// ── Reflow key handling ─────────────────────────────────────────────────
+
+/// Handle a key event while the reflow transcript view is active.
+///
+/// All keys are consumed here and never forwarded to the PTY — the reflow
+/// view is a pure read-only overlay. Navigation:
+///
+/// * `j` / Down — scroll down one line.
+/// * `k` / Up — scroll up one line.
+/// * `Ctrl-d` / PageDown — scroll down half a page.
+/// * `Ctrl-u` / PageUp — scroll up half a page.
+/// * `g` / Home — jump to the oldest turn (top).
+/// * `G` / End — jump to the newest turn (bottom) without leaving.
+/// * `Esc` — close reflow view and return to live PTY.
+/// * `j` / Down / PageDown at the bottom — close reflow (live return).
+fn handle_reflow_key(app: &mut App, key: KeyEvent) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use crate::event::reflow::{at_bottom, clamp_scroll};
+
+    let inner = app.reflow.last_inner_height as usize;
+    let total = app.reflow.total_lines;
+    let page: usize = (inner / 2).max(1);
+    let bottom = at_bottom(app.reflow.scroll, total, inner);
+
+    match key.code {
+        // ── Line scroll ─────────────────────────────────────────────────────
+        KeyCode::Char('j') | KeyCode::Down => {
+            if bottom {
+                // Bottom + discrete down-key → begin exit sweep back to live PTY.
+                app.request_close_reflow();
+                return;
+            }
+            app.reflow.scroll = app.reflow.scroll.saturating_add(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.reflow.scroll = app.reflow.scroll.saturating_sub(1);
+        }
+
+        // ── Page scroll ──────────────────────────────────────────────────────
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if bottom {
+                app.request_close_reflow();
+                return;
+            }
+            app.reflow.scroll = app.reflow.scroll.saturating_add(page);
+        }
+        KeyCode::PageDown => {
+            if bottom {
+                app.request_close_reflow();
+                return;
+            }
+            app.reflow.scroll = app.reflow.scroll.saturating_add(page);
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.reflow.scroll = app.reflow.scroll.saturating_sub(page);
+        }
+        KeyCode::PageUp => {
+            app.reflow.scroll = app.reflow.scroll.saturating_sub(page);
+        }
+
+        // ── Jump to top / bottom ─────────────────────────────────────────────
+        KeyCode::Char('g') | KeyCode::Home => {
+            app.reflow.scroll = 0;
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            // Snap to the newest turn (logical bottom) without leaving the view.
+            app.reflow.scroll = total.saturating_sub(inner);
+        }
+
+        // ── Leave ────────────────────────────────────────────────────────────
+        KeyCode::Esc => {
+            // Play the exit sweep before returning to the live PTY.
+            app.request_close_reflow();
+            return;
+        }
+
+        _ => {} // All other keys are silently consumed.
+    }
+
+    // Clamp scroll after any adjustment.  Upper bound is total - inner, not
+    // total - 1: aligns with the render path and at_bottom logic.
+    app.reflow.scroll = clamp_scroll(app.reflow.scroll, total, inner);
 }
 
 // ── Paste event handling ────────────────────────────────────────────────

@@ -559,6 +559,73 @@ pub struct App {
     /// the redraw rate, which varies from ~2fps (idle pulses) to ~60fps
     /// (active input).
     pub rich_epoch: std::time::Instant,
+
+    // ── Reflow transcript view ───────────────────────────────────────────
+    /// State for the read-only, word-wrapped session-log viewer that
+    /// overlays the Claude PTY panel during infinite-scrollback mode.
+    pub reflow: ReflowView,
+}
+
+/// Direction of the reflow view entry/exit sweep animation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SweepDir {
+    /// Sweep front moves top-to-bottom (entering the transcript view).
+    In,
+    /// Sweep front moves bottom-to-top (returning to the live PTY).
+    Out,
+}
+
+/// Active sweep animation for the reflow transcript view.
+///
+/// Holds the direction and the `Instant` the animation started so that
+/// `reflow_view::render` can compute progress via elapsed time without any
+/// frame-counter dependency.
+pub struct Sweep {
+    pub dir: SweepDir,
+    pub start: std::time::Instant,
+}
+
+/// State for the reflow transcript view.
+///
+/// When `active` is `true`, this view overlays the Claude PTY panel and renders
+/// the Claude Code session log as a scrollable, word-wrapped Markdown display.
+/// Width changes trigger a full re-render of `cached_lines`; otherwise the
+/// cached lines are reused each frame.
+#[derive(Default)]
+pub struct ReflowView {
+    /// Whether the reflow view is currently overlaying the Claude PTY panel.
+    pub active: bool,
+    /// Parsed and normalised log entries from the session file.
+    ///
+    /// Wrapped in `Rc` so that `build_lines` can cheaply clone the handle
+    /// (refcount increment only) and release its borrow on `self` before
+    /// calling `cache.render` — avoiding a deep copy of all entry strings on
+    /// every resize.
+    pub entries: std::rc::Rc<Vec<crate::claude_log::LogEntry>>,
+    /// Vertical scroll offset — number of rendered lines from the top to skip.
+    pub scroll: usize,
+    /// Total number of lines in `cached_lines` (kept in sync after each render).
+    pub total_lines: usize,
+    /// Panel inner width at the last render — used to detect size changes for reflow.
+    pub last_width: u16,
+    /// When `true`, the next render pins scroll to the bottom (most recent turn).
+    pub pending_bottom: bool,
+    /// Pre-rendered, width-reflowed lines; rebuilt only when `last_width` changes.
+    pub cached_lines: Vec<ratatui::text::Line<'static>>,
+    /// Inner panel height at the last render — used for page-scroll sizing.
+    pub last_inner_height: u16,
+    /// Per-session Markdown render cache.
+    ///
+    /// Kept separate from `App::markdown_cache` so it does not pollute the
+    /// shared cache with reflow keys and is automatically invalidated when a new
+    /// session is opened (the whole `ReflowView` is replaced by `open_reflow`).
+    pub cache: crate::ui::markdown::MarkdownCache,
+    /// In-progress entry/exit sweep animation, or `None` when idle.
+    ///
+    /// `Option<Sweep>` defaults to `None` — `Sweep` itself does not need
+    /// `Default` because `Option<T>: Default` is always `None` without a
+    /// `T: Default` bound.
+    pub sweep: Option<Sweep>,
 }
 
 /// Result of a background diff computation.
@@ -613,6 +680,114 @@ impl App {
             self.show_panel_number_overlay = true;
             self.panel_overlay_since = Some(std::time::Instant::now());
         }
+    }
+
+    // ── Reflow transcript view ────────────────────────────────────────────
+
+    /// Enter the reflow transcript view for the focused worktree's latest session.
+    ///
+    /// Resolves the focused worktree's working directory, looks up the most
+    /// recent Claude Code session via history, loads and parses the `.jsonl`
+    /// file, and activates the overlay. If no session is found or the log is
+    /// empty, a status flash is shown and the view stays inactive.
+    pub fn open_reflow(&mut self) {
+        let working_dir = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => wt.path.clone(),
+            None => {
+                self.set_status(
+                    "No worktree selected for transcript view".to_string(),
+                    StatusLevel::Warning,
+                );
+                return;
+            }
+        };
+
+        let canonical =
+            std::fs::canonicalize(&working_dir).unwrap_or_else(|_| working_dir.clone());
+        let session = match crate::claude_sessions::find_latest_sessions_for_paths(
+            std::slice::from_ref(&working_dir),
+        ) {
+            Ok(mut map) => map.remove(&canonical),
+            Err(e) => {
+                log::warn!("reflow: cannot look up session: {e}");
+                None
+            }
+        };
+        let session = match session {
+            Some(s) => s,
+            None => {
+                self.set_status(
+                    "No Claude session found for this worktree".to_string(),
+                    StatusLevel::Info,
+                );
+                return;
+            }
+        };
+
+        let jsonl_path =
+            match crate::claude_sessions::session_jsonl_path(&working_dir, &session.session_id) {
+                Some(p) => p,
+                None => {
+                    self.set_status(
+                        "Cannot resolve session file path".to_string(),
+                        StatusLevel::Warning,
+                    );
+                    return;
+                }
+            };
+
+        let entries = crate::claude_log::load_session(&jsonl_path);
+        if entries.is_empty() {
+            self.set_status(
+                "Session log is empty or unreadable".to_string(),
+                StatusLevel::Info,
+            );
+            return;
+        }
+
+        // TODO(background): load_session is currently synchronous; for very
+        // large files (5MB+) this may block the UI for a frame or two.
+        // A future version should spawn the parse on a background thread and
+        // show a "Loading…" placeholder while the entries arrive.
+        self.reflow = ReflowView {
+            active: true,
+            entries: std::rc::Rc::new(entries),
+            scroll: 0,
+            total_lines: 0,
+            last_width: 0, // Forces a full line rebuild on first render.
+            pending_bottom: true,
+            cached_lines: Vec::new(),
+            last_inner_height: 0,
+            cache: crate::ui::markdown::MarkdownCache::new(),
+            // Start the entry transition: the border glides from the accent to
+            // its complement over TRANSITION_DURATION_MS, masking the initial
+            // build_lines latency.
+            sweep: Some(Sweep {
+                dir: SweepDir::In,
+                start: std::time::Instant::now(),
+            }),
+        };
+    }
+
+    /// Leave the reflow transcript view and return to the live PTY display.
+    pub fn close_reflow(&mut self) {
+        self.reflow.active = false;
+        self.reflow.sweep = None;
+        // Reset Claude scrollback so the live tail is shown immediately.
+        self.terminal.scroll_claude = 0;
+    }
+
+    /// Begin the exit sweep animation rather than closing immediately.
+    ///
+    /// Sets `sweep` to a `SweepDir::Out` animation so `reflow_view::render`
+    /// plays the bottom-to-top wipe before calling `close_reflow()` once the
+    /// animation completes. Focus-loss closes the view immediately via
+    /// `set_focus` without a sweep (the panel disappears anyway).
+    pub fn request_close_reflow(&mut self) {
+        self.reflow.sweep = Some(Sweep {
+            dir: SweepDir::Out,
+            start: std::time::Instant::now(),
+        });
     }
 
     /// Returns `true` when any overlay popup is visible on top of the main panels.
@@ -765,6 +940,7 @@ impl App {
             rich_picker: None,
             rich_tier_available: crate::term_caps::RichTier::Off,
             rich_epoch: std::time::Instant::now(),
+            reflow: ReflowView::default(),
         };
         app.symbol_index = SymbolIndex::new(app.repo_path.clone());
 
@@ -1386,6 +1562,14 @@ impl App {
                 self.expanded_panel = None;
             }
         }
+        // Leaving the Claude terminal while the reflow view is active orphans it:
+        // the keyboard gate checks `focus == TerminalClaude`, so Esc would stop
+        // working and the transcript would float invisibly behind other panels.
+        // Close it here so the panel always returns to a clean live-PTY state.
+        if self.reflow.active && focus != Focus::TerminalClaude {
+            self.close_reflow();
+        }
+
         match focus {
             Focus::Explorer | Focus::Viewer => {
                 if self.viewer_state.tree.file_tree.is_empty() {
@@ -1483,6 +1667,13 @@ impl App {
         // up the new syntect theme. The cache fingerprints the UI colour palette
         // only; a syntax-only change would otherwise leave stale highlighted spans.
         self.markdown_cache.clear();
+
+        // Force a full rebuild of the reflow transcript on the next render so
+        // that Markdown spans pick up the new theme colours and syntect palette.
+        // Setting last_width=0 makes build_lines run on the next frame regardless
+        // of whether the panel width changed.
+        self.reflow.last_width = 0;
+        self.reflow.cache.clear();
 
         // ── Diff view mode ──────────────────────────────────────────
         // Apply view_mode directly. `diff_state.view_mode` is written only in

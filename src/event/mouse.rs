@@ -540,7 +540,7 @@ fn handle_worktree_column_click(app: &mut App, row: u16, geom: &ClickGeometry) {
         match app.worktree_list_rows[item_row] {
             crate::app::WorktreeListRow::Session { pty_idx, .. } => {
                 app.on_worktree_changed();
-                app.terminal.switch_claude_session(pty_idx);
+                app.switch_claude_session(pty_idx);
                 // Single click: keep focus on worktree panel.
                 // Double click: move focus to terminal.
                 if is_double {
@@ -1148,6 +1148,21 @@ fn handle_mouse_scroll(
         }
     } else {
         // Terminal panels (right column).
+        //
+        // Focus the panel being scrolled so that wheel events take immediate
+        // effect even when the panel does not currently hold keyboard focus.
+        // This also satisfies the `focus == TerminalClaude` render guard in
+        // terminal_claude.rs so reflow entry and display are consistent.
+        // Note: set_focus(TerminalShell) closes reflow if it was active, which
+        // is intentional — the user is deliberately scrolling away from Claude.
+        if row < terminal_split_y {
+            if app.focus != Focus::TerminalClaude {
+                app.set_focus(Focus::TerminalClaude);
+            }
+        } else if app.focus != Focus::TerminalShell {
+            app.set_focus(Focus::TerminalShell);
+        }
+
         let abs_delta = delta.unsigned_abs() as usize;
         // ScrollUp (delta < 0) moves toward older content / into history.
         let up = delta < 0;
@@ -1175,8 +1190,53 @@ fn handle_mouse_scroll(
         }
 
         if row < terminal_split_y {
-            if up {
-                app.terminal.scroll_claude = app.terminal.scroll_claude.saturating_add(abs_delta);
+            if app.reflow.active {
+                // While the reflow view is active, route wheel events into its
+                // scroll offset.
+                //
+                // Scroll convention: scroll=0 is the oldest/top content; max is
+                // newest/bottom. Wheel-up moves toward older content (subtract).
+                //
+                // Wheel-down past the logical bottom begins the exit sweep so
+                // trackpad inertia carries the user naturally back to the live
+                // tail (same experience as scrolling past the end of a document).
+                // Wheel-up and wheel-down above the bottom adjust scroll normally.
+                if up {
+                    app.reflow.scroll = app.reflow.scroll.saturating_sub(abs_delta);
+                } else {
+                    let inner = app.reflow.last_inner_height as usize;
+                    if crate::event::reflow::at_bottom(
+                        app.reflow.scroll,
+                        app.reflow.total_lines,
+                        inner,
+                    ) {
+                        // Already at the bottom — exit sweep on further down scroll.
+                        app.request_close_reflow();
+                        return;
+                    }
+                    app.reflow.scroll = app.reflow.scroll.saturating_add(abs_delta);
+                }
+                let inner = app.reflow.last_inner_height as usize;
+                let max_scroll = app.reflow.total_lines.saturating_sub(inner);
+                app.reflow.scroll = app.reflow.scroll.min(max_scroll);
+            } else if up {
+                // Enter the reflow transcript view on the first upward scroll
+                // from the live tail (scroll_claude == 0) instead of the
+                // limited vt100 scrollback buffer. Wheel-down never triggers
+                // entry; accidental upward inertia still opens the view but
+                // the user can Esc back immediately.
+                //
+                // Skip entry when the worktree is grabbed: the visible PTY
+                // runs on the main worktree's session while open_reflow would
+                // look up the grabbed (source) worktree's history, producing a
+                // mismatch.  Keyboard entry is already blocked by the grabbed-
+                // worktree gate in handle_terminal_only_action.
+                if app.terminal.scroll_claude == 0 && !app.is_selected_worktree_grabbed() {
+                    app.open_reflow();
+                } else {
+                    app.terminal.scroll_claude =
+                        app.terminal.scroll_claude.saturating_add(abs_delta);
+                }
             } else {
                 app.terminal.scroll_claude = app.terminal.scroll_claude.saturating_sub(abs_delta);
             }

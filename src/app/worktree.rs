@@ -350,7 +350,7 @@ impl App {
             &self.repo_path,
             None,
         )?;
-        self.terminal.switch_claude_session(idx);
+        self.switch_claude_session(idx);
         Ok(idx)
     }
 
@@ -1427,6 +1427,12 @@ impl App {
     }
 
     pub fn on_worktree_changed(&mut self) {
+        // A reflow transcript belongs to the previous worktree's session;
+        // switching worktrees must reset it before new session state loads.
+        if self.reflow.active {
+            self.close_reflow();
+        }
+
         // An embedded editor belongs to the worktree it was opened on; leaving
         // that worktree would strand it editing the wrong tree, so close it
         // first. The view reload below covers the new worktree.
