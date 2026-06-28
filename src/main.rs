@@ -5,6 +5,7 @@ mod app;
 mod background;
 mod cc_notify;
 mod ccusage_cache;
+mod claude_log;
 mod claude_sessions;
 mod command_palette;
 mod config;
@@ -543,6 +544,12 @@ fn run_loop(
         }
         if !app.worktree_mgr.pending_worktrees.is_empty() {
             app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+        }
+        // Drive the reflow sweep animation: keep the terminal panel dirty for
+        // every frame while a sweep is in progress (focus==TerminalClaude so the
+        // tick rate is already 8ms; no additional wake-up source needed).
+        if app.reflow.sweep.is_some() {
+            app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
         }
 
         if app.dirty.any() {

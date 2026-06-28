@@ -166,11 +166,49 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let output_block = if is_expanded {
         Block::default()
     } else {
+        // Border color while reflow is active: the complement of the accent is
+        // the persistent read-mode cue. During the entry/exit transition the
+        // border glides smoothly between the accent and that complement (a
+        // single gentle gradient, no flicker); otherwise it's the normal
+        // focus/unfocus color.
+        let effective_border = if app.reflow.active {
+            let complement = crate::theme::Theme::complement(theme.accent);
+            if let Some(sweep) = &app.reflow.sweep {
+                let p = crate::event::reflow::sweep_progress(
+                    &sweep.start,
+                    crate::event::reflow::TRANSITION_DURATION_MS,
+                );
+                let t = crate::event::reflow::transition_eased(p);
+                match sweep.dir {
+                    // Entering read mode: accent → complement.
+                    crate::app::SweepDir::In => crate::theme::Theme::lerp(theme.accent, complement, t),
+                    // Leaving read mode: complement → accent, then close_reflow.
+                    crate::app::SweepDir::Out => crate::theme::Theme::lerp(complement, theme.accent, t),
+                }
+            } else {
+                // Steady read mode: rest on the complement.
+                complement
+            }
+        } else {
+            border_color
+        };
         Block::default()
             .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
             .border_type(border_type)
-            .border_style(Style::default().fg(border_color))
+            .border_style(Style::default().fg(effective_border))
     };
+
+    // If the reflow transcript view is active *and* this panel has focus,
+    // hand off rendering to the reflow view.  The focus guard prevents a
+    // stale reflow from rendering after a worktree switch or focus move that
+    // didn't go through close_reflow (belt-and-suspenders; F4 closes it in
+    // set_focus/on_worktree_changed, but the guard keeps rendering safe).
+    if app.reflow.active && app.focus == Focus::TerminalClaude {
+        let inner = output_block.inner(output_area);
+        frame.render_widget(output_block, output_area);
+        crate::ui::reflow_view::render(frame, inner, app);
+        return;
+    }
 
     if let Some(active_idx) = app.terminal.active_claude_session {
         if let Some(screen_arc) = app.terminal.pty_manager.get_screen(active_idx) {

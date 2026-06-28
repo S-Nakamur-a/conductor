@@ -10,6 +10,23 @@ use std::path::PathBuf;
 const SESSION_ICONS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 impl App {
+    /// Switch the Claude panel to display the session at `idx`.
+    ///
+    /// Closes any active reflow transcript first: the reflow view is bound to
+    /// whichever session was showing when it was opened, so switching sessions
+    /// makes that transcript stale and it must be torn down here. This mirrors
+    /// the scroll/cache reset inside [`TerminalState::switch_claude_session`]
+    /// (same "the panel now shows a different session" invariant), but reflow
+    /// state lives on `App`, so the close has to happen one level up. Routing
+    /// every Claude session switch through this wrapper keeps the panel from
+    /// rendering the previous session's transcript after a tab/strip switch.
+    pub fn switch_claude_session(&mut self, idx: usize) {
+        if self.reflow.active {
+            self.close_reflow();
+        }
+        self.terminal.switch_claude_session(idx);
+    }
+
     /// Spawn a new Claude Code PTY session for the currently selected worktree.
     pub fn spawn_claude_code(&mut self) -> anyhow::Result<usize> {
         self.spawn_claude_code_with_name(None)
@@ -50,7 +67,7 @@ impl App {
             &self.repo_path,
             session_name,
         )?;
-        self.terminal.switch_claude_session(idx);
+        self.switch_claude_session(idx);
         self.rebuild_worktree_list_rows();
         Ok(idx)
     }
@@ -139,7 +156,7 @@ impl App {
                 .first()
                 .map(|(idx, _)| *idx)
             {
-                Some(idx) => self.terminal.switch_claude_session(idx),
+                Some(idx) => self.switch_claude_session(idx),
                 None => {
                     self.terminal.active_claude_session = None;
                     self.terminal.scroll_claude = 0;
@@ -308,7 +325,7 @@ impl App {
             &self.repo_path,
             None,
         )?;
-        self.terminal.switch_claude_session(idx);
+        self.switch_claude_session(idx);
         Ok(idx)
     }
 
@@ -375,7 +392,7 @@ impl App {
                     Ok(idx) => {
                         resumed_count += 1;
                         if wt.path == selected_wt_path {
-                            self.terminal.switch_claude_session(idx);
+                            self.switch_claude_session(idx);
                         }
                     }
                     Err(e) => {
@@ -422,7 +439,7 @@ impl App {
                     resumed_count += 1;
                     // Only switch to this session for the currently selected worktree.
                     if wt.path == selected_wt_path {
-                        self.terminal.switch_claude_session(idx);
+                        self.switch_claude_session(idx);
                     }
                 }
                 Err(e) => {

@@ -11,6 +11,7 @@ pub mod editor_panel;
 pub mod explorer_panel;
 pub mod markdown;
 pub mod party;
+pub mod reflow_view;
 pub mod rich;
 pub mod terminal_claude;
 pub mod terminal_shell;

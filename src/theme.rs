@@ -200,6 +200,37 @@ impl Theme {
         }
     }
 
+    /// Return the complementary color: the hue rotated 180° in HSL space while
+    /// preserving saturation and lightness. This yields an equally-bright
+    /// opposite hue (a green-ish complement for a purple accent, etc.) rather
+    /// than the muddy result of a raw RGB inversion. Non-RGB colors are
+    /// returned unchanged.
+    pub fn complement(color: Color) -> Color {
+        match color {
+            Color::Rgb(r, g, b) => {
+                let (h, s, l) = rgb_to_hsl(r, g, b);
+                let (r, g, b) = hsl_to_rgb((h + 0.5) % 1.0, s, l);
+                Color::Rgb(r, g, b)
+            }
+            other => other,
+        }
+    }
+
+    /// Linearly interpolate between two RGB colors by `t`, clamped to `[0, 1]`
+    /// (`0.0` = `from`, `1.0` = `to`). Used to glide the reflow border between
+    /// the accent and its complement. If either color is non-RGB, `from` is
+    /// returned unchanged.
+    pub fn lerp(from: Color, to: Color, t: f64) -> Color {
+        match (from, to) {
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+                let t = t.clamp(0.0, 1.0);
+                let mix = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+                Color::Rgb(mix(r1, r2), mix(g1, g2), mix(b1, b2))
+            }
+            _ => from,
+        }
+    }
+
     // ── Built-in themes ──────────────────────────────────────────────
 
     /// Default theme — the official Catppuccin Mocha palette.
@@ -956,6 +987,73 @@ impl Theme {
     }
 }
 
+/// Convert an 8-bit RGB triple to HSL with all components in `[0, 1]`.
+///
+/// Used by [`Theme::complement`] to rotate hue while keeping saturation and
+/// lightness. Achromatic inputs (r == g == b) report hue and saturation of 0.
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
+    let r = r as f64 / 255.0;
+    let g = g as f64 / 255.0;
+    let b = b as f64 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d.abs() < f64::EPSILON {
+        return (0.0, 0.0, l); // achromatic: hue is undefined, report 0
+    }
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
+    let h = if max == r {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if max == g {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, s, l)
+}
+
+/// Convert HSL components in `[0, 1]` back to an 8-bit RGB triple.
+///
+/// Inverse of [`rgb_to_hsl`]; `s == 0` short-circuits to a neutral gray.
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    if s.abs() < f64::EPSILON {
+        let v = (l * 255.0).round() as u8;
+        return (v, v, v);
+    }
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let hue_to_rgb = |p: f64, q: f64, mut t: f64| -> f64 {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 1.0 / 2.0 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
+    let g = hue_to_rgb(p, q, h);
+    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
+    (
+        (r * 255.0).round() as u8,
+        (g * 255.0).round() as u8,
+        (b * 255.0).round() as u8,
+    )
+}
+
 impl Default for Theme {
     fn default() -> Self {
         Self::catppuccin_mocha()
@@ -965,6 +1063,44 @@ impl Default for Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complement_rotates_hue_180_and_round_trips() {
+        // Pure red (h=0) → cyan (h=0.5) at the same saturation/lightness.
+        assert_eq!(Theme::complement(Color::Rgb(255, 0, 0)), Color::Rgb(0, 255, 255));
+        // Applying complement twice returns (approximately) the original hue.
+        let original = Color::Rgb(203, 166, 247); // Catppuccin Mauve accent
+        let twice = Theme::complement(Theme::complement(original));
+        let (Color::Rgb(r, g, b), Color::Rgb(r2, g2, b2)) = (original, twice) else {
+            unreachable!()
+        };
+        // Allow ±2 per channel for HSL round-trip rounding.
+        assert!((r as i16 - r2 as i16).abs() <= 2);
+        assert!((g as i16 - g2 as i16).abs() <= 2);
+        assert!((b as i16 - b2 as i16).abs() <= 2);
+    }
+
+    #[test]
+    fn complement_leaves_non_rgb_unchanged() {
+        assert_eq!(Theme::complement(Color::Reset), Color::Reset);
+    }
+
+    #[test]
+    fn lerp_endpoints_and_midpoint() {
+        let a = Color::Rgb(0, 0, 0);
+        let b = Color::Rgb(100, 200, 50);
+        assert_eq!(Theme::lerp(a, b, 0.0), a);
+        assert_eq!(Theme::lerp(a, b, 1.0), b);
+        assert_eq!(Theme::lerp(a, b, 0.5), Color::Rgb(50, 100, 25));
+    }
+
+    #[test]
+    fn lerp_clamps_out_of_range_t() {
+        let a = Color::Rgb(10, 20, 30);
+        let b = Color::Rgb(200, 200, 200);
+        assert_eq!(Theme::lerp(a, b, -1.0), a);
+        assert_eq!(Theme::lerp(a, b, 2.0), b);
+    }
 
     #[test]
     fn from_name_light_themes_have_light_true() {

@@ -51,7 +51,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 .copied()
             {
                 Some(WorktreeListRow::Session { pty_idx, .. }) => {
-                    app.terminal.switch_claude_session(pty_idx);
+                    app.switch_claude_session(pty_idx);
                     app.set_focus(Focus::TerminalClaude);
                 }
                 Some(WorktreeListRow::Worktree(_)) | None => {

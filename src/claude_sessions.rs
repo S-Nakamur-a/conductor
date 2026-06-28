@@ -246,6 +246,15 @@ pub fn find_latest_sessions_for_paths(
     Ok(result)
 }
 
+/// Return the `.jsonl` path for the given working directory and session ID.
+///
+/// Mirrors the path that `session_file_exists` checks so callers can open
+/// the file directly. Returns `None` if the home directory is unavailable.
+pub fn session_jsonl_path(working_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let dir = projects_dir_for(working_dir)?;
+    Some(dir.join(format!("{session_id}.jsonl")))
+}
+
 /// Return the Claude projects directory for a given working directory path.
 /// E.g. `/Users/foo/project` → `~/.claude/projects/-Users-foo-project/`.
 fn projects_dir_for(working_dir: &Path) -> Option<PathBuf> {
