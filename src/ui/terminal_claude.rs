@@ -171,7 +171,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // border glides smoothly between the accent and that complement (a
         // single gentle gradient, no flicker); otherwise it's the normal
         // focus/unfocus color.
-        let effective_border = if app.reflow.active {
+        // Focus-gated to match the reflow render guard below: while the panel is
+        // unfocused it shows the live PTY (reflow is preserved but not rendered),
+        // so the read-mode complement would be a misleading border cue there.
+        let effective_border = if app.reflow.active && app.focus == Focus::TerminalClaude {
             let complement = crate::theme::Theme::complement(theme.accent);
             if let Some(sweep) = &app.reflow.sweep {
                 let p = crate::event::reflow::sweep_progress(

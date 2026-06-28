@@ -60,6 +60,14 @@ pub struct PtySession {
     pub worktree: String,
     /// The working directory this session was spawned in.
     pub working_dir: PathBuf,
+    /// The Claude Code session id (`<id>.jsonl` under the project dir) backing
+    /// this panel, when known. Set for `ClaudeCode` sessions: a fresh spawn
+    /// forces a generated id via `--session-id`, and a resumed spawn records the
+    /// id it resumed. `None` for Shell/Editor sessions, and for any Claude
+    /// session whose id could not be determined. Lets the reflow transcript view
+    /// open *this* panel's log instead of merely the worktree's latest session —
+    /// essential when one worktree hosts multiple Claude panels (CC:1, CC:2, …).
+    pub claude_session_id: Option<String>,
     /// Whether this session is the currently displayed (active) session.
     pub is_active: bool,
 
@@ -184,14 +192,25 @@ impl PtyManager {
         session_name: Option<&str>,
     ) -> Result<usize> {
         // Build the command depending on the session kind, then hand off to the
-        // shared spawn path.
-        let cmd = match kind {
+        // shared spawn path. For Claude sessions we also pin down the session id
+        // so the reflow transcript view can later open this exact panel's log.
+        let (cmd, claude_session_id) = match kind {
             SessionKind::ClaudeCode => {
                 let mut c = CommandBuilder::new("claude");
-                if let Some(resume_id) = resume_session_id {
+                // Resume keeps the existing session id (Claude appends to the
+                // same `<id>.jsonl`); a fresh spawn forces a generated id via
+                // `--session-id` so we know the file name up front instead of
+                // having to guess "the worktree's most recent session".
+                let session_id = if let Some(resume_id) = resume_session_id {
                     c.arg("--resume");
                     c.arg(resume_id);
-                }
+                    resume_id.to_string()
+                } else {
+                    let new_id = Uuid::new_v4().to_string();
+                    c.arg("--session-id");
+                    c.arg(&new_id);
+                    new_id
+                };
                 if let Some(name) = session_name {
                     c.arg("--name");
                     c.arg(name);
@@ -199,14 +218,18 @@ impl PtyManager {
                 // Let the conductor MCP server find the review database.
                 let db_path = repo_root.join(".conductor").join("conductor.db");
                 c.env("CONDUCTOR_DB_PATH", db_path);
-                c
+                (c, Some(session_id))
             }
-            SessionKind::Shell => CommandBuilder::new(shell_path),
+            SessionKind::Shell => (CommandBuilder::new(shell_path), None),
             SessionKind::Editor => {
                 unreachable!("editor sessions are spawned via spawn_editor_session")
             }
         };
-        self.finish_spawn(kind, worktree, label, working_dir, rows, cols, cmd)
+        let idx = self.finish_spawn(kind, worktree, label, working_dir, rows, cols, cmd)?;
+        if let Some(session) = self.sessions.get_mut(idx) {
+            session.claude_session_id = claude_session_id;
+        }
+        Ok(idx)
     }
 
     /// Spawn an external editor (`$VISUAL` / `$EDITOR`) on a single `file` as a
@@ -360,6 +383,9 @@ impl PtyManager {
             kind,
             worktree: worktree.to_string(),
             working_dir: working_dir.clone(),
+            // Populated by `spawn_session` for Claude panels after this returns;
+            // Shell/Editor sessions keep it `None`.
+            claude_session_id: None,
             is_active: false,
             master: pair.master,
             writer,
@@ -755,6 +781,17 @@ impl PtyManager {
     /// Return the number of sessions.
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// The Claude session id and working directory for the session at `idx`,
+    /// when it is a Claude panel with a known id. Used by the reflow transcript
+    /// view to open the log for a *specific* panel rather than the worktree's
+    /// most recently written session. Returns `None` for out-of-range indices,
+    /// non-Claude sessions, or Claude sessions whose id is unknown.
+    pub fn claude_session_ref(&self, idx: usize) -> Option<(PathBuf, String)> {
+        let session = self.sessions.get(idx)?;
+        let id = session.claude_session_id.as_ref()?;
+        Some((session.working_dir.clone(), id.clone()))
     }
 
     /// Read-only access to the sessions slice.

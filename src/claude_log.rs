@@ -51,8 +51,12 @@ pub enum Block {
     Text {
         text: String,
     },
-    /// Thinking block — shown as a stub; body is empty in published logs.
-    Thinking,
+    /// Thinking block. Local session logs carry the full reasoning text in the
+    /// `thinking` field (unlike the redacted published logs), so capture it.
+    Thinking {
+        #[serde(default)]
+        thinking: String,
+    },
     ToolUse {
         name: String,
         #[serde(default)]
@@ -61,6 +65,10 @@ pub enum Block {
     ToolResult {
         #[serde(default)]
         content: ToolResultContent,
+        /// Set when the tool reported an error. Rendered with an error-colored
+        /// connector to mirror Claude Code's transcript.
+        #[serde(default)]
+        is_error: bool,
     },
     /// Any block type not explicitly handled above.
     #[serde(other)]
@@ -111,13 +119,25 @@ pub struct LogEntry {
 pub enum DisplayBlock {
     /// Markdown prose (user input or assistant text response).
     Text(String),
-    /// A tool invocation — rendered as `▸ {name}: {summary}`.
+    /// A tool invocation — rendered as `⏺ {name}({summary})`.
     ToolUse { name: String, summary: String },
-    /// The result returned by a tool — rendered as a line-count summary.
-    ToolResult { lines: usize },
-    /// A thinking block — rendered as a placeholder stub.
-    Thinking,
+    /// The result returned by a tool — a capped preview of the actual output
+    /// plus the total line count, mirroring Claude Code's collapsed `⎿` block.
+    ToolResult {
+        /// First [`TOOL_RESULT_PREVIEW_LINES`] lines of output (already capped).
+        preview: Vec<String>,
+        /// Total number of output lines, for the `… +N lines` summary.
+        total_lines: usize,
+        /// Whether the tool reported an error.
+        is_error: bool,
+    },
+    /// A thinking block — the assistant's reasoning text (may be empty).
+    Thinking { text: String },
 }
+
+/// Maximum number of tool-result output lines shown before collapsing into a
+/// `… +N lines` summary, matching Claude Code's transcript preview.
+pub const TOOL_RESULT_PREVIEW_LINES: usize = 4;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -140,12 +160,15 @@ fn summarise_tool_input(input: &serde_json::Value) -> String {
     String::new()
 }
 
-/// Count the total number of output lines in a `ToolResultContent`.
-fn count_result_lines(content: &ToolResultContent) -> usize {
+/// Split a `ToolResultContent` into its individual output lines.
+fn result_lines(content: &ToolResultContent) -> Vec<String> {
     match content {
-        ToolResultContent::None => 0,
-        ToolResultContent::Text(s) => s.lines().count(),
-        ToolResultContent::Blocks(blocks) => blocks.iter().map(|b| b.text.lines().count()).sum(),
+        ToolResultContent::None => Vec::new(),
+        ToolResultContent::Text(s) => s.lines().map(str::to_string).collect(),
+        ToolResultContent::Blocks(blocks) => blocks
+            .iter()
+            .flat_map(|b| b.text.lines().map(str::to_string))
+            .collect(),
     }
 }
 
@@ -160,14 +183,20 @@ fn content_to_display_blocks(content: Content) -> Vec<DisplayBlock> {
             .filter_map(|b| match b {
                 Block::Text { text } if !text.is_empty() => Some(DisplayBlock::Text(text)),
                 Block::Text { .. } => None,
-                Block::Thinking => Some(DisplayBlock::Thinking),
+                Block::Thinking { thinking } => Some(DisplayBlock::Thinking { text: thinking }),
                 Block::ToolUse { name, input } => {
                     let summary = summarise_tool_input(&input);
                     Some(DisplayBlock::ToolUse { name, summary })
                 }
-                Block::ToolResult { content } => {
-                    let lines = count_result_lines(&content);
-                    Some(DisplayBlock::ToolResult { lines })
+                Block::ToolResult { content, is_error } => {
+                    let lines = result_lines(&content);
+                    let total_lines = lines.len();
+                    let preview = lines.into_iter().take(TOOL_RESULT_PREVIEW_LINES).collect();
+                    Some(DisplayBlock::ToolResult {
+                        preview,
+                        total_lines,
+                        is_error,
+                    })
                 }
                 Block::Other => None,
             })
@@ -276,9 +305,15 @@ mod tests {
         );
         assert_eq!(blocks.len(), 4);
         assert!(matches!(blocks[0], DisplayBlock::Text(_)));
-        assert!(matches!(blocks[1], DisplayBlock::Thinking));
+        assert!(matches!(blocks[1], DisplayBlock::Thinking { .. }));
         assert!(matches!(blocks[2], DisplayBlock::ToolUse { .. }));
-        assert!(matches!(blocks[3], DisplayBlock::ToolResult { lines: 3 }));
+        assert!(matches!(
+            blocks[3],
+            DisplayBlock::ToolResult {
+                total_lines: 3,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -311,7 +346,7 @@ mod tests {
     #[test]
     fn tool_result_string_counts_lines() {
         let content = ToolResultContent::Text("a\nb\nc".to_string());
-        assert_eq!(count_result_lines(&content), 3);
+        assert_eq!(result_lines(&content).len(), 3);
     }
 
     #[test]
@@ -324,7 +359,60 @@ mod tests {
                 text: "d\ne".to_string(),
             },
         ]);
-        assert_eq!(count_result_lines(&content), 5);
+        assert_eq!(result_lines(&content).len(), 5);
+    }
+
+    #[test]
+    fn tool_result_preview_caps_and_reports_total() {
+        // 10 output lines → preview capped at TOOL_RESULT_PREVIEW_LINES,
+        // total_lines retains the real count for the "+N lines" summary.
+        let body: String = (0..10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let json = format!(
+            r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t","content":{body:?}}}]}}}}"#
+        );
+        let blocks = parse_msg_content(&json);
+        match &blocks[0] {
+            DisplayBlock::ToolResult {
+                preview,
+                total_lines,
+                is_error,
+            } => {
+                assert_eq!(*total_lines, 10);
+                assert_eq!(preview.len(), TOOL_RESULT_PREVIEW_LINES);
+                assert_eq!(preview[0], "line0");
+                assert!(!*is_error);
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_result_error_flag_is_captured() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":[
+                {"type":"tool_result","tool_use_id":"t","is_error":true,"content":"boom"}
+            ]}}"#,
+        );
+        assert!(matches!(
+            blocks[0],
+            DisplayBlock::ToolResult { is_error: true, .. }
+        ));
+    }
+
+    #[test]
+    fn thinking_text_is_captured() {
+        let blocks = parse_msg_content(
+            r#"{"type":"assistant","message":{"role":"assistant","content":[
+                {"type":"thinking","thinking":"let me reason","signature":"x"}
+            ]}}"#,
+        );
+        match &blocks[0] {
+            DisplayBlock::Thinking { text } => assert_eq!(text, "let me reason"),
+            other => panic!("expected Thinking, got {other:?}"),
+        }
     }
 
     #[test]
