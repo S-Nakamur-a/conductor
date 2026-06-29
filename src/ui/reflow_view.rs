@@ -31,7 +31,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, SweepDir};
+use crate::app::App;
 use crate::claude_log::{DisplayBlock, Role};
 use crate::theme::Theme;
 
@@ -152,33 +152,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .collect();
 
     // ── Transition completion ─────────────────────────────────────────────────
-    // Drive the entry/exit transition timer. `SweepDir` is Copy so we snapshot
-    // direction and progress before dropping the borrow on `app.reflow`, then
-    // apply any completion side-effects. The border color transition is painted
-    // in `terminal_claude::render`, not here.
-    let transition_state = app.reflow.sweep.as_ref().map(|s| {
-        (
-            s.dir,
-            crate::event::reflow::sweep_progress(
-                &s.start,
-                crate::event::reflow::TRANSITION_DURATION_MS,
-            ),
-        )
+    // Drive the entry transition timer: once the entry sweep elapses, clear it
+    // so the border rests on the steady read-mode color. The border color
+    // transition itself is painted in `terminal_claude::render`, not here.
+    let entry_done = app.reflow.sweep.as_ref().is_some_and(|s| {
+        crate::event::reflow::sweep_progress(&s.start, crate::event::reflow::TRANSITION_DURATION_MS)
+            >= 1.0
     });
-
-    if let Some((dir, p)) = transition_state
-        && p >= 1.0
-    {
-        match dir {
-            SweepDir::In => {
-                app.reflow.sweep = None;
-            }
-            SweepDir::Out => {
-                // close_reflow sets active=false; the next frame renders
-                // the live PTY instead of this view.
-                app.close_reflow();
-            }
-        }
+    if entry_done {
+        app.reflow.sweep = None;
     }
 
     // No .wrap(): `markdown_cache.render` already produces lines ≤ `body_width`

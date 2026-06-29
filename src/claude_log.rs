@@ -23,6 +23,15 @@ pub struct LogRecord {
     pub is_sidechain: bool,
     #[serde(default)]
     pub message: Option<Message>,
+    /// `queue-operation` records carry the queued text at the top level (not in
+    /// `message`) and an `operation` discriminator. A user prompt typed while
+    /// Claude is still working is recorded as `operation: "enqueue"` here and
+    /// never re-emitted as a `user` record, so the transcript must read it from
+    /// these fields or the input is lost from the scrollback.
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
 }
 
 /// The `message` field present on `user` and `assistant` records.
@@ -233,6 +242,23 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
                 continue;
             }
         };
+
+        // A prompt queued while Claude is working is stored as a
+        // `queue-operation` enqueue, with the text at the top level. Surface it
+        // as a user turn so the user's own input appears in the transcript; the
+        // matching `remove` (dequeue) carries no text and is ignored.
+        if record.kind == "queue-operation" {
+            if record.operation.as_deref() == Some("enqueue")
+                && let Some(text) = record.content.filter(|s| !s.is_empty())
+            {
+                entries.push(LogEntry {
+                    role: Role::User,
+                    model: None,
+                    blocks: vec![DisplayBlock::Text(text)],
+                });
+            }
+            continue;
+        }
 
         // Only process `user` and `assistant` turns; skip sidechain records.
         if record.kind != "user" && record.kind != "assistant" {
@@ -509,6 +535,27 @@ mod tests {
         assert_eq!(entries[0].role, Role::User);
         assert_eq!(entries[1].role, Role::Assistant);
         assert_eq!(entries[2].role, Role::User);
+    }
+
+    #[test]
+    fn load_session_includes_enqueued_prompts_skips_removes() {
+        // A prompt typed while Claude is busy is an `enqueue` queue-operation
+        // (top-level content); the dequeue is a contentless `remove`.
+        let f = write_jsonl(&[
+            r#"{"type":"user","message":{"role":"user","content":"first"}}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","content":"typed while busy"}"#,
+            r#"{"type":"queue-operation","operation":"remove","content":""}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":"reply"}}"#,
+        ]);
+        let entries = load_session(f.path());
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].role, Role::User);
+        assert_eq!(entries[1].role, Role::User);
+        assert!(
+            matches!(&entries[1].blocks[0], DisplayBlock::Text(t) if t == "typed while busy"),
+            "enqueued prompt text should be surfaced as a user turn"
+        );
+        assert_eq!(entries[2].role, Role::Assistant);
     }
 
     #[test]

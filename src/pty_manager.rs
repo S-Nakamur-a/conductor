@@ -21,10 +21,17 @@ use uuid::Uuid;
 /// Maximum number of raw PTY output bytes retained per session for
 /// reflow-on-resize. When the terminal width changes, vt100 cannot reflow
 /// existing content, so the parser is rebuilt by replaying this byte history
-/// at the new width. The cap is sized to comfortably exceed the vt100
-/// scrollback (a few thousand lines), so eviction only ever drops content
-/// already scrolled out of reach. Old bytes are trimmed at line boundaries.
-const MAX_RAW_HISTORY_BYTES: usize = 2 * 1024 * 1024;
+/// at the new width.
+///
+/// This replay runs synchronously on the main thread inside `resize_session`,
+/// so its cost is paid as a UI stall on *every* width change — panel maximize,
+/// focus shifts that resize the shared right column, Tab, tmux-style resize.
+/// The cap is therefore kept modest: 512 KiB still covers well over the
+/// default active scrollback (10 000 lines at typical shell line lengths) while
+/// keeping a worst-case replay to a single-frame stall instead of tens of ms.
+/// Bytes beyond the cap are trimmed at line boundaries — the only content lost
+/// to reflow is history already far out of view.
+const MAX_RAW_HISTORY_BYTES: usize = 512 * 1024;
 
 // ---------------------------------------------------------------------------
 // SessionKind

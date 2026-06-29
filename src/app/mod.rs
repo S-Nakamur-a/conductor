@@ -581,22 +581,14 @@ pub struct App {
     pub reflow: ReflowView,
 }
 
-/// Direction of the reflow view entry/exit sweep animation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SweepDir {
-    /// Sweep front moves top-to-bottom (entering the transcript view).
-    In,
-    /// Sweep front moves bottom-to-top (returning to the live PTY).
-    Out,
-}
-
-/// Active sweep animation for the reflow transcript view.
+/// Active entry animation for the reflow transcript view.
 ///
-/// Holds the direction and the `Instant` the animation started so that
-/// `reflow_view::render` can compute progress via elapsed time without any
-/// frame-counter dependency.
+/// Holds the `Instant` the animation started so that `reflow_view::render` can
+/// compute progress via elapsed time without any frame-counter dependency.
+/// Only the *entry* transition is animated — it masks the initial
+/// `build_lines` latency. Leaving the view swaps back to the live PTY
+/// immediately (no exit animation) so returning to the prompt feels instant.
 pub struct Sweep {
-    pub dir: SweepDir,
     pub start: std::time::Instant,
 }
 
@@ -719,58 +711,41 @@ impl App {
             .active_claude_session
             .and_then(|idx| self.terminal.pty_manager.claude_session_ref(idx));
 
-        let (working_dir, session_id) = match resolved {
-            Some(pair) => pair,
+        // Working dir of the selected worktree, used for the mtime fallback.
+        let working_dir = match self.worktrees.get(self.selected_worktree) {
+            Some(wt) => wt.path.clone(),
             None => {
-                // Fallback for panels without a tracked id (e.g. sessions that
-                // predate id pinning): use the selected worktree's latest log.
-                let working_dir = match self.worktrees.get(self.selected_worktree) {
-                    Some(wt) => wt.path.clone(),
-                    None => {
-                        self.set_status(
-                            "No worktree selected for transcript view".to_string(),
-                            StatusLevel::Warning,
-                        );
-                        return;
-                    }
-                };
-                let canonical =
-                    std::fs::canonicalize(&working_dir).unwrap_or_else(|_| working_dir.clone());
-                let session = match crate::claude_sessions::find_latest_sessions_for_paths(
-                    std::slice::from_ref(&working_dir),
-                ) {
-                    Ok(mut map) => map.remove(&canonical),
-                    Err(e) => {
-                        log::warn!("reflow: cannot look up session: {e}");
-                        None
-                    }
-                };
-                match session {
-                    Some(s) => (working_dir, s.session_id),
-                    None => {
-                        self.set_status(
-                            "No Claude session found for this worktree".to_string(),
-                            StatusLevel::Info,
-                        );
-                        return;
-                    }
-                }
+                self.set_status(
+                    "No worktree selected for transcript view".to_string(),
+                    StatusLevel::Warning,
+                );
+                return;
             }
         };
 
-        let jsonl_path =
-            match crate::claude_sessions::session_jsonl_path(&working_dir, &session_id) {
-                Some(p) => p,
-                None => {
-                    self.set_status(
-                        "Cannot resolve session file path".to_string(),
-                        StatusLevel::Warning,
-                    );
-                    return;
-                }
-            };
+        // 1. Prefer the active panel's pinned session id. When a worktree hosts
+        //    several Claude panels (CC:1, CC:2, …) this ties the transcript to
+        //    the panel actually on screen, avoiding cross-panel scroll bleed.
+        let mut entries = resolved
+            .and_then(|(wd, sid)| crate::claude_sessions::session_jsonl_path(&wd, &sid))
+            .map(|path| crate::claude_log::load_session(&path))
+            .unwrap_or_default();
 
-        let entries = crate::claude_log::load_session(&jsonl_path);
+        // 2. Fall back to the most-recently-written log in this worktree's
+        //    project dir when the pinned session is missing or empty. This is
+        //    what catches a manual in-app `/resume`: it switches the live
+        //    session id away from the conductor-launched (pinned) one, so the
+        //    pinned file is stale/empty while the real transcript is whatever
+        //    Claude is now appending to (= freshest mtime). Empty/aux logs
+        //    (e.g. one-shot security-review runs sharing the dir) are skipped.
+        if entries.is_empty() {
+            entries = crate::claude_sessions::session_logs_by_mtime(&working_dir)
+                .iter()
+                .map(|path| crate::claude_log::load_session(path))
+                .find(|e| !e.is_empty())
+                .unwrap_or_default();
+        }
+
         if entries.is_empty() {
             self.set_status(
                 "Session log is empty or unreadable".to_string(),
@@ -797,7 +772,6 @@ impl App {
             // its complement over TRANSITION_DURATION_MS, masking the initial
             // build_lines latency.
             sweep: Some(Sweep {
-                dir: SweepDir::In,
                 start: std::time::Instant::now(),
             }),
         };
@@ -809,19 +783,23 @@ impl App {
         self.reflow.sweep = None;
         // Reset Claude scrollback so the live tail is shown immediately.
         self.terminal.scroll_claude = 0;
+        // Force a fresh PTY snapshot on the next frame. While the reflow view
+        // was up the PTY panel rendered nothing, so `cache_claude` holds the
+        // pre-scrollback frame. If no new output happens to arrive right after
+        // closing (e.g. Claude is idle at its prompt), the stale cache would
+        // otherwise persist and the input box would not reappear. Clearing the
+        // cache and marking it dirty rebuilds the live tail immediately.
+        self.terminal.cache_claude = Default::default();
+        self.terminal.dirty_claude = true;
     }
 
-    /// Begin the exit sweep animation rather than closing immediately.
+    /// Leave the reflow transcript view, returning to the live PTY immediately.
     ///
-    /// Sets `sweep` to a `SweepDir::Out` animation so `reflow_view::render`
-    /// plays the bottom-to-top wipe before calling `close_reflow()` once the
-    /// animation completes. Focus-loss closes the view immediately via
-    /// `set_focus` without a sweep (the panel disappears anyway).
+    /// Kept as a distinct entry point from `close_reflow` for the keybind/scroll
+    /// call sites, but there is no exit animation: the content swaps back to the
+    /// live tail on the same frame so returning to the prompt feels instant.
     pub fn request_close_reflow(&mut self) {
-        self.reflow.sweep = Some(Sweep {
-            dir: SweepDir::Out,
-            start: std::time::Instant::now(),
-        });
+        self.close_reflow();
     }
 
     /// Returns `true` when any overlay popup is visible on top of the main panels.
