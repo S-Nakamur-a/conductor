@@ -47,7 +47,8 @@ Status bar
   count, ahead/behind, and Claude Code waiting/active state. Hidden while a panel
   is maximized.
 - The main area is a three-column accordion (`ui/layout.rs`): Explorer | Viewer |
-  Terminal, with focus-driven widths. Any panel can be maximized (`Alt+m`).
+  Terminal, with focus-driven widths. Any panel can be maximized (`Ctrl+Alt+Z`),
+  and resized tmux-style with `Ctrl+Alt+Arrow` (ratios persist to config.toml).
 - Explorer column is split 50/50 (file tree top, diff/comment list bottom).
 - Terminal column is split 80/20 vertically (Claude Code top, Shell bottom).
 - When the embedded editor is active (`Focus::Editor`), it merges the

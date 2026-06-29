@@ -147,12 +147,20 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.toggle_panel_overlay();
             true
         }
-        Action::GrowShell => {
-            app.grow_shell();
+        Action::ResizePaneLeft => {
+            app.resize_focused_pane(crate::app::ResizeDir::Left);
             true
         }
-        Action::ShrinkShell => {
-            app.shrink_shell();
+        Action::ResizePaneRight => {
+            app.resize_focused_pane(crate::app::ResizeDir::Right);
+            true
+        }
+        Action::ResizePaneUp => {
+            app.resize_focused_pane(crate::app::ResizeDir::Up);
+            true
+        }
+        Action::ResizePaneDown => {
+            app.resize_focused_pane(crate::app::ResizeDir::Down);
             true
         }
         Action::OpenThemePicker => {

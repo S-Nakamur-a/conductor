@@ -59,7 +59,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let title_line = ratatui::text::Line::from(vec![
         Span::styled(format!(" EDIT — {title} "), title_style),
         Span::styled(
-            ":q close · Ctrl+Esc Claude · alt+m zoom",
+            ":q close · Ctrl+Esc Claude · ctrl+alt+z zoom",
             Style::default().fg(muted),
         ),
     ]);
