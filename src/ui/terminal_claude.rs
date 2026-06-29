@@ -167,10 +167,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Block::default()
     } else {
         // Border color while reflow is active: the complement of the accent is
-        // the persistent read-mode cue. During the entry/exit transition the
-        // border glides smoothly between the accent and that complement (a
-        // single gentle gradient, no flicker); otherwise it's the normal
-        // focus/unfocus color.
+        // the persistent read-mode cue. During the entry transition the border
+        // glides smoothly from the accent to that complement (a single gentle
+        // gradient, no flicker); leaving the view is instant, so there is no
+        // exit gradient; otherwise it's the normal focus/unfocus color.
         // Focus-gated to match the reflow render guard below: while the panel is
         // unfocused it shows the live PTY (reflow is preserved but not rendered),
         // so the read-mode complement would be a misleading border cue there.
@@ -182,12 +182,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     crate::event::reflow::TRANSITION_DURATION_MS,
                 );
                 let t = crate::event::reflow::transition_eased(p);
-                match sweep.dir {
-                    // Entering read mode: accent → complement.
-                    crate::app::SweepDir::In => crate::theme::Theme::lerp(theme.accent, complement, t),
-                    // Leaving read mode: complement → accent, then close_reflow.
-                    crate::app::SweepDir::Out => crate::theme::Theme::lerp(complement, theme.accent, t),
-                }
+                // Entering read mode: accent → complement.
+                crate::theme::Theme::lerp(theme.accent, complement, t)
             } else {
                 // Steady read mode: rest on the complement.
                 complement
