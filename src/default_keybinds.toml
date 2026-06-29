@@ -60,7 +60,7 @@
 "alt+4" = "focus_viewer"
 "alt+5" = "focus_terminal_claude"
 "alt+6" = "focus_terminal_shell"
-# Focus a panel with alt/super+digit, then maximize it with alt+m (below) —
+# Focus a panel with alt/super+digit, then maximize it with ctrl+alt+z (below) —
 # this replaces the old hard-to-press alt+shift+digit "focus+expand" combo.
 # macOS Option-produces-Unicode fallback (US layout): Option+1='¡' … Option+6='§'.
 "¡" = "focus_worktree"
@@ -70,15 +70,20 @@
 "∞" = "focus_terminal_claude"
 "§" = "focus_terminal_shell"
 "ctrl+g" = "search_full_text"
-"super+space" = "toggle_panel_expand"
-# alt+m — maximize/zoom the focused panel. Reliable everywhere (super+space's
-# Cmd is eaten by macOS/terminals); the easy half of "focus then zoom".
-"alt+m" = "toggle_panel_expand"
-# Resize the Claude/Shell vertical split at runtime (the Shell starts small).
-# Ctrl+Alt+Up grows the Shell (divider up); Ctrl+Alt+Down shrinks it. These fire
-# even with the Shell (a terminal) focused, so you can resize while typing in it.
-"ctrl+alt+up" = "grow_shell"
-"ctrl+alt+down" = "shrink_shell"
+# ── Layout: tmux-style pane sizing (the ctrl+alt family) ───────────────────────
+# Resize the focused panel: Ctrl+Alt+Arrow grows the focused panel toward the
+# arrow (against an edge it shrinks instead), moving the shared divider and
+# re-distributing space to the neighbor. Left/Right move the column dividers
+# (Explorer|Viewer|Terminal); Up/Down move the Claude|Shell split while a
+# terminal is focused. These fire even with a terminal focused, so you can resize
+# while typing in it, and the new ratios are persisted to config.toml.
+"ctrl+alt+left" = "resize_pane_left"
+"ctrl+alt+right" = "resize_pane_right"
+"ctrl+alt+up" = "resize_pane_up"
+"ctrl+alt+down" = "resize_pane_down"
+# Ctrl+Alt+Z — maximize/restore (zoom) the focused panel, tmux's `prefix z`.
+# Same ctrl+alt family as the resize chords; works over a PTY too.
+"ctrl+alt+z" = "toggle_panel_expand"
 "alt+/" = "toggle_panel_overlay"
 # macOS Unicode fallback (Option+/ = '÷', US layout).
 "÷" = "toggle_panel_overlay"

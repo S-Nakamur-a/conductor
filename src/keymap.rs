@@ -145,10 +145,14 @@ pub enum Action {
     // ── Panel layout ────────────────────────────────────────────
     TogglePanelExpand,
     TogglePanelOverlay,
-    /// Grow the Shell area (move the Claude/Shell divider up).
-    GrowShell,
-    /// Shrink the Shell area (move the Claude/Shell divider down).
-    ShrinkShell,
+    /// Grow the focused panel toward the left (tmux `resize-pane -L`).
+    ResizePaneLeft,
+    /// Grow the focused panel toward the right (tmux `resize-pane -R`).
+    ResizePaneRight,
+    /// Grow the focused panel upward (tmux `resize-pane -U`).
+    ResizePaneUp,
+    /// Grow the focused panel downward (tmux `resize-pane -D`).
+    ResizePaneDown,
 
     // ── UI ──────────────────────────────────────────────────────
     /// Open the theme picker overlay to switch the UI color theme at runtime.
@@ -239,8 +243,10 @@ impl Action {
             "inline_reply" => Some(Action::InlineReply),
             "toggle_panel_expand" => Some(Action::TogglePanelExpand),
             "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
-            "grow_shell" => Some(Action::GrowShell),
-            "shrink_shell" => Some(Action::ShrinkShell),
+            "resize_pane_left" => Some(Action::ResizePaneLeft),
+            "resize_pane_right" => Some(Action::ResizePaneRight),
+            "resize_pane_up" => Some(Action::ResizePaneUp),
+            "resize_pane_down" => Some(Action::ResizePaneDown),
             "open_theme_picker" => Some(Action::OpenThemePicker),
             _ => None,
         }
@@ -330,8 +336,10 @@ impl Action {
             Action::InlineReply => "inline_reply",
             Action::TogglePanelExpand => "toggle_panel_expand",
             Action::TogglePanelOverlay => "toggle_panel_overlay",
-            Action::GrowShell => "grow_shell",
-            Action::ShrinkShell => "shrink_shell",
+            Action::ResizePaneLeft => "resize_pane_left",
+            Action::ResizePaneRight => "resize_pane_right",
+            Action::ResizePaneUp => "resize_pane_up",
+            Action::ResizePaneDown => "resize_pane_down",
             Action::OpenThemePicker => "open_theme_picker",
         }
     }
@@ -368,10 +376,13 @@ impl Action {
                 | Action::PrevWorktree
                 | Action::TogglePanelExpand
                 | Action::TogglePanelOverlay
-                // Resizing the Claude/Shell split is most useful with the Shell
-                // (a terminal) focused, so these must fire over a PTY too.
-                | Action::GrowShell
-                | Action::ShrinkShell
+                // Pane resizing is most useful with a terminal focused (resize
+                // the Claude/Shell split or the terminal column while typing in
+                // it), so these must fire over a PTY too.
+                | Action::ResizePaneLeft
+                | Action::ResizePaneRight
+                | Action::ResizePaneUp
+                | Action::ResizePaneDown
         )
     }
 }
@@ -766,12 +777,16 @@ mod tests {
     #[test]
     fn worktree_switch_and_zoom_aliases_resolve() {
         // alt+]/alt+[ are the kitty-protocol-free aliases for ctrl+tab worktree
-        // switching; alt+m zooms the focused panel (replacing alt+shift+digit).
+        // switching; ctrl+alt+z zooms the focused panel (tmux `prefix z`), joining
+        // the ctrl+alt pane-sizing family.
         let km = default_keymap();
         let cases = [
             (KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT), Action::NextWorktree),
             (KeyEvent::new(KeyCode::Char('['), KeyModifiers::ALT), Action::PrevWorktree),
-            (KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT), Action::TogglePanelExpand),
+            (
+                KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL | KeyModifiers::ALT),
+                Action::TogglePanelExpand,
+            ),
         ];
         for (key, action) in cases {
             assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "{key:?}");
@@ -887,9 +902,10 @@ mod tests {
             km.resolve(&alt_l, KeyContext::Editor),
             Some(Action::CycleFocusForward)
         );
-        let alt_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+        let ctrl_alt_z =
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL | KeyModifiers::ALT);
         assert_eq!(
-            km.resolve(&alt_m, KeyContext::Editor),
+            km.resolve(&ctrl_alt_z, KeyContext::Editor),
             Some(Action::TogglePanelExpand)
         );
     }

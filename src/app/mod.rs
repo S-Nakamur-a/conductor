@@ -133,6 +133,20 @@ impl Focus {
     }
 }
 
+/// Direction of a tmux-style pane resize, relative to the focused panel.
+///
+/// Semantics mirror tmux `resize-pane -L/-R/-U/-D`: the focused panel grows
+/// toward the given direction by moving the divider it shares with the neighbor
+/// on that side. When the panel has no neighbor on that side (it sits against
+/// the edge), the opposite divider moves instead, so the panel shrinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 /// Input mode for worktree operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeInputMode {
@@ -425,8 +439,9 @@ pub struct App {
 
     /// Runtime height percentage for the Claude Code area within the terminal
     /// column (the Shell gets the remainder). Seeded from
-    /// `config.layout.terminal_split_pct` at startup and adjusted live by the
-    /// grow/shrink-shell actions; not persisted back to the config file.
+    /// `config.layout.terminal_split_pct` at startup, adjusted live by a
+    /// tmux-style pane resize (Ctrl+Alt+Up/Down with a terminal focused), and
+    /// persisted back to the config file so the ratio survives a restart.
     pub terminal_split_pct: u16,
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
@@ -1322,7 +1337,7 @@ impl App {
                 self.terminal.needs_clear = true;
                 self.dirty.mark_all();
                 self.set_status(
-                    format!("Editing {fname} — Ctrl+Esc: Claude · :q: close · alt+m: zoom"),
+                    format!("Editing {fname} — Ctrl+Esc: Claude · :q: close · ctrl+alt+z: zoom"),
                     StatusLevel::Info,
                 );
             }
@@ -1708,6 +1723,16 @@ impl App {
         // and recomputes on the next frame; no explicit invalidation needed.
         self.config.adopt_appearance(new);
 
+        // The Claude/Shell split is a runtime field seeded from config; resync it
+        // so an external edit to layout.terminal_split_pct takes effect live. Our
+        // own resize-driven writes never reach here — they leave the appearance
+        // snapshot unchanged, so reload_appearance_config short-circuits first.
+        self.terminal_split_pct = self
+            .config
+            .layout
+            .terminal_split_pct
+            .clamp(Self::TERMINAL_SPLIT_MIN, Self::TERMINAL_SPLIT_MAX);
+
         // Refresh the viewer file tree + diff to pick up tab_width / word_diff.
         // refresh_viewer calls rehighlight_viewer unconditionally, so the new
         // syntect theme is applied to the open file as part of this call.
@@ -2019,8 +2044,10 @@ impl App {
             CommandId::NextWorktree => self.select_next_worktree(),
             CommandId::PrevWorktree => self.select_prev_worktree(),
             CommandId::TogglePanelExpand => self.cmd_toggle_panel_expand(),
-            CommandId::GrowShell => self.grow_shell(),
-            CommandId::ShrinkShell => self.shrink_shell(),
+            CommandId::ResizePaneLeft => self.resize_focused_pane(ResizeDir::Left),
+            CommandId::ResizePaneRight => self.resize_focused_pane(ResizeDir::Right),
+            CommandId::ResizePaneUp => self.resize_focused_pane(ResizeDir::Up),
+            CommandId::ResizePaneDown => self.resize_focused_pane(ResizeDir::Down),
             CommandId::CreateWorktree => self.cmd_create_worktree(),
             CommandId::DeleteWorktree => self.cmd_delete_worktree(),
             CommandId::SwitchBranch => self.cmd_switch_branch(),
@@ -2129,30 +2156,122 @@ impl App {
         }
     }
 
-    /// Grow the Shell area within the terminal column by one step (the Claude
-    /// area shrinks). Bound to the grow-shell action.
-    pub fn grow_shell(&mut self) {
-        self.adjust_terminal_split(-(Self::TERMINAL_SPLIT_STEP as i16));
-    }
-
-    /// Shrink the Shell area within the terminal column by one step (the Claude
-    /// area grows). Bound to the shrink-shell action.
-    pub fn shrink_shell(&mut self) {
-        self.adjust_terminal_split(Self::TERMINAL_SPLIT_STEP as i16);
-    }
-
-    /// Step (percentage points) each grow/shrink-shell action moves the
-    /// Claude/Shell divider.
+    /// Step (percentage points) each horizontal pane resize moves a column
+    /// divider.
+    const RESIZE_STEP_PCT: u16 = 5;
+    /// Minimum width percentage for each of the three columns (Explorer, Viewer,
+    /// Terminal), so a tmux-style resize can never collapse a column to nothing.
+    const MIN_COL_PCT: u16 = 10;
+    /// Step (percentage points) each vertical pane resize moves the Claude/Shell
+    /// divider.
     const TERMINAL_SPLIT_STEP: u16 = 5;
     /// Bounds for the runtime Claude-area percentage, leaving at least this much
     /// for each of the two terminal panes so neither can vanish.
     const TERMINAL_SPLIT_MIN: u16 = 20;
     const TERMINAL_SPLIT_MAX: u16 = 80;
 
+    /// Resize the focused panel tmux-style, growing it toward `dir`.
+    ///
+    /// Maps the focused panel and direction onto one of the three adjustable
+    /// dividers (Explorer|Viewer, Viewer|Terminal, Claude|Shell). The focused
+    /// panel grows toward `dir` by moving the divider it shares with its
+    /// neighbor on that side; against an edge it moves the only divider it has,
+    /// shrinking instead — mirroring `resize-pane -L/-R/-U/-D`. The middle
+    /// (Viewer) column can therefore push both of its borders, so it never
+    /// becomes the cramped pane that can only shrink.
+    pub fn resize_focused_pane(&mut self, dir: ResizeDir) {
+        let step = Self::RESIZE_STEP_PCT as i16;
+        match dir {
+            ResizeDir::Left | ResizeDir::Right => {
+                let grow_right = matches!(dir, ResizeDir::Right);
+                match self.focus {
+                    // The worktree strip is full-width, not one of the three
+                    // resizable columns — nothing to resize from there.
+                    Focus::Worktree => {}
+                    // Leftmost column: left/right ride the Explorer|Viewer divider.
+                    Focus::Explorer => {
+                        self.move_explorer_viewer_divider(if grow_right { step } else { -step });
+                    }
+                    // Middle column pushes whichever border faces `dir`.
+                    Focus::Viewer => {
+                        if grow_right {
+                            self.move_viewer_terminal_divider(step);
+                        } else {
+                            self.move_explorer_viewer_divider(-step);
+                        }
+                    }
+                    // Rightmost column: left grows it (shrinks Viewer), right shrinks it.
+                    Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => {
+                        self.move_viewer_terminal_divider(if grow_right { step } else { -step });
+                    }
+                }
+            }
+            ResizeDir::Up | ResizeDir::Down => {
+                // Only the Claude/Shell split is vertically adjustable. Down moves
+                // the divider down (Claude grows); Up moves it up (Claude shrinks),
+                // regardless of which of the two terminal panes is focused.
+                if matches!(self.focus, Focus::TerminalClaude | Focus::TerminalShell) {
+                    let delta = if matches!(dir, ResizeDir::Down) {
+                        Self::TERMINAL_SPLIT_STEP as i16
+                    } else {
+                        -(Self::TERMINAL_SPLIT_STEP as i16)
+                    };
+                    self.adjust_terminal_split(delta);
+                }
+            }
+        }
+    }
+
+    /// Move the Explorer|Viewer divider by `delta` points (positive = rightward,
+    /// enlarging Explorer and shrinking Viewer). Terminal width is conserved.
+    /// Clamped so neither Explorer nor Viewer drops below [`Self::MIN_COL_PCT`].
+    fn move_explorer_viewer_divider(&mut self, delta: i16) {
+        let (new_e, new_v) = clamp_ev_divider(
+            self.config.layout.explorer_width_pct,
+            self.config.layout.viewer_width_pct,
+            delta,
+            Self::MIN_COL_PCT,
+        );
+        if new_e == self.config.layout.explorer_width_pct {
+            return;
+        }
+        self.config.layout.explorer_width_pct = new_e;
+        self.config.layout.viewer_width_pct = new_v;
+        self.after_horizontal_resize();
+    }
+
+    /// Move the Viewer|Terminal divider by `delta` points (positive = rightward,
+    /// enlarging Viewer and shrinking Terminal). Explorer width is unchanged.
+    /// Clamped so neither Viewer nor Terminal drops below [`Self::MIN_COL_PCT`].
+    fn move_viewer_terminal_divider(&mut self, delta: i16) {
+        let new_v = clamp_vt_divider(
+            self.config.layout.explorer_width_pct,
+            self.config.layout.viewer_width_pct,
+            delta,
+            Self::MIN_COL_PCT,
+        );
+        if new_v == self.config.layout.viewer_width_pct {
+            return;
+        }
+        self.config.layout.viewer_width_pct = new_v;
+        self.after_horizontal_resize();
+    }
+
+    /// Shared tail for a column resize: redraw, flash the new split, and persist
+    /// the ratios so they survive a restart.
+    fn after_horizontal_resize(&mut self) {
+        self.dirty.mark_all();
+        let e = self.config.layout.explorer_width_pct;
+        let v = self.config.layout.viewer_width_pct;
+        let t = 100u16.saturating_sub(e.saturating_add(v));
+        self.set_status_info(format!("Layout: Explorer {e}% / Viewer {v}% / Terminal {t}%"));
+        self.persist_layout();
+    }
+
     /// Adjust the runtime Claude-area height percentage by `delta` points,
     /// clamped so both the Claude and Shell panes keep a usable minimum. A
     /// positive `delta` enlarges the Claude pane (shrinks the Shell); negative
-    /// enlarges the Shell. Flashes the resulting split as a status message.
+    /// enlarges the Shell. Flashes the resulting split and persists the ratio.
     fn adjust_terminal_split(&mut self, delta: i16) {
         let next = (self.terminal_split_pct as i16 + delta)
             .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
@@ -2161,11 +2280,28 @@ impl App {
             return;
         }
         self.terminal_split_pct = next;
+        // Keep the in-memory config in sync so the appearance snapshot matches
+        // what we write below — that makes the config watcher's reload a no-op
+        // (it only reacts when the snapshot differs), avoiding a self-write loop.
+        self.config.layout.terminal_split_pct = next;
         self.dirty.mark_all();
         self.set_status_info(format!(
             "Terminal split: Claude {next}% / Shell {}%",
             100 - next
         ));
+        self.persist_layout();
+    }
+
+    /// Persist the current panel proportions to `config.toml`. Best-effort: a
+    /// write failure is logged, never fatal (the in-memory layout still applies).
+    fn persist_layout(&self) {
+        if let Err(e) = crate::config::persist_layout_proportions(
+            self.config.layout.explorer_width_pct,
+            self.config.layout.viewer_width_pct,
+            self.terminal_split_pct,
+        ) {
+            log::warn!("failed to persist layout proportions: {e}");
+        }
     }
 
     fn cmd_create_worktree(&mut self) {
@@ -3160,9 +3296,83 @@ pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize
     Some((word.to_string(), start_col, end_col))
 }
 
+/// Compute the new `(explorer, viewer)` width percentages after moving the
+/// Explorer|Viewer divider by `delta` points. Explorer+Viewer is conserved
+/// (Terminal width is untouched), and both columns are kept `>= min`. A `delta`
+/// that would push a column below the floor is clamped, so the divider stops at
+/// the boundary rather than overshooting.
+fn clamp_ev_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> (u16, u16) {
+    let e = explorer as i16;
+    let v = viewer as i16;
+    let min = min as i16;
+    let upper = (e + v - min).max(min);
+    let new_e = (e + delta).clamp(min, upper);
+    (new_e as u16, (e + v - new_e) as u16)
+}
+
+/// Compute the new Viewer width percentage after moving the Viewer|Terminal
+/// divider by `delta` points. Explorer is untouched; Viewer and the implicit
+/// Terminal column (`100 - explorer - viewer`) are each kept `>= min`.
+fn clamp_vt_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> u16 {
+    let e = explorer as i16;
+    let v = viewer as i16;
+    let min = min as i16;
+    // Terminal = 100 - E - V, so keep new V in [min, 100 - E - min].
+    let upper = (100 - e - min).max(min);
+    (v + delta).clamp(min, upper) as u16
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── tmux-style pane resize divider math ──────────────────────────
+
+    const MIN: u16 = 10;
+
+    #[test]
+    fn ev_divider_moves_space_between_explorer_and_viewer() {
+        // Growing Explorer (delta +5) takes 5 points from Viewer; Terminal
+        // (the conserved remainder) is untouched.
+        assert_eq!(clamp_ev_divider(24, 38, 5, MIN), (29, 33));
+        // Growing Viewer (delta -5) gives 5 points back to Viewer.
+        assert_eq!(clamp_ev_divider(24, 38, -5, MIN), (19, 43));
+        // Explorer + Viewer is always conserved.
+        let (e, v) = clamp_ev_divider(24, 38, 5, MIN);
+        assert_eq!(e + v, 62);
+    }
+
+    #[test]
+    fn ev_divider_clamps_at_min_floor() {
+        // Explorer can't drop below MIN even with a big shrink.
+        assert_eq!(clamp_ev_divider(12, 50, -5, MIN), (10, 52));
+        // Viewer can't drop below MIN even when Explorer wants to grow.
+        assert_eq!(clamp_ev_divider(50, 12, 5, MIN), (52, 10));
+    }
+
+    #[test]
+    fn vt_divider_protects_the_terminal_column() {
+        // Explorer 24, Viewer 38 → Terminal 38. Growing Viewer right eats into
+        // Terminal but never past its MIN floor: max Viewer = 100 - 24 - 10 = 66.
+        assert_eq!(clamp_vt_divider(24, 38, 5, MIN), 43);
+        assert_eq!(clamp_vt_divider(24, 64, 5, MIN), 66); // clamped, Terminal=10
+        // Shrinking Viewer (grow Terminal) is floored at Viewer = MIN.
+        assert_eq!(clamp_vt_divider(24, 12, -5, MIN), 10);
+    }
+
+    #[test]
+    fn dividers_never_let_a_column_vanish() {
+        // Sweep deltas across the full range; all three columns stay >= MIN.
+        for delta in [-50i16, -20, -5, 5, 20, 50] {
+            let (e, v) = clamp_ev_divider(24, 38, delta, MIN);
+            let t = 100u16.saturating_sub(e + v);
+            assert!(e >= MIN && v >= MIN && t >= MIN, "ev delta={delta}: {e}/{v}/{t}");
+
+            let v2 = clamp_vt_divider(24, 38, delta, MIN);
+            let t2 = 100u16.saturating_sub(24 + v2);
+            assert!(v2 >= MIN && t2 >= MIN, "vt delta={delta}: 24/{v2}/{t2}");
+        }
+    }
 
     #[test]
     fn focus_is_pty_only_for_pty_panels() {

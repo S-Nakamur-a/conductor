@@ -19,8 +19,10 @@ pub enum CommandId {
     NextWorktree,
     PrevWorktree,
     TogglePanelExpand,
-    GrowShell,
-    ShrinkShell,
+    ResizePaneLeft,
+    ResizePaneRight,
+    ResizePaneUp,
+    ResizePaneDown,
 
     // Worktree
     CreateWorktree,
@@ -206,18 +208,32 @@ pub const COMMANDS: &[PaletteCommand] = &[
         keywords: "resize maximize fullscreen",
     },
     PaletteCommand {
-        id: CommandId::GrowShell,
-        label: "Layout: Grow Shell Area",
+        id: CommandId::ResizePaneLeft,
+        label: "Layout: Resize Pane Left",
         category: CommandCategory::Navigation,
-        action: Some(Action::GrowShell),
-        keywords: "resize terminal shell split bigger taller",
+        action: Some(Action::ResizePaneLeft),
+        keywords: "resize pane panel width column shrink grow tmux left",
     },
     PaletteCommand {
-        id: CommandId::ShrinkShell,
-        label: "Layout: Shrink Shell Area",
+        id: CommandId::ResizePaneRight,
+        label: "Layout: Resize Pane Right",
         category: CommandCategory::Navigation,
-        action: Some(Action::ShrinkShell),
-        keywords: "resize terminal shell split smaller shorter claude",
+        action: Some(Action::ResizePaneRight),
+        keywords: "resize pane panel width column shrink grow tmux right",
+    },
+    PaletteCommand {
+        id: CommandId::ResizePaneUp,
+        label: "Layout: Resize Pane Up",
+        category: CommandCategory::Navigation,
+        action: Some(Action::ResizePaneUp),
+        keywords: "resize pane panel height shell claude split shorter taller tmux up",
+    },
+    PaletteCommand {
+        id: CommandId::ResizePaneDown,
+        label: "Layout: Resize Pane Down",
+        category: CommandCategory::Navigation,
+        action: Some(Action::ResizePaneDown),
+        keywords: "resize pane panel height shell claude split shorter taller tmux down",
     },
     // Worktree
     PaletteCommand {

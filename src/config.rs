@@ -655,10 +655,12 @@ pub fn generate_default_config() -> String {
 # viewer_width_pct = 38                 # viewer column width % (default: 38)
 #                                       # terminal column gets the remaining width
 # terminal_split_pct = 80              # Claude Code area height % within terminal column (default: 80)
-#                                       # shell area receives the remainder; the initial split only —
-#                                       # adjust it live with Ctrl+Alt+Up / Ctrl+Alt+Down (grow/shrink shell)
+#                                       # shell area receives the remainder. These three values are the
+#                                       # initial proportions; resize panels live, tmux-style, with
+#                                       # Ctrl+Alt+Arrow (grows the focused panel toward the arrow) and
+#                                       # conductor writes the new ratios back here automatically.
 #                                       # These proportions apply in the default layout only;
-#                                       # maximizing a panel (Alt+m) overrides them temporarily.
+#                                       # maximizing a panel (Ctrl+Alt+Z) overrides them temporarily.
 "#,
     )
 }
@@ -684,60 +686,64 @@ pub fn persist_ui_theme(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Return `true` when `line` is a `[ui]` TOML section header, possibly followed
-/// by whitespace and/or an inline comment (e.g. `[ui]  # colors`).
+/// Return `true` when `line` is a bare `[section]` TOML header, possibly
+/// followed by whitespace and/or an inline comment (e.g. `[ui]  # colors`).
 /// Sub-sections like `[ui.fonts]` are deliberately excluded.
-fn is_ui_section_header(line: &str) -> bool {
+fn is_section_header(line: &str, section: &str) -> bool {
     let trimmed = line.trim();
-    // Must start with exactly `[ui]` (not `[ui.something]`).
-    if !trimmed.starts_with("[ui]") {
+    let bracket = format!("[{section}]");
+    if !trimmed.starts_with(&bracket) {
         return false;
     }
-    // After `[ui]` only whitespace and/or a `#` comment may follow.
-    let after = trimmed["[ui]".len()..].trim_start();
+    // After `[section]` only whitespace and/or a `#` comment may follow.
+    let after = trimmed[bracket.len()..].trim_start();
     after.is_empty() || after.starts_with('#')
 }
 
-/// Pure function: upsert `theme = "<name>"` in the `[ui]` section of a
-/// config file string, preserving all comments and surrounding content.
+/// Pure function: upsert `<key> = <value>` in the `[section]` table of a config
+/// file string, preserving all comments and surrounding content.
 ///
-/// Extracted as a testable helper so file I/O in `persist_ui_theme` can be
-/// tested independently. Called transitively via `set_theme`.
-fn upsert_ui_theme(contents: &str, name: &str) -> String {
-    let theme_line = format!("theme = \"{name}\"");
+/// - If the section has an uncommented `key = ...` line, it is replaced in place.
+/// - If the section exists but has no uncommented `key` line (e.g. only the
+///   commented default), the line is inserted right after the section header.
+/// - If the section does not exist, `\n[section]\n<key> = <value>\n` is appended.
+///
+/// `value` must already be formatted as valid TOML (quote strings yourself).
+/// Extracted as a testable helper so file I/O stays separable from the edit.
+fn upsert_section_kv(contents: &str, section: &str, key: &str, value: &str) -> String {
+    let kv_line = format!("{key} = {value}");
     let lines: Vec<&str> = contents.lines().collect();
 
-    // Locate the [ui] section header.
-    // Match `[ui]` with optional trailing whitespace/comment, e.g. `[ui]  # colors`,
-    // but NOT sub-sections like `[ui.colors]`.
-    let ui_start = lines.iter().position(|l| is_ui_section_header(l));
+    let sec_start = lines.iter().position(|l| is_section_header(l, section));
 
-    if let Some(ui_idx) = ui_start {
+    if let Some(sec_idx) = sec_start {
         // End of section = next bare `[...]` header (not a comment).
-        let ui_end = lines[ui_idx + 1..]
+        let sec_end = lines[sec_idx + 1..]
             .iter()
             .position(|l| {
                 let t = l.trim();
                 t.starts_with('[') && !t.starts_with('#')
             })
-            .map(|i| ui_idx + 1 + i)
+            .map(|i| sec_idx + 1 + i)
             .unwrap_or(lines.len());
 
-        // Look for an existing uncommented `theme = ...` key within the section.
-        let existing_theme_idx = lines[ui_idx + 1..ui_end]
+        // Look for an existing uncommented `key = ...` line within the section.
+        let key_eq = format!("{key} =");
+        let key_eq_tight = format!("{key}=");
+        let existing_idx = lines[sec_idx + 1..sec_end]
             .iter()
             .position(|l| {
                 let t = l.trim();
-                !t.starts_with('#') && (t.starts_with("theme =") || t.starts_with("theme="))
+                !t.starts_with('#') && (t.starts_with(&key_eq) || t.starts_with(&key_eq_tight))
             })
-            .map(|i| ui_idx + 1 + i);
+            .map(|i| sec_idx + 1 + i);
 
         let mut result_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-        if let Some(idx) = existing_theme_idx {
-            result_lines[idx] = theme_line;
+        if let Some(idx) = existing_idx {
+            result_lines[idx] = kv_line;
         } else {
-            // No uncommented theme line in the section — insert right after [ui].
-            result_lines.insert(ui_idx + 1, theme_line);
+            // No uncommented key line in the section — insert right after the header.
+            result_lines.insert(sec_idx + 1, kv_line);
         }
 
         let mut result = result_lines.join("\n");
@@ -746,14 +752,56 @@ fn upsert_ui_theme(contents: &str, name: &str) -> String {
         }
         result
     } else {
-        // No [ui] section at all — append one.
+        // No such section at all — append one.
         let mut result = contents.to_string();
         if !result.ends_with('\n') && !result.is_empty() {
             result.push('\n');
         }
-        result.push_str(&format!("\n[ui]\n{theme_line}\n"));
+        result.push_str(&format!("\n[{section}]\n{kv_line}\n"));
         result
     }
+}
+
+/// Pure function: upsert `theme = "<name>"` in the `[ui]` section. Thin wrapper
+/// over [`upsert_section_kv`] kept for call-site clarity and its dedicated tests.
+fn upsert_ui_theme(contents: &str, name: &str) -> String {
+    upsert_section_kv(contents, "ui", "theme", &format!("\"{name}\""))
+}
+
+/// Persist the runtime panel proportions to the `[layout]` section of
+/// `~/.config/conductor/config.toml`, preserving comments and structure.
+///
+/// Called after a tmux-style pane resize so the chosen ratios survive restarts.
+/// The three values are the explorer/viewer column width percentages and the
+/// Claude-area height percentage within the terminal column. Writing this file
+/// trips the config watcher, but `reload_appearance_config` no-ops because the
+/// running config already holds these values (the appearance snapshot matches).
+pub fn persist_layout_proportions(
+    explorer_width_pct: u16,
+    viewer_width_pct: u16,
+    terminal_split_pct: u16,
+) -> Result<()> {
+    let path = config_file_path();
+    let contents = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        generate_default_config()
+    };
+    let updated = upsert_section_kv(
+        &contents,
+        "layout",
+        "explorer_width_pct",
+        &explorer_width_pct.to_string(),
+    );
+    let updated = upsert_section_kv(&updated, "layout", "viewer_width_pct", &viewer_width_pct.to_string());
+    let updated = upsert_section_kv(
+        &updated,
+        "layout",
+        "terminal_split_pct",
+        &terminal_split_pct.to_string(),
+    );
+    std::fs::write(&path, updated)?;
+    Ok(())
 }
 
 /// Default review prompt template (Japanese).
@@ -916,6 +964,44 @@ theme = "catppuccin-latte"
     }
 
     #[test]
+    fn upsert_section_kv_inserts_layout_value_over_commented_default() {
+        // The generated config ships layout keys commented out; a resize must
+        // insert a live value after the header while keeping the comment.
+        let contents = "[layout]\n# explorer_width_pct = 24    # default\n";
+        let result = upsert_section_kv(contents, "layout", "explorer_width_pct", "30");
+        assert!(result.contains("explorer_width_pct = 30"));
+        assert!(result.contains("# explorer_width_pct = 24"));
+    }
+
+    #[test]
+    fn upsert_section_kv_replaces_existing_layout_value() {
+        let contents = "[layout]\nexplorer_width_pct = 24\nviewer_width_pct = 38\n";
+        let result = upsert_section_kv(contents, "layout", "viewer_width_pct", "42");
+        assert_eq!(result, "[layout]\nexplorer_width_pct = 24\nviewer_width_pct = 42\n");
+    }
+
+    #[test]
+    fn upsert_section_kv_chains_for_all_three_layout_keys() {
+        // Mirrors persist_layout_proportions: three sequential upserts land in
+        // the same [layout] table without clobbering each other.
+        let contents = "[layout]\n# explorer_width_pct = 24\n# viewer_width_pct = 38\n# terminal_split_pct = 80\n\n[ui]\ntheme = \"nord\"\n";
+        let r = upsert_section_kv(contents, "layout", "explorer_width_pct", "30");
+        let r = upsert_section_kv(&r, "layout", "viewer_width_pct", "40");
+        let r = upsert_section_kv(&r, "layout", "terminal_split_pct", "65");
+        assert!(r.contains("explorer_width_pct = 30"));
+        assert!(r.contains("viewer_width_pct = 40"));
+        assert!(r.contains("terminal_split_pct = 65"));
+        // Adjacent section is untouched.
+        assert!(r.contains("[ui]"));
+        assert!(r.contains("theme = \"nord\""));
+        // Round-trips as valid TOML reflecting the new values.
+        let cfg: Config = toml::from_str(&r).expect("layout edits stay valid TOML");
+        assert_eq!(cfg.layout.explorer_width_pct, 30);
+        assert_eq!(cfg.layout.viewer_width_pct, 40);
+        assert_eq!(cfg.layout.terminal_split_pct, 65);
+    }
+
+    #[test]
     fn upsert_ui_theme_replaces_existing_theme_line() {
         let contents = "[ui]\ntheme = \"dracula\"\n";
         let result = upsert_ui_theme(contents, "github-light");
@@ -982,14 +1068,17 @@ theme = "catppuccin-latte"
     }
 
     #[test]
-    fn is_ui_section_header_cases() {
-        assert!(super::is_ui_section_header("[ui]"));
-        assert!(super::is_ui_section_header("[ui]  "));
-        assert!(super::is_ui_section_header("[ui]  # comment"));
-        assert!(super::is_ui_section_header("  [ui]"));
-        assert!(!super::is_ui_section_header("[ui.sub]"));
-        assert!(!super::is_ui_section_header("[ui.colors]"));
-        assert!(!super::is_ui_section_header("[viewer]"));
+    fn is_section_header_cases() {
+        assert!(super::is_section_header("[ui]", "ui"));
+        assert!(super::is_section_header("[ui]  ", "ui"));
+        assert!(super::is_section_header("[ui]  # comment", "ui"));
+        assert!(super::is_section_header("  [ui]", "ui"));
+        assert!(!super::is_section_header("[ui.sub]", "ui"));
+        assert!(!super::is_section_header("[ui.colors]", "ui"));
+        assert!(!super::is_section_header("[viewer]", "ui"));
+        // Generic over the section name.
+        assert!(super::is_section_header("[layout]", "layout"));
+        assert!(!super::is_section_header("[layout]", "ui"));
     }
 
     #[test]

@@ -84,14 +84,16 @@ view.
 
 - **Explorer** column is split 50/50: file tree (top) and diff / comment list (bottom).
 - **Terminal** column is split 80/20: Claude Code (top) and Shell (bottom).
-- Any panel can be maximized (`Alt+m`) to take the full main area.
+- Any panel can be maximized (`Ctrl+Alt+Z`) to take the full main area, or resized
+  tmux-style with `Ctrl+Alt+Arrow` (the new ratios persist to `config.toml`).
 
 ### Keybindings
 
 - **Tab / Shift+Tab** — cycle panel focus (non-terminal panels)
 - **Alt+h / Alt+l** — cycle panel focus from anywhere, including terminals
 - **Alt+1…6** (or **⌘+1…6**) — focus a specific panel
-- **Alt+m** — maximize / restore the focused panel
+- **Ctrl+Alt+Z** — maximize / restore (zoom) the focused panel
+- **Ctrl+Alt+Arrow** — resize the focused panel tmux-style (ratios persist)
 - **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) — switch the selected worktree
 - **Ctrl+n** — new Claude Code session · **Ctrl+t** — new shell
 - **j/k** — navigate up/down · **h/l** — collapse/expand · **g/G** — top/bottom
