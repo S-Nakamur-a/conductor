@@ -736,6 +736,18 @@ impl App {
                     .pending_worktrees
                     .retain(|p| !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch));
                 self.refresh_worktrees();
+                // If the worktree currently shown in the Explorer/Claude/Shell
+                // panels was the one removed, `refresh_worktrees` has slid the
+                // selection onto a surviving worktree (e.g. main) — but the
+                // panels still point at the gone worktree and render blank.
+                // Reload them to match the new selection, exactly as a normal
+                // switch would. (Deleting some *other* worktree leaves the
+                // selection intact, so this is a no-op then.)
+                let selected_branch = self.selected_worktree_branch();
+                let view_branch = self.current_view_branch.clone().unwrap_or_default();
+                if selected_branch != view_branch {
+                    self.on_worktree_changed();
+                }
                 self.set_status(format!("Deleted worktree: {branch}"), StatusLevel::Success);
 
                 if delete_branch_after {

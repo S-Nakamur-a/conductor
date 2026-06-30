@@ -1,6 +1,7 @@
 //! Conductor — a terminal-based Git workspace and code review tool.
 
 mod ai_caller;
+mod anim;
 mod app;
 mod background;
 mod cc_notify;
@@ -47,6 +48,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
+    BeginSynchronizedUpdate, DisableLineWrap, EnableLineWrap, EndSynchronizedUpdate,
     EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
@@ -288,6 +290,13 @@ fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     execute!(
         w,
         EnterAlternateScreen,
+        // A TUI positions every cell explicitly (ratatui MoveTo's each row), so
+        // auto-wrap must be OFF: otherwise a glyph that the terminal renders
+        // wider than we counted can push a line's tail past the last column,
+        // where auto-wrap kicks it onto the *next* row's first column — bleeding
+        // one panel's overflow into the left edge of another. With wrap off the
+        // overflow is harmlessly clamped at the right edge instead.
+        DisableLineWrap,
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
     )?;
@@ -312,6 +321,7 @@ fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     disable_raw_mode()?;
     execute!(
         w,
+        EnableLineWrap,
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture,
         crossterm::event::DisableBracketedPaste,
@@ -359,6 +369,15 @@ fn run_loop(
     let mut last_claude_size: (u16, u16) = (0, 0);
     let mut last_shell_size: (u16, u16) = (0, 0);
     let mut first_frame_done = false;
+    // Track region-boundary state (maximize/restore, editor & reflow open/close,
+    // and the divider/split widths). When any of these change a screen region
+    // hands off to a different panel; ratatui's cell diff can't see that handoff,
+    // so the vacated edge keeps the previous occupant's glyphs (e.g. a restored
+    // Explorer showing fragments of the editor's code, or a resized panel leaving
+    // text along its old edge). A hard clear on the change resyncs the screen.
+    // `(expanded, editor, reflow, explorer_w, viewer_w, terminal_split, explorer_split)`
+    type LayoutKey = (Option<crate::app::Focus>, bool, bool, u16, u16, u16, u16);
+    let mut last_layout_key: Option<LayoutKey> = None;
 
     // Debounce file-watcher refreshes to avoid expensive git operations on
     // every single file-system event.
@@ -472,6 +491,8 @@ fn run_loop(
                 _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,
                 _ if app.show_panel_number_overlay => TICK_RATE_ACTIVE,
                 _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
+                // Keep frames flowing while a focus-border glide is in flight.
+                _ if app.has_active_transition() => TICK_RATE_ACTIVE,
                 _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
                 // Party mode keeps animating even while idle.
                 _ if app.party_mode => PULSE_TICK_INTERVAL,
@@ -509,7 +530,12 @@ fn run_loop(
                         last_input_time = Instant::now();
                         handle_paste_event(app, data);
                     }
-                    Event::Resize(_, _) => {}
+                    Event::Resize(_, _) => {
+                        // Window resize reshapes every panel boundary; hard-clear
+                        // so no panel's old edge content lingers (same desync
+                        // class as a divider resize).
+                        app.terminal.needs_clear = true;
+                    }
                     _ => {}
                 }
                 app.dirty.mark_all();
@@ -529,10 +555,27 @@ fn run_loop(
         }
 
         // ── 3. RENDER — immediately after events for lowest latency ──
-        if app.terminal.needs_clear {
-            terminal.clear()?;
-            app.terminal.needs_clear = false;
-            app.dirty.mark_all();
+        // Any change to a region boundary (panel maximize/restore, editor or
+        // reflow open/close, OR a divider/split resize) needs a hard clear:
+        // ratatui's cell diff can't repaint a region whose new owner happens to
+        // draw the glyphs the diff already believes are there, so the previous
+        // occupant's content lingers along the vacated edge. See decl above.
+        {
+            let layout_key = (
+                app.expanded_panel,
+                app.editor.is_some(),
+                app.reflow.active,
+                app.config.layout.explorer_width_pct,
+                app.config.layout.viewer_width_pct,
+                app.terminal_split_pct,
+                app.config.layout.explorer_split_pct,
+            );
+            if last_layout_key != Some(layout_key) {
+                if last_layout_key.is_some() {
+                    app.terminal.needs_clear = true;
+                }
+                last_layout_key = Some(layout_key);
+            }
         }
         // Continuous dirty marking for active overlays.
         if app.update_state != crate::app::UpdateState::Idle
@@ -545,36 +588,60 @@ fn run_loop(
         if !app.worktree_mgr.pending_worktrees.is_empty() {
             app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
         }
+        // Keep redrawing while a focus-border transition animates; it's
+        // time-based, so without this it would freeze at the idle tick rate.
+        if app.has_active_transition() {
+            app.dirty.mark_all();
+        }
         // Drive the reflow sweep animation: keep the terminal panel dirty for
         // every frame while a sweep is in progress (focus==TerminalClaude so the
         // tick rate is already 8ms; no additional wake-up source needed).
         if app.reflow.sweep.is_some() {
             app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
         }
+        // A pending hard clear implies a full repaint.
+        if app.terminal.needs_clear {
+            app.dirty.mark_all();
+        }
 
-        if app.dirty.any() {
-            app.ui_tick = app.ui_tick.wrapping_add(1);
+        // Render the frame atomically. Synchronized output (terminal mode 2026)
+        // brackets the clear + draw so the terminal presents the whole frame in
+        // one shot. Without it, fast back-to-back frames (8ms during scrollback)
+        // can be torn/partially applied, leaving the real screen out of sync
+        // with ratatui's cell buffers — which then never repaints the diverged
+        // cells (the scrollback "bleed"). Terminals lacking the capability just
+        // ignore the markers.
+        if app.terminal.needs_clear || app.dirty.any() {
+            let _ = execute!(io::stdout(), BeginSynchronizedUpdate);
+            if app.terminal.needs_clear {
+                terminal.clear()?;
+                app.terminal.needs_clear = false;
+            }
+            if app.dirty.any() {
+                app.ui_tick = app.ui_tick.wrapping_add(1);
 
-            const STATUS_FADE_TICKS: u64 = 180;
-            if let Some(ref msg) = app.status_message {
-                let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
-                if age >= STATUS_FADE_TICKS {
-                    app.status_message = None;
+                const STATUS_FADE_TICKS: u64 = 180;
+                if let Some(ref msg) = app.status_message {
+                    let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
+                    if age >= STATUS_FADE_TICKS {
+                        app.status_message = None;
+                    }
                 }
+
+                // Auto-dismiss panel number overlay after timer expires.
+                if app.show_panel_number_overlay && !app.show_panel_overlay() {
+                    app.show_panel_number_overlay = false;
+                    app.panel_overlay_since = None;
+                }
+
+                terminal.draw(|frame| {
+                    last_frame_area = frame.area();
+                    render_ui(frame, app);
+                })?;
+
+                app.dirty.clear();
             }
-
-            // Auto-dismiss panel number overlay after timer expires.
-            if app.show_panel_number_overlay && !app.show_panel_overlay() {
-                app.show_panel_number_overlay = false;
-                app.panel_overlay_since = None;
-            }
-
-            terminal.draw(|frame| {
-                last_frame_area = frame.area();
-                render_ui(frame, app);
-            })?;
-
-            app.dirty.clear();
+            let _ = execute!(io::stdout(), EndSynchronizedUpdate);
         }
 
         // ── 4. Background work (ok to be slow) ──────────────────

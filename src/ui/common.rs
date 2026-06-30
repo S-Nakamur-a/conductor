@@ -166,6 +166,11 @@ pub fn build_pty_lines(
 ///
 /// This is cheap: it just clones the cached `Line` data into a `Paragraph`.
 pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache, theme: &Theme) {
+    // Clear first: when scrolled back the snapshot can have fewer/shorter lines
+    // than the live view, and a bare Paragraph leaves the uncovered cells
+    // showing the previous frame's text (the "scrollback bleed"). Mirrors the
+    // viewer panel, which clears for the same reason.
+    frame.render_widget(ratatui::widgets::Clear, area);
     let paragraph = Paragraph::new(cache.lines.clone());
     frame.render_widget(paragraph, area);
 
@@ -676,13 +681,13 @@ fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::KeyMap) -> 
             ("leave", &[Action::LeaveTerminal]),
             ("panel", &[Action::CycleFocusForward]),
             ("new CC", &[Action::NewClaudeCode]),
-            ("palette", &[Action::CommandPalette]),
+            ("session", &[Action::NextSession]),
         ],
         Focus::TerminalShell => &[
             ("leave", &[Action::LeaveTerminal]),
             ("panel", &[Action::CycleFocusForward]),
             ("new shell", &[Action::NewShell]),
-            ("palette", &[Action::CommandPalette]),
+            ("session", &[Action::NextSession]),
         ],
         Focus::Editor => &[
             ("Claude", &[Action::LeaveTerminal]),
@@ -701,6 +706,17 @@ fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::KeyMap) -> 
         if !chords.is_empty() {
             parts.push(format!("{}: {label}", chords.join("/")));
         }
+    }
+
+    // Always advertise the command palette and the cheatsheet — they're the
+    // entry points to every other action, so they belong in every context's
+    // footer (the palette even fires over a PTY; `?` is shown only where it
+    // actually fires, i.e. not in the terminal/editor).
+    if let Some(c) = representative_chord(keymap, context, Action::CommandPalette) {
+        parts.push(format!("{c}: cmds"));
+    }
+    if let Some(c) = representative_chord(keymap, context, Action::ShowHelp) {
+        parts.push(format!("{c}: keys"));
     }
 
     // Terminals forward everything else to the PTY — set that expectation.

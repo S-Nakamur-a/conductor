@@ -457,6 +457,32 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 Column::Terminal => handle_terminal_column_click(app, mouse, col, row, &geom),
             }
         }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            // Extend an in-progress gutter range selection to the dragged line.
+            if let Some(anchor) = app.viewer_state.click.gutter_drag_anchor {
+                let inner_y = main_area.y + 1;
+                if row >= inner_y && col >= explorer_end && col < viewer_end {
+                    let screen_offset = (row - inner_y) as usize;
+                    if let Some(line) = resolve_screen_line(app, screen_offset) {
+                        let (start, end) = if anchor <= line {
+                            (anchor, line)
+                        } else {
+                            (line, anchor)
+                        };
+                        app.viewer_state.selection =
+                            crate::viewer::LineSelection::Selected { start, end };
+                    }
+                }
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            // Finish a gutter drag: commit the (single-line or range) selection
+            // by opening the comment composer for it.
+            let was_dragging = app.viewer_state.click.gutter_drag_anchor.take().is_some();
+            if was_dragging {
+                open_viewer_comment(app);
+            }
+        }
         MouseEventKind::Moved => {
             // Track hover line for gutter highlight in the viewer panel.
             let inner_y = main_area.y + 1;
@@ -464,7 +490,11 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 let line_offset = (row - inner_y) as usize;
                 let inner_x = explorer_end + 1;
                 let gutter_w = app.viewer_state.gutter_total_width();
-                let on_gutter = col >= inner_x && col < inner_x + gutter_w;
+                // Include the 2-cell comment-badge column so the "+" button stays
+                // lit (and clickable) while the cursor is over it — otherwise the
+                // button would vanish the moment you moved onto it.
+                let badge_w: u16 = 2;
+                let on_gutter = col >= inner_x && col < inner_x + gutter_w + badge_w;
 
                 // Both diff and file-content views now populate `screen_row_map`
                 // (the diff view injects inline comment threads), so a single
@@ -811,15 +841,8 @@ fn handle_viewer_column_click(
                     // Ask Claude: send the comment to the active Claude PTY.
                     ask_claude_about_comment(app, &comment_id);
                 } else {
-                    // Delete.
-                    if let Some(store) = app.review_store.as_ref() {
-                        let _ = store.delete_review(&comment_id);
-                        let wt = app.selected_worktree_branch();
-                        app.review_state.load_comments(store, &wt);
-                        if let Some(file) = app.viewer_state.content.current_file.clone() {
-                            app.review_state.build_file_comment_cache(&file);
-                        }
-                    }
+                    // Delete (with confirmation).
+                    app.request_delete_comment_by_id(comment_id);
                 }
             }
             return;
@@ -894,21 +917,32 @@ fn handle_viewer_column_click(
         }
     }
 
-    // Only trigger comment selection when clicking inside the
-    // line-number gutter (left-most columns).  Clicks on the
+    // Trigger commenting when clicking the left margin — the line-number gutter
+    // OR the "+" badge column (matching the hover region above). Clicks on the
     // code content area are treated as plain focus changes.
-    if on_gutter && row >= inner_y {
+    if on_margin && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         // Screen-row mapping handles inline thread rows and both view modes
         // (deletion lines have no new-line number, so they resolve to None).
         if let Some(line_1) = resolve_screen_line(app, screen_offset) {
-            let has_comment = app.review_state.file_comments.contains_key(&line_1);
-            app.viewer_state.explorer.comment_preview_line =
-                if has_comment { Some(line_1) } else { None };
-            let should_open = app.viewer_state.click_line_number(line_1);
-            if should_open {
+            if app.review_state.file_comments.contains_key(&line_1) {
+                // Existing comment on this line → reveal its thread instead of
+                // starting a new one.
+                app.viewer_state.explorer.comment_preview_line = Some(line_1);
+            } else if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                // Shift+click extends a range from the previously clicked line
+                // and opens the composer immediately.
                 app.viewer_state.explorer.comment_preview_line = None;
+                app.viewer_state.gutter_comment_click(line_1, true);
                 open_viewer_comment(app);
+            } else {
+                // Plain press: begin a gutter drag. The selection starts as this
+                // single line and grows as the cursor is dragged over more lines;
+                // the composer opens on mouse-up (GitHub-style: click = one line,
+                // drag = a range).
+                app.viewer_state.explorer.comment_preview_line = None;
+                app.viewer_state.gutter_comment_click(line_1, false);
+                app.viewer_state.click.gutter_drag_anchor = Some(line_1);
             }
         }
     }
@@ -988,7 +1022,7 @@ fn handle_terminal_column_click(
         app.set_focus(Focus::TerminalClaude);
         // Click on tab bar (first row of Claude panel).
         if row == terminal_claude_y {
-            handle_terminal_tab_click(app, col, terminal_x, true);
+            handle_terminal_tab_click(app, col, true);
         } else if app.current_worktree_claude_sessions().is_empty() {
             // Double-click required to spawn a new Claude Code session.
             if register_double_click(
@@ -1002,7 +1036,7 @@ fn handle_terminal_column_click(
         app.set_focus(Focus::TerminalShell);
         // Click on tab bar (first row of Shell panel).
         if row == terminal_split_y {
-            handle_terminal_tab_click(app, col, terminal_x, false);
+            handle_terminal_tab_click(app, col, false);
         } else if app.current_worktree_shell_sessions().is_empty() {
             // Double-click required to spawn a new Shell session.
             if register_double_click(

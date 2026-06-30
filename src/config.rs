@@ -350,6 +350,9 @@ pub struct LayoutConfig {
     /// Claude Code area height as a percentage of the terminal column height.
     /// The shell area receives the remainder.
     pub terminal_split_pct: u16,
+    /// File-tree height as a percentage of the Explorer column height; the
+    /// changed-files list below receives the remainder.
+    pub explorer_split_pct: u16,
 }
 
 impl Default for LayoutConfig {
@@ -358,6 +361,7 @@ impl Default for LayoutConfig {
             explorer_width_pct: 24,
             viewer_width_pct: 38,
             terminal_split_pct: 80,
+            explorer_split_pct: 50,
         }
     }
 }
@@ -370,6 +374,10 @@ pub struct UiConfig {
     /// backward compatibility. Light theme options: `catppuccin-latte`,
     /// `solarized-light`, `github-light`. Dark: see `Theme::all_names()`.
     pub theme: Option<String>,
+    /// Apply a high-contrast transform to the active theme: brighten (dark
+    /// themes) or deepen (light themes) the dim greys, body text, and accents
+    /// for stronger legibility. Works with every theme, built-in or custom.
+    pub high_contrast: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +392,7 @@ pub struct UiConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppearanceSnapshot {
     pub ui_theme: Option<String>,
+    pub ui_high_contrast: bool,
     pub viewer_theme: String,
     pub viewer_syntax_theme_file: Option<String>,
     pub viewer_tab_width: usize,
@@ -396,6 +405,7 @@ pub struct AppearanceSnapshot {
     pub layout_explorer_width_pct: u16,
     pub layout_viewer_width_pct: u16,
     pub layout_terminal_split_pct: u16,
+    pub layout_explorer_split_pct: u16,
 }
 
 impl Config {
@@ -403,6 +413,7 @@ impl Config {
     pub fn appearance_snapshot(&self) -> AppearanceSnapshot {
         AppearanceSnapshot {
             ui_theme: self.ui.theme.clone(),
+            ui_high_contrast: self.ui.high_contrast,
             viewer_theme: self.viewer.theme.clone(),
             viewer_syntax_theme_file: self.viewer.syntax_theme_file.clone(),
             viewer_tab_width: self.viewer.tab_width,
@@ -412,6 +423,7 @@ impl Config {
             layout_explorer_width_pct: self.layout.explorer_width_pct,
             layout_viewer_width_pct: self.layout.viewer_width_pct,
             layout_terminal_split_pct: self.layout.terminal_split_pct,
+            layout_explorer_split_pct: self.layout.explorer_split_pct,
         }
     }
 
@@ -424,6 +436,7 @@ impl Config {
     /// rebuilding derived state (syntect theme, diff, layout cache, etc.).
     pub fn adopt_appearance(&mut self, new: &Config) {
         self.ui.theme = new.ui.theme.clone();
+        self.ui.high_contrast = new.ui.high_contrast;
         self.viewer.theme = new.viewer.theme.clone();
         self.viewer.syntax_theme_file = new.viewer.syntax_theme_file.clone();
         self.viewer.tab_width = new.viewer.tab_width;
@@ -649,11 +662,15 @@ pub fn generate_default_config() -> String {
 #                                       # Light themes work best on terminals with a light/white background.
 #                                       # When unset, conductor auto-detects a light background via OSC 11
 #                                       # and switches to catppuccin-latte for that session (no file write).
+# high_contrast = false                 # boost the active theme's contrast (brighter/deeper text, borders,
+#                                       # accents). Works with any theme; toggle live from the command palette.
 
 [layout]
 # explorer_width_pct = 24               # explorer column width % (default: 24)
 # viewer_width_pct = 38                 # viewer column width % (default: 38)
 #                                       # terminal column gets the remaining width
+# explorer_split_pct = 50              # file-tree height % within explorer column (default: 50)
+#                                       # changed-files list receives the remainder
 # terminal_split_pct = 80              # Claude Code area height % within terminal column (default: 80)
 #                                       # shell area receives the remainder. These three values are the
 #                                       # initial proportions; resize panels live, tmux-style, with
@@ -768,6 +785,21 @@ fn upsert_ui_theme(contents: &str, name: &str) -> String {
     upsert_section_kv(contents, "ui", "theme", &format!("\"{name}\""))
 }
 
+/// Persist the high-contrast toggle to the `[ui]` section of the config file,
+/// preserving comments and structure. Mirrors [`persist_ui_theme`]; called by
+/// the in-app "Toggle High Contrast" command so the choice survives restarts.
+pub fn persist_ui_high_contrast(enabled: bool) -> Result<()> {
+    let path = config_file_path();
+    let contents = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        generate_default_config()
+    };
+    let updated = upsert_section_kv(&contents, "ui", "high_contrast", &enabled.to_string());
+    std::fs::write(&path, updated)?;
+    Ok(())
+}
+
 /// Persist the runtime panel proportions to the `[layout]` section of
 /// `~/.config/conductor/config.toml`, preserving comments and structure.
 ///
@@ -780,6 +812,7 @@ pub fn persist_layout_proportions(
     explorer_width_pct: u16,
     viewer_width_pct: u16,
     terminal_split_pct: u16,
+    explorer_split_pct: u16,
 ) -> Result<()> {
     let path = config_file_path();
     let contents = if path.exists() {
@@ -799,6 +832,12 @@ pub fn persist_layout_proportions(
         "layout",
         "terminal_split_pct",
         &terminal_split_pct.to_string(),
+    );
+    let updated = upsert_section_kv(
+        &updated,
+        "layout",
+        "explorer_split_pct",
+        &explorer_split_pct.to_string(),
     );
     std::fs::write(&path, updated)?;
     Ok(())
@@ -937,6 +976,32 @@ check_interval_secs = 3600"#,
     fn ui_config_default_has_no_theme() {
         let cfg = Config::default();
         assert!(cfg.ui.theme.is_none());
+    }
+
+    #[test]
+    fn ui_config_high_contrast_defaults_off_and_round_trips() {
+        let cfg = Config::default();
+        assert!(!cfg.ui.high_contrast, "high_contrast must default to false");
+
+        let toml_str = "[ui]\nhigh_contrast = true\n";
+        let cfg: Config = toml::from_str(toml_str).expect("parse");
+        assert!(cfg.ui.high_contrast);
+
+        // high_contrast is a live appearance field, so flipping it must register
+        // in the snapshot (and never as a restart change).
+        let base = Config::default();
+        assert_ne!(cfg.appearance_snapshot(), base.appearance_snapshot());
+        assert!(!has_restart_changes(&base, &cfg));
+    }
+
+    #[test]
+    fn upsert_high_contrast_inserts_into_ui_section() {
+        let contents = "[ui]\ntheme = \"nord\"\n";
+        let result = upsert_section_kv(contents, "ui", "high_contrast", "true");
+        assert!(result.contains("high_contrast = true"));
+        assert!(result.contains("theme = \"nord\""));
+        let cfg: Config = toml::from_str(&result).expect("valid toml");
+        assert!(cfg.ui.high_contrast);
     }
 
     #[test]

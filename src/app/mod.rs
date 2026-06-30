@@ -373,6 +373,11 @@ pub struct App {
     pub dirty: DirtyPanels,
     /// Current panel focus.
     pub focus: Focus,
+    /// Panel that had focus immediately before the current one — drives the
+    /// border-color glide when focus moves (see `animated_border_color`).
+    pub focus_prev: Focus,
+    /// When focus last changed, for timing the border transition.
+    pub focus_changed_at: std::time::Instant,
     /// All overlay popup states (switch-branch, grab, prune, help, etc.).
     pub overlays: OverlayManager,
     /// Working directory of the repository being inspected.
@@ -401,6 +406,10 @@ pub struct App {
     /// Kept in sync by `set_theme`; used to find the current selection in the
     /// theme picker and to build the config layer when persisting.
     pub theme_name: String,
+    /// Whether the high-contrast transform is applied to `theme`. Mirrors
+    /// `config.ui.high_contrast`; kept as a field so `set_theme` and the live
+    /// reload rebuild the theme with the right polarity.
+    pub high_contrast: bool,
     /// State for the Explorer/Viewer panel (file tree + file content).
     pub viewer_state: ViewerState,
     /// State for the Diff data (used for inline highlights in Viewer).
@@ -474,6 +483,11 @@ pub struct App {
     // ── Update check ───────────────────────────────────────────
     /// Latest release info when a newer version is available.
     pub update_info: Option<crate::update_checker::UpdateInfo>,
+    /// Set when the user manually triggered an update check (via the command
+    /// palette), so the next poll result flashes explicit feedback — including
+    /// the "already up to date" / "check failed" cases the silent startup check
+    /// swallows.
+    pub update_check_requested: bool,
 
     // ── Update & restart ──────────────────────────────────────
     /// Current state of the update flow.
@@ -659,6 +673,18 @@ fn resolve_theme_name(cfg: &config::Config) -> String {
         .as_deref()
         .unwrap_or(&cfg.viewer.theme)
         .to_string()
+}
+
+/// Build the active [`Theme`] from a name, applying the high-contrast transform
+/// when enabled. The single construction point so every call site (startup,
+/// theme picker, live reload, OSC11 auto-switch) honors the toggle identically.
+fn build_theme(name: &str, high_contrast: bool) -> Theme {
+    let theme = Theme::from_name(name);
+    if high_contrast {
+        theme.high_contrast()
+    } else {
+        theme
+    }
 }
 
 impl App {
@@ -862,7 +888,8 @@ impl App {
 
         let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
         let theme_name = resolve_theme_name(&config);
-        let theme = Theme::from_name(&theme_name);
+        let high_contrast = config.ui.high_contrast;
+        let theme = build_theme(&theme_name, high_contrast);
         let auto_resume = config.general.auto_resume;
 
         // Derive the main repo display name from the main worktree path.
@@ -883,6 +910,10 @@ impl App {
         let mut app = Self {
             dirty: DirtyPanels(DirtyPanels::ALL),
             focus: Focus::Explorer,
+            focus_prev: Focus::Explorer,
+            // Backdate so no border transition plays on the first frame.
+            focus_changed_at: std::time::Instant::now()
+                - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
             overlays: OverlayManager::default(),
             repo_path,
             main_repo_name,
@@ -894,6 +925,7 @@ impl App {
             keymap,
             theme,
             theme_name,
+            high_contrast,
             viewer_state: ViewerState::default(),
             diff_state,
             review_store,
@@ -920,6 +952,7 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             update_info: None,
+            update_check_requested: false,
             update_state: UpdateState::Idle,
             update_op: BackgroundOp::default(),
             update_progress_message: String::new(),
@@ -1605,7 +1638,55 @@ impl App {
             }
             _ => {}
         }
+        // A panel's transient search prompt is modal to that panel; moving focus
+        // away must release key capture. Otherwise the search box keeps eating
+        // keystrokes after focus moves (e.g. `/` in the viewer, then Tab to
+        // Claude — input should go to Claude). The query/matches persist so n/N
+        // still work when you return.
+        if focus != Focus::Viewer {
+            self.viewer_state.search.search_active = false;
+        }
+        if matches!(
+            focus,
+            Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor
+        ) {
+            self.viewer_state.filename_search.filename_search_active = false;
+        }
+        // Record the change so the gaining/losing panels can glide their border
+        // color (only on an actual change, so a re-focus doesn't restart it).
+        if self.focus != focus {
+            self.focus_prev = self.focus;
+            self.focus_changed_at = std::time::Instant::now();
+        }
         self.focus = focus;
+    }
+
+    /// Border color for `panel`, eased across focus changes: the panel gaining
+    /// focus glides `border_unfocused → border_focused`, the one losing it
+    /// glides back, over `anim::FOCUS_MS`. Everything else rests on the static
+    /// unfocused color. This is what makes panel switches feel smooth instead of
+    /// snapping, using the theme's RGB colors and `Theme::lerp`.
+    pub fn animated_border_color(&self, panel: Focus) -> ratatui::style::Color {
+        let t = crate::anim::eased_progress(self.focus_changed_at.elapsed(), crate::anim::FOCUS_MS);
+        if self.focus == panel {
+            if t >= 1.0 {
+                self.theme.border_focused
+            } else {
+                crate::theme::Theme::lerp(self.theme.border_unfocused, self.theme.border_focused, t)
+            }
+        } else if self.focus_prev == panel && t < 1.0 {
+            crate::theme::Theme::lerp(self.theme.border_focused, self.theme.border_unfocused, t)
+        } else {
+            self.theme.border_unfocused
+        }
+    }
+
+    /// Whether a UI transition (currently the focus-border glide) is still in
+    /// flight. The main loop uses this to keep redrawing at the active frame
+    /// rate so the transition actually animates instead of stalling at the idle
+    /// tick rate.
+    pub fn has_active_transition(&self) -> bool {
+        self.focus_changed_at.elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
     }
 
     /// Request the application to quit.
@@ -1629,7 +1710,7 @@ impl App {
     /// (`~/.config/conductor/config.toml`) so it survives restarts. A write
     /// failure is non-fatal: it is logged and surfaced as a warning flash.
     pub fn set_theme(&mut self, name: &str, persist: bool) {
-        self.theme = Theme::from_name(name);
+        self.theme = build_theme(name, self.high_contrast);
         self.theme_name = name.to_string();
         self.config.ui.theme = Some(name.to_string());
         if persist
@@ -1667,9 +1748,11 @@ impl App {
     pub fn apply_appearance(&mut self, new: &config::Config) {
         // ── UI / syntax theme ──────────────────────────────────────
         let new_theme_name = resolve_theme_name(new);
-        if new_theme_name != self.theme_name {
-            self.theme = Theme::from_name(&new_theme_name);
+        let new_high_contrast = new.ui.high_contrast;
+        if new_theme_name != self.theme_name || new_high_contrast != self.high_contrast {
+            self.theme = build_theme(&new_theme_name, new_high_contrast);
             self.theme_name = new_theme_name;
+            self.high_contrast = new_high_contrast;
         }
 
         // Rebuild syntect theme when either the viewer theme or the custom
@@ -2063,6 +2146,8 @@ impl App {
             CommandId::SaveSessionHistory => self.save_current_session_history(),
             CommandId::OpenPullRequest => self.open_pr_in_browser(),
             CommandId::UpdateAndRestart => self.cmd_update_and_restart(),
+            CommandId::CheckForUpdate => self.cmd_check_for_update(),
+            CommandId::ToggleHighContrast => self.cmd_toggle_high_contrast(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
             CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
             CommandId::ToggleRichMode => self.cmd_toggle_rich_mode(),
@@ -2185,16 +2270,20 @@ impl App {
                 }
             }
             ResizeDir::Up | ResizeDir::Down => {
-                // Only the Claude/Shell split is vertically adjustable. Down moves
-                // the divider down (Claude grows); Up moves it up (Claude shrinks),
-                // regardless of which of the two terminal panes is focused.
-                if matches!(self.focus, Focus::TerminalClaude | Focus::TerminalShell) {
-                    let delta = if matches!(dir, ResizeDir::Down) {
-                        Self::TERMINAL_SPLIT_STEP as i16
-                    } else {
-                        -(Self::TERMINAL_SPLIT_STEP as i16)
-                    };
-                    self.adjust_terminal_split(delta);
+                // Two columns have a vertical split: the terminal (Claude/Shell)
+                // and the Explorer (file tree / changed files). Down grows the
+                // top pane, Up shrinks it.
+                let down = matches!(dir, ResizeDir::Down);
+                match self.focus {
+                    Focus::TerminalClaude | Focus::TerminalShell => {
+                        let step = Self::TERMINAL_SPLIT_STEP as i16;
+                        self.adjust_terminal_split(if down { step } else { -step });
+                    }
+                    Focus::Explorer => {
+                        let step = Self::TERMINAL_SPLIT_STEP as i16;
+                        self.adjust_explorer_split(if down { step } else { -step });
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2270,6 +2359,25 @@ impl App {
         self.persist_layout();
     }
 
+    /// Adjust the Explorer column's file-tree height percentage by `delta`
+    /// points (positive grows the file tree, shrinking the changed-files list),
+    /// clamped so both panels keep a usable minimum. Flashes and persists.
+    fn adjust_explorer_split(&mut self, delta: i16) {
+        let next = (self.config.layout.explorer_split_pct as i16 + delta)
+            .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
+            as u16;
+        if next == self.config.layout.explorer_split_pct {
+            return;
+        }
+        self.config.layout.explorer_split_pct = next;
+        self.dirty.mark_all();
+        self.set_status_info(format!(
+            "Explorer split: tree {next}% / changed files {}%",
+            100 - next
+        ));
+        self.persist_layout();
+    }
+
     /// Persist the current panel proportions to `config.toml`. Best-effort: a
     /// write failure is logged, never fatal (the in-memory layout still applies).
     fn persist_layout(&self) {
@@ -2277,6 +2385,7 @@ impl App {
             self.config.layout.explorer_width_pct,
             self.config.layout.viewer_width_pct,
             self.terminal_split_pct,
+            self.config.layout.explorer_split_pct,
         ) {
             log::warn!("failed to persist layout proportions: {e}");
         }
@@ -2567,7 +2676,7 @@ impl App {
             && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
-            self.delete_selected_review_comment();
+            self.request_delete_selected_review_item();
         } else {
             self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
         }
@@ -2620,6 +2729,41 @@ impl App {
         } else {
             self.set_status("No update available.".to_string(), StatusLevel::Info);
         }
+    }
+
+    /// Manually check GitHub Releases for a newer version, on demand. Unlike the
+    /// silent startup/interval check, this flashes explicit feedback for every
+    /// outcome (update available / already current / check failed) when the
+    /// background result lands in [`poll_all_background_ops`](Self::poll_all_background_ops).
+    fn cmd_check_for_update(&mut self) {
+        self.update_check_requested = true;
+        self.set_status_info(format!(
+            "Checking for updates… (current v{})",
+            crate::update_checker::current_version()
+        ));
+        self.bg.update_check.start(|tx| {
+            let _ = tx.send(crate::update_checker::check_for_update());
+        });
+    }
+
+    /// Toggle the high-contrast theme transform live, persist the choice, and
+    /// rebuild the theme-dependent caches so the change is visible immediately.
+    fn cmd_toggle_high_contrast(&mut self) {
+        self.high_contrast = !self.high_contrast;
+        self.config.ui.high_contrast = self.high_contrast;
+        self.theme = build_theme(&self.theme_name, self.high_contrast);
+
+        // Caches that bake theme colours into rendered spans must be rebuilt.
+        self.markdown_cache.clear();
+        self.reflow.last_width = 0;
+        self.reflow.cache.clear();
+        self.dirty.mark_all();
+
+        if let Err(e) = crate::config::persist_ui_high_contrast(self.high_contrast) {
+            log::warn!("failed to persist high_contrast: {e}");
+        }
+        let state = if self.high_contrast { "on" } else { "off" };
+        self.set_status_info(format!("High contrast {state}"));
     }
 
     fn cmd_search_full_text(&mut self) {
@@ -2713,14 +2857,41 @@ impl App {
             }
         }
 
-        // update check
-        if let Some(Some(info)) = self.bg.update_check.poll()
-            && crate::update_checker::is_newer(
-                &info.latest_version,
-                crate::update_checker::current_version(),
-            )
-        {
-            self.update_info = Some(info);
+        // update check. The outer Option is "a result is ready"; the inner is
+        // the check itself (Some(info) on success, None on network/parse error).
+        if let Some(result) = self.bg.update_check.poll() {
+            // Whether the user asked for explicit feedback this round.
+            let requested = std::mem::take(&mut self.update_check_requested);
+            let current = crate::update_checker::current_version();
+            match result {
+                Some(info) => {
+                    if crate::update_checker::is_newer(&info.latest_version, current) {
+                        if requested {
+                            self.set_status(
+                                format!(
+                                    "Update available: v{} — run “App: Update and Restart”",
+                                    info.latest_version
+                                ),
+                                StatusLevel::Success,
+                            );
+                        }
+                        self.update_info = Some(info);
+                    } else if requested {
+                        self.set_status(
+                            format!("Already up to date (v{current})"),
+                            StatusLevel::Info,
+                        );
+                    }
+                }
+                None => {
+                    if requested {
+                        self.set_status(
+                            "Update check failed — could not reach GitHub".to_string(),
+                            StatusLevel::Warning,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -2743,6 +2914,18 @@ impl App {
         // When the editor is open it stands in for Explorer+Viewer in the cycle;
         // `set_focus` redirects any Explorer/Viewer target onto it, so the only
         // explicit arm needed is leaving the editor itself.
+        //
+        // The Explorer column holds two independent panels — the file tree and
+        // the changed-files list — so Tab visits each as its own stop (file tree
+        // → changed files → Viewer), toggling the sub-focus before moving on.
+        if self.editor.is_none()
+            && self.focus == Focus::Explorer
+            && !self.viewer_state.explorer.explorer_focus_on_diff_list
+        {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            self.focus_changed_at = std::time::Instant::now();
+            return;
+        }
         let next = match self.focus {
             Focus::Worktree | Focus::TerminalShell => Focus::Explorer,
             Focus::Explorer => Focus::Viewer,
@@ -2750,11 +2933,26 @@ impl App {
             Focus::Editor => Focus::TerminalClaude,
             Focus::TerminalClaude => Focus::TerminalShell,
         };
+        // Landing on the Explorer column from elsewhere always starts on the
+        // file tree (the top panel).
+        if next == Focus::Explorer {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = false;
+        }
         self.set_focus(next);
     }
 
     /// Cycle focus backward.
     pub fn cycle_focus_backward(&mut self) {
+        // Mirror of the forward cycle: stepping back through the Explorer column
+        // visits changed files then the file tree.
+        if self.editor.is_none()
+            && self.focus == Focus::Explorer
+            && self.viewer_state.explorer.explorer_focus_on_diff_list
+        {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = false;
+            self.focus_changed_at = std::time::Instant::now();
+            return;
+        }
         let prev = match self.focus {
             Focus::Worktree | Focus::Explorer => Focus::TerminalShell,
             Focus::Viewer => Focus::Explorer,
@@ -2762,6 +2960,11 @@ impl App {
             Focus::TerminalClaude => Focus::Viewer,
             Focus::TerminalShell => Focus::TerminalClaude,
         };
+        // Entering the Explorer column from the Viewer side lands on the
+        // changed-files panel (nearest), so a further Tab-back reaches the tree.
+        if prev == Focus::Explorer {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        }
         self.set_focus(prev);
     }
 

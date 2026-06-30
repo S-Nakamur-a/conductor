@@ -55,10 +55,12 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
             format!(" {icon} New {kind_label} (Tab: toggle | Shift+Enter: newline) ")
         }
         ReviewInputMode::EditingComment => " Edit Comment (Shift+Enter: newline) ".to_string(),
+        ReviewInputMode::EditingReply => " Edit Reply (Shift+Enter: newline) ".to_string(),
         ReviewInputMode::ReplyingToComment => {
             " Reply to Comment (Shift+Enter: newline) ".to_string()
         }
-        ReviewInputMode::Normal => unreachable!(),
+        // ConfirmingDelete uses a dedicated y/n overlay, never this composer.
+        ReviewInputMode::Normal | ReviewInputMode::ConfirmingDelete => unreachable!(),
     };
 
     let block = Block::default()
@@ -135,6 +137,51 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
     }
+}
+
+/// Render the y/n confirmation popup before deleting a comment or reply.
+pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::review_state::PendingDelete;
+    let theme = &app.theme;
+    let what = match &app.review_state.pending_delete {
+        Some(PendingDelete::Reply { .. }) => "this reply",
+        Some(PendingDelete::Comment { .. }) => "this comment and all its replies",
+        None => "this item",
+    };
+    let msg = format!("Delete {what}?");
+    let popup_width = (msg.len() as u16 + 8).clamp(28, area.width.saturating_sub(4));
+    let popup_height = 5_u16.min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .title(" Confirm delete ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.error));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let lines = vec![
+        Line::from(Span::styled(msg, Style::default().fg(theme.fg))),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "y",
+                Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": delete   ", Style::default().fg(theme.muted)),
+            Span::styled(
+                "n / Esc",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": cancel", Style::default().fg(theme.muted)),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Render a centered popup for the comment template picker.

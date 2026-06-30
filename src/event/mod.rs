@@ -247,6 +247,24 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // ── 1b4. Reflow transcript view — consume all keys while active ──────────
     // Must sit before the PTY-forward path so keys are not forwarded to Claude.
     if app.reflow.active && app.focus == Focus::TerminalClaude {
+        // Pane resize / zoom / panel-overlay still work while scrolled back —
+        // they don't conflict with reflow's plain-key navigation (j/k/arrows),
+        // so let those chords (Ctrl+Alt+Arrow, etc.) through instead of letting
+        // reflow silently swallow them.
+        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
+            && matches!(
+                action,
+                Action::ResizePaneLeft
+                    | Action::ResizePaneRight
+                    | Action::ResizePaneUp
+                    | Action::ResizePaneDown
+                    | Action::TogglePanelExpand
+                    | Action::TogglePanelOverlay
+            )
+            && dispatch_global_action(app, action)
+        {
+            return;
+        }
         handle_reflow_key(app, key);
         return;
     }
@@ -280,6 +298,17 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
         {
             return;
+        }
+
+        // Courtesy hint: Ctrl+Q is Conductor's quit chord, but in a terminal it's
+        // forwarded to the inner program (XON / flow-control), so a user pressing
+        // it here gets no quit. Flash how to actually quit, then forward as usual.
+        if key.code == KeyCode::Char('q')
+            && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            app.set_status_info(
+                "Ctrl+Q is sent to the terminal here. To quit Conductor: Ctrl+Esc to leave, then Ctrl+Q.".to_string(),
+            );
         }
 
         // Forward all remaining keys to the active PTY session.
@@ -402,6 +431,8 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             _ => unreachable!(),
         },
         Action::OpenFileFromTerminal => terminal::open_file_from_terminal_output(app),
+        Action::NextSession => app.cycle_terminal_session(true),
+        Action::PrevSession => app.cycle_terminal_session(false),
         _ => return false,
     }
     true
@@ -430,6 +461,7 @@ fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     let total = app.reflow.total_lines;
     let page: usize = (inner / 2).max(1);
     let bottom = at_bottom(app.reflow.scroll, total, inner);
+    let old_scroll = app.reflow.scroll;
 
     match key.code {
         // ── Line scroll ─────────────────────────────────────────────────────
@@ -489,6 +521,15 @@ fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     // Clamp scroll after any adjustment.  Upper bound is total - inner, not
     // total - 1: aligns with the render path and at_bottom logic.
     app.reflow.scroll = clamp_scroll(app.reflow.scroll, total, inner);
+
+    // On each scroll step, force a hard clear (presented atomically thanks to
+    // synchronized output). The transcript is arbitrary Unicode; a glyph the
+    // terminal renders wider than counted can drift a line and leave stale cells
+    // that ratatui's diff — comparing only its own buffers — never repaints.
+    // Re-clearing per step keeps the scrolled view free of that residue.
+    if app.reflow.scroll != old_scroll {
+        app.terminal.needs_clear = true;
+    }
 }
 
 // ── Paste event handling ────────────────────────────────────────────────

@@ -85,12 +85,14 @@ pub enum CommandId {
 
     // App
     UpdateAndRestart,
+    CheckForUpdate,
     TogglePartyMode,
     ToggleRichMode,
     Quit,
 
     // UI
     SwitchTheme,
+    ToggleHighContrast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,6 +478,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
     },
     // App
     PaletteCommand {
+        id: CommandId::CheckForUpdate,
+        label: "App: Check for Updates",
+        category: CommandCategory::App,
+        action: None,
+        keywords: "update upgrade version check latest release new github",
+    },
+    PaletteCommand {
         id: CommandId::UpdateAndRestart,
         label: "App: Update and Restart",
         category: CommandCategory::App,
@@ -510,6 +519,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::View,
         action: Some(Action::OpenThemePicker),
         keywords: "theme color light dark appearance palette catppuccin solarized github",
+    },
+    PaletteCommand {
+        id: CommandId::ToggleHighContrast,
+        label: "UI: Toggle High Contrast",
+        category: CommandCategory::View,
+        action: None,
+        keywords: "high contrast accessibility a11y legibility bright bold theme readable vision",
     },
 ];
 

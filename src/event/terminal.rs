@@ -1,7 +1,6 @@
 //! Terminal panel helpers — PTY forwarding, session spawning, tab clicks.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, StatusLevel};
 use crate::terminal_link;
@@ -230,103 +229,92 @@ pub(super) fn spawn_terminal_session(app: &mut App) {
 
 /// Handle a click on a terminal tab bar.
 /// `is_claude` is `true` for Claude panel, `false` for Shell panel.
-pub(super) fn handle_terminal_tab_click(
-    app: &mut App,
-    click_col: u16,
-    tab_area_x: u16,
-    is_claude: bool,
-) {
-    // Collect session info (global index + label) to avoid borrow issues.
-    let sessions: Vec<(usize, String)> = if is_claude {
-        app.current_worktree_claude_sessions()
-            .iter()
-            .map(|(idx, s)| (*idx, s.label.clone()))
-            .collect()
-    } else {
-        app.current_worktree_shell_sessions()
-            .iter()
-            .map(|(idx, s)| (*idx, s.label.clone()))
-            .collect()
+///
+/// Click resolution is driven by the hit regions recorded during render
+/// (`tab_bar::render`), so it stays in lockstep with the scrolling tab strip
+/// — `click_col` is an absolute screen column (the recorded regions are too).
+pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude: bool) {
+    use crate::ui::tab_bar::TabAction;
+
+    let hit = {
+        let hits = if is_claude {
+            &app.terminal.claude_tab_hits
+        } else {
+            &app.terminal.shell_tab_hits
+        };
+        hits.iter()
+            .find(|h| click_col >= h.x0 && click_col < h.x1)
+            .map(|h| h.action)
+    };
+    let Some(action) = hit else {
+        return;
     };
 
-    if sessions.is_empty() {
-        return;
-    }
-
-    // Build tab title strings to compute widths (must match render logic).
-    // Each tab renders as: "[CC:🎹] [x]" — session label + " [x]" suffix.
-    let tab_titles: Vec<String> = sessions
-        .iter()
-        .map(|(_, label)| format!("[{label}]"))
-        .collect();
-
-    let close_suffix = " [x]"; // 4 chars
-    let close_suffix_len = close_suffix.len() as u16;
-
-    let relative_x = click_col.saturating_sub(tab_area_x);
-
-    // Walk through tab titles to find which tab the click falls on.
-    let mut x = 0u16;
-    for (i, title) in tab_titles.iter().enumerate() {
-        let label_width = UnicodeWidthStr::width(title.as_str()) as u16;
-        let total_tab_width = label_width + close_suffix_len;
-        if relative_x >= x && relative_x < x + total_tab_width {
-            let (global_idx, _) = sessions[i];
-            // Check if the click falls on the [x] close button area.
-            // Only allow closing the currently active session to prevent accidental closes.
-            let active_session = if is_claude {
-                app.terminal.active_claude_session
-            } else {
-                app.terminal.active_shell_session
-            };
-            let close_start = x + label_width + 1; // +1 for the space before [x]
-            if relative_x >= close_start && relative_x < x + total_tab_width {
-                if Some(global_idx) == active_session {
-                    app.close_terminal_session(global_idx);
-                }
-                return;
-            }
-            // Otherwise, switch to the session (resets scroll + render cache
-            // so the panel re-renders the newly selected session).
+    match action {
+        TabAction::Select(global_idx) => {
+            // Switch to the session (resets scroll + render cache so the panel
+            // re-renders the newly selected session).
             if is_claude {
                 app.switch_claude_session(global_idx);
             } else {
                 app.terminal.switch_shell_session(global_idx);
             }
-            return;
         }
-        x += total_tab_width;
-        x += 1; // divider " "
-    }
-
-    // Check [+] tab.
-    if relative_x >= x && relative_x < x + 3 {
-        if is_claude {
-            if let Err(e) = app.spawn_claude_code() {
-                app.set_status(
-                    format!("Failed to start Claude Code: {e}"),
-                    StatusLevel::Error,
-                );
+        TabAction::Close(global_idx) => {
+            // Only allow closing the active session to prevent accidental closes.
+            let active_session = if is_claude {
+                app.terminal.active_claude_session
+            } else {
+                app.terminal.active_shell_session
+            };
+            if Some(global_idx) == active_session {
+                app.close_terminal_session(global_idx);
+            } else if is_claude {
+                // Otherwise select it first (so a second click can close it).
+                app.switch_claude_session(global_idx);
+            } else {
+                app.terminal.switch_shell_session(global_idx);
             }
-        } else if let Err(e) = app.spawn_shell() {
-            app.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
         }
-        return;
-    }
-    x += 3; // [+]
-    x += 1; // divider " "
-
-    // Check [<=>] toggle.
-    if relative_x >= x && relative_x < x + 5 {
-        let target = if is_claude {
-            Focus::TerminalClaude
-        } else {
-            Focus::TerminalShell
-        };
-        if app.expanded_panel.is_some() {
-            app.expanded_panel = None;
-        } else {
-            app.expanded_panel = Some(target);
+        TabAction::Add => {
+            if is_claude {
+                if let Err(e) = app.spawn_claude_code() {
+                    app.set_status(
+                        format!("Failed to start Claude Code: {e}"),
+                        StatusLevel::Error,
+                    );
+                }
+            } else if let Err(e) = app.spawn_shell() {
+                app.set_status(format!("Failed to start shell: {e}"), StatusLevel::Error);
+            }
+        }
+        TabAction::Expand => {
+            let target = if is_claude {
+                Focus::TerminalClaude
+            } else {
+                Focus::TerminalShell
+            };
+            if app.expanded_panel.is_some() {
+                app.expanded_panel = None;
+            } else {
+                app.expanded_panel = Some(target);
+            }
+        }
+        TabAction::ScrollLeft => {
+            let scroll = if is_claude {
+                &mut app.terminal.claude_tab_scroll
+            } else {
+                &mut app.terminal.shell_tab_scroll
+            };
+            *scroll = scroll.saturating_sub(1);
+        }
+        TabAction::ScrollRight => {
+            let scroll = if is_claude {
+                &mut app.terminal.claude_tab_scroll
+            } else {
+                &mut app.terminal.shell_tab_scroll
+            };
+            *scroll += 1;
         }
     }
 }

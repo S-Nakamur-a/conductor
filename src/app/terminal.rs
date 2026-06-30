@@ -27,6 +27,46 @@ impl App {
         self.terminal.switch_claude_session(idx);
     }
 
+    /// Cycle to the next (`forward`) or previous session tab in the focused
+    /// terminal panel — the keyboard equivalent of clicking a tab. No-op unless a
+    /// terminal panel is focused and it has more than one session. Wraps around.
+    pub fn cycle_terminal_session(&mut self, forward: bool) {
+        let (sessions, active): (Vec<usize>, Option<usize>) = match self.focus {
+            Focus::TerminalClaude => (
+                self.current_worktree_claude_sessions()
+                    .iter()
+                    .map(|(i, _)| *i)
+                    .collect(),
+                self.terminal.active_claude_session,
+            ),
+            Focus::TerminalShell => (
+                self.current_worktree_shell_sessions()
+                    .iter()
+                    .map(|(i, _)| *i)
+                    .collect(),
+                self.terminal.active_shell_session,
+            ),
+            _ => return,
+        };
+        if sessions.len() <= 1 {
+            return;
+        }
+        let pos = active
+            .and_then(|a| sessions.iter().position(|&i| i == a))
+            .unwrap_or(0);
+        let next = if forward {
+            (pos + 1) % sessions.len()
+        } else {
+            (pos + sessions.len() - 1) % sessions.len()
+        };
+        let target = sessions[next];
+        match self.focus {
+            Focus::TerminalClaude => self.switch_claude_session(target),
+            Focus::TerminalShell => self.terminal.switch_shell_session(target),
+            _ => {}
+        }
+    }
+
     /// Spawn a new Claude Code PTY session for the currently selected worktree.
     pub fn spawn_claude_code(&mut self) -> anyhow::Result<usize> {
         self.spawn_claude_code_with_name(None)

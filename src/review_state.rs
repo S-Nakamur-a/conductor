@@ -33,8 +33,21 @@ pub enum ReviewInputMode {
     AddingComment,
     /// Editing the body of an existing comment.
     EditingComment,
+    /// Editing the body of an existing reply.
+    EditingReply,
     /// Replying to an existing comment.
     ReplyingToComment,
+    /// Awaiting y/n confirmation before deleting a comment or reply.
+    ConfirmingDelete,
+}
+
+/// What a pending (awaiting-confirmation) delete targets.
+#[derive(Debug, Clone)]
+pub enum PendingDelete {
+    /// Delete a whole comment (cascades to its replies).
+    Comment { id: String },
+    /// Delete a single reply, leaving its parent comment intact.
+    Reply { id: String, parent_id: String },
 }
 
 /// UI state for the Review mode.
@@ -96,6 +109,13 @@ pub struct ReviewState {
     /// alongside comments and rendered as a banner above the diff. `None` when
     /// the current branch has no summary written.
     pub change_summary: Option<String>,
+
+    /// Target of an in-progress delete awaiting y/n confirmation (set while
+    /// `input_mode == ConfirmingDelete`).
+    pub pending_delete: Option<PendingDelete>,
+    /// `(reply_id, parent_comment_id)` of a reply being edited (set while
+    /// `input_mode == EditingReply`).
+    pub editing_reply: Option<(String, String)>,
 }
 
 impl ReviewState {
@@ -126,7 +146,48 @@ impl ReviewState {
             comment_detail_max_scroll: 0,
             comment_detail_idx: 0,
             change_summary: None,
+            pending_delete: None,
+            editing_reply: None,
         }
+    }
+
+    /// Resolve a visual row to `(comment_idx, reply_idx)` when it is a reply row.
+    pub fn selected_reply_at(&self, visual_idx: usize) -> Option<(usize, usize)> {
+        match self.comment_list_rows.get(visual_idx) {
+            Some(CommentListRow::Reply {
+                comment_idx,
+                reply_idx,
+            }) => Some((*comment_idx, *reply_idx)),
+            _ => None,
+        }
+    }
+
+    /// Resolve `(comment_idx, reply_idx)` to `(reply_id, parent_comment_id)`
+    /// via the parent comment's cached replies.
+    pub fn reply_id_at(&self, comment_idx: usize, reply_idx: usize) -> Option<(String, String)> {
+        let comment = self.comments.get(comment_idx)?;
+        let replies = self.cached_replies.get(&comment.id)?;
+        let reply = replies.get(reply_idx)?;
+        Some((reply.id.clone(), comment.id.clone()))
+    }
+
+    /// Re-fetch the replies for one comment into the cache (after a reply was
+    /// added / edited / deleted), update its reply count, and rebuild the
+    /// virtual row list so the thread reflects the change.
+    pub fn refresh_replies(&mut self, store: &ReviewStore, comment_id: &str) {
+        match store.get_replies(comment_id) {
+            Ok(replies) => {
+                self.reply_counts
+                    .insert(comment_id.to_string(), replies.len());
+                if replies.is_empty() {
+                    self.cached_replies.remove(comment_id);
+                } else {
+                    self.cached_replies.insert(comment_id.to_string(), replies);
+                }
+            }
+            Err(e) => log::warn!("failed to refresh replies: {e}"),
+        }
+        self.rebuild_comment_list_rows();
     }
 
     /// Reload comments from the database for the given worktree.

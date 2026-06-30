@@ -216,6 +216,71 @@ impl Theme {
         }
     }
 
+    /// Move an RGB color toward white by `amount` in `[0, 1]` (0 = unchanged,
+    /// 1 = pure white). The light-mode counterpart to [`darken`], which multiplies
+    /// toward black. Non-RGB colors are returned unchanged.
+    pub fn lighten(color: Color, amount: f64) -> Color {
+        match color {
+            Color::Rgb(r, g, b) => {
+                let a = amount.clamp(0.0, 1.0);
+                let mix = |c: u8| (c as f64 + (255.0 - c as f64) * a).round() as u8;
+                Color::Rgb(mix(r), mix(g), mix(b))
+            }
+            other => other,
+        }
+    }
+
+    /// Return a higher-contrast variant of this theme, derived generically so
+    /// every built-in (and any custom theme) gains a "high contrast mode" without
+    /// a hand-authored palette. The transform pushes the dim "secondary" greys
+    /// (borders, hints, muted separators, section headers — the usual legibility
+    /// offenders) and the body text away from the background, and intensifies
+    /// accents. Direction follows the theme's [`light`](Self::light) polarity:
+    /// dark themes brighten toward white, light themes deepen toward black.
+    pub fn high_contrast(mut self) -> Self {
+        // Capture polarity up front so the push closure borrows only a Copy bool,
+        // leaving `self`'s fields free to be reassigned below.
+        let light = self.light;
+        // Push amounts: dim greys move the most (they start closest to the
+        // background and hurt readability the most), then body text, then a
+        // gentle nudge for accents so they pop without washing out.
+        let push = |c: Color, amount: f64| -> Color {
+            if light {
+                Theme::darken(c, 1.0 - amount)
+            } else {
+                Theme::lighten(c, amount)
+            }
+        };
+        const TXT: f64 = 0.40;
+        const DIM: f64 = 0.55;
+        const ACC: f64 = 0.22;
+
+        // Body text + reply bodies.
+        self.fg = push(self.fg, TXT);
+        self.reply_text = push(self.reply_text, TXT);
+
+        // Dim greys: borders, hints, muted separators, section headers, paths.
+        self.muted = push(self.muted, DIM);
+        self.hint = push(self.hint, DIM);
+        self.dir_fg = push(self.dir_fg, DIM);
+        self.border_unfocused = push(self.border_unfocused, DIM);
+        self.border_secondary = push(self.border_secondary, DIM);
+        self.diff_section_header = push(self.diff_section_header, DIM);
+        self.gutter_hover_fg = push(self.gutter_hover_fg, DIM);
+
+        // Accents / semantic colours: intensify a touch.
+        self.accent = push(self.accent, ACC);
+        self.border_focused = push(self.border_focused, ACC);
+        self.info = push(self.info, ACC);
+        self.success = push(self.success, ACC);
+        self.error = push(self.error, ACC);
+        self.warning = push(self.warning, ACC);
+        self.diff_add = push(self.diff_add, ACC);
+        self.diff_del = push(self.diff_del, ACC);
+
+        self
+    }
+
     /// Linearly interpolate between two RGB colors by `t`, clamped to `[0, 1]`
     /// (`0.0` = `from`, `1.0` = `to`). Used to glide the reflow border between
     /// the accent and its complement. If either color is non-RGB, `from` is
@@ -1083,6 +1148,78 @@ mod tests {
     #[test]
     fn complement_leaves_non_rgb_unchanged() {
         assert_eq!(Theme::complement(Color::Reset), Color::Reset);
+    }
+
+    #[test]
+    fn lighten_endpoints_and_midpoint() {
+        let c = Color::Rgb(100, 100, 100);
+        assert_eq!(Theme::lighten(c, 0.0), c);
+        assert_eq!(Theme::lighten(c, 1.0), Color::Rgb(255, 255, 255));
+        // Halfway between 100 and 255 is ~178.
+        assert_eq!(Theme::lighten(c, 0.5), Color::Rgb(178, 178, 178));
+    }
+
+    #[test]
+    fn lighten_leaves_non_rgb_unchanged() {
+        assert_eq!(Theme::lighten(Color::Reset, 0.5), Color::Reset);
+    }
+
+    /// Helper: perceptual luminance (Rec. 601) of an RGB color, 0–255.
+    fn luma(c: Color) -> f64 {
+        match c {
+            Color::Rgb(r, g, b) => 0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64,
+            _ => 0.0,
+        }
+    }
+
+    #[test]
+    fn high_contrast_brightens_dim_greys_on_dark_themes() {
+        // On a dark theme, the dim greys (borders, hints, muted) must get lighter
+        // — that is the whole point of the high-contrast transform.
+        for &name in Theme::all_names() {
+            let base = Theme::from_name(name);
+            if base.light {
+                continue;
+            }
+            let hc = base.clone().high_contrast();
+            assert!(
+                luma(hc.border_unfocused) > luma(base.border_unfocused),
+                "{name}: border_unfocused must brighten in high contrast"
+            );
+            assert!(
+                luma(hc.hint) > luma(base.hint),
+                "{name}: hint must brighten in high contrast"
+            );
+            assert!(
+                luma(hc.fg) >= luma(base.fg),
+                "{name}: fg must not dim in high contrast"
+            );
+        }
+    }
+
+    #[test]
+    fn high_contrast_darkens_dim_greys_on_light_themes() {
+        // On a light theme, contrast against a near-white background means the
+        // dim greys must get darker, not lighter.
+        for &name in Theme::all_names() {
+            let base = Theme::from_name(name);
+            if !base.light {
+                continue;
+            }
+            let hc = base.clone().high_contrast();
+            assert!(
+                luma(hc.border_unfocused) < luma(base.border_unfocused),
+                "{name}: border_unfocused must darken in high contrast"
+            );
+            assert!(
+                luma(hc.hint) < luma(base.hint),
+                "{name}: hint must darken in high contrast"
+            );
+            assert!(
+                luma(hc.fg) <= luma(base.fg),
+                "{name}: fg must not lighten in high contrast"
+            );
+        }
     }
 
     #[test]

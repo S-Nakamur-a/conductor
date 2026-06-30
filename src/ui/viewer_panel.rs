@@ -85,11 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
     let focused = app.focus == Focus::Viewer;
-    let border_color = if focused {
-        theme.border_focused
-    } else {
-        theme.border_unfocused
-    };
+    let border_color = app.animated_border_color(Focus::Viewer);
 
     let is_expanded = app.expanded_panel == Some(Focus::Viewer);
     let (expand_label, expand_color) = if is_expanded {
@@ -288,13 +284,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         let gutter_span = Span::styled(num, gutter_style);
 
         // Comment badge: 💬 on the last line of a comment range,
-        // │ on earlier lines in the range, 💬 (muted) on gutter hover.
+        // │ on earlier lines in the range, and a GitHub-style "+" button on
+        // gutter hover (click it to start a comment).
         let badge = if comment_end_lines.contains(&line_1) {
             Span::styled("💬", Style::default().fg(theme.accent))
         } else if comment_lines.contains(&line_1) {
             Span::styled("│ ", Style::default().fg(theme.accent))
         } else if is_gutter_hovered {
-            Span::styled("💬", Style::default().fg(theme.muted))
+            Span::styled(
+                "+ ",
+                Style::default()
+                    .fg(theme.selected_fg)
+                    .bg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             Span::raw("  ")
         };
@@ -528,6 +531,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Store the screen-row mapping for mouse event handling.
     // Must be after all borrows of `vs` (&app.viewer_state) are dropped.
+    //
+    // The breadcrumb bar occupies the first inner row but is not a code line and
+    // was *not* part of `screen_row_map`, so every row below it mapped one line
+    // too high (clicks/hover landed a line off). Insert a non-selectable
+    // placeholder so the map lines up 1:1 with what's drawn.
+    if breadcrumb_height > 0 {
+        screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
+    }
     app.viewer_state.content.screen_row_map = screen_row_map;
 }
 
@@ -705,14 +716,20 @@ fn render_diff_content_line(
     };
     let gutter_span = Span::styled(num, gutter_style);
 
-    // Comment badge: 💬 on end lines, │ on earlier range lines,
-    // 💬 (muted) on hovered gutter.
+    // Comment badge: 💬 on end lines, │ on earlier range lines, and a
+    // GitHub-style "+" button on hovered gutter (click to start a comment).
     let badge = if new_line_no.is_some_and(|n| ctx.comment_end_lines.contains(&n)) {
         Span::styled("💬", Style::default().fg(theme.accent))
     } else if new_line_no.is_some_and(|n| ctx.comment_lines.contains(&n)) {
         Span::styled("│ ", Style::default().fg(theme.accent))
     } else if is_gutter_hovered {
-        Span::styled("💬", Style::default().fg(theme.muted))
+        Span::styled(
+            "+ ",
+            Style::default()
+                .fg(theme.selected_fg)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::raw("  ")
     };

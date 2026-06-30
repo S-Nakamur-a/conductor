@@ -24,6 +24,8 @@ pub struct LayoutCache {
     pub viewer_width_pct: u16,
     /// Claude Code area height % within the terminal column (cache key).
     pub terminal_split_pct: u16,
+    /// File-tree height % within the Explorer column (cache key).
+    pub explorer_split_pct: u16,
     /// Title bar area.
     pub title_area: Rect,
     /// Notification bar area.
@@ -58,6 +60,7 @@ impl LayoutCache {
             && self.explorer_width_pct == layout.explorer_width_pct
             && self.viewer_width_pct == layout.viewer_width_pct
             && self.terminal_split_pct == terminal_split_pct
+            && self.explorer_split_pct == layout.explorer_split_pct
         {
             return false;
         }
@@ -70,6 +73,7 @@ impl LayoutCache {
         // The terminal split is runtime-adjustable (grow/shrink shell), so it
         // comes in as a parameter rather than straight from the config.
         self.terminal_split_pct = terminal_split_pct;
+        self.explorer_split_pct = layout.explorer_split_pct;
 
         // The notification bar is gone — Claude-waiting state is now shown by
         // the worktree strip (the waiting worktree is highlighted there).
@@ -115,9 +119,12 @@ impl LayoutCache {
         self.columns = [cols[0], cols[1], cols[2], cols[3]];
 
         // Explorer 50/50 vertical split
-        let explorer_split =
-            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(self.columns[1]);
+        let changed_files_pct = 100u16.saturating_sub(self.explorer_split_pct);
+        let explorer_split = Layout::vertical([
+            Constraint::Percentage(self.explorer_split_pct),
+            Constraint::Percentage(changed_files_pct),
+        ])
+        .split(self.columns[1]);
         self.explorer_mid_y = explorer_split[1].y;
 
         // Terminal vertical split: Claude Code gets `terminal_split_pct`%,
@@ -184,6 +191,7 @@ mod tests {
             explorer_width_pct: explorer,
             viewer_width_pct: viewer,
             terminal_split_pct: terminal,
+            explorer_split_pct: 50,
         }
     }
 
@@ -244,6 +252,19 @@ mod tests {
         cache.update(rect(200, 50), None, false, &cfg, 80);
         let changed = cache.update(rect(200, 50), None, false, &cfg, 70);
         assert!(changed, "terminal_split_pct change must invalidate");
+    }
+
+    #[test]
+    fn layout_cache_invalidates_on_explorer_split_change() {
+        let mut cache = LayoutCache::default();
+        let mut cfg = layout(24, 38, 80);
+        cfg.explorer_split_pct = 50;
+        cache.update(rect(200, 50), None, false, &cfg, 80);
+        cfg.explorer_split_pct = 30;
+        let changed = cache.update(rect(200, 50), None, false, &cfg, 80);
+        assert!(changed, "explorer_split_pct change must invalidate");
+        // The mid-point moves up when the file tree shrinks.
+        assert!(cache.explorer_mid_y > 0);
     }
 
     // ── accordion_widths: abnormal percentages ───────────────────────
@@ -409,7 +430,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // Review input overlays (not part of ActiveOverlay enum). A new comment with
     // an anchor renders as an inline compose box in the viewer instead of this
     // modal, so suppress the modal in that case.
-    if app.review_state.input_mode != crate::review_state::ReviewInputMode::Normal {
+    if app.review_state.input_mode == crate::review_state::ReviewInputMode::ConfirmingDelete {
+        super::review::render_delete_confirm_overlay(frame, main_area, app);
+    } else if app.review_state.input_mode != crate::review_state::ReviewInputMode::Normal {
         let inline_new_comment = app.review_state.input_mode
             == crate::review_state::ReviewInputMode::AddingComment
             && app

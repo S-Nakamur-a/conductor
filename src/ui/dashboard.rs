@@ -1057,490 +1057,123 @@ fn help_key_dyn(lines: &mut Vec<Line<'static>>, keys: String, desc: &'static str
     ]));
 }
 
-/// Format keys for an action in a given context (e.g. "j / Down").
-fn fmt_keys(app: &App, ctx: crate::keymap::KeyContext, action: crate::keymap::Action) -> String {
-    let keys = app.keymap.keys_for_action(ctx, action);
-    if keys.is_empty() {
-        "(unbound)".to_string()
-    } else {
-        keys.join(" / ")
-    }
-}
-
-/// Build help text lines for the given focus context.
+/// Build the cheatsheet lines for a help tab, **auto-generated** from the
+/// keymap so it always lists every binding that fires in that panel — nothing
+/// is hand-curated, so no action can be silently missing (the old curated list
+/// showed only a fraction). One section per layer, listing that layer's own
+/// bindings (global chords are shown once, under "Global").
 fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>> {
     use crate::app::Focus;
     use crate::keymap::{Action, KeyContext};
 
     let mut lines = Vec::new();
 
-    // Global section always shown.
-    help_section(&mut lines, "Global", theme);
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::NewClaudeCode),
-        "New Claude Code session",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::NewShell),
-        "New Shell session",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::CommandPalette),
-        "Command palette",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::FocusWorktree),
-        "Jump to Worktree panel",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::OpenRepo),
-        "Open repository by path",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::SwitchRepo),
-        "Switch repository",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::SearchFullText),
-        "Full-text search (grep)",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::CycleFocusForward),
-        "Cycle panel focus forward",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::CycleFocusBackward),
-        "Cycle panel focus backward",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::Quit),
-        "Quit application",
-        theme,
-    );
-    help_key_dyn(
-        &mut lines,
-        fmt_keys(app, KeyContext::Global, Action::ShowHelp),
-        "Toggle this help",
-        theme,
-    );
+    let section = |lines: &mut Vec<Line<'static>>, title: &'static str, ctx: KeyContext| {
+        let mut entries: Vec<(String, &'static str)> = Vec::new();
+        for &action in Action::ALL {
+            let keys = app.keymap.keys_in_layer(ctx, action);
+            if !keys.is_empty() {
+                entries.push((keys.join(" / "), action.label()));
+            }
+        }
+        if entries.is_empty() {
+            return;
+        }
+        help_section(lines, title, theme);
+        for (keys, desc) in entries {
+            help_key_dyn(lines, keys, desc, theme);
+        }
+    };
 
-    match focus {
-        Focus::Worktree => {
-            let ctx = KeyContext::Worktree;
-            help_section(&mut lines, "Worktree Panel", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NavigateDown),
-                "Navigate down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NavigateUp),
-                "Navigate up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::Select),
-                "Select worktree -> Explorer",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::CreateWorktree),
-                "Create new worktree",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::DeleteWorktree),
-                "Delete selected worktree",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::SwitchBranch),
-                "Switch (checkout remote branch)",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::GrabBranch),
-                "Grab (checkout branch on main)",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::UngrabBranch),
-                "Ungrab (restore main branch)",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::CherryPick),
-                "Cherry-pick from other branch",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::PruneWorktrees),
-                "Prune stale worktrees",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::MergeToMain),
-                "Merge branch into main",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::RefreshWorktrees),
-                "Refresh worktree list",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ResetMainToOrigin),
-                "Reset main to origin/main",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::PullWorktree),
-                "Pull worktree",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::SessionHistory),
-                "Session history viewer",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::OpenPullRequest),
-                "Open pull request in browser",
-                theme,
-            );
-        }
-        Focus::Explorer => {
-            let ctx = KeyContext::Explorer;
-            help_section(&mut lines, "Explorer Panel (File Tree)", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NavigateDown),
-                "Navigate down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NavigateUp),
-                "Navigate up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ExpandOrRight),
-                "Expand directory",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::CollapseOrLeft),
-                "Collapse directory",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::Select),
-                "Open file -> Viewer",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ShowDiffList),
-                "Switch to Diff list",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ShowCommentList),
-                "Show review comments",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::SearchFilename),
-                "Search filename",
-                theme,
-            );
-
-            let ctx2 = KeyContext::ExplorerDiffList;
-            help_section(&mut lines, "Explorer Panel (Diff List)", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx2, Action::NavigateDown),
-                "Navigate down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx2, Action::NavigateUp),
-                "Navigate up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx2, Action::Select),
-                "Open diff file -> Viewer",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx2, Action::ExitSubPanel),
-                "Back to file tree",
-                theme,
-            );
-
-            let ctx3 = KeyContext::ExplorerCommentList;
-            help_section(&mut lines, "Explorer Panel (Comments)", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::NavigateDown),
-                "Navigate down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::NavigateUp),
-                "Navigate up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::GoToTop),
-                "Jump to top",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::GoToBottom),
-                "Jump to bottom",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::Select),
-                "Expand/collapse or jump",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::CollapseOrLeft),
-                "Collapse thread",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::EditComment),
-                "Edit selected comment",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::DeleteComment),
-                "Delete selected comment",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::ToggleResolve),
-                "Toggle resolve/pending",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::ReplyToComment),
-                "Reply to comment",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx3, Action::ExitSubPanel),
-                "Back to file tree",
-                theme,
-            );
-        }
-        Focus::Viewer => {
-            let ctx = KeyContext::Viewer;
-            help_section(&mut lines, "Viewer Panel", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NavigateDown),
-                "Scroll down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NavigateUp),
-                "Scroll up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ScrollHalfPageDown),
-                "Scroll half-page down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ScrollHalfPageUp),
-                "Scroll half-page up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::GoToTop),
-                "Jump to top",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::GoToBottom),
-                "Jump to bottom",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::SearchInFile),
-                "Search in file",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::SearchFilename),
-                "Jump to file (fuzzy, keeps maximized)",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::NextSearchMatch),
-                "Next search match",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::PrevSearchMatch),
-                "Previous search match",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ExitToExplorer),
-                "Back to Explorer",
-                theme,
-            );
-        }
-        Focus::TerminalClaude | Focus::TerminalShell => {
-            let ctx = KeyContext::Terminal;
-            help_section(&mut lines, "Terminal Panel", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::LeaveTerminal),
-                "Leave terminal -> Explorer",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ScrollbackUp),
-                "Scroll up",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ScrollbackDown),
-                "Scroll down",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::ScrollbackTop),
-                "Scroll to top",
-                theme,
-            );
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::SnapToLive),
-                "Snap to live",
-                theme,
-            );
-
-            help_section(&mut lines, "Note", theme);
-            lines.push(Line::from(Span::styled(
-                "  While in the terminal, all keys except the above are",
-                Style::default().fg(theme.muted),
-            )));
-            lines.push(Line::from(Span::styled(
-                "  sent directly to the running process (Claude Code / Shell).",
-                Style::default().fg(theme.muted),
-            )));
-            lines.push(Line::from(Span::styled(
-                "  Use mouse click to switch panels without leaving.",
-                Style::default().fg(theme.muted),
-            )));
-        }
-        Focus::Editor => {
-            let ctx = KeyContext::Editor;
-            help_section(&mut lines, "Editor Panel", theme);
-            help_key_dyn(
-                &mut lines,
-                fmt_keys(app, ctx, Action::LeaveTerminal),
-                "Step over to Claude (editor stays open)",
-                theme,
-            );
-            help_section(&mut lines, "Note", theme);
-            lines.push(Line::from(Span::styled(
-                "  All other keys go to the editor (vim/emacs). Quit it",
-                Style::default().fg(theme.muted),
-            )));
-            lines.push(Line::from(Span::styled(
-                "  (e.g. :q) to close the panel and reload the file.",
-                Style::default().fg(theme.muted),
-            )));
-        }
+    // Panel-specific layers first (most relevant to where you are), then the
+    // always-available global chords.
+    let panel_ctxs: &[(&'static str, KeyContext)] = match focus {
+        Focus::Worktree => &[("Worktree panel", KeyContext::Worktree)],
+        Focus::Explorer => &[
+            ("Explorer — file tree", KeyContext::Explorer),
+            ("Explorer — changed files", KeyContext::ExplorerDiffList),
+            ("Explorer — comment list", KeyContext::ExplorerCommentList),
+        ],
+        Focus::Viewer => &[
+            ("Viewer", KeyContext::Viewer),
+            ("Viewer — diff mode", KeyContext::ViewerDiffMode),
+        ],
+        Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
+        Focus::Editor => &[("Editor panel", KeyContext::Editor)],
+    };
+    for (title, ctx) in panel_ctxs {
+        section(&mut lines, title, *ctx);
     }
+    section(&mut lines, "Global — works anywhere", KeyContext::Global);
 
     lines
 }
 
 // ── Smart Worktree overlays ──────────────────────────────────────────
 
+/// Wrap `text` into visual rows that are at most `width` display-columns wide,
+/// hard-breaking long lines (and honouring explicit `\n`). Returns the wrapped
+/// rows plus the (row, col) of `cursor_char` within them — so the caller can
+/// place the cursor and scroll to keep it visible. This mirrors exactly what is
+/// rendered (we draw these rows without ratatui's own `Wrap`), so the cursor
+/// never drifts from the text the way it did when `Paragraph` re-wrapped behind
+/// our back.
+fn wrap_with_cursor(text: &str, width: usize, cursor_char: char) -> (Vec<String>, usize, usize) {
+    use unicode_width::UnicodeWidthChar;
+    let width = width.max(1);
+    let mut rows: Vec<String> = vec![String::new()];
+    let mut cur_w = 0usize;
+    let mut cursor_pos = (0usize, 0usize);
+    for ch in text.chars() {
+        if ch == '\n' {
+            rows.push(String::new());
+            cur_w = 0;
+            continue;
+        }
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if cur_w + cw > width && !rows.last().unwrap().is_empty() {
+            rows.push(String::new());
+            cur_w = 0;
+        }
+        if ch == cursor_char {
+            cursor_pos = (rows.len() - 1, cur_w);
+        }
+        rows.last_mut().unwrap().push(ch);
+        cur_w += cw;
+    }
+    (rows, cursor_pos.0, cursor_pos.1)
+}
+
 /// Render the Smart Worktree description input overlay (multi-line).
 pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 80_u16.min(area.width.saturating_sub(4));
-    let popup_height = 14_u16.min(area.height.saturating_sub(4));
+    let text_width = popup_width.saturating_sub(2).max(1); // inside L/R borders
+
+    // Embed a block-cursor glyph so its wrapped position is computed exactly
+    // like the surrounding text.
+    let display = format!(
+        "{}\u{2588}{}",
+        app.worktree_mgr
+            .smart_description_buffer
+            .text_before_cursor(),
+        app.worktree_mgr
+            .smart_description_buffer
+            .text_after_cursor()
+    );
+    let (rows, cur_row, cur_col) =
+        wrap_with_cursor(&display, text_width as usize, '\u{2588}');
+
+    // Grow the popup with the content: borders (2) + text rows + hint (1),
+    // clamped to what fits on screen. A scroll offset keeps the cursor visible
+    // once the text outgrows the available height.
+    let max_height = area.height.saturating_sub(4).max(4);
+    let desired_height = (rows.len() as u16).saturating_add(3); // 2 borders + 1 hint
+    let popup_height = desired_height.clamp(6, max_height);
+    let text_area_height = popup_height.saturating_sub(3).max(1);
+
+    let scroll = (cur_row as u16).saturating_sub(text_area_height.saturating_sub(1));
+
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -1558,28 +1191,21 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     // Split: text area + help hint
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
-    // Render multi-line text with block cursor.
-    let display = format!(
-        "{}\u{2588}{}",
-        app.worktree_mgr
-            .smart_description_buffer
-            .text_before_cursor(),
-        app.worktree_mgr
-            .smart_description_buffer
-            .text_after_cursor()
-    );
-    let paragraph = Paragraph::new(display)
-        .style(Style::default().fg(theme.fg))
-        .wrap(ratatui::widgets::Wrap { trim: false });
+    // Render only the visible (scrolled) slice of pre-wrapped rows.
+    let visible: Vec<Line> = rows
+        .iter()
+        .skip(scroll as usize)
+        .take(text_area_height as usize)
+        .map(|r| Line::from(r.clone()))
+        .collect();
+    let paragraph = Paragraph::new(visible).style(Style::default().fg(theme.fg));
     frame.render_widget(paragraph, chunks[0]);
-    {
-        let (row, _col) = app.worktree_mgr.smart_description_buffer.cursor_row_col();
-        let cursor_x = chunks[0].x
-            + app
-                .worktree_mgr
-                .smart_description_buffer
-                .display_width_before_cursor() as u16;
-        let cursor_y = chunks[0].y + row as u16;
+
+    // Place the hardware cursor at the glyph's visual position (within view).
+    let cursor_screen_row = cur_row as u16;
+    if cursor_screen_row >= scroll {
+        let cursor_x = chunks[0].x + cur_col as u16;
+        let cursor_y = chunks[0].y + (cursor_screen_row - scroll);
         if cursor_x < chunks[0].x + chunks[0].width && cursor_y < chunks[0].y + chunks[0].height {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
@@ -1729,4 +1355,40 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
     }
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_with_cursor;
+
+    #[test]
+    fn explicit_newlines_become_rows() {
+        let (rows, r, c) = wrap_with_cursor("ab\ncd\u{2588}", 80, '\u{2588}');
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], "ab");
+        // Cursor glyph sits at row 1, after "cd".
+        assert_eq!((r, c), (1, 2));
+    }
+
+    #[test]
+    fn long_line_hard_wraps_at_width_and_tracks_cursor() {
+        // 10 chars, width 4 → rows of 4,4,2. Cursor glyph at the very end.
+        let (rows, r, c) = wrap_with_cursor("0123456789\u{2588}", 4, '\u{2588}');
+        assert_eq!(rows, vec!["0123", "4567", "89\u{2588}"]);
+        assert_eq!((r, c), (2, 2));
+    }
+
+    #[test]
+    fn wide_chars_do_not_split_across_the_boundary() {
+        // Each CJK char is 2 cols wide; width 3 fits one per row.
+        let (rows, _r, _c) = wrap_with_cursor("あい", 3, '\u{2588}');
+        assert_eq!(rows, vec!["あ", "い"]);
+    }
+
+    #[test]
+    fn empty_text_yields_one_row_and_origin_cursor() {
+        let (rows, r, c) = wrap_with_cursor("\u{2588}", 80, '\u{2588}');
+        assert_eq!(rows.len(), 1);
+        assert_eq!((r, c), (0, 0));
+    }
 }

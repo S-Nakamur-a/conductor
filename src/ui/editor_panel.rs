@@ -30,17 +30,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     let focused = app.focus == Focus::Editor;
-    let border_focused = app.theme.border_focused;
-    let border_unfocused = app.theme.border_unfocused;
     let fg = app.theme.fg;
     let muted = app.theme.muted;
     let accent = app.theme.accent;
 
-    let border_color = if focused {
-        border_focused
-    } else {
-        border_unfocused
-    };
+    let border_color = app.animated_border_color(Focus::Editor);
     let border_type = if focused {
         BorderType::Thick
     } else {
