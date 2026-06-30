@@ -406,6 +406,10 @@ pub struct App {
     /// Kept in sync by `set_theme`; used to find the current selection in the
     /// theme picker and to build the config layer when persisting.
     pub theme_name: String,
+    /// Whether the high-contrast transform is applied to `theme`. Mirrors
+    /// `config.ui.high_contrast`; kept as a field so `set_theme` and the live
+    /// reload rebuild the theme with the right polarity.
+    pub high_contrast: bool,
     /// State for the Explorer/Viewer panel (file tree + file content).
     pub viewer_state: ViewerState,
     /// State for the Diff data (used for inline highlights in Viewer).
@@ -479,6 +483,11 @@ pub struct App {
     // ── Update check ───────────────────────────────────────────
     /// Latest release info when a newer version is available.
     pub update_info: Option<crate::update_checker::UpdateInfo>,
+    /// Set when the user manually triggered an update check (via the command
+    /// palette), so the next poll result flashes explicit feedback — including
+    /// the "already up to date" / "check failed" cases the silent startup check
+    /// swallows.
+    pub update_check_requested: bool,
 
     // ── Update & restart ──────────────────────────────────────
     /// Current state of the update flow.
@@ -664,6 +673,18 @@ fn resolve_theme_name(cfg: &config::Config) -> String {
         .as_deref()
         .unwrap_or(&cfg.viewer.theme)
         .to_string()
+}
+
+/// Build the active [`Theme`] from a name, applying the high-contrast transform
+/// when enabled. The single construction point so every call site (startup,
+/// theme picker, live reload, OSC11 auto-switch) honors the toggle identically.
+fn build_theme(name: &str, high_contrast: bool) -> Theme {
+    let theme = Theme::from_name(name);
+    if high_contrast {
+        theme.high_contrast()
+    } else {
+        theme
+    }
 }
 
 impl App {
@@ -867,7 +888,8 @@ impl App {
 
         let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
         let theme_name = resolve_theme_name(&config);
-        let theme = Theme::from_name(&theme_name);
+        let high_contrast = config.ui.high_contrast;
+        let theme = build_theme(&theme_name, high_contrast);
         let auto_resume = config.general.auto_resume;
 
         // Derive the main repo display name from the main worktree path.
@@ -903,6 +925,7 @@ impl App {
             keymap,
             theme,
             theme_name,
+            high_contrast,
             viewer_state: ViewerState::default(),
             diff_state,
             review_store,
@@ -929,6 +952,7 @@ impl App {
             worktree_heads: HashMap::new(),
             ccusage_info: None,
             update_info: None,
+            update_check_requested: false,
             update_state: UpdateState::Idle,
             update_op: BackgroundOp::default(),
             update_progress_message: String::new(),
@@ -1686,7 +1710,7 @@ impl App {
     /// (`~/.config/conductor/config.toml`) so it survives restarts. A write
     /// failure is non-fatal: it is logged and surfaced as a warning flash.
     pub fn set_theme(&mut self, name: &str, persist: bool) {
-        self.theme = Theme::from_name(name);
+        self.theme = build_theme(name, self.high_contrast);
         self.theme_name = name.to_string();
         self.config.ui.theme = Some(name.to_string());
         if persist
@@ -1724,9 +1748,11 @@ impl App {
     pub fn apply_appearance(&mut self, new: &config::Config) {
         // ── UI / syntax theme ──────────────────────────────────────
         let new_theme_name = resolve_theme_name(new);
-        if new_theme_name != self.theme_name {
-            self.theme = Theme::from_name(&new_theme_name);
+        let new_high_contrast = new.ui.high_contrast;
+        if new_theme_name != self.theme_name || new_high_contrast != self.high_contrast {
+            self.theme = build_theme(&new_theme_name, new_high_contrast);
             self.theme_name = new_theme_name;
+            self.high_contrast = new_high_contrast;
         }
 
         // Rebuild syntect theme when either the viewer theme or the custom
@@ -2120,6 +2146,8 @@ impl App {
             CommandId::SaveSessionHistory => self.save_current_session_history(),
             CommandId::OpenPullRequest => self.open_pr_in_browser(),
             CommandId::UpdateAndRestart => self.cmd_update_and_restart(),
+            CommandId::CheckForUpdate => self.cmd_check_for_update(),
+            CommandId::ToggleHighContrast => self.cmd_toggle_high_contrast(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
             CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
             CommandId::ToggleRichMode => self.cmd_toggle_rich_mode(),
@@ -2703,6 +2731,41 @@ impl App {
         }
     }
 
+    /// Manually check GitHub Releases for a newer version, on demand. Unlike the
+    /// silent startup/interval check, this flashes explicit feedback for every
+    /// outcome (update available / already current / check failed) when the
+    /// background result lands in [`poll_all_background_ops`](Self::poll_all_background_ops).
+    fn cmd_check_for_update(&mut self) {
+        self.update_check_requested = true;
+        self.set_status_info(format!(
+            "Checking for updates… (current v{})",
+            crate::update_checker::current_version()
+        ));
+        self.bg.update_check.start(|tx| {
+            let _ = tx.send(crate::update_checker::check_for_update());
+        });
+    }
+
+    /// Toggle the high-contrast theme transform live, persist the choice, and
+    /// rebuild the theme-dependent caches so the change is visible immediately.
+    fn cmd_toggle_high_contrast(&mut self) {
+        self.high_contrast = !self.high_contrast;
+        self.config.ui.high_contrast = self.high_contrast;
+        self.theme = build_theme(&self.theme_name, self.high_contrast);
+
+        // Caches that bake theme colours into rendered spans must be rebuilt.
+        self.markdown_cache.clear();
+        self.reflow.last_width = 0;
+        self.reflow.cache.clear();
+        self.dirty.mark_all();
+
+        if let Err(e) = crate::config::persist_ui_high_contrast(self.high_contrast) {
+            log::warn!("failed to persist high_contrast: {e}");
+        }
+        let state = if self.high_contrast { "on" } else { "off" };
+        self.set_status_info(format!("High contrast {state}"));
+    }
+
     fn cmd_search_full_text(&mut self) {
         self.overlays.active = ActiveOverlay::GrepSearch;
         self.overlays.grep_search.query.clear();
@@ -2794,14 +2857,41 @@ impl App {
             }
         }
 
-        // update check
-        if let Some(Some(info)) = self.bg.update_check.poll()
-            && crate::update_checker::is_newer(
-                &info.latest_version,
-                crate::update_checker::current_version(),
-            )
-        {
-            self.update_info = Some(info);
+        // update check. The outer Option is "a result is ready"; the inner is
+        // the check itself (Some(info) on success, None on network/parse error).
+        if let Some(result) = self.bg.update_check.poll() {
+            // Whether the user asked for explicit feedback this round.
+            let requested = std::mem::take(&mut self.update_check_requested);
+            let current = crate::update_checker::current_version();
+            match result {
+                Some(info) => {
+                    if crate::update_checker::is_newer(&info.latest_version, current) {
+                        if requested {
+                            self.set_status(
+                                format!(
+                                    "Update available: v{} — run “App: Update and Restart”",
+                                    info.latest_version
+                                ),
+                                StatusLevel::Success,
+                            );
+                        }
+                        self.update_info = Some(info);
+                    } else if requested {
+                        self.set_status(
+                            format!("Already up to date (v{current})"),
+                            StatusLevel::Info,
+                        );
+                    }
+                }
+                None => {
+                    if requested {
+                        self.set_status(
+                            "Update check failed — could not reach GitHub".to_string(),
+                            StatusLevel::Warning,
+                        );
+                    }
+                }
+            }
         }
     }
 
