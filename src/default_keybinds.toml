@@ -282,6 +282,13 @@
 "shift+home" = "scrollback_top"
 "shift+end" = "snap_to_live"
 "ctrl+g" = "open_file_from_terminal"
+# Cycle session tabs in the focused terminal panel (Ctrl+PageUp/Down is the
+# conventional "previous/next tab" chord in editors & terminals). Shift+arrows
+# are kitty-protocol-free aliases for terminals that don't deliver Ctrl+PageX.
+"ctrl+pagedown" = "next_session"
+"ctrl+pageup" = "prev_session"
+"shift+right" = "next_session"
+"shift+left" = "prev_session"
 
 # ── Editor (embedded vim/emacs PTY) ───────────────────────────────────────────
 # Almost everything is forwarded to the inner editor — Esc (vim mode changes),

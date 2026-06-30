@@ -169,14 +169,66 @@ fn summarise_tool_input(input: &serde_json::Value) -> String {
     String::new()
 }
 
-/// Split a `ToolResultContent` into its individual output lines.
+/// Strip characters that would desync terminal rendering from a raw tool-output
+/// line: ANSI escape sequences, tabs (expanded to spaces), and other C0/C1
+/// control codes. Tool output (command results, file dumps) is arbitrary text —
+/// a stray tab advances the terminal cursor to the next tab stop while ratatui
+/// counts it as one cell, and a color escape is zero-width to the terminal but
+/// byte-width to ratatui; either shifts the rest of the line and garbles the
+/// transcript panel. We render a clean, plain-text preview instead.
+fn sanitize_preview_line(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // ANSI escape — drop the whole sequence so it isn't rendered as text.
+            '\u{1b}' => match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    // CSI: consume until a final byte in 0x40–0x7E.
+                    for cc in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&cc) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    // OSC: consume until BEL or the ST terminator (ESC \).
+                    while let Some(cc) = chars.next() {
+                        if cc == '\u{07}' {
+                            break;
+                        }
+                        if cc == '\u{1b}' {
+                            if matches!(chars.peek(), Some('\\')) {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                // Lone ESC or other escape form: drop the following byte too.
+                _ => {
+                    chars.next();
+                }
+            },
+            '\t' => out.push_str("    "),
+            c if c.is_control() => {} // drop CR and other control codes
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Split a `ToolResultContent` into its individual output lines, sanitized for
+/// safe single-row rendering (see [`sanitize_preview_line`]).
 fn result_lines(content: &ToolResultContent) -> Vec<String> {
     match content {
         ToolResultContent::None => Vec::new(),
-        ToolResultContent::Text(s) => s.lines().map(str::to_string).collect(),
+        ToolResultContent::Text(s) => s.lines().map(sanitize_preview_line).collect(),
         ToolResultContent::Blocks(blocks) => blocks
             .iter()
-            .flat_map(|b| b.text.lines().map(str::to_string))
+            .flat_map(|b| b.text.lines().map(sanitize_preview_line))
             .collect(),
     }
 }
@@ -373,6 +425,27 @@ mod tests {
     fn tool_result_string_counts_lines() {
         let content = ToolResultContent::Text("a\nb\nc".to_string());
         assert_eq!(result_lines(&content).len(), 3);
+    }
+
+    #[test]
+    fn preview_lines_are_sanitized_for_rendering() {
+        // Tabs → spaces, ANSI color escapes stripped, control codes dropped, so a
+        // rendered preview line contains no width-desyncing characters.
+        let content = ToolResultContent::Text(
+            "a\tb\n\u{1b}[31mred\u{1b}[0m\n\u{1b}]8;;http://x\u{07}link\u{1b}]8;;\u{07}\ncr\rlf"
+                .to_string(),
+        );
+        let lines = result_lines(&content);
+        assert_eq!(lines[0], "a    b", "tab expands to spaces");
+        assert_eq!(lines[1], "red", "ANSI SGR escapes stripped");
+        assert_eq!(lines[2], "link", "OSC hyperlink sequences stripped");
+        assert_eq!(lines[3], "crlf", "carriage return dropped");
+        for l in &lines {
+            assert!(
+                !l.chars().any(|c| c.is_control()),
+                "no control chars remain in {l:?}"
+            );
+        }
     }
 
     #[test]

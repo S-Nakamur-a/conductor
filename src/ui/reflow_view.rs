@@ -40,17 +40,30 @@ use crate::theme::Theme;
 /// Display columns reserved for the left-hand marker gutter.
 const MARKER_COLS: usize = 2;
 
-/// Bullet/record marker for assistant messages and tool invocations (U+23FA ⏺).
-const ASSISTANT_MARKER: &str = "\u{23fa}";
+// Gutter markers MUST measure 1 column in `unicode-width` AND render 1 column in
+// the terminal, or every transcript line ends up one short and its last char
+// spills past the panel edge. Claude Code's glyphs (⏺ ✻ ⎿) are width-Narrow but
+// many terminals/fonts render them 2 columns wide (⏺ even carries the Emoji
+// property), so the count and the render disagree — the source of the scrollback
+// "bleed". We use only glyphs this terminal provably renders at the width we
+// count: ASCII for the bullet/prompt (always 1 col) and a box-drawing corner for
+// tool results (the panel borders use the same block, so it renders narrow too).
+// The host terminal's line-wrap is also disabled (see `enter_tui`) so even a
+// wide glyph in message *content* can't wrap into a neighbouring panel.
+
+/// Bullet/record marker for assistant messages and tool invocations.
+/// ASCII so it can't be widened by emoji presentation (Claude Code uses ⏺).
+const ASSISTANT_MARKER: &str = "*";
 
 /// Prompt marker for user turns (Claude Code shows `>` before user input).
 const USER_MARKER: &str = ">";
 
-/// Corner glyph for tool result lines (U+23BF ⎿).
-const TOOL_RESULT_GLYPH: &str = "\u{23bf}";
+/// Corner glyph for tool result lines (box-drawing `└`, same block as the panel
+/// borders so it renders one column wide; Claude Code uses ⎿).
+const TOOL_RESULT_GLYPH: &str = "\u{2514}";
 
-/// Marker for thinking blocks (U+273B ✻), matching Claude Code's spinner glyph.
-const THINKING_GLYPH: &str = "\u{273b}";
+/// Marker for thinking blocks (Claude Code uses ✻; ASCII keeps the width honest).
+const THINKING_GLYPH: &str = "*";
 
 // ── Claude Code fixed palette (dark theme) ─────────────────────────────────────
 //
@@ -108,17 +121,30 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let inner_width = area.width as usize;
-    let inner_height = area.height as usize;
+    // Clear so a partially-filled transcript never lets the previous frame's
+    // text show through (the scrollback-bleed fix, as in the live PTY render).
+    frame.render_widget(ratatui::widgets::Clear, area);
+
+    // Reserve one column on the right as a safety gutter. Transcript content is
+    // arbitrary Unicode, and a glyph the terminal renders one column wider than
+    // `unicode-width` counts (an emoji, an emoji-presented symbol) would push a
+    // line's last character to the panel edge; building/rendering one column
+    // narrower lets that overflow land in this reserved blank column instead.
+    let render_area = Rect {
+        width: area.width.saturating_sub(1).max(1),
+        ..area
+    };
+    let inner_width = render_area.width as usize;
+    let inner_height = render_area.height as usize;
 
     // ── (Re)build cached lines when the panel width changed ──────────────────
-    if app.reflow.last_width != area.width {
+    if app.reflow.last_width != render_area.width {
         let new_lines = build_lines(app, inner_width);
         let total = new_lines.len();
 
         app.reflow.cached_lines = new_lines;
         app.reflow.total_lines = total;
-        app.reflow.last_width = area.width;
+        app.reflow.last_width = render_area.width;
     }
 
     app.reflow.last_inner_height = area.height;
@@ -165,9 +191,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // No .wrap(): `markdown_cache.render` already produces lines ≤ `body_width`
     // columns, and each line then receives a `MARKER_COLS`-wide prefix, keeping
-    // total width ≤ `area.width`.  1 logical line == 1 visual row means scroll
-    // arithmetic is exact with no invisible over-height rows.
-    frame.render_widget(Paragraph::new(visible), area);
+    // total width ≤ `render_area.width`.  1 logical line == 1 visual row means
+    // scroll arithmetic is exact with no invisible over-height rows. Rendered
+    // into `render_area` (one column narrower than `area`) so the reserved
+    // safety gutter stays blank.
+    frame.render_widget(Paragraph::new(visible), render_area);
 }
 
 // ── Line builder ─────────────────────────────────────────────────────────────
@@ -459,6 +487,28 @@ mod tests {
         // ⏺ (U+23FA) has unicode_width of 1; padded to 2 should append one space.
         let padded = pad_glyph_to(ASSISTANT_MARKER, MARKER_COLS);
         assert_eq!(UnicodeWidthStr::width(padded.as_str()), MARKER_COLS);
+    }
+
+    #[test]
+    fn gutter_markers_are_exactly_one_column() {
+        // The gutter markers MUST measure as a single column. They render with
+        // emoji presentation (2 cols) in many fonts; the VS15 text-presentation
+        // selector forces narrow rendering to match this width. If a marker ever
+        // measures >1 here, every transcript line will be one column short and
+        // its last char will bleed past the panel edge (the regression that the
+        // VS15 suffix fixes).
+        for (name, m) in [
+            ("assistant", ASSISTANT_MARKER),
+            ("tool-result", TOOL_RESULT_GLYPH),
+            ("thinking", THINKING_GLYPH),
+            ("user", USER_MARKER),
+        ] {
+            assert_eq!(
+                UnicodeWidthStr::width(m),
+                1,
+                "marker {name} must be exactly 1 display column"
+            );
+        }
     }
 
     // ── with_marker ──────────────────────────────────────────────────────────

@@ -373,6 +373,11 @@ pub struct App {
     pub dirty: DirtyPanels,
     /// Current panel focus.
     pub focus: Focus,
+    /// Panel that had focus immediately before the current one — drives the
+    /// border-color glide when focus moves (see `animated_border_color`).
+    pub focus_prev: Focus,
+    /// When focus last changed, for timing the border transition.
+    pub focus_changed_at: std::time::Instant,
     /// All overlay popup states (switch-branch, grab, prune, help, etc.).
     pub overlays: OverlayManager,
     /// Working directory of the repository being inspected.
@@ -883,6 +888,10 @@ impl App {
         let mut app = Self {
             dirty: DirtyPanels(DirtyPanels::ALL),
             focus: Focus::Explorer,
+            focus_prev: Focus::Explorer,
+            // Backdate so no border transition plays on the first frame.
+            focus_changed_at: std::time::Instant::now()
+                - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
             overlays: OverlayManager::default(),
             repo_path,
             main_repo_name,
@@ -1605,7 +1614,55 @@ impl App {
             }
             _ => {}
         }
+        // A panel's transient search prompt is modal to that panel; moving focus
+        // away must release key capture. Otherwise the search box keeps eating
+        // keystrokes after focus moves (e.g. `/` in the viewer, then Tab to
+        // Claude — input should go to Claude). The query/matches persist so n/N
+        // still work when you return.
+        if focus != Focus::Viewer {
+            self.viewer_state.search.search_active = false;
+        }
+        if matches!(
+            focus,
+            Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor
+        ) {
+            self.viewer_state.filename_search.filename_search_active = false;
+        }
+        // Record the change so the gaining/losing panels can glide their border
+        // color (only on an actual change, so a re-focus doesn't restart it).
+        if self.focus != focus {
+            self.focus_prev = self.focus;
+            self.focus_changed_at = std::time::Instant::now();
+        }
         self.focus = focus;
+    }
+
+    /// Border color for `panel`, eased across focus changes: the panel gaining
+    /// focus glides `border_unfocused → border_focused`, the one losing it
+    /// glides back, over `anim::FOCUS_MS`. Everything else rests on the static
+    /// unfocused color. This is what makes panel switches feel smooth instead of
+    /// snapping, using the theme's RGB colors and `Theme::lerp`.
+    pub fn animated_border_color(&self, panel: Focus) -> ratatui::style::Color {
+        let t = crate::anim::eased_progress(self.focus_changed_at.elapsed(), crate::anim::FOCUS_MS);
+        if self.focus == panel {
+            if t >= 1.0 {
+                self.theme.border_focused
+            } else {
+                crate::theme::Theme::lerp(self.theme.border_unfocused, self.theme.border_focused, t)
+            }
+        } else if self.focus_prev == panel && t < 1.0 {
+            crate::theme::Theme::lerp(self.theme.border_focused, self.theme.border_unfocused, t)
+        } else {
+            self.theme.border_unfocused
+        }
+    }
+
+    /// Whether a UI transition (currently the focus-border glide) is still in
+    /// flight. The main loop uses this to keep redrawing at the active frame
+    /// rate so the transition actually animates instead of stalling at the idle
+    /// tick rate.
+    pub fn has_active_transition(&self) -> bool {
+        self.focus_changed_at.elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
     }
 
     /// Request the application to quit.
@@ -2185,16 +2242,20 @@ impl App {
                 }
             }
             ResizeDir::Up | ResizeDir::Down => {
-                // Only the Claude/Shell split is vertically adjustable. Down moves
-                // the divider down (Claude grows); Up moves it up (Claude shrinks),
-                // regardless of which of the two terminal panes is focused.
-                if matches!(self.focus, Focus::TerminalClaude | Focus::TerminalShell) {
-                    let delta = if matches!(dir, ResizeDir::Down) {
-                        Self::TERMINAL_SPLIT_STEP as i16
-                    } else {
-                        -(Self::TERMINAL_SPLIT_STEP as i16)
-                    };
-                    self.adjust_terminal_split(delta);
+                // Two columns have a vertical split: the terminal (Claude/Shell)
+                // and the Explorer (file tree / changed files). Down grows the
+                // top pane, Up shrinks it.
+                let down = matches!(dir, ResizeDir::Down);
+                match self.focus {
+                    Focus::TerminalClaude | Focus::TerminalShell => {
+                        let step = Self::TERMINAL_SPLIT_STEP as i16;
+                        self.adjust_terminal_split(if down { step } else { -step });
+                    }
+                    Focus::Explorer => {
+                        let step = Self::TERMINAL_SPLIT_STEP as i16;
+                        self.adjust_explorer_split(if down { step } else { -step });
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2270,6 +2331,25 @@ impl App {
         self.persist_layout();
     }
 
+    /// Adjust the Explorer column's file-tree height percentage by `delta`
+    /// points (positive grows the file tree, shrinking the changed-files list),
+    /// clamped so both panels keep a usable minimum. Flashes and persists.
+    fn adjust_explorer_split(&mut self, delta: i16) {
+        let next = (self.config.layout.explorer_split_pct as i16 + delta)
+            .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
+            as u16;
+        if next == self.config.layout.explorer_split_pct {
+            return;
+        }
+        self.config.layout.explorer_split_pct = next;
+        self.dirty.mark_all();
+        self.set_status_info(format!(
+            "Explorer split: tree {next}% / changed files {}%",
+            100 - next
+        ));
+        self.persist_layout();
+    }
+
     /// Persist the current panel proportions to `config.toml`. Best-effort: a
     /// write failure is logged, never fatal (the in-memory layout still applies).
     fn persist_layout(&self) {
@@ -2277,6 +2357,7 @@ impl App {
             self.config.layout.explorer_width_pct,
             self.config.layout.viewer_width_pct,
             self.terminal_split_pct,
+            self.config.layout.explorer_split_pct,
         ) {
             log::warn!("failed to persist layout proportions: {e}");
         }
@@ -2567,7 +2648,7 @@ impl App {
             && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
-            self.delete_selected_review_comment();
+            self.request_delete_selected_review_item();
         } else {
             self.set_status("No comment selected.".to_string(), StatusLevel::Warning);
         }
@@ -2743,6 +2824,18 @@ impl App {
         // When the editor is open it stands in for Explorer+Viewer in the cycle;
         // `set_focus` redirects any Explorer/Viewer target onto it, so the only
         // explicit arm needed is leaving the editor itself.
+        //
+        // The Explorer column holds two independent panels — the file tree and
+        // the changed-files list — so Tab visits each as its own stop (file tree
+        // → changed files → Viewer), toggling the sub-focus before moving on.
+        if self.editor.is_none()
+            && self.focus == Focus::Explorer
+            && !self.viewer_state.explorer.explorer_focus_on_diff_list
+        {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            self.focus_changed_at = std::time::Instant::now();
+            return;
+        }
         let next = match self.focus {
             Focus::Worktree | Focus::TerminalShell => Focus::Explorer,
             Focus::Explorer => Focus::Viewer,
@@ -2750,11 +2843,26 @@ impl App {
             Focus::Editor => Focus::TerminalClaude,
             Focus::TerminalClaude => Focus::TerminalShell,
         };
+        // Landing on the Explorer column from elsewhere always starts on the
+        // file tree (the top panel).
+        if next == Focus::Explorer {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = false;
+        }
         self.set_focus(next);
     }
 
     /// Cycle focus backward.
     pub fn cycle_focus_backward(&mut self) {
+        // Mirror of the forward cycle: stepping back through the Explorer column
+        // visits changed files then the file tree.
+        if self.editor.is_none()
+            && self.focus == Focus::Explorer
+            && self.viewer_state.explorer.explorer_focus_on_diff_list
+        {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = false;
+            self.focus_changed_at = std::time::Instant::now();
+            return;
+        }
         let prev = match self.focus {
             Focus::Worktree | Focus::Explorer => Focus::TerminalShell,
             Focus::Viewer => Focus::Explorer,
@@ -2762,6 +2870,11 @@ impl App {
             Focus::TerminalClaude => Focus::Viewer,
             Focus::TerminalShell => Focus::TerminalClaude,
         };
+        // Entering the Explorer column from the Viewer side lands on the
+        // changed-files panel (nearest), so a further Tab-back reaches the tree.
+        if prev == Focus::Explorer {
+            self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        }
         self.set_focus(prev);
     }
 

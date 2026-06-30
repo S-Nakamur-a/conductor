@@ -218,22 +218,13 @@ pub(super) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.explorer.explorer_focus_on_diff_list = false;
         }
         Some(Action::DeleteComment) if row_count > 0 => {
-            app.delete_selected_review_comment();
+            app.request_delete_selected_review_item();
         }
         Some(Action::ToggleResolve) if row_count > 0 => {
             app.toggle_selected_review_status();
         }
         Some(Action::EditComment) => {
-            let comment_idx = app
-                .review_state
-                .selected_comment_idx(app.viewer_state.explorer.comment_list_selected);
-            if let Some(comment) = comment_idx.and_then(|idx| app.review_state.comments.get(idx)) {
-                app.review_state.input_buffer.set_text(&comment.body);
-                app.review_state.input_mode = ReviewInputMode::EditingComment;
-                app.review_state.selected = comment_idx.unwrap();
-                app.review_state.status_message =
-                    Some("Edit comment (Enter to save, Esc to cancel)".to_string());
-            }
+            app.start_edit_selected_review_item();
         }
         Some(Action::ReplyToComment) if row_count > 0 => {
             let comment_idx = app

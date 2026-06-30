@@ -21,9 +21,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let focused = app.focus == Focus::Explorer;
 
-    // Split into top (file tree) and bottom (diff list).
-    let chunks =
-        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+    // Split into top (file tree) and bottom (diff list), using the configured,
+    // runtime-resizable ratio (Ctrl+Alt+↑/↓). Must match `LayoutCache`'s
+    // `explorer_mid_y` so mouse routing lines up with what's drawn.
+    let tree_pct = app.config.layout.explorer_split_pct;
+    let changed_pct = 100u16.saturating_sub(tree_pct);
+    let chunks = Layout::vertical([
+        Constraint::Percentage(tree_pct),
+        Constraint::Percentage(changed_pct),
+    ])
+    .split(area);
 
     // Record actual panel heights for scroll calculations in event handling.
     let tree_inner_height = chunks[0].height.saturating_sub(2) as usize;
@@ -80,11 +87,17 @@ fn indent_for_depth(depth: usize) -> std::borrow::Cow<'static, str> {
 
 /// Render the file tree (top half).
 fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused: bool) {
-    let tree_focused = panel_focused && !app.viewer_state.explorer.explorer_focus_on_diff_list;
+    let on_diff = app.viewer_state.explorer.explorer_focus_on_diff_list;
+    let tree_focused = panel_focused && !on_diff;
+    // Glide the column-level focus color; the tree is the "active" element when
+    // not focused on the diff list, so it eases both when the column gains and
+    // when it loses focus. The inactive sub-panel keeps the static secondary tint.
     let border_color = if tree_focused {
-        app.theme.border_focused
+        app.animated_border_color(Focus::Explorer)
     } else if panel_focused {
         app.theme.border_secondary
+    } else if !on_diff {
+        app.animated_border_color(Focus::Explorer)
     } else {
         app.theme.border_unfocused
     };
@@ -178,6 +191,10 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
         })
         .collect();
 
+    // Clear first so rows below the last item (or stale rows after scrolling /
+    // a height change) don't show the previous frame's glyphs — the same
+    // scroll-bleed guard the viewer uses.
+    frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
 
@@ -202,11 +219,14 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 
     let theme = &app.theme;
     let vs_explorer = &app.viewer_state.explorer;
-    let diff_focused = panel_focused && vs_explorer.explorer_focus_on_diff_list;
+    let on_diff = vs_explorer.explorer_focus_on_diff_list;
+    let diff_focused = panel_focused && on_diff;
     let border_color = if diff_focused {
-        theme.border_focused
+        app.animated_border_color(Focus::Explorer)
     } else if panel_focused {
         theme.border_secondary
+    } else if on_diff {
+        app.animated_border_color(Focus::Explorer)
     } else {
         theme.border_unfocused
     };
@@ -339,6 +359,10 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
         })
         .collect();
 
+    // Clear first so rows below the last item (or stale rows after scrolling /
+    // a height change) don't show the previous frame's glyphs — the same
+    // scroll-bleed guard the viewer uses.
+    frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
 }
@@ -636,6 +660,10 @@ fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: 
         })
         .collect();
 
+    // Clear first so rows below the last item (or stale rows after scrolling /
+    // a height change) don't show the previous frame's glyphs — the same
+    // scroll-bleed guard the viewer uses.
+    frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
 }

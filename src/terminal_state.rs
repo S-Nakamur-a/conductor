@@ -53,6 +53,18 @@ pub struct TerminalState {
     pub dirty_claude: bool,
     /// Set when PTY reader thread produces new output for Shell terminal.
     pub dirty_shell: bool,
+    /// First-visible tab index for the Claude session tab strip (horizontal scroll).
+    pub claude_tab_scroll: usize,
+    /// First-visible tab index for the Shell session tab strip (horizontal scroll).
+    pub shell_tab_scroll: usize,
+    /// Pan the Claude tab strip to reveal the active tab on the next render.
+    pub claude_tab_reveal: bool,
+    /// Pan the Shell tab strip to reveal the active tab on the next render.
+    pub shell_tab_reveal: bool,
+    /// Clickable regions of the Claude tab strip, recorded each render.
+    pub claude_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
+    /// Clickable regions of the Shell tab strip, recorded each render.
+    pub shell_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
 }
 
 impl TerminalState {
@@ -78,6 +90,12 @@ impl TerminalState {
             deferred_prompts: HashMap::new(),
             dirty_claude: true,
             dirty_shell: true,
+            claude_tab_scroll: 0,
+            shell_tab_scroll: 0,
+            claude_tab_reveal: false,
+            shell_tab_reveal: false,
+            claude_tab_hits: Vec::new(),
+            shell_tab_hits: Vec::new(),
         }
     }
 
@@ -94,6 +112,7 @@ impl TerminalState {
         self.active_claude_session = Some(idx);
         self.scroll_claude = 0;
         self.cache_claude = PtyRenderCache::default();
+        self.claude_tab_reveal = true;
     }
 
     /// Switch the Shell panel to display the session at `idx`.
@@ -105,6 +124,7 @@ impl TerminalState {
         self.active_shell_session = Some(idx);
         self.scroll_shell = 0;
         self.cache_shell = PtyRenderCache::default();
+        self.shell_tab_reveal = true;
     }
 }
 

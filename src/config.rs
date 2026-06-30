@@ -350,6 +350,9 @@ pub struct LayoutConfig {
     /// Claude Code area height as a percentage of the terminal column height.
     /// The shell area receives the remainder.
     pub terminal_split_pct: u16,
+    /// File-tree height as a percentage of the Explorer column height; the
+    /// changed-files list below receives the remainder.
+    pub explorer_split_pct: u16,
 }
 
 impl Default for LayoutConfig {
@@ -358,6 +361,7 @@ impl Default for LayoutConfig {
             explorer_width_pct: 24,
             viewer_width_pct: 38,
             terminal_split_pct: 80,
+            explorer_split_pct: 50,
         }
     }
 }
@@ -396,6 +400,7 @@ pub struct AppearanceSnapshot {
     pub layout_explorer_width_pct: u16,
     pub layout_viewer_width_pct: u16,
     pub layout_terminal_split_pct: u16,
+    pub layout_explorer_split_pct: u16,
 }
 
 impl Config {
@@ -412,6 +417,7 @@ impl Config {
             layout_explorer_width_pct: self.layout.explorer_width_pct,
             layout_viewer_width_pct: self.layout.viewer_width_pct,
             layout_terminal_split_pct: self.layout.terminal_split_pct,
+            layout_explorer_split_pct: self.layout.explorer_split_pct,
         }
     }
 
@@ -654,6 +660,8 @@ pub fn generate_default_config() -> String {
 # explorer_width_pct = 24               # explorer column width % (default: 24)
 # viewer_width_pct = 38                 # viewer column width % (default: 38)
 #                                       # terminal column gets the remaining width
+# explorer_split_pct = 50              # file-tree height % within explorer column (default: 50)
+#                                       # changed-files list receives the remainder
 # terminal_split_pct = 80              # Claude Code area height % within terminal column (default: 80)
 #                                       # shell area receives the remainder. These three values are the
 #                                       # initial proportions; resize panels live, tmux-style, with
@@ -780,6 +788,7 @@ pub fn persist_layout_proportions(
     explorer_width_pct: u16,
     viewer_width_pct: u16,
     terminal_split_pct: u16,
+    explorer_split_pct: u16,
 ) -> Result<()> {
     let path = config_file_path();
     let contents = if path.exists() {
@@ -799,6 +808,12 @@ pub fn persist_layout_proportions(
         "layout",
         "terminal_split_pct",
         &terminal_split_pct.to_string(),
+    );
+    let updated = upsert_section_kv(
+        &updated,
+        "layout",
+        "explorer_split_pct",
+        &explorer_split_pct.to_string(),
     );
     std::fs::write(&path, updated)?;
     Ok(())

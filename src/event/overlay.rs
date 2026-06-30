@@ -570,11 +570,12 @@ pub(super) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
             app.review_state.comment_detail_active = false;
         }
         KeyCode::Delete => {
-            // Delete from the detail view.
+            // Delete from the detail view (with confirmation).
             let idx = app.review_state.comment_detail_idx;
-            app.review_state.selected = idx;
             app.review_state.comment_detail_active = false;
-            app.delete_selected_review_comment();
+            if let Some(id) = app.review_state.comments.get(idx).map(|c| c.id.clone()) {
+                app.request_delete_comment_by_id(id);
+            }
         }
         KeyCode::Char('r') => {
             // Toggle resolve from the detail view.
@@ -983,6 +984,20 @@ pub(super) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
 // ── Overlay: review input ───────────────────────────────────────────────
 
 pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
+    // Delete confirmation is a y/n prompt, not a text field — handle it first.
+    if app.review_state.input_mode == ReviewInputMode::ConfirmingDelete {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.confirm_pending_delete();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.cancel_pending_delete();
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Shift+Enter inserts a newline (multi-line editing).
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
         app.review_state.input_buffer.insert_char('\n');
@@ -993,6 +1008,7 @@ pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.review_state.input_buffer.clear();
             app.review_state.input_anchor = None;
+            app.review_state.editing_reply = None;
             app.review_state.input_mode = ReviewInputMode::Normal;
             app.review_state.status_message = None;
         }
@@ -1028,14 +1044,21 @@ pub(super) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
                         app.update_selected_review_body(&buffer);
                     }
                 }
+                ReviewInputMode::EditingReply => {
+                    if !buffer.is_empty() {
+                        app.update_selected_reply_body(&buffer);
+                    }
+                }
                 ReviewInputMode::ReplyingToComment => {
                     if !buffer.is_empty() {
                         app.add_reply_to_selected_comment(&buffer);
                     }
                 }
-                ReviewInputMode::Normal => unreachable!(),
+                // ConfirmingDelete is intercepted above; Normal never reaches here.
+                ReviewInputMode::Normal | ReviewInputMode::ConfirmingDelete => unreachable!(),
             }
             app.review_state.input_buffer.clear();
+            app.review_state.editing_reply = None;
             app.review_state.input_mode = ReviewInputMode::Normal;
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {

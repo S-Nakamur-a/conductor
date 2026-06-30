@@ -598,6 +598,31 @@ impl ReviewStore {
         Ok(out)
     }
 
+    /// Delete a single reply by id, leaving the parent comment and its other
+    /// replies intact. (Contrast with `delete_review`, which cascade-deletes
+    /// every reply.)
+    pub fn delete_reply(&self, id: &str) -> Result<()> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM review_replies WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            anyhow::bail!("reply not found: {id}");
+        }
+        Ok(())
+    }
+
+    /// Edit the body text of a single reply.
+    pub fn update_reply_body(&self, id: &str, body: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE review_replies SET body = ?1 WHERE id = ?2",
+            params![body, id],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("reply not found: {id}");
+        }
+        Ok(())
+    }
+
     /// Return reply counts for all comments in a given worktree.
     ///
     /// Returns a map of review_id → reply count.
@@ -1486,6 +1511,69 @@ mod tests {
         store.delete_review(&review.id).unwrap();
         let replies = store.get_replies(&review.id).unwrap();
         assert!(replies.is_empty());
+    }
+
+    #[test]
+    fn delete_reply_removes_only_that_reply_not_the_parent() {
+        let store = test_store();
+        let review = store
+            .add_review(
+                "wt1",
+                "src/app.rs",
+                10,
+                None,
+                CommentKind::Question,
+                "why?",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+        store.add_reply(&review.id, "first", Author::Claude).unwrap();
+        store.add_reply(&review.id, "second", Author::User).unwrap();
+
+        let replies = store.get_replies(&review.id).unwrap();
+        assert_eq!(replies.len(), 2);
+
+        // Delete only the first reply.
+        store.delete_reply(&replies[0].id).unwrap();
+        let after = store.get_replies(&review.id).unwrap();
+        assert_eq!(after.len(), 1, "only the targeted reply should be removed");
+        assert_eq!(after[0].body, "second");
+        // The parent comment must still exist (the old bug deleted it).
+        assert!(
+            store
+                .reviews_for_worktree("wt1")
+                .unwrap()
+                .iter()
+                .any(|c| c.id == review.id)
+        );
+    }
+
+    #[test]
+    fn update_reply_body_edits_only_that_reply() {
+        let store = test_store();
+        let review = store
+            .add_review(
+                "wt1",
+                "src/app.rs",
+                10,
+                None,
+                CommentKind::Question,
+                "why?",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+        store.add_reply(&review.id, "typo", Author::User).unwrap();
+        let id = store.get_replies(&review.id).unwrap()[0].id.clone();
+
+        store.update_reply_body(&id, "fixed").unwrap();
+        assert_eq!(store.get_replies(&review.id).unwrap()[0].body, "fixed");
+        // Editing a non-existent reply is an error, not a silent no-op.
+        assert!(store.update_reply_body("nope", "x").is_err());
+        assert!(store.delete_reply("nope").is_err());
     }
 
     // ── Gamification: daily stats ─────────────────────────────────

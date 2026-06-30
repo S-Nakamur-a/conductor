@@ -175,7 +175,12 @@ pub enum LineSelection {
     /// No line is selected.
     #[default]
     None,
-    /// First click done — start line set, waiting for second click to set end.
+    /// A range is being dragged out — start line set, end not yet committed.
+    /// Retained (with its dimmer "pending range" rendering) for a future
+    /// click-drag range selection; commenting currently commits the range
+    /// immediately (single click / shift-click), so nothing constructs this
+    /// today.
+    #[allow(dead_code)]
     Pending { start: usize },
     /// Range fully selected (start and end are 1-indexed, inclusive).
     /// `start` may be > `end` — callers normalize via `selected_range()`.
@@ -223,6 +228,10 @@ pub struct ClickTracker {
     pub last_line_click_time: std::time::Instant,
     /// The 1-indexed line number that was last clicked on.
     pub last_line_click_line: usize,
+    /// While a gutter drag is in progress, the 1-indexed line where it started
+    /// (the anchor). The range extends to the dragged-over line; the comment
+    /// opens on mouse-up. `None` when not dragging.
+    pub gutter_drag_anchor: Option<usize>,
     /// Timestamp of the last file-tree click for double-click detection.
     pub last_tree_click_time: std::time::Instant,
     /// The tree index that was last clicked in the file tree.
@@ -241,6 +250,7 @@ impl Default for ClickTracker {
             hover_symbol: None,
             last_line_click_time: std::time::Instant::now(),
             last_line_click_line: 0,
+            gutter_drag_anchor: None,
             last_tree_click_time: std::time::Instant::now(),
             last_tree_click_idx: usize::MAX,
             last_comment_click_time: std::time::Instant::now(),
@@ -843,55 +853,28 @@ impl ViewerState {
         matches!(self.selection, LineSelection::Pending { .. })
     }
 
-    /// Handle a click on a line in the viewer.  Returns `true` when the
-    /// caller should open the comment input overlay (double-click for a
-    /// single-line comment, or second single-click on a different line for
-    /// a range comment).
-    pub fn click_line_number(&mut self, line_1indexed: usize) -> bool {
-        let now = std::time::Instant::now();
-        let elapsed = now.duration_since(self.click.last_line_click_time);
-        let is_double =
-            elapsed.as_millis() < 400 && self.click.last_line_click_line == line_1indexed;
-
-        self.click.last_line_click_time = now;
-        self.click.last_line_click_line = line_1indexed;
-
-        if is_double {
-            // Double-click → select single line and signal comment creation.
-            self.selection = LineSelection::Pending {
-                start: line_1indexed,
+    /// Handle a click on the gutter "+" button (GitHub-style commenting).
+    ///
+    /// A plain click selects just `line_1indexed`; a shift-click extends a
+    /// range from the previously clicked line (the anchor, kept fixed so
+    /// successive shift-clicks grow from the same origin). The caller then
+    /// opens the comment input, which reads the resulting `selection`.
+    pub fn gutter_comment_click(&mut self, line_1indexed: usize, extend: bool) {
+        let anchor = self.click.last_line_click_line;
+        if extend && anchor != 0 {
+            let (start, end) = if anchor <= line_1indexed {
+                (anchor, line_1indexed)
+            } else {
+                (line_1indexed, anchor)
             };
-            return true;
-        }
-
-        match self.selection {
-            LineSelection::None => {
-                // First click — select start line.
-                self.selection = LineSelection::Pending {
-                    start: line_1indexed,
-                };
-                false
-            }
-            LineSelection::Pending { start } => {
-                if start == line_1indexed {
-                    // Clicked the same line again (slow double-click) — keep.
-                    false
-                } else {
-                    // Second click on a different line — set range and open comment.
-                    self.selection = LineSelection::Selected {
-                        start,
-                        end: line_1indexed,
-                    };
-                    true
-                }
-            }
-            LineSelection::Selected { .. } => {
-                // Already have a completed range — start a new selection.
-                self.selection = LineSelection::Pending {
-                    start: line_1indexed,
-                };
-                false
-            }
+            self.selection = LineSelection::Selected { start, end };
+        } else {
+            self.selection = LineSelection::Selected {
+                start: line_1indexed,
+                end: line_1indexed,
+            };
+            self.click.last_line_click_line = line_1indexed;
+            self.click.last_line_click_time = std::time::Instant::now();
         }
     }
 
@@ -1552,6 +1535,37 @@ fn digit_count(n: usize) -> usize {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn gutter_click_selects_single_line() {
+        let mut vs = ViewerState::default();
+        vs.gutter_comment_click(7, false);
+        assert_eq!(vs.selected_range(), Some((7, 7)));
+    }
+
+    #[test]
+    fn shift_gutter_click_extends_range_from_anchor() {
+        let mut vs = ViewerState::default();
+        vs.gutter_comment_click(5, false); // anchor at 5
+        vs.gutter_comment_click(9, true); // shift-click extends to 9
+        assert_eq!(vs.selected_range(), Some((5, 9)));
+    }
+
+    #[test]
+    fn shift_gutter_click_normalizes_upward_range() {
+        let mut vs = ViewerState::default();
+        vs.gutter_comment_click(9, false); // anchor at 9
+        vs.gutter_comment_click(4, true); // shift-click above the anchor
+        assert_eq!(vs.selected_range(), Some((4, 9)));
+    }
+
+    #[test]
+    fn shift_gutter_click_without_anchor_falls_back_to_single_line() {
+        let mut vs = ViewerState::default();
+        // No prior click → anchor is the default 0, so this is just a single line.
+        vs.gutter_comment_click(3, true);
+        assert_eq!(vs.selected_range(), Some((3, 3)));
+    }
 
     /// The explorer must list files purely from the filesystem, independent of
     /// git state. A directory ignored by `.gitignore` (i.e. not under git

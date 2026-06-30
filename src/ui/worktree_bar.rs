@@ -65,7 +65,7 @@ struct Chip {
 /// caller has already reserved room for the overflow hints). `desired_start` is
 /// the current scroll position; when `reveal` is set the window is panned the
 /// minimum amount needed to include `selected`.
-fn visible_window(
+pub(crate) fn visible_window(
     slots: &[u16],
     sep_w: u16,
     avail: u16,
@@ -130,7 +130,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let muted = app.theme.muted;
     let success = app.theme.success;
-    let accent = app.theme.accent;
     let warning = app.theme.warning;
     let border = app.theme.border_secondary;
     let error = app.theme.error;
@@ -164,21 +163,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         x += w(&icon);
         spans.push(Span::styled(icon, style));
     }
-    // New-worktree button.
-    {
-        let add = "[+] ";
-        let aw = w(add);
-        spans.push(Span::styled(
-            add,
-            Style::default().fg(success).add_modifier(Modifier::BOLD),
-        ));
-        hits.push(WtbarHit {
-            x0: x,
-            x1: x + aw,
-            action: WtbarAction::Add,
-        });
-        x += aw;
-    }
+    // The new-worktree button is pinned at the right edge (consistent with the
+    // Claude/Shell session tab bars); reserve room for it here and render it at
+    // the end. " [+]" = leading gap + button.
+    let add = " [+]";
+    let add_w = w(add);
+    let chips_max_x = max_x.saturating_sub(add_w);
 
     // Gather chip data up front (releases the borrow on `app.worktrees`).
     let chips: Vec<Chip> = app
@@ -211,7 +201,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             }
             text.push(' ');
 
-            let del = if wt.is_main { "" } else { "\u{2715} " };
+            // `[x]` to match the Claude/Shell session tabs (was `✕`); it sits
+            // just past the chip's filled background, so the danger red stays
+            // readable.
+            let del = if wt.is_main { "" } else { "[x]" };
             Chip {
                 width: w(&text),
                 del,
@@ -229,7 +222,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // and the literal are defined together so they can't drift apart.
     let sep = "\u{2502} ";
     let sep_w = w(sep);
-    let avail_full = max_x.saturating_sub(x);
+    let avail_full = chips_max_x.saturating_sub(x);
 
     // Does everything fit with no overflow hints? If so, skip the hint reserve.
     let slots: Vec<u16> = chips.iter().map(|c| c.width + c.del_width).collect();
@@ -282,7 +275,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
 
         let chip_style = if chip.is_current {
-            Style::default().fg(accent).add_modifier(Modifier::BOLD)
+            // Filled chip so the active worktree reads at a glance, not just a
+            // color shift — the chip text carries its own surrounding spaces.
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
         } else if chip.waiting {
             Style::default().fg(warning)
         } else if chip.active {
@@ -323,7 +321,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             x1: x + hw,
             action: WtbarAction::ScrollRight,
         });
+        x += hw;
     }
+
+    // Pin the new-worktree [+] button flush against the right edge.
+    if x < chips_max_x {
+        let pad = (chips_max_x - x) as usize;
+        spans.push(Span::raw(" ".repeat(pad)));
+        x = chips_max_x;
+    }
+    spans.push(Span::styled(
+        add,
+        Style::default().fg(success).add_modifier(Modifier::BOLD),
+    ));
+    hits.push(WtbarHit {
+        x0: x,
+        x1: x + add_w,
+        action: WtbarAction::Add,
+    });
 
     app.wtbar_scroll = start;
     app.wtbar_reveal_selected = false;
