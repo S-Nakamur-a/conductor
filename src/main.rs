@@ -77,6 +77,13 @@ const PULSE_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// Interval for refreshing unfocused terminal panels (~2fps).
 /// Balances visibility of background PTY output with CPU usage.
 const UNFOCUSED_TERMINAL_REFRESH: Duration = Duration::from_millis(500);
+/// Redraw cadence for rich-mode gradient borders (~30fps). The rotating focus
+/// gradient and waiting glow (`ui::rich`) derive their phase from wall-clock
+/// time but only advance when the frame is redrawn; without a dedicated cadence
+/// the gradient stutters at the idle/decoration tick rate. Only armed in rich
+/// mode (and never overriding the faster terminal/active rates), so the cost is
+/// a steady 30fps repaint while rich effects are visible.
+const RICH_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
 
 fn main() -> Result<()> {
     // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
@@ -444,6 +451,7 @@ fn run_loop(
     timers.register("decoration", DECORATION_TICK_INTERVAL);
     timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
     timers.register("pulse", PULSE_TICK_INTERVAL);
+    timers.register("rich_glow", RICH_REFRESH_INTERVAL);
 
     // Maximum time to spend draining events before rendering a frame.
     // Prevents input starvation during rapid scroll (trackpad inertia
@@ -463,6 +471,10 @@ fn run_loop(
         let decoration_active =
             crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
                 .has_animation();
+        // Rich-mode gradient borders animate from wall-clock time but need the
+        // frame to keep redrawing; arm a 30fps cadence whenever rich effects are
+        // on screen. Party mode owns its own animation path, so exclude it here.
+        let rich_active = app.rich_tier.is_rich() && !app.party_mode;
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
         if pty_dirty {
             app.terminal.dirty_claude = true;
@@ -493,6 +505,11 @@ fn run_loop(
                 _ if last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
                 // Keep frames flowing while a focus-border glide is in flight.
                 _ if app.has_active_transition() => TICK_RATE_ACTIVE,
+                // Rich gradients want ~30fps even when otherwise idle, so the
+                // rotating border never stutters. Placed below the faster
+                // terminal/active rates (which already cover their cases) and
+                // above the slower waiting/decoration/idle rates.
+                _ if rich_active => RICH_REFRESH_INTERVAL,
                 _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
                 // Party mode keeps animating even while idle.
                 _ if app.party_mode => PULSE_TICK_INTERVAL,
@@ -680,6 +697,13 @@ fn run_loop(
                 }
                 // Drive party-mode animations (rainbow border, syntax, confetti).
                 "pulse" if app.party_mode => {
+                    app.dirty.mark_all();
+                }
+                // Drive the rich-mode gradient borders at a steady ~30fps. The
+                // effect is a whole-frame post-process, so a full repaint is
+                // required to advance it; the PTY raster stays cached (gated by
+                // `dirty_claude`/`dirty_shell`), so this is a cheap widget redraw.
+                "rich_glow" if rich_active => {
                     app.dirty.mark_all();
                 }
                 "unfocused_terminal" => {
