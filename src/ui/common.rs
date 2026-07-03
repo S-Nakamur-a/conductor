@@ -164,15 +164,20 @@ pub fn build_pty_lines(
 
 /// Render previously built PTY lines from a [`PtyRenderCache`].
 ///
-/// This is cheap: it just clones the cached `Line` data into a `Paragraph`.
+/// This is cheap: the cached `Line`s are blitted straight into the frame
+/// buffer by reference. (It used to `clone()` the whole line vector into a
+/// `Paragraph` — a full deep copy of every span string, twice per frame at
+/// the terminal-focus tick rate, for zero benefit.)
 pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache, theme: &Theme) {
     // Clear first: when scrolled back the snapshot can have fewer/shorter lines
-    // than the live view, and a bare Paragraph leaves the uncovered cells
+    // than the live view, and bare line blitting leaves the uncovered cells
     // showing the previous frame's text (the "scrollback bleed"). Mirrors the
     // viewer panel, which clears for the same reason.
     frame.render_widget(ratatui::widgets::Clear, area);
-    let paragraph = Paragraph::new(cache.lines.clone());
-    frame.render_widget(paragraph, area);
+    let buf = frame.buffer_mut();
+    for (i, line) in cache.lines.iter().enumerate().take(area.height as usize) {
+        buf.set_line(area.x, area.y + i as u16, line, area.width);
+    }
 
     if cache.effective_offset > 0 {
         let indicator = Line::from(Span::styled(

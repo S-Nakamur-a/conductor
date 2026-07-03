@@ -30,6 +30,10 @@ pub struct WorktreeInfo {
     pub ahead: Option<usize>,
     /// Commits behind upstream (remote commits not yet pulled). `None` if no upstream.
     pub behind: Option<usize>,
+    /// HEAD commit OID (hex). `None` on an unborn branch. Captured while the
+    /// repo is already open so callers don't need a second `Repository::open`
+    /// per worktree just to detect new commits.
+    pub head_oid: Option<String>,
 }
 
 /// Summary info for a single commit.
@@ -77,12 +81,6 @@ impl GitEngine {
             format!("failed to discover git repository from {}", path.display())
         })?;
         Ok(Self { repo })
-    }
-
-    /// Return the HEAD commit OID as a hex string.
-    pub fn head_oid_string(&self) -> Result<String> {
-        let head = self.repo.head()?.peel_to_commit()?.id();
-        Ok(head.to_string())
     }
 
     // ── Worktree enumeration ─────────────────────────────────────────
@@ -373,6 +371,33 @@ impl GitEngine {
                 .with_context(|| format!("failed to delete branch '{name}' (not fully merged?)"))?;
         }
         Ok(())
+    }
+
+    /// Return `true` when every commit on `branch` is already contained in
+    /// `into` (tip equal or an ancestor of `into`'s tip). Used to warn before
+    /// a worktree delete force-removes a branch whose commits would become
+    /// unreachable — libgit2's non-force `Branch::delete` does *not* perform
+    /// the "not fully merged" refusal that the git CLI does, so this check is
+    /// the only guard.
+    pub fn is_branch_merged_into(&self, branch: &str, into: &str) -> Result<bool> {
+        let branch_oid = self
+            .repo
+            .find_branch(branch, git2::BranchType::Local)
+            .with_context(|| format!("branch '{branch}' not found"))?
+            .get()
+            .peel_to_commit()?
+            .id();
+        let into_oid = self
+            .repo
+            .find_branch(into, git2::BranchType::Local)
+            .with_context(|| format!("branch '{into}' not found"))?
+            .get()
+            .peel_to_commit()?
+            .id();
+        if branch_oid == into_oid {
+            return Ok(true);
+        }
+        Ok(self.repo.graph_descendant_of(into_oid, branch_oid)?)
     }
 
     /// Forcefully remove a worktree even if dirty.
@@ -1453,6 +1478,11 @@ impl GitEngine {
         let (added, modified, deleted) = Self::status_counts(&repo).unwrap_or((0, 0, 0));
         let is_clean = added == 0 && modified == 0 && deleted == 0;
         let (ahead, behind) = Self::ahead_behind_upstream(&repo);
+        let head_oid = repo
+            .head()
+            .ok()
+            .and_then(|h| h.target())
+            .map(|oid| oid.to_string());
 
         Ok(WorktreeInfo {
             path: path.to_path_buf(),
@@ -1464,6 +1494,7 @@ impl GitEngine {
             is_clean,
             ahead,
             behind,
+            head_oid,
         })
     }
 

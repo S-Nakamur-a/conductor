@@ -133,7 +133,9 @@ impl MediaState {
         self.rendered_path = Some(rel_path.to_string());
         self.rendered_size = size;
         self.rendered_pixel = picker.is_some();
-        *self.content.lock().unwrap() = MediaContent::Loading;
+        // Poison recovery: if a decode thread panicked while holding the lock,
+        // keep the viewer alive and overwrite the poisoned value.
+        *self.content.lock().unwrap_or_else(|e| e.into_inner()) = MediaContent::Loading;
 
         let path = full_path.to_path_buf();
         let content = Arc::clone(&self.content);
@@ -143,7 +145,7 @@ impl MediaState {
                 Some(mut picker) => render_image_to_pixels(&path, &mut picker, cols, rows),
                 None => render_image_to_lines(&path, cols, rows),
             };
-            *content.lock().unwrap() = result;
+            *content.lock().unwrap_or_else(|e| e.into_inner()) = result;
         });
     }
 

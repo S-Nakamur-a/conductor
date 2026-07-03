@@ -81,11 +81,54 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                         StatusLevel::Warning,
                     );
                 } else {
+                    // Confirming deletes both the worktree AND its branch
+                    // (force). Spell out exactly what will be lost so a
+                    // reflexive `y` can't silently destroy work: uncommitted
+                    // changes vanish with the directory, and commits not
+                    // merged into main become unreachable with the branch.
+                    let branch = wt.branch.clone();
+                    let dirty_count = wt.added + wt.modified + wt.deleted;
+                    let is_clean = wt.is_clean;
+                    let main_branch = app
+                        .worktrees
+                        .iter()
+                        .find(|w| w.is_main)
+                        .map(|w| w.branch.clone());
+
+                    let mut warnings: Vec<String> = Vec::new();
+                    if !is_clean {
+                        warnings.push(format!(
+                            "{dirty_count} uncommitted change(s) will be LOST"
+                        ));
+                    }
+                    if let Some(main_branch) =
+                        main_branch.filter(|m| *m != branch)
+                    {
+                        match git_engine::GitEngine::open(&app.repo_path)
+                            .and_then(|e| e.is_branch_merged_into(&branch, &main_branch))
+                        {
+                            Ok(false) => warnings.push(format!(
+                                "commits not merged into '{main_branch}' will be lost with the branch"
+                            )),
+                            Ok(true) => {}
+                            // Can't verify (e.g. branch renamed); don't block the
+                            // delete, but don't claim it's safe either.
+                            Err(e) => {
+                                log::warn!("merged-into-main check failed for '{branch}': {e}");
+                            }
+                        }
+                    }
+
                     app.worktree_mgr.input_mode = crate::app::WorktreeInputMode::ConfirmingDelete;
-                    app.set_status(
-                        format!("Delete worktree '{}'? (y/n)", wt.branch),
-                        StatusLevel::Warning,
-                    );
+                    let prompt = if warnings.is_empty() {
+                        format!("Delete worktree '{branch}' and its branch? (y/n)")
+                    } else {
+                        format!(
+                            "Delete worktree '{branch}'? WARNING: {} (y/n)",
+                            warnings.join("; ")
+                        )
+                    };
+                    app.set_status(prompt, StatusLevel::Warning);
                 }
             }
         }
