@@ -6,6 +6,12 @@
 //! The engine is [`keymap-suite`](keymap_suite), the one-import facade over
 //! `keymap-core`/`keymap-config`/`keymap-seq`. We follow its design directly:
 //!
+//! * **The action vocabulary is declared once.** The [`Action`] enum, its
+//!   stable config names, and `Action::ALL` come from one
+//!   [`actions!`](keymap_suite::actions) block; the generated
+//!   [`ActionName`](keymap_suite::ActionName) impl (`from_name` / `name`)
+//!   replaces the hand-written `from_str` / `as_str` name tables and slots
+//!   straight into the suite's loaders.
 //! * **Loaded once, owned whole.** [`KeyMap`] holds one [`Loaded<Action>`] — the
 //!   facade's TOML-build result — whose `layers` map is keyed by name. Each
 //!   `KeyContext` names one layer; `Global` is the bare `[keys]` table
@@ -26,425 +32,154 @@
 //!   shortcuts can never drift from what actually resolves.
 
 use crossterm::event::KeyEvent;
-use keymap_suite::{KeyInput, Keymap, Loaded, resolve_layered};
+use keymap_suite::{ActionName, KeyInput, Keymap, Loaded, resolve_layered};
 
 // ---------------------------------------------------------------------------
 // Action — every customisable user action
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Action {
-    // ── Global ────────────────────────────────────────────────────
-    Quit,
-    ShowHelp,
-    CommandPalette,
-    CycleFocusForward,
-    CycleFocusBackward,
-    /// Switch the selected worktree to the next/previous one, from any panel
-    /// (the worktree strip follows the selection). Distinct from focus cycling.
-    NextWorktree,
-    PrevWorktree,
-    FocusWorktree,
-    FocusExplorer,
-    FocusExplorerDiffList,
-    FocusViewer,
-    FocusTerminalClaude,
-    FocusTerminalShell,
-    NewClaudeCode,
-    NewShell,
-    OpenRepo,
-    SwitchRepo,
+// The `actions!` macro (keymap-suite 0.1.2) generates the enum, the
+// `ActionName` impl (`from_name` / `name` — the config-name mapping the old
+// hand-written `from_str` / `as_str` provided), and `Action::ALL` in
+// declaration order (which the cheatsheet renders, so declaration order IS
+// display order). Default chords are deliberately NOT declared here: they live
+// in `default_keybinds.toml`, whose per-layer tables fit this app's
+// nine-layer, shared-navigation keymap better than the macro's per-action
+// `"chord" @ "layer"` lists would (see the file for the schema and rationale
+// comments users read when overriding).
+keymap_suite::actions! {
+    pub enum Action {
+        // ── Global ────────────────────────────────────────────────────
+        Quit => "quit",
+        ShowHelp => "show_help",
+        CommandPalette => "command_palette",
+        CycleFocusForward => "cycle_focus_forward",
+        CycleFocusBackward => "cycle_focus_backward",
+        /// Switch the selected worktree to the next/previous one, from any panel
+        /// (the worktree strip follows the selection). Distinct from focus cycling.
+        NextWorktree => "next_worktree",
+        PrevWorktree => "prev_worktree",
+        FocusWorktree => "focus_worktree",
+        FocusExplorer => "focus_explorer",
+        FocusExplorerDiffList => "focus_explorer_diff_list",
+        FocusViewer => "focus_viewer",
+        FocusTerminalClaude => "focus_terminal_claude",
+        FocusTerminalShell => "focus_terminal_shell",
+        NewClaudeCode => "new_claude_code",
+        NewShell => "new_shell",
+        OpenRepo => "open_repo",
+        SwitchRepo => "switch_repo",
 
-    // ── Shared navigation ────────────────────────────────────────
-    NavigateUp,
-    NavigateDown,
-    GoToTop,
-    GoToBottom,
-    ExpandOrRight,
-    CollapseOrLeft,
-    Select,
+        // ── Shared navigation ────────────────────────────────────────
+        NavigateUp => "navigate_up",
+        NavigateDown => "navigate_down",
+        GoToTop => "go_to_top",
+        GoToBottom => "go_to_bottom",
+        ExpandOrRight => "expand_or_right",
+        CollapseOrLeft => "collapse_or_left",
+        Select => "select",
 
-    // ── Worktree panel ───────────────────────────────────────────
-    CreateWorktree,
-    DeleteWorktree,
-    SwitchBranch,
-    GrabBranch,
-    UngrabBranch,
-    PruneWorktrees,
-    MergeToMain,
-    RefreshWorktrees,
-    ResetMainToOrigin,
-    CherryPick,
-    PullWorktree,
-    SessionHistory,
-    OpenPullRequest,
+        // ── Worktree panel ───────────────────────────────────────────
+        CreateWorktree => "create_worktree",
+        DeleteWorktree => "delete_worktree",
+        SwitchBranch => "switch_branch",
+        GrabBranch => "grab_branch",
+        UngrabBranch => "ungrab_branch",
+        PruneWorktrees => "prune_worktrees",
+        MergeToMain => "merge_to_main",
+        RefreshWorktrees => "refresh_worktrees",
+        ResetMainToOrigin => "reset_main_to_origin",
+        CherryPick => "cherry_pick",
+        PullWorktree => "pull_worktree",
+        SessionHistory => "session_history",
+        OpenPullRequest => "open_pull_request",
 
-    // ── Explorer panel ───────────────────────────────────────────
-    ShowDiffList,
-    ShowCommentList,
-    /// Open the full-screen comment-list modal (overview of all comments on the
-    /// branch, with jump-to-location).
-    OpenCommentList,
-    SearchFilename,
-    DeleteComment,
-    ToggleResolve,
-    EditComment,
-    ReplyToComment,
-    ViewCommentDetail,
-    ExitSubPanel,
+        // ── Explorer panel ───────────────────────────────────────────
+        ShowDiffList => "show_diff_list",
+        ShowCommentList => "show_comment_list",
+        /// Open the full-screen comment-list modal (overview of all comments on the
+        /// branch, with jump-to-location).
+        OpenCommentList => "open_comment_list",
+        SearchFilename => "search_filename",
+        DeleteComment => "delete_comment",
+        ToggleResolve => "toggle_resolve",
+        EditComment => "edit_comment",
+        ReplyToComment => "reply_to_comment",
+        ViewCommentDetail => "view_comment_detail",
+        ExitSubPanel => "exit_sub_panel",
 
-    // ── Viewer panel ─────────────────────────────────────────────
-    ScrollHalfPageDown,
-    ScrollHalfPageUp,
-    ScrollLeft,
-    ScrollRight,
-    ScrollHome,
-    SearchInFile,
-    NextSearchMatch,
-    PrevSearchMatch,
-    AddComment,
-    ExitToExplorer,
-    /// Open the file shown in the Viewer in an external editor ($VISUAL /
-    /// $EDITOR): suspend the TUI, run the editor, then restore and reload.
-    OpenInEditor,
+        // ── Viewer panel ─────────────────────────────────────────────
+        ScrollHalfPageDown => "scroll_half_page_down",
+        ScrollHalfPageUp => "scroll_half_page_up",
+        ScrollLeft => "scroll_left",
+        ScrollRight => "scroll_right",
+        ScrollHome => "scroll_home",
+        SearchInFile => "search_in_file",
+        NextSearchMatch => "next_search_match",
+        PrevSearchMatch => "prev_search_match",
+        AddComment => "add_comment",
+        ExitToExplorer => "exit_to_explorer",
+        /// Open the file shown in the Viewer in an external editor ($VISUAL /
+        /// $EDITOR): suspend the TUI, run the editor, then restore and reload.
+        OpenInEditor => "open_in_editor",
 
-    // ── Terminal panel ────────────────────────────────────────────
-    LeaveTerminal,
-    ScrollbackUp,
-    ScrollbackDown,
-    ScrollbackTop,
-    SnapToLive,
-    OpenFileFromTerminal,
-    /// Cycle to the next/previous session tab in the focused terminal panel
-    /// (Claude Code or Shell) — the keyboard equivalent of clicking a tab.
-    NextSession,
-    PrevSession,
+        // ── Terminal panel ────────────────────────────────────────────
+        LeaveTerminal => "leave_terminal",
+        ScrollbackUp => "scrollback_up",
+        ScrollbackDown => "scrollback_down",
+        ScrollbackTop => "scrollback_top",
+        SnapToLive => "snap_to_live",
+        OpenFileFromTerminal => "open_file_from_terminal",
+        /// Cycle to the next/previous session tab in the focused terminal panel
+        /// (Claude Code or Shell) — the keyboard equivalent of clicking a tab.
+        NextSession => "next_session",
+        PrevSession => "prev_session",
 
-    // ── App ──────────────────────────────────────────────────────
-    UpdateAndRestart,
+        // ── App ──────────────────────────────────────────────────────
+        UpdateAndRestart => "update_and_restart",
 
-    // ── Search ──────────────────────────────────────────────────
-    SearchFullText,
+        // ── Search ──────────────────────────────────────────────────
+        SearchFullText => "search_full_text",
 
-    // ── Code navigation ─────────────────────────────────────────
-    JumpBack,
-    JumpForward,
-    ToggleInlineThread,
-    InlineReply,
+        // ── Code navigation ─────────────────────────────────────────
+        JumpBack => "jump_back",
+        JumpForward => "jump_forward",
+        ToggleInlineThread => "toggle_inline_thread",
+        InlineReply => "inline_reply",
 
-    // ── Diff navigation ─────────────────────────────────────────
-    NextHunk,
-    PrevHunk,
-    NextComment,
-    PrevComment,
-    /// Jump to the next/previous changed file in the diff list (GitHub-style
-    /// "next file" — the lightweight substitute for cross-file scrolling).
-    NextChangedFile,
-    PrevChangedFile,
+        // ── Diff navigation ─────────────────────────────────────────
+        NextHunk => "next_hunk",
+        PrevHunk => "prev_hunk",
+        NextComment => "next_comment",
+        PrevComment => "prev_comment",
+        /// Jump to the next/previous changed file in the diff list (GitHub-style
+        /// "next file" — the lightweight substitute for cross-file scrolling).
+        NextChangedFile => "next_changed_file",
+        PrevChangedFile => "prev_changed_file",
 
-    // ── Diff context expansion ─────────────────────────────────
-    ExpandContext,
-    ExpandAllContext,
+        // ── Diff context expansion ─────────────────────────────────
+        ExpandContext => "expand_context",
+        ExpandAllContext => "expand_all_context",
 
-    // ── Panel layout ────────────────────────────────────────────
-    TogglePanelExpand,
-    TogglePanelOverlay,
-    /// Grow the focused panel toward the left (tmux `resize-pane -L`).
-    ResizePaneLeft,
-    /// Grow the focused panel toward the right (tmux `resize-pane -R`).
-    ResizePaneRight,
-    /// Grow the focused panel upward (tmux `resize-pane -U`).
-    ResizePaneUp,
-    /// Grow the focused panel downward (tmux `resize-pane -D`).
-    ResizePaneDown,
+        // ── Panel layout ────────────────────────────────────────────
+        TogglePanelExpand => "toggle_panel_expand",
+        TogglePanelOverlay => "toggle_panel_overlay",
+        /// Grow the focused panel toward the left (tmux `resize-pane -L`).
+        ResizePaneLeft => "resize_pane_left",
+        /// Grow the focused panel toward the right (tmux `resize-pane -R`).
+        ResizePaneRight => "resize_pane_right",
+        /// Grow the focused panel upward (tmux `resize-pane -U`).
+        ResizePaneUp => "resize_pane_up",
+        /// Grow the focused panel downward (tmux `resize-pane -D`).
+        ResizePaneDown => "resize_pane_down",
 
-    // ── UI ──────────────────────────────────────────────────────
-    /// Open the theme picker overlay to switch the UI color theme at runtime.
-    OpenThemePicker,
+        // ── UI ──────────────────────────────────────────────────────
+        /// Open the theme picker overlay to switch the UI color theme at runtime.
+        OpenThemePicker => "open_theme_picker",
+    }
 }
 
 impl Action {
-    /// Convert from config string to Action.
-    pub fn from_str(s: &str) -> Option<Action> {
-        match s {
-            "quit" => Some(Action::Quit),
-            "show_help" => Some(Action::ShowHelp),
-            "command_palette" => Some(Action::CommandPalette),
-            "cycle_focus_forward" => Some(Action::CycleFocusForward),
-            "cycle_focus_backward" => Some(Action::CycleFocusBackward),
-            "next_worktree" => Some(Action::NextWorktree),
-            "prev_worktree" => Some(Action::PrevWorktree),
-            "focus_worktree" => Some(Action::FocusWorktree),
-            "focus_explorer" => Some(Action::FocusExplorer),
-            "focus_explorer_diff_list" => Some(Action::FocusExplorerDiffList),
-            "focus_viewer" => Some(Action::FocusViewer),
-            "focus_terminal_claude" => Some(Action::FocusTerminalClaude),
-            "focus_terminal_shell" => Some(Action::FocusTerminalShell),
-            "new_claude_code" => Some(Action::NewClaudeCode),
-            "new_shell" => Some(Action::NewShell),
-            "open_repo" => Some(Action::OpenRepo),
-            "switch_repo" => Some(Action::SwitchRepo),
-            "navigate_up" => Some(Action::NavigateUp),
-            "navigate_down" => Some(Action::NavigateDown),
-            "go_to_top" => Some(Action::GoToTop),
-            "go_to_bottom" => Some(Action::GoToBottom),
-            "expand_or_right" => Some(Action::ExpandOrRight),
-            "collapse_or_left" => Some(Action::CollapseOrLeft),
-            "select" => Some(Action::Select),
-            "create_worktree" => Some(Action::CreateWorktree),
-            "delete_worktree" => Some(Action::DeleteWorktree),
-            "switch_branch" => Some(Action::SwitchBranch),
-            "grab_branch" => Some(Action::GrabBranch),
-            "ungrab_branch" => Some(Action::UngrabBranch),
-            "prune_worktrees" => Some(Action::PruneWorktrees),
-            "merge_to_main" => Some(Action::MergeToMain),
-            "refresh_worktrees" => Some(Action::RefreshWorktrees),
-            "reset_main_to_origin" => Some(Action::ResetMainToOrigin),
-            "cherry_pick" => Some(Action::CherryPick),
-            "pull_worktree" => Some(Action::PullWorktree),
-            "session_history" => Some(Action::SessionHistory),
-            "open_pull_request" => Some(Action::OpenPullRequest),
-            "show_diff_list" => Some(Action::ShowDiffList),
-            "show_comment_list" => Some(Action::ShowCommentList),
-            "open_comment_list" => Some(Action::OpenCommentList),
-            "search_filename" => Some(Action::SearchFilename),
-            "delete_comment" => Some(Action::DeleteComment),
-            "toggle_resolve" => Some(Action::ToggleResolve),
-            "edit_comment" => Some(Action::EditComment),
-            "reply_to_comment" => Some(Action::ReplyToComment),
-            "view_comment_detail" => Some(Action::ViewCommentDetail),
-            "exit_sub_panel" => Some(Action::ExitSubPanel),
-            "scroll_half_page_down" => Some(Action::ScrollHalfPageDown),
-            "scroll_half_page_up" => Some(Action::ScrollHalfPageUp),
-            "scroll_left" => Some(Action::ScrollLeft),
-            "scroll_right" => Some(Action::ScrollRight),
-            "scroll_home" => Some(Action::ScrollHome),
-            "search_in_file" => Some(Action::SearchInFile),
-            "next_search_match" => Some(Action::NextSearchMatch),
-            "prev_search_match" => Some(Action::PrevSearchMatch),
-            "add_comment" => Some(Action::AddComment),
-            "exit_to_explorer" => Some(Action::ExitToExplorer),
-            "open_in_editor" => Some(Action::OpenInEditor),
-            "leave_terminal" => Some(Action::LeaveTerminal),
-            "scrollback_up" => Some(Action::ScrollbackUp),
-            "scrollback_down" => Some(Action::ScrollbackDown),
-            "scrollback_top" => Some(Action::ScrollbackTop),
-            "snap_to_live" => Some(Action::SnapToLive),
-            "open_file_from_terminal" => Some(Action::OpenFileFromTerminal),
-            "next_session" => Some(Action::NextSession),
-            "prev_session" => Some(Action::PrevSession),
-            "update_and_restart" => Some(Action::UpdateAndRestart),
-            "search_full_text" => Some(Action::SearchFullText),
-            "jump_back" => Some(Action::JumpBack),
-            "jump_forward" => Some(Action::JumpForward),
-            "next_hunk" => Some(Action::NextHunk),
-            "prev_hunk" => Some(Action::PrevHunk),
-            "next_comment" => Some(Action::NextComment),
-            "next_changed_file" => Some(Action::NextChangedFile),
-            "prev_changed_file" => Some(Action::PrevChangedFile),
-            "prev_comment" => Some(Action::PrevComment),
-            "expand_context" => Some(Action::ExpandContext),
-            "expand_all_context" => Some(Action::ExpandAllContext),
-            "toggle_inline_thread" => Some(Action::ToggleInlineThread),
-            "inline_reply" => Some(Action::InlineReply),
-            "toggle_panel_expand" => Some(Action::TogglePanelExpand),
-            "toggle_panel_overlay" => Some(Action::TogglePanelOverlay),
-            "resize_pane_left" => Some(Action::ResizePaneLeft),
-            "resize_pane_right" => Some(Action::ResizePaneRight),
-            "resize_pane_up" => Some(Action::ResizePaneUp),
-            "resize_pane_down" => Some(Action::ResizePaneDown),
-            "open_theme_picker" => Some(Action::OpenThemePicker),
-            _ => None,
-        }
-    }
-
-    /// Convert Action to config string.
-    #[allow(dead_code)]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Action::Quit => "quit",
-            Action::ShowHelp => "show_help",
-            Action::CommandPalette => "command_palette",
-            Action::CycleFocusForward => "cycle_focus_forward",
-            Action::CycleFocusBackward => "cycle_focus_backward",
-            Action::NextWorktree => "next_worktree",
-            Action::PrevWorktree => "prev_worktree",
-            Action::FocusWorktree => "focus_worktree",
-            Action::FocusExplorer => "focus_explorer",
-            Action::FocusExplorerDiffList => "focus_explorer_diff_list",
-            Action::FocusViewer => "focus_viewer",
-            Action::FocusTerminalClaude => "focus_terminal_claude",
-            Action::FocusTerminalShell => "focus_terminal_shell",
-            Action::NewClaudeCode => "new_claude_code",
-            Action::NewShell => "new_shell",
-            Action::OpenRepo => "open_repo",
-            Action::SwitchRepo => "switch_repo",
-            Action::NavigateUp => "navigate_up",
-            Action::NavigateDown => "navigate_down",
-            Action::GoToTop => "go_to_top",
-            Action::GoToBottom => "go_to_bottom",
-            Action::ExpandOrRight => "expand_or_right",
-            Action::CollapseOrLeft => "collapse_or_left",
-            Action::Select => "select",
-            Action::CreateWorktree => "create_worktree",
-            Action::DeleteWorktree => "delete_worktree",
-            Action::SwitchBranch => "switch_branch",
-            Action::GrabBranch => "grab_branch",
-            Action::UngrabBranch => "ungrab_branch",
-            Action::PruneWorktrees => "prune_worktrees",
-            Action::MergeToMain => "merge_to_main",
-            Action::RefreshWorktrees => "refresh_worktrees",
-            Action::ResetMainToOrigin => "reset_main_to_origin",
-            Action::CherryPick => "cherry_pick",
-            Action::PullWorktree => "pull_worktree",
-            Action::SessionHistory => "session_history",
-            Action::OpenPullRequest => "open_pull_request",
-            Action::ShowDiffList => "show_diff_list",
-            Action::ShowCommentList => "show_comment_list",
-            Action::OpenCommentList => "open_comment_list",
-            Action::SearchFilename => "search_filename",
-            Action::DeleteComment => "delete_comment",
-            Action::ToggleResolve => "toggle_resolve",
-            Action::EditComment => "edit_comment",
-            Action::ReplyToComment => "reply_to_comment",
-            Action::ViewCommentDetail => "view_comment_detail",
-            Action::ExitSubPanel => "exit_sub_panel",
-            Action::ScrollHalfPageDown => "scroll_half_page_down",
-            Action::ScrollHalfPageUp => "scroll_half_page_up",
-            Action::ScrollLeft => "scroll_left",
-            Action::ScrollRight => "scroll_right",
-            Action::ScrollHome => "scroll_home",
-            Action::SearchInFile => "search_in_file",
-            Action::NextSearchMatch => "next_search_match",
-            Action::PrevSearchMatch => "prev_search_match",
-            Action::AddComment => "add_comment",
-            Action::ExitToExplorer => "exit_to_explorer",
-            Action::OpenInEditor => "open_in_editor",
-            Action::LeaveTerminal => "leave_terminal",
-            Action::ScrollbackUp => "scrollback_up",
-            Action::ScrollbackDown => "scrollback_down",
-            Action::ScrollbackTop => "scrollback_top",
-            Action::SnapToLive => "snap_to_live",
-            Action::OpenFileFromTerminal => "open_file_from_terminal",
-            Action::NextSession => "next_session",
-            Action::PrevSession => "prev_session",
-            Action::UpdateAndRestart => "update_and_restart",
-            Action::SearchFullText => "search_full_text",
-            Action::JumpBack => "jump_back",
-            Action::JumpForward => "jump_forward",
-            Action::NextHunk => "next_hunk",
-            Action::PrevHunk => "prev_hunk",
-            Action::NextComment => "next_comment",
-            Action::PrevComment => "prev_comment",
-            Action::NextChangedFile => "next_changed_file",
-            Action::PrevChangedFile => "prev_changed_file",
-            Action::ExpandContext => "expand_context",
-            Action::ExpandAllContext => "expand_all_context",
-            Action::ToggleInlineThread => "toggle_inline_thread",
-            Action::InlineReply => "inline_reply",
-            Action::TogglePanelExpand => "toggle_panel_expand",
-            Action::TogglePanelOverlay => "toggle_panel_overlay",
-            Action::ResizePaneLeft => "resize_pane_left",
-            Action::ResizePaneRight => "resize_pane_right",
-            Action::ResizePaneUp => "resize_pane_up",
-            Action::ResizePaneDown => "resize_pane_down",
-            Action::OpenThemePicker => "open_theme_picker",
-        }
-    }
-
-    /// Every action, in a stable display order (grouped by domain). Used to
-    /// auto-generate the per-context cheatsheet so it can never fall out of sync
-    /// with the `Action` enum or miss a binding.
-    pub const ALL: &'static [Action] = &[
-        Action::Quit,
-        Action::ShowHelp,
-        Action::CommandPalette,
-        Action::CycleFocusForward,
-        Action::CycleFocusBackward,
-        Action::NextWorktree,
-        Action::PrevWorktree,
-        Action::FocusWorktree,
-        Action::FocusExplorer,
-        Action::FocusExplorerDiffList,
-        Action::FocusViewer,
-        Action::FocusTerminalClaude,
-        Action::FocusTerminalShell,
-        Action::NewClaudeCode,
-        Action::NewShell,
-        Action::OpenRepo,
-        Action::SwitchRepo,
-        Action::NavigateUp,
-        Action::NavigateDown,
-        Action::GoToTop,
-        Action::GoToBottom,
-        Action::ExpandOrRight,
-        Action::CollapseOrLeft,
-        Action::Select,
-        Action::CreateWorktree,
-        Action::DeleteWorktree,
-        Action::SwitchBranch,
-        Action::GrabBranch,
-        Action::UngrabBranch,
-        Action::PruneWorktrees,
-        Action::MergeToMain,
-        Action::RefreshWorktrees,
-        Action::ResetMainToOrigin,
-        Action::CherryPick,
-        Action::PullWorktree,
-        Action::SessionHistory,
-        Action::OpenPullRequest,
-        Action::ShowDiffList,
-        Action::ShowCommentList,
-        Action::OpenCommentList,
-        Action::SearchFilename,
-        Action::DeleteComment,
-        Action::ToggleResolve,
-        Action::EditComment,
-        Action::ReplyToComment,
-        Action::ViewCommentDetail,
-        Action::ExitSubPanel,
-        Action::ScrollHalfPageDown,
-        Action::ScrollHalfPageUp,
-        Action::ScrollLeft,
-        Action::ScrollRight,
-        Action::ScrollHome,
-        Action::SearchInFile,
-        Action::NextSearchMatch,
-        Action::PrevSearchMatch,
-        Action::AddComment,
-        Action::ExitToExplorer,
-        Action::OpenInEditor,
-        Action::LeaveTerminal,
-        Action::ScrollbackUp,
-        Action::ScrollbackDown,
-        Action::ScrollbackTop,
-        Action::SnapToLive,
-        Action::OpenFileFromTerminal,
-        Action::NextSession,
-        Action::PrevSession,
-        Action::UpdateAndRestart,
-        Action::SearchFullText,
-        Action::JumpBack,
-        Action::JumpForward,
-        Action::ToggleInlineThread,
-        Action::InlineReply,
-        Action::NextHunk,
-        Action::PrevHunk,
-        Action::NextComment,
-        Action::PrevComment,
-        Action::NextChangedFile,
-        Action::PrevChangedFile,
-        Action::ExpandContext,
-        Action::ExpandAllContext,
-        Action::TogglePanelExpand,
-        Action::TogglePanelOverlay,
-        Action::ResizePaneLeft,
-        Action::ResizePaneRight,
-        Action::ResizePaneUp,
-        Action::ResizePaneDown,
-        Action::OpenThemePicker,
-    ];
-
     /// Human-readable one-line description of the action, for the cheatsheet.
     pub fn label(self) -> &'static str {
         match self {
@@ -717,7 +452,7 @@ impl KeyMap {
 
         // 1. Embedded defaults — the merge base. Authored in-repo, so any
         //    warning is a build bug: fail loudly in debug, never reach the user.
-        let defaults = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_str)
+        let defaults = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_name)
             .expect("embedded default keybinds must be valid TOML");
         debug_assert!(
             defaults.warnings.is_empty(),
@@ -875,7 +610,7 @@ fn parse_user_keybinds(
         }
     };
 
-    match keymap_suite::from_toml_str(&toml_text, Action::from_str) {
+    match keymap_suite::from_toml_str(&toml_text, Action::from_name) {
         Ok(build) => Some(build),
         Err(e) => {
             warnings.push(KeybindWarning::InvalidConfig {
@@ -936,7 +671,7 @@ mod tests {
     fn every_default_action_name_resolves() {
         // Guards against a typo in default_keybinds.toml: an unknown action name
         // would surface as a warning when the defaults are parsed.
-        let build = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_str).unwrap();
+        let build = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_name).unwrap();
         assert!(build.warnings.is_empty(), "{:?}", build.warnings);
     }
 
@@ -1404,16 +1139,12 @@ mod tests {
     }
 
     #[test]
-    fn action_from_str_as_str_roundtrip() {
-        let actions = [
-            Action::Quit,
-            Action::NavigateDown,
-            Action::LeaveTerminal,
-            Action::AddComment,
-            Action::ScrollHalfPageDown,
-        ];
-        for action in actions {
-            assert_eq!(Action::from_str(action.as_str()), Some(action));
+    fn action_name_roundtrips_for_every_variant() {
+        // The macro-generated ActionName impl must be a bijection over ALL —
+        // this covers every variant, not a hand-picked sample, because the
+        // names and the match arms now come from the same declaration.
+        for &action in Action::ALL {
+            assert_eq!(Action::from_name(action.name()), Some(action));
         }
     }
 
@@ -1549,9 +1280,9 @@ mod tests {
     fn removed_lsp_actions_no_longer_parse() {
         // Unwired actions were dropped from the vocabulary so binding them
         // warns (UnknownAction) instead of silently doing nothing.
-        assert_eq!(Action::from_str("go_to_definition"), None);
-        assert_eq!(Action::from_str("go_to_implementation"), None);
-        assert_eq!(Action::from_str("find_references"), None);
+        assert_eq!(Action::from_name("go_to_definition"), None);
+        assert_eq!(Action::from_name("go_to_implementation"), None);
+        assert_eq!(Action::from_name("find_references"), None);
     }
 
     #[test]

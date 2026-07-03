@@ -636,12 +636,13 @@ mod tests {
 
     #[test]
     fn every_command_action_is_valid() {
+        use keymap_suite::ActionName;
         // A Some(action) must round-trip through the action vocabulary, so a
         // palette entry can never point at a stale/renamed action.
         for cmd in COMMANDS {
             if let Some(action) = cmd.action {
                 assert_eq!(
-                    Action::from_str(action.as_str()),
+                    Action::from_name(action.name()),
                     Some(action),
                     "command {:?} has an unrecognized action",
                     cmd.id

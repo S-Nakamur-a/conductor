@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.82.0"
+version = "0.82.1"
 edition = "2024"
 
 [dependencies]
@@ -38,10 +38,11 @@ tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
 libc = "0.2"
 # The one-import facade (keymap-core + keymap-config + keymap-seq). The
-# `crossterm` feature pulls in `KeyInput::try_from(KeyEvent)`. 0.1.1 is the first
-# release with the suite facade, `merge` (defaults ⊕ user with `= false`
-# tombstones), and the `keys_for_action` discovery helper this app relies on.
-keymap-suite = { version = "0.1.1", features = ["crossterm"] }
+# `crossterm` feature pulls in `KeyInput::try_from(KeyEvent)`. 0.1.2 adds the
+# declarative layer this app relies on — the `actions!` macro and `ActionName`
+# trait — on top of 0.1.1's `merge` (defaults ⊕ user with `= false` tombstones)
+# and `keys_for_action` discovery helper.
+keymap-suite = { version = "0.1.2", features = ["crossterm"] }
 # Pinned: ratatui-image 4.x+ requires ratatui 0.30 — bump together with ratatui.
 ratatui-image = { version = "=3.0.0", default-features = false, features = ["crossterm"] }
 
