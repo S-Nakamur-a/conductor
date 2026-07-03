@@ -357,7 +357,17 @@ fn run_loop(
     // `git init` in a plain folder, or adds/removes a worktree — so newly
     // created files keep showing up instead of going unnoticed.
     let mut current_watch_paths = watch_paths_for(app);
-    let mut file_watcher = crate::file_watcher::FileWatcher::new(&current_watch_paths).ok();
+    let mut file_watcher = match crate::file_watcher::FileWatcher::new(&current_watch_paths) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            log::warn!("file watcher setup failed: {e}");
+            app.set_status(
+                format!("File watcher unavailable — auto-refresh degraded ({e})"),
+                crate::app::StatusLevel::Warning,
+            );
+            None
+        }
+    };
 
     // Set up a dedicated watcher for the conductor config file. Separate from
     // the worktree file watcher: the worktree watcher is rebuilt each time the
@@ -734,9 +744,22 @@ fn run_loop(
                     // keep monitoring a stale set and miss new files.
                     let desired = watch_paths_for(app);
                     if desired != current_watch_paths {
-                        current_watch_paths = desired;
-                        file_watcher =
-                            crate::file_watcher::FileWatcher::new(&current_watch_paths).ok();
+                        match crate::file_watcher::FileWatcher::new(&desired) {
+                            Ok(w) => {
+                                current_watch_paths = desired;
+                                file_watcher = Some(w);
+                            }
+                            Err(e) => {
+                                // Keep the previous watcher (still valid for the
+                                // old path set) instead of silently downgrading
+                                // to no watcher at all; retry on the next poll.
+                                log::warn!("file watcher rebuild failed: {e}");
+                                app.set_status(
+                                    format!("File watcher rebuild failed ({e})"),
+                                    crate::app::StatusLevel::Warning,
+                                );
+                            }
+                        }
                     }
                     // Periodic fallback: re-walk the file tree so newly created
                     // files appear even if a watcher event was missed. Cheap

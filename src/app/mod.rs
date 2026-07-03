@@ -346,6 +346,8 @@ pub struct BackgroundOps {
     pub branch_details: BackgroundOp<git_engine::BranchDetails>,
     /// Background symbol index build.
     pub symbol_index: BackgroundOp<Result<usize, String>>,
+    /// Background session-log parse for the reflow transcript view.
+    pub reflow_load: BackgroundOp<Vec<crate::claude_log::LogEntry>>,
 }
 
 /// State for an active embedded editor panel (vim/emacs in a PTY).
@@ -616,6 +618,10 @@ pub struct Sweep {
 pub struct ReflowView {
     /// Whether the reflow view is currently overlaying the Claude PTY panel.
     pub active: bool,
+    /// Whether the session log is still being parsed on a background thread.
+    /// While `true`, the view renders a "Loading…" placeholder instead of
+    /// transcript lines; cleared when `poll_reflow_load` receives the entries.
+    pub loading: bool,
     /// Parsed and normalised log entries from the session file.
     ///
     /// Wrapped in `Rc` so that `build_lines` can cheaply clone the handle
@@ -749,44 +755,44 @@ impl App {
             }
         };
 
-        // 1. Prefer the active panel's pinned session id. When a worktree hosts
-        //    several Claude panels (CC:1, CC:2, …) this ties the transcript to
-        //    the panel actually on screen, avoiding cross-panel scroll bleed.
-        let mut entries = resolved
-            .and_then(|(wd, sid)| crate::claude_sessions::session_jsonl_path(&wd, &sid))
-            .map(|path| crate::claude_log::load_session(&path))
-            .unwrap_or_default();
-
-        // 2. Fall back to the most-recently-written log in this worktree's
-        //    project dir when the pinned session is missing or empty. This is
-        //    what catches a manual in-app `/resume`: it switches the live
-        //    session id away from the conductor-launched (pinned) one, so the
-        //    pinned file is stale/empty while the real transcript is whatever
-        //    Claude is now appending to (= freshest mtime). Empty/aux logs
-        //    (e.g. one-shot security-review runs sharing the dir) are skipped.
-        if entries.is_empty() {
-            entries = crate::claude_sessions::session_logs_by_mtime(&working_dir)
-                .iter()
-                .map(|path| crate::claude_log::load_session(path))
-                .find(|e| !e.is_empty())
+        // Parse the log on a background thread: `load_session` reads and
+        // JSON-parses the whole `.jsonl`, which for large sessions (5MB+)
+        // would otherwise block the 60fps loop for several frames. The view
+        // activates immediately with a "Loading…" placeholder and
+        // `poll_reflow_load` swaps the entries in when they arrive.
+        self.bg.reflow_load.start(move |tx| {
+            // 1. Prefer the active panel's pinned session id. When a worktree
+            //    hosts several Claude panels (CC:1, CC:2, …) this ties the
+            //    transcript to the panel actually on screen, avoiding
+            //    cross-panel scroll bleed.
+            let mut entries = resolved
+                .and_then(|(wd, sid)| crate::claude_sessions::session_jsonl_path(&wd, &sid))
+                .map(|path| crate::claude_log::load_session(&path))
                 .unwrap_or_default();
-        }
 
-        if entries.is_empty() {
-            self.set_status(
-                "Session log is empty or unreadable".to_string(),
-                StatusLevel::Info,
-            );
-            return;
-        }
+            // 2. Fall back to the most-recently-written log in this worktree's
+            //    project dir when the pinned session is missing or empty. This
+            //    is what catches a manual in-app `/resume`: it switches the
+            //    live session id away from the conductor-launched (pinned)
+            //    one, so the pinned file is stale/empty while the real
+            //    transcript is whatever Claude is now appending to (= freshest
+            //    mtime). Empty/aux logs (e.g. one-shot security-review runs
+            //    sharing the dir) are skipped.
+            if entries.is_empty() {
+                entries = crate::claude_sessions::session_logs_by_mtime(&working_dir)
+                    .iter()
+                    .map(|path| crate::claude_log::load_session(path))
+                    .find(|e| !e.is_empty())
+                    .unwrap_or_default();
+            }
 
-        // TODO(background): load_session is currently synchronous; for very
-        // large files (5MB+) this may block the UI for a frame or two.
-        // A future version should spawn the parse on a background thread and
-        // show a "Loading…" placeholder while the entries arrive.
+            let _ = tx.send(entries);
+        });
+
         self.reflow = ReflowView {
             active: true,
-            entries: std::rc::Rc::new(entries),
+            loading: true,
+            entries: std::rc::Rc::new(Vec::new()),
             scroll: 0,
             total_lines: 0,
             last_width: 0, // Forces a full line rebuild on first render.
@@ -796,17 +802,49 @@ impl App {
             cache: crate::ui::markdown::MarkdownCache::new(),
             // Start the entry transition: the border glides from the accent to
             // its complement over TRANSITION_DURATION_MS, masking the initial
-            // build_lines latency.
+            // load + build_lines latency.
             sweep: Some(Sweep {
                 start: std::time::Instant::now(),
             }),
         };
     }
 
+    /// Apply a finished background session-log parse to the reflow view.
+    ///
+    /// Discards the result when the view was closed while loading (stale). An
+    /// empty log closes the view with a status flash — the same outcome the
+    /// old synchronous path produced before activating the view.
+    pub fn poll_reflow_load(&mut self) {
+        let Some(entries) = self.bg.reflow_load.poll() else {
+            return;
+        };
+        if !self.reflow.active {
+            return; // View closed while loading; drop the stale result.
+        }
+        if entries.is_empty() {
+            self.close_reflow();
+            self.set_status(
+                "Session log is empty or unreadable".to_string(),
+                StatusLevel::Info,
+            );
+            return;
+        }
+        self.reflow.entries = std::rc::Rc::new(entries);
+        self.reflow.loading = false;
+        self.reflow.last_width = 0; // Force a full line rebuild on next render.
+        self.reflow.pending_bottom = true;
+        // The entry sweep may already have finished on a slow load; redraw so
+        // the transcript replaces the "Loading…" placeholder immediately.
+        self.dirty.mark(DirtyPanels::TERMINAL);
+    }
+
     /// Leave the reflow transcript view and return to the live PTY display.
     pub fn close_reflow(&mut self) {
         self.reflow.active = false;
         self.reflow.sweep = None;
+        // Cancel any in-flight background log parse so a stale result can't
+        // arrive after the view is gone (or leak into the next open).
+        self.bg.reflow_load.clear();
         // Reset Claude scrollback so the live tail is shown immediately.
         self.terminal.scroll_claude = 0;
         // Force a fresh PTY snapshot on the next frame. While the reflow view
@@ -1216,19 +1254,26 @@ impl App {
                         ) {
                             self.selected_worktree = idx;
                         }
-                        // Detect commits by HEAD oid changes.
-                        for wt in &self.worktrees {
-                            if let Ok(wt_engine) = git_engine::GitEngine::open(&wt.path)
-                                && let Ok(head_oid) = wt_engine.head_oid_string()
+                        // Detect commits by HEAD oid changes. The oid was
+                        // captured while `list_worktrees` had each repo open,
+                        // so no second `Repository::open` per worktree here.
+                        let head_updates: Vec<(String, String)> = self
+                            .worktrees
+                            .iter()
+                            .filter_map(|wt| {
+                                wt.head_oid
+                                    .clone()
+                                    .map(|oid| (wt.branch.clone(), oid))
+                            })
+                            .collect();
+                        for (branch, head_oid) in head_updates {
+                            if let Some(old) = self.worktree_heads.get(&branch)
+                                && old != &head_oid
                             {
-                                if let Some(old) = self.worktree_heads.get(&wt.branch)
-                                    && old != &head_oid
-                                {
-                                    self.record_stat("commits_made");
-                                    changed = true;
-                                }
-                                self.worktree_heads.insert(wt.branch.clone(), head_oid);
+                                self.record_stat("commits_made");
+                                changed = true;
                             }
+                            self.worktree_heads.insert(branch, head_oid);
                         }
                     }
                     Err(e) => {
@@ -2832,6 +2877,7 @@ impl App {
         self.poll_bg_pull();
         self.poll_grep_search();
         self.poll_update_progress();
+        self.poll_reflow_load();
         self.poll_pr_url();
         self.poll_worktree_switch_ops();
         self.poll_worktree_ops();
@@ -3150,18 +3196,40 @@ fn try_binary_update(
         archive.to_string_lossy().to_string(),
     ];
 
-    // Use GITHUB_TOKEN if available.
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        curl_args.push("-H".to_string());
-        curl_args.push(format!("Authorization: token {token}"));
+    // Use GITHUB_TOKEN if available. The token is fed to curl via a config
+    // read from stdin (`--config -`), never as an argv header: command-line
+    // arguments are world-readable (`ps`/`/proc/<pid>/cmdline`), so an argv
+    // `-H "Authorization: token …"` would expose the credential to every
+    // local process for the duration of the download.
+    let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
+    if token.is_some() {
+        curl_args.push("--config".to_string());
+        curl_args.push("-".to_string());
     }
 
     curl_args.push(asset.download_url.clone());
 
-    let dl = Command::new("curl")
-        .args(&curl_args)
-        .stdin(std::process::Stdio::null())
-        .output();
+    let dl = match token {
+        Some(token) => Command::new("curl")
+            .args(&curl_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let mut stdin = stdin;
+                    // curl config syntax; a GitHub token never contains `"`.
+                    let _ = writeln!(stdin, "header = \"Authorization: token {token}\"");
+                }
+                child.wait_with_output()
+            }),
+        None => Command::new("curl")
+            .args(&curl_args)
+            .stdin(std::process::Stdio::null())
+            .output(),
+    };
     match dl {
         Err(e) => {
             log::warn!("binary download failed (curl): {e}");
@@ -3679,6 +3747,7 @@ mod tests {
             is_clean: true,
             ahead: None,
             behind: None,
+            head_oid: None,
         }
     }
 

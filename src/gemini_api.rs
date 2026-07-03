@@ -101,7 +101,10 @@ pub fn call_messages_api(
         std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY environment variable not set")?;
 
     let model = model.unwrap_or(DEFAULT_MODEL);
-    let url = format!("{API_BASE_URL}/{model}:generateContent?key={api_key}");
+    // The key travels in the `x-goog-api-key` header (Google's recommended
+    // method), never in the URL: query strings leak into proxy/access logs
+    // and any request tracing.
+    let url = format!("{API_BASE_URL}/{model}:generateContent");
 
     let request_body = GenerateContentRequest {
         system_instruction: SystemInstruction {
@@ -127,6 +130,7 @@ pub fn call_messages_api(
         .context("Failed to build HTTP client")?;
     let response = client
         .post(&url)
+        .header("x-goog-api-key", &api_key)
         .header("content-type", "application/json")
         .json(&request_body)
         .send()

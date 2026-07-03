@@ -346,6 +346,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
+/// Render the worktree switcher modal: a centered popup that reuses the full
+/// worktree panel (list + detail + sessions) so selection/creation/etc. keep
+/// their existing UI and key handling.
+pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
+    // Clamp lower bounds to `area` so a tiny terminal can't make min > max
+    // (which would panic in `u16::clamp`).
+    let w = ((area.width as u32 * 60 / 100) as u16).clamp(24.min(area.width), area.width);
+    let h = ((area.height as u32 * 70 / 100) as u16).clamp(6.min(area.height), area.height);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    let popup = Rect::new(x, y, w, h);
+    frame.render_widget(ratatui::widgets::Clear, popup);
+    crate::ui::worktree_panel::render(frame, popup, app);
+}
+
 #[cfg(test)]
 mod tests {
     use super::visible_window;
@@ -412,19 +427,4 @@ mod tests {
     fn empty_list_is_handled() {
         assert_eq!(visible_window(&[], 1, 100, 0, 0, true), (0, 0));
     }
-}
-
-/// Render the worktree switcher modal: a centered popup that reuses the full
-/// worktree panel (list + detail + sessions) so selection/creation/etc. keep
-/// their existing UI and key handling.
-pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Clamp lower bounds to `area` so a tiny terminal can't make min > max
-    // (which would panic in `u16::clamp`).
-    let w = ((area.width as u32 * 60 / 100) as u16).clamp(24.min(area.width), area.width);
-    let h = ((area.height as u32 * 70 / 100) as u16).clamp(6.min(area.height), area.height);
-    let x = area.x + area.width.saturating_sub(w) / 2;
-    let y = area.y + area.height.saturating_sub(h) / 2;
-    let popup = Rect::new(x, y, w, h);
-    frame.render_widget(ratatui::widgets::Clear, popup);
-    crate::ui::worktree_panel::render(frame, popup, app);
 }

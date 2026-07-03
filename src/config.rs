@@ -72,7 +72,7 @@ impl Config {
                 log::warn!("failed to create config directory: {e}");
             }
             let default_content = generate_default_config();
-            if let Err(e) = std::fs::write(&config_path, &default_content) {
+            if let Err(e) = write_atomic(&config_path, &default_content) {
                 log::warn!("failed to write default config: {e}");
             } else {
                 log::info!("generated default config at {}", config_path.display());
@@ -699,7 +699,24 @@ pub fn persist_ui_theme(name: &str) -> Result<()> {
         generate_default_config()
     };
     let updated = upsert_ui_theme(&contents, name);
-    std::fs::write(&path, updated)?;
+    write_atomic(&path, &updated)?;
+    Ok(())
+}
+
+/// Write `contents` to `path` atomically: write to a sibling temp file, fsync,
+/// then rename over the target. A crash, kill, or full disk mid-write can no
+/// longer leave the user's hand-edited config truncated or half-written —
+/// `std::fs::write` truncates in place, so the old direct writes could destroy
+/// the whole file on a mistimed failure.
+fn write_atomic(path: &std::path::Path, contents: &str) -> Result<()> {
+    let tmp = path.with_extension("toml.tmp");
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -796,7 +813,7 @@ pub fn persist_ui_high_contrast(enabled: bool) -> Result<()> {
         generate_default_config()
     };
     let updated = upsert_section_kv(&contents, "ui", "high_contrast", &enabled.to_string());
-    std::fs::write(&path, updated)?;
+    write_atomic(&path, &updated)?;
     Ok(())
 }
 
@@ -839,7 +856,7 @@ pub fn persist_layout_proportions(
         "explorer_split_pct",
         &explorer_split_pct.to_string(),
     );
-    std::fs::write(&path, updated)?;
+    write_atomic(&path, &updated)?;
     Ok(())
 }
 

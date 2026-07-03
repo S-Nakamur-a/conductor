@@ -1120,7 +1120,15 @@ fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>)
     let theme = &app.theme;
     let vs = &app.viewer_state;
 
-    let content = vs.media_state.content.lock().unwrap().clone();
+    // Recover from a poisoned lock instead of panicking: the decode thread
+    // holds this mutex while rendering, so a panic there (malformed media)
+    // must not take down the whole TUI on the next frame.
+    let content = vs
+        .media_state
+        .content
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
 
     match content {
         MediaContent::Loading => {

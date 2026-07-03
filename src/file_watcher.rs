@@ -32,18 +32,25 @@ impl FileWatcher {
             move |result: Result<Event, notify::Error>| {
                 if let Ok(event) = result {
                     // Only notify on modifications (not access-only events).
-                    if (event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove())
-                        && let Some(path) = event.paths.first()
+                    if !(event.kind.is_modify()
+                        || event.kind.is_create()
+                        || event.kind.is_remove())
                     {
-                        // Skip changes inside .git/ directories — git
-                        // operations (e.g. `git status`) touch index files
-                        // and would otherwise trigger expensive refreshes.
-                        if path
+                        return;
+                    }
+                    // Skip changes inside .git/ / .conductor directories — git
+                    // operations (e.g. `git status`) touch index files and
+                    // would otherwise trigger expensive refreshes. Check every
+                    // path in the event, not just the first: rename events
+                    // carry (from, to), and a move out of `.git` into the
+                    // working tree is a real change even when `paths[0]` is
+                    // the `.git` side.
+                    let any_real_path = event.paths.iter().any(|path| {
+                        !path
                             .components()
                             .any(|c| c.as_os_str() == ".git" || c.as_os_str() == ".conductor")
-                        {
-                            return;
-                        }
+                    });
+                    if any_real_path {
                         let _ = sender.send(FsEvent::Changed);
                     }
                 }
