@@ -4,7 +4,9 @@
 //! layout focus model, and transitions between panels.
 
 mod review;
+mod review_publish;
 mod terminal;
+mod walkthrough_view;
 mod worktree;
 
 use std::collections::{HashMap, HashSet};
@@ -394,6 +396,23 @@ pub struct App {
     /// [`App::exit_editor`] (the only two methods that pair this field with
     /// `Focus::Editor`, keeping the invariant local).
     pub editor: Option<EditorPanel>,
+    /// In-flight headless walkthrough generation, if any. Polled by
+    /// [`App::poll_walkthrough_generation`]; the DB row is the source of
+    /// truth for completion, this handle only catches process failures.
+    pub walkthrough_gen: Option<crate::walkthrough::WalkthroughGeneration>,
+    /// The selected worktree's walkthrough (header + steps), reloaded by
+    /// [`App::refresh_reviews`] alongside the comment list.
+    pub current_walkthrough: Option<(
+        crate::walkthrough::Walkthrough,
+        Vec<crate::walkthrough::WalkthroughStep>,
+    )>,
+    /// Pending y/n confirmation for `Action::PublishReview`: `Some` while the
+    /// confirm overlay is showing (holding the already-filtered comments and
+    /// skip count to display), cleared on either answer.
+    pub publish_confirm: Option<crate::review_publish::PublishConfirm>,
+    /// In-flight GitHub-publish operation, polled by
+    /// [`App::poll_publish_review`].
+    pub publish_op: BackgroundOp<crate::review_publish::PublishOutcome>,
     /// Index of the currently selected worktree in the worktree list.
     pub selected_worktree: usize,
     /// Cached list of worktrees discovered in the repository.
@@ -957,6 +976,10 @@ impl App {
             main_repo_name,
             should_quit: false,
             editor: None,
+            walkthrough_gen: None,
+            current_walkthrough: None,
+            publish_confirm: None,
+            publish_op: BackgroundOp::default(),
             selected_worktree: 0,
             worktrees: Vec::new(),
             config,
@@ -1608,10 +1631,19 @@ impl App {
     /// Load (or reload) the diff for the currently selected worktree
     /// against the configured main branch.
     pub fn refresh_diff(&mut self) {
-        let base_branch = self.config.general.main_branch.clone();
         let word_diff = self.config.diff.word_diff;
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             let path = wt.path.clone();
+            // A PR-review worktree may target a base other than the configured
+            // main branch (e.g. a release/develop branch); prefer the base ref
+            // recorded at intake time and only fall back to main_branch when
+            // none was saved (regular worktrees, or DB unavailable).
+            let saved_base = self
+                .review_store
+                .as_ref()
+                .and_then(|store| store.get_worktree_base_branch(&wt.branch).ok().flatten());
+            let base_branch =
+                resolve_diff_base_branch(saved_base, &self.config.general.main_branch);
             let tab_width = self.config.viewer.tab_width;
             self.diff_state
                 .load_diff(&path, &base_branch, word_diff, tab_width);
@@ -2177,11 +2209,15 @@ impl App {
                 self.review_state.template_picker_active = true;
             }
             CommandId::SessionHistory => self.cmd_session_history(),
+            CommandId::ReviewPullRequest => self.cmd_review_pull_request(),
+            CommandId::GenerateWalkthrough => self.cmd_generate_walkthrough(),
+            CommandId::PublishReview => self.cmd_publish_review(),
             CommandId::OpenRepo => self.cmd_open_repo(),
             CommandId::SwitchRepo => self.cmd_switch_repo(),
             CommandId::UngrabBranch => self.cmd_ungrab_branch(),
             CommandId::ShowDiffList => self.cmd_show_diff_list(),
             CommandId::ShowCommentList => self.cmd_show_comment_list(),
+            CommandId::ShowWalkthrough => self.cmd_show_walkthrough(),
             CommandId::AddReviewComment => self.cmd_add_review_comment(),
             CommandId::ViewCommentDetail => self.cmd_view_comment_detail(),
             CommandId::DeleteComment => self.cmd_delete_comment(),
@@ -2603,7 +2639,8 @@ impl App {
     }
 
     fn cmd_show_review_comments(&mut self) {
-        self.viewer_state.explorer.explorer_show_comments = true;
+        self.viewer_state.explorer.explorer_bottom_view =
+            crate::viewer::ExplorerBottomView::Comments;
         self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
@@ -2619,6 +2656,13 @@ impl App {
             .open_repo
             .buffer
             .set_text(&self.repo_path.display().to_string());
+    }
+
+    fn cmd_review_pull_request(&mut self) {
+        self.overlays.active = ActiveOverlay::PrInput;
+        self.overlays.pr_input.buffer.clear();
+        self.overlays.pr_input.loading = false;
+        self.overlays.pr_input.error = None;
     }
 
     fn cmd_switch_repo(&mut self) {
@@ -2644,13 +2688,26 @@ impl App {
     }
 
     fn cmd_show_diff_list(&mut self) {
-        self.viewer_state.explorer.explorer_show_comments = false;
+        self.viewer_state.explorer.explorer_bottom_view = crate::viewer::ExplorerBottomView::DiffList;
         self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
     fn cmd_show_comment_list(&mut self) {
-        self.viewer_state.explorer.explorer_show_comments = true;
+        self.viewer_state.explorer.explorer_bottom_view =
+            crate::viewer::ExplorerBottomView::Comments;
+        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.set_focus(Focus::Explorer);
+    }
+
+    /// Palette/keybinding entry point: switch the Explorer's bottom pane to
+    /// the AI walkthrough view and focus the Explorer, mirroring
+    /// `cmd_show_diff_list`/`cmd_show_comment_list`. `cmd_generate_walkthrough`
+    /// uses a display-only variant instead (see its doc comment) so kicking
+    /// off a generation never steals focus from an active terminal input.
+    fn cmd_show_walkthrough(&mut self) {
+        self.viewer_state.explorer.explorer_bottom_view =
+            crate::viewer::ExplorerBottomView::Walkthrough;
         self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
@@ -2717,7 +2774,7 @@ impl App {
     }
 
     fn cmd_delete_comment(&mut self) {
-        if self.viewer_state.explorer.explorer_show_comments
+        if self.viewer_state.explorer.explorer_bottom_view == crate::viewer::ExplorerBottomView::Comments
             && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
@@ -2728,7 +2785,7 @@ impl App {
     }
 
     fn cmd_toggle_comment_resolve(&mut self) {
-        if self.viewer_state.explorer.explorer_show_comments
+        if self.viewer_state.explorer.explorer_bottom_view == crate::viewer::ExplorerBottomView::Comments
             && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
@@ -2881,6 +2938,9 @@ impl App {
         self.poll_pr_url();
         self.poll_worktree_switch_ops();
         self.poll_worktree_ops();
+        self.poll_pr_intake();
+        self.poll_walkthrough_generation();
+        self.poll_publish_review();
 
         // ccusage
         if let Some(info) = self.bg.ccusage.poll() {
@@ -3571,6 +3631,16 @@ fn clamp_vt_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> u16 {
     (v + delta).clamp(min, upper) as u16
 }
 
+/// Resolve the base branch a diff should be computed against: a worktree's
+/// saved base ref (recorded at PR-intake time — see `save_worktree_base_branch`)
+/// takes priority, since a PR may target something other than the configured
+/// main branch (e.g. release/develop); `main_branch` is only used as a
+/// fallback for worktrees with no saved base (regular worktrees, or when the
+/// review DB is unavailable).
+fn resolve_diff_base_branch(saved_base: Option<String>, main_branch: &str) -> String {
+    saved_base.unwrap_or_else(|| main_branch.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3621,6 +3691,21 @@ mod tests {
             let t2 = 100u16.saturating_sub(24 + v2);
             assert!(v2 >= MIN && t2 >= MIN, "vt delta={delta}: 24/{v2}/{t2}");
         }
+    }
+
+    // ── diff base branch resolution (FIX-1: PR base ref must reach the diff) ──
+
+    #[test]
+    fn resolve_diff_base_branch_prefers_saved_base_over_main() {
+        assert_eq!(
+            resolve_diff_base_branch(Some("release/1.0".to_string()), "main"),
+            "release/1.0"
+        );
+    }
+
+    #[test]
+    fn resolve_diff_base_branch_falls_back_to_main_when_unsaved() {
+        assert_eq!(resolve_diff_base_branch(None, "main"), "main");
     }
 
     #[test]

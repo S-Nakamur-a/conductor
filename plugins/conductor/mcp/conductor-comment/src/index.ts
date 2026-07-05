@@ -725,6 +725,166 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Tool: save_walkthrough
+//
+// This is the production write path — the headless `claude -p` session
+// spawned by `walkthrough.rs` calls this tool directly over stdio. Rust's
+// `ReviewStore::save_walkthrough` (src/review_store.rs) is a second,
+// intentionally-unused-in-production implementation of the same insert that
+// exists only so the round-trip can be tested without spawning a Node
+// process. Keep the two in sync by hand: a schema or invariant change here
+// needs the matching change made there, and vice versa.
+// ---------------------------------------------------------------------------
+
+const WALKTHROUGH_STEP_KINDS = ["intent", "core", "ripple", "test"] as const;
+
+const walkthroughStepSchema = z.object({
+  seq: z.number().int().describe("Step order within the walkthrough, 0-based"),
+  file_path: z
+    .string()
+    .min(1)
+    .describe("Repo-relative file path the step points at (e.g. src/foo.rs)"),
+  line_start: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("1-based line number the step points at, if file-anchored"),
+  line_end: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("1-based end line for a multi-line range; omit for a single line"),
+  kind: z
+    .enum(WALKTHROUGH_STEP_KINDS)
+    .describe(
+      "'intent' (why this change), 'core' (the main implementation), 'ripple' (knock-on changes elsewhere), or 'test' (what the tests cover)"
+    ),
+  title: z.string().min(1).describe("Short step heading"),
+  body: z.string().min(1).describe("Step explanation, following the kind's content contract"),
+});
+
+server.tool(
+  "save_walkthrough",
+  "Save a completed PR walkthrough for a branch: an ordered set of steps (intent -> core -> ripple -> test) that narrate the change, each anchored to a file/line range. " +
+    "Called once, at the end, from the /conductor-walkthrough command after the exploration is done — replaces any prior walkthrough for the branch and marks it ready for the Conductor Viewer to render.",
+  {
+    branch: z.string().min(1).describe("Branch the walkthrough belongs to"),
+    title: z.string().min(1).describe("One-line walkthrough title"),
+    summary: z.string().min(1).describe("Short overview of the change, shown above the steps"),
+    steps: z
+      .array(walkthroughStepSchema)
+      .min(1)
+      .describe("Ordered walkthrough steps (see save_walkthrough's step fields)"),
+  },
+  async ({ branch, title, summary, steps }) => {
+    const d = getDb();
+
+    for (const step of steps) {
+      if (path.isAbsolute(step.file_path)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `step file_path must be repo-relative (e.g. src/foo.rs), got absolute path: ${step.file_path}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (
+        step.line_end !== undefined &&
+        step.line_start !== undefined &&
+        step.line_end < step.line_start
+      ) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Invalid range on step ${step.seq} (${step.file_path}): line_end (${step.line_end}) is before line_start (${step.line_start}).`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    // walkthroughs.branch is UNIQUE with no generation history (see the Rust
+    // v6 migration): re-saving replaces the row and CASCADE-deletes its old
+    // steps rather than keeping past generations around.
+    const save = d.transaction(() => {
+      const walkthroughId = crypto.randomUUID();
+      d.prepare(
+        `INSERT INTO walkthroughs (id, branch, title, summary, status, error, created_at, updated_at)
+         VALUES (@id, @branch, @title, @summary, 'ready', NULL,
+                 COALESCE((SELECT created_at FROM walkthroughs WHERE branch = @branch), datetime('now')),
+                 datetime('now'))
+         ON CONFLICT(branch) DO UPDATE SET
+           title = excluded.title,
+           summary = excluded.summary,
+           status = 'ready',
+           error = NULL,
+           updated_at = datetime('now')`
+      ).run({ id: walkthroughId, branch, title, summary });
+
+      const { id: resolvedId } = d
+        .prepare("SELECT id FROM walkthroughs WHERE branch = ?")
+        .get(branch) as { id: string };
+
+      d.prepare("DELETE FROM walkthrough_steps WHERE walkthrough_id = ?").run(resolvedId);
+
+      const insertStep = d.prepare(
+        `INSERT INTO walkthrough_steps
+           (id, walkthrough_id, seq, file_path, line_start, line_end, kind, title, body)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const step of steps) {
+        insertStep.run(
+          crypto.randomUUID(),
+          resolvedId,
+          step.seq,
+          step.file_path,
+          step.line_start ?? null,
+          step.line_end ?? null,
+          step.kind,
+          step.title,
+          step.body
+        );
+      }
+
+      return resolvedId;
+    });
+
+    let walkthroughId: string;
+    try {
+      walkthroughId = save();
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to save walkthrough: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    signalUiRefresh();
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Walkthrough saved for branch "${branch}" (id: ${walkthroughId.slice(0, 8)}, ${steps.length} step(s)), status=ready.`,
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 

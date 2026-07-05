@@ -250,6 +250,109 @@ impl GitEngine {
         Ok(wt_path)
     }
 
+    /// Create a worktree checking out a branch that already exists locally
+    /// (PR intake equivalent — the branch was created by a prior
+    /// `fetch_refspec`, so this is a plain `git worktree add <path> <branch>`
+    /// with no `-b`, unlike `create_worktree_from_base`/`create_worktree_from_remote`).
+    ///
+    /// `wt_dir` is the full worktree directory to create (the caller decides
+    /// its name/location, e.g. via `worktrees_base_dir`).
+    pub fn create_worktree_for_existing_branch(
+        &self,
+        branch: &str,
+        wt_dir: &Path,
+    ) -> Result<PathBuf> {
+        if wt_dir.exists() {
+            anyhow::bail!("directory already exists: {}", wt_dir.display());
+        }
+
+        let name = wt_dir.file_name().ok_or_else(|| {
+            anyhow!(
+                "cannot determine worktree name from path {}",
+                wt_dir.display()
+            )
+        })?;
+        self.force_prune_worktree_entry(&name.to_string_lossy());
+
+        // See create_worktree_from_base() for why we use spawn()+wait() over output().
+        let main_dir = self.main_worktree_path()?;
+        let mut child = std::process::Command::new("git")
+            .args(["worktree", "add", &wt_dir.display().to_string(), branch])
+            .current_dir(&main_dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("failed to run `git worktree add`")?;
+        let status = child
+            .wait()
+            .context("failed to wait for `git worktree add`")?;
+        if !status.success() {
+            let mut stderr_buf = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                use std::io::Read;
+                let _ = stderr.read_to_string(&mut stderr_buf);
+            }
+            anyhow::bail!("git worktree add failed: {}", stderr_buf.trim());
+        }
+
+        Ok(wt_dir.to_path_buf())
+    }
+
+    /// Ensure a local branch for `base_branch` exists and is reasonably
+    /// up to date, without ever force-updating or checking it out.
+    ///
+    /// - If no local branch exists yet, fetch it straight into
+    ///   `refs/heads/<base_branch>`.
+    /// - If it exists, fetch the remote tip into a scratch ref first (fetching
+    ///   directly into `refs/heads/<base_branch>` would be rejected by git if
+    ///   that branch happens to be checked out in another worktree) and only
+    ///   fast-forward the local branch if the fetched tip is a strict
+    ///   descendant of it. A non-fast-forward (diverged, or already caught
+    ///   up) is left untouched — this is metadata for a diff base, not a
+    ///   branch the user is actively working on, so silently discarding local
+    ///   history would be the wrong failure mode.
+    pub fn ensure_base_ref_available(&self, base_branch: &str) -> Result<()> {
+        if self
+            .repo
+            .find_branch(base_branch, git2::BranchType::Local)
+            .is_err()
+        {
+            self.fetch_refspec(&format!("{base_branch}:refs/heads/{base_branch}"))?;
+            return Ok(());
+        }
+
+        const SCRATCH_REF: &str = "refs/conductor/pr-intake-base-update";
+        self.fetch_refspec(&format!("{base_branch}:{SCRATCH_REF}"))?;
+
+        let local_oid = self
+            .repo
+            .find_branch(base_branch, git2::BranchType::Local)?
+            .get()
+            .peel_to_commit()?
+            .id();
+        let fetched_oid = self
+            .repo
+            .find_reference(SCRATCH_REF)?
+            .peel_to_commit()?
+            .id();
+
+        if fetched_oid != local_oid && self.repo.graph_descendant_of(fetched_oid, local_oid)? {
+            let mut branch_ref = self
+                .repo
+                .find_reference(&format!("refs/heads/{base_branch}"))?;
+            branch_ref.set_target(
+                fetched_oid,
+                "conductor: fast-forward base branch for PR intake",
+            )?;
+        }
+
+        if let Ok(mut scratch) = self.repo.find_reference(SCRATCH_REF) {
+            let _ = scratch.delete();
+        }
+
+        Ok(())
+    }
+
     // ── Remote branch operations (wt switch) ─────────────────────
 
     /// List remote branches (refs/remotes/origin/*), excluding HEAD.
@@ -947,16 +1050,31 @@ impl GitEngine {
     /// NOTE: This performs network I/O and may block for several seconds.
     /// Do NOT call from the UI thread — use a background thread instead.
     pub fn fetch_origin(&self) -> Result<()> {
+        self.run_git_fetch(&["--prune", "origin"])
+    }
+
+    /// Run `git fetch origin <refspec>` by shelling out to the `git` CLI —
+    /// the refspec-taking sibling of `fetch_origin`, for pulling down a
+    /// specific ref (e.g. a PR head: `pull/123/head:pr-123`) rather than
+    /// syncing every remote-tracking branch.
+    ///
+    /// NOTE: This performs network I/O and may block for several seconds.
+    /// Do NOT call from the UI thread — use a background thread instead.
+    pub fn fetch_refspec(&self, refspec: &str) -> Result<()> {
+        self.run_git_fetch(&["origin", refspec])
+    }
+
+    /// Shell out to `git fetch <args>`, with the timeout/output handling
+    /// shared by `fetch_origin` and `fetch_refspec`.
+    fn run_git_fetch(&self, args: &[&str]) -> Result<()> {
         use std::process::{Command, Stdio};
         use std::time::Duration;
 
         let cwd = self.repo.workdir().unwrap_or(self.repo.path());
-        log::debug!(
-            "fetch_origin: running `git fetch --prune origin` in {}",
-            cwd.display()
-        );
+        log::debug!("run_git_fetch: running `git fetch {}` in {}", args.join(" "), cwd.display());
         let mut child = Command::new("git")
-            .args(["fetch", "--prune", "origin"])
+            .arg("fetch")
+            .args(args)
             .current_dir(cwd)
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null())
@@ -982,22 +1100,27 @@ impl GitEngine {
                                 buf
                             })
                             .unwrap_or_default();
-                        log::warn!("fetch_origin stderr: {stderr}");
-                        anyhow::bail!("git fetch failed (exit {}): {}", status, stderr.trim());
+                        log::warn!("git fetch {} stderr: {stderr}", args.join(" "));
+                        anyhow::bail!(
+                            "git fetch {} failed (exit {}): {}",
+                            args.join(" "),
+                            status,
+                            stderr.trim()
+                        );
                     }
-                    log::debug!("fetch_origin: success");
+                    log::debug!("run_git_fetch: success ({})", args.join(" "));
                     return Ok(());
                 }
                 Ok(None) => {
                     // Still running.
                     if start.elapsed() > timeout {
                         let _ = child.kill();
-                        anyhow::bail!("git fetch timed out after {timeout:?}");
+                        anyhow::bail!("git fetch {} timed out after {timeout:?}", args.join(" "));
                     }
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 Err(e) => {
-                    anyhow::bail!("failed to wait for git fetch: {e}");
+                    anyhow::bail!("failed to wait for git fetch {}: {e}", args.join(" "));
                 }
             }
         }
@@ -1898,5 +2021,247 @@ mod tests {
         assert_eq!(loaded.3, None);
 
         engine.remove_grab_state().unwrap();
+    }
+
+    /// Create a bare "origin" repo with a `main` branch, plus a local repo
+    /// that has it configured as `origin` and has fetched `main`. Returns
+    /// `(origin_tmp, local_tmp, origin_repo, local_engine)` — `origin_repo`
+    /// lets a test add more commits/branches to push into the "remote".
+    fn temp_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir, Repository, GitEngine) {
+        let origin_tmp = tempfile::tempdir().expect("create origin temp dir");
+        let origin_repo = Repository::init_bare(origin_tmp.path()).expect("init bare origin");
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+        {
+            // A bare repo has no index/workdir, so build the (empty) tree
+            // directly rather than going through Repository::index().
+            let tree_oid = origin_repo.treebuilder(None).unwrap().write().unwrap();
+            let tree = origin_repo.find_tree(tree_oid).unwrap();
+            origin_repo
+                .commit(Some("refs/heads/main"), &sig, &sig, "initial", &tree, &[])
+                .unwrap();
+        }
+
+        let local_tmp = tempfile::tempdir().expect("create local temp dir");
+        let local_repo = Repository::init(local_tmp.path()).expect("init local repo");
+        // A fresh repo's HEAD points at (an unborn) refs/heads/main, which
+        // git fetch treats as "checked out" and refuses to fetch into.
+        // Point HEAD elsewhere first so fetching `main` directly is allowed.
+        local_repo.set_head("refs/heads/scratch").unwrap();
+        local_repo
+            .remote("origin", &origin_tmp.path().display().to_string())
+            .unwrap();
+        let engine = GitEngine::open(local_tmp.path()).expect("open local repo");
+        engine.fetch_refspec("main:refs/heads/main").unwrap();
+
+        (origin_tmp, local_tmp, origin_repo, engine)
+    }
+
+    /// Add a commit to `refs/heads/<branch_name>` in `repo`, parented on
+    /// `main`'s current tip. Used to simulate a PR head landing on "origin".
+    fn commit_on_branch(repo: &Repository, branch_name: &str, message: &str) {
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+        let parent = repo
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let tree = parent.tree().unwrap();
+        repo.commit(
+            Some(&format!("refs/heads/{branch_name}")),
+            &sig,
+            &sig,
+            message,
+            &tree,
+            &[&parent],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn fetch_refspec_creates_local_branch() {
+        let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
+        commit_on_branch(&origin_repo, "feature", "a PR head");
+
+        engine
+            .fetch_refspec("refs/heads/feature:refs/heads/pr-99")
+            .unwrap();
+
+        let branch = engine
+            .repo
+            .find_branch("pr-99", git2::BranchType::Local)
+            .expect("pr-99 branch should exist after fetch_refspec");
+        assert_eq!(
+            branch.get().peel_to_commit().unwrap().message(),
+            Some("a PR head")
+        );
+    }
+
+    #[test]
+    fn fetch_refspec_reports_failure_for_unknown_ref() {
+        let (_origin_tmp, _local_tmp, _origin_repo, engine) = temp_repo_with_origin();
+        let err = engine
+            .fetch_refspec("refs/heads/does-not-exist:refs/heads/pr-1")
+            .unwrap_err();
+        assert!(err.to_string().contains("git fetch"));
+    }
+
+    #[test]
+    fn create_worktree_for_existing_branch_checks_out_branch() {
+        let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
+        commit_on_branch(&origin_repo, "feature", "a PR head");
+        engine
+            .fetch_refspec("refs/heads/feature:refs/heads/pr-99")
+            .unwrap();
+
+        let base_dir = engine.worktrees_base_dir(None).unwrap();
+        let wt_dir = base_dir.join("pr-99");
+        let created = engine
+            .create_worktree_for_existing_branch("pr-99", &wt_dir)
+            .unwrap();
+
+        assert_eq!(created, wt_dir);
+        assert!(wt_dir.join(".git").exists());
+        let checked_out = GitEngine::open(&wt_dir).unwrap();
+        assert_eq!(
+            checked_out
+                .repo
+                .head()
+                .unwrap()
+                .shorthand()
+                .unwrap_or_default(),
+            "pr-99"
+        );
+    }
+
+    #[test]
+    fn create_worktree_for_existing_branch_rejects_existing_dir() {
+        let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
+        commit_on_branch(&origin_repo, "feature", "a PR head");
+        engine
+            .fetch_refspec("refs/heads/feature:refs/heads/pr-99")
+            .unwrap();
+
+        let base_dir = engine.worktrees_base_dir(None).unwrap();
+        let wt_dir = base_dir.join("pr-99");
+        std::fs::create_dir_all(&wt_dir).unwrap();
+
+        assert!(
+            engine
+                .create_worktree_for_existing_branch("pr-99", &wt_dir)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ensure_base_ref_available_creates_missing_local_branch() {
+        // A local repo with `origin` configured but that hasn't fetched
+        // `main` yet, to exercise the "no local branch" path.
+        let origin_tmp = tempfile::tempdir().unwrap();
+        let origin_repo = Repository::init_bare(origin_tmp.path()).unwrap();
+        {
+            let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+            let tree_oid = origin_repo.treebuilder(None).unwrap().write().unwrap();
+            let tree = origin_repo.find_tree(tree_oid).unwrap();
+            origin_repo
+                .commit(Some("refs/heads/main"), &sig, &sig, "initial", &tree, &[])
+                .unwrap();
+        }
+
+        let local_tmp = tempfile::tempdir().unwrap();
+        let local_repo = Repository::init(local_tmp.path()).unwrap();
+        // See temp_repo_with_origin() for why HEAD must move off main first.
+        local_repo.set_head("refs/heads/scratch").unwrap();
+        local_repo
+            .remote("origin", &origin_tmp.path().display().to_string())
+            .unwrap();
+        let engine = GitEngine::open(local_tmp.path()).unwrap();
+
+        assert!(
+            engine
+                .repo
+                .find_branch("main", git2::BranchType::Local)
+                .is_err()
+        );
+        engine.ensure_base_ref_available("main").unwrap();
+        assert!(
+            engine
+                .repo
+                .find_branch("main", git2::BranchType::Local)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn ensure_base_ref_available_fast_forwards_existing_local_branch() {
+        let (origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
+        let before = engine
+            .repo
+            .find_branch("main", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+
+        // Origin's main moves forward after the local clone already has it.
+        commit_on_branch(&origin_repo, "main", "a later commit on main");
+        let _ = origin_tmp;
+
+        engine.ensure_base_ref_available("main").unwrap();
+
+        let after = engine
+            .repo
+            .find_branch("main", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        assert_ne!(before, after, "local main should fast-forward");
+        assert_eq!(after.to_string().len(), 40);
+    }
+
+    #[test]
+    fn ensure_base_ref_available_leaves_diverged_branch_untouched() {
+        let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
+
+        // Diverge local main from origin's main with a local-only commit.
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+        let parent = engine
+            .repo
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let tree = parent.tree().unwrap();
+        let local_only_oid = engine
+            .repo
+            .commit(
+                Some("refs/heads/main"),
+                &sig,
+                &sig,
+                "local-only commit",
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
+
+        // Origin also moves forward independently — a true divergence.
+        commit_on_branch(&origin_repo, "main", "origin-only commit");
+
+        engine.ensure_base_ref_available("main").unwrap();
+
+        let after = engine
+            .repo
+            .find_branch("main", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        assert_eq!(
+            after, local_only_oid,
+            "diverged local branch must not be force-updated"
+        );
     }
 }

@@ -119,6 +119,18 @@ pub struct DiffViewState {
     pub screen_entry_map: Vec<Option<usize>>,
 }
 
+/// Which view the Explorer's bottom pane is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExplorerBottomView {
+    /// The changed-files diff list.
+    #[default]
+    DiffList,
+    /// The review comment list.
+    Comments,
+    /// The AI walkthrough (steps + selected step's body).
+    Walkthrough,
+}
+
 /// Explorer panel state (selections, scrolls).
 pub struct ExplorerState {
     /// Index of the selected diff file in the diff list.
@@ -131,8 +143,8 @@ pub struct ExplorerState {
     pub explorer_tree_height: usize,
     /// Last known inner height of the explorer diff-list pane (updated during render).
     pub explorer_diff_list_height: usize,
-    /// Whether the explorer bottom pane shows comments instead of the diff list.
-    pub explorer_show_comments: bool,
+    /// Which view the explorer's bottom pane is currently showing.
+    pub explorer_bottom_view: ExplorerBottomView,
     /// Index of the selected comment in the explorer comment list.
     pub comment_list_selected: usize,
     /// Vertical scroll offset for the explorer comment list.
@@ -147,6 +159,16 @@ pub struct ExplorerState {
     pub inline_reply_comment_id: Option<String>,
     /// Text buffer for inline reply input.
     pub inline_reply_buffer: TextInput,
+    /// Index of the selected step in the walkthrough view.
+    pub walkthrough_selected: usize,
+    /// Vertical scroll offset for the walkthrough step list.
+    pub walkthrough_scroll: usize,
+    /// IDs of walkthrough steps that have been jumped to at least once.
+    pub viewed_steps: HashSet<String>,
+    /// Whether the walkthrough step detail overlay (`space`) is open.
+    pub walkthrough_detail_active: bool,
+    /// Relative paths of files marked "viewed" by the reviewer.
+    pub viewed: HashSet<String>,
 }
 
 impl Default for ExplorerState {
@@ -157,7 +179,7 @@ impl Default for ExplorerState {
             explorer_focus_on_diff_list: false,
             explorer_tree_height: 20,
             explorer_diff_list_height: 20,
-            explorer_show_comments: false,
+            explorer_bottom_view: ExplorerBottomView::default(),
             comment_list_selected: 0,
             comment_list_scroll: 0,
             comment_preview_line: None,
@@ -165,6 +187,11 @@ impl Default for ExplorerState {
             inline_reply_line: None,
             inline_reply_comment_id: None,
             inline_reply_buffer: TextInput::new_multiline(),
+            walkthrough_selected: 0,
+            walkthrough_scroll: 0,
+            viewed_steps: HashSet::new(),
+            walkthrough_detail_active: false,
+            viewed: HashSet::new(),
         }
     }
 }
@@ -293,6 +320,18 @@ pub struct ViewerState {
     /// Total wrapped line count of the summary view, written during render and
     /// read by the key handler to clamp `summary_scroll`.
     pub summary_total_lines: usize,
+}
+
+/// The new-file line number a diff entry represents, for entries that map to
+/// one: a concrete `Line` (`None` for a deletion, which has no new-file
+/// line), or an `ExpandableContext`'s first hidden line. `HunkSeparator`
+/// carries no line number.
+fn diff_entry_new_line_no(entry: &UnifiedDiffEntry) -> Option<usize> {
+    match entry {
+        UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
+        UnifiedDiffEntry::ExpandableContext { new_line_start, .. } => Some(*new_line_start),
+        UnifiedDiffEntry::HunkSeparator { .. } => None,
+    }
 }
 
 impl ViewerState {
@@ -571,6 +610,7 @@ impl ViewerState {
                 .unwrap_or(0);
             self.content.file_scroll = self.search.search_matches[self.search.search_match_idx];
         }
+        self.sync_diff_scroll_to_file_scroll();
     }
 
     /// Jump to the next search match.
@@ -581,6 +621,7 @@ impl ViewerState {
         self.search.search_match_idx =
             (self.search.search_match_idx + 1) % self.search.search_matches.len();
         self.content.file_scroll = self.search.search_matches[self.search.search_match_idx];
+        self.sync_diff_scroll_to_file_scroll();
     }
 
     /// Jump to the previous search match.
@@ -594,6 +635,61 @@ impl ViewerState {
             self.search.search_match_idx - 1
         };
         self.content.file_scroll = self.search.search_matches[self.search.search_match_idx];
+        self.sync_diff_scroll_to_file_scroll();
+    }
+
+    /// Resolve the file line (0-indexed, matching `content.file_scroll`) that
+    /// the diff view's current scroll position corresponds to, from the
+    /// nearest concrete new-file line number at or after `diff_view_scroll`
+    /// (falling back to the nearest one before it — e.g. when the cursor
+    /// sits on a deleted line, which has no new-file line number).
+    fn diff_scroll_file_line(&self) -> Option<usize> {
+        let lines = &self.diff_view.diff_view_lines;
+        let scroll = self.diff_view.diff_view_scroll.min(lines.len());
+        lines[scroll..]
+            .iter()
+            .find_map(diff_entry_new_line_no)
+            .or_else(|| {
+                lines[..scroll]
+                    .iter()
+                    .rev()
+                    .find_map(diff_entry_new_line_no)
+            })
+            .map(|n| n.saturating_sub(1))
+    }
+
+    /// Keep `content.file_scroll` in sync with the diff view's scroll
+    /// position. Symbol lookup and search operate on `content.file_scroll`
+    /// unconditionally (they predate diff mode), so anything reached while
+    /// browsing a diff needs this synced first, or it would act on whatever
+    /// line plain-view browsing last left `file_scroll` at. A no-op outside
+    /// diff mode.
+    pub fn sync_file_scroll_to_diff_scroll(&mut self) {
+        if !self.diff_view.diff_mode {
+            return;
+        }
+        if let Some(line) = self.diff_scroll_file_line() {
+            self.content.file_scroll = line;
+        }
+    }
+
+    /// Keep the diff view's scroll position in sync with `content.file_scroll`
+    /// after it moves on its own (e.g. a search match) so the diff pane
+    /// visibly follows along instead of staying put while the underlying
+    /// cursor moves. A no-op outside diff mode.
+    fn sync_diff_scroll_to_file_scroll(&mut self) {
+        if !self.diff_view.diff_mode {
+            return;
+        }
+        let target_line = self.content.file_scroll + 1; // new_line_no is 1-indexed
+        if let Some(idx) = self
+            .diff_view
+            .diff_view_lines
+            .iter()
+            .position(|entry| diff_entry_new_line_no(entry).is_some_and(|n| n >= target_line))
+        {
+            self.diff_view.diff_view_scroll = idx;
+        }
     }
 
     // -- Filename fuzzy search ------------------------------------------------
@@ -1535,6 +1631,68 @@ fn digit_count(n: usize) -> usize {
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Builds a `Line` entry with the given new-file line number (`None` for
+    /// a deletion, which has no new-file line).
+    fn diff_line(new_line_no: Option<usize>) -> UnifiedDiffEntry {
+        UnifiedDiffEntry::Line {
+            tag: DiffLineTag::Equal,
+            new_line_no,
+            content: String::new(),
+            inline_segments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sync_file_scroll_to_diff_scroll_resolves_deletion_lines_forward() {
+        let mut vs = ViewerState::default();
+        vs.diff_view.diff_mode = true;
+        vs.diff_view.diff_view_lines = vec![
+            UnifiedDiffEntry::HunkSeparator { func_header: None },
+            diff_line(Some(10)), // idx 1
+            diff_line(None),     // idx 2 — a deletion, no new-file line
+            diff_line(Some(11)), // idx 3
+        ];
+
+        // Scrolled onto the deletion: no new-file line at this exact index,
+        // so the cursor resolves forward to the next concrete line (11).
+        vs.diff_view.diff_view_scroll = 2;
+        vs.sync_file_scroll_to_diff_scroll();
+        assert_eq!(vs.content.file_scroll, 10); // line 11, 0-indexed
+
+        // Scrolled directly onto a concrete line: resolves to that line.
+        vs.diff_view.diff_view_scroll = 1;
+        vs.sync_file_scroll_to_diff_scroll();
+        assert_eq!(vs.content.file_scroll, 9); // line 10, 0-indexed
+    }
+
+    #[test]
+    fn sync_file_scroll_to_diff_scroll_is_noop_outside_diff_mode() {
+        let mut vs = ViewerState::default();
+        vs.diff_view.diff_mode = false;
+        vs.diff_view.diff_view_lines = vec![diff_line(Some(5))];
+        vs.diff_view.diff_view_scroll = 0;
+        vs.content.file_scroll = 42;
+        vs.sync_file_scroll_to_diff_scroll();
+        assert_eq!(vs.content.file_scroll, 42);
+    }
+
+    #[test]
+    fn sync_diff_scroll_to_file_scroll_follows_a_search_jump() {
+        let mut vs = ViewerState::default();
+        vs.diff_view.diff_mode = true;
+        vs.diff_view.diff_view_lines = vec![
+            diff_line(Some(1)), // idx 0
+            diff_line(Some(2)), // idx 1
+            diff_line(Some(3)), // idx 2
+        ];
+        vs.diff_view.diff_view_scroll = 0;
+
+        // A search match landed on file_scroll = 2 (line 3, 0-indexed).
+        vs.content.file_scroll = 2;
+        vs.sync_diff_scroll_to_file_scroll();
+        assert_eq!(vs.diff_view.diff_view_scroll, 2);
+    }
 
     #[test]
     fn gutter_click_selects_single_line() {

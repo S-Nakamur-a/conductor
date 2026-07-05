@@ -21,8 +21,10 @@ mod jump_history;
 mod keymap;
 mod media_state;
 mod overlay;
+mod pr_intake;
 mod pty_manager;
 mod refresh_pipe;
+mod review_publish;
 mod review_state;
 mod review_store;
 mod search_result_tree;
@@ -36,6 +38,7 @@ mod timer;
 mod ui;
 mod update_checker;
 mod viewer;
+mod walkthrough;
 mod worktree_ops;
 
 use std::io;
@@ -892,6 +895,11 @@ fn run_loop(
         app.terminal.pty_manager.nudge_alt_screen_sessions();
 
         if app.should_quit {
+            // An in-flight walkthrough generation is a headless `claude`
+            // child process; without this it would keep running (and
+            // billing API calls) as an orphan after Conductor exits, since
+            // nothing polls it once the main loop stops.
+            app.shutdown_walkthrough_generation();
             return Ok(());
         }
     }

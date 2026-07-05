@@ -11,6 +11,20 @@ use crate::viewer::UnifiedDiffEntry;
 
 use super::explorer::open_viewer_comment_detail;
 
+/// 'g' — show symbol hints and wait for a second key (gd, gi, gr, gg, or a
+/// hint label). Shared by the plain-file view and unified-diff view so `g`
+/// means the same thing in both; the caller is responsible for syncing
+/// `content.file_scroll` to the diff cursor first when in diff mode; hints
+/// are built from that same synced position.
+fn enter_g_prefix_mode(app: &mut App) {
+    app.viewer_state.pending_g_key = true;
+    // Build hints using an estimated viewer height (will be clipped by actual content).
+    let hints = app.build_symbol_hints(50);
+    app.symbol_hint_overlay.active = !hints.is_empty();
+    app.symbol_hint_overlay.hints = hints;
+    app.symbol_hint_overlay.input.clear();
+}
+
 /// Handle keys when the Viewer panel is focused.
 pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     // ── Inline reply input mode ──────────────────────────────────
@@ -28,13 +42,9 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Unified diff mode has its own navigation.
-    if app.viewer_state.diff_view.diff_mode {
-        handle_viewer_diff_mode_key(app, key);
-        return;
-    }
-
     // ── pending 'g' key — symbol hints are shown, waiting for second key ──
+    // Checked before the diff-mode dispatch below since gd/gi/gr/gg apply the
+    // same way whether the viewer is showing a plain file or a unified diff.
     if app.viewer_state.pending_g_key {
         app.viewer_state.pending_g_key = false;
         match key.code {
@@ -56,7 +66,11 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('g') => {
                 // gg = go to top
                 app.symbol_hint_overlay = Default::default();
-                app.viewer_state.content.file_scroll = 0;
+                if app.viewer_state.diff_view.diff_mode {
+                    app.viewer_state.diff_view.diff_view_scroll = 0;
+                } else {
+                    app.viewer_state.content.file_scroll = 0;
+                }
                 return;
             }
             KeyCode::Esc => {
@@ -73,6 +87,12 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
                 app.symbol_hint_overlay = Default::default();
             }
         }
+    }
+
+    // Unified diff mode has its own navigation.
+    if app.viewer_state.diff_view.diff_mode {
+        handle_viewer_diff_mode_key(app, key);
+        return;
     }
 
     let total = app.viewer_state.content.file_content.len();
@@ -121,15 +141,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.content.file_scroll =
                 app.viewer_state.content.file_scroll.saturating_sub(15);
         }
-        Some(Action::GoToTop) => {
-            // 'g' — show symbol hints and wait for second key (gd, gi, gr, gg, or hint label).
-            app.viewer_state.pending_g_key = true;
-            // Build hints using an estimated viewer height (will be clipped by actual content).
-            let hints = app.build_symbol_hints(50);
-            app.symbol_hint_overlay.active = !hints.is_empty();
-            app.symbol_hint_overlay.hints = hints;
-            app.symbol_hint_overlay.input.clear();
-        }
+        Some(Action::GoToTop) => enter_g_prefix_mode(app),
         Some(Action::GoToBottom) => {
             app.viewer_state.content.file_scroll = total.saturating_sub(1);
         }
@@ -273,10 +285,28 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
                 .saturating_sub(15);
         }
         Some(Action::GoToTop) => {
-            app.viewer_state.diff_view.diff_view_scroll = 0;
+            // 'g' now matches the plain-file view's symbol-hint prefix (gd,
+            // gi, gr, gg, or a hint label) instead of jumping to the top
+            // directly — the previous single-`g`-jumps-to-top behavior moved
+            // to `gg` so `g` means the same thing in both views. Sync
+            // `content.file_scroll` to the line under the diff cursor first,
+            // since symbol lookup and hint-building read that field.
+            app.viewer_state.sync_file_scroll_to_diff_scroll();
+            enter_g_prefix_mode(app);
         }
         Some(Action::GoToBottom) => {
             app.viewer_state.diff_view.diff_view_scroll = total.saturating_sub(1);
+        }
+        Some(Action::SearchInFile) => {
+            app.viewer_state.sync_file_scroll_to_diff_scroll();
+            app.viewer_state.search.search_active = true;
+            app.viewer_state.search.search_query.clear();
+        }
+        Some(Action::NextSearchMatch) => {
+            app.viewer_state.next_search_match();
+        }
+        Some(Action::PrevSearchMatch) => {
+            app.viewer_state.prev_search_match();
         }
         Some(Action::NextHunk) => {
             let lines = &app.viewer_state.diff_view.diff_view_lines;
@@ -343,6 +373,11 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
             // Expand all lines at the first visible ExpandableContext.
             if let Some(idx) = app.viewer_state.find_visible_expandable(50) {
                 app.viewer_state.expand_context_at(idx, true);
+            }
+        }
+        Some(Action::ToggleViewed) => {
+            if let Some(path) = app.viewer_state.content.current_file.clone() {
+                app.toggle_path_viewed(&path);
             }
         }
         _ => {}

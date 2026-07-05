@@ -1,7 +1,11 @@
 //! Review / Comment / History methods for [`App`].
 //!
 //! This module contains methods for managing review comments, templates,
-//! and session history.
+//! and session history. It also orchestrates AI walkthrough generation for
+//! review mode: starting a headless `claude -p` session via
+//! [`crate::walkthrough`], polling it to completion, and reflecting
+//! success/failure back into the review database via
+//! [`crate::review_store::ReviewStore`].
 
 use super::*;
 
@@ -11,6 +15,8 @@ impl App {
         if let Some(store) = &self.review_store {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
+            // Walkthrough (if any) rides along with the same branch scope.
+            self.current_walkthrough = store.get_walkthrough(&wt).ok().flatten();
             // Rebuild per-file cache for the currently viewed file.
             if let Some(file_path) = self.viewer_state.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);
@@ -630,5 +636,173 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Kick off walkthrough generation for the selected worktree's branch:
+    /// insert the `generating` row, then spawn the headless Claude session.
+    /// Re-running while `failed` (or `ready`) regenerates from scratch; while
+    /// a generation is already in flight it's a no-op with a status hint.
+    pub fn cmd_generate_walkthrough(&mut self) {
+        if self.review_store.is_none() {
+            self.set_status(
+                "Review database unavailable — cannot generate a walkthrough.".to_string(),
+                StatusLevel::Error,
+            );
+            return;
+        }
+        let branch = self.selected_worktree_branch();
+        if branch.is_empty() {
+            self.set_status(
+                "No worktree selected — open one to generate a walkthrough.".to_string(),
+                StatusLevel::Warning,
+            );
+            return;
+        }
+        // Only one generation may be in flight per app instance: replacing
+        // the handle would silently drop (and orphan) the running `claude`
+        // child and strand its branch's row in `generating` forever.
+        if let Some(g) = &self.walkthrough_gen {
+            let msg = if g.branch == branch {
+                "A walkthrough is already being generated for this branch.".to_string()
+            } else {
+                format!(
+                    "A walkthrough is already being generated for '{}' — wait for it to finish.",
+                    g.branch
+                )
+            };
+            self.set_status(msg, StatusLevel::Warning);
+            return;
+        }
+        let Some(wt_path) = self
+            .worktrees
+            .get(self.selected_worktree)
+            .map(|w| w.path.clone())
+        else {
+            return;
+        };
+
+        // Insert the `generating` row first so the UI (and a timeout) always
+        // have a row to reflect, then spawn. Base ref comes from the PR meta
+        // when this branch was taken in via PR intake.
+        let store = self.review_store.as_ref().expect("checked above");
+        if let Err(e) = store.begin_walkthrough(&branch) {
+            let msg = format!("Failed to start walkthrough: {e}");
+            self.set_status(msg, StatusLevel::Error);
+            return;
+        }
+        let base_ref = store
+            .get_pr_review_meta(&branch)
+            .ok()
+            .flatten()
+            .and_then(|m| m.base_ref);
+        let db = crate::review_store::db_path(&self.repo_path);
+        let model = self.config.review.walkthrough_model.clone();
+        let language = self.config.review.walkthrough_language.clone();
+        match crate::walkthrough::spawn_generation(
+            &self.repo_path,
+            &wt_path,
+            &db,
+            &branch,
+            base_ref.as_deref(),
+            model.as_deref(),
+            language.as_deref(),
+        ) {
+            Ok(generation) => {
+                self.walkthrough_gen = Some(generation);
+                // Display-only switch — no `set_focus`, so kicking off a
+                // generation from the palette never steals focus from an
+                // active terminal input; it just makes the in-progress state
+                // visible once the reviewer does look at the Explorer.
+                self.viewer_state.explorer.explorer_bottom_view =
+                    crate::viewer::ExplorerBottomView::Walkthrough;
+                self.set_status(
+                    "Generating walkthrough in the background — this takes a few minutes."
+                        .to_string(),
+                    StatusLevel::Info,
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if let Some(store) = &self.review_store {
+                    let _ = store.fail_walkthrough(&branch, &msg);
+                }
+                self.set_status(
+                    format!("Failed to launch walkthrough generation: {msg}"),
+                    StatusLevel::Error,
+                );
+            }
+        }
+        self.refresh_reviews();
+    }
+
+    /// Kill an in-flight walkthrough generation, if any, so it doesn't
+    /// outlive the app as an orphaned headless `claude` process. Called once
+    /// on shutdown (see `main.rs`'s main loop, right before it returns on
+    /// `should_quit`) — a generation still running at that point would
+    /// otherwise keep making API calls with no one polling its outcome.
+    pub fn shutdown_walkthrough_generation(&mut self) {
+        if let Some(mut generation) = self.walkthrough_gen.take() {
+            generation.abort();
+        }
+    }
+
+    /// Poll the in-flight walkthrough generation (if any) and reconcile the
+    /// database row with what the process actually did. Called from
+    /// [`App::poll_all_background_ops`](Self::poll_all_background_ops).
+    pub fn poll_walkthrough_generation(&mut self) {
+        let Some(generation) = &mut self.walkthrough_gen else {
+            return;
+        };
+        use crate::walkthrough::{GenerationPoll, WalkthroughStatus};
+        let outcome = generation.poll();
+        if matches!(outcome, GenerationPoll::Running) {
+            return;
+        }
+        let branch = generation.branch.clone();
+        let log_path = generation.log_path.clone();
+        self.walkthrough_gen = None;
+
+        let (message, level) = match outcome {
+            GenerationPoll::Running => unreachable!("handled above"),
+            GenerationPoll::Exited => {
+                // Success is decided by the row the MCP tool wrote, not the
+                // exit code: a session that ended without saving is a failure.
+                let saved = self
+                    .review_store
+                    .as_ref()
+                    .and_then(|s| s.get_walkthrough(&branch).ok().flatten())
+                    .is_some_and(|(w, _)| w.status == WalkthroughStatus::Ready);
+                if saved {
+                    ("Walkthrough ready.".to_string(), StatusLevel::Success)
+                } else {
+                    let msg = format!(
+                        "Claude session ended without saving a walkthrough (log: {})",
+                        log_path.display()
+                    );
+                    if let Some(store) = &self.review_store {
+                        let _ = store.fail_walkthrough(&branch, &msg);
+                    }
+                    (format!("Walkthrough failed: {msg}"), StatusLevel::Error)
+                }
+            }
+            GenerationPoll::Failed(msg) => {
+                if let Some(store) = &self.review_store {
+                    let _ = store.fail_walkthrough(&branch, &msg);
+                }
+                (format!("Walkthrough failed: {msg}"), StatusLevel::Error)
+            }
+            GenerationPoll::TimedOut => {
+                let msg = format!(
+                    "Timed out after {} minutes.",
+                    crate::walkthrough::GENERATION_TIMEOUT.as_secs() / 60
+                );
+                if let Some(store) = &self.review_store {
+                    let _ = store.fail_walkthrough(&branch, &msg);
+                }
+                (format!("Walkthrough failed: {msg}"), StatusLevel::Error)
+            }
+        };
+        self.set_status(message, level);
+        self.refresh_reviews();
     }
 }

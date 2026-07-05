@@ -356,6 +356,69 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     set_cursor_for_input(frame, inner, &app.overlays.open_repo.buffer);
 }
 
+/// Render the PR-number/URL input overlay ("Review: Review Pull Request…").
+///
+/// Below the input line, shows either a loading notice while the background
+/// gh/git intake runs, or the last failure's message — the overlay stays
+/// open on failure (input preserved) so the user can correct and retry.
+pub fn render_pr_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let overlay = &app.overlays.pr_input;
+    let popup_width = 70_u16.min(area.width.saturating_sub(4));
+    let popup_height = 6_u16.min(area.height.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let title = if overlay.loading {
+        " Review Pull Request (fetching...) "
+    } else {
+        " Review Pull Request (Enter: fetch & review, Esc: cancel) "
+    };
+    let border_color = if overlay.error.is_some() {
+        theme.error
+    } else {
+        theme.border_focused
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
+
+    let input_text = format_input_with_cursor(&overlay.buffer);
+    let input_style = if overlay.loading {
+        Style::default().fg(theme.muted)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    frame.render_widget(Paragraph::new(Span::styled(input_text, input_style)), chunks[0]);
+    if !overlay.loading {
+        set_cursor_for_input(frame, chunks[0], &overlay.buffer);
+    }
+
+    let message = if overlay.loading {
+        Some(("Fetching PR metadata via gh...".to_string(), theme.muted))
+    } else {
+        overlay
+            .error
+            .as_ref()
+            .map(|e| (e.clone(), theme.error))
+    };
+    if let Some((text, color)) = message {
+        let paragraph =
+            Paragraph::new(Span::styled(text, Style::default().fg(color)))
+                .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(paragraph, chunks[1]);
+    }
+}
+
 /// Render the switch-branch (remote branch checkout) overlay.
 pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -1093,6 +1156,7 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
             ("Explorer — file tree", KeyContext::Explorer),
             ("Explorer — changed files", KeyContext::ExplorerDiffList),
             ("Explorer — comment list", KeyContext::ExplorerCommentList),
+            ("Explorer — walkthrough", KeyContext::ExplorerWalkthrough),
         ],
         Focus::Viewer => &[
             ("Viewer", KeyContext::Viewer),
@@ -1104,9 +1168,37 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
     for (title, ctx) in panel_ctxs {
         section(&mut lines, title, *ctx);
     }
+    help_review_commands_section(&mut lines, theme);
     section(&mut lines, "Global — works anywhere", KeyContext::Global);
 
     lines
+}
+
+/// The PR-intake, walkthrough-generation, and publish commands have no
+/// default keybinding (see `default_keybinds.toml`) — they're reached only
+/// through the command palette, so `section()` above (which walks
+/// `app.keymap`) never finds them. Listed here instead so the help screen
+/// still surfaces them.
+fn help_review_commands_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    help_section(lines, "Review (via command palette)", theme);
+    help_key_dyn(
+        lines,
+        "palette".to_string(),
+        "Review: Review Pull Request…",
+        theme,
+    );
+    help_key_dyn(
+        lines,
+        "palette".to_string(),
+        "Review: Generate Walkthrough",
+        theme,
+    );
+    help_key_dyn(
+        lines,
+        "palette".to_string(),
+        "Review: Publish Comments to GitHub",
+        theme,
+    );
 }
 
 // ── Smart Worktree overlays ──────────────────────────────────────────
@@ -1292,6 +1384,67 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(": いいえ", Style::default().fg(theme.muted)),
         ]),
     ];
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Render the confirm dialog for publishing review comments to GitHub —
+/// shown before the irreversible external POST, listing how many comments
+/// will be posted and how many were skipped for not being on a diff line.
+pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let Some(confirm) = app.publish_confirm.as_ref() else {
+        return;
+    };
+    let popup_width = 60_u16.min(area.width.saturating_sub(4));
+    let popup_height = if confirm.skipped > 0 { 6 } else { 5 };
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Publish Comments to GitHub ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.warning));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let mut lines = vec![Line::from(Span::styled(
+        format!(
+            " Publish {} comment(s) to PR #{}?",
+            confirm.comments.len(),
+            confirm.pr_number
+        ),
+        Style::default().fg(theme.fg),
+    ))];
+    if confirm.skipped > 0 {
+        lines.push(Line::from(Span::styled(
+            format!(
+                " {} comment(s) skipped — outside the current diff",
+                confirm.skipped
+            ),
+            Style::default().fg(theme.muted),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            " y",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(": publish / ", Style::default().fg(theme.muted)),
+        Span::styled(
+            "n",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(": cancel", Style::default().fg(theme.muted)),
+    ]));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 

@@ -176,6 +176,29 @@ keymap_suite::actions! {
         // ── UI ──────────────────────────────────────────────────────
         /// Open the theme picker overlay to switch the UI color theme at runtime.
         OpenThemePicker => "open_theme_picker",
+
+        // ── PR review ───────────────────────────────────────────────
+        /// Show the AI walkthrough as the Explorer's bottom-pane view.
+        ShowWalkthrough => "show_walkthrough",
+        /// Toggle the "viewed" mark on a file (diff list row, or the file
+        /// currently open in the Viewer's diff mode).
+        ToggleViewed => "toggle_viewed",
+        /// Move the walkthrough step selection to the next/previous step and jump
+        /// to it immediately (only in the Explorer's Walkthrough view).
+        WalkthroughNextStep => "walkthrough_next_step",
+        WalkthroughPrevStep => "walkthrough_prev_step",
+        /// Open the PR-number/URL input overlay to fetch (or reuse) a worktree
+        /// for a pull request.
+        ReviewPullRequest => "review_pull_request",
+        /// Generate (or regenerate) the AI walkthrough for the selected
+        /// worktree's branch via a background headless Claude session.
+        /// Palette-only by default: `g` is the go-to-top idiom everywhere, and a
+        /// minutes-long generation is too expensive to fire from a slipped key.
+        GenerateWalkthrough => "generate_walkthrough",
+        /// Publish this branch's unpublished review comments to the GitHub PR
+        /// they were opened from. Palette-only: it's an irreversible external
+        /// action and always goes through a y/n confirm overlay first.
+        PublishReview => "publish_review",
     }
 }
 
@@ -220,6 +243,13 @@ impl Action {
             Action::PullWorktree => "Pull worktree",
             Action::SessionHistory => "Session history",
             Action::OpenPullRequest => "Open pull request",
+            Action::ShowWalkthrough => "Show AI walkthrough",
+            Action::ToggleViewed => "Toggle file viewed",
+            Action::WalkthroughNextStep => "Jump to next walkthrough step",
+            Action::WalkthroughPrevStep => "Jump to previous walkthrough step",
+            Action::ReviewPullRequest => "Review a pull request by number or URL",
+            Action::GenerateWalkthrough => "Generate an AI walkthrough of this branch's diff",
+            Action::PublishReview => "Publish unpublished review comments to the GitHub PR",
             Action::ShowDiffList => "Show changed-files list",
             Action::ShowCommentList => "Show comment list",
             Action::OpenCommentList => "Open comment-list modal",
@@ -330,6 +360,8 @@ pub enum KeyContext {
     Explorer,
     ExplorerDiffList,
     ExplorerCommentList,
+    /// The Explorer bottom pane showing the AI walkthrough step list.
+    ExplorerWalkthrough,
     Viewer,
     ViewerDiffMode,
     Terminal,
@@ -344,11 +376,12 @@ pub enum KeyContext {
 }
 
 /// The non-global contexts, each backed by a named `[layers.<name>]` table.
-const PANEL_CONTEXTS: [KeyContext; 9] = [
+const PANEL_CONTEXTS: [KeyContext; 10] = [
     KeyContext::Worktree,
     KeyContext::Explorer,
     KeyContext::ExplorerDiffList,
     KeyContext::ExplorerCommentList,
+    KeyContext::ExplorerWalkthrough,
     KeyContext::Viewer,
     KeyContext::ViewerDiffMode,
     KeyContext::Terminal,
@@ -366,6 +399,7 @@ impl KeyContext {
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerDiffList => "explorer_diff_list",
             KeyContext::ExplorerCommentList => "explorer_comment_list",
+            KeyContext::ExplorerWalkthrough => "explorer_walkthrough",
             KeyContext::Viewer => "viewer",
             KeyContext::ViewerDiffMode => "viewer_diff_mode",
             KeyContext::Terminal => "terminal",
@@ -722,6 +756,26 @@ mod tests {
         ];
         for (key, action) in cases {
             assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn explorer_walkthrough_layer_resolves() {
+        let km = default_keymap();
+        let cases = [
+            (KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()), Action::NavigateDown),
+            (KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()), Action::NavigateUp),
+            (KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()), Action::Select),
+            (KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty()), Action::WalkthroughNextStep),
+            (KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT), Action::WalkthroughPrevStep),
+            (KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()), Action::ExitSubPanel),
+        ];
+        for (key, action) in cases {
+            assert_eq!(
+                km.resolve(&key, KeyContext::ExplorerWalkthrough),
+                Some(action),
+                "{key:?}"
+            );
         }
     }
 

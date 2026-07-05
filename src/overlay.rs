@@ -28,6 +28,10 @@ pub enum ActiveOverlay {
     ResumeSession,
     RepoSelector,
     OpenRepo,
+    /// PR-number/URL input for "Review: Review Pull Request…" — stays open
+    /// (with the typed input preserved) if the intake attempt fails, so the
+    /// user can correct and retry without retyping.
+    PrInput,
     GrepSearch,
     Help,
     CommandPalette,
@@ -144,6 +148,19 @@ pub struct OpenRepoOverlay {
     pub buffer: TextInput,
 }
 
+/// PR-number/URL input overlay state ("Review: Review Pull Request…").
+#[derive(Default)]
+pub struct PrInputOverlay {
+    pub buffer: TextInput,
+    /// Set while a background PR intake (gh/git) is running for this overlay.
+    pub loading: bool,
+    /// Set on a failed intake attempt; cleared on the next Enter/edit. The
+    /// overlay stays open and `buffer` is left untouched so the user can
+    /// correct and retry.
+    pub error: Option<String>,
+    pub bg_op: BackgroundOp<crate::pr_intake::PrIntakeOutcome>,
+}
+
 /// Code navigation: references overlay state (for `gr` — Find References).
 #[derive(Default)]
 pub struct ReferencesOverlay {
@@ -231,6 +248,7 @@ pub struct OverlayManager {
     pub resume_session: ResumeSessionOverlay,
     pub repo_selector: RepoSelectorOverlay,
     pub open_repo: OpenRepoOverlay,
+    pub pr_input: PrInputOverlay,
     pub grep_search: GrepSearchOverlay,
     pub help: HelpOverlay,
     pub command_palette: CommandPaletteOverlay,

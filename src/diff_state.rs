@@ -444,6 +444,14 @@ impl DiffState {
         }
     }
 
+    /// Find the display list index for a file by its repo-relative path
+    /// (the reverse of [`Self::resolve_file`]). Used to keep the diff list's
+    /// cursor in sync when a file is opened by path rather than by list
+    /// index (e.g. jumping to a walkthrough step's file).
+    pub fn display_index_for_path(&self, path: &str) -> Option<usize> {
+        (0..self.display_list.len()).find(|&idx| self.resolve_file(idx).is_some_and(|(f, _)| f.path == path))
+    }
+
     /// Toggle the collapsed state of the directory at the given display index.
     /// Returns `true` if a directory was toggled (so the caller knows the list
     /// changed). Non-directory rows (files, the summary) are a no-op.
@@ -1088,5 +1096,40 @@ mod tests {
             collapsed: false,
         }];
         ds.expand_section(0); // must not panic
+    }
+
+    /// `display_index_for_path` is the reverse of `resolve_file` — used to
+    /// re-sync the diff list's cursor when a file is opened by path (e.g.
+    /// jumping to a walkthrough step) rather than by list index.
+    #[test]
+    fn display_index_for_path_finds_committed_and_uncommitted_files() {
+        use super::*;
+        let file = |path: &str| FileDiff {
+            path: path.to_string(),
+            added_lines: 0,
+            deleted_lines: 0,
+            is_new: false,
+            is_deleted: false,
+            hunks: Vec::new(),
+        };
+        let mut ds = DiffState::new("main", DiffViewMode::Unified);
+        ds.committed_files = vec![file("src/a.rs")];
+        ds.uncommitted_files = vec![file("src/b.rs")];
+        ds.display_list = vec![
+            DiffListEntry::File {
+                section: DiffSection::Committed,
+                file_index: 0,
+                depth: 0,
+            },
+            DiffListEntry::File {
+                section: DiffSection::Uncommitted,
+                file_index: 0,
+                depth: 0,
+            },
+        ];
+
+        assert_eq!(ds.display_index_for_path("src/a.rs"), Some(0));
+        assert_eq!(ds.display_index_for_path("src/b.rs"), Some(1));
+        assert_eq!(ds.display_index_for_path("src/missing.rs"), None);
     }
 }

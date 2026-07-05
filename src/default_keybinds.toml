@@ -140,6 +140,7 @@
 "d" = "show_diff_list"
 "c" = "show_comment_list"
 "C" = "open_comment_list"
+"w" = "show_walkthrough"
 "/" = "search_filename"
 ":" = "command_palette"
 
@@ -158,6 +159,7 @@
 "enter" = "select"
 "g" = "go_to_top"
 "G" = "go_to_bottom"
+"v" = "toggle_viewed"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
@@ -183,6 +185,27 @@
 "e" = "edit_comment"
 "R" = "reply_to_comment"
 "space" = "view_comment_detail"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Explorer: walkthrough ───────────────────────────────────────────────────────
+[layers.explorer_walkthrough]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"enter" = "select"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"space" = "view_comment_detail"
+# Jump to the next/previous step immediately and stay on this view, unlike
+# `enter` (which jumps and moves focus to the Viewer) — lets a reviewer page
+# through the whole walkthrough with the diff following along.
+"n" = "walkthrough_next_step"
+"N" = "walkthrough_prev_step"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
@@ -242,6 +265,9 @@
 "l" = "scroll_right"
 "right" = "scroll_right"
 "0" = "scroll_home"
+"/" = "search_in_file"
+"n" = "next_search_match"
+"N" = "prev_search_match"
 "ctrl+f" = "search_filename"
 # Jump between changes (hunks) and between review comments.
 "]" = "next_hunk"
@@ -252,6 +278,7 @@
 "J" = "next_changed_file"
 "K" = "prev_changed_file"
 "c" = "add_comment"
+"v" = "toggle_viewed"
 # 'e' for "edit": open the file under review in $VISUAL/$EDITOR for a quick
 # manual fix without leaving the diff workflow (reloads on return).
 "e" = "open_in_editor"

@@ -7,6 +7,7 @@ use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::{CommentListRow, ReviewInputMode};
 use crate::review_store::{Author, CommentKind};
+use crate::viewer::ExplorerBottomView;
 
 use super::{adjust_diff_list_scroll, adjust_tree_scroll};
 
@@ -16,16 +17,22 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
         app.refresh_viewer();
     }
 
-    // Check for show-diff / show-comments before delegating to sub-panels.
+    // Check for show-diff / show-comments / show-walkthrough before delegating
+    // to sub-panels.
     let action = app.keymap.resolve(&key, KeyContext::Explorer);
     match action {
         Some(Action::ShowDiffList) => {
-            app.viewer_state.explorer.explorer_show_comments = false;
+            app.viewer_state.explorer.explorer_bottom_view = ExplorerBottomView::DiffList;
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             return;
         }
         Some(Action::ShowCommentList) => {
-            app.viewer_state.explorer.explorer_show_comments = true;
+            app.viewer_state.explorer.explorer_bottom_view = ExplorerBottomView::Comments;
+            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            return;
+        }
+        Some(Action::ShowWalkthrough) => {
+            app.viewer_state.explorer.explorer_bottom_view = ExplorerBottomView::Walkthrough;
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             return;
         }
@@ -33,10 +40,12 @@ pub(super) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
     }
 
     if app.viewer_state.explorer.explorer_focus_on_diff_list {
-        if app.viewer_state.explorer.explorer_show_comments {
-            handle_explorer_comment_list_key(app, key);
-        } else {
-            handle_explorer_diff_list_key(app, key);
+        match app.viewer_state.explorer.explorer_bottom_view {
+            ExplorerBottomView::Comments => handle_explorer_comment_list_key(app, key),
+            ExplorerBottomView::Walkthrough => {
+                super::explorer_walkthrough::handle_explorer_walkthrough_key(app, key)
+            }
+            ExplorerBottomView::DiffList => handle_explorer_diff_list_key(app, key),
         }
         return;
     }
@@ -169,6 +178,13 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::GoToBottom) if count > 0 => {
             app.viewer_state.explorer.diff_list_selected = count - 1;
+        }
+        Some(Action::ToggleViewed) => {
+            let selected = app.viewer_state.explorer.diff_list_selected;
+            if let Some((file_diff, _)) = app.diff_state.resolve_file(selected) {
+                let path = file_diff.path.clone();
+                app.toggle_path_viewed(&path);
+            }
         }
         _ => {}
     }
