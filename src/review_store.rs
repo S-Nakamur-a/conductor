@@ -12,6 +12,10 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
+use crate::walkthrough::{
+    NewWalkthroughStep, Walkthrough, WalkthroughStatus, WalkthroughStep, WalkthroughStepKind,
+};
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -147,6 +151,23 @@ pub struct SessionStatsSnapshot {
 #[derive(Debug, Clone)]
 pub struct StreakInfo {
     pub consecutive_days: u32,
+}
+
+/// PR metadata for a review-mode branch (`pr_review_meta` table) — the facts
+/// needed to render the review header and, later, to publish comments back
+/// to the right PR. Unlike `worktree_metadata`, every field but `branch` is
+/// optional since a review can start from a bare branch name without a PR.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct PrReviewMeta {
+    pub branch: String,
+    pub pr_number: Option<i64>,
+    pub pr_url: Option<String>,
+    pub pr_title: Option<String>,
+    pub base_ref: Option<String>,
+    pub head_ref: Option<String>,
+    pub author: Option<String>,
+    pub created_at: String,
 }
 
 /// A saved session history record.
@@ -434,6 +455,59 @@ impl ReviewStore {
             .context("failed to migrate to v5 (change_summary)")?;
         }
 
+        if version < 6 {
+            // Review mode's PR walkthrough + GitHub-publish support.
+            // `walkthroughs.branch` is UNIQUE with no generation history —
+            // re-generating deletes and recreates the row (pamela's ruling:
+            // a versioned/generational scheme wasn't worth the complexity
+            // for a single-branch, single-current-walkthrough feature).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS walkthroughs (
+                    id          TEXT PRIMARY KEY,
+                    branch      TEXT NOT NULL UNIQUE,
+                    title       TEXT,
+                    summary     TEXT,
+                    status      TEXT NOT NULL DEFAULT 'generating'
+                                  CHECK (status IN ('generating', 'ready', 'failed')),
+                    error       TEXT,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS walkthrough_steps (
+                    id             TEXT PRIMARY KEY,
+                    walkthrough_id TEXT NOT NULL REFERENCES walkthroughs(id) ON DELETE CASCADE,
+                    seq            INTEGER NOT NULL,
+                    file_path      TEXT NOT NULL,
+                    line_start     INTEGER,
+                    line_end       INTEGER,
+                    kind           TEXT NOT NULL CHECK (kind IN ('intent', 'core', 'ripple', 'test')),
+                    title          TEXT NOT NULL,
+                    body           TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS pr_review_meta (
+                    branch      TEXT PRIMARY KEY,
+                    pr_number   INTEGER,
+                    pr_url      TEXT,
+                    pr_title    TEXT,
+                    base_ref    TEXT,
+                    head_ref    TEXT,
+                    author      TEXT,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                ALTER TABLE reviews ADD COLUMN published_at TEXT;
+
+                PRAGMA user_version = 6;
+                ",
+            )
+            .context(
+                "failed to migrate to v6 (walkthroughs, walkthrough_steps, pr_review_meta, reviews.published_at)",
+            )?;
+        }
+
         Ok(Self { conn })
     }
 
@@ -547,6 +621,46 @@ impl ReviewStore {
              ORDER BY line_start",
         )?;
         collect_reviews(&mut stmt, params![worktree, file_path])
+    }
+
+    /// Mark the given review comments as published to GitHub, stamping them
+    /// all with the same `timestamp` (one publish batch = one moment in
+    /// time). Once set, `unpublished_reviews` no longer returns them, so a
+    /// retried publish doesn't repost the same comment.
+    pub fn mark_published(&self, comment_ids: &[String], timestamp: &str) -> Result<()> {
+        self.conn.execute_batch("BEGIN;")?;
+        let result = (|| -> Result<()> {
+            for id in comment_ids {
+                self.conn.execute(
+                    "UPDATE reviews SET published_at = ?1 WHERE id = ?2",
+                    params![timestamp, id],
+                )?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT;")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
+    /// Return a branch's review comments that have not yet been posted to
+    /// GitHub (`published_at IS NULL`).
+    pub fn unpublished_reviews(&self, branch: &str) -> Result<Vec<ReviewComment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
+                    commit_ref, author, branch, created_at, updated_at
+             FROM reviews
+             WHERE branch = ?1 AND published_at IS NULL
+             ORDER BY file_path, line_start",
+        )?;
+        collect_reviews(&mut stmt, params![branch])
     }
 
     // -- Replies ------------------------------------------------------------
@@ -815,6 +929,211 @@ impl ReviewStore {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    // -- PR review metadata ---------------------------------------------------
+
+    /// Insert or replace the PR metadata for a branch.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
+    pub fn save_pr_review_meta(
+        &self,
+        branch: &str,
+        pr_number: Option<i64>,
+        pr_url: Option<&str>,
+        pr_title: Option<&str>,
+        base_ref: Option<&str>,
+        head_ref: Option<&str>,
+        author: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO pr_review_meta
+                (branch, pr_number, pr_url, pr_title, base_ref, head_ref, author)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(branch) DO UPDATE SET
+                 pr_number = excluded.pr_number,
+                 pr_url    = excluded.pr_url,
+                 pr_title  = excluded.pr_title,
+                 base_ref  = excluded.base_ref,
+                 head_ref  = excluded.head_ref,
+                 author    = excluded.author",
+            params![branch, pr_number, pr_url, pr_title, base_ref, head_ref, author],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve the PR metadata for a branch, if any has been saved.
+    pub fn get_pr_review_meta(&self, branch: &str) -> Result<Option<PrReviewMeta>> {
+        match self.conn.query_row(
+            "SELECT branch, pr_number, pr_url, pr_title, base_ref, head_ref, author, created_at
+             FROM pr_review_meta WHERE branch = ?1",
+            params![branch],
+            row_to_pr_review_meta,
+        ) {
+            Ok(meta) => Ok(Some(meta)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    // -- Walkthroughs ---------------------------------------------------------
+
+    /// Start (or restart) walkthrough generation for a branch: delete any
+    /// existing walkthrough for it (no generation history is kept — see the
+    /// v6 migration note) and insert a fresh `generating` row, so the caller
+    /// has an id to poll for completion / detect a stuck generation.
+    pub fn begin_walkthrough(&self, branch: &str) -> Result<Walkthrough> {
+        self.conn.execute(
+            "DELETE FROM walkthroughs WHERE branch = ?1",
+            params![branch],
+        )?;
+        let id = Uuid::new_v4().to_string();
+        self.conn.execute(
+            "INSERT INTO walkthroughs (id, branch, status) VALUES (?1, ?2, 'generating')",
+            params![id, branch],
+        )?;
+        self.walkthrough_row_by_id(&id)
+    }
+
+    /// Save a completed walkthrough: replaces the branch's steps and marks it
+    /// `ready`, in one transaction. `begin_walkthrough` must have already
+    /// created the row — this only updates/populates it, so a generation
+    /// that skipped the "generating" placeholder is treated as an error
+    /// rather than silently creating one (the placeholder is what a stuck- or
+    /// failed-generation UI depends on existing).
+    ///
+    /// Not called in production: the actual write path is the conductor MCP
+    /// server's `save_walkthrough` tool (`plugins/conductor/mcp/conductor-comment/src/index.ts`),
+    /// which the headless `claude -p` session invokes directly over stdio —
+    /// this Rust method exists only so the save round-trip can be tested
+    /// without spawning a Node process. The two implementations must be kept
+    /// in sync by hand: a schema or invariant change here needs the same
+    /// change made in `index.ts`, and vice versa.
+    #[allow(dead_code)]
+    pub fn save_walkthrough(
+        &self,
+        branch: &str,
+        title: &str,
+        summary: &str,
+        steps: &[NewWalkthroughStep],
+    ) -> Result<()> {
+        let walkthrough_id: String = self
+            .conn
+            .query_row(
+                "SELECT id FROM walkthroughs WHERE branch = ?1",
+                params![branch],
+                |row| row.get(0),
+            )
+            .with_context(|| {
+                format!("no walkthrough row for branch {branch} — call begin_walkthrough first")
+            })?;
+
+        self.conn.execute_batch("BEGIN;")?;
+        let result = (|| -> Result<()> {
+            self.conn.execute(
+                "UPDATE walkthroughs
+                 SET title = ?1, summary = ?2, status = 'ready', error = NULL,
+                     updated_at = datetime('now')
+                 WHERE id = ?3",
+                params![title, summary, walkthrough_id],
+            )?;
+            self.conn.execute(
+                "DELETE FROM walkthrough_steps WHERE walkthrough_id = ?1",
+                params![walkthrough_id],
+            )?;
+            for (seq, step) in steps.iter().enumerate() {
+                let step_id = Uuid::new_v4().to_string();
+                self.conn.execute(
+                    "INSERT INTO walkthrough_steps
+                        (id, walkthrough_id, seq, file_path, line_start, line_end, kind, title, body)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        step_id,
+                        walkthrough_id,
+                        seq as i64,
+                        step.file_path,
+                        step.line_start,
+                        step.line_end,
+                        step.kind.as_str(),
+                        step.title,
+                        step.body,
+                    ],
+                )?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT;")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
+    /// Mark a branch's walkthrough as failed, recording why. Requires
+    /// `begin_walkthrough` to have created the row first.
+    pub fn fail_walkthrough(&self, branch: &str, error: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE walkthroughs
+             SET status = 'failed', error = ?1, updated_at = datetime('now')
+             WHERE branch = ?2",
+            params![error, branch],
+        )?;
+        if changed == 0 {
+            anyhow::bail!(
+                "no walkthrough row for branch {branch} — call begin_walkthrough first"
+            );
+        }
+        Ok(())
+    }
+
+    /// Retrieve a branch's walkthrough header and its steps (ordered by
+    /// `seq`), or `None` if no walkthrough has been started for it.
+    pub fn get_walkthrough(
+        &self,
+        branch: &str,
+    ) -> Result<Option<(Walkthrough, Vec<WalkthroughStep>)>> {
+        let walkthrough = match self.conn.query_row(
+            "SELECT id, branch, title, summary, status, error, created_at, updated_at
+             FROM walkthroughs WHERE branch = ?1",
+            params![branch],
+            row_to_walkthrough,
+        ) {
+            Ok(w) => w,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, walkthrough_id, seq, file_path, line_start, line_end, kind, title, body
+             FROM walkthrough_steps
+             WHERE walkthrough_id = ?1
+             ORDER BY seq",
+        )?;
+        let rows = stmt.query_map(params![walkthrough.id], row_to_walkthrough_step)?;
+        let mut steps = Vec::new();
+        for row in rows {
+            steps.push(row?);
+        }
+        Ok(Some((walkthrough, steps)))
+    }
+
+    /// Fetch a walkthrough row by id (used right after `begin_walkthrough`
+    /// inserts it, to read back server-side defaults like `created_at`).
+    fn walkthrough_row_by_id(&self, id: &str) -> Result<Walkthrough> {
+        self.conn
+            .query_row(
+                "SELECT id, branch, title, summary, status, error, created_at, updated_at
+                 FROM walkthroughs WHERE id = ?1",
+                params![id],
+                row_to_walkthrough,
+            )
+            .map_err(Into::into)
     }
 
     // -- View state (restore where the user was on restart) -----------------
@@ -1110,6 +1429,64 @@ fn collect_reviews(
         out.push(row?);
     }
     Ok(out)
+}
+
+fn row_to_walkthrough(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthrough> {
+    let status_str: String = row.get(4)?;
+    let status = WalkthroughStatus::from_str(&status_str).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Text,
+            format!("unknown WalkthroughStatus: {status_str}").into(),
+        )
+    })?;
+
+    Ok(Walkthrough {
+        id: row.get(0)?,
+        branch: row.get(1)?,
+        title: row.get(2)?,
+        summary: row.get(3)?,
+        status,
+        error: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+fn row_to_walkthrough_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<WalkthroughStep> {
+    let kind_str: String = row.get(6)?;
+    let kind = WalkthroughStepKind::from_str(&kind_str).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            6,
+            rusqlite::types::Type::Text,
+            format!("unknown WalkthroughStepKind: {kind_str}").into(),
+        )
+    })?;
+
+    Ok(WalkthroughStep {
+        id: row.get(0)?,
+        walkthrough_id: row.get(1)?,
+        seq: row.get(2)?,
+        file_path: row.get(3)?,
+        line_start: row.get(4)?,
+        line_end: row.get(5)?,
+        kind,
+        title: row.get(7)?,
+        body: row.get(8)?,
+    })
+}
+
+fn row_to_pr_review_meta(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrReviewMeta> {
+    Ok(PrReviewMeta {
+        branch: row.get(0)?,
+        pr_number: row.get(1)?,
+        pr_url: row.get(2)?,
+        pr_title: row.get(3)?,
+        base_ref: row.get(4)?,
+        head_ref: row.get(5)?,
+        author: row.get(6)?,
+        created_at: row.get(7)?,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1764,5 +2141,225 @@ mod tests {
         assert_eq!(snap1.commits_made, 0);
         assert_eq!(snap2.reviews_created, 0);
         assert_eq!(snap2.commits_made, 2);
+    }
+
+    #[test]
+    fn migrates_existing_v5_db_to_v6() {
+        // Simulate a pre-v6 database on disk: open a fresh store (which
+        // migrates straight to the latest version), then hand-roll it back
+        // down to what a v5 database looked like, and reopen it the same
+        // way ReviewStore::open would encounter it in the wild.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("conductor.db");
+
+        {
+            let store = ReviewStore::open(&db_path).unwrap();
+            store
+                .add_review(
+                    "feat/x",
+                    "src/main.rs",
+                    1,
+                    None,
+                    CommentKind::Suggest,
+                    "predates the v6 migration",
+                    "abc123",
+                    Author::User,
+                    Some("feat/x"),
+                )
+                .unwrap();
+
+            store
+                .conn
+                .execute_batch(
+                    "
+                    DROP TABLE walkthroughs;
+                    DROP TABLE walkthrough_steps;
+                    DROP TABLE pr_review_meta;
+                    ALTER TABLE reviews DROP COLUMN published_at;
+                    PRAGMA user_version = 5;
+                    ",
+                )
+                .unwrap();
+        }
+
+        let store = ReviewStore::open(&db_path).unwrap();
+        let version: i32 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 6);
+
+        // Pre-existing data survived the migration.
+        let reviews = store.reviews_for_worktree("feat/x").unwrap();
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].body, "predates the v6 migration");
+
+        // The new tables/columns are usable.
+        assert!(store.get_walkthrough("feat/x").unwrap().is_none());
+        assert!(store.get_pr_review_meta("feat/x").unwrap().is_none());
+        assert_eq!(store.unpublished_reviews("feat/x").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn walkthrough_lifecycle() {
+        let store = test_store();
+
+        // No walkthrough yet.
+        assert!(store.get_walkthrough("feat/x").unwrap().is_none());
+
+        let started = store.begin_walkthrough("feat/x").unwrap();
+        assert_eq!(started.branch, "feat/x");
+        assert_eq!(started.status, WalkthroughStatus::Generating);
+
+        let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(walkthrough.id, started.id);
+        assert_eq!(walkthrough.status, WalkthroughStatus::Generating);
+        assert!(steps.is_empty());
+
+        let new_steps = vec![
+            NewWalkthroughStep {
+                file_path: "src/main.rs".to_string(),
+                line_start: Some(10),
+                line_end: Some(20),
+                kind: WalkthroughStepKind::Intent,
+                title: "Why this change exists".to_string(),
+                body: "Fixes a startup crash.".to_string(),
+            },
+            NewWalkthroughStep {
+                file_path: "src/lib.rs".to_string(),
+                line_start: None,
+                line_end: None,
+                kind: WalkthroughStepKind::Core,
+                title: "Core fix".to_string(),
+                body: "Guards against the null case.".to_string(),
+            },
+        ];
+        store
+            .save_walkthrough("feat/x", "Fix startup crash", "A short summary.", &new_steps)
+            .unwrap();
+
+        let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(walkthrough.status, WalkthroughStatus::Ready);
+        assert_eq!(walkthrough.title.as_deref(), Some("Fix startup crash"));
+        assert_eq!(walkthrough.summary.as_deref(), Some("A short summary."));
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].seq, 0);
+        assert_eq!(steps[0].file_path, "src/main.rs");
+        assert_eq!(steps[0].kind, WalkthroughStepKind::Intent);
+        assert_eq!(steps[1].seq, 1);
+        assert_eq!(steps[1].kind, WalkthroughStepKind::Core);
+
+        // Re-generating replaces the row entirely (no history kept).
+        let restarted = store.begin_walkthrough("feat/x").unwrap();
+        assert_ne!(restarted.id, started.id);
+        let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(walkthrough.status, WalkthroughStatus::Generating);
+        assert!(steps.is_empty());
+
+        store.fail_walkthrough("feat/x", "Claude Code exited early").unwrap();
+        let (walkthrough, _) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(walkthrough.status, WalkthroughStatus::Failed);
+        assert_eq!(
+            walkthrough.error.as_deref(),
+            Some("Claude Code exited early")
+        );
+    }
+
+    #[test]
+    fn fail_walkthrough_without_begin_is_an_error() {
+        let store = test_store();
+        assert!(store.fail_walkthrough("feat/x", "boom").is_err());
+    }
+
+    #[test]
+    fn save_walkthrough_without_begin_is_an_error() {
+        let store = test_store();
+        assert!(
+            store
+                .save_walkthrough("feat/x", "title", "summary", &[])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pr_review_meta_upsert_and_get() {
+        let store = test_store();
+
+        assert!(store.get_pr_review_meta("feat/x").unwrap().is_none());
+
+        store
+            .save_pr_review_meta(
+                "feat/x",
+                Some(42),
+                Some("https://github.com/o/r/pull/42"),
+                Some("Add feature"),
+                Some("main"),
+                Some("feat/x"),
+                Some("octocat"),
+            )
+            .unwrap();
+
+        let meta = store.get_pr_review_meta("feat/x").unwrap().unwrap();
+        assert_eq!(meta.pr_number, Some(42));
+        assert_eq!(meta.pr_url.as_deref(), Some("https://github.com/o/r/pull/42"));
+        assert_eq!(meta.author.as_deref(), Some("octocat"));
+
+        // Upsert overwrites rather than duplicating.
+        store
+            .save_pr_review_meta(
+                "feat/x",
+                Some(42),
+                Some("https://github.com/o/r/pull/42"),
+                Some("Add feature (renamed)"),
+                Some("main"),
+                Some("feat/x"),
+                Some("octocat"),
+            )
+            .unwrap();
+        let meta = store.get_pr_review_meta("feat/x").unwrap().unwrap();
+        assert_eq!(meta.pr_title.as_deref(), Some("Add feature (renamed)"));
+    }
+
+    #[test]
+    fn mark_published_hides_reviews_from_unpublished_query() {
+        let store = test_store();
+
+        let r1 = store
+            .add_review(
+                "feat/x",
+                "src/main.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "first",
+                "abc123",
+                Author::User,
+                Some("feat/x"),
+            )
+            .unwrap();
+        let r2 = store
+            .add_review(
+                "feat/x",
+                "src/lib.rs",
+                2,
+                None,
+                CommentKind::Question,
+                "second",
+                "abc123",
+                Author::User,
+                Some("feat/x"),
+            )
+            .unwrap();
+
+        let unpublished = store.unpublished_reviews("feat/x").unwrap();
+        assert_eq!(unpublished.len(), 2);
+
+        store
+            .mark_published(std::slice::from_ref(&r1.id), "2026-07-05T00:00:00Z")
+            .unwrap();
+
+        let unpublished = store.unpublished_reviews("feat/x").unwrap();
+        assert_eq!(unpublished.len(), 1);
+        assert_eq!(unpublished[0].id, r2.id);
     }
 }

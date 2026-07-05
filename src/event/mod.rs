@@ -6,6 +6,7 @@
 //! Terminal-focused panels forward keys to the active PTY session.
 
 mod explorer;
+mod explorer_walkthrough;
 mod global;
 mod mouse;
 mod overlay;
@@ -38,8 +39,12 @@ enum EffectiveOverlay {
     SkipReason,
     /// Update confirmation/progress/failure dialog.
     UpdateState,
+    /// Publish-to-GitHub confirmation dialog.
+    PublishConfirm,
     /// Comment detail popup.
     CommentDetail,
+    /// Walkthrough step detail popup (Explorer walkthrough view's `space`).
+    WalkthroughDetail,
     /// Review text input (add/edit/reply).
     ReviewInput,
     /// Worktree text input (create/confirm/smart).
@@ -66,8 +71,14 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
     if app.update_state != UpdateState::Idle {
         return EffectiveOverlay::UpdateState;
     }
+    if app.publish_confirm.is_some() {
+        return EffectiveOverlay::PublishConfirm;
+    }
     if app.review_state.comment_detail_active {
         return EffectiveOverlay::CommentDetail;
+    }
+    if app.viewer_state.explorer.walkthrough_detail_active {
+        return EffectiveOverlay::WalkthroughDetail;
     }
     if app.review_state.input_mode != ReviewInputMode::Normal {
         return EffectiveOverlay::ReviewInput;
@@ -122,6 +133,7 @@ fn is_text_input_active(app: &App) -> bool {
             | ActiveOverlay::SwitchBranch
             | ActiveOverlay::CommandPalette
             | ActiveOverlay::OpenRepo
+            | ActiveOverlay::PrInput
             | ActiveOverlay::History
             | ActiveOverlay::ResumeSession
     )
@@ -175,8 +187,21 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             handle_update_key(app, key);
             return;
         }
+        EffectiveOverlay::PublishConfirm => {
+            handle_publish_confirm_key(app, key);
+            return;
+        }
         EffectiveOverlay::CommentDetail => {
             handle_comment_detail_key(app, key);
+            return;
+        }
+        EffectiveOverlay::WalkthroughDetail => {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(' ')
+            ) {
+                app.viewer_state.explorer.walkthrough_detail_active = false;
+            }
             return;
         }
         EffectiveOverlay::ReviewInput => {
@@ -197,6 +222,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 ActiveOverlay::ResumeSession => handle_resume_session_key(app, key),
                 ActiveOverlay::RepoSelector => handle_repo_selector_key(app, key),
                 ActiveOverlay::OpenRepo => handle_open_repo_key(app, key),
+                ActiveOverlay::PrInput => handle_pr_input_key(app, key),
                 ActiveOverlay::GrepSearch => handle_grep_search_key(app, key),
                 ActiveOverlay::Help => handle_help_key(app, key),
                 ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
@@ -244,85 +270,12 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── 1b4. Reflow transcript view — consume all keys while active ──────────
-    // Must sit before the PTY-forward path so keys are not forwarded to Claude.
-    if app.reflow.active && app.focus == Focus::TerminalClaude {
-        // Pane resize / zoom / panel-overlay still work while scrolled back —
-        // they don't conflict with reflow's plain-key navigation (j/k/arrows),
-        // so let those chords (Ctrl+Alt+Arrow, etc.) through instead of letting
-        // reflow silently swallow them.
-        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
-            && matches!(
-                action,
-                Action::ResizePaneLeft
-                    | Action::ResizePaneRight
-                    | Action::ResizePaneUp
-                    | Action::ResizePaneDown
-                    | Action::TogglePanelExpand
-                    | Action::TogglePanelOverlay
-            )
-            && dispatch_global_action(app, action)
-        {
-            return;
-        }
-        handle_reflow_key(app, key);
-        return;
-    }
-
-    // ── 1c. PTY focus — intercept configurable keys, forward rest to PTY ─
-    // Covers the Claude/Shell terminals and the embedded editor: each forwards
-    // unstolen keys to its inner program, using its own keymap context.
-
-    if app.focus.is_pty() {
-        let pty_context = app.focus.key_context();
-
-        // If the selected worktree is grabbed, block all terminal input
-        // except navigation keys (focus switching is handled above in §0).
-        // (The editor never opens on a grabbed worktree, so this only guards
-        // the Claude/Shell terminals in practice.)
-        if app.is_selected_worktree_grabbed() {
-            // Allow Esc to leave terminal, but block everything else.
-            if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, pty_context) {
-                app.set_focus(Focus::Explorer);
-            }
-            return;
-        }
-
-        // Resolve via the keymap (panel layer + global fallback, already
-        // filtered to actions that fire in the terminal). Terminal-only actions
-        // need terminal state; everything else reuses the shared global
-        // dispatch. A miss falls through to the PTY below — the keymap is the
-        // single source of truth for what the panel steals from the inner
-        // program (no hand-maintained allowlist).
-        if let Some(action) = app.keymap.resolve(&key, pty_context)
-            && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
-        {
-            return;
-        }
-
-        // Courtesy hint: Ctrl+Q is Conductor's quit chord, but in a terminal it's
-        // forwarded to the inner program (XON / flow-control), so a user pressing
-        // it here gets no quit. Flash how to actually quit, then forward as usual.
-        if key.code == KeyCode::Char('q')
-            && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-        {
-            app.set_status_info(
-                "Ctrl+Q is sent to the terminal here. To quit Conductor: Ctrl+Esc to leave, then Ctrl+Q.".to_string(),
-            );
-        }
-
-        // Forward all remaining keys to the active PTY session.
-        let session_idx = match app.focus {
-            Focus::TerminalClaude => app.terminal.active_claude_session,
-            Focus::TerminalShell => app.terminal.active_shell_session,
-            Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
-            _ => unreachable!(),
-        };
-        if let Some(idx) = session_idx {
-            forward_key_to_pty(app, idx, key);
-        } else if key.code == KeyCode::Enter && app.focus != Focus::Editor {
-            spawn_terminal_session(app);
-        }
+    // ── 1b4/1c. Reflow transcript view and PTY focus ──────────────────────
+    // Must sit before the Focus dispatch below so keys are not forwarded to
+    // Claude. Factored into `dispatch_pty_key` so both the reflow-over-Claude
+    // case and the plain PTY-focus case share one code path.
+    if (app.reflow.active && app.focus == Focus::TerminalClaude) || app.focus.is_pty() {
+        dispatch_pty_key(app, key);
         return;
     }
 
@@ -348,6 +301,89 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Explorer => handle_explorer_key(app, key),
         Focus::Viewer => handle_viewer_key(app, key),
         Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
+    }
+}
+
+/// Dispatch a key event for a PTY-focused panel (Claude/Shell/Editor), or for
+/// the reflow transcript view layered over the Claude terminal. Callers must
+/// only invoke this when `app.focus.is_pty()` or the reflow-over-Claude
+/// condition holds — `handle_key_event`'s panel dispatch guarantees this.
+fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
+    // Reflow transcript view — consume all keys while active. Pane
+    // resize/zoom/panel-overlay still work while scrolled back — they don't
+    // conflict with reflow's plain-key navigation (j/k/arrows), so let those
+    // chords (Ctrl+Alt+Arrow, etc.) through instead of letting reflow
+    // silently swallow them.
+    if app.reflow.active && app.focus == Focus::TerminalClaude {
+        if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
+            && matches!(
+                action,
+                Action::ResizePaneLeft
+                    | Action::ResizePaneRight
+                    | Action::ResizePaneUp
+                    | Action::ResizePaneDown
+                    | Action::TogglePanelExpand
+                    | Action::TogglePanelOverlay
+            )
+            && dispatch_global_action(app, action)
+        {
+            return;
+        }
+        handle_reflow_key(app, key);
+        return;
+    }
+
+    if !app.focus.is_pty() {
+        return;
+    }
+    let pty_context = app.focus.key_context();
+
+    // If the selected worktree is grabbed, block all terminal input
+    // except navigation keys (focus switching is handled above in §0).
+    // (The editor never opens on a grabbed worktree, so this only guards
+    // the Claude/Shell terminals in practice.)
+    if app.is_selected_worktree_grabbed() {
+        // Allow Esc to leave terminal, but block everything else.
+        if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, pty_context) {
+            app.set_focus(Focus::Explorer);
+        }
+        return;
+    }
+
+    // Resolve via the keymap (panel layer + global fallback, already
+    // filtered to actions that fire in the terminal). Terminal-only actions
+    // need terminal state; everything else reuses the shared global
+    // dispatch. A miss falls through to the PTY below — the keymap is the
+    // single source of truth for what the panel steals from the inner
+    // program (no hand-maintained allowlist).
+    if let Some(action) = app.keymap.resolve(&key, pty_context)
+        && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
+    {
+        return;
+    }
+
+    // Courtesy hint: Ctrl+Q is Conductor's quit chord, but in a terminal it's
+    // forwarded to the inner program (XON / flow-control), so a user pressing
+    // it here gets no quit. Flash how to actually quit, then forward as usual.
+    if key.code == KeyCode::Char('q')
+        && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        app.set_status_info(
+            "Ctrl+Q is sent to the terminal here. To quit Conductor: Ctrl+Esc to leave, then Ctrl+Q.".to_string(),
+        );
+    }
+
+    // Forward all remaining keys to the active PTY session.
+    let session_idx = match app.focus {
+        Focus::TerminalClaude => app.terminal.active_claude_session,
+        Focus::TerminalShell => app.terminal.active_shell_session,
+        Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
+        _ => unreachable!(),
+    };
+    if let Some(idx) = session_idx {
+        forward_key_to_pty(app, idx, key);
+    } else if key.code == KeyCode::Enter && app.focus != Focus::Editor {
+        spawn_terminal_session(app);
     }
 }
 
@@ -598,6 +634,10 @@ pub fn handle_paste_event(app: &mut App, data: String) {
                 ActiveOverlay::OpenRepo => {
                     app.overlays.open_repo.buffer.insert_str(&single_line);
                 }
+                ActiveOverlay::PrInput => {
+                    app.overlays.pr_input.buffer.insert_str(&single_line);
+                    app.overlays.pr_input.error = None;
+                }
                 ActiveOverlay::History => {
                     app.overlays.history.search_query.insert_str(&single_line);
                 }
@@ -661,6 +701,20 @@ fn handle_update_key(app: &mut App, key: KeyEvent) {
             app.update_state = UpdateState::Idle;
         }
         UpdateState::Restarting | UpdateState::Idle => {}
+    }
+}
+
+// ── Publish-to-GitHub overlay ───────────────────────────────────────────
+
+fn handle_publish_confirm_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            app.confirm_publish_review();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.cancel_publish_review();
+        }
+        _ => {}
     }
 }
 
@@ -749,6 +803,21 @@ fn adjust_diff_list_scroll(app: &mut App) {
         app.viewer_state.explorer.diff_list_scroll = selected;
     } else if selected >= app.viewer_state.explorer.diff_list_scroll + page_size {
         app.viewer_state.explorer.diff_list_scroll = selected.saturating_sub(page_size - 1);
+    }
+}
+
+/// Adjust `walkthrough_scroll` so that `walkthrough_selected` stays visible.
+/// Shares `explorer_diff_list_height` with the diff list since both views
+/// occupy the same Explorer bottom-pane rect (mutually exclusive, so the
+/// height is always current for whichever one is showing).
+fn adjust_walkthrough_scroll(app: &mut App) {
+    let selected = app.viewer_state.explorer.walkthrough_selected;
+    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
+
+    if selected < app.viewer_state.explorer.walkthrough_scroll {
+        app.viewer_state.explorer.walkthrough_scroll = selected;
+    } else if selected >= app.viewer_state.explorer.walkthrough_scroll + page_size {
+        app.viewer_state.explorer.walkthrough_scroll = selected.saturating_sub(page_size - 1);
     }
 }
 

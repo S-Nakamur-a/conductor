@@ -624,6 +624,10 @@ struct DiffLineRenderCtx<'a> {
     area_width: u16,
     comment_lines: &'a std::collections::HashSet<usize>,
     comment_end_lines: &'a std::collections::HashSet<usize>,
+    /// Inclusive new-side line range of the walkthrough step currently
+    /// selected in review mode, when it points at the file being rendered.
+    /// `None` outside review mode, with no walkthrough, or for other files.
+    walkthrough_highlight: Option<(usize, usize)>,
     /// Party-mode rainbow phase (`None` when party mode is off).
     party: Option<f64>,
 }
@@ -669,6 +673,10 @@ fn render_diff_content_line(
             };
             n >= lo && n <= hi
         };
+    let is_in_walkthrough_highlight = new_line_no.is_some_and(|n| {
+        ctx.walkthrough_highlight
+            .is_some_and(|(lo, hi)| n >= lo && n <= hi)
+    });
 
     // Gutter marker.
     let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
@@ -846,6 +854,18 @@ fn render_diff_content_line(
     let content_max_w = (ctx.area_width as usize).saturating_sub(gutter_width + 8);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
+    // Underline the current walkthrough step's line range — a highlight that
+    // doesn't fight the existing selection/diff background colors, since it
+    // only lasts while this step stays current.
+    let content_spans: Vec<Span> = if is_in_walkthrough_highlight {
+        content_spans
+            .into_iter()
+            .map(|s| Span::styled(s.content, s.style.add_modifier(Modifier::UNDERLINED)))
+            .collect()
+    } else {
+        content_spans
+    };
+
     let mut spans = vec![gutter_span, badge];
     spans.extend(content_spans);
 
@@ -973,6 +993,19 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'
         let inline_reply_line = vs.explorer.inline_reply_line;
         let compose_anchor_end = new_comment_anchor_end(app);
 
+        // The selected walkthrough step's line range, if it's anchored to
+        // the file currently open in this pane.
+        let walkthrough_highlight = (|| {
+            let (_, steps) = app.current_walkthrough.as_ref()?;
+            let step = steps.get(vs.explorer.walkthrough_selected)?;
+            if vs.content.current_file.as_deref() != Some(step.file_path.as_str()) {
+                return None;
+            }
+            let start = step.line_start?;
+            let end = step.line_end.unwrap_or(start);
+            Some((start as usize, end as usize))
+        })();
+
         let line_ctx = DiffLineRenderCtx {
             vs,
             theme,
@@ -981,6 +1014,7 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'
             area_width: area.width,
             comment_lines: &comment_lines,
             comment_end_lines: &comment_end_lines,
+            walkthrough_highlight,
             party,
         };
 
@@ -1112,6 +1146,17 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'
                 .bg(theme.gutter_selected_bg),
         ));
         frame.render_widget(hint_widget, hint_area);
+    }
+
+    // Show search input overlay (skip cursor positioning when a global overlay covers us).
+    if vs.search.search_active {
+        render_search_box(
+            frame,
+            area,
+            &vs.search.search_query,
+            theme,
+            app.is_any_overlay_active(),
+        );
     }
 }
 

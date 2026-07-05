@@ -39,10 +39,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.viewer_state.explorer.explorer_diff_list_height = diff_inner_height.max(1);
 
     render_file_tree(frame, chunks[0], app, focused);
-    if app.viewer_state.explorer.explorer_show_comments {
-        render_comment_list(frame, chunks[1], app, focused);
-    } else {
-        render_diff_list(frame, chunks[1], app, focused);
+    match app.viewer_state.explorer.explorer_bottom_view {
+        crate::viewer::ExplorerBottomView::Comments => {
+            render_comment_list(frame, chunks[1], app, focused);
+        }
+        crate::viewer::ExplorerBottomView::Walkthrough => {
+            super::walkthrough_pane::render(frame, chunks[1], app, focused);
+        }
+        crate::viewer::ExplorerBottomView::DiffList => {
+            render_diff_list(frame, chunks[1], app, focused);
+        }
     }
 
     // Show search input overlay (skip cursor positioning when a global overlay covers us).
@@ -111,11 +117,23 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused:
         .position(|&i| i == tree_selected)
         .unwrap_or(0);
 
-    let title = if visible.len() > inner_height {
+    let mut title = if visible.len() > inner_height {
         format!(" Explorer ({}/{}) ", selected_vis_idx + 1, visible.len())
     } else {
         " Explorer ".to_string()
     };
+    // Walkthrough-ready signal, mirroring the comment badge's "there's
+    // something here you haven't opened" pattern — hidden once the
+    // walkthrough view is already showing since the badge would be redundant.
+    let walkthrough_ready = matches!(
+        app.current_walkthrough.as_ref().map(|(w, _)| w.status),
+        Some(crate::walkthrough::WalkthroughStatus::Ready)
+    );
+    if walkthrough_ready
+        && app.viewer_state.explorer.explorer_bottom_view != crate::viewer::ExplorerBottomView::Walkthrough
+    {
+        title.push_str("\u{1f9ed} ");
+    }
 
     let is_expanded = app.expanded_panel == Some(Focus::Explorer);
     let theme = &app.theme;
@@ -338,6 +356,12 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
                 if let Some(badge) = comment_badge(app, &file_diff.path, theme) {
                     spans.push(badge);
                 }
+                if vs_explorer.viewed.contains(&file_diff.path) {
+                    spans.push(Span::styled(
+                        "  \u{2713}",
+                        Style::default().fg(theme.success),
+                    ));
+                }
                 ListItem::new(Line::from(spans))
             }
             DiffListEntry::Summary {} => {
@@ -370,7 +394,11 @@ fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: boo
 /// Build a GitHub-style comment-count badge (e.g. ` 💬3`) for a file path, or
 /// `None` when the file has no review comments. Unresolved comments colour the
 /// badge with the accent; an all-resolved file uses muted.
-fn comment_badge<'a>(app: &App, file_path: &str, theme: &crate::theme::Theme) -> Option<Span<'a>> {
+pub(crate) fn comment_badge<'a>(
+    app: &App,
+    file_path: &str,
+    theme: &crate::theme::Theme,
+) -> Option<Span<'a>> {
     use crate::review_store::CommentStatus;
     let mut total = 0usize;
     let mut unresolved = 0usize;

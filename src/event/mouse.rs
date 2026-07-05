@@ -614,7 +614,10 @@ fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickG
 
         // Check for click on bottom border "✨ Ask Claude All" button.
         let bottom_border_y = main_area.y + main_area.height.saturating_sub(1);
-        if row == bottom_border_y && app.viewer_state.explorer.explorer_show_comments {
+        if row == bottom_border_y
+            && app.viewer_state.explorer.explorer_bottom_view
+                == crate::viewer::ExplorerBottomView::Comments
+        {
             // " ✨ Ask Claude All " is right-aligned, ~19 chars from right edge.
             let ask_label_w = 19_u16;
             let ask_start_col = explorer_end.saturating_sub(ask_label_w + 1);
@@ -628,7 +631,9 @@ fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickG
         if row >= inner_y {
             let click_offset = (row - inner_y) as usize;
 
-            if app.viewer_state.explorer.explorer_show_comments {
+            if app.viewer_state.explorer.explorer_bottom_view
+                == crate::viewer::ExplorerBottomView::Comments
+            {
                 // Comment list is displayed — handle comment selection.
                 let idx = app.viewer_state.explorer.comment_list_scroll + click_offset;
                 let row_count = app.review_state.comment_list_rows.len();
@@ -650,7 +655,9 @@ fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickG
                         navigate_to_comment_with_focus(app, comment_idx, is_double);
                     }
                 }
-            } else {
+            } else if app.viewer_state.explorer.explorer_bottom_view
+                == crate::viewer::ExplorerBottomView::DiffList
+            {
                 // Diff list is displayed — handle diff selection.
                 let idx = app.viewer_state.explorer.diff_list_scroll + click_offset;
                 if idx < app.diff_state.display_list.len() {

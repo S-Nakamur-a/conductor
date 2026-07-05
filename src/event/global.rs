@@ -114,6 +114,13 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             }
             true
         }
+        Action::ReviewPullRequest => {
+            app.overlays.active = ActiveOverlay::PrInput;
+            app.overlays.pr_input.buffer.clear();
+            app.overlays.pr_input.loading = false;
+            app.overlays.pr_input.error = None;
+            true
+        }
         Action::UpdateAndRestart => {
             if app.update_info.is_some() {
                 app.start_update_confirm();
@@ -165,6 +172,14 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         }
         Action::OpenThemePicker => {
             app.cmd_open_theme_picker();
+            true
+        }
+        Action::GenerateWalkthrough => {
+            app.cmd_generate_walkthrough();
+            true
+        }
+        Action::PublishReview => {
+            app.cmd_publish_review();
             true
         }
         _ => false, // Not a global action — let panel-specific handler try.

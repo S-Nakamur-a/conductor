@@ -523,6 +523,45 @@ pub(super) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+// ── Overlay: PR intake (Review Pull Request) ────────────────────────────
+
+pub(super) fn handle_pr_input_key(app: &mut App, key: KeyEvent) {
+    // While a gh/git intake is running, only Esc is honored — the input
+    // itself is frozen so a stray keystroke can't race the background thread.
+    if app.overlays.pr_input.loading {
+        if key.code == KeyCode::Esc {
+            app.overlays.active = ActiveOverlay::None;
+        }
+        return;
+    }
+    match key.code {
+        KeyCode::Esc => {
+            app.overlays.active = ActiveOverlay::None;
+            app.overlays.pr_input.buffer.clear();
+            app.overlays.pr_input.error = None;
+        }
+        KeyCode::Enter => {
+            let input = app.overlays.pr_input.buffer.text().to_string();
+            if !input.trim().is_empty() {
+                app.overlays.pr_input.error = None;
+                app.start_pr_intake(&input);
+            }
+        }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
+            app.overlays.pr_input.buffer.delete_to_line_start();
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            clipboard_paste(app, |a| &mut a.overlays.pr_input.buffer, false);
+        }
+        _ => {
+            // Any edit after a failed attempt clears the stale error so it
+            // doesn't linger next to input the user has already changed.
+            app.overlays.pr_input.error = None;
+            app.overlays.pr_input.buffer.handle_key(key);
+        }
+    }
+}
+
 // ── Overlay: comment detail ─────────────────────────────────────────────
 
 pub(super) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {

@@ -18,6 +18,7 @@ Terminal-based Git workspace and code review TUI written in Rust. Manages multip
 | Dependency | Purpose | How to enable |
 |---|---|---|
 | **ccusage** (via npx) | Token usage / cost display in title bar | Set `ccusage.enabled = true` in config |
+| **GitHub CLI** (`gh`) | Pulling in a PR for review, and publishing review comments to GitHub | [Install](https://cli.github.com/) and run `gh auth login` |
 
 ## Installation
 
@@ -103,6 +104,38 @@ view.
 ### Command Palette
 
 **Ctrl+p** (any panel, including terminals) or **:** (non-terminal panels) opens the command palette. All available commands are listed and fuzzy-searchable — worktree operations, terminal management, diff toggles, review comments, etc.
+
+## Reviewing a Pull Request
+
+PR review is built into the normal Explorer/Viewer/Terminal accordion — there's
+no separate full-screen mode to enter or exit, so all the usual navigation and
+terminal keybindings keep working while you review:
+
+1. **Pull Request → local worktree** — palette: *Review: Review Pull Request…*,
+   enter a PR number or URL. Conductor fetches it (via `gh`) into a worktree and
+   focuses the Explorer's changed-files list.
+2. **Changed files, comments, and walkthrough** — the Explorer's bottom pane
+   cycles between three views: the changed-files diff list, the review comment
+   list, and (once generated) the AI walkthrough — palette: *Review: Show
+   Walkthrough* to switch to it directly.
+3. **Jump into the code** — the diff pane supports the Viewer's `gd`/`gi`/`gr`
+   symbol-jump hints (go to definition / implementation / references). **Symbol
+   jumps only work for Rust, Go, and TypeScript** — other languages show no
+   hints.
+4. **AI walkthrough** — palette: *Review: Generate Walkthrough* asks Claude
+   Code to produce an ordered tour of the change (intent → core change →
+   ripple effects → tests). In the walkthrough view, `j`/`k` move the
+   selection, `n`/`N` jump to the next/previous step's location in the diff,
+   `Enter` jumps to the selected step, and `space` opens the full step text in
+   an overlay. A viewed step, or a changed file you've marked with `v`, is
+   greyed out with a ✓ once you've looked at it.
+5. **Publish comments** — palette: *Review: Publish Comments to GitHub* posts
+   your inline review comments (and replies) back to the PR via `gh`.
+
+Requires the `gh` CLI (see Prerequisites) to be installed and authenticated.
+
+> **Breaking change:** diff mode's "jump to top" moved from `g` to `gg` (vim-style),
+> since `g` is now a prefix for symbol-jump hints (`gd`/`gi`/`gr`/`gg`).
 
 ## MCP Server
 

@@ -52,6 +52,9 @@ pub enum CommandId {
     ShowReviewComments,
     ShowReviewTemplates,
     SessionHistory,
+    ReviewPullRequest,
+    GenerateWalkthrough,
+    PublishReview,
 
     // Repository
     OpenRepo,
@@ -63,6 +66,7 @@ pub enum CommandId {
     // Explorer
     ShowDiffList,
     ShowCommentList,
+    ShowWalkthrough,
 
     // Viewer / Review
     AddReviewComment,
@@ -382,6 +386,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::ShowCommentList),
         keywords: "comment review list",
     },
+    PaletteCommand {
+        id: CommandId::ShowWalkthrough,
+        label: "Review: Show Walkthrough",
+        category: CommandCategory::View,
+        action: Some(Action::ShowWalkthrough),
+        keywords: "walkthrough steps ai tour",
+    },
     // Review
     PaletteCommand {
         id: CommandId::ShowReviewComments,
@@ -403,6 +414,27 @@ pub const COMMANDS: &[PaletteCommand] = &[
         category: CommandCategory::Review,
         action: Some(Action::SessionHistory),
         keywords: "history log",
+    },
+    PaletteCommand {
+        id: CommandId::ReviewPullRequest,
+        label: "Review: Review Pull Request…",
+        category: CommandCategory::Review,
+        action: Some(Action::ReviewPullRequest),
+        keywords: "pr pull request github fetch worktree walkthrough number url",
+    },
+    PaletteCommand {
+        id: CommandId::GenerateWalkthrough,
+        label: "Review: Generate Walkthrough",
+        category: CommandCategory::Review,
+        action: Some(Action::GenerateWalkthrough),
+        keywords: "walkthrough tour generate ai claude steps regenerate retry",
+    },
+    PaletteCommand {
+        id: CommandId::PublishReview,
+        label: "Review: Publish Comments to GitHub",
+        category: CommandCategory::Review,
+        action: Some(Action::PublishReview),
+        keywords: "publish post github pr comments review upload",
     },
     PaletteCommand {
         id: CommandId::AddReviewComment,
@@ -666,6 +698,24 @@ mod tests {
             Action::PullWorktree,
             Action::CherryPick,
             Action::OpenPullRequest,
+        ];
+        for action in must_have {
+            assert!(
+                COMMANDS.iter().any(|c| c.action == Some(action)),
+                "missing palette command for {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn comprehensive_review_commands_present() {
+        // Guards the PR-intake and AI-walkthrough entry points — each needs a
+        // palette command so a user without a keybinding memorized can still
+        // reach them.
+        let must_have = [
+            Action::ReviewPullRequest,
+            Action::GenerateWalkthrough,
+            Action::PublishReview,
         ];
         for action in must_have {
             assert!(

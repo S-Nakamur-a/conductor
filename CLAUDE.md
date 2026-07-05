@@ -59,7 +59,7 @@ Status bar
 
 | Module | Role |
 |--------|------|
-| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`) |
+| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `walkthrough_view.rs`) |
 | `event/` | Keyboard/mouse event dispatch based on Focus and overlay state (per-context submodules) |
 | `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
 | `diff_state.rs` | Diff data model (file diffs, hunks, lines) using `similar` crate |
@@ -70,6 +70,10 @@ Status bar
 | `config.rs` | Config loading from `~/.config/conductor/config.toml` |
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
 | `term_caps.rs` | Rich-mode terminal capability detection (truecolor / graphics protocol tiers) |
+| `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
+| `walkthrough.rs` | AI walkthrough data model and generation trigger — spawns a headless `claude -p` session that saves its result via the MCP server |
+| `app/walkthrough_view.rs` | Explorer walkthrough-view methods for `App` — step selection, jumping to a step's diff location, and the "viewed" file/step toggle |
+| `app/review_publish.rs` | Publishes review comments to GitHub via `gh`, tracking which comments are already posted |
 
 ### UI Modules (`src/ui/`)
 

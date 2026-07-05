@@ -17,6 +17,7 @@ pub mod tab_bar;
 pub mod terminal_claude;
 pub mod terminal_shell;
 pub mod viewer_panel;
+pub mod walkthrough_pane;
 pub mod worktree_bar;
 pub mod worktree_panel;
 

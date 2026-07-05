@@ -226,6 +226,13 @@ pub struct ReviewConfig {
     pub prompt_template: String,
     /// What to do with the rendered prompt.
     pub prompt_action: PromptAction,
+    /// Model for the headless walkthrough-generation session, passed to
+    /// `claude --model` (alias like "opus"/"sonnet" or a full model id).
+    /// `None` uses the Claude CLI's session default.
+    pub walkthrough_model: Option<String>,
+    /// Natural language the walkthrough should be written in (e.g. "日本語",
+    /// "English"). `None` leaves the choice to the model.
+    pub walkthrough_language: Option<String>,
 }
 
 impl Default for ReviewConfig {
@@ -233,6 +240,8 @@ impl Default for ReviewConfig {
         Self {
             prompt_template: default_prompt_template(),
             prompt_action: PromptAction::Clipboard,
+            walkthrough_model: None,
+            walkthrough_language: None,
         }
     }
 }
@@ -606,6 +615,10 @@ pub fn generate_default_config() -> String {
 # prompt_template = "以下のレビューコメントに対応してください。\n\n{comments}"
 #                                       # template for review prompts ({comments} is replaced)
 # prompt_action = "clipboard"           # clipboard | send_to_session
+# walkthrough_model = "opus"            # model for AI walkthrough generation
+#                                       # (claude --model alias or full id; unset = CLI default)
+# walkthrough_language = "日本語"        # language the walkthrough is written in
+#                                       # (unset = model's choice)
 
 [keybinds]
 # Key-bind overrides, in key→action form. Each entry maps a key chord to an
