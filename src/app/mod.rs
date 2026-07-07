@@ -149,6 +149,23 @@ pub enum ResizeDir {
     Down,
 }
 
+/// A panel boundary that can be grabbed and dragged with the mouse to resize.
+///
+/// Each variant maps onto the same clamped state mutator the keyboard
+/// (Ctrl+Alt+Arrow) resize drives, so mouse and keyboard share one source of
+/// truth for the layout ratios ([`App::drag_divider_to`] resolves the mapping).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Divider {
+    /// Vertical boundary between the Explorer and Viewer columns.
+    ExplorerViewer,
+    /// Vertical boundary between the Viewer and Terminal columns.
+    ViewerTerminal,
+    /// Horizontal boundary between the Explorer's file tree and changed-files list.
+    ExplorerSplit,
+    /// Horizontal boundary between the Claude and Shell terminal panes.
+    TerminalSplit,
+}
+
 /// Input mode for worktree operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeInputMode {
@@ -473,6 +490,17 @@ pub struct App {
     /// tmux-style pane resize (Ctrl+Alt+Up/Down with a terminal focused), and
     /// persisted back to the config file so the ratio survives a restart.
     pub terminal_split_pct: u16,
+
+    /// The panel divider currently being dragged with the mouse, if any. Set on
+    /// mouse-down over a boundary, moved on each drag event, and cleared (with a
+    /// single config persist) on mouse-up. While `Some`, drag events resize
+    /// instead of doing their normal per-panel work.
+    pub divider_drag: Option<Divider>,
+    /// The panel divider the mouse is hovering, if any. Drives the resize
+    /// affordance — the hovered boundary is highlighted, standing in for a
+    /// `col-resize`/`row-resize` cursor (a terminal can't switch the OS cursor
+    /// shape). A live drag takes precedence over hover when rendering.
+    pub divider_hover: Option<Divider>,
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
@@ -1003,6 +1031,8 @@ impl App {
             markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             expanded_panel: None,
             terminal_split_pct: config_terminal_split_pct,
+            divider_drag: None,
+            divider_hover: None,
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
@@ -2325,28 +2355,28 @@ impl App {
     /// becomes the cramped pane that can only shrink.
     pub fn resize_focused_pane(&mut self, dir: ResizeDir) {
         let step = Self::RESIZE_STEP_PCT as i16;
-        match dir {
+        let changed = match dir {
             ResizeDir::Left | ResizeDir::Right => {
                 let grow_right = matches!(dir, ResizeDir::Right);
                 match self.focus {
                     // The worktree strip is full-width, not one of the three
                     // resizable columns — nothing to resize from there.
-                    Focus::Worktree => {}
+                    Focus::Worktree => false,
                     // Leftmost column: left/right ride the Explorer|Viewer divider.
                     Focus::Explorer => {
-                        self.move_explorer_viewer_divider(if grow_right { step } else { -step });
+                        self.move_explorer_viewer_divider(if grow_right { step } else { -step })
                     }
                     // Middle column pushes whichever border faces `dir`.
                     Focus::Viewer => {
                         if grow_right {
-                            self.move_viewer_terminal_divider(step);
+                            self.move_viewer_terminal_divider(step)
                         } else {
-                            self.move_explorer_viewer_divider(-step);
+                            self.move_explorer_viewer_divider(-step)
                         }
                     }
                     // Rightmost column: left grows it (shrinks Viewer), right shrinks it.
                     Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => {
-                        self.move_viewer_terminal_divider(if grow_right { step } else { -step });
+                        self.move_viewer_terminal_divider(if grow_right { step } else { -step })
                     }
                 }
             }
@@ -2358,14 +2388,77 @@ impl App {
                 match self.focus {
                     Focus::TerminalClaude | Focus::TerminalShell => {
                         let step = Self::TERMINAL_SPLIT_STEP as i16;
-                        self.adjust_terminal_split(if down { step } else { -step });
+                        self.adjust_terminal_split(if down { step } else { -step })
                     }
                     Focus::Explorer => {
                         let step = Self::TERMINAL_SPLIT_STEP as i16;
-                        self.adjust_explorer_split(if down { step } else { -step });
+                        self.adjust_explorer_split(if down { step } else { -step })
                     }
-                    _ => {}
+                    _ => false,
                 }
+            }
+        };
+        // Persist once per keypress (only when a ratio actually moved — a resize
+        // that hit the clamp floor writes nothing). The mouse-drag path persists
+        // once on release instead, so both share the same clamped mutators
+        // without writing the config on every intermediate step.
+        if changed {
+            self.persist_layout();
+        }
+    }
+
+    /// Drag `divider` so its boundary tracks the mouse at screen cell
+    /// (`col`, `row`), reusing the same clamped mutators as the keyboard resize.
+    /// Returns whether a ratio actually moved. Does **not** persist — the caller
+    /// writes the config once when the drag ends, avoiding a disk write per
+    /// mouse event.
+    pub fn drag_divider_to(&mut self, divider: Divider, col: u16, row: u16) -> bool {
+        // Snapshot the (Copy) geometry before taking `&mut self` for the mutator.
+        let main = self.layout_cache.main_area;
+        let explorer_col = self.layout_cache.columns[1];
+        let terminal_col = self.layout_cache.columns[3];
+        match divider {
+            // Vertical dividers: percentages are relative to the main area width.
+            Divider::ExplorerViewer => {
+                if main.width == 0 {
+                    return false;
+                }
+                let target_px = col.saturating_sub(main.x);
+                let target_pct = (target_px as u32 * 100 / main.width as u32) as i16;
+                let delta = target_pct - self.config.layout.explorer_width_pct as i16;
+                self.move_explorer_viewer_divider(delta)
+            }
+            Divider::ViewerTerminal => {
+                if main.width == 0 {
+                    return false;
+                }
+                // The divider sits at the right edge of (Explorer + Viewer); with
+                // Explorer fixed, the target Viewer % is that combined width minus
+                // Explorer.
+                let combined_px = col.saturating_sub(main.x);
+                let combined_pct = (combined_px as u32 * 100 / main.width as u32) as i16;
+                let target_v = combined_pct - self.config.layout.explorer_width_pct as i16;
+                let delta = target_v - self.config.layout.viewer_width_pct as i16;
+                self.move_viewer_terminal_divider(delta)
+            }
+            // Horizontal dividers: percentages are relative to their column height.
+            Divider::ExplorerSplit => {
+                if explorer_col.height == 0 {
+                    return false;
+                }
+                let target_px = row.saturating_sub(explorer_col.y);
+                let target_pct = (target_px as u32 * 100 / explorer_col.height as u32) as i16;
+                let delta = target_pct - self.config.layout.explorer_split_pct as i16;
+                self.adjust_explorer_split(delta)
+            }
+            Divider::TerminalSplit => {
+                if terminal_col.height == 0 {
+                    return false;
+                }
+                let target_px = row.saturating_sub(terminal_col.y);
+                let target_pct = (target_px as u32 * 100 / terminal_col.height as u32) as i16;
+                let delta = target_pct - self.terminal_split_pct as i16;
+                self.adjust_terminal_split(delta)
             }
         }
     }
@@ -2373,7 +2466,8 @@ impl App {
     /// Move the Explorer|Viewer divider by `delta` points (positive = rightward,
     /// enlarging Explorer and shrinking Viewer). Terminal width is conserved.
     /// Clamped so neither Explorer nor Viewer drops below [`Self::MIN_COL_PCT`].
-    fn move_explorer_viewer_divider(&mut self, delta: i16) {
+    /// Returns whether the ratio changed; the caller persists.
+    fn move_explorer_viewer_divider(&mut self, delta: i16) -> bool {
         let (new_e, new_v) = clamp_ev_divider(
             self.config.layout.explorer_width_pct,
             self.config.layout.viewer_width_pct,
@@ -2381,17 +2475,19 @@ impl App {
             Self::MIN_COL_PCT,
         );
         if new_e == self.config.layout.explorer_width_pct {
-            return;
+            return false;
         }
         self.config.layout.explorer_width_pct = new_e;
         self.config.layout.viewer_width_pct = new_v;
         self.after_horizontal_resize();
+        true
     }
 
     /// Move the Viewer|Terminal divider by `delta` points (positive = rightward,
     /// enlarging Viewer and shrinking Terminal). Explorer width is unchanged.
     /// Clamped so neither Viewer nor Terminal drops below [`Self::MIN_COL_PCT`].
-    fn move_viewer_terminal_divider(&mut self, delta: i16) {
+    /// Returns whether the ratio changed; the caller persists.
+    fn move_viewer_terminal_divider(&mut self, delta: i16) -> bool {
         let new_v = clamp_vt_divider(
             self.config.layout.explorer_width_pct,
             self.config.layout.viewer_width_pct,
@@ -2399,56 +2495,59 @@ impl App {
             Self::MIN_COL_PCT,
         );
         if new_v == self.config.layout.viewer_width_pct {
-            return;
+            return false;
         }
         self.config.layout.viewer_width_pct = new_v;
         self.after_horizontal_resize();
+        true
     }
 
-    /// Shared tail for a column resize: redraw, flash the new split, and persist
-    /// the ratios so they survive a restart.
+    /// Shared tail for a column resize: redraw and flash the new split. Persist
+    /// is left to the caller (keyboard: per keypress; mouse: on drag release).
     fn after_horizontal_resize(&mut self) {
         self.dirty.mark_all();
         let e = self.config.layout.explorer_width_pct;
         let v = self.config.layout.viewer_width_pct;
         let t = 100u16.saturating_sub(e.saturating_add(v));
         self.set_status_info(format!("Layout: Explorer {e}% / Viewer {v}% / Terminal {t}%"));
-        self.persist_layout();
     }
 
     /// Adjust the runtime Claude-area height percentage by `delta` points,
     /// clamped so both the Claude and Shell panes keep a usable minimum. A
     /// positive `delta` enlarges the Claude pane (shrinks the Shell); negative
-    /// enlarges the Shell. Flashes the resulting split and persists the ratio.
-    fn adjust_terminal_split(&mut self, delta: i16) {
+    /// enlarges the Shell. Flashes the resulting split. Returns whether the ratio
+    /// changed; the caller persists.
+    fn adjust_terminal_split(&mut self, delta: i16) -> bool {
         let next = (self.terminal_split_pct as i16 + delta)
             .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
             as u16;
         if next == self.terminal_split_pct {
-            return;
+            return false;
         }
         self.terminal_split_pct = next;
         // Keep the in-memory config in sync so the appearance snapshot matches
-        // what we write below — that makes the config watcher's reload a no-op
-        // (it only reacts when the snapshot differs), avoiding a self-write loop.
+        // what we write on persist — that makes the config watcher's reload a
+        // no-op (it only reacts when the snapshot differs), avoiding a self-write
+        // loop.
         self.config.layout.terminal_split_pct = next;
         self.dirty.mark_all();
         self.set_status_info(format!(
             "Terminal split: Claude {next}% / Shell {}%",
             100 - next
         ));
-        self.persist_layout();
+        true
     }
 
     /// Adjust the Explorer column's file-tree height percentage by `delta`
     /// points (positive grows the file tree, shrinking the changed-files list),
-    /// clamped so both panels keep a usable minimum. Flashes and persists.
-    fn adjust_explorer_split(&mut self, delta: i16) {
+    /// clamped so both panels keep a usable minimum. Flashes. Returns whether the
+    /// ratio changed; the caller persists.
+    fn adjust_explorer_split(&mut self, delta: i16) -> bool {
         let next = (self.config.layout.explorer_split_pct as i16 + delta)
             .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
             as u16;
         if next == self.config.layout.explorer_split_pct {
-            return;
+            return false;
         }
         self.config.layout.explorer_split_pct = next;
         self.dirty.mark_all();
@@ -2456,12 +2555,12 @@ impl App {
             "Explorer split: tree {next}% / changed files {}%",
             100 - next
         ));
-        self.persist_layout();
+        true
     }
 
     /// Persist the current panel proportions to `config.toml`. Best-effort: a
     /// write failure is logged, never fatal (the in-memory layout still applies).
-    fn persist_layout(&self) {
+    pub(crate) fn persist_layout(&self) {
         if let Err(e) = crate::config::persist_layout_proportions(
             self.config.layout.explorer_width_pct,
             self.config.layout.viewer_width_pct,

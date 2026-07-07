@@ -251,6 +251,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::terminal_claude::render(frame, terminal_split[0], app);
     super::terminal_shell::render(frame, terminal_split[1], app);
 
+    // ── Resize affordance: light up a hovered/dragged divider ────────
+    highlight_active_divider(frame, app);
+
     // ── Panel number overlay (Alt+/ toggle) ──────────────────────────
     // Only show when no other overlay/modal is active.
     if app.show_panel_overlay()
@@ -296,6 +299,66 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // title bar, and confetti land on top of everything (including overlays).
     if app.party_mode {
         super::party::apply_party_effects(frame, app);
+    }
+}
+
+/// Paint the divider currently hovered or being dragged in the theme accent
+/// colour — the terminal stand-in for the `col-resize`/`row-resize` cursor a GUI
+/// would show, since crossterm can't switch the OS cursor shape. A live drag
+/// wins over hover and keeps the boundary lit even if the cursor slips a cell
+/// off it mid-drag. Only border glyphs are recoloured, so panel content is never
+/// touched. Runs before the rich/party post-processing, which only recolours
+/// cells matching the focused-border colour and so leaves the accent line alone.
+fn highlight_active_divider(frame: &mut Frame, app: &App) {
+    use crate::app::Divider;
+
+    let Some(divider) = app.divider_drag.or(app.divider_hover) else {
+        return;
+    };
+    let lc = &app.layout_cache;
+    let color = app.theme.accent;
+
+    // Resolve the divider to (is_vertical, fixed coordinate, span area). The
+    // fixed coordinate is the top/left panel's border cell (`edge - 1`), which
+    // is the visible divider line.
+    let (vertical, fixed, area) = match divider {
+        Divider::ExplorerViewer => {
+            let edge = lc.columns[1].x.saturating_add(lc.columns[1].width);
+            (true, edge.saturating_sub(1), lc.main_area)
+        }
+        Divider::ViewerTerminal => {
+            let edge = lc.columns[2].x.saturating_add(lc.columns[2].width);
+            (true, edge.saturating_sub(1), lc.main_area)
+        }
+        Divider::ExplorerSplit => (false, lc.explorer_mid_y.saturating_sub(1), lc.columns[1]),
+        Divider::TerminalSplit => {
+            (false, lc.terminal_split[1].y.saturating_sub(1), lc.columns[3])
+        }
+    };
+
+    let buf = frame.buffer_mut();
+    if vertical {
+        if fixed < area.x || fixed >= area.x.saturating_add(area.width) {
+            return;
+        }
+        for y in area.y..area.y.saturating_add(area.height) {
+            if let Some(cell) = buf.cell_mut((fixed, y))
+                && super::party::is_border_glyph(cell.symbol())
+            {
+                cell.set_fg(color);
+            }
+        }
+    } else {
+        if fixed < area.y || fixed >= area.y.saturating_add(area.height) {
+            return;
+        }
+        for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell_mut((x, fixed))
+                && super::party::is_border_glyph(cell.symbol())
+            {
+                cell.set_fg(color);
+            }
+        }
     }
 }
 

@@ -148,6 +148,21 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.symbol_action_overlay.active
 }
 
+/// Whether `divider` can currently be grabbed for a mouse resize. Never while a
+/// panel is maximized (the columns collapse to the edges, so the boundaries are
+/// meaningless), and not the Explorer-side boundaries while the editor has
+/// merged the Explorer+Viewer columns into a single PTY.
+fn divider_draggable(app: &App, divider: crate::app::Divider) -> bool {
+    use crate::app::Divider;
+    if app.expanded_panel.is_some() {
+        return false;
+    }
+    if app.editor.is_some() && matches!(divider, Divider::ExplorerViewer | Divider::ExplorerSplit) {
+        return false;
+    }
+    true
+}
+
 /// Which of the four main columns a screen column falls into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Column {
@@ -186,6 +201,44 @@ impl ClickGeometry {
         } else {
             Column::Terminal
         }
+    }
+
+    /// Hit-test a draggable panel divider at screen cell (`col`, `row`).
+    ///
+    /// Adjacent columns each render their own border, so a vertical boundary is
+    /// a two-cell-thick line (the left panel's right border at `edge - 1` and
+    /// the right panel's left border at `edge`); both cells count as a grab
+    /// zone, and likewise for horizontal boundaries. Vertical dividers (column
+    /// boundaries) win over horizontal ones (interior column splits) where they
+    /// meet at a corner. Editor-merge and maximize gating is left to the caller.
+    fn divider_at(&self, col: u16, row: u16) -> Option<crate::app::Divider> {
+        use crate::app::Divider;
+
+        let top = self.main_area.y;
+        let bottom = self.main_area.y.saturating_add(self.main_area.height);
+        let right = self.main_area.x.saturating_add(self.main_area.width);
+        let on_boundary = |v: u16, edge: u16| edge > 0 && (v == edge - 1 || v == edge);
+
+        // Vertical dividers: the full-height column boundaries.
+        if row >= top && row < bottom {
+            if on_boundary(col, self.explorer_end) {
+                return Some(Divider::ExplorerViewer);
+            }
+            if on_boundary(col, self.viewer_end) {
+                return Some(Divider::ViewerTerminal);
+            }
+        }
+        // Horizontal dividers: splits interior to a single column.
+        if col >= self.left_end
+            && col < self.explorer_end
+            && on_boundary(row, self.explorer_mid_y)
+        {
+            return Some(Divider::ExplorerSplit);
+        }
+        if col >= self.viewer_end && col < right && on_boundary(row, self.terminal_split_y) {
+            return Some(Divider::TerminalSplit);
+        }
+        None
     }
 
     /// Hit-test the `[<=>]` expand button on the top border row, returning the
@@ -430,6 +483,18 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
+            // Grab a panel divider to begin a mouse resize. Checked before the
+            // editor-refocus and column routing below so a boundary always wins
+            // over the panel that sits on it (the [<=>] expand buttons live a few
+            // cells inward, so they don't overlap the grab zone).
+            if let Some(divider) = geom.divider_at(col, row)
+                && divider_draggable(app, divider)
+            {
+                app.divider_drag = Some(divider);
+                app.divider_hover = Some(divider);
+                return;
+            }
+
             // The embedded editor occupies the merged Explorer+Viewer region; a
             // click anywhere in it just (re)focuses the editor — the Explorer and
             // Viewer panels behind it are hidden, so their click handlers must
@@ -458,6 +523,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            // A divider drag takes priority: move the grabbed boundary to track
+            // the cursor. The clamped mutators reject out-of-bounds targets, so
+            // dragging past a panel's minimum simply pins the divider there.
+            if let Some(divider) = app.divider_drag {
+                app.drag_divider_to(divider, col, row);
+                return;
+            }
             // Extend an in-progress gutter range selection to the dragged line.
             if let Some(anchor) = app.viewer_state.click.gutter_drag_anchor {
                 let inner_y = main_area.y + 1;
@@ -476,6 +548,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
+            // Finish a divider drag: persist the final ratios once (the drag
+            // itself intentionally skips the per-event config write).
+            if app.divider_drag.take().is_some() {
+                app.divider_hover = geom.divider_at(col, row);
+                app.persist_layout();
+                return;
+            }
             // Finish a gutter drag: commit the (single-line or range) selection
             // by opening the comment composer for it.
             let was_dragging = app.viewer_state.click.gutter_drag_anchor.take().is_some();
@@ -484,6 +563,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
         }
         MouseEventKind::Moved => {
+            // Light up the divider under the cursor as a resize affordance — the
+            // terminal stand-in for a col-/row-resize mouse cursor (a plain hover
+            // never mutates a ratio; only a drag does).
+            app.divider_hover = geom
+                .divider_at(col, row)
+                .filter(|&d| divider_draggable(app, d));
+
             // Track hover line for gutter highlight in the viewer panel.
             let inner_y = main_area.y + 1;
             if col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
@@ -1381,6 +1467,53 @@ mod tests {
             terminal_claude_y: 1,
             terminal_split_y: 33,
         }
+    }
+
+    #[test]
+    fn divider_at_hits_both_cells_of_a_vertical_boundary() {
+        use crate::app::Divider;
+        // main_area spans y in [1, 41); a vertical boundary is a 2-cell zone at
+        // {edge-1, edge}.
+        let g = geom(0, 24, 62);
+        assert_eq!(g.divider_at(23, 10), Some(Divider::ExplorerViewer));
+        assert_eq!(g.divider_at(24, 10), Some(Divider::ExplorerViewer));
+        assert_eq!(g.divider_at(61, 10), Some(Divider::ViewerTerminal));
+        assert_eq!(g.divider_at(62, 10), Some(Divider::ViewerTerminal));
+        // One cell either side of the zone is not a hit.
+        assert_eq!(g.divider_at(22, 10), None);
+        assert_eq!(g.divider_at(25, 10), None);
+    }
+
+    #[test]
+    fn divider_at_hits_horizontal_splits_within_their_column() {
+        use crate::app::Divider;
+        let g = geom(0, 24, 62); // explorer_mid_y=20, terminal_split_y=33
+        // Explorer split: only inside the Explorer column [0, 24).
+        assert_eq!(g.divider_at(10, 19), Some(Divider::ExplorerSplit));
+        assert_eq!(g.divider_at(10, 20), Some(Divider::ExplorerSplit));
+        assert_eq!(g.divider_at(10, 18), None);
+        // The Explorer split does not extend into the Viewer/Terminal columns.
+        assert_eq!(g.divider_at(40, 20), None);
+        // Terminal split: only inside the Terminal column [62, right).
+        assert_eq!(g.divider_at(70, 32), Some(Divider::TerminalSplit));
+        assert_eq!(g.divider_at(70, 33), Some(Divider::TerminalSplit));
+        assert_eq!(g.divider_at(40, 33), None);
+    }
+
+    #[test]
+    fn divider_at_vertical_boundary_wins_at_a_corner() {
+        use crate::app::Divider;
+        // (explorer_end-1, explorer_mid_y) is both a vertical-boundary cell and
+        // on the Explorer split row — the vertical divider must take priority.
+        let g = geom(0, 24, 62);
+        assert_eq!(g.divider_at(23, 20), Some(Divider::ExplorerViewer));
+    }
+
+    #[test]
+    fn divider_at_misses_open_panel_area() {
+        let g = geom(0, 24, 62);
+        assert_eq!(g.divider_at(10, 10), None);
+        assert_eq!(g.divider_at(70, 10), None);
     }
 
     #[test]
