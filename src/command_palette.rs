@@ -54,6 +54,7 @@ pub enum CommandId {
     SessionHistory,
     ReviewPullRequest,
     GenerateWalkthrough,
+    ForceGenerateWalkthrough,
     PublishReview,
 
     // Repository
@@ -430,6 +431,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         keywords: "walkthrough tour generate ai claude steps regenerate retry",
     },
     PaletteCommand {
+        id: CommandId::ForceGenerateWalkthrough,
+        label: "Review: Regenerate Walkthrough (force)",
+        category: CommandCategory::Review,
+        action: Some(Action::ForceGenerateWalkthrough),
+        keywords: "walkthrough regenerate force rebuild ignore cache same commit ai claude steps",
+    },
+    PaletteCommand {
         id: CommandId::PublishReview,
         label: "Review: Publish Comments to GitHub",
         category: CommandCategory::Review,
@@ -715,6 +723,7 @@ mod tests {
         let must_have = [
             Action::ReviewPullRequest,
             Action::GenerateWalkthrough,
+            Action::ForceGenerateWalkthrough,
             Action::PublishReview,
         ];
         for action in must_have {

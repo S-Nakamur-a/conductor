@@ -2240,7 +2240,8 @@ impl App {
             }
             CommandId::SessionHistory => self.cmd_session_history(),
             CommandId::ReviewPullRequest => self.cmd_review_pull_request(),
-            CommandId::GenerateWalkthrough => self.cmd_generate_walkthrough(),
+            CommandId::GenerateWalkthrough => self.cmd_generate_walkthrough(false),
+            CommandId::ForceGenerateWalkthrough => self.cmd_generate_walkthrough(true),
             CommandId::PublishReview => self.cmd_publish_review(),
             CommandId::OpenRepo => self.cmd_open_repo(),
             CommandId::SwitchRepo => self.cmd_switch_repo(),

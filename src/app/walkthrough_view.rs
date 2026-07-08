@@ -115,6 +115,10 @@ impl App {
         }
 
         self.viewer_state.explorer.walkthrough_selected = idx;
+        // The Viewer now reflects this step: its banner and line-range
+        // underline follow `walkthrough_viewing`, not the list cursor, so a
+        // later `j`/`k` that only moves the cursor won't disturb the Viewer.
+        self.viewer_state.explorer.walkthrough_viewing = Some(idx);
         self.viewer_state.explorer.viewed_steps.insert(step_id);
         true
     }
@@ -145,7 +149,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let store = ReviewStore::open(&dir.path().join("conductor.db")).unwrap();
-        store.begin_walkthrough("feature-x").unwrap();
+        store.begin_walkthrough("feature-x", None).unwrap();
         store
             .save_walkthrough(
                 "feature-x",

@@ -91,8 +91,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
 }
 
 /// The icon shown next to a walkthrough step, matching this UI's existing
-/// emoji-badge convention (comment badges, file-tree icons, …).
-fn step_icon(kind: WalkthroughStepKind) -> &'static str {
+/// emoji-badge convention (comment badges, file-tree icons, …). Shared with
+/// the Viewer's walkthrough step banner (`ui::viewer_panel`).
+pub(crate) fn step_icon(kind: WalkthroughStepKind) -> &'static str {
     match kind {
         WalkthroughStepKind::Intent => "\u{1f3af}", // 🎯
         WalkthroughStepKind::Core => "\u{1f527}",   // 🔧

@@ -115,6 +115,11 @@ pub struct Walkthrough {
     pub summary: Option<String>,
     pub status: WalkthroughStatus,
     pub error: Option<String>,
+    /// The branch tip (HEAD commit OID) this walkthrough was generated
+    /// against, or `None` for rows predating commit tracking. A regenerate
+    /// request whose current HEAD matches this is skipped — the diff, and so
+    /// the walkthrough, hasn't changed.
+    pub head_commit: Option<String>,
     #[allow(dead_code)]
     pub created_at: String,
     #[allow(dead_code)]
@@ -162,11 +167,17 @@ pub struct NewWalkthroughStep {
 /// past it we assume the session is wedged.
 pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// Tools the headless generation session may use. Both `save_walkthrough`
-/// tool-name forms are listed so the session works whether the MCP server
-/// comes from the bundled `--mcp-config` below (dogfooding: `conductor`) or
-/// from the user's installed marketplace plugin
+/// Tools the headless generation session may use. Both tool-name forms of
+/// `save_walkthrough` and `create_comment` are listed so the session works
+/// whether the MCP server comes from the bundled `--mcp-config` below
+/// (dogfooding: `conductor`) or from the user's installed marketplace plugin
 /// (`plugin_conductor_conductor`).
+///
+/// `create_comment` lets the session drop inline review comments on the
+/// genuinely-hard-to-understand spots it finds while touring the diff, so a
+/// single generation produces both the Explorer walkthrough and the in-Viewer
+/// 💬 annotations. It only writes to the local review DB (no network), so
+/// unlike a write-capable git subcommand it opens no exfiltration path.
 ///
 /// This session reads a PR's diff, which may be adversarial (a malicious
 /// contributor's prompt-injection attempt), so the git subcommands are
@@ -175,6 +186,8 @@ pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// through allowedTools.
 const GENERATION_ALLOWED_TOOLS: &str = "mcp__conductor__save_walkthrough,\
 mcp__plugin_conductor_conductor__save_walkthrough,\
+mcp__conductor__create_comment,\
+mcp__plugin_conductor_conductor__create_comment,\
 Read,Grep,Glob,\
 Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git merge-base:*),\
 Bash(git rev-parse:*),Bash(git status:*),Bash(git branch:*)";
@@ -302,8 +315,18 @@ Each step needs: file_path (repo-relative), optional line_start/line_end (new-si
 numbers), kind, title, body. There is no fixed step count — match the actual change.\n\
 \n\
 When all steps are assembled, call the `save_walkthrough` tool exactly once with: \
-branch = `{branch}`, a one-line title, a short summary, and the steps (seq starting at 0). \
-Then report the step count and kind breakdown briefly and stop.{language_hint}"
+branch = `{branch}`, a one-line title, a short summary, and the steps (seq starting at 0).\n\
+\n\
+After saving, for the few spots that are genuinely hard to understand — tricky logic whose \
+intent isn't obvious at a glance, a non-obvious tradeoff, or a subtle edge case a reviewer \
+could miss — drop an inline comment with the `create_comment` tool, anchored to that \
+file_path and its new-side line number(s). Use kind = \"question\", keep each to 1-3 \
+sentences, and explain *why* it works / where the subtlety is. This is high-signal and \
+low-frequency: a handful per change at most, and none at all when nothing is genuinely \
+tricky. Do NOT comment on self-evident changes (renames, boilerplate, formatting, imports).\n\
+\n\
+Then report the step count, kind breakdown, and how many inline comments you left, briefly, \
+and stop.{language_hint}"
     )
 }
 
@@ -406,6 +429,14 @@ mod tests {
     }
 
     #[test]
+    fn generation_allowed_tools_lists_both_create_comment_tool_name_forms() {
+        // The session drops inline 💬 on hard-to-understand spots, so both the
+        // dogfooding and marketplace-plugin tool-name forms must be permitted.
+        assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__conductor__create_comment"));
+        assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__create_comment"));
+    }
+
+    #[test]
     fn generation_allowed_tools_has_no_write_git_subcommands() {
         // Matches the FIX-2 restriction: no bare `Bash(git:*)`, and none of
         // the write-capable subcommands that would open an exfiltration path
@@ -434,6 +465,15 @@ mod tests {
         let prompt = generation_prompt("pr-42", None, None);
         assert!(prompt.to_lowercase().contains("do not compare"));
         assert!(prompt.contains("Determine the base branch"));
+    }
+
+    #[test]
+    fn generation_prompt_instructs_inline_comments_on_hard_spots() {
+        let prompt = generation_prompt("pr-42", Some("main"), None);
+        // The session must be told to annotate genuinely-tricky spots with
+        // create_comment, high-signal and low-frequency.
+        assert!(prompt.contains("create_comment"));
+        assert!(prompt.contains("hard to understand"));
     }
 
     #[test]

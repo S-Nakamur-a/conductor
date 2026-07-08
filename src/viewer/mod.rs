@@ -163,8 +163,16 @@ pub struct ExplorerState {
     pub inline_reply_comment_id: Option<String>,
     /// Text buffer for inline reply input.
     pub inline_reply_buffer: TextInput,
-    /// Index of the selected step in the walkthrough view.
+    /// Index of the selected step in the walkthrough view (the list cursor
+    /// that `j`/`k` move).
     pub walkthrough_selected: usize,
+    /// Index of the step the Viewer is currently reflecting — the last one
+    /// *jumped to* (`Enter`/`n`/`N`), which drives the Viewer's full-width
+    /// step banner and line-range underline. Kept distinct from
+    /// `walkthrough_selected` so merely moving the list cursor with `j`/`k`
+    /// doesn't shift the Viewer out from under the reviewer. `None` until a
+    /// step is jumped to.
+    pub walkthrough_viewing: Option<usize>,
     /// Vertical scroll offset for the walkthrough step list.
     pub walkthrough_scroll: usize,
     /// IDs of walkthrough steps that have been jumped to at least once.
@@ -192,6 +200,7 @@ impl Default for ExplorerState {
             inline_reply_comment_id: None,
             inline_reply_buffer: TextInput::new_multiline(),
             walkthrough_selected: 0,
+            walkthrough_viewing: None,
             walkthrough_scroll: 0,
             viewed_steps: HashSet::new(),
             walkthrough_detail_active: false,

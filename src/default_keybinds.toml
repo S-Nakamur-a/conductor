@@ -141,6 +141,13 @@
 "c" = "show_comment_list"
 "C" = "open_comment_list"
 "w" = "show_walkthrough"
+# Shift+W generates the walkthrough — the "heavier" sibling of w=show,
+# mirroring the do/undo shift-pairing used elsewhere. Dispatched as a global
+# action, so it fires even though this Explorer layer owns the chord. It skips
+# when a walkthrough already exists for the current commit; Alt+w forces a
+# rebuild past that skip.
+"W" = "generate_walkthrough"
+"alt+w" = "force_generate_walkthrough"
 "/" = "search_filename"
 ":" = "command_palette"
 

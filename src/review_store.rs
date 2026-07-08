@@ -508,6 +508,21 @@ impl ReviewStore {
             )?;
         }
 
+        if version < 7 {
+            // Record the branch tip a walkthrough was generated against, so a
+            // regenerate request for an unchanged HEAD can be skipped (the
+            // diff hasn't moved, so neither has the walkthrough). Nullable:
+            // rows from before v7 have no recorded commit and are treated as
+            // "unknown" (never skipped).
+            conn.execute_batch(
+                "
+                ALTER TABLE walkthroughs ADD COLUMN head_commit TEXT;
+                PRAGMA user_version = 7;
+                ",
+            )
+            .context("failed to migrate to v7 (walkthroughs.head_commit)")?;
+        }
+
         Ok(Self { conn })
     }
 
@@ -982,15 +997,24 @@ impl ReviewStore {
     /// existing walkthrough for it (no generation history is kept — see the
     /// v6 migration note) and insert a fresh `generating` row, so the caller
     /// has an id to poll for completion / detect a stuck generation.
-    pub fn begin_walkthrough(&self, branch: &str) -> Result<Walkthrough> {
+    /// Start a fresh walkthrough for `branch`, recording the branch tip
+    /// (`head_commit`, the HEAD commit OID) it's being generated against so a
+    /// later same-commit regenerate can be skipped. Pass `None` when the tip
+    /// is unknown.
+    pub fn begin_walkthrough(
+        &self,
+        branch: &str,
+        head_commit: Option<&str>,
+    ) -> Result<Walkthrough> {
         self.conn.execute(
             "DELETE FROM walkthroughs WHERE branch = ?1",
             params![branch],
         )?;
         let id = Uuid::new_v4().to_string();
         self.conn.execute(
-            "INSERT INTO walkthroughs (id, branch, status) VALUES (?1, ?2, 'generating')",
-            params![id, branch],
+            "INSERT INTO walkthroughs (id, branch, status, head_commit)
+             VALUES (?1, ?2, 'generating', ?3)",
+            params![id, branch, head_commit],
         )?;
         self.walkthrough_row_by_id(&id)
     }
@@ -1099,7 +1123,7 @@ impl ReviewStore {
         branch: &str,
     ) -> Result<Option<(Walkthrough, Vec<WalkthroughStep>)>> {
         let walkthrough = match self.conn.query_row(
-            "SELECT id, branch, title, summary, status, error, created_at, updated_at
+            "SELECT id, branch, title, summary, status, error, created_at, updated_at, head_commit
              FROM walkthroughs WHERE branch = ?1",
             params![branch],
             row_to_walkthrough,
@@ -1128,7 +1152,7 @@ impl ReviewStore {
     fn walkthrough_row_by_id(&self, id: &str) -> Result<Walkthrough> {
         self.conn
             .query_row(
-                "SELECT id, branch, title, summary, status, error, created_at, updated_at
+                "SELECT id, branch, title, summary, status, error, created_at, updated_at, head_commit
                  FROM walkthroughs WHERE id = ?1",
                 params![id],
                 row_to_walkthrough,
@@ -1450,6 +1474,7 @@ fn row_to_walkthrough(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthrough> 
         error: row.get(5)?,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
+        head_commit: row.get(8)?,
     })
 }
 
@@ -2187,17 +2212,21 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        // Reopening a v5 db runs every migration up to the latest (v6 tables,
+        // then v7's walkthroughs.head_commit).
+        assert_eq!(version, 7);
 
         // Pre-existing data survived the migration.
         let reviews = store.reviews_for_worktree("feat/x").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].body, "predates the v6 migration");
 
-        // The new tables/columns are usable.
+        // The new tables/columns are usable, including v7's head_commit.
         assert!(store.get_walkthrough("feat/x").unwrap().is_none());
         assert!(store.get_pr_review_meta("feat/x").unwrap().is_none());
         assert_eq!(store.unpublished_reviews("feat/x").unwrap().len(), 1);
+        let begun = store.begin_walkthrough("feat/x", Some("deadbeef")).unwrap();
+        assert_eq!(begun.head_commit.as_deref(), Some("deadbeef"));
     }
 
     #[test]
@@ -2207,13 +2236,16 @@ mod tests {
         // No walkthrough yet.
         assert!(store.get_walkthrough("feat/x").unwrap().is_none());
 
-        let started = store.begin_walkthrough("feat/x").unwrap();
+        let started = store.begin_walkthrough("feat/x", Some("abc1234")).unwrap();
         assert_eq!(started.branch, "feat/x");
         assert_eq!(started.status, WalkthroughStatus::Generating);
+        // The branch tip is recorded so a same-commit regenerate can be skipped.
+        assert_eq!(started.head_commit.as_deref(), Some("abc1234"));
 
         let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
         assert_eq!(walkthrough.id, started.id);
         assert_eq!(walkthrough.status, WalkthroughStatus::Generating);
+        assert_eq!(walkthrough.head_commit.as_deref(), Some("abc1234"));
         assert!(steps.is_empty());
 
         let new_steps = vec![
@@ -2249,9 +2281,11 @@ mod tests {
         assert_eq!(steps[1].seq, 1);
         assert_eq!(steps[1].kind, WalkthroughStepKind::Core);
 
-        // Re-generating replaces the row entirely (no history kept).
-        let restarted = store.begin_walkthrough("feat/x").unwrap();
+        // Re-generating replaces the row entirely (no history kept); passing
+        // no tip leaves head_commit null.
+        let restarted = store.begin_walkthrough("feat/x", None).unwrap();
         assert_ne!(restarted.id, started.id);
+        assert_eq!(restarted.head_commit, None);
         let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
         assert_eq!(walkthrough.status, WalkthroughStatus::Generating);
         assert!(steps.is_empty());
