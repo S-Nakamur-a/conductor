@@ -290,6 +290,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             Span::styled("💬", Style::default().fg(theme.accent))
         } else if comment_lines.contains(&line_1) {
             Span::styled("│ ", Style::default().fg(theme.accent))
+        } else if vs.content.test_runs.contains_key(&line_1) {
+            // Runnable Go test line: a ▶ button that sends `go test …` to the
+            // Shell PTY (handled in event/mouse.rs).
+            Span::styled(
+                "\u{25b6} ",
+                Style::default()
+                    .fg(theme.success)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else if is_gutter_hovered {
             Span::styled(
                 "+ ",

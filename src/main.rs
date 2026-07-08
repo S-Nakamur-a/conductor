@@ -16,6 +16,7 @@ mod event;
 mod file_watcher;
 mod gemini_api;
 mod git_engine;
+mod go_test;
 mod grep_search;
 mod jump_history;
 mod keymap;

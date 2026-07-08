@@ -75,6 +75,10 @@ pub struct FileContentState {
     /// Screen-row mapping built during render. Used by mouse event handlers
     /// to translate screen positions to file lines / thread actions.
     pub screen_row_map: Vec<ScreenRow>,
+    /// Runnable Go tests in the current file, keyed by 1-indexed line number.
+    /// Populated (from [`crate::go_test::scan_go_test_runs`]) only for
+    /// `*_test.go` files; empty otherwise. Drives the ▶ run buttons.
+    pub test_runs: std::collections::HashMap<usize, crate::go_test::TestRun>,
 }
 
 /// What a screen row represents (for mouse click handling).
@@ -461,6 +465,7 @@ impl ViewerState {
         self.content.highlighted_lines.clear();
         self.content.highlighted_cache_key = None;
         self.content.grep_highlight_line = None;
+        self.content.test_runs.clear();
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
@@ -491,6 +496,8 @@ impl ViewerState {
                 self.content.current_file = Some(relative_path.to_string());
                 self.content.file_scroll = 0;
                 self.content.h_scroll = 0;
+                self.content.test_runs =
+                    crate::go_test::scan_go_test_runs(&self.content.file_content, relative_path);
             }
             Err(e) => {
                 // Show error as file content so the user sees feedback.
