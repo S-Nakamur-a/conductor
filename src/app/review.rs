@@ -640,9 +640,11 @@ impl App {
 
     /// Kick off walkthrough generation for the selected worktree's branch:
     /// insert the `generating` row, then spawn the headless Claude session.
-    /// Re-running while `failed` (or `ready`) regenerates from scratch; while
-    /// a generation is already in flight it's a no-op with a status hint.
-    pub fn cmd_generate_walkthrough(&mut self) {
+    /// Re-running regenerates from scratch — except when a `ready` walkthrough
+    /// already exists for the current branch tip, which is a no-op that just
+    /// re-shows it (the diff, and so the walkthrough, hasn't changed). While a
+    /// generation is already in flight it's a no-op with a status hint.
+    pub fn cmd_generate_walkthrough(&mut self, force: bool) {
         if self.review_store.is_none() {
             self.set_status(
                 "Review database unavailable — cannot generate a walkthrough.".to_string(),
@@ -673,19 +675,52 @@ impl App {
             self.set_status(msg, StatusLevel::Warning);
             return;
         }
-        let Some(wt_path) = self
+        let Some((wt_path, head_oid)) = self
             .worktrees
             .get(self.selected_worktree)
-            .map(|w| w.path.clone())
+            .map(|w| (w.path.clone(), w.head_oid.clone()))
         else {
             return;
         };
 
+        // Skip regeneration when a ready walkthrough already covers this exact
+        // branch tip: the diff hasn't moved, so the walkthrough hasn't either.
+        // Only when the current HEAD is actually known — an unknown tip (or a
+        // pre-tracking row) never matches, so it always regenerates. `force`
+        // (Alt+w / the palette's force entry) bypasses this to rebuild anyway.
+        let up_to_date = !force
+            && head_oid.as_deref().is_some_and(|head| {
+            self.review_store
+                .as_ref()
+                .and_then(|s| s.get_walkthrough(&branch).ok().flatten())
+                .is_some_and(|(w, _)| {
+                    w.status == crate::walkthrough::WalkthroughStatus::Ready
+                        && w.head_commit.as_deref() == Some(head)
+                })
+        });
+        if up_to_date {
+            let short: String = head_oid
+                .as_deref()
+                .map(|h| h.chars().take(8).collect())
+                .unwrap_or_default();
+            self.viewer_state.explorer.explorer_bottom_view =
+                crate::viewer::ExplorerBottomView::Walkthrough;
+            self.set_status(
+                format!(
+                    "Walkthrough already up to date for commit {short} — showing it. \
+                     Alt+w (or the palette's force entry) to regenerate anyway."
+                ),
+                StatusLevel::Info,
+            );
+            return;
+        }
+
         // Insert the `generating` row first so the UI (and a timeout) always
         // have a row to reflect, then spawn. Base ref comes from the PR meta
-        // when this branch was taken in via PR intake.
+        // when this branch was taken in via PR intake. Record the branch tip
+        // so the next same-commit regenerate short-circuits above.
         let store = self.review_store.as_ref().expect("checked above");
-        if let Err(e) = store.begin_walkthrough(&branch) {
+        if let Err(e) = store.begin_walkthrough(&branch, head_oid.as_deref()) {
             let msg = format!("Failed to start walkthrough: {e}");
             self.set_status(msg, StatusLevel::Error);
             return;

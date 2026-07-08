@@ -155,9 +155,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
 
-    // Unified diff mode: delegate to dedicated renderer.
+    // Unified diff mode: delegate to dedicated renderer. When touring a
+    // walkthrough step anchored to this file, carve a full-width banner off
+    // the top for the step's explanation so it reads at Viewer width instead
+    // of being cramped in the Explorer pane.
     if vs.diff_view.diff_mode && !vs.diff_view.diff_view_lines.is_empty() {
-        render_diff_view(frame, area, app, block);
+        let diff_area = match build_walkthrough_banner(app, area.width) {
+            Some((title, lines)) if area.height > 8 => {
+                // Reserve up to ~2/5 of the Viewer height for the banner, and
+                // never leave the diff fewer than 3 rows.
+                let content_h = (lines.len() as u16).saturating_add(2);
+                let max_h = (area.height * 2 / 5).max(4);
+                let banner_h = content_h.min(max_h).min(area.height.saturating_sub(3));
+                let banner_area = Rect::new(area.x, area.y, area.width, banner_h);
+                let diff_area =
+                    Rect::new(area.x, area.y + banner_h, area.width, area.height - banner_h);
+                render_walkthrough_banner(frame, banner_area, app, &title, &lines);
+                diff_area
+            }
+            _ => area,
+        };
+        render_diff_view(frame, diff_area, app, block);
         return;
     }
 
@@ -973,6 +991,77 @@ fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, focused: bo
     frame.render_widget(Paragraph::new(visible).block(block), area);
 }
 
+/// When the Explorer is in walkthrough-reading mode and the Viewer is showing
+/// the file the *selected* walkthrough step is anchored to, build a full-width
+/// banner (step title + Markdown-rendered body) to sit above the diff. This is
+/// the fix for the walkthrough's explanation being confined to the narrow
+/// Explorer pane: here the prose reads at full Viewer width, right above the
+/// code it describes. Returns `None` (no banner) unless we're actively touring
+/// this step's file.
+fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String, Vec<Line<'static>>)> {
+    if app.viewer_state.explorer.explorer_bottom_view
+        != crate::viewer::ExplorerBottomView::Walkthrough
+    {
+        return None;
+    }
+    let (_, steps) = app.current_walkthrough.as_ref()?;
+    // The banner follows the *jumped-to* step, not the list cursor, so
+    // browsing the step list with j/k leaves the Viewer untouched.
+    let step = steps.get(app.viewer_state.explorer.walkthrough_viewing?)?;
+    // Only when the diff on screen is actually this step's file.
+    if app.viewer_state.content.current_file.as_deref() != Some(step.file_path.as_str()) {
+        return None;
+    }
+    let title = format!(
+        " {} {} — {} ",
+        crate::ui::walkthrough_pane::step_icon(step.kind),
+        step.kind,
+        step.title
+    );
+    let lines = crate::ui::markdown::render_markdown(
+        &step.body,
+        (width as usize).saturating_sub(3),
+        &app.theme,
+        &app.syntax_set,
+        &app.syntect_theme,
+    );
+    Some((title, lines))
+}
+
+/// Render the walkthrough step banner into `area`: a titled box holding the
+/// step's Markdown body, clipped to the available height with a hint pointing
+/// at the `space` full-text overlay when the body overflows.
+fn render_walkthrough_banner(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    title: &str,
+    lines: &[Line<'static>],
+) {
+    let theme = &app.theme;
+    let block = Block::default()
+        .title(Span::styled(
+            title.to_string(),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(theme.border_secondary));
+    let inner_h = area.height.saturating_sub(2) as usize;
+    let visible: Vec<Line> = if inner_h > 0 && lines.len() > inner_h {
+        let mut v: Vec<Line> = lines.iter().take(inner_h.saturating_sub(1)).cloned().collect();
+        v.push(Line::from(Span::styled(
+            "…  (space: 全文)",
+            Style::default().fg(theme.muted),
+        )));
+        v
+    } else {
+        lines.to_vec()
+    };
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(Paragraph::new(visible).block(block), area);
+}
+
 fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     let inner_height = area.height.saturating_sub(2) as usize;
 
@@ -1006,7 +1095,9 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'
         // the file currently open in this pane.
         let walkthrough_highlight = (|| {
             let (_, steps) = app.current_walkthrough.as_ref()?;
-            let step = steps.get(vs.explorer.walkthrough_selected)?;
+            // Underline the jumped-to step's range, not the list cursor's, so
+            // it stays put while j/k only moves the Explorer selection.
+            let step = steps.get(vs.explorer.walkthrough_viewing?)?;
             if vs.content.current_file.as_deref() != Some(step.file_path.as_str()) {
                 return None;
             }

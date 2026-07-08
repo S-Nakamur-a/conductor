@@ -175,7 +175,11 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::GenerateWalkthrough => {
-            app.cmd_generate_walkthrough();
+            app.cmd_generate_walkthrough(false);
+            true
+        }
+        Action::ForceGenerateWalkthrough => {
+            app.cmd_generate_walkthrough(true);
             true
         }
         Action::PublishReview => {

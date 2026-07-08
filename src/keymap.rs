@@ -195,6 +195,10 @@ keymap_suite::actions! {
         /// Palette-only by default: `g` is the go-to-top idiom everywhere, and a
         /// minutes-long generation is too expensive to fire from a slipped key.
         GenerateWalkthrough => "generate_walkthrough",
+        /// Regenerate the walkthrough even when one already exists for the
+        /// current branch tip — the escape hatch past `GenerateWalkthrough`'s
+        /// same-commit skip (e.g. to pick up an improved generation prompt).
+        ForceGenerateWalkthrough => "force_generate_walkthrough",
         /// Publish this branch's unpublished review comments to the GitHub PR
         /// they were opened from. Palette-only: it's an irreversible external
         /// action and always goes through a y/n confirm overlay first.
@@ -249,6 +253,7 @@ impl Action {
             Action::WalkthroughPrevStep => "Jump to previous walkthrough step",
             Action::ReviewPullRequest => "Review a pull request by number or URL",
             Action::GenerateWalkthrough => "Generate an AI walkthrough of this branch's diff",
+            Action::ForceGenerateWalkthrough => "Regenerate the walkthrough (ignore same-commit skip)",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",
             Action::ShowDiffList => "Show changed-files list",
             Action::ShowCommentList => "Show comment list",
@@ -947,6 +952,31 @@ mod tests {
         assert_eq!(
             km.resolve(&key_c, KeyContext::Explorer),
             Some(Action::ShowCommentList)
+        );
+    }
+
+    #[test]
+    fn explorer_walkthrough_show_and_generate_keys_resolve() {
+        // w shows the walkthrough, Shift+W (re)generates it — the show/heavier
+        // pairing. Both resolve in the Explorer context (generate rides the
+        // global-action dispatch even though the chord lives in this layer).
+        let km = default_keymap();
+        let key_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty());
+        assert_eq!(
+            km.resolve(&key_w, KeyContext::Explorer),
+            Some(Action::ShowWalkthrough)
+        );
+        // Shift+W arrives as the resolved glyph 'W' + redundant SHIFT.
+        let key_shift_w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
+        assert_eq!(
+            km.resolve(&key_shift_w, KeyContext::Explorer),
+            Some(Action::GenerateWalkthrough)
+        );
+        // Alt+w is the force-regenerate escape hatch past the same-commit skip.
+        let key_alt_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
+        assert_eq!(
+            km.resolve(&key_alt_w, KeyContext::Explorer),
+            Some(Action::ForceGenerateWalkthrough)
         );
     }
 
