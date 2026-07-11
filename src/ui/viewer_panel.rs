@@ -10,10 +10,12 @@ use crate::media_state::MediaContent;
 use crate::theme::Theme;
 use crate::viewer::UnifiedDiffEntry;
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Position, Rect};
+use ratatui::layout::{Alignment, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 
 /// Shared definition of the inline-thread action row.
 ///
@@ -524,6 +526,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let paragraph = Paragraph::new(all_lines).block(block);
     frame.render_widget(paragraph, area);
+
+    // Render scrollbar when the file has more lines than fit in the panel —
+    // same trigger and look as the Explorer file tree.
+    if vs.content.file_content.len() > inner_height {
+        let mut scrollbar_area = area.inner(Margin {
+            horizontal: 0,
+            vertical: 1,
+        });
+        // Keep the track below the breadcrumb row so it spans only the code area.
+        scrollbar_area.y += breadcrumb_height;
+        scrollbar_area.height = scrollbar_area.height.saturating_sub(breadcrumb_height);
+        let mut scrollbar_state =
+            ScrollbarState::new(vs.content.file_content.len().saturating_sub(inner_height))
+                .position(vs.content.file_scroll);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None);
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
 
     // Show selection hint overlay.
     if let Some((start, end)) = vs.selected_range() {
@@ -1229,6 +1250,22 @@ fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'
     // Show selection hint overlay.
     let theme = &app.theme;
     let vs = &app.viewer_state;
+
+    // Render scrollbar when the diff has more rows than fit in the panel —
+    // same trigger and look as the Explorer file tree.
+    if vs.diff_view.diff_view_lines.len() > inner_height {
+        let scrollbar_area = area.inner(Margin {
+            horizontal: 0,
+            vertical: 1,
+        });
+        let mut scrollbar_state =
+            ScrollbarState::new(vs.diff_view.diff_view_lines.len().saturating_sub(inner_height))
+                .position(vs.diff_view.diff_view_scroll);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None);
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
     if let Some((start, end)) = vs.selected_range() {
         let hint = if start == end {
             format!(" L{start} selected \u{2502} c: comment  Esc: clear ")
