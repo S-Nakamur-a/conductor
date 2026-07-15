@@ -21,6 +21,13 @@ pub struct LogRecord {
     pub kind: String,
     #[serde(default)]
     pub is_sidechain: bool,
+    /// Hidden context injections recorded as `user` turns — skill definition
+    /// dumps (a `/skill` invocation appends the whole SKILL.md as a meta user
+    /// message), caveat banners, standalone system reminders. Claude Code's
+    /// live UI never displays these, so the transcript must skip them too or
+    /// the reflow view opens onto walls of text the user has never seen.
+    #[serde(default)]
+    pub is_meta: bool,
     #[serde(default)]
     pub message: Option<Message>,
     /// `queue-operation` records carry the queued text at the top level (not in
@@ -32,6 +39,13 @@ pub struct LogRecord {
     pub operation: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
+    /// ISO-8601 UTC (`…Z`) wall-clock stamp on turn records. Used to detect a
+    /// mid-session `/clear` (or in-app `/resume`), which rotates Claude Code's
+    /// live log to a *new* session file: the continuation begins at/after the
+    /// pinned session's last turn. All stamps share one machine-clock UTC
+    /// format, so lexicographic string order equals chronological order.
+    #[serde(default)]
+    pub timestamp: Option<String>,
 }
 
 /// The `message` field present on `user` and `assistant` records.
@@ -233,17 +247,109 @@ fn result_lines(content: &ToolResultContent) -> Vec<String> {
     }
 }
 
+/// Return the text between `<{tag}>` and `</{tag}>`, if the opening tag exists.
+/// An unterminated tag captures to the end of the string.
+fn tag_inner<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let rest = &text[start..];
+    Some(match rest.find(&close) {
+        Some(end) => &rest[..end],
+        None => rest,
+    })
+}
+
+/// Remove every `<{tag}>…</{tag}>` span from `text` (an unterminated opening
+/// tag removes through to the end of the string).
+fn strip_tag_spans(text: &str, tag: &str) -> String {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(&open) {
+        out.push_str(&rest[..start]);
+        rest = &rest[start + open.len()..];
+        match rest.find(&close) {
+            Some(end) => rest = &rest[end + close.len()..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Normalise a user text block to what Claude Code's live UI actually shows.
+///
+/// The session log records several wrapper forms inside plain user turns that
+/// the CLI renders specially (or not at all); left raw they make the reflow
+/// transcript look nothing like the screen the user just scrolled away from:
+///
+/// * `<command-name>/foo</command-name>…<command-args>bar</command-args>` —
+///   a slash-command invocation; the CLI shows it as `> /foo bar`.
+/// * `<local-command-stdout>…</local-command-stdout>` — output of a local
+///   command, shown unwrapped (sanitized here: it can carry raw ANSI).
+/// * `<system-reminder>…</system-reminder>` — hidden context; stripped.
+///
+/// Returns `None` when nothing displayable remains.
+fn normalise_user_text(text: String) -> Option<String> {
+    // The wrapper forms are only recognised at the very start of the message
+    // (that is where the CLI writes them); a user merely *mentioning* one of
+    // these tags mid-prompt keeps their text untouched.
+    let lead = text.trim_start();
+    // The CLI always writes a terminated tag; an unterminated one at the start
+    // of a message is user prose, not a command record — leave it alone rather
+    // than swallowing the whole message as a "command name".
+    if lead.starts_with("<command-name>")
+        && lead.contains("</command-name>")
+        && let Some(name) = tag_inner(lead, "command-name")
+    {
+        let args = tag_inner(lead, "command-args").unwrap_or("").trim();
+        let display = if args.is_empty() {
+            name.trim().to_string()
+        } else {
+            format!("{} {}", name.trim(), args)
+        };
+        return (!display.is_empty()).then_some(display);
+    }
+    if lead.starts_with("<local-command-stdout>")
+        && let Some(stdout) = tag_inner(lead, "local-command-stdout")
+    {
+        let cleaned: Vec<String> = stdout.trim().lines().map(sanitize_preview_line).collect();
+        let joined = cleaned.join("\n").trim().to_string();
+        return (!joined.is_empty()).then_some(joined);
+    }
+    let stripped = strip_tag_spans(&text, "system-reminder");
+    let trimmed = stripped.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 /// Convert a [`Content`] value into display blocks, normalising the two surface
 /// forms (bare string and typed block array) into the same flat representation.
-fn content_to_display_blocks(content: Content) -> Vec<DisplayBlock> {
+///
+/// `is_user` applies the user-turn wrapper normalisation (slash commands,
+/// local-command stdout, system reminders — see [`normalise_user_text`]).
+/// Assistant text is left untouched: it may legitimately *quote* those tags.
+fn content_to_display_blocks(content: Content, is_user: bool) -> Vec<DisplayBlock> {
+    let text_block = |text: String| -> Option<DisplayBlock> {
+        if text.is_empty() {
+            return None;
+        }
+        if is_user {
+            normalise_user_text(text).map(DisplayBlock::Text)
+        } else {
+            Some(DisplayBlock::Text(text))
+        }
+    };
     match content {
-        Content::Text(s) if !s.is_empty() => vec![DisplayBlock::Text(s)],
-        Content::Text(_) => vec![],
+        Content::Text(s) => text_block(s).into_iter().collect(),
         Content::Blocks(blocks) => blocks
             .into_iter()
             .filter_map(|b| match b {
-                Block::Text { text } if !text.is_empty() => Some(DisplayBlock::Text(text)),
-                Block::Text { .. } => None,
+                Block::Text { text } => text_block(text),
                 Block::Thinking { thinking } => Some(DisplayBlock::Thinking { text: thinking }),
                 Block::ToolUse { name, input } => {
                     let summary = summarise_tool_input(&input);
@@ -319,6 +425,11 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
         if record.is_sidechain {
             continue;
         }
+        // Hidden context injections (skill dumps, caveat banners, standalone
+        // reminders) that Claude Code's own UI never displays.
+        if record.is_meta {
+            continue;
+        }
 
         let Some(msg) = record.message else {
             continue;
@@ -330,7 +441,7 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
             _ => continue,
         };
 
-        let blocks = content_to_display_blocks(msg.content);
+        let blocks = content_to_display_blocks(msg.content, role == Role::User);
         if blocks.is_empty() {
             continue;
         }
@@ -344,6 +455,49 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
     entries
 }
 
+/// First top-level `timestamp` in a session log (the session's start time).
+///
+/// Scans from the top and stops at the first record that carries one — the
+/// leading `mode` / `file-history-snapshot` bookkeeping records have none, so a
+/// few lines are read before the first real turn. Returns `None` for an
+/// unreadable file or one with no timestamps (a pre-timestamp log format).
+pub fn session_first_timestamp(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(record) = serde_json::from_str::<LogRecord>(line)
+            && let Some(ts) = record.timestamp
+        {
+            return Some(ts);
+        }
+    }
+    None
+}
+
+/// Last top-level `timestamp` in a session log (the session's last activity).
+///
+/// Reads the whole file and keeps the final timestamp seen. Returns `None` for
+/// an unreadable file or one with no timestamps.
+pub fn session_last_timestamp(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut last = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(record) = serde_json::from_str::<LogRecord>(line)
+            && let Some(ts) = record.timestamp
+        {
+            last = Some(ts);
+        }
+    }
+    last
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -352,7 +506,115 @@ mod tests {
 
     fn parse_msg_content(json: &str) -> Vec<DisplayBlock> {
         let r: LogRecord = serde_json::from_str(json).expect("valid test json");
-        content_to_display_blocks(r.message.unwrap().content)
+        let msg = r.message.unwrap();
+        let is_user = msg.role.as_deref() == Some("user");
+        content_to_display_blocks(msg.content, is_user)
+    }
+
+    // ── Hidden-context normalisation (isMeta / wrappers) ─────────────────────
+
+    #[test]
+    fn meta_records_are_skipped() {
+        // A skill invocation dumps the whole SKILL.md as an isMeta user turn;
+        // Claude Code never displays it, so the transcript must not either.
+        let f = write_jsonl(&[
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"Base directory for this skill: ... 20k chars of SKILL.md"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"real prompt"}}"#,
+        ]);
+        let entries = load_session(f.path());
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(&entries[0].blocks[0], DisplayBlock::Text(t) if t == "real prompt"));
+    }
+
+    #[test]
+    fn command_wrapper_renders_as_slash_invocation() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/merge-pr</command-name>\n<command-message>merge-pr</command-message>\n<command-args>--admin</command-args>"}}"#,
+        );
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == "/merge-pr --admin"));
+    }
+
+    #[test]
+    fn command_wrapper_without_args_shows_bare_command() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}}"#,
+        );
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == "/clear"));
+    }
+
+    #[test]
+    fn local_command_stdout_is_unwrapped_and_sanitized() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>\u001b[2mCompacted\u001b[22m</local-command-stdout>"}}"#,
+        );
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == "Compacted"));
+    }
+
+    #[test]
+    fn empty_local_command_stdout_is_dropped() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout></local-command-stdout>"}}"#,
+        );
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn system_reminder_spans_are_stripped_from_user_text() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"fix the bug <system-reminder>hidden note</system-reminder>please"}}"#,
+        );
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == "fix the bug please"));
+    }
+
+    #[test]
+    fn reminder_only_user_block_is_dropped() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"<system-reminder>only hidden</system-reminder>"}}"#,
+        );
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn unterminated_system_reminder_strips_to_end() {
+        let blocks = parse_msg_content(
+            r#"{"type":"user","message":{"role":"user","content":"visible <system-reminder>truncated"}}"#,
+        );
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == "visible"));
+    }
+
+    #[test]
+    fn unterminated_command_tag_at_start_is_left_as_prose() {
+        // A real command record always carries the closing tag; a prompt that
+        // merely *starts* with the literal tag must survive intact.
+        let raw = "<command-name> is a wrapper the CLI writes";
+        let blocks = parse_msg_content(&format!(
+            r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
+        ));
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == raw));
+    }
+
+    #[test]
+    fn mid_prompt_mention_of_command_tag_is_not_rewritten() {
+        // The wrapper is only recognised at the start of the message; a user
+        // *talking about* the tag keeps their full prompt (the reminder-strip
+        // pass still runs, but there is no reminder here).
+        let raw = "why does <command-name>/x</command-name> appear in my log?";
+        let blocks = parse_msg_content(&format!(
+            r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
+        ));
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == raw));
+    }
+
+    #[test]
+    fn assistant_text_quoting_wrapper_tags_is_untouched() {
+        // The assistant may legitimately discuss these tags; only user turns
+        // get the wrapper normalisation.
+        let raw = "use <system-reminder> and <command-name>/x</command-name> in docs";
+        let blocks = parse_msg_content(&format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":"{raw}"}}}}"#,
+        ));
+        assert!(matches!(&blocks[0], DisplayBlock::Text(t) if t == raw));
     }
 
     #[test]
@@ -635,5 +897,60 @@ mod tests {
     fn load_session_missing_file_returns_empty() {
         let entries = load_session(std::path::Path::new("/nonexistent/path.jsonl"));
         assert!(entries.is_empty());
+    }
+
+    // ── Session timestamp bounds (mid-session /clear rotation detection) ──────
+
+    #[test]
+    fn timestamp_bounds_skip_leading_bookkeeping_records() {
+        // A fresh session opens with `mode` / `file-history-snapshot` records
+        // that carry no top-level timestamp; the bounds must come from the
+        // first and last *turn* records instead.
+        let f = write_jsonl(&[
+            r#"{"type":"mode","mode":"normal","sessionId":"s"}"#,
+            r#"{"type":"file-history-snapshot","messageId":"m"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-07-06T03:15:21.896Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":"yo"},"timestamp":"2026-07-06T03:16:00.000Z"}"#,
+        ]);
+        assert_eq!(
+            session_first_timestamp(f.path()).as_deref(),
+            Some("2026-07-06T03:15:21.896Z")
+        );
+        assert_eq!(
+            session_last_timestamp(f.path()).as_deref(),
+            Some("2026-07-06T03:16:00.000Z")
+        );
+    }
+
+    #[test]
+    fn timestamp_bounds_none_for_timestampless_log() {
+        // A pre-timestamp log format yields None, which disables rotation
+        // detection (the caller falls back to the pinned session).
+        let f = write_jsonl(&[
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+        ]);
+        assert!(session_first_timestamp(f.path()).is_none());
+        assert!(session_last_timestamp(f.path()).is_none());
+    }
+
+    #[test]
+    fn continuation_starts_at_or_after_pinned_last_turn() {
+        // The rotation-detection predicate: a post-`/clear` continuation begins
+        // at/after the pinned session's last turn (string compare == chrono
+        // order for uniform UTC stamps), while a concurrent sibling panel's
+        // first turn predates it and is rejected.
+        let pinned = write_jsonl(&[
+            r#"{"type":"user","message":{"role":"user","content":"a"},"timestamp":"2026-07-06T03:00:00.000Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":"b"},"timestamp":"2026-07-06T03:10:00.000Z"}"#,
+        ]);
+        let continuation = write_jsonl(&[
+            r#"{"type":"user","message":{"role":"user","content":"c"},"timestamp":"2026-07-06T03:10:00.000Z"}"#,
+        ]);
+        let sibling = write_jsonl(&[
+            r#"{"type":"user","message":{"role":"user","content":"d"},"timestamp":"2026-07-06T03:05:00.000Z"}"#,
+        ]);
+        let pinned_last = session_last_timestamp(pinned.path()).unwrap();
+        assert!(session_first_timestamp(continuation.path()).unwrap() >= pinned_last);
+        assert!(session_first_timestamp(sibling.path()).unwrap() < pinned_last);
     }
 }

@@ -812,19 +812,52 @@ impl App {
             //    hosts several Claude panels (CC:1, CC:2, …) this ties the
             //    transcript to the panel actually on screen, avoiding
             //    cross-panel scroll bleed.
-            let mut entries = resolved
-                .and_then(|(wd, sid)| crate::claude_sessions::session_jsonl_path(&wd, &sid))
-                .map(|path| crate::claude_log::load_session(&path))
+            let pinned_path = resolved
+                .and_then(|(wd, sid)| crate::claude_sessions::session_jsonl_path(&wd, &sid));
+            let mut entries = pinned_path
+                .as_ref()
+                .map(|path| crate::claude_log::load_session(path))
                 .unwrap_or_default();
+
+            // 1b. Follow a mid-session `/clear` (or in-app `/resume`). Claude
+            //     Code mints a *new* session file on `/clear`, so the pinned
+            //     file freezes with the pre-clear conversation while the live
+            //     turns land in a different log — scrolling up would otherwise
+            //     open onto the stale pre-clear transcript. Prefer the freshest
+            //     log in the project dir that is a *temporal continuation* of
+            //     the pinned session: one whose first turn is at/after the
+            //     pinned session's last turn. Because a concurrently-active
+            //     sibling panel overlaps the pinned session in time, its first
+            //     turn predates the pinned session's last turn and it is never
+            //     mistaken for the continuation — the per-panel pin (and its
+            //     cross-panel-bleed guarantee) is preserved.
+            if let Some(pinned) = pinned_path.as_ref()
+                && !entries.is_empty()
+                && let Some(pinned_last) = crate::claude_log::session_last_timestamp(pinned)
+            {
+                let live = crate::claude_sessions::session_logs_by_mtime(&working_dir)
+                    .into_iter()
+                    .filter(|p| p.as_path() != pinned.as_path())
+                    .find(|p| {
+                        crate::claude_log::session_first_timestamp(p)
+                            .is_some_and(|first| first >= pinned_last)
+                    });
+                if let Some(live_path) = live {
+                    let live_entries = crate::claude_log::load_session(&live_path);
+                    if !live_entries.is_empty() {
+                        entries = live_entries;
+                    }
+                }
+            }
 
             // 2. Fall back to the most-recently-written log in this worktree's
             //    project dir when the pinned session is missing or empty. This
-            //    is what catches a manual in-app `/resume`: it switches the
-            //    live session id away from the conductor-launched (pinned)
-            //    one, so the pinned file is stale/empty while the real
-            //    transcript is whatever Claude is now appending to (= freshest
-            //    mtime). Empty/aux logs (e.g. one-shot security-review runs
-            //    sharing the dir) are skipped.
+            //    is what catches a manual in-app `/resume` sent before any turn
+            //    was typed: it switches the live session id away from the
+            //    conductor-launched (pinned) one, so the pinned file is
+            //    stale/empty while the real transcript is whatever Claude is now
+            //    appending to (= freshest mtime). Empty/aux logs (e.g. one-shot
+            //    security-review runs sharing the dir) are skipped.
             if entries.is_empty() {
                 entries = crate::claude_sessions::session_logs_by_mtime(&working_dir)
                     .iter()
