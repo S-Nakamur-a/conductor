@@ -76,8 +76,12 @@ mod palette {
 
     /// Claude's signature coral/orange accent — `claude` token.
     pub const CLAUDE: Color = Color::Rgb(215, 119, 87);
-    /// Primary text — `text` token (white).
-    pub const TEXT: Color = Color::Rgb(255, 255, 255);
+    /// Primary text — follows the terminal's default foreground (`Color::Reset`),
+    /// exactly like the live PTY view (`vt100::Color::Default → Color::Reset`).
+    /// A hardcoded pure white here read as a harsh, brighter-than-live white when
+    /// scrolling from the live panel into the transcript; deferring to the
+    /// terminal default keeps the two views pixel-identical for body text.
+    pub const TEXT: Color = Color::Reset;
     /// Tool-invocation bullet — `success` token (green).
     pub const SUCCESS: Color = Color::Rgb(78, 186, 101);
     /// Error connector — `error` token (coral red).
