@@ -75,10 +75,11 @@ pub struct FileContentState {
     /// Screen-row mapping built during render. Used by mouse event handlers
     /// to translate screen positions to file lines / thread actions.
     pub screen_row_map: Vec<ScreenRow>,
-    /// Runnable Go tests in the current file, keyed by 1-indexed line number.
-    /// Populated (from [`crate::go_test::scan_go_test_runs`]) only for
-    /// `*_test.go` files; empty otherwise. Drives the ▶ run buttons.
-    pub test_runs: std::collections::HashMap<usize, crate::go_test::TestRun>,
+    /// Runnable tests in the current file, keyed by 1-indexed line number.
+    /// Populated by the language-specific scanner ([`crate::go_test`] for
+    /// `*_test.go`, [`crate::rust_test`] for `*.rs`); empty for other files.
+    /// Drives the ▶ run buttons.
+    pub test_runs: std::collections::HashMap<usize, crate::test_run::TestRun>,
 }
 
 /// What a screen row represents (for mouse click handling).
@@ -505,8 +506,13 @@ impl ViewerState {
                 self.content.current_file = Some(relative_path.to_string());
                 self.content.file_scroll = 0;
                 self.content.h_scroll = 0;
-                self.content.test_runs =
-                    crate::go_test::scan_go_test_runs(&self.content.file_content, relative_path);
+                // Detect runnable tests for the ▶ run buttons, dispatching by
+                // language: Go's `*_test.go` files and Rust's `*.rs` files.
+                self.content.test_runs = if relative_path.ends_with(".rs") {
+                    crate::rust_test::scan_rust_test_runs(&self.content.file_content, relative_path)
+                } else {
+                    crate::go_test::scan_go_test_runs(&self.content.file_content, relative_path)
+                };
             }
             Err(e) => {
                 // Show error as file content so the user sees feedback.
