@@ -120,9 +120,10 @@ fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
     }
 }
 
-/// Send a `go test` command for the clicked run button to the active Shell PTY
-/// and focus it. The command is auto-run (terminated with a newline).
-fn run_go_test(app: &mut App, run: &crate::go_test::TestRun) {
+/// Send the clicked run button's test command to the active Shell PTY and focus
+/// it. The command is auto-run (terminated with a newline). Language-agnostic —
+/// the command (`go test …` or `cargo test …`) is built by the scanner.
+fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
     use crate::app::StatusLevel;
     let Some(idx) = app.terminal.active_shell_session else {
         app.set_status(
@@ -133,7 +134,7 @@ fn run_go_test(app: &mut App, run: &crate::go_test::TestRun) {
     };
     let line = format!("{}\n", run.command);
     if let Err(e) = app.terminal.pty_manager.write_chunked_to_session(idx, &line) {
-        log::warn!("failed to send go test to shell: {e}");
+        log::warn!("failed to send test command to shell: {e}");
         app.set_status(
             "Failed to send test command to shell".to_string(),
             StatusLevel::Warning,
@@ -969,8 +970,9 @@ fn handle_viewer_column_click(
     }
 
     // Run-test button: clicking the ▶ marker in the left margin of a runnable
-    // Go test line sends `go test -run …` to the Shell PTY. Only in file view —
-    // the diff renderer doesn't draw these markers, so don't hit-test them there.
+    // test line sends its `go test …` / `cargo test …` command to the Shell PTY.
+    // Only in file view — the diff renderer doesn't draw these markers, so don't
+    // hit-test them there.
     if !app.viewer_state.diff_view.diff_mode && row >= inner_y {
         let badge_end = inner_x + gutter_w + 2;
         if col >= inner_x && col < badge_end {
@@ -981,7 +983,7 @@ fn handle_viewer_column_click(
                 && !app.review_state.file_comments.contains_key(&line_1)
                 && let Some(run) = app.viewer_state.content.test_runs.get(&line_1).cloned()
             {
-                run_go_test(app, &run);
+                run_test(app, &run);
                 return;
             }
         }

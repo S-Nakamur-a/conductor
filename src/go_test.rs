@@ -17,6 +17,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use crate::test_run::{TestRun, TestRunKind, shell_single_quote};
+
 /// Top-level test function: `func TestXxx(` at column 0. Receiver methods
 /// (`func (s *Suite) TestX(`) are intentionally not matched — `go test -run`
 /// can't target them directly.
@@ -27,27 +29,6 @@ static FUNC_RE: LazyLock<Regex> =
 /// `t.Run(tt.name, …)` (non-literal) is skipped — the func-level button covers it.
 static SUBTEST_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\.Run\(\s*"([^"]*)""#).unwrap());
-
-/// What scope a run button covers (used for the status-bar label).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestRunKind {
-    /// Every top-level test in the file.
-    File,
-    /// A single top-level test function.
-    Func,
-    /// A `Run("…")` subtest of an enclosing test function.
-    Subtest,
-}
-
-/// A single runnable test scope anchored to a file line.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestRun {
-    pub kind: TestRunKind,
-    /// Human-readable label for the status bar (e.g. `"TestFoo/case"`).
-    pub label: String,
-    /// Full shell command, e.g. `go test -run '^TestFoo$' ./pkg/foo`.
-    pub command: String,
-}
 
 /// Scan an open file's content for runnable Go tests.
 ///
@@ -151,12 +132,6 @@ fn go_test_cmd(run_pattern: &str, target: &str) -> String {
     // quotes: func names are `\w`-only and subtest names containing a `'` are
     // rejected before we get here, so no embedded single quote can appear.
     format!("go test -run '{run_pattern}' {}", shell_single_quote(target))
-}
-
-/// Wrap `s` in single quotes for safe use as one shell word, escaping any
-/// embedded single quotes via the `'\''` idiom.
-fn shell_single_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// The `go test` package argument for a file: `./dir` for a nested file, `.`
