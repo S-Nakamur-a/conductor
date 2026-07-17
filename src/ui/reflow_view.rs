@@ -274,13 +274,14 @@ fn build_lines(app: &mut App, width: usize) -> Vec<Line<'static>> {
                     // app.reflow.cache and the syntax fields are disjoint members
                     // of `app`, so the simultaneous &mut / & borrows are fine
                     // under NLL. `md_theme` is a local, independent of `app`.
-                    let md_lines = app.reflow.cache.render(
+                    let md_lines = app.reflow.cache.render_flavored(
                         &key,
                         text,
                         body_width,
                         &md_theme,
                         &app.syntax_set,
                         &app.syntect_theme,
+                        crate::ui::markdown::MarkdownFlavor::Transcript,
                     );
                     let (glyph, marker_style) = if is_user {
                         (USER_MARKER, style_user)
@@ -335,13 +336,14 @@ fn build_lines(app: &mut App, width: usize) -> Vec<Line<'static>> {
                     ]));
                     if !text.trim().is_empty() {
                         let key = format!("{ei}:{bi}:think");
-                        let md_lines = app.reflow.cache.render(
+                        let md_lines = app.reflow.cache.render_flavored(
                             &key,
                             text,
                             body_width,
                             &md_theme,
                             &app.syntax_set,
                             &app.syntect_theme,
+                            crate::ui::markdown::MarkdownFlavor::Transcript,
                         );
                         // Recolor the Markdown output to dim italic and indent it
                         // under the gutter (blank marker, so no glyph repeats).

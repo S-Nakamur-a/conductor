@@ -58,6 +58,21 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::theme::Theme;
 
+/// Which visual dialect to render in. The renderer is shared between conductor's
+/// own rich UI (change summaries, review comments, walkthrough) and the Claude
+/// Code transcript overlay (the reflow scroll-up view); the two want different
+/// list-marker and heading chrome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkdownFlavor {
+    /// Conductor UI: `•` bullets in the accent colour; headings get a coloured
+    /// left bar and (H1/H2) a full-width underline rule.
+    Rich,
+    /// Claude Code transcript: `-` bullets in the body colour; headings render as
+    /// bold body-colour text with a blank line above and below and no bar or
+    /// rule — matching how the real Claude Code CLI prints markdown.
+    Transcript,
+}
+
 /// A block of the parsed summary. The parser is line-oriented, so most blocks
 /// map to a single source line; only `CodeBlock` spans multiple lines.
 #[derive(Debug, PartialEq)]
@@ -118,18 +133,63 @@ pub fn render_markdown(
     syntax_set: &SyntaxSet,
     syntect_theme: &SyntectTheme,
 ) -> Vec<Line<'static>> {
+    render_markdown_flavored(
+        text,
+        width,
+        theme,
+        syntax_set,
+        syntect_theme,
+        MarkdownFlavor::Rich,
+    )
+}
+
+/// [`render_markdown`] with an explicit [`MarkdownFlavor`]. The 5-arg
+/// [`render_markdown`] is this with [`MarkdownFlavor::Rich`]; the Claude
+/// transcript overlay passes [`MarkdownFlavor::Transcript`].
+pub fn render_markdown_flavored(
+    text: &str,
+    width: usize,
+    theme: &Theme,
+    syntax_set: &SyntaxSet,
+    syntect_theme: &SyntectTheme,
+    flavor: MarkdownFlavor,
+) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut out: Vec<Line<'static>> = Vec::new();
     // Track whether the previous block was blank so headings get one (and only
     // one) blank line of breathing room above them — GitHub-style section
     // separation that makes the structure scannable at a glance.
     let mut prev_blank = true;
+    // In Transcript flavor a heading also gets a blank line *below* it; if the
+    // source already has a blank line next, swallow it so the two don't stack.
+    let mut swallow_next_blank = false;
     for block in parse_blocks(text) {
-        if matches!(block, MdBlock::Heading { .. }) && !prev_blank {
+        let is_blank = matches!(block, MdBlock::Blank);
+        let is_heading = matches!(block, MdBlock::Heading { .. });
+        if is_blank && swallow_next_blank {
+            swallow_next_blank = false;
+            prev_blank = true;
+            continue;
+        }
+        swallow_next_blank = false;
+        if is_heading && !prev_blank {
             out.push(Line::from(""));
         }
-        prev_blank = matches!(block, MdBlock::Blank);
-        out.extend(render_block(&block, width, theme, syntax_set, syntect_theme));
+        out.extend(render_block(
+            &block,
+            width,
+            theme,
+            syntax_set,
+            syntect_theme,
+            flavor,
+        ));
+        if is_heading && flavor == MarkdownFlavor::Transcript {
+            out.push(Line::from(""));
+            swallow_next_blank = true;
+            prev_blank = true;
+        } else {
+            prev_blank = is_blank;
+        }
     }
     if out.is_empty() {
         out.push(Line::from(""));
@@ -181,6 +241,32 @@ impl MarkdownCache {
         syntax_set: &SyntaxSet,
         syntect_theme: &SyntectTheme,
     ) -> Vec<Line<'static>> {
+        self.render_flavored(
+            key,
+            body,
+            width,
+            theme,
+            syntax_set,
+            syntect_theme,
+            MarkdownFlavor::Rich,
+        )
+    }
+
+    /// [`render`](Self::render) with an explicit [`MarkdownFlavor`]. A given cache
+    /// instance is used with a single flavor throughout (conductor's `markdown_cache`
+    /// is Rich, the reflow transcript's cache is Transcript), so flavor is not part
+    /// of the cache key.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_flavored(
+        &self,
+        key: &str,
+        body: &str,
+        width: usize,
+        theme: &Theme,
+        syntax_set: &SyntaxSet,
+        syntect_theme: &SyntectTheme,
+        flavor: MarkdownFlavor,
+    ) -> Vec<Line<'static>> {
         // A theme switch changes colours baked into the cached spans, so drop
         // every entry when the theme fingerprint moves.
         let fp = theme_fingerprint(theme);
@@ -194,7 +280,7 @@ impl MarkdownCache {
         {
             return e.lines.clone();
         }
-        let lines = render_markdown(body, width, theme, syntax_set, syntect_theme);
+        let lines = render_markdown_flavored(body, width, theme, syntax_set, syntect_theme, flavor);
         self.entries.borrow_mut().insert(
             key.to_string(),
             CacheEntry {
@@ -502,6 +588,7 @@ fn render_block(
     theme: &Theme,
     syntax_set: &SyntaxSet,
     syntect_theme: &SyntectTheme,
+    flavor: MarkdownFlavor,
 ) -> Vec<Line<'static>> {
     match block {
         MdBlock::Blank => vec![Line::from("")],
@@ -509,6 +596,14 @@ fn render_block(
             "\u{2500}".repeat(width),
             Style::default().fg(theme.muted),
         ))],
+        // Transcript flavor: no colour bar, no underline rule — just bold
+        // body-colour text. The surrounding blank lines are added by
+        // `render_markdown_flavored`.
+        MdBlock::Heading { text, .. } if flavor == MarkdownFlavor::Transcript => {
+            let style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+            let cells = spans_to_cells(&inline_spans(text, style, theme));
+            wrap_cells(&cells, width, false)
+        }
         MdBlock::Heading { level, text } => {
             // Distinct colour per depth so the heading level reads at a glance
             // (not just "bold text"): H1 accent, H2 info, H3 success, then warm
@@ -563,16 +658,25 @@ fn render_block(
             indent,
         } => {
             let indent = (*indent).min(8);
+            // Bullet glyph: `•` in the rich UI, `-` in the Claude transcript
+            // (both one display column, so the marker-width math is unaffected).
+            let bullet = match flavor {
+                MarkdownFlavor::Rich => "\u{2022} ",
+                MarkdownFlavor::Transcript => "- ",
+            };
             // Marker is a truth table over (checked, ordered).
             let marker = match (checked, ordered) {
                 (Some(true), _) => "[x] ".to_string(),
                 (Some(false), _) => "[ ] ".to_string(),
                 (None, Some(num)) => format!("{num}. "),
-                (None, None) => "\u{2022} ".to_string(),
+                (None, None) => bullet.to_string(),
             };
-            let marker_color = match checked {
-                Some(true) => theme.success,
-                _ => theme.accent,
+            // Rich accents bullets/numbers; the transcript keeps them body-colour
+            // (like the real Claude Code CLI). A completed task always uses success.
+            let marker_color = match (checked, flavor) {
+                (Some(true), _) => theme.success,
+                (_, MarkdownFlavor::Transcript) => theme.fg,
+                (_, MarkdownFlavor::Rich) => theme.accent,
             };
             // Completed items recede so the eye lands on what's left.
             let text_color = if *checked == Some(true) {
@@ -1287,6 +1391,11 @@ mod tests {
         render_markdown(text, width, &theme, &ss, &st)
     }
 
+    fn render_transcript(text: &str, width: usize) -> Vec<Line<'static>> {
+        let (theme, ss, st) = fixtures();
+        render_markdown_flavored(text, width, &theme, &ss, &st, MarkdownFlavor::Transcript)
+    }
+
     // ── Parsing ──
 
     #[test]
@@ -1880,6 +1989,89 @@ mod tests {
             let text = &lines[0].spans[1];
             assert_eq!(text.style.fg, Some(color));
             assert!(text.style.add_modifier.contains(Modifier::BOLD));
+        }
+    }
+
+    // ── Transcript flavor (Claude scroll-up view) ──
+
+    #[test]
+    fn transcript_bullets_use_dash_in_body_colour() {
+        let (theme, _, _) = fixtures();
+        // Bullet marker is "- " (not "• ") and in body colour (not accent).
+        let lines = render_transcript("- item", 20);
+        let marker = &lines[0].spans[0];
+        assert_eq!(marker.content.as_ref(), "- ");
+        assert_eq!(marker.style.fg, Some(theme.fg));
+        // The Rich flavor still uses the accent bullet, unchanged.
+        let rich = render("- item", 20);
+        assert_eq!(rich[0].spans[0].content.as_ref(), "\u{2022} ");
+        assert_eq!(rich[0].spans[0].style.fg, Some(theme.accent));
+    }
+
+    #[test]
+    fn transcript_ordered_marker_in_body_colour() {
+        let (theme, _, _) = fixtures();
+        let lines = render_transcript("1. item", 20);
+        let marker = &lines[0].spans[0];
+        assert_eq!(marker.content.as_ref(), "1. ");
+        assert_eq!(marker.style.fg, Some(theme.fg));
+    }
+
+    #[test]
+    fn transcript_headings_are_bold_body_colour_no_bar_no_rule() {
+        let (theme, _, _) = fixtures();
+        // Green H3 (and every other level) render as plain bold body-colour text:
+        // first span is the text itself, not a "┃ " bar, and there is no rule.
+        for src in ["# H1", "## H2", "### H3"] {
+            let lines = render_transcript(src, 30);
+            let first = &lines[0].spans[0];
+            assert_ne!(first.content.as_ref(), "\u{2503} ", "{src}: no colour bar");
+            assert_eq!(first.style.fg, Some(theme.fg), "{src}: body colour");
+            assert!(
+                first.style.add_modifier.contains(Modifier::BOLD),
+                "{src}: bold"
+            );
+            assert!(
+                !lines.iter().any(|l| {
+                    let t = line_text(l);
+                    !t.is_empty() && t.chars().all(|c| c == '\u{2500}')
+                }),
+                "{src}: no underline rule"
+            );
+        }
+    }
+
+    #[test]
+    fn transcript_heading_has_blank_line_before_and_after() {
+        // "body / ## Head / more" → blank inserted both above and below the head.
+        let lines = render_transcript("body\n## Head\nmore", 30);
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        let h = texts
+            .iter()
+            .position(|t| t == "Head")
+            .expect("heading present");
+        assert_eq!(texts[h - 1], "", "blank line above heading");
+        assert_eq!(texts[h + 1], "", "blank line below heading");
+        assert_eq!(texts[h + 2], "more");
+    }
+
+    #[test]
+    fn transcript_heading_does_not_stack_double_blank() {
+        // An authored blank after the heading is swallowed, not stacked.
+        let lines = render_transcript("## Head\n\nbody", 30);
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        let h = texts.iter().position(|t| t == "Head").unwrap();
+        assert_eq!(texts[h + 1], "", "one blank below");
+        assert_eq!(texts[h + 2], "body", "body immediately after the single blank");
+    }
+
+    #[test]
+    fn transcript_lines_stay_within_width() {
+        // The dash bullet and bold headings never overflow the wrap width.
+        for width in [4usize, 8, 20, 40] {
+            for line in render_transcript("### 見出し\n- あいうえお item\n1. another one", width) {
+                assert!(display_width(&line_text(&line)) <= width);
+            }
         }
     }
 
