@@ -340,12 +340,21 @@ mod tests {
     use crate::review_store::{Author, CommentKind, CommentStatus, ReviewComment};
 
     fn comment(id: &str, line: u32, status: CommentStatus) -> ReviewComment {
+        range_comment(id, line, None, status)
+    }
+
+    fn range_comment(
+        id: &str,
+        line_start: u32,
+        line_end: Option<u32>,
+        status: CommentStatus,
+    ) -> ReviewComment {
         ReviewComment {
             id: id.to_string(),
             worktree: "wt".to_string(),
             file_path: "src/main.rs".to_string(),
-            line_start: line,
-            line_end: None,
+            line_start,
+            line_end,
             kind: CommentKind::Suggest,
             body: "body".to_string(),
             status,
@@ -371,5 +380,33 @@ mod tests {
         // resolved comments are only hidden from the inline thread expansion.
         assert!(state.file_comments.contains_key(&10));
         assert!(state.file_comments.contains_key(&20));
+    }
+
+    #[test]
+    fn build_file_comment_cache_supports_overlapping_ranges() {
+        // Two comments whose ranges nest (L10-L20 and L11-L19) must coexist:
+        // shared lines carry both, and each keeps its own distinct end line
+        // (where its 💬 badge and inline thread live).
+        let mut state = ReviewState::new();
+        state.comments = vec![
+            range_comment("outer", 10, Some(20), CommentStatus::Pending),
+            range_comment("inner", 11, Some(19), CommentStatus::Pending),
+        ];
+
+        state.build_file_comment_cache("src/main.rs");
+
+        let on = |line: usize| -> Vec<&str> {
+            state.file_comments[&line]
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect()
+        };
+        // A line inside both ranges sees both comments.
+        assert_eq!(on(15), vec!["outer", "inner"]);
+        // Boundary lines covered only by the outer range see just it.
+        assert_eq!(on(10), vec!["outer"]);
+        assert_eq!(on(20), vec!["outer"]);
+        // Each comment's own end line is present with its comment.
+        assert!(on(19).contains(&"inner"));
     }
 }

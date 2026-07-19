@@ -154,8 +154,6 @@ pub struct ExplorerState {
     pub comment_list_selected: usize,
     /// Vertical scroll offset for the explorer comment list.
     pub comment_list_scroll: usize,
-    /// Line number (1-indexed) for comment preview triggered by single-clicking a comment marker.
-    pub comment_preview_line: Option<usize>,
     /// Set of 1-indexed line numbers whose inline comment threads are expanded.
     pub expanded_inline_threads: HashSet<usize>,
     /// Line number where inline reply input is active (None = not replying).
@@ -195,7 +193,6 @@ impl Default for ExplorerState {
             explorer_bottom_view: ExplorerBottomView::default(),
             comment_list_selected: 0,
             comment_list_scroll: 0,
-            comment_preview_line: None,
             expanded_inline_threads: HashSet::new(),
             inline_reply_line: None,
             inline_reply_comment_id: None,
@@ -301,6 +298,13 @@ impl Default for ClickTracker {
 }
 
 // ── Main struct ──────────────────────────────────────────────────────
+
+/// Width (in columns) of the comment-marker column at the far left of the
+/// Viewer — where the 💬/│ thread markers live, LEFT of the line numbers.
+/// Kept separate from the "+" badge column (right of the numbers) so that
+/// toggling an existing thread and starting a new comment never share a
+/// click target: the whole gutter+badge side always starts a comment.
+pub const COMMENT_MARKER_W: u16 = 2;
 
 /// All state owned by the Viewer mode.
 #[derive(Default)]

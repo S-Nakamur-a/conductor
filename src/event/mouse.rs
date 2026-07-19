@@ -603,11 +603,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 let line_offset = (row - inner_y) as usize;
                 let inner_x = explorer_end + 1;
                 let gutter_w = app.viewer_state.gutter_total_width();
-                // Include the 2-cell comment-badge column so the "+" button stays
-                // lit (and clickable) while the cursor is over it — otherwise the
-                // button would vanish the moment you moved onto it.
+                // Include the comment-marker column (left) and the 2-cell "+"
+                // badge column (right) so the "+" button stays lit (and
+                // clickable) while the cursor is over the whole left margin.
                 let badge_w: u16 = 2;
-                let on_gutter = col >= inner_x && col < inner_x + gutter_w + badge_w;
+                let marker_w = crate::viewer::COMMENT_MARKER_W;
+                let on_gutter =
+                    col >= inner_x && col < inner_x + marker_w + gutter_w + badge_w;
 
                 // Both diff and file-content views now populate `screen_row_map`
                 // (the diff view injects inline comment threads), so a single
@@ -623,7 +625,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                     let gutter_w = app.viewer_state.gutter_total_width();
                     let inner_x = explorer_end + 1;
                     let badge_w: u16 = 2;
-                    let content_start_x = inner_x + gutter_w + badge_w;
+                    let content_start_x =
+                        inner_x + crate::viewer::COMMENT_MARKER_W + gutter_w + badge_w;
                     if col >= content_start_x {
                         if let Some(line_1) = resolve_screen_line(app, line_offset) {
                             let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
@@ -863,15 +866,16 @@ fn handle_viewer_column_click(
 
     let inner_x = explorer_end + 1; // inside left border
     let inner_y = main_area.y + 1; // inside top border
+    let marker_w = crate::viewer::COMMENT_MARKER_W;
     let gutter_w = app.viewer_state.gutter_total_width();
-    let on_gutter = col >= inner_x && col < inner_x + gutter_w;
+    let on_gutter = col >= inner_x && col < inner_x + marker_w + gutter_w;
 
     // Cmd+Click (macOS) / Ctrl+Click — go-to-definition on the clicked symbol.
     let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
         || mouse.modifiers.contains(KeyModifiers::CONTROL);
     if has_jump_modifier && !on_gutter && !app.viewer_state.diff_view.diff_mode && row >= inner_y {
         let badge_w: u16 = 2;
-        let content_start_x = inner_x + gutter_w + badge_w;
+        let content_start_x = inner_x + marker_w + gutter_w + badge_w;
         if col >= content_start_x {
             let screen_offset = (row - inner_y) as usize;
             if let Some(line_1) = resolve_screen_line(app, screen_offset) {
@@ -897,9 +901,9 @@ fn handle_viewer_column_click(
             // Determine which action was clicked by column offset, using the
             // same layout constants the renderer draws the row with.
             // Offset equivalence with the renderer: gutter_total_width() is
-            // digits+4, and the renderer indents digits + 6 (left_pad) + 4
-            // ("  │ ") = digits + 10 = gutter_total_width() + 2 + 4.
-            let content_x = inner_x + gutter_w + 2 + 4;
+            // digits+4, and the renderer indents marker(2) + digits + 6
+            // (left_pad) + 4 ("  │ ") = marker + gutter_total_width() + 2 + 4.
+            let content_x = inner_x + marker_w + gutter_w + 2 + 4;
             let click_col = col.saturating_sub(content_x) as usize;
             if click_col < thread_actions::reply_end() {
                 // Reply: start inline reply for this comment.
@@ -969,76 +973,10 @@ fn handle_viewer_column_click(
         }
     }
 
-    // Run-test button: clicking the ▶ marker in the left margin of a runnable
-    // test line sends its `go test …` / `cargo test …` command to the Shell PTY.
-    // Only in file view — the diff renderer doesn't draw these markers, so don't
-    // hit-test them there.
-    if !app.viewer_state.diff_view.diff_mode && row >= inner_y {
-        let badge_end = inner_x + gutter_w + 2;
-        if col >= inner_x && col < badge_end {
-            let screen_offset = (row - inner_y) as usize;
-            if let Some(line_1) = resolve_screen_line(app, screen_offset)
-                // Comment badges take visual precedence over the ▶ marker, so a
-                // commented line falls through to the comment-toggle path below.
-                && !app.review_state.file_comments.contains_key(&line_1)
-                && let Some(run) = app.viewer_state.content.test_runs.get(&line_1).cloned()
-            {
-                run_test(app, &run);
-                return;
-            }
-        }
-    }
-
-    // Click anywhere in the left margin (line-number gutter + comment badge) of
-    // a *commented* line toggles its inline thread. A generous hit target so it
-    // works regardless of landing exactly on the 2-cell 💬 glyph, whose width
-    // and column can drift with the terminal/font. Non-commented lines fall
-    // through to the gutter selection path below.
-    let badge_w: u16 = 2;
-    let on_margin = col >= inner_x && col < inner_x + gutter_w + badge_w;
-    if on_margin && row >= inner_y {
-        let screen_offset = (row - inner_y) as usize;
-        if let Some(line_1) = resolve_screen_line(app, screen_offset) {
-            // Defensively refresh the per-file comment cache if it's stale (e.g.
-            // a comment was created via MCP while a different file was current),
-            // so the badge and the toggle gate agree.
-            if app.review_state.file_comments_path.as_deref()
-                != app.viewer_state.content.current_file.as_deref()
-                && let Some(f) = app.viewer_state.content.current_file.clone()
-            {
-                app.review_state.build_file_comment_cache(&f);
-            }
-            if app.review_state.file_comments.contains_key(&line_1) {
-                let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
-                if threads.contains(&line_1) {
-                    threads.remove(&line_1);
-                    if app.viewer_state.explorer.inline_reply_line == Some(line_1) {
-                        app.viewer_state.explorer.inline_reply_line = None;
-                        app.viewer_state.explorer.inline_reply_comment_id = None;
-                        app.viewer_state.explorer.inline_reply_buffer.clear();
-                    }
-                } else {
-                    threads.insert(line_1);
-                    if let Some(comments) = app.review_state.file_comments.get(&line_1) {
-                        for comment in comments {
-                            if !app.review_state.cached_replies.contains_key(&comment.id)
-                                && let Some(store) = app.review_store.as_ref()
-                                && let Ok(replies) = store.get_replies(&comment.id)
-                            {
-                                app.review_state
-                                    .cached_replies
-                                    .insert(comment.id.clone(), replies);
-                            }
-                        }
-                    }
-                }
-                return;
-            }
-        }
-    }
-
     // Click on an ExpandableContext row expands it. Inline threads shift screen
-    // rows, so map the row back to its diff entry via the entry map.
+    // rows, so map the row back to its diff entry via the entry map. (These
+    // rows carry no line number, so they never collide with the margin
+    // dispatch below.)
     if app.viewer_state.diff_view.diff_mode && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(idx) = app
@@ -1057,32 +995,158 @@ fn handle_viewer_column_click(
         }
     }
 
-    // Trigger commenting when clicking the left margin — the line-number gutter
-    // OR the "+" badge column (matching the hover region above). Clicks on the
-    // code content area are treated as plain focus changes.
-    if on_margin && row >= inner_y {
+    // Left-margin dispatch. The margin is three zones with distinct jobs:
+    //   - comment-marker column (far left, 💬/│) → toggles the existing
+    //     inline thread; this is the only place thread focus lives;
+    //   - line-number gutter → always starts a NEW comment, even on lines
+    //     already covered by a comment range (overlapping/nested ranges);
+    //   - 2-cell badge column → ▶ runs the test, otherwise "+" starts a new
+    //     comment — identical on every line, commented or not.
+    // Clicks on the code content area are treated as plain focus changes.
+    let badge_w: u16 = 2;
+    let on_marker = col >= inner_x && col < inner_x + marker_w;
+    let gutter_start = inner_x + marker_w;
+    let on_number_gutter = col >= gutter_start && col < gutter_start + gutter_w;
+    let on_badge = col >= gutter_start + gutter_w && col < gutter_start + gutter_w + badge_w;
+    if (on_marker || on_number_gutter || on_badge) && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         // Screen-row mapping handles inline thread rows and both view modes
         // (deletion lines have no new-line number, so they resolve to None).
         if let Some(line_1) = resolve_screen_line(app, screen_offset) {
-            if app.review_state.file_comments.contains_key(&line_1) {
-                // Existing comment on this line → reveal its thread instead of
-                // starting a new one.
-                app.viewer_state.explorer.comment_preview_line = Some(line_1);
-            } else if mouse.modifiers.contains(KeyModifiers::SHIFT) {
-                // Shift+click extends a range from the previously clicked line
-                // and opens the composer immediately.
-                app.viewer_state.explorer.comment_preview_line = None;
-                app.viewer_state.gutter_comment_click(line_1, true);
-                open_viewer_comment(app);
+            // Defensively refresh the per-file comment cache if it's stale (e.g.
+            // a comment was created via MCP while a different file was current),
+            // so the badge and the dispatch below agree.
+            if app.review_state.file_comments_path.as_deref()
+                != app.viewer_state.content.current_file.as_deref()
+                && let Some(f) = app.viewer_state.content.current_file.clone()
+            {
+                app.review_state.build_file_comment_cache(&f);
+            }
+            let zone = if on_marker {
+                MarginZone::Marker
+            } else if on_badge {
+                MarginZone::Badge
             } else {
-                // Plain press: begin a gutter drag. The selection starts as this
-                // single line and grows as the cursor is dragged over more lines;
-                // the composer opens on mouse-up (GitHub-style: click = one line,
-                // drag = a range).
-                app.viewer_state.explorer.comment_preview_line = None;
-                app.viewer_state.gutter_comment_click(line_1, false);
-                app.viewer_state.click.gutter_drag_anchor = Some(line_1);
+                MarginZone::NumberGutter
+            };
+            let has_comment = app.review_state.file_comments.contains_key(&line_1);
+            // The ▶ marker is only drawn in file view — don't hit-test it in
+            // diff view.
+            let has_test_run = !app.viewer_state.diff_view.diff_mode
+                && app.viewer_state.content.test_runs.contains_key(&line_1);
+            let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+            match classify_margin_click(zone, has_comment, has_test_run, shift) {
+                MarginClickAction::ToggleThread => toggle_inline_thread_at(app, line_1),
+                MarginClickAction::RunTest => {
+                    if let Some(run) = app.viewer_state.content.test_runs.get(&line_1).cloned() {
+                        run_test(app, &run);
+                    }
+                }
+                MarginClickAction::StartComment { extend: true } => {
+                    // Shift+click extends a range from the previously clicked
+                    // line and opens the composer immediately.
+                    app.viewer_state.gutter_comment_click(line_1, true);
+                    open_viewer_comment(app);
+                }
+                MarginClickAction::StartComment { extend: false } => {
+                    // Plain press: begin a gutter drag. The selection starts as
+                    // this single line and grows as the cursor is dragged over
+                    // more lines; the composer opens on mouse-up (GitHub-style:
+                    // click = one line, drag = a range).
+                    app.viewer_state.gutter_comment_click(line_1, false);
+                    app.viewer_state.click.gutter_drag_anchor = Some(line_1);
+                }
+            }
+        }
+    }
+}
+
+/// Which zone of the viewer's left margin a click landed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarginZone {
+    /// The comment-marker column at the far left (💬 / │), before the numbers.
+    Marker,
+    /// The line-number gutter.
+    NumberGutter,
+    /// The 2-cell badge column right of the gutter (▶ / hover "+").
+    Badge,
+}
+
+/// What a left click in the viewer's left margin does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarginClickAction {
+    /// Toggle the inline comment thread injected below the clicked line.
+    ToggleThread,
+    /// Send the line's test command to the Shell PTY.
+    RunTest,
+    /// Start a new comment (`extend` = shift-click range extension).
+    StartComment { extend: bool },
+}
+
+/// Decide what a left click in the viewer's left margin does.
+///
+/// Thread focus lives ONLY in the marker column (its 💬/│ glyphs mark the
+/// thread); the number gutter and the "+" badge column always start a NEW
+/// comment — even on lines already covered by an existing comment range — so
+/// ranges that overlap or nest inside another comment's range stay creatable,
+/// and the "+" affordance behaves identically on every line. The ▶ run-test
+/// button keeps its spot in the badge column.
+fn classify_margin_click(
+    zone: MarginZone,
+    has_comment: bool,
+    has_test_run: bool,
+    shift: bool,
+) -> MarginClickAction {
+    match zone {
+        MarginZone::Marker if has_comment => MarginClickAction::ToggleThread,
+        MarginZone::Badge if has_test_run => MarginClickAction::RunTest,
+        _ => MarginClickAction::StartComment { extend: shift },
+    }
+}
+
+/// Where the inline thread for a badge click on `line_1` is anchored.
+///
+/// Threads are injected below a comment's END line (where its 💬 sits) — the
+/// diff renderer draws them nowhere else — so a click on a mid-range │ line
+/// redirects to the nearest covering end line instead of dead-toggling a line
+/// that never shows a thread. On an end line the minimum is the line itself.
+fn thread_anchor_line(comments: &[crate::review_store::ReviewComment], line_1: usize) -> usize {
+    comments
+        .iter()
+        .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
+        .min()
+        .unwrap_or(line_1)
+}
+
+/// Toggle the inline comment thread for the comment(s) covering `line_1`,
+/// loading replies on first expansion and cancelling an in-progress reply on
+/// collapse. Shared by the mouse (marker-column click) and keyboard toggles.
+pub(super) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
+    let line_1 = app
+        .review_state
+        .file_comments
+        .get(&line_1)
+        .map_or(line_1, |comments| thread_anchor_line(comments, line_1));
+    let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
+    if threads.contains(&line_1) {
+        threads.remove(&line_1);
+        if app.viewer_state.explorer.inline_reply_line == Some(line_1) {
+            app.viewer_state.explorer.inline_reply_line = None;
+            app.viewer_state.explorer.inline_reply_comment_id = None;
+            app.viewer_state.explorer.inline_reply_buffer.clear();
+        }
+    } else {
+        threads.insert(line_1);
+        if let Some(comments) = app.review_state.file_comments.get(&line_1) {
+            for comment in comments {
+                if !app.review_state.cached_replies.contains_key(&comment.id)
+                    && let Some(store) = app.review_store.as_ref()
+                    && let Ok(replies) = store.get_replies(&comment.id)
+                {
+                    app.review_state
+                        .cached_replies
+                        .insert(comment.id.clone(), replies);
+                }
             }
         }
     }
@@ -1514,6 +1578,95 @@ mod tests {
             terminal_claude_y: 1,
             terminal_split_y: 33,
         }
+    }
+
+    #[test]
+    fn gutter_and_badge_clicks_always_start_a_comment() {
+        // The core of the overlap fix: a line inside an existing comment's
+        // range (has_comment = true) must still start a NEW comment from the
+        // number gutter and the "+" badge column — never get swallowed by
+        // thread focus. The affordance is identical on every line.
+        for zone in [MarginZone::NumberGutter, MarginZone::Badge] {
+            for has_comment in [false, true] {
+                assert_eq!(
+                    classify_margin_click(zone, has_comment, false, false),
+                    MarginClickAction::StartComment { extend: false }
+                );
+                assert_eq!(
+                    classify_margin_click(zone, has_comment, false, true),
+                    MarginClickAction::StartComment { extend: true }
+                );
+            }
+        }
+        // Even on a runnable-test line, the number gutter comments.
+        assert_eq!(
+            classify_margin_click(MarginZone::NumberGutter, false, true, false),
+            MarginClickAction::StartComment { extend: false }
+        );
+    }
+
+    #[test]
+    fn marker_click_focuses_existing_thread() {
+        // The far-left 💬/│ marker column is the ONLY place thread focus lives.
+        assert_eq!(
+            classify_margin_click(MarginZone::Marker, true, false, false),
+            MarginClickAction::ToggleThread
+        );
+        // Comment wins even on a commented test line (▶ lives in the badge
+        // column, not here).
+        assert_eq!(
+            classify_margin_click(MarginZone::Marker, true, true, false),
+            MarginClickAction::ToggleThread
+        );
+        // An empty marker cell falls back to starting a comment.
+        assert_eq!(
+            classify_margin_click(MarginZone::Marker, false, false, false),
+            MarginClickAction::StartComment { extend: false }
+        );
+    }
+
+    #[test]
+    fn badge_click_on_test_line_runs_the_test() {
+        assert_eq!(
+            classify_margin_click(MarginZone::Badge, false, true, false),
+            MarginClickAction::RunTest
+        );
+        // A commented test line: ▶ still renders in the badge column, so the
+        // click there still runs the test (thread focus is the marker's job).
+        assert_eq!(
+            classify_margin_click(MarginZone::Badge, true, true, false),
+            MarginClickAction::RunTest
+        );
+    }
+
+    #[test]
+    fn thread_anchor_redirects_mid_range_lines_to_nearest_end_line() {
+        use crate::review_store::{Author, CommentKind, CommentStatus, ReviewComment};
+        let range = |id: &str, start: u32, end: u32| ReviewComment {
+            id: id.to_string(),
+            worktree: "wt".to_string(),
+            file_path: "src/main.rs".to_string(),
+            line_start: start,
+            line_end: Some(end),
+            kind: CommentKind::Suggest,
+            body: "body".to_string(),
+            status: CommentStatus::Pending,
+            commit_ref: "abc".to_string(),
+            author: Author::User,
+            branch: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        // Nested ranges L10-L20 and L11-L19: a mid-range │ click lands on the
+        // nearest end line (💬), where both views render the thread.
+        let both = [range("outer", 10, 20), range("inner", 11, 19)];
+        assert_eq!(thread_anchor_line(&both, 15), 19);
+        // A line covered only by the outer range anchors at its end.
+        let outer_only = [range("outer", 10, 20)];
+        assert_eq!(thread_anchor_line(&outer_only, 10), 20);
+        // An end line anchors at itself.
+        assert_eq!(thread_anchor_line(&both, 19), 19);
+        assert_eq!(thread_anchor_line(&outer_only, 20), 20);
     }
 
     #[test]

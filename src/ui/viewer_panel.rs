@@ -303,14 +303,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         };
         let gutter_span = Span::styled(num, gutter_style);
 
-        // Comment badge: 💬 on the last line of a comment range,
-        // │ on earlier lines in the range, and a GitHub-style "+" button on
-        // gutter hover (click it to start a comment).
-        let badge = if comment_end_lines.contains(&line_1) {
+        // Comment-marker column (far left, BEFORE the line numbers): 💬 on
+        // the last line of a comment range, │ on earlier lines in the range.
+        // Clicking it toggles the thread — kept out of the gutter/badge side
+        // so starting a new comment works identically on every line.
+        let marker = if comment_end_lines.contains(&line_1) {
             Span::styled("💬", Style::default().fg(theme.accent))
         } else if comment_lines.contains(&line_1) {
             Span::styled("│ ", Style::default().fg(theme.accent))
-        } else if vs.content.test_runs.contains_key(&line_1) {
+        } else {
+            Span::raw("  ")
+        };
+
+        // Badge column (right of the line numbers): ▶ on runnable test lines,
+        // otherwise a GitHub-style "+" button on gutter hover (click it to
+        // start a comment) — shown regardless of existing comments.
+        let badge = if vs.content.test_runs.contains_key(&line_1) {
             // Runnable test line: a ▶ button that sends the test command
             // (`go test …` / `cargo test …`) to the Shell PTY (handled in
             // event/mouse.rs).
@@ -414,8 +422,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg, party)
         };
 
-        // Apply horizontal scroll to content spans, clipping to panel width.
-        let content_max_w = (area.width as usize).saturating_sub(gutter_width + 8);
+        // Apply horizontal scroll to content spans, clipping to panel width
+        // (borders + marker column + gutter + badge).
+        let content_max_w = (area.width as usize)
+            .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
         let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
         // Apply underline to hover symbol (Cmd+hover for jump targets).
@@ -458,7 +468,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             content_spans
         };
 
-        let mut spans = vec![gutter_span, badge];
+        let mut spans = vec![marker, gutter_span, badge];
         spans.extend(content_spans);
         lines.push(Line::from(spans));
         screen_row_map.push(crate::viewer::ScreenRow::Code(line_1));
@@ -773,13 +783,20 @@ fn render_diff_content_line(
     };
     let gutter_span = Span::styled(num, gutter_style);
 
-    // Comment badge: 💬 on end lines, │ on earlier range lines, and a
-    // GitHub-style "+" button on hovered gutter (click to start a comment).
-    let badge = if new_line_no.is_some_and(|n| ctx.comment_end_lines.contains(&n)) {
+    // Comment-marker column (far left, BEFORE the line numbers): 💬 on end
+    // lines, │ on earlier range lines. Clicking it toggles the thread.
+    let marker = if new_line_no.is_some_and(|n| ctx.comment_end_lines.contains(&n)) {
         Span::styled("💬", Style::default().fg(theme.accent))
     } else if new_line_no.is_some_and(|n| ctx.comment_lines.contains(&n)) {
         Span::styled("│ ", Style::default().fg(theme.accent))
-    } else if is_gutter_hovered {
+    } else {
+        Span::raw("  ")
+    };
+
+    // Badge column (right of the line numbers): a GitHub-style "+" button on
+    // hovered gutter (click to start a comment) — regardless of existing
+    // comments. (The diff view draws no ▶ test markers.)
+    let badge = if is_gutter_hovered {
         Span::styled(
             "+ ",
             Style::default()
@@ -899,8 +916,10 @@ fn render_diff_content_line(
         }
     };
 
-    // Apply horizontal scroll, clipping to panel width.
-    let content_max_w = (ctx.area_width as usize).saturating_sub(gutter_width + 8);
+    // Apply horizontal scroll, clipping to panel width
+    // (borders + marker column + gutter + badge).
+    let content_max_w = (ctx.area_width as usize)
+        .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
     // Underline the current walkthrough step's line range — a highlight that
@@ -915,7 +934,7 @@ fn render_diff_content_line(
         content_spans
     };
 
-    let mut spans = vec![gutter_span, badge];
+    let mut spans = vec![marker, gutter_span, badge];
     spans.extend(content_spans);
 
     // Extend background color to the end of the line for
@@ -1422,7 +1441,7 @@ fn build_inline_thread_lines<'a>(
 
     use crate::viewer::ScreenRow;
     let mut out: Vec<(Line, ScreenRow)> = Vec::new();
-    let left_pad = gutter_width + 4 + 2; // gutter + badge
+    let left_pad = crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 4 + 2; // marker + gutter + badge
     let gutter_pad: String = " ".repeat(left_pad);
     let border_style = Style::default().fg(theme.accent);
     // Per-author surface tint so "who wrote this" reads at a glance: Claude's
@@ -1709,7 +1728,7 @@ fn build_inline_compose_lines<'a>(
 ) -> Vec<(Line<'a>, crate::viewer::ScreenRow)> {
     use crate::viewer::ScreenRow;
     let bg = theme.comment_user_bg;
-    let left_pad = gutter_width + 4 + 2;
+    let left_pad = crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 4 + 2;
     let gutter_pad: String = " ".repeat(left_pad);
     let border_style = Style::default().fg(theme.accent);
     let bg_style = Style::default().bg(bg);
