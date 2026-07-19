@@ -33,9 +33,6 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Clear comment preview on any key input.
-    app.viewer_state.explorer.comment_preview_line = None;
-
     // Summary pseudo-file view has its own (simple) scroll navigation.
     if app.viewer_state.is_summary() {
         handle_viewer_summary_mode_key(app, key);
@@ -461,36 +458,13 @@ fn toggle_inline_thread(app: &mut App) {
         app.viewer_state.content.file_scroll + 1
     };
 
-    // Only toggle if the line has comments.
+    // Only toggle if the line has comments. The shared helper redirects a
+    // mid-range line to its thread's end-line anchor, matching the mouse path
+    // (the diff view only renders threads at end lines).
     if !app.review_state.file_comments.contains_key(&cursor_line) {
         return;
     }
-
-    let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
-    if threads.contains(&cursor_line) {
-        threads.remove(&cursor_line);
-        // Also cancel any active reply on this line.
-        if app.viewer_state.explorer.inline_reply_line == Some(cursor_line) {
-            app.viewer_state.explorer.inline_reply_line = None;
-            app.viewer_state.explorer.inline_reply_comment_id = None;
-            app.viewer_state.explorer.inline_reply_buffer.clear();
-        }
-    } else {
-        threads.insert(cursor_line);
-        // Load replies if not cached.
-        if let Some(comments) = app.review_state.file_comments.get(&cursor_line) {
-            for comment in comments {
-                if !app.review_state.cached_replies.contains_key(&comment.id)
-                    && let Some(store) = app.review_store.as_ref()
-                    && let Ok(replies) = store.get_replies(&comment.id)
-                {
-                    app.review_state
-                        .cached_replies
-                        .insert(comment.id.clone(), replies);
-                }
-            }
-        }
-    }
+    super::mouse::toggle_inline_thread_at(app, cursor_line);
 }
 
 /// Start inline reply mode for the current cursor line.
