@@ -14,6 +14,333 @@ impl App {
         extract_symbol_from_line(line)
     }
 
+    /// Explicitly show the hover-info popup for the symbol under the viewer
+    /// cursor (the first identifier on the top line — same lookup as `gd`).
+    ///
+    /// Bound to `K` as an instant, no-wait trigger. Because it's a deliberate
+    /// press it gives feedback when it can't produce a popup (status flash),
+    /// unlike the passive auto-hover which stays silent.
+    pub fn show_hover_info(&mut self) {
+        use crate::app::StatusLevel;
+
+        let symbol = match self.get_symbol_at_cursor() {
+            Some(s) => s,
+            None => {
+                self.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
+                return;
+            }
+        };
+        if !self.symbol_index.is_available() {
+            self.set_status(
+                "Symbol index not ready yet".to_string(),
+                StatusLevel::Warning,
+            );
+            return;
+        }
+        let current_file = self.viewer_state.content.current_file.clone();
+        match crate::hover_info::build_hover_info(
+            &self.symbol_index,
+            &symbol,
+            current_file.as_deref(),
+        ) {
+            Some(info) => {
+                self.hover_info_overlay.shown_file = current_file.clone();
+                self.hover_info_overlay.info = Some(info);
+            }
+            None => {
+                self.set_status(
+                    format!("No definition indexed for '{symbol}'"),
+                    StatusLevel::Info,
+                );
+            }
+        }
+    }
+
+    /// Whether the passive auto-hover popup is allowed to appear right now:
+    /// a file (plain or diff) open in the focused Viewer, with no blocking
+    /// overlay or the summary pseudo-view stealing the surface.
+    fn hover_auto_allowed(&self) -> bool {
+        self.focus == Focus::Viewer
+            && !self.viewer_state.is_summary()
+            && self.overlays.active == crate::overlay::ActiveOverlay::None
+            && !self.references_overlay.active
+            && !self.symbol_action_overlay.active
+            && !self.symbol_hint_overlay.active
+            && self.viewer_state.content.current_file.is_some()
+    }
+
+    /// Clear the whole hover modal stack (popup, pending candidate, refs list,
+    /// preview, pin). Returns whether anything was actually showing.
+    pub fn clear_hover(&mut self) -> bool {
+        let had = self.hover_info_overlay.info.is_some()
+            || self.hover_info_overlay.pending.is_some()
+            || self.hover_info_overlay.pinned;
+        self.hover_info_overlay.reset();
+        had
+    }
+
+    /// Record the symbol the mouse is currently resting on (from a mouse-move
+    /// event). `cand` is `(symbol, 1-indexed line, anchor_row, anchor_col)` in
+    /// absolute screen coords, or `None` when the mouse is over blank space / a
+    /// non-identifier. A *new* symbol restarts the idle countdown and drops any
+    /// popup shown for the previous one.
+    pub fn set_mouse_hover_candidate(&mut self, cand: Option<(String, usize, u16, u16)>) {
+        match cand {
+            Some((symbol, line, anchor_row, anchor_col)) => {
+                let same = self
+                    .hover_info_overlay
+                    .pending
+                    .as_ref()
+                    .is_some_and(|c| c.symbol == symbol && c.line == line);
+                if same {
+                    return;
+                }
+                let file = self.viewer_state.content.current_file.clone();
+                self.hover_info_overlay.pending = Some(crate::overlay::HoverCandidate {
+                    symbol,
+                    line,
+                    file,
+                    anchor_row,
+                    anchor_col,
+                    since: std::time::Instant::now(),
+                    resolved: false,
+                });
+                self.hover_info_overlay.leave_at = None;
+                if self.hover_info_overlay.info.take().is_some() {
+                    self.dirty.mark_all();
+                }
+            }
+            None => {
+                // Mouse moved off the symbol onto blank space. If a popup is
+                // showing, don't drop it instantly — start a short grace window
+                // (see `tick_hover`) so the cursor can travel onto the popup to
+                // click it. If nothing is shown yet, just drop the candidate.
+                if self.hover_info_overlay.info.is_some() {
+                    self.hover_info_overlay.pending = None;
+                    if self.hover_info_overlay.leave_at.is_none() {
+                        self.hover_info_overlay.leave_at = Some(std::time::Instant::now());
+                    }
+                } else if self.hover_info_overlay.pending.take().is_some() {
+                    self.dirty.mark_all();
+                }
+            }
+        }
+    }
+
+    /// True when the given absolute screen point lies within any part of the
+    /// hover modal stack (base popup, refs list, or preview) — used to keep the
+    /// popup alive while the mouse is over it and to route clicks.
+    pub fn hover_point_hit(&self, col: u16, row: u16) -> bool {
+        let hv = &self.hover_info_overlay;
+        let in_rect = |r: ratatui::layout::Rect| {
+            r.width > 0
+                && r.height > 0
+                && col >= r.x
+                && col < r.x + r.width
+                && row >= r.y
+                && row < r.y + r.height
+        };
+        if in_rect(hv.info_rect) {
+            return true;
+        }
+        if let Some(refs) = &hv.refs {
+            if in_rect(refs.rect) {
+                return true;
+            }
+            if let Some(p) = &refs.preview {
+                if in_rect(p.rect) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Per-frame auto-hover driver. When the mouse has rested on a symbol past
+    /// the debounce, resolves its hover popup; stays silent when nothing is
+    /// found. Also manages the grace window and stale-file/focus invalidation.
+    pub fn tick_hover(&mut self) {
+        /// How long the mouse must rest on a symbol before the popup appears.
+        const HOVER_IDLE: std::time::Duration = std::time::Duration::from_millis(350);
+        /// Grace window keeping a transient popup alive after the mouse leaves
+        /// the symbol, so the cursor can reach the popup to click it.
+        const HOVER_GRACE: std::time::Duration = std::time::Duration::from_millis(700);
+
+        // A pinned modal is user-driven: it survives focus/idle loss and is only
+        // dismissed by Esc or a click outside (handled in the event layer).
+        if self.hover_info_overlay.pinned {
+            return;
+        }
+
+        // Stale-file guard: if the viewer switched files (via a jump, the file
+        // tree, or an external reload) while a popup was up, the popup now
+        // describes a symbol from a file no longer on screen. Drop it — even
+        // within the grace window — so it can never linger over unrelated code.
+        if self.hover_info_overlay.info.is_some()
+            && self.hover_info_overlay.shown_file != self.viewer_state.content.current_file
+        {
+            if self.clear_hover() {
+                self.dirty.mark_all();
+            }
+            return;
+        }
+
+        // Grace window: a popup whose symbol the mouse left stays up briefly, but
+        // only while the mouse is actually over it or the timer hasn't expired.
+        if let Some(left) = self.hover_info_overlay.leave_at {
+            if left.elapsed() >= HOVER_GRACE {
+                if self.clear_hover() {
+                    self.dirty.mark_all();
+                }
+                return;
+            }
+        }
+
+        if !self.hover_auto_allowed() {
+            // Don't kill a popup that's within its grace window — the user may be
+            // moving the mouse toward it (which briefly leaves the content area).
+            if self.hover_info_overlay.leave_at.is_some() {
+                return;
+            }
+            if self.clear_hover() {
+                self.dirty.mark_all();
+            }
+            return;
+        }
+
+        // Auto-hover is driven purely by the mouse resting on a symbol (set by the
+        // mouse-move handler). A top-line/keyboard heuristic was tried and dropped:
+        // with no per-line text cursor, "the cursor line" is always the top visible
+        // line, so it fired for code the user wasn't pointing at. Mouse position is
+        // exact — on a symbol shows the popup, on whitespace shows nothing.
+
+        // Resolve a candidate that has rested long enough.
+        let ready = self
+            .hover_info_overlay
+            .pending
+            .as_ref()
+            .is_some_and(|c| !c.resolved && c.since.elapsed() >= HOVER_IDLE);
+        if ready {
+            let (symbol, file, anchor_row, anchor_col) = {
+                let c = self.hover_info_overlay.pending.as_ref().unwrap();
+                (c.symbol.clone(), c.file.clone(), c.anchor_row, c.anchor_col)
+            };
+            let info = crate::hover_info::build_hover_info(
+                &self.symbol_index,
+                &symbol,
+                file.as_deref(),
+            );
+            if let Some(c) = self.hover_info_overlay.pending.as_mut() {
+                c.resolved = true;
+            }
+            self.hover_info_overlay.anchor_row = anchor_row;
+            self.hover_info_overlay.anchor_col = anchor_col;
+            // Remember which viewed file this popup describes, so the stale-file
+            // guard can drop it the moment the viewer moves to another file.
+            self.hover_info_overlay.shown_file = if info.is_some() { file } else { None };
+            self.hover_info_overlay.info = info;
+            self.dirty.mark_all();
+        }
+    }
+
+    /// Cancel the grace window because the mouse is now over the popup itself.
+    pub fn hover_keep_alive(&mut self) {
+        self.hover_info_overlay.leave_at = None;
+    }
+
+    /// Open the references list (level 1) for the currently-shown symbol and pin
+    /// the popup. No-op when nothing is shown or the symbol has no references.
+    pub fn open_hover_refs(&mut self) {
+        let symbol = match self.hover_info_overlay.info.as_ref() {
+            Some(info) if info.ref_count > 0 => info.symbol_name.clone(),
+            _ => return,
+        };
+        let root = self.symbol_index.root();
+        let results = self.symbol_index.find_references(&symbol, &root);
+        if results.is_empty() {
+            return;
+        }
+        self.hover_info_overlay.pinned = true;
+        self.hover_info_overlay.leave_at = None;
+        self.hover_info_overlay.refs = Some(crate::overlay::HoverRefs {
+            symbol,
+            results,
+            selected: 0,
+            scroll: 0,
+            rect: ratatui::layout::Rect::default(),
+            row_hits: Vec::new(),
+            preview: None,
+        });
+        self.dirty.mark_all();
+    }
+
+    /// Open the code preview (level 2) for reference row `idx` in the list.
+    pub fn open_hover_preview(&mut self, idx: usize) {
+        let (file, line) = match self.hover_info_overlay.refs.as_mut() {
+            Some(refs) => match refs.results.get(idx) {
+                Some(r) => {
+                    refs.selected = idx;
+                    (r.file_path.clone(), r.line)
+                }
+                None => return,
+            },
+            None => return,
+        };
+        let root = self.symbol_index.root();
+        let preview = build_hover_preview(&root, &file, line);
+        if let Some(refs) = self.hover_info_overlay.refs.as_mut() {
+            refs.preview = preview;
+        }
+        self.dirty.mark_all();
+    }
+
+    /// Jump to the open preview's location and dismiss the whole hover stack.
+    pub fn hover_jump_to_preview(&mut self) {
+        let target = self
+            .hover_info_overlay
+            .refs
+            .as_ref()
+            .and_then(|r| r.preview.as_ref())
+            .map(|p| (p.file.clone(), p.center_line));
+        if let Some((file, line)) = target {
+            self.clear_hover();
+            self.jump_to_location(&file, line, 0);
+        }
+    }
+
+    /// Move the references-list selection by `delta` (keyboard nav), clamping.
+    pub fn hover_refs_move(&mut self, delta: isize) {
+        if let Some(refs) = self.hover_info_overlay.refs.as_mut() {
+            let n = refs.results.len();
+            if n == 0 {
+                return;
+            }
+            let cur = refs.selected as isize;
+            refs.selected = (cur + delta).clamp(0, n as isize - 1) as usize;
+            self.dirty.mark_all();
+        }
+    }
+
+    /// Esc from the hover stack: close the deepest open level (preview → list →
+    /// the whole popup). Returns whether a level was closed.
+    pub fn hover_pop_level(&mut self) -> bool {
+        if let Some(refs) = self.hover_info_overlay.refs.as_mut() {
+            if refs.preview.take().is_some() {
+                self.dirty.mark_all();
+                return true;
+            }
+            self.hover_info_overlay.refs = None;
+            self.hover_info_overlay.pinned = false;
+            self.dirty.mark_all();
+            return true;
+        }
+        if self.clear_hover() {
+            self.dirty.mark_all();
+            return true;
+        }
+        false
+    }
+
     /// Check if the cursor is currently at (or very near) a definition site
     /// for the given symbol. Returns `true` when the current file + line
     /// matches one of the symbol's definition locations.
@@ -203,11 +530,53 @@ impl App {
     }
 }
 
+/// Build a code preview window around `line_1` (1-indexed) in `rel_path`,
+/// reading a few lines of context on each side. Returns `None` if the file
+/// can't be read or the line is out of range.
+fn build_hover_preview(
+    root: &std::path::Path,
+    rel_path: &str,
+    line_1: usize,
+) -> Option<crate::overlay::HoverPreview> {
+    /// Lines of context shown on each side of the reference line.
+    const CONTEXT: usize = 3;
+
+    let source = std::fs::read_to_string(root.join(rel_path)).ok()?;
+    let all: Vec<&str> = source.lines().collect();
+    if line_1 == 0 || line_1 > all.len() {
+        return None;
+    }
+    let idx = line_1 - 1;
+    let start = idx.saturating_sub(CONTEXT);
+    let end = (idx + CONTEXT + 1).min(all.len());
+    let lines = (start..end)
+        .map(|i| (i + 1, all[i].to_string()))
+        .collect::<Vec<_>>();
+    Some(crate::overlay::HoverPreview {
+        file: rel_path.to_string(),
+        center_line: line_1,
+        lines,
+        rect: ratatui::layout::Rect::default(),
+    })
+}
+
 // ── Free functions for symbol extraction ──────────────────────────────
 
 /// Extract a symbol name from a source code line at the cursor position.
-/// Returns the first Rust-like identifier found on the line that is not a keyword.
+/// Returns the first Rust-like identifier found on the line that is not a
+/// keyword. Comment and attribute lines yield nothing — an English word in a
+/// doc comment (e.g. `//! Building …`) must not resolve to a same-named symbol.
 pub fn extract_symbol_from_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    // Skip lines that are comments (`//`, `///`, `//!`, `/* … */`, block-comment
+    // continuation `* …`) or attributes (`#[…]`) — none carry a code symbol.
+    if trimmed.starts_with("//")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.starts_with('#')
+    {
+        return None;
+    }
     let re = regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\b").ok()?;
     for cap in re.captures_iter(line) {
         let word = cap.get(1)?.as_str();
@@ -353,5 +722,65 @@ mod tests {
         let line = "    _handler.call();";
         let result = extract_symbol_at_column(line, 5);
         assert_eq!(result, Some(("_handler".to_string(), 4, 12)));
+    }
+
+    #[test]
+    fn build_hover_preview_windows_around_line() {
+        let dir = std::env::temp_dir().join(format!("hover_prev_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = (1..=10)
+            .map(|n| format!("line{n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.join("f.rs"), src).unwrap();
+
+        // Center line 5 → 3 lines of context each side (2..=8).
+        let p = build_hover_preview(&dir, "f.rs", 5).expect("preview");
+        assert_eq!(p.center_line, 5);
+        assert_eq!(p.file, "f.rs");
+        assert_eq!(
+            p.lines,
+            vec![
+                (2, "line2".to_string()),
+                (3, "line3".to_string()),
+                (4, "line4".to_string()),
+                (5, "line5".to_string()),
+                (6, "line6".to_string()),
+                (7, "line7".to_string()),
+                (8, "line8".to_string()),
+            ]
+        );
+
+        // Near the top the window clamps to the file start.
+        let p = build_hover_preview(&dir, "f.rs", 1).expect("preview");
+        assert_eq!(p.lines.first().unwrap().0, 1);
+
+        // Out-of-range / missing file → None.
+        assert!(build_hover_preview(&dir, "f.rs", 999).is_none());
+        assert!(build_hover_preview(&dir, "nope.rs", 1).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_symbol_from_line_skips_comments_and_attributes() {
+        // Doc/line/block comments must not yield an English word that happens
+        // to collide with a real type name (the "Building" bug).
+        assert_eq!(extract_symbol_from_line("//! Building and navigating"), None);
+        assert_eq!(extract_symbol_from_line("/// Create a new state"), None);
+        assert_eq!(extract_symbol_from_line("    // Building the list"), None);
+        assert_eq!(extract_symbol_from_line("/* Building */"), None);
+        assert_eq!(extract_symbol_from_line("     * Building (block cont.)"), None);
+        assert_eq!(extract_symbol_from_line("#[derive(Debug)]"), None);
+        // Real code lines still resolve to their first identifier.
+        assert_eq!(
+            extract_symbol_from_line("    let state = DiffState::new();"),
+            Some("state".to_string())
+        );
+        assert_eq!(
+            extract_symbol_from_line("pub struct Building {"),
+            Some("Building".to_string())
+        );
     }
 }

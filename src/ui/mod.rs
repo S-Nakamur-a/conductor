@@ -27,6 +27,7 @@ pub mod layout;
 // Overlay renderers (used from layout::render_ui overlays).
 pub mod dashboard;
 pub mod grep_search;
+pub mod hover_info;
 pub mod panel_overlay;
 pub mod references;
 pub mod review;

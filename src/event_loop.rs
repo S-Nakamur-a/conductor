@@ -404,6 +404,10 @@ pub(crate) fn run_loop(
         // Poll all background operations.
         app.poll_all_background_ops();
 
+        // Auto-hover: show the popup once the mouse has rested on a symbol past
+        // the idle debounce, and manage its grace window / invalidation.
+        app.tick_hover();
+
         if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch
             && app.check_grep_debounce()
         {

@@ -277,6 +277,22 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // ── 1b1. Hover modal. When pinned (the user clicked into it), keys drive
+    // the modal stack — Esc pops a level, arrows navigate the refs list, Enter
+    // drills in / jumps — and are consumed. Otherwise it's a transient auto
+    // popup: any key dismisses it (Esc consumed; other keys fall through to do
+    // their normal job as the popup vanishes). ──
+    if app.hover_info_overlay.pinned {
+        handle_hover_modal_key(app, key);
+        return;
+    }
+    if app.hover_info_overlay.info.is_some() || app.hover_info_overlay.pending.is_some() {
+        app.clear_hover();
+        if key.code == KeyCode::Esc {
+            return;
+        }
+    }
+
     // ── 1b2. Symbol action overlay (after hint selection) ──
     if app.symbol_action_overlay.active {
         handle_symbol_action_key(app, key);
@@ -320,6 +336,35 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Explorer => handle_explorer_key(app, key),
         Focus::Viewer => handle_viewer_key(app, key),
         Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
+    }
+}
+
+/// Keyboard driver for the pinned interactive hover modal stack. Esc pops the
+/// deepest open level (preview → refs list → the whole popup); Up/Down (or k/j)
+/// move the references selection; Enter opens the selected reference's preview,
+/// or — when a preview is already showing — jumps to that location.
+fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.hover_pop_level();
+        }
+        KeyCode::Up | KeyCode::Char('k') => app.hover_refs_move(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.hover_refs_move(1),
+        KeyCode::Enter => {
+            let has_preview = app
+                .hover_info_overlay
+                .refs
+                .as_ref()
+                .is_some_and(|r| r.preview.is_some());
+            if has_preview {
+                app.hover_jump_to_preview();
+            } else if let Some(sel) =
+                app.hover_info_overlay.refs.as_ref().map(|r| r.selected)
+            {
+                app.open_hover_preview(sel);
+            }
+        }
+        _ => {}
     }
 }
 

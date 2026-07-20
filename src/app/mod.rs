@@ -49,7 +49,7 @@ use crate::git_engine;
 use crate::jump_history::JumpHistory;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
-use crate::overlay::{ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
+use crate::overlay::{HoverInfoOverlay, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
 use crate::pty_manager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
@@ -281,6 +281,7 @@ pub struct App {
     pub references_overlay: ReferencesOverlay,
     pub symbol_hint_overlay: SymbolHintOverlay,
     pub symbol_action_overlay: SymbolActionOverlay,
+    pub hover_info_overlay: HoverInfoOverlay,
 
     // ── Background operations (polled by the event loop) ─────────
     pub bg: BackgroundOps,
