@@ -12,7 +12,9 @@ use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
 use crate::jump_history::JumpHistory;
 use crate::keymap::KeyMap;
-use crate::overlay::{OverlayManager, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
+use crate::overlay::{
+    HoverInfoOverlay, OverlayManager, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay,
+};
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
 use crate::symbol_index::SymbolIndex;
@@ -164,6 +166,7 @@ impl App {
             references_overlay: ReferencesOverlay::default(),
             symbol_hint_overlay: SymbolHintOverlay::default(),
             symbol_action_overlay: SymbolActionOverlay::default(),
+            hover_info_overlay: HoverInfoOverlay::default(),
             bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
             show_panel_number_overlay: false,

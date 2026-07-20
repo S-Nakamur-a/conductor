@@ -20,6 +20,7 @@ mod gemini_api;
 mod git_engine;
 mod go_test;
 mod grep_search;
+mod hover_info;
 mod jump_history;
 mod keymap;
 mod media_state;

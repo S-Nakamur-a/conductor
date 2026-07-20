@@ -222,6 +222,110 @@ pub struct SymbolActionOverlay {
     pub source_screen_row: usize,
 }
 
+/// A symbol the mouse/cursor is resting on, awaiting the idle debounce before
+/// its hover popup is resolved. `resolved` flips true once we've attempted the
+/// lookup (whether or not it produced a popup) so the per-frame tick doesn't
+/// recompute every frame while the cursor sits still.
+pub struct HoverCandidate {
+    /// Identifier under the cursor/mouse.
+    pub symbol: String,
+    /// 1-indexed content line the symbol is on.
+    pub line: usize,
+    /// File the symbol is in, for definition disambiguation.
+    pub file: Option<String>,
+    /// Absolute screen row of the symbol — the popup anchors just below (or
+    /// above, if there's no room) this row.
+    pub anchor_row: u16,
+    /// Absolute screen column of the symbol's start, for horizontal placement.
+    pub anchor_col: u16,
+    /// When the cursor/mouse came to rest on this symbol.
+    pub since: std::time::Instant,
+    /// Whether the lookup has already run for this candidate.
+    pub resolved: bool,
+}
+
+/// A code preview (level 2): a window of source lines around a reference,
+/// shown when a row in the references list is clicked.
+pub struct HoverPreview {
+    /// File the preview is from (repo-relative).
+    pub file: String,
+    /// 1-indexed reference line the preview is centered on.
+    pub center_line: usize,
+    /// `(1-indexed line number, text)` for each shown line.
+    pub lines: Vec<(usize, String)>,
+    /// Rendered rect, written by the renderer for hit-testing.
+    pub rect: ratatui::layout::Rect,
+}
+
+/// The references list (level 1), opened by clicking `N refs` in the base hover
+/// popup. Mouse-first: rows are clickable to open a [`HoverPreview`].
+pub struct HoverRefs {
+    /// Symbol whose references these are (list title).
+    pub symbol: String,
+    /// All references found.
+    pub results: Vec<crate::symbol_index::Reference>,
+    /// Highlighted row (for keyboard nav / preview target).
+    pub selected: usize,
+    /// First visible row index.
+    pub scroll: usize,
+    /// Rendered list-popup rect, written by the renderer.
+    pub rect: ratatui::layout::Rect,
+    /// `(result index, row rect)` for each visible row, written by the renderer.
+    pub row_hits: Vec<(usize, ratatui::layout::Rect)>,
+    /// The open preview, if a row was clicked.
+    pub preview: Option<HoverPreview>,
+}
+
+/// Symbol hover-info popup — signature/doc/references for the symbol under the
+/// viewer cursor. Shown automatically when the mouse rests on a symbol or the
+/// keyboard cursor sits idle; `info` is the resolved popup (`None` = hidden),
+/// `pending` is the candidate counting down the idle debounce. `anchor_row`/
+/// `anchor_col` are the screen position of the resolved symbol, for placement.
+///
+/// It can escalate into an interactive modal stack: clicking `N refs` pins the
+/// popup and opens [`HoverRefs`]; clicking a row opens a [`HoverPreview`].
+/// `pinned` popups survive focus/idle loss until Esc or a click outside;
+/// `leave_at` is the short grace window keeping a still-transient popup alive
+/// after the mouse leaves the symbol (so the cursor can reach it to click).
+#[derive(Default)]
+pub struct HoverInfoOverlay {
+    pub info: Option<crate::hover_info::HoverInfo>,
+    pub pending: Option<HoverCandidate>,
+    pub anchor_row: u16,
+    pub anchor_col: u16,
+    pub pinned: bool,
+    pub leave_at: Option<std::time::Instant>,
+    /// The viewed file the current `info` was resolved against. When the viewer
+    /// switches files underneath a (non-pinned) popup, this no longer matches
+    /// `content.current_file`, and the tick drops the now-stale popup.
+    pub shown_file: Option<String>,
+    /// Base popup rect, written by the renderer for hit-testing.
+    pub info_rect: ratatui::layout::Rect,
+    /// The `N refs` clickable region within the base popup (zero-sized if the
+    /// symbol has no references), written by the renderer.
+    pub refs_hit: ratatui::layout::Rect,
+    pub refs: Option<HoverRefs>,
+}
+
+impl HoverInfoOverlay {
+    /// Whether any part of the hover modal stack is showing.
+    pub fn is_shown(&self) -> bool {
+        self.info.is_some()
+    }
+
+    /// Reset the whole hover modal stack to hidden/unpinned.
+    pub fn reset(&mut self) {
+        self.info = None;
+        self.pending = None;
+        self.pinned = false;
+        self.leave_at = None;
+        self.shown_file = None;
+        self.refs = None;
+        self.info_rect = ratatui::layout::Rect::default();
+        self.refs_hit = ratatui::layout::Rect::default();
+    }
+}
+
 /// Help overlay state.
 pub struct HelpOverlay {
     pub context: Focus,

@@ -254,6 +254,9 @@
 ":" = "command_palette"
 "ctrl+o" = "jump_back"
 "ctrl+i" = "jump_forward"
+# Hover info also appears automatically when the mouse rests on a symbol or the
+# cursor sits idle. `K` (à la Vim/LSP hover) forces it instantly without waiting.
+"K" = "show_hover_info"
 
 # ── Viewer: diff mode ────────────────────────────────────────────────────────────
 [layers.viewer_diff_mode]

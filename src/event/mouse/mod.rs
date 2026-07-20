@@ -83,6 +83,106 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
 
 /// Returns true if any overlay/modal is active and should consume all mouse events,
 /// preventing them from reaching background panels.
+/// Route a mouse event against the interactive hover modal stack. Returns
+/// `true` when the event was consumed (the caller then returns early).
+///
+/// - Left click on `N refs` → open the references list (pins the popup).
+/// - Left click on a list row → open its code preview.
+/// - Left click on the preview → jump to that location, closing the stack.
+/// - Left click on empty popup padding → kept (consumed).
+/// - Left click anywhere else while pinned → dismiss (swallowed).
+/// - Move over any part → keep alive (cancel the transient grace window).
+/// - Scroll over the list → move the selection.
+fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
+    if !app.hover_info_overlay.is_shown() {
+        return false;
+    }
+    let col = mouse.column;
+    let row = mouse.row;
+    let in_rect = |r: ratatui::layout::Rect| {
+        r.width > 0 && r.height > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+    };
+    let pinned = app.hover_info_overlay.pinned;
+
+    match mouse.kind {
+        MouseEventKind::Moved => {
+            if app.hover_point_hit(col, row) {
+                app.hover_keep_alive();
+                return true;
+            }
+            // Off the popup: while pinned, still consume so a stray move can't
+            // clobber the modal; while transient, let the normal move handler
+            // manage the candidate/grace.
+            pinned
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Level 2: click the preview → jump there and close everything.
+            if let Some(pr) = app
+                .hover_info_overlay
+                .refs
+                .as_ref()
+                .and_then(|r| r.preview.as_ref())
+                && in_rect(pr.rect)
+            {
+                app.hover_jump_to_preview();
+                return true;
+            }
+            // Level 1: click a reference row → open its preview.
+            if let Some(refs) = app.hover_info_overlay.refs.as_ref() {
+                if let Some((idx, _)) = refs.row_hits.iter().find(|(_, r)| in_rect(*r)).copied() {
+                    app.open_hover_preview(idx);
+                    return true;
+                }
+                if in_rect(refs.rect) {
+                    return true; // list padding — keep open
+                }
+            }
+            // Base popup: click "N refs" → open the list; click body → keep.
+            if in_rect(app.hover_info_overlay.refs_hit) {
+                app.open_hover_refs();
+                return true;
+            }
+            if in_rect(app.hover_info_overlay.info_rect) {
+                return true;
+            }
+            // Outside everything: a pinned modal dismisses and swallows the
+            // click; a transient popup lets the click through (the top-level
+            // non-Moved clear will drop it).
+            if pinned {
+                app.clear_hover();
+                app.dirty.mark_all();
+                return true;
+            }
+            false
+        }
+        MouseEventKind::ScrollDown => {
+            if app
+                .hover_info_overlay
+                .refs
+                .as_ref()
+                .is_some_and(|r| in_rect(r.rect))
+            {
+                app.hover_refs_move(1);
+                return true;
+            }
+            pinned
+        }
+        MouseEventKind::ScrollUp => {
+            if app
+                .hover_info_overlay
+                .refs
+                .as_ref()
+                .is_some_and(|r| in_rect(r.rect))
+            {
+                app.hover_refs_move(-1);
+                return true;
+            }
+            pinned
+        }
+        _ => pinned,
+    }
+}
+
 fn has_blocking_overlay(app: &App) -> bool {
     use crate::app::{UpdateState, WorktreeInputMode};
     use crate::review_state::ReviewInputMode;
@@ -217,6 +317,13 @@ impl ClickGeometry {
 
 /// Process a single mouse event, updating application state as needed.
 pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui::layout::Rect) {
+    // Interactive hover modal stack (popup → refs list → preview) gets first
+    // crack at the mouse: clicks on its parts drill in, moving over it keeps it
+    // alive, and a pinned modal swallows clicks outside it (to dismiss).
+    if handle_hover_modal_mouse(app, mouse) {
+        return;
+    }
+
     // When any overlay/modal is active, consume all mouse events to prevent
     // them from reaching background panels (scroll, click, etc.).
     if has_blocking_overlay(app) {
@@ -242,6 +349,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
 
     let col = mouse.column;
     let row = mouse.row;
+
+    // Any mouse action other than a plain move (scroll, click, drag) invalidates
+    // the auto-hover popup: it was tied to a now-stale line. Moved manages its
+    // own candidate below.
+    if !matches!(mouse.kind, MouseEventKind::Moved) && app.clear_hover() {
+        app.dirty.mark_all();
+    }
 
     let geom = ClickGeometry {
         main_area,
@@ -445,10 +559,52 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 } else {
                     app.viewer_state.click.hover_symbol = None;
                 }
+
+                // Auto-hover candidate: the symbol under the resting mouse, with
+                // no modifier required. Works in both plain-file and diff mode:
+                // `gutter_total_width()` already accounts for the diff `+/-`
+                // prefix, so the content-start column is the same formula, and
+                // `resolve_screen_line` yields the new-side file line (None on
+                // deletion rows, which we skip). Feeds the idle debounce in
+                // `tick_hover`; blank space / non-identifiers clear it.
+                let auto_cand = {
+                    let gutter_w = app.viewer_state.gutter_total_width();
+                    let inner_x = explorer_end + 1;
+                    let badge_w: u16 = 2;
+                    let content_start_x =
+                        inner_x + crate::viewer::COMMENT_MARKER_W + gutter_w + badge_w;
+                    if col >= content_start_x {
+                        resolve_screen_line(app, line_offset).and_then(|line_1| {
+                            let content_col =
+                                (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
+                            app.viewer_state
+                                .content
+                                .file_content
+                                .get(line_1 - 1)
+                                .and_then(|text| {
+                                    crate::app::extract_symbol_at_column(text, content_col).map(
+                                        |(symbol, start, _)| {
+                                            // Anchor the popup at the symbol's
+                                            // start column and this screen row.
+                                            let anchor_col = content_start_x
+                                                + (start.saturating_sub(
+                                                    app.viewer_state.content.h_scroll,
+                                                )) as u16;
+                                            (symbol, line_1, row, anchor_col)
+                                        },
+                                    )
+                                })
+                        })
+                    } else {
+                        None
+                    }
+                };
+                app.set_mouse_hover_candidate(auto_cand);
             } else {
                 app.viewer_state.click.hover_line = None;
                 app.viewer_state.click.hover_gutter_line = None;
                 app.viewer_state.click.hover_symbol = None;
+                app.set_mouse_hover_candidate(None);
             }
         }
         _ => {}

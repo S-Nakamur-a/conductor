@@ -150,6 +150,11 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
         crate::ui::symbol_action::render_symbol_action_overlay(frame, area, app);
     }
 
+    // ── Hover-info popup (K in the viewer) ──
+    if app.hover_info_overlay.info.is_some() {
+        crate::ui::hover_info::render_hover_info_overlay(frame, area, app);
+    }
+
     // ── Skip reason modal ────────────────────────────────────────────
     if let Some(ref reason) = app.worktree_mgr.skip_reason {
         render_skip_reason_overlay(frame, area, reason, &app.theme);

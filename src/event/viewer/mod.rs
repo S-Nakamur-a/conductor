@@ -71,6 +71,16 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
                 handle_find_references(app);
                 return;
             }
+            // gK / gh — hover info. Uppercase K (Vim-LSP convention) plus `h`
+            // for "hover"; both are safe here because hint labels are always
+            // lowercase and never start with these carved-out keys. Works in
+            // both plain-file and diff mode: the diff-mode `g` handler already
+            // synced content.file_scroll to the diff cursor before this.
+            KeyCode::Char('K') | KeyCode::Char('h') => {
+                app.symbol_hint_overlay = Default::default();
+                app.show_hover_info();
+                return;
+            }
             KeyCode::Char('g') => {
                 // gg = go to top
                 app.symbol_hint_overlay = Default::default();
@@ -189,6 +199,9 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::JumpForward) => {
             app.jump_forward();
+        }
+        Some(Action::ShowHoverInfo) => {
+            app.show_hover_info();
         }
         _ => {}
     }
@@ -387,6 +400,10 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
             if let Some(path) = app.viewer_state.content.current_file.clone() {
                 app.toggle_path_viewed(&path);
             }
+        }
+        Some(Action::ShowHoverInfo) => {
+            app.viewer_state.sync_file_scroll_to_diff_scroll();
+            app.show_hover_info();
         }
         _ => {}
     }

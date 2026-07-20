@@ -37,4 +37,6 @@ pub(super) fn dismiss_overlays(app: &mut App) {
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
     app.references_overlay.active = false;
+    // A deliberate focus switch closes the hover modal stack too.
+    app.clear_hover();
 }

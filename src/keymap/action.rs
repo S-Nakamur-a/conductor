@@ -114,6 +114,9 @@ keymap_suite::actions! {
         // ── Code navigation ─────────────────────────────────────────
         JumpBack => "jump_back",
         JumpForward => "jump_forward",
+        /// Show a hover popup with the type/signature, doc comment, and
+        /// reference count of the symbol under the viewer cursor.
+        ShowHoverInfo => "show_hover_info",
         ToggleInlineThread => "toggle_inline_thread",
         InlineReply => "inline_reply",
 
@@ -258,6 +261,7 @@ impl Action {
             Action::SearchFullText => "Full-text search (grep)",
             Action::JumpBack => "Jump back (history)",
             Action::JumpForward => "Jump forward (history)",
+            Action::ShowHoverInfo => "Show hover info (signature/doc)",
             Action::ToggleInlineThread => "Toggle inline comment thread",
             Action::InlineReply => "Inline reply",
             Action::NextHunk => "Next hunk",
