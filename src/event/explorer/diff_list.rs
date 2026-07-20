@@ -1,0 +1,76 @@
+//! Explorer diff-list sub-panel: navigating and acting on the unified diff
+//! list (files, directories, and section headers).
+
+use crossterm::event::KeyEvent;
+
+use crate::app::{App, Focus};
+use crate::keymap::{Action, KeyContext};
+
+pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
+    let count = app.diff_state.display_list.len();
+    let action = app.keymap.resolve(&key, KeyContext::ExplorerDiffList);
+
+    match action {
+        Some(Action::ExitSubPanel) => {
+            app.viewer_state.explorer.explorer_focus_on_diff_list = false;
+        }
+        Some(Action::NavigateDown)
+            if count > 0 && app.viewer_state.explorer.diff_list_selected + 1 < count =>
+        {
+            app.viewer_state.explorer.diff_list_selected += 1;
+        }
+        Some(Action::NavigateUp) if app.viewer_state.explorer.diff_list_selected > 0 => {
+            app.viewer_state.explorer.diff_list_selected -= 1;
+        }
+        Some(Action::CollapseOrLeft) => {
+            let selected = app.viewer_state.explorer.diff_list_selected;
+            app.diff_state.collapse_section(selected);
+            let new_count = app.diff_state.display_list.len();
+            if new_count > 0 && app.viewer_state.explorer.diff_list_selected >= new_count {
+                app.viewer_state.explorer.diff_list_selected = new_count - 1;
+            }
+        }
+        Some(Action::ExpandOrRight) => {
+            let selected = app.viewer_state.explorer.diff_list_selected;
+            app.diff_state.expand_section(selected);
+        }
+        Some(Action::Select) => {
+            let selected = app.viewer_state.explorer.diff_list_selected;
+            // The SUMMARY pseudo-file opens the branch change summary full-panel.
+            if matches!(
+                app.diff_state.display_list.get(selected),
+                Some(crate::diff_state::DiffListEntry::Summary {})
+            ) {
+                app.viewer_state.enter_summary_view();
+                app.set_focus(Focus::Viewer);
+            }
+            // Toggle section headers and directories on Enter.
+            else if app.diff_state.toggle_section(selected) {
+                let new_count = app.diff_state.display_list.len();
+                if new_count > 0 && app.viewer_state.explorer.diff_list_selected >= new_count {
+                    app.viewer_state.explorer.diff_list_selected = new_count - 1;
+                }
+            } else if app.diff_state.resolve_file(selected).is_some() {
+                // `diff_list_selected` already points at this row.
+                app.open_diff_file_at_selected();
+                app.set_focus(Focus::Viewer);
+            }
+        }
+        Some(Action::GoToTop) => {
+            app.viewer_state.explorer.diff_list_selected = 0;
+        }
+        Some(Action::GoToBottom) if count > 0 => {
+            app.viewer_state.explorer.diff_list_selected = count - 1;
+        }
+        Some(Action::ToggleViewed) => {
+            let selected = app.viewer_state.explorer.diff_list_selected;
+            if let Some((file_diff, _)) = app.diff_state.resolve_file(selected) {
+                let path = file_diff.path.clone();
+                app.toggle_path_viewed(&path);
+            }
+        }
+        _ => {}
+    }
+
+    crate::event::adjust_diff_list_scroll(app);
+}
