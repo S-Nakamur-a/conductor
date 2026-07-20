@@ -199,6 +199,14 @@ impl App {
         // restart (e.g. after an update) lands the user where they left off.
         app.restore_selected_worktree_and_view();
         app.refresh_reviews();
+        // Seed the Explorer's file tree and the "Changed files" diff for the
+        // restored worktree right away. Without this the diff list stays empty
+        // on the first frame and only fills in once the 3s `worktree_poll`
+        // staleness check (or a worktree-bar click) fires — the panel appeared
+        // to "not show up" until the user clicked the bar. Mirrors the
+        // refresh_viewer + refresh_diff pairing in `check_diff_viewer_staleness`.
+        app.refresh_viewer();
+        app.refresh_diff();
 
         // Restore grab state from $git_common_dir/wt-grab if it exists.
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
