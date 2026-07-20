@@ -5,12 +5,18 @@
 //! Overlay handlers (worktree input, cherry-pick, etc.) take priority.
 //! Terminal-focused panels forward keys to the active PTY session.
 
+mod clipboard;
+mod dialogs;
 mod explorer;
 mod explorer_walkthrough;
 mod global;
 mod mouse;
 mod overlay;
+mod overlay_helpers;
+mod paste;
 pub mod reflow;
+mod reflow_key;
+mod scroll;
 mod terminal;
 mod viewer;
 mod worktree;
@@ -22,13 +28,25 @@ use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
+use self::dialogs::{handle_publish_confirm_key, handle_update_key};
 use self::explorer::handle_explorer_comment_list_key;
 use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
 use self::overlay::*;
+use self::overlay_helpers::dismiss_overlays;
+use self::reflow_key::handle_reflow_key;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use self::viewer::handle_viewer_key;
 use self::worktree::handle_worktree_key;
+
+// Re-export items whose original path was `crate::event::X` but which now
+// live in a sibling submodule, so sibling modules' existing `super::X`
+// references keep resolving without modification.
+pub(in crate::event) use self::clipboard::clipboard_paste;
+pub(in crate::event) use self::overlay_helpers::open_filename_search;
+pub(in crate::event) use self::scroll::{
+    adjust_diff_list_scroll, adjust_tree_scroll, adjust_walkthrough_scroll,
+};
 
 // ── Effective overlay ───────────────────────────────────────────────────
 
@@ -141,6 +159,7 @@ fn is_text_input_active(app: &App) -> bool {
 
 // Re-export public API.
 pub use self::mouse::handle_mouse_event;
+pub use self::paste::handle_paste_event;
 
 /// Process a single key event, updating application state as needed.
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
@@ -472,353 +491,6 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
         _ => return false,
     }
     true
-}
-
-// ── Reflow key handling ─────────────────────────────────────────────────
-
-/// Handle a key event while the reflow transcript view is active.
-///
-/// All keys are consumed here and never forwarded to the PTY — the reflow
-/// view is a pure read-only overlay. Navigation:
-///
-/// * `j` / Down — scroll down one line.
-/// * `k` / Up — scroll up one line.
-/// * `Ctrl-d` / PageDown — scroll down half a page.
-/// * `Ctrl-u` / PageUp — scroll up half a page.
-/// * `g` / Home — jump to the oldest turn (top).
-/// * `G` / End — jump to the newest turn (bottom) without leaving.
-/// * `Esc` — close reflow view and return to live PTY.
-/// * `j` / Down / PageDown at the bottom — close reflow (live return).
-fn handle_reflow_key(app: &mut App, key: KeyEvent) {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    use crate::event::reflow::{at_bottom, clamp_scroll};
-
-    let inner = app.reflow.last_inner_height as usize;
-    let total = app.reflow.total_lines;
-    let page: usize = (inner / 2).max(1);
-    let bottom = at_bottom(app.reflow.scroll, total, inner);
-    let old_scroll = app.reflow.scroll;
-
-    match key.code {
-        // ── Line scroll ─────────────────────────────────────────────────────
-        KeyCode::Char('j') | KeyCode::Down => {
-            if bottom {
-                // Bottom + discrete down-key → begin exit sweep back to live PTY.
-                app.request_close_reflow();
-                return;
-            }
-            app.reflow.scroll = app.reflow.scroll.saturating_add(1);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.reflow.scroll = app.reflow.scroll.saturating_sub(1);
-        }
-
-        // ── Page scroll ──────────────────────────────────────────────────────
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if bottom {
-                app.request_close_reflow();
-                return;
-            }
-            app.reflow.scroll = app.reflow.scroll.saturating_add(page);
-        }
-        KeyCode::PageDown => {
-            if bottom {
-                app.request_close_reflow();
-                return;
-            }
-            app.reflow.scroll = app.reflow.scroll.saturating_add(page);
-        }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.reflow.scroll = app.reflow.scroll.saturating_sub(page);
-        }
-        KeyCode::PageUp => {
-            app.reflow.scroll = app.reflow.scroll.saturating_sub(page);
-        }
-
-        // ── Jump to top / bottom ─────────────────────────────────────────────
-        KeyCode::Char('g') | KeyCode::Home => {
-            app.reflow.scroll = 0;
-        }
-        KeyCode::Char('G') | KeyCode::End => {
-            // Snap to the newest turn (logical bottom) without leaving the view.
-            app.reflow.scroll = total.saturating_sub(inner);
-        }
-
-        // ── Leave ────────────────────────────────────────────────────────────
-        KeyCode::Esc => {
-            // Play the exit sweep before returning to the live PTY.
-            app.request_close_reflow();
-            return;
-        }
-
-        _ => {} // All other keys are silently consumed.
-    }
-
-    // Clamp scroll after any adjustment.  Upper bound is total - inner, not
-    // total - 1: aligns with the render path and at_bottom logic.
-    app.reflow.scroll = clamp_scroll(app.reflow.scroll, total, inner);
-
-    // On each scroll step, force a hard clear (presented atomically thanks to
-    // synchronized output). The transcript is arbitrary Unicode; a glyph the
-    // terminal renders wider than counted can drift a line and leave stale cells
-    // that ratatui's diff — comparing only its own buffers — never repaints.
-    // Re-clearing per step keeps the scrolled view free of that residue.
-    if app.reflow.scroll != old_scroll {
-        app.terminal.needs_clear = true;
-    }
-}
-
-// ── Paste event handling ────────────────────────────────────────────────
-
-/// Handle a bracketed paste event. A text-input overlay/modal takes the paste
-/// first (so IME-committed multi-byte text reaches the input field rather than a
-/// terminal sitting behind the modal); otherwise, when a terminal panel is
-/// focused, the entire pasted text is forwarded to the PTY in one write, wrapped
-/// with bracketed-paste escape sequences so the shell/application treats it as a
-/// single paste rather than individual keystrokes.
-pub fn handle_paste_event(app: &mut App, data: String) {
-    // A text-input overlay/modal owns paste regardless of which panel holds
-    // focus underneath it — the same modal grab that §0 of `handle_key_event`
-    // applies to key events. This matters because macOS terminals deliver
-    // IME-committed multi-byte text (kana/kanji, especially 2+ chars or a
-    // conversion) as a bracketed paste, not as individual key events. Gating on
-    // focus alone would forward that paste into the focused Claude/Shell PTY
-    // sitting behind the modal, so typed Japanese would vanish from the input
-    // field and surface in the terminal instead. Half-width ASCII is unaffected
-    // because it arrives as ordinary key events. Kept in lockstep with
-    // `is_text_input_active`: every destination below is enumerated there.
-    if is_text_input_active(app) {
-        // Dispatch paste data to the active overlay input buffer.
-        let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
-
-        if app.viewer_state.explorer.inline_reply_line.is_some() {
-            app.viewer_state
-                .explorer
-                .inline_reply_buffer
-                .insert_str(&single_line);
-        } else if app.review_state.input_mode != ReviewInputMode::Normal {
-            // Review input is multiline.
-            app.review_state.input_buffer.insert_str(&data);
-        } else if app.worktree_mgr.input_mode == WorktreeInputMode::SmartDescription {
-            // Smart description is multiline.
-            app.worktree_mgr.smart_description_buffer.insert_str(&data);
-        } else if app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktree
-            || app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktreeBase
-        {
-            app.worktree_mgr.input_buffer.insert_str(&single_line);
-        } else if app.overlays.active == ActiveOverlay::GrepSearch {
-            app.overlays.grep_search.query.insert_str(&single_line);
-            app.overlays.grep_search.input_focused = true;
-            app.schedule_grep_search();
-        } else if app.viewer_state.search.search_active {
-            app.viewer_state
-                .search
-                .search_query
-                .insert_str(&single_line);
-        } else if app.viewer_state.filename_search.filename_search_active {
-            app.viewer_state
-                .filename_search
-                .filename_search_query
-                .insert_str(&single_line);
-        } else if app.review_state.search_active {
-            app.review_state.search_query.insert_str(&single_line);
-            app.review_state.apply_filter();
-        } else {
-            match app.overlays.active {
-                ActiveOverlay::SwitchBranch => {
-                    app.overlays.switch_branch.filter.insert_str(&single_line);
-                }
-                ActiveOverlay::CommandPalette => {
-                    app.overlays.command_palette.filter.insert_str(&single_line);
-                }
-                ActiveOverlay::OpenRepo => {
-                    app.overlays.open_repo.buffer.insert_str(&single_line);
-                }
-                ActiveOverlay::PrInput => {
-                    app.overlays.pr_input.buffer.insert_str(&single_line);
-                    app.overlays.pr_input.error = None;
-                }
-                ActiveOverlay::History => {
-                    app.overlays.history.search_query.insert_str(&single_line);
-                }
-                ActiveOverlay::ResumeSession => {
-                    app.overlays.resume_session.filter.insert_str(&single_line);
-                }
-                _ => {}
-            }
-        }
-        return;
-    }
-
-    let session_idx = match app.focus {
-        Focus::TerminalClaude => app.terminal.active_claude_session,
-        Focus::TerminalShell => app.terminal.active_shell_session,
-        _ => None,
-    };
-
-    // Block paste into grabbed worktree terminals.
-    if app.is_selected_worktree_grabbed() {
-        return;
-    }
-
-    if let Some(idx) = session_idx {
-        // Use chunked write with bracketed-paste wrapping so large pastes
-        // don't overflow the kernel PTY input buffer.
-        if let Err(e) = app.terminal.pty_manager.write_paste_to_session(idx, &data) {
-            log::warn!("failed to write paste data to PTY session: {e}");
-        } else {
-            match app.focus {
-                Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-                Focus::TerminalShell => app.terminal.scroll_shell = 0,
-                _ => {}
-            }
-            app.clear_cc_waiting_signal(idx);
-        }
-    }
-}
-
-// ── Update overlay ──────────────────────────────────────────────────────
-
-fn handle_update_key(app: &mut App, key: KeyEvent) {
-    match app.update_state {
-        UpdateState::Confirming => match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                app.start_update_download();
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.update_state = UpdateState::Idle;
-            }
-            _ => {}
-        },
-        UpdateState::InProgress => {
-            if key.code == KeyCode::Esc {
-                app.update_op.clear();
-                app.update_state = UpdateState::Idle;
-            }
-        }
-        UpdateState::Failed => {
-            // Any key dismisses the error.
-            app.update_state = UpdateState::Idle;
-        }
-        UpdateState::Restarting | UpdateState::Idle => {}
-    }
-}
-
-// ── Publish-to-GitHub overlay ───────────────────────────────────────────
-
-fn handle_publish_confirm_key(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            app.confirm_publish_review();
-        }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            app.cancel_publish_review();
-        }
-        _ => {}
-    }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Paste clipboard contents into the `TextInput` returned by `get_buffer`.
-///
-/// If `multiline` is false, newlines are stripped from the pasted text.
-fn clipboard_paste<F>(app: &mut App, get_buffer: F, multiline: bool)
-where
-    F: FnOnce(&mut App) -> &mut crate::text_input::TextInput,
-{
-    use copypasta::ClipboardProvider;
-    let text = app
-        .clipboard
-        .as_mut()
-        .and_then(|ctx| ctx.get_contents().ok());
-    if let Some(text) = text {
-        let buf = get_buffer(app);
-        if multiline {
-            buf.insert_str(&text);
-        } else {
-            let cleaned: String = text.chars().filter(|c| *c != '\n' && *c != '\r').collect();
-            buf.insert_str(&cleaned);
-        }
-    }
-}
-
-/// Adjust `tree_scroll` so that `tree_selected` stays visible.
-fn adjust_tree_scroll(app: &mut App) {
-    let visible = app.viewer_state.visible_indices();
-    let cur_vis = visible
-        .iter()
-        .position(|&i| i == app.viewer_state.tree.tree_selected)
-        .unwrap_or(0);
-
-    let page_size = app.viewer_state.explorer.explorer_tree_height.max(1);
-
-    if cur_vis < app.viewer_state.tree.tree_scroll {
-        app.viewer_state.tree.tree_scroll = cur_vis;
-    } else if cur_vis >= app.viewer_state.tree.tree_scroll + page_size {
-        app.viewer_state.tree.tree_scroll = cur_vis.saturating_sub(page_size - 1);
-    }
-}
-
-/// Open the fuzzy filename-search modal and seed it with the current
-/// worktree's file list. Triggerable from both the Explorer (file tree) and
-/// the Viewer, so files can be switched even while the viewer is maximized.
-pub(super) fn open_filename_search(app: &mut App) {
-    app.viewer_state.filename_search.filename_search_active = true;
-    app.viewer_state
-        .filename_search
-        .filename_search_query
-        .clear();
-    app.viewer_state
-        .filename_search
-        .filename_search_results
-        .clear();
-    app.viewer_state.filename_search.filename_search_selected = 0;
-    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
-        app.viewer_state.populate_filename_search_cache(&wt.path);
-    }
-    app.viewer_state.execute_filename_search();
-}
-
-/// Dismiss all active overlays so that focus-switching keys work globally.
-fn dismiss_overlays(app: &mut App) {
-    app.worktree_mgr.skip_reason = None;
-    app.review_state.comment_detail_active = false;
-    app.review_state.input_mode = ReviewInputMode::Normal;
-    app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-    app.overlays.active = ActiveOverlay::None;
-    app.viewer_state.filename_search.filename_search_active = false;
-    app.viewer_state.search.search_active = false;
-    app.review_state.search_active = false;
-    app.review_state.template_picker_active = false;
-    app.references_overlay.active = false;
-}
-
-/// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.
-fn adjust_diff_list_scroll(app: &mut App) {
-    let selected = app.viewer_state.explorer.diff_list_selected;
-    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
-
-    if selected < app.viewer_state.explorer.diff_list_scroll {
-        app.viewer_state.explorer.diff_list_scroll = selected;
-    } else if selected >= app.viewer_state.explorer.diff_list_scroll + page_size {
-        app.viewer_state.explorer.diff_list_scroll = selected.saturating_sub(page_size - 1);
-    }
-}
-
-/// Adjust `walkthrough_scroll` so that `walkthrough_selected` stays visible.
-/// Shares `explorer_diff_list_height` with the diff list since both views
-/// occupy the same Explorer bottom-pane rect (mutually exclusive, so the
-/// height is always current for whichever one is showing).
-fn adjust_walkthrough_scroll(app: &mut App) {
-    let selected = app.viewer_state.explorer.walkthrough_selected;
-    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
-
-    if selected < app.viewer_state.explorer.walkthrough_scroll {
-        app.viewer_state.explorer.walkthrough_scroll = selected;
-    } else if selected >= app.viewer_state.explorer.walkthrough_scroll + page_size {
-        app.viewer_state.explorer.walkthrough_scroll = selected.saturating_sub(page_size - 1);
-    }
 }
 
 // NOTE: the focus-grab decision now lives in `is_text_input_active` (a function

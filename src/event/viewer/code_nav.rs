@@ -1,0 +1,168 @@
+//! Go-to-definition, go-to-implementation, and find-references handlers,
+//! triggered from the viewer panel by the `g` prefix (gd / gi / gr).
+
+use crate::app::{App, StatusLevel};
+
+pub(super) fn handle_go_to_definition(app: &mut App) {
+    let symbol = match app.get_symbol_at_cursor() {
+        Some(s) => s,
+        None => {
+            app.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
+            return;
+        }
+    };
+
+    if !app.symbol_index.is_available() {
+        app.set_status(
+            "Symbol index not ready yet".to_string(),
+            StatusLevel::Warning,
+        );
+        return;
+    }
+
+    // Context-aware: if cursor is at a definition site, show references instead.
+    if app.is_cursor_at_definition(&symbol) {
+        let root = app.symbol_index.root();
+        let refs = app.symbol_index.find_references(&symbol, &root);
+        if refs.is_empty() {
+            app.set_status(
+                format!("No references found for '{symbol}'"),
+                StatusLevel::Warning,
+            );
+        } else {
+            let count = refs.len();
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = symbol.clone();
+            app.references_overlay.results = refs;
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+            app.set_status(
+                format!("At definition — showing {count} references for '{symbol}'"),
+                StatusLevel::Info,
+            );
+        }
+        return;
+    }
+
+    let defs = app.symbol_index.find_definitions(&symbol);
+    match defs.len() {
+        0 => {
+            app.set_status(
+                format!("No definition found for '{symbol}'"),
+                StatusLevel::Warning,
+            );
+        }
+        1 => {
+            let def = &defs[0];
+            let file = def.file_path.clone();
+            let line = def.line;
+            app.jump_to_location(&file, line, 0);
+            app.set_status(
+                format!("Jumped to definition of '{symbol}'"),
+                StatusLevel::Success,
+            );
+        }
+        n => {
+            // Multiple definitions — show in references overlay.
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (definitions)");
+            app.references_overlay.results = defs
+                .iter()
+                .map(|d| crate::symbol_index::Reference {
+                    file_path: d.file_path.clone(),
+                    line: d.line,
+                    content: format!("{:?} {}", d.kind, d.name),
+                })
+                .collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+            app.set_status(
+                format!("{n} definitions found for '{symbol}'"),
+                StatusLevel::Info,
+            );
+        }
+    }
+}
+
+pub(super) fn handle_go_to_implementation(app: &mut App) {
+    let symbol = match app.get_symbol_at_cursor() {
+        Some(s) => s,
+        None => {
+            app.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
+            return;
+        }
+    };
+
+    if !app.symbol_index.is_available() {
+        app.set_status(
+            "Symbol index not ready yet".to_string(),
+            StatusLevel::Warning,
+        );
+        return;
+    }
+
+    let impls = app.symbol_index.find_implementations(&symbol);
+    match impls.len() {
+        0 => {
+            app.set_status(
+                format!("No implementations found for '{symbol}'"),
+                StatusLevel::Warning,
+            );
+        }
+        1 => {
+            let imp = &impls[0];
+            let file = imp.file_path.clone();
+            let line = imp.line;
+            app.jump_to_location(&file, line, 0);
+            app.set_status(
+                format!("Jumped to implementation of '{symbol}'"),
+                StatusLevel::Success,
+            );
+        }
+        n => {
+            app.references_overlay.active = true;
+            app.references_overlay.symbol_name = format!("{symbol} (implementations)");
+            app.references_overlay.results = impls
+                .iter()
+                .map(|d| crate::symbol_index::Reference {
+                    file_path: d.file_path.clone(),
+                    line: d.line,
+                    content: format!("{:?} {}", d.kind, d.name),
+                })
+                .collect();
+            app.references_overlay.selected = 0;
+            app.references_overlay.scroll = 0;
+            app.set_status(
+                format!("{n} implementations found for '{symbol}'"),
+                StatusLevel::Info,
+            );
+        }
+    }
+}
+
+pub(super) fn handle_find_references(app: &mut App) {
+    let symbol = match app.get_symbol_at_cursor() {
+        Some(s) => s,
+        None => {
+            app.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
+            return;
+        }
+    };
+
+    let root = app.symbol_index.root();
+    let refs = app.symbol_index.find_references(&symbol, &root);
+
+    if refs.is_empty() {
+        app.set_status(
+            format!("No references found for '{symbol}'"),
+            StatusLevel::Warning,
+        );
+        return;
+    }
+
+    app.references_overlay.active = true;
+    app.references_overlay.symbol_name = symbol;
+    app.references_overlay.results = refs;
+    app.references_overlay.selected = 0;
+    app.references_overlay.scroll = 0;
+}
