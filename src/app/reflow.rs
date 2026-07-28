@@ -66,34 +66,53 @@ impl App {
 
     /// Enter the reflow transcript view for the active Claude panel's session.
     ///
-    /// Resolves the session backing the currently displayed Claude panel (via
-    /// its pinned `claude_session_id`), loads and parses that `.jsonl` file, and
-    /// activates the overlay. Falls back to the selected worktree's most recent
-    /// session only when the panel has no tracked id. If no session is found or
-    /// the log is empty, a status flash is shown and the view stays inactive.
+    /// Resolves the log of the session backing the currently displayed Claude
+    /// panel — strictly by its pinned `claude_session_id` — then loads and parses
+    /// that `.jsonl` and activates the overlay. When the id does not resolve to a
+    /// log, or the log holds no displayable turn, a status flash explains why and
+    /// the view stays inactive; no other session's history is ever substituted.
     pub fn open_reflow(&mut self) {
-        // Prefer the session backing the *currently displayed* Claude panel. A
-        // worktree can host several Claude panels (CC:1, CC:2, …), so resolving
-        // "the worktree's latest session" would open whichever log was written
-        // most recently regardless of which panel is on screen — that is the
-        // cross-panel scroll bleed this view used to suffer from. The pinned
-        // per-session id (see `PtySession::claude_session_id`) ties the
-        // transcript to the panel the user is actually looking at.
-        let resolved = self
+        // The transcript source is the session backing the *currently displayed*
+        // Claude panel, identified only by its pinned session id (see
+        // `PtySession::claude_session_id`).
+        //
+        // Nothing here may widen to a directory-level criterion. One Claude
+        // project dir holds the logs of every session ever run in that worktree
+        // — sibling Conductor panels (CC:1, CC:2, …), earlier runs, plain
+        // `claude` invocations — so "the freshest log" or "the log whose first
+        // turn follows this one's last turn" can name a different conversation.
+        // The latter is how this view used to show the wrong session's history:
+        // it treated a later-starting log as the continuation of a `/clear`
+        // rotation, which held only while the pinned session kept writing turns.
+        // A panel whose main agent is stopped while a subagent still works
+        // writes nothing to its session log (subagent turns go to
+        // `<session-id>/subagents/*.jsonl`), so its last turn froze and any
+        // session started later in the same worktree passed the test and
+        // hijacked the view for as long as the subagent ran.
+        //
+        // Consequence worth knowing: a mid-session `/clear` or an in-app
+        // `/resume` rotates Claude Code's live log to a new session id that
+        // Conductor cannot observe, so scrolling up then shows this session's
+        // pre-rotation transcript. Stale-but-own beats fresh-but-someone-else's.
+        let Some((working_dir, session_id)) = self
             .terminal
             .active_claude_session
-            .and_then(|idx| self.terminal.pty_manager.claude_session_ref(idx));
+            .and_then(|idx| self.terminal.pty_manager.claude_session_ref(idx))
+        else {
+            self.set_status(
+                "No Claude session for this panel; transcript unavailable".to_string(),
+                StatusLevel::Warning,
+            );
+            return;
+        };
 
-        // Working dir of the selected worktree, used for the mtime fallback.
-        let working_dir = match self.worktrees.get(self.selected_worktree) {
-            Some(wt) => wt.path.clone(),
-            None => {
-                self.set_status(
-                    "No worktree selected for transcript view".to_string(),
-                    StatusLevel::Warning,
-                );
-                return;
-            }
+        let Some(path) = crate::claude_sessions::session_jsonl_path(&working_dir, &session_id)
+        else {
+            self.set_status(
+                format!("No session log on disk for {session_id}"),
+                StatusLevel::Warning,
+            );
+            return;
         };
 
         // Parse the log on a background thread: `load_session` reads and
@@ -102,65 +121,7 @@ impl App {
         // activates immediately with a "Loading…" placeholder and
         // `poll_reflow_load` swaps the entries in when they arrive.
         self.bg.reflow_load.start(move |tx| {
-            // 1. Prefer the active panel's pinned session id. When a worktree
-            //    hosts several Claude panels (CC:1, CC:2, …) this ties the
-            //    transcript to the panel actually on screen, avoiding
-            //    cross-panel scroll bleed.
-            let pinned_path = resolved
-                .and_then(|(wd, sid)| crate::claude_sessions::session_jsonl_path(&wd, &sid));
-            let mut entries = pinned_path
-                .as_ref()
-                .map(|path| crate::claude_log::load_session(path))
-                .unwrap_or_default();
-
-            // 1b. Follow a mid-session `/clear` (or in-app `/resume`). Claude
-            //     Code mints a *new* session file on `/clear`, so the pinned
-            //     file freezes with the pre-clear conversation while the live
-            //     turns land in a different log — scrolling up would otherwise
-            //     open onto the stale pre-clear transcript. Prefer the freshest
-            //     log in the project dir that is a *temporal continuation* of
-            //     the pinned session: one whose first turn is at/after the
-            //     pinned session's last turn. Because a concurrently-active
-            //     sibling panel overlaps the pinned session in time, its first
-            //     turn predates the pinned session's last turn and it is never
-            //     mistaken for the continuation — the per-panel pin (and its
-            //     cross-panel-bleed guarantee) is preserved.
-            if let Some(pinned) = pinned_path.as_ref()
-                && !entries.is_empty()
-                && let Some(pinned_last) = crate::claude_log::session_last_timestamp(pinned)
-            {
-                let live = crate::claude_sessions::session_logs_by_mtime(&working_dir)
-                    .into_iter()
-                    .filter(|p| p.as_path() != pinned.as_path())
-                    .find(|p| {
-                        crate::claude_log::session_first_timestamp(p)
-                            .is_some_and(|first| first >= pinned_last)
-                    });
-                if let Some(live_path) = live {
-                    let live_entries = crate::claude_log::load_session(&live_path);
-                    if !live_entries.is_empty() {
-                        entries = live_entries;
-                    }
-                }
-            }
-
-            // 2. Fall back to the most-recently-written log in this worktree's
-            //    project dir when the pinned session is missing or empty. This
-            //    is what catches a manual in-app `/resume` sent before any turn
-            //    was typed: it switches the live session id away from the
-            //    conductor-launched (pinned) one, so the pinned file is
-            //    stale/empty while the real transcript is whatever Claude is now
-            //    appending to (= freshest mtime). Empty/aux logs (e.g. one-shot
-            //    security-review runs sharing the dir) are skipped.
-            if entries.is_empty() {
-                entries = crate::claude_sessions::session_logs_by_mtime(&working_dir)
-                    .iter()
-                    .map(|path| crate::claude_log::load_session(path))
-                    .find(|e| !e.is_empty())
-                    .unwrap_or_default();
-            }
-
-            let _ = tx.send(entries);
+            let _ = tx.send(crate::claude_log::load_session(&path));
         });
 
         self.reflow = ReflowView {

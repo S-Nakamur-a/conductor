@@ -1,5 +1,5 @@
-//! Listing resumable sessions: full history scan, per-worktree latest-session
-//! lookup, and mtime-ordered session logs for the reflow transcript view.
+//! Listing resumable sessions: full history scan and per-worktree
+//! latest-session lookup.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::{
-    ClaudeHistoryEntry, ResumableSession, format_time_ago, history_file_path, projects_dir_for,
-    session_file_exists,
+    ClaudeHistoryEntry, ResumableSession, format_time_ago, history_file_path, session_file_exists,
 };
 
 /// Load all resumable Claude sessions, optionally filtered to a specific project path.
@@ -195,49 +194,8 @@ pub fn find_latest_sessions_for_paths(
     Ok(result)
 }
 
-/// List the session `.jsonl` files in a worktree's Claude project directory,
-/// most recently modified first.
-///
-/// This is the basis for the reflow transcript view's session selection: the
-/// file Claude is *currently appending to* always has the freshest mtime, so
-/// picking by mtime tracks whatever session the live pane shows — including a
-/// session the user switched to with a manual `/resume` (which can mint a new
-/// session ID). That is more reliable than re-deriving the session from
-/// `history.jsonl`, whose newest entry can point at an unrelated auxiliary
-/// session (e.g. a one-shot security review run in the same directory) or at a
-/// freshly-spawned-but-empty session.
-///
-/// The working dir is canonicalized first because Claude Code encodes its
-/// *resolved* cwd; symlinked worktree paths would otherwise miss the directory.
-/// Symlinked session files (created by `migrate_session` for grabbed branches)
-/// are followed via `metadata()`; dangling or unreadable entries are skipped.
-pub fn session_logs_by_mtime(working_dir: &Path) -> Vec<PathBuf> {
-    let canonical = std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
-    let dir = match projects_dir_for(&canonical) {
-        Some(d) => d,
-        None => return Vec::new(),
-    };
-
-    let read_dir = match std::fs::read_dir(&dir) {
-        Ok(rd) => rd,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
-        }
-        // metadata() follows symlinks, so a migrated session resolves to its
-        // real file's mtime; a dangling symlink errors out and is skipped.
-        if let Ok(meta) = std::fs::metadata(&path)
-            && let Ok(mtime) = meta.modified()
-        {
-            files.push((mtime, path));
-        }
-    }
-
-    files.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
-    files.into_iter().map(|(_, p)| p).collect()
-}
+// NOTE: there is deliberately no "list the project dir's logs by mtime" helper
+// here. The reflow transcript view used to select its source that way and it
+// leaked other sessions' conversations into the view (see `App::open_reflow`);
+// a transcript is resolved from the panel's own session id via
+// `session_jsonl_path` instead.

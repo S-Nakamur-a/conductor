@@ -1,6 +1,4 @@
-//! Public file-reading API: parse a session log into display entries, and
-//! read its first/last top-level timestamps for mid-session rotation
-//! detection.
+//! Public file-reading API: parse a session log into display entries.
 
 use std::path::Path;
 
@@ -88,47 +86,4 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
         });
     }
     entries
-}
-
-/// First top-level `timestamp` in a session log (the session's start time).
-///
-/// Scans from the top and stops at the first record that carries one — the
-/// leading `mode` / `file-history-snapshot` bookkeeping records have none, so a
-/// few lines are read before the first real turn. Returns `None` for an
-/// unreadable file or one with no timestamps (a pre-timestamp log format).
-pub fn session_first_timestamp(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(record) = serde_json::from_str::<LogRecord>(line)
-            && let Some(ts) = record.timestamp
-        {
-            return Some(ts);
-        }
-    }
-    None
-}
-
-/// Last top-level `timestamp` in a session log (the session's last activity).
-///
-/// Reads the whole file and keeps the final timestamp seen. Returns `None` for
-/// an unreadable file or one with no timestamps.
-pub fn session_last_timestamp(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut last = None;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(record) = serde_json::from_str::<LogRecord>(line)
-            && let Some(ts) = record.timestamp
-        {
-            last = Some(ts);
-        }
-    }
-    last
 }

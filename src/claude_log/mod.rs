@@ -10,8 +10,7 @@
 //! Split by responsibility: [`schema`] holds the raw serde types (one-to-one
 //! with the JSONL schema), [`model`] holds the display-ready types, [`convert`]
 //! normalises raw records into display blocks, and [`session`] is the public
-//! file-reading API ([`load_session`], [`session_first_timestamp`],
-//! [`session_last_timestamp`]).
+//! file-reading API ([`load_session`]).
 
 mod convert;
 mod model;
@@ -20,7 +19,7 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub use session::{load_session, session_first_timestamp, session_last_timestamp};
+pub use session::load_session;
 
 // `DisplayBlock` and `Role` are consumed externally (via `crate::claude_log::X`)
 // by `ui/reflow_view.rs`; `LogEntry` likewise by `app/reflow.rs`. The rest of
