@@ -28,13 +28,6 @@ pub struct LogRecord {
     pub operation: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
-    /// ISO-8601 UTC (`…Z`) wall-clock stamp on turn records. Used to detect a
-    /// mid-session `/clear` (or in-app `/resume`), which rotates Claude Code's
-    /// live log to a *new* session file: the continuation begins at/after the
-    /// pinned session's last turn. All stamps share one machine-clock UTC
-    /// format, so lexicographic string order equals chronological order.
-    #[serde(default)]
-    pub timestamp: Option<String>,
 }
 
 /// The `message` field present on `user` and `assistant` records.

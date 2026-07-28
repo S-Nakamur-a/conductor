@@ -1,10 +1,10 @@
 //! Unit tests for claude_log: wrapper-tag normalisation, content-to-block
-//! conversion, `load_session` integration, and session timestamp bounds.
+//! conversion, and `load_session` integration.
 
 use super::convert::{content_to_display_blocks, result_lines, summarise_tool_input};
 use super::model::{DisplayBlock, Role, TOOL_RESULT_PREVIEW_LINES};
 use super::schema::{LogRecord, TextOnly, ToolResultContent};
-use super::session::{load_session, session_first_timestamp, session_last_timestamp};
+use super::session::load_session;
 
 fn parse_msg_content(json: &str) -> Vec<DisplayBlock> {
     let r: LogRecord = serde_json::from_str(json).expect("valid test json");
@@ -399,59 +399,4 @@ fn load_session_includes_enqueued_prompts_skips_removes() {
 fn load_session_missing_file_returns_empty() {
     let entries = load_session(std::path::Path::new("/nonexistent/path.jsonl"));
     assert!(entries.is_empty());
-}
-
-// ── Session timestamp bounds (mid-session /clear rotation detection) ──────
-
-#[test]
-fn timestamp_bounds_skip_leading_bookkeeping_records() {
-    // A fresh session opens with `mode` / `file-history-snapshot` records
-    // that carry no top-level timestamp; the bounds must come from the
-    // first and last *turn* records instead.
-    let f = write_jsonl(&[
-        r#"{"type":"mode","mode":"normal","sessionId":"s"}"#,
-        r#"{"type":"file-history-snapshot","messageId":"m"}"#,
-        r#"{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-07-06T03:15:21.896Z"}"#,
-        r#"{"type":"assistant","message":{"role":"assistant","content":"yo"},"timestamp":"2026-07-06T03:16:00.000Z"}"#,
-    ]);
-    assert_eq!(
-        session_first_timestamp(f.path()).as_deref(),
-        Some("2026-07-06T03:15:21.896Z")
-    );
-    assert_eq!(
-        session_last_timestamp(f.path()).as_deref(),
-        Some("2026-07-06T03:16:00.000Z")
-    );
-}
-
-#[test]
-fn timestamp_bounds_none_for_timestampless_log() {
-    // A pre-timestamp log format yields None, which disables rotation
-    // detection (the caller falls back to the pinned session).
-    let f = write_jsonl(&[
-        r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
-    ]);
-    assert!(session_first_timestamp(f.path()).is_none());
-    assert!(session_last_timestamp(f.path()).is_none());
-}
-
-#[test]
-fn continuation_starts_at_or_after_pinned_last_turn() {
-    // The rotation-detection predicate: a post-`/clear` continuation begins
-    // at/after the pinned session's last turn (string compare == chrono
-    // order for uniform UTC stamps), while a concurrent sibling panel's
-    // first turn predates it and is rejected.
-    let pinned = write_jsonl(&[
-        r#"{"type":"user","message":{"role":"user","content":"a"},"timestamp":"2026-07-06T03:00:00.000Z"}"#,
-        r#"{"type":"assistant","message":{"role":"assistant","content":"b"},"timestamp":"2026-07-06T03:10:00.000Z"}"#,
-    ]);
-    let continuation = write_jsonl(&[
-        r#"{"type":"user","message":{"role":"user","content":"c"},"timestamp":"2026-07-06T03:10:00.000Z"}"#,
-    ]);
-    let sibling = write_jsonl(&[
-        r#"{"type":"user","message":{"role":"user","content":"d"},"timestamp":"2026-07-06T03:05:00.000Z"}"#,
-    ]);
-    let pinned_last = session_last_timestamp(pinned.path()).unwrap();
-    assert!(session_first_timestamp(continuation.path()).unwrap() >= pinned_last);
-    assert!(session_first_timestamp(sibling.path()).unwrap() < pinned_last);
 }

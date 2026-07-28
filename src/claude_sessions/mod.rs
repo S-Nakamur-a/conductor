@@ -13,8 +13,10 @@ use serde::Deserialize;
 
 mod discovery;
 mod migrate;
+#[cfg(test)]
+mod tests;
 
-pub use discovery::{find_latest_sessions_for_paths, load_resumable_sessions, session_logs_by_mtime};
+pub use discovery::{find_latest_sessions_for_paths, load_resumable_sessions};
 pub use migrate::{migrate_session, unmigrate_session};
 
 /// A single entry from `~/.claude/history.jsonl`.
@@ -71,11 +73,41 @@ fn session_file_exists(session_id: &str, project: &str) -> bool {
 
 /// Return the `.jsonl` path for the given working directory and session ID.
 ///
-/// Mirrors the path that `session_file_exists` checks so callers can open
-/// the file directly. Returns `None` if the home directory is unavailable.
+/// The session id is the only key: one project directory holds the logs of
+/// *every* session ever run in that directory, so resolution must never widen to
+/// a directory-level criterion (see [`session_log_in_dir`]). Returns `None` when
+/// the home directory is unavailable or that session has no log on disk.
+///
+/// The working dir is canonicalized first because Claude Code encodes its
+/// *resolved* cwd; a symlinked worktree path would otherwise miss the directory.
+/// The raw path is tried as a second encoding so a worktree that no longer
+/// resolves (deleted, unmounted) still finds its log — both attempts look up the
+/// same session id, so this widens only *where* the log is looked for, never
+/// *which* session is shown.
 pub fn session_jsonl_path(working_dir: &Path, session_id: &str) -> Option<PathBuf> {
-    let dir = projects_dir_for(working_dir)?;
-    Some(dir.join(format!("{session_id}.jsonl")))
+    let canonical =
+        std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
+    for dir in [canonical.as_path(), working_dir] {
+        if let Some(project_dir) = projects_dir_for(dir)
+            && let Some(path) = session_log_in_dir(&project_dir, session_id)
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// The log of exactly `session_id` inside an already-resolved Claude project
+/// directory, or `None` when that session has no log there.
+///
+/// Deliberately ignores every sibling `.jsonl` in the directory. Siblings are
+/// *different conversations* — other Conductor panels on the same worktree,
+/// earlier runs, plain `claude` invocations — so picking one by mtime or by any
+/// other directory-level heuristic shows the user someone else's history. When
+/// the id does not resolve, the answer is "no history", not "some history".
+pub fn session_log_in_dir(project_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let path = project_dir.join(format!("{session_id}.jsonl"));
+    path.exists().then_some(path)
 }
 
 /// Return the Claude projects directory for a given working directory path.
