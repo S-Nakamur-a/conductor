@@ -30,7 +30,10 @@ description: Generate a PR walkthrough (intent -> core -> ripple -> test) and sa
 
 - `branch`: 現在の worktree のブランチ名（`git rev-parse --abbrev-ref HEAD` で取得できるもの）
 - `title`: ウォークスルー全体の一行タイトル
-- `summary`: 変更全体の短い概要（intent の要約でよい）
+- `summary`: 変更全体の概要。**これはブランチの change summary として保存され、Conductor の
+  SUMMARY 疑似ファイルに全画面で表示される** ので、PR description のつもりで書く — 何のための
+  変更か、なぜこれらのファイルを触っているか、レビュアーに先に知っておいてほしい前提や
+  スコープ外のこと。Markdown が描画される
 - `steps`: 上記で組み立てたステップ列（`seq` は 0 始まりの通し番号）
 
 ## 4. 難所にインラインコメントを付ける（任意）

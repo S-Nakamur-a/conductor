@@ -315,7 +315,12 @@ Each step needs: file_path (repo-relative), optional line_start/line_end (new-si
 numbers), kind, title, body. There is no fixed step count — match the actual change.\n\
 \n\
 When all steps are assembled, call the `save_walkthrough` tool exactly once with: \
-branch = `{branch}`, a one-line title, a short summary, and the steps (seq starting at 0).\n\
+branch = `{branch}`, a one-line title, a summary, and the steps (seq starting at 0).\n\
+\n\
+The summary is not throwaway text: it is stored as the branch's change summary and shown \
+full-panel as Conductor's SUMMARY pseudo-file, so write it like a PR description — what the \
+change is for, why these files are touched, and anything a reviewer should know up front \
+(including what is deliberately out of scope). Markdown is rendered.\n\
 \n\
 After saving, for the few spots that are genuinely hard to understand — tricky logic whose \
 intent isn't obvious at a glance, a non-obvious tradeoff, or a subtle edge case a reviewer \

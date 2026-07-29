@@ -9,7 +9,7 @@ use crate::walkthrough::{
     NewWalkthroughStep, Walkthrough, WalkthroughStatus, WalkthroughStep, WalkthroughStepKind,
 };
 
-use super::ReviewStore;
+use super::{Author, ReviewStore};
 
 impl ReviewStore {
     /// Start (or restart) walkthrough generation for a branch: delete any
@@ -44,6 +44,13 @@ impl ReviewStore {
     /// that skipped the "generating" placeholder is treated as an error
     /// rather than silently creating one (the placeholder is what a stuck- or
     /// failed-generation UI depends on existing).
+    ///
+    /// `summary` is written twice on purpose: onto the walkthrough row (for
+    /// round-trip fidelity) and into `change_summary`, which backs the SUMMARY
+    /// pseudo-file. Generating a walkthrough is the only thing that writes that
+    /// table, so the two must land together — hence inside the same
+    /// transaction, so a failed save leaves no summary describing a walkthrough
+    /// that was never stored.
     ///
     /// Not called in production: the actual write path is the conductor MCP
     /// server's `save_walkthrough` tool (`plugins/conductor/mcp/conductor-comment/src/index.ts`),
@@ -80,6 +87,7 @@ impl ReviewStore {
                  WHERE id = ?3",
                 params![title, summary, walkthrough_id],
             )?;
+            self.save_change_summary(branch, summary, Author::Claude)?;
             self.conn.execute(
                 "DELETE FROM walkthrough_steps WHERE walkthrough_id = ?1",
                 params![walkthrough_id],
@@ -315,5 +323,52 @@ mod tests {
                 .save_walkthrough("feat/x", "title", "summary", &[])
                 .is_err()
         );
+    }
+
+    /// The walkthrough's `summary` is also the branch's change summary — the
+    /// SUMMARY pseudo-file's content. Generating a walkthrough is the only
+    /// thing that writes it, so if this link breaks the SUMMARY pane silently
+    /// stays empty forever.
+    #[test]
+    fn save_walkthrough_also_writes_the_change_summary() {
+        let store = test_store();
+        store.begin_walkthrough("feat/x", None).unwrap();
+        assert_eq!(store.get_change_summary("feat/x").unwrap(), None);
+
+        store
+            .save_walkthrough("feat/x", "Fix startup crash", "何をなぜ変えたか。", &[])
+            .unwrap();
+
+        assert_eq!(
+            store.get_change_summary("feat/x").unwrap().as_deref(),
+            Some("何をなぜ変えたか。")
+        );
+
+        // Re-generating replaces it, so the pane always shows the latest
+        // overview rather than accumulating stale ones.
+        store.begin_walkthrough("feat/x", None).unwrap();
+        store
+            .save_walkthrough("feat/x", "Fix startup crash", "更新後の概要。", &[])
+            .unwrap();
+        assert_eq!(
+            store.get_change_summary("feat/x").unwrap().as_deref(),
+            Some("更新後の概要。")
+        );
+    }
+
+    /// A save rejected for want of `begin_walkthrough` must not leave a change
+    /// summary behind describing a walkthrough that was never stored. Note this
+    /// covers only the pre-transaction guard — a failure *inside* the
+    /// transaction is handled by the surrounding BEGIN/ROLLBACK and can't be
+    /// provoked through this API, so it isn't asserted here.
+    #[test]
+    fn save_walkthrough_rejected_before_begin_writes_no_change_summary() {
+        let store = test_store();
+        assert!(
+            store
+                .save_walkthrough("feat/x", "title", "summary", &[])
+                .is_err()
+        );
+        assert_eq!(store.get_change_summary("feat/x").unwrap(), None);
     }
 }

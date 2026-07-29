@@ -51,8 +51,9 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
             for (text, _) in [
                 ("(no change summary on this branch)", ()),
                 ("", ()),
-                ("Write one with the conductor `set_change_summary` MCP tool", ()),
-                ("(e.g. via the /self-review skill).", ()),
+                ("Generating a walkthrough writes one — palette:", ()),
+                ("\"Review: Generate Walkthrough\". Claude can also set it", ()),
+                ("directly with the conductor `set_change_summary` MCP tool.", ()),
             ] {
                 lines.push(Line::from(Span::styled(
                     text,

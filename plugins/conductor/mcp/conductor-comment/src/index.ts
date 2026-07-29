@@ -589,6 +589,42 @@ server.tool(
   }
 );
 
+/**
+ * Upsert the branch-level change summary — the body behind Conductor's SUMMARY
+ * pseudo-file. Two tools write it: `set_change_summary` (a standalone overview)
+ * and `save_walkthrough` (its `summary` argument, so generating a walkthrough
+ * fills the pane in as a side effect). Shared here so those two can never drift
+ * apart; must stay in sync with Rust's `ReviewStore::save_change_summary`
+ * (`src/review_store/worktree_metadata.rs`).
+ *
+ * Safe to call inside a caller's transaction — it issues no BEGIN of its own.
+ */
+function upsertChangeSummary(d: Database.Database, branch: string, body: string): void {
+  // Defensive: the table is created by the Rust TUI's v5 migration, but the
+  // MCP server may run against a DB an older binary hasn't migrated yet.
+  // Mirror the Rust schema so a fresh write never fails on a missing table.
+  d.exec(
+    `CREATE TABLE IF NOT EXISTS change_summary (
+       branch      TEXT PRIMARY KEY,
+       body        TEXT NOT NULL,
+       author      TEXT NOT NULL DEFAULT 'claude'
+                     CHECK (author IN ('user', 'claude')),
+       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+       updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+     )`
+  );
+  d.prepare(
+    `INSERT INTO change_summary (branch, body, author, created_at, updated_at)
+     VALUES (@branch, @body, 'claude',
+             COALESCE((SELECT created_at FROM change_summary WHERE branch = @branch), datetime('now')),
+             datetime('now'))
+     ON CONFLICT(branch) DO UPDATE SET
+       body = excluded.body,
+       author = 'claude',
+       updated_at = datetime('now')`
+  ).run({ branch, body });
+}
+
 server.tool(
   "set_change_summary",
   "Set the branch-level change summary — the 'what & why' of the whole diff (the PR-description counterpart to line-anchored comments). " +
@@ -618,31 +654,8 @@ server.tool(
       };
     }
 
-    // Defensive: the table is created by the Rust TUI's v5 migration, but the
-    // MCP server may run against a DB an older binary hasn't migrated yet.
-    // Mirror the Rust schema so a fresh write never fails on a missing table.
-    d.exec(
-      `CREATE TABLE IF NOT EXISTS change_summary (
-         branch      TEXT PRIMARY KEY,
-         body        TEXT NOT NULL,
-         author      TEXT NOT NULL DEFAULT 'claude'
-                       CHECK (author IN ('user', 'claude')),
-         created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-       )`
-    );
-
     try {
-      d.prepare(
-        `INSERT INTO change_summary (branch, body, author, created_at, updated_at)
-         VALUES (@branch, @body, 'claude',
-                 COALESCE((SELECT created_at FROM change_summary WHERE branch = @branch), datetime('now')),
-                 datetime('now'))
-         ON CONFLICT(branch) DO UPDATE SET
-           body = excluded.body,
-           author = 'claude',
-           updated_at = datetime('now')`
-      ).run({ branch, body });
+      upsertChangeSummary(d, branch, body);
     } catch (err) {
       return {
         content: [
@@ -670,7 +683,7 @@ server.tool(
 
 server.tool(
   "get_change_summary",
-  "Get the branch-level change summary (the 'what & why' overview set by set_change_summary) for the current branch, or a specified branch. " +
+  "Get the branch-level change summary (the 'what & why' overview written by set_change_summary or save_walkthrough) for the current branch, or a specified branch. " +
     "Useful for reusing the summary as a PR description body.",
   {
     branch: z
@@ -772,7 +785,12 @@ server.tool(
   {
     branch: z.string().min(1).describe("Branch the walkthrough belongs to"),
     title: z.string().min(1).describe("One-line walkthrough title"),
-    summary: z.string().min(1).describe("Short overview of the change, shown above the steps"),
+    summary: z
+      .string()
+      .min(1)
+      .describe(
+        "Overview of the change. Also stored as the branch's change summary and shown full-panel as Conductor's SUMMARY pseudo-file, so write it like a PR description (what the change is for, why these files, what is out of scope). Markdown is rendered."
+      ),
     steps: z
       .array(walkthroughStepSchema)
       .min(1)
@@ -827,6 +845,11 @@ server.tool(
            error = NULL,
            updated_at = datetime('now')`
       ).run({ id: walkthroughId, branch, title, summary });
+
+      // The same overview also backs the SUMMARY pseudo-file. Writing it here,
+      // inside the transaction, is what keeps that pane from going permanently
+      // empty: nothing else writes `change_summary` in the normal review flow.
+      upsertChangeSummary(d, branch, summary);
 
       const { id: resolvedId } = d
         .prepare("SELECT id FROM walkthroughs WHERE branch = ?")
