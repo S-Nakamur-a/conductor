@@ -33,9 +33,12 @@ impl ReviewStore {
     /// body. `updated_at` is bumped on every write; `created_at` is preserved on
     /// replace via the COALESCE against the existing row.
     ///
-    /// Currently the MCP `set_change_summary` tool is the live writer (raw SQL,
-    /// sibling process); this canonical Rust writer documents the upsert contract
-    /// and backs a future in-TUI summary editor.
+    /// The live writers are both in the MCP server (raw SQL, sibling process):
+    /// `set_change_summary` for a standalone overview, and `save_walkthrough`,
+    /// which writes the walkthrough's summary here so the SUMMARY pseudo-file
+    /// is filled in as a side effect of generating a walkthrough. This Rust
+    /// writer documents the upsert contract, backs the tested Rust mirror of
+    /// `save_walkthrough`, and would back a future in-TUI summary editor.
     #[allow(dead_code)]
     pub fn save_change_summary(&self, branch: &str, body: &str, author: Author) -> Result<()> {
         self.conn.execute(

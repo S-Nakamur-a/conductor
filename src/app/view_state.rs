@@ -114,6 +114,17 @@ impl App {
         let Some(restore) = self.pending_view_restore.take() else {
             return;
         };
+        match restore_disposition(
+            self.viewer_state.content.current_file.is_some(),
+            self.viewer_state.is_summary(),
+        ) {
+            RestoreDisposition::Apply => {}
+            RestoreDisposition::Drop => return,
+            RestoreDisposition::Keep => {
+                self.pending_view_restore = Some(restore);
+                return;
+            }
+        }
         let wt_path = self.selected_worktree_path();
         if !wt_path.join(&restore.file).is_file() {
             return;
@@ -189,6 +200,40 @@ impl App {
     }
 }
 
+/// What to do with a pending [`PendingViewRestore`] that has come due.
+#[derive(Debug, PartialEq, Eq)]
+enum RestoreDisposition {
+    /// Nothing is showing — open the saved file as intended.
+    Apply,
+    /// The user opened a real file during the window between the worktree
+    /// switch and the tree finishing its walk. The saved view is obsolete, so
+    /// forget it; keeping it armed would make [`App::save_view_for`] persist
+    /// the stale pending path instead of the file the user ended up on.
+    Drop,
+    /// Only the SUMMARY pseudo-file is showing, with no file behind it. Don't
+    /// open over it, but stay armed: the view-state schema has no way to say
+    /// "was viewing SUMMARY", so dropping here would persist an empty view and
+    /// lose the saved file outright. The caller re-runs this on every later
+    /// consume, so the restore can still land once the viewer is empty again.
+    Keep,
+}
+
+/// Decide the fate of a due view restore from what the viewer is showing.
+///
+/// Split out from [`App::consume_pending_view_restore`] because both wrong
+/// answers are silent: `Drop` where `Keep` belongs quietly erases a branch's
+/// saved file, and `Keep` where `Drop` belongs quietly freezes it at a stale
+/// value. Neither surfaces as a crash, so the truth table is pinned by tests.
+fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDisposition {
+    if has_open_file {
+        RestoreDisposition::Drop
+    } else if showing_summary {
+        RestoreDisposition::Keep
+    } else {
+        RestoreDisposition::Apply
+    }
+}
+
 /// Resolve the base branch a diff should be computed against: a worktree's
 /// saved base ref (recorded at PR-intake time — see `save_worktree_base_branch`)
 /// takes priority, since a PR may target something other than the configured
@@ -214,5 +259,23 @@ mod tests {
     #[test]
     fn resolve_diff_base_branch_falls_back_to_main_when_unsaved() {
         assert_eq!(resolve_diff_base_branch(None, "main"), "main");
+    }
+
+    /// The full truth table. Startup and worktree switch both reset the viewer
+    /// before arming a restore, so `Apply` is the ordinary path; the other two
+    /// rows only occur when the user got there first during the tree walk.
+    #[test]
+    fn restore_disposition_truth_table() {
+        use RestoreDisposition::*;
+        // Viewer empty: the restore does its job.
+        assert_eq!(restore_disposition(false, false), Apply);
+        // Only SUMMARY open: don't clobber it, but stay armed so the branch's
+        // saved file isn't erased by a later save.
+        assert_eq!(restore_disposition(false, true), Keep);
+        // A real file is open: the saved view is obsolete either way, including
+        // when SUMMARY is layered over that file — dropping keeps persistence
+        // tracking what the user actually opened.
+        assert_eq!(restore_disposition(true, false), Drop);
+        assert_eq!(restore_disposition(true, true), Drop);
     }
 }

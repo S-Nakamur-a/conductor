@@ -68,9 +68,11 @@ impl ViewerState {
         if let Some(ref rel_path) = prev_file {
             let full = worktree_path.join(rel_path);
             if full.is_file() {
-                // Preserve diff mode state across tree refreshes so that
-                // file-watcher / periodic refreshes don't kick the user
-                // out of the unified diff view.
+                // Preserve the viewer's *mode* across tree refreshes so that
+                // file-watcher / periodic refreshes don't kick the user out of
+                // the unified diff view or the SUMMARY pseudo-file. `open_file`
+                // below goes through `exit_diff_mode`, which clears both, so
+                // every mode flag has to be captured here and put back after.
                 let was_diff_mode = self.diff_view.diff_mode;
                 let prev_diff_lines = if was_diff_mode {
                     std::mem::take(&mut self.diff_view.diff_view_lines)
@@ -79,6 +81,8 @@ impl ViewerState {
                 };
                 let prev_diff_scroll = self.diff_view.diff_view_scroll;
                 let prev_diff_max_line_no = self.diff_view.diff_view_max_line_no;
+                let was_summary = self.show_summary;
+                let prev_summary_scroll = self.summary_scroll;
 
                 self.open_file(worktree_path, rel_path, tab_width);
                 self.content.file_scroll = prev_file_scroll;
@@ -89,6 +93,12 @@ impl ViewerState {
                     self.diff_view.diff_view_lines = prev_diff_lines;
                     self.diff_view.diff_view_scroll = prev_diff_scroll;
                     self.diff_view.diff_view_max_line_no = prev_diff_max_line_no;
+                }
+                // Mutually exclusive with diff mode (see `enter_summary_view`),
+                // so this can never fight the branch above.
+                if was_summary {
+                    self.show_summary = true;
+                    self.summary_scroll = prev_summary_scroll;
                 }
 
                 // Try to restore tree_selected to point at the file entry.
