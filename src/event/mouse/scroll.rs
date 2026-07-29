@@ -101,7 +101,26 @@ pub(super) fn handle_mouse_scroll(
         }
     } else if col < viewer_end {
         // Viewer scroll.
-        if app.viewer_state.diff_view.diff_mode {
+        //
+        // The summary pseudo-file is checked first: it renders over the whole
+        // panel while `diff_mode` is false and `current_file` still points at
+        // whatever was open behind it, so without this the wheel would scroll
+        // that hidden file and the summary would sit motionless.
+        if app.viewer_state.is_summary() {
+            let total = app.viewer_state.summary_total_lines;
+            if total > 0 {
+                if delta > 0 {
+                    app.viewer_state.summary_scroll = (app.viewer_state.summary_scroll
+                        + delta.unsigned_abs() as usize)
+                        .min(total.saturating_sub(1));
+                } else {
+                    app.viewer_state.summary_scroll = app
+                        .viewer_state
+                        .summary_scroll
+                        .saturating_sub(delta.unsigned_abs() as usize);
+                }
+            }
+        } else if app.viewer_state.diff_view.diff_mode {
             // Unified diff view scroll.
             let total = app.viewer_state.diff_view.diff_view_lines.len();
             if total > 0 {

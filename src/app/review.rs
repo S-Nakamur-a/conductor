@@ -30,12 +30,13 @@ impl App {
             if self.diff_state.has_summary != has_summary {
                 self.diff_state.has_summary = has_summary;
                 self.diff_state.rebuild_display_list();
-                // If the summary vanished while its pseudo-file was open, leave
-                // the now-orphaned summary view so the Viewer and the list agree.
-                if !has_summary && self.viewer_state.is_summary() {
-                    self.viewer_state.exit_diff_mode();
-                }
             }
+            // Deliberately no "summary vanished, so close the view" branch here.
+            // A data reload must never close a view the user opened: `None` here
+            // means "this reload found no summary", which also covers reloads
+            // against a branch that failed to resolve, and closing on that threw
+            // the user onto an unrelated file. The summary pane renders its own
+            // empty state, so an orphaned view explains itself and Esc closes it.
         }
     }
 

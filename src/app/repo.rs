@@ -102,6 +102,10 @@ impl App {
                 self.selected_worktree = 0;
                 self.refresh_worktrees();
                 self.viewer_state = ViewerState::default();
+                // This repo gets no view restore, so drop any restore still
+                // armed for the *previous* repo — otherwise it could fire here
+                // and open a same-named path in the newly opened tree.
+                self.pending_view_restore = None;
                 self.diff_state =
                     crate::diff_state::DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
                 self.refresh_reviews();
@@ -226,7 +230,14 @@ impl App {
         // often the main worktree), reload the review state. Otherwise the
         // previous branch's change summary and comments linger and get shown
         // against the wrong branch (e.g. a merged PR's summary on `main`).
-        if self.selected_worktree_branch() != prev_selected_branch {
+        //
+        // An *empty* branch is excluded: `list_worktrees` logs and skips a
+        // worktree it fails to inspect (see `git_engine::worktree_ops`), so a
+        // transient git error can empty the list for one poll. That is a failed
+        // read, not a selection change, and reloading reviews against `""`
+        // would blank out the panel every few seconds until it recovered.
+        let new_branch = self.selected_worktree_branch();
+        if !new_branch.is_empty() && new_branch != prev_selected_branch {
             self.refresh_reviews();
         }
         changed
