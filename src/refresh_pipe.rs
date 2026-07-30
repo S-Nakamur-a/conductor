@@ -5,7 +5,7 @@
 //! forwards events through an `mpsc` channel to the main loop, which then
 //! calls `refresh_reviews()`.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -175,6 +175,61 @@ impl RefreshPipe {
     }
 }
 
+/// Poke the TUI's refresh FIFO so it reloads review data.
+///
+/// Called by `mcp-serve` after every write. Best-effort on purpose: the common
+/// "failure" is that no conductor is running, so the FIFO either does not exist
+/// or has no reader, and `O_NONBLOCK` turns the latter into `ENXIO`. Neither is
+/// worth surfacing — the write already succeeded, and the next time the TUI
+/// opens it reads the database fresh anyway.
+///
+/// `O_NONBLOCK` is what keeps this from being a hang: opening a FIFO for writing
+/// blocks until a reader attaches, which would wedge the tool call.
+pub fn signal_refresh(pipe_path: &Path) {
+    let Some(path) = pipe_path.to_str() else {
+        log::warn!("refresh pipe path is not UTF-8: {}", pipe_path.display());
+        return;
+    };
+    let Ok(path_cstr) = std::ffi::CString::new(path) else {
+        return;
+    };
+
+    // SAFETY: standard POSIX open; path_cstr is valid and null-terminated.
+    let fd = unsafe { libc::open(path_cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
+    if fd < 0 {
+        log::debug!(
+            "refresh pipe not writable ({}): {}",
+            pipe_path.display(),
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+
+    // SAFETY: fd is a valid descriptor we own exclusively; closed on drop.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+
+    // Only ever write into an actual FIFO. If `refresh.pipe` came back as a
+    // regular file or a symlink to one — a backup restored without special
+    // files, an archive extracted by a tool that doesn't carry them — this
+    // write would land at offset 0 and overwrite the first byte of whatever
+    // that file really is.
+    // SAFETY: `fd` is open and owned by `file`; `stat` is written only on success.
+    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+    let is_fifo = unsafe { libc::fstat(fd, &mut stat) } == 0
+        && (stat.st_mode & libc::S_IFMT) == libc::S_IFIFO;
+    if !is_fifo {
+        log::warn!(
+            "refresh pipe is not a FIFO, refusing to write: {}",
+            pipe_path.display()
+        );
+        return;
+    }
+
+    if let Err(e) = file.write_all(b"r") {
+        log::debug!("refresh pipe write failed: {e}");
+    }
+}
+
 impl Drop for RefreshPipe {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
@@ -204,18 +259,14 @@ impl Drop for RefreshPipe {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
-    /// Write to the FIFO the same way the MCP server does (O_WRONLY | O_NONBLOCK).
+    /// Write to the FIFO the way the mcp-serve tool handlers do — through the
+    /// real `signal_refresh`, not a hand-rolled copy of it. A copy here would
+    /// mean these tests stay green even if `signal_refresh` itself broke,
+    /// which is exactly the function every write-capable mcp-serve tool calls
+    /// in production.
     fn write_to_pipe(pipe_path: &Path) {
-        let path_cstr = std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
-        unsafe {
-            let fd = libc::open(path_cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK);
-            assert!(fd >= 0, "failed to open pipe for writing");
-            let mut file = std::fs::File::from_raw_fd(fd);
-            file.write_all(b"r").unwrap();
-            // file is dropped here, closing the fd.
-        }
+        super::signal_refresh(pipe_path);
     }
 
     #[test]
@@ -267,5 +318,61 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(100));
         assert!(listener.poll().is_none(), "expected no event");
+    }
+
+    /// `signal_refresh` is the "no conductor is running" path when the
+    /// database's `.conductor/` directory doesn't even have a `refresh.pipe`
+    /// yet — `libc::open` fails with `ENOENT`, and this must not panic.
+    #[test]
+    fn signal_refresh_on_nonexistent_path_returns_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe_path = dir.path().join("does-not-exist.pipe");
+        signal_refresh(&pipe_path); // must not panic
+    }
+
+    /// A `refresh.pipe` can exist (created by a past run) with nothing
+    /// currently reading it — `mcp-serve` writes without ever having started
+    /// a `RefreshPipe` listener itself. `O_NONBLOCK` is what keeps this from
+    /// hanging: opening a FIFO for writing normally blocks until a reader
+    /// attaches, which would wedge the tool call forever. Run on a background
+    /// thread with a timeout so a regression here fails this test instead of
+    /// hanging CI.
+    #[test]
+    fn signal_refresh_with_no_reader_returns_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe_path = dir.path().join("refresh.pipe");
+        let path_cstr = std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
+        // SAFETY: standard POSIX mkfifo; path_cstr is valid and null-terminated.
+        let ret = unsafe { libc::mkfifo(path_cstr.as_ptr(), 0o660) };
+        assert_eq!(ret, 0, "failed to create test FIFO");
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            signal_refresh(&pipe_path);
+            let _ = tx.send(());
+        });
+
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("signal_refresh hung on a reader-less FIFO");
+    }
+
+    /// If `refresh.pipe` is somehow a regular file — an archive extracted
+    /// without special files, a restored backup — writing to it would land at
+    /// offset 0 and clobber the first byte of whatever it actually is. The
+    /// FIFO check has to come before the write.
+    #[test]
+    fn signal_refresh_will_not_write_into_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_pipe = dir.path().join("refresh.pipe");
+        let original = "IMPORTANT PRE-EXISTING CONTENT";
+        std::fs::write(&not_a_pipe, original).unwrap();
+
+        signal_refresh(&not_a_pipe);
+
+        assert_eq!(
+            std::fs::read_to_string(&not_a_pipe).unwrap(),
+            original,
+            "signal_refresh overwrote a regular file"
+        );
     }
 }

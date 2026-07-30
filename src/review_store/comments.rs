@@ -7,6 +7,12 @@ use uuid::Uuid;
 use super::ReviewStore;
 use super::model::{Author, CommentKind, CommentStatus, ReviewComment};
 
+/// Shortest id prefix [`ReviewStore::resolve_id_prefix`] will match on.
+///
+/// Comment ids are surfaced to Claude as their first 8 characters, so 8 is both
+/// what the MCP tools advertise and what a caller has actually seen.
+pub const MIN_ID_PREFIX_LEN: usize = 8;
+
 impl ReviewStore {
     /// Insert a new review comment and return it.
     #[allow(clippy::too_many_arguments)]
@@ -46,7 +52,7 @@ impl ReviewStore {
     }
 
     /// Fetch a single review by id.
-    fn get_review(&self, id: &str) -> Result<ReviewComment> {
+    pub fn get_review(&self, id: &str) -> Result<ReviewComment> {
         self.conn
             .query_row(
                 "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
@@ -156,6 +162,91 @@ impl ReviewStore {
              ORDER BY file_path, line_start",
         )?;
         collect_reviews(&mut stmt, params![branch])
+    }
+
+    /// Resolve a full comment id or a unique prefix of one to the full id.
+    ///
+    /// Shorter than [`MIN_ID_PREFIX_LEN`] is rejected: that is the length the
+    /// tools advertise, and it is also how comment ids are printed back, so
+    /// anything shorter is a mistake rather than a legitimate shorthand.
+    ///
+    /// `prefix` must consist only of hex digits and `-` (the alphabet a UUID
+    /// is drawn from) or this returns `Ok(None)` without touching the
+    /// database — a bare `LIKE` pattern built from an unvalidated prefix
+    /// would let `%`/`_` act as SQL wildcards (e.g. `prefix = "%"` matching
+    /// any comment), and rejecting that shape up front costs nothing a
+    /// legitimate id or id-prefix would ever need. When multiple rows match,
+    /// the first by `id` is returned rather than treated as ambiguous — this
+    /// mirrors the Node MCP server it replaces, just made deterministic with
+    /// an explicit `ORDER BY`.
+    pub fn resolve_id_prefix(&self, prefix: &str) -> Result<Option<String>> {
+        // The tools advertise "ID or unique prefix (min 8 chars)" — enforce it
+        // rather than just documenting it. A one- or two-character prefix
+        // matches whichever id happens to sort first, so a model that mistypes
+        // an id would resolve or reply to *someone else's* comment and be told
+        // it succeeded.
+        if prefix.len() < MIN_ID_PREFIX_LEN {
+            return Ok(None);
+        }
+        // Ids are UUIDs, so anything outside hex-and-dashes cannot match one.
+        // Rejecting it here also keeps `%` and `_` — LIKE's wildcards — from
+        // reaching the pattern below, where they would match unrelated rows.
+        if !prefix.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Ok(None);
+        }
+        let pattern = format!("{prefix}%");
+        let result = self.conn.query_row(
+            "SELECT id FROM reviews WHERE id LIKE ?1 ORDER BY id LIMIT 1",
+            params![pattern],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Return pending review comments, optionally narrowed by branch,
+    /// worktree, and/or file path.
+    ///
+    /// `branch` matches the `branch` column **or** the `worktree` column
+    /// (`OR`, both bound to the same value). Under the v4 schema's `CHECK
+    /// (branch IS NULL OR worktree = branch)` the `branch = ?` side can never
+    /// be the one that makes a match — a non-null `branch` always agrees with
+    /// `worktree` already — so the `OR` is redundant against this schema. It
+    /// is kept anyway for parity with the Node MCP server this replaces,
+    /// which predates that CHECK and could see rows where the two disagreed
+    /// (see `docs/spec-s6-mcp-tools.md` §1).
+    pub fn pending_reviews(
+        &self,
+        branch: Option<&str>,
+        worktree: Option<&str>,
+        file_path: Option<&str>,
+    ) -> Result<Vec<ReviewComment>> {
+        let mut sql = String::from(
+            "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
+                    commit_ref, author, branch, created_at, updated_at
+             FROM reviews WHERE status = 'pending'",
+        );
+        let mut bind: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(w) = worktree {
+            sql.push_str(" AND worktree = ?");
+            bind.push(Box::new(w.to_string()));
+        }
+        if let Some(b) = branch {
+            sql.push_str(" AND (branch = ? OR worktree = ?)");
+            bind.push(Box::new(b.to_string()));
+            bind.push(Box::new(b.to_string()));
+        }
+        if let Some(f) = file_path {
+            sql.push_str(" AND file_path = ?");
+            bind.push(Box::new(f.to_string()));
+        }
+        sql.push_str(" ORDER BY file_path, line_start");
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        collect_reviews(&mut stmt, rusqlite::params_from_iter(bind.iter()))
     }
 }
 
@@ -394,5 +485,331 @@ mod tests {
         let unpublished = store.unpublished_reviews("feat/x").unwrap();
         assert_eq!(unpublished.len(), 1);
         assert_eq!(unpublished[0].id, r2.id);
+    }
+
+    #[test]
+    fn pending_reviews_filters_by_status() {
+        let store = test_store();
+
+        let pending = store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "still open",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+        let resolved = store
+            .add_review(
+                "wt1",
+                "src/b.rs",
+                2,
+                None,
+                CommentKind::Suggest,
+                "done",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+        store
+            .update_review_status(&resolved.id, CommentStatus::Resolved)
+            .unwrap();
+
+        let rows = store.pending_reviews(None, None, None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, pending.id);
+    }
+
+    /// Exercises the `(branch = ? OR worktree = ?)` clause. Under the v4
+    /// CHECK (`branch IS NULL OR worktree = branch`), `branch = ?` can never
+    /// be the side that produces a match on its own — a non-null `branch`
+    /// always already agrees with `worktree` — so this test only isolates
+    /// the `worktree = ?` half (`via_worktree`, whose `branch` is NULL); the
+    /// `via_branch` row happens to also satisfy `worktree = ?`, it does not
+    /// prove the `branch = ?` side does anything under this schema. Both
+    /// rows must still come back for a `branch` filter of `"feat/x"`.
+    #[test]
+    fn pending_reviews_matches_branch_or_worktree_column() {
+        let store = test_store();
+
+        // The v4 CHECK (`branch IS NULL OR worktree = branch`) forces
+        // `worktree` to agree with a non-null `branch`, so this row matches
+        // both columns — the row below is what isolates the `worktree`-only
+        // path.
+        let via_branch = store
+            .add_review(
+                "feat/x",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "matches via branch",
+                "abc",
+                Author::User,
+                Some("feat/x"),
+            )
+            .unwrap();
+        let via_worktree = store
+            .add_review(
+                "feat/x",
+                "src/b.rs",
+                2,
+                None,
+                CommentKind::Suggest,
+                "matches via worktree",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        let rows = store.pending_reviews(Some("feat/x"), None, None).unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(rows.len(), 2);
+        assert!(ids.contains(&via_branch.id.as_str()));
+        assert!(ids.contains(&via_worktree.id.as_str()));
+    }
+
+    #[test]
+    fn pending_reviews_filters_by_file_path() {
+        let store = test_store();
+
+        let a = store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "on a.rs",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+        store
+            .add_review(
+                "wt1",
+                "src/b.rs",
+                2,
+                None,
+                CommentKind::Suggest,
+                "on b.rs",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        let rows = store.pending_reviews(None, None, Some("src/a.rs")).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, a.id);
+    }
+
+    #[test]
+    fn resolve_id_prefix_finds_by_8char_prefix() {
+        let store = test_store();
+
+        let review = store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        let resolved = store
+            .resolve_id_prefix(&review.id[..8])
+            .unwrap()
+            .expect("prefix should resolve");
+        assert_eq!(resolved, review.id);
+    }
+
+    #[test]
+    fn resolve_id_prefix_returns_none_when_no_match() {
+        let store = test_store();
+        store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(store.resolve_id_prefix("deadbeef").unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_id_prefix_rejects_like_wildcards() {
+        let store = test_store();
+        store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        // Without the hex/`-` validation this would resolve to whichever
+        // comment sorts first by id — a security-relevant escape.
+        assert_eq!(store.resolve_id_prefix("%").unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_id_prefix_is_deterministic_with_multiple_matches() {
+        let store = test_store();
+
+        // Hand-crafted ids sharing a prefix — real UUIDs are random, so this
+        // is the only way to reliably provoke an ambiguous prefix. Inserted
+        // in descending id order on purpose: inserting ascending would let
+        // rowid order (SQLite's default without an ORDER BY) coincide with
+        // id order and pass even if the `ORDER BY id` were dropped from the
+        // query.
+        for id in [
+            "aaaaaaaa-2222-0000-0000-000000000000",
+            "aaaaaaaa-1111-0000-0000-000000000000",
+        ] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO reviews (id, worktree, file_path, line_start, kind, body, commit_ref)
+                     VALUES (?1, 'wt1', 'src/a.rs', 1, 'suggest', 'note', 'abc')",
+                    params![id],
+                )
+                .unwrap();
+        }
+
+        let resolved = store.resolve_id_prefix("aaaaaaaa").unwrap().unwrap();
+        assert_eq!(resolved, "aaaaaaaa-1111-0000-0000-000000000000");
+    }
+
+    #[test]
+    fn resolve_id_prefix_rejects_underscore_wildcard() {
+        let store = test_store();
+        store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        // `_` is `LIKE`'s single-character wildcard — the other one besides
+        // `%`, and just as much an escape if a bare LIKE pattern were built
+        // from an unvalidated prefix.
+        assert_eq!(store.resolve_id_prefix("_").unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_id_prefix_rejects_empty_string() {
+        let store = test_store();
+        store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(store.resolve_id_prefix("").unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_id_prefix_rejects_non_hex_letters() {
+        let store = test_store();
+        store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        // Contains no `%`/`_` at all — a validator that only strips LIKE
+        // wildcard characters (rather than actually checking the alphabet
+        // is hex digits + `-`) would let this slip through unchanged.
+        assert_eq!(store.resolve_id_prefix("xyz").unwrap(), None);
+    }
+
+    /// A prefix shorter than the advertised 8 characters resolves to nothing.
+    /// Without this, a mistyped id like `"a"` silently matches whichever
+    /// comment sorts first — resolving or replying to someone else's comment
+    /// and reporting success.
+    #[test]
+    fn resolve_id_prefix_rejects_prefixes_shorter_than_advertised() {
+        let store = test_store();
+        let review = store
+            .add_review(
+                "wt1",
+                "src/a.rs",
+                1,
+                None,
+                CommentKind::Suggest,
+                "note",
+                "abc",
+                Author::User,
+                None,
+            )
+            .unwrap();
+
+        // Genuine leading characters of a real id, and still refused.
+        for len in 1..MIN_ID_PREFIX_LEN {
+            let short_prefix = &review.id[..len];
+            assert_eq!(
+                store.resolve_id_prefix(short_prefix).unwrap(),
+                None,
+                "{len}-char prefix must not resolve"
+            );
+        }
+        // The advertised length does resolve, so the bound is the only thing
+        // being tested here.
+        assert_eq!(
+            store
+                .resolve_id_prefix(&review.id[..MIN_ID_PREFIX_LEN])
+                .unwrap(),
+            Some(review.id.clone())
+        );
     }
 }

@@ -1,7 +1,7 @@
 //! AI walkthrough generation lifecycle: start, save, fail, and fetch a
 //! branch's walkthrough (the `walkthroughs` and `walkthrough_steps` tables).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::params;
 use uuid::Uuid;
 
@@ -38,12 +38,19 @@ impl ReviewStore {
         self.walkthrough_row_by_id(&id)
     }
 
-    /// Save a completed walkthrough: replaces the branch's steps and marks it
-    /// `ready`, in one transaction. `begin_walkthrough` must have already
-    /// created the row — this only updates/populates it, so a generation
-    /// that skipped the "generating" placeholder is treated as an error
-    /// rather than silently creating one (the placeholder is what a stuck- or
-    /// failed-generation UI depends on existing).
+    /// Save a completed walkthrough for `branch`: upserts the walkthrough
+    /// row and replaces its steps, in one transaction. This is production's
+    /// write path — the conductor `mcp-serve` binary's `save_walkthrough`
+    /// tool calls this method directly (in-process, no separate
+    /// implementation to keep in sync). `begin_walkthrough` is no longer a
+    /// prerequisite: calling this on a branch with no prior walkthrough
+    /// creates one, and calling it again replaces the previous one entirely
+    /// (matching the "no generation history" model described on the v6
+    /// migration).
+    ///
+    /// Returns the walkthrough's id — on an upsert that hit an existing row
+    /// this is that row's id, not the one generated here, so the caller can
+    /// report the id actually in effect.
     ///
     /// `summary` is written twice on purpose: onto the walkthrough row (for
     /// round-trip fidelity) and into `change_summary`, which backs the SUMMARY
@@ -51,47 +58,55 @@ impl ReviewStore {
     /// table, so the two must land together — hence inside the same
     /// transaction, so a failed save leaves no summary describing a walkthrough
     /// that was never stored.
-    ///
-    /// Not called in production: the actual write path is the conductor MCP
-    /// server's `save_walkthrough` tool (`plugins/conductor/mcp/conductor-comment/src/index.ts`),
-    /// which the headless `claude -p` session invokes directly over stdio —
-    /// this Rust method exists only so the save round-trip can be tested
-    /// without spawning a Node process. The two implementations must be kept
-    /// in sync by hand: a schema or invariant change here needs the same
-    /// change made in `index.ts`, and vice versa.
-    #[allow(dead_code)]
     pub fn save_walkthrough(
         &self,
         branch: &str,
         title: &str,
         summary: &str,
         steps: &[NewWalkthroughStep],
-    ) -> Result<()> {
-        let walkthrough_id: String = self
-            .conn
-            .query_row(
+    ) -> Result<String> {
+        let candidate_id = Uuid::new_v4().to_string();
+
+        // BEGIN IMMEDIATE (not a bare BEGIN) takes the write lock up front.
+        // Under WAL, a deferred transaction that reads before it writes can
+        // get SQLITE_BUSY_SNAPSHOT instead of SQLITE_BUSY on a concurrent
+        // writer — and busy_timeout's retry handler only fires for the
+        // latter, so a deferred transaction here could fail instead of
+        // waiting.
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        let result = (|| -> Result<String> {
+            self.conn.execute(
+                "INSERT INTO walkthroughs (id, branch, title, summary, status, error, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'ready', NULL,
+                         COALESCE((SELECT created_at FROM walkthroughs WHERE branch = ?5), datetime('now')),
+                         datetime('now'))
+                 ON CONFLICT(branch) DO UPDATE SET
+                     title = excluded.title, summary = excluded.summary,
+                     status = 'ready', error = NULL, updated_at = datetime('now')",
+                params![candidate_id, branch, title, summary, branch],
+            )?;
+            self.save_change_summary(branch, summary, Author::Claude)?;
+
+            // On conflict the INSERT keeps the existing row's id rather than
+            // `candidate_id`, so re-read the id actually in effect instead of
+            // assuming the one just generated.
+            let walkthrough_id: String = self.conn.query_row(
                 "SELECT id FROM walkthroughs WHERE branch = ?1",
                 params![branch],
                 |row| row.get(0),
-            )
-            .with_context(|| {
-                format!("no walkthrough row for branch {branch} — call begin_walkthrough first")
-            })?;
-
-        self.conn.execute_batch("BEGIN;")?;
-        let result = (|| -> Result<()> {
-            self.conn.execute(
-                "UPDATE walkthroughs
-                 SET title = ?1, summary = ?2, status = 'ready', error = NULL,
-                     updated_at = datetime('now')
-                 WHERE id = ?3",
-                params![title, summary, walkthrough_id],
             )?;
-            self.save_change_summary(branch, summary, Author::Claude)?;
+
             self.conn.execute(
                 "DELETE FROM walkthrough_steps WHERE walkthrough_id = ?1",
                 params![walkthrough_id],
             )?;
+            // `seq` comes from the slice's order, not from anything the caller
+            // supplied: the MCP tool accepts a per-step `seq`, and a model that
+            // numbers steps within each kind (intent 0,1 / core 0,1,2 / …) would
+            // otherwise interleave the whole tour — rendered perfectly, reported
+            // as success, with nothing to indicate the narrative order was lost.
+            // Deriving it here also keeps `seq` dense and unique per walkthrough,
+            // so `get_walkthrough`'s `ORDER BY seq` needs no tie-break.
             for (seq, step) in steps.iter().enumerate() {
                 let step_id = Uuid::new_v4().to_string();
                 self.conn.execute(
@@ -111,14 +126,21 @@ impl ReviewStore {
                     ],
                 )?;
             }
-            Ok(())
+            Ok(walkthrough_id)
         })();
 
         match result {
-            Ok(()) => {
-                self.conn.execute_batch("COMMIT;")?;
-                Ok(())
-            }
+            // A failing COMMIT still leaves the transaction open, so it needs
+            // the same rollback as a failing statement: otherwise every later
+            // write on this connection joins the stranded transaction, reports
+            // success, and is discarded when the process exits.
+            Ok(walkthrough_id) => match self.conn.execute_batch("COMMIT;") {
+                Ok(()) => Ok(walkthrough_id),
+                Err(e) => {
+                    let _ = self.conn.execute_batch("ROLLBACK;");
+                    Err(e.into())
+                }
+            },
             Err(e) => {
                 let _ = self.conn.execute_batch("ROLLBACK;");
                 Err(e)
@@ -136,9 +158,7 @@ impl ReviewStore {
             params![error, branch],
         )?;
         if changed == 0 {
-            anyhow::bail!(
-                "no walkthrough row for branch {branch} — call begin_walkthrough first"
-            );
+            anyhow::bail!("no walkthrough row for branch {branch} — call begin_walkthrough first");
         }
         Ok(())
     }
@@ -160,6 +180,11 @@ impl ReviewStore {
             Err(e) => return Err(e.into()),
         };
 
+        // `seq` is assigned from the slice's order on write, so it is dense and
+        // unique within a walkthrough — `ORDER BY seq` alone is total here, and
+        // needs no tie-break. (`, id` would actively hurt: step ids are random
+        // UUIDs, so tie-breaking on them would order steps at random rather
+        // than by the order they were saved in.)
         let mut stmt = self.conn.prepare(
             "SELECT id, walkthrough_id, seq, file_path, line_start, line_end, kind, title, body
              FROM walkthrough_steps
@@ -277,7 +302,12 @@ mod tests {
             },
         ];
         store
-            .save_walkthrough("feat/x", "Fix startup crash", "A short summary.", &new_steps)
+            .save_walkthrough(
+                "feat/x",
+                "Fix startup crash",
+                "A short summary.",
+                &new_steps,
+            )
             .unwrap();
 
         let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
@@ -300,7 +330,9 @@ mod tests {
         assert_eq!(walkthrough.status, WalkthroughStatus::Generating);
         assert!(steps.is_empty());
 
-        store.fail_walkthrough("feat/x", "Claude Code exited early").unwrap();
+        store
+            .fail_walkthrough("feat/x", "Claude Code exited early")
+            .unwrap();
         let (walkthrough, _) = store.get_walkthrough("feat/x").unwrap().unwrap();
         assert_eq!(walkthrough.status, WalkthroughStatus::Failed);
         assert_eq!(
@@ -315,14 +347,67 @@ mod tests {
         assert!(store.fail_walkthrough("feat/x", "boom").is_err());
     }
 
+    /// `save_walkthrough` no longer requires `begin_walkthrough` — it upserts
+    /// the walkthrough row itself, so it's a valid entry point on its own
+    /// (this is what the `mcp-serve` tool calls directly).
     #[test]
-    fn save_walkthrough_without_begin_is_an_error() {
+    fn save_walkthrough_without_begin_upserts() {
         let store = test_store();
-        assert!(
-            store
-                .save_walkthrough("feat/x", "title", "summary", &[])
-                .is_err()
-        );
+        assert!(store.get_walkthrough("feat/x").unwrap().is_none());
+
+        store
+            .save_walkthrough("feat/x", "title", "summary", &[])
+            .unwrap();
+
+        let (walkthrough, _) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(walkthrough.status, WalkthroughStatus::Ready);
+        assert_eq!(walkthrough.title.as_deref(), Some("title"));
+    }
+
+    /// Saving twice must replace the steps outright (the `DELETE` +
+    /// re-`INSERT` inside the transaction, backed by the CASCADE on
+    /// `walkthrough_steps.walkthrough_id`), not append to them.
+    #[test]
+    fn save_walkthrough_replaces_previous_steps() {
+        let store = test_store();
+
+        store
+            .save_walkthrough(
+                "feat/x",
+                "title",
+                "summary",
+                &[NewWalkthroughStep {
+                    file_path: "src/old.rs".to_string(),
+                    line_start: None,
+                    line_end: None,
+                    kind: WalkthroughStepKind::Intent,
+                    title: "First pass".to_string(),
+                    body: "Old body.".to_string(),
+                }],
+            )
+            .unwrap();
+
+        store
+            .save_walkthrough(
+                "feat/x",
+                "title",
+                "summary",
+                &[NewWalkthroughStep {
+                    file_path: "src/new.rs".to_string(),
+                    line_start: None,
+                    line_end: None,
+                    kind: WalkthroughStepKind::Core,
+                    title: "Second pass".to_string(),
+                    body: "New body.".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let (_, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].file_path, "src/new.rs");
+        assert_eq!(steps[0].kind, WalkthroughStepKind::Core);
+        assert_eq!(steps[0].body, "New body.");
     }
 
     /// The walkthrough's `summary` is also the branch's change summary — the
@@ -356,19 +441,134 @@ mod tests {
         );
     }
 
-    /// A save rejected for want of `begin_walkthrough` must not leave a change
-    /// summary behind describing a walkthrough that was never stored. Note this
-    /// covers only the pre-transaction guard — a failure *inside* the
-    /// transaction is handled by the surrounding BEGIN/ROLLBACK and can't be
-    /// provoked through this API, so it isn't asserted here.
+    /// Proves the transaction-safety claim in `save_walkthrough`'s doc
+    /// comment: a step insert that fails must roll back the walkthrough row
+    /// and the change summary written alongside it in the same transaction,
+    /// not leave a summary describing a walkthrough that was never actually
+    /// stored. The failure is injected with a trigger rather than a bad
+    /// argument, since every argument shape `save_walkthrough` itself would
+    /// reject is already caught before any write happens.
     #[test]
-    fn save_walkthrough_rejected_before_begin_writes_no_change_summary() {
+    fn failed_step_insert_leaves_no_change_summary() {
         let store = test_store();
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER boom BEFORE INSERT ON walkthrough_steps
+                 BEGIN SELECT RAISE(ABORT, 'boom'); END",
+            )
+            .unwrap();
+
+        let steps = vec![NewWalkthroughStep {
+            file_path: "src/main.rs".to_string(),
+            line_start: None,
+            line_end: None,
+            kind: WalkthroughStepKind::Intent,
+            title: "won't be saved".to_string(),
+            body: "the trigger aborts before this lands".to_string(),
+        }];
         assert!(
             store
-                .save_walkthrough("feat/x", "title", "summary", &[])
+                .save_walkthrough("feat/x", "t", "summary", &steps)
                 .is_err()
         );
+
+        // ROLLBACK undoes both the walkthrough upsert and the change summary
+        // write, not just the step insert that actually failed.
         assert_eq!(store.get_change_summary("feat/x").unwrap(), None);
+        assert!(store.get_walkthrough("feat/x").unwrap().is_none());
+    }
+
+    /// The slice's order is the walkthrough's order, and `seq` is derived from
+    /// it — so steps always come back in the order they were handed over, with
+    /// a dense `0..n`. This is what stops a caller that numbers steps per-kind
+    /// from silently interleaving the tour.
+    #[test]
+    fn save_walkthrough_numbers_steps_by_slice_order() {
+        let store = test_store();
+        let steps = vec![
+            NewWalkthroughStep {
+                file_path: "src/a.rs".to_string(),
+                line_start: None,
+                line_end: None,
+                kind: WalkthroughStepKind::Intent,
+                title: "a".to_string(),
+                body: "a".to_string(),
+            },
+            NewWalkthroughStep {
+                file_path: "src/b.rs".to_string(),
+                line_start: None,
+                line_end: None,
+                kind: WalkthroughStepKind::Core,
+                title: "b".to_string(),
+                body: "b".to_string(),
+            },
+            NewWalkthroughStep {
+                file_path: "src/c.rs".to_string(),
+                line_start: None,
+                line_end: None,
+                kind: WalkthroughStepKind::Ripple,
+                title: "c".to_string(),
+                body: "c".to_string(),
+            },
+        ];
+        store
+            .save_walkthrough("feat/x", "title", "summary", &steps)
+            .unwrap();
+
+        let (_, loaded) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(
+            loaded.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "seq must be dense and follow the slice order"
+        );
+        assert_eq!(
+            loaded
+                .iter()
+                .map(|s| s.file_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/a.rs", "src/b.rs", "src/c.rs"],
+            "steps must come back in the order they were supplied"
+        );
+    }
+
+    /// `WalkthroughStepKind::as_str()` and the schema's
+    /// `CHECK (kind IN ('intent','core','ripple','test'))` are two separately
+    /// written string lists; if they ever drift apart, only the kinds absent
+    /// from the CHECK fail — and only at save time, not at compile time. This
+    /// exercises all four so such a drift is caught immediately.
+    #[test]
+    fn save_and_load_round_trips_every_step_kind() {
+        let store = test_store();
+        let kinds = [
+            WalkthroughStepKind::Intent,
+            WalkthroughStepKind::Core,
+            WalkthroughStepKind::Ripple,
+            WalkthroughStepKind::Test,
+        ];
+        let steps: Vec<NewWalkthroughStep> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| NewWalkthroughStep {
+                file_path: format!("src/{i}.rs"),
+                line_start: None,
+                line_end: None,
+                kind: *kind,
+                title: format!("step {i}"),
+                body: format!("body {i}"),
+            })
+            .collect();
+        store
+            .save_walkthrough("feat/x", "title", "summary", &steps)
+            .unwrap();
+
+        let (_, loaded) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(loaded.len(), kinds.len());
+        for (step, kind) in loaded.iter().zip(kinds.iter()) {
+            assert_eq!(step.kind, *kind);
+            // Round trip through the string form too, not just the enum
+            // value already deserialized off the row.
+            assert_eq!(WalkthroughStepKind::from_str(kind.as_str()), Some(*kind));
+        }
     }
 }

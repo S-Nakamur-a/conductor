@@ -152,6 +152,11 @@ pub struct WalkthroughStep {
 /// A step as supplied when saving a completed walkthrough — no `id` or
 /// `walkthrough_id`, since the store assigns those (`seq` is likewise
 /// implied by the slice's order, not repeated here).
+///
+/// The order of the slice is the walkthrough's order, deliberately: the MCP
+/// tool also accepts a `seq` per step, but trusting it lets a caller that
+/// numbers steps per-kind (intent 0,1 / core 0,1,2 / …) interleave the tour
+/// while still reporting success. See `ReviewStore::save_walkthrough`.
 #[derive(Debug, Clone)]
 pub struct NewWalkthroughStep {
     pub file_path: String,
@@ -167,11 +172,12 @@ pub struct NewWalkthroughStep {
 /// past it we assume the session is wedged.
 pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// Tools the headless generation session may use. Both tool-name forms of
-/// `save_walkthrough` and `create_comment` are listed so the session works
-/// whether the MCP server comes from the bundled `--mcp-config` below
-/// (dogfooding: `conductor`) or from the user's installed marketplace plugin
-/// (`plugin_conductor_conductor`).
+/// Tools the headless generation session may use. `spawn_generation` always
+/// passes `--strict-mcp-config`, so the session sees only the MCP server
+/// registered by its own `--mcp-config` — whose server name is always
+/// `conductor` (see `self_mcp_config`) — and never the user's ambient
+/// marketplace-plugin server. That makes the tool-name form unambiguous:
+/// only `mcp__conductor__*` needs listing here.
 ///
 /// `create_comment` lets the session drop inline review comments on the
 /// genuinely-hard-to-understand spots it finds while touring the diff, so a
@@ -185,9 +191,7 @@ pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// close off any exfiltration path that would otherwise be reachable purely
 /// through allowedTools.
 const GENERATION_ALLOWED_TOOLS: &str = "mcp__conductor__save_walkthrough,\
-mcp__plugin_conductor_conductor__save_walkthrough,\
 mcp__conductor__create_comment,\
-mcp__plugin_conductor_conductor__create_comment,\
 Read,Grep,Glob,\
 Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git merge-base:*),\
 Bash(git rev-parse:*),Bash(git status:*),Bash(git branch:*)";
@@ -245,38 +249,37 @@ impl WalkthroughGeneration {
     }
 }
 
-/// Build the `--mcp-config` JSON registering the repo-bundled conductor MCP
-/// server, or `None` when this repository doesn't carry the server (e.g. a
-/// non-conductor repo reviewed by a marketplace-plugin install — there the
-/// headless session inherits the user's ambient plugin MCP instead).
-fn bundled_mcp_config(repo_root: &Path, db_path: &Path) -> Option<String> {
-    let server_dir = repo_root.join("plugins/conductor/mcp/conductor-comment");
-    let dist = server_dir.join("dist/index.js");
-    let src = server_dir.join("src/index.ts");
-    let (command, args) = if dist.is_file() {
-        ("node", vec![dist.to_string_lossy().into_owned()])
-    } else if src.is_file() {
-        (
-            "npx",
-            vec![
-                "--yes".to_string(),
-                "tsx".to_string(),
-                src.to_string_lossy().into_owned(),
-            ],
-        )
-    } else {
-        return None;
-    };
+/// Build the `--mcp-config` JSON that registers conductor's own `mcp-serve`
+/// subcommand as the headless generation session's MCP server.
+///
+/// Points at [`std::env::current_exe`] rather than a path inside the repo, so
+/// it works in any repository, not just conductor's own — see
+/// `src/mcp_serve/mod.rs`'s module doc for why the server is embedded in the
+/// binary at all.
+///
+/// Both paths are rejected outright (`bail!`, not lossy-converted) if they
+/// aren't valid UTF-8: `to_string_lossy` would silently substitute U+FFFD
+/// and register a server at a path that doesn't exist, so the session would
+/// launch tool-less and exit 0 — the exact silent-failure mode this
+/// function exists to close off (see `src/refresh_pipe.rs`'s `RefreshPipe::new`
+/// for the same pattern).
+fn self_mcp_config(db_path: &Path) -> Result<String> {
+    let exe = std::env::current_exe().context("failed to resolve conductor's own path")?;
+    let exe = exe.to_str().ok_or_else(|| {
+        anyhow::anyhow!("conductor's own path is not valid UTF-8: {}", exe.display())
+    })?;
+    let db_path = db_path.to_str().ok_or_else(|| {
+        anyhow::anyhow!("database path is not valid UTF-8: {}", db_path.display())
+    })?;
     let config = serde_json::json!({
         "mcpServers": {
             "conductor": {
-                "command": command,
-                "args": args,
-                "env": { "CONDUCTOR_DB_PATH": db_path.to_string_lossy() },
+                "command": exe,
+                "args": ["mcp-serve", "--db", db_path],
             }
         }
     });
-    Some(config.to_string())
+    Ok(config.to_string())
 }
 
 /// The generation instructions handed to the headless session. Mirrors
@@ -341,7 +344,6 @@ and stop.{language_hint}"
 /// ([`crate::review_store::ReviewStore::begin_walkthrough`]); on spawn
 /// failure it should flip that row to `failed`.
 pub fn spawn_generation(
-    repo_root: &Path,
     worktree_path: &Path,
     db_path: &Path,
     branch: &str,
@@ -371,13 +373,21 @@ pub fn spawn_generation(
     if let Some(model) = model {
         cmd.arg("--model").arg(model);
     }
-    if let Some(config) = bundled_mcp_config(repo_root, db_path) {
-        cmd.arg("--mcp-config").arg(config);
-    }
+    // `--strict-mcp-config` is placed *before* `--mcp-config`: the latter
+    // takes a space-separated variable-length list of configs
+    // (`<configs...>`), so a flag placed right after it risks being
+    // swallowed as another config value instead of parsed as its own flag.
+    // Together these two are what makes generation work in any repository,
+    // not just conductor's own: the session sees only conductor's own MCP
+    // server and never a user's ambient (and possibly stale) marketplace
+    // plugin server, regardless of what that plugin's cache currently
+    // exposes.
+    cmd.arg("--strict-mcp-config");
+    cmd.arg("--mcp-config").arg(self_mcp_config(db_path)?);
 
-    let child = cmd.spawn().context(
-        "failed to launch `claude` — is Claude Code installed and on PATH?",
-    )?;
+    let child = cmd
+        .spawn()
+        .context("failed to launch `claude` — is Claude Code installed and on PATH?")?;
     Ok(WalkthroughGeneration {
         branch: branch.to_string(),
         child,
@@ -390,55 +400,42 @@ pub fn spawn_generation(
 mod tests {
     use super::*;
 
-    // ── bundled_mcp_config: dist takes priority over src, else None ──
+    // ── self_mcp_config: points at the running binary, carries the db path ──
 
     #[test]
-    fn bundled_mcp_config_prefers_compiled_dist_over_ts_source() {
+    fn self_mcp_config_points_at_current_exe_with_db() {
         let dir = tempfile::tempdir().unwrap();
-        let server_dir = dir.path().join("plugins/conductor/mcp/conductor-comment");
-        std::fs::create_dir_all(server_dir.join("dist")).unwrap();
-        std::fs::create_dir_all(server_dir.join("src")).unwrap();
-        std::fs::write(server_dir.join("dist/index.js"), "").unwrap();
-        std::fs::write(server_dir.join("src/index.ts"), "").unwrap();
+        let db_path = dir.path().join("db.sqlite");
 
-        let config = bundled_mcp_config(dir.path(), &dir.path().join("db.sqlite")).unwrap();
-        assert!(config.contains("\"node\""));
-        assert!(config.contains("dist/index.js"));
-    }
+        let config = self_mcp_config(&db_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&config).unwrap();
 
-    #[test]
-    fn bundled_mcp_config_falls_back_to_ts_source_via_npx_tsx() {
-        let dir = tempfile::tempdir().unwrap();
-        let server_dir = dir.path().join("plugins/conductor/mcp/conductor-comment");
-        std::fs::create_dir_all(server_dir.join("src")).unwrap();
-        std::fs::write(server_dir.join("src/index.ts"), "").unwrap();
-
-        let config = bundled_mcp_config(dir.path(), &dir.path().join("db.sqlite")).unwrap();
-        assert!(config.contains("\"npx\""));
-        assert!(config.contains("tsx"));
-        assert!(config.contains("src/index.ts"));
-    }
-
-    #[test]
-    fn bundled_mcp_config_is_none_when_neither_dist_nor_src_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(bundled_mcp_config(dir.path(), &dir.path().join("db.sqlite")).is_none());
+        let current_exe = std::env::current_exe().unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["conductor"]["command"],
+            current_exe.to_str().unwrap()
+        );
+        assert_eq!(
+            parsed["mcpServers"]["conductor"]["args"],
+            serde_json::json!(["mcp-serve", "--db", db_path.to_str().unwrap()])
+        );
     }
 
     // ── allowedTools: MCP tool names present, git restricted to read-only ──
 
     #[test]
-    fn generation_allowed_tools_lists_both_save_walkthrough_tool_name_forms() {
+    fn generation_allowed_tools_uses_only_the_self_served_form() {
+        // `--strict-mcp-config` makes the registered server name always
+        // `conductor` (see self_mcp_config), so the marketplace-plugin form
+        // is never reachable and must not be listed.
         assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__conductor__save_walkthrough"));
-        assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__save_walkthrough"));
-    }
-
-    #[test]
-    fn generation_allowed_tools_lists_both_create_comment_tool_name_forms() {
-        // The session drops inline 💬 on hard-to-understand spots, so both the
-        // dogfooding and marketplace-plugin tool-name forms must be permitted.
+        assert!(
+            !GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__save_walkthrough")
+        );
         assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__conductor__create_comment"));
-        assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__create_comment"));
+        assert!(
+            !GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__create_comment")
+        );
     }
 
     #[test]

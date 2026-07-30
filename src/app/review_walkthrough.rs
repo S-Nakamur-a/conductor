@@ -103,7 +103,6 @@ impl App {
         let model = self.config.review.walkthrough_model.clone();
         let language = self.config.review.walkthrough_language.clone();
         match crate::walkthrough::spawn_generation(
-            &self.repo_path,
             &wt_path,
             &db,
             &branch,

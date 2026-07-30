@@ -23,6 +23,7 @@ mod grep_search;
 mod hover_info;
 mod jump_history;
 mod keymap;
+mod mcp_serve;
 mod media_state;
 mod overlay;
 mod pr_intake;
@@ -126,11 +127,32 @@ fn main() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "conductor {}\n\nUsage: conductor [REPO_PATH]\n\n  REPO_PATH    Git repository to open (defaults to the current directory)\n\nOptions:\n  -V, --version    Print version and exit\n  -h, --help       Print this help and exit",
+                    r#"conductor {}
+
+Usage: conductor [REPO_PATH]
+       conductor mcp-serve [--db <PATH>]
+
+  REPO_PATH    Git repository to open (defaults to the current directory)
+
+Commands:
+  mcp-serve    Serve the review database to Claude Code over stdio (MCP).
+               Started automatically by conductor and by the Claude Code
+               plugin; not usually run by hand.
+
+    --db <PATH>    Review database to serve. Defaults to $CONDUCTOR_DB_PATH,
+                   then .conductor/conductor.db in the surrounding repository.
+
+Options:
+  -V, --version    Print version and exit
+  -h, --help       Print this help and exit"#,
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
             }
+            // Must return before any terminal setup below: this subcommand
+            // speaks JSON-RPC on stdout, so entering the alternate screen or
+            // probing terminal capabilities would corrupt the protocol.
+            "mcp-serve" => return mcp_serve::run(),
             _ => {}
         }
     }
