@@ -24,8 +24,10 @@ mod worktree_panel;
 #[cfg(test)]
 mod tests;
 
-use bars::{handle_notification_bar_click, handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
-use explorer_panel::handle_explorer_column_click;
+use bars::{
+    handle_notification_bar_click, handle_title_bar_click, handle_wtbar_click, wtbar_page_step,
+};
+use explorer_panel::{diff_list_row_at, explorer_tree_row_at, handle_explorer_column_click};
 use scroll::handle_mouse_scroll;
 use terminal_panel::handle_terminal_column_click;
 use viewer_panel::handle_viewer_column_click;
@@ -100,7 +102,12 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     let col = mouse.column;
     let row = mouse.row;
     let in_rect = |r: ratatui::layout::Rect| {
-        r.width > 0 && r.height > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        r.width > 0
+            && r.height > 0
+            && col >= r.x
+            && col < r.x + r.width
+            && row >= r.y
+            && row < r.y + r.height
     };
     let pinned = app.hover_info_overlay.pinned;
 
@@ -281,9 +288,7 @@ impl ClickGeometry {
             }
         }
         // Horizontal dividers: splits interior to a single column.
-        if col >= self.left_end
-            && col < self.explorer_end
-            && on_boundary(row, self.explorer_mid_y)
+        if col >= self.left_end && col < self.explorer_end && on_boundary(row, self.explorer_mid_y)
         {
             return Some(Divider::ExplorerSplit);
         }
@@ -356,6 +361,12 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // When any overlay/modal is active, consume all mouse events to prevent
     // them from reaching background panels (scroll, click, etc.).
     if has_blocking_overlay(app) {
+        // D7(c): once we return here, the background panels stop receiving
+        // `Moved` events for as long as the overlay is open — the `Moved`
+        // handler is what naturally clears tree/diff-list row highlights,
+        // the jump underline, and the hover popup when the mouse leaves them.
+        // Clear it up front instead, so nothing is left lit behind the modal.
+        app.clear_all_hover();
         return;
     }
 
@@ -536,6 +547,46 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 .divider_at(col, row)
                 .filter(|&d| divider_draggable(app, d));
 
+            // Track hover for the worktree bar's chips / `[x]` (S7). Resolves
+            // to `None` whenever the cursor isn't on the bar's single row,
+            // which doubles as the "mouse left the bar" clear.
+            app.wtbar_hover = if wtbar_area.height > 0 && row == wtbar_area.y {
+                crate::ui::worktree_bar::hit_at(&app.wtbar_hits, col)
+            } else {
+                None
+            };
+
+            // Same idea for the Claude/Shell terminal tab bars' `[x]` close
+            // buttons — gated on the terminal column too, since their tab-bar
+            // rows could otherwise coincide with an unrelated row in the
+            // Explorer/Viewer columns.
+            app.terminal.claude_tab_hover = if col >= viewer_end && row == terminal_claude_y {
+                crate::ui::tab_bar::hit_at(&app.terminal.claude_tab_hits, col)
+            } else {
+                None
+            };
+            app.terminal.shell_tab_hover = if col >= viewer_end && row == terminal_split_y {
+                crate::ui::tab_bar::hit_at(&app.terminal.shell_tab_hits, col)
+            } else {
+                None
+            };
+
+            // Track hover for the Explorer file tree's row highlight. Resolves
+            // to `None` whenever the cursor isn't over a tree row (wrong
+            // column, the Explorer's bottom half, above the list, ...), which
+            // is exactly what's needed to clear hover once the mouse leaves —
+            // no separate "did we leave the tree" check required.
+            let tree_scroll = app.viewer_state.tree.tree_scroll;
+            app.explorer_tree_hover
+                .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
+
+            // Same idea for the Changed files (diff) list in the Explorer's
+            // bottom half.
+            let diff_scroll = app.viewer_state.explorer.diff_list_scroll;
+            let diff_banner = app.viewer_state.explorer.explorer_diff_banner_rows;
+            app.diff_list_hover
+                .set(diff_list_row_at(&geom, diff_scroll, diff_banner, col, row));
+
             // Track hover line for gutter highlight in the viewer panel.
             // Rendered markdown draws no gutter and no per-line highlight, and
             // its rows aren't source lines, so it takes the clear-everything
@@ -560,87 +611,63 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 app.viewer_state.click.hover_line = resolved;
                 app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
 
-                // Cmd/Ctrl+hover: resolve symbol for underline display.
                 let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
                     || mouse.modifiers.contains(KeyModifiers::CONTROL);
-                if has_jump_modifier && !app.viewer_state.diff_view.diff_mode {
-                    let gutter_w = app.viewer_state.gutter_total_width();
-                    let inner_x = explorer_end + 1;
-                    let badge_w: u16 = 2;
-                    let content_start_x =
-                        inner_x + crate::viewer::COMMENT_MARKER_W + gutter_w + badge_w;
-                    if col >= content_start_x {
-                        if let Some(line_1) = resolve_screen_line(app, line_offset) {
-                            let content_col = (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
-                            let line_text = &app.viewer_state.content.file_content[line_1 - 1];
-                            if let Some((symbol, start, end)) = crate::app::extract_symbol_at_column(line_text, content_col) {
-                                if app.can_jump_to_symbol(&symbol) {
-                                    app.viewer_state.click.hover_symbol = Some(crate::viewer::HoverSymbol {
-                                        text: symbol,
-                                        line: line_1,
-                                        start_col: start,
-                                        end_col: end,
-                                    });
-                                } else {
-                                    app.viewer_state.click.hover_symbol = None;
-                                }
-                            } else {
-                                app.viewer_state.click.hover_symbol = None;
-                            }
-                        } else {
-                            app.viewer_state.click.hover_symbol = None;
-                        }
-                    } else {
-                        app.viewer_state.click.hover_symbol = None;
-                    }
+
+                // Shared extraction: the symbol (if any) under the mouse's
+                // content column, plus its line and 0-indexed content cols.
+                // Both the jump underline and the auto-hover popup below need
+                // this; they differ only in which candidate setter consumes it
+                // and in the diff-mode restriction (see below).
+                let gutter_w = app.viewer_state.gutter_total_width();
+                let inner_x = explorer_end + 1;
+                let badge_w: u16 = 2;
+                let content_start_x =
+                    inner_x + crate::viewer::COMMENT_MARKER_W + gutter_w + badge_w;
+                let symbol_here = if col >= content_start_x {
+                    resolve_screen_line(app, line_offset).and_then(|line_1| {
+                        let content_col =
+                            (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
+                        app.viewer_state
+                            .content
+                            .file_content
+                            .get(line_1 - 1)
+                            .and_then(|text| {
+                                crate::app::extract_symbol_at_column(text, content_col)
+                                    .map(|(symbol, start, end)| (symbol, line_1, start, end))
+                            })
+                    })
                 } else {
-                    app.viewer_state.click.hover_symbol = None;
+                    None
+                };
+
+                // Jump underline (D8/D9): shown on any rest over a jumpable
+                // symbol, no modifier required — only its color depends on
+                // `has_jump_modifier` (resolved in `tick_underline_hover`).
+                // Still restricted to `!diff_mode`, because the actual
+                // Cmd+click jump handler (`viewer_panel.rs`) is itself
+                // `!diff_mode`-only; showing the underline in diff view would
+                // promise a jump that click can't deliver there.
+                if app.viewer_state.diff_view.diff_mode {
+                    app.set_underline_candidate(None, has_jump_modifier);
+                } else {
+                    app.set_underline_candidate(symbol_here.clone(), has_jump_modifier);
                 }
 
-                // Auto-hover candidate: the symbol under the resting mouse, with
-                // no modifier required. Works in both plain-file and diff mode:
-                // `gutter_total_width()` already accounts for the diff `+/-`
-                // prefix, so the content-start column is the same formula, and
-                // `resolve_screen_line` yields the new-side file line (None on
-                // deletion rows, which we skip). Feeds the idle debounce in
-                // `tick_hover`; blank space / non-identifiers clear it.
-                let auto_cand = {
-                    let gutter_w = app.viewer_state.gutter_total_width();
-                    let inner_x = explorer_end + 1;
-                    let badge_w: u16 = 2;
-                    let content_start_x =
-                        inner_x + crate::viewer::COMMENT_MARKER_W + gutter_w + badge_w;
-                    if col >= content_start_x {
-                        resolve_screen_line(app, line_offset).and_then(|line_1| {
-                            let content_col =
-                                (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
-                            app.viewer_state
-                                .content
-                                .file_content
-                                .get(line_1 - 1)
-                                .and_then(|text| {
-                                    crate::app::extract_symbol_at_column(text, content_col).map(
-                                        |(symbol, start, _)| {
-                                            // Anchor the popup at the symbol's
-                                            // start column and this screen row.
-                                            let anchor_col = content_start_x
-                                                + (start.saturating_sub(
-                                                    app.viewer_state.content.h_scroll,
-                                                )) as u16;
-                                            (symbol, line_1, row, anchor_col)
-                                        },
-                                    )
-                                })
-                        })
-                    } else {
-                        None
-                    }
-                };
+                // Auto-hover popup candidate: same extraction, no diff-mode
+                // restriction (the popup is read-only, so it's never a false
+                // affordance) and no modifier required — unchanged from
+                // before D8.
+                let auto_cand = symbol_here.map(|(symbol, line_1, start, end)| {
+                    let anchor_col = content_start_x
+                        + (start.saturating_sub(app.viewer_state.content.h_scroll)) as u16;
+                    (symbol, line_1, row, anchor_col, start, end)
+                });
                 app.set_mouse_hover_candidate(auto_cand);
             } else {
                 app.viewer_state.click.hover_line = None;
                 app.viewer_state.click.hover_gutter_line = None;
-                app.viewer_state.click.hover_symbol = None;
+                app.set_underline_candidate(None, false);
                 app.set_mouse_hover_candidate(None);
             }
         }

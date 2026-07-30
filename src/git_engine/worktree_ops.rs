@@ -121,7 +121,7 @@ impl GitEngine {
             .with_context(|| format!("cannot open repo at {}", path.display()))?;
 
         let branch = Self::current_branch_name(&repo);
-        let (added, modified, deleted) = Self::status_counts(&repo).unwrap_or((0, 0, 0));
+        let (added, modified, deleted, staged) = Self::status_counts(&repo).unwrap_or((0, 0, 0, 0));
         let is_clean = added == 0 && modified == 0 && deleted == 0;
         let (ahead, behind) = Self::ahead_behind_upstream(&repo);
         let head_oid = repo
@@ -137,6 +137,7 @@ impl GitEngine {
             added,
             modified,
             deleted,
+            staged,
             is_clean,
             ahead,
             behind,
@@ -188,8 +189,10 @@ impl GitEngine {
         "HEAD (detached)".to_string()
     }
 
-    /// Compute `(added, modified, deleted)` status counts for a repository.
-    fn status_counts(repo: &Repository) -> Result<(usize, usize, usize)> {
+    /// Compute `(added, modified, deleted, staged)` status counts for a repository.
+    /// The first three pick one bucket per file; `staged` overlaps them and is
+    /// the only one that reacts to `git add` / `git reset` (see `WorktreeInfo`).
+    fn status_counts(repo: &Repository) -> Result<(usize, usize, usize, usize)> {
         let mut opts = StatusOptions::new();
         opts.show(StatusShow::IndexAndWorkdir)
             .include_untracked(true)
@@ -200,9 +203,25 @@ impl GitEngine {
         let mut added: usize = 0;
         let mut modified: usize = 0;
         let mut deleted: usize = 0;
+        let mut staged: usize = 0;
 
         for entry in statuses.iter() {
             let s = entry.status();
+            // Counted separately from (and overlapping with) the three totals
+            // below: those pick one bucket per file with the index checked
+            // first, so staging a modified file keeps every one of them the
+            // same. This is the only number that moves on `git add` / `git
+            // reset`, and it is what tells the poll loop to re-read git status
+            // so the Explorer's stage colours follow along.
+            if s.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            ) {
+                staged += 1;
+            }
             // Index changes
             if s.intersects(git2::Status::INDEX_NEW) {
                 added += 1;
@@ -229,7 +248,7 @@ impl GitEngine {
             }
         }
 
-        Ok((added, modified, deleted))
+        Ok((added, modified, deleted, staged))
     }
 
     // ── Main worktree path resolution ──────────────────────────────────

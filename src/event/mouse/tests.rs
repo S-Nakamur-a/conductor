@@ -1,8 +1,11 @@
 //! Unit tests for the mouse hit-testing geometry, double-click detection, and
 //! left-margin click classification.
 
-use super::viewer_panel::{classify_margin_click, thread_anchor_line, MarginClickAction, MarginZone};
-use super::{register_double_click, register_double_click_on, Column, ClickGeometry};
+use super::explorer_panel::{diff_list_row_at, explorer_tree_row_at};
+use super::viewer_panel::{
+    MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
+};
+use super::{ClickGeometry, Column, register_double_click, register_double_click_on};
 use std::time::{Duration, Instant};
 
 /// Build a `ClickGeometry` with the given column boundaries. Widths/heights
@@ -199,6 +202,113 @@ fn expand_button_absent_for_narrow_columns() {
 }
 
 #[test]
+fn explorer_tree_row_at_rejects_the_border_row() {
+    let g = geom(20, 50, 90); // main_area.y = 1, so the top border is row 1.
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 1), None);
+    // The first row inside the border resolves to visible index 0.
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 2), Some(0));
+}
+
+#[test]
+fn explorer_tree_row_at_rejects_columns_outside_the_explorer() {
+    let g = geom(20, 50, 90);
+    assert_eq!(explorer_tree_row_at(&g, 0, 19, 5), None); // Worktree column
+    assert_eq!(explorer_tree_row_at(&g, 0, 50, 5), None); // Viewer column
+    // The Explorer's own edge columns are still in-bounds.
+    assert_eq!(explorer_tree_row_at(&g, 0, 20, 5), Some(3));
+    assert_eq!(explorer_tree_row_at(&g, 0, 49, 5), Some(3));
+}
+
+#[test]
+fn explorer_tree_row_at_rejects_the_bottom_half() {
+    let g = geom(20, 50, 90); // explorer_mid_y = 20
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 18), Some(16)); // last row actually drawn
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 19), None); // the tree's own bottom border
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 20), None); // Changed files starts here
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 25), None);
+}
+
+/// Tie both hit-testers to the number of rows their panel actually renders,
+/// derived the same way the renderers derive it (`height - 2` for the two
+/// borders). A plain "row N maps to index M" assertion restates whatever the
+/// function happens to do; this one fails the moment either panel accepts a
+/// border row or drops a content row, which is exactly the class of bug that
+/// let a click open a file that was never on screen.
+#[test]
+fn row_at_helpers_accept_exactly_the_rows_their_panel_draws() {
+    let g = geom(20, 50, 90);
+    let col = 30;
+
+    let tree_inner = (g.explorer_mid_y - g.main_area.y) as usize - 2;
+    let tree_hits: Vec<usize> = (0..g.explorer_mid_y)
+        .filter_map(|row| explorer_tree_row_at(&g, 0, col, row))
+        .collect();
+    assert_eq!(tree_hits, (0..tree_inner).collect::<Vec<_>>());
+
+    let diff_bottom = g.main_area.y + g.main_area.height;
+    let diff_inner = (diff_bottom - g.explorer_mid_y) as usize - 2;
+    let diff_hits: Vec<usize> = (g.explorer_mid_y..diff_bottom)
+        .filter_map(|row| diff_list_row_at(&g, 0, 0, col, row))
+        .collect();
+    assert_eq!(diff_hits, (0..diff_inner).collect::<Vec<_>>());
+}
+
+#[test]
+fn explorer_tree_row_at_adds_the_scroll_offset() {
+    let g = geom(20, 50, 90);
+    assert_eq!(explorer_tree_row_at(&g, 5, 30, 2), Some(5));
+    assert_eq!(explorer_tree_row_at(&g, 5, 30, 7), Some(10));
+}
+
+#[test]
+fn diff_list_row_at_rejects_the_top_half_and_its_border() {
+    let g = geom(20, 50, 90); // explorer_mid_y = 20
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 19), None); // still the file tree
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 20), None); // the diff list's own top border
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 21), Some(0)); // first diff-list row
+}
+
+#[test]
+fn diff_list_row_at_rejects_columns_outside_the_explorer() {
+    let g = geom(20, 50, 90);
+    assert_eq!(diff_list_row_at(&g, 0, 0, 19, 25), None); // Worktree column
+    assert_eq!(diff_list_row_at(&g, 0, 0, 50, 25), None); // Viewer column
+    assert_eq!(diff_list_row_at(&g, 0, 0, 20, 25), Some(4));
+    assert_eq!(diff_list_row_at(&g, 0, 0, 49, 25), Some(4));
+}
+
+#[test]
+fn diff_list_row_at_rejects_the_bottom_border() {
+    // main_area = Rect::new(0, 1, .., 40) → bottom border row is 1 + 40 - 1 = 40,
+    // which is where the "Ask Claude All" button lives, not a list row.
+    let g = geom(20, 50, 90);
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 39), Some(18)); // last diff-list row
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 40), None);
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 45), None);
+}
+
+/// The error banner sits inside the list's inner area without occupying an
+/// entry, so entries start that many rows lower. Getting this wrong lands the
+/// click one file off and makes the banner itself open whatever is scrolled to
+/// the top. Both the click handler and the hover tracker go through here, so
+/// the offset only has to be right once.
+#[test]
+fn diff_list_row_at_skips_the_error_banner() {
+    let g = geom(20, 50, 90); // explorer_mid_y = 20, first inner row = 21
+    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 21), None); // banner, not an entry
+    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 22), None);
+    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 23), Some(0)); // first real entry
+    assert_eq!(diff_list_row_at(&g, 5, 2, 30, 23), Some(5)); // banner then scroll
+}
+
+#[test]
+fn diff_list_row_at_adds_the_scroll_offset() {
+    let g = geom(20, 50, 90);
+    assert_eq!(diff_list_row_at(&g, 5, 0, 30, 21), Some(5));
+    assert_eq!(diff_list_row_at(&g, 5, 0, 30, 26), Some(10));
+}
+
+#[test]
 fn double_click_within_threshold() {
     let t0 = Instant::now();
     let mut last = t0;
@@ -249,8 +359,7 @@ fn indexed_double_click_resets_on_different_idx() {
     let mut last_idx = 3usize;
     // Quick click but on a different row → not a double-click, and the
     // stored index/time update so the next click compares against this one.
-    let hit =
-        register_double_click_on(&mut last, &mut last_idx, 7, t0 + Duration::from_millis(10));
+    let hit = register_double_click_on(&mut last, &mut last_idx, 7, t0 + Duration::from_millis(10));
     assert!(!hit);
     assert_eq!(last_idx, 7);
     assert_eq!(last, t0 + Duration::from_millis(10));

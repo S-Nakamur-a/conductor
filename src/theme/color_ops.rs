@@ -101,6 +101,66 @@ impl Theme {
         self
     }
 
+    /// Saturation below which a color carries no hue worth preserving. Under
+    /// this threshold `rgb_to_hsl` reports an essentially arbitrary hue (for a
+    /// perfectly achromatic color it reports `0.0`, i.e. red), so saturating
+    /// such a color would invent a hue rather than intensify one.
+    const NEUTRAL_SATURATION: f64 = 0.08;
+
+    /// Move a color toward the most colorful version of *its own hue*: raise
+    /// saturation toward full and slide lightness toward `target_l`, both by
+    /// `amount` in `[0, 1]` (`0.0` = unchanged).
+    ///
+    /// Unlike [`lighten`](Self::lighten) / [`darken`](Self::darken), which
+    /// converge on white/black and therefore run out of headroom exactly when
+    /// the input is already near one of them, this always has somewhere to go:
+    /// a near-white color gains chroma on the way to `target_l`. Hue is held
+    /// fixed, so a color that encodes meaning still reads as itself.
+    ///
+    /// Near-neutral inputs have no hue to preserve, so the hue of
+    /// `hue_fallback` is borrowed instead. Non-RGB colors are returned
+    /// unchanged.
+    pub fn vivify(color: Color, hue_fallback: Color, amount: f64, target_l: f64) -> Color {
+        let Color::Rgb(r, g, b) = color else {
+            return color;
+        };
+        let (hue, sat, lum) = rgb_to_hsl(r, g, b);
+        let amount = amount.clamp(0.0, 1.0);
+        let hue = match hue_fallback {
+            Color::Rgb(r, g, b) if sat < Self::NEUTRAL_SATURATION => rgb_to_hsl(r, g, b).0,
+            _ => hue,
+        };
+        let (r, g, b) = hsl_to_rgb(
+            hue,
+            sat + (1.0 - sat) * amount,
+            lum + (target_l - lum) * amount,
+        );
+        Color::Rgb(r, g, b)
+    }
+
+    /// Approximate perceptual distance between two colors, using the "redmean"
+    /// weighting. It tracks human perception far better than a plain RGB
+    /// euclidean distance — green dominates, and the red/blue weights shift
+    /// with the average red level — at a fraction of the cost of a real CIE
+    /// ΔE, which would need a full sRGB→Lab conversion.
+    ///
+    /// The scale runs from `0.0` (identical) to roughly `765.0` (black vs
+    /// white). Non-RGB colors have nothing meaningful to compare, so they
+    /// report `0.0`.
+    pub fn perceptual_distance(a: Color, b: Color) -> f64 {
+        let (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) = (a, b) else {
+            return 0.0;
+        };
+        let rmean = (f64::from(r1) + f64::from(r2)) / 2.0;
+        let dr = f64::from(r1) - f64::from(r2);
+        let dg = f64::from(g1) - f64::from(g2);
+        let db = f64::from(b1) - f64::from(b2);
+        ((2.0 + rmean / 256.0) * dr * dr
+            + 4.0 * dg * dg
+            + (2.0 + (255.0 - rmean) / 256.0) * db * db)
+            .sqrt()
+    }
+
     /// Linearly interpolate between two RGB colors by `t`, clamped to `[0, 1]`
     /// (`0.0` = `from`, `1.0` = `to`). Used to glide the reflow border between
     /// the accent and its complement. If either color is non-RGB, `from` is

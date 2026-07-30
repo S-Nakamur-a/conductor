@@ -99,6 +99,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.terminal.shell_tab_scroll,
         app.terminal.shell_tab_reveal,
         is_expanded,
+        app.terminal.shell_tab_hover,
     );
     app.terminal.shell_tab_hits = hits;
     app.terminal.shell_tab_scroll = scroll;

@@ -225,21 +225,51 @@ pub(super) fn render_code_line_rows(
         .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
-    // Apply underline to hover symbol (Cmd+hover for jump targets).
+    // Apply the jump-underline (D8: shown on any rest over a jumpable symbol,
+    // colored by whether Cmd/Ctrl is held — `hover_symbol` only exists once
+    // `tick_underline_hover` has confirmed the symbol is jumpable, so A7's
+    // "no underline for non-jumpable words" is already handled by its being
+    // `None`).
     let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
         if hs.line == line_1 {
+            // `hover_symbol` only ever exists for an already-confirmed-jumpable
+            // symbol (see `tick_underline_hover`), so this is always `Some` —
+            // `unwrap_or` just avoids a panic if that invariant ever changes.
+            let color = match crate::app::underline_color_kind(true, hs.has_jump_modifier)
+                .unwrap_or(crate::app::UnderlineColorKind::Hint)
+            {
+                crate::app::UnderlineColorKind::Hint => theme.hint,
+                crate::app::UnderlineColorKind::Accent => theme.accent,
+            };
             apply_underline_range(
                 content_spans,
                 hs.start_col,
                 hs.end_col,
                 vs.content.h_scroll,
-                theme.accent,
+                color,
             )
         } else {
             content_spans
         }
     } else {
         content_spans
+    };
+
+    // A8: independently of the underline above, keep the hover-info popup's
+    // own target symbol highlighted for as long as the popup is shown — the
+    // mouse may have moved off it (underline has no leave-grace, D9) or be
+    // sitting in the popup's own leave-grace window pointed elsewhere.
+    let content_spans = match crate::app::popup_highlight_range(
+        app.hover_info_overlay.is_shown(),
+        app.hover_info_overlay.target_line,
+        app.hover_info_overlay.target_start_col,
+        app.hover_info_overlay.target_end_col,
+        line_1,
+    ) {
+        Some((start, end)) => {
+            apply_underline_range(content_spans, start, end, vs.content.h_scroll, theme.accent)
+        }
+        None => content_spans,
     };
 
     // Apply symbol hint labels (Vimium-style).

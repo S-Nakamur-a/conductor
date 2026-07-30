@@ -106,19 +106,29 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
             }
         }
         TabAction::Close(global_idx) => {
-            // Only allow closing the active session to prevent accidental closes.
-            let active_session = if is_claude {
-                app.terminal.active_claude_session
+            // One click closes, whichever tab it is. This deliberately drops an
+            // earlier guard that only closed the *active* session and merely
+            // selected an inactive one, so a second click was needed to close
+            // it. That guard was paired with the tab colour: the active `[x]`
+            // was `theme.error` ("this kills it") and an inactive one
+            // `theme.muted` ("this only selects"), so behaviour and appearance
+            // agreed. Making every `[x]` close on the first click therefore
+            // required repainting them all `theme.error` — done in
+            // `ui::tab_bar::render`, and not separable from this change. A
+            // grey glyph that silently kills a running session would be a far
+            // worse affordance than the two-click guard ever was.
+            app.close_terminal_session(global_idx);
+            // Closing shifts every later session's index down by one, and the
+            // tab labels are fixed-width, so the next tab's `[x]` lands on the
+            // same screen column the one just clicked occupied. A second click
+            // there — a reflexive double-click, or two events drained in the
+            // same frame before a repaint — would resolve against the stale
+            // hit map and kill a session the user never aimed at. Dropping the
+            // hit regions forces the next click to wait for a fresh render.
+            if is_claude {
+                app.terminal.claude_tab_hits.clear();
             } else {
-                app.terminal.active_shell_session
-            };
-            if Some(global_idx) == active_session {
-                app.close_terminal_session(global_idx);
-            } else if is_claude {
-                // Otherwise select it first (so a second click can close it).
-                app.switch_claude_session(global_idx);
-            } else {
-                app.terminal.switch_shell_session(global_idx);
+                app.terminal.shell_tab_hits.clear();
             }
         }
         TabAction::Add => {
@@ -227,4 +237,3 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
         ),
     }
 }
-

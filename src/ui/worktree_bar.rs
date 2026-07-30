@@ -40,6 +40,17 @@ pub struct WtbarHit {
     pub action: WtbarAction,
 }
 
+/// Determine which `WtbarAction` the given absolute screen column falls on,
+/// from the hit regions recorded by the bar's last `render` call. Pure, so the
+/// hover-target logic is unit-testable even though `render()` itself takes
+/// `&mut App` and can't be exercised in a `TestBackend` test (the bar's visual
+/// hover result is left to manual/real-machine confirmation).
+pub fn hit_at(hits: &[WtbarHit], col: u16) -> Option<WtbarAction> {
+    hits.iter()
+        .find(|h| col >= h.x0 && col < h.x1)
+        .map(|h| h.action)
+}
+
 fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
 }
@@ -288,6 +299,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         } else {
             Style::default().fg(muted)
         };
+        // Hover background (D1 revised: bars/tabs reuse `gutter_hover_bg`,
+        // distinguishable from the current chip's own `selected_bg` fill in
+        // every theme). The current chip already has a strong fill, so it
+        // isn't given a hover background on top of it — there's nothing left
+        // to distinguish.
+        let chip_style = if !chip.is_current && app.wtbar_hover == Some(WtbarAction::Select(i)) {
+            chip_style.bg(app.theme.gutter_hover_bg)
+        } else {
+            chip_style
+        };
         spans.push(Span::styled(chip.text.clone(), chip_style));
         hits.push(WtbarHit {
             x0: x,
@@ -297,7 +318,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         x += chip.width;
 
         if !chip.del.is_empty() {
-            spans.push(Span::styled(chip.del, Style::default().fg(error)));
+            let del_style = Style::default().fg(error);
+            let del_style = if app.wtbar_hover == Some(WtbarAction::Delete(i)) {
+                del_style.bg(app.theme.gutter_hover_bg)
+            } else {
+                del_style
+            };
+            spans.push(Span::styled(chip.del, del_style));
             hits.push(WtbarHit {
                 x0: x,
                 x1: x + chip.del_width,
@@ -363,7 +390,7 @@ pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_window;
+    use super::{WtbarAction, WtbarHit, hit_at, visible_window};
 
     // Ten uniform-width chips, separator width 1.
     const W: &[u16] = &[10, 10, 10, 10, 10, 10, 10, 10, 10, 10];
@@ -426,5 +453,41 @@ mod tests {
     #[test]
     fn empty_list_is_handled() {
         assert_eq!(visible_window(&[], 1, 100, 0, 0, true), (0, 0));
+    }
+
+    fn sample_hits() -> Vec<WtbarHit> {
+        vec![
+            WtbarHit {
+                x0: 0,
+                x1: 5,
+                action: WtbarAction::Select(0),
+            },
+            WtbarHit {
+                x0: 5,
+                x1: 8,
+                action: WtbarAction::Delete(0),
+            },
+        ]
+    }
+
+    #[test]
+    fn hit_at_finds_the_action_owning_the_column() {
+        let hits = sample_hits();
+        assert_eq!(hit_at(&hits, 0), Some(WtbarAction::Select(0)));
+        assert_eq!(hit_at(&hits, 4), Some(WtbarAction::Select(0)));
+        assert_eq!(hit_at(&hits, 5), Some(WtbarAction::Delete(0)));
+        assert_eq!(hit_at(&hits, 7), Some(WtbarAction::Delete(0)));
+    }
+
+    #[test]
+    fn hit_at_is_none_outside_every_region() {
+        let hits = sample_hits();
+        assert_eq!(hit_at(&hits, 8), None);
+        assert_eq!(hit_at(&hits, 100), None);
+    }
+
+    #[test]
+    fn hit_at_is_none_for_empty_hits() {
+        assert_eq!(hit_at(&[], 3), None);
     }
 }

@@ -70,10 +70,31 @@ use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
 use crate::ui::layout::render_ui;
 
 fn main() -> Result<()> {
-    // ── Panic hook: write backtrace to ~/.config/conductor/panic.log ──
+    // ── Panic hook: restore the terminal, then log the backtrace ──────
     {
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
+            // Restore FIRST, before any I/O that could itself fail: a panic
+            // leaves the tty in whatever state `enter_tui` put it, and
+            // `leave_tui` only runs when `run_loop` *returns* — an unwind skips
+            // it entirely. Without this the user is dropped back to a shell
+            // with no visible caret (ratatui emits `\x1b[?25l` every frame),
+            // mouse tracking still on (`\x1b[?1003h`, so selection and the
+            // pointer misbehave), the alternate screen still active, and raw
+            // mode still set — all of which persist until they run `reset`.
+            //
+            // Main thread only. This crate does not set `panic = "abort"`, so a
+            // worker (background diff, symbol index, worktree ops) unwinds just
+            // itself while the event loop keeps drawing at 60fps. Tearing the
+            // terminal down from *that* panic would leave the alternate screen
+            // and raw mode off underneath a still-running TUI — frames would
+            // start scribbling over the user's actual shell. A worker dying is
+            // survivable; the log below is the right response on its own.
+            // `execute!` flushes internally, so no extra flush is needed here.
+            if std::thread::current().name() == Some("main") {
+                let _ = restore_terminal_modes(&mut io::stdout());
+            }
+
             if let Some(config_dir) = dirs::config_dir() {
                 let log_dir = config_dir.join("conductor");
                 let _ = std::fs::create_dir_all(&log_dir);
@@ -290,6 +311,13 @@ fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
         DisableLineWrap,
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
+        // D7(b): crossterm never reports the mouse leaving the terminal
+        // window, so `Event::FocusLost` (the terminal losing focus entirely,
+        // e.g. an alt-tab) is the one reliable signal the event loop has for
+        // "the mouse definitely isn't resting on anything drawn right now" —
+        // used to clear stale hover state (viewer underline, popup, tree/diff
+        // row highlights).
+        crossterm::event::EnableFocusChange,
     )?;
     if keyboard_enhanced {
         execute!(
@@ -310,13 +338,70 @@ fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
         execute!(w, PopKeyboardEnhancementFlags)?;
     }
     disable_raw_mode()?;
+    restore_terminal_modes(w)?;
+    Ok(())
+}
+
+/// Write every mode-reset [`leave_tui`] depends on, and leave raw mode.
+///
+/// Split out of `leave_tui` so the panic hook can reuse it: the hook has no
+/// access to the `Terminal` (or to `keyboard_enhanced`), but it must still undo
+/// the modes `enter_tui` set, or an unwind strands the user's tty. Taking a
+/// generic writer also makes the emitted sequence assertable in a test without
+/// touching the real terminal.
+///
+/// `cursor::Show` is included because ratatui hides the caret on **every**
+/// frame (`Terminal::draw` → `hide_cursor` unless a widget requested a cursor
+/// position), so `\x1b[?25l` is essentially always the last caret state we set.
+/// The normal exit path re-shows it via `terminal.show_cursor()`; the panic
+/// path has no `Terminal`, so it has to be done here.
+fn restore_terminal_modes<W: io::Write>(w: &mut W) -> io::Result<()> {
+    // `disable_raw_mode` is a libc/termios call, not an escape sequence, so it
+    // writes nothing to `w` — harmless (and idempotent) when `leave_tui` has
+    // already called it.
+    let _ = disable_raw_mode();
     execute!(
         w,
         EnableLineWrap,
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture,
         crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableFocusChange,
+        crossterm::cursor::Show,
     )?;
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::restore_terminal_modes;
+
+    /// The panic hook's whole purpose is that these specific modes get undone
+    /// even when `leave_tui` never runs. Assert on the raw bytes rather than
+    /// trusting the `execute!` list to stay complete: the two symptoms users
+    /// actually report after an abnormal exit are an invisible caret and a
+    /// misbehaving mouse, which map to exactly these two resets.
+    #[test]
+    fn panic_hook_restores_terminal() {
+        let mut buf: Vec<u8> = Vec::new();
+        restore_terminal_modes(&mut buf).expect("writing to a Vec cannot fail");
+        let seq = String::from_utf8(buf).expect("escape sequences are ASCII");
+
+        assert!(
+            seq.contains("\x1b[?25h"),
+            "caret must be shown again (ratatui hides it every frame); got {seq:?}"
+        );
+        assert!(
+            seq.contains("\x1b[?1003l"),
+            "any-event mouse tracking must be turned off; got {seq:?}"
+        );
+        assert!(
+            seq.contains("\x1b[?1049l"),
+            "the alternate screen must be left; got {seq:?}"
+        );
+        assert!(
+            seq.contains("\x1b[?2004l"),
+            "bracketed paste must be turned off; got {seq:?}"
+        );
+    }
+}

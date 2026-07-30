@@ -229,8 +229,6 @@ fn display_index_for_path_finds_committed_and_uncommitted_files() {
         path: path.to_string(),
         added_lines: 0,
         deleted_lines: 0,
-        is_new: false,
-        is_deleted: false,
         hunks: Vec::new(),
     };
     let mut ds = DiffState::new("main", DiffViewMode::Unified);

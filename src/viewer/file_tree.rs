@@ -1,5 +1,7 @@
 //! File tree types — `FileTreeEntry` and `ScoredFile`.
 
+use crate::git_engine::status_map::TreeGitState;
+
 /// A file matched by filename fuzzy search, with its score.
 #[derive(Debug, Clone)]
 pub struct ScoredFile {
@@ -28,6 +30,9 @@ pub struct FileTreeEntry {
     pub children_loaded: bool,
     /// Cached icon string for this entry (computed once at creation time).
     pub icon: &'static str,
+    /// Tracked/untracked/ignored, per the git status snapshot taken when
+    /// the tree was (re)built — drives the Explorer's dimmed rendering.
+    pub git_state: TreeGitState,
 }
 
 /// Return an emoji icon for a file based on its extension or name.

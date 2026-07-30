@@ -129,6 +129,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.terminal.claude_tab_scroll,
         app.terminal.claude_tab_reveal,
         is_expanded,
+        app.terminal.claude_tab_hover,
     );
     app.terminal.claude_tab_hits = hits;
     app.terminal.claude_tab_scroll = scroll;

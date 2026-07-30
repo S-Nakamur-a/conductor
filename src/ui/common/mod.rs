@@ -7,6 +7,7 @@
 //! [`status_bar`], [`worktree_label`]).
 
 mod color;
+pub mod list_row;
 mod notification_bar;
 mod pty;
 mod status_bar;

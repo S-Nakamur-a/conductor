@@ -16,6 +16,8 @@
 //! - [`merge`]: pull, merge-into-main, and hard-reset-to-origin
 //! - [`cherry_pick`]: listing commits and cherry-picking them into a worktree
 //! - [`recently_modified`]: recently touched file paths for a worktree
+//! - [`status_map`]: path -> git status lookup shared by the Explorer file
+//!   tree (dimming) and the Changed files list (stage-state coloring)
 
 mod branch_lineage;
 mod cherry_pick;
@@ -23,6 +25,7 @@ mod fetch;
 mod grab;
 mod merge;
 mod recently_modified;
+pub mod status_map;
 #[cfg(test)]
 mod tests;
 mod worktree_create;
@@ -51,6 +54,17 @@ pub struct WorktreeInfo {
     pub modified: usize,
     /// Number of deleted files (index or working directory).
     pub deleted: usize,
+    /// Number of files with anything staged in the index.
+    ///
+    /// Deliberately overlaps with `added`/`modified`/`deleted`, which count
+    /// each file once and check the index side first — so `git add` on a
+    /// modified file moves it from the working-directory branch of that chain
+    /// to the index branch and leaves all three totals identical. Without a
+    /// separate staged count there is no observable signal that staging
+    /// happened, and the Explorer's stage-state colours (D6) never refresh:
+    /// the file watcher ignores `.git/`, so `git add` produces no event at
+    /// all, and the 3s poll compares only those three numbers.
+    pub staged: usize,
     /// True when the working directory has no uncommitted changes.
     pub is_clean: bool,
     /// Commits ahead of upstream (local commits not yet pushed). `None` if no upstream.

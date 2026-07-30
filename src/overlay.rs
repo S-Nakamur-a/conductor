@@ -238,6 +238,13 @@ pub struct HoverCandidate {
     pub anchor_row: u16,
     /// Absolute screen column of the symbol's start, for horizontal placement.
     pub anchor_col: u16,
+    /// Start column (0-indexed, in content characters before h_scroll) of the
+    /// symbol in its source line — carried into `HoverInfoOverlay::target_*`
+    /// once resolved, so the popup's target can stay highlighted (A8)
+    /// independent of the mouse's current position.
+    pub start_col: usize,
+    /// End column (exclusive), see `start_col`.
+    pub end_col: usize,
     /// When the cursor/mouse came to rest on this symbol.
     pub since: std::time::Instant,
     /// Whether the lookup has already run for this candidate.
@@ -299,6 +306,16 @@ pub struct HoverInfoOverlay {
     /// switches files underneath a (non-pinned) popup, this no longer matches
     /// `content.current_file`, and the tick drops the now-stale popup.
     pub shown_file: Option<String>,
+    /// 1-indexed source line of the symbol `info` describes (A8: lets the
+    /// renderer keep that symbol highlighted for as long as the popup is
+    /// shown, independent of `ClickTracker::hover_symbol` — the mouse may
+    /// have since moved off it, or be sitting in the popup's leave-grace
+    /// window, while the underline itself has no such grace).
+    pub target_line: usize,
+    /// Start column of `target_line`'s highlighted symbol (see `target_line`).
+    pub target_start_col: usize,
+    /// End column (exclusive) of the highlighted symbol.
+    pub target_end_col: usize,
     /// Base popup rect, written by the renderer for hit-testing.
     pub info_rect: ratatui::layout::Rect,
     /// The `N refs` clickable region within the base popup (zero-sized if the
@@ -320,6 +337,9 @@ impl HoverInfoOverlay {
         self.pinned = false;
         self.leave_at = None;
         self.shown_file = None;
+        self.target_line = 0;
+        self.target_start_col = 0;
+        self.target_end_col = 0;
         self.refs = None;
         self.info_rect = ratatui::layout::Rect::default();
         self.refs_hit = ratatui::layout::Rect::default();

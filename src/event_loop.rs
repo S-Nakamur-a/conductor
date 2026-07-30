@@ -191,9 +191,8 @@ pub(crate) fn run_loop(
             // The editor occupies the Explorer/Viewer columns, so its repaint
             // rides the EXPLORER/VIEWER dirty bits rather than TERMINAL.
             if app.editor.is_some() {
-                app.dirty.mark(
-                    crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER,
-                );
+                app.dirty
+                    .mark(crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER);
             }
         }
 
@@ -242,6 +241,18 @@ pub(crate) fn run_loop(
                             key.kind
                         );
                         last_input_time = Instant::now();
+                        // D7(a): a key press means the mouse is no longer the
+                        // active input device — crossterm never reports the
+                        // mouse leaving the terminal window, so the underline
+                        // and the row/chip/tab highlights would otherwise
+                        // linger indefinitely once the user switches to the
+                        // keyboard.
+                        //
+                        // Pointer highlights only: `handle_key_event` below
+                        // owns the hover *popup*, and it needs the stack
+                        // intact to tell a pinned modal (keys drive it) from a
+                        // transient one (any key dismisses it, Esc consumed).
+                        app.clear_pointer_hover();
                         handle_key_event(app, key);
                     }
                     Event::Mouse(mouse) => {
@@ -257,6 +268,12 @@ pub(crate) fn run_loop(
                         // so no panel's old edge content lingers (same desync
                         // class as a divider resize).
                         app.terminal.needs_clear = true;
+                    }
+                    // D7(b): the one case crossterm *does* report that reliably
+                    // implies the mouse has left our surface — the terminal
+                    // window itself lost focus (e.g. the user alt-tabbed away).
+                    Event::FocusLost => {
+                        app.clear_all_hover();
                     }
                     _ => {}
                 }
@@ -407,6 +424,10 @@ pub(crate) fn run_loop(
         // Auto-hover: show the popup once the mouse has rested on a symbol past
         // the idle debounce, and manage its grace window / invalidation.
         app.tick_hover();
+
+        // Jump underline (D8/D9): a separate, faster (150ms, no grace)
+        // debounce than the popup's — see `tick_underline_hover`.
+        app.tick_underline_hover();
 
         if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch
             && app.check_grep_debounce()
