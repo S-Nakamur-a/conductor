@@ -12,6 +12,44 @@ use similar::{ChangeTag, TextDiff};
 
 use super::model::{DiffHunk, DiffLine, DiffLineTag, DiffRange, DiffState, FileDiff, InlineSegment};
 
+/// Resolve `base` — a branch name, a remote-tracking ref, a tag, or a raw OID —
+/// to the commit the diff should be based on.
+///
+/// `revparse_single` rather than `find_branch` because worktrees Conductor
+/// creates record `origin/<main>` as their base (see
+/// `GitEngine::resolve_base_ref`), and a remote-tracking ref is not a local
+/// branch — that mismatch is what made the changed-files list come back empty.
+///
+/// The name is resolved exactly as recorded, so a base of `origin/main` uses
+/// the remote-tracking ref even when a stale local `main` exists. Note the
+/// converse: PR intake records the PR's base as a bare name (`main`), and that
+/// *does* resolve to the local branch, which may lag the remote. The `origin/`
+/// retry is only for names with no local ref at all — a configured base like
+/// `develop` that exists solely as `refs/remotes/origin/develop`.
+///
+/// Ordering follows git's own revspec rules, so a *tag* named `main` wins over
+/// a branch named `main`, matching what `git rev-parse main` would pick.
+fn resolve_base_commit(repo: &Repository, base: &str) -> Result<git2::Oid> {
+    let resolved = repo.revparse_single(base).or_else(|primary| {
+        // A base recorded as a bare name (`develop`) can exist only as
+        // `refs/remotes/origin/develop`: git's revspec rules stop at
+        // `refs/remotes/<name>` and won't fill in the remote for you. Skip the
+        // retry for an already-qualified name so the error the user reads never
+        // says `origin/origin/main`, and keep the first failure as the cause —
+        // that's the one naming the ref they actually configured.
+        if base.starts_with("origin/") {
+            return Err(primary);
+        }
+        repo.revparse_single(&format!("origin/{base}"))
+            .map_err(|_| primary)
+    });
+    let obj = resolved.with_context(|| format!("base ref '{base}' cannot be resolved"))?;
+    let commit = obj
+        .peel_to_commit()
+        .with_context(|| format!("cannot peel '{base}' to commit"))?;
+    Ok(commit.id())
+}
+
 impl DiffState {
     /// Load the diff between `base_branch` and HEAD for the repository at
     /// `worktree_path`, replacing any previously stored diff data.
@@ -42,10 +80,10 @@ impl DiffState {
             }
             Err(e) => {
                 self.committed_files.clear();
-                self.uncommitted_files.clear();
                 self.error = Some(format!("{e:#}"));
-                self.rebuild_display_list();
-                return;
+                // Fall through to the uncommitted computation below: it
+                // doesn't depend on `base_branch`, so a bad base must not
+                // hide uncommitted changes too.
             }
         }
 
@@ -158,16 +196,6 @@ impl DiffState {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open repo at {}", worktree_path.display()))?;
 
-        // Resolve base branch OID.
-        let base_ref = repo
-            .find_branch(base_branch, git2::BranchType::Local)
-            .with_context(|| format!("branch '{base_branch}' not found"))?;
-        let base_oid = base_ref
-            .get()
-            .peel_to_commit()
-            .with_context(|| format!("cannot peel '{base_branch}' to commit"))?
-            .id();
-
         // Resolve HEAD.
         let head_commit = repo
             .head()
@@ -180,6 +208,7 @@ impl DiffState {
         let diff = match range {
             DiffRange::Committed => {
                 // merge-base(base, HEAD)..HEAD
+                let base_oid = resolve_base_commit(&repo, base_branch)?;
                 let merge_base_oid = repo.merge_base(base_oid, head_oid).with_context(|| {
                     format!("cannot find merge-base between '{base_branch}' and HEAD")
                 })?;

@@ -89,6 +89,16 @@ pub(super) fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, ge
                 == crate::viewer::ExplorerBottomView::DiffList
             {
                 // Diff list is displayed — handle diff selection.
+                // The error banner occupies the top row(s) without being in
+                // `display_list`, so every entry sits that much lower on screen
+                // than its index suggests. Without this the click lands one file
+                // off, and clicking the message itself opens whatever happens to
+                // be scrolled to the top.
+                let Some(click_offset) =
+                    click_offset.checked_sub(app.viewer_state.explorer.explorer_diff_banner_rows)
+                else {
+                    return;
+                };
                 let idx = app.viewer_state.explorer.diff_list_scroll + click_offset;
                 if idx < app.diff_state.display_list.len() {
                     app.viewer_state.explorer.diff_list_selected = idx;

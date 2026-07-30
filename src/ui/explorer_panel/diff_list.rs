@@ -28,7 +28,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     };
 
     let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
-    let title = format!(" Changed files ({total}) ");
+    let title = diff_list_title(total, app.diff_state.error.is_some());
 
     let border_type = if panel_focused {
         BorderType::Thick
@@ -50,13 +50,29 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.diff_list_scroll;
 
-    let items: Vec<ListItem> = app
+    // Base-resolution failures used to be completely silent: the committed
+    // section just came back empty and read as "no changes". Pin the message to
+    // the top row so the two are never confused. The banner is not part of
+    // `display_list`, so it can't be selected and doesn't shift any index the
+    // navigation keys work with — it only costs one row of list height.
+    // Newlines are flattened because a multi-line `ListItem` would silently
+    // consume more rows than the one reserved here; the List widget clips the
+    // overflow at the panel edge.
+    let error_banner: Option<ListItem> = app.diff_state.error.as_deref().map(|msg| {
+        ListItem::new(Span::styled(
+            format!("  \u{26a0} {}", msg.replace('\n', " ")),
+            Style::default().fg(theme.error),
+        ))
+    });
+    let list_height = inner_height.saturating_sub(diff_list_banner_rows(error_banner.is_some()));
+
+    let entry_items = app
         .diff_state
         .display_list
         .iter()
         .enumerate()
         .skip(scroll)
-        .take(inner_height)
+        .take(list_height)
         .map(|(idx, entry)| match entry {
             DiffListEntry::Directory {
                 name,
@@ -158,8 +174,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 };
                 ListItem::new(Span::styled("  \u{25A3} SUMMARY", style))
             }
-        })
-        .collect();
+        });
+    let items: Vec<ListItem> = error_banner.into_iter().chain(entry_items).collect();
 
     // Clear first so rows below the last item (or stale rows after scrolling /
     // a height change) don't show the previous frame's glyphs — the same
@@ -167,6 +183,30 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
+}
+
+/// Title for the changed-files block. The `— diff error` suffix distinguishes
+/// "the committed section is missing because something failed" from a genuine
+/// `(0)`; without it the two render identically. Deliberately not "base error":
+/// resolving the base ref is the common failure but not the only one — an
+/// unresolvable HEAD or a missing merge-base land here too.
+fn diff_list_title(total: usize, has_error: bool) -> String {
+    if has_error {
+        format!(" Changed files ({total}) — diff error ")
+    } else {
+        format!(" Changed files ({total}) ")
+    }
+}
+
+/// Rows the error banner occupies at the top of the changed-files list.
+///
+/// The single source of truth for that geometry. Three places have to agree on
+/// it: the renderer (how many entry rows fit), the scroll page size, and the
+/// mouse handler (which screen row maps to which `display_list` index). They
+/// used to be able to drift, and a one-row disagreement silently opens the
+/// wrong file on click.
+pub(super) fn diff_list_banner_rows(has_error: bool) -> usize {
+    usize::from(has_error)
 }
 
 /// Build a GitHub-style comment-count badge (e.g. ` 💬3`) for a file path, or
@@ -198,4 +238,36 @@ pub(crate) fn comment_badge<'a>(
         format!("  \u{1f4ac}{total}"),
         Style::default().fg(color),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{diff_list_banner_rows, diff_list_title};
+
+    /// The whole point of the error suffix: a failed base resolution and a
+    /// genuinely clean tree must not render the same title.
+    #[test]
+    fn error_title_differs_from_a_genuine_zero() {
+        assert_ne!(diff_list_title(0, true), diff_list_title(0, false));
+        assert_eq!(diff_list_title(0, false), " Changed files (0) ");
+        assert!(diff_list_title(0, true).contains("error"));
+    }
+
+    /// With the uncommitted section surviving a base failure, the count is
+    /// non-zero *and* the error marker is present — both must show.
+    #[test]
+    fn error_title_keeps_the_count() {
+        let title = diff_list_title(17, true);
+        assert!(title.contains("(17)"), "{title}");
+        assert!(title.contains("error"), "{title}");
+    }
+
+    /// The renderer, the scroll page size, and the mouse row→index conversion
+    /// all derive the banner's row cost from here. If they ever disagree by one,
+    /// a click opens the wrong file — so pin the contract.
+    #[test]
+    fn banner_costs_exactly_one_row_and_only_when_erroring() {
+        assert_eq!(diff_list_banner_rows(false), 0);
+        assert_eq!(diff_list_banner_rows(true), 1);
+    }
 }

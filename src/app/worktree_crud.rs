@@ -299,7 +299,9 @@ impl App {
 
                 self.new_worktree_paths.insert(path.clone());
                 self.record_stat("branches_created");
-                if let Some(store) = &self.review_store {
+                if let Some(store) = &self.review_store
+                    && is_usable_diff_base(&pending.base_ref)
+                {
                     let _ = store.save_worktree_base_branch(&pending.branch, &pending.base_ref);
                 }
                 self.refresh_worktrees();
@@ -433,6 +435,39 @@ impl App {
                     );
                 }
             }
+        }
+    }
+}
+
+/// Whether `base_ref` is meaningful as a *diff* base, as opposed to merely a
+/// valid starting point for `git worktree add`.
+///
+/// `GitEngine::resolve_base_ref` falls back to the literal string `"HEAD"` when
+/// neither `origin/<main>` nor `<main>` exists — correct for creating the
+/// worktree, useless for diffing it. Persisted as a base, `"HEAD"` resolves to
+/// the worktree's *own* head, so `merge-base(HEAD, HEAD) == HEAD` and the
+/// committed section is empty forever with no error to explain it: exactly the
+/// silent `(0)` this whole change exists to kill, arriving by another door.
+/// Dropping it here falls back to `main_branch`, which either works or fails
+/// loudly in the panel.
+fn is_usable_diff_base(base_ref: &str) -> bool {
+    !base_ref.is_empty() && base_ref != "HEAD"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_usable_diff_base;
+
+    #[test]
+    fn head_and_empty_are_rejected_as_diff_bases() {
+        assert!(!is_usable_diff_base("HEAD"));
+        assert!(!is_usable_diff_base(""));
+    }
+
+    #[test]
+    fn real_refs_are_accepted() {
+        for base in ["main", "origin/main", "release/1.0", "v1.2.3"] {
+            assert!(is_usable_diff_base(base), "{base} should be usable");
         }
     }
 }
