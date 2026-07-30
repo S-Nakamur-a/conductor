@@ -92,6 +92,10 @@ keymap_suite::actions! {
         /// Open the file shown in the Viewer in an external editor ($VISUAL /
         /// $EDITOR): suspend the TUI, run the editor, then restore and reload.
         OpenInEditor => "open_in_editor",
+        /// Switch a markdown file in the Viewer between raw source and rendered
+        /// prose. No-op on any other file (and in diff mode), since the two
+        /// views only differ for markdown.
+        ToggleMarkdownRender => "toggle_markdown_render",
 
         // ── Terminal panel ────────────────────────────────────────────
         LeaveTerminal => "leave_terminal",
@@ -249,6 +253,7 @@ impl Action {
             Action::AddComment => "Add comment on line",
             Action::ExitToExplorer => "Back to Explorer",
             Action::OpenInEditor => "Open in $EDITOR",
+            Action::ToggleMarkdownRender => "Toggle markdown Raw / Rendered",
             Action::LeaveTerminal => "Leave terminal (keep session)",
             Action::ScrollbackUp => "Scrollback up",
             Action::ScrollbackDown => "Scrollback down",

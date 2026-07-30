@@ -42,6 +42,7 @@ pub enum CommandId {
     // View
     SearchInFile,
     ToggleHelp,
+    ToggleMarkdownRender,
 
     // Review
     ShowReviewComments,

@@ -17,6 +17,7 @@ use ratatui::widgets::{
 use super::code_line::{render_code_line_rows, FileLineRenderCtx};
 use super::comment_thread::new_comment_anchor_end;
 use super::diff_view::{build_walkthrough_banner, render_diff_view, render_walkthrough_banner};
+use super::markdown_view::{render_markdown_view, toggle_segments, toggle_spans, TOGGLE_W};
 use super::media_view::render_media_view;
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
@@ -58,9 +59,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ("[<=>]", theme.border_unfocused)
     };
 
-    // Truncate title so it doesn't overlap with the [<=>] button on the right.
-    // Reserve: 2 (borders) + expand_label width + 1 (gap).
-    let max_title_len = (area.width as usize).saturating_sub(2 + expand_label.len() + 1);
+    // Raw/Rendered toggle — markdown files in the plain-file view only, and
+    // only when the column is wide enough to hold it (`toggle_segments`, the
+    // same function the click hit-test consults).
+    let show_md_toggle =
+        vs.markdown_toggle_available() && toggle_segments(area.x, area.width).is_some();
+    let md_toggle_w = if show_md_toggle { TOGGLE_W as usize } else { 0 };
+
+    // Truncate title so it doesn't overlap with the [<=>] button (and the
+    // toggle, when shown) on the right. Reserve: 2 (borders) + toggle +
+    // expand_label width + 1 (gap).
+    let max_title_len =
+        (area.width as usize).saturating_sub(2 + md_toggle_w + expand_label.len() + 1);
     let title = match &vs.content.current_file {
         Some(path) => {
             let raw = if !vs.search.search_matches.is_empty() {
@@ -75,22 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             } else {
                 format!(" {path} ")
             };
-            if raw.len() > max_title_len && max_title_len > 4 {
-                // Truncate with ellipsis: " …<tail> "
-                let inner_max = max_title_len.saturating_sub(2); // leading/trailing spaces
-                let tail: String = raw
-                    .trim()
-                    .chars()
-                    .rev()
-                    .take(inner_max.saturating_sub(1))
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                format!(" \u{2026}{tail} ")
-            } else {
-                raw
-            }
+            fit_title(&raw, max_title_len)
         }
         None => " (no file selected) ".to_string(),
     };
@@ -106,15 +101,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         Style::default().fg(theme.muted)
     };
+    // One right-aligned line holds both controls, so `[<=>]` keeps its exact
+    // columns (and its existing hit-test) whether or not the toggle is drawn.
+    let mut right_spans: Vec<Span> = Vec::new();
+    if show_md_toggle {
+        right_spans.extend(toggle_spans(vs.is_showing_rendered_markdown(), theme));
+    }
+    right_spans.push(Span::styled(
+        expand_label,
+        Style::default().fg(expand_color),
+    ));
     let block = Block::default()
         .title(Span::styled(title, title_style))
-        .title_top(
-            Line::from(Span::styled(
-                expand_label,
-                Style::default().fg(expand_color),
-            ))
-            .alignment(Alignment::Right),
-        )
+        .title_top(Line::from(right_spans).alignment(Alignment::Right))
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
@@ -146,6 +145,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Media file mode: render image/video as ASCII art.
     if vs.is_current_file_media() {
         render_media_view(frame, area, app, block);
+        return;
+    }
+
+    // Rendered-markdown mode. Returns before any of the line-oriented rendering
+    // below, so `screen_row_map` stays empty (cleared at function entry) and no
+    // gutter, comment marker, or thread row is ever drawn — see `markdown_view`.
+    if vs.is_showing_rendered_markdown() {
+        render_markdown_view(frame, area, app, block);
         return;
     }
 
@@ -314,6 +321,44 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.viewer_state.content.screen_row_map = screen_row_map;
 }
 
+/// Fit the Viewer's title into `max_w` **display columns**, eliding from the
+/// left (`" …tail "`) so the filename — the informative end of a path —
+/// survives.
+///
+/// Columns, not bytes or chars: a CJK filename costs 2 columns per character
+/// while measuring 3 bytes, so a byte- or char-budgeted cut yields a title
+/// that overruns its allowance and paints over the header controls to its
+/// right (the `[Raw|Rendered]` toggle and `[<=>]`). Below the width of
+/// `" … "` nothing meaningful fits, so the title yields the row entirely
+/// rather than overlapping.
+pub(super) fn fit_title(raw: &str, max_w: usize) -> String {
+    if display_width(raw) <= max_w {
+        return raw.to_string();
+    }
+    if max_w < 4 {
+        return " ".repeat(max_w);
+    }
+    // Leading space + ellipsis + trailing space cost 3 columns.
+    let budget = max_w - 3;
+    let mut tail: Vec<char> = Vec::new();
+    let mut used = 0usize;
+    for ch in raw.trim_end().chars().rev() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + cw > budget {
+            break;
+        }
+        tail.push(ch);
+        used += cw;
+    }
+    tail.reverse();
+    let tail: String = tail.into_iter().collect();
+    format!(" \u{2026}{tail} ")
+}
+
+fn display_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
 /// Build the breadcrumb `Line` from jump history + current position.
 /// Returns `None` when there are fewer than 2 entries (no navigation happened).
 fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
@@ -368,4 +413,60 @@ fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
 fn breadcrumb_label(loc: &crate::jump_history::Location) -> String {
     let filename = loc.file_path.rsplit('/').next().unwrap_or(&loc.file_path);
     format!("{}:{}", filename, loc.line + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The invariant the header controls depend on: whatever comes back never
+    /// exceeds its column budget. Anything wider paints over the toggle and the
+    /// `[<=>]` button sharing that row.
+    #[test]
+    fn fitted_title_never_exceeds_its_budget() {
+        let titles = [
+            " src/main.rs ",
+            " 設計メモ.md ",
+            " docs/日本語/とても長い名前のファイル.markdown ",
+            " a.rs ",
+            " 🦀🦀🦀/emoji.md ",
+            " ",
+        ];
+        for t in titles {
+            for max_w in 0..40usize {
+                let fitted = fit_title(t, max_w);
+                assert!(
+                    display_width(&fitted) <= max_w,
+                    "title={t:?} max_w={max_w} -> {fitted:?} ({} cols)",
+                    display_width(&fitted)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn short_titles_pass_through_untouched() {
+        assert_eq!(fit_title(" a.rs ", 20), " a.rs ");
+        // Exactly at budget still passes through.
+        assert_eq!(fit_title(" a.rs ", 6), " a.rs ");
+    }
+
+    /// Eliding keeps the tail, because the filename is at the end of a path.
+    #[test]
+    fn elision_keeps_the_end_of_the_path() {
+        let fitted = fit_title(" src/ui/viewer_panel/file_view.rs ", 16);
+        assert!(fitted.starts_with(" \u{2026}"), "{fitted:?}");
+        assert!(fitted.ends_with("file_view.rs "), "{fitted:?}");
+    }
+
+    /// A wide-glyph title is budgeted in columns, so it elides *sooner* than a
+    /// byte- or char-count would suggest — this is the case that used to
+    /// overrun into the header controls.
+    #[test]
+    fn wide_glyphs_are_budgeted_by_column() {
+        // 4 CJK chars = 8 columns, but 12 bytes.
+        let fitted = fit_title(" 設計メモ.md ", 10);
+        assert!(display_width(&fitted) <= 10, "{fitted:?}");
+        assert!(fitted.contains('\u{2026}'), "{fitted:?}");
+    }
 }

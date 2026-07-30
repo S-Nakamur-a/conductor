@@ -338,6 +338,74 @@ fn table_renders_within_width_and_truncates() {
     }
 }
 
+/// The point of wrapping instead of truncating: **no content is lost.** Every
+/// word of an over-wide cell must appear somewhere in the rendered table, at
+/// every width that can hold the column at all.
+#[test]
+fn wide_table_cells_wrap_instead_of_losing_content() {
+    let table = "| feature | notes |\n| --- | --- |\n\
+        | toggle | switches a markdown file between raw source and rendered prose |\n\
+        | scroll | independent of the raw view |";
+    let words = [
+        "switches", "markdown", "between", "source", "rendered", "prose", "independent",
+    ];
+    for width in [20usize, 30, 40, 60, 100] {
+        let text: String = render(table, width)
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for w in words {
+            assert!(
+                text.contains(w),
+                "width {width}: lost {w:?} from the table\n{text}"
+            );
+        }
+        assert!(
+            !text.contains('\u{2026}'),
+            "width {width}: cell was still elided\n{text}"
+        );
+    }
+}
+
+/// Wrapping makes a row taller, so the columns must stay a grid: every line of
+/// a row has to be the same display width, or the second column ends up ragged.
+#[test]
+fn wrapped_table_rows_keep_their_columns_aligned() {
+    let table = "| a | b |\n| --- | --- |\n\
+        | one two three four five | six |\n\
+        | x | seven eight nine ten eleven |";
+    for width in [24usize, 36, 50] {
+        let lines = render(table, width);
+        // Skip the leading blank the renderer puts before a block.
+        let body: Vec<usize> = lines
+            .iter()
+            .map(|l| display_width(&line_text(l)))
+            .filter(|&w| w > 0)
+            .collect();
+        assert!(
+            body.iter().all(|&w| w == body[0]),
+            "width {width}: ragged row widths {body:?}"
+        );
+    }
+}
+
+/// A single unbreakable token wider than its column still has to appear in
+/// full — hard-split across lines rather than cut short.
+#[test]
+fn overlong_unbreakable_cell_is_split_not_cut() {
+    let url = "https://example.com/a/very/long/path/that/never/breaks";
+    let table = format!("| link |\n| --- |\n| {url} |");
+    let text: String = render(&table, 24)
+        .iter()
+        .map(|l| line_text(l))
+        .collect::<Vec<_>>()
+        .join("");
+    // Reassembled across lines (padding stripped), the whole URL is present.
+    let joined: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(joined.contains(url), "URL was cut: {text:?}");
+}
+
 #[test]
 fn table_cell_truncation_never_splits_multibyte() {
     // Force CJK / accented cells below their content width — must not panic

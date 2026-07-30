@@ -177,6 +177,28 @@ impl App {
         }
     }
 
+    /// Switch the Viewer between raw markdown source and rendered prose.
+    ///
+    /// Only meaningful for a markdown file in the plain-file view; anywhere else
+    /// it flashes a hint rather than silently latching a mode the user can't
+    /// see, since the header toggle is hidden in exactly those cases.
+    pub fn cmd_toggle_markdown_render(&mut self) {
+        if !self.viewer_state.markdown_toggle_available() {
+            self.set_status(
+                "Raw/Rendered applies to a markdown file in the Viewer".to_string(),
+                StatusLevel::Warning,
+            );
+            return;
+        }
+        self.viewer_state.toggle_markdown_rendered();
+        let msg = if self.viewer_state.md_rendered {
+            "Markdown: Rendered"
+        } else {
+            "Markdown: Raw"
+        };
+        self.set_status(msg.to_string(), StatusLevel::Info);
+    }
+
     /// Open a file path (relative to the current worktree) in the Viewer panel.
     ///
     /// Optionally jumps to `line` (1-indexed). Reveals the file in the explorer
@@ -198,6 +220,7 @@ impl App {
                 .len()
                 .saturating_sub(1);
             self.viewer_state.content.file_scroll = (ln.saturating_sub(1)).min(max);
+            self.viewer_state.show_raw_for_line_target();
         }
 
         self.set_focus(Focus::Viewer);

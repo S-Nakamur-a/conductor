@@ -215,6 +215,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         keywords: "grep search find text content regex ripgrep fulltext",
     },
     PaletteCommand {
+        id: CommandId::ToggleMarkdownRender,
+        label: "Viewer: Toggle Markdown Raw / Rendered",
+        category: CommandCategory::View,
+        action: Some(Action::ToggleMarkdownRender),
+        keywords: "markdown md render raw preview prose readme",
+    },
+    PaletteCommand {
         id: CommandId::ToggleHelp,
         label: "Show Help",
         category: CommandCategory::View,

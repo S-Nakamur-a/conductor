@@ -315,6 +315,35 @@ impl ClickGeometry {
     }
 }
 
+/// Handle a click on the Viewer header's `[Raw|Rendered]` toggle, returning
+/// whether it was consumed.
+///
+/// Each half selects its mode outright instead of flipping the current one, so
+/// clicking the label you can already see is a no-op rather than a surprise.
+/// The chip's columns come from the same `toggle_segments` the renderer uses,
+/// and `markdown_toggle_available` gates it exactly as the renderer does — so a
+/// toggle that isn't on screen has no click target.
+fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool {
+    if !app.viewer_state.markdown_toggle_available() {
+        return false;
+    }
+    let viewer_x = geom.explorer_end;
+    let Some(seg) = crate::ui::viewer_panel::toggle_segments(viewer_x, geom.viewer_w) else {
+        return false;
+    };
+    let want_rendered = if seg.raw.contains(&col) {
+        false
+    } else if seg.rendered.contains(&col) {
+        true
+    } else {
+        return false;
+    };
+    if app.viewer_state.md_rendered != want_rendered {
+        app.cmd_toggle_markdown_render();
+    }
+    true
+}
+
 /// Process a single mouse event, updating application state as needed.
 pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui::layout::Rect) {
     // Interactive hover modal stack (popup → refs list → preview) gets first
@@ -436,7 +465,12 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
-            // Check for [<=>] expand button clicks on the top border row.
+            // Check for the Viewer's Raw/Rendered toggle and the [<=>] expand
+            // button, both on the top border row. The toggle is checked first;
+            // it sits left of the expand button and the two never overlap.
+            if row == main_area.y && handle_md_toggle_click(app, col, &geom) {
+                return;
+            }
             if row == main_area.y
                 && let Some(target) = geom.expand_button_at(col) {
                     app.expanded_panel = if app.expanded_panel == Some(target) {
@@ -503,8 +537,11 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 .filter(|&d| divider_draggable(app, d));
 
             // Track hover line for gutter highlight in the viewer panel.
+            // Rendered markdown draws no gutter and no per-line highlight, and
+            // its rows aren't source lines, so it takes the clear-everything
+            // branch below exactly as if the cursor were outside the panel.
             let inner_y = main_area.y + 1;
-            if col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
+            if !app.viewer_state.is_showing_rendered_markdown() && col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
                 let line_offset = (row - inner_y) as usize;
                 let inner_x = explorer_end + 1;
                 let gutter_w = app.viewer_state.gutter_total_width();

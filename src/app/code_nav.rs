@@ -399,6 +399,7 @@ impl App {
             .min(total.saturating_sub(1));
         self.viewer_state.content.file_scroll = scroll;
         self.viewer_state.content.h_scroll = 0;
+        self.viewer_state.show_raw_for_line_target();
         self.set_focus(Focus::Viewer);
     }
 
@@ -426,6 +427,7 @@ impl App {
             let total = self.viewer_state.content.file_content.len();
             self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
             self.viewer_state.content.h_scroll = loc.h_scroll;
+            self.viewer_state.show_raw_for_line_target();
         }
     }
 
@@ -453,6 +455,7 @@ impl App {
             let total = self.viewer_state.content.file_content.len();
             self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
             self.viewer_state.content.h_scroll = loc.h_scroll;
+            self.viewer_state.show_raw_for_line_target();
         }
     }
 

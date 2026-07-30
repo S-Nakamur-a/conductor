@@ -83,10 +83,16 @@ impl ViewerState {
                 let prev_diff_max_line_no = self.diff_view.diff_view_max_line_no;
                 let was_summary = self.show_summary;
                 let prev_summary_scroll = self.summary_scroll;
+                // `open_file` resets the rendered-markdown scroll (it indexes a
+                // specific document), which is right when the *user* opens a
+                // file and wrong here — a watcher or the 3s poll would yank a
+                // reader back to the top of the prose mid-read.
+                let prev_md_scroll = self.md_scroll;
 
                 self.open_file(worktree_path, rel_path, tab_width);
                 self.content.file_scroll = prev_file_scroll;
                 self.content.h_scroll = prev_h_scroll;
+                self.md_scroll = prev_md_scroll;
 
                 if was_diff_mode {
                     self.diff_view.diff_mode = true;

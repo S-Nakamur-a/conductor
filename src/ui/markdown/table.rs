@@ -1,6 +1,6 @@
 //! GFM table layout: borderless rendering (bold header, a rule, aligned rows)
-//! with column widths fitted — and over-wide cells truncated — to the panel
-//! width.
+//! with column widths fitted to the panel width and over-wide cells wrapped
+//! onto extra lines.
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -9,13 +9,19 @@ use crate::theme::Theme;
 
 use super::inline::inline_spans;
 use super::parse::Align;
-use super::wrap::{Cell, cells_to_line, char_width, spans_to_cells};
+use super::wrap::{Cell, cells_to_line, char_width, spans_to_cells, wrap_cells_raw};
 
 /// Render a GFM table borderless: a bold header row, a horizontal rule, then
 /// aligned body rows with columns separated by two spaces. Box-drawing borders
 /// are intentionally omitted — they cost too much width in the narrow summary
-/// column. Over-wide cells are truncated with `…`. (A future refinement could
-/// fall back to a `key: value` list when even truncation can't fit.)
+/// column.
+///
+/// A cell too wide for its column **wraps** rather than truncating, so a row
+/// occupies as many lines as its tallest cell needs. Truncation was the earlier
+/// behaviour and silently destroyed content — in a table the cut text is often
+/// the whole point of the row, and there is no way to reveal it (no horizontal
+/// scroll, no expand). Height is the cheaper thing to spend: the views that
+/// render markdown all scroll vertically.
 pub(crate) fn render_table(
     headers: &[String],
     aligns: &[Align],
@@ -48,7 +54,7 @@ pub(crate) fn render_table(
     let body_style = Style::default().fg(theme.fg);
 
     let mut out = Vec::with_capacity(rows.len() + 2);
-    out.push(render_table_row(
+    out.extend(render_table_row(
         headers,
         &widths,
         &aligns,
@@ -63,7 +69,7 @@ pub(crate) fn render_table(
         Style::default().fg(theme.muted),
     )));
     for row in &rows {
-        out.push(render_table_row(
+        out.extend(render_table_row(
             row,
             &widths,
             &aligns,
@@ -117,9 +123,13 @@ fn fit_col_widths(natural: &[usize], width: usize) -> Vec<usize> {
     w
 }
 
-/// Render one table row into a `Line`: each cell fitted to its column width and
-/// alignment, columns joined by two spaces, then the whole hard-clipped to
-/// `width` as a final guard for degenerate (tiny) widths.
+/// Render one table row into as many `Line`s as its tallest cell needs.
+///
+/// Each cell is wrapped to its column width and padded per its alignment, so
+/// every column contributes the same number of columns on every line and the
+/// grid stays aligned. Short cells are padded with blank lines at the bottom.
+/// Each produced line is hard-clipped to `width` as a final guard for
+/// degenerate (tiny) widths.
 fn render_table_row(
     cells: &[String],
     widths: &[usize],
@@ -127,29 +137,63 @@ fn render_table_row(
     base: Style,
     width: usize,
     theme: &Theme,
-) -> Line<'static> {
-    let mut row: Vec<Cell> = Vec::new();
-    for (k, &col_w) in widths.iter().enumerate() {
-        if k > 0 {
-            row.push(Cell { ch: ' ', style: base });
-            row.push(Cell { ch: ' ', style: base });
-        }
-        let text = cells.get(k).map(String::as_str).unwrap_or("");
-        let align = aligns.get(k).copied().unwrap_or(Align::Left);
-        row.extend(fit_cell(text, col_w, align, base, theme));
-    }
-    cells_to_line(&clip_cells(row, width))
+) -> Vec<Line<'static>> {
+    let cols: Vec<Vec<Vec<Cell>>> = widths
+        .iter()
+        .enumerate()
+        .map(|(k, &col_w)| {
+            let text = cells.get(k).map(String::as_str).unwrap_or("");
+            let align = aligns.get(k).copied().unwrap_or(Align::Left);
+            wrap_cell(text, col_w, align, base, theme)
+        })
+        .collect();
+
+    let height = cols.iter().map(Vec::len).max().unwrap_or(0);
+    let blank = |col_w: usize| -> Vec<Cell> {
+        (0..col_w).map(|_| Cell { ch: ' ', style: base }).collect()
+    };
+
+    (0..height)
+        .map(|row_line| {
+            let mut row: Vec<Cell> = Vec::new();
+            for (k, col) in cols.iter().enumerate() {
+                if k > 0 {
+                    row.push(Cell { ch: ' ', style: base });
+                    row.push(Cell { ch: ' ', style: base });
+                }
+                match col.get(row_line) {
+                    Some(line) => row.extend(line.iter().cloned()),
+                    None => row.extend(blank(widths[k])),
+                }
+            }
+            cells_to_line(&clip_cells(row, width))
+        })
+        .collect()
 }
 
-/// Fit `text` into exactly `col_w` display columns: render its inline markup,
-/// truncate (with a trailing `…`) when too wide, then pad per `align`. Returns
-/// cells whose total display width is `col_w` (empty when `col_w` is 0).
-/// Works on `Cell`s, so truncation never splits a multibyte char.
-fn fit_cell(text: &str, col_w: usize, align: Align, base: Style, theme: &Theme) -> Vec<Cell> {
+/// Wrap `text` into lines of exactly `col_w` display columns: render its inline
+/// markup, wrap at word boundaries, then pad each line per `align`. Always
+/// returns at least one line (empty cells become one blank line), so a row's
+/// height is `max` over its cells and never zero.
+fn wrap_cell(
+    text: &str,
+    col_w: usize,
+    align: Align,
+    base: Style,
+    theme: &Theme,
+) -> Vec<Vec<Cell>> {
     if col_w == 0 {
-        return Vec::new();
+        return vec![Vec::new()];
     }
-    let cells = truncate_cells(spans_to_cells(&inline_spans(text, base, theme)), col_w);
+    let cells = spans_to_cells(&inline_spans(text, base, theme));
+    wrap_cells_raw(&cells, col_w, false)
+        .into_iter()
+        .map(|line| pad_cell_line(line, col_w, align, base))
+        .collect()
+}
+
+/// Pad one wrapped line out to `col_w` columns according to `align`.
+fn pad_cell_line(cells: Vec<Cell>, col_w: usize, align: Align, base: Style) -> Vec<Cell> {
     let pad = col_w.saturating_sub(cells_width(&cells));
     let space = |n: usize| -> Vec<Cell> {
         (0..n).map(|_| Cell { ch: ' ', style: base }).collect()
@@ -173,35 +217,6 @@ fn fit_cell(text: &str, col_w: usize, align: Align, base: Style, theme: &Theme) 
             out
         }
     }
-}
-
-/// Truncate `cells` to at most `max_w` display columns, appending `…` (in the
-/// last kept cell's style) only when content was actually cut. Truncates by
-/// display width on char boundaries, so multibyte/CJK content never panics.
-fn truncate_cells(cells: Vec<Cell>, max_w: usize) -> Vec<Cell> {
-    if cells_width(&cells) <= max_w {
-        return cells;
-    }
-    if max_w == 0 {
-        return Vec::new();
-    }
-    let budget = max_w - 1; // reserve one column for the ellipsis
-    let mut out: Vec<Cell> = Vec::new();
-    let mut w = 0;
-    for cell in cells {
-        let cw = char_width(cell.ch);
-        if w + cw > budget {
-            break;
-        }
-        out.push(cell);
-        w += cw;
-    }
-    let style = out.last().map(|c| c.style).unwrap_or_default();
-    out.push(Cell {
-        ch: '\u{2026}',
-        style,
-    });
-    out
 }
 
 /// Hard-clip `cells` to at most `width` display columns (no ellipsis). The final
