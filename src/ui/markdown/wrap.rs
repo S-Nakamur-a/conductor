@@ -62,14 +62,27 @@ pub(crate) fn cells_to_line(cells: &[Cell]) -> Line<'static> {
 /// and only overlong single words are hard-split. Display width is measured with
 /// `unicode-width`, so full-width (CJK) text wraps correctly.
 pub(crate) fn wrap_cells(cells: &[Cell], width: usize, hard: bool) -> Vec<Line<'static>> {
+    wrap_cells_raw(cells, width, hard)
+        .iter()
+        .map(|l| cells_to_line(l))
+        .collect()
+}
+
+/// [`wrap_cells`] without the final merge into `Line`s — one `Vec<Cell>` per
+/// wrapped line.
+///
+/// Callers that need to keep working at cell granularity after wrapping use
+/// this: table columns, for instance, must pad and align each wrapped line to
+/// the column width before the columns are stitched together side by side,
+/// which is impossible once the cells have collapsed into `Span`s.
+pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Vec<Cell>> {
     let width = width.max(1);
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut lines: Vec<Vec<Cell>> = Vec::new();
     let mut cur: Vec<Cell> = Vec::new();
     let mut cur_w = 0usize;
 
     let mut push_line = |cur: &mut Vec<Cell>, cur_w: &mut usize| {
-        lines.push(cells_to_line(cur));
-        cur.clear();
+        lines.push(std::mem::take(cur));
         *cur_w = 0;
     };
 
@@ -86,7 +99,7 @@ pub(crate) fn wrap_cells(cells: &[Cell], width: usize, hard: bool) -> Vec<Line<'
             push_line(&mut cur, &mut cur_w);
         }
         if lines.is_empty() {
-            lines.push(Line::from(""));
+            lines.push(Vec::new());
         }
         return lines;
     }
@@ -146,7 +159,7 @@ pub(crate) fn wrap_cells(cells: &[Cell], width: usize, hard: bool) -> Vec<Line<'
         push_line(&mut cur, &mut cur_w);
     }
     if lines.is_empty() {
-        lines.push(Line::from(""));
+        lines.push(Vec::new());
     }
     lines
 }

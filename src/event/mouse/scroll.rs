@@ -120,6 +120,22 @@ pub(super) fn handle_mouse_scroll(
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
+        } else if app.viewer_state.is_showing_rendered_markdown() {
+            // Rendered markdown scrolls its own wrapped-line count, which has no
+            // relation to the source line count `file_scroll` indexes.
+            let total = app.viewer_state.md_total_lines;
+            if total > 0 {
+                if delta > 0 {
+                    app.viewer_state.md_scroll = (app.viewer_state.md_scroll
+                        + delta.unsigned_abs() as usize)
+                        .min(total.saturating_sub(1));
+                } else {
+                    app.viewer_state.md_scroll = app
+                        .viewer_state
+                        .md_scroll
+                        .saturating_sub(delta.unsigned_abs() as usize);
+                }
+            }
         } else if app.viewer_state.diff_view.diff_mode {
             // Unified diff view scroll.
             let total = app.viewer_state.diff_view.diff_view_lines.len();

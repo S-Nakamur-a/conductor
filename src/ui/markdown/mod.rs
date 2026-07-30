@@ -19,10 +19,10 @@
 //! - **Strikethrough `~~x~~`** applies `CROSSED_OUT` *and* a muted colour, so
 //!   the "removed/deprecated" meaning survives even where the terminal ignores
 //!   the SGR 9 escape.
-//! - **Tables** render borderless (bold header, a rule, aligned rows) rather
-//!   than with box-drawing — borders are too width-hungry for the narrow
-//!   summary column. Over-wide cells truncate with `…`. A future refinement
-//!   could fall back to a `key: value` list when even truncation can't fit.
+//!   summary column. A cell too wide for its column **wraps** onto extra lines
+//!   (the row grows to its tallest cell) rather than truncating — in a table
+//!   the cut text is usually the point of the row, and nothing in these views
+//!   can reveal it afterwards.
 //! - **Headings** colour and bold their text; H1/H2 also get a full-width
 //!   underline rule, echoing GitHub's bottom border on top-level sections.
 //! - **Code — fenced and inline `code`** sits on a shaded `code_bg` "card"
@@ -228,6 +228,66 @@ impl MarkdownCache {
         syntect_theme: &SyntectTheme,
         flavor: MarkdownFlavor,
     ) -> Vec<Line<'static>> {
+        self.ensure(key, body, width, theme, syntax_set, syntect_theme, flavor);
+        self.entries.borrow()[key].lines.clone()
+    }
+
+    /// Render a scrollable document and return only the visible window:
+    /// `(total_lines, clamped_skip, lines[clamped_skip..][..take])`.
+    ///
+    /// Same caching and invalidation as [`render`](Self::render); it exists
+    /// because the Viewer's rendered-markdown mode re-draws a whole file every
+    /// frame, where `render`'s clone-the-entire-document cost would scale with
+    /// file length instead of with the viewport.
+    ///
+    /// `skip` is clamped to the last line *here*, where the true total is known.
+    /// A caller clamping beforehand would have to use the previous frame's total
+    /// — stale exactly when it matters (the document or the wrap width just
+    /// changed), which shows up as a blank viewport the user can't scroll out of.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_window(
+        &self,
+        key: &str,
+        body: &str,
+        width: usize,
+        theme: &Theme,
+        syntax_set: &SyntaxSet,
+        syntect_theme: &SyntectTheme,
+        skip: usize,
+        take: usize,
+    ) -> (usize, usize, Vec<Line<'static>>) {
+        self.ensure(
+            key,
+            body,
+            width,
+            theme,
+            syntax_set,
+            syntect_theme,
+            MarkdownFlavor::Rich,
+        );
+        let entries = self.entries.borrow();
+        let lines = &entries[key].lines;
+        let skip = skip.min(lines.len().saturating_sub(1));
+        (
+            lines.len(),
+            skip,
+            lines.iter().skip(skip).take(take).cloned().collect(),
+        )
+    }
+
+    /// Populate `key`'s entry if absent or stale. On return the entry is
+    /// guaranteed present and current, so callers may index it directly.
+    #[allow(clippy::too_many_arguments)]
+    fn ensure(
+        &self,
+        key: &str,
+        body: &str,
+        width: usize,
+        theme: &Theme,
+        syntax_set: &SyntaxSet,
+        syntect_theme: &SyntectTheme,
+        flavor: MarkdownFlavor,
+    ) {
         // A theme switch changes colours baked into the cached spans, so drop
         // every entry when the theme fingerprint moves.
         let fp = theme_fingerprint(theme);
@@ -239,7 +299,7 @@ impl MarkdownCache {
             && e.body == body
             && e.width == width
         {
-            return e.lines.clone();
+            return;
         }
         let lines = render_markdown_flavored(body, width, theme, syntax_set, syntect_theme, flavor);
         self.entries.borrow_mut().insert(
@@ -247,10 +307,9 @@ impl MarkdownCache {
             CacheEntry {
                 body: body.to_string(),
                 width,
-                lines: lines.clone(),
+                lines,
             },
         );
-        lines
     }
 }
 

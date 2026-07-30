@@ -245,6 +245,10 @@
 # 'e' for "edit": hand off to $VISUAL/$EDITOR for a quick manual touch-up,
 # then drop back into the viewer (the file reloads on return).
 "e" = "open_in_editor"
+# 'm' for "markdown": switch a .md/.markdown file between raw source and
+# rendered prose. Bound in this layer only — the rendered view resolves its keys
+# against it too, so one binding covers both directions.
+"m" = "toggle_markdown_render"
 "space" = "toggle_inline_thread"
 "esc" = "exit_to_explorer"
 # Ctrl+Esc is the app-wide "leave focus" chord (it is the only way out of the

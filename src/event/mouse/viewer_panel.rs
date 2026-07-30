@@ -86,6 +86,13 @@ pub(super) fn handle_viewer_column_click(
 
     app.set_focus(Focus::Viewer);
 
+    // Rendered markdown has no line numbers, so none of what follows (symbol
+    // jump, comment threads, the gutter's comment/run-test zones) has a line to
+    // resolve against. A click is a plain focus change and nothing more.
+    if app.viewer_state.is_showing_rendered_markdown() {
+        return;
+    }
+
     let inner_x = explorer_end + 1; // inside left border
     let inner_y = main_area.y + 1; // inside top border
     let marker_w = crate::viewer::COMMENT_MARKER_W;

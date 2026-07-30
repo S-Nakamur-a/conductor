@@ -331,4 +331,17 @@ pub struct ViewerState {
     /// Total wrapped line count of the summary view, written during render and
     /// read by the key handler to clamp `summary_scroll`.
     pub summary_total_lines: usize,
+    /// Whether markdown files are shown rendered (SUMMARY-style prose) instead
+    /// of as raw source. Sticky for the session: it survives opening another
+    /// markdown file, and is simply ignored while a non-markdown file is open.
+    /// Only takes effect in the plain-file view — see
+    /// `is_showing_rendered_markdown`, which is what every renderer and event
+    /// handler must gate on.
+    pub md_rendered: bool,
+    /// Vertical scroll offset within the rendered-markdown view. Reset per file
+    /// (in `open_file`), unlike `md_rendered`.
+    pub md_scroll: usize,
+    /// Total wrapped line count of the rendered-markdown view, written during
+    /// render and read by the key handler to clamp `md_scroll`.
+    pub md_total_lines: usize,
 }

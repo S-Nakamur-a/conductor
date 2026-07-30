@@ -7,16 +7,18 @@
 //! Split by rendering responsibility: [`file_view`] draws the plain/annotated
 //! file content (the panel's default mode), [`diff_view`] the unified-diff
 //! mode, [`summary_view`] the branch change-summary pseudo-file,
-//! [`media_view`] images/video, [`comment_thread`] inline review-comment
-//! threads and the new-comment compose box, [`syntax`] syntax/diff annotation
-//! helpers, [`span_utils`] generic `Span` manipulation, and [`search_box`] the
-//! in-panel search input.
+//! [`markdown_view`] a markdown file rendered as prose (and its Raw/Rendered
+//! header toggle), [`media_view`] images/video, [`comment_thread`] inline
+//! review-comment threads and the new-comment compose box, [`syntax`]
+//! syntax/diff annotation helpers, [`span_utils`] generic `Span` manipulation,
+//! and [`search_box`] the in-panel search input.
 
 mod code_line;
 mod comment_thread;
 mod diff_line;
 mod diff_view;
 mod file_view;
+mod markdown_view;
 mod media_view;
 mod search_box;
 mod span_utils;
@@ -24,6 +26,7 @@ mod summary_view;
 mod syntax;
 
 pub use file_view::render;
+pub(crate) use markdown_view::toggle_segments;
 
 /// Shared definition of the inline-thread action row.
 ///

@@ -42,6 +42,7 @@ impl App {
             CommandId::RefreshDiff => self.refresh_diff(),
             CommandId::SearchInFile => self.cmd_search_in_file(),
             CommandId::ToggleHelp => self.cmd_toggle_help(),
+            CommandId::ToggleMarkdownRender => self.cmd_toggle_markdown_render(),
             CommandId::ShowReviewComments => self.cmd_show_review_comments(),
             CommandId::ShowReviewTemplates => {
                 self.review_state.template_picker_active = true;

@@ -50,6 +50,14 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Rendered markdown: the prose carries no line numbers, so only whole-view
+    // navigation applies. Checked before everything below — including the `g`
+    // symbol-hint prefix, which resolves hints by line.
+    if app.viewer_state.is_showing_rendered_markdown() {
+        handle_viewer_markdown_mode_key(app, key);
+        return;
+    }
+
     // ── pending 'g' key — symbol hints are shown, waiting for second key ──
     // Checked before the diff-mode dispatch below since gd/gi/gr/gg apply the
     // same way whether the viewer is showing a plain file or a unified diff.
@@ -202,6 +210,49 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::ShowHoverInfo) => {
             app.show_hover_info();
+        }
+        Some(Action::ToggleMarkdownRender) => {
+            app.cmd_toggle_markdown_render();
+        }
+        _ => {}
+    }
+}
+
+/// Navigate the rendered-markdown view: scroll, jump to ends, switch back to
+/// raw, or leave the panel.
+///
+/// Deliberately an allowlist rather than the full viewer dispatch: every action
+/// omitted here (comment creation, inline threads, in-file search, hover/symbol
+/// jumps, horizontal scroll) addresses content by *source line*, and rendered
+/// prose has no line numbers to address. Resolution still uses the ordinary
+/// `Viewer` context so the toggle keeps one binding across both modes.
+pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) {
+    let total = app.viewer_state.md_total_lines;
+    let action = app.keymap.resolve(&key, KeyContext::Viewer);
+
+    match action {
+        Some(Action::ToggleMarkdownRender) => app.cmd_toggle_markdown_render(),
+        Some(Action::ExitToExplorer) => app.set_focus(crate::app::Focus::Explorer),
+        Some(Action::SearchFilename) => super::open_filename_search(app),
+        // File-level, not line-level: handing the file to $EDITOR is just as
+        // meaningful from the rendered view.
+        Some(Action::OpenInEditor) => app.open_in_editor(),
+        Some(Action::NavigateDown) if app.viewer_state.md_scroll + 1 < total => {
+            app.viewer_state.md_scroll += 1;
+        }
+        Some(Action::NavigateUp) => {
+            app.viewer_state.md_scroll = app.viewer_state.md_scroll.saturating_sub(1);
+        }
+        Some(Action::ScrollHalfPageDown) => {
+            app.viewer_state.md_scroll =
+                (app.viewer_state.md_scroll + 15).min(total.saturating_sub(1));
+        }
+        Some(Action::ScrollHalfPageUp) => {
+            app.viewer_state.md_scroll = app.viewer_state.md_scroll.saturating_sub(15);
+        }
+        Some(Action::GoToTop) => app.viewer_state.md_scroll = 0,
+        Some(Action::GoToBottom) => {
+            app.viewer_state.md_scroll = total.saturating_sub(1);
         }
         _ => {}
     }

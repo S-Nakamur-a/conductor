@@ -209,6 +209,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                     if app.viewer_state.content.file_scroll > hit_0 {
                         app.viewer_state.content.file_scroll = hit_0;
                     }
+                    app.viewer_state.show_raw_for_line_target();
                     app.set_focus(Focus::Viewer);
                 }
             } else {

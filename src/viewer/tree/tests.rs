@@ -111,3 +111,28 @@ fn tree_refresh_preserves_diff_mode() {
     assert!(!vs.is_summary(), "diff mode must not turn on summary view");
     assert_eq!(vs.diff_view.diff_view_scroll, 3);
 }
+
+/// The same guarantee for the rendered-markdown view. `open_file` resets
+/// `md_scroll` — correct when the *user* opens a file, wrong on the refresh
+/// path, which re-opens the current file every time the watcher fires or the
+/// 3s poll comes round. Without the save/restore, reading a long rendered
+/// README would snap back to the top every few seconds.
+#[test]
+fn tree_refresh_preserves_rendered_markdown_scroll() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    std::fs::write(root.join("README.md"), "# t\n\nbody\n".repeat(50)).unwrap();
+
+    let mut vs = ViewerState::default();
+    vs.load_file_tree(root, 4);
+    vs.open_file(root, "README.md", 4);
+    vs.md_rendered = true;
+    vs.md_scroll = 40;
+    vs.content.file_scroll = 40;
+
+    vs.load_file_tree(root, 4);
+
+    assert_eq!(vs.content.file_scroll, 40, "raw scroll is preserved");
+    assert_eq!(vs.md_scroll, 40, "rendered scroll must be preserved too");
+    assert!(vs.md_rendered, "the mode itself must survive a refresh");
+}
