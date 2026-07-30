@@ -143,22 +143,33 @@ impl App {
         self.viewer_state.highlight_content(syntax_set, theme);
     }
 
+    /// The ref `branch`'s diff should be computed against.
+    ///
+    /// Every diff path must go through here. There are two of them — this one,
+    /// reached by `refresh_diff`, and the background computation on worktree
+    /// switch — and they used to decide the base differently, so the same
+    /// worktree showed one file list right after the switch and a different one
+    /// after the next refresh. Keeping the decision in a single method is what
+    /// stops that from silently coming back.
+    pub(super) fn diff_base_for(&self, branch: &str) -> String {
+        // A PR-review worktree may target a base other than the configured main
+        // branch (e.g. a release/develop branch); prefer the base ref recorded
+        // at intake time and only fall back to main_branch when none was saved
+        // (regular worktrees, or DB unavailable).
+        let saved_base = self
+            .review_store
+            .as_ref()
+            .and_then(|store| store.get_worktree_base_branch(branch).ok().flatten());
+        resolve_diff_base_branch(saved_base, &self.config.general.main_branch)
+    }
+
     /// Load (or reload) the diff for the currently selected worktree
-    /// against the configured main branch.
+    /// against its resolved base ref.
     pub fn refresh_diff(&mut self) {
         let word_diff = self.config.diff.word_diff;
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             let path = wt.path.clone();
-            // A PR-review worktree may target a base other than the configured
-            // main branch (e.g. a release/develop branch); prefer the base ref
-            // recorded at intake time and only fall back to main_branch when
-            // none was saved (regular worktrees, or DB unavailable).
-            let saved_base = self
-                .review_store
-                .as_ref()
-                .and_then(|store| store.get_worktree_base_branch(&wt.branch).ok().flatten());
-            let base_branch =
-                resolve_diff_base_branch(saved_base, &self.config.general.main_branch);
+            let base_branch = self.diff_base_for(&wt.branch);
             let tab_width = self.config.viewer.tab_width;
             self.diff_state
                 .load_diff(&path, &base_branch, word_diff, tab_width);

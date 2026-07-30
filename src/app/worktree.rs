@@ -80,6 +80,13 @@ impl App {
 
         self.viewer_state = ViewerState::default();
 
+        // The file lists deliberately survive until the background diff lands
+        // (swapping them for an empty pane would flicker), but the error must
+        // not: it belongs to the worktree we just left, and leaving a red
+        // banner up would attribute the outgoing worktree's failure to the
+        // incoming one.
+        self.diff_state.error = None;
+
         // Track the worktree now being loaded and seed its saved file/scroll
         // so it gets re-opened once the file tree arrives.
         let new_branch = self.selected_worktree_branch();
@@ -138,6 +145,7 @@ impl App {
         // Dispatch heavy operations to background threads.
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             let wt_path = wt.path.clone();
+            let wt_branch = wt.branch.clone();
 
             // Background file tree walk.
             {
@@ -152,48 +160,14 @@ impl App {
             // Background diff computation.
             {
                 let path = wt_path.clone();
-                let base_branch = self.config.general.main_branch.clone();
+                // Same base as `refresh_diff`: using a different one here would
+                // make the file list change out from under the user moments
+                // after the switch. `diff_base_for` is the single decision point.
+                let base_branch = self.diff_base_for(&wt_branch);
                 let word_diff = self.config.diff.word_diff;
                 let tab_width = self.config.viewer.tab_width;
                 self.bg.diff.start(move |tx| {
-                    let mut result = BgDiffResult {
-                        committed: Vec::new(),
-                        uncommitted: Vec::new(),
-                        error: None,
-                    };
-                    match DiffState::compute_diff_range_static(
-                        &path,
-                        &base_branch,
-                        true,
-                        word_diff,
-                        tab_width,
-                    ) {
-                        Ok(mut files) => {
-                            files.sort_by(|a, b| a.path.cmp(&b.path));
-                            result.committed = files;
-                        }
-                        Err(e) => {
-                            result.error = Some(format!("{e:#}"));
-                            let _ = tx.send(result);
-                            return;
-                        }
-                    }
-                    match DiffState::compute_diff_range_static(
-                        &path,
-                        &base_branch,
-                        false,
-                        word_diff,
-                        tab_width,
-                    ) {
-                        Ok(mut files) => {
-                            files.sort_by(|a, b| a.path.cmp(&b.path));
-                            result.uncommitted = files;
-                        }
-                        Err(e) => {
-                            log::warn!("failed to compute uncommitted diff: {e:#}");
-                        }
-                    }
-                    let _ = tx.send(result);
+                    let _ = tx.send(compute_bg_diff(&path, &base_branch, word_diff, tab_width));
                 });
             }
 
@@ -291,16 +265,7 @@ impl App {
 
         // Diff result.
         if let Some(result) = self.bg.diff.poll() {
-            if let Some(error) = result.error {
-                self.diff_state.committed_files.clear();
-                self.diff_state.uncommitted_files.clear();
-                self.diff_state.error = Some(error);
-            } else {
-                self.diff_state.committed_files = result.committed;
-                self.diff_state.uncommitted_files = result.uncommitted;
-                self.diff_state.error = None;
-            }
-            self.diff_state.rebuild_display_list();
+            apply_bg_diff_result(&mut self.diff_state, result);
         }
 
         // Branch details result.
@@ -372,5 +337,198 @@ impl App {
             self.branch_details.pr_url = result;
             self.branch_details.pr_loading = false;
         }
+    }
+}
+
+/// Compute both diff ranges for the background worktree-switch worker.
+///
+/// Lifted out of the worker closure so it can be exercised directly: the rule it
+/// encodes — a committed failure records the error but must not stop the
+/// uncommitted diff, which doesn't depend on the base ref — is the one this
+/// module got wrong, and inside a `bg.diff.start` closure nothing could reach it
+/// to check. Mirrors [`DiffState::load_diff`]'s handling of the same two ranges.
+fn compute_bg_diff(
+    path: &std::path::Path,
+    base_branch: &str,
+    word_diff: bool,
+    tab_width: usize,
+) -> BgDiffResult {
+    let mut result = BgDiffResult {
+        committed: Vec::new(),
+        uncommitted: Vec::new(),
+        error: None,
+    };
+    match DiffState::compute_diff_range_static(path, base_branch, true, word_diff, tab_width) {
+        Ok(mut files) => {
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            result.committed = files;
+        }
+        Err(e) => result.error = Some(format!("{e:#}")),
+    }
+    match DiffState::compute_diff_range_static(path, base_branch, false, word_diff, tab_width) {
+        Ok(mut files) => {
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            result.uncommitted = files;
+        }
+        // Non-fatal on its own: the committed half may still be worth showing.
+        Err(e) => log::warn!("failed to compute uncommitted diff: {e:#}"),
+    }
+    result
+}
+
+/// Copy a finished background diff into the [`DiffState`].
+///
+/// A free function rather than a `DiffState` method so it can be unit-tested
+/// without building a whole `App`, and so `diff_state` never has to depend on
+/// `app::types::BgDiffResult` — that would invert the module dependency.
+///
+/// Both file lists are applied unconditionally, including when `error` is set:
+/// the error only ever comes from resolving the base ref, which the uncommitted
+/// list (HEAD vs workdir+index) does not depend on. Clearing it alongside the
+/// committed list is what made a bad base ref look identical to a clean tree.
+fn apply_bg_diff_result(diff_state: &mut DiffState, result: BgDiffResult) {
+    diff_state.committed_files = result.committed;
+    diff_state.uncommitted_files = result.uncommitted;
+    diff_state.error = result.error;
+    diff_state.rebuild_display_list();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff_state::{DiffViewMode, FileDiff};
+
+    fn file(path: &str) -> FileDiff {
+        FileDiff {
+            path: path.to_string(),
+            added_lines: 1,
+            deleted_lines: 0,
+            is_new: false,
+            is_deleted: false,
+            hunks: Vec::new(),
+        }
+    }
+
+    /// The reported bug: a base ref that won't resolve used to wipe the
+    /// uncommitted list too, so 17 modified files rendered as `(0)`.
+    #[test]
+    fn bg_diff_result_with_error_keeps_uncommitted() {
+        let mut ds = DiffState::new("origin/main", DiffViewMode::Unified);
+        apply_bg_diff_result(
+            &mut ds,
+            BgDiffResult {
+                committed: Vec::new(),
+                uncommitted: vec![file("CLAUDE.md"), file("src/config.rs")],
+                error: Some("base ref 'origin/main' not found".to_string()),
+            },
+        );
+
+        assert!(ds.committed_files.is_empty());
+        assert_eq!(
+            ds.uncommitted_files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CLAUDE.md", "src/config.rs"],
+        );
+        assert!(ds.error.is_some(), "the failure must stay visible");
+
+        // Resolve every File entry back through the display list rather than
+        // just checking it's non-empty. `diff_list.rs` indexes
+        // `committed_files`/`uncommitted_files` by the entry's `file_index`, so
+        // a display list left un-rebuilt after swapping the file vectors is an
+        // out-of-bounds panic waiting for the next render — this pins the
+        // "always rebuild" invariant, not merely "something got listed".
+        let listed: Vec<&str> = (0..ds.display_list.len())
+            .filter_map(|idx| ds.resolve_file(idx))
+            .map(|(f, _section)| f.path.as_str())
+            .collect();
+        // Directory-grouped order, not input order: files under a directory
+        // node come before top-level ones.
+        assert_eq!(listed, vec!["src/config.rs", "CLAUDE.md"]);
+    }
+
+    /// Build a repo with one commit on `main`, HEAD on `feature`, and an
+    /// uncommitted file in the worktree. Returns the tempdir (kept alive by the
+    /// caller) — every path below needs a real repo, not a hand-built struct.
+    fn repo_with_uncommitted_change() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        let blob = repo.blob(b"a").unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        tb.insert("a.txt", blob, 0o100644).unwrap();
+        let tree = repo.find_tree(tb.write().unwrap()).unwrap();
+        let oid = repo
+            .commit(Some("refs/heads/main"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        let commit = repo.find_commit(oid).unwrap();
+        repo.branch("feature", &commit, true).unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        std::fs::write(dir.path().join("dirty.txt"), b"uncommitted").unwrap();
+        dir
+    }
+
+    /// The bg worker's half of the fix. `apply_bg_diff_result` only proves the
+    /// *reporting* side; this proves the worker still computes the uncommitted
+    /// diff after the committed one fails. Put the `return` back in the Err arm
+    /// and this is the test that catches it.
+    #[test]
+    fn compute_bg_diff_keeps_uncommitted_when_base_is_unresolvable() {
+        let dir = repo_with_uncommitted_change();
+
+        let result = compute_bg_diff(dir.path(), "no-such-base", false, 4);
+
+        let err = result.error.as_deref().expect("base failure must be recorded");
+        assert!(err.contains("no-such-base"), "error was: {err}");
+        assert!(result.committed.is_empty());
+        assert_eq!(
+            result
+                .uncommitted
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dirty.txt"],
+        );
+    }
+
+    /// A resolvable base leaves no error behind, so the panel shows no banner.
+    #[test]
+    fn compute_bg_diff_reports_no_error_for_a_resolvable_base() {
+        let dir = repo_with_uncommitted_change();
+
+        let result = compute_bg_diff(dir.path(), "main", false, 4);
+
+        assert_eq!(result.error, None);
+        assert!(result.committed.is_empty(), "feature == main, so nothing committed");
+        assert_eq!(
+            result
+                .uncommitted
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dirty.txt"],
+        );
+    }
+
+    /// A later successful result must clear a stale error, or the panel would
+    /// keep the error marker forever.
+    #[test]
+    fn bg_diff_result_without_error_clears_a_stale_one() {
+        let mut ds = DiffState::new("main", DiffViewMode::Unified);
+        ds.error = Some("previous failure".to_string());
+        apply_bg_diff_result(
+            &mut ds,
+            BgDiffResult {
+                committed: vec![file("src/main.rs")],
+                uncommitted: Vec::new(),
+                error: None,
+            },
+        );
+
+        assert!(ds.error.is_none());
+        assert_eq!(ds.committed_files.len(), 1);
     }
 }

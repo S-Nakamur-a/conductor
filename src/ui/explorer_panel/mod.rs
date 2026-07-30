@@ -41,9 +41,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Record actual panel heights for scroll calculations in event handling.
     let tree_inner_height = chunks[0].height.saturating_sub(2) as usize;
-    let diff_inner_height = chunks[1].height.saturating_sub(2) as usize;
+    // The diff list gives its top row to the error banner, which is not a
+    // `display_list` entry. Both the scroll page size and the mouse handler's
+    // row→index conversion have to know that, so publish the row count from
+    // here — the one place that also knows which view is on screen.
+    let shows_error_banner = app.viewer_state.explorer.explorer_bottom_view
+        == crate::viewer::ExplorerBottomView::DiffList
+        && app.diff_state.error.is_some();
+    let banner_rows = diff_list::diff_list_banner_rows(shows_error_banner);
+    let diff_inner_height = (chunks[1].height.saturating_sub(2) as usize).saturating_sub(banner_rows);
     app.viewer_state.explorer.explorer_tree_height = tree_inner_height.max(1);
     app.viewer_state.explorer.explorer_diff_list_height = diff_inner_height.max(1);
+    app.viewer_state.explorer.explorer_diff_banner_rows = banner_rows;
 
     file_tree::render_file_tree(frame, chunks[0], app, focused);
     match app.viewer_state.explorer.explorer_bottom_view {

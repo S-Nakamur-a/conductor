@@ -135,6 +135,11 @@ pub struct ExplorerState {
     pub explorer_tree_height: usize,
     /// Last known inner height of the explorer diff-list pane (updated during render).
     pub explorer_diff_list_height: usize,
+    /// Rows the diff list spends on its base-error banner (0 or 1, updated
+    /// during render). The banner is not a `display_list` entry, so anything
+    /// converting a screen row back into a list index — mouse clicks — has to
+    /// subtract it or it selects the wrong file.
+    pub explorer_diff_banner_rows: usize,
     /// Which view the explorer's bottom pane is currently showing.
     pub explorer_bottom_view: ExplorerBottomView,
     /// Index of the selected comment in the explorer comment list.
@@ -177,6 +182,7 @@ impl Default for ExplorerState {
             explorer_focus_on_diff_list: false,
             explorer_tree_height: 20,
             explorer_diff_list_height: 20,
+            explorer_diff_banner_rows: 0,
             explorer_bottom_view: ExplorerBottomView::default(),
             comment_list_selected: 0,
             comment_list_scroll: 0,
