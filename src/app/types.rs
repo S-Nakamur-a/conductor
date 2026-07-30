@@ -3,8 +3,8 @@
 //! tracking, and background-operation handles.
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::background::BackgroundOp;
 use crate::git_engine;
@@ -241,8 +241,14 @@ pub struct BackgroundOps {
     pub pr_url: BackgroundOp<Option<String>>,
     /// Background diff computation (worktree switch).
     pub diff: BackgroundOp<BgDiffResult>,
-    /// Background file tree walk (worktree switch).
-    pub file_tree: BackgroundOp<Vec<crate::viewer::FileTreeEntry>>,
+    /// Background file tree walk (worktree switch), paired with the git
+    /// status snapshot taken alongside it so `poll_worktree_switch_ops()`
+    /// can populate `FileTreeEntry::git_state` without a second `statuses()`
+    /// call on the main thread.
+    pub file_tree: BackgroundOp<(
+        Vec<crate::viewer::FileTreeEntry>,
+        crate::git_engine::status_map::GitStatusMap,
+    )>,
     /// Background branch details computation (worktree switch).
     pub branch_details: BackgroundOp<git_engine::BranchDetails>,
     /// Background symbol index build.

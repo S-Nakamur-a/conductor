@@ -7,7 +7,7 @@ use crossterm::event::{KeyModifiers, MouseEvent};
 use crate::app::{App, Focus, StatusLevel};
 
 use super::super::explorer::open_viewer_comment;
-use super::{resolve_screen_line, ClickGeometry};
+use super::{ClickGeometry, resolve_screen_line};
 
 /// Send a comment to the active Claude Code PTY via the address-conductor-comment skill.
 fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
@@ -49,7 +49,11 @@ fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
         return;
     };
     let line = format!("{}\n", run.command);
-    if let Err(e) = app.terminal.pty_manager.write_chunked_to_session(idx, &line) {
+    if let Err(e) = app
+        .terminal
+        .pty_manager
+        .write_chunked_to_session(idx, &line)
+    {
         log::warn!("failed to send test command to shell: {e}");
         app.set_status(
             "Failed to send test command to shell".to_string(),
@@ -110,9 +114,16 @@ pub(super) fn handle_viewer_column_click(
             if let Some(line_1) = resolve_screen_line(app, screen_offset) {
                 let content_col =
                     (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
-                let line_text = &app.viewer_state.content.file_content[line_1 - 1];
-                if let Some((symbol, _, _)) =
-                    crate::app::extract_symbol_at_column(line_text, content_col)
+                // `.get`, not an index: `screen_row_map` is only rebuilt on
+                // render, so a click processed in the same loop iteration as a
+                // file-watcher reload resolves against the *previous* frame's
+                // map. If the file shrank (Claude Code rewriting it, a `git
+                // checkout`), that line number is now past the end — and
+                // indexing would take the whole app down mid-click. The hover
+                // path already guards this the same way.
+                if let Some(line_text) = app.viewer_state.content.file_content.get(line_1 - 1)
+                    && let Some((symbol, _, _)) =
+                        crate::app::extract_symbol_at_column(line_text, content_col)
                 {
                     handle_symbol_click_jump(app, &symbol, screen_offset);
                 }
@@ -339,7 +350,10 @@ pub(super) fn classify_margin_click(
 /// diff renderer draws them nowhere else — so a click on a mid-range │ line
 /// redirects to the nearest covering end line instead of dead-toggling a line
 /// that never shows a thread. On an end line the minimum is the line itself.
-pub(super) fn thread_anchor_line(comments: &[crate::review_store::ReviewComment], line_1: usize) -> usize {
+pub(super) fn thread_anchor_line(
+    comments: &[crate::review_store::ReviewComment],
+    line_1: usize,
+) -> usize {
     comments
         .iter()
         .map(|c| c.line_end.unwrap_or(c.line_start) as usize)

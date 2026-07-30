@@ -9,6 +9,59 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem};
 
+/// Which of the 4 git stage-states a Changed-files row's filename color
+/// represents (D6, ADR in the plan doc). Distinct from `DiffSection`
+/// (committed/uncommitted, which section a row is diffed against) — a file
+/// can be `Uncommitted` and still color as `Staged` here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileStageState {
+    Untracked,
+    Unstaged,
+    Staged,
+    Committed,
+}
+
+/// Classify a file's stage state from its raw git status bits. `None` means
+/// `GitStatusMap` had no entry for the path at all, i.e. it's clean relative
+/// to HEAD — which is exactly what `Committed` represents here.
+///
+/// Order matters: a file can carry both `WT_*` and `INDEX_*` bits at once
+/// (edited, `git add`-ed, then edited again) — D6 says unstaged must win in
+/// that case, so the `WT_*` check runs first.
+fn file_stage_state(status: Option<git2::Status>) -> FileStageState {
+    let Some(status) = status else {
+        return FileStageState::Committed;
+    };
+    if status.is_wt_new() {
+        FileStageState::Untracked
+    } else if status.is_wt_modified()
+        || status.is_wt_deleted()
+        || status.is_wt_renamed()
+        || status.is_wt_typechange()
+    {
+        FileStageState::Unstaged
+    } else if status.is_index_new()
+        || status.is_index_modified()
+        || status.is_index_deleted()
+        || status.is_index_renamed()
+        || status.is_index_typechange()
+    {
+        FileStageState::Staged
+    } else {
+        FileStageState::Committed
+    }
+}
+
+/// Map a stage state to its D6-assigned theme color.
+fn status_color(theme: &crate::theme::Theme, state: FileStageState) -> ratatui::style::Color {
+    match state {
+        FileStageState::Untracked => theme.hint,
+        FileStageState::Unstaged => theme.error,
+        FileStageState::Staged => theme.warning,
+        FileStageState::Committed => theme.success,
+    }
+}
+
 /// Render the diff file list (bottom half) with Committed / Uncommitted sections.
 pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::diff_state::{DiffListEntry, DiffSection};
@@ -73,7 +126,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
         .enumerate()
         .skip(scroll)
         .take(list_height)
-        .map(|(idx, entry)| match entry {
+        .filter_map(|(idx, entry)| match entry {
             DiffListEntry::Directory {
                 name,
                 depth,
@@ -84,21 +137,15 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 let arrow = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
                 let label = format!("  {indent}{arrow} \u{1f4c1} {name}");
 
-                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
-                    Style::default()
-                        .fg(theme.selected_fg)
-                        .bg(theme.selected_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else if idx == vs_explorer.diff_list_selected {
-                    Style::default()
-                        .fg(theme.selected_fg_inactive)
-                        .bg(theme.selected_bg_inactive)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.info)
-                };
+                let style = crate::ui::common::list_row::row_style(
+                    theme,
+                    theme.info,
+                    idx == vs_explorer.diff_list_selected,
+                    diff_focused,
+                    app.diff_list_hover.phase(idx),
+                );
 
-                ListItem::new(Span::styled(label, style))
+                Some(ListItem::new(Span::styled(label, style)))
             }
             DiffListEntry::File {
                 section,
@@ -109,7 +156,12 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     DiffSection::Committed => &app.diff_state.committed_files,
                     DiffSection::Uncommitted => &app.diff_state.uncommitted_files,
                 };
-                let file_diff = &files[*file_index];
+                // `.get`, not an index: `display_list` and the per-section
+                // file vectors are rebuilt on different ticks, so a frame can
+                // render the older of the two. Skipping the row costs a
+                // flicker; indexing would take the whole app down from inside
+                // the render pass. The file tree above already does this.
+                let file_diff = files.get(*file_index)?;
 
                 let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
 
@@ -121,32 +173,45 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     DiffSection::Committed => "C",
                     DiffSection::Uncommitted => "U",
                 };
-                let label = format!(
-                    "  {indent}{marker} {icon} {filename} +{} -{}",
-                    file_diff.added_lines, file_diff.deleted_lines
-                );
+                let label = format!("  {indent}{marker} {icon} {filename}");
 
-                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
-                    Style::default()
-                        .fg(theme.selected_fg)
-                        .bg(theme.selected_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else if idx == vs_explorer.diff_list_selected {
-                    Style::default()
-                        .fg(theme.selected_fg_inactive)
-                        .bg(theme.selected_bg_inactive)
-                        .add_modifier(Modifier::BOLD)
-                } else if file_diff.is_new {
-                    Style::default().fg(theme.success)
-                } else if file_diff.is_deleted {
-                    Style::default().fg(theme.error)
-                } else {
-                    Style::default().fg(theme.fg)
+                // D6: the filename color reports the file's git stage state
+                // (untracked / unstaged / staged / committed), not the
+                // is_new/is_deleted section split — a file already tracked
+                // and only modified is neither "new" nor "deleted" and used
+                // to fall through to a flat `theme.fg`.
+                let stage_state =
+                    file_stage_state(app.viewer_state.tree.git_status.status(&file_diff.path));
+                let base_fg = status_color(theme, stage_state);
+                let style = crate::ui::common::list_row::row_style(
+                    theme,
+                    base_fg,
+                    idx == vs_explorer.diff_list_selected,
+                    diff_focused,
+                    app.diff_list_hover.phase(idx),
+                );
+                // The row's background/selection styling comes from `style`
+                // (via `row_style`), but +added/-deleted keep their own
+                // foreground regardless of stage state, so they're split into
+                // separate spans rather than baked into `label`.
+                let counts_style = |fg| Style {
+                    fg: Some(fg),
+                    ..style
                 };
 
                 // GitHub-style comment badge: 💬N for files with review comments,
                 // coloured by whether any are still unresolved.
-                let mut spans = vec![Span::styled(label, style)];
+                let mut spans = vec![
+                    Span::styled(label, style),
+                    Span::styled(
+                        format!(" +{}", file_diff.added_lines),
+                        counts_style(theme.diff_add),
+                    ),
+                    Span::styled(
+                        format!(" -{}", file_diff.deleted_lines),
+                        counts_style(theme.diff_del),
+                    ),
+                ];
                 if let Some(badge) = comment_badge(app, &file_diff.path, theme) {
                     spans.push(badge);
                 }
@@ -156,23 +221,23 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                         Style::default().fg(theme.success),
                     ));
                 }
-                ListItem::new(Line::from(spans))
+                Some(ListItem::new(Line::from(spans)))
             }
             DiffListEntry::Summary {} => {
-                let style = if idx == vs_explorer.diff_list_selected && diff_focused {
-                    Style::default()
-                        .fg(theme.selected_fg)
-                        .bg(theme.selected_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else if idx == vs_explorer.diff_list_selected {
-                    Style::default()
-                        .fg(theme.selected_fg_inactive)
-                        .bg(theme.selected_bg_inactive)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
-                };
-                ListItem::new(Span::styled("  \u{25A3} SUMMARY", style))
+                let selected = idx == vs_explorer.diff_list_selected;
+                let mut style = crate::ui::common::list_row::row_style(
+                    theme,
+                    theme.accent,
+                    selected,
+                    diff_focused,
+                    app.diff_list_hover.phase(idx),
+                );
+                // The unselected SUMMARY row is bold regardless of hover;
+                // `row_style` doesn't apply BOLD outside the selected cases.
+                if !selected {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                Some(ListItem::new(Span::styled("  \u{25A3} SUMMARY", style)))
             }
         });
     let items: Vec<ListItem> = error_banner.into_iter().chain(entry_items).collect();
@@ -212,15 +277,16 @@ pub(super) fn diff_list_banner_rows(has_error: bool) -> usize {
 /// Build a GitHub-style comment-count badge (e.g. ` 💬3`) for a file path, or
 /// `None` when the file has no review comments. Unresolved comments colour the
 /// badge with the accent; an all-resolved file uses muted.
-pub(crate) fn comment_badge<'a>(
-    app: &App,
-    file_path: &str,
-    theme: &crate::theme::Theme,
-) -> Option<Span<'a>> {
+fn comment_badge(app: &App, file_path: &str, theme: &crate::theme::Theme) -> Option<Span<'static>> {
     use crate::review_store::CommentStatus;
     let mut total = 0usize;
     let mut unresolved = 0usize;
-    for c in app.review_state.comments.iter().filter(|c| c.file_path == file_path) {
+    for c in app
+        .review_state
+        .comments
+        .iter()
+        .filter(|c| c.file_path == file_path)
+    {
         total += 1;
         if c.status == CommentStatus::Pending {
             unresolved += 1;
@@ -242,7 +308,8 @@ pub(crate) fn comment_badge<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{diff_list_banner_rows, diff_list_title};
+    use super::*;
+    use crate::theme::Theme;
 
     /// The whole point of the error suffix: a failed base resolution and a
     /// genuinely clean tree must not render the same title.
@@ -269,5 +336,61 @@ mod tests {
     fn banner_costs_exactly_one_row_and_only_when_erroring() {
         assert_eq!(diff_list_banner_rows(false), 0);
         assert_eq!(diff_list_banner_rows(true), 1);
+    }
+
+    /// D6's color table, independent of `status_color`'s own implementation —
+    /// re-deriving the expected color from the theme here means a bug that
+    /// swapped two colors in `status_color` would still be caught.
+    fn diff_file_status_color(
+        theme: &Theme,
+        status: Option<git2::Status>,
+    ) -> ratatui::style::Color {
+        status_color(theme, file_stage_state(status))
+    }
+
+    #[test]
+    fn diff_file_status_color_untracked_is_hint() {
+        let theme = Theme::default();
+        let status = Some(git2::Status::WT_NEW);
+        assert_eq!(diff_file_status_color(&theme, status), theme.hint);
+    }
+
+    #[test]
+    fn diff_file_status_color_unstaged_is_error() {
+        let theme = Theme::default();
+        let status = Some(git2::Status::WT_MODIFIED);
+        assert_eq!(diff_file_status_color(&theme, status), theme.error);
+    }
+
+    #[test]
+    fn diff_file_status_color_staged_is_warning() {
+        let theme = Theme::default();
+        let status = Some(git2::Status::INDEX_MODIFIED);
+        assert_eq!(diff_file_status_color(&theme, status), theme.warning);
+    }
+
+    #[test]
+    fn diff_file_status_color_committed_is_success() {
+        let theme = Theme::default();
+        // `None` stands in for "GitStatusMap has no entry for this path",
+        // i.e. clean relative to HEAD.
+        assert_eq!(diff_file_status_color(&theme, None), theme.success);
+    }
+
+    /// D6: a file edited, `git add`-ed, then edited again again carries both
+    /// WT_* and INDEX_* bits at once. It must resolve to unstaged (error),
+    /// not staged — the working-tree edit is the more recent, more relevant
+    /// state, and showing "staged" would hide that there's an uncommitted
+    /// change on top of what's staged.
+    #[test]
+    fn diff_file_status_color_staged_and_unstaged_resolves_to_unstaged() {
+        let theme = Theme::default();
+        let status = Some(git2::Status::INDEX_MODIFIED | git2::Status::WT_MODIFIED);
+        assert_eq!(
+            file_stage_state(status),
+            FileStageState::Unstaged,
+            "both staged and unstaged bits set must resolve to Unstaged"
+        );
+        assert_eq!(diff_file_status_color(&theme, status), theme.error);
     }
 }

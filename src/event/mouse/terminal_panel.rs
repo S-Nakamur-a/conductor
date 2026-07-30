@@ -6,7 +6,7 @@ use crate::app::{App, Focus};
 use crate::terminal_link;
 
 use super::super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
-use super::{register_double_click, ClickGeometry};
+use super::{ClickGeometry, register_double_click};
 
 /// Handle a left click in the right column (Claude terminal / Shell).
 pub(super) fn handle_terminal_column_click(

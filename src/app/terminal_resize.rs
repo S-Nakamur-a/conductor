@@ -54,7 +54,9 @@ impl App {
             let size = self.editor_pty_size();
             if size != self.terminal.size_editor && size.0 > 0 && size.1 > 0 {
                 self.terminal.size_editor = size;
-                self.terminal.pty_manager.resize_session(idx, size.0, size.1);
+                self.terminal
+                    .pty_manager
+                    .resize_session(idx, size.0, size.1);
             }
         }
     }
@@ -119,7 +121,14 @@ impl App {
         };
 
         let current_head = self.worktree_heads.get(&wt.branch).cloned();
-        let current_status = (wt.added, wt.modified, wt.deleted);
+        // `staged` is here specifically so `git add` / `git reset` are visible.
+        // The other three count one bucket per file with the index checked
+        // first, so staging a modified file leaves all of them unchanged — and
+        // the file watcher can't help either, since it ignores `.git/` and
+        // staging touches nothing else. Without this component the Explorer's
+        // stage-state colours (D6) would only ever update when some unrelated
+        // edit happened to trigger a refresh.
+        let current_status = (wt.added, wt.modified, wt.deleted, wt.staged);
 
         let head_changed = self.last_poll_head_oid.as_ref() != current_head.as_ref();
         let status_changed = self.last_poll_status != Some(current_status);

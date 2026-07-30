@@ -71,7 +71,8 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         Some(crate::walkthrough::WalkthroughStatus::Ready)
     );
     if walkthrough_ready
-        && app.viewer_state.explorer.explorer_bottom_view != crate::viewer::ExplorerBottomView::Walkthrough
+        && app.viewer_state.explorer.explorer_bottom_view
+            != crate::viewer::ExplorerBottomView::Walkthrough
     {
         title.push_str("\u{1f9ed} ");
     }
@@ -130,21 +131,31 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 format!("{indent}  {} {}", entry.icon, entry.name)
             };
 
-            let style = if vis_idx == selected_vis_idx && tree_focused {
-                Style::default()
-                    .fg(theme.selected_fg)
-                    .bg(theme.selected_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else if vis_idx == selected_vis_idx {
-                Style::default()
-                    .fg(theme.selected_fg_inactive)
-                    .bg(theme.selected_bg_inactive)
-                    .add_modifier(Modifier::BOLD)
-            } else if entry.is_dir {
-                Style::default().fg(theme.info)
-            } else {
-                Style::default().fg(theme.fg)
+            // Untracked/ignored entries dim regardless of file-vs-directory,
+            // taking priority over the directory/file color split below.
+            // `theme.muted` is deliberately avoided here: it's the same RGB
+            // as the background on solarized-dark (effectively invisible)
+            // and reads as a border color on github-light — see S4 in the
+            // plan doc.
+            let base_fg = match entry.git_state {
+                crate::git_engine::status_map::TreeGitState::Untracked
+                | crate::git_engine::status_map::TreeGitState::Ignored => theme.hint,
+                crate::git_engine::status_map::TreeGitState::Tracked => {
+                    if entry.is_dir {
+                        theme.info
+                    } else {
+                        theme.fg
+                    }
+                }
             };
+            let hover = app.explorer_tree_hover.phase(vis_idx);
+            let style = crate::ui::common::list_row::row_style(
+                theme,
+                base_fg,
+                vis_idx == selected_vis_idx,
+                tree_focused,
+                hover,
+            );
 
             Some(ListItem::new(Span::styled(label, style)))
         })

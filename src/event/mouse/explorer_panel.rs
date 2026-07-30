@@ -3,7 +3,7 @@
 use crate::app::{App, Focus};
 
 use super::super::explorer::navigate_to_comment_with_focus;
-use super::{register_double_click_on, ClickGeometry};
+use super::{ClickGeometry, register_double_click_on};
 
 /// Send all pending comments to Claude via /conductor:address-conductor-comment (no ID = bulk mode).
 fn ask_claude_all_comments(app: &mut App) {
@@ -30,8 +30,96 @@ fn ask_claude_all_comments(app: &mut App) {
     }
 }
 
+/// Resolve a screen cell to a file-tree visible-list index (i.e. an index into
+/// `ViewerState::visible_indices()`), or `None` if the cell isn't over a tree
+/// row at all (wrong column, the Explorer's bottom half, or above the first
+/// row). Doesn't check against the actual number of visible rows — like the
+/// pre-existing click handling, that's left to the caller via
+/// `visible.get(idx)`.
+///
+/// Shared by the click handler and the hover tracker (`Moved` in
+/// `event/mouse/mod.rs`) so the two can never resolve a click to a different
+/// row than the one that was lit up — see ADR D3.
+pub(super) fn explorer_tree_row_at(
+    geom: &ClickGeometry,
+    scroll: usize,
+    col: u16,
+    row: u16,
+) -> Option<usize> {
+    if col < geom.left_end || col >= geom.explorer_end {
+        return None;
+    }
+    // `explorer_mid_y` is the *Changed files* panel's top border, so the file
+    // tree's own bottom border sits one row above it. Both must be rejected:
+    // the tree draws `height - 2` content rows, and letting the border through
+    // returns `scroll + inner_height` — one past the last row actually drawn.
+    //
+    // That is normally masked because `divider_at` claims those two rows for
+    // resizing first, but `divider_draggable` returns false while a panel is
+    // maximized — so with the Explorer maximized, clicking the horizontal rule
+    // fell through to here and opened a file that was never on screen. The
+    // sibling `diff_list_row_at` has always excluded its own bottom border;
+    // this asymmetry was the bug.
+    if row >= geom.explorer_mid_y.saturating_sub(1) {
+        return None;
+    }
+    let inner_y = geom.main_area.y + 1; // inside border
+    if row < inner_y {
+        return None;
+    }
+    let offset = (row - inner_y) as usize;
+    Some(scroll + offset)
+}
+
+/// Resolve a screen cell to a Changed-files (diff list) visible-list index
+/// (i.e. an index into `DiffState::display_list`), or `None` if the cell
+/// isn't over a diff-list row (wrong column, the Explorer's top half, above
+/// the first row, or on/below the panel's bottom border — the latter is
+/// where the "Ask Claude All" button lives, not a list row). As with
+/// [`explorer_tree_row_at`], the actual row count is left to the caller via
+/// `display_list.get(idx)`.
+///
+/// Shared by the click handler and the hover tracker so a mismatch between
+/// "what's lit" and "what opens" is structurally impossible — see ADR D3.
+///
+/// `banner_rows` is the height of the error banner the panel draws above the
+/// list. Those rows are on screen without being in `display_list`, so every
+/// entry sits that much lower than its index suggests; the offset belongs here
+/// rather than in the callers precisely because both of them need it.
+pub(super) fn diff_list_row_at(
+    geom: &ClickGeometry,
+    scroll: usize,
+    banner_rows: usize,
+    col: u16,
+    row: u16,
+) -> Option<usize> {
+    if col < geom.left_end || col >= geom.explorer_end {
+        return None;
+    }
+    if row < geom.explorer_mid_y {
+        return None;
+    }
+    let bottom_border_y = geom.main_area.y + geom.main_area.height.saturating_sub(1);
+    if row >= bottom_border_y {
+        return None;
+    }
+    let inner_y = geom.explorer_mid_y + 1; // inside border
+    if row < inner_y {
+        return None;
+    }
+    let offset = (row - inner_y) as usize;
+    // A cell over the banner itself is over no entry at all: without this,
+    // clicking the message opens whatever happens to be scrolled to the top.
+    Some(scroll + offset.checked_sub(banner_rows)?)
+}
+
 /// Handle a left click in the Explorer column (file tree / diff list / comment list).
-pub(super) fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickGeometry) {
+pub(super) fn handle_explorer_column_click(
+    app: &mut App,
+    col: u16,
+    row: u16,
+    geom: &ClickGeometry,
+) {
     let main_area = geom.main_area;
     let explorer_mid_y = geom.explorer_mid_y;
     let explorer_end = geom.explorer_end;
@@ -89,18 +177,11 @@ pub(super) fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, ge
                 == crate::viewer::ExplorerBottomView::DiffList
             {
                 // Diff list is displayed — handle diff selection.
-                // The error banner occupies the top row(s) without being in
-                // `display_list`, so every entry sits that much lower on screen
-                // than its index suggests. Without this the click lands one file
-                // off, and clicking the message itself opens whatever happens to
-                // be scrolled to the top.
-                let Some(click_offset) =
-                    click_offset.checked_sub(app.viewer_state.explorer.explorer_diff_banner_rows)
-                else {
-                    return;
-                };
-                let idx = app.viewer_state.explorer.diff_list_scroll + click_offset;
-                if idx < app.diff_state.display_list.len() {
+                let scroll = app.viewer_state.explorer.diff_list_scroll;
+                let banner = app.viewer_state.explorer.explorer_diff_banner_rows;
+                if let Some(idx) = diff_list_row_at(geom, scroll, banner, col, row)
+                    && idx < app.diff_state.display_list.len()
+                {
                     app.viewer_state.explorer.diff_list_selected = idx;
                     // Single-click: SUMMARY pseudo-file opens the change summary.
                     if matches!(
@@ -131,11 +212,9 @@ pub(super) fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, ge
     } else {
         app.viewer_state.explorer.explorer_focus_on_diff_list = false;
         // Select the clicked file tree item.
-        let inner_y = main_area.y + 1; // inside border
-        if row >= inner_y {
-            let click_offset = (row - inner_y) as usize;
+        let scroll = app.viewer_state.tree.tree_scroll;
+        if let Some(idx) = explorer_tree_row_at(geom, scroll, col, row) {
             let visible = app.viewer_state.visible_indices();
-            let idx = app.viewer_state.tree.tree_scroll + click_offset;
             if let Some(&tree_idx) = visible.get(idx) {
                 app.viewer_state.tree.tree_selected = tree_idx;
                 // Single-click opens the file in Viewer (or toggles dir).

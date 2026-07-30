@@ -19,7 +19,11 @@ fn walk_includes_gitignored_directories_and_recurses() {
 
     // Top-level walk must surface the gitignored directory itself.
     let mut top = Vec::new();
-    ViewerState::walk_dir(root, root, 0, &mut top);
+    // No real git repo here — an empty status map (everything reads as
+    // Tracked) is fine since this test is only about the plain filesystem
+    // walk, not git-state classification (see `git_status_map` tests for that).
+    let git_status = GitStatusMap::default();
+    ViewerState::walk_dir(root, root, 0, &mut top, &git_status);
     assert!(
         top.iter().any(|e| e.name == "generated" && e.is_dir),
         "gitignored directory should still be listed: {:?}",
@@ -28,7 +32,7 @@ fn walk_includes_gitignored_directories_and_recurses() {
 
     // Expanding it must reveal nested files, including gitignored ones.
     let mut children = Vec::new();
-    ViewerState::read_dir_entries(root, &root.join("generated"), 1, &mut children);
+    ViewerState::walk_dir(root, &root.join("generated"), 1, &mut children, &git_status);
     let names: Vec<&str> = children.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"out.txt"), "files: {names:?}");
     assert!(names.contains(&"sub"), "files: {names:?}");
@@ -39,7 +43,7 @@ fn walk_includes_gitignored_directories_and_recurses() {
 
     // And recursion continues one level deeper.
     let mut deep = Vec::new();
-    ViewerState::read_dir_entries(root, &root.join("generated/sub"), 2, &mut deep);
+    ViewerState::walk_dir(root, &root.join("generated/sub"), 2, &mut deep, &git_status);
     assert!(
         deep.iter().any(|e| e.name == "inner.txt"),
         "deep files: {:?}",
@@ -57,7 +61,7 @@ fn walk_still_skips_heavy_dirs() {
     std::fs::create_dir_all(root.join("src")).unwrap();
 
     let mut top = Vec::new();
-    ViewerState::walk_dir(root, root, 0, &mut top);
+    ViewerState::walk_dir(root, root, 0, &mut top, &GitStatusMap::default());
     assert!(top.iter().any(|e| e.name == "src"));
     assert!(
         !top.iter().any(|e| e.name == "node_modules"),

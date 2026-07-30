@@ -65,6 +65,13 @@ pub struct TerminalState {
     pub claude_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
     /// Clickable regions of the Shell tab strip, recorded each render.
     pub shell_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
+    /// Which Claude tab-strip region the pointer is over, if any. Only `Close`
+    /// is drawn differently (S7), but the whole action is stored so the render
+    /// side decides what a hover means rather than the event side.
+    pub claude_tab_hover: Option<crate::ui::tab_bar::TabAction>,
+    /// Which Shell tab-strip region the pointer is over — see
+    /// [`Self::claude_tab_hover`].
+    pub shell_tab_hover: Option<crate::ui::tab_bar::TabAction>,
 }
 
 impl TerminalState {
@@ -96,6 +103,8 @@ impl TerminalState {
             shell_tab_reveal: false,
             claude_tab_hits: Vec::new(),
             shell_tab_hits: Vec::new(),
+            claude_tab_hover: None,
+            shell_tab_hover: None,
         }
     }
 

@@ -45,8 +45,10 @@ impl App {
         self.selected_worktree = 0;
         self.refresh_worktrees();
         self.viewer_state = ViewerState::default();
-        self.diff_state =
-            crate::diff_state::DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
+        self.diff_state = crate::diff_state::DiffState::new(
+            &self.config.general.main_branch,
+            self.diff_state.view_mode,
+        );
         // Restore the new repo's last selected worktree + open file/scroll.
         self.restore_selected_worktree_and_view();
         self.refresh_reviews();
@@ -106,8 +108,10 @@ impl App {
                 // armed for the *previous* repo — otherwise it could fire here
                 // and open a same-named path in the newly opened tree.
                 self.pending_view_restore = None;
-                self.diff_state =
-                    crate::diff_state::DiffState::new(&self.config.general.main_branch, self.diff_state.view_mode);
+                self.diff_state = crate::diff_state::DiffState::new(
+                    &self.config.general.main_branch,
+                    self.diff_state.view_mode,
+                );
                 self.refresh_reviews();
                 self.terminal.active_claude_session = None;
                 self.terminal.active_shell_session = None;
@@ -193,9 +197,7 @@ impl App {
                             .worktrees
                             .iter()
                             .filter_map(|wt| {
-                                wt.head_oid
-                                    .clone()
-                                    .map(|oid| (wt.branch.clone(), oid))
+                                wt.head_oid.clone().map(|oid| (wt.branch.clone(), oid))
                             })
                             .collect();
                         for (branch, head_oid) in head_updates {
@@ -326,6 +328,7 @@ mod tests {
             added: 0,
             modified: 0,
             deleted: 0,
+            staged: 0,
             is_clean: true,
             ahead: None,
             behind: None,

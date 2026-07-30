@@ -192,8 +192,6 @@ mod tests {
             path: core.file_path.clone(),
             added_lines: 3,
             deleted_lines: 0,
-            is_new: false,
-            is_deleted: false,
             hunks: Vec::new(),
         }];
         ds.display_list = vec![DiffListEntry::File {

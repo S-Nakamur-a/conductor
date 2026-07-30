@@ -77,6 +77,16 @@ pub struct TabHit {
     pub action: TabAction,
 }
 
+/// Determine which `TabAction` the given absolute screen column falls on,
+/// from the hit regions recorded by the bar's last `render` call. Row-agnostic
+/// — callers confirm the mouse is actually on the tab bar's row themselves
+/// before calling this (both click handling and, since S7, hover tracking).
+pub fn hit_at(hits: &[TabHit], col: u16) -> Option<TabAction> {
+    hits.iter()
+        .find(|h| col >= h.x0 && col < h.x1)
+        .map(|h| h.action)
+}
+
 /// One session tab to render.
 pub struct TabItem {
     /// Global PTY session index (what `Select`/`Close` carry).
@@ -95,7 +105,12 @@ pub struct TabItem {
 ///
 /// `scroll` is the desired first-visible tab index; `reveal` pans the window the
 /// minimum needed to keep the active tab visible (set it the frame after the
-/// active session changes).
+/// active session changes). `hover` is the action currently under the mouse
+/// (tracked by the caller from `Moved` events against the previous frame's
+/// hits); only `Close` hover is drawn (a `theme.gutter_hover_bg` background on
+/// the `[x]`) — no "pressed" style, since a mouse-down/up is only 1-2 frames
+/// and not worth the engineering cost (D4 revised).
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -104,6 +119,7 @@ pub fn render(
     scroll: usize,
     reveal: bool,
     is_expanded: bool,
+    hover: Option<TabAction>,
 ) -> (Vec<TabHit>, usize) {
     let mut hits: Vec<TabHit> = Vec::new();
     if area.width == 0 || area.height == 0 {
@@ -181,6 +197,15 @@ pub fn render(
             x += sep_w;
         }
         let label_w = w(label);
+        // Both tabs' [x] are `theme.error` (D4 revised): a single click now
+        // closes even an inactive tab (S8), so a gray "inactive" button that
+        // silently kills a running session must read as dangerous, not muted.
+        let close_style = Style::default().fg(theme.error);
+        let close_style = if hover == Some(TabAction::Close(item.global_idx)) {
+            close_style.bg(theme.gutter_hover_bg)
+        } else {
+            close_style
+        };
         if item.is_active {
             // Strong filled tab so the active session reads at a glance. The
             // [x] is left OUTSIDE the fill (on the default background) so its
@@ -191,11 +216,14 @@ pub fn render(
                 .bg(theme.selected_bg)
                 .add_modifier(Modifier::BOLD);
             spans.push(Span::styled(label.clone(), fill));
-            spans.push(Span::styled(close, Style::default().fg(theme.error)));
         } else {
             spans.push(Span::styled(label.clone(), item.label_style));
-            spans.push(Span::styled(close, Style::default().fg(theme.muted)));
         }
+        // The leading space of " [x]" belongs to the `Select` hit region (it's
+        // the separator before the button), so it's rendered plain; only the
+        // "[x]" glyphs themselves — the `Close` hit region — get the hover bg.
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("[x]", close_style));
         // Select covers the label (+ leading space of the close suffix);
         // Close covers the "[x]" glyphs only.
         hits.push(TabHit {
@@ -251,7 +279,10 @@ pub fn render(
     // Pinned expand toggle.
     spans.push(Span::raw(sep));
     x += sep_w;
-    spans.push(Span::styled(expand_label, Style::default().fg(expand_color)));
+    spans.push(Span::styled(
+        expand_label,
+        Style::default().fg(expand_color),
+    ));
     hits.push(TabHit {
         x0: x,
         x1: x + w(expand_label),
@@ -281,17 +312,45 @@ mod tests {
     }
 
     fn render_hits(width: u16, items: &[TabItem], scroll: usize) -> Vec<TabHit> {
+        render_hits_hover(width, items, scroll, None)
+    }
+
+    fn render_hits_hover(
+        width: u16,
+        items: &[TabItem],
+        scroll: usize,
+        hover: Option<TabAction>,
+    ) -> Vec<TabHit> {
         let theme = Theme::default();
         let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
         let mut captured = Vec::new();
         terminal
             .draw(|f| {
                 let area = f.area();
-                let (hits, _) = render(f, area, &theme, items, scroll, false, false);
+                let (hits, _) = render(f, area, &theme, items, scroll, false, false, hover);
                 captured = hits;
             })
             .unwrap();
         captured
+    }
+
+    /// Render into a `TestBackend` and return the terminal so cell styles can
+    /// be inspected directly (for hover-background / color assertions that
+    /// `render_hits`'s hit-region output can't answer).
+    fn render_buffer(
+        width: u16,
+        items: &[TabItem],
+        hover: Option<TabAction>,
+    ) -> ratatui::buffer::Buffer {
+        let theme = Theme::default();
+        let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(f, area, &theme, items, 0, false, false, hover);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
     }
 
     #[test]
@@ -318,7 +377,10 @@ mod tests {
         let width = 40u16;
         let hits = render_hits(width, &items(3), 0);
         let rightmost = hits.iter().map(|h| h.x1).max().unwrap();
-        assert_eq!(rightmost, width, "expand toggle should end at the right edge");
+        assert_eq!(
+            rightmost, width,
+            "expand toggle should end at the right edge"
+        );
     }
 
     #[test]
@@ -345,10 +407,121 @@ mod tests {
         let hits = render_hits(80, &items(3), 0);
         for i in 0..3 {
             assert!(
-                hits.iter()
-                    .any(|h| h.action == TabAction::Select(i)),
+                hits.iter().any(|h| h.action == TabAction::Select(i)),
                 "tab {i} should be selectable when everything fits"
             );
         }
+    }
+
+    /// Two tabs: 0 active, 1 inactive — enough to distinguish the active vs.
+    /// inactive close-button styling and to have a second `Close` hit to prove
+    /// hover styling doesn't leak onto it.
+    fn two_tabs() -> Vec<TabItem> {
+        vec![
+            TabItem {
+                global_idx: 0,
+                label: "[CC:0]".to_string(),
+                is_active: true,
+                label_style: Style::default(),
+            },
+            TabItem {
+                global_idx: 1,
+                label: "[CC:1]".to_string(),
+                is_active: false,
+                label_style: Style::default(),
+            },
+        ]
+    }
+
+    #[test]
+    fn tab_close_hover_style_inactive_close_is_error_not_muted() {
+        // D4 revised: S8 makes a single click close even an inactive tab, so
+        // its `[x]` must read as dangerous (`theme.error`) rather than the old
+        // muted gray, which made a destructive one-click button nearly
+        // invisible (worst case: solarized-dark, where muted ≈ the background).
+        let theme = Theme::default();
+        let items = two_tabs();
+        let hits = render_hits(80, &items, 0);
+        let close_hit = hits
+            .iter()
+            .find(|h| h.action == TabAction::Close(1))
+            .unwrap();
+        let buf = render_buffer(80, &items, None);
+        assert_eq!(buf[(close_hit.x0, 0)].fg, theme.error);
+    }
+
+    #[test]
+    fn tab_close_hover_style_active_close_is_also_error() {
+        // Unchanged from before D4, but pinned down here so a future edit
+        // can't silently regress the active tab's close button too.
+        let theme = Theme::default();
+        let items = two_tabs();
+        let hits = render_hits(80, &items, 0);
+        let close_hit = hits
+            .iter()
+            .find(|h| h.action == TabAction::Close(0))
+            .unwrap();
+        let buf = render_buffer(80, &items, None);
+        assert_eq!(buf[(close_hit.x0, 0)].fg, theme.error);
+    }
+
+    #[test]
+    fn tab_close_hover_style_applies_hover_background_only_to_hovered_close() {
+        let theme = Theme::default();
+        let items = two_tabs();
+        let hits = render_hits(80, &items, 0);
+        let hovered = hits
+            .iter()
+            .find(|h| h.action == TabAction::Close(1))
+            .unwrap();
+        let other = hits
+            .iter()
+            .find(|h| h.action == TabAction::Close(0))
+            .unwrap();
+
+        let hovered_buf = render_buffer(80, &items, Some(TabAction::Close(1)));
+        assert_eq!(hovered_buf[(hovered.x0, 0)].bg, theme.gutter_hover_bg);
+        // The other tab's close button is unaffected by tab 1's hover.
+        assert_ne!(hovered_buf[(other.x0, 0)].bg, theme.gutter_hover_bg);
+
+        // With no hover at all, neither close button gets the background.
+        let no_hover_buf = render_buffer(80, &items, None);
+        assert_ne!(no_hover_buf[(hovered.x0, 0)].bg, theme.gutter_hover_bg);
+    }
+
+    #[test]
+    fn hit_at_finds_the_action_owning_the_column() {
+        let items = two_tabs();
+        let hits = render_hits(80, &items, 0);
+        let close_hit = hits
+            .iter()
+            .find(|h| h.action == TabAction::Close(1))
+            .unwrap();
+        assert_eq!(hit_at(&hits, close_hit.x0), Some(TabAction::Close(1)));
+    }
+
+    #[test]
+    fn hit_at_is_none_outside_every_region() {
+        let items = two_tabs();
+        let hits = render_hits(80, &items, 0);
+        let past_everything = hits.iter().map(|h| h.x1).max().unwrap() + 1;
+        assert_eq!(hit_at(&hits, past_everything), None);
+    }
+
+    #[test]
+    fn tab_close_hover_style_leading_separator_space_stays_unstyled() {
+        // The space between the label and "[x]" belongs to the `Select` hit
+        // region, not `Close` — it must not pick up the hover background even
+        // while the close button next to it is hovered, or the highlight would
+        // visually bleed into the label's clickable area.
+        let theme = Theme::default();
+        let items = two_tabs();
+        let hits = render_hits(80, &items, 0);
+        let close_hit = hits
+            .iter()
+            .find(|h| h.action == TabAction::Close(1))
+            .unwrap();
+        let buf = render_buffer(80, &items, Some(TabAction::Close(1)));
+        assert_ne!(buf[(close_hit.x0 - 1, 0)].bg, theme.gutter_hover_bg);
     }
 }

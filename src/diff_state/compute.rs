@@ -10,7 +10,9 @@ use git2::Repository;
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 
-use super::model::{DiffHunk, DiffLine, DiffLineTag, DiffRange, DiffState, FileDiff, InlineSegment};
+use super::model::{
+    DiffHunk, DiffLine, DiffLineTag, DiffRange, DiffState, FileDiff, InlineSegment,
+};
 
 /// Resolve `base` — a branch name, a remote-tracking ref, a tag, or a raw OID —
 /// to the commit the diff should be based on.
@@ -250,10 +252,6 @@ impl DiffState {
 
             let delta = diff.get_delta(delta_idx).unwrap();
 
-            let status = delta.status();
-            let is_new = status == git2::Delta::Added || status == git2::Delta::Untracked;
-            let is_deleted = status == git2::Delta::Deleted;
-
             // Determine file path.
             let path = delta
                 .new_file()
@@ -409,8 +407,6 @@ impl DiffState {
                 path,
                 added_lines: total_added,
                 deleted_lines: total_deleted,
-                is_new,
-                is_deleted,
                 hunks,
             });
         }

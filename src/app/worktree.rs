@@ -9,6 +9,8 @@
 
 use std::sync::mpsc;
 
+use crate::git_engine::status_map::GitStatusMap;
+
 use super::*;
 
 impl App {
@@ -119,7 +121,7 @@ impl App {
         // Snapshot baseline so the next poll cycle doesn't trigger a redundant refresh.
         if let Some(wt) = self.worktrees.get(self.selected_worktree) {
             self.last_poll_head_oid = self.worktree_heads.get(&wt.branch).cloned();
-            self.last_poll_status = Some((wt.added, wt.modified, wt.deleted));
+            self.last_poll_status = Some((wt.added, wt.modified, wt.deleted, wt.staged));
         }
 
         // Update active sessions to match the new worktree.
@@ -151,9 +153,23 @@ impl App {
             {
                 let path = wt_path.clone();
                 self.bg.file_tree.start(move |tx| {
+                    // Computed alongside the walk (not on the main thread)
+                    // so switching worktrees doesn't add a second, separate
+                    // git-status pause — see D5.
+                    // Same fallback-and-log rationale as the synchronous path
+                    // in `ViewerState::load_file_tree`: an empty map makes the
+                    // UI claim everything is tracked and committed, so a
+                    // failure here must not pass silently.
+                    let git_status = GitStatusMap::load(&path).unwrap_or_else(|e| {
+                        log::warn!(
+                            "git status unavailable for {} during worktree switch — tree and Changed files will render as if everything is tracked and committed: {e}",
+                            path.display()
+                        );
+                        GitStatusMap::default()
+                    });
                     let mut entries = Vec::new();
-                    ViewerState::walk_dir(&path, &path, 0, &mut entries);
-                    let _ = tx.send(entries);
+                    ViewerState::walk_dir(&path, &path, 0, &mut entries, &git_status);
+                    let _ = tx.send((entries, git_status));
                 });
             }
 
@@ -254,8 +270,9 @@ impl App {
     /// Poll background worktree-switch operations (file tree, diff, branch details).
     pub fn poll_worktree_switch_ops(&mut self) {
         // File tree result.
-        if let Some(entries) = self.bg.file_tree.poll() {
+        if let Some((entries, git_status)) = self.bg.file_tree.poll() {
             self.viewer_state.tree.file_tree = entries;
+            self.viewer_state.tree.git_status = git_status;
             self.viewer_state.invalidate_visible_cache();
             // Restore the previously viewed file + scroll for this worktree now
             // that its file tree is available (one-shot).
@@ -403,8 +420,6 @@ mod tests {
             path: path.to_string(),
             added_lines: 1,
             deleted_lines: 0,
-            is_new: false,
-            is_deleted: false,
             hunks: Vec::new(),
         }
     }

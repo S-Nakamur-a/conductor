@@ -1,8 +1,8 @@
 //! Code navigation: symbol lookup under the cursor, jump-to-definition,
 //! jump history, background symbol-index builds, and on-screen symbol hints.
 
-use super::focus::Focus;
 use super::App;
+use super::focus::Focus;
 
 impl App {
     // ── Code navigation helpers ────────────────────────────────────
@@ -79,14 +79,63 @@ impl App {
         had
     }
 
+    /// Clear every piece of mouse-hover state at once (D7): the jump
+    /// underline, the popup stack, and the Explorer's row-hover highlights.
+    /// crossterm never reports the mouse leaving the terminal window, so this
+    /// is called from the few events that *do* reliably mean "the mouse isn't
+    /// resting on anything drawn right now" — any key press, `FocusLost`, and
+    /// a blocking overlay opening (see call sites in `event_loop.rs` and
+    /// `event/mouse/mod.rs`).
+    pub fn clear_all_hover(&mut self) {
+        self.clear_pointer_hover();
+        // The popup stack is only safe to drop when it is *not* pinned: a
+        // pinned modal is keyboard-driven and, by long-standing convention,
+        // survives focus and idle loss (see `HoverInfoOverlay::pinned` and
+        // `tick_hover`'s early return).
+        if !self.hover_info_overlay.pinned {
+            self.clear_hover();
+        }
+    }
+
+    /// Clear only the *pointer-driven* highlights: the jump underline and the
+    /// row / chip / tab hovers.
+    ///
+    /// Deliberately does **not** touch the hover popup stack. `handle_key_event`
+    /// already resolves the popup per keystroke with semantics this function
+    /// cannot reproduce — a pinned modal consumes the key to drive itself, and
+    /// a transient popup is dismissed while Esc specifically is swallowed so it
+    /// doesn't also trigger the focused panel's Esc action. Clearing the stack
+    /// here — which an earlier revision did, ahead of `handle_key_event` —
+    /// reset `pinned` to false before that check ever ran, making the modal's
+    /// entire keyboard path unreachable and letting Esc fire twice.
+    ///
+    /// Everything this *does* clear has no other escape hatch on a key press:
+    /// crossterm never reports the pointer leaving the window, so without this
+    /// a highlight would stay lit after the user switches to the keyboard.
+    pub fn clear_pointer_hover(&mut self) {
+        self.viewer_state.click.hover_symbol = None;
+        self.viewer_state.click.underline_pending = None;
+        self.explorer_tree_hover.set(None);
+        self.diff_list_hover.set(None);
+        // S7: bar/tab-bar hover (background-based, D1 revised).
+        self.wtbar_hover = None;
+        self.terminal.claude_tab_hover = None;
+        self.terminal.shell_tab_hover = None;
+    }
+
     /// Record the symbol the mouse is currently resting on (from a mouse-move
-    /// event). `cand` is `(symbol, 1-indexed line, anchor_row, anchor_col)` in
-    /// absolute screen coords, or `None` when the mouse is over blank space / a
-    /// non-identifier. A *new* symbol restarts the idle countdown and drops any
-    /// popup shown for the previous one.
-    pub fn set_mouse_hover_candidate(&mut self, cand: Option<(String, usize, u16, u16)>) {
+    /// event). `cand` is `(symbol, 1-indexed line, anchor_row, anchor_col,
+    /// start_col, end_col)` — the anchor is in absolute screen coords, the
+    /// cols are 0-indexed content columns (before h_scroll), carried through
+    /// to `HoverInfoOverlay::target_*` once resolved (A8). `None` when the
+    /// mouse is over blank space / a non-identifier. A *new* symbol restarts
+    /// the idle countdown and drops any popup shown for the previous one.
+    pub fn set_mouse_hover_candidate(
+        &mut self,
+        cand: Option<(String, usize, u16, u16, usize, usize)>,
+    ) {
         match cand {
-            Some((symbol, line, anchor_row, anchor_col)) => {
+            Some((symbol, line, anchor_row, anchor_col, start_col, end_col)) => {
                 let same = self
                     .hover_info_overlay
                     .pending
@@ -102,6 +151,8 @@ impl App {
                     file,
                     anchor_row,
                     anchor_col,
+                    start_col,
+                    end_col,
                     since: std::time::Instant::now(),
                     resolved: false,
                 });
@@ -123,6 +174,66 @@ impl App {
                 } else if self.hover_info_overlay.pending.take().is_some() {
                     self.dirty.mark_all();
                 }
+            }
+        }
+    }
+
+    /// Record the symbol the mouse is resting on for the jump-underline (D8),
+    /// separately from [`set_mouse_hover_candidate`]'s popup debounce. `cand`
+    /// is `(symbol, 1-indexed line, start_col, end_col)`, or `None` off any
+    /// symbol. `has_jump_modifier` is Cmd/Ctrl's state as of this move —
+    /// stored on the resolved [`crate::viewer::HoverSymbol`] to drive the
+    /// underline's color (A6/A7), and refreshed live even while resting on an
+    /// already-resolved symbol so holding/releasing the modifier updates the
+    /// color without re-running the debounce.
+    ///
+    /// D9: unlike the popup, there's no leave grace — moving off the symbol
+    /// (or onto a different one) clears any shown underline instantly.
+    pub fn set_underline_candidate(
+        &mut self,
+        cand: Option<(String, usize, usize, usize)>,
+        has_jump_modifier: bool,
+    ) {
+        match cand {
+            Some((symbol, line, start_col, end_col)) => {
+                if let Some(hs) = self.viewer_state.click.hover_symbol.as_mut()
+                    && hs.line == line
+                    && hs.start_col == start_col
+                    && hs.end_col == end_col
+                {
+                    hs.has_jump_modifier = has_jump_modifier;
+                    return;
+                }
+                let same_pending = self
+                    .viewer_state
+                    .click
+                    .underline_pending
+                    .as_ref()
+                    .is_some_and(|p| {
+                        p.line == line && p.start_col == start_col && p.end_col == end_col
+                    });
+                if same_pending {
+                    if let Some(p) = self.viewer_state.click.underline_pending.as_mut() {
+                        p.has_jump_modifier = has_jump_modifier;
+                    }
+                    return;
+                }
+                self.viewer_state.click.underline_pending = Some(crate::viewer::PendingUnderline {
+                    symbol,
+                    line,
+                    start_col,
+                    end_col,
+                    since: std::time::Instant::now(),
+                    resolved: false,
+                    has_jump_modifier,
+                });
+                // No grace (D9): a new rested-on candidate immediately hides
+                // whatever underline was shown for the previous one.
+                self.viewer_state.click.hover_symbol = None;
+            }
+            None => {
+                self.viewer_state.click.underline_pending = None;
+                self.viewer_state.click.hover_symbol = None;
             }
         }
     }
@@ -221,15 +332,20 @@ impl App {
             .as_ref()
             .is_some_and(|c| !c.resolved && c.since.elapsed() >= HOVER_IDLE);
         if ready {
-            let (symbol, file, anchor_row, anchor_col) = {
+            let (symbol, file, anchor_row, anchor_col, start_col, end_col, line) = {
                 let c = self.hover_info_overlay.pending.as_ref().unwrap();
-                (c.symbol.clone(), c.file.clone(), c.anchor_row, c.anchor_col)
+                (
+                    c.symbol.clone(),
+                    c.file.clone(),
+                    c.anchor_row,
+                    c.anchor_col,
+                    c.start_col,
+                    c.end_col,
+                    c.line,
+                )
             };
-            let info = crate::hover_info::build_hover_info(
-                &self.symbol_index,
-                &symbol,
-                file.as_deref(),
-            );
+            let info =
+                crate::hover_info::build_hover_info(&self.symbol_index, &symbol, file.as_deref());
             if let Some(c) = self.hover_info_overlay.pending.as_mut() {
                 c.resolved = true;
             }
@@ -238,9 +354,63 @@ impl App {
             // Remember which viewed file this popup describes, so the stale-file
             // guard can drop it the moment the viewer moves to another file.
             self.hover_info_overlay.shown_file = if info.is_some() { file } else { None };
+            // A8: keep the described symbol highlighted for as long as `info` is
+            // shown, independent of `ClickTracker::hover_symbol` (which the mouse
+            // may since have moved off, or which has no leave-grace at all — D9).
+            if info.is_some() {
+                self.hover_info_overlay.target_line = line;
+                self.hover_info_overlay.target_start_col = start_col;
+                self.hover_info_overlay.target_end_col = end_col;
+            }
             self.hover_info_overlay.info = info;
             self.dirty.mark_all();
         }
+    }
+
+    /// Per-frame jump-underline driver (D8/D9): once the mouse has rested on
+    /// a symbol past its own, faster debounce, resolves whether it's
+    /// jumpable and shows/hides the underline accordingly (A7 — no underline
+    /// for a non-jumpable word).
+    pub fn tick_underline_hover(&mut self) {
+        // D9: 150ms (`underline_debounce_ready`'s threshold) — long enough
+        // that a mouse merely passing over code on its way elsewhere doesn't
+        // paint-and-unpaint every symbol it crosses (0ms was tried and
+        // produces a "Christmas tree" flicker), short enough to stay clearly
+        // faster than — and independent of — the popup's 350ms `HOVER_IDLE`
+        // in `tick_hover` above, since the underline is meant to read as
+        // instantaneous compared to the popup's deliberate pause.
+        let ready = self
+            .viewer_state
+            .click
+            .underline_pending
+            .as_ref()
+            .is_some_and(|p| underline_debounce_ready(p.since.elapsed(), p.resolved));
+        if !ready {
+            return;
+        }
+
+        let (symbol, line, start_col, end_col, has_jump_modifier) = {
+            let p = self.viewer_state.click.underline_pending.as_ref().unwrap();
+            (
+                p.symbol.clone(),
+                p.line,
+                p.start_col,
+                p.end_col,
+                p.has_jump_modifier,
+            )
+        };
+        let jumpable = self.can_jump_to_symbol(&symbol);
+        if let Some(p) = self.viewer_state.click.underline_pending.as_mut() {
+            p.resolved = true;
+        }
+        self.viewer_state.click.hover_symbol = jumpable.then_some(crate::viewer::HoverSymbol {
+            text: symbol,
+            line,
+            start_col,
+            end_col,
+            has_jump_modifier,
+        });
+        self.dirty.mark_all();
     }
 
     /// Cancel the grace window because the mouse is now over the popup itself.
@@ -563,6 +733,64 @@ fn build_hover_preview(
     })
 }
 
+// ── Jump-underline decision helpers (pure, unit-tested directly) ──────
+
+/// Which of the two underline colors to draw, or `None` to draw nothing.
+///
+/// The underline is now shown on any rest over a symbol, not just while
+/// Cmd/Ctrl is held — its color is what still communicates the modifier
+/// state: `Hint` reads as "there's a definition here", `Accent` as "press
+/// now to jump" (the click itself still requires the modifier — this only
+/// changes which promise the underline makes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnderlineColorKind {
+    Hint,
+    Accent,
+}
+
+/// Decide the underline's color for a rested-on symbol (A7: non-jumpable
+/// words — keywords, unresolved identifiers — get no underline at all,
+/// matching the popup's silence for the same words).
+pub fn underline_color_kind(
+    is_jumpable: bool,
+    has_jump_modifier: bool,
+) -> Option<UnderlineColorKind> {
+    if !is_jumpable {
+        return None;
+    }
+    Some(if has_jump_modifier {
+        UnderlineColorKind::Accent
+    } else {
+        UnderlineColorKind::Hint
+    })
+}
+
+/// Whether the hover-info popup's target symbol (A8) covers `query_line`, and
+/// if so, its highlight range. Returns `None` while the popup is hidden or
+/// describing a different line — the renderer then falls back to whatever
+/// `ClickTracker::hover_symbol` (the underline) says for that line instead.
+pub fn popup_highlight_range(
+    popup_shown: bool,
+    target_line: usize,
+    target_start_col: usize,
+    target_end_col: usize,
+    query_line: usize,
+) -> Option<(usize, usize)> {
+    if popup_shown && target_line == query_line {
+        Some((target_start_col, target_end_col))
+    } else {
+        None
+    }
+}
+
+/// D9's debounce check, factored out of `tick_underline_hover` so it can be
+/// unit-tested without constructing an `App`: ready once `elapsed` has
+/// crossed 150ms and the candidate hasn't already been resolved once.
+fn underline_debounce_ready(elapsed: std::time::Duration, resolved: bool) -> bool {
+    const HOVER_UNDERLINE_MS: u64 = 150;
+    !resolved && elapsed >= std::time::Duration::from_millis(HOVER_UNDERLINE_MS)
+}
+
 // ── Free functions for symbol extraction ──────────────────────────────
 
 /// Extract a symbol name from a source code line at the cursor position.
@@ -770,11 +998,17 @@ mod tests {
     fn extract_symbol_from_line_skips_comments_and_attributes() {
         // Doc/line/block comments must not yield an English word that happens
         // to collide with a real type name (the "Building" bug).
-        assert_eq!(extract_symbol_from_line("//! Building and navigating"), None);
+        assert_eq!(
+            extract_symbol_from_line("//! Building and navigating"),
+            None
+        );
         assert_eq!(extract_symbol_from_line("/// Create a new state"), None);
         assert_eq!(extract_symbol_from_line("    // Building the list"), None);
         assert_eq!(extract_symbol_from_line("/* Building */"), None);
-        assert_eq!(extract_symbol_from_line("     * Building (block cont.)"), None);
+        assert_eq!(
+            extract_symbol_from_line("     * Building (block cont.)"),
+            None
+        );
         assert_eq!(extract_symbol_from_line("#[derive(Debug)]"), None);
         // Real code lines still resolve to their first identifier.
         assert_eq!(
@@ -785,5 +1019,76 @@ mod tests {
             extract_symbol_from_line("pub struct Building {"),
             Some("Building".to_string())
         );
+    }
+
+    // ── D8/D9/A7/A8: jump-underline decision functions ──────────────────
+
+    #[test]
+    fn viewer_hover_symbol_color_none_when_not_jumpable() {
+        // A7: a non-jumpable word never gets an underline, modifier or not.
+        assert_eq!(underline_color_kind(false, false), None);
+        assert_eq!(underline_color_kind(false, true), None);
+    }
+
+    #[test]
+    fn viewer_hover_symbol_color_hint_without_modifier() {
+        // D8: shown on any rest now (no modifier needed) — hint-colored to
+        // read as informational rather than actionable.
+        assert_eq!(
+            underline_color_kind(true, false),
+            Some(UnderlineColorKind::Hint)
+        );
+    }
+
+    #[test]
+    fn viewer_hover_symbol_color_accent_with_modifier() {
+        // D8: Cmd/Ctrl held promotes the same underline to "press now to jump".
+        assert_eq!(
+            underline_color_kind(true, true),
+            Some(UnderlineColorKind::Accent)
+        );
+    }
+
+    #[test]
+    fn viewer_hover_symbol_popup_range_matches_target_line() {
+        // A8: the popup's own target line/cols are returned regardless of
+        // where the mouse currently is.
+        assert_eq!(popup_highlight_range(true, 42, 4, 10, 42), Some((4, 10)));
+    }
+
+    #[test]
+    fn viewer_hover_symbol_popup_range_none_off_target_line() {
+        assert_eq!(popup_highlight_range(true, 42, 4, 10, 43), None);
+    }
+
+    #[test]
+    fn viewer_hover_symbol_popup_range_none_when_hidden() {
+        assert_eq!(popup_highlight_range(false, 42, 4, 10, 42), None);
+    }
+
+    #[test]
+    fn viewer_hover_symbol_debounce_not_ready_before_150ms() {
+        assert!(!underline_debounce_ready(
+            std::time::Duration::from_millis(149),
+            false
+        ));
+    }
+
+    #[test]
+    fn viewer_hover_symbol_debounce_ready_at_150ms() {
+        assert!(underline_debounce_ready(
+            std::time::Duration::from_millis(150),
+            false
+        ));
+    }
+
+    #[test]
+    fn viewer_hover_symbol_debounce_not_ready_once_resolved() {
+        // Already-resolved candidates don't get re-resolved every tick while
+        // the mouse sits still on the same symbol.
+        assert!(!underline_debounce_ready(
+            std::time::Duration::from_millis(500),
+            true
+        ));
     }
 }

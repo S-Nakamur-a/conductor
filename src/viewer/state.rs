@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use crate::git_engine::status_map::GitStatusMap;
 use crate::media_state::MediaState;
 use crate::text_input::TextInput;
 
@@ -27,6 +28,11 @@ pub struct FileTreeState {
     pub tree_scroll: usize,
     /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
     pub cached_visible_indices: Option<Rc<Vec<usize>>>,
+    /// Git status snapshot backing each entry's `git_state`. Refreshed once
+    /// per `load_file_tree()` call (not per frame, not per entry) and
+    /// reused by `ensure_children_loaded()` for lazily-loaded children in
+    /// between full rebuilds — see D5 in the plan doc.
+    pub git_status: GitStatusMap,
 }
 
 /// File content viewing state.
@@ -233,7 +239,8 @@ pub struct FilenameSearchState {
     pub filename_search_all_files: Vec<String>,
 }
 
-/// Symbol hover info for Cmd+hover underline.
+/// Symbol hover info for the jump underline (D8: shown on any rest, not just
+/// Cmd/Ctrl+hover — see `has_jump_modifier` below).
 #[derive(Debug, Clone)]
 pub struct HoverSymbol {
     /// The symbol text (e.g. "AppState").
@@ -245,6 +252,29 @@ pub struct HoverSymbol {
     pub start_col: usize,
     /// End column (exclusive, 0-indexed).
     pub end_col: usize,
+    /// Whether Cmd/Ctrl was held as of the last mouse-move over this symbol.
+    /// Drives the underline's color (D8's 2-stage disclosure): `false` draws
+    /// `theme.hint` ("there's a definition here"), `true` draws
+    /// `theme.accent` ("press now to jump"). The click contract itself is
+    /// unchanged — this only controls which promise the underline makes.
+    pub has_jump_modifier: bool,
+}
+
+/// A symbol the mouse is resting on, awaiting the jump-underline's own
+/// debounce (D9, 150ms — independent of the popup's 350ms `HOVER_IDLE` in
+/// `code_nav.rs`) before it's promoted to `ClickTracker::hover_symbol`.
+#[derive(Debug, Clone)]
+pub struct PendingUnderline {
+    pub symbol: String,
+    pub line: usize,
+    pub start_col: usize,
+    pub end_col: usize,
+    pub since: std::time::Instant,
+    /// Whether the (expensive, index-lookup) jumpability check has already
+    /// run for this rested position, so the per-frame tick doesn't repeat it
+    /// every frame while the mouse sits still.
+    pub resolved: bool,
+    pub has_jump_modifier: bool,
 }
 
 /// Double-click tracking state.
@@ -253,8 +283,12 @@ pub struct ClickTracker {
     pub hover_line: Option<usize>,
     /// Line number (1-indexed) when the mouse cursor is specifically over the gutter (line-number area).
     pub hover_gutter_line: Option<usize>,
-    /// Symbol under the mouse cursor when Cmd/Ctrl is held (for underline + click-to-jump).
+    /// Resolved jump-underline target, shown once the mouse has rested on a
+    /// jumpable symbol past the D9 debounce (`None` while waiting, or over a
+    /// non-jumpable word — A7).
     pub hover_symbol: Option<HoverSymbol>,
+    /// The rested-on candidate mid-debounce, before `hover_symbol` is decided.
+    pub underline_pending: Option<PendingUnderline>,
     /// Timestamp (ms) of the last line-number click for double-click detection.
     pub last_line_click_time: std::time::Instant,
     /// The 1-indexed line number that was last clicked on.
@@ -279,6 +313,7 @@ impl Default for ClickTracker {
             hover_line: None,
             hover_gutter_line: None,
             hover_symbol: None,
+            underline_pending: None,
             last_line_click_time: std::time::Instant::now(),
             last_line_click_line: 0,
             gutter_drag_anchor: None,

@@ -139,10 +139,6 @@ pub struct FileDiff {
     pub added_lines: usize,
     /// Number of deleted lines across all hunks.
     pub deleted_lines: usize,
-    /// Whether this file is newly created in HEAD.
-    pub is_new: bool,
-    /// Whether this file was deleted in HEAD.
-    pub is_deleted: bool,
     /// Parsed hunks with context.
     pub hunks: Vec<DiffHunk>,
 }

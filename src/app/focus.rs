@@ -151,12 +151,22 @@ impl App {
         }
     }
 
-    /// Whether a UI transition (currently the focus-border glide) is still in
-    /// flight. The main loop uses this to keep redrawing at the active frame
-    /// rate so the transition actually animates instead of stalling at the idle
-    /// tick rate.
+    /// Whether a UI transition (currently the focus-border glide or a row
+    /// hover fade-out) is still in flight. The main loop uses this to keep
+    /// redrawing at the active frame rate so the transition actually animates
+    /// instead of stalling at the idle tick rate.
+    ///
+    /// The hover fade happens to get redrawn today anyway, because mouse
+    /// movement already refreshes `last_input_time` and the idle tick rate
+    /// only kicks in after `ACTIVITY_TIMEOUT` (500ms) of no input — comfortably
+    /// longer than the fade's 120ms. But that's an accident of an unrelated
+    /// constant: if `ACTIVITY_TIMEOUT` is ever shortened, the fade would start
+    /// stalling with no visible link back to this code. Folding it in here
+    /// makes the fade animate on its own terms.
     pub fn has_active_transition(&self) -> bool {
         self.focus_changed_at.elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
+            || self.explorer_tree_hover.is_animating()
+            || self.diff_list_hover.is_animating()
     }
 
     // ── Focus cycling ────────────────────────────────────────────────
@@ -239,6 +249,9 @@ mod tests {
 
     #[test]
     fn editor_focus_uses_editor_keymap_context() {
-        assert_eq!(Focus::Editor.key_context(), crate::keymap::KeyContext::Editor);
+        assert_eq!(
+            Focus::Editor.key_context(),
+            crate::keymap::KeyContext::Editor
+        );
     }
 }

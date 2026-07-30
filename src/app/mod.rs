@@ -56,10 +56,13 @@ use crate::review_store::{self, ReviewStore};
 use crate::symbol_index::SymbolIndex;
 use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
+use crate::ui::common::list_row::HoverRow;
 use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
-pub use code_nav::extract_symbol_at_column;
+pub use code_nav::{
+    UnderlineColorKind, extract_symbol_at_column, popup_highlight_range, underline_color_kind,
+};
 pub use editor::EditorPanel;
 pub use focus::Focus;
 pub use panel_resize::{Divider, ResizeDir};
@@ -148,7 +151,7 @@ pub struct App {
     /// Last known HEAD oid for the selected worktree (for change-detection polling).
     pub last_poll_head_oid: Option<String>,
     /// Last known status signature (added, modified, deleted) for the selected worktree.
-    pub last_poll_status: Option<(usize, usize, usize)>,
+    pub last_poll_status: Option<(usize, usize, usize, usize)>,
     /// List of known repository paths (including the current one).
     pub repo_list: Vec<std::path::PathBuf>,
     /// Index of the currently active repository in repo_list.
@@ -184,6 +187,16 @@ pub struct App {
     /// `col-resize`/`row-resize` cursor (a terminal can't switch the OS cursor
     /// shape). A live drag takes precedence over hover when rendering.
     pub divider_hover: Option<Divider>,
+
+    /// Which Explorer file-tree row (by visible-list index) the mouse is
+    /// hovering, plus the fade-out state of the row it just left. Shared
+    /// tracking type so the tree, Changed files, and worktree panels don't
+    /// each reimplement the same hover/selection priority rules — see
+    /// `src/ui/common/list_row.rs`.
+    pub explorer_tree_hover: HoverRow,
+    /// Same as [`explorer_tree_hover`](Self::explorer_tree_hover) but for the
+    /// Changed files (diff) list in the Explorer's bottom half.
+    pub diff_list_hover: HoverRow,
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
@@ -274,6 +287,10 @@ pub struct App {
     /// selected worktree's chip visible. Set when the selection changes so a
     /// jump always reveals its chip, without disturbing free scrolling otherwise.
     pub wtbar_reveal_selected: bool,
+    /// Action the mouse is currently over in the worktree bar (from the last
+    /// `Moved` event, resolved against `wtbar_hits`). Drives hover background
+    /// on chips and the `[x]` delete button.
+    pub wtbar_hover: Option<crate::ui::worktree_bar::WtbarAction>,
 
     // ── Code navigation (symbol index + jump history) ───────────
     pub symbol_index: SymbolIndex,

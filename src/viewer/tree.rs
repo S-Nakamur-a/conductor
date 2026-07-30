@@ -5,6 +5,8 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::git_engine::status_map::GitStatusMap;
+
 use super::file_tree::{FileTreeEntry, file_icon};
 use super::state::ViewerState;
 
@@ -41,13 +43,39 @@ impl ViewerState {
             .file_tree
             .get(self.tree.tree_selected)
             .map(|e| e.path.clone());
-        let prev_paths: Vec<String> =
-            self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
+        let prev_paths: Vec<String> = self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
+
+        // Refresh the git status snapshot once per rebuild (not per entry —
+        // see D5). Falls back to an empty map rather than failing the whole
+        // tree rebuild over a dimming detail — but log it, because the empty
+        // map is not a neutral fallback: with no entries, everything reads as
+        // `Tracked` in the tree *and* as `Committed` (green) in Changed files,
+        // so the UI silently asserts the opposite of "you have unstaged work".
+        // A plain non-git directory takes this path legitimately (there is no
+        // repo to discover); a transient failure inside a real repo — an
+        // `index.lock` held by a concurrent git command, say — looks identical
+        // on screen, so the log is the only way to tell them apart.
+        self.tree.git_status = match GitStatusMap::load(worktree_path) {
+            Ok(map) => map,
+            Err(e) => {
+                log::warn!(
+                    "git status unavailable for {} — file tree and Changed files will render as if everything is tracked and committed: {e}",
+                    worktree_path.display()
+                );
+                GitStatusMap::default()
+            }
+        };
 
         // Rebuild the tree from disk.
         self.tree.file_tree.clear();
         self.invalidate_visible_cache();
-        Self::walk_dir(worktree_path, worktree_path, 0, &mut self.tree.file_tree);
+        Self::walk_dir(
+            worktree_path,
+            worktree_path,
+            0,
+            &mut self.tree.file_tree,
+            &self.tree.git_status,
+        );
 
         // Restore directory expansion state. For lazily-loaded dirs, also
         // load their children so the tree looks the same as before the refresh.
@@ -120,7 +148,11 @@ impl ViewerState {
         // previously selected entry so watcher/periodic refreshes don't snap the
         // cursor back to the top.
         let anchored_to_open_file = prev_file.as_ref().is_some_and(|f| {
-            self.tree.file_tree.get(self.tree.tree_selected).map(|e| &e.path) == Some(f)
+            self.tree
+                .file_tree
+                .get(self.tree.tree_selected)
+                .map(|e| &e.path)
+                == Some(f)
         });
         if !anchored_to_open_file
             && let Some(path) = prev_selected_path
@@ -316,7 +348,13 @@ impl ViewerState {
         let child_depth = entry.depth + 1;
 
         let mut children: Vec<FileTreeEntry> = Vec::new();
-        Self::read_dir_entries(worktree_root, &full_path, child_depth, &mut children);
+        Self::walk_dir(
+            worktree_root,
+            &full_path,
+            child_depth,
+            &mut children,
+            &self.tree.git_status,
+        );
 
         self.tree.file_tree[idx].children_loaded = true;
 
@@ -334,63 +372,6 @@ impl ViewerState {
 
         self.tree.file_tree.splice(insert_pos..insert_pos, children);
         self.invalidate_visible_cache();
-    }
-
-    /// Read the immediate children of `dir` and append them to `entries`.
-    /// Does not recurse — children directories will have
-    /// `children_loaded: false`.
-    fn read_dir_entries(root: &Path, dir: &Path, depth: usize, entries: &mut Vec<FileTreeEntry>) {
-        if depth > Self::MAX_DEPTH {
-            return;
-        }
-
-        let Ok(read_dir) = std::fs::read_dir(dir) else {
-            return;
-        };
-
-        let mut children: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
-
-        children.sort_by(|a, b| {
-            let a_is_dir = a.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-            let b_is_dir = b.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-            match (a_is_dir, b_is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.file_name().cmp(&b.file_name()),
-            }
-        });
-
-        for child in &children {
-            let name = child.file_name().to_string_lossy().to_string();
-
-            let child_path = child.path();
-            let is_dir = child_path.is_dir();
-
-            if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-
-            let rel_path = child_path
-                .strip_prefix(root)
-                .unwrap_or(&child_path)
-                .to_string_lossy()
-                .to_string();
-
-            let icon = if is_dir {
-                "\u{1f4c1}"
-            } else {
-                file_icon(&name)
-            };
-            entries.push(FileTreeEntry {
-                path: rel_path,
-                name,
-                depth,
-                is_dir,
-                is_expanded: false,
-                children_loaded: false,
-                icon,
-            });
-        }
     }
 
     /// Populate the filename search cache by walking the entire filesystem
@@ -436,10 +417,23 @@ impl ViewerState {
         }
     }
 
-    /// Walk `dir` and append its immediate children to `entries`.
-    /// All directories start collapsed with `children_loaded: false`;
-    /// their contents are loaded lazily when the user expands them.
-    pub fn walk_dir(root: &Path, dir: &Path, depth: usize, entries: &mut Vec<FileTreeEntry>) {
+    /// Read the immediate children of `dir` and append them to `entries`,
+    /// stamping each with its [`TreeGitState`] from `git_status`.
+    ///
+    /// Does not recurse: child directories are pushed collapsed with
+    /// `children_loaded: false`, and `ensure_children_loaded` calls back here
+    /// to fill one in when the user expands it. Serving both the initial walk
+    /// and lazy expansion from one function is deliberate — they were separate
+    /// copies of identical logic until the `git_status` parameter had to be
+    /// threaded through both, at which point the next divergence was only a
+    /// matter of time.
+    pub fn walk_dir(
+        root: &Path,
+        dir: &Path,
+        depth: usize,
+        entries: &mut Vec<FileTreeEntry>,
+        git_status: &GitStatusMap,
+    ) {
         if depth > Self::MAX_DEPTH {
             return;
         }
@@ -483,6 +477,7 @@ impl ViewerState {
             } else {
                 file_icon(&name)
             };
+            let git_state = git_status.classify(&rel_path);
             entries.push(FileTreeEntry {
                 path: rel_path,
                 name,
@@ -491,6 +486,7 @@ impl ViewerState {
                 is_expanded: false,
                 children_loaded: false,
                 icon,
+                git_state,
             });
         }
     }

@@ -363,8 +363,6 @@ mod tests {
             path: path.to_string(),
             added_lines: new_lines.len(),
             deleted_lines: 0,
-            is_new: false,
-            is_deleted: false,
             hunks: vec![DiffHunk {
                 lines,
                 func_header: None,
