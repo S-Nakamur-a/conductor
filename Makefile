@@ -2,7 +2,6 @@
 
 install:
 	cargo install --path .
-	cd plugins/conductor/mcp/conductor-comment && npm ci
 
 build:
 	cargo build --release
@@ -12,4 +11,3 @@ dev:
 
 clean:
 	cargo clean
-	rm -rf plugins/conductor/mcp/conductor-comment/dist

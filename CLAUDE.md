@@ -16,12 +16,23 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 - **Check:** `cargo check`
 - **Logging:** Set `RUST_LOG=debug` (or `info`, `warn`) before running
 
-### MCP Server (plugins/conductor/mcp/conductor-comment/)
+### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
 
-Node.js MCP server that exposes review DB tools to Claude Code sessions.
+The review DB tools are served by the conductor binary itself over stdio — no
+separate build step, no Node. `cargo install --path .` updates the binary and its
+MCP tools together, which is the point: they used to be two artifacts on two
+release channels and drifted apart.
 
-- **Build:** `cd plugins/conductor/mcp/conductor-comment && npm run build`
-- **Dev:** `cd plugins/conductor/mcp/conductor-comment && npm run dev`
+- **Run by hand:** `conductor mcp-serve --db <path>` (speaks JSON-RPC on stdout)
+- **Who starts it:** `walkthrough.rs` for headless generation (passes `--db`), and
+  `plugins/conductor/.mcp.json` for sessions inside the TUI (resolves the DB from
+  `$CONDUCTOR_DB_PATH`, injected by `pty_manager/spawn.rs`)
+- **Tool contract:** the 8 `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
+  comments become the JSON Schema descriptions the model reads, so changing one
+  changes the tool's public contract — treat them as API, not commentary.
+
+Never print to stdout from anything reachable by `mcp-serve`; it would corrupt the
+protocol. Logging goes to stderr (env_logger's default).
 
 ## Architecture
 

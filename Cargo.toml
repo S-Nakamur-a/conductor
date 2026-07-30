@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.93.0"
+version = "0.94.0"
 edition = "2024"
 
 [dependencies]
@@ -45,6 +45,16 @@ libc = "0.2"
 keymap-suite = { version = "0.1.2", features = ["crossterm"] }
 # Pinned: ratatui-image 4.x+ requires ratatui 0.30 — bump together with ratatui.
 ratatui-image = { version = "=3.0.0", default-features = false, features = ["crossterm"] }
+# `conductor mcp-serve` — the stdio MCP server the headless walkthrough session
+# talks to; see `src/mcp_serve/mod.rs`'s module doc for why it's embedded in
+# the binary rather than a separate package. `schemars` backs the
+# `#[derive(JsonSchema)]` on the tool argument structs; `tokio` is already in
+# the tree via reqwest → hyper, so only the features rmcp's stdio transport
+# needs are new. A current-thread runtime is enough — the server handles one
+# client over one pipe.
+rmcp = { version = "3.0.1", features = ["server", "macros", "transport-io"] }
+schemars = "1"
+tokio = { version = "1", features = ["rt", "io-std", "time"] }
 
 [profile.dev]
 debug = "limited"

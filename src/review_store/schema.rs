@@ -17,6 +17,24 @@ impl ReviewStore {
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .context("failed to enable foreign keys")?;
 
+        // busy_timeout must be set before the WAL switch below: switching
+        // journal_mode briefly requires an exclusive lock, and without a
+        // busy_timeout already in place a TUI connection that's already open
+        // on this DB would make that switch fail immediately with
+        // SQLITE_BUSY instead of waiting.
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")
+            .context("failed to set busy_timeout")?;
+
+        // WAL lets the TUI and the mcp-serve process hold the database open
+        // concurrently. Its failure is only logged, not propagated: the
+        // review feature still works without WAL, but returning `Err` here
+        // makes `app/lifecycle.rs` drop `review_store` entirely, which is a
+        // worse outcome (and silent unless RUST_LOG is set) than staying on
+        // the default journal mode.
+        if let Err(e) = conn.pragma_update(None, "journal_mode", "WAL") {
+            log::warn!("failed to switch database to WAL journal mode: {e}");
+        }
+
         // Create tables that have never changed.
         conn.execute_batch(
             "
@@ -335,6 +353,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn open_sets_wal_journal_mode() {
+        // WAL only takes effect on a file-backed database — `:memory:` (what
+        // `test_store()` uses) never switches to it, so this needs a real
+        // tempdir DB to exercise the PRAGMA.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("conductor.db");
+        let store = ReviewStore::open(&db_path).unwrap();
+
+        let journal_mode: String = store
+            .conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(journal_mode, "wal");
+
+        let busy_timeout: i64 = store
+            .conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(busy_timeout, 5000);
+    }
+
+    #[test]
     fn v4_commit_ref_defaults_to_head() {
         let store = test_store();
         // Insert omitting commit_ref — the v4 schema default should fill it,
@@ -362,7 +402,10 @@ mod tests {
              VALUES ('r1', 'feat/x', 'src/main.rs', 1, 'suggest', 'note', 'HEAD', 'feat/y')",
             [],
         );
-        assert!(result.is_err(), "worktree != branch should violate the CHECK");
+        assert!(
+            result.is_err(),
+            "worktree != branch should violate the CHECK"
+        );
     }
 
     #[test]

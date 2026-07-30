@@ -11,7 +11,7 @@ Terminal-based Git workspace and code review TUI written in Rust. Manages multip
 | **Rust toolchain** | 1.85+ | Edition 2024. Install via [rustup](https://rustup.rs/) |
 | **Git** | 2.x | Used for worktree operations (`git worktree add`, `git fetch`, etc.) |
 | **Claude Code** | latest | `claude` CLI must be in `$PATH`. Install via `npm install -g @anthropic-ai/claude-code` |
-| **Node.js + npm** | 20+ | Required for Claude Code installation and MCP server build |
+| **Node.js + npm** | 20+ | Required for Claude Code installation |
 
 ### Optional
 
@@ -30,7 +30,7 @@ cd conductor
 make install
 ```
 
-`make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`) and installs MCP server dependencies (`npm ci`).
+`make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`). The MCP server ships inside this same binary, so there's nothing else to install for it.
 
 ### 2. Install the Claude Code plugin
 
@@ -139,18 +139,14 @@ Requires the `gh` CLI (see Prerequisites) to be installed and authenticated.
 
 ## MCP Server
 
-Conductor includes an MCP server (`plugins/conductor/mcp/conductor-comment/`) that exposes the review database to Claude Code sessions running inside the terminal. This enables Claude Code to read and write review comments directly.
+The MCP server that exposes the review database to Claude Code sessions running inside the terminal is the `conductor` binary itself, via `conductor mcp-serve` — there's no separate package to build or keep in sync with the TUI's version.
 
-The MCP server is automatically configured when you install the Claude Code plugin (see Installation step 2).
+The MCP server is automatically configured when you install the Claude Code plugin (see Installation step 2). **`conductor` must be on `$PATH`** for this to work — the plugin's `.mcp.json` invokes it by name, not by absolute path.
 
-For development:
+To run it manually (e.g. for development):
 
 ```sh
-cd plugins/conductor/mcp/conductor-comment
-npm install
-npm run build  # compile TypeScript
-npm start      # run compiled JS
-# or: npm run dev (runs via tsx, no build step needed)
+conductor mcp-serve --db /path/to/repo/.conductor/conductor.db
 ```
 
 ## Configuration
