@@ -25,12 +25,16 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     );
 
     let title_area = app.layout_cache.title_area;
+    let menubar_area = app.layout_cache.menubar_area;
     let wtbar_area = app.layout_cache.wtbar_area;
     let main_area = app.layout_cache.main_area;
     let status_area = app.layout_cache.status_area;
 
     // ── Title bar ───────────────────────────────────────────────────
     super::super::common::render_title_bar(frame, title_area, app);
+
+    // ── Menu bar (always present, directly under the title) ─────────
+    super::super::menu_bar::render(frame, menubar_area, app);
 
     // ── Worktree monitor strip (replaces the old left column and the
     //    former CC-waiting notification bar) ─────────────────────────
@@ -99,6 +103,12 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     }
 
     render_overlays(frame, main_area, app);
+
+    // ── Menu dropdown ────────────────────────────────────────────────
+    // Drawn last among content so it sits over the panels. It hangs off the
+    // menu bar row, which is above `main_area`, so it is clamped to the whole
+    // frame rather than to the main area.
+    super::super::menu_bar::render_dropdown(frame, area, app);
 
     // ── Status bar ──────────────────────────────────────────────────
     // Show worktree branch + repo on the right of status bar.

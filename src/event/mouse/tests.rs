@@ -364,3 +364,164 @@ fn indexed_double_click_resets_on_different_idx() {
     assert_eq!(last_idx, 7);
     assert_eq!(last, t0 + Duration::from_millis(10));
 }
+
+// ── Menu bar clicks ──────────────────────────────────────────────────────
+
+mod menu_clicks {
+    use super::super::menu::{MenuClick, classify_menu_click};
+    use crate::menu::state::{BarHit, ItemHit, MenuFocus, MenuState};
+    use ratatui::layout::Rect;
+
+    const BAR_ROW: u16 = 1;
+
+    /// A state with two titles on row 1 and, optionally, menu 1's dropdown open
+    /// at rows 2..6 with one enabled row (3) and one disabled row (4).
+    fn state(open: bool) -> MenuState {
+        let mut s = MenuState {
+            bar_hits: vec![
+                BarHit {
+                    x0: 0,
+                    x1: 6,
+                    menu: 0,
+                },
+                BarHit {
+                    x0: 6,
+                    x1: 16,
+                    menu: 1,
+                },
+            ],
+            ..Default::default()
+        };
+        if open {
+            s.focus = MenuFocus::Open {
+                index: 1,
+                selected: 0,
+                scroll: 0,
+            };
+            s.dropdown_area = Rect::new(6, 2, 20, 4);
+            s.item_hits = vec![
+                ItemHit {
+                    y: 3,
+                    item: 0,
+                    enabled: true,
+                },
+                ItemHit {
+                    y: 4,
+                    item: 1,
+                    enabled: false,
+                },
+            ];
+        }
+        s
+    }
+
+    #[test]
+    fn clicking_a_title_opens_that_menu() {
+        let s = state(false);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 8, BAR_ROW),
+            MenuClick::Open(1)
+        );
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 2, BAR_ROW),
+            MenuClick::Open(0)
+        );
+    }
+
+    #[test]
+    fn clicking_the_open_title_again_closes_it() {
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 8, BAR_ROW),
+            MenuClick::Close,
+            "the same title toggles rather than re-opening"
+        );
+    }
+
+    #[test]
+    fn clicking_a_different_title_switches_menus() {
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 2, BAR_ROW),
+            MenuClick::Open(0)
+        );
+    }
+
+    #[test]
+    fn clicking_blank_bar_space_closes() {
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 40, BAR_ROW),
+            MenuClick::Close
+        );
+    }
+
+    #[test]
+    fn clicking_an_enabled_row_activates_it() {
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 10, 3),
+            MenuClick::Activate { menu: 1, item: 0 }
+        );
+    }
+
+    #[test]
+    fn clicking_a_disabled_row_does_nothing_but_keeps_the_menu_open() {
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 10, 4),
+            MenuClick::Inert
+        );
+    }
+
+    #[test]
+    fn clicking_the_dropdown_border_is_inert() {
+        // Row 2 and 5 are the popup's own border rows: inside the rect but
+        // carrying no item hit.
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 10, 2),
+            MenuClick::Inert
+        );
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 10, 5),
+            MenuClick::Inert
+        );
+    }
+
+    #[test]
+    fn clicking_outside_an_open_menu_closes_and_swallows_the_click() {
+        let s = state(true);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 60, 30),
+            MenuClick::Close,
+            "the dismissing click must not also reach the panel underneath"
+        );
+    }
+
+    #[test]
+    fn clicks_elsewhere_pass_through_when_no_menu_is_open() {
+        let s = state(false);
+        assert_eq!(classify_menu_click(&s, Some(BAR_ROW), 60, 30), MenuClick::Pass);
+    }
+
+    #[test]
+    fn a_stale_dropdown_rect_cannot_swallow_clicks_after_closing() {
+        // Regression guard: `close()` clears the recorded regions, so the rect
+        // from the last render can't keep eating clicks.
+        let mut s = state(true);
+        s.close();
+        assert_eq!(classify_menu_click(&s, Some(BAR_ROW), 10, 3), MenuClick::Pass);
+    }
+
+    #[test]
+    fn the_bar_row_is_claimed_even_with_no_menu_open() {
+        // Otherwise the click falls through to `handle_title_bar_click`, which
+        // consumes every row above the main area.
+        let s = state(false);
+        assert!(matches!(
+            classify_menu_click(&s, Some(BAR_ROW), 8, BAR_ROW),
+            MenuClick::Open(_)
+        ));
+    }
+}

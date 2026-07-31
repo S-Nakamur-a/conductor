@@ -25,6 +25,10 @@
 # ':' is bound per non-terminal layer so it passes through to the PTY in
 # terminal panels. Ctrl+P stays global for command-palette access anywhere.
 "ctrl+p" = "command_palette"
+# F10 opens the menu bar, as it does in GTK and Windows apps. The function keys
+# are otherwise unused here, so this steals nothing; Alt+<letter> mnemonics were
+# rejected because that space is already dense (alt+h/l, alt+t, alt+w).
+"f10" = "focus_menu_bar"
 # Alt+h / Alt+l — panel cycle that works everywhere, including terminals.
 "alt+h" = "cycle_focus_backward"
 "alt+l" = "cycle_focus_forward"

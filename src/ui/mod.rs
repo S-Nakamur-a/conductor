@@ -10,6 +10,7 @@ pub mod decoration;
 pub mod editor_panel;
 pub mod explorer_panel;
 pub mod markdown;
+pub mod menu_bar;
 pub mod party;
 pub mod reflow_view;
 pub mod rich;

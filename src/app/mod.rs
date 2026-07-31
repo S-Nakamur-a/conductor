@@ -292,6 +292,10 @@ pub struct App {
     /// on chips and the `[x]` delete button.
     pub wtbar_hover: Option<crate::ui::worktree_bar::WtbarAction>,
 
+    /// Menu bar interaction state: which menu is focused or open, and the
+    /// click regions recorded by the last bar/dropdown render.
+    pub menu: crate::menu::MenuState,
+
     // ── Code navigation (symbol index + jump history) ───────────
     pub symbol_index: SymbolIndex,
     pub jump_history: JumpHistory,

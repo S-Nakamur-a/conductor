@@ -3,6 +3,10 @@
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
+/// Rows the menu bar occupies. Constant — the bar is always drawn, so it is not
+/// a cache key (nothing about the app state can change it).
+const MENUBAR_HEIGHT: u16 = 1;
+
 /// Cached layout rectangles computed once per frame.
 /// Shared between render_ui, mouse event handler, PTY sizing, and decoration.
 #[derive(Default, Clone)]
@@ -23,6 +27,12 @@ pub struct LayoutCache {
     pub explorer_split_pct: u16,
     /// Title bar area.
     pub title_area: Rect,
+    /// Menu bar area — one row directly under the title bar. Unlike the
+    /// worktree strip this is *not* hidden while a panel is maximized: a menu
+    /// you can only reach by un-maximizing is a menu you stop reaching for, and
+    /// the maximized panel is exactly where you are most likely to want a
+    /// command you don't have memorised.
+    pub menubar_area: Rect,
     /// Notification bar area.
     pub notif_area: Rect,
     /// Worktree monitor strip area (full-width, between notif and main).
@@ -79,6 +89,7 @@ impl LayoutCache {
 
         let outer = Layout::vertical([
             Constraint::Length(1),
+            Constraint::Length(MENUBAR_HEIGHT),
             Constraint::Length(notif_height),
             Constraint::Length(wtbar_height),
             Constraint::Min(0),
@@ -87,10 +98,11 @@ impl LayoutCache {
         .split(frame_area);
 
         self.title_area = outer[0];
-        self.notif_area = outer[1];
-        self.wtbar_area = outer[2];
-        self.main_area = outer[3];
-        self.status_area = outer[4];
+        self.menubar_area = outer[1];
+        self.notif_area = outer[2];
+        self.wtbar_area = outer[3];
+        self.main_area = outer[4];
+        self.status_area = outer[5];
 
         let (left_w, explorer_w, viewer_w) = accordion_widths(
             expanded_panel,

@@ -130,3 +130,75 @@ fn custom_percentages_are_respected() {
     assert_eq!(explorer, 30);
     assert_eq!(viewer, 30);
 }
+
+// ── Menu bar row ─────────────────────────────────────────────────
+
+#[test]
+fn menu_bar_sits_directly_under_the_title_bar() {
+    let mut cache = LayoutCache::default();
+    cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
+    assert_eq!(cache.title_area.y, 0);
+    assert_eq!(cache.title_area.height, 1);
+    assert_eq!(
+        cache.menubar_area.y,
+        cache.title_area.y + cache.title_area.height,
+        "the menu bar must be the row immediately below the title bar"
+    );
+    assert_eq!(cache.menubar_area.height, 1);
+    assert_eq!(
+        cache.menubar_area.width, 200,
+        "the bar spans the full width so its blank stretch is still clickable"
+    );
+}
+
+#[test]
+fn menu_bar_stays_visible_while_a_panel_is_maximized() {
+    // Unlike the worktree strip, which collapses to give the expanded panel
+    // its rows back. A menu reachable only after un-maximizing is a menu that
+    // stops being used.
+    let mut cache = LayoutCache::default();
+    cache.update(
+        rect(200, 50),
+        Some(Focus::Explorer),
+        false,
+        &layout(24, 38, 80),
+        80,
+    );
+    assert_eq!(cache.menubar_area.height, 1);
+    assert_eq!(cache.wtbar_area.height, 0, "worktree strip still collapses");
+}
+
+#[test]
+fn menu_bar_row_comes_out_of_the_main_area() {
+    // The bar takes its row from the content region, not from the status bar
+    // or by overdrawing the worktree strip.
+    let mut cache = LayoutCache::default();
+    let cfg = layout(24, 38, 80);
+    cache.update(rect(200, 50), None, false, &cfg, 80);
+
+    assert_eq!(cache.main_area.y, cache.wtbar_area.y + cache.wtbar_area.height);
+    assert_eq!(
+        cache.main_area.y + cache.main_area.height,
+        cache.status_area.y,
+        "main area must still butt up against the status bar"
+    );
+    // title(1) + menubar(1) + wtbar(1) + status(1) = 4 rows of chrome.
+    assert_eq!(cache.main_area.height, 50 - 4);
+}
+
+#[test]
+fn every_vertical_row_is_accounted_for() {
+    // No gaps and no overlaps between the stacked regions, at a couple of
+    // heights including one short enough to squeeze the main area.
+    for h in [50_u16, 10, 6] {
+        let mut cache = LayoutCache::default();
+        cache.update(rect(120, h), None, false, &layout(24, 38, 80), 80);
+        let total = cache.title_area.height
+            + cache.menubar_area.height
+            + cache.notif_area.height
+            + cache.wtbar_area.height
+            + cache.main_area.height
+            + cache.status_area.height;
+        assert_eq!(total, h, "regions must tile the frame exactly at height {h}");
+    }
+}

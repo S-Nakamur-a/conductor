@@ -23,6 +23,15 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.overlays.command_palette.selected = 0;
             true
         }
+        Action::FocusMenuBar => {
+            // Focus the bar without dropping a list open; Down/Enter does that.
+            // Gated on no overlay being up, which is the invariant the key
+            // dispatcher relies on when it checks the menu ahead of overlays.
+            if app.overlays.active == ActiveOverlay::None {
+                app.menu.focus_bar(0);
+            }
+            true
+        }
         Action::OpenCommentList => {
             app.viewer_state.explorer.comment_list_selected = 0;
             app.viewer_state.explorer.comment_list_scroll = 0;
