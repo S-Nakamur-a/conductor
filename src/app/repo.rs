@@ -51,6 +51,14 @@ impl App {
         );
         // Restore the new repo's last selected worktree + open file/scroll.
         self.restore_selected_worktree_and_view();
+        // Re-aim the symbol index, now that the worktree selection has settled
+        // on the incoming repository. Without this the index keeps answering
+        // from the repository we just left: a path like `src/app/mod.rs` exists
+        // in both, so a jump lands in the new repo's file at the old repo's
+        // line number, and the hover popup reads its text out of the old tree
+        // entirely. Worktree switching funnels through `on_worktree_changed`,
+        // but a repository switch never passes through it.
+        self.start_symbol_index_build();
         self.refresh_reviews();
         self.terminal.active_claude_session = None;
         self.terminal.active_shell_session = None;

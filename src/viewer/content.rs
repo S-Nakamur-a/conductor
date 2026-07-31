@@ -25,6 +25,10 @@ impl ViewerState {
         self.content.highlighted_cache_key = None;
         self.content.grep_highlight_line = None;
         self.content.test_runs.clear();
+        // Dropped up front rather than only on the success path: the media and
+        // read-error branches below also replace `file_content`, and a mask
+        // left over from the previous file would describe the wrong text.
+        self.content.code_mask = crate::symbol_index::CodeMask::default();
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
@@ -55,6 +59,11 @@ impl ViewerState {
                 self.content.current_file = Some(relative_path.to_string());
                 self.content.file_scroll = 0;
                 self.content.h_scroll = 0;
+                // Record which identifiers are code before anything can be
+                // navigated. Built from `text` rather than `file_content`
+                // because tree-sitter needs the file as written, tabs and all.
+                self.content.code_mask =
+                    crate::symbol_index::CodeMask::compute(&text, relative_path);
                 // Detect runnable tests for the ▶ run buttons, dispatching by
                 // language: Go's `*_test.go` files and Rust's `*.rs` files.
                 self.content.test_runs = if relative_path.ends_with(".rs") {
@@ -179,6 +188,81 @@ pub fn is_markdown_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Opening a file must leave behind a mask that agrees with the tab-expanded
+    /// lines the viewer will render, because every navigation query indexes into
+    /// that expansion. Driven through `open_file` rather than `CodeMask::compute`
+    /// so the expansion and the mask are exercised against each other; the
+    /// fixture is tab-indented for exactly that reason.
+    #[test]
+    fn opening_a_file_masks_its_comments_and_strings() {
+        let dir = std::env::temp_dir().join(format!("mask_open_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sample.go"),
+            "package main\n// Server handles things\nfunc Serve() {\n\tname := \"Server\"\n}\n",
+        )
+        .unwrap();
+
+        let mut vs = ViewerState::default();
+        vs.open_file(&dir, "sample.go", 4);
+
+        // Walk each line the way `build_symbol_hints` does and collect the
+        // words it would offer as jumpable.
+        let mut jumpable: Vec<(usize, String)> = Vec::new();
+        for (i, line) in vs.content.file_content.iter().enumerate() {
+            let line_1 = i + 1;
+            for (k, (_, _, w)) in crate::symbol_index::identifier_occurrences(line).enumerate() {
+                if vs.content.code_mask.is_code(line_1, k) {
+                    jumpable.push((line_1, w.to_string()));
+                }
+            }
+        }
+
+        // "Server" appears three times: in the comment, as the function's
+        // neighbour in code, and inside a string. Only the code one survives.
+        let servers: Vec<usize> = jumpable
+            .iter()
+            .filter(|(_, w)| w == "Server")
+            .map(|(line, _)| *line)
+            .collect();
+        assert!(
+            servers.is_empty(),
+            "comment and string occurrences of `Server` must not be jumpable, got lines {servers:?}"
+        );
+
+        assert!(jumpable.contains(&(3, "func".to_string())));
+        assert!(jumpable.contains(&(3, "Serve".to_string())));
+        // The tab-indented line still resolves, which is the point of keying
+        // the mask by occurrence rather than column.
+        assert!(jumpable.contains(&(4, "name".to_string())));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file we have no grammar for offers nothing rather than offering the
+    /// previous file's answers or falling back to raw word matching.
+    #[test]
+    fn opening_an_unsupported_language_clears_the_mask() {
+        let dir = std::env::temp_dir().join(format!("mask_unsup_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.rs"), "fn keep() {}\n").unwrap();
+        std::fs::write(dir.join("b.py"), "def keep():\n    pass\n").unwrap();
+
+        let mut vs = ViewerState::default();
+        vs.open_file(&dir, "a.rs", 4);
+        assert!(vs.content.code_mask.is_code(1, 0), "Rust file is masked");
+
+        vs.open_file(&dir, "b.py", 4);
+        assert!(
+            !vs.content.code_mask.is_code(1, 0),
+            "Python must not inherit the Rust file's mask"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn markdown_paths_are_detected_case_insensitively() {

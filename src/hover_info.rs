@@ -13,6 +13,9 @@ use crate::symbol_index::SymbolIndex;
 const MAX_SIGNATURE_LINES: usize = 8;
 /// Maximum number of doc-comment lines collected before truncating with `…`.
 const MAX_DOC_LINES: usize = 12;
+/// How many references the popup counts before giving up and saying "50+".
+/// Bounds the work on a path that runs inside a frame — see the call site.
+const REF_COUNT_CAP: usize = 50;
 
 /// Hover information for a symbol, ready for rendering.
 pub struct HoverInfo {
@@ -30,8 +33,12 @@ pub struct HoverInfo {
     pub signature_lines: Vec<String>,
     /// Number of definitions matching the name (>1 means the shown one is one of several).
     pub def_count: usize,
-    /// Number of textual references across the repo.
+    /// Number of code-position references across the repo, counted only up to
+    /// [`REF_COUNT_CAP`]. See [`ref_count_capped`](Self::ref_count_capped).
     pub ref_count: usize,
+    /// Whether the count stopped at the cap, meaning the real total is at
+    /// least `ref_count` rather than exactly it. Rendered as a trailing `+`.
+    pub ref_count_capped: bool,
 }
 
 /// Build hover info for `symbol`. Prefers a definition in `current_file` when
@@ -59,7 +66,11 @@ pub fn build_hover_info(
         return None;
     }
 
-    let ref_count = index.find_references(symbol, &root).len();
+    // Capped, not exact: this runs on the UI thread every time the pointer
+    // settles on a symbol, and an exact count for a common name means parsing
+    // every file that mentions it (~157ms for `new` here — ten dropped
+    // frames). The popup reports "50+" past the cap.
+    let (ref_count, ref_count_capped) = index.count_references_upto(symbol, &root, REF_COUNT_CAP);
 
     Some(HoverInfo {
         symbol_name: symbol.to_string(),
@@ -70,6 +81,7 @@ pub fn build_hover_info(
         signature_lines: extract_signature(&lines, def_idx),
         def_count: defs.len(),
         ref_count,
+        ref_count_capped,
     })
 }
 

@@ -43,7 +43,7 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     // Pull owned data so the immutable borrow of `info` ends before we write
     // the hit-test rects back onto `app.hover_info_overlay`.
-    let (symbol_name, signature_lines, doc_lines, loc, ref_count) = {
+    let (symbol_name, signature_lines, doc_lines, loc, ref_count, ref_count_capped) = {
         let info = app.hover_info_overlay.info.as_ref().unwrap();
         let mut loc = format!("{}  {}:{}", info.kind, info.file_path, info.line);
         if info.def_count > 1 {
@@ -55,6 +55,7 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
             info.doc_lines.clone(),
             loc,
             info.ref_count,
+            info.ref_count_capped,
         )
     };
     let refs_present = ref_count > 0;
@@ -76,8 +77,14 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     body.push(Line::from(""));
     body.push(Line::from(Span::styled(loc, Style::default().fg(theme.muted))));
 
-    // The clickable refs row (drawn on its own reserved bottom line).
-    let refs_label = format!("▸ {ref_count} refs — click to list");
+    // The clickable refs row (drawn on its own reserved bottom line). The `+`
+    // marks a count that stopped at the cap, so a common name reads as "50+
+    // refs" rather than claiming an exact 50 it never finished counting.
+    let refs_label = if ref_count_capped {
+        format!("▸ {ref_count}+ refs — click to list")
+    } else {
+        format!("▸ {ref_count} refs — click to list")
+    };
 
     // Width fits the widest of body + refs row.
     let content_w = body

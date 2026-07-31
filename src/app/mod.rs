@@ -61,7 +61,7 @@ use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
 pub use code_nav::{
-    UnderlineColorKind, extract_symbol_at_column, popup_highlight_range, underline_color_kind,
+    UnderlineColorKind, masked_symbol_at_column, popup_highlight_range, underline_color_kind,
 };
 pub use editor::EditorPanel;
 pub use focus::Focus;

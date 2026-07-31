@@ -122,8 +122,12 @@ pub(super) fn handle_viewer_column_click(
                 // indexing would take the whole app down mid-click. The hover
                 // path already guards this the same way.
                 if let Some(line_text) = app.viewer_state.content.file_content.get(line_1 - 1)
-                    && let Some((symbol, _, _)) =
-                        crate::app::extract_symbol_at_column(line_text, content_col)
+                    && let Some((symbol, _, _)) = crate::app::masked_symbol_at_column(
+                        line_text,
+                        content_col,
+                        line_1,
+                        &app.viewer_state.content.code_mask,
+                    )
                 {
                     handle_symbol_click_jump(app, &symbol, screen_offset);
                 }
