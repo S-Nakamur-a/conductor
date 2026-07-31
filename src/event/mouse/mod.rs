@@ -16,6 +16,7 @@ use super::explorer::open_viewer_comment;
 
 mod bars;
 mod explorer_panel;
+mod menu;
 mod scroll;
 mod terminal_panel;
 mod viewer_panel;
@@ -436,6 +437,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 app.viewer_state.scroll_right(4);
             }
         MouseEventKind::Down(MouseButton::Left) => {
+            // The menu bar goes first, for the same reason the worktree strip
+            // beats the title bar below: `handle_title_bar_click` claims every
+            // row above `main_area`. It also owns the dismiss-on-outside-click,
+            // which has to see the click before any panel does.
+            if menu::handle_menu_click(app, col, row) {
+                return;
+            }
             // Notification / worktree / title bar clicks are consumed first.
             // The worktree bar must be checked before the title bar: the latter
             // treats every row above `main_area` as "title" and would otherwise
@@ -540,6 +548,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
         }
         MouseEventKind::Moved => {
+            // Menu hover first, and it takes the whole event when a menu is up
+            // — panels under an open dropdown must not light up as if they were
+            // reachable.
+            if menu::handle_menu_hover(app, col, row) {
+                return;
+            }
+
             // Light up the divider under the cursor as a resize affordance — the
             // terminal stand-in for a col-/row-resize mouse cursor (a plain hover
             // never mutates a ratio; only a drag does).

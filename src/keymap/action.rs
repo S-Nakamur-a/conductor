@@ -23,6 +23,13 @@ keymap_suite::actions! {
         Quit => "quit",
         ShowHelp => "show_help",
         CommandPalette => "command_palette",
+        /// Give the menu bar keyboard focus. Arrow keys then browse the titles
+        /// and Down/Enter drops the list open — the GTK/Windows convention,
+        /// which is why the default chord is `f10`. No Alt+letter mnemonics:
+        /// alt+<letter> is already dense here (alt+h/l focus cycling, alt+t
+        /// theme picker, alt+w walkthrough), and a mnemonic set would have to
+        /// steal from it.
+        FocusMenuBar => "focus_menu_bar",
         CycleFocusForward => "cycle_focus_forward",
         CycleFocusBackward => "cycle_focus_backward",
         /// Switch the selected worktree to the next/previous one, from any panel
@@ -190,6 +197,7 @@ impl Action {
             Action::Quit => "Quit application",
             Action::ShowHelp => "Toggle this cheatsheet",
             Action::CommandPalette => "Command palette",
+            Action::FocusMenuBar => "Focus the menu bar",
             Action::CycleFocusForward => "Focus next panel",
             Action::CycleFocusBackward => "Focus previous panel",
             Action::NextWorktree => "Next worktree",
@@ -318,6 +326,10 @@ impl Action {
                 | Action::FocusTerminalClaude
                 | Action::FocusTerminalShell
                 | Action::CommandPalette
+                // The menu bar must be reachable from a terminal panel too —
+                // that's where most time is spent, and a menu you can only open
+                // after focusing something else is a menu you stop using.
+                | Action::FocusMenuBar
                 | Action::CycleFocusForward
                 | Action::CycleFocusBackward
                 | Action::NextWorktree

@@ -25,6 +25,7 @@ mod jump_history;
 mod keymap;
 mod mcp_serve;
 mod media_state;
+mod menu;
 mod overlay;
 mod pr_intake;
 mod pty_manager;

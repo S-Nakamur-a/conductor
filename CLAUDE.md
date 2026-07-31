@@ -48,10 +48,18 @@ Single-struct state model: `App` in `app/` (`app/mod.rs`, with logic split acros
 
 ```
 Title bar
+Menu bar (full width)
 Worktree monitor strip (full width)
 Explorer | Viewer | Terminal (Claude Code / Shell)
 Status bar
 ```
+
+- The **menu bar** (`ui/menu_bar.rs`, `menu/`) is a permanent one-row strip of
+  dropdown menus directly under the title bar — the browsable route to the same
+  commands the palette and the keybindings run. `f10` focuses it. Unlike the
+  worktree strip it stays visible while a panel is maximized. Menu rows carry a
+  `CommandId` and go through `App::execute_palette_command`, so the menu holds
+  no command logic of its own; `menu/model.rs` is taxonomy and labels only.
 
 - The worktree list is **not** a column: it lives in a full-width monitor strip
   along the top (`ui/worktree_bar.rs`), showing every worktree's branch, dirty
@@ -72,6 +80,7 @@ Status bar
 |--------|------|
 | `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `walkthrough_view.rs`) |
 | `event/` | Keyboard/mouse event dispatch based on Focus and overlay state (per-context submodules) |
+| `menu/` | Menu bar model (`model.rs` — which command sits under which menu), interaction state (`state.rs`), and availability predicates for the greyed-out rows (`enabled.rs`) |
 | `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
 | `diff_state.rs` | Diff data model (file diffs, hunks, lines) using `similar` crate |
 | `viewer/` | File tree model (`file_tree.rs`) and file content buffer (`file_view.rs`) |

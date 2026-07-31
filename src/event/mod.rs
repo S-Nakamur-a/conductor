@@ -10,6 +10,7 @@ mod dialogs;
 mod explorer;
 mod explorer_walkthrough;
 mod global;
+mod menu;
 mod mouse;
 mod overlay;
 mod overlay_helpers;
@@ -32,6 +33,7 @@ use self::dialogs::{handle_publish_confirm_key, handle_update_key};
 use self::explorer::handle_explorer_comment_list_key;
 use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
+use self::menu::handle_menu_key;
 use self::overlay::*;
 use self::overlay_helpers::dismiss_overlays;
 use self::reflow_key::handle_reflow_key;
@@ -191,6 +193,16 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             }
             _ => {}
         }
+    }
+
+    // ── 0.5. Menu bar — consumes ALL keys while focused ───────────────
+    //
+    // Ahead of the overlay dispatch because the menu is only ever active when
+    // no overlay is (opening it is gated on that below), so reaching this first
+    // costs nothing and keeps the menu's own Esc/arrow handling in one place.
+    if app.menu.focus.is_active() {
+        handle_menu_key(app, key);
+        return;
     }
 
     // ── 1. Overlay / modal dispatch — consume ALL keys when active ────

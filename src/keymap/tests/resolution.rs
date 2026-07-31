@@ -406,3 +406,29 @@ fn viewer_c_is_add_comment() {
         Some(Action::AddComment)
     );
 }
+
+#[test]
+fn f10_opens_the_menu_bar_from_every_context() {
+    // The menu bar is only discoverable if its chord actually resolves. It is
+    // also the one place a function key is used, so a parser that silently
+    // dropped `f10` would leave the bar keyboard-unreachable while every other
+    // binding kept working.
+    let km = default_keymap();
+    let f10 = KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE);
+
+    assert_eq!(km.resolve(&f10, KeyContext::Global), Some(Action::FocusMenuBar));
+    // Including over a PTY, where most time is spent.
+    assert_eq!(
+        km.resolve(&f10, KeyContext::Terminal),
+        Some(Action::FocusMenuBar),
+        "must fire while a terminal panel is focused"
+    );
+    assert_eq!(km.resolve(&f10, KeyContext::Explorer), Some(Action::FocusMenuBar));
+
+    // And it must be advertised in the generated cheatsheet.
+    assert_eq!(
+        km.keys_in_layer(KeyContext::Global, Action::FocusMenuBar),
+        vec!["f10".to_string()],
+        "the cheatsheet reads this; an empty result means the binding is invisible"
+    );
+}

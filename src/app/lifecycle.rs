@@ -167,6 +167,7 @@ impl App {
             wtbar_scroll: 0,
             wtbar_reveal_selected: false,
             wtbar_hover: None,
+            menu: Default::default(),
             symbol_index: SymbolIndex::new(PathBuf::new()),
             jump_history: JumpHistory::new(),
             references_overlay: ReferencesOverlay::default(),
