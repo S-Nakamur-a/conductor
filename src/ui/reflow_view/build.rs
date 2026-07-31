@@ -6,6 +6,8 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::claude_log::{DisplayBlock, LogEntry, Role};
 
@@ -39,6 +41,14 @@ pub(crate) struct BuildCtx<'a> {
 
 /// Block index standing for the blank separator line between entries.
 pub(crate) const SEPARATOR_BLOCK: usize = usize::MAX;
+
+/// Rightmost column a gutter marker can start at, and so the last column
+/// [`width_risk_hole`] scans. Markers are emitted at column 0 by
+/// [`helpers::with_marker`](super::helpers::with_marker) and
+/// [`fit_glyph_line`](super::helpers::fit_glyph_line), and at column 2 by
+/// [`tool_lines`](super::tool_lines)' `"  ⎿  "` / `" ⎿  "` prefixes. Anything
+/// past this is body text, where the same characters are content.
+pub(crate) const MAX_GUTTER_GLYPH_COL: usize = 2;
 
 /// Text of the `✻` line marking where a `/compact` cut the context (measured
 /// verbatim from a resumed transcript). Conductor cannot honour the `ctrl+o`
@@ -404,12 +414,40 @@ fn is_annotation_only(entry: &LogEntry) -> bool {
 /// ratatui's diff discontinuous there, which makes the crossterm backend emit
 /// an absolute `MoveTo` — the same trick. Verified against the real backend
 /// in `super::render`'s tests.
+///
+/// Two things this must get right, both of which a naive scan gets wrong:
+///
+/// * **Only the gutter counts.** `⏺`/`⎿`/`✻` are also ordinary characters that
+///   appear in body text — this app's own transcripts are full of pasted Claude
+///   Code output. A hole is an *unwritten cell*, so punching one into body text
+///   both drops a character and leaves whatever the previous frame had there.
+///   A marker only ever sits at column 0 (`helpers::with_marker`,
+///   `helpers::fit_glyph_line`) or column 2 (`tool_lines`' `"  ⎿  "` and
+///   `" ⎿  "` prefixes), so the scan stops after [`MAX_GUTTER_GLYPH_COL`].
+/// * **Columns advance by grapheme cluster, not by `char`.** Summing per `char`
+///   over-counts a ZWJ sequence (a family emoji is 2 columns but 7 `char`s) and
+///   under-counts an emoji-presentation sequence, which would put the hole on
+///   the wrong cell. Same reasoning as `helpers::truncate_to_width` and
+///   `user_text::wrap_plain_text`.
 fn width_risk_hole(line: &Line<'_>) -> Option<u16> {
     let mut col: usize = 0;
     for span in &line.spans {
-        for ch in span.content.chars() {
-            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if super::glyphs::is_width_ambiguous(ch) {
+        for cluster in span.content.graphemes(true) {
+            if col > MAX_GUTTER_GLYPH_COL {
+                return None; // past the gutter — everything here is content
+            }
+            let w = UnicodeWidthStr::width(cluster);
+            // `w == 1` *is* the ambiguity: the defence exists for glyphs
+            // `unicode-width` calls one column while the terminal may draw two.
+            // A marker carrying a variation selector already measures two, so
+            // measurement and terminal agree and no hole is wanted — punching
+            // one there would blank the body's first cell instead.
+            if w == 1
+                && cluster
+                    .chars()
+                    .next()
+                    .is_some_and(super::glyphs::is_width_ambiguous)
+            {
                 return u16::try_from(col + w).ok();
             }
             col += w;

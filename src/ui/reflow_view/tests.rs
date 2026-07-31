@@ -38,12 +38,18 @@ fn pad_glyph_assistant_marker_produces_two_cols() {
 
 #[test]
 fn gutter_markers_are_exactly_one_column() {
-    // The gutter markers MUST measure as a single column. They render with
-    // emoji presentation (2 cols) in many fonts; the VS15 text-presentation
-    // selector forces narrow rendering to match this width. If a marker ever
-    // measures >1 here, every transcript line will be one column short and
-    // its last char will bleed past the panel edge (the regression that the
-    // VS15 suffix fixes).
+    // The gutter markers MUST measure as a single column, because every line's
+    // body budget is computed as `width - MARKER_COLS`. If a marker measured
+    // >1 here, each transcript line would be one column short and its last
+    // char would bleed past the panel edge.
+    //
+    // Measuring 1 is not the same as *rendering* as 1: `⏺`/`⎿`/`✻` are drawn
+    // two columns wide by many terminals and fonts. That gap is not closed
+    // here (an earlier comment claimed a U+FE0E text-presentation suffix did
+    // it — no such suffix exists on these constants). It is handled instead by
+    // leaving the cell after the glyph unwritten so the body is positioned
+    // absolutely; see `glyphs::WIDTH_AMBIGUOUS_GLYPHS` and
+    // `build::width_risk_hole`.
     for (name, m) in [
         ("assistant", ASSISTANT_MARKER),
         ("tool-result", TOOL_RESULT_GLYPH),
