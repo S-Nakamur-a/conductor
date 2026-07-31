@@ -99,10 +99,11 @@ pub struct App {
     /// [`App::exit_editor`] (the only two methods that pair this field with
     /// `Focus::Editor`, keeping the invariant local).
     pub editor: Option<EditorPanel>,
-    /// In-flight headless walkthrough generation, if any. Polled by
+    /// In-flight headless walkthrough generations, at most one per branch so
+    /// worktrees don't block each other. Polled by
     /// [`App::poll_walkthrough_generation`]; the DB row is the source of
-    /// truth for completion, this handle only catches process failures.
-    pub walkthrough_gen: Option<crate::walkthrough::WalkthroughGeneration>,
+    /// truth for completion, these handles only catch process failures.
+    pub walkthrough_gens: crate::walkthrough::WalkthroughGenerations,
     /// The selected worktree's walkthrough (header + steps), reloaded by
     /// [`App::refresh_reviews`] alongside the comment list.
     pub current_walkthrough: Option<(
