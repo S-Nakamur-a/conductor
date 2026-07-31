@@ -483,7 +483,16 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                 && !app.reflow.active
             {
                 app.open_reflow();
-                return true;
+                // `open_reflow` bails out (with a status flash) when the panel
+                // has no pinned session or its log is missing on disk. Claiming
+                // the key regardless used to strand the user: `scroll_claude`
+                // stayed 0, so the next press re-entered this branch and failed
+                // identically — scroll-up went permanently dead rather than
+                // degrading to the vt100 buffer. Only claim it if the view
+                // actually opened.
+                if app.reflow.active {
+                    return true;
+                }
             }
             let page = match app.focus {
                 Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
@@ -517,7 +526,10 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                 && !app.reflow.active
             {
                 app.open_reflow();
-                return true;
+                // Same fall-through as ScrollbackUp when the view can't open.
+                if app.reflow.active {
+                    return true;
+                }
             }
             match app.focus {
                 Focus::TerminalClaude => app.terminal.scroll_claude = 1000,

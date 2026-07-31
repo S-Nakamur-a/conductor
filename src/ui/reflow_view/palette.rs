@@ -25,6 +25,12 @@ pub(crate) const INACTIVE: Color = Color::Rgb(153, 153, 153);
 pub(crate) const PERMISSION: Color = Color::Rgb(177, 185, 249);
 /// Inline-code / very dim — `subtle` token.
 pub(crate) const SUBTLE: Color = Color::Rgb(80, 80, 80);
+/// Background fill for a user turn's full-width block (S3, measured).
+pub(crate) const USER_BG: Color = Color::Rgb(55, 55, 55);
+/// The `❯` prompt marker's color on a user turn's background block.
+pub(crate) const USER_MARKER_FG: Color = Color::Rgb(80, 80, 80);
+/// Body text color on a user turn's background block.
+pub(crate) const USER_TEXT: Color = Color::Rgb(255, 255, 255);
 
 /// Build a Claude-flavored [`Theme`] for the Markdown renderer so prose,
 /// headings, links and code in the transcript adopt Claude Code's palette

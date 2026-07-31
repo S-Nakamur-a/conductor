@@ -10,9 +10,11 @@ use syntect::parsing::SyntaxSet;
 use crate::theme::Theme;
 
 use super::MarkdownFlavor;
+use super::code_colors::render_code_block_transcript;
 use super::inline::inline_spans;
 use super::parse::MdBlock;
 use super::table::render_table;
+use super::table_boxed::render_table_boxed;
 use super::wrap::{display_width, spans_to_cells, with_prefix, wrap_cells};
 
 pub(crate) fn render_block(
@@ -30,11 +32,16 @@ pub(crate) fn render_block(
             Style::default().fg(theme.muted),
         ))],
         // Transcript flavor: no colour bar, no underline rule — just bold
-        // body-colour text. The surrounding blank lines are added by
-        // `render_markdown_flavored`.
-        MdBlock::Heading { text, .. } if flavor == MarkdownFlavor::Transcript => {
-            let style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
-            let cells = spans_to_cells(&inline_spans(text, style, theme));
+        // body-colour text (H1 additionally gets italic + underline, matching
+        // native Claude Code; H2+ stay bold-only). The surrounding blank
+        // lines are added by `render_markdown_flavored`.
+        MdBlock::Heading { level, text } if flavor == MarkdownFlavor::Transcript => {
+            let mut modifier = Modifier::BOLD;
+            if *level == 1 {
+                modifier |= Modifier::ITALIC | Modifier::UNDERLINED;
+            }
+            let style = Style::default().fg(theme.fg).add_modifier(modifier);
+            let cells = spans_to_cells(&inline_spans(text, style, theme, flavor));
             wrap_cells(&cells, width, false)
         }
         MdBlock::Heading { level, text } => {
@@ -58,7 +65,7 @@ pub(crate) fn render_block(
             );
             let cont = Span::styled("  ".to_string(), Style::default());
             let inner = width.saturating_sub(2).max(1);
-            let cells = spans_to_cells(&inline_spans(text, style, theme));
+            let cells = spans_to_cells(&inline_spans(text, style, theme, MarkdownFlavor::Rich));
             let mut out = with_prefix(wrap_cells(&cells, inner, false), bar, cont);
             // GitHub draws a bottom border under H1/H2; mirror that with a
             // full-width rule tinted toward the heading colour so the section
@@ -72,15 +79,27 @@ pub(crate) fn render_block(
             out
         }
         MdBlock::Paragraph(text) => {
-            let cells = spans_to_cells(&inline_spans(text, Style::default().fg(theme.fg), theme));
+            let cells =
+                spans_to_cells(&inline_spans(text, Style::default().fg(theme.fg), theme, flavor));
             wrap_cells(&cells, width, false)
+        }
+        // Native Claude Code marks a quote with a dim `▎` and renders the body
+        // in the terminal's default colour, italic (no muted grey — that's
+        // Rich-only chrome). Kept as its own arm rather than folding into the
+        // Rich arm below: the glyph, its style, and the body colour all differ.
+        MdBlock::Quote(text) if flavor == MarkdownFlavor::Transcript => {
+            let inner = width.saturating_sub(2).max(1);
+            let style = Style::default().fg(theme.fg).add_modifier(Modifier::ITALIC);
+            let cells = spans_to_cells(&inline_spans(text, style, theme, flavor));
+            let bar = Span::styled("\u{258e} ".to_string(), Style::default().add_modifier(Modifier::DIM));
+            with_prefix(wrap_cells(&cells, inner, false), bar.clone(), bar)
         }
         MdBlock::Quote(text) => {
             let inner = width.saturating_sub(2).max(1);
             let style = Style::default()
                 .fg(theme.muted)
                 .add_modifier(Modifier::ITALIC);
-            let cells = spans_to_cells(&inline_spans(text, style, theme));
+            let cells = spans_to_cells(&inline_spans(text, style, theme, MarkdownFlavor::Rich));
             let bar = Span::styled("\u{2502} ".to_string(), Style::default().fg(theme.muted));
             with_prefix(wrap_cells(&cells, inner, false), bar.clone(), bar)
         }
@@ -97,6 +116,27 @@ pub(crate) fn render_block(
                 MarkdownFlavor::Rich => "\u{2022} ",
                 MarkdownFlavor::Transcript => "- ",
             };
+            // Native Claude Code doesn't special-case GFM task-list syntax: a
+            // `- [ ] text`/`- [x] text` source line prints as an ordinary
+            // bullet item with the checkbox left in the text, unstyled. Fold
+            // the marker back into the body and drop `checked` so the rest of
+            // this arm's Rich-only styling below doesn't apply to it.
+            let (checked, text): (Option<bool>, String) = if flavor == MarkdownFlavor::Transcript {
+                let literal = |mark: &str| {
+                    if text.is_empty() {
+                        mark.to_string()
+                    } else {
+                        format!("{mark} {text}")
+                    }
+                };
+                match checked {
+                    Some(true) => (None, literal("[x]")),
+                    Some(false) => (None, literal("[ ]")),
+                    None => (None, text.clone()),
+                }
+            } else {
+                (*checked, text.clone())
+            };
             // Marker is a truth table over (checked, ordered).
             let marker = match (checked, ordered) {
                 (Some(true), _) => "[x] ".to_string(),
@@ -112,27 +152,40 @@ pub(crate) fn render_block(
                 (_, MarkdownFlavor::Rich) => theme.accent,
             };
             // Completed items recede so the eye lands on what's left.
-            let text_color = if *checked == Some(true) {
+            let text_color = if checked == Some(true) {
                 theme.muted
             } else {
                 theme.fg
             };
             let prefix_w = indent + display_width(&marker);
             let inner = width.saturating_sub(prefix_w).max(1);
-            let cells = spans_to_cells(&inline_spans(text, Style::default().fg(text_color), theme));
+            let cells = spans_to_cells(&inline_spans(
+                &text,
+                Style::default().fg(text_color),
+                theme,
+                flavor,
+            ));
             let pad = " ".repeat(indent);
             let first = Span::styled(format!("{pad}{marker}"), Style::default().fg(marker_color));
             let cont = Span::styled(" ".repeat(prefix_w), Style::default());
             with_prefix(wrap_cells(&cells, inner, false), first, cont)
         }
-        MdBlock::CodeBlock { lang, lines } => {
-            render_code_block(lang.as_deref(), lines, width, theme, syntax_set, syntect_theme)
-        }
+        MdBlock::CodeBlock { lang, lines } => match flavor {
+            MarkdownFlavor::Rich => {
+                render_code_block(lang.as_deref(), lines, width, theme, syntax_set, syntect_theme)
+            }
+            MarkdownFlavor::Transcript => {
+                render_code_block_transcript(lang.as_deref(), lines, width, syntax_set)
+            }
+        },
         MdBlock::Table {
             headers,
             aligns,
             rows,
-        } => render_table(headers, aligns, rows, width, theme),
+        } => match flavor {
+            MarkdownFlavor::Rich => render_table(headers, aligns, rows, width, theme),
+            MarkdownFlavor::Transcript => render_table_boxed(headers, rows, width, theme),
+        },
     }
 }
 

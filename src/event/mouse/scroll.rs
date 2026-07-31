@@ -254,9 +254,18 @@ pub(super) fn handle_mouse_scroll(
                 // look up the grabbed (source) worktree's history, producing a
                 // mismatch.  Keyboard entry is already blocked by the grabbed-
                 // worktree gate in handle_terminal_only_action.
-                if app.terminal.scroll_claude == 0 && !app.is_selected_worktree_grabbed() {
+                // `open_reflow` is a no-op (plus a status flash) when the panel
+                // has no pinned session or its log is missing, so fall back to
+                // the vt100 buffer rather than swallowing the wheel forever.
+                let opened = if app.terminal.scroll_claude == 0
+                    && !app.is_selected_worktree_grabbed()
+                {
                     app.open_reflow();
+                    app.reflow.active
                 } else {
+                    false
+                };
+                if !opened {
                     app.terminal.scroll_claude =
                         app.terminal.scroll_claude.saturating_add(abs_delta);
                 }

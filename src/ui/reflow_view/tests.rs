@@ -5,7 +5,10 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use unicode_width::UnicodeWidthStr;
 
-use super::glyphs::{ASSISTANT_MARKER, MARKER_COLS, THINKING_GLYPH, TOOL_RESULT_GLYPH, USER_MARKER};
+use super::glyphs::{
+    ASSISTANT_MARKER, MARKER_COLS, TEAMMATE_MESSAGE_GLYPH, THINKING_GLYPH, TOOL_RESULT_GLYPH,
+    USER_MARKER,
+};
 use super::helpers::{pad_glyph_to, truncate_to_width, with_marker};
 
 // ── pad_glyph_to ─────────────────────────────────────────────────────────
@@ -46,6 +49,7 @@ fn gutter_markers_are_exactly_one_column() {
         ("tool-result", TOOL_RESULT_GLYPH),
         ("thinking", THINKING_GLYPH),
         ("user", USER_MARKER),
+        ("teammate-message", TEAMMATE_MESSAGE_GLYPH),
     ] {
         assert_eq!(
             UnicodeWidthStr::width(m),
@@ -104,4 +108,20 @@ fn truncate_over_limit_appends_ellipsis() {
 #[test]
 fn truncate_zero_budget_returns_empty() {
     assert_eq!(truncate_to_width("anything", 0), "");
+}
+
+#[test]
+fn truncate_keeps_a_string_that_fits_exactly() {
+    // Used to reserve the ellipsis column unconditionally and return "hell…".
+    assert_eq!(truncate_to_width("hello", 5), "hello");
+}
+
+#[test]
+fn truncate_does_not_cut_inside_a_cluster() {
+    // Cutting between `⚠` and its U+FE0F selector would leave a dangling
+    // combining mark and mis-measure the result.
+    let s = "\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}";
+    let out = truncate_to_width(s, 5);
+    assert!(UnicodeWidthStr::width(out.as_str()) <= 5, "{out:?}");
+    assert!(!out.contains('\u{fe0f}') || out.contains('\u{26a0}'));
 }

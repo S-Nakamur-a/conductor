@@ -4,28 +4,55 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-/// A single display cell: one char carrying its style. The wrapping helpers
-/// work at this granularity so styles survive line breaks.
+/// A single display cell: one **grapheme cluster** carrying its style. The
+/// wrapping helpers work at this granularity so styles survive line breaks.
+///
+/// A cluster, not a `char`, because the two disagree on width in both
+/// directions: `⚠` is one column but `⚠️` (the same character followed by
+/// U+FE0F) is two, so summing per `char` under-counts it and the line
+/// overflows; a ZWJ sequence like a family emoji is two columns total but
+/// seven `char`s, so summing per `char` over-counts it and the line wraps
+/// early. Clusters also can't be split across a line break, which a `char`
+/// granularity happily did.
 #[derive(Clone)]
 pub(crate) struct Cell {
-    pub(crate) ch: char,
+    pub(crate) text: String,
     pub(crate) style: Style,
 }
 
-pub(crate) fn char_width(c: char) -> usize {
-    UnicodeWidthChar::width(c).unwrap_or(0)
+impl Cell {
+    pub(crate) fn new(ch: char, style: Style) -> Self {
+        Self {
+            text: ch.to_string(),
+            style,
+        }
+    }
+
+    pub(crate) fn width(&self) -> usize {
+        UnicodeWidthStr::width(self.text.as_str())
+    }
+
+    pub(crate) fn is_space(&self) -> bool {
+        self.text == " "
+    }
 }
 
 pub(crate) fn display_width(s: &str) -> usize {
-    s.chars().map(char_width).sum()
+    UnicodeWidthStr::width(s)
 }
 
 pub(crate) fn spans_to_cells(spans: &[Span<'static>]) -> Vec<Cell> {
     spans
         .iter()
-        .flat_map(|s| s.content.chars().map(move |ch| Cell { ch, style: s.style }))
+        .flat_map(|s| {
+            s.content.graphemes(true).map(move |g| Cell {
+                text: g.to_string(),
+                style: s.style,
+            })
+        })
         .collect()
 }
 
@@ -37,12 +64,12 @@ pub(crate) fn cells_to_line(cells: &[Cell]) -> Line<'static> {
     let mut cur: Option<Style> = None;
     for cell in cells {
         match cur {
-            Some(s) if s == cell.style => buf.push(cell.ch),
+            Some(s) if s == cell.style => buf.push_str(&cell.text),
             _ => {
                 if let Some(s) = cur {
                     spans.push(Span::styled(std::mem::take(&mut buf), s));
                 }
-                buf.push(cell.ch);
+                buf.push_str(&cell.text);
                 cur = Some(cell.style);
             }
         }
@@ -88,7 +115,7 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
 
     if hard {
         for cell in cells {
-            let cw = char_width(cell.ch);
+            let cw = cell.width();
             if cur_w + cw > width && !cur.is_empty() {
                 push_line(&mut cur, &mut cur_w);
             }
@@ -107,7 +134,7 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
     let n = cells.len();
     let mut i = 0;
     while i < n {
-        if cells[i].ch == ' ' {
+        if cells[i].is_space() {
             // A space: keep it only if it fits on the current (non-empty) line;
             // otherwise drop it as the wrap point so the next line has no
             // leading space.
@@ -126,8 +153,8 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
         // Gather the next word (run of non-space cells).
         let start = i;
         let mut word_w = 0;
-        while i < n && cells[i].ch != ' ' {
-            word_w += char_width(cells[i].ch);
+        while i < n && !cells[i].is_space() {
+            word_w += cells[i].width();
             i += 1;
         }
         let word = &cells[start..i];
@@ -138,7 +165,7 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
                 push_line(&mut cur, &mut cur_w);
             }
             for cell in word {
-                let cw = char_width(cell.ch);
+                let cw = cell.width();
                 if cur_w + cw > width && !cur.is_empty() {
                     push_line(&mut cur, &mut cur_w);
                 }
@@ -151,7 +178,7 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
             }
             for cell in word {
                 cur.push(cell.clone());
-                cur_w += char_width(cell.ch);
+                cur_w += cell.width();
             }
         }
     }
