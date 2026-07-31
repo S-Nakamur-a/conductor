@@ -41,8 +41,25 @@ pub struct ReflowView {
     pub total_lines: usize,
     /// Panel inner width at the last render — used to detect size changes for reflow.
     pub last_width: u16,
-    /// When `true`, the next render pins scroll to the bottom (most recent turn).
-    pub pending_bottom: bool,
+    /// Stick-to-bottom state: `true` while the view is riding the newest turn,
+    /// `false` once the reader has scrolled up and away from it.
+    ///
+    /// This is the flag that decides what a reflow does to the viewport. A
+    /// follower is re-pinned to the bottom on every frame, so a resize keeps
+    /// showing the newest output; a detached reader is put back on the same
+    /// *logical* line instead (see
+    /// [`crate::event::reflow::scroll_after_reflow`]). Without the distinction
+    /// one of the two always broke: pinning unconditionally lost the reader's
+    /// place, anchoring unconditionally left the newest lines below the
+    /// viewport whenever a narrower panel wrapped the text into more of them.
+    ///
+    /// It doubles as the "pin on open" flag — the view opens following, so the
+    /// first render lands on the newest turn with no separate one-shot state.
+    pub follow: bool,
+    /// Screen rect of the "jump to the newest turn" badge drawn while detached,
+    /// or `None` when it isn't on screen. Recorded by the renderer each frame
+    /// and consulted by the click handler; see [`super::App::reflow_jump_to_latest`].
+    pub jump_hit: Option<ratatui::layout::Rect>,
     /// Pre-rendered, width-reflowed lines; rebuilt only when `last_width`
     /// changes or `needs_rebuild` is set.
     pub cached_lines: Vec<ratatui::text::Line<'static>>,
@@ -156,7 +173,10 @@ impl App {
             scroll: 0,
             total_lines: 0,
             last_width: 0, // Forces a full line rebuild on first render.
-            pending_bottom: true,
+            // Opens on the newest turn, and stays there until the reader
+            // scrolls up — which is also what pins the first render.
+            follow: true,
+            jump_hit: None,
             cached_lines: Vec::new(),
             line_meta: Vec::new(),
             needs_rebuild: false,
@@ -198,10 +218,30 @@ impl App {
         self.reflow.entries = std::rc::Rc::new(entries);
         self.reflow.loading = false;
         self.reflow.last_width = 0; // Force a full line rebuild on next render.
-        self.reflow.pending_bottom = true;
+        // The placeholder had nothing to scroll, so the reader cannot have
+        // detached yet — the transcript arrives pinned to its newest turn.
+        self.reflow.follow = true;
         // The entry sweep may already have finished on a slow load; redraw so
         // the transcript replaces the "Loading…" placeholder immediately.
         self.dirty.mark(super::DirtyPanels::TERMINAL);
+    }
+
+    /// Jump the transcript to its newest turn and resume following it.
+    ///
+    /// The single "back to the latest" entry point, shared by `G`/`End` and by
+    /// a click on the detached badge, so both leave the view in the same state
+    /// — at the bottom *and* following, which is what makes the next resize
+    /// keep it there.
+    pub fn reflow_jump_to_latest(&mut self) {
+        self.reflow.scroll = crate::event::reflow::bottom_scroll(
+            self.reflow.total_lines,
+            self.reflow.last_inner_height as usize,
+        );
+        self.reflow.follow = true;
+        // Same rationale as the per-step clear in the key handler: every row
+        // moves, and a glyph the terminal draws wider than counted would leave
+        // residue that ratatui's own diff cannot see.
+        self.terminal.needs_clear = true;
     }
 
     /// Leave the reflow transcript view and return to the live PTY display.

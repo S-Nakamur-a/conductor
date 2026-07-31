@@ -20,6 +20,9 @@ use super::palette;
 /// `app` is taken as `&mut` so the render can write updated scroll / cache state
 /// back to `app.reflow` after building or scrolling the line list.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
+    // Any path that returns before the badge is drawn must retract its hit
+    // region, or a click would keep landing on a chip that is no longer there.
+    app.reflow.jump_hit = None;
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -73,6 +76,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // ── (Re)build cached lines when the panel width or expand state changed ──
+    // `anchored` carries the rebuild's answer to "where did the top line go?"
+    // down to the single scroll decision below; it stays `None` on the frames
+    // where nothing was rebuilt.
+    let mut anchored: Option<usize> = None;
     if app.reflow.last_width != render_area.width || app.reflow.needs_rebuild {
         // Block-scoped so the shared borrows on `app` drop before the
         // `cached_lines` / `total_lines` / `last_width` assignments below.
@@ -104,31 +111,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // keeps a glyph from the previous layout.
         app.terminal.needs_clear = true;
 
-        if let Some(anchor) = anchor
-            && !app.reflow.pending_bottom
-        {
-            app.reflow.scroll = anchor_index(&app.reflow.line_meta, anchor);
-        }
+        anchored = anchor.map(|a| anchor_index(&app.reflow.line_meta, a));
     }
 
     app.reflow.last_inner_height = area.height;
 
-    // ── Pin to bottom on first open ───────────────────────────────────────────
-    if app.reflow.pending_bottom {
-        app.reflow.scroll = app
-            .reflow
-            .total_lines
-            .saturating_sub(inner_height);
-        app.reflow.pending_bottom = false;
-    }
-
-    // ── Clamp scroll to valid range ───────────────────────────────────────────
-    // Upper bound is total - inner_height, not total - 1: when pinned to the
-    // logical bottom, the last content line sits at the last visual row, not
-    // one row above.  total < inner_height (short log) collapses to 0 via
-    // saturating_sub so the view stays at the top and shows no blank rows.
-    app.reflow.scroll =
-        crate::event::reflow::clamp_scroll(app.reflow.scroll, app.reflow.total_lines, inner_height);
+    // ── Place the viewport ────────────────────────────────────────────────────
+    // One decision for every way the geometry can move under the reader —
+    // width (rebuild above), height, and the expand toggle. A follower is
+    // re-pinned to the newest line; anyone parked in the history is put back on
+    // the line the anchor resolved to, never dragged to the tail. The result is
+    // clamped, so the upper bound is total - inner_height rather than total - 1:
+    // at the logical bottom the last content line sits on the last visual row,
+    // and a log shorter than the panel collapses to 0 with no blank rows.
+    app.reflow.scroll = crate::event::reflow::scroll_after_reflow(
+        app.reflow.follow,
+        anchored,
+        app.reflow.scroll,
+        app.reflow.total_lines,
+        inner_height,
+    );
 
     let scroll = app.reflow.scroll;
 
@@ -174,13 +176,63 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             cell.set_skip(true);
         }
     }
+
+    app.reflow.jump_hit = render_jump_badge(frame, render_area, app.reflow.follow);
+}
+
+/// Text of the detached badge at each width tier, longest first. Deliberately
+/// ASCII: the badge is positioned against the panel's right edge, so a glyph
+/// the terminal draws wider than `unicode-width` counts (the `⏺`/`⎿` problem
+/// the gutter solves with an unwritten cell) would push its tail onto the
+/// border. There is no arrow here for that reason.
+pub(super) const JUMP_BADGE_LABELS: [&str; 3] = [" Jump to latest (G) ", " Latest (G) ", " (G) "];
+
+/// Draw the "you are not at the newest turn" badge, returning its screen rect
+/// so a click can be routed back to it.
+///
+/// Only visible while detached — that *is* the feedback. Following, the badge
+/// is absent and the function reports no hit region, so a stale rect can never
+/// keep swallowing clicks after the reader returns to the tail.
+///
+/// It is deliberately the quietest thing on screen that is still a target:
+/// one right-aligned chip on the last row, in the transcript's own dim grey on
+/// the user-turn block's background. Anything louder would compete with the
+/// transcript for attention on every scroll-up, which is the common case.
+pub(super) fn render_jump_badge(frame: &mut Frame, area: Rect, following: bool) -> Option<Rect> {
+    if following || area.height == 0 {
+        return None;
+    }
+    // Widest label that fits, leaving one column of slack against the panel
+    // edge; if even the shortest needs more room than the panel has, the badge
+    // is dropped rather than truncated into something unreadable.
+    let label = JUMP_BADGE_LABELS
+        .iter()
+        .find(|l| UnicodeWidthStr::width(**l) < area.width as usize)?;
+    let w = UnicodeWidthStr::width(*label) as u16;
+
+    let rect = Rect::new(
+        area.x + area.width - w,
+        area.y + area.height - 1,
+        w,
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            *label,
+            Style::default()
+                .fg(palette::INACTIVE)
+                .bg(palette::USER_BG),
+        ))),
+        rect,
+    );
+    Some(rect)
 }
 
 /// Index of the line matching `anchor` after a rebuild — the first line whose
 /// `(entry, block, offset)` is at or past the anchor's, so a block that got
 /// shorter (or vanished) lands on whatever now occupies that position rather
 /// than scrolling somewhere unrelated.
-fn anchor_index(meta: &[LineMeta], anchor: LineMeta) -> usize {
+pub(super) fn anchor_index(meta: &[LineMeta], anchor: LineMeta) -> usize {
     let key = (anchor.entry, anchor.block, anchor.offset);
     meta.iter()
         .position(|m| (m.entry, m.block, m.offset) >= key)

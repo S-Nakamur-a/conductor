@@ -23,6 +23,46 @@ pub fn at_bottom(scroll: usize, total: usize, inner: usize) -> bool {
     scroll >= total.saturating_sub(inner)
 }
 
+/// Scroll offset for the newest line — the position [`at_bottom`] reports as
+/// the bottom, and the one a follower is pinned to.
+pub fn bottom_scroll(total: usize, inner: usize) -> usize {
+    total.saturating_sub(inner)
+}
+
+/// Where the viewport should sit once the geometry underneath it has changed.
+///
+/// Called on every frame with `anchored` set only when the line list was just
+/// rebuilt (a width change or the expand toggle). The two branches encode the
+/// whole "preserve the reading position" rule:
+///
+/// * `following` — the reader is riding the newest turn, so re-pin to the
+///   bottom. This is what keeps a resize from stranding the newest output
+///   below the viewport: a narrower panel wraps the same text into *more*
+///   lines, so the old offset (and even a correctly re-anchored one) no
+///   longer reaches the end.
+/// * otherwise — the reader is parked somewhere in the history, so honour
+///   `anchored`: the index of the same logical line (entry / block / offset)
+///   after the rebuild. Falling back to `previous` covers the frames where
+///   nothing was rebuilt and the offset is still meaningful.
+///
+/// Never a raw line offset carried across a rebuild: line *indices* mean
+/// something different at every width, which is exactly how a reflow used to
+/// throw the reader somewhere unrelated.
+pub fn scroll_after_reflow(
+    following: bool,
+    anchored: Option<usize>,
+    previous: usize,
+    total: usize,
+    inner: usize,
+) -> usize {
+    let target = if following {
+        bottom_scroll(total, inner)
+    } else {
+        anchored.unwrap_or(previous)
+    };
+    clamp_scroll(target, total, inner)
+}
+
 // ── Transition animation ──────────────────────────────────────────────────────
 
 /// Total duration of the entry/exit transition animation in milliseconds.
@@ -125,6 +165,75 @@ mod tests {
     fn at_bottom_when_log_fits_in_panel() {
         // total(10) <= inner(20): max_scroll = 0, any scroll >= 0 is at bottom
         assert!(at_bottom(0, 10, 20));
+    }
+
+    // ── scroll_after_reflow ──────────────────────────────────────────────────
+
+    #[test]
+    fn follower_repins_to_bottom_when_a_narrower_width_adds_lines() {
+        // The regression this whole flag exists for: the reader was riding the
+        // newest turn at 100 lines / 20 rows (scroll 80). The panel narrows, the
+        // same text now wraps into 140 lines, and the anchor would put the old
+        // top line back on top — leaving the newest 40 lines below the viewport.
+        let anchored = Some(80); // whatever the anchor resolved to
+        assert_eq!(scroll_after_reflow(true, anchored, 80, 140, 20), 120);
+    }
+
+    #[test]
+    fn follower_repins_to_bottom_when_the_panel_gets_shorter() {
+        // Height-only change: no rebuild, so `anchored` is None. Clamping alone
+        // would leave scroll at 80 with the last 10 lines cut off below.
+        assert_eq!(scroll_after_reflow(true, None, 80, 100, 10), 90);
+    }
+
+    #[test]
+    fn detached_reader_lands_on_the_anchored_line() {
+        // Parked mid-history: the anchor wins over both the old raw offset and
+        // the bottom.
+        assert_eq!(scroll_after_reflow(false, Some(57), 40, 200, 20), 57);
+    }
+
+    #[test]
+    fn detached_reader_keeps_its_offset_when_nothing_was_rebuilt() {
+        assert_eq!(scroll_after_reflow(false, None, 40, 200, 20), 40);
+    }
+
+    #[test]
+    fn detached_reader_never_gets_dragged_to_the_bottom() {
+        // The property that matters more than any single number: for a reader
+        // who is *not* following, no combination of anchor / geometry may
+        // resolve to the bottom unless the anchor genuinely points there.
+        let total = 300;
+        let inner = 25;
+        let bottom = bottom_scroll(total, inner);
+        for anchored in [Some(0), Some(11), Some(120), None] {
+            let got = scroll_after_reflow(false, anchored, 33, total, inner);
+            assert!(
+                got < bottom,
+                "anchored={anchored:?} resolved to {got}, i.e. the live tail"
+            );
+        }
+    }
+
+    #[test]
+    fn anchored_index_past_the_end_is_clamped_not_wrapped() {
+        // A block that shrank can resolve past the last valid offset; that must
+        // clamp to the bottom rather than index out of range downstream.
+        assert_eq!(scroll_after_reflow(false, Some(9_999), 40, 200, 20), 180);
+    }
+
+    #[test]
+    fn short_log_collapses_to_top_for_follower_and_reader_alike() {
+        assert_eq!(scroll_after_reflow(true, None, 0, 10, 40), 0);
+        assert_eq!(scroll_after_reflow(false, Some(5), 3, 10, 40), 0);
+    }
+
+    #[test]
+    fn following_result_always_reports_at_bottom() {
+        for (total, inner) in [(100usize, 20usize), (10, 40), (0, 5), (41, 7)] {
+            let s = scroll_after_reflow(true, None, 0, total, inner);
+            assert!(at_bottom(s, total, inner), "total={total} inner={inner}");
+        }
     }
 
     // ── sweep_progress ───────────────────────────────────────────────────────

@@ -140,10 +140,33 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
     for (title, ctx) in panel_ctxs {
         section(&mut lines, title, *ctx);
     }
+    if matches!(focus, Focus::TerminalClaude | Focus::TerminalShell) {
+        help_transcript_section(&mut lines, theme);
+    }
     help_review_commands_section(&mut lines, theme);
     section(&mut lines, "Global — works anywhere", KeyContext::Global);
 
     lines
+}
+
+/// Keys for the Claude transcript, reached by scrolling up from the live tail.
+///
+/// Hand-written for the same reason as the section below: `handle_reflow_key`
+/// owns these directly instead of going through `app.keymap`, so `section()` —
+/// which walks the keymap — cannot see any of them. They were invisible in the
+/// help until this existed, `G` included.
+fn help_transcript_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    help_section(lines, "Claude transcript (scroll up to enter)", theme);
+    for (keys, desc) in [
+        ("j / k", "Scroll one line"),
+        ("ctrl+d / ctrl+u", "Scroll half a page"),
+        ("g / Home", "Oldest turn"),
+        ("G / End", "Newest turn, and resume following it"),
+        ("ctrl+o", "Expand / collapse tool results and thinking"),
+        ("Esc", "Back to the live prompt"),
+    ] {
+        help_key_dyn(lines, keys.to_string(), desc, theme);
+    }
 }
 
 /// The PR-intake, walkthrough-generation, and publish commands have no

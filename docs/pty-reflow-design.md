@@ -52,6 +52,33 @@ vt100 パーサを再構築する:
 4. **コスト**（shell）: 幅変更のたびに最大 2MB の再パース（同期、`screen` ロック
    保持）。頻度はパネル最大化・エディタ開閉・ウィンドウリサイズ時のみだが、
    リサイズドラッグ中は連発し得る。
+5. **スクロール位置は近似でしか保てない**: リビルドは全行を振り直すので、
+   `scroll_shell` / `scroll_claude` の数値が指す行は前後にずれる。以前は
+   これを「0 に戻す（＝ライブ末尾へスナップ）」で処理していたが、読んでいた
+   位置を捨てる方が実害が大きいため、現在はオフセットを**そのまま維持**する
+   （`app/terminal_resize.rs`）。transcript view のような厳密なアンカー復元は
+   下記の vt100 の制約により**この層では実装できない**。
+
+### vt100 0.15.2 の scrollback 制約（要注意）
+
+`Grid::visible_rows()` が `self.rows.len() - self.scrollback_offset` を計算するため、
+**scrollback オフセットが 1 画面分（＝ビューポート行数）を超えると減算がアンダー
+フローする**。release ビルドは overflow-check が無効なのでラップして偶然正しく
+動くが、**dev ビルド（`cargo run`）では 1 画面以上スクロールバックした時点で panic
+する**。再現:
+
+```rust
+let mut p = vt100::Parser::new(10, 20, 1000);
+for i in 0..100 { p.process(format!("line-{i:03}\r\n").as_bytes()); }
+p.set_scrollback(50);          // 受理される（scrollback.len() までクランプ）
+let _ = p.screen().cell(0, 0); // ← attempt to subtract with overflow
+```
+
+`ui/common/pty.rs` の `snapshot_screen` が毎フレーム通る経路なので、これは
+新規のバグではなく既存の潜在的な地雷。**候補オフセットを走査してアンカー行を
+探す**方式（transcript view の `LineMeta` 相当をこの層でやる方式）は、この API を
+ループで叩くことになるため採用していない。やるなら先に vt100 の置換（§3-B）か
+クランプラッパの導入が要る。
 
 ## 3. 選択肢の評価
 
