@@ -103,7 +103,7 @@ impl App {
             main_repo_name,
             should_quit: false,
             editor: None,
-            walkthrough_gen: None,
+            walkthrough_gens: Default::default(),
             current_walkthrough: None,
             publish_confirm: None,
             publish_op: BackgroundOp::default(),

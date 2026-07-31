@@ -12,7 +12,9 @@ impl App {
     /// Re-running regenerates from scratch — except when a `ready` walkthrough
     /// already exists for the current branch tip, which is a no-op that just
     /// re-shows it (the diff, and so the walkthrough, hasn't changed). While a
-    /// generation is already in flight it's a no-op with a status hint.
+    /// generation for *this* branch is already in flight it's a no-op with a
+    /// status hint; other branches' generations are unaffected and keep
+    /// running, so several worktrees can be generating at once.
     pub fn cmd_generate_walkthrough(&mut self, force: bool) {
         if self.review_store.is_none() {
             self.set_status(
@@ -29,19 +31,17 @@ impl App {
             );
             return;
         }
-        // Only one generation may be in flight per app instance: replacing
-        // the handle would silently drop (and orphan) the running `claude`
-        // child and strand its branch's row in `generating` forever.
-        if let Some(g) = &self.walkthrough_gen {
-            let msg = if g.branch == branch {
-                "A walkthrough is already being generated for this branch.".to_string()
-            } else {
-                format!(
-                    "A walkthrough is already being generated for '{}' — wait for it to finish.",
-                    g.branch
-                )
-            };
-            self.set_status(msg, StatusLevel::Warning);
+        // Only one generation may be in flight *per branch*: replacing the
+        // handle would silently drop (and orphan) the running `claude` child
+        // and strand its branch's row in `generating` forever. Generations
+        // for other branches are none of this branch's business — they write
+        // disjoint rows, so they run concurrently (see
+        // `walkthrough::WalkthroughGenerations`).
+        if self.walkthrough_gens.is_generating(&branch) {
+            self.set_status(
+                "A walkthrough is already being generated for this branch.".to_string(),
+                StatusLevel::Warning,
+            );
             return;
         }
         let Some((wt_path, head_oid)) = self
@@ -111,7 +111,7 @@ impl App {
             language.as_deref(),
         ) {
             Ok(generation) => {
-                self.walkthrough_gen = Some(generation);
+                self.walkthrough_gens.insert(generation);
                 // Display-only switch — no `set_focus`, so kicking off a
                 // generation from the palette never steals focus from an
                 // active terminal input; it just makes the in-progress state
@@ -138,35 +138,61 @@ impl App {
         self.refresh_reviews();
     }
 
-    /// Kill an in-flight walkthrough generation, if any, so it doesn't
-    /// outlive the app as an orphaned headless `claude` process. Called once
-    /// on shutdown (see `main.rs`'s main loop, right before it returns on
-    /// `should_quit`) — a generation still running at that point would
-    /// otherwise keep making API calls with no one polling its outcome.
+    /// Kill every in-flight walkthrough generation so none outlives the app as
+    /// an orphaned headless `claude` process. Called once on shutdown (see
+    /// `main.rs`'s main loop, right before it returns on `should_quit`) — a
+    /// generation still running at that point would otherwise keep making API
+    /// calls with no one polling its outcome.
     pub fn shutdown_walkthrough_generation(&mut self) {
-        if let Some(mut generation) = self.walkthrough_gen.take() {
-            generation.abort();
-        }
+        self.walkthrough_gens.abort_all();
     }
 
-    /// Poll the in-flight walkthrough generation (if any) and reconcile the
-    /// database row with what the process actually did. Called from
+    /// Poll the in-flight walkthrough generations and reconcile each one's
+    /// database row with what its process actually did. Called from
     /// [`App::poll_all_background_ops`](Self::poll_all_background_ops).
     pub fn poll_walkthrough_generation(&mut self) {
-        let Some(generation) = &mut self.walkthrough_gen else {
-            return;
-        };
-        use crate::walkthrough::{GenerationPoll, WalkthroughStatus};
-        let outcome = generation.poll();
-        if matches!(outcome, GenerationPoll::Running) {
+        if self.walkthrough_gens.is_empty() {
             return;
         }
-        let branch = generation.branch.clone();
-        let log_path = generation.log_path.clone();
-        self.walkthrough_gen = None;
+        let finished = self.walkthrough_gens.take_finished();
+        if finished.is_empty() {
+            return;
+        }
+        for outcome in finished {
+            let (message, level) = self.reconcile_finished_generation(outcome);
+            self.set_status(message, level);
+        }
+        self.refresh_reviews();
+    }
 
-        let (message, level) = match outcome {
-            GenerationPoll::Running => unreachable!("handled above"),
+    /// Turn one finished generation into the status message to flash, writing
+    /// a `failed` row when the session didn't leave a good one behind.
+    ///
+    /// Messages name the branch: with several worktrees generating at once,
+    /// the one that finishes is often not the one the reviewer is looking at.
+    fn reconcile_finished_generation(
+        &self,
+        finished: crate::walkthrough::FinishedGeneration,
+    ) -> (String, StatusLevel) {
+        use crate::walkthrough::{GenerationPoll, WalkthroughStatus};
+        let crate::walkthrough::FinishedGeneration {
+            branch,
+            log_path,
+            outcome,
+        } = finished;
+        let fail = |msg: &str| {
+            if let Some(store) = &self.review_store {
+                let _ = store.fail_walkthrough(&branch, msg);
+            }
+            (
+                format!("Walkthrough failed for '{branch}': {msg}"),
+                StatusLevel::Error,
+            )
+        };
+        match outcome {
+            GenerationPoll::Running => {
+                unreachable!("take_finished only yields generations that stopped")
+            }
             GenerationPoll::Exited => {
                 // Success is decided by the row the MCP tool wrote, not the
                 // exit code: a session that ended without saving is a failure.
@@ -176,36 +202,22 @@ impl App {
                     .and_then(|s| s.get_walkthrough(&branch).ok().flatten())
                     .is_some_and(|(w, _)| w.status == WalkthroughStatus::Ready);
                 if saved {
-                    ("Walkthrough ready.".to_string(), StatusLevel::Success)
+                    (
+                        format!("Walkthrough ready for '{branch}'."),
+                        StatusLevel::Success,
+                    )
                 } else {
-                    let msg = format!(
+                    fail(&format!(
                         "Claude session ended without saving a walkthrough (log: {})",
                         log_path.display()
-                    );
-                    if let Some(store) = &self.review_store {
-                        let _ = store.fail_walkthrough(&branch, &msg);
-                    }
-                    (format!("Walkthrough failed: {msg}"), StatusLevel::Error)
+                    ))
                 }
             }
-            GenerationPoll::Failed(msg) => {
-                if let Some(store) = &self.review_store {
-                    let _ = store.fail_walkthrough(&branch, &msg);
-                }
-                (format!("Walkthrough failed: {msg}"), StatusLevel::Error)
-            }
-            GenerationPoll::TimedOut => {
-                let msg = format!(
-                    "Timed out after {} minutes.",
-                    crate::walkthrough::GENERATION_TIMEOUT.as_secs() / 60
-                );
-                if let Some(store) = &self.review_store {
-                    let _ = store.fail_walkthrough(&branch, &msg);
-                }
-                (format!("Walkthrough failed: {msg}"), StatusLevel::Error)
-            }
-        };
-        self.set_status(message, level);
-        self.refresh_reviews();
+            GenerationPoll::Failed(msg) => fail(&msg),
+            GenerationPoll::TimedOut => fail(&format!(
+                "Timed out after {} minutes.",
+                crate::walkthrough::GENERATION_TIMEOUT.as_secs() / 60
+            )),
+        }
     }
 }

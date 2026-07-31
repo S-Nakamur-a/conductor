@@ -10,6 +10,7 @@
 //! of truth for completion; the process handle here only detects failures
 //! (spawn error, non-zero exit, exit without saving, timeout).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -249,6 +250,107 @@ impl WalkthroughGeneration {
     }
 }
 
+#[cfg(test)]
+impl WalkthroughGeneration {
+    /// Wrap an arbitrary child process in a generation handle. Lets the
+    /// registry tests below drive real process lifecycles (exit, kill,
+    /// timeout) without launching a `claude` session.
+    fn for_test(branch: &str, child: Child, started: Instant) -> Self {
+        Self {
+            branch: branch.to_string(),
+            child,
+            started,
+            log_path: PathBuf::from("/dev/null"),
+        }
+    }
+}
+
+/// A generation that stopped running, as handed back by
+/// [`WalkthroughGenerations::take_finished`]. Carries the context the caller
+/// needs to reconcile the database row it left behind — which branch it was
+/// for, and where its log is — because the handle itself is gone by then.
+pub struct FinishedGeneration {
+    pub branch: String,
+    pub log_path: PathBuf,
+    pub outcome: GenerationPoll,
+}
+
+/// Every walkthrough generation in flight in this Conductor instance, at most
+/// one per branch.
+///
+/// Keyed by branch, not by "one at a time", because the branch is the only
+/// thing a generation actually contends for: `begin_walkthrough` deletes and
+/// re-inserts the `walkthroughs` row for its branch and `save_walkthrough`
+/// replaces it, so two sessions on one branch would race for a single row and
+/// the loser's steps would vanish. Sessions on *different* branches — which
+/// means different worktrees, since git won't check one branch out twice —
+/// touch disjoint rows, disjoint log files, and a database that is already
+/// WAL + `busy_timeout` (see `review_store::schema`), so they can run side by
+/// side. Serializing them was over-broad: it made a reviewer touring one
+/// worktree unable to start a walkthrough in another.
+#[derive(Default)]
+pub struct WalkthroughGenerations {
+    by_branch: HashMap<String, WalkthroughGeneration>,
+}
+
+impl WalkthroughGenerations {
+    /// Whether a generation for `branch` is currently in flight.
+    pub fn is_generating(&self, branch: &str) -> bool {
+        self.by_branch.contains_key(branch)
+    }
+
+    /// Register a freshly spawned generation. The caller is expected to have
+    /// checked [`Self::is_generating`] first: inserting over a live handle
+    /// would drop (and orphan) the running `claude` child and strand its
+    /// branch's row in `generating` forever.
+    pub fn insert(&mut self, generation: WalkthroughGeneration) {
+        debug_assert!(
+            !self.is_generating(&generation.branch),
+            "would orphan the in-flight generation for {}",
+            generation.branch
+        );
+        self.by_branch
+            .insert(generation.branch.clone(), generation);
+    }
+
+    /// Poll every in-flight generation, removing the ones that are no longer
+    /// running and returning what each one did.
+    ///
+    /// Removal is what makes a wedged or externally-killed session
+    /// self-healing: whatever the child did — saved and exited, crashed, was
+    /// `kill`ed from outside, or ran past [`GENERATION_TIMEOUT`] — its slot is
+    /// released here, so the next request for that branch starts a fresh
+    /// session instead of being told one is already running.
+    pub fn take_finished(&mut self) -> Vec<FinishedGeneration> {
+        let mut finished = Vec::new();
+        self.by_branch.retain(|branch, generation| {
+            let outcome = generation.poll();
+            if matches!(outcome, GenerationPoll::Running) {
+                return true;
+            }
+            finished.push(FinishedGeneration {
+                branch: branch.clone(),
+                log_path: generation.log_path.clone(),
+                outcome,
+            });
+            false
+        });
+        finished
+    }
+
+    /// Whether nothing is in flight (lets the caller skip polling entirely).
+    pub fn is_empty(&self) -> bool {
+        self.by_branch.is_empty()
+    }
+
+    /// Kill every in-flight generation (used when the app shuts down).
+    pub fn abort_all(&mut self) {
+        for (_, mut generation) in self.by_branch.drain() {
+            generation.abort();
+        }
+    }
+}
+
 /// Build the `--mcp-config` JSON that registers conductor's own `mcp-serve`
 /// subcommand as the headless generation session's MCP server.
 ///
@@ -476,6 +578,142 @@ mod tests {
         // create_comment, high-signal and low-frequency.
         assert!(prompt.contains("create_comment"));
         assert!(prompt.contains("hard to understand"));
+    }
+
+    // ── WalkthroughGenerations: per-branch, not per-app, exclusion ──
+
+    /// A child that stays alive well past the end of the test.
+    fn long_running_child() -> Child {
+        test_child("sleep 30")
+    }
+
+    fn test_child(script: &str) -> Child {
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn test child")
+    }
+
+    /// Poll until something finishes. `take_finished` is non-blocking, so a
+    /// child that has only just been spawned is legitimately still `Running`
+    /// on the first call.
+    fn wait_for_finished(generations: &mut WalkthroughGenerations) -> Vec<FinishedGeneration> {
+        for _ in 0..400 {
+            let finished = generations.take_finished();
+            if !finished.is_empty() {
+                return finished;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("no generation finished within 10 seconds");
+    }
+
+    #[test]
+    fn different_branches_generate_side_by_side() {
+        // The bug this replaced: one in-flight generation blocked every other
+        // worktree's branch, not just its own.
+        let mut generations = WalkthroughGenerations::default();
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/a",
+            long_running_child(),
+            Instant::now(),
+        ));
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/b",
+            long_running_child(),
+            Instant::now(),
+        ));
+
+        assert!(generations.is_generating("feature/a"));
+        assert!(generations.is_generating("feature/b"));
+        // Neither displaced nor finished the other.
+        assert!(generations.take_finished().is_empty());
+
+        generations.abort_all();
+        assert!(generations.is_empty());
+    }
+
+    #[test]
+    fn only_the_same_branch_is_refused() {
+        let mut generations = WalkthroughGenerations::default();
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/a",
+            long_running_child(),
+            Instant::now(),
+        ));
+
+        // This predicate is the guard `cmd_generate_walkthrough` consults.
+        assert!(generations.is_generating("feature/a"));
+        assert!(!generations.is_generating("feature/b"));
+
+        generations.abort_all();
+    }
+
+    #[test]
+    fn a_finished_generation_frees_its_branch() {
+        let mut generations = WalkthroughGenerations::default();
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/a",
+            test_child("exit 0"),
+            Instant::now(),
+        ));
+
+        let finished = wait_for_finished(&mut generations);
+        assert_eq!(finished.len(), 1);
+        assert_eq!(finished[0].branch, "feature/a");
+        assert!(matches!(finished[0].outcome, GenerationPoll::Exited));
+        assert!(!generations.is_generating("feature/a"));
+    }
+
+    #[test]
+    fn an_externally_killed_generation_frees_its_branch() {
+        // Stale-lock recovery: if the session dies without Conductor asking it
+        // to, its slot must be released so the next request can regenerate
+        // rather than being told one is already running.
+        let mut generations = WalkthroughGenerations::default();
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/a",
+            test_child("kill -9 $$"),
+            Instant::now(),
+        ));
+
+        let finished = wait_for_finished(&mut generations);
+        assert!(matches!(finished[0].outcome, GenerationPoll::Failed(_)));
+        assert!(!generations.is_generating("feature/a"));
+
+        // And the branch accepts a fresh generation immediately.
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/a",
+            long_running_child(),
+            Instant::now(),
+        ));
+        assert!(generations.is_generating("feature/a"));
+        generations.abort_all();
+    }
+
+    #[test]
+    fn a_wedged_generation_times_out_and_frees_its_branch() {
+        let Some(started) = Instant::now().checked_sub(GENERATION_TIMEOUT + Duration::from_secs(1))
+        else {
+            // Machine booted less than GENERATION_TIMEOUT ago; no instant far
+            // enough in the past exists to backdate against.
+            return;
+        };
+        let mut generations = WalkthroughGenerations::default();
+        generations.insert(WalkthroughGeneration::for_test(
+            "feature/a",
+            long_running_child(),
+            started,
+        ));
+
+        let finished = generations.take_finished();
+        assert_eq!(finished.len(), 1);
+        assert!(matches!(finished[0].outcome, GenerationPoll::TimedOut));
+        assert!(!generations.is_generating("feature/a"));
     }
 
     #[test]
