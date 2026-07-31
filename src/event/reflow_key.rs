@@ -15,9 +15,15 @@ use crate::app::App;
 /// * `Ctrl-d` / PageDown — scroll down half a page.
 /// * `Ctrl-u` / PageUp — scroll up half a page.
 /// * `g` / Home — jump to the oldest turn (top).
-/// * `G` / End — jump to the newest turn (bottom) without leaving.
+/// * `G` / End — jump to the newest turn (bottom) and resume following it.
 /// * `Esc` — close reflow view and return to live PTY.
 /// * `j` / Down / PageDown at the bottom — close reflow (live return).
+///
+/// Every arm also maintains [`ReflowView::follow`](crate::app::ReflowView::follow):
+/// moving up detaches, and landing on the bottom re-attaches. That flag is what
+/// a later reflow consults to decide between re-pinning to the newest turn and
+/// restoring the reader's logical position, so leaving it stale here would
+/// resurrect the snap-to-bottom this view exists to avoid.
 pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     use crossterm::event::KeyModifiers;
     use crate::event::reflow::{at_bottom, clamp_scroll};
@@ -69,8 +75,10 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
             app.reflow.scroll = 0;
         }
         KeyCode::Char('G') | KeyCode::End => {
-            // Snap to the newest turn (logical bottom) without leaving the view.
-            app.reflow.scroll = total.saturating_sub(inner);
+            // Snap to the newest turn (logical bottom) without leaving the view,
+            // and resume following so the next resize keeps it there.
+            app.reflow_jump_to_latest();
+            return;
         }
 
         // ── Expand / collapse ────────────────────────────────────────────────
@@ -98,6 +106,13 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     // Clamp scroll after any adjustment.  Upper bound is total - inner, not
     // total - 1: aligns with the render path and at_bottom logic.
     app.reflow.scroll = clamp_scroll(app.reflow.scroll, total, inner);
+
+    // Re-derive the follow state from where the scroll actually landed, rather
+    // than per-arm: the reader is following exactly when the newest line is on
+    // screen, whichever key put it there. (`G`/`End` returned early above —
+    // that one sets the flag itself, because a bottom that is only *reachable*
+    // once the panel is re-measured still has to count as following.)
+    app.reflow.follow = at_bottom(app.reflow.scroll, total, inner);
 
     // On each scroll step, force a hard clear (presented atomically thanks to
     // synchronized output). The transcript is arbitrary Unicode; a glyph the

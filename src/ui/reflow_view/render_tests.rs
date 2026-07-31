@@ -299,3 +299,272 @@ fn holes_stay_inside_the_line_for_wide_content() {
         }
     }
 }
+// ── Detached badge ──────────────────────────────────────────────────────────
+//
+// The badge is the only signal that the view is not showing the newest turn,
+// and the only pointer route back to it, so both its presence rule and its
+// reported hit region are asserted rather than eyeballed.
+
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use unicode_width::UnicodeWidthStr;
+
+use super::render::{JUMP_BADGE_LABELS, render_jump_badge};
+
+/// Draw the badge into a `width x height` frame and return what it reported
+/// plus the rendered screen.
+fn draw_badge(width: u16, height: u16, following: bool) -> (Option<Rect>, Buffer) {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    let mut hit = None;
+    terminal
+        .draw(|f| {
+            hit = render_jump_badge(f, Rect::new(0, 0, width, height), following);
+        })
+        .unwrap();
+    (hit, terminal.backend().buffer().clone())
+}
+
+fn screen_text(buf: &Buffer) -> String {
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Following the newest turn is the quiet state: no badge, and — just as
+/// importantly — no hit region, or a click on that spot would keep firing.
+#[test]
+fn no_badge_while_following() {
+    let (hit, buf) = draw_badge(40, 6, true);
+    assert_eq!(hit, None);
+    assert!(
+        !screen_text(&buf).contains("(G)"),
+        "{}",
+        screen_text(&buf)
+    );
+}
+
+#[test]
+fn detached_draws_the_badge_bottom_right_and_reports_its_rect() {
+    let (hit, buf) = draw_badge(40, 6, false);
+    let rect = hit.expect("detached view must offer a way back");
+
+    // Bottom-right corner, flush with the right edge.
+    assert_eq!(rect.y, 5, "badge belongs on the last row");
+    assert_eq!(rect.x + rect.width, 40, "badge is right-aligned");
+    assert_eq!(rect.height, 1);
+
+    // The reported rect is where the text actually is — this is the contract
+    // the click handler relies on.
+    let text = screen_text(&buf);
+    let last_row = text.lines().last().unwrap();
+    assert!(last_row.contains("Jump to latest (G)"), "{last_row:?}");
+    assert_eq!(
+        rect.width as usize,
+        UnicodeWidthStr::width(JUMP_BADGE_LABELS[0])
+    );
+}
+
+/// The badge steps down through shorter labels rather than being truncated
+/// into something unreadable, and disappears entirely when even the shortest
+/// would not fit — the Claude column can be narrow.
+#[test]
+fn badge_shrinks_with_the_panel_and_eventually_gives_up() {
+    // Wide enough for the full label (20 cols + 1 of slack).
+    assert_eq!(draw_badge(21, 3, false).0.map(|r| r.width), Some(20));
+    // One column short of it: falls back to " Latest (G) " (12).
+    assert_eq!(draw_badge(20, 3, false).0.map(|r| r.width), Some(12));
+    // Only room for " (G) " (5).
+    assert_eq!(draw_badge(12, 3, false).0.map(|r| r.width), Some(5));
+    // Not even that.
+    assert_eq!(draw_badge(5, 3, false).0, None);
+}
+
+/// Every label must measure exactly what `unicode-width` says, because the
+/// badge is positioned against the panel's right edge — a glyph the terminal
+/// draws wider would push its tail onto the border.
+#[test]
+fn badge_labels_are_plain_ascii() {
+    for label in JUMP_BADGE_LABELS {
+        assert!(
+            label.is_ascii(),
+            "{label:?} is not ASCII; see the note on JUMP_BADGE_LABELS"
+        );
+        assert_eq!(UnicodeWidthStr::width(label), label.len());
+    }
+}
+
+/// Labels are ordered longest-first; `render_jump_badge` picks the first that
+/// fits, so a mis-ordered list would silently prefer a shorter one.
+#[test]
+fn badge_labels_are_ordered_longest_first() {
+    let widths: Vec<usize> = JUMP_BADGE_LABELS
+        .iter()
+        .map(|l| UnicodeWidthStr::width(*l))
+        .collect();
+    assert!(
+        widths.windows(2).all(|w| w[0] > w[1]),
+        "labels must strictly shrink, got {widths:?}"
+    );
+}
+
+// ── Scroll placement across a reflow ────────────────────────────────────────
+//
+// The pure arithmetic is covered in `event::reflow`; these run the real line
+// builder at two widths and check the two outcomes that matter to a reader:
+// a detached one stays on their line, a following one stays on the newest.
+
+use crate::event::reflow::{at_bottom, scroll_after_reflow};
+
+use super::build::BuiltLines;
+use super::render::anchor_index;
+
+/// Prose long enough that the wrap positions genuinely differ between the two
+/// widths under test — the fixture's whole job.
+fn reflow_fixture() -> Vec<LogEntry> {
+    // Long enough that a 20-row viewport is a small slice of it — with a short
+    // log, "three quarters down" is already the bottom and the clamp, not the
+    // anchor, would decide where the reader lands.
+    (0..40)
+        .map(|i| {
+            entry(
+                if i % 2 == 0 { Role::Assistant } else { Role::User },
+                vec![DisplayBlock::Text(format!(
+                    "Turn {i}: {}",
+                    "the quick brown fox jumps over the lazy dog ".repeat(4)
+                ))],
+            )
+        })
+        .collect()
+}
+
+fn build_at(entries: &[LogEntry], width: usize) -> BuiltLines {
+    let theme = crate::theme::Theme::default();
+    let syntax_set = two_face::syntax::extra_newlines();
+    let syntect_theme = ThemeSet::load_defaults()
+        .themes
+        .remove("base16-ocean.dark")
+        .unwrap();
+    let cache = MarkdownCache::new();
+    let ctx = BuildCtx {
+        entries,
+        cache: &cache,
+        theme: &theme,
+        syntax_set: &syntax_set,
+        syntect_theme: &syntect_theme,
+        expanded: false,
+    };
+    build_lines(&ctx, width)
+}
+
+/// The reported bug, end to end: a reader parked in the history must come out
+/// of a width change looking at the same turn — not at the newest one, and not
+/// at whatever unrelated text inherited their old line number.
+#[test]
+fn narrowing_keeps_a_detached_reader_on_the_same_turn() {
+    const INNER: usize = 20;
+    let entries = reflow_fixture();
+
+    let before = build_at(&entries, 80);
+    // Three quarters in: far enough down that the extra wrapped lines the
+    // narrower width introduces have accumulated into real drift.
+    let scroll = before.meta.len() * 3 / 4;
+    let anchor = before.meta[scroll];
+
+    let after = build_at(&entries, 50);
+    assert!(
+        after.lines.len() > before.lines.len(),
+        "fixture must wrap into more lines at the narrower width"
+    );
+
+    // Carrying the raw line number across is the behaviour being replaced —
+    // assert it would actually have been wrong, or this test proves nothing.
+    let naive = after.meta[scroll];
+    assert_ne!(
+        (naive.entry, naive.block, naive.offset),
+        (anchor.entry, anchor.block, anchor.offset),
+        "fixture no longer renumbers lines; the test would pass vacuously"
+    );
+
+    let placed = scroll_after_reflow(
+        false,
+        Some(anchor_index(&after.meta, anchor)),
+        scroll,
+        after.lines.len(),
+        INNER,
+    );
+    let landed = after.meta[placed];
+    assert_eq!(
+        (landed.entry, landed.block),
+        (anchor.entry, anchor.block),
+        "reader was moved off their turn: {anchor:?} -> {landed:?}"
+    );
+    assert!(
+        !at_bottom(placed, after.lines.len(), INNER),
+        "a reader in the middle of the log must not end up at the live tail"
+    );
+}
+
+/// The other half: someone riding the newest turn must still be riding it, or
+/// the fix would have traded one broken case for another.
+#[test]
+fn narrowing_keeps_a_follower_on_the_newest_turn() {
+    const INNER: usize = 20;
+    let entries = reflow_fixture();
+
+    let before = build_at(&entries, 80);
+    let scroll = before.lines.len().saturating_sub(INNER);
+    assert!(at_bottom(scroll, before.lines.len(), INNER));
+    let anchor = before.meta[scroll];
+
+    let after = build_at(&entries, 50);
+    let placed = scroll_after_reflow(
+        true,
+        Some(anchor_index(&after.meta, anchor)),
+        scroll,
+        after.lines.len(),
+        INNER,
+    );
+
+    assert!(at_bottom(placed, after.lines.len(), INNER));
+    assert_eq!(
+        placed + INNER,
+        after.lines.len(),
+        "the last built line must sit on the last visual row"
+    );
+    // And the anchor alone would have left the newest lines off-screen — which
+    // is exactly why `follow` overrides it.
+    let anchored_only = anchor_index(&after.meta, anchor);
+    assert!(
+        anchored_only < placed,
+        "fixture does not exercise the follow override"
+    );
+}
+
+/// Growing the panel is the mirror case: fewer wrapped lines, and the follower
+/// must not be left short of the end.
+#[test]
+fn widening_keeps_a_follower_on_the_newest_turn() {
+    const INNER: usize = 20;
+    let entries = reflow_fixture();
+
+    let before = build_at(&entries, 50);
+    let scroll = before.lines.len().saturating_sub(INNER);
+    let anchor = before.meta[scroll];
+
+    let after = build_at(&entries, 100);
+    assert!(after.lines.len() < before.lines.len());
+
+    let placed = scroll_after_reflow(
+        true,
+        Some(anchor_index(&after.meta, anchor)),
+        scroll,
+        after.lines.len(),
+        INNER,
+    );
+    assert_eq!(placed + INNER, after.lines.len());
+}

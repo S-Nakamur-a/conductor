@@ -80,6 +80,18 @@ pub(super) fn handle_terminal_column_click(
 
     if row < terminal_split_y {
         app.set_focus(Focus::TerminalClaude);
+        // The transcript's "jump to latest" chip, drawn only while the reader
+        // has scrolled away from the newest turn. Checked before the tab strip
+        // and the blank-area double-click so a click on the chip is never also
+        // read as one of those; `jump_hit` is `None` whenever the chip is not
+        // on screen, so this costs nothing the rest of the time.
+        if app.reflow.active
+            && let Some(hit) = app.reflow.jump_hit
+            && hit.contains(ratatui::layout::Position::new(col, row))
+        {
+            app.reflow_jump_to_latest();
+            return;
+        }
         // Click on tab bar (first row of Claude panel).
         if row == terminal_claude_y {
             handle_terminal_tab_click(app, col, true);

@@ -240,8 +240,16 @@ pub(super) fn handle_mouse_scroll(
                     app.reflow.scroll = app.reflow.scroll.saturating_add(abs_delta);
                 }
                 let inner = app.reflow.last_inner_height as usize;
-                let max_scroll = app.reflow.total_lines.saturating_sub(inner);
-                app.reflow.scroll = app.reflow.scroll.min(max_scroll);
+                app.reflow.scroll = crate::event::reflow::clamp_scroll(
+                    app.reflow.scroll,
+                    app.reflow.total_lines,
+                    inner,
+                );
+                // Wheel-up detaches the view from the tail, wheel-down re-attaches
+                // once the newest line is back on screen. Without this a resize
+                // after a wheel-up would re-pin to the bottom and undo the scroll.
+                app.reflow.follow =
+                    crate::event::reflow::at_bottom(app.reflow.scroll, app.reflow.total_lines, inner);
             } else if up {
                 // Enter the reflow transcript view on the first upward scroll
                 // from the live tail (scroll_claude == 0) instead of the

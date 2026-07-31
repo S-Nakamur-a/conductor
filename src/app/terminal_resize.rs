@@ -65,9 +65,25 @@ impl App {
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_claude = (rows, cols);
         if self.resize_sessions_of_kind(pty_manager::SessionKind::ClaudeCode, rows, cols) {
-            // The grid was rebuilt at a new width, so any scrollback offset is
-            // stale. Snap back to the live view and force a re-render.
-            self.terminal.scroll_claude = 0;
+            // The grid was rebuilt at a new width, so the cached render is stale.
+            //
+            // The *scroll offset* is deliberately left alone. This used to
+            // reset it to 0, which snapped a reader who had scrolled back to
+            // the live tail on every width change — and width changes are not
+            // rare events here: a window resize, a panel maximize, a divider
+            // drag, even moving focus between panels (column widths are
+            // focus-driven) all reach this path. Losing your place because you
+            // glanced at another window was the whole complaint.
+            //
+            // Keeping the number is approximate — re-wrapping renumbers the
+            // rows above the viewport, so the view can shift by a few lines —
+            // but it lands near where the reader was instead of at the far end
+            // of the history. Anchoring it exactly, the way the transcript view
+            // does with `LineMeta`, would mean probing `vt100::Parser::
+            // set_scrollback` across candidate offsets, and that API underflows
+            // (`Grid::visible_rows`, vt100 0.15.2) for any offset past one
+            // screenful — it only survives today because release builds wrap on
+            // overflow. See the note in `docs/pty-reflow-design.md`.
             self.terminal.cache_claude = Default::default();
             self.terminal.dirty_claude = true;
         }
@@ -77,9 +93,10 @@ impl App {
     pub fn update_shell_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_shell = (rows, cols);
         if self.resize_sessions_of_kind(pty_manager::SessionKind::Shell, rows, cols) {
-            // The grid was rebuilt at a new width, so any scrollback offset is
-            // stale. Snap back to the live view and force a re-render.
-            self.terminal.scroll_shell = 0;
+            // Same as the Claude panel above: invalidate the render cache, keep
+            // the reader's scroll offset. The shell is where this actually
+            // fires today — only shell sessions record the `raw_history` that
+            // makes `resize_session` report a reflow at all.
             self.terminal.cache_shell = Default::default();
             self.terminal.dirty_shell = true;
         }
