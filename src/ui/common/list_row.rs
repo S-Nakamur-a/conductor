@@ -152,6 +152,20 @@ pub fn row_style(
     }
 }
 
+/// The same row style, minus the hover underline: for the parts of a row that
+/// are not its name — leading indent, expand arrow, icon, origin marker, line
+/// counts.
+///
+/// The underline is a "this is the thing you're pointing at" mark, and the
+/// thing is the file, not the tree scaffolding in front of it. Running it under
+/// the indent made a nested row's rule start far to the left of anything
+/// clickable, which read as a text-input underline spanning the row rather than
+/// as a pointer affordance. Colour still applies to the whole row, so the row
+/// as a whole is still visibly hovered.
+pub fn decoration_style(style: Style) -> Style {
+    style.remove_modifier(Modifier::UNDERLINED)
+}
+
 /// How far a hovered row's colour has to sit from its resting colour, in the
 /// units of [`Theme::perceptual_distance`] (`0` identical, ~`765` black vs
 /// white).
@@ -484,6 +498,34 @@ mod tests {
             "the underline marks where the pointer *is*, so it must not linger \
              into the fade-out"
         );
+    }
+
+    /// The underline marks the name, not the row: the indent/arrow/icon prefix
+    /// keeps the hover *colour* (so the whole row still lights up) but drops
+    /// the rule, which is what kept it from starting at the left edge of a
+    /// deeply nested row.
+    #[test]
+    fn decoration_keeps_the_hover_colour_but_not_the_underline() {
+        let theme = test_theme();
+        let hovered = row_style(&theme, theme.fg, false, true, Some(HoverPhase::On));
+        let decoration = decoration_style(hovered);
+
+        assert_eq!(decoration.fg, hovered.fg);
+        assert!(hovered.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(!decoration.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    /// A selected row's BOLD is not the hover affordance and must survive the
+    /// split, or the prefix would render lighter than the name it belongs to.
+    #[test]
+    fn decoration_preserves_selection_styling() {
+        let theme = test_theme();
+        let selected = row_style(&theme, theme.fg, true, true, None);
+        let decoration = decoration_style(selected);
+
+        assert_eq!(decoration.fg, selected.fg);
+        assert_eq!(decoration.bg, selected.bg);
+        assert!(decoration.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]

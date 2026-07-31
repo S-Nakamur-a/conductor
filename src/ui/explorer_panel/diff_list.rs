@@ -135,7 +135,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
             } => {
                 let indent = "  ".repeat(*depth);
                 let arrow = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
-                let label = format!("  {indent}{arrow} \u{1f4c1} {name}");
+                let prefix = format!("  {indent}{arrow} \u{1f4c1} ");
 
                 let style = crate::ui::common::list_row::row_style(
                     theme,
@@ -145,7 +145,15 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     app.diff_list_hover.phase(idx),
                 );
 
-                Some(ListItem::new(Span::styled(label, style)))
+                // Prefix split off so the hover underline stops at the name
+                // (see `list_row::decoration_style`).
+                Some(ListItem::new(Line::from(vec![
+                    Span::styled(
+                        prefix,
+                        crate::ui::common::list_row::decoration_style(style),
+                    ),
+                    Span::styled(name.clone(), style),
+                ])))
             }
             DiffListEntry::File {
                 section,
@@ -173,7 +181,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     DiffSection::Committed => "C",
                     DiffSection::Uncommitted => "U",
                 };
-                let label = format!("  {indent}{marker} {icon} {filename}");
+                let prefix = format!("  {indent}{marker} {icon} ");
 
                 // D6: the filename color reports the file's git stage state
                 // (untracked / unstaged / staged / committed), not the
@@ -190,19 +198,24 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     diff_focused,
                     app.diff_list_hover.phase(idx),
                 );
+                // Everything that isn't the filename — indent, origin marker,
+                // icon, line counts — drops the hover underline so the rule
+                // sits under the name alone.
+                let decoration = crate::ui::common::list_row::decoration_style(style);
                 // The row's background/selection styling comes from `style`
                 // (via `row_style`), but +added/-deleted keep their own
                 // foreground regardless of stage state, so they're split into
-                // separate spans rather than baked into `label`.
+                // separate spans rather than baked into the label.
                 let counts_style = |fg| Style {
                     fg: Some(fg),
-                    ..style
+                    ..decoration
                 };
 
                 // GitHub-style comment badge: 💬N for files with review comments,
                 // coloured by whether any are still unresolved.
                 let mut spans = vec![
-                    Span::styled(label, style),
+                    Span::styled(prefix, decoration),
+                    Span::styled(filename.to_string(), style),
                     Span::styled(
                         format!(" +{}", file_diff.added_lines),
                         counts_style(theme.diff_add),
@@ -237,7 +250,13 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 if !selected {
                     style = style.add_modifier(Modifier::BOLD);
                 }
-                Some(ListItem::new(Span::styled("  \u{25A3} SUMMARY", style)))
+                Some(ListItem::new(Line::from(vec![
+                    Span::styled(
+                        "  \u{25A3} ",
+                        crate::ui::common::list_row::decoration_style(style),
+                    ),
+                    Span::styled("SUMMARY", style),
+                ])))
             }
         });
     let items: Vec<ListItem> = error_banner.into_iter().chain(entry_items).collect();
