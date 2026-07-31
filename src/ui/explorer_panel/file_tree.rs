@@ -120,15 +120,17 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
             let entry = app.viewer_state.tree.file_tree.get(tree_idx)?;
             let indent = indent_for_depth(entry.depth);
 
-            let label = if entry.is_dir {
+            // Split from the name so the hover underline can be confined to
+            // the name itself (see `list_row::decoration_style`).
+            let prefix = if entry.is_dir {
                 let arrow = if entry.is_expanded {
                     "\u{25bc}" // ▼
                 } else {
                     "\u{25b6}" // ▶
                 };
-                format!("{indent}{arrow} {} {}", entry.icon, entry.name)
+                format!("{indent}{arrow} {} ", entry.icon)
             } else {
-                format!("{indent}  {} {}", entry.icon, entry.name)
+                format!("{indent}  {} ", entry.icon)
             };
 
             // Untracked/ignored entries dim regardless of file-vs-directory,
@@ -157,7 +159,13 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 hover,
             );
 
-            Some(ListItem::new(Span::styled(label, style)))
+            Some(ListItem::new(Line::from(vec![
+                Span::styled(
+                    prefix,
+                    crate::ui::common::list_row::decoration_style(style),
+                ),
+                Span::styled(entry.name.clone(), style),
+            ])))
         })
         .collect();
 
