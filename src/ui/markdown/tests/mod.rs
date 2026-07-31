@@ -12,6 +12,7 @@ use syntect::highlighting::ThemeSet;
 
 mod parsing;
 mod rendering;
+mod transcript_code_block_colors;
 
 fn fixtures() -> (Theme, SyntaxSet, SyntectTheme) {
     let theme = Theme::default();

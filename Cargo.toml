@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.95.0"
+version = "0.96.0"
 edition = "2024"
 
 [dependencies]
@@ -24,6 +24,7 @@ copypasta = "0.10"
 log = "0.4"
 env_logger = "0.11"
 notify = "8"
+unicode-segmentation = "1"
 unicode-width = "0.2"
 vt100 = "0.15"
 open = "5"

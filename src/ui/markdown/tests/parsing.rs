@@ -116,11 +116,11 @@ fn snake_case_and_bare_star_stay_literal() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     // Underscores are never emphasis.
-    let spans = inline_spans("call set_change_summary here", base, &theme);
+    let spans = inline_spans("call set_change_summary here", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "call set_change_summary here");
     assert_eq!(spans.len(), 1, "no styled split for snake_case");
     // `2 * 3`: space-flanked star is literal.
-    let spans = inline_spans("rate is 2 * 3", base, &theme);
+    let spans = inline_spans("rate is 2 * 3", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "rate is 2 * 3");
     assert_eq!(spans.len(), 1);
 }
@@ -130,7 +130,7 @@ fn bold_italic_code_are_styled() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
-    let spans = inline_spans("a **b** c", base, &theme);
+    let spans = inline_spans("a **b** c", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "a b c");
     assert!(
         spans
@@ -138,14 +138,14 @@ fn bold_italic_code_are_styled() {
             .any(|s| s.content == "b" && s.style.add_modifier.contains(Modifier::BOLD))
     );
 
-    let spans = inline_spans("a *b* c", base, &theme);
+    let spans = inline_spans("a *b* c", base, &theme, MarkdownFlavor::Rich);
     assert!(
         spans
             .iter()
             .any(|s| s.content == "b" && s.style.add_modifier.contains(Modifier::ITALIC))
     );
 
-    let spans = inline_spans("use `git` now", base, &theme);
+    let spans = inline_spans("use `git` now", base, &theme, MarkdownFlavor::Rich);
     // Inline code is padded with NBSP into a pink-on-card chip; match on the
     // trimmed content rather than the exact padded string.
     assert!(
@@ -166,7 +166,7 @@ fn unclosed_inline_delimiters_stay_literal() {
         "a `b", "a *b", "a **b", "*", "`", "a ~~b", "~~", "~", "a ~ b", "~/foo",
         "a ~~ b ~~ c",
     ] {
-        let spans = inline_spans(input, base, &theme);
+        let spans = inline_spans(input, base, &theme, MarkdownFlavor::Rich);
         assert_eq!(joined(&spans), input, "input {input:?} should be literal");
     }
 }
@@ -175,7 +175,7 @@ fn unclosed_inline_delimiters_stay_literal() {
 fn strikethrough_is_styled_and_muted() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
-    let spans = inline_spans("keep ~~drop~~ this", base, &theme);
+    let spans = inline_spans("keep ~~drop~~ this", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "keep drop this");
     let struck = spans.iter().find(|s| s.content == "drop").unwrap();
     assert!(struck.style.add_modifier.contains(Modifier::CROSSED_OUT));
@@ -188,7 +188,7 @@ fn strikethrough_does_not_nest_inner_markup() {
     // nesting) — but inline markup OUTSIDE the strike still works.
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
-    let spans = inline_spans("~~old **bold**~~ and **real**", base, &theme);
+    let spans = inline_spans("~~old **bold**~~ and **real**", base, &theme, MarkdownFlavor::Rich);
     assert!(
         spans
             .iter()
@@ -455,7 +455,7 @@ fn links_render_text_and_url() {
     let base = Style::default().fg(theme.fg);
 
     // Link text shown, URL kept in a recessive parenthetical.
-    let spans = inline_spans("see [the docs](https://example.com) now", base, &theme);
+    let spans = inline_spans("see [the docs](https://example.com) now", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "see the docs (https://example.com) now");
     assert!(
         spans.iter().any(|s| s.content == "the docs"
@@ -464,7 +464,7 @@ fn links_render_text_and_url() {
     );
 
     // Inline markup inside the link text is still styled.
-    let spans = inline_spans("[**bold** link](https://x.io)", base, &theme);
+    let spans = inline_spans("[**bold** link](https://x.io)", base, &theme, MarkdownFlavor::Rich);
     assert!(
         spans
             .iter()
@@ -479,14 +479,14 @@ fn self_titled_and_empty_links_show_url_once() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
-    let spans = inline_spans("[https://x.com](https://x.com)", base, &theme);
+    let spans = inline_spans("[https://x.com](https://x.com)", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "https://x.com");
 
     // Trailing-slash / case differences still collapse.
-    let spans = inline_spans("[https://x.com/](https://x.com)", base, &theme);
+    let spans = inline_spans("[https://x.com/](https://x.com)", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "https://x.com");
 
-    let spans = inline_spans("[](https://x.com)", base, &theme);
+    let spans = inline_spans("[](https://x.com)", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "https://x.com");
 }
 
@@ -495,7 +495,7 @@ fn malformed_links_stay_literal() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     for input in ["[text]", "[text](", "[text(url)", "a [b] c", "["] {
-        let spans = inline_spans(input, base, &theme);
+        let spans = inline_spans(input, base, &theme, MarkdownFlavor::Rich);
         assert_eq!(joined(&spans), input, "{input:?} should stay literal");
     }
 }
@@ -504,7 +504,7 @@ fn malformed_links_stay_literal() {
 fn link_preserves_trailing_text() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
-    let spans = inline_spans("[a](b)c", base, &theme);
+    let spans = inline_spans("[a](b)c", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "a (b)c");
 }
 

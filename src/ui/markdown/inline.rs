@@ -6,15 +6,31 @@ use ratatui::text::Span;
 
 use crate::theme::Theme;
 
+use super::MarkdownFlavor;
+
 /// Parse inline `code`, `**bold**`, `*italic*`, `~~strikethrough~~`, and
 /// `[text](url)` links out of `text`, styling the rest with `base`.
 /// Unmatched/space-flanked delimiters stay literal.
-pub(crate) fn inline_spans(text: &str, base: Style, theme: &Theme) -> Vec<Span<'static>> {
-    // Inline `code`: a pink foreground on a shaded card, with one space of
-    // padding inside the card on each side (`[ code ]`, GitHub-style) so it
-    // reads as a distinct chip and not just tinted text. The padding spaces
-    // carry the card colour too.
-    let code_style = Style::default().fg(theme.code_fg).bg(theme.code_bg);
+///
+/// `flavor` only affects inline code: the Rich UI pads it into a coloured
+/// card (`[ code ]`); the Claude transcript renders it as plain
+/// `theme.info`-coloured text with no padding or background, matching native
+/// Claude Code.
+pub(crate) fn inline_spans(
+    text: &str,
+    base: Style,
+    theme: &Theme,
+    flavor: MarkdownFlavor,
+) -> Vec<Span<'static>> {
+    let code_style = match flavor {
+        // A pink foreground on a shaded card, one space of padding inside the
+        // card on each side (`[ code ]`, GitHub-style) so it reads as a
+        // distinct chip and not just tinted text. The padding spaces carry
+        // the card colour too.
+        MarkdownFlavor::Rich => Style::default().fg(theme.code_fg).bg(theme.code_bg),
+        // Native Claude Code: `theme.info`-coloured text, no card, no padding.
+        MarkdownFlavor::Transcript => Style::default().fg(theme.info),
+    };
     let chars: Vec<char> = text.chars().collect();
     let n = chars.len();
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -30,12 +46,16 @@ pub(crate) fn inline_spans(text: &str, base: Style, theme: &Theme) -> Vec<Span<'
                 && j > i + 1
             {
                 flush(&mut buf, &mut spans, base);
-                // Pad with NBSP (not a regular space) so the wrapper never
-                // breaks the chip at its padding — it only wraps on 0x20.
-                spans.push(Span::styled(
-                    format!("\u{a0}{}\u{a0}", collect(&chars, i + 1, j)),
-                    code_style,
-                ));
+                let content = collect(&chars, i + 1, j);
+                let styled = match flavor {
+                    // Pad with NBSP (not a regular space) so the wrapper
+                    // never breaks the chip at its padding — it only wraps
+                    // on 0x20.
+                    MarkdownFlavor::Rich => format!("\u{a0}{content}\u{a0}"),
+                    // Native Claude Code has no padding around inline code.
+                    MarkdownFlavor::Transcript => content,
+                };
+                spans.push(Span::styled(styled, code_style));
                 i = j + 1;
                 continue;
             }
@@ -80,7 +100,7 @@ pub(crate) fn inline_spans(text: &str, base: Style, theme: &Theme) -> Vec<Span<'
                 // Link text (which may itself contain inline markup) plus the
                 // URL in a recessive, footnote-like parenthetical so the
                 // destination stays visible/copyable in a non-clickable TUI.
-                spans.extend(inline_spans(&link.text, link_style, theme));
+                spans.extend(inline_spans(&link.text, link_style, theme, flavor));
                 spans.push(Span::styled(
                     format!(" ({})", link.url),
                     Style::default().fg(theme.muted),

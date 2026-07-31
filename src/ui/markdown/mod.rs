@@ -52,10 +52,12 @@
 //! [`render`] (block-to-`Line` rendering), [`table`] (GFM table layout), and
 //! [`wrap`] (display-width-aware span wrapping).
 
+mod code_colors;
 mod inline;
 mod parse;
 mod render;
 mod table;
+mod table_boxed;
 mod wrap;
 
 use parse::{MdBlock, parse_blocks};

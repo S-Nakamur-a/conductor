@@ -43,8 +43,21 @@ pub struct ReflowView {
     pub last_width: u16,
     /// When `true`, the next render pins scroll to the bottom (most recent turn).
     pub pending_bottom: bool,
-    /// Pre-rendered, width-reflowed lines; rebuilt only when `last_width` changes.
+    /// Pre-rendered, width-reflowed lines; rebuilt only when `last_width`
+    /// changes or `needs_rebuild` is set.
     pub cached_lines: Vec<ratatui::text::Line<'static>>,
+    /// One entry per line of `cached_lines`: where it came from (the scroll
+    /// anchor) and where its gutter glyph forces an unwritten cell.
+    pub line_meta: Vec<crate::ui::reflow_view::LineMeta>,
+    /// Set when something other than a width change invalidates
+    /// `cached_lines` — currently only the expand toggle.
+    pub needs_rebuild: bool,
+    /// Whether an overlay covered the panel on the previous frame. Used to
+    /// force one hard repaint when it closes: cells this view deliberately
+    /// leaves unwritten (see `LineMeta::skip_col`) keep whatever the overlay
+    /// painted there, and ratatui's diff — comparing only its own buffers —
+    /// would never repaint them.
+    pub last_overlay_active: bool,
     /// Inner panel height at the last render — used for page-scroll sizing.
     pub last_inner_height: u16,
     /// Per-session Markdown render cache.
@@ -59,6 +72,13 @@ pub struct ReflowView {
     /// `Default` because `Option<T>: Default` is always `None` without a
     /// `T: Default` bound.
     pub sweep: Option<Sweep>,
+    /// Conductor's own ctrl+o-equivalent toggle: when `true`, tool_use/
+    /// tool_result blocks render fully expanded instead of Claude's default
+    /// collapsed form. A global toggle, not per-block — see ADR-2 in
+    /// `docs/plans/2026-07-31-native-render-parity.md`. Flipping it forces a
+    /// `cached_lines` rebuild (the width-change check in `render.rs` alone
+    /// would not catch it).
+    pub expanded: bool,
 }
 
 impl App {
@@ -120,6 +140,11 @@ impl App {
         // would otherwise block the 60fps loop for several frames. The view
         // activates immediately with a "Loading…" placeholder and
         // `poll_reflow_load` swaps the entries in when they arrive.
+        // Force one hard repaint: the panel currently shows the live PTY, and
+        // the cells this view leaves unwritten after a gutter glyph would keep
+        // that stale content forever otherwise.
+        self.terminal.needs_clear = true;
+
         self.bg.reflow_load.start(move |tx| {
             let _ = tx.send(crate::claude_log::load_session(&path));
         });
@@ -133,6 +158,9 @@ impl App {
             last_width: 0, // Forces a full line rebuild on first render.
             pending_bottom: true,
             cached_lines: Vec::new(),
+            line_meta: Vec::new(),
+            needs_rebuild: false,
+            last_overlay_active: false,
             last_inner_height: 0,
             cache: crate::ui::markdown::MarkdownCache::new(),
             // Start the entry transition: the border glides from the accent to
@@ -141,6 +169,9 @@ impl App {
             sweep: Some(Sweep {
                 start: std::time::Instant::now(),
             }),
+            // Always opens collapsed, matching Claude Code's own default
+            // (non-ctrl+o) transcript view. The toggle keybind is S5.
+            expanded: false,
         };
     }
 

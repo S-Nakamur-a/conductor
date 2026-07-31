@@ -7,9 +7,10 @@ use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
 
+use super::MarkdownFlavor;
 use super::inline::inline_spans;
 use super::parse::Align;
-use super::wrap::{Cell, cells_to_line, char_width, spans_to_cells, wrap_cells_raw};
+use super::wrap::{Cell, cells_to_line, spans_to_cells, wrap_cells_raw};
 
 /// Render a GFM table borderless: a bold header row, a horizontal rule, then
 /// aligned body rows with columns separated by two spaces. Box-drawing borders
@@ -98,7 +99,12 @@ fn natural_col_widths(headers: &[String], rows: &[Vec<String>], theme: &Theme) -
 /// Display width of `text` after inline markup is stripped, so column widths
 /// match what actually renders (not the raw `**bold**` source).
 fn rendered_width(text: &str, theme: &Theme) -> usize {
-    cells_width(&spans_to_cells(&inline_spans(text, Style::default(), theme)))
+    cells_width(&spans_to_cells(&inline_spans(
+        text,
+        Style::default(),
+        theme,
+        MarkdownFlavor::Rich,
+    )))
 }
 
 /// Shrink natural column widths so the row (cells + 2-space separators) fits
@@ -150,7 +156,7 @@ fn render_table_row(
 
     let height = cols.iter().map(Vec::len).max().unwrap_or(0);
     let blank = |col_w: usize| -> Vec<Cell> {
-        (0..col_w).map(|_| Cell { ch: ' ', style: base }).collect()
+        (0..col_w).map(|_| Cell::new(' ', base)).collect()
     };
 
     (0..height)
@@ -158,8 +164,8 @@ fn render_table_row(
             let mut row: Vec<Cell> = Vec::new();
             for (k, col) in cols.iter().enumerate() {
                 if k > 0 {
-                    row.push(Cell { ch: ' ', style: base });
-                    row.push(Cell { ch: ' ', style: base });
+                    row.push(Cell::new(' ', base));
+                    row.push(Cell::new(' ', base));
                 }
                 match col.get(row_line) {
                     Some(line) => row.extend(line.iter().cloned()),
@@ -185,7 +191,7 @@ fn wrap_cell(
     if col_w == 0 {
         return vec![Vec::new()];
     }
-    let cells = spans_to_cells(&inline_spans(text, base, theme));
+    let cells = spans_to_cells(&inline_spans(text, base, theme, MarkdownFlavor::Rich));
     wrap_cells_raw(&cells, col_w, false)
         .into_iter()
         .map(|line| pad_cell_line(line, col_w, align, base))
@@ -196,7 +202,7 @@ fn wrap_cell(
 fn pad_cell_line(cells: Vec<Cell>, col_w: usize, align: Align, base: Style) -> Vec<Cell> {
     let pad = col_w.saturating_sub(cells_width(&cells));
     let space = |n: usize| -> Vec<Cell> {
-        (0..n).map(|_| Cell { ch: ' ', style: base }).collect()
+        (0..n).map(|_| Cell::new(' ', base)).collect()
     };
     match align {
         Align::Left => {
@@ -226,7 +232,7 @@ fn clip_cells(cells: Vec<Cell>, width: usize) -> Vec<Cell> {
     let mut out = Vec::new();
     let mut w = 0;
     for cell in cells {
-        let cw = char_width(cell.ch);
+        let cw = cell.width();
         if w + cw > width {
             break;
         }
@@ -238,5 +244,5 @@ fn clip_cells(cells: Vec<Cell>, width: usize) -> Vec<Cell> {
 
 /// Total display width of a cell slice.
 fn cells_width(cells: &[Cell]) -> usize {
-    cells.iter().map(|c| char_width(c.ch)).sum()
+    cells.iter().map(|c| c.width()).sum()
 }

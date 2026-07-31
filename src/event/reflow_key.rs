@@ -73,6 +73,18 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
             app.reflow.scroll = total.saturating_sub(inner);
         }
 
+        // ── Expand / collapse ────────────────────────────────────────────────
+        // Claude Code's own transcript folds tool results and thinking blocks
+        // and offers `ctrl+o` to expand; conductor reuses the key but expands
+        // in place rather than switching to a separate full-screen view. It is
+        // a single view-wide toggle: this panel has no per-block cursor to
+        // aim a finer-grained one at.
+        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.reflow.expanded = !app.reflow.expanded;
+            app.reflow.needs_rebuild = true;
+            return;
+        }
+
         // ── Leave ────────────────────────────────────────────────────────────
         KeyCode::Esc => {
             // Play the exit sweep before returning to the live PTY.

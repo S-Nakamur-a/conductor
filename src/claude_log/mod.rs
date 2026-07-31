@@ -16,6 +16,7 @@ mod convert;
 mod model;
 mod schema;
 mod session;
+mod tool_class;
 #[cfg(test)]
 mod tests;
 
@@ -23,11 +24,18 @@ pub use session::load_session;
 
 // `DisplayBlock` and `Role` are consumed externally (via `crate::claude_log::X`)
 // by `ui/reflow_view.rs`; `LogEntry` likewise by `app/reflow.rs`. The rest of
-// these re-exports (`TOOL_RESULT_PREVIEW_LINES` and the raw schema types) are
-// only used within this module tree today, via `super::model::X` /
-// `super::schema::X`, but stay re-exported at the module root to preserve the
-// pre-split `crate::claude_log::X` path for any future external caller.
+// these re-exports (the raw schema types) are only used within this module
+// tree today, via `super::model::X` / `super::schema::X`, but stay
+// re-exported at the module root to preserve the pre-split
+// `crate::claude_log::X` path for any future external caller.
 #[allow(unused_imports)]
-pub use model::{DisplayBlock, LogEntry, Role, TOOL_RESULT_PREVIEW_LINES};
+pub use model::{DisplayBlock, LogEntry, Role};
 #[allow(unused_imports)]
 pub use schema::{Block, Content, LogRecord, Message, TextOnly, ToolResultContent};
+// `ToolCategory`/`CountedBucket`/`classify`/`unknown_tool_arg` are consumed by
+// `ui/reflow_view/build.rs` to lay out `tool_use`/`tool_result` lines, and by
+// `convert.rs` (within this module tree) to resolve the pairing map's stored
+// bucket — see `tool_class.rs` for why both call sites share one table.
+pub use tool_class::{
+    BUCKET_ORDER, CountedBucket, ResultKind, ToolCategory, classify, unknown_tool_arg,
+};
