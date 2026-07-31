@@ -134,6 +134,17 @@ impl App {
                     log::warn!("Symbol index build failed: {msg}");
                 }
             }
+            // The root can move while a build is walking the old one, and
+            // `start_symbol_index_build` declines to pile a second build on
+            // top of a running one. That combination leaves the finished build
+            // discarding its own result with nothing queued behind it, so the
+            // index would sit empty until the next filesystem event. Kicking
+            // off the catch-up build here is what closes that gap: by now the
+            // slot is free, and if the root never moved this is a no-op
+            // because the index is already marked available.
+            if !self.symbol_index.is_available() {
+                self.start_symbol_index_build();
+            }
         }
 
         // update check. The outer Option is "a result is ready"; the inner is

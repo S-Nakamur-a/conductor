@@ -82,6 +82,21 @@ impl App {
 
         self.viewer_state = ViewerState::default();
 
+        // Rebuild the symbol index over the tree the user is now looking at.
+        // Worktrees are siblings of the repository root, so an index built over
+        // one of them cannot see any of the others: without this, navigation
+        // keeps answering from the previous worktree and lands on the right
+        // file at a line number taken from a different branch. The worse the
+        // branches have diverged, the further off it is — which puts the error
+        // exactly where the diff is most worth reading.
+        //
+        // Deliberately hung on this method rather than on assignments to
+        // `selected_worktree`: several of those are not worktree switches at
+        // all (a temporary hop while spawning a session, moving the highlight
+        // to open a delete prompt), and two more run on a 3-second poll and on
+        // every mouse wheel tick, where a rebuild would pile up.
+        self.start_symbol_index_build();
+
         // The file lists deliberately survive until the background diff lands
         // (swapping them for an empty pane would flicker), but the error must
         // not: it belongs to the worktree we just left, and leaving a red

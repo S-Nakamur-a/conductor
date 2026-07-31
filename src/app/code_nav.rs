@@ -8,10 +8,14 @@ impl App {
     // ── Code navigation helpers ────────────────────────────────────
 
     /// Extract the symbol under the cursor from the current viewer line.
+    ///
+    /// Still the top visible line, not the actual text cursor — that
+    /// mismatch is tracked separately (S6) and out of scope here.
     pub fn get_symbol_at_cursor(&self) -> Option<String> {
         let scroll = self.viewer_state.content.file_scroll;
         let line = self.viewer_state.content.file_content.get(scroll)?;
-        extract_symbol_from_line(line)
+        let line_1 = scroll + 1;
+        extract_symbol_from_line(line, line_1, &self.viewer_state.content.code_mask)
     }
 
     /// Explicitly show the hover-info popup for the symbol under the viewer
@@ -629,8 +633,30 @@ impl App {
         }
     }
 
-    /// Start building the symbol index in the background.
+    /// Start building the symbol index in the background, over whichever
+    /// worktree is currently selected.
+    ///
+    /// Re-aiming the index here rather than at each call site is what keeps the
+    /// two from drifting: the index must describe the tree the viewer is
+    /// showing, and every path that wants a build — startup, a worktree
+    /// switch, a filesystem change — wants it for that same tree.
+    /// [`SymbolIndex::set_root`] is a no-op when the root has not moved, so the
+    /// filesystem-change path still just rebuilds in place.
+    ///
+    /// A build already running is left to finish rather than being replaced.
+    /// Worktree selection changes arrive as fast as the user can scroll a list,
+    /// and each one reaches here; without this, dragging through ten worktrees
+    /// starts ten concurrent full-tree parses (`BackgroundOp` cannot cancel the
+    /// one it replaces — it drops the join handle and the worker runs to
+    /// completion regardless). The index stays unavailable for as long as the
+    /// pile takes to drain, so navigation dies exactly while the user is moving
+    /// around. Superseded builds discard their own results via the generation
+    /// check, and the settled worktree gets its build from the caller below.
     pub fn start_symbol_index_build(&mut self) {
+        self.symbol_index.set_root(self.selected_worktree_path());
+        if self.bg.symbol_index.is_running() {
+            return;
+        }
         let index = self.symbol_index.clone();
         self.bg.symbol_index.start(move |tx| {
             let result = match index.build() {
@@ -656,31 +682,31 @@ impl App {
         let total = self.viewer_state.content.file_content.len();
         let end = (scroll + inner_height).min(total);
 
-        let re = match regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\b") {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
-        };
-
+        let mask = &self.viewer_state.content.code_mask;
         let mut seen = std::collections::HashSet::new();
         let mut candidates = Vec::new();
 
         for line_idx in scroll..end {
             let line = &self.viewer_state.content.file_content[line_idx];
             let line_1 = line_idx + 1;
-            for cap in re.captures_iter(line) {
-                if let Some(m) = cap.get(1) {
-                    let word = m.as_str();
-                    if word.len() <= 1 || is_rust_keyword(word) {
-                        continue;
-                    }
-                    if !seen.insert(word.to_string()) {
-                        continue;
-                    }
-                    if !self.can_jump_to_symbol(word) {
-                        continue;
-                    }
-                    candidates.push((word.to_string(), line_1, m.start(), m.end()));
+            // Enumerated with the same scan that built the mask — the mask is
+            // keyed by position in this sequence, so it must be this one.
+            for (k, (start, stop, word)) in
+                crate::symbol_index::identifier_occurrences(line).enumerate()
+            {
+                if !mask.is_code(line_1, k) {
+                    continue;
                 }
+                if word.len() <= 1 || is_rust_keyword(word) {
+                    continue;
+                }
+                if !seen.insert(word.to_string()) {
+                    continue;
+                }
+                if !self.can_jump_to_symbol(word) {
+                    continue;
+                }
+                candidates.push((word.to_string(), line_1, start, stop));
             }
         }
 
@@ -794,24 +820,28 @@ fn underline_debounce_ready(elapsed: std::time::Duration, resolved: bool) -> boo
 // ── Free functions for symbol extraction ──────────────────────────────
 
 /// Extract a symbol name from a source code line at the cursor position.
-/// Returns the first Rust-like identifier found on the line that is not a
-/// keyword. Comment and attribute lines yield nothing — an English word in a
-/// doc comment (e.g. `//! Building …`) must not resolve to a same-named symbol.
-pub fn extract_symbol_from_line(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    // Skip lines that are comments (`//`, `///`, `//!`, `/* … */`, block-comment
-    // continuation `* …`) or attributes (`#[…]`) — none carry a code symbol.
-    if trimmed.starts_with("//")
-        || trimmed.starts_with("/*")
-        || trimmed.starts_with('*')
-        || trimmed.starts_with('#')
-    {
-        return None;
-    }
-    let re = regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\b").ok()?;
-    for cap in re.captures_iter(line) {
-        let word = cap.get(1)?.as_str();
-        if !is_rust_keyword(word) && word.len() > 1 {
+/// Returns the first identifier on `line_1` (1-indexed) that [`mask`] marks
+/// as code — not the first identifier-shaped word. A word inside a comment
+/// or string literal (e.g. `Building` in `//! Building …`, or `index` in
+/// `let x = 1; // build the index`) is skipped the same way a comment-only
+/// line used to be, but per-occurrence rather than per-line, so a trailing
+/// comment on an otherwise real code line no longer hides the code before it.
+///
+/// Was a standalone prefix check (`//`, `/*`, `*`, `#`) before S2; that only
+/// caught comments starting the line and had no way to see a mid-line
+/// comment or a string literal, and duplicated what the mask now decides in
+/// one place. Follows the same enumerate-and-gate shape as
+/// [`App::build_symbol_hints`](crate::app::App::build_symbol_hints).
+pub fn extract_symbol_from_line(
+    line: &str,
+    line_1: usize,
+    mask: &crate::symbol_index::CodeMask,
+) -> Option<String> {
+    for (k, (_, _, word)) in crate::symbol_index::identifier_occurrences(line).enumerate() {
+        if !mask.is_code(line_1, k) {
+            continue;
+        }
+        if word.len() > 1 && !is_rust_keyword(word) {
             return Some(word.to_string());
         }
     }
@@ -898,6 +928,27 @@ pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize
     Some((word.to_string(), start_col, end_col))
 }
 
+/// [`extract_symbol_at_column`], gated on `mask` so a word sitting in a
+/// comment or string literal never resolves to a jump target.
+///
+/// Kept separate from the extraction itself, which stays a pure "what
+/// identifier is at this column" lookup — it has no way to know whether that
+/// occurrence is code or prose. Every call site that turns a mouse column
+/// into a jumpable symbol (hover underline, auto-hover popup, Cmd+Click) goes
+/// through this instead of calling `extract_symbol_at_column` directly.
+pub fn masked_symbol_at_column(
+    line: &str,
+    col: usize,
+    line_1: usize,
+    mask: &crate::symbol_index::CodeMask,
+) -> Option<(String, usize, usize)> {
+    let (symbol, start_col, end_col) = extract_symbol_at_column(line, col)?;
+    if !mask.is_code_at_column(line, line_1, col) {
+        return None;
+    }
+    Some((symbol, start_col, end_col))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -955,6 +1006,43 @@ mod tests {
         assert_eq!(result, Some(("_handler".to_string(), 4, 12)));
     }
 
+    // ── S2: masked_symbol_at_column ─────────────────────────────────────
+
+    #[test]
+    fn masked_symbol_at_column_skips_trailing_line_comment() {
+        // `extract_symbol_at_column` alone would happily return "build" —
+        // it has no notion of comments. The mask is what makes hover /
+        // Cmd+Click refuse to treat prose as a jump target.
+        let src = "fn f() {\n    let x = 1; // build the index\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = src.lines().nth(1).unwrap();
+        let col = line.find("build").unwrap();
+        assert_eq!(masked_symbol_at_column(line, col, 2, &mask), None);
+    }
+
+    #[test]
+    fn masked_symbol_at_column_skips_string_literal() {
+        let src = "fn f() {\n    let s = \"index\";\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = src.lines().nth(1).unwrap();
+        let col = line.find("index").unwrap();
+        assert_eq!(masked_symbol_at_column(line, col, 2, &mask), None);
+    }
+
+    #[test]
+    fn masked_symbol_at_column_allows_real_code() {
+        // Same line shape as the comment case above, but pointing at the
+        // identifier in code position — the mask must not over-mask.
+        let src = "fn f() {\n    let value = 1; // build the index\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = src.lines().nth(1).unwrap();
+        let col = line.find("value").unwrap();
+        assert_eq!(
+            masked_symbol_at_column(line, col, 2, &mask),
+            Some(("value".to_string(), col, col + 5))
+        );
+    }
+
     #[test]
     fn build_hover_preview_windows_around_line() {
         let dir = std::env::temp_dir().join(format!("hover_prev_{}", std::process::id()));
@@ -995,30 +1083,90 @@ mod tests {
     }
 
     #[test]
-    fn extract_symbol_from_line_skips_comments_and_attributes() {
+    fn extract_symbol_from_line_skips_comments_via_mask() {
         // Doc/line/block comments must not yield an English word that happens
-        // to collide with a real type name (the "Building" bug).
+        // to collide with a real type name (the "Building" bug) — now decided
+        // by the mask (S1) rather than a line-prefix guess, so it needs real
+        // multi-line source for the block comment to parse as one.
+        let src = "\
+//! Building and navigating
+/// Create a new state
+// Building the list
+/* Building */
+fn f() {
+/* Building
+ * Building (block cont.)
+ */
+}
+#[derive(Debug)]
+struct Marker;
+fn g() {
+    let state = DiffState::new();
+}
+pub struct Building {
+    x: i32,
+}
+";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = |n: usize| src.lines().nth(n - 1).unwrap();
+
+        assert_eq!(extract_symbol_from_line(line(1), 1, &mask), None);
+        assert_eq!(extract_symbol_from_line(line(2), 2, &mask), None);
+        assert_eq!(extract_symbol_from_line(line(3), 3, &mask), None);
+        assert_eq!(extract_symbol_from_line(line(4), 4, &mask), None);
+        // Continuation line of the multi-line block comment above.
+        assert_eq!(extract_symbol_from_line(line(7), 7, &mask), None);
+
+        // `#[derive(Debug)]` is no longer specially excluded: an attribute is
+        // real syntax, not prose, and the mask only masks comments/strings
+        // (D2) — so `derive` is in code position and comes back like any
+        // other identifier. The old prefix check treated every `#`-led line
+        // as unresolvable; the mask draws the line at "is this a comment or
+        // a string", which an attribute is neither.
         assert_eq!(
-            extract_symbol_from_line("//! Building and navigating"),
-            None
+            extract_symbol_from_line(line(10), 10, &mask),
+            Some("derive".to_string())
         );
-        assert_eq!(extract_symbol_from_line("/// Create a new state"), None);
-        assert_eq!(extract_symbol_from_line("    // Building the list"), None);
-        assert_eq!(extract_symbol_from_line("/* Building */"), None);
-        assert_eq!(
-            extract_symbol_from_line("     * Building (block cont.)"),
-            None
-        );
-        assert_eq!(extract_symbol_from_line("#[derive(Debug)]"), None);
+
         // Real code lines still resolve to their first identifier.
         assert_eq!(
-            extract_symbol_from_line("    let state = DiffState::new();"),
+            extract_symbol_from_line(line(13), 13, &mask),
             Some("state".to_string())
         );
         assert_eq!(
-            extract_symbol_from_line("pub struct Building {"),
+            extract_symbol_from_line(line(15), 15, &mask),
             Some("Building".to_string())
         );
+    }
+
+    #[test]
+    fn extract_symbol_from_line_skips_trailing_comment_and_string_hits() {
+        // The bug this replaces the prefix check for: a real statement
+        // followed by a trailing comment. `x` is a single character (dropped
+        // on its own) and `build`/`the`/`index` sit inside the comment, so
+        // the whole line now resolves to nothing — not "build", which the
+        // old implementation returned because it only looked at how the line
+        // *started*, never at what came after `//` mid-line.
+        let src = "fn f() {\n    let x = 1; // build the index\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = src.lines().nth(1).unwrap();
+        assert_eq!(extract_symbol_from_line(line, 2, &mask), None);
+
+        // Same shape, but with a real identifier before the comment: it must
+        // still resolve, proving the fix isn't over-masking the whole line.
+        let src = "fn f() {\n    let value = 1; // build the index\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = src.lines().nth(1).unwrap();
+        assert_eq!(
+            extract_symbol_from_line(line, 2, &mask),
+            Some("value".to_string())
+        );
+
+        // A string literal hides its contents the same way.
+        let src = "fn f() {\n    let s = \"index\";\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let line = src.lines().nth(1).unwrap();
+        assert_eq!(extract_symbol_from_line(line, 2, &mask), None);
     }
 
     // ── D8/D9/A7/A8: jump-underline decision functions ──────────────────

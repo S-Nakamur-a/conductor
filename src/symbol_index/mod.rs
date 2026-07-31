@@ -9,7 +9,12 @@
 //! build/query methods, `extract_common` holds the shared tree-sitter
 //! AST-walking helpers, and `extract_rust`/`extract_go`/`extract_ts` hold the
 //! per-language symbol extractors.
+//!
+//! [`code_mask`] answers the question the index cannot: given a word on screen,
+//! is it code at all, or prose inside a comment or string? Every navigation
+//! query needs that before a name lookup means anything.
 
+mod code_mask;
 mod extract_common;
 mod extract_go;
 mod extract_rust;
@@ -19,6 +24,7 @@ mod model;
 #[cfg(test)]
 mod tests;
 
+pub use code_mask::{CodeMask, identifier_occurrences};
 pub use index::SymbolIndex;
 // `Reference` is consumed externally today (via `crate::symbol_index::Reference`
 // in `app/`). `Symbol`/`SymbolKind` are currently only used within this module

@@ -633,8 +633,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                             .file_content
                             .get(line_1 - 1)
                             .and_then(|text| {
-                                crate::app::extract_symbol_at_column(text, content_col)
-                                    .map(|(symbol, start, end)| (symbol, line_1, start, end))
+                                crate::app::masked_symbol_at_column(
+                                    text,
+                                    content_col,
+                                    line_1,
+                                    &app.viewer_state.content.code_mask,
+                                )
+                                .map(|(symbol, start, end)| (symbol, line_1, start, end))
                             })
                     })
                 } else {

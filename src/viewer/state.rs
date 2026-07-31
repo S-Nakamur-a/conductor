@@ -73,6 +73,13 @@ pub struct FileContentState {
     /// `*_test.go`, [`crate::rust_test`] for `*.rs`); empty for other files.
     /// Drives the ▶ run buttons.
     pub test_runs: std::collections::HashMap<usize, crate::test_run::TestRun>,
+    /// Which identifier occurrences in the open file are code rather than
+    /// prose inside a comment or string. Built from the file's own text when
+    /// it is opened, so it always describes what is actually on screen —
+    /// independent of whatever root the symbol index happens to be built over.
+    /// Empty for languages we have no grammar for, which leaves them with no
+    /// navigation rather than wrong navigation.
+    pub code_mask: crate::symbol_index::CodeMask,
 }
 
 /// What a screen row represents (for mouse click handling).
