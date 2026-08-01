@@ -1,9 +1,9 @@
-//! Named pipe (FIFO) listener for MCP-triggered UI refresh.
+//! MCP をきっかけに UI をリフレッシュするための名前付きパイプ (FIFO) のリスナ。
 //!
-//! The MCP server writes to `.conductor/refresh.pipe` after modifying review
-//! data (reply, resolve, etc.).  A background thread reads from the pipe and
-//! forwards events through an `mpsc` channel to the main loop, which then
-//! calls `refresh_reviews()`.
+//! MCP サーバはレビューデータを変更したあと (返信、解決など) に
+//! `.conductor/refresh.pipe` へ書き込む。バックグラウンドスレッドがパイプから
+//! 読み取り、`mpsc` チャネルでメインループへイベントを転送する。メインループは
+//! それを受けて `refresh_reviews()` を呼ぶ。
 
 use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -13,11 +13,11 @@ use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-/// Event sent when MCP writes to the refresh pipe.
+/// MCP がリフレッシュ用パイプへ書いたときに送られるイベント。
 #[derive(Debug)]
 pub struct RefreshEvent;
 
-/// Listens on a named pipe for UI refresh signals from the MCP server.
+/// MCP サーバからの UI リフレッシュ信号を名前付きパイプで待ち受ける。
 pub struct RefreshPipe {
     rx: mpsc::Receiver<RefreshEvent>,
     pipe_path: PathBuf,
@@ -26,8 +26,8 @@ pub struct RefreshPipe {
 }
 
 impl RefreshPipe {
-    /// Create a new listener bound to `.conductor/refresh.pipe` under the
-    /// given repository root.
+    /// 指定したリポジトリルート配下の `.conductor/refresh.pipe` に紐づけた
+    /// リスナを作る。
     pub fn new(repo_path: &Path) -> anyhow::Result<Self> {
         let conductor_dir = crate::git_engine::GitEngine::open(repo_path)
             .and_then(|e| e.main_worktree_path())
@@ -37,19 +37,19 @@ impl RefreshPipe {
 
         let pipe_path = conductor_dir.join("refresh.pipe");
 
-        // Remove stale pipe from a previous run and recreate.
+        // 前回の実行で残ったパイプを消して作り直す。
         if pipe_path.exists() {
             let _ = std::fs::remove_file(&pipe_path);
         }
 
-        // Create the FIFO.
+        // FIFO を作る。
         let path_cstr = std::ffi::CString::new(
             pipe_path
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path"))?,
         )?;
-        // SAFETY: mkfifo is a standard POSIX call; path_cstr is valid and
-        // null-terminated.  Mode 0o660 gives owner+group read/write.
+        // SAFETY: mkfifo は標準的な POSIX 呼び出しで、path_cstr は有効かつ
+        // null 終端されている。モード 0o660 は所有者とグループに読み書きを与える。
         let ret = unsafe { libc::mkfifo(path_cstr.as_ptr(), 0o660) };
         if ret != 0 {
             return Err(anyhow::anyhow!(
@@ -77,33 +77,32 @@ impl RefreshPipe {
         })
     }
 
-    /// Non-blocking poll for the next event.
+    /// 次のイベントをノンブロッキングで取り出す。
     pub fn poll(&self) -> Option<RefreshEvent> {
         self.rx.try_recv().ok()
     }
 
     fn read_loop(pipe_path: PathBuf, tx: mpsc::Sender<RefreshEvent>, shutdown: Arc<AtomicBool>) {
-        // We loop re-opening the pipe because a FIFO returns EOF when all
-        // writers close.  After each EOF we re-open to wait for the next
-        // writer.
+        // パイプを開き直すループになっているのは、FIFO は書き手が全員閉じると
+        // EOF を返すから。EOF のたびに開き直して次の書き手を待つ。
         while !shutdown.load(Ordering::Relaxed) {
-            // Open the FIFO for reading (blocking until a writer connects).
-            // We use raw libc::open because Rust's File::open does not
-            // support O_NONBLOCK at open time on FIFOs.
+            // FIFO を読み取り用に開く (書き手がつながるまでブロックする)。
+            // 生の libc::open を使うのは、Rust の File::open が FIFO に対して
+            // 開く時点での O_NONBLOCK に対応していないため。
             let path_cstr = match std::ffi::CString::new(pipe_path.to_string_lossy().as_ref()) {
                 Ok(c) => c,
                 Err(_) => break,
             };
 
-            // SAFETY: standard POSIX open; path_cstr is valid and null-terminated.
+            // SAFETY: 標準的な POSIX の open。path_cstr は有効かつ null 終端されている。
             let fd: RawFd = unsafe { libc::open(path_cstr.as_ptr(), libc::O_RDONLY) };
             if fd < 0 {
-                // Pipe was removed (shutdown or cleanup).
+                // パイプが消えた (終了処理か後始末)。
                 break;
             }
 
-            // Wrap in a File for convenient reading. SAFETY: fd is a valid
-            // open file descriptor that we own exclusively.
+            // 読みやすいように File で包む。SAFETY: fd はこちらが排他的に所有する
+            // 有効な open 済みファイルディスクリプタ。
             let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
 
             let mut buf = [0u8; 64];
@@ -113,12 +112,12 @@ impl RefreshPipe {
                 }
                 match file.read(&mut buf) {
                     Ok(0) => {
-                        // EOF — all writers closed. Re-open.
+                        // EOF。書き手が全員閉じた。開き直す。
                         break;
                     }
                     Ok(_) => {
                         if tx.send(RefreshEvent).is_err() {
-                            // Receiver dropped — main loop exited.
+                            // 受信側が落ちた = メインループが終了した。
                             return;
                         }
                     }
@@ -129,13 +128,12 @@ impl RefreshPipe {
                 }
             }
 
-            // Small sleep before re-opening to avoid busy-loop on rapid
-            // EOF cycles.
+            // 開き直す前に少し待つ。EOF が高速に繰り返されたときのビジーループを避ける。
             std::thread::sleep(Duration::from_millis(50));
         }
     }
 
-    /// Create a listener from an explicit pipe path (for testing).
+    /// パイプのパスを明示してリスナを作る (テスト用)。
     #[cfg(test)]
     fn from_path(pipe_path: PathBuf) -> anyhow::Result<Self> {
         if pipe_path.exists() {
@@ -175,16 +173,16 @@ impl RefreshPipe {
     }
 }
 
-/// Poke the TUI's refresh FIFO so it reloads review data.
+/// TUI のリフレッシュ用 FIFO を突いて、レビューデータを読み直させる。
 ///
-/// Called by `mcp-serve` after every write. Best-effort on purpose: the common
-/// "failure" is that no conductor is running, so the FIFO either does not exist
-/// or has no reader, and `O_NONBLOCK` turns the latter into `ENXIO`. Neither is
-/// worth surfacing — the write already succeeded, and the next time the TUI
-/// opens it reads the database fresh anyway.
+/// `mcp-serve` が書き込みのたびに呼ぶ。ベストエフォートなのは意図的で、よくある
+/// 「失敗」は conductor が動いていないこと。その場合 FIFO が存在しないか読み手が
+/// いないかで、後者は `O_NONBLOCK` により `ENXIO` になる。どちらも表に出す価値は
+/// ない。書き込み自体は既に成功しているし、次に TUI を開いたときにはどのみち
+/// データベースを読み直すため。
 ///
-/// `O_NONBLOCK` is what keeps this from being a hang: opening a FIFO for writing
-/// blocks until a reader attaches, which would wedge the tool call.
+/// ハングしないのは `O_NONBLOCK` のおかげ。FIFO を書き込み用に開くのは読み手が
+/// つながるまでブロックするので、これが無いとツール呼び出しが固まってしまう。
 pub fn signal_refresh(pipe_path: &Path) {
     let Some(path) = pipe_path.to_str() else {
         log::warn!("refresh pipe path is not UTF-8: {}", pipe_path.display());
@@ -194,7 +192,7 @@ pub fn signal_refresh(pipe_path: &Path) {
         return;
     };
 
-    // SAFETY: standard POSIX open; path_cstr is valid and null-terminated.
+    // SAFETY: 標準的な POSIX の open。path_cstr は有効かつ null 終端されている。
     let fd = unsafe { libc::open(path_cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
     if fd < 0 {
         log::debug!(
@@ -205,15 +203,14 @@ pub fn signal_refresh(pipe_path: &Path) {
         return;
     }
 
-    // SAFETY: fd is a valid descriptor we own exclusively; closed on drop.
+    // SAFETY: fd はこちらが排他的に所有する有効なディスクリプタで、drop 時に閉じられる。
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
 
-    // Only ever write into an actual FIFO. If `refresh.pipe` came back as a
-    // regular file or a symlink to one — a backup restored without special
-    // files, an archive extracted by a tool that doesn't carry them — this
-    // write would land at offset 0 and overwrite the first byte of whatever
-    // that file really is.
-    // SAFETY: `fd` is open and owned by `file`; `stat` is written only on success.
+    // 書き込むのは本物の FIFO に対してだけにする。`refresh.pipe` が通常ファイルや
+    // その symlink として戻ってきた場合 (特殊ファイルを含まないバックアップの復元、
+    // 特殊ファイルを運ばないツールで展開したアーカイブなど)、この書き込みは
+    // オフセット 0 に着地して、その実体が何であれ先頭バイトを潰してしまう。
+    // SAFETY: `fd` は open 済みで `file` が所有している。`stat` は成功時のみ書かれる。
     let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
     let is_fifo = unsafe { libc::fstat(fd, &mut stat) } == 0
         && (stat.st_mode & libc::S_IFMT) == libc::S_IFIFO;
@@ -234,12 +231,12 @@ impl Drop for RefreshPipe {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
 
-        // Unblock the reader by opening the pipe for writing briefly.
+        // パイプを短時間だけ書き込み用に開いて、読み手のブロックを解く。
         if self.pipe_path.exists() {
             let path_cstr = std::ffi::CString::new(self.pipe_path.to_string_lossy().as_ref());
             if let Ok(cstr) = path_cstr {
-                // SAFETY: standard POSIX open with O_WRONLY | O_NONBLOCK.
-                // O_NONBLOCK prevents blocking if no reader exists.
+                // SAFETY: O_WRONLY | O_NONBLOCK を指定した標準的な POSIX の open。
+                // 読み手がいなくても O_NONBLOCK によりブロックしない。
                 unsafe {
                     let fd = libc::open(cstr.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK);
                     if fd >= 0 {
@@ -260,11 +257,10 @@ impl Drop for RefreshPipe {
 mod tests {
     use super::*;
 
-    /// Write to the FIFO the way the mcp-serve tool handlers do — through the
-    /// real `signal_refresh`, not a hand-rolled copy of it. A copy here would
-    /// mean these tests stay green even if `signal_refresh` itself broke,
-    /// which is exactly the function every write-capable mcp-serve tool calls
-    /// in production.
+    /// mcp-serve のツールハンドラと同じやり方で FIFO へ書く。自前の複製ではなく
+    /// 本物の `signal_refresh` を通す。ここで複製してしまうと、`signal_refresh`
+    /// 自体が壊れてもこれらのテストは通ったままになる。それは本番で書き込み系の
+    /// mcp-serve ツールがどれも呼んでいる、まさにその関数なのに。
     fn write_to_pipe(pipe_path: &Path) {
         super::signal_refresh(pipe_path);
     }
@@ -275,7 +271,7 @@ mod tests {
         let pipe_path = dir.path().join("refresh.pipe");
         let listener = RefreshPipe::from_path(pipe_path.clone()).unwrap();
 
-        // Give the background thread time to open the pipe for reading.
+        // バックグラウンドスレッドがパイプを読み取り用に開くのを待つ。
         std::thread::sleep(Duration::from_millis(100));
 
         write_to_pipe(&pipe_path);
@@ -296,13 +292,13 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
 
         write_to_pipe(&pipe_path);
-        // Writer closes → EOF → reader re-opens. Wait for re-open.
+        // 書き手が閉じる → EOF → 読み手が開き直す。開き直しを待つ。
         std::thread::sleep(Duration::from_millis(200));
 
         write_to_pipe(&pipe_path);
         std::thread::sleep(Duration::from_millis(200));
 
-        // Should have received at least 2 events.
+        // 少なくとも 2 件のイベントを受け取っているはず。
         let mut count = 0;
         while listener.poll().is_some() {
             count += 1;
@@ -320,29 +316,28 @@ mod tests {
         assert!(listener.poll().is_none(), "expected no event");
     }
 
-    /// `signal_refresh` is the "no conductor is running" path when the
-    /// database's `.conductor/` directory doesn't even have a `refresh.pipe`
-    /// yet — `libc::open` fails with `ENOENT`, and this must not panic.
+    /// データベースの `.conductor/` にまだ `refresh.pipe` すら無いときの
+    /// 「conductor が動いていない」経路。`libc::open` は `ENOENT` で失敗するが、
+    /// ここで panic してはいけない。
     #[test]
     fn signal_refresh_on_nonexistent_path_returns_immediately() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("does-not-exist.pipe");
-        signal_refresh(&pipe_path); // must not panic
+        signal_refresh(&pipe_path); // panic しないこと
     }
 
-    /// A `refresh.pipe` can exist (created by a past run) with nothing
-    /// currently reading it — `mcp-serve` writes without ever having started
-    /// a `RefreshPipe` listener itself. `O_NONBLOCK` is what keeps this from
-    /// hanging: opening a FIFO for writing normally blocks until a reader
-    /// attaches, which would wedge the tool call forever. Run on a background
-    /// thread with a timeout so a regression here fails this test instead of
-    /// hanging CI.
+    /// `refresh.pipe` が (過去の実行で作られて) 存在するのに、今は誰も読んでいない
+    /// ことがある。`mcp-serve` は自分で `RefreshPipe` のリスナを立てないまま書き込む。
+    /// ハングしないのは `O_NONBLOCK` のおかげで、FIFO を書き込み用に開くのは本来
+    /// 読み手がつながるまでブロックし、ツール呼び出しが永遠に固まってしまう。
+    /// ここで退行したときに CI がハングするのではなくテストが落ちるよう、
+    /// バックグラウンドスレッドでタイムアウト付きで実行する。
     #[test]
     fn signal_refresh_with_no_reader_returns_immediately() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("refresh.pipe");
         let path_cstr = std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
-        // SAFETY: standard POSIX mkfifo; path_cstr is valid and null-terminated.
+        // SAFETY: 標準的な POSIX の mkfifo。path_cstr は有効かつ null 終端されている。
         let ret = unsafe { libc::mkfifo(path_cstr.as_ptr(), 0o660) };
         assert_eq!(ret, 0, "failed to create test FIFO");
 
@@ -356,10 +351,10 @@ mod tests {
             .expect("signal_refresh hung on a reader-less FIFO");
     }
 
-    /// If `refresh.pipe` is somehow a regular file — an archive extracted
-    /// without special files, a restored backup — writing to it would land at
-    /// offset 0 and clobber the first byte of whatever it actually is. The
-    /// FIFO check has to come before the write.
+    /// 何かの理由で `refresh.pipe` が通常ファイルだった場合 (特殊ファイル抜きで
+    /// 展開されたアーカイブ、復元されたバックアップなど)、書き込みはオフセット 0 に
+    /// 着地して、その実体が何であれ先頭バイトを潰す。FIFO かどうかの確認は書き込みの
+    /// 前に来なければならない。
     #[test]
     fn signal_refresh_will_not_write_into_a_regular_file() {
         let dir = tempfile::tempdir().unwrap();

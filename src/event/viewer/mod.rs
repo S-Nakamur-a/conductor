@@ -31,9 +31,9 @@ fn enter_g_prefix_mode(app: &mut App) {
     app.viewer_state.pending_g_key = true;
     // Build hints using an estimated viewer height (will be clipped by actual content).
     let hints = app.build_symbol_hints(50);
-    app.symbol_hint_overlay.active = !hints.is_empty();
-    app.symbol_hint_overlay.hints = hints;
-    app.symbol_hint_overlay.input.clear();
+    app.code_nav.symbol_hint.active = !hints.is_empty();
+    app.code_nav.symbol_hint.hints = hints;
+    app.code_nav.symbol_hint.input.clear();
 }
 
 /// Handle keys when the Viewer panel is focused.
@@ -65,17 +65,17 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         app.viewer_state.pending_g_key = false;
         match key.code {
             KeyCode::Char('d') => {
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
                 handle_go_to_definition(app);
                 return;
             }
             KeyCode::Char('i') => {
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
                 handle_go_to_implementation(app);
                 return;
             }
             KeyCode::Char('r') => {
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
                 handle_find_references(app);
                 return;
             }
@@ -85,13 +85,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             // both plain-file and diff mode: the diff-mode `g` handler already
             // synced content.file_scroll to the diff cursor before this.
             KeyCode::Char('K') | KeyCode::Char('h') => {
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
                 app.show_hover_info();
                 return;
             }
             KeyCode::Char('g') => {
                 // gg = go to top
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
                 if app.viewer_state.diff_view.diff_mode {
                     app.viewer_state.diff_view.diff_view_scroll = 0;
                 } else {
@@ -100,17 +100,17 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Esc => {
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
                 return;
             }
             KeyCode::Char(c) if c.is_ascii_lowercase() => {
                 // First character of a hint label — enter hint input mode.
-                app.symbol_hint_overlay.input.push(c);
+                app.code_nav.symbol_hint.input.push(c);
                 return;
             }
             _ => {
                 // Unknown second key — dismiss hints.
-                app.symbol_hint_overlay = Default::default();
+                app.code_nav.symbol_hint = Default::default();
             }
         }
     }

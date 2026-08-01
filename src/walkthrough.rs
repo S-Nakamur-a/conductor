@@ -1,53 +1,51 @@
-//! Data model and generation for AI-generated PR walkthroughs.
+//! AI が生成する PR ウォークスルーのデータモデルと生成処理。
 //!
-//! A walkthrough is a model-authored, ordered tour of a branch's diff
-//! (`walkthroughs` + `walkthrough_steps` in the review database, persisted
-//! and queried via [`crate::review_store::ReviewStore`]). This module holds
-//! the plain data types shared by the store and the UI pane, plus the
-//! generation task itself.
+//! ウォークスルーとは、モデルが書いたブランチ差分の順序付きツアーのこと
+//! (レビューデータベースの `walkthroughs` と `walkthrough_steps`。永続化と問い合わせは
+//! [`crate::review_store::ReviewStore`] 経由)。このモジュールは、ストアと UI ペインが
+//! 共有する素のデータ型と、生成タスクそのものを持つ。
 //!
-//! ## How generation runs
+//! ## 生成がどう走るか
 //!
-//! Through the one configurable AI seam, [`crate::ai_caller`], exactly like
-//! smart-worktree naming: Conductor owns the prompt and the parsing, and the
-//! user owns *which* model answers via `[api] provider` / `[api] command`.
-//! Conductor never spawns a `claude` process of its own — that rule holds
-//! across this entire codebase, and this module used to be the last exception.
+//! 設定可能な唯一の AI の継ぎ目 [`crate::ai_caller`] を通す。スマート worktree の
+//! 命名とまったく同じで、プロンプトとパースは Conductor が持ち、どのモデルが
+//! 答えるかは `[api] provider` / `[api] command` でユーザーが持つ。Conductor が
+//! 自前で `claude` プロセスを起動することは決してない。この規則はコードベース全体に
+//! 及んでおり、このモジュールが最後の例外だった。
 //!
-//! The task is agentic in nature: the model has to read the branch's diff, and
-//! usually the callers/callees around it, before it can narrate anything. The
-//! command therefore runs with its working directory set to the reviewed
-//! worktree (see the protocol notes in [`crate::ai_caller`]), and the reply
-//! comes back as one JSON object that [`parse_generated`] turns into steps.
+//! このタスクは本質的にエージェント的で、モデルは何かを語る前にブランチの差分と、
+//! たいていはその周辺の呼び出し元・呼び出し先を読まねばならない。そのためコマンドは
+//! 作業ディレクトリをレビュー対象の worktree に設定して実行され
+//! ([`crate::ai_caller`] のプロトコルの説明を参照)、応答は 1 つの JSON オブジェクトとして
+//! 返り、[`parse_generated`] がそれをステップへ変える。
 //!
-//! ## Why the reply is JSON rather than an MCP tool call
+//! ## なぜ MCP のツール呼び出しではなく JSON で返すのか
 //!
-//! The MCP `save_walkthrough` tool still exists and is still how the external
-//! `/conductor-walkthrough` command saves its work. It is not how *this* path
-//! saves, because the seam above is a plain stdin/stdout text protocol: there
-//! is no argv Conductor controls, so there is nowhere to inject an
-//! `--mcp-config`. Conductor parses the JSON and writes the rows itself, which
-//! also means a malformed reply fails loudly here instead of leaving a row
-//! stuck in `generating`.
+//! MCP の `save_walkthrough` ツールは今も存在し、外部の `/conductor-walkthrough`
+//! コマンドは今もそれで保存する。この経路がそうしないのは、上の継ぎ目が素の
+//! stdin/stdout のテキストプロトコルだから。Conductor が制御する argv が無いので、
+//! `--mcp-config` を差し込む場所が無い。Conductor が JSON をパースして自分で行を書く。
+//! これは同時に、形式の壊れた応答が `generating` のまま行を残すのではなく、
+//! ここではっきり失敗することも意味する。
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-/// Generation status of a walkthrough.
+/// ウォークスルーの生成状態。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkthroughStatus {
-    /// A background generation is producing the steps.
+    /// バックグラウンドの生成がステップを作っている最中。
     Generating,
-    /// Steps are saved and ready to display.
+    /// ステップが保存され、表示できる状態。
     Ready,
-    /// Generation failed; `Walkthrough::error` holds the reason.
+    /// 生成に失敗した。理由は `Walkthrough::error` が持つ。
     Failed,
 }
 
 impl WalkthroughStatus {
-    /// Convert to the string representation stored in the database.
+    /// データベースに格納する文字列表現へ変換する。
     pub fn as_str(&self) -> &'static str {
         match self {
             WalkthroughStatus::Generating => "generating",
@@ -56,7 +54,7 @@ impl WalkthroughStatus {
         }
     }
 
-    /// Parse the string representation stored in the database.
+    /// データベースに格納された文字列表現をパースする。
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "generating" => Some(WalkthroughStatus::Generating),
@@ -73,21 +71,21 @@ impl std::fmt::Display for WalkthroughStatus {
     }
 }
 
-/// The kind of a walkthrough step, driving its icon/emphasis in the UI.
+/// ウォークスルーのステップの種別。UI でのアイコンや強調を決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkthroughStepKind {
-    /// Why the change exists — the motivating problem or request.
+    /// なぜこの変更があるのか。動機となった課題や要望。
     Intent,
-    /// The main implementation of the change.
+    /// 変更の中心となる実装。
     Core,
-    /// A knock-on effect of the core change (call-site updates, config, etc).
+    /// 中心の変更に伴う波及 (呼び出し箇所の更新、設定など)。
     Ripple,
-    /// Test coverage added or updated for the change.
+    /// この変更のために追加・更新されたテスト。
     Test,
 }
 
 impl WalkthroughStepKind {
-    /// Convert to the string representation stored in the database.
+    /// データベースに格納する文字列表現へ変換する。
     pub fn as_str(&self) -> &'static str {
         match self {
             WalkthroughStepKind::Intent => "intent",
@@ -97,7 +95,7 @@ impl WalkthroughStepKind {
         }
     }
 
-    /// Parse the string representation stored in the database.
+    /// データベースに格納された文字列表現をパースする。
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "intent" => Some(WalkthroughStepKind::Intent),
@@ -115,29 +113,29 @@ impl std::fmt::Display for WalkthroughStepKind {
     }
 }
 
-/// A branch's walkthrough header row (`walkthroughs` table). One per branch —
-/// re-generating deletes and recreates this row rather than keeping history.
+/// ブランチのウォークスルーのヘッダ行 (`walkthroughs` テーブル)。ブランチにつき 1 つで、
+/// 再生成すると履歴を残さずこの行を削除して作り直す。
 #[derive(Debug, Clone)]
 pub struct Walkthrough {
     pub id: String,
-    // Row-identifying/audit fields, kept for parity with the `walkthroughs`
-    // table and for `Debug` output when troubleshooting, but no caller reads
-    // them today: lookups key on the branch string they already have, and the
-    // UI doesn't surface timestamps.
+    // 行の識別・監査用のフィールド。`walkthroughs` テーブルとの対応と、調査時の
+    // `Debug` 出力のために残しているが、今のところ読む呼び出し側は無い。検索は
+    // 呼び出し側が既に持っているブランチ文字列をキーにするし、UI はタイムスタンプを
+    // 表に出さない。
     #[allow(dead_code)]
     pub branch: String,
     pub title: Option<String>,
-    // The pane title carries `title` and the intent step carries the same
-    // narrative as `summary`, so the compact walkthrough pane doesn't render
-    // this separately; kept for round-trip fidelity with `save_walkthrough`.
+    // ペインのタイトルが `title` を担い、intent のステップが `summary` と同じ内容を
+    // 語るので、コンパクトなウォークスルーのペインはこれを別に描かない。
+    // `save_walkthrough` との往復で情報を落とさないために保持している。
     #[allow(dead_code)]
     pub summary: Option<String>,
     pub status: WalkthroughStatus,
     pub error: Option<String>,
-    /// The branch tip (HEAD commit OID) this walkthrough was generated
-    /// against, or `None` for rows predating commit tracking. A regenerate
-    /// request whose current HEAD matches this is skipped — the diff, and so
-    /// the walkthrough, hasn't changed.
+    /// このウォークスルーを生成した対象のブランチ先端 (HEAD コミットの OID)。
+    /// コミット追跡より前に作られた行では `None`。再生成の要求時に現在の HEAD が
+    /// これと一致するなら飛ばす。差分が変わっていない = ウォークスルーも
+    /// 変わらないため。
     pub head_commit: Option<String>,
     #[allow(dead_code)]
     pub created_at: String,
@@ -145,19 +143,18 @@ pub struct Walkthrough {
     pub updated_at: String,
 }
 
-/// A single ordered step of a walkthrough (`walkthrough_steps` table),
-/// anchored to a file and optional line range.
+/// ウォークスルーの順序付きステップ 1 つ (`walkthrough_steps` テーブル)。
+/// ファイルと、任意で行範囲に紐づく。
 #[derive(Debug, Clone)]
 pub struct WalkthroughStep {
     pub id: String,
-    /// Foreign key to the owning `Walkthrough`, kept for parity with the
-    /// `walkthrough_steps` table; steps are always accessed already scoped to
-    /// their walkthrough (via `get_walkthrough`), so nothing re-derives it.
+    /// 所有する `Walkthrough` への外部キー。`walkthrough_steps` テーブルとの対応の
+    /// ために保持している。ステップは常に (`get_walkthrough` 経由で) 自分の
+    /// ウォークスルーに絞られた状態でアクセスされるので、これを再導出する箇所は無い。
     #[allow(dead_code)]
     pub walkthrough_id: String,
-    /// Display order, kept for parity with the table; the UI reads steps
-    /// from the already-ordered `Vec` `get_walkthrough` returns instead of
-    /// re-sorting by this field.
+    /// 表示順。テーブルとの対応のために保持している。UI は `get_walkthrough` が
+    /// 返す既に並んだ `Vec` からステップを読むので、このフィールドで並べ直しはしない。
     #[allow(dead_code)]
     pub seq: i64,
     pub file_path: String,
@@ -168,14 +165,14 @@ pub struct WalkthroughStep {
     pub body: String,
 }
 
-/// A step as supplied when saving a completed walkthrough — no `id` or
-/// `walkthrough_id`, since the store assigns those (`seq` is likewise
-/// implied by the slice's order, not repeated here).
+/// 完成したウォークスルーを保存するときに渡すステップ。`id` も `walkthrough_id` も
+/// 持たない (ストアが割り当てる。`seq` も同様にスライスの順序が示すので、ここには
+/// 繰り返さない)。
 ///
-/// The order of the slice is the walkthrough's order, deliberately: the MCP
-/// tool also accepts a `seq` per step, but trusting it lets a caller that
-/// numbers steps per-kind (intent 0,1 / core 0,1,2 / …) interleave the tour
-/// while still reporting success. See `ReviewStore::save_walkthrough`.
+/// スライスの順序がウォークスルーの順序であるのは意図的。MCP のツールはステップごとの
+/// `seq` も受け取るが、それを信用すると、種別ごとに番号を振る呼び出し側
+/// (intent 0,1 / core 0,1,2 / …) がツアーを入り乱れさせたまま成功を報告できてしまう。
+/// `ReviewStore::save_walkthrough` を参照。
 #[derive(Debug, Clone)]
 pub struct NewWalkthroughStep {
     pub file_path: String,
@@ -186,18 +183,18 @@ pub struct NewWalkthroughStep {
     pub body: String,
 }
 
-/// Wall-clock budget for one generation, handed to the AI seam as this task's
-/// timeout so it is not capped by `[api] command_timeout_secs` (which is sized
-/// for a few seconds of smart-worktree naming). Reading a branch diff and
-/// narrating it takes minutes; past this we assume the session is wedged.
+/// 生成 1 回あたりの実時間の予算。このタスクのタイムアウトとして AI の継ぎ目へ渡す
+/// ので、`[api] command_timeout_secs` (スマート worktree の命名で数秒を想定した値)
+/// に頭打ちにされない。ブランチの差分を読んで語るには数分かかる。これを超えたら
+/// セッションが詰まっていると見なす。
 pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// The system prompt: what a walkthrough is, and the exact reply shape.
+/// システムプロンプト。ウォークスルーとは何か、そして応答の正確な形。
 ///
-/// Mirrors `plugins/conductor/commands/conductor-walkthrough.md` (kept for
-/// marketplace-plugin users, which saves through the MCP tool instead) but is
-/// embedded here so generation works regardless of which slash commands the
-/// installed plugin cache has.
+/// `plugins/conductor/commands/conductor-walkthrough.md` と対応している
+/// (そちらはマーケットプレイスのプラグイン利用者向けに残してあり、MCP ツール経由で
+/// 保存する) が、インストール済みのプラグインキャッシュがどのスラッシュコマンドを
+/// 持っているかに関係なく生成が動くよう、ここに埋め込んである。
 const GENERATION_SYSTEM_PROMPT: &str = r#"You build reviewer walkthroughs: an ordered tour of a branch's change that a reviewer follows step by step, each step anchored to a file and line range.
 
 Use your tools freely: this task cannot be done without reading the repository in your working directory. Run git to see the diff, and read the changed files and the code around them. Only when you have finished exploring, answer with the JSON described below and nothing else.
@@ -224,7 +221,7 @@ Output ONLY a JSON object, no markdown fences and no explanation, with these fie
 
 Every file_path must be repo-relative: the reviewer's diff list matches these against git's own paths, so a step whose path is spelled any other way cannot be opened."#;
 
-/// The per-run instruction: which branch, which base, which language.
+/// 実行ごとの指示。どのブランチか、どのベースか、どの言語か。
 fn generation_prompt(branch: &str, base_ref: Option<&str>, language: Option<&str>) -> String {
     let base_hint = match base_ref {
         Some(b) => format!("The base branch is `{b}`."),
@@ -250,7 +247,7 @@ else.{language_hint}"
     )
 }
 
-/// One inline note the generation asked for, saved as a `question` comment.
+/// 生成が求めたインラインの注記 1 件。`question` コメントとして保存される。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GeneratedComment {
     pub file_path: String,
@@ -259,7 +256,7 @@ pub struct GeneratedComment {
     pub body: String,
 }
 
-/// A step as it arrives from the model, before validation.
+/// モデルから届いたままの、検証前のステップ。
 #[derive(Debug, Clone, serde::Deserialize)]
 struct GeneratedStep {
     file_path: String,
@@ -272,7 +269,7 @@ struct GeneratedStep {
     body: String,
 }
 
-/// The whole reply, before validation.
+/// 応答全体。検証前。
 #[derive(Debug, Clone, serde::Deserialize)]
 struct GeneratedWalkthrough {
     title: String,
@@ -282,7 +279,7 @@ struct GeneratedWalkthrough {
     comments: Vec<GeneratedComment>,
 }
 
-/// A validated generation result, ready for [`crate::review_store::ReviewStore`].
+/// 検証済みの生成結果。[`crate::review_store::ReviewStore`] へ渡せる状態。
 #[derive(Debug, Clone)]
 pub struct Generated {
     pub title: String,
@@ -291,15 +288,14 @@ pub struct Generated {
     pub comments: Vec<GeneratedComment>,
 }
 
-/// Turn the model's raw reply into a saveable walkthrough, or explain what is
-/// wrong with it.
+/// モデルの生の応答を保存できるウォークスルーに変えるか、どこがおかしいのかを説明する。
 ///
-/// Tolerant about the *envelope* (markdown fences, a sentence before the JSON)
-/// because models add those regardless of instructions, and strict about the
-/// *contents*: an unknown `kind` or a path that cannot anchor to a file would
-/// otherwise be stored and only show up as a step the reviewer can't open.
-/// Mirrors the checks `mcp_serve::tools::save_walkthrough` runs on the same
-/// data arriving over MCP, so both entry points reject the same things.
+/// 外側の包み (Markdown のコードフェンス、JSON の前の一文) には寛容にする。
+/// 指示に関わらずモデルがそれらを付けてくるから。一方で中身には厳しくする。
+/// 未知の `kind` や、ファイルに紐づけられないパスをそのまま保存すると、
+/// レビュアーが開けないステップとしてしか現れないため。同じデータが MCP 経由で
+/// 届いたときに `mcp_serve::tools::save_walkthrough` が行う検査と対応させてあり、
+/// 両方の入口が同じものを拒否する。
 pub fn parse_generated(raw: &str) -> Result<Generated, String> {
     let json = extract_json_object(raw)
         .ok_or_else(|| format!("no JSON object in the model's reply\nRaw output: {raw}"))?;
@@ -336,9 +332,8 @@ pub fn parse_generated(raw: &str) -> Result<Generated, String> {
         if step.body.trim().is_empty() {
             return Err(format!("step {i} ({file_path}) has no body"));
         }
-        // Line numbers are 1-based everywhere they are read back, and a
-        // reversed range would underline nothing; drop the range rather than
-        // failing the whole walkthrough over an anchor detail.
+        // 行番号は読み戻すどの場所でも 1 始まりで、逆転した範囲は何も下線を引かない。
+        // 紐づけの細部でウォークスルー全体を失敗させるより、範囲のほうを捨てる。
         let (line_start, line_end) = sane_range(step.line_start, step.line_end);
         steps.push(NewWalkthroughStep {
             file_path,
@@ -350,8 +345,8 @@ pub fn parse_generated(raw: &str) -> Result<Generated, String> {
         });
     }
 
-    // Comments are the optional extra: a bad one is dropped with a log line
-    // rather than failing a walkthrough that is otherwise fine.
+    // コメントはあくまで任意の付随物。おかしなものはログを 1 行残して捨て、
+    // 他が問題ないウォークスルーを失敗させたりはしない。
     let comments = parsed
         .comments
         .into_iter()
@@ -384,8 +379,8 @@ pub fn parse_generated(raw: &str) -> Result<Generated, String> {
     })
 }
 
-/// Keep a 1-based, non-reversed line range; anything else anchors to the file
-/// as a whole rather than to a wrong span.
+/// 1 始まりで逆転していない行範囲だけを残す。それ以外は誤った範囲ではなく
+/// ファイル全体に紐づける。
 fn sane_range(start: Option<i64>, end: Option<i64>) -> (Option<i64>, Option<i64>) {
     let start = start.filter(|s| *s >= 1);
     let end = end.filter(|e| *e >= 1);
@@ -396,12 +391,13 @@ fn sane_range(start: Option<i64>, end: Option<i64>) -> (Option<i64>, Option<i64>
     }
 }
 
-/// Find the JSON object in a reply that may be fenced or prefaced with prose.
+/// コードフェンスで囲まれていたり地の文が前置されていたりする応答から、
+/// JSON オブジェクトを見つける。
 ///
-/// Scans for the first `{` and then tracks brace depth, skipping over braces
-/// that appear inside string literals — a `body` containing `}` (very likely,
-/// since bodies quote code) would otherwise truncate the object at the wrong
-/// place and produce a parse error the user cannot act on.
+/// 最初の `{` を探してから波括弧の深さを追い、文字列リテラルの中に現れる波括弧は
+/// 飛ばす。`}` を含む `body` (本文はコードを引用するので大いにあり得る) があると、
+/// そうしなければ誤った位置でオブジェクトが切れ、ユーザーには対処のしようがない
+/// パースエラーになる。
 fn extract_json_object(raw: &str) -> Option<&str> {
     let start = raw.find('{')?;
     let bytes = raw.as_bytes();
@@ -435,12 +431,12 @@ fn extract_json_object(raw: &str) -> Option<&str> {
     None
 }
 
-/// Run one generation to completion and return the parsed walkthrough.
+/// 生成を 1 回最後まで走らせ、パース済みのウォークスルーを返す。
 ///
-/// Blocking: the caller runs this on a background thread and reports the result
-/// through a channel (see `App::cmd_generate_walkthrough`). `cancel` is checked
-/// by the underlying caller too, so a cancelled generation kills its child
-/// rather than waiting out the timeout.
+/// ブロッキング。呼び出し側はこれをバックグラウンドスレッドで実行し、結果を
+/// チャネルで報告する (`App::cmd_generate_walkthrough` を参照)。`cancel` は
+/// 下層の caller も見ているので、キャンセルされた生成はタイムアウトを待たずに
+/// 子プロセスを kill する。
 pub fn generate(
     api: &crate::config::ApiConfig,
     worktree_path: &Path,
@@ -466,7 +462,7 @@ pub fn generate(
 mod tests {
     use super::*;
 
-    // ── generation_prompt: branch, base, language ───────────────────────
+    // ── generation_prompt: ブランチ・ベース・言語 ──────────────────────
 
     #[test]
     fn generation_prompt_includes_the_branch_name() {
@@ -485,42 +481,41 @@ mod tests {
     fn generation_prompt_requests_the_configured_language() {
         let prompt = generation_prompt("pr-42", Some("main"), Some("日本語"));
         assert!(prompt.contains("in 日本語"));
-        // No language configured → no language directive at all.
+        // 言語の設定が無ければ、言語の指示自体が出ない。
         let unconstrained = generation_prompt("pr-42", Some("main"), None);
         assert!(!unconstrained.contains("Write the walkthrough title"));
     }
 
-    /// The instruction not to compare alternative designs, and the step-order
-    /// story, live in the system prompt now — they must not have been lost in
-    /// the move off the headless session.
+    /// 代替設計を比較するなという指示と、ステップ順の筋書きは、いまはシステム
+    /// プロンプトにある。ヘッドレスセッションから移行した際に失われていないことを
+    /// 確かめる。
     #[test]
     fn system_prompt_keeps_the_walkthrough_contract() {
         assert!(GENERATION_SYSTEM_PROMPT.to_lowercase().contains("do not compare"));
         assert!(GENERATION_SYSTEM_PROMPT.contains("intent -> core -> ripple -> test"));
-        // Path spelling is the whole reason walkthrough steps used to fail to
-        // open, so the prompt has to be explicit about it.
+        // ウォークスルーのステップが開けなかった原因はまさにパスの綴りだったので、
+        // プロンプトはそこを明示しなければならない。
         assert!(GENERATION_SYSTEM_PROMPT.contains("repo-relative"));
         assert!(GENERATION_SYSTEM_PROMPT.contains("never starting with \"./\""));
-        // Inline notes are asked for here rather than through an MCP tool call,
-        // but the contract is the same one the plugin command states: annotate
-        // the genuinely-tricky spots, high-signal and low-frequency.
+        // インラインの注記は MCP のツール呼び出しではなくここで要求するが、契約は
+        // プラグインのコマンドが述べているものと同じ。本当に厄介な箇所にだけ、
+        // 信号が強く頻度の低い形で注記する。
         assert!(GENERATION_SYSTEM_PROMPT.contains("hard to understand"));
         assert!(GENERATION_SYSTEM_PROMPT.contains("\"comments\""));
     }
 
-    /// The opposite constraint from smart-worktree naming, and it has to be
-    /// stated here rather than in a wrapper the user maintains: an agentic
-    /// command told nothing would answer from the prompt alone, and this task
-    /// is impossible without reading the repo.
+    /// スマート worktree の命名とは正反対の制約で、ユーザーが保守するラッパーでは
+    /// なくここで述べる必要がある。何も指示されなかったエージェント型のコマンドは
+    /// プロンプトだけで答えてしまうが、このタスクはリポジトリを読まずには不可能だから。
     #[test]
     fn system_prompt_tells_the_model_to_read_the_repo() {
         assert!(GENERATION_SYSTEM_PROMPT.contains("Use your tools freely"));
         assert!(GENERATION_SYSTEM_PROMPT.contains("working directory"));
     }
 
-    /// Conductor must not spawn `claude` itself anywhere; this module was the
-    /// last place that did. The prompt names no CLI and no MCP tool call — the
-    /// reply comes back as JSON over whatever `[api]` is pointed at.
+    /// Conductor はどこでも `claude` を自分で起動してはならず、このモジュールが
+    /// それをしていた最後の場所だった。プロンプトは CLI も MCP のツール呼び出しも
+    /// 名指ししない。応答は `[api]` が指す先から JSON で返ってくる。
     #[test]
     fn generation_never_names_a_cli_to_run() {
         assert!(!GENERATION_SYSTEM_PROMPT.contains("claude -p"));
@@ -554,8 +549,8 @@ mod tests {
         assert!(g.comments.is_empty());
     }
 
-    /// Models wrap JSON in fences and prefaces no matter what the prompt says,
-    /// so the envelope is tolerated even though the contents are not.
+    /// プロンプトに何と書いてあってもモデルは JSON をコードフェンスや前置きで
+    /// 包むので、中身は厳しく見る一方で外側の包みは許容する。
     #[test]
     fn parses_through_fences_and_preamble() {
         let inner = reply(r#"{"file_path":"src/a.rs","kind":"intent","title":"t","body":"b"}"#);
@@ -569,9 +564,9 @@ mod tests {
         }
     }
 
-    /// A body quoting code will contain braces. Counting to the *matching*
-    /// close brace, and skipping braces inside strings, is what keeps such a
-    /// reply from being truncated into a parse error.
+    /// コードを引用する本文には波括弧が入る。対応する閉じ波括弧まで数えること、
+    /// そして文字列内の波括弧を飛ばすことが、そうした応答が途中で切れて
+    /// パースエラーになるのを防いでいる。
     #[test]
     fn parses_a_body_containing_braces() {
         let raw = r#"prose {"title":"T","summary":"S","steps":[{"file_path":"src/a.rs","kind":"core","title":"t","body":"fn main() { let x = {1}; }"}]} trailing"#;
@@ -579,8 +574,8 @@ mod tests {
         assert_eq!(g.steps[0].body, "fn main() { let x = {1}; }");
     }
 
-    /// The same spellings the diff list cannot match are canonicalised here, so
-    /// a generated step can always be opened.
+    /// 差分一覧が照合できない綴りをここで正規の形に揃える。生成されたステップが
+    /// 必ず開けるようにするため。
     #[test]
     fn normalises_step_paths() {
         for spelling in ["./src/a.rs", "src//a.rs", "src/a.rs/", "  src/a.rs  "] {
@@ -622,8 +617,8 @@ mod tests {
         assert!(parse_generated("no json here").is_err());
     }
 
-    /// A bad line range anchors the step to its file rather than failing the
-    /// whole walkthrough or underlining a nonsense span.
+    /// おかしな行範囲は、ウォークスルー全体を失敗させたり意味のない範囲に下線を
+    /// 引いたりするのではなく、ステップをファイル全体に紐づける。
     #[test]
     fn sanitises_line_ranges() {
         assert_eq!(sane_range(Some(10), Some(5)), (Some(10), None));
@@ -633,8 +628,8 @@ mod tests {
         assert_eq!(sane_range(Some(3), Some(3)), (Some(3), Some(3)));
     }
 
-    /// Inline comments are the optional extra: a malformed one is dropped, and
-    /// the walkthrough it came with still saves.
+    /// インラインコメントは任意の付随物。形式の壊れたものは捨てられ、
+    /// 一緒に届いたウォークスルーはそのまま保存される。
     #[test]
     fn drops_malformed_comments_but_keeps_the_walkthrough() {
         let raw = r#"{"title":"T","summary":"S",
@@ -652,8 +647,8 @@ mod tests {
         assert_eq!(g.comments[0].line_start, Some(4));
     }
 
-    /// A reversed comment range collapses to a single line instead of being
-    /// stored as a span that renders backwards.
+    /// 逆転したコメントの範囲は、逆向きに描画される範囲として保存されるのではなく
+    /// 1 行に潰れる。
     #[test]
     fn reversed_comment_range_collapses() {
         let raw = r#"{"title":"T","summary":"S",

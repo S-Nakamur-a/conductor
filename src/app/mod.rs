@@ -20,6 +20,12 @@ mod review_history;
 mod review_publish;
 mod review_walkthrough;
 pub use review_walkthrough::WalkthroughGenerations;
+mod state;
+pub use state::{
+    CodeNav, Highlighting, ListHover, LoadedWalkthrough, PanelLayout, PanelNumberOverlay,
+    PublishState, RepoState, RichState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore,
+    WalkthroughState, WorktreeList, WtbarState,
+};
 mod terminal;
 mod terminal_cc_state;
 mod terminal_resize;
@@ -40,24 +46,17 @@ mod worktree_smart;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::background::BackgroundOp;
-
-use syntect::parsing::SyntaxSet;
 
 use crate::config;
 use crate::diff_state::DiffState;
 use crate::git_engine;
-use crate::jump_history::JumpHistory;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
-use crate::overlay::{HoverInfoOverlay, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
 use crate::pty_manager;
 use crate::review_state::ReviewState;
-use crate::review_store::{self, ReviewStore};
-use crate::symbol_index::SymbolIndex;
+use crate::review_store::ReviewStore;
 use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
-use crate::ui::common::list_row::HoverRow;
 use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
@@ -73,7 +72,7 @@ pub use types::{
     PendingWorktree, PendingWorktreeOp, SmartGenResult, StatusLevel, StatusMessage,
     WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
 };
-pub use update::{UpdateProgress, UpdateState};
+pub use update::UpdateState;
 
 /// Top-level application state shared across all UI panels.
 pub struct App {
@@ -81,17 +80,15 @@ pub struct App {
     pub dirty: DirtyPanels,
     /// Current panel focus.
     pub focus: Focus,
-    /// Panel that had focus immediately before the current one — drives the
-    /// border-color glide when focus moves (see `animated_border_color`).
+    /// フォーカスが直前にあったパネルと、移った時刻。ボーダー色のグライド
+    /// アニメーション (`animated_border_color`) だけがこの 2 つを読む。
     pub focus_prev: Focus,
     /// When focus last changed, for timing the border transition.
     pub focus_changed_at: std::time::Instant,
     /// All overlay popup states (switch-branch, grab, prune, help, etc.).
     pub overlays: OverlayManager,
-    /// Working directory of the repository being inspected.
-    pub repo_path: PathBuf,
-    /// Display name of the main repository (directory name of the main worktree).
-    pub main_repo_name: String,
+    /// いま開いているリポジトリの同一性と、切り替え先の候補。
+    pub repo: RepoState,
     /// Whether the application should quit on the next tick.
     pub should_quit: bool,
     /// The embedded editor panel, when active. `Some` ⟺ an editor PTY is running
@@ -100,42 +97,21 @@ pub struct App {
     /// [`App::exit_editor`] (the only two methods that pair this field with
     /// `Focus::Editor`, keeping the invariant local).
     pub editor: Option<EditorPanel>,
-    /// In-flight walkthrough generations, at most one per branch so worktrees
-    /// don't block each other: each is a background thread's result channel
-    /// plus enough context to report against the right branch. Drained by
-    /// [`App::poll_walkthrough_generation`].
-    pub walkthrough_gens: WalkthroughGenerations,
-    /// The selected worktree's walkthrough (header + steps), reloaded by
-    /// [`App::refresh_reviews`] alongside the comment list.
-    pub current_walkthrough: Option<(
-        crate::walkthrough::Walkthrough,
-        Vec<crate::walkthrough::WalkthroughStep>,
-    )>,
-    /// Pending y/n confirmation for `Action::PublishReview`: `Some` while the
-    /// confirm overlay is showing (holding the already-filtered comments and
-    /// skip count to display), cleared on either answer.
-    pub publish_confirm: Option<crate::review_publish::PublishConfirm>,
-    /// In-flight GitHub-publish operation, polled by
-    /// [`App::poll_publish_review`].
-    pub publish_op: BackgroundOp<crate::review_publish::PublishOutcome>,
-    /// Index of the currently selected worktree in the worktree list.
-    pub selected_worktree: usize,
-    /// Cached list of worktrees discovered in the repository.
-    pub worktrees: Vec<git_engine::WorktreeInfo>,
+    /// AI ウォークスルー: 生成中のものと、いま読み込まれているもの。
+    pub walkthrough: WalkthroughState,
+    /// レビューコメントの GitHub 公開フロー (確認待ち + 実行中の処理)。
+    pub publish: PublishState,
+    /// 発見済みの worktree 一覧と、そこへの選択 (行の平坦化リストを含む)。
+    pub worktrees: WorktreeList,
     /// Application configuration loaded from config file.
     pub config: config::Config,
     /// Resolved keybinding map (defaults + user overrides).
     pub keymap: KeyMap,
-    /// UI color theme.
+    /// 描画に使う配色。フレームごとに読まれるので 1 階層浅いところに置く。
+    /// 組み立ての元データは [`Self::theme_sel`]。
     pub theme: Theme,
-    /// Active theme name — the canonical key used to resolve `theme`.
-    /// Kept in sync by `set_theme`; used to find the current selection in the
-    /// theme picker and to build the config layer when persisting.
-    pub theme_name: String,
-    /// Whether the high-contrast transform is applied to `theme`. Mirrors
-    /// `config.ui.high_contrast`; kept as a field so `set_theme` and the live
-    /// reload rebuild the theme with the right polarity.
-    pub high_contrast: bool,
+    /// [`Self::theme`] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
+    pub theme_sel: ThemeSelection,
     /// State for the Explorer/Viewer panel (file tree + file content).
     pub viewer_state: ViewerState,
     /// State for the Diff data (used for inline highlights in Viewer).
@@ -154,16 +130,9 @@ pub struct App {
     pub last_poll_head_oid: Option<String>,
     /// Last known status signature (added, modified, deleted) for the selected worktree.
     pub last_poll_status: Option<(usize, usize, usize, usize)>,
-    /// List of known repository paths (including the current one).
-    pub repo_list: Vec<std::path::PathBuf>,
-    /// Index of the currently active repository in repo_list.
-    pub repo_list_index: usize,
 
-    // ── Syntax highlighting (syntect) ──────────────────────────
-    /// Shared syntect syntax definitions.
-    pub syntax_set: SyntaxSet,
-    /// Active syntect highlighting theme.
-    pub syntect_theme: syntect::highlighting::Theme,
+    /// syntect によるシンタックスハイライトの共有資源。
+    pub highlight: Highlighting,
     /// Per-id cache of rendered Markdown (comment/reply bodies), so the inline
     /// thread box doesn't re-parse/highlight every frame.
     pub markdown_cache: crate::ui::markdown::MarkdownCache,
@@ -172,33 +141,12 @@ pub struct App {
     /// `None` means no panel is expanded (default layout).
     pub expanded_panel: Option<Focus>,
 
-    /// Runtime height percentage for the Claude Code area within the terminal
-    /// column (the Shell gets the remainder). Seeded from
-    /// `config.layout.terminal_split_pct` at startup, adjusted live by a
-    /// tmux-style pane resize (Ctrl+Alt+Up/Down with a terminal focused), and
-    /// persisted back to the config file so the ratio survives a restart.
-    pub terminal_split_pct: u16,
+    /// パネルの幾何: レイアウト矩形のキャッシュ、ターミナル列の分割比、
+    /// マウスによる境界リサイズ。
+    pub layout: PanelLayout,
 
-    /// The panel divider currently being dragged with the mouse, if any. Set on
-    /// mouse-down over a boundary, moved on each drag event, and cleared (with a
-    /// single config persist) on mouse-up. While `Some`, drag events resize
-    /// instead of doing their normal per-panel work.
-    pub divider_drag: Option<Divider>,
-    /// The panel divider the mouse is hovering, if any. Drives the resize
-    /// affordance — the hovered boundary is highlighted, standing in for a
-    /// `col-resize`/`row-resize` cursor (a terminal can't switch the OS cursor
-    /// shape). A live drag takes precedence over hover when rendering.
-    pub divider_hover: Option<Divider>,
-
-    /// Which Explorer file-tree row (by visible-list index) the mouse is
-    /// hovering, plus the fade-out state of the row it just left. Shared
-    /// tracking type so the tree, Changed files, and worktree panels don't
-    /// each reimplement the same hover/selection priority rules — see
-    /// `src/ui/common/list_row.rs`.
-    pub explorer_tree_hover: HoverRow,
-    /// Same as [`explorer_tree_hover`](Self::explorer_tree_hover) but for the
-    /// Changed files (diff) list in the Explorer's bottom half.
-    pub diff_list_hover: HoverRow,
+    /// Explorer の 2 つのリスト (ファイルツリー / Changed files) のホバー追跡。
+    pub list_hover: ListHover,
 
     /// Frame counter for UI animations (e.g. waiting-state pulse).
     pub ui_tick: u64,
@@ -209,48 +157,13 @@ pub struct App {
     /// Populated during rendering for click-to-jump.
     pub notification_bar_badges: Vec<(u16, u16, String)>,
 
-    // ── Inline worktree+session list ────────────────────────────────
-    /// Flattened list of worktree rows and inline session rows.
-    pub worktree_list_rows: Vec<WorktreeListRow>,
-    /// Selected index within `worktree_list_rows`.
-    pub worktree_list_selected: usize,
-
-    // ── Gamification (session stats + streak) ────────────────────
-    /// ID of the current stats session (for gamification tracking).
-    pub stats_session_id: Option<String>,
-    /// Cached today's activity stats (refreshed periodically).
-    pub today_stats: Option<review_store::DailyStats>,
+    /// セッション統計 (ゲーミフィケーション) と ccusage のキャッシュ。
+    pub stats: SessionStats,
     /// HEAD oid per worktree branch (for commit detection).
     pub worktree_heads: HashMap<String, String>,
 
-    // ── ccusage (token/cost tracking) ────────────────────────────
-    /// Cached ccusage info (refreshed periodically via background thread).
-    pub ccusage_info: Option<CcusageInfo>,
-
-    // ── Update check ───────────────────────────────────────────
-    /// Latest release info when a newer version is available.
-    pub update_info: Option<crate::update_checker::UpdateInfo>,
-    /// Set when the user manually triggered an update check (via the command
-    /// palette), so the next poll result flashes explicit feedback — including
-    /// the "already up to date" / "check failed" cases the silent startup check
-    /// swallows.
-    pub update_check_requested: bool,
-
-    // ── Update & restart ──────────────────────────────────────
-    /// Current state of the update flow.
-    pub update_state: UpdateState,
-    /// Background update operation.
-    pub update_op: BackgroundOp<UpdateProgress>,
-    /// Latest progress message to display in the overlay.
-    pub update_progress_message: String,
-    /// Path to the executable at startup (for exec-based restart).
-    pub startup_exe: PathBuf,
-    /// Command-line arguments at startup (for exec-based restart).
-    pub startup_args: Vec<String>,
-    /// Set to `true` when the update is done and the app should restart.
-    pub should_restart: bool,
-    /// Column range (start, end) of the update badge in the title bar.
-    pub update_badge_cols: Option<(u16, u16)>,
+    /// 自己更新フロー: 新バージョンの検出 → 確認 → インストール → 再起動。
+    pub update: UpdateFlow,
 
     /// System clipboard context for Ctrl+V paste support.
     pub clipboard: Option<copypasta::ClipboardContext>,
@@ -268,43 +181,18 @@ pub struct App {
     /// Whether auto-resume should run on the next frame (one-shot).
     pub pending_auto_resume: bool,
 
-    // ── View state restore (persist where the user was) ─────────
-    /// Branch of the worktree whose viewer state is currently loaded in
-    /// memory. Tracks the "owner" of `viewer_state` so it can be persisted
-    /// before we switch away. `None` until the first worktree is loaded.
-    pub current_view_branch: Option<String>,
-    /// A saved file+scroll to restore once the file tree is available
-    /// (one-shot; consumed by [`App::consume_pending_view_restore`]).
-    pub pending_view_restore: Option<PendingViewRestore>,
+    /// 「ユーザーがどこを見ていたか」の保存と復元。
+    pub view_restore: ViewRestore,
 
-    /// Cached layout rectangles (recomputed when frame size or expansion state changes).
-    pub layout_cache: crate::ui::layout::LayoutCache,
-    /// Clickable regions of the worktree bar, recorded during render and read by
-    /// the mouse handler (worktree select / delete / add).
-    pub wtbar_hits: Vec<crate::ui::worktree_bar::WtbarHit>,
-    /// Index of the first worktree chip shown in the bar (horizontal scroll
-    /// position). Adjusted by wheel/arrow paging and re-clamped each render.
-    pub wtbar_scroll: usize,
-    /// When set, the next bar render pans `wtbar_scroll` just enough to keep the
-    /// selected worktree's chip visible. Set when the selection changes so a
-    /// jump always reveals its chip, without disturbing free scrolling otherwise.
-    pub wtbar_reveal_selected: bool,
-    /// Action the mouse is currently over in the worktree bar (from the last
-    /// `Moved` event, resolved against `wtbar_hits`). Drives hover background
-    /// on chips and the `[x]` delete button.
-    pub wtbar_hover: Option<crate::ui::worktree_bar::WtbarAction>,
+    /// 画面上端の worktree モニタストリップ (横スクロール位置 + 当たり判定)。
+    pub wtbar: WtbarState,
 
     /// Menu bar interaction state: which menu is focused or open, and the
     /// click regions recorded by the last bar/dropdown render.
     pub menu: crate::menu::MenuState,
 
-    // ── Code navigation (symbol index + jump history) ───────────
-    pub symbol_index: SymbolIndex,
-    pub jump_history: JumpHistory,
-    pub references_overlay: ReferencesOverlay,
-    pub symbol_hint_overlay: SymbolHintOverlay,
-    pub symbol_action_overlay: SymbolActionOverlay,
-    pub hover_info_overlay: HoverInfoOverlay,
+    /// コードナビゲーション: シンボル索引、ジャンプ履歴、付随するポップアップ。
+    pub code_nav: CodeNav,
 
     // ── Background operations (polled by the event loop) ─────────
     pub bg: BackgroundOps,
@@ -313,12 +201,8 @@ pub struct App {
     /// Paths of worktrees recently created (for badge display). Cleared on selection.
     pub new_worktree_paths: HashSet<PathBuf>,
 
-    // ── Panel number overlay (Alt+/ toggle) ─────────────────────
-    /// When true, panel number badges are rendered over each panel.
-    /// Toggled by Alt+/ and auto-dismissed after 2 seconds.
-    pub show_panel_number_overlay: bool,
-    /// Instant when the overlay was activated (for auto-dismiss timer).
-    pub panel_overlay_since: Option<std::time::Instant>,
+    /// Alt+/ で出す、各パネル上の番号バッジ (2 秒で自動的に消える)。
+    pub panel_number_overlay: PanelNumberOverlay,
 
     // ── Party mode (hidden easter egg) ───────────────────────────
     /// When true, the UI goes full party: the focused panel's border
@@ -327,23 +211,8 @@ pub struct App {
     /// the command palette; not persisted (session-only secret).
     pub party_mode: bool,
 
-    // ── Rich mode (terminal graphics tiers) ──────────────────────
-    /// Resolved rich-mode tier, decided once at startup from config +
-    /// terminal capability detection (see `term_caps`). Tier A drives the
-    /// gradient border/title effects; Tier B additionally enables
-    /// graphics-protocol image previews.
-    pub rich_tier: crate::term_caps::RichTier,
-    /// Graphics-protocol picker for Tier B image rendering.
-    /// `Some` only when `rich_tier` is `TierB`.
-    pub rich_picker: Option<ratatui_image::picker::Picker>,
-    /// The tier detection resolved at startup, kept so the runtime toggle
-    /// can restore it after switching rich mode off.
-    pub rich_tier_available: crate::term_caps::RichTier,
-    /// Wall-clock anchor for rich-mode animations. Phases derive from
-    /// elapsed time (not `ui_tick`) so animation speed is independent of
-    /// the redraw rate, which varies from ~2fps (idle pulses) to ~60fps
-    /// (active input).
-    pub rich_epoch: std::time::Instant,
+    /// リッチモード (端末グラフィックス) の描画ティアと、それに紐づく資源。
+    pub rich: RichState,
 
     // ── Reflow transcript view ───────────────────────────────────────────
     /// State for the read-only, word-wrapped session-log viewer that
@@ -376,40 +245,13 @@ fn build_theme(name: &str, high_contrast: bool) -> Theme {
 }
 
 impl App {
-    /// Returns `true` when the panel number overlay should be rendered.
-    /// Activated by Alt+/ and auto-dismisses after 2 seconds.
-    pub fn show_panel_overlay(&self) -> bool {
-        if !self.show_panel_number_overlay {
-            return false;
-        }
-        // Auto-dismiss after 2 seconds.
-        if let Some(since) = self.panel_overlay_since
-            && since.elapsed() >= std::time::Duration::from_secs(2)
-        {
-            return false;
-        }
-        true
-    }
-
-    /// Toggle the panel number overlay on/off. When turning on, starts
-    /// the auto-dismiss timer.
-    pub fn toggle_panel_overlay(&mut self) {
-        if self.show_panel_overlay() {
-            self.show_panel_number_overlay = false;
-            self.panel_overlay_since = None;
-        } else {
-            self.show_panel_number_overlay = true;
-            self.panel_overlay_since = Some(std::time::Instant::now());
-        }
-    }
-
     pub fn is_any_overlay_active(&self) -> bool {
         self.overlays.active != ActiveOverlay::None
             || self.worktree_mgr.input_mode != WorktreeInputMode::Normal
             || self.review_state.input_mode != crate::review_state::ReviewInputMode::Normal
             || self.review_state.template_picker_active
             || self.review_state.comment_detail_active
-            || self.update_state != UpdateState::Idle
+            || self.update.is_active()
             || self.worktree_mgr.skip_reason.is_some()
     }
 
@@ -433,7 +275,7 @@ impl App {
     /// Return the branch name used as the worktree identifier.
     pub fn selected_worktree_branch(&self) -> String {
         self.worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| w.branch.clone())
             .unwrap_or_default()
     }
@@ -442,7 +284,7 @@ impl App {
     /// (i.e. its real branch was grabbed away to main and it holds a temporary checkout).
     pub fn is_selected_worktree_grabbed(&self) -> bool {
         self.worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| w.branch.ends_with("__grab"))
             .unwrap_or(false)
     }
@@ -450,9 +292,9 @@ impl App {
     /// Return the directory path for the currently selected worktree.
     pub fn selected_worktree_path(&self) -> PathBuf {
         self.worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| w.path.clone())
-            .unwrap_or_else(|| self.repo_path.clone())
+            .unwrap_or_else(|| self.repo.path.clone())
     }
 
     /// Return all Claude Code sessions grouped by worktree.
@@ -513,24 +355,19 @@ impl App {
                 }
             }
         }
-        self.worktree_list_rows = rows;
-        // Clamp selected index.
-        if !self.worktree_list_rows.is_empty()
-            && self.worktree_list_selected >= self.worktree_list_rows.len()
-        {
-            self.worktree_list_selected = self.worktree_list_rows.len() - 1;
-        }
+        // 行の選択のクランプは set_rows が担う。
+        self.worktrees.set_rows(rows);
     }
 
-    /// Derive `selected_worktree` from the current `worktree_list_selected`.
+    /// 行の選択 (`row_selected`) から worktree の選択を導出する。
     pub fn sync_selected_worktree(&mut self) {
-        if let Some(row) = self.worktree_list_rows.get(self.worktree_list_selected) {
+        if let Some(row) = self.worktrees.rows.get(self.worktrees.row_selected) {
             let wt_idx = match *row {
                 WorktreeListRow::Worktree(i) => i,
                 WorktreeListRow::Session { wt_idx, .. } => wt_idx,
             };
             if wt_idx < self.worktrees.len() {
-                self.selected_worktree = wt_idx;
+                self.worktrees.select(wt_idx);
             }
         }
     }

@@ -24,7 +24,7 @@ mod worktree;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Focus, UpdateState, WorktreeInputMode};
+use crate::app::{App, Focus, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
@@ -88,10 +88,10 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
     if app.worktree_mgr.skip_reason.is_some() {
         return EffectiveOverlay::SkipReason;
     }
-    if app.update_state != UpdateState::Idle {
+    if app.update.is_active() {
         return EffectiveOverlay::UpdateState;
     }
-    if app.publish_confirm.is_some() {
+    if app.publish.confirm.is_some() {
         return EffectiveOverlay::PublishConfirm;
     }
     if app.review_state.comment_detail_active {
@@ -284,7 +284,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 
     // ── 1b. References overlay (panel-level popup, not part of OverlayManager) ──
-    if app.references_overlay.active {
+    if app.code_nav.references.active {
         handle_references_key(app, key);
         return;
     }
@@ -294,11 +294,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // drills in / jumps — and are consumed. Otherwise it's a transient auto
     // popup: any key dismisses it (Esc consumed; other keys fall through to do
     // their normal job as the popup vanishes). ──
-    if app.hover_info_overlay.pinned {
+    if app.code_nav.hover_info.pinned {
         handle_hover_modal_key(app, key);
         return;
     }
-    if app.hover_info_overlay.info.is_some() || app.hover_info_overlay.pending.is_some() {
+    if app.code_nav.hover_info.info.is_some() || app.code_nav.hover_info.pending.is_some() {
         app.clear_hover();
         if key.code == KeyCode::Esc {
             return;
@@ -306,13 +306,13 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 
     // ── 1b2. Symbol action overlay (after hint selection) ──
-    if app.symbol_action_overlay.active {
+    if app.code_nav.symbol_action.active {
         handle_symbol_action_key(app, key);
         return;
     }
 
     // ── 1b3. Symbol hint overlay input (second char of label) ──
-    if app.symbol_hint_overlay.active && !app.symbol_hint_overlay.input.is_empty() {
+    if app.code_nav.symbol_hint.active && !app.code_nav.symbol_hint.input.is_empty() {
         handle_symbol_hint_key(app, key);
         return;
     }
@@ -364,14 +364,14 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Down | KeyCode::Char('j') => app.hover_refs_move(1),
         KeyCode::Enter => {
             let has_preview = app
-                .hover_info_overlay
+                .code_nav.hover_info
                 .refs
                 .as_ref()
                 .is_some_and(|r| r.preview.is_some());
             if has_preview {
                 app.hover_jump_to_preview();
             } else if let Some(sel) =
-                app.hover_info_overlay.refs.as_ref().map(|r| r.selected)
+                app.code_nav.hover_info.refs.as_ref().map(|r| r.selected)
             {
                 app.open_hover_preview(sel);
             }

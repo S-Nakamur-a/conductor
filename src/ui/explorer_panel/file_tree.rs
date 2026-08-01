@@ -2,11 +2,11 @@
 
 use crate::app::{App, Focus};
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
 /// Cached indent strings by depth level to avoid repeated allocation.
@@ -67,7 +67,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
     // something here you haven't opened" pattern — hidden once the
     // walkthrough view is already showing since the badge would be redundant.
     let walkthrough_ready = matches!(
-        app.current_walkthrough.as_ref().map(|(w, _)| w.status),
+        app.walkthrough.current.as_ref().map(|wt| wt.header.status),
         Some(crate::walkthrough::WalkthroughStatus::Ready)
     );
     if walkthrough_ready
@@ -77,37 +77,18 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         title.push_str("\u{1f9ed} ");
     }
 
-    let is_expanded = app.expanded_panel == Some(Focus::Explorer);
     let theme = &app.theme;
-    let (expand_label, expand_color) = if is_expanded {
-        ("[>=<]", theme.border_focused)
-    } else {
-        ("[<=>]", theme.border_unfocused)
-    };
-
-    let border_type = if panel_focused {
-        BorderType::Thick
-    } else {
-        BorderType::Plain
-    };
-
+    // ボーダーの太さは Explorer カラム全体のフォーカスで、タイトルの強調は
+    // その中でツリー側にフォーカスがあるかで決まる (下半分と共有のカラムなので)。
     let title_style = if tree_focused {
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.muted)
     };
-    let block = Block::default()
-        .title(Span::styled(title, title_style))
-        .title_top(
-            Line::from(Span::styled(
-                expand_label,
-                Style::default().fg(expand_color),
-            ))
-            .alignment(Alignment::Right),
-        )
-        .borders(Borders::ALL)
-        .border_type(border_type)
-        .border_style(Style::default().fg(border_color));
+    let block = crate::ui::common::PanelChrome::new(theme, title, panel_focused, border_color)
+        .with_expand_button(app.expanded_panel == Some(Focus::Explorer))
+        .with_title_style(title_style)
+        .into_block();
 
     let scroll = app.viewer_state.tree.tree_scroll;
 
@@ -150,7 +131,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                     }
                 }
             };
-            let hover = app.explorer_tree_hover.phase(vis_idx);
+            let hover = app.list_hover.explorer_tree.phase(vis_idx);
             let style = crate::ui::common::list_row::row_style(
                 theme,
                 base_fg,

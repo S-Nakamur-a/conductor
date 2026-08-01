@@ -50,7 +50,7 @@ fn activate(app: &mut App, menu_idx: usize, item_idx: usize) {
 
 /// Keep the highlighted row inside the visible window of the dropdown.
 fn rescroll(app: &mut App) {
-    let visible = crate::ui::menu_bar::visible_rows(app, app.layout_cache.frame_area.height);
+    let visible = crate::ui::menu_bar::visible_rows(app, app.layout.cache.frame_area.height);
     app.menu.scroll_selection_into_view(visible);
 }
 

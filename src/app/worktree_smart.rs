@@ -115,7 +115,7 @@ impl App {
     pub fn start_smart_worktree_async(&mut self, description: &str) {
         let desc = description.to_string();
         let main_branch = self.config.general.main_branch.clone();
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         // Resolve to a ref that actually exists: origin/<main> if there is a
         // remote, otherwise the local <main> branch (or HEAD). Without this,
         // worktree creation fails with "invalid reference: origin/main" in a

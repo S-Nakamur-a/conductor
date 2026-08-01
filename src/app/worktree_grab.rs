@@ -65,9 +65,9 @@ impl App {
 
         let selected_path = self
             .worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| w.path.clone());
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
                 match engine.grab_branch(&main_path, &source_path, branch_name, session_id) {
                     Ok(()) => {
@@ -158,7 +158,7 @@ impl App {
             rows,
             cols,
             Some(session_id),
-            &self.repo_path,
+            &self.repo.path,
             None,
         )?;
         self.switch_claude_session(idx);
@@ -183,10 +183,10 @@ impl App {
         };
         let selected_path = self
             .worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| w.path.clone());
         let main_branch = self.config.general.main_branch.clone();
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
                 match engine.ungrab_branch(
                     &main_path,

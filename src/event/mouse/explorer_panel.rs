@@ -222,12 +222,12 @@ pub(super) fn handle_explorer_column_click(
                     if entry.is_dir {
                         // Lazy-load children before expanding.
                         if !entry.is_expanded
-                            && let Some(wt) = app.worktrees.get(app.selected_worktree)
+                            && let Some(wt) = app.worktrees.selected()
                         {
                             app.viewer_state.ensure_children_loaded(tree_idx, &wt.path);
                         }
                         app.viewer_state.toggle_dir(tree_idx);
-                    } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                    } else if let Some(wt) = app.worktrees.selected() {
                         // Double-click detection.
                         let is_double = register_double_click_on(
                             &mut app.viewer_state.click.last_tree_click_time,

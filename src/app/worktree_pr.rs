@@ -19,7 +19,7 @@ impl App {
         self.overlays.pr_input.loading = true;
         self.overlays.pr_input.error = None;
 
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         let worktree_dir = self.config.general.worktree_dir.clone();
         let input = input.to_string();
 
@@ -92,7 +92,7 @@ impl App {
             return;
         }
 
-        match crate::git_engine::GitEngine::open(&self.repo_path) {
+        match crate::git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.pr_url_for_branch(&branch) {
                 Some(url) => {
                     log::info!("Opening PR URL: {url}");

@@ -18,7 +18,11 @@ impl App {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
             // Walkthrough (if any) rides along with the same branch scope.
-            self.current_walkthrough = store.get_walkthrough(&wt).ok().flatten();
+            self.walkthrough.current = store
+                .get_walkthrough(&wt)
+                .ok()
+                .flatten()
+                .map(crate::app::LoadedWalkthrough::from);
             // Re-anchor each step onto the diff's own spelling of its file
             // while we have both in hand. The Viewer's step banner and its
             // line-range underline compare `current_file` against
@@ -27,7 +31,7 @@ impl App {
             // written relative to a subdirectory) would jump correctly and
             // then render neither. Steps that already match, and steps whose
             // file isn't in the diff at all, are left exactly as they are.
-            if let Some((_, steps)) = self.current_walkthrough.as_mut() {
+            if let Some(steps) = self.walkthrough.current.as_mut().map(|wt| &mut wt.steps) {
                 for step in steps.iter_mut() {
                     if let Some(resolved) = self.diff_state.resolve_changed_path(&step.file_path)
                         && resolved != step.file_path
@@ -66,7 +70,7 @@ impl App {
             Some((f, _)) => (f.path.clone(), f.clone()),
             None => return,
         };
-        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+        let Some(wt) = self.worktrees.selected() else {
             return;
         };
         let wt_path = wt.path.clone();
@@ -174,7 +178,7 @@ impl App {
     ) {
         let branch = self
             .worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| w.branch.clone());
 
         if let Some(store) = &self.review_store {

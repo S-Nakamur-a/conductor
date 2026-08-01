@@ -1,30 +1,28 @@
-//! The canonical spelling of the repo-relative paths that review comments and
-//! walkthrough steps are keyed by.
+//! レビューコメントと walkthrough ステップのキーになる、リポジトリ相対パスの
+//! 正規の綴り。
 //!
-//! These paths are matched against `FileDiff::path`, which comes straight from
-//! `git2` and is therefore always plain (`src/foo.rs` — no `./`, no doubled
-//! separators, no trailing slash). Anything keyed by a *different* spelling of
-//! the same file silently fails to resolve: a walkthrough step reports "not in
-//! this diff" while the file sits right there in the list.
+//! これらのパスは `FileDiff::path` と突き合わせる。`FileDiff::path` は `git2` が
+//! そのまま返す値なので必ず素の形 (`src/foo.rs` — `./` なし、区切りの重複なし、
+//! 末尾スラッシュなし) になる。同じファイルを別の綴りでキーにすると、解決に
+//! 静かに失敗する: ファイルは一覧にちゃんと並んでいるのに、walkthrough の
+//! ステップは「この差分には無い」と報告する。
 //!
-//! Both sides go through [`normalize`]: `mcp-serve`'s tools normalize before
-//! writing, and the store normalizes again when reading rows back, so rows
-//! written before this existed resolve without a migration.
+//! 書き込み側も読み出し側も [`normalize`] を通す。`mcp-serve` のツールは書き込み前に
+//! 正規化し、ストアは行を読み戻すときにもう一度正規化するので、この仕組みが
+//! 入る前に書かれた行もマイグレーション無しで解決できる。
 
-/// Rewrite a repo-relative path into the spelling git uses.
+/// リポジトリ相対パスを、git が使う綴りに書き換える。
 ///
-/// Drops surrounding whitespace, `.` segments (including a leading `./`),
-/// empty segments (doubled slashes), and a trailing slash.
+/// 前後の空白、`.` セグメント (先頭の `./` を含む)、空セグメント
+/// (スラッシュの重複)、末尾のスラッシュを落とす。
 ///
-/// This is a pure spelling fix, not a validator — two things it deliberately
-/// leaves alone, so that whoever *does* validate still sees them:
+/// これは綴りの修正であってバリデータではない。検証する側が見落とさないよう、
+/// 次の 2 つは意図的にそのまま残す:
 ///
-/// - `..` segments are preserved. Resolving them here would turn a path that
-///   must be refused (`mcp_serve::reply::ensure_repo_relative`) into an
-///   innocuous-looking one.
-/// - A leading `/` is preserved, so an absolute path stays absolute and is
-///   still caught by that same check rather than being quietly demoted to a
-///   relative path pointing somewhere else entirely.
+/// - `..` セグメントは保持する。ここで解決してしまうと、拒否しなければならない
+///   パス (`mcp_serve::reply::ensure_repo_relative`) が無害な見た目に化ける。
+/// - 先頭の `/` も保持する。絶対パスは絶対パスのまま同じ検査に引っかかり、
+///   まったく別の場所を指す相対パスへ静かに格下げされることがない。
 pub fn normalize(path: &str) -> String {
     let trimmed = path.trim();
     let mut out = String::with_capacity(trimmed.len());
@@ -65,9 +63,9 @@ mod tests {
         assert_eq!(normalize("./"), "");
     }
 
-    /// `..` must survive normalization: the validation that rejects it runs on
-    /// the normalized form, so resolving it here would launder an escaping
-    /// path into an acceptable one.
+    /// `..` は正規化を生き延びなければならない。これを拒否する検証は正規化後の形に
+    /// 対して走るので、ここで解決してしまうと脱出するパスを通ってしまう形に
+    /// 洗浄することになる。
     #[test]
     fn parent_dir_segments_survive() {
         assert_eq!(normalize("../secret"), "../secret");
@@ -75,8 +73,8 @@ mod tests {
         assert_eq!(normalize("./../secret"), "../secret");
     }
 
-    /// Likewise an absolute path stays absolute, so the caller that refuses
-    /// absolute paths still gets to refuse it.
+    /// 同様に絶対パスは絶対パスのままにして、絶対パスを拒否する呼び出し側が
+    /// ちゃんと拒否できるようにする。
     #[test]
     fn absolute_paths_stay_absolute() {
         assert_eq!(normalize("/etc/passwd"), "/etc/passwd");

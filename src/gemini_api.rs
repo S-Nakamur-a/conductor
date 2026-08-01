@@ -1,9 +1,9 @@
-//! Gemini API client.
+//! Gemini API クライアント。
 //!
-//! Provides a blocking HTTP client for the Google Gemini API — one of the two
-//! providers behind the `[api]` seam (see `ai_caller.rs`). Being plain HTTP, it
-//! cannot read the repository, so tasks that need the code (walkthrough
-//! generation) want the `command` provider instead.
+//! Google Gemini API 向けのブロッキング HTTP クライアント。`[api]` の継ぎ目
+//! (`ai_caller.rs` を参照) の背後にある 2 つのプロバイダのうちの 1 つ。素の HTTP
+//! なのでリポジトリを読めない。コードを必要とするタスク (walkthrough の生成) は
+//! こちらではなく `command` プロバイダを使うこと。
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -11,37 +11,37 @@ use serde::{Deserialize, Serialize};
 const API_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL: &str = "gemini-2.5-flash";
 
-/// A text part in a Gemini message.
+/// Gemini のメッセージ内のテキストパート。
 #[derive(Debug, Serialize, Deserialize)]
 struct Part {
     text: String,
 }
 
-/// A content entry (role + parts).
+/// content エントリ (role と parts)。
 #[derive(Debug, Serialize)]
 struct Content {
     role: &'static str,
     parts: Vec<Part>,
 }
 
-/// System instruction wrapper.
+/// システム指示のラッパー。
 #[derive(Debug, Serialize)]
 struct SystemInstruction {
     parts: Vec<Part>,
 }
 
-/// Thinking config for Gemini 2.5+ models.
+/// Gemini 2.5 以降のモデル向けの thinking 設定。
 ///
-/// Gemini 2.5 models have thinking enabled by default, and thinking tokens
-/// count against `max_output_tokens`. Set `thinking_budget: 0` to disable
-/// thinking for simple structured-output tasks.
+/// Gemini 2.5 系はデフォルトで thinking が有効で、thinking のトークンも
+/// `max_output_tokens` に算入される。単純な構造化出力のタスクでは
+/// `thinking_budget: 0` にして thinking を切る。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThinkingConfig {
     thinking_budget: i32,
 }
 
-/// Generation config (includes thinking config nested inside).
+/// 生成の設定 (内側に thinking 設定を含む)。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerationConfig {
@@ -49,7 +49,7 @@ struct GenerationConfig {
     thinking_config: ThinkingConfig,
 }
 
-/// Request body for the Gemini generateContent API.
+/// Gemini の generateContent API へのリクエストボディ。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateContentRequest {
@@ -58,7 +58,7 @@ struct GenerateContentRequest {
     generation_config: GenerationConfig,
 }
 
-/// Response body from the Gemini API.
+/// Gemini API からのレスポンスボディ。
 #[derive(Debug, Deserialize)]
 struct GenerateContentResponse {
     candidates: Option<Vec<Candidate>>,
@@ -74,7 +74,7 @@ struct CandidateContent {
     parts: Vec<Part>,
 }
 
-/// Error response from the API.
+/// API からのエラーレスポンス。
 #[derive(Debug, Deserialize)]
 struct ApiErrorResponse {
     error: ApiErrorDetail,
@@ -85,14 +85,14 @@ struct ApiErrorDetail {
     message: String,
 }
 
-/// Call the Gemini generateContent API (blocking).
+/// Gemini の generateContent API を呼ぶ (ブロッキング)。
 ///
-/// - `system_prompt`: system instruction content
-/// - `user_message`: user message content
-/// - `model`: model ID (uses default if `None`)
-/// - `max_tokens`: max tokens to generate
+/// - `system_prompt`: システム指示の内容
+/// - `user_message`: ユーザーメッセージの内容
+/// - `model`: モデル ID (`None` ならデフォルトを使う)
+/// - `max_tokens`: 生成する最大トークン数
 ///
-/// Returns the text content from the first candidate's first part.
+/// 最初の candidate の最初の part のテキストを返す。
 pub fn call_messages_api(
     system_prompt: &str,
     user_message: &str,
@@ -103,9 +103,8 @@ pub fn call_messages_api(
         std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY environment variable not set")?;
 
     let model = model.unwrap_or(DEFAULT_MODEL);
-    // The key travels in the `x-goog-api-key` header (Google's recommended
-    // method), never in the URL: query strings leak into proxy/access logs
-    // and any request tracing.
+    // API キーは URL ではなく `x-goog-api-key` ヘッダで送る (Google の推奨方法)。
+    // クエリ文字列はプロキシやアクセスログ、リクエストトレースに漏れるため。
     let url = format!("{API_BASE_URL}/{model}:generateContent");
 
     let request_body = GenerateContentRequest {

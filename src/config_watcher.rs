@@ -1,9 +1,9 @@
-//! Configuration file watcher.
+//! 設定ファイルの監視。
 //!
-//! Monitors the parent directory of `config.toml` for file-system events and
-//! forwards only events that match the config file name. Using the parent
-//! directory instead of the file directly avoids losing the watch when an
-//! editor saves atomically via a write-then-rename (which replaces the inode).
+//! `config.toml` の親ディレクトリのファイルシステムイベントを監視し、設定
+//! ファイル名に一致するイベントだけを転送する。ファイルそのものではなく親
+//! ディレクトリを監視するのは、エディタが「書いてリネーム」でアトミックに
+//! 保存したとき (inode が入れ替わる) に監視が外れないようにするため。
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -11,28 +11,28 @@ use std::sync::mpsc;
 
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Events sent from the config watcher to the main loop.
+/// 設定ファイル監視からメインループへ送られるイベント。
 #[derive(Debug)]
 pub enum ConfigEvent {
-    /// The config file was created, modified, or replaced.
+    /// 設定ファイルが作成・変更・置換された。
     Changed,
 }
 
-/// File system watcher for the conductor configuration file.
+/// conductor の設定ファイル用のファイルシステムウォッチャ。
 ///
-/// Watches the *parent directory* of the config file in non-recursive mode so
-/// that write-then-rename atomic saves (common in editors like Vim, neovim,
-/// and most $EDITOR wrappers) still deliver events after an inode swap.
+/// 設定ファイルの親ディレクトリを非再帰モードで監視する。こうすると、
+/// 「書いてリネーム」によるアトミック保存 (Vim, neovim をはじめ大半の $EDITOR
+/// ラッパーでよくある) で inode が入れ替わったあともイベントが届く。
 pub struct ConfigWatcher {
     _watcher: RecommendedWatcher,
     rx: mpsc::Receiver<ConfigEvent>,
 }
 
 impl ConfigWatcher {
-    /// Create a new watcher for `config_path`.
+    /// `config_path` を対象にしたウォッチャを作る。
     ///
-    /// The parent directory of `config_path` is monitored; only events whose
-    /// path matches the config file name produce a [`ConfigEvent`].
+    /// 監視するのは `config_path` の親ディレクトリで、[`ConfigEvent`] を出すのは
+    /// パスが設定ファイル名に一致したイベントだけ。
     pub fn new(config_path: &Path) -> anyhow::Result<Self> {
         let config_filename = config_path
             .file_name()
@@ -71,22 +71,22 @@ impl ConfigWatcher {
         })
     }
 
-    /// Check for a pending config-change event (non-blocking).
+    /// 未処理の設定変更イベントがあれば取り出す (ノンブロッキング)。
     pub fn poll(&self) -> Option<ConfigEvent> {
         self.rx.try_recv().ok()
     }
 }
 
-/// Return `true` when `path` refers to the given config file name.
+/// `path` が指定した設定ファイル名を指しているとき `true` を返す。
 ///
-/// Extracted as a pure function so the filename-matching logic can be unit
-/// tested independently of the file system.
+/// ファイル名の一致判定をファイルシステムと切り離して単体テストできるよう、
+/// 純粋な関数として切り出してある。
 fn matches_config_file(path: &Path, config_filename: &OsStr) -> bool {
     path.file_name() == Some(config_filename)
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// テスト
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

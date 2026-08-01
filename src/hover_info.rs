@@ -1,49 +1,49 @@
-//! Symbol hover info — signature, doc comment, and reference count for the
-//! symbol under the viewer cursor.
+//! シンボルのホバー情報。Viewer のカーソル下にあるシンボルのシグネチャ、
+//! doc コメント、参照数。
 //!
-//! Built on the existing tree-sitter [`SymbolIndex`](crate::symbol_index::SymbolIndex)
-//! (no language server): the index locates the definition, then a bounded read
-//! of the definition file extracts the declaration signature and the doc
-//! comment block directly above it. Lookups that find nothing return `None`
-//! so the caller can stay silent.
+//! 既存の tree-sitter 製 [`SymbolIndex`](crate::symbol_index::SymbolIndex) の上に
+//! 作ってある (language server は使わない)。インデックスが定義位置を特定し、
+//! そのファイルを範囲を限って読んで宣言のシグネチャと直上の doc コメント
+//! ブロックを取り出す。何も見つからなければ `None` を返し、呼び出し側は
+//! 黙っていられる。
 
 use crate::symbol_index::SymbolIndex;
 
-/// Maximum number of signature lines collected before truncating with `…`.
+/// シグネチャとして集める最大行数。超えたら `…` で切り詰める。
 const MAX_SIGNATURE_LINES: usize = 8;
-/// Maximum number of doc-comment lines collected before truncating with `…`.
+/// doc コメントとして集める最大行数。超えたら `…` で切り詰める。
 const MAX_DOC_LINES: usize = 12;
-/// How many references the popup counts before giving up and saying "50+".
-/// Bounds the work on a path that runs inside a frame — see the call site.
+/// ポップアップが参照を数えるのを諦めて「50+」と出すまでの件数。
+/// フレーム内で走る経路なので作業量に上限を設ける。呼び出し側を参照。
 const REF_COUNT_CAP: usize = 50;
 
-/// Hover information for a symbol, ready for rendering.
+/// 描画に使える形にしたシンボルのホバー情報。
 pub struct HoverInfo {
-    /// The symbol name (popup title).
+    /// シンボル名 (ポップアップのタイトル)。
     pub symbol_name: String,
-    /// Definition kind (e.g. "Function", "Struct"), from the symbol index.
+    /// 定義の種別 (例: "Function", "Struct")。シンボルインデックス由来。
     pub kind: String,
-    /// Definition file path, relative to the repo root.
+    /// 定義があるファイルのパス (リポジトリルートからの相対)。
     pub file_path: String,
-    /// 1-indexed definition line.
+    /// 1 始まりの定義行。
     pub line: usize,
-    /// Doc-comment lines above the definition, comment markers stripped.
+    /// 定義の直上にある doc コメントの各行 (コメント記号は除去済み)。
     pub doc_lines: Vec<String>,
-    /// Declaration signature lines (dedented, body-opening brace stripped).
+    /// 宣言のシグネチャの各行 (インデントを揃え、本体を開く波括弧は除去済み)。
     pub signature_lines: Vec<String>,
-    /// Number of definitions matching the name (>1 means the shown one is one of several).
+    /// 名前に一致した定義の数 (2 以上なら、表示しているのは複数あるうちの 1 つ)。
     pub def_count: usize,
-    /// Number of code-position references across the repo, counted only up to
-    /// [`REF_COUNT_CAP`]. See [`ref_count_capped`](Self::ref_count_capped).
+    /// リポジトリ全体でのコード位置としての参照数。数えるのは
+    /// [`REF_COUNT_CAP`] まで。[`ref_count_capped`](Self::ref_count_capped) を参照。
     pub ref_count: usize,
-    /// Whether the count stopped at the cap, meaning the real total is at
-    /// least `ref_count` rather than exactly it. Rendered as a trailing `+`.
+    /// 上限で数えるのを止めたか。true のとき実際の総数は `ref_count` ちょうどではなく
+    /// 「それ以上」を意味する。末尾の `+` として描画する。
     pub ref_count_capped: bool,
 }
 
-/// Build hover info for `symbol`. Prefers a definition in `current_file` when
-/// the name is defined in several places. Returns `None` (quietly) when the
-/// index is not ready, the symbol has no definition, or the file can't be read.
+/// `symbol` のホバー情報を組み立てる。複数箇所で定義されている名前については
+/// `current_file` 内の定義を優先する。インデックスが未完成、シンボルに定義が無い、
+/// ファイルが読めない、のいずれかなら (黙って) `None` を返す。
 pub fn build_hover_info(
     index: &SymbolIndex,
     symbol: &str,
@@ -66,10 +66,10 @@ pub fn build_hover_info(
         return None;
     }
 
-    // Capped, not exact: this runs on the UI thread every time the pointer
-    // settles on a symbol, and an exact count for a common name means parsing
-    // every file that mentions it (~157ms for `new` here — ten dropped
-    // frames). The popup reports "50+" past the cap.
+    // 正確な数ではなく上限付き。これはポインタがシンボル上で止まるたびに UI
+    // スレッドで走るが、ありふれた名前の正確な数を出すにはその名前が現れる全ファイルを
+    // パースすることになる (ここでの `new` は約 157ms = 10 フレーム落ち)。
+    // 上限を超えたぶんはポップアップに「50+」と出す。
     let (ref_count, ref_count_capped) = index.count_references_upto(symbol, &root, REF_COUNT_CAP);
 
     Some(HoverInfo {
@@ -85,10 +85,9 @@ pub fn build_hover_info(
     })
 }
 
-/// Extract the declaration signature starting at `def_idx` (0-indexed):
-/// lines up to and including the first one that ends with `{` (brace stripped)
-/// or `;`/`=`-terminated declarations, capped at [`MAX_SIGNATURE_LINES`].
-/// Lines are dedented by the first line's indentation.
+/// `def_idx` (0 始まり) から始まる宣言のシグネチャを取り出す。`{` で終わる最初の行
+/// (波括弧は除去) まで、または `;` / `=` で終わる宣言までを含め、上限は
+/// [`MAX_SIGNATURE_LINES`]。各行は最初の行のインデントぶんだけ左へ詰める。
 fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
     let indent = lines[def_idx].len() - lines[def_idx].trim_start().len();
     let mut out = Vec::new();
@@ -117,14 +116,14 @@ fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
     out
 }
 
-/// Collect the comment block directly above `def_idx` (0-indexed), skipping
-/// attribute/decorator lines (`#[...]`, `@...`). Handles `///`, `//!`, `//`
-/// (Rust/Go) and `/** ... */` (TS/JS) styles; markers are stripped. Capped at
-/// [`MAX_DOC_LINES`] (keeping the opening lines, which carry the summary).
+/// `def_idx` (0 始まり) の直上にあるコメントブロックを集める。属性・デコレータの行
+/// (`#[...]`, `@...`) は読み飛ばす。`///`, `//!`, `//` (Rust/Go) と
+/// `/** ... */` (TS/JS) の形式に対応し、記号は除去する。上限は [`MAX_DOC_LINES`]
+/// (概要を持つ先頭側を残す)。
 fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
     let mut collected: Vec<String> = Vec::new();
     let mut i = def_idx;
-    let mut in_block = false; // inside a `/* ... */` scanned bottom-up
+    let mut in_block = false; // 下から上へ走査中の `/* ... */` の内側かどうか
     while i > 0 {
         i -= 1;
         let t = lines[i].trim();
@@ -140,13 +139,13 @@ fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
             }
             continue;
         }
-        // Skip attributes/decorators between the doc block and the item.
+        // doc ブロックと対象アイテムのあいだにある属性・デコレータは飛ばす。
         if collected.is_empty() && (t.starts_with("#[") || t.starts_with('@') || t == "]") {
             continue;
         }
         if t.ends_with("*/") && !t.starts_with("//") {
             let body = t.trim_end_matches("*/").trim_end();
-            // A `/*` opener on the same line means the block was one line.
+            // 同じ行に `/*` の開始があるなら、そのブロックは 1 行だったということ。
             in_block = !body.starts_with("/*");
             let body = body
                 .trim_start_matches("/**")
@@ -168,7 +167,7 @@ fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
         }
     }
     collected.reverse();
-    // Drop leading/trailing empty lines left by block-comment delimiters.
+    // ブロックコメントの区切りが残した先頭・末尾の空行を落とす。
     while collected.first().is_some_and(|l| l.is_empty()) {
         collected.remove(0);
     }
@@ -252,8 +251,8 @@ mod tests {
 
     #[test]
     fn end_to_end_over_real_index() {
-        // Build a real tree-sitter index over a temp repo and resolve hover
-        // info through the full path (find_definitions → read → extract).
+        // 一時リポジトリに対して本物の tree-sitter インデックスを作り、
+        // 経路全体 (find_definitions → 読み取り → 抽出) を通してホバー情報を解決する。
         let dir = std::env::temp_dir().join(format!("hover_e2e_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -283,10 +282,10 @@ fn caller() {
             vec!["Adds two numbers together.", "Returns their sum."]
         );
         assert_eq!(info.signature_lines, vec!["pub fn add(a: i64, b: i64) -> i64"]);
-        // "add" appears at the definition and one call site.
+        // "add" は定義箇所と呼び出し箇所の 2 つに現れる。
         assert!(info.ref_count >= 2, "ref_count = {}", info.ref_count);
 
-        // A name with no definition returns nothing (silent).
+        // 定義の無い名前は何も返さない (黙る)。
         assert!(build_hover_info(&index, "nonexistent_symbol", None).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -130,9 +130,9 @@ impl App {
     /// mouse event.
     pub fn drag_divider_to(&mut self, divider: Divider, col: u16, row: u16) -> bool {
         // Snapshot the (Copy) geometry before taking `&mut self` for the mutator.
-        let main = self.layout_cache.main_area;
-        let explorer_col = self.layout_cache.columns[1];
-        let terminal_col = self.layout_cache.columns[3];
+        let main = self.layout.cache.main_area;
+        let explorer_col = self.layout.cache.columns[1];
+        let terminal_col = self.layout.cache.columns[3];
         match divider {
             // Vertical dividers: percentages are relative to the main area width.
             Divider::ExplorerViewer => {
@@ -173,7 +173,7 @@ impl App {
                 }
                 let target_px = row.saturating_sub(terminal_col.y);
                 let target_pct = (target_px as u32 * 100 / terminal_col.height as u32) as i16;
-                let delta = target_pct - self.terminal_split_pct as i16;
+                let delta = target_pct - self.layout.terminal_split_pct as i16;
                 self.adjust_terminal_split(delta)
             }
         }
@@ -234,13 +234,13 @@ impl App {
     /// enlarges the Shell. Flashes the resulting split. Returns whether the ratio
     /// changed; the caller persists.
     fn adjust_terminal_split(&mut self, delta: i16) -> bool {
-        let next = (self.terminal_split_pct as i16 + delta)
+        let next = (self.layout.terminal_split_pct as i16 + delta)
             .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
             as u16;
-        if next == self.terminal_split_pct {
+        if next == self.layout.terminal_split_pct {
             return false;
         }
-        self.terminal_split_pct = next;
+        self.layout.terminal_split_pct = next;
         // Keep the in-memory config in sync so the appearance snapshot matches
         // what we write on persist — that makes the config watcher's reload a
         // no-op (it only reacts when the snapshot differs), avoiding a self-write
@@ -280,7 +280,7 @@ impl App {
         if let Err(e) = crate::config::persist_layout_proportions(
             self.config.layout.explorer_width_pct,
             self.config.layout.viewer_width_pct,
-            self.terminal_split_pct,
+            self.layout.terminal_split_pct,
             self.config.layout.explorer_split_pct,
         ) {
             log::warn!("failed to persist layout proportions: {e}");

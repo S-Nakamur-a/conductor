@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 /// Render the full change summary as a dedicated, scrollable, full-panel view —
 /// the "SUMMARY" pseudo-file. This is the PR-description counterpart to the
@@ -23,21 +23,19 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
         } else {
             theme.border_unfocused
         };
-        let border_type = if focused {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        };
         let title_style = if focused {
             Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.muted)
         };
-        let block = Block::default()
-            .title(Span::styled(" \u{25A3} SUMMARY ", title_style))
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(Style::default().fg(border_color));
+        let block = crate::ui::common::PanelChrome::new(
+            theme,
+            " \u{25A3} SUMMARY ",
+            focused,
+            border_color,
+        )
+        .with_title_style(title_style)
+        .into_block();
 
         let summary = app
             .review_state
@@ -69,8 +67,8 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
                 summary,
                 inner_width.saturating_sub(1),
                 theme,
-                &app.syntax_set,
-                &app.syntect_theme,
+                &app.highlight.syntax_set,
+                &app.highlight.theme,
             );
         }
         (block, lines)

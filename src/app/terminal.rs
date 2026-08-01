@@ -104,7 +104,7 @@ impl App {
             rows,
             cols,
             None,
-            &self.repo_path,
+            &self.repo.path,
             session_name,
         )?;
         self.switch_claude_session(idx);
@@ -134,7 +134,7 @@ impl App {
             rows,
             cols,
             None,
-            &self.repo_path,
+            &self.repo.path,
             None,
         )?;
         self.terminal.switch_shell_session(idx);

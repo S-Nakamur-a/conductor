@@ -103,9 +103,9 @@ impl App {
 
         // Resolve the main repo root so we look in the right place even
         // when Conductor was launched from a linked worktree.
-        let conductor_dir = git_engine::GitEngine::open(&self.repo_path)
+        let conductor_dir = git_engine::GitEngine::open(&self.repo.path)
             .and_then(|e| e.main_worktree_path())
-            .unwrap_or_else(|_| self.repo_path.clone())
+            .unwrap_or_else(|_| self.repo.path.clone())
             .join(".conductor");
 
         // Helper: scan a signal directory and collect matching worktree paths.
@@ -267,9 +267,9 @@ impl App {
             .cc_waiting_ack_time
             .insert(working_dir.clone(), last_output);
 
-        let conductor_dir = git_engine::GitEngine::open(&self.repo_path)
+        let conductor_dir = git_engine::GitEngine::open(&self.repo.path)
             .and_then(|e| e.main_worktree_path())
-            .unwrap_or_else(|_| self.repo_path.clone())
+            .unwrap_or_else(|_| self.repo.path.clone())
             .join(".conductor");
         // Normalize the path (strip trailing slash) to match the shell's $PWD encoding.
         let normalized: PathBuf = session.working_dir.components().collect();

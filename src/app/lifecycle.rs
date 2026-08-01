@@ -6,24 +6,21 @@ use std::path::PathBuf;
 
 use syntect::highlighting::ThemeSet;
 
-use crate::background::BackgroundOp;
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;
-use crate::jump_history::JumpHistory;
 use crate::keymap::KeyMap;
-use crate::overlay::{
-    HoverInfoOverlay, OverlayManager, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay,
-};
+use crate::overlay::OverlayManager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
-use crate::symbol_index::SymbolIndex;
 use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
 use super::focus::Focus;
+use super::state::{
+    CodeNav, Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
+};
 use super::types::{BackgroundOps, DirtyPanels};
-use super::update::UpdateState;
 use super::{App, GrabbedBranch, StatusLevel};
 
 impl App {
@@ -99,21 +96,26 @@ impl App {
             focus_changed_at: std::time::Instant::now()
                 - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
             overlays: OverlayManager::default(),
-            repo_path,
-            main_repo_name,
+            // 索引の探索起点は repo_path。構造体に move される前に取る。
+            code_nav: CodeNav::new(repo_path.clone()),
+            repo: RepoState {
+                path: repo_path,
+                main_name: main_repo_name,
+                known: repo_list,
+                known_index: 0,
+            },
             should_quit: false,
             editor: None,
-            walkthrough_gens: Default::default(),
-            current_walkthrough: None,
-            publish_confirm: None,
-            publish_op: BackgroundOp::default(),
-            selected_worktree: 0,
-            worktrees: Vec::new(),
+            walkthrough: Default::default(),
+            publish: Default::default(),
+            worktrees: Default::default(),
             config,
             keymap,
             theme,
-            theme_name,
-            high_contrast,
+            theme_sel: ThemeSelection {
+                name: theme_name,
+                high_contrast,
+            },
             viewer_state: ViewerState::default(),
             diff_state,
             review_store,
@@ -126,66 +128,42 @@ impl App {
             status_message: None,
             last_poll_head_oid: None,
             last_poll_status: None,
-            repo_list,
-            repo_list_index: 0,
-            syntax_set,
-            syntect_theme,
+            highlight: Highlighting {
+                syntax_set,
+                theme: syntect_theme,
+            },
             markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             expanded_panel: None,
-            terminal_split_pct: config_terminal_split_pct,
-            divider_drag: None,
-            divider_hover: None,
-            explorer_tree_hover: crate::ui::common::list_row::HoverRow::default(),
-            diff_list_hover: crate::ui::common::list_row::HoverRow::default(),
+            layout: PanelLayout {
+                terminal_split_pct: config_terminal_split_pct,
+                ..Default::default()
+            },
+            list_hover: Default::default(),
             ui_tick: 0,
             decoration_tick: 0,
             notification_bar_badges: Vec::new(),
-            worktree_list_rows: Vec::new(),
-            worktree_list_selected: 0,
-            stats_session_id,
-            today_stats,
+            stats: SessionStats {
+                session_id: stats_session_id,
+                today: today_stats,
+                ccusage: None,
+            },
             worktree_heads: HashMap::new(),
-            ccusage_info: None,
-            update_info: None,
-            update_check_requested: false,
-            update_state: UpdateState::Idle,
-            update_op: BackgroundOp::default(),
-            update_progress_message: String::new(),
-            startup_exe: std::env::current_exe().unwrap_or_default(),
-            startup_args: std::env::args().skip(1).collect(),
-            should_restart: false,
-            update_badge_cols: None,
+            update: UpdateFlow::from_current_process(),
             clipboard: copypasta::ClipboardContext::new().ok(),
             decoration_states: Default::default(),
             branch_details: Default::default(),
             gh_available: Self::check_gh_available(),
             pending_auto_resume: auto_resume,
-            current_view_branch: None,
-            pending_view_restore: None,
-            layout_cache: Default::default(),
-            wtbar_hits: Vec::new(),
-            wtbar_scroll: 0,
-            wtbar_reveal_selected: false,
-            wtbar_hover: None,
+            view_restore: Default::default(),
+            wtbar: Default::default(),
             menu: Default::default(),
-            symbol_index: SymbolIndex::new(PathBuf::new()),
-            jump_history: JumpHistory::new(),
-            references_overlay: ReferencesOverlay::default(),
-            symbol_hint_overlay: SymbolHintOverlay::default(),
-            symbol_action_overlay: SymbolActionOverlay::default(),
-            hover_info_overlay: HoverInfoOverlay::default(),
             bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
-            show_panel_number_overlay: false,
-            panel_overlay_since: None,
+            panel_number_overlay: Default::default(),
             party_mode: false,
-            rich_tier: crate::term_caps::RichTier::Off,
-            rich_picker: None,
-            rich_tier_available: crate::term_caps::RichTier::Off,
-            rich_epoch: std::time::Instant::now(),
+            rich: Default::default(),
             reflow: super::reflow::ReflowView::default(),
         };
-        app.symbol_index = SymbolIndex::new(app.repo_path.clone());
 
         // Surface keybind config problems: a TUI hides stdout, so a silent
         // log::warn! would never reach the user whose customizations were
@@ -219,7 +197,7 @@ impl App {
         app.refresh_diff();
 
         // Restore grab state from $git_common_dir/wt-grab if it exists.
-        if let Ok(engine) = git_engine::GitEngine::open(&app.repo_path) {
+        if let Ok(engine) = git_engine::GitEngine::open(&app.repo.path) {
             match engine.load_grab_state() {
                 Ok(Some((branch, source_worktree, _stash_branch, claude_session_id))) => {
                     if source_worktree.exists() {

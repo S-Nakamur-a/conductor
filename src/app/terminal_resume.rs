@@ -14,7 +14,7 @@ impl App {
         let filter = if self.overlays.resume_session.all_projects {
             None
         } else {
-            Some(self.repo_path.as_path())
+            Some(self.repo.path.as_path())
         };
         match crate::claude_sessions::load_resumable_sessions(filter) {
             Ok(sessions) => {
@@ -81,7 +81,7 @@ impl App {
             rows,
             cols,
             Some(session_id),
-            &self.repo_path,
+            &self.repo.path,
             None,
         )?;
         self.switch_claude_session(idx);
@@ -125,10 +125,10 @@ impl App {
         let selected_wt_path = self.selected_worktree_path();
         let shell = self.config.general.shell.clone();
         let (rows, cols) = self.terminal.size_claude;
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         let mut resumed_count = 0;
 
-        for wt in &self.worktrees.clone() {
+        for wt in &self.worktrees.to_vec() {
             let canonical = std::fs::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
 
             // For main worktree with a grabbed session, prefer the grabbed session ID.

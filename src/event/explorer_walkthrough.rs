@@ -11,9 +11,9 @@ use super::adjust_walkthrough_scroll;
 /// Handle keys while the Explorer's Walkthrough view is focused.
 pub(super) fn handle_explorer_walkthrough_key(app: &mut App, key: KeyEvent) {
     let len = app
-        .current_walkthrough
+        .walkthrough.current
         .as_ref()
-        .map(|(_, steps)| steps.len())
+        .map(|wt| wt.steps.len())
         .unwrap_or(0);
     let action = app.keymap.resolve(&key, KeyContext::ExplorerWalkthrough);
 

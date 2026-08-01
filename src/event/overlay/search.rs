@@ -38,7 +38,7 @@ pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent)
                 app.viewer_state.filename_search.filename_search_active = false;
 
                 // Reveal and open the selected file (keep Focus on Explorer).
-                if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                if let Some(wt) = app.worktrees.selected() {
                     let wt_path = wt.path.clone();
                     app.viewer_state.reveal_file_in_tree(&result.path, &wt_path);
                     let tab_width = app.config.viewer.tab_width;
@@ -188,7 +188,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.debounce_deadline = None;
                 app.overlays.grep_search.phase1_active = false;
 
-                if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                if let Some(wt) = app.worktrees.selected() {
                     let wt_path = wt.path.clone();
                     app.viewer_state
                         .reveal_file_in_tree(&result.file_path, &wt_path);

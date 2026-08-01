@@ -1,44 +1,43 @@
-//! File path detection from terminal output text.
+//! 端末出力のテキストからファイルパスを検出する。
 //!
-//! Extracts file paths (with optional line/column numbers) from terminal text,
-//! typically compiler output, `grep` results, or editor-style references.
+//! 端末のテキスト (典型的にはコンパイラの出力、`grep` の結果、エディタ形式の
+//! 参照) からファイルパスを抽出する。行番号・桁番号が付いていれば併せて取る。
 
 use std::path::Path;
 
 use regex::Regex;
 
-/// A file reference extracted from terminal output.
+/// 端末出力から抽出したファイル参照。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileLink {
-    /// The file path (relative or absolute).
+    /// ファイルパス (相対または絶対)。
     pub path: String,
-    /// 1-indexed line number, if present.
+    /// 1 始まりの行番号 (あれば)。
     pub line: Option<usize>,
-    /// 1-indexed column number, if present.
+    /// 1 始まりの桁番号 (あれば)。
     pub col: Option<usize>,
-    /// Byte offset of the path start within the source text.
+    /// 元テキスト内でのパス開始のバイトオフセット。
     pub start: usize,
-    /// Byte offset past the last character of the match.
+    /// マッチ末尾の次を指すバイトオフセット。
     pub end: usize,
 }
 
-/// Detect file path references in a single line of text.
+/// テキスト 1 行の中からファイルパスの参照を検出する。
 ///
-/// Returns all matches sorted by position. Paths are validated against the
-/// given `worktree_root` — only matches whose resolved path exists on disk
-/// are returned.
+/// 見つかったマッチを位置順に返す。パスは渡された `worktree_root` を基準に
+/// 検証し、解決した先が実在するものだけを返す。
 pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
-    // Lazy-compile patterns.  The order matters: more specific patterns first.
+    // パターンは必要時にコンパイルする。順番に意味があり、限定的なものが先。
     let patterns: &[&str] = &[
-        // Rust / generic compiler: `--> src/app.rs:42:10`
+        // Rust など一般的なコンパイラ: `--> src/app.rs:42:10`
         r#"-->\s+([^\s:]+):(\d+):(\d+)"#,
         // path:line:col
         r#"(?:^|[\s"'`(,])([./]?[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+):(\d+):(\d+)"#,
         // path:line
         r#"(?:^|[\s"'`(,])([./]?[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+):(\d+)"#,
-        // bare path starting with `./` or `/`
+        // `./` または `/` で始まる裸のパス
         r#"(?:^|[\s"'`(,])([./][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+)"#,
-        // bare relative path containing `/` (e.g. `src/app.rs`)
+        // `/` を含む裸の相対パス (例: `src/app.rs`)
         r#"(?:^|[\s"'`(,])([a-zA-Z0-9_][a-zA-Z0-9_.\-]*/[a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+)"#,
     ];
 
@@ -52,10 +51,10 @@ pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
             let path_str = m_path.as_str();
             let match_start = m_path.start();
 
-            // The overall match end (including line:col suffixes).
+            // マッチ全体の終端 (`line:col` の接尾辞を含む)。
             let match_end = caps.get(caps.len() - 1).unwrap().end();
 
-            // Skip if this region overlaps with an already-detected link.
+            // 既に検出したリンクと範囲が重なるものは飛ばす。
             if covered
                 .iter()
                 .any(|&(s, e)| match_start < e && match_end > s)
@@ -63,11 +62,11 @@ pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
                 continue;
             }
 
-            // Parse optional line/col groups.
+            // 任意の line / col グループをパースする。
             let line = caps.get(2).and_then(|m| m.as_str().parse::<usize>().ok());
             let col = caps.get(3).and_then(|m| m.as_str().parse::<usize>().ok());
 
-            // Resolve path and check existence.
+            // パスを解決して実在を確認する。
             let resolved = if Path::new(path_str).is_absolute() {
                 Path::new(path_str).to_path_buf()
             } else {
@@ -93,12 +92,12 @@ pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
     links
 }
 
-/// Find the file link at a given byte offset (column) within the text.
+/// テキスト内の指定バイトオフセット (桁) にあるファイルリンクを探す。
 pub fn file_link_at_offset(links: &[FileLink], offset: usize) -> Option<&FileLink> {
     links.iter().find(|l| offset >= l.start && offset < l.end)
 }
 
-/// Extract text from a single vt100 screen row.
+/// vt100 スクリーンの 1 行からテキストを取り出す。
 pub fn extract_row_text(screen: &vt100::Screen, row: u16, cols: u16) -> String {
     let mut text = String::with_capacity(cols as usize);
     for col in 0..cols {
@@ -119,7 +118,7 @@ mod tests {
 
     fn setup_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();
-        // Create test files.
+        // テスト用のファイルを作る。
         fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::write(dir.path().join("src/app.rs"), "fn main() {}").unwrap();
         fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
@@ -198,12 +197,12 @@ mod tests {
         let links = detect_file_links(text, dir.path());
         assert!(!links.is_empty());
 
-        // Offset within the file path should match.
+        // ファイルパスの内側のオフセットならマッチするはず。
         let link = file_link_at_offset(&links, links[0].start + 2);
         assert!(link.is_some());
         assert_eq!(link.unwrap().path, "src/app.rs");
 
-        // Offset outside the match should return None.
+        // マッチの外のオフセットなら None になるはず。
         let link = file_link_at_offset(&links, text.len() - 1);
         assert!(link.is_none());
     }

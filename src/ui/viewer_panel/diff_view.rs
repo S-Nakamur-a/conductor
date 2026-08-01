@@ -102,7 +102,7 @@ pub(super) fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String,
     {
         return None;
     }
-    let (_, steps) = app.current_walkthrough.as_ref()?;
+    let steps = &app.walkthrough.current.as_ref()?.steps;
     // The banner follows the *jumped-to* step, not the list cursor, so
     // browsing the step list with j/k leaves the Viewer untouched.
     let step = steps.get(app.viewer_state.explorer.walkthrough_viewing?)?;
@@ -120,8 +120,8 @@ pub(super) fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String,
         &step.body,
         (width as usize).saturating_sub(3),
         &app.theme,
-        &app.syntax_set,
-        &app.syntect_theme,
+        &app.highlight.syntax_set,
+        &app.highlight.theme,
     );
     Some((title, lines))
 }
@@ -193,7 +193,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         // The selected walkthrough step's line range, if it's anchored to
         // the file currently open in this pane.
         let walkthrough_highlight = (|| {
-            let (_, steps) = app.current_walkthrough.as_ref()?;
+            let steps = &app.walkthrough.current.as_ref()?.steps;
             // Underline the jumped-to step's range, not the list cursor's, so
             // it stays put while j/k only moves the Explorer selection.
             let step = steps.get(vs.explorer.walkthrough_viewing?)?;
@@ -280,8 +280,8 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
                     reply_cid,
                     &vs.explorer.inline_reply_buffer,
                     theme,
-                    &app.syntax_set,
-                    &app.syntect_theme,
+                    &app.highlight.syntax_set,
+                    &app.highlight.theme,
                     &app.markdown_cache,
                 );
                 for (l, rt) in thread {

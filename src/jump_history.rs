@@ -1,32 +1,32 @@
-//! Jump history stack for code navigation (back/forward).
+//! コードナビゲーション (戻る・進む) のためのジャンプ履歴スタック。
 //!
-//! Tracks file locations so the user can jump back and forward
-//! between definition sites, similar to IDE "go back" / "go forward".
+//! ファイル上の位置を記録し、IDE の「戻る」「進む」と同じように定義位置の
+//! あいだを行き来できるようにする。
 
-/// A saved location in the codebase.
+/// コードベース上の保存された位置。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Location {
-    /// Relative file path from the worktree root.
+    /// worktree ルートからの相対ファイルパス。
     pub file_path: String,
-    /// 0-indexed line number (scroll position).
+    /// 0 始まりの行番号 (スクロール位置)。
     pub line: usize,
-    /// Horizontal scroll offset.
+    /// 水平スクロールのオフセット。
     pub h_scroll: usize,
 }
 
-/// Maximum number of entries in the history stack.
+/// 履歴スタックに保持する最大件数。
 const MAX_HISTORY: usize = 200;
 
-/// A back/forward navigation history.
+/// 戻る・進むのナビゲーション履歴。
 pub struct JumpHistory {
-    /// Stack of past locations (most recent at the end).
+    /// 過去の位置のスタック (末尾が最新)。
     back: Vec<Location>,
-    /// Stack of forward locations (populated when going back).
+    /// 進む先の位置のスタック (戻ったときに積まれる)。
     forward: Vec<Location>,
 }
 
 impl JumpHistory {
-    /// Create a new empty history.
+    /// 空の履歴を作る。
     pub fn new() -> Self {
         Self {
             back: Vec::new(),
@@ -34,8 +34,8 @@ impl JumpHistory {
         }
     }
 
-    /// Push a location onto the back stack.
-    /// Clears the forward stack (new navigation branch).
+    /// 位置を「戻る」スタックへ積む。
+    /// 「進む」スタックはクリアする (新しい分岐に入ったため)。
     pub fn push(&mut self, location: Location) {
         self.forward.clear();
         self.back.push(location);
@@ -44,49 +44,50 @@ impl JumpHistory {
         }
     }
 
-    /// Go back to the previous location.
-    /// Pushes `current` onto the forward stack and returns the previous location.
+    /// 直前の位置へ戻る。
+    /// `current` を「進む」スタックへ積み、直前の位置を返す。
     pub fn go_back(&mut self, current: Location) -> Option<Location> {
         let prev = self.back.pop()?;
         self.forward.push(current);
         Some(prev)
     }
 
-    /// Go forward to the next location.
-    /// Pushes `current` onto the back stack and returns the next location.
+    /// 次の位置へ進む。
+    /// `current` を「戻る」スタックへ積み、次の位置を返す。
     pub fn go_forward(&mut self, current: Location) -> Option<Location> {
         let next = self.forward.pop()?;
         self.back.push(current);
         Some(next)
     }
 
-    /// Whether there are entries to go back to.
+    /// 戻れる履歴があるか。
     #[allow(dead_code)]
     pub fn can_go_back(&self) -> bool {
         !self.back.is_empty()
     }
 
-    /// Whether there are entries to go forward to.
+    /// 進める履歴があるか。
     #[allow(dead_code)]
     pub fn can_go_forward(&self) -> bool {
         !self.forward.is_empty()
     }
 
-    /// Build a breadcrumb trail for UI rendering.
+    /// UI 描画用のパンくずリストを組み立てる。
     ///
-    /// Returns `(entries, current_index)` where `entries` contains the back stack
-    /// + `current` + forward stack (in order), and `current_index` points to `current`.
+    /// `(entries, current_index)` を返す。`entries` は「戻る」スタック +
+    /// `current` + 「進む」スタックを順に並べたもので、`current_index` が
+    /// `current` を指す。
     ///
-    /// Only the most recent `max_visible` entries around the current position are returned;
-    /// if entries were trimmed from the front, a sentinel `None` is prepended.
+    /// 返すのは現在位置の周辺 `max_visible` 件までで、先頭側を切り詰めた場合は
+    /// 番兵として `None` を先頭に挿入する。
     pub fn breadcrumb_trail(
         &self,
         current: &Location,
         max_visible: usize,
     ) -> (Vec<Option<Location>>, usize) {
-        // Full trail: back (oldest→newest) + current + forward (reversed so oldest→newest).
+        // 全体の並び: back (古い→新しい) + current + forward (古い→新しいになるよう反転)。
         let total = self.back.len() + 1 + self.forward.len();
-        let cur_idx = self.back.len(); // 0-indexed position of current
+        let cur_idx = self.back.len(); // current の位置 (0 始まり)
 
         if total <= max_visible {
             let mut entries: Vec<Option<Location>> = self.back.iter().cloned().map(Some).collect();
@@ -97,7 +98,7 @@ impl JumpHistory {
             return (entries, cur_idx);
         }
 
-        // Window: center around current, preferring showing more history (back).
+        // 表示窓: 現在位置を中心に取りつつ、履歴 (back) 側を多めに見せる。
         let half = max_visible / 2;
         let start = if cur_idx <= half {
             0
@@ -119,7 +120,7 @@ impl JumpHistory {
         let mut adjusted_idx = cur_idx - start;
 
         if start > 0 {
-            entries.insert(0, None); // sentinel for "…"
+            entries.insert(0, None); // 「…」を表す番兵
             adjusted_idx += 1;
         }
 
@@ -157,7 +158,7 @@ mod tests {
         let prev = h.go_back(loc("b.rs", 20));
         assert_eq!(prev, Some(loc("a.rs", 10)));
 
-        // No more history.
+        // これ以上の履歴は無い。
         assert!(h.go_back(loc("a.rs", 10)).is_none());
     }
 
@@ -167,11 +168,11 @@ mod tests {
         h.push(loc("a.rs", 10));
         h.push(loc("b.rs", 20));
 
-        // Go back.
+        // 戻る。
         let prev = h.go_back(loc("c.rs", 30)).unwrap();
         assert_eq!(prev, loc("b.rs", 20));
 
-        // Go forward.
+        // 進む。
         let next = h.go_forward(loc("b.rs", 20)).unwrap();
         assert_eq!(next, loc("c.rs", 30));
     }
@@ -185,7 +186,7 @@ mod tests {
         h.go_back(loc("c.rs", 30));
         assert!(h.can_go_forward());
 
-        // New push should clear forward.
+        // 新しく push したら forward はクリアされるはず。
         h.push(loc("d.rs", 40));
         assert!(!h.can_go_forward());
     }
@@ -196,7 +197,7 @@ mod tests {
         for i in 0..250 {
             h.push(loc("file.rs", i));
         }
-        // Should be capped at MAX_HISTORY.
+        // MAX_HISTORY で頭打ちになるはず。
         assert_eq!(h.back.len(), 200);
     }
 }

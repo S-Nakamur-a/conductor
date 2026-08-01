@@ -1,64 +1,63 @@
-//! Terminal capability detection for rich mode.
+//! rich モードのための端末ケイパビリティ検出。
 //!
-//! Rich mode has two tiers resolved at startup:
+//! rich モードには起動時に決まる 2 つのティアがある:
 //!
-//! - **Tier A** (truecolor): gradient breathing borders and title-bar
-//!   gradients, rendered purely with per-cell RGB. Works in any truecolor
-//!   terminal (Alacritty included).
-//! - **Tier B** (graphics protocol): everything in Tier A, plus pixel-quality
-//!   image previews via the kitty/iTerm2 graphics protocols (Ghostty, kitty,
-//!   WezTerm, iTerm2).
+//! - Tier A (truecolor): 呼吸するグラデーションの枠とタイトルバーの
+//!   グラデーション。セルごとの RGB だけで描く。truecolor の端末なら
+//!   どれでも動く (Alacritty も含む)。
+//! - Tier B (グラフィックスプロトコル): Tier A のすべてに加え、kitty / iTerm2 の
+//!   グラフィックスプロトコルによるピクセル品質の画像プレビュー
+//!   (Ghostty, kitty, WezTerm, iTerm2)。
 //!
-//! Detection is two-staged on purpose: cheap environment-variable hints decide
-//! *whether* to probe, and the actual escape-sequence probe (delegated to
-//! `ratatui_image::picker::Picker::from_query_stdio`, which needs up to a
-//! second on unresponsive terminals) only runs when the hints say a graphics
-//! protocol is likely. The probe must run after entering raw mode but before
-//! the crossterm event loop starts reading stdin, or the query response would
-//! be swallowed as input events.
+//! 検出を 2 段階にしてあるのは意図的で、安価な環境変数のヒントで「問い合わせるか
+//! どうか」を決め、実際のエスケープシーケンスによる問い合わせ
+//! (`ratatui_image::picker::Picker::from_query_stdio` に委譲。応答しない端末では
+//! 最大 1 秒かかる) は、ヒントがグラフィックスプロトコルの存在を示唆したときだけ
+//! 走らせる。この問い合わせは raw mode に入ったあと、かつ crossterm の
+//! イベントループが stdin を読み始める前に実行しなければならない。そうしないと
+//! 問い合わせへの応答が入力イベントとして飲み込まれてしまう。
 
 use std::io::Write;
 
 use ratatui_image::picker::ProtocolType;
 
-/// Resolved rich-mode tier for this session.
+/// このセッションで確定した rich モードのティア。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RichTier {
-    /// No rich effects (non-truecolor terminal or `mode = "off"`).
+    /// rich な効果は無し (truecolor でない端末、または `mode = "off"`)。
     Off,
-    /// Truecolor cell effects only.
+    /// truecolor のセル効果のみ。
     TierA,
-    /// Truecolor cell effects + graphics-protocol image rendering.
+    /// truecolor のセル効果に加え、グラフィックスプロトコルによる画像描画。
     TierB,
 }
 
 impl RichTier {
-    /// Whether any rich effect (Tier A or above) is active.
+    /// rich な効果 (Tier A 以上) が有効かどうか。
     pub fn is_rich(self) -> bool {
         !matches!(self, RichTier::Off)
     }
 
-    /// Whether graphics-protocol features (Tier B) are active.
+    /// グラフィックスプロトコルの機能 (Tier B) が有効かどうか。
     pub fn has_graphics(self) -> bool {
         matches!(self, RichTier::TierB)
     }
 }
 
-/// Capabilities inferred from environment variables (no terminal I/O).
+/// 環境変数から推測したケイパビリティ (端末との I/O は行わない)。
 #[derive(Debug, Clone, Default)]
 pub struct TermCaps {
-    /// Terminal advertises 24-bit color (`COLORTERM`), or is a terminal known
-    /// to support it.
+    /// 端末が 24bit カラーを表明している (`COLORTERM`)、または対応が既知の端末。
     pub truecolor: bool,
-    /// Environment hints that a graphics protocol (kitty/iTerm2) is likely
-    /// supported, making an escape-sequence probe worthwhile.
+    /// グラフィックスプロトコル (kitty / iTerm2) に対応していそうだと環境が
+    /// 示唆しており、エスケープシーケンスでの問い合わせに見合うかどうか。
     pub graphics_likely: bool,
-    /// Friendly terminal name for user-facing messages (e.g. "Ghostty").
+    /// ユーザー向けメッセージに使う端末の呼び名 (例: "Ghostty")。
     pub terminal_name: Option<String>,
 }
 
 impl TermCaps {
-    /// Detect capabilities from environment variables only.
+    /// 環境変数だけからケイパビリティを検出する。
     pub fn detect_from_env() -> Self {
         Self::from_vars(
             &std::env::var("COLORTERM").unwrap_or_default(),
@@ -71,7 +70,7 @@ impl TermCaps {
         )
     }
 
-    /// Pure detection logic, separated from `std::env` for testability.
+    /// 検出ロジックそのもの。テストしやすいよう `std::env` から切り離してある。
     #[allow(clippy::too_many_arguments)]
     fn from_vars(
         colorterm: &str,
@@ -116,11 +115,11 @@ impl TermCaps {
     }
 }
 
-/// Resolve the rich tier from the config mode, env capabilities, and the
-/// (optional) result of the graphics-protocol probe.
+/// 設定のモード、環境から得たケイパビリティ、そして (あれば) グラフィックス
+/// プロトコルの問い合わせ結果から rich のティアを決める。
 ///
-/// `probed_protocol` is `Some` only when the probe ran and succeeded;
-/// `Halfblocks` means the terminal answered but supports no real protocol.
+/// `probed_protocol` が `Some` になるのは問い合わせが走って成功したときだけ。
+/// `Halfblocks` は「端末は応答したが実際のプロトコルには対応していない」を意味する。
 pub fn resolve_rich_tier(
     mode: &str,
     caps: &TermCaps,
@@ -139,7 +138,7 @@ pub fn resolve_rich_tier(
                 RichTier::TierA
             }
         }
-        // "auto" and anything unrecognized.
+        // "auto" と、認識できない値すべて。
         _ => {
             if graphics_confirmed {
                 RichTier::TierB
@@ -152,35 +151,35 @@ pub fn resolve_rich_tier(
     }
 }
 
-/// Query the terminal for its background color via OSC 11 and return the
-/// relative luminance (0.0 = black, 1.0 = white, linear scale).
+/// OSC 11 で端末に背景色を問い合わせ、相対輝度を返す
+/// (0.0 = 黒、1.0 = 白、線形スケール)。
 ///
-/// **How it works:** sends `ESC ] 11 ; ? ST` to stdout while in raw mode, then
-/// polls fd 0 (stdin) on the **main thread** with `libc::poll` and a 150 ms
-/// deadline. Reading happens only when the fd is reported readable, so the call
-/// never blocks longer than the deadline. The response is drained completely
-/// before returning so no bytes leak into the subsequent graphics-protocol probe
-/// (`Picker::from_query_stdio`).
+/// 仕組み: raw mode のまま `ESC ] 11 ; ? ST` を stdout へ送り、メインスレッドで
+/// `libc::poll` を使って 150ms の期限つきで fd 0 (stdin) をポーリングする。
+/// 読み取るのは fd が読み取り可能と報告されたときだけなので、この呼び出しが
+/// 期限より長くブロックすることはない。応答は返る前に完全に読み切るので、
+/// 後続のグラフィックスプロトコルの問い合わせ (`Picker::from_query_stdio`) へ
+/// バイトが漏れることはない。
 ///
-/// **tmux:** when `TERM` starts with `"tmux"` or `TERM_PROGRAM == "tmux"`,
-/// the passthrough is typically disabled and no response arrives; the function
-/// returns `None` immediately without sending the query.
+/// tmux: `TERM` が `"tmux"` で始まるか `TERM_PROGRAM == "tmux"` のとき、
+/// パススルーは通常無効で応答が来ない。その場合は問い合わせを送らずに
+/// 即座に `None` を返す。
 ///
-/// Returns `None` when the terminal does not respond within the timeout or the
-/// response cannot be parsed.
+/// タイムアウト内に端末が応答しない場合や、応答をパースできない場合は
+/// `None` を返す。
 pub fn query_background_luminance() -> Option<f64> {
-    // Skip when running inside tmux (passthrough usually disabled).
+    // tmux の中で動いているときは飛ばす (パススルーは通常無効)。
     let term = std::env::var("TERM").unwrap_or_default();
     let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
     if term.starts_with("tmux") || term_program.eq_ignore_ascii_case("tmux") {
         return None;
     }
 
-    // Send the OSC 11 query to stdout. Raw mode is already active and the
-    // crossterm event loop has not started yet, so there is no concurrent reader.
+    // OSC 11 の問い合わせを stdout へ送る。raw mode は既に有効で、crossterm の
+    // イベントループはまだ始まっていないので、同時に読む相手はいない。
     {
         let mut stdout = std::io::stdout().lock();
-        // OSC 11 query: ESC ] 11 ; ? ST  (ST = ESC \)
+        // OSC 11 の問い合わせ: ESC ] 11 ; ? ST  (ST = ESC \)
         if stdout.write_all(b"\x1b]11;?\x1b\\").is_err() {
             return None;
         }
@@ -189,24 +188,24 @@ pub fn query_background_luminance() -> Option<f64> {
         }
     }
 
-    // Read the response on the main thread using libc::poll so we never block
-    // longer than the deadline even on terminals that don't support OSC 11.
+    // 応答はメインスレッドで libc::poll を使って読む。OSC 11 に対応しない端末でも
+    // 期限より長くブロックしないようにするため。
     const TIMEOUT_MS: i32 = 150;
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_millis(TIMEOUT_MS as u64);
 
     let mut buf: Vec<u8> = Vec::with_capacity(64);
     loop {
-        // Compute remaining time for this poll call.
+        // この poll 呼び出しに残された時間を求める。
         let remaining = deadline
             .checked_duration_since(std::time::Instant::now())
             .map(|d| d.as_millis().min(TIMEOUT_MS as u128) as i32)
             .unwrap_or(0);
         if remaining <= 0 {
-            return None; // Timed out.
+            return None; // タイムアウト。
         }
 
-        // SAFETY: poll is a simple syscall with a plain-old-data pollfd struct.
+        // SAFETY: poll は単純なシステムコールで、pollfd も素のデータ構造。
         let ready = unsafe {
             let mut pfd = libc::pollfd {
                 fd: libc::STDIN_FILENO,
@@ -217,12 +216,12 @@ pub fn query_background_luminance() -> Option<f64> {
         };
 
         if ready <= 0 {
-            return None; // Timeout or error.
+            return None; // タイムアウトまたはエラー。
         }
 
-        // Read one byte at a time to detect the OSC terminator precisely.
+        // OSC の終端を正確に検出するため 1 バイトずつ読む。
         let mut byte = [0u8; 1];
-        // SAFETY: reading one byte from fd 0 (stdin) which we know is readable.
+        // SAFETY: 読み取り可能と分かっている fd 0 (stdin) から 1 バイト読むだけ。
         let n = unsafe {
             libc::read(
                 libc::STDIN_FILENO,
@@ -235,7 +234,7 @@ pub fn query_background_luminance() -> Option<f64> {
         }
         buf.push(byte[0]);
 
-        // OSC terminators: ST (ESC \) or BEL (0x07).
+        // OSC の終端: ST (ESC \) または BEL (0x07)。
         let ended = buf.ends_with(b"\x1b\\") || buf.ends_with(b"\x07");
         if ended {
             return std::str::from_utf8(&buf)
@@ -243,51 +242,51 @@ pub fn query_background_luminance() -> Option<f64> {
                 .and_then(parse_osc11_luminance);
         }
 
-        // Bail if the response grows unreasonably large.
+        // 応答が不自然に大きくなったら諦める。
         if buf.len() > 256 {
             return None;
         }
     }
 }
 
-/// Choose a theme name based on the terminal background luminance.
+/// 端末の背景輝度からテーマ名を選ぶ。
 ///
-/// Returns `Some(name)` only when the caller should switch themes automatically:
-/// - `configured` is `None` (user has not pinned a theme in the config), and
-/// - `lum > 0.5` (light background detected).
+/// 呼び出し側が自動でテーマを切り替えるべきときだけ `Some(name)` を返す:
+/// - `configured` が `None` (設定でテーマを固定していない)、かつ
+/// - `lum > 0.5` (明るい背景を検出)。
 ///
-/// Returns `None` when a theme is already configured, or the background is dark
-/// (keep whatever theme is already active).
+/// 既にテーマが設定されている場合や背景が暗い場合は `None` を返す
+/// (今のテーマをそのまま使う)。
 pub fn auto_theme_for_background(lum: f64, configured: Option<&str>) -> Option<&'static str> {
     if configured.is_some() {
-        return None; // Explicit config always wins.
+        return None; // 明示的な設定が常に優先。
     }
     if lum > 0.5 {
         Some("catppuccin-latte")
     } else {
-        None // Dark background — keep the default dark theme.
+        None // 暗い背景。デフォルトのダークテーマのままにする。
     }
 }
 
-/// Parse `ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST` and return the relative luminance.
+/// `ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST` をパースして相対輝度を返す。
 ///
-/// Each channel is a 4-hex-digit value (0000–FFFF); we use the high byte (first
-/// two hex digits) for the luminance calculation, matching common practice.
+/// 各チャネルは 16 進 4 桁の値 (0000-FFFF)。輝度の計算には一般的な慣習に合わせて
+/// 上位バイト (先頭 2 桁) を使う。
 fn parse_osc11_luminance(response: &str) -> Option<f64> {
-    // Strip the OSC prefix and suffix, then extract the rgb:…/…/… part.
+    // OSC の前後を剥がしてから rgb:…/…/… の部分を取り出す。
     let inner = response
         .trim_start_matches('\x1b')
         .trim_start_matches(']')
         .trim_end_matches('\x1b')
         .trim_end_matches('\\')
         .trim_end_matches('\x07');
-    // Expected: "11;rgb:RRRR/GGGG/BBBB"
+    // 期待する形: "11;rgb:RRRR/GGGG/BBBB"
     let rgb_part = inner.strip_prefix("11;rgb:")?;
     let parts: Vec<&str> = rgb_part.split('/').collect();
     if parts.len() != 3 {
         return None;
     }
-    // Each part is a 4-digit hex value; take the first two digits (high byte).
+    // 各要素は 16 進 4 桁。先頭 2 桁 (上位バイト) を取る。
     let r = u8::from_str_radix(parts[0].get(..2)?, 16).ok()? as f64 / 255.0;
     let g = u8::from_str_radix(parts[1].get(..2)?, 16).ok()? as f64 / 255.0;
     let b = u8::from_str_radix(parts[2].get(..2)?, 16).ok()? as f64 / 255.0;
@@ -330,7 +329,7 @@ mod tests {
     fn kitty_detected_via_window_id() {
         let c = TermCaps::from_vars("", "xterm-kitty", "", true, false, false, false);
         assert!(c.graphics_likely);
-        // Graphics-capable terminals are always truecolor even without COLORTERM.
+        // グラフィックス対応の端末は COLORTERM が無くても必ず truecolor。
         assert!(c.truecolor);
         assert_eq!(c.terminal_name.as_deref(), Some("kitty"));
     }
@@ -368,7 +367,7 @@ mod tests {
 
     #[test]
     fn resolve_probe_halfblocks_falls_back_to_tier_a() {
-        // Probe answered but found no graphics protocol: stay on Tier A.
+        // 問い合わせに応答はあったがグラフィックスプロトコルは見つからず。Tier A に留まる。
         let c = caps("truecolor", "xterm-256color", "WezTerm");
         assert_eq!(
             resolve_rich_tier("auto", &c, Some(ProtocolType::Halfblocks)),
@@ -395,11 +394,11 @@ mod tests {
         assert!(RichTier::TierB.has_graphics());
     }
 
-    // auto_theme_for_background pure-function tests.
+    // auto_theme_for_background の純粋関数としてのテスト。
 
     #[test]
     fn auto_theme_configured_always_returns_none() {
-        // User has pinned a theme — auto-detection must not override it.
+        // ユーザーがテーマを固定している。自動検出がそれを上書きしてはいけない。
         assert!(super::auto_theme_for_background(0.9, Some("dracula")).is_none());
         assert!(super::auto_theme_for_background(0.9, Some("catppuccin-mocha")).is_none());
         assert!(super::auto_theme_for_background(0.1, Some("github-light")).is_none());
@@ -407,12 +406,12 @@ mod tests {
 
     #[test]
     fn auto_theme_light_background_selects_latte() {
-        // Light background (luminance > 0.5) with no configured theme.
+        // 明るい背景 (輝度 > 0.5) かつテーマ未設定。
         let t = super::auto_theme_for_background(0.9, None);
         assert_eq!(t, Some("catppuccin-latte"));
-        // Exactly on the threshold (0.5) counts as dark.
+        // しきい値ちょうど (0.5) は暗い扱い。
         assert!(super::auto_theme_for_background(0.5, None).is_none());
-        // Just above threshold.
+        // しきい値のすぐ上。
         let t2 = super::auto_theme_for_background(0.501, None);
         assert_eq!(t2, Some("catppuccin-latte"));
     }
@@ -424,11 +423,11 @@ mod tests {
         assert!(super::auto_theme_for_background(0.499, None).is_none());
     }
 
-    // OSC11 parser tests (no terminal I/O needed).
+    // OSC11 のパーサのテスト (端末との I/O は不要)。
 
     #[test]
     fn parse_osc11_black_background() {
-        // Black background: all channels 0x00.
+        // 黒い背景: 全チャネル 0x00。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:0000/0000/0000\x1b\\");
         assert!(lum.is_some());
         assert!((lum.unwrap() - 0.0).abs() < 0.01);
@@ -436,7 +435,7 @@ mod tests {
 
     #[test]
     fn parse_osc11_white_background() {
-        // White background: all channels 0xFF.
+        // 白い背景: 全チャネル 0xFF。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
         assert!(lum.is_some());
         assert!((lum.unwrap() - 1.0).abs() < 0.01);
@@ -444,11 +443,11 @@ mod tests {
 
     #[test]
     fn parse_osc11_catppuccin_mocha_bg() {
-        // Catppuccin Mocha base: #1e1e2e → 0x1e1e ≈ 30, 0x1e1e ≈ 30, 0x2e2e ≈ 46
+        // Catppuccin Mocha の base: #1e1e2e → 0x1e1e ≈ 30, 0x1e1e ≈ 30, 0x2e2e ≈ 46
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\");
         assert!(lum.is_some());
         let v = lum.unwrap();
-        // Expect a dark background — luminance well below 0.5.
+        // 暗い背景を期待する。輝度は 0.5 を大きく下回るはず。
         assert!(v < 0.2, "expected dark bg, got {v}");
     }
 
@@ -459,11 +458,11 @@ mod tests {
         assert!(super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff\x1b\\").is_none());
     }
 
-    // additional parser coverage.
+    // パーサの追加カバレッジ。
 
     #[test]
     fn parse_osc11_bel_terminator() {
-        // Some terminals (e.g. old xterm) use BEL (0x07) as the OSC terminator.
+        // 一部の端末 (古い xterm など) は OSC の終端に BEL (0x07) を使う。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x07");
         assert!(lum.is_some());
         assert!((lum.unwrap() - 1.0).abs() < 0.01, "white bg via BEL terminator");
@@ -471,8 +470,8 @@ mod tests {
 
     #[test]
     fn parse_osc11_8bit_channels() {
-        // Some terminals reply with 8-bit (2-digit) channel values: `rgb:RR/GG/BB`.
-        // The parser reads the first two hex digits, so this is handled naturally.
+        // 一部の端末は 8bit (2 桁) のチャネル値 `rgb:RR/GG/BB` で応答する。
+        // パーサは先頭 2 桁を読むので、これは自然に扱える。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:ff/ff/ff\x1b\\");
         assert!(lum.is_some());
         assert!((lum.unwrap() - 1.0).abs() < 0.01, "white bg via 8-bit channels");

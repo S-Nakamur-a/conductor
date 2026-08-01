@@ -93,7 +93,7 @@ impl App {
             return;
         }
 
-        self.publish_confirm = Some(PublishConfirm {
+        self.publish.confirm = Some(PublishConfirm {
             owner,
             repo,
             pr_number: pr_number as u64,
@@ -127,10 +127,10 @@ impl App {
     /// background thread. A no-op if there's nothing pending or a publish is
     /// already running.
     pub fn confirm_publish_review(&mut self) {
-        let Some(confirm) = self.publish_confirm.take() else {
+        let Some(confirm) = self.publish.confirm.take() else {
             return;
         };
-        if !should_start_publish(self.publish_op.is_running()) {
+        if !should_start_publish(self.publish.op.is_running()) {
             self.set_status(
                 "A publish is already in progress.".to_string(),
                 StatusLevel::Warning,
@@ -144,7 +144,7 @@ impl App {
             pr_number: confirm.pr_number,
             comments: confirm.comments,
         };
-        self.publish_op.start(move |tx| {
+        self.publish.op.start(move |tx| {
             let outcome = crate::review_publish::publish(request);
             let _ = tx.send(outcome);
         });
@@ -156,7 +156,7 @@ impl App {
 
     /// Cancel the pending publish confirm (`n`/`Esc`).
     pub fn cancel_publish_review(&mut self) {
-        self.publish_confirm = None;
+        self.publish.confirm = None;
         self.set_status("Publish cancelled.".to_string(), StatusLevel::Warning);
     }
 
@@ -165,7 +165,7 @@ impl App {
     /// what happened. Called from
     /// [`App::poll_all_background_ops`](Self::poll_all_background_ops).
     pub fn poll_publish_review(&mut self) {
-        let Some(outcome) = self.publish_op.poll() else {
+        let Some(outcome) = self.publish.op.poll() else {
             return;
         };
         let now = Utc::now().to_rfc3339();

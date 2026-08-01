@@ -1,4 +1,4 @@
-//! Conductor — a terminal-based Git workspace and code review tool.
+//! Conductor — 端末で動く Git ワークスペース兼コードレビューツール。
 
 mod ai_caller;
 mod anim;
@@ -36,6 +36,7 @@ mod review_state;
 mod review_store;
 mod rust_test;
 mod search_result_tree;
+mod startup;
 mod symbol_index;
 mod term_caps;
 mod terminal_link;
@@ -51,307 +52,94 @@ mod walkthrough;
 mod worktree_ops;
 
 use std::io;
-use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags, poll as crossterm_poll, read as crossterm_read,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    BeginSynchronizedUpdate, DisableLineWrap, EnableLineWrap, EndSynchronizedUpdate,
+    DisableLineWrap, EnableLineWrap,
     EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Rect;
 
 use crate::app::App;
-use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
-use crate::ui::layout::render_ui;
 
 fn main() -> Result<()> {
-    // ── Panic hook: restore the terminal, then log the backtrace ──────
-    {
-        let default_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            // Restore FIRST, before any I/O that could itself fail: a panic
-            // leaves the tty in whatever state `enter_tui` put it, and
-            // `leave_tui` only runs when `run_loop` *returns* — an unwind skips
-            // it entirely. Without this the user is dropped back to a shell
-            // with no visible caret (ratatui emits `\x1b[?25l` every frame),
-            // mouse tracking still on (`\x1b[?1003h`, so selection and the
-            // pointer misbehave), the alternate screen still active, and raw
-            // mode still set — all of which persist until they run `reset`.
-            //
-            // Main thread only. This crate does not set `panic = "abort"`, so a
-            // worker (background diff, symbol index, worktree ops) unwinds just
-            // itself while the event loop keeps drawing at 60fps. Tearing the
-            // terminal down from *that* panic would leave the alternate screen
-            // and raw mode off underneath a still-running TUI — frames would
-            // start scribbling over the user's actual shell. A worker dying is
-            // survivable; the log below is the right response on its own.
-            // `execute!` flushes internally, so no extra flush is needed here.
-            if std::thread::current().name() == Some("main") {
-                let _ = restore_terminal_modes(&mut io::stdout());
-            }
-
-            if let Some(config_dir) = dirs::config_dir() {
-                let log_dir = config_dir.join("conductor");
-                let _ = std::fs::create_dir_all(&log_dir);
-                let log_path = log_dir.join("panic.log");
-                let bt = std::backtrace::Backtrace::force_capture();
-                let payload = format!(
-                    "=== Conductor panic at {} ===\n{info}\n\nBacktrace:\n{bt}\n\n",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                );
-                let _ = std::fs::write(&log_path, &payload);
-            }
-            default_hook(info);
-        }));
-    }
-
-    // ── Initialise logging (honour RUST_LOG env var) ─────────────────
+    startup::install_panic_hook();
     env_logger::init();
 
-    // ── Fast-path CLI flags (must not touch the terminal) ────────────
-    // `--version` also doubles as the updater's verification probe: before
-    // swapping in a freshly downloaded binary, the updater spawns it with
-    // `--version` and checks it exits cleanly. Keep this branch above the
-    // terminal setup so it never enters raw mode or the alternate screen.
-    if let Some(arg) = std::env::args().nth(1) {
-        match arg.as_str() {
-            "--version" | "-V" => {
-                println!("conductor {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--help" | "-h" => {
-                println!(
-                    r#"conductor {}
-
-Usage: conductor [REPO_PATH]
-       conductor mcp-serve [--db <PATH>]
-
-  REPO_PATH    Git repository to open (defaults to the current directory)
-
-Commands:
-  mcp-serve    Serve the review database to Claude Code over stdio (MCP).
-               Started automatically by conductor and by the Claude Code
-               plugin; not usually run by hand.
-
-    --db <PATH>    Review database to serve. Defaults to $CONDUCTOR_DB_PATH,
-                   then .conductor/conductor.db in the surrounding repository.
-
-Options:
-  -V, --version    Print version and exit
-  -h, --help       Print this help and exit"#,
-                    env!("CARGO_PKG_VERSION")
-                );
-                return Ok(());
-            }
-            // Must return before any terminal setup below: this subcommand
-            // speaks JSON-RPC on stdout, so entering the alternate screen or
-            // probing terminal capabilities would corrupt the protocol.
-            "mcp-serve" => return mcp_serve::run(),
-            _ => {}
-        }
+    // 端末に触る前に。`mcp-serve` は stdout で JSON-RPC を話すので、
+    // 代替スクリーンに入ったあとでは手遅れになる。
+    if let Some(result) = startup::handle_cli_fast_path() {
+        return result;
     }
 
-    // ── Set up crossterm terminal ────────────────────────────────────
     let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
     log::debug!("keyboard_enhanced = {keyboard_enhanced}");
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     enter_tui(terminal.backend_mut(), keyboard_enhanced)?;
 
-    // ── Create application state ─────────────────────────────────────
-    let repo_path = match std::env::args().nth(1) {
-        Some(path) => {
-            let p = std::path::PathBuf::from(&path);
-            if p.is_absolute() {
-                p
-            } else {
-                std::env::current_dir()?.join(p)
-            }
-        }
-        None => std::env::current_dir()?,
-    };
-    // Climb to the enclosing worktree root. Everything keyed off `repo_path`
-    // assumes a root — most visibly `.conductor/conductor.db`, which is
-    // *created* where it is looked for, so starting conductor from a
-    // subdirectory used to open a second, empty database beside that
-    // subdirectory: no comments, no walkthrough, and a stray `.conductor/`
-    // left behind. `discover` returns the path unchanged when it already is a
-    // root, and a linked worktree resolves to its own root, not the main one.
-    let repo_path = git2::Repository::discover(&repo_path)
-        .ok()
-        .and_then(|repo| repo.workdir().map(std::path::Path::to_path_buf))
-        .unwrap_or(repo_path);
-    let mut app = App::new(repo_path);
+    let mut app = App::new(startup::resolve_repo_path()?);
+    execute!(io::stdout(), SetTitle(format!("conductor - {}", app.repo.main_name)))?;
 
-    // ── Set terminal window title ────────────────────────────────────
-    let window_title = format!("conductor - {}", app.main_repo_name);
-    execute!(io::stdout(), SetTitle(&window_title))?;
+    // どちらも raw mode に入ったあと・イベントループが stdin を読み始める前で
+    // なければならない。端末への問い合わせの応答を自分で stdin から読むため。
+    startup::apply_auto_theme(&mut app);
+    startup::detect_rich_mode(&mut app);
 
-    // ── OSC11 background auto-detection ──────────────────────────────
-    // The query must run while in raw mode and before the event loop starts
-    // reading stdin (same requirement as the graphics-protocol probe below).
-    // `auto_theme_for_background` handles the "only when unconfigured" guard
-    // and the light/dark threshold, so main.rs stays free of inline logic.
-    if let Some(lum) = term_caps::query_background_luminance() {
-        let configured = app.config.ui.theme.as_deref();
-        if let Some(theme) = term_caps::auto_theme_for_background(lum, configured) {
-            // Session-only (persist=false); user can override via theme picker.
-            app.set_theme(theme, false);
-            log::info!(
-                "OSC11 auto-detected light background (luminance={lum:.2}): switched to {theme}"
-            );
-        } else {
-            log::info!(
-                "OSC11 auto-detected background (luminance={lum:.2}): keeping current theme"
-            );
-        }
-    }
-
-    // ── Rich mode capability detection ───────────────────────────────
-    // Runs after entering the alternate screen but before the event loop
-    // starts reading stdin: the graphics probe (when it runs) must read the
-    // terminal's query response from stdin itself, or the crossterm event
-    // loop would swallow it.
-    {
-        let caps = term_caps::TermCaps::detect_from_env();
-        let mode = app.config.rich.mode.clone();
-        // `auto` probes only when env hints a graphics terminal (keeps startup
-        // instant on unknown terminals); `force` always probes so it works as
-        // an escape hatch on terminals the hint list doesn't know about.
-        let probed = if mode == "force" || (mode != "off" && caps.graphics_likely) {
-            match ratatui_image::picker::Picker::from_query_stdio() {
-                Ok(picker) => Some(picker),
-                Err(e) => {
-                    log::warn!("graphics protocol probe failed: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        let protocol = probed.map(|p| p.protocol_type());
-        app.rich_tier = term_caps::resolve_rich_tier(&mode, &caps, protocol);
-        app.rich_tier_available = app.rich_tier;
-        if app.rich_tier.has_graphics() {
-            app.rich_picker = probed;
-        }
-        log::info!(
-            "rich mode: tier={:?} terminal={:?} protocol={:?}",
-            app.rich_tier,
-            caps.terminal_name,
-            protocol
-        );
-        if app.rich_tier.is_rich() {
-            let label = match (app.rich_tier.has_graphics(), caps.terminal_name.as_deref()) {
-                (true, Some(name)) => format!("✨ Rich mode — {name} graphics detected"),
-                (true, None) => String::from("✨ Rich mode — terminal graphics detected"),
-                (false, Some(name)) => format!("✨ Rich mode — {name} truecolor"),
-                (false, None) => String::from("✨ Rich mode — truecolor"),
-            };
-            app.status_message = Some(app::StatusMessage::new(
-                label,
-                app::StatusLevel::Info,
-                app.ui_tick,
-            ));
-        }
-    }
-
-    // ── Build symbol index in background ─────────────────────────────
     app.start_symbol_index_build();
 
-    // ── Main event loop ──────────────────────────────────────────────
     let result = event_loop::run_loop(&mut terminal, &mut app);
 
-    // ── Restore terminal (always, even on error) ─────────────────────
-    // Best-effort: attempt every restore step even if an earlier one errors,
-    // so a failure mid-teardown can't strand the user in a half-restored tty.
+    // 端末の復旧はエラー時も必ず。途中で 1 つ失敗しても残りを試す
+    // (中途半端に戻った tty にユーザーを取り残さないため)。
     let _ = leave_tui(terminal.backend_mut(), keyboard_enhanced);
     let _ = execute!(terminal.backend_mut(), SetTitle(""));
     let _ = terminal.show_cursor();
 
-    // ── Persist view state (covers both normal quit and update-restart) ─
-    // Must run before the `exec` below: `exec` replaces the process image, so
-    // no Drop or later code would execute on the restart path.
+    // 再起動より前に。`exec` はプロセスイメージを置き換えるので、
+    // その先では Drop も後続のコードも走らない。
     app.persist_view_state();
-
-    // ── Restart if update was installed ───────────────────────────────
-    if app.should_restart {
-        println!("Restarting Conductor...");
-        use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new(&app.startup_exe)
-            .args(&app.startup_args)
-            .exec();
-        eprintln!("Failed to restart: {err}");
-        std::process::exit(1);
-    }
-
-    // ── Session summary (gamification) ──────────────────────────────
-    if let (Some(store), Some(session_id)) = (&app.review_store, &app.stats_session_id)
-        && let Ok(stats) = store.end_stats_session(session_id)
-    {
-        let total = stats.reviews_created + stats.branches_created + stats.commits_made;
-        if total > 0 {
-            println!("\n--- Conductor Session Summary ---");
-            if stats.reviews_created > 0 {
-                println!("  Reviews created:  {}", stats.reviews_created);
-            }
-            if stats.branches_created > 0 {
-                println!("  Branches created: {}", stats.branches_created);
-            }
-            if stats.commits_made > 0 {
-                println!("  Commits made:     {}", stats.commits_made);
-            }
-            if let Ok(streak) = store.calculate_streak()
-                && streak.consecutive_days > 0
-            {
-                println!("  Current streak:   {} day(s)", streak.consecutive_days);
-            }
-            println!("---------------------------------\n");
-        }
-    }
+    startup::restart_if_updated(&app); // 更新済みなら戻らない
+    startup::print_session_summary(&app);
 
     result
 }
 
-// ── Terminal mode setup / teardown ───────────────────────────────────────
+// ── 端末モードの設定と後始末 ─────────────────────────────────────────────
 //
-// `enter_tui` and `leave_tui` are exact inverses, with the enhancement-flag
-// push/pop bracketing the raw-mode + alternate-screen + mouse/paste capture so
-// suspend → restore round-trips cleanly. Keeping both in one place is what lets
-// `main`'s startup/shutdown and the editor-suspend guard share the *same*
-// symmetric sequence — a stray flag added to one but not the other would leave
-// the terminal subtly broken on return.
+// `enter_tui` と `leave_tui` は厳密に逆の操作で、拡張フラグの push/pop が
+// raw mode・代替スクリーン・マウス/ペーストの捕捉を挟む形になっている。
+// これにより中断から復帰までが綺麗に往復する。両方を 1 か所に置いてあるので、
+// `main` の起動・終了と、エディタ中断時のガードがまったく同じ対称な手順を
+// 共有できる。片方にだけフラグが増えると、戻ってきた端末が微妙に壊れる。
 
-/// Enter the full-screen TUI terminal mode (raw mode, alternate screen, mouse
-/// and bracketed-paste capture, and — when supported — the kitty keyboard
-/// enhancement flags).
+/// 全画面 TUI の端末モードに入る (raw mode、代替スクリーン、マウスと
+/// bracketed paste の捕捉、対応していれば kitty のキーボード拡張フラグ)。
 fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()> {
     enable_raw_mode()?;
     execute!(
         w,
         EnterAlternateScreen,
-        // A TUI positions every cell explicitly (ratatui MoveTo's each row), so
-        // auto-wrap must be OFF: otherwise a glyph that the terminal renders
-        // wider than we counted can push a line's tail past the last column,
-        // where auto-wrap kicks it onto the *next* row's first column — bleeding
-        // one panel's overflow into the left edge of another. With wrap off the
-        // overflow is harmlessly clamped at the right edge instead.
+        // TUI は全セルを明示的に位置決めする (ratatui が行ごとに MoveTo する)
+        // ので、自動折り返しは切っておかなければならない。切らないと、こちらの
+        // 数えた幅より端末が広く描く字形があったときに行の末尾が最終桁を越え、
+        // 自動折り返しで次の行の先頭桁へ送られてしまう。あるパネルのはみ出しが
+        // 別のパネルの左端に染み出すことになる。折り返しを切っておけば、
+        // はみ出しは右端で無害にクランプされる。
         DisableLineWrap,
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
-        // D7(b): crossterm never reports the mouse leaving the terminal
-        // window, so `Event::FocusLost` (the terminal losing focus entirely,
-        // e.g. an alt-tab) is the one reliable signal the event loop has for
-        // "the mouse definitely isn't resting on anything drawn right now" —
-        // used to clear stale hover state (viewer underline, popup, tree/diff
-        // row highlights).
+        // crossterm はマウスが端末ウィンドウから出たことを報告しない。そのため
+        // `Event::FocusLost` (端末がフォーカスを完全に失う、alt-tab など) が、
+        // 「今この瞬間、マウスは描画されたどの要素の上にも乗っていない」と
+        // イベントループが確信できる唯一の信号になる。古くなったホバー状態
+        // (Viewer の下線、ポップアップ、ツリーや差分の行ハイライト) を消すのに使う。
         crossterm::event::EnableFocusChange,
     )?;
     if keyboard_enhanced {
@@ -366,8 +154,8 @@ fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     Ok(())
 }
 
-/// Leave the full-screen TUI terminal mode, returning the terminal to the
-/// cooked / normal-screen baseline. The exact inverse of [`enter_tui`].
+/// 全画面 TUI の端末モードを抜け、端末を cooked / 通常スクリーンの状態へ戻す。
+/// [`enter_tui`] の厳密な逆操作。
 fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()> {
     if keyboard_enhanced {
         execute!(w, PopKeyboardEnhancementFlags)?;
@@ -377,23 +165,22 @@ fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     Ok(())
 }
 
-/// Write every mode-reset [`leave_tui`] depends on, and leave raw mode.
+/// [`leave_tui`] が依存するモードのリセットをすべて書き出し、raw mode を抜ける。
 ///
-/// Split out of `leave_tui` so the panic hook can reuse it: the hook has no
-/// access to the `Terminal` (or to `keyboard_enhanced`), but it must still undo
-/// the modes `enter_tui` set, or an unwind strands the user's tty. Taking a
-/// generic writer also makes the emitted sequence assertable in a test without
-/// touching the real terminal.
+/// `leave_tui` から切り出してあるのは、パニックフックが再利用するため。フックは
+/// `Terminal` にも `keyboard_enhanced` にも触れないが、`enter_tui` が設定した
+/// モードは元に戻さねばならない。戻さないとアンワインドでユーザーの tty が
+/// 取り残される。ジェネリックな writer を取ることで、実際の端末に触らずに
+/// 出力されるシーケンスをテストで検証できるようにもなっている。
 ///
-/// `cursor::Show` is included because ratatui hides the caret on **every**
-/// frame (`Terminal::draw` → `hide_cursor` unless a widget requested a cursor
-/// position), so `\x1b[?25l` is essentially always the last caret state we set.
-/// The normal exit path re-shows it via `terminal.show_cursor()`; the panic
-/// path has no `Terminal`, so it has to be done here.
-fn restore_terminal_modes<W: io::Write>(w: &mut W) -> io::Result<()> {
-    // `disable_raw_mode` is a libc/termios call, not an escape sequence, so it
-    // writes nothing to `w` — harmless (and idempotent) when `leave_tui` has
-    // already called it.
+/// `cursor::Show` を含めているのは、ratatui が毎フレーム カーソルを隠すため
+/// (ウィジェットがカーソル位置を要求しない限り `Terminal::draw` が
+/// `hide_cursor` を呼ぶ)。つまり `\x1b[?25l` が事実上いつも最後に設定した
+/// カーソル状態になる。通常の終了経路では `terminal.show_cursor()` で戻すが、
+/// パニック経路には `Terminal` が無いのでここでやる必要がある。
+pub(crate) fn restore_terminal_modes<W: io::Write>(w: &mut W) -> io::Result<()> {
+    // `disable_raw_mode` はエスケープシーケンスではなく libc / termios の呼び出しなので
+    // `w` には何も書かない。`leave_tui` が既に呼んだあとでも無害 (かつ冪等)。
     let _ = disable_raw_mode();
     execute!(
         w,
@@ -411,11 +198,11 @@ fn restore_terminal_modes<W: io::Write>(w: &mut W) -> io::Result<()> {
 mod tests {
     use super::restore_terminal_modes;
 
-    /// The panic hook's whole purpose is that these specific modes get undone
-    /// even when `leave_tui` never runs. Assert on the raw bytes rather than
-    /// trusting the `execute!` list to stay complete: the two symptoms users
-    /// actually report after an abnormal exit are an invisible caret and a
-    /// misbehaving mouse, which map to exactly these two resets.
+    /// パニックフックの存在意義は、`leave_tui` が一度も走らなくてもこれらの
+    /// モードが元に戻ること。`execute!` の並びが完全であり続けることを信じる
+    /// のではなく、生のバイト列に対して検証する。異常終了のあとユーザーが実際に
+    /// 報告してくる症状は「カーソルが見えない」と「マウスの挙動がおかしい」の
+    /// 2 つで、それがちょうどこの 2 つのリセットに対応する。
     #[test]
     fn panic_hook_restores_terminal() {
         let mut buf: Vec<u8> = Vec::new();

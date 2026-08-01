@@ -10,9 +10,9 @@ impl App {
     /// the step list's bounds. Selection only — no jump, unlike `n`/`N`.
     pub fn walkthrough_move(&mut self, delta: isize) {
         let Some(len) = self
-            .current_walkthrough
+            .walkthrough.current
             .as_ref()
-            .map(|(_, steps)| steps.len())
+            .map(|wt| wt.steps.len())
         else {
             return;
         };
@@ -42,9 +42,9 @@ impl App {
     /// keyboard focus away from the step list.
     pub fn walkthrough_step(&mut self, delta: isize) {
         let Some(len) = self
-            .current_walkthrough
+            .walkthrough.current
             .as_ref()
-            .map(|(_, steps)| steps.len())
+            .map(|wt| wt.steps.len())
         else {
             return;
         };
@@ -73,7 +73,7 @@ impl App {
     /// equality: a step spelled `./src/a.rs` names a file that is right there
     /// in the list, and used to report itself as missing.
     fn jump_to_walkthrough_step(&mut self, idx: usize) -> bool {
-        let Some((_, steps)) = &self.current_walkthrough else {
+        let Some(steps) = self.walkthrough.current.as_ref().map(|wt| &wt.steps) else {
             return false;
         };
         let Some(step) = steps.get(idx) else {
@@ -82,7 +82,7 @@ impl App {
         let step_path = step.file_path.clone();
         let line_start = step.line_start;
         let step_id = step.id.clone();
-        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+        let Some(wt) = self.worktrees.selected() else {
             return false;
         };
         let wt_path = wt.path.clone();
@@ -116,7 +116,7 @@ impl App {
         // `current_file == step.file_path`, so leaving the step on its own
         // spelling would jump correctly and then render neither.
         if file_path != step_path
-            && let Some((_, steps)) = self.current_walkthrough.as_mut()
+            && let Some(steps) = self.walkthrough.current.as_mut().map(|wt| &mut wt.steps)
             && let Some(step) = steps.get_mut(idx)
         {
             log::debug!("walkthrough step {idx}: resolved '{step_path}' to '{file_path}'");

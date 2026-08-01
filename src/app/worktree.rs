@@ -21,7 +21,7 @@ impl App {
     /// `pub(super)` — shared with [`super::worktree_grab`] and [`super::worktree_pr`].
     pub(super) fn select_worktree_by_path(&mut self, path: &std::path::Path) {
         if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
-            self.selected_worktree = idx;
+            self.worktrees.select(idx);
             self.on_worktree_changed();
         }
     }
@@ -41,7 +41,7 @@ impl App {
         if n <= 1 {
             return;
         }
-        self.selected_worktree = (self.selected_worktree + 1) % n;
+        self.worktrees.select((self.worktrees.selected_index() + 1) % n);
         self.on_worktree_changed();
     }
 
@@ -52,7 +52,7 @@ impl App {
         if n <= 1 {
             return;
         }
-        self.selected_worktree = (self.selected_worktree + n - 1) % n;
+        self.worktrees.select((self.worktrees.selected_index() + n - 1) % n);
         self.on_worktree_changed();
     }
 
@@ -73,10 +73,10 @@ impl App {
         // This is only safe to set on *user-initiated* selection changes: if a
         // background event ever drives selection while the user is free-scrolling
         // the strip to peek elsewhere, setting this would yank the bar back.
-        self.wtbar_reveal_selected = true;
+        self.wtbar.reveal_selected = true;
 
         // Persist the outgoing worktree's view before we wipe it.
-        if let Some(outgoing) = self.current_view_branch.clone() {
+        if let Some(outgoing) = self.view_restore.current_branch.clone() {
             self.save_view_for(&outgoing);
         }
 
@@ -107,8 +107,8 @@ impl App {
         // Track the worktree now being loaded and seed its saved file/scroll
         // so it gets re-opened once the file tree arrives.
         let new_branch = self.selected_worktree_branch();
-        self.pending_view_restore = None;
-        self.current_view_branch = if new_branch.is_empty() {
+        self.view_restore.pending = None;
+        self.view_restore.current_branch = if new_branch.is_empty() {
             None
         } else {
             Some(new_branch.clone())
@@ -118,7 +118,7 @@ impl App {
                 let _ = store.set_selected_worktree(&new_branch);
             }
             if let Ok(Some((Some(file), line))) = store.get_view_state(&new_branch) {
-                self.pending_view_restore = Some(crate::app::PendingViewRestore {
+                self.view_restore.pending = Some(crate::app::PendingViewRestore {
                     file,
                     scroll: line.max(0) as usize,
                 });
@@ -126,7 +126,7 @@ impl App {
         }
 
         // Clear "new" badge for the worktree the user just selected.
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             self.new_worktree_paths.remove(&wt.path);
         }
 
@@ -134,7 +134,7 @@ impl App {
         self.refresh_reviews();
 
         // Snapshot baseline so the next poll cycle doesn't trigger a redundant refresh.
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             self.last_poll_head_oid = self.worktree_heads.get(&wt.branch).cloned();
             self.last_poll_status = Some((wt.added, wt.modified, wt.deleted, wt.staged));
         }
@@ -160,7 +160,7 @@ impl App {
         self.terminal.cache_shell = Default::default();
 
         // Dispatch heavy operations to background threads.
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             let wt_path = wt.path.clone();
             let wt_branch = wt.branch.clone();
 
@@ -214,13 +214,13 @@ impl App {
 
     /// Spawn background branch details computation.
     fn start_bg_branch_details(&mut self) {
-        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+        let Some(wt) = self.worktrees.selected() else {
             self.branch_details = Default::default();
             return;
         };
         let branch = wt.branch.clone();
         let is_main = wt.is_main;
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         let main_branch = self.config.general.main_branch.clone();
         let worktree_branches: Vec<String> = self
             .worktrees
@@ -339,7 +339,7 @@ impl App {
     /// Spawn a background thread to look up the PR URL via `gh pr view`.
     fn start_pr_url_lookup(&mut self, branch: &str) {
         let branch = branch.to_string();
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
 
         self.bg.pr_url.start(move |tx| {
             let result = std::process::Command::new("gh")

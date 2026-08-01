@@ -1,9 +1,9 @@
-//! Startup version check against GitHub Releases.
+//! 起動時に GitHub Releases と照らしてバージョンを確認する。
 //!
-//! On startup, checks `GET /repos/S-Nakamur-a/conductor/releases/latest` via
-//! `curl` (no extra dependencies). Results are cached at
-//! `~/.cache/conductor/update-check.json` so the badge can appear instantly
-//! while a fresh background fetch runs.
+//! 起動時に `curl` で `GET /repos/S-Nakamur-a/conductor/releases/latest` を叩く
+//! (追加の依存は無し)。結果は `~/.cache/conductor/update-check.json` に
+//! キャッシュするので、バックグラウンドで最新を取りに行っているあいだも
+//! バッジをすぐ出せる。
 
 use std::fs;
 use std::path::PathBuf;
@@ -11,31 +11,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// A downloadable binary asset from a GitHub Release.
+/// GitHub Release からダウンロードできるバイナリアセット。
 #[derive(Debug, Clone)]
 pub struct ReleaseAsset {
     pub name: String,
     pub download_url: String,
 }
 
-/// Information about the latest available release.
+/// 入手可能な最新リリースの情報。
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub latest_version: String,
     pub release_url: String,
     pub tarball_url: String,
-    /// Pre-built binary assets attached to the release.
+    /// リリースに添付されたビルド済みバイナリのアセット。
     pub assets: Vec<ReleaseAsset>,
 }
 
-/// Serializable form of [`ReleaseAsset`] for caching.
+/// キャッシュ用にシリアライズできる [`ReleaseAsset`] の形。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedAsset {
     name: String,
     download_url: String,
 }
 
-/// On-disk cache representation.
+/// ディスク上のキャッシュの表現。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
     updated_at: u64,
@@ -47,12 +47,12 @@ struct CacheEntry {
     assets: Vec<CachedAsset>,
 }
 
-/// Return the current crate version from `Cargo.toml`.
+/// `Cargo.toml` にある現在のクレートのバージョンを返す。
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Return the cache file path: `~/.cache/conductor/update-check.json`.
+/// キャッシュファイルのパスを返す: `~/.cache/conductor/update-check.json`。
 fn cache_path() -> Option<PathBuf> {
     Some(
         dirs::cache_dir()?
@@ -61,7 +61,7 @@ fn cache_path() -> Option<PathBuf> {
     )
 }
 
-/// Current Unix timestamp in seconds.
+/// 現在の Unix タイムスタンプ (秒)。
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -69,10 +69,10 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Read cached update info regardless of age.
+/// 鮮度を問わずキャッシュ済みの更新情報を読む。
 ///
-/// Used for instant badge display on startup while a fresh background
-/// fetch is in progress.
+/// バックグラウンドで最新を取得しているあいだ、起動時にバッジを即座に
+/// 表示するために使う。
 pub fn read_cache() -> Option<UpdateInfo> {
     let path = cache_path()?;
     let data = fs::read_to_string(&path).ok()?;
@@ -92,7 +92,7 @@ pub fn read_cache() -> Option<UpdateInfo> {
     })
 }
 
-/// Write cache entry atomically.
+/// キャッシュエントリをアトミックに書く。
 fn write_cache(info: &UpdateInfo) {
     let Some(path) = cache_path() else { return };
     if let Some(dir) = path.parent() {
@@ -121,9 +121,9 @@ fn write_cache(info: &UpdateInfo) {
     }
 }
 
-/// Query GitHub Releases API via `curl`, write cache, and return the result.
+/// `curl` で GitHub Releases API に問い合わせ、キャッシュを書いて結果を返す。
 ///
-/// Returns `None` on network errors, 404 (no releases yet), or parse failures.
+/// ネットワークエラー、404 (まだリリースが無い)、パース失敗のときは `None` を返す。
 pub fn check_for_update() -> Option<UpdateInfo> {
     use std::process::Stdio;
 
@@ -184,10 +184,10 @@ pub fn check_for_update() -> Option<UpdateInfo> {
         .unwrap_or("")
         .to_string();
 
-    // Strip leading 'v' if present (e.g. "v0.3.0" → "0.3.0").
+    // 先頭に 'v' があれば落とす (例: "v0.3.0" → "0.3.0")。
     let version = tag.strip_prefix('v').unwrap_or(tag).to_string();
 
-    // Parse binary assets from the release.
+    // リリースからバイナリアセットを読み取る。
     let assets = val
         .get("assets")
         .and_then(|v| v.as_array())
@@ -218,10 +218,10 @@ pub fn check_for_update() -> Option<UpdateInfo> {
     Some(info)
 }
 
-/// Compare two semver strings (`major.minor.patch`).
+/// semver 形式の文字列 (`major.minor.patch`) を 2 つ比較する。
 ///
-/// Returns `true` if `latest` is strictly newer than `current`.
-/// Non-parseable versions return `false`.
+/// `latest` が `current` より厳密に新しければ `true` を返す。
+/// パースできないバージョンは `false` を返す。
 pub fn is_newer(latest: &str, current: &str) -> bool {
     let parse = |s: &str| -> Option<(u64, u64, u64)> {
         let parts: Vec<&str> = s.split('.').collect();
@@ -245,10 +245,10 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     (lmaj, lmin, lpat) > (cmaj, cmin, cpat)
 }
 
-/// Return the Rust target triple for the current platform.
+/// 現在のプラットフォームに対応する Rust のターゲットトリプルを返す。
 ///
-/// Maps `(std::env::consts::OS, std::env::consts::ARCH)` to the triple used
-/// in release asset names (e.g. `aarch64-apple-darwin`).
+/// `(std::env::consts::OS, std::env::consts::ARCH)` を、リリースのアセット名で
+/// 使われるトリプル (例: `aarch64-apple-darwin`) へ対応づける。
 pub fn current_target_triple() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
@@ -259,10 +259,10 @@ pub fn current_target_triple() -> Option<&'static str> {
     }
 }
 
-/// Find a pre-built binary asset matching the current platform.
+/// 現在のプラットフォームに合うビルド済みバイナリのアセットを探す。
 ///
-/// Looks for an asset whose name contains the target triple and ends with
-/// `.tar.gz`.  Returns the download URL if found.
+/// 名前にターゲットトリプルを含み `.tar.gz` で終わるアセットを探す。
+/// 見つかればそれを返す。
 pub fn find_binary_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     let triple = current_target_triple()?;
     assets
@@ -271,7 +271,7 @@ pub fn find_binary_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// テスト
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

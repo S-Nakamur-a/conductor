@@ -21,24 +21,24 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
 
     let action = app.keymap.resolve(&key, KeyContext::Worktree);
     match action {
-        Some(Action::NavigateDown) if !app.worktree_list_rows.is_empty() => {
-            let prev_wt = app.selected_worktree;
-            app.worktree_list_selected =
-                (app.worktree_list_selected + 1) % app.worktree_list_rows.len();
+        Some(Action::NavigateDown) if !app.worktrees.rows.is_empty() => {
+            let prev_wt = app.worktrees.selected_index();
+            app.worktrees.row_selected =
+                (app.worktrees.row_selected + 1) % app.worktrees.rows.len();
             app.sync_selected_worktree();
-            if app.selected_worktree != prev_wt {
+            if app.worktrees.selected_index() != prev_wt {
                 app.on_worktree_changed();
             }
         }
-        Some(Action::NavigateUp) if !app.worktree_list_rows.is_empty() => {
-            let prev_wt = app.selected_worktree;
-            app.worktree_list_selected = if app.worktree_list_selected == 0 {
-                app.worktree_list_rows.len() - 1
+        Some(Action::NavigateUp) if !app.worktrees.rows.is_empty() => {
+            let prev_wt = app.worktrees.selected_index();
+            app.worktrees.row_selected = if app.worktrees.row_selected == 0 {
+                app.worktrees.rows.len() - 1
             } else {
-                app.worktree_list_selected - 1
+                app.worktrees.row_selected - 1
             };
             app.sync_selected_worktree();
-            if app.selected_worktree != prev_wt {
+            if app.worktrees.selected_index() != prev_wt {
                 app.on_worktree_changed();
             }
         }
@@ -46,8 +46,8 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             // Selecting commits the choice and closes the switcher modal.
             app.overlays.active = ActiveOverlay::None;
             match app
-                .worktree_list_rows
-                .get(app.worktree_list_selected)
+                .worktrees.rows
+                .get(app.worktrees.row_selected)
                 .copied()
             {
                 Some(WorktreeListRow::Session { pty_idx, .. }) => {
@@ -69,7 +69,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             );
         }
         Some(Action::DeleteWorktree) => {
-            if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+            if let Some(wt) = app.worktrees.selected() {
                 if wt.is_main {
                     app.set_status(
                         "Cannot delete the main worktree.".to_string(),
@@ -104,7 +104,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                     if let Some(main_branch) =
                         main_branch.filter(|m| *m != branch)
                     {
-                        match git_engine::GitEngine::open(&app.repo_path)
+                        match git_engine::GitEngine::open(&app.repo.path)
                             .and_then(|e| e.is_branch_merged_into(&branch, &main_branch))
                         {
                             Ok(false) => warnings.push(format!(
@@ -181,7 +181,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 );
             }
         }
-        Some(Action::PruneWorktrees) => match git_engine::GitEngine::open(&app.repo_path) {
+        Some(Action::PruneWorktrees) => match git_engine::GitEngine::open(&app.repo.path) {
             Ok(engine) => match engine.find_stale_worktrees() {
                 Ok(stale) => {
                     if stale.is_empty() {
@@ -200,7 +200,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             }
         },
         Some(Action::MergeToMain) => {
-            if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+            if let Some(wt) = app.worktrees.selected() {
                 if wt.is_main {
                     app.set_status(
                         "Cannot merge main into itself.".to_string(),
@@ -209,7 +209,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                 } else {
                     let branch = wt.branch.clone();
                     let main_branch = app.config.general.main_branch.clone();
-                    match git_engine::GitEngine::open(&app.repo_path) {
+                    match git_engine::GitEngine::open(&app.repo.path) {
                         Ok(engine) => match engine.merge_into_main(&branch, &main_branch) {
                             Ok(msg) => {
                                 app.set_status(msg, StatusLevel::Success);
@@ -246,7 +246,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
         Some(Action::CherryPick) => {
             let current_branch = app
                 .worktrees
-                .get(app.selected_worktree)
+                .get(app.worktrees.selected_index())
                 .map(|w| w.branch.clone())
                 .unwrap_or_default();
             let source = app

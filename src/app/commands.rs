@@ -88,12 +88,12 @@ impl App {
             .collect();
         let selected = themes
             .iter()
-            .position(|t| t == &self.theme_name)
+            .position(|t| t == &self.theme_sel.name)
             .unwrap_or(0);
         self.overlays.theme_picker = crate::overlay::ThemePickerOverlay {
             themes,
             selected,
-            original: self.theme_name.clone(),
+            original: self.theme_sel.name.clone(),
         };
         self.overlays.active = ActiveOverlay::ThemePicker;
     }
@@ -118,12 +118,12 @@ impl App {
     /// Tier A (same behaviour as `[rich] mode = "force"`).
     fn cmd_toggle_rich_mode(&mut self) {
         use crate::term_caps::RichTier;
-        if self.rich_tier.is_rich() {
-            self.rich_tier = RichTier::Off;
+        if self.rich.is_rich() {
+            self.rich.tier = RichTier::Off;
             self.set_status_info("Rich mode off.".to_string());
         } else {
-            self.rich_tier = if self.rich_tier_available.is_rich() {
-                self.rich_tier_available
+            self.rich.tier = if self.rich.available.is_rich() {
+                self.rich.available
             } else {
                 RichTier::TierA
             };
@@ -135,9 +135,9 @@ impl App {
     /// Toggle the high-contrast theme transform live, persist the choice, and
     /// rebuild the theme-dependent caches so the change is visible immediately.
     fn cmd_toggle_high_contrast(&mut self) {
-        self.high_contrast = !self.high_contrast;
-        self.config.ui.high_contrast = self.high_contrast;
-        self.theme = super::build_theme(&self.theme_name, self.high_contrast);
+        self.theme_sel.high_contrast = !self.theme_sel.high_contrast;
+        self.config.ui.high_contrast = self.theme_sel.high_contrast;
+        self.theme = super::build_theme(&self.theme_sel.name, self.theme_sel.high_contrast);
 
         // Caches that bake theme colours into rendered spans must be rebuilt.
         self.markdown_cache.clear();
@@ -145,10 +145,10 @@ impl App {
         self.reflow.cache.clear();
         self.dirty.mark_all();
 
-        if let Err(e) = crate::config::persist_ui_high_contrast(self.high_contrast) {
+        if let Err(e) = crate::config::persist_ui_high_contrast(self.theme_sel.high_contrast) {
             log::warn!("failed to persist high_contrast: {e}");
         }
-        let state = if self.high_contrast { "on" } else { "off" };
+        let state = if self.theme_sel.high_contrast { "on" } else { "off" };
         self.set_status_info(format!("High contrast {state}"));
     }
 
@@ -217,7 +217,7 @@ impl App {
         self.overlays
             .open_repo
             .buffer
-            .set_text(&self.repo_path.display().to_string());
+            .set_text(&self.repo.path.display().to_string());
     }
 
     fn cmd_review_pull_request(&mut self) {
@@ -228,9 +228,9 @@ impl App {
     }
 
     fn cmd_switch_repo(&mut self) {
-        if self.repo_list.len() > 1 {
+        if self.repo.known.len() > 1 {
             self.overlays.active = ActiveOverlay::RepoSelector;
-            self.overlays.repo_selector.selected = self.repo_list_index;
+            self.overlays.repo_selector.selected = self.repo.known_index;
         }
     }
 

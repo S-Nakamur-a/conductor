@@ -1,21 +1,20 @@
-//! Small time-based transition helpers for smooth UI color animation.
+//! UI の色を滑らかに動かすための、時間ベースの小さな遷移ヘルパー。
 //!
-//! Conductor renders in immediate mode and, when idle, throttles its redraw to
-//! ~2fps. A "transition" is therefore two things working together: an eased
-//! value derived from elapsed wall-clock time (here), and a redraw pump in the
-//! main loop that keeps frames flowing while the transition is in flight (see
-//! `App::has_active_transition` / `main.rs`). Colors are interpolated with
-//! `Theme::lerp`, which the high-FPS, truecolor terminals this targets render as
-//! a genuinely smooth gradient.
+//! Conductor は即時モードで描画し、待機中は再描画を 2fps 程度まで落とす。
+//! つまり「遷移」は 2 つの仕組みの合わせ技になる: 経過実時間から求めた
+//! イージング済みの値 (このモジュール) と、遷移が続いている間だけフレームを
+//! 流し続けるメインループ側の再描画ポンプ (`App::has_active_transition` /
+//! `main.rs` を参照)。色の補間は `Theme::lerp` で行い、対象としている
+//! 高 FPS・truecolor の端末ではこれが実際に滑らかなグラデーションになる。
 
 use std::time::Duration;
 
-/// Duration of focus / panel-border transitions, in milliseconds.
+/// フォーカスとパネル枠の遷移にかける時間 (ミリ秒)。
 pub const FOCUS_MS: u64 = 180;
 
-/// Smoothstep-eased progress in `[0.0, 1.0]` for a transition of `duration_ms`
-/// that began `elapsed` ago. Zero slope at both ends gives a gentle ease-in /
-/// ease-out feel rather than a linear ramp.
+/// `elapsed` 前に始まった `duration_ms` の遷移について、smoothstep で
+/// イージングした `[0.0, 1.0]` の進捗を返す。両端で傾きが 0 になるので、
+/// 線形のランプではなく緩やかな ease-in / ease-out の感触になる。
 pub fn eased_progress(elapsed: Duration, duration_ms: u64) -> f64 {
     if duration_ms == 0 {
         return 1.0;
@@ -32,7 +31,7 @@ mod tests {
     fn progress_is_zero_at_start_and_one_at_end() {
         assert_eq!(eased_progress(Duration::ZERO, 180), 0.0);
         assert_eq!(eased_progress(Duration::from_millis(180), 180), 1.0);
-        // Past the end clamps to fully complete.
+        // 終端を過ぎたぶんは完了側にクランプされる。
         assert_eq!(eased_progress(Duration::from_millis(500), 180), 1.0);
     }
 
@@ -42,7 +41,7 @@ mod tests {
         let b = eased_progress(Duration::from_millis(90), 180);
         let c = eased_progress(Duration::from_millis(135), 180);
         assert!(a > 0.0 && a < b && b < c && c < 1.0);
-        // Smoothstep is symmetric about the midpoint.
+        // smoothstep は中点について対称。
         assert!((b - 0.5).abs() < 1e-9);
     }
 

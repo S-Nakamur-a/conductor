@@ -260,10 +260,10 @@ pub(super) fn render_code_line_rows(
     // mouse may have moved off it (underline has no leave-grace, D9) or be
     // sitting in the popup's own leave-grace window pointed elsewhere.
     let content_spans = match crate::app::popup_highlight_range(
-        app.hover_info_overlay.is_shown(),
-        app.hover_info_overlay.target_line,
-        app.hover_info_overlay.target_start_col,
-        app.hover_info_overlay.target_end_col,
+        app.code_nav.hover_info.is_shown(),
+        app.code_nav.hover_info.target_line,
+        app.code_nav.hover_info.target_start_col,
+        app.code_nav.hover_info.target_end_col,
         line_1,
     ) {
         Some((start, end)) => {
@@ -273,9 +273,9 @@ pub(super) fn render_code_line_rows(
     };
 
     // Apply symbol hint labels (Vimium-style).
-    let content_spans = if app.symbol_hint_overlay.active {
+    let content_spans = if app.code_nav.symbol_hint.active {
         let hints_on_line: Vec<_> = app
-            .symbol_hint_overlay
+            .code_nav.symbol_hint
             .hints
             .iter()
             .filter(|h| h.line == line_1)
@@ -286,7 +286,7 @@ pub(super) fn render_code_line_rows(
             apply_hint_labels(
                 content_spans,
                 &hints_on_line,
-                &app.symbol_hint_overlay.input,
+                &app.code_nav.symbol_hint.input,
                 vs.content.h_scroll,
                 theme,
             )
@@ -316,8 +316,8 @@ pub(super) fn render_code_line_rows(
             reply_cid,
             &app.viewer_state.explorer.inline_reply_buffer,
             theme,
-            &app.syntax_set,
-            &app.syntect_theme,
+            &app.highlight.syntax_set,
+            &app.highlight.theme,
             &app.markdown_cache,
         );
         rows.extend(thread_lines);

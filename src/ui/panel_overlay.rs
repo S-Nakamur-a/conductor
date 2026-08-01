@@ -20,9 +20,9 @@ struct PanelInfo {
 
 /// Render the panel number overlay on all panels.
 pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
-    let columns = app.layout_cache.columns;
-    let terminal_split = app.layout_cache.terminal_split;
-    let explorer_mid_y = app.layout_cache.explorer_mid_y;
+    let columns = app.layout.cache.columns;
+    let terminal_split = app.layout.cache.terminal_split;
+    let explorer_mid_y = app.layout.cache.explorer_mid_y;
 
     // Split Explorer column (columns[1]) into top (file tree) and bottom (diff list).
     let explorer_col = columns[1];

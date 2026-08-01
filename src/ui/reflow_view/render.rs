@@ -88,8 +88,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 entries: &app.reflow.entries,
                 cache: &app.reflow.cache,
                 theme: &app.theme,
-                syntax_set: &app.syntax_set,
-                syntect_theme: &app.syntect_theme,
+                syntax_set: &app.highlight.syntax_set,
+                syntect_theme: &app.highlight.theme,
                 expanded: app.reflow.expanded,
             };
             build_lines(&ctx, inner_width)

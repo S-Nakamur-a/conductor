@@ -335,8 +335,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         &comment.body,
         inner_width.saturating_sub(1),
         theme,
-        &app.syntax_set,
-        &app.syntect_theme,
+        &app.highlight.syntax_set,
+        &app.highlight.theme,
     );
     for line in body_md {
         let mut spans = vec![Span::raw(" ")];
@@ -375,8 +375,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 &reply.body,
                 inner_width.saturating_sub(4),
                 theme,
-                &app.syntax_set,
-                &app.syntect_theme,
+                &app.highlight.syntax_set,
+                &app.highlight.theme,
             );
             for line in reply_md {
                 let mut spans = vec![Span::raw("    ")];

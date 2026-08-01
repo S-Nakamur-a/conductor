@@ -37,7 +37,7 @@ pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
             // Cycle through source branches.
             let current_branch = app
                 .worktrees
-                .get(app.selected_worktree)
+                .get(app.worktrees.selected_index())
                 .map(|w| w.branch.clone())
                 .unwrap_or_default();
             let other_branches: Vec<String> = app

@@ -13,7 +13,7 @@ use super::overlay_list_nav;
 // ── Overlay: repo selector ──────────────────────────────────────────────
 
 pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
-    let count = app.repo_list.len();
+    let count = app.repo.known.len();
 
     if overlay_list_nav(
         &app.keymap,

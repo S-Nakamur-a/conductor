@@ -1,7 +1,7 @@
-//! Terminal / PTY state management.
+//! 端末 / PTY の状態管理。
 //!
-//! Groups all PTY-related fields previously scattered in `App` into a
-//! single `TerminalState` struct.
+//! これまで `App` に散らばっていた PTY 関連のフィールドを、1 つの
+//! `TerminalState` 構造体にまとめたもの。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -10,72 +10,72 @@ use std::time::Instant;
 use crate::pty_manager;
 use crate::ui::common::PtyRenderCache;
 
-/// Aggregated state for the dual terminal panels (Claude Code + Shell).
+/// 2 つの端末パネル (Claude Code と Shell) をまとめた状態。
 pub struct TerminalState {
-    /// PTY session manager.
+    /// PTY セッションの管理。
     pub pty_manager: pty_manager::PtyManager,
-    /// Index of the active Claude Code session for the current worktree.
+    /// 現在の worktree でアクティブな Claude Code セッションの添字。
     pub active_claude_session: Option<usize>,
-    /// Index of the active Shell session for the current worktree.
+    /// 現在の worktree でアクティブな Shell セッションの添字。
     pub active_shell_session: Option<usize>,
-    /// Last known terminal content area size (rows, cols) for Claude PTY.
+    /// Claude 用 PTY の、最後に判明した内容領域のサイズ (行数, 桁数)。
     pub size_claude: (u16, u16),
-    /// Last known terminal content area size (rows, cols) for Shell PTY.
+    /// Shell 用 PTY の、最後に判明した内容領域のサイズ (行数, 桁数)。
     pub size_shell: (u16, u16),
-    /// Last applied content area size (rows, cols) for the embedded editor PTY.
-    /// Tracked separately so `sync_pty_sizes` only resizes on an actual change.
+    /// 埋め込みエディタ用 PTY に最後に適用した内容領域のサイズ (行数, 桁数)。
+    /// `sync_pty_sizes` が実際に変化したときだけリサイズできるよう別に持つ。
     pub size_editor: (u16, u16),
-    /// Scrollback offset for the Claude Code terminal (0 = live view).
+    /// Claude Code 端末のスクロールバックのオフセット (0 = 最新表示)。
     pub scroll_claude: usize,
-    /// Scrollback offset for the Shell terminal (0 = live view).
+    /// Shell 端末のスクロールバックのオフセット (0 = 最新表示)。
     pub scroll_shell: usize,
-    /// Cached PTY render output for Claude terminal.
+    /// Claude 端末の描画結果のキャッシュ。
     pub cache_claude: PtyRenderCache,
-    /// Cached PTY render output for Shell terminal.
+    /// Shell 端末の描画結果のキャッシュ。
     pub cache_shell: PtyRenderCache,
-    /// Worktree paths whose Claude Code sessions are actively working.
+    /// Claude Code セッションが作業中の worktree パス。
     pub cc_active_worktrees: HashSet<PathBuf>,
-    /// Worktree paths whose Claude Code sessions are waiting for user input.
+    /// Claude Code セッションがユーザーの入力を待っている worktree パス。
     pub cc_waiting_worktrees: HashSet<PathBuf>,
-    /// Acknowledged waiting states — maps worktree path to the PTY session's
-    /// `last_output_time` at the moment the user dismissed the notification.
+    /// 確認済みの待機状態。worktree パスから、ユーザーが通知を消した時点での
+    /// PTY セッションの `last_output_time` へのマップ。
     pub cc_waiting_ack_time: HashMap<PathBuf, Instant>,
-    /// Timestamp of last click on Claude terminal blank area (for double-click detection).
+    /// Claude 端末の空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
     pub claude_blank_last_click: Instant,
-    /// Timestamp of last click on Shell terminal blank area (for double-click detection).
+    /// Shell 端末の空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
     pub shell_blank_last_click: Instant,
-    /// Set to `true` when a full terminal clear + redraw is needed.
+    /// 端末全体のクリアと再描画が必要なときに `true` にする。
     pub needs_clear: bool,
-    /// Deferred prompts: session index → prompt text.
-    /// Written once the CC session becomes ready (waiting for input).
+    /// 保留中のプロンプト: セッション添字 → プロンプト文字列。
+    /// Claude Code セッションが入力待ちになった時点で書き込まれる。
     pub deferred_prompts: HashMap<usize, String>,
-    /// Set when PTY reader thread produces new output for Claude terminal.
+    /// PTY のリーダースレッドが Claude 端末向けの新しい出力を出したときに立つ。
     pub dirty_claude: bool,
-    /// Set when PTY reader thread produces new output for Shell terminal.
+    /// PTY のリーダースレッドが Shell 端末向けの新しい出力を出したときに立つ。
     pub dirty_shell: bool,
-    /// First-visible tab index for the Claude session tab strip (horizontal scroll).
+    /// Claude セッションのタブ列で最初に見えているタブの添字 (横スクロール)。
     pub claude_tab_scroll: usize,
-    /// First-visible tab index for the Shell session tab strip (horizontal scroll).
+    /// Shell セッションのタブ列で最初に見えているタブの添字 (横スクロール)。
     pub shell_tab_scroll: usize,
-    /// Pan the Claude tab strip to reveal the active tab on the next render.
+    /// 次の描画でアクティブなタブが見えるよう Claude のタブ列をずらす。
     pub claude_tab_reveal: bool,
-    /// Pan the Shell tab strip to reveal the active tab on the next render.
+    /// 次の描画でアクティブなタブが見えるよう Shell のタブ列をずらす。
     pub shell_tab_reveal: bool,
-    /// Clickable regions of the Claude tab strip, recorded each render.
+    /// Claude のタブ列のクリック可能領域。描画のたびに記録する。
     pub claude_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
-    /// Clickable regions of the Shell tab strip, recorded each render.
+    /// Shell のタブ列のクリック可能領域。描画のたびに記録する。
     pub shell_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
-    /// Which Claude tab-strip region the pointer is over, if any. Only `Close`
-    /// is drawn differently (S7), but the whole action is stored so the render
-    /// side decides what a hover means rather than the event side.
+    /// Claude のタブ列のどの領域にポインタが乗っているか。描画を変えるのは
+    /// `Close` だけだが、アクションごと保存しておくことで「ホバーが何を意味するか」を
+    /// イベント側ではなく描画側が決められるようにしている。
     pub claude_tab_hover: Option<crate::ui::tab_bar::TabAction>,
-    /// Which Shell tab-strip region the pointer is over — see
-    /// [`Self::claude_tab_hover`].
+    /// Shell のタブ列のどの領域にポインタが乗っているか。
+    /// [`Self::claude_tab_hover`] を参照。
     pub shell_tab_hover: Option<crate::ui::tab_bar::TabAction>,
 }
 
 impl TerminalState {
-    /// Create a new `TerminalState` with the given scrollback limits.
+    /// 指定したスクロールバック上限で `TerminalState` を作る。
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
@@ -108,14 +108,14 @@ impl TerminalState {
         }
     }
 
-    /// Switch the Claude panel to display the session at `idx`.
+    /// Claude パネルの表示を添字 `idx` のセッションへ切り替える。
     ///
-    /// Marks the PTY session active, records it as the active Claude session,
-    /// and resets the panel's scroll offset and render cache. Clearing the
-    /// cache is essential: it is a single buffer shared across sessions, so
-    /// without this the panel would keep rendering the previous session's
-    /// content until some other trigger (scroll, new output) happened to
-    /// rebuild it. See `ui::terminal_claude` for the rebuild condition.
+    /// PTY セッションをアクティブにし、アクティブな Claude セッションとして記録し、
+    /// パネルのスクロール位置と描画キャッシュをリセットする。キャッシュのクリアは
+    /// 必須で、これは全セッションで共有される 1 つのバッファだから。クリアしないと、
+    /// 別のきっかけ (スクロール、新しい出力) でたまたま作り直されるまで、パネルは
+    /// 前のセッションの内容を描き続けてしまう。作り直しの条件は
+    /// `ui::terminal_claude` を参照。
     pub fn switch_claude_session(&mut self, idx: usize) {
         self.pty_manager.activate_session(idx);
         self.active_claude_session = Some(idx);
@@ -124,10 +124,9 @@ impl TerminalState {
         self.claude_tab_reveal = true;
     }
 
-    /// Switch the Shell panel to display the session at `idx`.
+    /// Shell パネルの表示を添字 `idx` のセッションへ切り替える。
     ///
-    /// Shell-side counterpart of [`Self::switch_claude_session`]; same cache
-    /// invalidation rationale applies.
+    /// [`Self::switch_claude_session`] の Shell 版。キャッシュを無効化する理由も同じ。
     pub fn switch_shell_session(&mut self, idx: usize) {
         self.pty_manager.activate_session(idx);
         self.active_shell_session = Some(idx);
@@ -142,9 +141,9 @@ mod tests {
     use super::*;
     use ratatui::text::Line;
 
-    /// Seed a render cache so we can prove `switch_*` clears it. Mirrors the
-    /// stale state that caused the panel-not-syncing bug: a non-empty cache
-    /// left over from a previously displayed session.
+    /// `switch_*` がキャッシュをクリアすることを示すために、描画キャッシュへ種を仕込む。
+    /// パネルが同期しなくなるバグを起こした古い状態、すなわち前に表示していた
+    /// セッションから残った空でないキャッシュを再現する。
     fn stale_cache() -> PtyRenderCache {
         PtyRenderCache {
             lines: vec![Line::from("previous session output")],
@@ -159,8 +158,8 @@ mod tests {
         term.scroll_claude = 42;
         term.cache_claude = stale_cache();
 
-        // No sessions exist; activate_session is a tolerant no-op, so this
-        // exercises the panel-state reset in isolation.
+        // セッションは 1 つも無い。activate_session は寛容な no-op なので、
+        // ここではパネル状態のリセットだけを切り離して検証できる。
         term.switch_claude_session(0);
 
         assert_eq!(term.active_claude_session, Some(0));
@@ -194,7 +193,7 @@ mod tests {
 
         term.switch_claude_session(0);
 
-        // Switching the Claude panel must not disturb the Shell panel's state.
+        // Claude パネルの切り替えが Shell パネルの状態を乱してはいけない。
         assert_eq!(term.scroll_shell, 5);
         assert!(!term.cache_shell.lines.is_empty());
     }

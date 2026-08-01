@@ -181,7 +181,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
     let max_x = (frame_area.x + frame_area.width).saturating_sub(popup_w);
     let popup_x = anchor_x.min(max_x);
 
-    let popup_y = app.layout_cache.menubar_area.y + app.layout_cache.menubar_area.height;
+    let popup_y = app.layout.cache.menubar_area.y + app.layout.cache.menubar_area.height;
     let avail_h = (frame_area.y + frame_area.height).saturating_sub(popup_y);
     // 2 rows of border; at least one content row or there is nothing to show.
     let popup_h = ((rows.len() as u16) + 2).min(avail_h);
@@ -298,7 +298,7 @@ enum Row {
 /// key handler to keep the selection scrolled into view. Mirrors the clamp in
 /// [`render_dropdown`].
 pub fn visible_rows(app: &App, frame_height: u16) -> usize {
-    let popup_y = app.layout_cache.menubar_area.y + app.layout_cache.menubar_area.height;
+    let popup_y = app.layout.cache.menubar_area.y + app.layout.cache.menubar_area.height;
     let avail_h = frame_height.saturating_sub(popup_y);
     avail_h.saturating_sub(2) as usize
 }

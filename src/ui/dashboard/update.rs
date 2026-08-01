@@ -28,7 +28,7 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, popup_area);
 
     let version = app
-        .update_info
+        .update.info
         .as_ref()
         .map(|u| u.latest_version.as_str())
         .unwrap_or("?");
@@ -63,7 +63,7 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
 /// will be posted and how many were skipped for not being on a diff line.
 pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    let Some(confirm) = app.publish_confirm.as_ref() else {
+    let Some(confirm) = app.publish.confirm.as_ref() else {
         return;
     };
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
@@ -130,7 +130,7 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    let (title, border_color) = match app.update_state {
+    let (title, border_color) = match app.update.state {
         UpdateState::InProgress => (" Updating Conductor ", theme.info),
         UpdateState::Restarting => (" Restarting... ", theme.success),
         UpdateState::Failed => (" Update Failed ", theme.error),
@@ -153,9 +153,9 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
 
     let mut lines = Vec::new();
 
-    if app.update_state == UpdateState::Failed {
+    if app.update.state == UpdateState::Failed {
         lines.push(Line::from(Span::styled(
-            format!(" {}", app.update_progress_message),
+            format!(" {}", app.update.progress_message),
             Style::default().fg(theme.error),
         )));
         lines.push(Line::from(""));
@@ -167,9 +167,9 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
         let spinner = braille[idx];
         lines.push(Line::from(vec![
             Span::styled(format!(" {spinner} "), Style::default().fg(theme.accent)),
-            Span::styled(&app.update_progress_message, Style::default().fg(theme.fg)),
+            Span::styled(&app.update.progress_message, Style::default().fg(theme.fg)),
         ]));
-        if app.update_state == UpdateState::InProgress {
+        if app.update.state == UpdateState::InProgress {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 " Press Esc to cancel",

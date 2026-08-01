@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem};
+use ratatui::widgets::{List, ListItem};
 
 /// Which of the 4 git stage-states a Changed-files row's filename color
 /// represents (D6, ADR in the plan doc). Distinct from `DiffSection`
@@ -83,22 +83,16 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
     let title = diff_list_title(total, app.diff_state.error.is_some());
 
-    let border_type = if panel_focused {
-        BorderType::Thick
-    } else {
-        BorderType::Plain
-    };
-
+    // ボーダーの太さは Explorer カラム全体、タイトルの強調はその下半分に
+    // フォーカスがあるかで決まる。
     let title_style = if diff_focused {
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.muted)
     };
-    let block = Block::default()
-        .title(Span::styled(title, title_style))
-        .borders(Borders::ALL)
-        .border_type(border_type)
-        .border_style(Style::default().fg(border_color));
+    let block = crate::ui::common::PanelChrome::new(theme, title, panel_focused, border_color)
+        .with_title_style(title_style)
+        .into_block();
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.diff_list_scroll;
@@ -142,7 +136,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     theme.info,
                     idx == vs_explorer.diff_list_selected,
                     diff_focused,
-                    app.diff_list_hover.phase(idx),
+                    app.list_hover.diff_list.phase(idx),
                 );
 
                 // Prefix split off so the hover underline stops at the name
@@ -196,7 +190,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     base_fg,
                     idx == vs_explorer.diff_list_selected,
                     diff_focused,
-                    app.diff_list_hover.phase(idx),
+                    app.list_hover.diff_list.phase(idx),
                 );
                 // Everything that isn't the filename — indent, origin marker,
                 // icon, line counts — drops the hover underline so the rule
@@ -243,7 +237,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     theme.accent,
                     selected,
                     diff_focused,
-                    app.diff_list_hover.phase(idx),
+                    app.list_hover.diff_list.phase(idx),
                 );
                 // The unselected SUMMARY row is bold regardless of hover;
                 // `row_style` doesn't apply BOLD outside the selected cases.

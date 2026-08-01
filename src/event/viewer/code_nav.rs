@@ -12,7 +12,7 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
         }
     };
 
-    if !app.symbol_index.is_available() {
+    if !app.code_nav.index.is_available() {
         app.set_status(
             "Symbol index not ready yet".to_string(),
             StatusLevel::Warning,
@@ -22,8 +22,8 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
 
     // Context-aware: if cursor is at a definition site, show references instead.
     if app.is_cursor_at_definition(&symbol) {
-        let root = app.symbol_index.root();
-        let refs = app.symbol_index.find_references(&symbol, &root);
+        let root = app.code_nav.index.root();
+        let refs = app.code_nav.index.find_references(&symbol, &root);
         if refs.is_empty() {
             app.set_status(
                 format!("No references found for '{symbol}'"),
@@ -31,11 +31,11 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
             );
         } else {
             let count = refs.len();
-            app.references_overlay.active = true;
-            app.references_overlay.symbol_name = symbol.clone();
-            app.references_overlay.results = refs;
-            app.references_overlay.selected = 0;
-            app.references_overlay.scroll = 0;
+            app.code_nav.references.active = true;
+            app.code_nav.references.symbol_name = symbol.clone();
+            app.code_nav.references.results = refs;
+            app.code_nav.references.selected = 0;
+            app.code_nav.references.scroll = 0;
             app.set_status(
                 format!("At definition — showing {count} references for '{symbol}'"),
                 StatusLevel::Info,
@@ -44,7 +44,7 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
         return;
     }
 
-    let defs = app.symbol_index.find_definitions(&symbol);
+    let defs = app.code_nav.index.find_definitions(&symbol);
     match defs.len() {
         0 => {
             app.set_status(
@@ -64,9 +64,9 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
         }
         n => {
             // Multiple definitions — show in references overlay.
-            app.references_overlay.active = true;
-            app.references_overlay.symbol_name = format!("{symbol} (definitions)");
-            app.references_overlay.results = defs
+            app.code_nav.references.active = true;
+            app.code_nav.references.symbol_name = format!("{symbol} (definitions)");
+            app.code_nav.references.results = defs
                 .iter()
                 .map(|d| crate::symbol_index::Reference {
                     file_path: d.file_path.clone(),
@@ -74,8 +74,8 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
                     content: format!("{:?} {}", d.kind, d.name),
                 })
                 .collect();
-            app.references_overlay.selected = 0;
-            app.references_overlay.scroll = 0;
+            app.code_nav.references.selected = 0;
+            app.code_nav.references.scroll = 0;
             app.set_status(
                 format!("{n} definitions found for '{symbol}'"),
                 StatusLevel::Info,
@@ -93,7 +93,7 @@ pub(super) fn handle_go_to_implementation(app: &mut App) {
         }
     };
 
-    if !app.symbol_index.is_available() {
+    if !app.code_nav.index.is_available() {
         app.set_status(
             "Symbol index not ready yet".to_string(),
             StatusLevel::Warning,
@@ -101,7 +101,7 @@ pub(super) fn handle_go_to_implementation(app: &mut App) {
         return;
     }
 
-    let impls = app.symbol_index.find_implementations(&symbol);
+    let impls = app.code_nav.index.find_implementations(&symbol);
     match impls.len() {
         0 => {
             app.set_status(
@@ -120,9 +120,9 @@ pub(super) fn handle_go_to_implementation(app: &mut App) {
             );
         }
         n => {
-            app.references_overlay.active = true;
-            app.references_overlay.symbol_name = format!("{symbol} (implementations)");
-            app.references_overlay.results = impls
+            app.code_nav.references.active = true;
+            app.code_nav.references.symbol_name = format!("{symbol} (implementations)");
+            app.code_nav.references.results = impls
                 .iter()
                 .map(|d| crate::symbol_index::Reference {
                     file_path: d.file_path.clone(),
@@ -130,8 +130,8 @@ pub(super) fn handle_go_to_implementation(app: &mut App) {
                     content: format!("{:?} {}", d.kind, d.name),
                 })
                 .collect();
-            app.references_overlay.selected = 0;
-            app.references_overlay.scroll = 0;
+            app.code_nav.references.selected = 0;
+            app.code_nav.references.scroll = 0;
             app.set_status(
                 format!("{n} implementations found for '{symbol}'"),
                 StatusLevel::Info,
@@ -149,8 +149,8 @@ pub(super) fn handle_find_references(app: &mut App) {
         }
     };
 
-    let root = app.symbol_index.root();
-    let refs = app.symbol_index.find_references(&symbol, &root);
+    let root = app.code_nav.index.root();
+    let refs = app.code_nav.index.find_references(&symbol, &root);
 
     if refs.is_empty() {
         app.set_status(
@@ -160,9 +160,9 @@ pub(super) fn handle_find_references(app: &mut App) {
         return;
     }
 
-    app.references_overlay.active = true;
-    app.references_overlay.symbol_name = symbol;
-    app.references_overlay.results = refs;
-    app.references_overlay.selected = 0;
-    app.references_overlay.scroll = 0;
+    app.code_nav.references.active = true;
+    app.code_nav.references.symbol_name = symbol;
+    app.code_nav.references.results = refs;
+    app.code_nav.references.selected = 0;
+    app.code_nav.references.scroll = 0;
 }

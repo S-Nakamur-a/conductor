@@ -62,7 +62,7 @@ const WAITING_BREATH_PERIOD_SECS: f64 = 1.6;
 /// Called at the end of `render_ui` (before the party-mode pass, which takes
 /// over completely when active).
 pub fn apply_rich_effects(frame: &mut Frame, app: &App) {
-    let t = app.rich_epoch.elapsed().as_secs_f64();
+    let t = app.rich.epoch.elapsed().as_secs_f64();
     apply_focus_gradient(frame, app, t);
     apply_waiting_glow(frame, app, t);
 }
@@ -152,7 +152,7 @@ fn apply_waiting_glow(frame: &mut Frame, app: &App, t: f64) {
         return;
     }
 
-    let rect = app.layout_cache.terminal_split[0];
+    let rect = app.layout.cache.terminal_split[0];
     if rect.width < 2 || rect.height < 2 {
         return;
     }

@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem};
+use ratatui::widgets::{List, ListItem};
 
 /// Render the comment list as a centered full-screen modal (the `C` overlay) —
 /// an overview of every review comment on the branch with jump-to-location.
@@ -50,12 +50,8 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
     // "ask claude" action defined in `viewer_panel::thread_actions`.
     const ASK_CLAUDE_ALL_LABEL: &str = " ✨ Ask Claude All ";
 
-    let border_type = if panel_focused {
-        BorderType::Thick
-    } else {
-        BorderType::Plain
-    };
-
+    // ボーダーの太さは Explorer カラム全体、タイトルの強調はその下半分に
+    // フォーカスがあるかで決まる。
     let title_style = if list_focused {
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
     } else {
@@ -65,18 +61,16 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
     let scroll = vs_explorer.comment_list_scroll;
     let total_rows = app.review_state.comment_list_rows.len();
 
-    let mut block = Block::default()
-        .title(Span::styled(title, title_style))
+    let mut block = crate::ui::common::PanelChrome::new(theme, title, panel_focused, border_color)
+        .with_title_style(title_style)
+        .into_block()
         .title_bottom(
             Line::from(vec![Span::styled(
                 ASK_CLAUDE_ALL_LABEL,
                 Style::default().fg(Color::Rgb(180, 140, 255)),
             )])
             .alignment(Alignment::Right),
-        )
-        .borders(Borders::ALL)
-        .border_type(border_type)
-        .border_style(Style::default().fg(border_color));
+        );
 
     // Scroll position indicator (only when the list overflows).
     if total_rows > inner_height {

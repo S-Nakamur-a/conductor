@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
         Style::default().fg(theme.muted)
     };
 
-    let title = match app.current_walkthrough.as_ref().and_then(|(w, _)| w.title.as_deref()) {
+    let title = match app.walkthrough.current.as_ref().and_then(|wt| wt.header.title.as_deref()) {
         Some(t) => format!(" Walkthrough: {t} "),
         None => " Walkthrough ".to_string(),
     };
@@ -51,7 +51,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
 
-    let Some((walkthrough, steps)) = &app.current_walkthrough else {
+    let Some(loaded) = &app.walkthrough.current else {
         let paragraph = Paragraph::new("No walkthrough yet — palette: Generate Walkthrough")
             .style(Style::default().fg(theme.muted))
             .block(block);
@@ -60,7 +60,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
         return;
     };
 
-    match walkthrough.status {
+    match loaded.header.status {
         WalkthroughStatus::Generating => {
             let paragraph = Paragraph::new("Generating walkthrough… (this takes a few minutes)")
                 .style(Style::default().fg(theme.info))
@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
             frame.render_widget(paragraph, area);
         }
         WalkthroughStatus::Failed => {
-            let error = walkthrough.error.as_deref().unwrap_or("unknown error");
+            let error = loaded.header.error.as_deref().unwrap_or("unknown error");
             let paragraph = Paragraph::new(vec![
                 Line::from(Span::styled(
                     format!("Generation failed: {error}"),
@@ -85,7 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
             frame.render_widget(paragraph, area);
         }
         WalkthroughStatus::Ready => {
-            render_steps(frame, area, app, block, steps, list_focused);
+            render_steps(frame, area, app, block, &loaded.steps, list_focused);
         }
     }
 }
@@ -220,7 +220,7 @@ fn render_steps(
 /// for `view_comment_detail`, applied to a step's untruncated body).
 pub fn render_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
-    let Some((_, steps)) = &app.current_walkthrough else {
+    let Some(steps) = app.walkthrough.current.as_ref().map(|wt| &wt.steps) else {
         app.viewer_state.explorer.walkthrough_detail_active = false;
         return;
     };

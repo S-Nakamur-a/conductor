@@ -1,14 +1,14 @@
-//! Media rendering state for the viewer panel.
+//! Viewer パネルのメディア描画の状態。
 //!
-//! Handles loading images via the `image` crate and rendering them for the
-//! viewer panel through one of two paths:
+//! `image` クレートで画像を読み込み、次の 2 つの経路のどちらかで Viewer パネル
+//! 向けに描画する:
 //!
-//! - **Halfblocks** (default): ANSI strings via `aa_media::Renderer`,
-//!   converted to ratatui `Line`s. Works in any truecolor terminal.
-//! - **Pixel** (rich mode Tier B): a `ratatui_image` graphics-protocol
-//!   payload (kitty/iTerm2/sixel) built once per (file, panel size) in the
-//!   background thread. The encoded escape data rides ratatui's normal cell
-//!   diffing, so an unchanged image is never re-transmitted.
+//! - ハーフブロック (既定): `aa_media::Renderer` の ANSI 文字列を ratatui の
+//!   `Line` へ変換する。truecolor の端末ならどれでも動く。
+//! - ピクセル (rich モードの Tier B): `ratatui_image` のグラフィックスプロトコル
+//!   (kitty / iTerm2 / sixel) のペイロードを、(ファイル, パネルサイズ) の組ごとに
+//!   1 度だけバックグラウンドスレッドで作る。エンコード済みのエスケープ列は
+//!   ratatui の通常のセル差分に乗るので、変化していない画像が再送されることはない。
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -23,18 +23,18 @@ use ratatui_image::protocol::Protocol;
 
 use aa_media::renderer::{Mode, Renderer};
 
-/// File extensions recognized as images.
+/// 画像として扱う拡張子。
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
-/// File extensions recognized as videos.
+/// 動画として扱う拡張子。
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "webm", "avi", "mov", "mkv"];
 
-/// Check whether a file path has a media (image or video) extension.
+/// ファイルパスがメディア (画像または動画) の拡張子を持つか。
 pub fn is_media_file(path: &str) -> bool {
     is_image_file(path) || is_video_file(path)
 }
 
-/// Check whether a file path has an image extension.
+/// ファイルパスが画像の拡張子を持つか。
 pub fn is_image_file(path: &str) -> bool {
     let ext = Path::new(path)
         .extension()
@@ -44,7 +44,7 @@ pub fn is_image_file(path: &str) -> bool {
     IMAGE_EXTENSIONS.contains(&ext.as_str())
 }
 
-/// Check whether a file path has a video extension.
+/// ファイルパスが動画の拡張子を持つか。
 pub fn is_video_file(path: &str) -> bool {
     let ext = Path::new(path)
         .extension()
@@ -54,43 +54,43 @@ pub fn is_video_file(path: &str) -> bool {
     VIDEO_EXTENSIONS.contains(&ext.as_str())
 }
 
-/// Cached result of media rendering.
+/// メディア描画の結果のキャッシュ。
 #[derive(Clone)]
 pub enum MediaContent {
-    /// Rendering is in progress.
+    /// 描画中。
     Loading,
-    /// Successfully rendered lines.
+    /// 描画に成功した行。
     Rendered {
         lines: Vec<Line<'static>>,
-        /// Image dimensions (width x height pixels).
+        /// 画像の寸法 (幅 x 高さ、ピクセル)。
         dimensions: (u32, u32),
-        /// File size in bytes.
+        /// ファイルサイズ (バイト)。
         file_size: u64,
     },
-    /// Pixel-quality graphics-protocol payload (rich mode Tier B).
-    /// `Arc` because [`Protocol`] is not `Clone` and the render path clones
-    /// the content out of the mutex each frame.
+    /// ピクセル品質のグラフィックスプロトコルのペイロード (rich モードの Tier B)。
+    /// `Arc` にしてあるのは [`Protocol`] が `Clone` でなく、描画経路が毎フレーム
+    /// mutex から中身を clone して取り出すため。
     Pixel {
         protocol: Arc<Protocol>,
-        /// Image dimensions (width x height pixels).
+        /// 画像の寸法 (幅 x 高さ、ピクセル)。
         dimensions: (u32, u32),
-        /// File size in bytes.
+        /// ファイルサイズ (バイト)。
         file_size: u64,
     },
-    /// Rendering failed; show this error message.
+    /// 描画に失敗した。このエラーメッセージを表示する。
     Error(String),
 }
 
-/// State for media display in the viewer.
+/// Viewer でのメディア表示の状態。
 pub struct MediaState {
-    /// The file path that was rendered (to detect when it changes).
+    /// 描画したファイルのパス (変化を検知するため)。
     pub rendered_path: Option<String>,
-    /// The terminal size (cols, rows) used for the last render.
+    /// 直近の描画に使った端末サイズ (桁数, 行数)。
     pub rendered_size: (u16, u16),
-    /// Whether the last render used the pixel (graphics-protocol) path, so
-    /// toggling rich mode at runtime invalidates the cache.
+    /// 直近の描画がピクセル (グラフィックスプロトコル) 経路だったか。実行中に
+    /// rich モードを切り替えるとキャッシュが無効になるようにするため。
     pub rendered_pixel: bool,
-    /// Shared render result, updated by the background thread.
+    /// 共有の描画結果。バックグラウンドスレッドが更新する。
     pub content: Arc<Mutex<MediaContent>>,
 }
 
@@ -106,12 +106,12 @@ impl Default for MediaState {
 }
 
 impl MediaState {
-    /// Start rendering a media file in a background thread.
+    /// メディアファイルの描画をバックグラウンドスレッドで開始する。
     ///
-    /// When `picker` is `Some` (rich mode Tier B), the image is encoded as a
-    /// graphics-protocol payload; otherwise it falls back to halfblock ANSI.
-    /// If the file, size, and render path haven't changed, this is a no-op
-    /// (cached result is reused).
+    /// `picker` が `Some` (rich モードの Tier B) なら画像をグラフィックス
+    /// プロトコルのペイロードとしてエンコードし、そうでなければハーフブロックの
+    /// ANSI にフォールバックする。ファイル・サイズ・描画経路のいずれも変わって
+    /// いなければ何もしない (キャッシュを再利用する)。
     pub fn render_if_needed(
         &mut self,
         full_path: &Path,
@@ -122,7 +122,7 @@ impl MediaState {
     ) {
         let size = (cols, rows);
 
-        // Use cached result if file, size, and render path haven't changed.
+        // ファイル・サイズ・描画経路が変わっていなければキャッシュを使う。
         if self.rendered_path.as_deref() == Some(rel_path)
             && self.rendered_size == size
             && self.rendered_pixel == picker.is_some()
@@ -133,8 +133,8 @@ impl MediaState {
         self.rendered_path = Some(rel_path.to_string());
         self.rendered_size = size;
         self.rendered_pixel = picker.is_some();
-        // Poison recovery: if a decode thread panicked while holding the lock,
-        // keep the viewer alive and overwrite the poisoned value.
+        // poison からの復帰: デコードスレッドがロックを持ったまま panic した場合でも、
+        // Viewer を生かしたまま poison された値を上書きする。
         *self.content.lock().unwrap_or_else(|e| e.into_inner()) = MediaContent::Loading;
 
         let path = full_path.to_path_buf();
@@ -149,7 +149,7 @@ impl MediaState {
         });
     }
 
-    /// Invalidate the cache (e.g. when switching to a non-media file).
+    /// キャッシュを無効にする (メディア以外のファイルへ切り替えたときなど)。
     pub fn clear(&mut self) {
         self.rendered_path = None;
         self.rendered_size = (0, 0);
@@ -157,10 +157,11 @@ impl MediaState {
     }
 }
 
-/// Render an image file to a graphics-protocol payload (rich mode Tier B).
+/// 画像ファイルをグラフィックスプロトコルのペイロードへ描画する
+/// (rich モードの Tier B)。
 ///
-/// The protocol data is sized for the viewer's media area: panel size minus
-/// borders and the info line, mirroring the halfblock path's layout.
+/// プロトコルのデータは Viewer のメディア領域、すなわちパネルサイズから枠と
+/// 情報行を引いた大きさに合わせる。ハーフブロック経路のレイアウトと揃えてある。
 fn render_image_to_pixels(path: &Path, picker: &mut Picker, cols: u16, rows: u16) -> MediaContent {
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
@@ -171,7 +172,7 @@ fn render_image_to_pixels(path: &Path, picker: &mut Picker, cols: u16, rows: u16
     let dimensions = (img.width(), img.height());
 
     let avail_cols = cols.saturating_sub(2);
-    let avail_rows = rows.saturating_sub(3); // borders + info line
+    let avail_rows = rows.saturating_sub(3); // 枠と情報行のぶん
     let area = Rect::new(0, 0, avail_cols, avail_rows);
 
     match picker.new_protocol(
@@ -188,12 +189,12 @@ fn render_image_to_pixels(path: &Path, picker: &mut Picker, cols: u16, rows: u16
     }
 }
 
-/// Render an image file to ratatui `Line`s using aa-media's Tile renderer.
+/// aa-media の Tile レンダラを使って画像ファイルを ratatui の `Line` へ描画する。
 fn render_image_to_lines(path: &Path, cols: u16, rows: u16) -> MediaContent {
-    // Read file size.
+    // ファイルサイズを読む。
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
-    // Load the image.
+    // 画像を読み込む。
     let img = match image::open(path) {
         Ok(img) => img.into_rgb8(),
         Err(e) => return MediaContent::Error(format!("Failed to load image: {e}")),
@@ -202,15 +203,15 @@ fn render_image_to_lines(path: &Path, cols: u16, rows: u16) -> MediaContent {
     let src_w = img.width();
     let src_h = img.height();
 
-    // Use Tile mode (half-block) for best quality with color.
+    // 色付きで最も品質が良い Tile モード (ハーフブロック) を使う。
     let mut renderer = Renderer::new(Mode::Tile, " .:-=+*#%@", true);
 
-    // Compute target pixel size that fits the panel (leave room for border).
+    // パネルに収まる目標ピクセルサイズを計算する (枠のぶんを空ける)。
     let avail_cols = cols.saturating_sub(2);
-    let avail_rows = rows.saturating_sub(3); // borders + info line
+    let avail_rows = rows.saturating_sub(3); // 枠と情報行のぶん
     let (tw, th) = renderer.target_size_fit(avail_cols, avail_rows, src_w, src_h);
 
-    // Resize the image.
+    // 画像をリサイズする。
     let resized = image::imageops::resize(
         &img,
         tw as u32,
@@ -218,13 +219,13 @@ fn render_image_to_lines(path: &Path, cols: u16, rows: u16) -> MediaContent {
         image::imageops::FilterType::Triangle,
     );
 
-    // Render to ANSI string.
+    // ANSI 文字列へ描画する。
     let mut buf: Vec<u8> = Vec::with_capacity(1 << 16);
     if let Err(e) = renderer.render_frame(&mut buf, &resized, avail_cols) {
         return MediaContent::Error(format!("Render error: {e}"));
     }
 
-    // Parse ANSI output through vt100 to extract styled cells.
+    // ANSI 出力を vt100 に通し、スタイル付きのセルを取り出す。
     let lines = ansi_to_ratatui_lines(&buf, avail_cols, avail_rows);
 
     MediaContent::Rendered {
@@ -234,7 +235,7 @@ fn render_image_to_lines(path: &Path, cols: u16, rows: u16) -> MediaContent {
     }
 }
 
-/// Convert ANSI-escaped bytes into ratatui `Line`s by parsing through vt100.
+/// ANSI エスケープを含むバイト列を vt100 に通してパースし、ratatui の `Line` へ変換する。
 fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'static>> {
     let parser = vt100::Parser::new(rows, cols, 0);
     let mut parser = parser;
@@ -282,7 +283,7 @@ fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'s
         }
 
         if !current_text.is_empty() {
-            // Trim trailing spaces.
+            // 末尾の空白を落とす。
             let trimmed = current_text.trim_end();
             if !trimmed.is_empty() {
                 spans.push(Span::styled(trimmed.to_string(), current_style));
@@ -294,7 +295,7 @@ fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'s
         }
     }
 
-    // Remove trailing empty lines.
+    // 末尾の空行を取り除く。
     while lines.last().is_some_and(|l| l.spans.is_empty()) {
         lines.pop();
     }
@@ -302,7 +303,7 @@ fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'s
     lines
 }
 
-/// Convert a vt100 cell's colors to a ratatui `Style`.
+/// vt100 のセルの色を ratatui の `Style` へ変換する。
 fn vt100_cell_to_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default();
 

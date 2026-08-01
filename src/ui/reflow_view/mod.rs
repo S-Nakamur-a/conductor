@@ -32,6 +32,7 @@
 //! [`user_text`] the user-turn background-block renderer, and [`render`] the
 //! public entry point that blits the cache each frame.
 
+mod block_render;
 mod build;
 mod glyphs;
 mod helpers;

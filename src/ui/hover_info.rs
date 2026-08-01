@@ -4,7 +4,7 @@
 //! 2). The popup anchors to the hovered symbol within the Viewer panel.
 //!
 //! Each level records its rendered `Rect` (and the refs list its per-row rects)
-//! back onto `app.hover_info_overlay` so the mouse layer can hit-test clicks.
+//! back onto `app.code_nav.hover_info` so the mouse layer can hit-test clicks.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -16,19 +16,19 @@ use crate::app::App;
 
 /// Render the hover popup and any open child levels over `area` (the frame).
 pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.hover_info_overlay.info.is_none() {
+    if app.code_nav.hover_info.info.is_none() {
         return;
     }
     let host = {
-        let vr = app.layout_cache.columns[2];
+        let vr = app.layout.cache.columns[2];
         if vr.width > 0 && vr.height > 0 { vr } else { area }
     };
     render_base_popup(frame, host, app);
     // Level 1: references list (pinned). Level 2: preview.
-    if app.hover_info_overlay.refs.is_some() {
+    if app.code_nav.hover_info.refs.is_some() {
         render_refs_list(frame, host, app);
         if app
-            .hover_info_overlay
+            .code_nav.hover_info
             .refs
             .as_ref()
             .is_some_and(|r| r.preview.is_some())
@@ -42,9 +42,9 @@ pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
 fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     // Pull owned data so the immutable borrow of `info` ends before we write
-    // the hit-test rects back onto `app.hover_info_overlay`.
+    // the hit-test rects back onto `app.code_nav.hover_info`.
     let (symbol_name, signature_lines, doc_lines, loc, ref_count, ref_count_capped) = {
-        let info = app.hover_info_overlay.info.as_ref().unwrap();
+        let info = app.code_nav.hover_info.info.as_ref().unwrap();
         let mut loc = format!("{}  {}:{}", info.kind, info.file_path, info.line);
         if info.def_count > 1 {
             loc.push_str(&format!("  (+{} defs)", info.def_count - 1));
@@ -106,7 +106,7 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let inner_h = (body_h + if refs_present { 1 } else { 0 }).max(1);
     let popup_height = (inner_h as u16 + 2).min(host.height.saturating_sub(2)).max(3);
 
-    let popup_area = place(host, app.hover_info_overlay.anchor_row, app.hover_info_overlay.anchor_col, popup_width, popup_height);
+    let popup_area = place(host, app.code_nav.hover_info.anchor_row, app.code_nav.hover_info.anchor_col, popup_width, popup_height);
 
     frame.render_widget(Clear, popup_area);
     let block = Block::default()
@@ -133,16 +133,16 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
         Rect::default()
     };
 
-    app.hover_info_overlay.info_rect = popup_area;
-    app.hover_info_overlay.refs_hit = refs_hit;
+    app.code_nav.hover_info.info_rect = popup_area;
+    app.code_nav.hover_info.refs_hit = refs_hit;
 }
 
 /// The references list (level 1) — anchored below the base popup (above if no
 /// room), with clickable rows.
 fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
-    let base = app.hover_info_overlay.info_rect;
-    let Some(refs) = app.hover_info_overlay.refs.as_mut() else {
+    let base = app.code_nav.hover_info.info_rect;
+    let Some(refs) = app.code_nav.hover_info.refs.as_mut() else {
         return;
     };
 
@@ -150,7 +150,7 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
     let title = format!(" {} · {} refs ", refs.symbol, count);
 
     // Width: fit the host, capped.
-    let popup_width = host.width.saturating_sub(2).min(90).max(20);
+    let popup_width = host.width.saturating_sub(2).clamp(20, 90);
     let inner_w = popup_width.saturating_sub(2).max(1) as usize;
     let max_rows = (host.height / 2).clamp(3, 14);
     let visible = (count as u16).min(max_rows).max(1);
@@ -209,13 +209,13 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
 fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     let list_rect = app
-        .hover_info_overlay
+        .code_nav.hover_info
         .refs
         .as_ref()
         .map(|r| r.rect)
         .unwrap_or_default();
     let Some(preview) = app
-        .hover_info_overlay
+        .code_nav.hover_info
         .refs
         .as_mut()
         .and_then(|r| r.preview.as_mut())

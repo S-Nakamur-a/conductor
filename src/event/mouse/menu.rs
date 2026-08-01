@@ -84,7 +84,7 @@ pub(super) fn classify_menu_click(
 /// Handle a left click against the menu bar and any open dropdown. Returns
 /// `true` when the click was consumed.
 pub(super) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
-    let bar = app.layout_cache.menubar_area;
+    let bar = app.layout.cache.menubar_area;
     let bar_row = (bar.height > 0).then_some(bar.y);
 
     match classify_menu_click(&app.menu, bar_row, col, row) {
@@ -109,7 +109,7 @@ pub(super) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
 /// movement, so the caller skips the other panels' hover bookkeeping (whatever
 /// is under the dropdown shouldn't light up).
 pub(super) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
-    let bar = app.layout_cache.menubar_area;
+    let bar = app.layout.cache.menubar_area;
     let on_bar = bar.height > 0 && row == bar.y;
 
     // Highlight the title under the cursor; resolving to `None` off the row

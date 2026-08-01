@@ -44,32 +44,32 @@ impl App {
         if let Some(branch) = saved_branch
             && let Some(idx) = self.worktrees.iter().position(|w| w.branch == branch)
         {
-            self.selected_worktree = idx;
+            self.worktrees.select(idx);
         }
 
         // Point the worktree-list cursor at the restored worktree.
         self.rebuild_worktree_list_rows();
-        let sel = self.selected_worktree;
+        let sel = self.worktrees.selected_index();
         if let Some(pos) = self
-            .worktree_list_rows
+            .worktrees.rows
             .iter()
             .position(|r| matches!(r, super::WorktreeListRow::Worktree(i) if *i == sel))
         {
-            self.worktree_list_selected = pos;
+            self.worktrees.row_selected = pos;
         }
 
         // Track the loaded worktree and seed its saved file/scroll.
         let branch = self.selected_worktree_branch();
-        self.pending_view_restore = None;
+        self.view_restore.pending = None;
         if branch.is_empty() {
-            self.current_view_branch = None;
+            self.view_restore.current_branch = None;
             return;
         }
-        self.current_view_branch = Some(branch.clone());
+        self.view_restore.current_branch = Some(branch.clone());
         if let Some(store) = &self.review_store
             && let Ok(Some((Some(file), line))) = store.get_view_state(&branch)
         {
-            self.pending_view_restore = Some(PendingViewRestore {
+            self.view_restore.pending = Some(PendingViewRestore {
                 file,
                 scroll: line.max(0) as usize,
             });
@@ -85,7 +85,7 @@ impl App {
         let Some(store) = &self.review_store else {
             return;
         };
-        let (file, line) = match &self.pending_view_restore {
+        let (file, line) = match &self.view_restore.pending {
             Some(r) => (Some(r.file.clone()), r.scroll as i64),
             None => (
                 self.viewer_state.content.current_file.clone(),
@@ -98,7 +98,7 @@ impl App {
     /// Save the current worktree's view and selection. Called before exit /
     /// restart and before switching repos.
     pub fn persist_view_state(&self) {
-        if let Some(branch) = &self.current_view_branch {
+        if let Some(branch) = &self.view_restore.current_branch {
             self.save_view_for(branch);
             if let Some(store) = &self.review_store {
                 let _ = store.set_selected_worktree(branch);
@@ -111,7 +111,7 @@ impl App {
     /// longer exists. The scroll target is clamped to the file length so a
     /// shrunken file doesn't leave a blank viewer.
     pub fn consume_pending_view_restore(&mut self) {
-        let Some(restore) = self.pending_view_restore.take() else {
+        let Some(restore) = self.view_restore.pending.take() else {
             return;
         };
         match restore_disposition(
@@ -121,7 +121,7 @@ impl App {
             RestoreDisposition::Apply => {}
             RestoreDisposition::Drop => return,
             RestoreDisposition::Keep => {
-                self.pending_view_restore = Some(restore);
+                self.view_restore.pending = Some(restore);
                 return;
             }
         }
@@ -138,8 +138,8 @@ impl App {
     /// Run syntect highlighting on the currently loaded file content.
     pub fn rehighlight_viewer(&mut self) {
         // Use disjoint field borrows to satisfy the borrow checker.
-        let syntax_set = &self.syntax_set;
-        let theme = &self.syntect_theme;
+        let syntax_set = &self.highlight.syntax_set;
+        let theme = &self.highlight.theme;
         self.viewer_state.highlight_content(syntax_set, theme);
     }
 
@@ -167,7 +167,7 @@ impl App {
     /// against its resolved base ref.
     pub fn refresh_diff(&mut self) {
         let word_diff = self.config.diff.word_diff;
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             let path = wt.path.clone();
             let base_branch = self.diff_base_for(&wt.branch);
             let tab_width = self.config.viewer.tab_width;

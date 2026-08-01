@@ -1,16 +1,16 @@
-//! Detection of runnable Go tests within an open `*_test.go` file.
+//! 開いている `*_test.go` ファイルの中から、実行可能な Go のテストを検出する。
 //!
-//! Scans file content line-by-line (regex, no full Go parser) and produces a
-//! map from 1-indexed line number to a [`TestRun`] describing the `go test`
-//! command that runs that scope. Three button kinds are produced:
+//! ファイルの内容を 1 行ずつ走査し (正規表現。Go のパーサは持たない)、1 始まりの
+//! 行番号から、そのスコープを実行する `go test` コマンドを表す [`TestRun`] への
+//! マップを作る。作るボタンは 3 種類:
 //!
-//! - **File**: on line 1 — runs every top-level `Test*` function in the file.
-//! - **Func**: on each `func Test*(...)` line — runs that one test.
-//! - **Subtest**: on each `x.Run("name", ...)` line inside a test function —
-//!   runs that subtest of its enclosing test.
+//! - File: 1 行目。ファイル内のトップレベルの `Test*` 関数をすべて実行する。
+//! - Func: `func Test*(...)` の各行。そのテスト 1 つを実行する。
+//! - Subtest: テスト関数内の `x.Run("name", ...)` の各行。外側のテストの、
+//!   そのサブテストを実行する。
 //!
-//! Commands target the file's package directory (`./dir`, or `.` at the repo
-//! root) and rely on the Shell PTY's working directory being the worktree root.
+//! コマンドはファイルのパッケージディレクトリ (`./dir`、リポジトリルートなら `.`)
+//! を対象にし、Shell の PTY の作業ディレクトリが worktree ルートであることを前提にする。
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -19,21 +19,22 @@ use regex::Regex;
 
 use crate::test_run::{TestRun, TestRunKind, shell_single_quote};
 
-/// Top-level test function: `func TestXxx(` at column 0. Receiver methods
-/// (`func (s *Suite) TestX(`) are intentionally not matched — `go test -run`
-/// can't target them directly.
+/// トップレベルのテスト関数: 0 桁目から始まる `func TestXxx(`。レシーバ付きの
+/// メソッド (`func (s *Suite) TestX(`) はあえて対象外にしている。`go test -run`
+/// では直接指定できないため。
 static FUNC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^func\s+(Test\w*)\s*\(").unwrap());
 
-/// A subtest call with a string-literal name: `x.Run("name"`. Table-driven
-/// `t.Run(tt.name, …)` (non-literal) is skipped — the func-level button covers it.
+/// 名前が文字列リテラルのサブテスト呼び出し: `x.Run("name"`。テーブル駆動の
+/// `t.Run(tt.name, …)` のようなリテラルでないものは飛ばす。関数単位のボタンが
+/// それをカバーする。
 static SUBTEST_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\.Run\(\s*"([^"]*)""#).unwrap());
 
-/// Scan an open file's content for runnable Go tests.
+/// 開いているファイルの内容から実行可能な Go のテストを走査する。
 ///
-/// Returns an empty map when `relative_path` is not a `*_test.go` file or the
-/// file contains no top-level `Test*` functions.
+/// `relative_path` が `*_test.go` でないか、ファイルにトップレベルの `Test*`
+/// 関数が無い場合は空のマップを返す。
 pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMap<usize, TestRun> {
     let mut runs = HashMap::new();
     if !relative_path.ends_with("_test.go") {
@@ -41,8 +42,8 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
     }
     let target = package_target(relative_path);
 
-    // First pass: locate top-level test functions (line + name), skipping the
-    // special `TestMain` entry point (not matched by `-run`).
+    // 第 1 走査: トップレベルのテスト関数 (行と名前) を見つける。特別な入口である
+    // `TestMain` は飛ばす (`-run` の対象にならない)。
     let funcs: Vec<(usize, String)> = file_content
         .iter()
         .enumerate()
@@ -56,7 +57,7 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         return runs;
     }
 
-    // File-level button on line 1: run every top-level test in the file.
+    // 1 行目のファイル単位のボタン: ファイル内のトップレベルのテストをすべて実行する。
     let all = funcs
         .iter()
         .map(|(_, n)| n.as_str())
@@ -71,7 +72,7 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         },
     );
 
-    // Func-level buttons.
+    // 関数単位のボタン。
     for (line, name) in &funcs {
         runs.insert(
             *line,
@@ -83,9 +84,9 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         );
     }
 
-    // Subtest buttons: associate each `Run("name")` with the nearest enclosing
-    // top-level test. A `func …` line at column 0 that is not a test function
-    // ends the current test's scope.
+    // サブテストのボタン: 各 `Run("name")` を、それを囲む一番近いトップレベルの
+    // テストに結びつける。0 桁目から始まる `func …` の行がテスト関数でなければ、
+    // そこで現在のテストのスコープが終わる。
     let mut current: Option<&str> = None;
     for (i, line) in file_content.iter().enumerate() {
         if line.starts_with("func ") {
@@ -97,7 +98,7 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         }
         let Some(func) = current else { continue };
         let line_1 = i + 1;
-        // Don't shadow a func button that sits on the same line.
+        // 同じ行にある関数ボタンを上書きしない。
         if runs.contains_key(&line_1) {
             continue;
         }
@@ -105,12 +106,12 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
             continue;
         };
         let sub = sub.as_str();
-        // A single quote in the name would break the single-quoted `-run`
-        // argument; skip rather than emit a malformed command.
+        // 名前にシングルクォートが入っていると、シングルクォートで囲んだ `-run`
+        // 引数が壊れる。壊れたコマンドを出すくらいなら飛ばす。
         if sub.contains('\'') {
             continue;
         }
-        // Go maps spaces in subtest names to underscores for `-run` matching.
+        // Go は `-run` の照合にあたり、サブテスト名の空白をアンダースコアに対応づける。
         let sub_pattern = sub.replace(' ', "_");
         runs.insert(
             line_1,
@@ -126,16 +127,16 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
 }
 
 fn go_test_cmd(run_pattern: &str, target: &str) -> String {
-    // `target` is derived from a filesystem path that can come from an untrusted
-    // repo (e.g. a PR under review), so it may contain shell metacharacters or
-    // spaces — single-quote it. `run_pattern` is safe to wrap in literal single
-    // quotes: func names are `\w`-only and subtest names containing a `'` are
-    // rejected before we get here, so no embedded single quote can appear.
+    // `target` は信用できないリポジトリ (レビュー中の PR など) 由来のファイルパスから
+    // 作られるので、シェルのメタ文字や空白を含み得る。シングルクォートで囲む。
+    // `run_pattern` はリテラルのシングルクォートで囲んで安全: 関数名は `\w` のみで、
+    // `'` を含むサブテスト名はここへ来る前に弾かれているため、埋め込みの
+    // シングルクォートは現れない。
     format!("go test -run '{run_pattern}' {}", shell_single_quote(target))
 }
 
-/// The `go test` package argument for a file: `./dir` for a nested file, `.`
-/// at the repo root.
+/// ファイルに対応する `go test` のパッケージ引数。入れ子のファイルなら `./dir`、
+/// リポジトリルートなら `.`。
 fn package_target(relative_path: &str) -> String {
     match relative_path.rsplit_once('/') {
         Some((dir, _)) if !dir.is_empty() => format!("./{dir}"),
@@ -178,7 +179,7 @@ mod tests {
         );
         let runs = scan_go_test_runs(&src, "pkg/foo/foo_test.go");
 
-        // File button on line 1 runs both tests.
+        // 1 行目のファイルボタンは両方のテストを実行する。
         let file = &runs[&1];
         assert_eq!(file.kind, TestRunKind::File);
         assert_eq!(
@@ -186,12 +187,12 @@ mod tests {
             "go test -run '^(TestAlpha|TestBeta)$' './pkg/foo'"
         );
 
-        // Func button on the TestAlpha line.
+        // TestAlpha の行の関数ボタン。
         let alpha = &runs[&3];
         assert_eq!(alpha.kind, TestRunKind::Func);
         assert_eq!(alpha.command, "go test -run '^TestAlpha$' './pkg/foo'");
 
-        // Subtest button on the t.Run line (spaces → underscores).
+        // t.Run の行のサブテストボタン (空白はアンダースコアへ)。
         let sub = &runs[&4];
         assert_eq!(sub.kind, TestRunKind::Subtest);
         assert_eq!(sub.label, "TestAlpha/case one");
@@ -200,7 +201,7 @@ mod tests {
             "go test -run '^TestAlpha$/^case_one$' './pkg/foo'"
         );
 
-        // Func button on the TestBeta line.
+        // TestBeta の行の関数ボタン。
         assert_eq!(runs[&7].command, "go test -run '^TestBeta$' './pkg/foo'");
     }
 
@@ -212,7 +213,7 @@ mod tests {
              func TestReal(t *testing.T) {}\n",
         );
         let runs = scan_go_test_runs(&src, "a_test.go");
-        // Line 1 file button only lists TestReal; TestMain has no button.
+        // 1 行目のファイルボタンは TestReal だけを並べる。TestMain にはボタンが無い。
         assert_eq!(runs[&1].command, "go test -run '^(TestReal)$' '.'");
         assert!(!runs.contains_key(&2));
         assert_eq!(runs[&3].kind, TestRunKind::Func);
@@ -227,8 +228,8 @@ mod tests {
 
     #[test]
     fn hostile_directory_name_is_shell_quoted() {
-        // A dir name with shell metacharacters (as an untrusted repo could
-        // contain) must be neutralized by quoting — the `;` stays inside quotes.
+        // シェルのメタ文字を含むディレクトリ名 (信用できないリポジトリならあり得る)
+        // はクォートで無力化されなければならない。`;` はクォートの内側に留まる。
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         let runs = scan_go_test_runs(&src, "a; rm -rf x/x_test.go");
         assert_eq!(runs[&2].command, "go test -run '^TestX$' './a; rm -rf x'");
@@ -238,7 +239,7 @@ mod tests {
     fn single_quote_in_directory_is_escaped() {
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         let runs = scan_go_test_runs(&src, "o'clock/x_test.go");
-        // `'\''` closes the quote, adds an escaped quote, and reopens it.
+        // `'\''` はクォートを閉じ、エスケープしたクォートを足し、また開く。
         assert_eq!(runs[&2].command, "go test -run '^TestX$' './o'\\''clock'");
     }
 

@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
-    let content_lines = app.repo_list.len() as u16;
+    let content_lines = app.repo.known.len() as u16;
     let popup_height = (content_lines + 2)
         .min(12)
         .min(area.height.saturating_sub(4));
@@ -31,7 +31,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    if app.repo_list.is_empty() {
+    if app.repo.known.is_empty() {
         let paragraph =
             Paragraph::new("  No repositories configured.").style(Style::default().fg(theme.muted));
         frame.render_widget(paragraph, inner);
@@ -39,7 +39,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let items: Vec<ListItem> = app
-        .repo_list
+        .repo.known
         .iter()
         .enumerate()
         .map(|(i, path)| {
@@ -49,7 +49,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 .unwrap_or_else(|| path.display().to_string());
             let full_path = path.display().to_string();
 
-            let active_marker = if i == app.repo_list_index {
+            let active_marker = if i == app.repo.known_index {
                 "\u{25cf} "
             } else {
                 "  "
@@ -66,7 +66,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
             let line = Line::from(vec![
                 Span::styled(
                     format!(" {active_marker}"),
-                    if i == app.repo_list_index {
+                    if i == app.repo.known_index {
                         Style::default().fg(theme.success)
                     } else {
                         Style::default().fg(theme.muted)

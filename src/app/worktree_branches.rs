@@ -7,7 +7,7 @@ use super::*;
 impl App {
     /// Prune all stale worktrees.
     pub fn execute_prune(&mut self) {
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
                 let mut pruned = 0;
                 for name in &self.overlays.prune.stale {
@@ -38,7 +38,7 @@ impl App {
     /// picks up the refreshed list so the overlay updates without blocking.
     pub fn load_switch_branches(&mut self) {
         // Show cached refs instantly.
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.list_remote_branches() {
                 Ok(branches) => {
                     self.overlays.switch_branch.branches = branches;
@@ -57,7 +57,7 @@ impl App {
         }
 
         // Fetch in background and send updated branch list back.
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         self.bg.branch.start(move |tx| {
             let engine = match git_engine::GitEngine::open(&repo_path) {
                 Ok(e) => e,
@@ -115,14 +115,14 @@ impl App {
             return;
         }
 
-        let wt = match self.worktrees.get(self.selected_worktree) {
+        let wt = match self.worktrees.selected() {
             Some(wt) => wt,
             None => return,
         };
 
         let branch = wt.branch.clone();
         let wt_path = wt.path.clone();
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
 
         self.set_status(format!("Pulling '{branch}'..."), StatusLevel::Info);
 
@@ -197,7 +197,7 @@ impl App {
     /// Load branches available as base for worktree creation.
     /// Lists remote branches and pre-selects `origin/<main_branch>`.
     pub fn load_base_branches(&mut self) {
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
                 // Prefer remote-tracking branches; fall back to local branches
                 // when the repo has no remote (e.g. a local-only project),
@@ -275,7 +275,7 @@ impl App {
             self.overlays.cherry_pick.commits.clear();
             return;
         }
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.list_branch_commits(&branch, 20) {
                 Ok(commits) => {
                     self.overlays.cherry_pick.commits = commits;
@@ -306,7 +306,7 @@ impl App {
                 return;
             }
         };
-        let wt_path = match self.worktrees.get(self.selected_worktree) {
+        let wt_path = match self.worktrees.selected() {
             Some(wt) => wt.path.clone(),
             None => {
                 self.set_status("No worktree selected.".to_string(), StatusLevel::Error);
@@ -314,7 +314,7 @@ impl App {
             }
         };
 
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.cherry_pick_to_worktree(&wt_path, &commit.oid) {
                 Ok(msg) => {
                     self.set_status(msg, StatusLevel::Success);
