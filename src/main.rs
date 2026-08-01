@@ -4,6 +4,7 @@ mod ai_caller;
 mod anim;
 mod app;
 mod background;
+mod cc_hook;
 mod cc_notify;
 mod ccusage_cache;
 mod claude_log;

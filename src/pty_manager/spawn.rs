@@ -47,6 +47,13 @@ impl PtyManager {
         // Build the command depending on the session kind, then hand off to the
         // shared spawn path. For Claude sessions we also pin down the session id
         // so the reflow transcript view can later open this exact panel's log.
+        //
+        // パネルの識別子。`SessionStart` フックへ環境変数で渡し、フックが
+        // 「どのパネルの通知か」を名乗れるようにする (`cc_hook`)。セッションを
+        // 作る前に決めるのは、コマンドを組み立てる時点で環境変数に入れる必要が
+        // あるため。
+        let panel_id = Uuid::new_v4().to_string();
+
         let (cmd, claude_session_id) = match kind {
             SessionKind::ClaudeCode => {
                 let mut c = CommandBuilder::new("claude");
@@ -71,6 +78,30 @@ impl PtyManager {
                 // Let the conductor MCP server find the review database.
                 let db_path = repo_root.join(".conductor").join("conductor.db");
                 c.env("CONDUCTOR_DB_PATH", db_path);
+
+                // `/clear` は書き込み先を新しい session id の `.jsonl` に移すが、
+                // 旧ログにも新ログにも相互参照が残らない。`SessionStart` フックは
+                // そのパネル自身の Claude プロセスの中で走り、新しい session id を
+                // 持って来てくれるので、これを差し込んでおくとローテーションを
+                // 推測ではなく事実として受け取れる。
+                //
+                // `--settings` は追加レイヤーとして重なる (実測: ユーザ全体の
+                // settings もプロジェクトの `.claude/settings.json` もそのまま
+                // 生き残る) ので、ユーザ自身のフックを潰す心配はない。
+                match Self::write_hook_settings(repo_root) {
+                    Ok(path) => {
+                        c.arg("--settings");
+                        c.arg(&path);
+                        c.env(crate::cc_hook::PANEL_ID_ENV, &panel_id);
+                        c.env(
+                            crate::cc_hook::NOTIFY_SOCK_ENV,
+                            crate::cc_notify::socket_path(repo_root),
+                        );
+                    }
+                    // 書けなくてもパネルは動かす。ローテーション追跡は
+                    // `claude_sessions::rotation` の推測にフォールバックする。
+                    Err(e) => log::warn!("could not install the Claude session hook: {e}"),
+                }
                 (c, Some(session_id))
             }
             SessionKind::Shell => (CommandBuilder::new(shell_path), None),
@@ -81,8 +112,49 @@ impl PtyManager {
         let idx = self.finish_spawn(kind, worktree, label, working_dir, rows, cols, cmd)?;
         if let Some(session) = self.sessions.get_mut(idx) {
             session.claude_session_id = claude_session_id;
+            // フックが名乗る id と一致させる。
+            session.id = panel_id;
         }
         Ok(idx)
+    }
+
+    /// `SessionStart` フックを差し込む settings を `.conductor/` に書き、その
+    /// パスを返す。
+    ///
+    /// フックのコマンドは conductor 自身 (`conductor cc-hook`)。シェルスクリプトや
+    /// `jq` を挟まないのは、signal をバイナリと同じ成果物に載せるため — 別
+    /// リリースチャネルに置くとバージョンがずれた組み合わせで黙って効かなくなる。
+    /// 実行ファイルは絶対パスで書くので、`claude` の PATH に conductor が
+    /// 無くても動く。
+    pub(super) fn write_hook_settings(repo_root: &Path) -> Result<PathBuf> {
+        let exe = std::env::current_exe().context("could not locate the conductor executable")?;
+        let dir = repo_root.join(".conductor");
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("could not create {}", dir.display()))?;
+        let path = dir.join("claude-hooks.json");
+
+        let settings = serde_json::json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{} cc-hook", Self::shell_quote(&exe.to_string_lossy())),
+                    }],
+                }],
+            },
+        });
+        // spawn のたびに書き直す。conductor の置き場所が変わっても追随する。
+        std::fs::write(&path, serde_json::to_vec_pretty(&settings)?)
+            .with_context(|| format!("could not write {}", path.display()))?;
+        Ok(path)
+    }
+
+    /// フックのコマンド行に埋める実行ファイルパスを POSIX シェル用にクォートする。
+    ///
+    /// Claude Code はフックの `command` をシェルに渡すので、空白や引用符を含む
+    /// パス (`/Users/me/my tools/conductor` など) はそのままでは分割される。
+    pub(super) fn shell_quote(raw: &str) -> String {
+        format!("'{}'", raw.replace('\'', r"'\''"))
     }
 
     /// Spawn an external editor (`$VISUAL` / `$EDITOR`) on a single `file` as a
@@ -239,6 +311,7 @@ impl PtyManager {
             // Populated by `spawn_session` for Claude panels after this returns;
             // Shell/Editor sessions keep it `None`.
             claude_session_id: None,
+            spawned_at: std::time::SystemTime::now(),
             is_active: false,
             master: pair.master,
             writer,

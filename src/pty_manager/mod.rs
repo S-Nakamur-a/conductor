@@ -14,12 +14,12 @@
 //! input-waiting detection), [`reader`] (the background reader thread), and
 //! [`locale`] (UTF-8 locale/chunking helpers).
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use portable_pty::NativePtySystem;
@@ -89,6 +89,12 @@ pub struct PtySession {
     /// open *this* panel's log instead of merely the worktree's latest session —
     /// essential when one worktree hosts multiple Claude panels (CC:1, CC:2, …).
     pub claude_session_id: Option<String>,
+    /// 子プロセスを起動した時刻。
+    ///
+    /// `/clear` によるセッションログのローテーション追跡で、起動より前に
+    /// 始まっていたログを後続と誤認しないための下限として使う (古いセッションを
+    /// `--resume` した直後は pin したログの mtime が何日も前になりうる)。
+    pub spawned_at: std::time::SystemTime,
     /// Whether this session is the currently displayed (active) session.
     pub is_active: bool,
 
@@ -204,15 +210,52 @@ impl PtyManager {
         self.sessions.len()
     }
 
-    /// The Claude session id and working directory for the session at `idx`,
-    /// when it is a Claude panel with a known id. Used by the reflow transcript
-    /// view to open the log for a *specific* panel rather than the worktree's
-    /// most recently written session. Returns `None` for out-of-range indices,
-    /// non-Claude sessions, or Claude sessions whose id is unknown.
-    pub fn claude_session_ref(&self, idx: usize) -> Option<(PathBuf, String)> {
+    /// The Claude session id, working directory and spawn time for the session
+    /// at `idx`, when it is a Claude panel with a known id. Used by the reflow
+    /// transcript view to open the log for a *specific* panel rather than the
+    /// worktree's most recently written session. Returns `None` for
+    /// out-of-range indices, non-Claude sessions, or Claude sessions whose id
+    /// is unknown.
+    pub fn claude_session_ref(&self, idx: usize) -> Option<(PathBuf, String, SystemTime)> {
         let session = self.sessions.get(idx)?;
         let id = session.claude_session_id.as_ref()?;
-        Some((session.working_dir.clone(), id.clone()))
+        Some((session.working_dir.clone(), id.clone(), session.spawned_at))
+    }
+
+    /// `panel_id` のパネルが書き込んでいる Claude セッションの id を差し替える。
+    ///
+    /// 呼ぶのは `SessionStart` フック経由の通知 ([`crate::cc_hook`]) だけ。
+    /// フックはそのパネル自身の Claude プロセスの中で走るので、これは推測では
+    /// なく事実。`/clear` や `/resume` でログがローテーションしても、以降の
+    /// トランスクリプト解決が正しいファイルを指す。
+    ///
+    /// 該当パネルが無い (すでに閉じた等) 場合や、値が変わらない場合は `false`。
+    pub fn set_claude_session_id(&mut self, panel_id: &str, session_id: String) -> bool {
+        let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|s| s.id == panel_id && s.kind == SessionKind::ClaudeCode)
+        else {
+            return false;
+        };
+        if session.claude_session_id.as_deref() == Some(session_id.as_str()) {
+            return false;
+        }
+        session.claude_session_id = Some(session_id);
+        true
+    }
+
+    /// `idx` 以外の Claude パネルが pin している session id の集合。
+    ///
+    /// `/clear` のローテーション追跡で、他パネルが自分のログとして持っている
+    /// セッションを後続候補から外すために使う。
+    pub fn other_claude_session_ids(&self, idx: usize) -> HashSet<String> {
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != idx)
+            .filter_map(|(_, s)| s.claude_session_id.clone())
+            .collect()
     }
 
     /// Read-only access to the sessions slice.

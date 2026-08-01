@@ -32,6 +32,9 @@ pub fn handle_cli_fast_path() -> Option<Result<()>> {
             Some(Ok(()))
         }
         "mcp-serve" => Some(crate::mcp_serve::run()),
+        // Claude Code の SessionStart フックとして呼ばれる。`mcp-serve` と同じく
+        // 端末に触る前に処理する必要がある (stdin/stdout を占有するため)。
+        "cc-hook" => Some(crate::cc_hook::run()),
         _ => None,
     }
 }
@@ -42,6 +45,7 @@ fn print_help() {
 
 Usage: conductor [REPO_PATH]
        conductor mcp-serve [--db <PATH>]
+       conductor cc-hook
 
   REPO_PATH    Git repository to open (defaults to the current directory)
 
@@ -52,6 +56,13 @@ Commands:
 
     --db <PATH>    Review database to serve. Defaults to $CONDUCTOR_DB_PATH,
                    then .conductor/conductor.db in the surrounding repository.
+
+  cc-hook      Claude Code SessionStart hook. Reads the hook payload on stdin
+               and reports the panel's current session id back to the running
+               conductor, so scrolling up shows the transcript this panel is
+               actually writing after a /clear. Wired up automatically via
+               --settings when conductor spawns a Claude panel; not usually
+               run by hand.
 
 Options:
   -V, --version    Print version and exit
