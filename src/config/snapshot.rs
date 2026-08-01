@@ -97,7 +97,5 @@ pub fn has_restart_changes(old: &Config, new: &Config) -> bool {
         || old.updates.check_interval_secs != new.updates.check_interval_secs
         || old.ccusage.enabled != new.ccusage.enabled
         || old.ccusage.poll_interval_secs != new.ccusage.poll_interval_secs
-        || old.review.prompt_template != new.review.prompt_template
-        || old.review.prompt_action != new.review.prompt_action
         || old.keybinds != new.keybinds
 }

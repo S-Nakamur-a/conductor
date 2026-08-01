@@ -284,7 +284,7 @@ impl McpServer {
         // CHECK enforcing they agree, and `commit_ref` defaults to 'HEAD'.
         let created = self.store().add_review(
             &branch,
-            rel_path,
+            &rel_path,
             args.line_start,
             args.line_end,
             kind,
@@ -318,7 +318,7 @@ impl McpServer {
         ok_text(format!(
             "Comment created (id: {}) at {} on branch \"{branch}\". ({count} unresolved self-review comment(s) now on this branch{nudge}.)",
             short_id(&created.id),
-            line_range(rel_path, args.line_start, args.line_end),
+            line_range(&rel_path, args.line_start, args.line_end),
         ))
     }
 
@@ -392,10 +392,21 @@ impl McpServer {
             }
         }
         // Validate every step before writing any of them, so a bad step late in
-        // the list cannot leave a half-saved walkthrough.
+        // the list cannot leave a half-saved walkthrough. `file_path` is also
+        // normalised here, and the normalised form is what gets stored: steps
+        // are matched against `FileDiff::path` by string equality when the
+        // Explorer jumps to one, so a step saved as `./src/a.rs` would validate,
+        // save, render — and then report "not in this diff" for a file sitting
+        // in the list. `create_comment` has always normalised; this is the same
+        // call, on the same helper.
+        let mut normalized_paths: Vec<String> = Vec::with_capacity(args.steps.len());
         for step in &args.steps {
             if let Err(msg) = ensure_repo_relative(&step.file_path, "step file_path") {
                 return err_text(msg);
+            }
+            match normalize_repo_relative(&step.file_path, "step file_path") {
+                Ok(p) => normalized_paths.push(p),
+                Err(msg) => return err_text(msg),
             }
             for (value, what) in [
                 (&step.file_path, "step file_path"),
@@ -437,8 +448,9 @@ impl McpServer {
         let steps: Vec<NewWalkthroughStep> = args
             .steps
             .iter()
-            .map(|s| NewWalkthroughStep {
-                file_path: s.file_path.clone(),
+            .zip(normalized_paths)
+            .map(|(s, file_path)| NewWalkthroughStep {
+                file_path,
                 line_start: s.line_start,
                 line_end: s.line_end,
                 kind: s.kind.into(),
@@ -647,6 +659,69 @@ mod tests {
         let (walkthrough, saved_steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
         assert_eq!(saved_steps.len(), 2);
         assert!(text.contains(&format!("(id: {}, 2 step(s))", short_id(&walkthrough.id))));
+    }
+
+    /// The regression this fixes: a step whose `file_path` is spelled any way
+    /// other than git's own spelling used to be stored verbatim, and the
+    /// Explorer — which matches it against `FileDiff::path` by string equality
+    /// — then reported the file as not being in the diff. What lands in the
+    /// database has to be the canonical spelling.
+    #[test]
+    fn save_walkthrough_stores_canonical_paths() {
+        let (server, _dir) = test_server();
+        let steps = ["./src/foo.rs", "src//bar.rs", "  src/baz.rs  "]
+            .iter()
+            .enumerate()
+            .map(|(i, path)| WalkthroughStep {
+                seq: i as i64,
+                file_path: (*path).into(),
+                line_start: None,
+                line_end: None,
+                kind: StepKindArg::Core,
+                title: "Step".into(),
+                body: "Body".into(),
+            })
+            .collect();
+        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
+            branch: "feat/x".into(),
+            title: "Title".into(),
+            summary: "Summary".into(),
+            steps,
+        })))
+        .unwrap();
+        assert_eq!(result.is_error, Some(false), "{}", text_of(&result));
+
+        let store = server.store();
+        let (_, saved) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(
+            saved.iter().map(|s| s.file_path.as_str()).collect::<Vec<_>>(),
+            vec!["src/foo.rs", "src/bar.rs", "src/baz.rs"]
+        );
+    }
+
+    /// A step path that normalises away to nothing anchors to no file at all,
+    /// so it is refused rather than saved.
+    #[test]
+    fn save_walkthrough_rejects_a_path_that_normalises_to_empty() {
+        let (server, _dir) = test_server();
+        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
+            branch: "feat/x".into(),
+            title: "Title".into(),
+            summary: "Summary".into(),
+            steps: vec![WalkthroughStep {
+                seq: 0,
+                file_path: "./".into(),
+                line_start: None,
+                line_end: None,
+                kind: StepKindArg::Core,
+                title: "Step".into(),
+                body: "Body".into(),
+            }],
+        })))
+        .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(text_of(&result).contains("must not be empty"));
     }
 
     #[test]

@@ -19,6 +19,23 @@ impl App {
             self.review_state.load_comments(store, &wt);
             // Walkthrough (if any) rides along with the same branch scope.
             self.current_walkthrough = store.get_walkthrough(&wt).ok().flatten();
+            // Re-anchor each step onto the diff's own spelling of its file
+            // while we have both in hand. The Viewer's step banner and its
+            // line-range underline compare `current_file` against
+            // `step.file_path` directly, so a step whose stored path only
+            // *resolves* to a diff file (a `git diff` `b/` prefix, a path
+            // written relative to a subdirectory) would jump correctly and
+            // then render neither. Steps that already match, and steps whose
+            // file isn't in the diff at all, are left exactly as they are.
+            if let Some((_, steps)) = self.current_walkthrough.as_mut() {
+                for step in steps.iter_mut() {
+                    if let Some(resolved) = self.diff_state.resolve_changed_path(&step.file_path)
+                        && resolved != step.file_path
+                    {
+                        step.file_path = resolved;
+                    }
+                }
+            }
             // Rebuild per-file cache for the currently viewed file.
             if let Some(file_path) = self.viewer_state.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);

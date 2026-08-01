@@ -1,26 +1,44 @@
-//! Data model and generation trigger for AI-generated PR walkthroughs.
+//! Data model and generation for AI-generated PR walkthroughs.
 //!
-//! A walkthrough is a Claude-authored, ordered tour of a branch's diff
+//! A walkthrough is a model-authored, ordered tour of a branch's diff
 //! (`walkthroughs` + `walkthrough_steps` in the review database, persisted
 //! and queried via [`crate::review_store::ReviewStore`]). This module holds
-//! the plain data types shared by the store, the UI pane, and the generator:
-//! a headless `claude -p` process spawned in the reviewed worktree that
-//! explores the diff and saves the result through the conductor MCP server's
-//! `save_walkthrough` tool. The database row's `status` column is the source
-//! of truth for completion; the process handle here only detects failures
-//! (spawn error, non-zero exit, exit without saving, timeout).
+//! the plain data types shared by the store and the UI pane, plus the
+//! generation task itself.
+//!
+//! ## How generation runs
+//!
+//! Through the one configurable AI seam, [`crate::ai_caller`], exactly like
+//! smart-worktree naming: Conductor owns the prompt and the parsing, and the
+//! user owns *which* model answers via `[api] provider` / `[api] command`.
+//! Conductor never spawns a `claude` process of its own — that rule holds
+//! across this entire codebase, and this module used to be the last exception.
+//!
+//! The task is agentic in nature: the model has to read the branch's diff, and
+//! usually the callers/callees around it, before it can narrate anything. The
+//! command therefore runs with its working directory set to the reviewed
+//! worktree (see the protocol notes in [`crate::ai_caller`]), and the reply
+//! comes back as one JSON object that [`parse_generated`] turns into steps.
+//!
+//! ## Why the reply is JSON rather than an MCP tool call
+//!
+//! The MCP `save_walkthrough` tool still exists and is still how the external
+//! `/conductor-walkthrough` command saves its work. It is not how *this* path
+//! saves, because the seam above is a plain stdin/stdout text protocol: there
+//! is no argv Conductor controls, so there is nowhere to inject an
+//! `--mcp-config`. Conductor parses the JSON and writes the rows itself, which
+//! also means a malformed reply fails loudly here instead of leaving a row
+//! stuck in `generating`.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
-
-use anyhow::{Context, Result};
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 /// Generation status of a walkthrough.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkthroughStatus {
-    /// A background Claude Code session is producing the steps.
+    /// A background generation is producing the steps.
     Generating,
     /// Steps are saved and ready to display.
     Ready,
@@ -168,226 +186,45 @@ pub struct NewWalkthroughStep {
     pub body: String,
 }
 
-/// Kill a generation that has been running longer than this. Claude writes
-/// its result through the MCP tool well before this on any reasonable PR;
-/// past it we assume the session is wedged.
+/// Wall-clock budget for one generation, handed to the AI seam as this task's
+/// timeout so it is not capped by `[api] command_timeout_secs` (which is sized
+/// for a few seconds of smart-worktree naming). Reading a branch diff and
+/// narrating it takes minutes; past this we assume the session is wedged.
 pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// Tools the headless generation session may use. `spawn_generation` always
-/// passes `--strict-mcp-config`, so the session sees only the MCP server
-/// registered by its own `--mcp-config` — whose server name is always
-/// `conductor` (see `self_mcp_config`) — and never the user's ambient
-/// marketplace-plugin server. That makes the tool-name form unambiguous:
-/// only `mcp__conductor__*` needs listing here.
+/// The system prompt: what a walkthrough is, and the exact reply shape.
 ///
-/// `create_comment` lets the session drop inline review comments on the
-/// genuinely-hard-to-understand spots it finds while touring the diff, so a
-/// single generation produces both the Explorer walkthrough and the in-Viewer
-/// 💬 annotations. It only writes to the local review DB (no network), so
-/// unlike a write-capable git subcommand it opens no exfiltration path.
-///
-/// This session reads a PR's diff, which may be adversarial (a malicious
-/// contributor's prompt-injection attempt), so the git subcommands are
-/// restricted to read-only ones — no `git push`, `git remote add`, etc. — to
-/// close off any exfiltration path that would otherwise be reachable purely
-/// through allowedTools.
-const GENERATION_ALLOWED_TOOLS: &str = "mcp__conductor__save_walkthrough,\
-mcp__conductor__create_comment,\
-Read,Grep,Glob,\
-Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git merge-base:*),\
-Bash(git rev-parse:*),Bash(git status:*),Bash(git branch:*)";
+/// Mirrors `plugins/conductor/commands/conductor-walkthrough.md` (kept for
+/// marketplace-plugin users, which saves through the MCP tool instead) but is
+/// embedded here so generation works regardless of which slash commands the
+/// installed plugin cache has.
+const GENERATION_SYSTEM_PROMPT: &str = r#"You build reviewer walkthroughs: an ordered tour of a branch's change that a reviewer follows step by step, each step anchored to a file and line range.
 
-/// What a [`WalkthroughGeneration::poll`] observed about the child process.
-pub enum GenerationPoll {
-    /// Still running (and within the timeout).
-    Running,
-    /// Exited with success. Whether a walkthrough was actually saved is up
-    /// to the database row — the caller must check `walkthroughs.status`.
-    Exited,
-    /// Exited with a non-zero status, or polling the process failed.
-    Failed(String),
-    /// Ran past [`GENERATION_TIMEOUT`]; the process has been killed.
-    TimedOut,
-}
+Use your tools freely: this task cannot be done without reading the repository in your working directory. Run git to see the diff, and read the changed files and the code around them. Only when you have finished exploring, answer with the JSON described below and nothing else.
 
-/// Handle to an in-flight walkthrough generation: the headless `claude`
-/// child plus enough context to report failures against the right branch.
-pub struct WalkthroughGeneration {
-    pub branch: String,
-    child: Child,
-    started: Instant,
-    /// Where the child's stdout/stderr go — named in error messages so the
-    /// user can inspect what the session actually did.
-    pub log_path: PathBuf,
-}
+Order the steps as a story: intent -> core -> ripple -> test.
+- intent: what this change wanted to achieve (background, motivation).
+- core: what was changed to achieve it, and its effect on existing code. Do NOT compare alternative designs — reviewers ask those questions themselves.
+- ripple: knock-on changes (call-site updates, config/schema follow-ups).
+- test: a summary of what behavior each test verifies, detailed enough that a reviewer can skip reading the full test diff.
 
-impl WalkthroughGeneration {
-    /// Non-blocking check of the child process, enforcing the timeout.
-    pub fn poll(&mut self) -> GenerationPoll {
-        match self.child.try_wait() {
-            Ok(Some(status)) if status.success() => GenerationPoll::Exited,
-            Ok(Some(status)) => GenerationPoll::Failed(format!(
-                "claude exited with {status} (log: {})",
-                self.log_path.display()
-            )),
-            Ok(None) => {
-                if self.started.elapsed() > GENERATION_TIMEOUT {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    GenerationPoll::TimedOut
-                } else {
-                    GenerationPoll::Running
-                }
-            }
-            Err(e) => GenerationPoll::Failed(format!("failed to poll claude process: {e}")),
-        }
-    }
+There is no fixed step count — match the actual change.
 
-    /// Kill the child (used when the app shuts down mid-generation).
-    pub fn abort(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
+Output ONLY a JSON object, no markdown fences and no explanation, with these fields:
+- "title": a one-line title for the whole walkthrough.
+- "summary": the overview of the change. This is stored as the branch's change summary and shown full-panel as Conductor's SUMMARY pseudo-file, so write it like a PR description — what the change is for, why these files are touched, and anything a reviewer should know up front (including what is deliberately out of scope). Markdown is rendered.
+- "steps": an array, in tour order, of objects with:
+    "file_path"  (string, repo-relative, e.g. "src/foo.rs" — never absolute, never prefixed with "a/" or "b/", never starting with "./")
+    "line_start" (integer or null, 1-based line number on the NEW side)
+    "line_end"   (integer or null, 1-based)
+    "kind"       ("intent" | "core" | "ripple" | "test")
+    "title"      (string, one line)
+    "body"       (string, the explanation; Markdown is rendered)
+- "comments": an array (possibly empty) of inline notes for the few spots that are genuinely hard to understand — tricky logic whose intent isn't obvious at a glance, a non-obvious tradeoff, or a subtle edge case a reviewer could miss. Each object has "file_path", "line_start", "line_end" (integer or null), and "body" (1-3 sentences explaining *why* it works / where the subtlety is). This is high-signal and low-frequency: a handful per change at most, and an empty array when nothing is genuinely tricky. Do NOT comment on self-evident changes (renames, boilerplate, formatting, imports).
 
-#[cfg(test)]
-impl WalkthroughGeneration {
-    /// Wrap an arbitrary child process in a generation handle. Lets the
-    /// registry tests below drive real process lifecycles (exit, kill,
-    /// timeout) without launching a `claude` session.
-    fn for_test(branch: &str, child: Child, started: Instant) -> Self {
-        Self {
-            branch: branch.to_string(),
-            child,
-            started,
-            log_path: PathBuf::from("/dev/null"),
-        }
-    }
-}
+Every file_path must be repo-relative: the reviewer's diff list matches these against git's own paths, so a step whose path is spelled any other way cannot be opened."#;
 
-/// A generation that stopped running, as handed back by
-/// [`WalkthroughGenerations::take_finished`]. Carries the context the caller
-/// needs to reconcile the database row it left behind — which branch it was
-/// for, and where its log is — because the handle itself is gone by then.
-pub struct FinishedGeneration {
-    pub branch: String,
-    pub log_path: PathBuf,
-    pub outcome: GenerationPoll,
-}
-
-/// Every walkthrough generation in flight in this Conductor instance, at most
-/// one per branch.
-///
-/// Keyed by branch, not by "one at a time", because the branch is the only
-/// thing a generation actually contends for: `begin_walkthrough` deletes and
-/// re-inserts the `walkthroughs` row for its branch and `save_walkthrough`
-/// replaces it, so two sessions on one branch would race for a single row and
-/// the loser's steps would vanish. Sessions on *different* branches — which
-/// means different worktrees, since git won't check one branch out twice —
-/// touch disjoint rows, disjoint log files, and a database that is already
-/// WAL + `busy_timeout` (see `review_store::schema`), so they can run side by
-/// side. Serializing them was over-broad: it made a reviewer touring one
-/// worktree unable to start a walkthrough in another.
-#[derive(Default)]
-pub struct WalkthroughGenerations {
-    by_branch: HashMap<String, WalkthroughGeneration>,
-}
-
-impl WalkthroughGenerations {
-    /// Whether a generation for `branch` is currently in flight.
-    pub fn is_generating(&self, branch: &str) -> bool {
-        self.by_branch.contains_key(branch)
-    }
-
-    /// Register a freshly spawned generation. The caller is expected to have
-    /// checked [`Self::is_generating`] first: inserting over a live handle
-    /// would drop (and orphan) the running `claude` child and strand its
-    /// branch's row in `generating` forever.
-    pub fn insert(&mut self, generation: WalkthroughGeneration) {
-        debug_assert!(
-            !self.is_generating(&generation.branch),
-            "would orphan the in-flight generation for {}",
-            generation.branch
-        );
-        self.by_branch
-            .insert(generation.branch.clone(), generation);
-    }
-
-    /// Poll every in-flight generation, removing the ones that are no longer
-    /// running and returning what each one did.
-    ///
-    /// Removal is what makes a wedged or externally-killed session
-    /// self-healing: whatever the child did — saved and exited, crashed, was
-    /// `kill`ed from outside, or ran past [`GENERATION_TIMEOUT`] — its slot is
-    /// released here, so the next request for that branch starts a fresh
-    /// session instead of being told one is already running.
-    pub fn take_finished(&mut self) -> Vec<FinishedGeneration> {
-        let mut finished = Vec::new();
-        self.by_branch.retain(|branch, generation| {
-            let outcome = generation.poll();
-            if matches!(outcome, GenerationPoll::Running) {
-                return true;
-            }
-            finished.push(FinishedGeneration {
-                branch: branch.clone(),
-                log_path: generation.log_path.clone(),
-                outcome,
-            });
-            false
-        });
-        finished
-    }
-
-    /// Whether nothing is in flight (lets the caller skip polling entirely).
-    pub fn is_empty(&self) -> bool {
-        self.by_branch.is_empty()
-    }
-
-    /// Kill every in-flight generation (used when the app shuts down).
-    pub fn abort_all(&mut self) {
-        for (_, mut generation) in self.by_branch.drain() {
-            generation.abort();
-        }
-    }
-}
-
-/// Build the `--mcp-config` JSON that registers conductor's own `mcp-serve`
-/// subcommand as the headless generation session's MCP server.
-///
-/// Points at [`std::env::current_exe`] rather than a path inside the repo, so
-/// it works in any repository, not just conductor's own — see
-/// `src/mcp_serve/mod.rs`'s module doc for why the server is embedded in the
-/// binary at all.
-///
-/// Both paths are rejected outright (`bail!`, not lossy-converted) if they
-/// aren't valid UTF-8: `to_string_lossy` would silently substitute U+FFFD
-/// and register a server at a path that doesn't exist, so the session would
-/// launch tool-less and exit 0 — the exact silent-failure mode this
-/// function exists to close off (see `src/refresh_pipe.rs`'s `RefreshPipe::new`
-/// for the same pattern).
-fn self_mcp_config(db_path: &Path) -> Result<String> {
-    let exe = std::env::current_exe().context("failed to resolve conductor's own path")?;
-    let exe = exe.to_str().ok_or_else(|| {
-        anyhow::anyhow!("conductor's own path is not valid UTF-8: {}", exe.display())
-    })?;
-    let db_path = db_path.to_str().ok_or_else(|| {
-        anyhow::anyhow!("database path is not valid UTF-8: {}", db_path.display())
-    })?;
-    let config = serde_json::json!({
-        "mcpServers": {
-            "conductor": {
-                "command": exe,
-                "args": ["mcp-serve", "--db", db_path],
-            }
-        }
-    });
-    Ok(config.to_string())
-}
-
-/// The generation instructions handed to the headless session. Mirrors
-/// `plugins/conductor/commands/conductor-walkthrough.md` (kept for
-/// marketplace-plugin users) but is embedded here so generation works
-/// regardless of which slash commands the installed plugin cache has.
+/// The per-run instruction: which branch, which base, which language.
 fn generation_prompt(branch: &str, base_ref: Option<&str>, language: Option<&str>) -> String {
     let base_hint = match base_ref {
         Some(b) => format!("The base branch is `{b}`."),
@@ -401,161 +238,235 @@ fn generation_prompt(branch: &str, base_ref: Option<&str>, language: Option<&str
     };
     format!(
         "Read this branch's merge-base diff against its base branch and build a reviewer \
-walkthrough (an ordered tour of the change), then save it with the conductor MCP server's \
-`save_walkthrough` tool.\n\
+walkthrough of it.\n\
 \n\
-{base_hint} The branch under review is `{branch}`. Use `git diff <base>...HEAD` (three-dot, \
-merge-base) to see the change. Read not only the changed files but, where needed, their \
-callers/callees so you understand the whole picture.\n\
+{base_hint} The branch under review is `{branch}`, checked out in your working directory. \
+Use `git diff <base>...HEAD` (three-dot, merge-base) to see the change. Read not only the \
+changed files but, where needed, their callers/callees so you understand the whole \
+picture.\n\
 \n\
-Order the steps as a story: intent -> core -> ripple -> test.\n\
-- intent: what this change wanted to achieve (background, motivation).\n\
-- core: what was changed to achieve it, and its effect on existing code. Do NOT compare \
-alternative designs — reviewers ask those questions themselves.\n\
-- ripple: knock-on changes (call-site updates, config/schema follow-ups).\n\
-- test: a summary of what behavior each test verifies, detailed enough that a reviewer can \
-skip reading the full test diff.\n\
-\n\
-Each step needs: file_path (repo-relative), optional line_start/line_end (new-side line \
-numbers), kind, title, body. There is no fixed step count — match the actual change.\n\
-\n\
-When all steps are assembled, call the `save_walkthrough` tool exactly once with: \
-branch = `{branch}`, a one-line title, a summary, and the steps (seq starting at 0).\n\
-\n\
-The summary is not throwaway text: it is stored as the branch's change summary and shown \
-full-panel as Conductor's SUMMARY pseudo-file, so write it like a PR description — what the \
-change is for, why these files are touched, and anything a reviewer should know up front \
-(including what is deliberately out of scope). Markdown is rendered.\n\
-\n\
-After saving, for the few spots that are genuinely hard to understand — tricky logic whose \
-intent isn't obvious at a glance, a non-obvious tradeoff, or a subtle edge case a reviewer \
-could miss — drop an inline comment with the `create_comment` tool, anchored to that \
-file_path and its new-side line number(s). Use kind = \"question\", keep each to 1-3 \
-sentences, and explain *why* it works / where the subtlety is. This is high-signal and \
-low-frequency: a handful per change at most, and none at all when nothing is genuinely \
-tricky. Do NOT comment on self-evident changes (renames, boilerplate, formatting, imports).\n\
-\n\
-Then report the step count, kind breakdown, and how many inline comments you left, briefly, \
-and stop.{language_hint}"
+When you have explored enough, reply with the JSON object described above and nothing \
+else.{language_hint}"
     )
 }
 
-/// Spawn the headless generation session in `worktree_path`.
+/// One inline note the generation asked for, saved as a `question` comment.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GeneratedComment {
+    pub file_path: String,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    pub body: String,
+}
+
+/// A step as it arrives from the model, before validation.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GeneratedStep {
+    file_path: String,
+    #[serde(default)]
+    line_start: Option<i64>,
+    #[serde(default)]
+    line_end: Option<i64>,
+    kind: String,
+    title: String,
+    body: String,
+}
+
+/// The whole reply, before validation.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GeneratedWalkthrough {
+    title: String,
+    summary: String,
+    steps: Vec<GeneratedStep>,
+    #[serde(default)]
+    comments: Vec<GeneratedComment>,
+}
+
+/// A validated generation result, ready for [`crate::review_store::ReviewStore`].
+#[derive(Debug, Clone)]
+pub struct Generated {
+    pub title: String,
+    pub summary: String,
+    pub steps: Vec<NewWalkthroughStep>,
+    pub comments: Vec<GeneratedComment>,
+}
+
+/// Turn the model's raw reply into a saveable walkthrough, or explain what is
+/// wrong with it.
 ///
-/// The caller must have inserted the `generating` row first
-/// ([`crate::review_store::ReviewStore::begin_walkthrough`]); on spawn
-/// failure it should flip that row to `failed`.
-pub fn spawn_generation(
+/// Tolerant about the *envelope* (markdown fences, a sentence before the JSON)
+/// because models add those regardless of instructions, and strict about the
+/// *contents*: an unknown `kind` or a path that cannot anchor to a file would
+/// otherwise be stored and only show up as a step the reviewer can't open.
+/// Mirrors the checks `mcp_serve::tools::save_walkthrough` runs on the same
+/// data arriving over MCP, so both entry points reject the same things.
+pub fn parse_generated(raw: &str) -> Result<Generated, String> {
+    let json = extract_json_object(raw)
+        .ok_or_else(|| format!("no JSON object in the model's reply\nRaw output: {raw}"))?;
+    let parsed: GeneratedWalkthrough = serde_json::from_str(json)
+        .map_err(|e| format!("could not parse the walkthrough JSON: {e}\nRaw output: {raw}"))?;
+
+    if parsed.title.trim().is_empty() {
+        return Err("the walkthrough has no title".to_string());
+    }
+    if parsed.summary.trim().is_empty() {
+        return Err("the walkthrough has no summary".to_string());
+    }
+    if parsed.steps.is_empty() {
+        return Err("the walkthrough has no steps".to_string());
+    }
+
+    let mut steps = Vec::with_capacity(parsed.steps.len());
+    for (i, step) in parsed.steps.into_iter().enumerate() {
+        let kind = WalkthroughStepKind::from_str(step.kind.trim())
+            .ok_or_else(|| format!("step {i} has an unknown kind '{}'", step.kind))?;
+        let file_path = crate::repo_path::normalize(&step.file_path);
+        if file_path.is_empty() {
+            return Err(format!("step {i} has no file_path"));
+        }
+        if file_path.starts_with('/') || file_path.split('/').any(|s| s == "..") {
+            return Err(format!(
+                "step {i} file_path must be repo-relative, got: {}",
+                step.file_path
+            ));
+        }
+        if step.title.trim().is_empty() {
+            return Err(format!("step {i} ({file_path}) has no title"));
+        }
+        if step.body.trim().is_empty() {
+            return Err(format!("step {i} ({file_path}) has no body"));
+        }
+        // Line numbers are 1-based everywhere they are read back, and a
+        // reversed range would underline nothing; drop the range rather than
+        // failing the whole walkthrough over an anchor detail.
+        let (line_start, line_end) = sane_range(step.line_start, step.line_end);
+        steps.push(NewWalkthroughStep {
+            file_path,
+            line_start,
+            line_end,
+            kind,
+            title: step.title,
+            body: step.body,
+        });
+    }
+
+    // Comments are the optional extra: a bad one is dropped with a log line
+    // rather than failing a walkthrough that is otherwise fine.
+    let comments = parsed
+        .comments
+        .into_iter()
+        .filter_map(|mut c| {
+            let path = crate::repo_path::normalize(&c.file_path);
+            if path.is_empty()
+                || path.starts_with('/')
+                || path.split('/').any(|s| s == "..")
+                || c.body.trim().is_empty()
+                || c.line_start.is_none_or(|l| l == 0)
+            {
+                log::warn!("dropping malformed inline comment for {:?}", c.file_path);
+                return None;
+            }
+            if let (Some(start), Some(end)) = (c.line_start, c.line_end)
+                && end < start
+            {
+                c.line_end = None;
+            }
+            c.file_path = path;
+            Some(c)
+        })
+        .collect();
+
+    Ok(Generated {
+        title: parsed.title,
+        summary: parsed.summary,
+        steps,
+        comments,
+    })
+}
+
+/// Keep a 1-based, non-reversed line range; anything else anchors to the file
+/// as a whole rather than to a wrong span.
+fn sane_range(start: Option<i64>, end: Option<i64>) -> (Option<i64>, Option<i64>) {
+    let start = start.filter(|s| *s >= 1);
+    let end = end.filter(|e| *e >= 1);
+    match (start, end) {
+        (Some(s), Some(e)) if e < s => (Some(s), None),
+        (None, Some(_)) => (None, None),
+        pair => pair,
+    }
+}
+
+/// Find the JSON object in a reply that may be fenced or prefaced with prose.
+///
+/// Scans for the first `{` and then tracks brace depth, skipping over braces
+/// that appear inside string literals — a `body` containing `}` (very likely,
+/// since bodies quote code) would otherwise truncate the object at the wrong
+/// place and produce a parse error the user cannot act on.
+fn extract_json_object(raw: &str) -> Option<&str> {
+    let start = raw.find('{')?;
+    let bytes = raw.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for i in start..bytes.len() {
+        let c = bytes[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&raw[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Run one generation to completion and return the parsed walkthrough.
+///
+/// Blocking: the caller runs this on a background thread and reports the result
+/// through a channel (see `App::cmd_generate_walkthrough`). `cancel` is checked
+/// by the underlying caller too, so a cancelled generation kills its child
+/// rather than waiting out the timeout.
+pub fn generate(
+    api: &crate::config::ApiConfig,
     worktree_path: &Path,
-    db_path: &Path,
     branch: &str,
     base_ref: Option<&str>,
-    model: Option<&str>,
     language: Option<&str>,
-) -> Result<WalkthroughGeneration> {
-    let log_path = db_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(format!("walkthrough-{}.log", branch.replace('/', "-")));
-    let log_file = std::fs::File::create(&log_path)
-        .with_context(|| format!("failed to create log file {}", log_path.display()))?;
-    let log_err = log_file
-        .try_clone()
-        .context("failed to clone log file handle")?;
-
-    let mut cmd = Command::new("claude");
-    cmd.arg("-p")
-        .arg(generation_prompt(branch, base_ref, language))
-        .arg("--allowedTools")
-        .arg(GENERATION_ALLOWED_TOOLS)
-        .current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err));
-    if let Some(model) = model {
-        cmd.arg("--model").arg(model);
-    }
-    // `--strict-mcp-config` is placed *before* `--mcp-config`: the latter
-    // takes a space-separated variable-length list of configs
-    // (`<configs...>`), so a flag placed right after it risks being
-    // swallowed as another config value instead of parsed as its own flag.
-    // Together these two are what makes generation work in any repository,
-    // not just conductor's own: the session sees only conductor's own MCP
-    // server and never a user's ambient (and possibly stale) marketplace
-    // plugin server, regardless of what that plugin's cache currently
-    // exposes.
-    cmd.arg("--strict-mcp-config");
-    cmd.arg("--mcp-config").arg(self_mcp_config(db_path)?);
-
-    let child = cmd
-        .spawn()
-        .context("failed to launch `claude` — is Claude Code installed and on PATH?")?;
-    Ok(WalkthroughGeneration {
-        branch: branch.to_string(),
-        child,
-        started: Instant::now(),
-        log_path,
-    })
+    cancel: &Arc<AtomicBool>,
+) -> Result<Generated, String> {
+    let env = crate::ai_caller::TaskEnv {
+        timeout_secs: Some(GENERATION_TIMEOUT.as_secs()),
+        working_dir: Some(worktree_path.to_path_buf()),
+    };
+    let caller = crate::ai_caller::build_caller(api, &env)?;
+    let raw = caller.complete(
+        GENERATION_SYSTEM_PROMPT,
+        &generation_prompt(branch, base_ref, language),
+        cancel,
+    )?;
+    parse_generated(&raw)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── self_mcp_config: points at the running binary, carries the db path ──
-
-    #[test]
-    fn self_mcp_config_points_at_current_exe_with_db() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("db.sqlite");
-
-        let config = self_mcp_config(&db_path).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&config).unwrap();
-
-        let current_exe = std::env::current_exe().unwrap();
-        assert_eq!(
-            parsed["mcpServers"]["conductor"]["command"],
-            current_exe.to_str().unwrap()
-        );
-        assert_eq!(
-            parsed["mcpServers"]["conductor"]["args"],
-            serde_json::json!(["mcp-serve", "--db", db_path.to_str().unwrap()])
-        );
-    }
-
-    // ── allowedTools: MCP tool names present, git restricted to read-only ──
-
-    #[test]
-    fn generation_allowed_tools_uses_only_the_self_served_form() {
-        // `--strict-mcp-config` makes the registered server name always
-        // `conductor` (see self_mcp_config), so the marketplace-plugin form
-        // is never reachable and must not be listed.
-        assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__conductor__save_walkthrough"));
-        assert!(
-            !GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__save_walkthrough")
-        );
-        assert!(GENERATION_ALLOWED_TOOLS.contains("mcp__conductor__create_comment"));
-        assert!(
-            !GENERATION_ALLOWED_TOOLS.contains("mcp__plugin_conductor_conductor__create_comment")
-        );
-    }
-
-    #[test]
-    fn generation_allowed_tools_has_no_write_git_subcommands() {
-        // Matches the FIX-2 restriction: no bare `Bash(git:*)`, and none of
-        // the write-capable subcommands that would open an exfiltration path
-        // for an adversarial PR diff (push, remote, fetch with refspec-write
-        // side effects, config, etc).
-        assert!(!GENERATION_ALLOWED_TOOLS.contains("Bash(git:*)"));
-        for write_subcommand in ["push", "remote", "config", "commit", "checkout", "reset"] {
-            assert!(
-                !GENERATION_ALLOWED_TOOLS.contains(&format!("git {write_subcommand}")),
-                "allowedTools should not permit `git {write_subcommand}`"
-            );
-        }
-    }
-
-    // ── generation_prompt: branch name and no-alternatives instruction ──
+    // ── generation_prompt: branch, base, language ───────────────────────
 
     #[test]
     fn generation_prompt_includes_the_branch_name() {
@@ -565,155 +476,9 @@ mod tests {
     }
 
     #[test]
-    fn generation_prompt_tells_the_model_not_to_compare_alternative_designs() {
+    fn generation_prompt_falls_back_to_discovering_the_base() {
         let prompt = generation_prompt("pr-42", None, None);
-        assert!(prompt.to_lowercase().contains("do not compare"));
         assert!(prompt.contains("Determine the base branch"));
-    }
-
-    #[test]
-    fn generation_prompt_instructs_inline_comments_on_hard_spots() {
-        let prompt = generation_prompt("pr-42", Some("main"), None);
-        // The session must be told to annotate genuinely-tricky spots with
-        // create_comment, high-signal and low-frequency.
-        assert!(prompt.contains("create_comment"));
-        assert!(prompt.contains("hard to understand"));
-    }
-
-    // ── WalkthroughGenerations: per-branch, not per-app, exclusion ──
-
-    /// A child that stays alive well past the end of the test.
-    fn long_running_child() -> Child {
-        test_child("sleep 30")
-    }
-
-    fn test_child(script: &str) -> Child {
-        Command::new("/bin/sh")
-            .arg("-c")
-            .arg(script)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("failed to spawn test child")
-    }
-
-    /// Poll until something finishes. `take_finished` is non-blocking, so a
-    /// child that has only just been spawned is legitimately still `Running`
-    /// on the first call.
-    fn wait_for_finished(generations: &mut WalkthroughGenerations) -> Vec<FinishedGeneration> {
-        for _ in 0..400 {
-            let finished = generations.take_finished();
-            if !finished.is_empty() {
-                return finished;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        panic!("no generation finished within 10 seconds");
-    }
-
-    #[test]
-    fn different_branches_generate_side_by_side() {
-        // The bug this replaced: one in-flight generation blocked every other
-        // worktree's branch, not just its own.
-        let mut generations = WalkthroughGenerations::default();
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/a",
-            long_running_child(),
-            Instant::now(),
-        ));
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/b",
-            long_running_child(),
-            Instant::now(),
-        ));
-
-        assert!(generations.is_generating("feature/a"));
-        assert!(generations.is_generating("feature/b"));
-        // Neither displaced nor finished the other.
-        assert!(generations.take_finished().is_empty());
-
-        generations.abort_all();
-        assert!(generations.is_empty());
-    }
-
-    #[test]
-    fn only_the_same_branch_is_refused() {
-        let mut generations = WalkthroughGenerations::default();
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/a",
-            long_running_child(),
-            Instant::now(),
-        ));
-
-        // This predicate is the guard `cmd_generate_walkthrough` consults.
-        assert!(generations.is_generating("feature/a"));
-        assert!(!generations.is_generating("feature/b"));
-
-        generations.abort_all();
-    }
-
-    #[test]
-    fn a_finished_generation_frees_its_branch() {
-        let mut generations = WalkthroughGenerations::default();
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/a",
-            test_child("exit 0"),
-            Instant::now(),
-        ));
-
-        let finished = wait_for_finished(&mut generations);
-        assert_eq!(finished.len(), 1);
-        assert_eq!(finished[0].branch, "feature/a");
-        assert!(matches!(finished[0].outcome, GenerationPoll::Exited));
-        assert!(!generations.is_generating("feature/a"));
-    }
-
-    #[test]
-    fn an_externally_killed_generation_frees_its_branch() {
-        // Stale-lock recovery: if the session dies without Conductor asking it
-        // to, its slot must be released so the next request can regenerate
-        // rather than being told one is already running.
-        let mut generations = WalkthroughGenerations::default();
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/a",
-            test_child("kill -9 $$"),
-            Instant::now(),
-        ));
-
-        let finished = wait_for_finished(&mut generations);
-        assert!(matches!(finished[0].outcome, GenerationPoll::Failed(_)));
-        assert!(!generations.is_generating("feature/a"));
-
-        // And the branch accepts a fresh generation immediately.
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/a",
-            long_running_child(),
-            Instant::now(),
-        ));
-        assert!(generations.is_generating("feature/a"));
-        generations.abort_all();
-    }
-
-    #[test]
-    fn a_wedged_generation_times_out_and_frees_its_branch() {
-        let Some(started) = Instant::now().checked_sub(GENERATION_TIMEOUT + Duration::from_secs(1))
-        else {
-            // Machine booted less than GENERATION_TIMEOUT ago; no instant far
-            // enough in the past exists to backdate against.
-            return;
-        };
-        let mut generations = WalkthroughGenerations::default();
-        generations.insert(WalkthroughGeneration::for_test(
-            "feature/a",
-            long_running_child(),
-            started,
-        ));
-
-        let finished = generations.take_finished();
-        assert_eq!(finished.len(), 1);
-        assert!(matches!(finished[0].outcome, GenerationPoll::TimedOut));
-        assert!(!generations.is_generating("feature/a"));
     }
 
     #[test]
@@ -723,5 +488,179 @@ mod tests {
         // No language configured → no language directive at all.
         let unconstrained = generation_prompt("pr-42", Some("main"), None);
         assert!(!unconstrained.contains("Write the walkthrough title"));
+    }
+
+    /// The instruction not to compare alternative designs, and the step-order
+    /// story, live in the system prompt now — they must not have been lost in
+    /// the move off the headless session.
+    #[test]
+    fn system_prompt_keeps_the_walkthrough_contract() {
+        assert!(GENERATION_SYSTEM_PROMPT.to_lowercase().contains("do not compare"));
+        assert!(GENERATION_SYSTEM_PROMPT.contains("intent -> core -> ripple -> test"));
+        // Path spelling is the whole reason walkthrough steps used to fail to
+        // open, so the prompt has to be explicit about it.
+        assert!(GENERATION_SYSTEM_PROMPT.contains("repo-relative"));
+        assert!(GENERATION_SYSTEM_PROMPT.contains("never starting with \"./\""));
+        // Inline notes are asked for here rather than through an MCP tool call,
+        // but the contract is the same one the plugin command states: annotate
+        // the genuinely-tricky spots, high-signal and low-frequency.
+        assert!(GENERATION_SYSTEM_PROMPT.contains("hard to understand"));
+        assert!(GENERATION_SYSTEM_PROMPT.contains("\"comments\""));
+    }
+
+    /// The opposite constraint from smart-worktree naming, and it has to be
+    /// stated here rather than in a wrapper the user maintains: an agentic
+    /// command told nothing would answer from the prompt alone, and this task
+    /// is impossible without reading the repo.
+    #[test]
+    fn system_prompt_tells_the_model_to_read_the_repo() {
+        assert!(GENERATION_SYSTEM_PROMPT.contains("Use your tools freely"));
+        assert!(GENERATION_SYSTEM_PROMPT.contains("working directory"));
+    }
+
+    /// Conductor must not spawn `claude` itself anywhere; this module was the
+    /// last place that did. The prompt names no CLI and no MCP tool call — the
+    /// reply comes back as JSON over whatever `[api]` is pointed at.
+    #[test]
+    fn generation_never_names_a_cli_to_run() {
+        assert!(!GENERATION_SYSTEM_PROMPT.contains("claude -p"));
+        assert!(!GENERATION_SYSTEM_PROMPT.contains("save_walkthrough"));
+        let prompt = generation_prompt("pr-42", Some("main"), None);
+        assert!(!prompt.contains("claude -p"));
+        assert!(!prompt.contains("save_walkthrough"));
+    }
+
+    // ── parse_generated ────────────────────────────────────────────────
+
+    fn reply(steps: &str) -> String {
+        format!(
+            r#"{{"title":"T","summary":"S","steps":[{steps}]}}"#
+        )
+    }
+
+    #[test]
+    fn parses_a_well_formed_reply() {
+        let raw = reply(
+            r#"{"file_path":"src/a.rs","line_start":10,"line_end":12,"kind":"core","title":"t","body":"b"}"#,
+        );
+        let g = parse_generated(&raw).unwrap();
+        assert_eq!(g.title, "T");
+        assert_eq!(g.summary, "S");
+        assert_eq!(g.steps.len(), 1);
+        assert_eq!(g.steps[0].file_path, "src/a.rs");
+        assert_eq!(g.steps[0].line_start, Some(10));
+        assert_eq!(g.steps[0].line_end, Some(12));
+        assert_eq!(g.steps[0].kind, WalkthroughStepKind::Core);
+        assert!(g.comments.is_empty());
+    }
+
+    /// Models wrap JSON in fences and prefaces no matter what the prompt says,
+    /// so the envelope is tolerated even though the contents are not.
+    #[test]
+    fn parses_through_fences_and_preamble() {
+        let inner = reply(r#"{"file_path":"src/a.rs","kind":"intent","title":"t","body":"b"}"#);
+        for wrapped in [
+            format!("```json\n{inner}\n```"),
+            format!("Here you go:\n{inner}\nHope that helps!"),
+            format!("```\n{inner}\n```"),
+        ] {
+            let g = parse_generated(&wrapped).unwrap();
+            assert_eq!(g.steps.len(), 1, "wrapped: {wrapped}");
+        }
+    }
+
+    /// A body quoting code will contain braces. Counting to the *matching*
+    /// close brace, and skipping braces inside strings, is what keeps such a
+    /// reply from being truncated into a parse error.
+    #[test]
+    fn parses_a_body_containing_braces() {
+        let raw = r#"prose {"title":"T","summary":"S","steps":[{"file_path":"src/a.rs","kind":"core","title":"t","body":"fn main() { let x = {1}; }"}]} trailing"#;
+        let g = parse_generated(raw).unwrap();
+        assert_eq!(g.steps[0].body, "fn main() { let x = {1}; }");
+    }
+
+    /// The same spellings the diff list cannot match are canonicalised here, so
+    /// a generated step can always be opened.
+    #[test]
+    fn normalises_step_paths() {
+        for spelling in ["./src/a.rs", "src//a.rs", "src/a.rs/", "  src/a.rs  "] {
+            let raw = reply(&format!(
+                r#"{{"file_path":"{spelling}","kind":"core","title":"t","body":"b"}}"#
+            ));
+            let g = parse_generated(&raw).unwrap();
+            assert_eq!(g.steps[0].file_path, "src/a.rs", "spelling: {spelling}");
+        }
+    }
+
+    #[test]
+    fn rejects_paths_that_escape_the_repo() {
+        for bad in ["/etc/passwd", "../secret", ""] {
+            let raw = reply(&format!(
+                r#"{{"file_path":"{bad}","kind":"core","title":"t","body":"b"}}"#
+            ));
+            assert!(parse_generated(&raw).is_err(), "path: {bad}");
+        }
+    }
+
+    #[test]
+    fn rejects_an_unknown_step_kind() {
+        let raw = reply(r#"{"file_path":"src/a.rs","kind":"summary","title":"t","body":"b"}"#);
+        let err = parse_generated(&raw).unwrap_err();
+        assert!(err.contains("summary"), "should echo the bad kind: {err}");
+    }
+
+    #[test]
+    fn rejects_empty_title_summary_and_steps() {
+        assert!(parse_generated(r#"{"title":"","summary":"S","steps":[]}"#).is_err());
+        assert!(
+            parse_generated(
+                r#"{"title":"T","summary":"S","steps":[{"file_path":"a.rs","kind":"core","title":"t","body":"b"}]}"#
+            )
+            .is_ok()
+        );
+        assert!(parse_generated(r#"{"title":"T","summary":"S","steps":[]}"#).is_err());
+        assert!(parse_generated("no json here").is_err());
+    }
+
+    /// A bad line range anchors the step to its file rather than failing the
+    /// whole walkthrough or underlining a nonsense span.
+    #[test]
+    fn sanitises_line_ranges() {
+        assert_eq!(sane_range(Some(10), Some(5)), (Some(10), None));
+        assert_eq!(sane_range(Some(0), Some(5)), (None, None));
+        assert_eq!(sane_range(None, Some(5)), (None, None));
+        assert_eq!(sane_range(Some(3), None), (Some(3), None));
+        assert_eq!(sane_range(Some(3), Some(3)), (Some(3), Some(3)));
+    }
+
+    /// Inline comments are the optional extra: a malformed one is dropped, and
+    /// the walkthrough it came with still saves.
+    #[test]
+    fn drops_malformed_comments_but_keeps_the_walkthrough() {
+        let raw = r#"{"title":"T","summary":"S",
+            "steps":[{"file_path":"src/a.rs","kind":"core","title":"t","body":"b"}],
+            "comments":[
+              {"file_path":"./src/a.rs","line_start":4,"line_end":6,"body":"why"},
+              {"file_path":"/etc/passwd","line_start":1,"body":"escape"},
+              {"file_path":"src/a.rs","line_start":0,"body":"zero line"},
+              {"file_path":"src/a.rs","line_start":9,"body":"   "}
+            ]}"#;
+        let g = parse_generated(raw).unwrap();
+        assert_eq!(g.steps.len(), 1);
+        assert_eq!(g.comments.len(), 1);
+        assert_eq!(g.comments[0].file_path, "src/a.rs");
+        assert_eq!(g.comments[0].line_start, Some(4));
+    }
+
+    /// A reversed comment range collapses to a single line instead of being
+    /// stored as a span that renders backwards.
+    #[test]
+    fn reversed_comment_range_collapses() {
+        let raw = r#"{"title":"T","summary":"S",
+            "steps":[{"file_path":"a.rs","kind":"core","title":"t","body":"b"}],
+            "comments":[{"file_path":"a.rs","line_start":9,"line_end":2,"body":"why"}]}"#;
+        let g = parse_generated(raw).unwrap();
+        assert_eq!(g.comments[0].line_start, Some(9));
+        assert_eq!(g.comments[0].line_end, None);
     }
 }

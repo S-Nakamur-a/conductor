@@ -63,18 +63,25 @@ pub(super) fn ensure_not_blank(value: &str, what: &str) -> Result<(), String> {
 /// turns it into `/etc/passwd`, which `Path::join` would follow straight out of
 /// the worktree. Validating the stripped form is what closes that.
 ///
+/// What comes back is [`crate::repo_path::normalize`]'s canonical spelling, not
+/// merely the stripped one: the value is stored and later matched against
+/// `FileDiff::path` by string equality, so `./src/a.rs` or `src//a.rs` has to
+/// land in the database already spelled the way git spells it.
+///
 /// Errors quote the caller's own spelling rather than the stripped form, so the
 /// message matches what it actually sent.
-pub(super) fn normalize_repo_relative<'a>(
-    file_path: &'a str,
-    what: &str,
-) -> Result<&'a str, String> {
+pub(super) fn normalize_repo_relative(file_path: &str, what: &str) -> Result<String, String> {
     ensure_not_blank(file_path, what)?;
     let stripped = file_path.strip_prefix("./").unwrap_or(file_path);
     ensure_repo_relative(stripped, what).map_err(|_| {
         format!("{what} must be repo-relative and must not escape the repo root: {file_path}")
     })?;
-    Ok(stripped)
+    let normalized = crate::repo_path::normalize(stripped);
+    // Normalisation can only remove `.`/empty segments, so it cannot introduce
+    // an escape — but it can empty the path out entirely (`"./"`), which would
+    // otherwise be stored as a step anchored to nothing.
+    ensure_not_blank(&normalized, what)?;
+    Ok(normalized)
 }
 
 /// Reject a path that would escape the repository root.
@@ -169,12 +176,41 @@ mod tests {
     fn normalize_repo_relative_keeps_ordinary_paths() {
         assert_eq!(
             normalize_repo_relative("src/foo.rs", "file_path"),
-            Ok("src/foo.rs")
+            Ok("src/foo.rs".to_string())
         );
         assert_eq!(
             normalize_repo_relative("./src/foo.rs", "file_path"),
-            Ok("src/foo.rs")
+            Ok("src/foo.rs".to_string())
         );
+    }
+
+    /// Every spelling that means `src/foo.rs` has to *become* `src/foo.rs`
+    /// before it is stored: the diff list matches these by string equality, so
+    /// a stored `./src/foo.rs` is a step that can never be jumped to.
+    #[test]
+    fn normalize_repo_relative_canonicalises_every_spelling() {
+        for spelling in [
+            "src/foo.rs",
+            "./src/foo.rs",
+            "src//foo.rs",
+            "src/./foo.rs",
+            "  src/foo.rs  ",
+            "src/foo.rs/",
+        ] {
+            assert_eq!(
+                normalize_repo_relative(spelling, "file_path"),
+                Ok("src/foo.rs".to_string()),
+                "spelling: {spelling}"
+            );
+        }
+    }
+
+    /// A path that normalises away to nothing is rejected rather than stored as
+    /// an anchor to no file at all.
+    #[test]
+    fn normalize_repo_relative_rejects_a_path_that_normalises_to_empty() {
+        assert!(normalize_repo_relative("./", "file_path").is_err());
+        assert!(normalize_repo_relative(".", "file_path").is_err());
     }
 
     /// The Node server only rejected absolute paths; `..` reaches the same

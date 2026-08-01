@@ -62,15 +62,11 @@ pub fn generate_default_config() -> String {
 # word_diff = true                      # highlight intra-line word changes
 
 [review]
-# レビュー機能はMCPプラグイン (conductor plugin) に移行済みです。
-# 以下の設定は互換性のため残されていますが、通常は変更不要です。
-# prompt_template = "以下のレビューコメントに対応してください。\n\n{comments}"
-#                                       # template for review prompts ({comments} is replaced)
-# prompt_action = "clipboard"           # clipboard | send_to_session
-# walkthrough_model = "opus"            # model for AI walkthrough generation
-#                                       # (claude --model alias or full id; unset = CLI default)
+# レビューコメントの受け渡しはMCPプラグイン (conductor plugin) 経由です。
 # walkthrough_language = "日本語"        # language the walkthrough is written in
 #                                       # (unset = model's choice)
+#                                       # which MODEL writes it is [api] below — walkthrough
+#                                       # generation goes through the same configurable seam
 
 [keybinds]
 # Key-bind overrides, in key→action form. Each entry maps a key chord to an
@@ -114,10 +110,27 @@ pub fn generate_default_config() -> String {
 #                                       #   force - enable even when detection fails
 
 [api]
-# provider = "gemini"                   # "gemini" (Gemini API), "claude" (claude -p CLI), or "command" (external) — no fallback between them
-# model = "gemini-2.5-flash"            # model for smart worktree generation (Gemini API)
-# command = ["ollama", "run", "llama3"] # external command for provider = "command" (prompt on stdin, completion on stdout)
-# command_timeout_secs = 60             # wall-clock timeout for the command provider (0 = no timeout)
+# Which AI answers Conductor's own prompts (smart worktree naming, walkthrough
+# generation). Conductor never runs a CLI of its own — you name the tool here.
+#
+# provider = "gemini"                   # "gemini" (Gemini API) or "command" (any CLI) — no fallback between them
+# model = "gemini-2.5-flash"            # model for the "gemini" provider
+# command_timeout_secs = 60             # wall-clock timeout (0 = none). Long tasks such as
+#                                       #   walkthrough generation set their own instead.
+#
+# `command` is the AI tool itself, as argv. Two placeholders are substituted:
+#   {prompt}   the assembled prompt. Put it where the tool expects its prompt;
+#              LEAVE IT OUT for tools that read stdin, which is then used.
+#   {workdir}  the directory the task is about (the reviewed worktree). The
+#              command also *runs* in that directory, so "." works too.
+#
+# command = ["claude", "-p", "{prompt}"]                 # Claude Code, one-shot
+# command = ["my-cli", "-w", "{workdir}", "{prompt}"]    # prompt as a positional argument
+# command = ["ollama", "run", "llama3"]                  # reads stdin, no placeholder needed
+#
+# You do not need a wrapper script: what a task requires — that the model must
+# not use tools, the output format, which directory to read — is part of the
+# prompt Conductor builds for that task.
 
 [ui]
 # theme = "catppuccin-mocha"            # UI color theme (overrides [viewer] theme when set)

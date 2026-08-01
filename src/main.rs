@@ -30,6 +30,7 @@ mod overlay;
 mod pr_intake;
 mod pty_manager;
 mod refresh_pipe;
+mod repo_path;
 mod review_publish;
 mod review_state;
 mod review_store;
@@ -176,6 +177,17 @@ Options:
         }
         None => std::env::current_dir()?,
     };
+    // Climb to the enclosing worktree root. Everything keyed off `repo_path`
+    // assumes a root — most visibly `.conductor/conductor.db`, which is
+    // *created* where it is looked for, so starting conductor from a
+    // subdirectory used to open a second, empty database beside that
+    // subdirectory: no comments, no walkthrough, and a stray `.conductor/`
+    // left behind. `discover` returns the path unchanged when it already is a
+    // root, and a linked worktree resolves to its own root, not the main one.
+    let repo_path = git2::Repository::discover(&repo_path)
+        .ok()
+        .and_then(|repo| repo.workdir().map(std::path::Path::to_path_buf))
+        .unwrap_or(repo_path);
     let mut app = App::new(repo_path);
 
     // ── Set terminal window title ────────────────────────────────────
