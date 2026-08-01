@@ -125,7 +125,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.viewer_state.filename_search.filename_search_active {
         super::super::dashboard::render_filename_search_overlay(frame, area, app);
     }
-    match app.update_state {
+    match app.update.state {
         crate::app::UpdateState::Confirming => {
             super::super::dashboard::render_update_confirm_overlay(frame, area, app);
         }
@@ -136,22 +136,22 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
         }
         crate::app::UpdateState::Idle => {}
     }
-    if app.publish_confirm.is_some() {
+    if app.publish.confirm.is_some() {
         super::super::dashboard::render_publish_confirm_overlay(frame, area, app);
     }
 
     // ── References overlay (panel-level, not part of OverlayManager) ──
-    if app.references_overlay.active {
+    if app.code_nav.references.active {
         crate::ui::references::render_references_overlay(frame, area, app);
     }
 
     // ── Symbol action overlay (after hint selection) ──
-    if app.symbol_action_overlay.active {
+    if app.code_nav.symbol_action.active {
         crate::ui::symbol_action::render_symbol_action_overlay(frame, area, app);
     }
 
     // ── Hover-info popup (K in the viewer) ──
-    if app.hover_info_overlay.info.is_some() {
+    if app.code_nav.hover_info.info.is_some() {
         crate::ui::hover_info::render_hover_info_overlay(frame, area, app);
     }
 

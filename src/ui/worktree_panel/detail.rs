@@ -30,7 +30,7 @@ pub(super) fn render_detail(
         return;
     }
 
-    let Some(wt) = app.worktrees.get(app.selected_worktree) else {
+    let Some(wt) = app.worktrees.selected() else {
         return;
     };
 

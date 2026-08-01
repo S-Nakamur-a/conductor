@@ -168,7 +168,7 @@ impl App {
     /// layout: the editor occupies the merged Explorer+Viewer region, minus the
     /// title row and borders (which collapse when the panel is maximized).
     pub(super) fn editor_pty_size(&self) -> (u16, u16) {
-        let cols = &self.layout_cache.columns;
+        let cols = &self.layout.cache.columns;
         let region_w = cols[1].width.saturating_add(cols[2].width);
         let region_h = cols[1].height;
         let expanded = self.expanded_panel == Some(Focus::Editor);

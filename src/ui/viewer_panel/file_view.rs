@@ -369,7 +369,7 @@ fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
         h_scroll: app.viewer_state.content.h_scroll,
     };
 
-    let (entries, cur_idx) = app.jump_history.breadcrumb_trail(&current, 7);
+    let (entries, cur_idx) = app.code_nav.history.breadcrumb_trail(&current, 7);
 
     // Don't show breadcrumb if there's only the current entry (no navigation).
     let real_count = entries.iter().filter(|e| e.is_some()).count();

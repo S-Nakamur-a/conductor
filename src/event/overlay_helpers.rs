@@ -19,7 +19,7 @@ pub(in crate::event) fn open_filename_search(app: &mut App) {
         .filename_search_results
         .clear();
     app.viewer_state.filename_search.filename_search_selected = 0;
-    if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+    if let Some(wt) = app.worktrees.selected() {
         app.viewer_state.populate_filename_search_cache(&wt.path);
     }
     app.viewer_state.execute_filename_search();
@@ -36,7 +36,7 @@ pub(super) fn dismiss_overlays(app: &mut App) {
     app.viewer_state.search.search_active = false;
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
-    app.references_overlay.active = false;
+    app.code_nav.references.active = false;
     // A deliberate focus switch closes the hover modal stack too.
     app.clear_hover();
 }

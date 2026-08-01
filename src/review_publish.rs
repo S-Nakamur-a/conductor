@@ -1,11 +1,10 @@
-//! Publishing review comments back to GitHub via `gh api`.
+//! `gh api` 経由でレビューコメントを GitHub へ公開する。
 //!
-//! Kept separate from `app/review_publish.rs` (the `App`-side orchestration:
-//! confirm-overlay state, background-thread spawn, DB writes) the same way
-//! `pr_intake.rs` is kept separate from `app/worktree.rs` — the exact `gh`
-//! CLI/JSON spelling lives in one place, and everything here is plain data +
-//! `gh` subprocess calls with no `App` dependency, so it can be unit tested
-//! without a running application.
+//! `app/review_publish.rs` (確認オーバーレイの状態、バックグラウンドスレッドの起動、
+//! DB への書き込みといった `App` 側の段取り) とは分けてある。`pr_intake.rs` を
+//! `app/worktree.rs` から分けているのと同じ理由で、`gh` の CLI と JSON の正確な
+//! 綴りを 1 か所にまとめるため。ここにあるのは素のデータと `gh` のサブプロセス
+//! 呼び出しだけで `App` に依存しないので、アプリを起動せずに単体テストできる。
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -14,10 +13,9 @@ use serde::Serialize;
 
 use crate::diff_state::DiffState;
 
-/// One review comment ready to publish: the parent comment's body with its
-/// replies appended. GitHub review comments don't have a v1 concept of
-/// threaded replies here, so a comment with replies is flattened into one
-/// GitHub comment body (see ADR-6).
+/// 公開できる状態のレビューコメント 1 件。親コメントの本文に返信を連結したもの。
+/// ここでの GitHub のレビューコメントにはスレッド返信の概念が無いので、返信を持つ
+/// コメントは 1 つの GitHub コメント本文へ平坦化する。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishComment {
     pub id: String,
@@ -27,9 +25,9 @@ pub struct PublishComment {
     pub body: String,
 }
 
-/// A confirmed, ready-to-run publish request: everything [`publish`] needs,
-/// already resolved by the caller (owner/repo from `pr_review_meta.pr_url`,
-/// comments already filtered to lines that are actually in the diff).
+/// 確認済みで実行できる公開リクエスト。[`publish`] が必要とするものが、呼び出し側で
+/// 既に解決されている (owner と repo は `pr_review_meta.pr_url` 由来、コメントは
+/// 実際に差分に含まれる行だけに絞り込み済み)。
 pub struct PublishRequest {
     pub owner: String,
     pub repo: String,
@@ -37,10 +35,9 @@ pub struct PublishRequest {
     pub comments: Vec<PublishComment>,
 }
 
-/// State backing `App::publish_confirm`'s y/n overlay: the already-filtered
-/// comments a confirmed publish will send, plus how many were skipped for
-/// not being on a line the current diff covers. Doubles as the source for
-/// building the [`PublishRequest`] once the user confirms.
+/// `App::publish_confirm` の y/n オーバーレイを支える状態。確認後の公開が送る
+/// 絞り込み済みのコメントと、現在の差分が覆っていない行にあったために飛ばした件数。
+/// ユーザーが確認したあと [`PublishRequest`] を組み立てる元にもなる。
 pub struct PublishConfirm {
     pub owner: String,
     pub repo: String,
@@ -49,28 +46,28 @@ pub struct PublishConfirm {
     pub skipped: usize,
 }
 
-/// Result of a publish attempt.
+/// 公開を試みた結果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishOutcome {
-    /// Every comment in the request was posted (or there was nothing to post).
+    /// リクエスト内の全コメントを投稿した (または投稿するものが無かった)。
     Succeeded { published_ids: Vec<String> },
-    /// The batch review call failed and the per-comment fallback posted some
-    /// but not all of the comments.
+    /// 一括レビューの呼び出しが失敗し、コメント単位のフォールバックが一部だけを
+    /// 投稿できた。
     PartialFailure {
         published_ids: Vec<String>,
         failed: Vec<(String, String)>,
     },
-    /// Nothing was posted (couldn't resolve the commit id, or every attempt
-    /// — batch and fallback — failed).
+    /// 何も投稿できなかった (コミット ID を解決できなかったか、一括とフォールバックの
+    /// どちらの試行も失敗した)。
     Failed { error: String },
 }
 
-/// Split `comments` into what's safe to publish and how many were skipped.
+/// `comments` を、公開して安全なものと、飛ばした件数に分ける。
 ///
-/// A GitHub review comment must anchor to a line that's part of the current
-/// diff's hunks; posting even one comment on a line outside the diff fails
-/// the *entire* batch with a 422, so out-of-diff comments must be filtered
-/// out before ever reaching [`publish`], not just discarded on failure.
+/// GitHub のレビューコメントは現在の差分のハンクに含まれる行に紐づいていなければ
+/// ならない。差分の外の行にコメントが 1 件でもあると一括全体が 422 で失敗するので、
+/// 差分外のコメントは失敗してから捨てるのではなく、[`publish`] に届く前に
+/// 除いておかねばならない。
 pub fn filter_publishable(
     comments: Vec<PublishComment>,
     diff: &DiffState,
@@ -88,10 +85,10 @@ pub fn filter_publishable(
     (publishable, skipped)
 }
 
-/// Whether `[start, end]` (new-side line numbers) both fall within the same
-/// diff hunk for `file_path`, across either diff section (committed or
-/// uncommitted — a review comment doesn't record which section it was made
-/// against, so both are checked).
+/// `[start, end]` (新側の行番号) の両方が、`file_path` の同一の差分ハンクに
+/// 収まるかどうか。どちらの差分セクション (コミット済み・未コミット) も対象にする。
+/// レビューコメントはどちらのセクションに対して付けられたかを記録しないため、
+/// 両方を調べる。
 fn line_range_in_diff(file_path: &str, start: u32, end: u32, diff: &DiffState) -> bool {
     diff.committed_files
         .iter()
@@ -112,8 +109,8 @@ fn line_range_in_diff(file_path: &str, start: u32, end: u32, diff: &DiffState) -
         })
 }
 
-/// Parse `owner`/`repo` out of a GitHub PR URL
-/// (`https://github.com/{owner}/{repo}/pull/{n}`).
+/// GitHub の PR URL (`https://github.com/{owner}/{repo}/pull/{n}`) から
+/// `owner` と `repo` を取り出す。
 pub fn owner_repo_from_pr_url(url: &str) -> Option<(String, String)> {
     let rest = url.strip_prefix("https://github.com/")?;
     let mut parts = rest.splitn(3, '/');
@@ -126,7 +123,7 @@ pub fn owner_repo_from_pr_url(url: &str) -> Option<(String, String)> {
 }
 
 // ---------------------------------------------------------------------------
-// Payload shapes (see ADR-6's greta-grounded field spelling)
+// ペイロードの形 (フィールド名は実際の gh api の応答で確認済み)
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -166,7 +163,7 @@ impl<'a> ReviewCommentPayload<'a> {
     }
 }
 
-/// `POST /repos/{owner}/{repo}/pulls/{N}/reviews` body.
+/// `POST /repos/{owner}/{repo}/pulls/{N}/reviews` のボディ。
 #[derive(Serialize)]
 struct BatchReviewPayload<'a> {
     commit_id: &'a str,
@@ -175,9 +172,9 @@ struct BatchReviewPayload<'a> {
     comments: Vec<ReviewCommentPayload<'a>>,
 }
 
-/// `POST /repos/{owner}/{repo}/pulls/{N}/comments` body (single-comment
-/// fallback — always accepts `line`/`side`, unlike the batch endpoint's
-/// unverified acceptance of them per ADR-6).
+/// `POST /repos/{owner}/{repo}/pulls/{N}/comments` のボディ (コメント 1 件ずつの
+/// フォールバック)。一括エンドポイントが `line` / `side` を受け付けるかは未検証だが、
+/// こちらは必ず受け付ける。
 #[derive(Serialize)]
 struct SingleCommentPayload<'a> {
     commit_id: &'a str,
@@ -186,12 +183,12 @@ struct SingleCommentPayload<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// gh CLI plumbing
+// gh CLI の配管
 // ---------------------------------------------------------------------------
 
-/// Fetch the PR's head commit sha via `gh pr view <N> --json headRefOid`,
-/// explicitly rather than letting the review API default to whatever HEAD
-/// happens to be at post time — the default is a race with a concurrent push.
+/// PR の head コミットの sha を `gh pr view <N> --json headRefOid` で明示的に取る。
+/// レビュー API の既定 (投稿時点の HEAD が何であれそれを使う) に任せないのは、
+/// 既定だと同時に走る push と競合するため。
 fn fetch_head_commit_id(pr_number: u64) -> Result<String, String> {
     let output = Command::new("gh")
         .args([
@@ -217,8 +214,8 @@ fn fetch_head_commit_id(pr_number: u64) -> Result<String, String> {
     Ok(oid)
 }
 
-/// `gh api <path> --input -` — the JSON body is piped over stdin rather than
-/// passed as a CLI argument, since a comment body can be long/multiline.
+/// `gh api <path> --input -`。JSON のボディは CLI の引数ではなく stdin へ流す。
+/// コメントの本文は長かったり複数行だったりするため。
 fn gh_api_post(path: &str, body: &str) -> Result<(), GhApiError> {
     let mut child = Command::new("gh")
         .args(["api", path, "--input", "-"])
@@ -248,19 +245,18 @@ fn gh_api_post(path: &str, body: &str) -> Result<(), GhApiError> {
 }
 
 struct GhApiError {
-    /// Whether the failure looks like GitHub's 422 Unprocessable Entity —
-    /// the signal to fall back to single-comment posting (ADR-6). `gh api`
-    /// reports this as e.g. `gh: Validation Failed (HTTP 422): ...` on
-    /// stderr; matching the substring is the least brittle check available
-    /// without parsing `gh`'s own error formatting.
+    /// 失敗が GitHub の 422 Unprocessable Entity に見えるかどうか。コメント 1 件ずつの
+    /// 投稿へフォールバックする合図になる。`gh api` はこれを stderr に
+    /// `gh: Validation Failed (HTTP 422): ...` のような形で報告する。`gh` 自身の
+    /// エラー整形をパースせずに済む中では、部分一致がいちばん壊れにくい判定。
     is_422: bool,
     message: String,
 }
 
-/// Run a publish request: resolve the commit id, POST the batch review, and
-/// fall back to posting comments one at a time if the batch is rejected as a
-/// 422 (per ADR-6, the batch endpoint's acceptance of `line`/`side` was the
-/// one thing left unverified by the pre-implementation `gh api` grounding).
+/// 公開リクエストを実行する。コミット ID を解決し、一括レビューを POST し、
+/// 一括が 422 で拒否されたらコメントを 1 件ずつ投稿する方式へフォールバックする
+/// (実装前に `gh api` で確かめたなかで、一括エンドポイントが `line` / `side` を
+/// 受け付けるかどうかだけが未検証のまま残っていた)。
 pub fn publish(req: PublishRequest) -> PublishOutcome {
     if req.comments.is_empty() {
         return PublishOutcome::Succeeded {
@@ -305,9 +301,8 @@ pub fn publish(req: PublishRequest) -> PublishOutcome {
     }
 }
 
-/// Post each comment individually to `/pulls/{N}/comments`, which accepts
-/// `line`/`side` unconditionally — the fallback for a batch review the
-/// GitHub API rejected.
+/// 各コメントを `/pulls/{N}/comments` へ個別に投稿する。こちらは `line` / `side` を
+/// 無条件で受け付ける。GitHub API が一括レビューを拒否したときのフォールバック。
 fn publish_fallback(req: &PublishRequest, commit_id: &str) -> PublishOutcome {
     let comments_path = format!(
         "repos/{}/{}/pulls/{}/comments",
@@ -452,9 +447,9 @@ mod tests {
 
     #[test]
     fn publish_with_no_comments_succeeds_without_calling_gh() {
-        // No commit-id lookup should happen for an empty comment list — this
-        // would hang/fail in a sandboxed test environment without a real
-        // `gh`/network, so it's the one `publish()` path exercised here.
+        // コメントが空ならコミット ID の問い合わせは起きないはず。本物の `gh` も
+        // ネットワークも無いサンドボックスのテスト環境ではそれがハングまたは
+        // 失敗するので、ここで動かせる `publish()` の経路はこれだけ。
         let outcome = publish(PublishRequest {
             owner: "o".to_string(),
             repo: "r".to_string(),

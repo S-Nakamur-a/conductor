@@ -7,9 +7,10 @@ use std::sync::mpsc;
 use super::{App, StatusLevel};
 
 /// State of the in-app update flow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UpdateState {
     /// Normal operation — no update in progress.
+    #[default]
     Idle,
     /// Confirmation dialog is shown.
     Confirming,
@@ -34,7 +35,7 @@ pub enum UpdateProgress {
 
 impl App {
     pub(super) fn cmd_update_and_restart(&mut self) {
-        if self.update_info.is_some() {
+        if self.update.info.is_some() {
             self.start_update_confirm();
         } else {
             self.set_status("No update available.".to_string(), StatusLevel::Info);
@@ -46,7 +47,7 @@ impl App {
     /// outcome (update available / already current / check failed) when the
     /// background result lands in [`poll_all_background_ops`](Self::poll_all_background_ops).
     pub(super) fn cmd_check_for_update(&mut self) {
-        self.update_check_requested = true;
+        self.update.check_requested = true;
         self.set_status_info(format!(
             "Checking for updates… (current v{})",
             crate::update_checker::current_version()
@@ -58,41 +59,41 @@ impl App {
 
     /// Show the update confirmation dialog.
     pub fn start_update_confirm(&mut self) {
-        self.update_state = UpdateState::Confirming;
+        self.update.state = UpdateState::Confirming;
     }
 
     /// Kick off the background update thread.
     pub fn start_update_download(&mut self) {
-        let Some(ref info) = self.update_info else {
+        let Some(ref info) = self.update.info else {
             return;
         };
         let version = info.latest_version.clone();
         let assets = info.assets.clone();
 
-        self.update_state = UpdateState::InProgress;
-        self.update_progress_message = "Preparing update...".to_string();
+        self.update.state = UpdateState::InProgress;
+        self.update.progress_message = "Preparing update...".to_string();
 
-        self.update_op.start(move |tx| {
+        self.update.op.start(move |tx| {
             perform_update(&tx, &version, &assets);
         });
     }
 
     /// Poll for progress messages from the background update thread.
     pub fn poll_update_progress(&mut self) {
-        for msg in self.update_op.poll_all() {
+        for msg in self.update.op.poll_all() {
             match msg {
                 UpdateProgress::Status(s) => {
-                    self.update_progress_message = s;
+                    self.update.progress_message = s;
                 }
                 UpdateProgress::Done(s) => {
-                    self.update_progress_message = s;
-                    self.update_state = UpdateState::Restarting;
-                    self.should_restart = true;
+                    self.update.progress_message = s;
+                    self.update.state = UpdateState::Restarting;
+                    self.update.should_restart = true;
                     self.should_quit = true;
                 }
                 UpdateProgress::Error(s) => {
-                    self.update_progress_message = s;
-                    self.update_state = UpdateState::Failed;
+                    self.update.progress_message = s;
+                    self.update.state = UpdateState::Failed;
                 }
             }
         }
@@ -117,7 +118,7 @@ impl App {
 
         // ccusage
         if let Some(info) = self.bg.ccusage.poll() {
-            self.ccusage_info = Some(info);
+            self.stats.ccusage = Some(info);
         }
 
         // symbol index
@@ -142,7 +143,7 @@ impl App {
             // off the catch-up build here is what closes that gap: by now the
             // slot is free, and if the root never moved this is a no-op
             // because the index is already marked available.
-            if !self.symbol_index.is_available() {
+            if !self.code_nav.index.is_available() {
                 self.start_symbol_index_build();
             }
         }
@@ -151,7 +152,7 @@ impl App {
         // the check itself (Some(info) on success, None on network/parse error).
         if let Some(result) = self.bg.update_check.poll() {
             // Whether the user asked for explicit feedback this round.
-            let requested = std::mem::take(&mut self.update_check_requested);
+            let requested = std::mem::take(&mut self.update.check_requested);
             let current = crate::update_checker::current_version();
             match result {
                 Some(info) => {
@@ -165,7 +166,7 @@ impl App {
                                 StatusLevel::Success,
                             );
                         }
-                        self.update_info = Some(info);
+                        self.update.info = Some(info);
                     } else if requested {
                         self.set_status(
                             format!("Already up to date (v{current})"),

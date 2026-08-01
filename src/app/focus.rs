@@ -165,8 +165,7 @@ impl App {
     /// makes the fade animate on its own terms.
     pub fn has_active_transition(&self) -> bool {
         self.focus_changed_at.elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
-            || self.explorer_tree_hover.is_animating()
-            || self.diff_list_hover.is_animating()
+            || self.list_hover.is_animating()
     }
 
     // ── Focus cycling ────────────────────────────────────────────────

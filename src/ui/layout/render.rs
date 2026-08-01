@@ -14,21 +14,21 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
 
     // Update layout cache (no-op if nothing changed).
-    // Disjoint field borrows: `app.layout_cache` mutably, `app.config.layout`
+    // Disjoint field borrows: `app.layout.cache` mutably, `app.config.layout`
     // immutably — Rust allows this because they are separate struct fields.
-    app.layout_cache.update(
+    app.layout.cache.update(
         area,
         app.expanded_panel,
         has_notifications,
         &app.config.layout,
-        app.terminal_split_pct,
+        app.layout.terminal_split_pct,
     );
 
-    let title_area = app.layout_cache.title_area;
-    let menubar_area = app.layout_cache.menubar_area;
-    let wtbar_area = app.layout_cache.wtbar_area;
-    let main_area = app.layout_cache.main_area;
-    let status_area = app.layout_cache.status_area;
+    let title_area = app.layout.cache.title_area;
+    let menubar_area = app.layout.cache.menubar_area;
+    let wtbar_area = app.layout.cache.wtbar_area;
+    let main_area = app.layout.cache.main_area;
+    let status_area = app.layout.cache.status_area;
 
     // ── Title bar ───────────────────────────────────────────────────
     super::super::common::render_title_bar(frame, title_area, app);
@@ -41,7 +41,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::super::worktree_bar::render(frame, wtbar_area, app);
 
     // ── Accordion column widths (from cache) ───────────────────────
-    let columns = app.layout_cache.columns;
+    let columns = app.layout.cache.columns;
 
     // ── Column 0 (worktree) is gone — its status is in the top strip. ──
 
@@ -69,8 +69,8 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             let cols = columns[2].width;
             let rows = columns[2].height;
             // Tier B: pixel-quality rendering via the graphics protocol.
-            let picker = if app.rich_tier.has_graphics() {
-                app.rich_picker
+            let picker = if app.rich.has_graphics() {
+                app.rich.picker
             } else {
                 None
             };
@@ -82,7 +82,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     }
 
     // ── Column 3: Terminal split (Claude 80% / Shell 20%) ───────────
-    let terminal_split = app.layout_cache.terminal_split;
+    let terminal_split = app.layout.cache.terminal_split;
     super::super::terminal_claude::render(frame, terminal_split[0], app);
     super::super::terminal_shell::render(frame, terminal_split[1], app);
 
@@ -91,11 +91,11 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // ── Panel number overlay (Alt+/ toggle) ──────────────────────────
     // Only show when no other overlay/modal is active.
-    if app.show_panel_overlay()
+    if app.panel_number_overlay.is_visible()
         && app.overlays.active == crate::overlay::ActiveOverlay::None
         && app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::Normal
         && app.review_state.input_mode == crate::review_state::ReviewInputMode::Normal
-        && app.update_state == crate::app::UpdateState::Idle
+        && !app.update.is_active()
         && !app.review_state.comment_detail_active
         && app.worktree_mgr.skip_reason.is_none()
     {
@@ -114,7 +114,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // Show worktree branch + repo on the right of status bar.
     let _worktree_branch = app
         .worktrees
-        .get(app.selected_worktree)
+        .get(app.worktrees.selected_index())
         .map(|w| w.branch.as_str())
         .unwrap_or("");
     super::super::common::render_status_bar(frame, status_area, app);
@@ -122,7 +122,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         frame,
         status_area,
         _worktree_branch,
-        &app.repo_path,
+        &app.repo.path,
         &app.theme,
     );
 
@@ -131,7 +131,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // and Claude-waiting glow. Skipped while party mode is active: party
     // finds the focused border by colour equality with `border_focused`,
     // which the gradient would break.
-    if app.rich_tier.is_rich() && !app.party_mode {
+    if app.rich.is_rich() && !app.party_mode {
         super::super::rich::apply_rich_effects(frame, app);
     }
 
@@ -153,10 +153,10 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 fn highlight_active_divider(frame: &mut Frame, app: &App) {
     use crate::app::Divider;
 
-    let Some(divider) = app.divider_drag.or(app.divider_hover) else {
+    let Some(divider) = app.layout.divider_drag.or(app.layout.divider_hover) else {
         return;
     };
-    let lc = &app.layout_cache;
+    let lc = &app.layout.cache;
     let color = app.theme.accent;
 
     // Resolve the divider to (is_vertical, fixed coordinate, span area). The

@@ -1,11 +1,11 @@
-//! Simple named-interval timer registry.
+//! 名前付き周期タイマーの簡単なレジストリ。
 //!
-//! Replaces scattered `last_X` + `INTERVAL` variables in main.rs with a
-//! single data structure that tracks all periodic tasks.
+//! main.rs に散らばっていた `last_X` と `INTERVAL` の変数を、周期タスクを
+//! まとめて管理する 1 つのデータ構造に置き換えたもの。
 
 use std::time::{Duration, Instant};
 
-/// A collection of named periodic timers.
+/// 名前付き周期タイマーの集合。
 pub struct TimerRegistry {
     timers: Vec<Timer>,
 }
@@ -21,8 +21,8 @@ impl TimerRegistry {
         Self { timers: Vec::new() }
     }
 
-    /// Register a timer that fires every `interval`.
-    /// The first fire happens after `interval` from now (unless `fire_immediately` is set).
+    /// `interval` ごとに発火するタイマーを登録する。
+    /// 最初の発火は今から `interval` 後 (`fire_immediately` を指定した場合を除く)。
     pub fn register(&mut self, name: &'static str, interval: Duration) {
         self.timers.push(Timer {
             name,
@@ -31,7 +31,7 @@ impl TimerRegistry {
         });
     }
 
-    /// Register a timer that fires immediately on the first check.
+    /// 最初のチェックで即座に発火するタイマーを登録する。
     pub fn register_immediate(&mut self, name: &'static str, interval: Duration) {
         self.timers.push(Timer {
             name,
@@ -40,8 +40,8 @@ impl TimerRegistry {
         });
     }
 
-    /// Check all timers and return names of those that are due.
-    /// Resets the fired timers automatically.
+    /// 全タイマーを調べ、発火時刻に達したものの名前を返す。
+    /// 発火したタイマーは自動的にリセットされる。
     pub fn check_due(&mut self) -> Vec<&'static str> {
         let mut due = Vec::new();
         for timer in &mut self.timers {

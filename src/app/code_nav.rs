@@ -34,7 +34,7 @@ impl App {
                 return;
             }
         };
-        if !self.symbol_index.is_available() {
+        if !self.code_nav.index.is_available() {
             self.set_status(
                 "Symbol index not ready yet".to_string(),
                 StatusLevel::Warning,
@@ -43,13 +43,13 @@ impl App {
         }
         let current_file = self.viewer_state.content.current_file.clone();
         match crate::hover_info::build_hover_info(
-            &self.symbol_index,
+            &self.code_nav.index,
             &symbol,
             current_file.as_deref(),
         ) {
             Some(info) => {
-                self.hover_info_overlay.shown_file = current_file.clone();
-                self.hover_info_overlay.info = Some(info);
+                self.code_nav.hover_info.shown_file = current_file.clone();
+                self.code_nav.hover_info.info = Some(info);
             }
             None => {
                 self.set_status(
@@ -67,19 +67,19 @@ impl App {
         self.focus == Focus::Viewer
             && !self.viewer_state.is_summary()
             && self.overlays.active == crate::overlay::ActiveOverlay::None
-            && !self.references_overlay.active
-            && !self.symbol_action_overlay.active
-            && !self.symbol_hint_overlay.active
+            && !self.code_nav.references.active
+            && !self.code_nav.symbol_action.active
+            && !self.code_nav.symbol_hint.active
             && self.viewer_state.content.current_file.is_some()
     }
 
     /// Clear the whole hover modal stack (popup, pending candidate, refs list,
     /// preview, pin). Returns whether anything was actually showing.
     pub fn clear_hover(&mut self) -> bool {
-        let had = self.hover_info_overlay.info.is_some()
-            || self.hover_info_overlay.pending.is_some()
-            || self.hover_info_overlay.pinned;
-        self.hover_info_overlay.reset();
+        let had = self.code_nav.hover_info.info.is_some()
+            || self.code_nav.hover_info.pending.is_some()
+            || self.code_nav.hover_info.pinned;
+        self.code_nav.hover_info.reset();
         had
     }
 
@@ -96,7 +96,7 @@ impl App {
         // pinned modal is keyboard-driven and, by long-standing convention,
         // survives focus and idle loss (see `HoverInfoOverlay::pinned` and
         // `tick_hover`'s early return).
-        if !self.hover_info_overlay.pinned {
+        if !self.code_nav.hover_info.pinned {
             self.clear_hover();
         }
     }
@@ -119,10 +119,9 @@ impl App {
     pub fn clear_pointer_hover(&mut self) {
         self.viewer_state.click.hover_symbol = None;
         self.viewer_state.click.underline_pending = None;
-        self.explorer_tree_hover.set(None);
-        self.diff_list_hover.set(None);
+        self.list_hover.clear();
         // S7: bar/tab-bar hover (background-based, D1 revised).
-        self.wtbar_hover = None;
+        self.wtbar.hover = None;
         self.terminal.claude_tab_hover = None;
         self.terminal.shell_tab_hover = None;
     }
@@ -141,7 +140,7 @@ impl App {
         match cand {
             Some((symbol, line, anchor_row, anchor_col, start_col, end_col)) => {
                 let same = self
-                    .hover_info_overlay
+                    .code_nav.hover_info
                     .pending
                     .as_ref()
                     .is_some_and(|c| c.symbol == symbol && c.line == line);
@@ -149,7 +148,7 @@ impl App {
                     return;
                 }
                 let file = self.viewer_state.content.current_file.clone();
-                self.hover_info_overlay.pending = Some(crate::overlay::HoverCandidate {
+                self.code_nav.hover_info.pending = Some(crate::overlay::HoverCandidate {
                     symbol,
                     line,
                     file,
@@ -160,8 +159,8 @@ impl App {
                     since: std::time::Instant::now(),
                     resolved: false,
                 });
-                self.hover_info_overlay.leave_at = None;
-                if self.hover_info_overlay.info.take().is_some() {
+                self.code_nav.hover_info.leave_at = None;
+                if self.code_nav.hover_info.info.take().is_some() {
                     self.dirty.mark_all();
                 }
             }
@@ -170,12 +169,12 @@ impl App {
                 // showing, don't drop it instantly — start a short grace window
                 // (see `tick_hover`) so the cursor can travel onto the popup to
                 // click it. If nothing is shown yet, just drop the candidate.
-                if self.hover_info_overlay.info.is_some() {
-                    self.hover_info_overlay.pending = None;
-                    if self.hover_info_overlay.leave_at.is_none() {
-                        self.hover_info_overlay.leave_at = Some(std::time::Instant::now());
+                if self.code_nav.hover_info.info.is_some() {
+                    self.code_nav.hover_info.pending = None;
+                    if self.code_nav.hover_info.leave_at.is_none() {
+                        self.code_nav.hover_info.leave_at = Some(std::time::Instant::now());
                     }
-                } else if self.hover_info_overlay.pending.take().is_some() {
+                } else if self.code_nav.hover_info.pending.take().is_some() {
                     self.dirty.mark_all();
                 }
             }
@@ -246,7 +245,7 @@ impl App {
     /// hover modal stack (base popup, refs list, or preview) — used to keep the
     /// popup alive while the mouse is over it and to route clicks.
     pub fn hover_point_hit(&self, col: u16, row: u16) -> bool {
-        let hv = &self.hover_info_overlay;
+        let hv = &self.code_nav.hover_info;
         let in_rect = |r: ratatui::layout::Rect| {
             r.width > 0
                 && r.height > 0
@@ -262,10 +261,10 @@ impl App {
             if in_rect(refs.rect) {
                 return true;
             }
-            if let Some(p) = &refs.preview {
-                if in_rect(p.rect) {
-                    return true;
-                }
+            if let Some(p) = &refs.preview
+                && in_rect(p.rect)
+            {
+                return true;
             }
         }
         false
@@ -283,7 +282,7 @@ impl App {
 
         // A pinned modal is user-driven: it survives focus/idle loss and is only
         // dismissed by Esc or a click outside (handled in the event layer).
-        if self.hover_info_overlay.pinned {
+        if self.code_nav.hover_info.pinned {
             return;
         }
 
@@ -291,8 +290,8 @@ impl App {
         // tree, or an external reload) while a popup was up, the popup now
         // describes a symbol from a file no longer on screen. Drop it — even
         // within the grace window — so it can never linger over unrelated code.
-        if self.hover_info_overlay.info.is_some()
-            && self.hover_info_overlay.shown_file != self.viewer_state.content.current_file
+        if self.code_nav.hover_info.info.is_some()
+            && self.code_nav.hover_info.shown_file != self.viewer_state.content.current_file
         {
             if self.clear_hover() {
                 self.dirty.mark_all();
@@ -302,19 +301,19 @@ impl App {
 
         // Grace window: a popup whose symbol the mouse left stays up briefly, but
         // only while the mouse is actually over it or the timer hasn't expired.
-        if let Some(left) = self.hover_info_overlay.leave_at {
-            if left.elapsed() >= HOVER_GRACE {
-                if self.clear_hover() {
-                    self.dirty.mark_all();
-                }
-                return;
+        if let Some(left) = self.code_nav.hover_info.leave_at
+            && left.elapsed() >= HOVER_GRACE
+        {
+            if self.clear_hover() {
+                self.dirty.mark_all();
             }
+            return;
         }
 
         if !self.hover_auto_allowed() {
             // Don't kill a popup that's within its grace window — the user may be
             // moving the mouse toward it (which briefly leaves the content area).
-            if self.hover_info_overlay.leave_at.is_some() {
+            if self.code_nav.hover_info.leave_at.is_some() {
                 return;
             }
             if self.clear_hover() {
@@ -331,13 +330,13 @@ impl App {
 
         // Resolve a candidate that has rested long enough.
         let ready = self
-            .hover_info_overlay
+            .code_nav.hover_info
             .pending
             .as_ref()
             .is_some_and(|c| !c.resolved && c.since.elapsed() >= HOVER_IDLE);
         if ready {
             let (symbol, file, anchor_row, anchor_col, start_col, end_col, line) = {
-                let c = self.hover_info_overlay.pending.as_ref().unwrap();
+                let c = self.code_nav.hover_info.pending.as_ref().unwrap();
                 (
                     c.symbol.clone(),
                     c.file.clone(),
@@ -349,24 +348,24 @@ impl App {
                 )
             };
             let info =
-                crate::hover_info::build_hover_info(&self.symbol_index, &symbol, file.as_deref());
-            if let Some(c) = self.hover_info_overlay.pending.as_mut() {
+                crate::hover_info::build_hover_info(&self.code_nav.index, &symbol, file.as_deref());
+            if let Some(c) = self.code_nav.hover_info.pending.as_mut() {
                 c.resolved = true;
             }
-            self.hover_info_overlay.anchor_row = anchor_row;
-            self.hover_info_overlay.anchor_col = anchor_col;
+            self.code_nav.hover_info.anchor_row = anchor_row;
+            self.code_nav.hover_info.anchor_col = anchor_col;
             // Remember which viewed file this popup describes, so the stale-file
             // guard can drop it the moment the viewer moves to another file.
-            self.hover_info_overlay.shown_file = if info.is_some() { file } else { None };
+            self.code_nav.hover_info.shown_file = if info.is_some() { file } else { None };
             // A8: keep the described symbol highlighted for as long as `info` is
             // shown, independent of `ClickTracker::hover_symbol` (which the mouse
             // may since have moved off, or which has no leave-grace at all — D9).
             if info.is_some() {
-                self.hover_info_overlay.target_line = line;
-                self.hover_info_overlay.target_start_col = start_col;
-                self.hover_info_overlay.target_end_col = end_col;
+                self.code_nav.hover_info.target_line = line;
+                self.code_nav.hover_info.target_start_col = start_col;
+                self.code_nav.hover_info.target_end_col = end_col;
             }
-            self.hover_info_overlay.info = info;
+            self.code_nav.hover_info.info = info;
             self.dirty.mark_all();
         }
     }
@@ -419,24 +418,24 @@ impl App {
 
     /// Cancel the grace window because the mouse is now over the popup itself.
     pub fn hover_keep_alive(&mut self) {
-        self.hover_info_overlay.leave_at = None;
+        self.code_nav.hover_info.leave_at = None;
     }
 
     /// Open the references list (level 1) for the currently-shown symbol and pin
     /// the popup. No-op when nothing is shown or the symbol has no references.
     pub fn open_hover_refs(&mut self) {
-        let symbol = match self.hover_info_overlay.info.as_ref() {
+        let symbol = match self.code_nav.hover_info.info.as_ref() {
             Some(info) if info.ref_count > 0 => info.symbol_name.clone(),
             _ => return,
         };
-        let root = self.symbol_index.root();
-        let results = self.symbol_index.find_references(&symbol, &root);
+        let root = self.code_nav.index.root();
+        let results = self.code_nav.index.find_references(&symbol, &root);
         if results.is_empty() {
             return;
         }
-        self.hover_info_overlay.pinned = true;
-        self.hover_info_overlay.leave_at = None;
-        self.hover_info_overlay.refs = Some(crate::overlay::HoverRefs {
+        self.code_nav.hover_info.pinned = true;
+        self.code_nav.hover_info.leave_at = None;
+        self.code_nav.hover_info.refs = Some(crate::overlay::HoverRefs {
             symbol,
             results,
             selected: 0,
@@ -450,7 +449,7 @@ impl App {
 
     /// Open the code preview (level 2) for reference row `idx` in the list.
     pub fn open_hover_preview(&mut self, idx: usize) {
-        let (file, line) = match self.hover_info_overlay.refs.as_mut() {
+        let (file, line) = match self.code_nav.hover_info.refs.as_mut() {
             Some(refs) => match refs.results.get(idx) {
                 Some(r) => {
                     refs.selected = idx;
@@ -460,9 +459,9 @@ impl App {
             },
             None => return,
         };
-        let root = self.symbol_index.root();
+        let root = self.code_nav.index.root();
         let preview = build_hover_preview(&root, &file, line);
-        if let Some(refs) = self.hover_info_overlay.refs.as_mut() {
+        if let Some(refs) = self.code_nav.hover_info.refs.as_mut() {
             refs.preview = preview;
         }
         self.dirty.mark_all();
@@ -471,7 +470,7 @@ impl App {
     /// Jump to the open preview's location and dismiss the whole hover stack.
     pub fn hover_jump_to_preview(&mut self) {
         let target = self
-            .hover_info_overlay
+            .code_nav.hover_info
             .refs
             .as_ref()
             .and_then(|r| r.preview.as_ref())
@@ -484,7 +483,7 @@ impl App {
 
     /// Move the references-list selection by `delta` (keyboard nav), clamping.
     pub fn hover_refs_move(&mut self, delta: isize) {
-        if let Some(refs) = self.hover_info_overlay.refs.as_mut() {
+        if let Some(refs) = self.code_nav.hover_info.refs.as_mut() {
             let n = refs.results.len();
             if n == 0 {
                 return;
@@ -498,13 +497,13 @@ impl App {
     /// Esc from the hover stack: close the deepest open level (preview → list →
     /// the whole popup). Returns whether a level was closed.
     pub fn hover_pop_level(&mut self) -> bool {
-        if let Some(refs) = self.hover_info_overlay.refs.as_mut() {
+        if let Some(refs) = self.code_nav.hover_info.refs.as_mut() {
             if refs.preview.take().is_some() {
                 self.dirty.mark_all();
                 return true;
             }
-            self.hover_info_overlay.refs = None;
-            self.hover_info_overlay.pinned = false;
+            self.code_nav.hover_info.refs = None;
+            self.code_nav.hover_info.pinned = false;
             self.dirty.mark_all();
             return true;
         }
@@ -525,7 +524,7 @@ impl App {
         };
         // Cursor line is 1-indexed (file_scroll is 0-indexed).
         let cursor_line = self.viewer_state.content.file_scroll + 1;
-        let defs = self.symbol_index.find_definitions(symbol);
+        let defs = self.code_nav.index.find_definitions(symbol);
         defs.iter().any(|d| {
             d.file_path == *cur_file && (d.line as isize - cursor_line as isize).unsigned_abs() <= 2
         })
@@ -553,11 +552,11 @@ impl App {
                 line: self.viewer_state.content.file_scroll,
                 h_scroll: self.viewer_state.content.h_scroll,
             };
-            self.jump_history.push(loc);
+            self.code_nav.history.push(loc);
         }
 
         // Open the target file.
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             let wt_path = wt.path.clone();
             let tab_width = self.config.viewer.tab_width;
             self.viewer_state.open_file(&wt_path, file_path, tab_width);
@@ -588,8 +587,8 @@ impl App {
             None => return,
         };
 
-        if let Some(loc) = self.jump_history.go_back(current) {
-            if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(loc) = self.code_nav.history.go_back(current) {
+            if let Some(wt) = self.worktrees.selected() {
                 let wt_path = wt.path.clone();
                 let tab_width = self.config.viewer.tab_width;
                 self.viewer_state
@@ -616,8 +615,8 @@ impl App {
             None => return,
         };
 
-        if let Some(loc) = self.jump_history.go_forward(current) {
-            if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(loc) = self.code_nav.history.go_forward(current) {
+            if let Some(wt) = self.worktrees.selected() {
                 let wt_path = wt.path.clone();
                 let tab_width = self.config.viewer.tab_width;
                 self.viewer_state
@@ -653,11 +652,11 @@ impl App {
     /// around. Superseded builds discard their own results via the generation
     /// check, and the settled worktree gets its build from the caller below.
     pub fn start_symbol_index_build(&mut self) {
-        self.symbol_index.set_root(self.selected_worktree_path());
+        self.code_nav.index.set_root(self.selected_worktree_path());
         if self.bg.symbol_index.is_running() {
             return;
         }
-        let index = self.symbol_index.clone();
+        let index = self.code_nav.index.clone();
         self.bg.symbol_index.start(move |tx| {
             let result = match index.build() {
                 Ok(count) => Ok(count),
@@ -669,10 +668,10 @@ impl App {
 
     /// Check whether a symbol has definitions in the symbol index.
     pub fn can_jump_to_symbol(&self, name: &str) -> bool {
-        if !self.symbol_index.is_available() {
+        if !self.code_nav.index.is_available() {
             return false;
         }
-        !self.symbol_index.find_definitions(name).is_empty()
+        !self.code_nav.index.find_definitions(name).is_empty()
     }
 
     /// Build symbol hints for visible lines in the viewer.

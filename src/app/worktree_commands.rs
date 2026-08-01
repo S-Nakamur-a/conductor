@@ -16,7 +16,7 @@ impl App {
     }
 
     pub(super) fn cmd_delete_worktree(&mut self) {
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             if wt.is_main {
                 self.set_status(
                     "Cannot delete the main worktree.".to_string(),
@@ -56,7 +56,7 @@ impl App {
     }
 
     pub(super) fn cmd_prune_worktrees(&mut self) {
-        match crate::git_engine::GitEngine::open(&self.repo_path) {
+        match crate::git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.find_stale_worktrees() {
                 Ok(stale) => {
                     if stale.is_empty() {
@@ -73,7 +73,7 @@ impl App {
     }
 
     pub(super) fn cmd_merge_to_main(&mut self) {
-        if let Some(wt) = self.worktrees.get(self.selected_worktree) {
+        if let Some(wt) = self.worktrees.selected() {
             if wt.is_main {
                 self.set_status(
                     "Cannot merge main into itself.".to_string(),
@@ -82,7 +82,7 @@ impl App {
             } else {
                 let branch = wt.branch.clone();
                 let main_branch = self.config.general.main_branch.clone();
-                match crate::git_engine::GitEngine::open(&self.repo_path) {
+                match crate::git_engine::GitEngine::open(&self.repo.path) {
                     Ok(engine) => match engine.merge_into_main(&branch, &main_branch) {
                         Ok(msg) => {
                             self.set_status(msg, StatusLevel::Success);
@@ -112,7 +112,7 @@ impl App {
     /// after the user confirms (see [`cmd_reset_main_to_origin`](Self::cmd_reset_main_to_origin)).
     pub fn perform_reset_main_to_origin(&mut self) {
         let main_branch = self.config.general.main_branch.clone();
-        match crate::git_engine::GitEngine::open(&self.repo_path) {
+        match crate::git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.reset_main_to_origin(&main_branch) {
                 Ok(msg) => {
                     self.set_status(msg, StatusLevel::Success);

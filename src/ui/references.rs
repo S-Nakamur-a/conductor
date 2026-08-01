@@ -10,7 +10,7 @@ use crate::app::App;
 
 /// Render the references overlay popup centered over `area`.
 pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let overlay = &app.references_overlay;
+    let overlay = &app.code_nav.references;
     let theme = &app.theme;
 
     // Calculate popup dimensions: 70% width, 60% height, centered.

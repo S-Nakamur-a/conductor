@@ -113,13 +113,13 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.overlays
                 .open_repo
                 .buffer
-                .set_text(&app.repo_path.display().to_string());
+                .set_text(&app.repo.path.display().to_string());
             true
         }
         Action::SwitchRepo => {
-            if app.repo_list.len() > 1 {
+            if app.repo.known.len() > 1 {
                 app.overlays.active = ActiveOverlay::RepoSelector;
-                app.overlays.repo_selector.selected = app.repo_list_index;
+                app.overlays.repo_selector.selected = app.repo.known_index;
             }
             true
         }
@@ -131,7 +131,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::UpdateAndRestart => {
-            if app.update_info.is_some() {
+            if app.update.info.is_some() {
                 app.start_update_confirm();
             }
             true
@@ -160,7 +160,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::TogglePanelOverlay => {
-            app.toggle_panel_overlay();
+            app.panel_number_overlay.toggle();
             true
         }
         Action::ResizePaneLeft => {

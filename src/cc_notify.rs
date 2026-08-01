@@ -1,8 +1,8 @@
-//! Unix domain socket listener for CC state notifications.
+//! Claude Code の状態通知を受ける Unix ドメインソケットのリスナ。
 //!
-//! Hooks send `"active <cwd>\n"` or `"waiting <cwd>\n"` messages via the
-//! socket.  A background thread accepts connections and forwards parsed
-//! events through an `mpsc` channel to the main loop.
+//! フック側がソケット経由で `"active <cwd>\n"` または `"waiting <cwd>\n"` を送る。
+//! バックグラウンドスレッドが接続を受け付け、パースしたイベントを `mpsc`
+//! チャネルでメインループへ転送する。
 
 use std::io::Read;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -12,21 +12,21 @@ use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-/// The kind of CC state change.
+/// Claude Code の状態変化の種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CcNotifyKind {
     Active,
     Waiting,
 }
 
-/// A single notification event received from a hook.
+/// フックから受け取った通知イベント 1 件。
 #[derive(Debug)]
 pub struct CcNotifyEvent {
     pub kind: CcNotifyKind,
     pub cwd: PathBuf,
 }
 
-/// Listens on a Unix domain socket for CC state notifications.
+/// Claude Code の状態通知を Unix ドメインソケットで待ち受ける。
 pub struct CcNotifyListener {
     rx: mpsc::Receiver<CcNotifyEvent>,
     socket_path: PathBuf,
@@ -35,8 +35,8 @@ pub struct CcNotifyListener {
 }
 
 impl CcNotifyListener {
-    /// Create a new listener bound to `.conductor/cc-notify.sock` under the
-    /// given repository root.
+    /// 指定したリポジトリルート配下の `.conductor/cc-notify.sock` に bind した
+    /// リスナを作る。
     pub fn new(repo_path: &Path) -> anyhow::Result<Self> {
         let conductor_dir = crate::git_engine::GitEngine::open(repo_path)
             .and_then(|e| e.main_worktree_path())
@@ -46,19 +46,19 @@ impl CcNotifyListener {
 
         let socket_path = conductor_dir.join("cc-notify.sock");
 
-        // Handle stale socket from a previous crash.
+        // 前回のクラッシュで残ったソケットを処理する。
         if socket_path.exists() {
             if UnixStream::connect(&socket_path).is_err() {
-                // No listener — stale socket file.
+                // 待ち受けている相手がいない = 取り残されたソケットファイル。
                 let _ = std::fs::remove_file(&socket_path);
             } else {
-                // Another Conductor instance is already listening.
+                // 別の Conductor インスタンスが既に待ち受けている。
                 anyhow::bail!("socket already in use: {}", socket_path.display());
             }
         }
 
         let listener = UnixListener::bind(&socket_path)?;
-        // The background thread blocks on accept(); non-blocking is not needed.
+        // バックグラウンドスレッドは accept() でブロックするので、ノンブロッキングは不要。
 
         let (tx, rx) = mpsc::channel();
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -79,7 +79,7 @@ impl CcNotifyListener {
         })
     }
 
-    /// Non-blocking poll for the next event.
+    /// 次のイベントをノンブロッキングで取り出す。
     pub fn poll(&self) -> Option<CcNotifyEvent> {
         self.rx.try_recv().ok()
     }
@@ -101,7 +101,7 @@ impl CcNotifyListener {
                     continue;
                 }
             };
-            // Short read timeout to avoid blocking on misbehaving clients.
+            // 行儀の悪いクライアントでブロックしないよう、読み取りタイムアウトは短く。
             let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
 
             let mut buf = [0u8; 1024];
@@ -117,7 +117,7 @@ impl CcNotifyListener {
 
             if let Some(event) = Self::parse_message(msg) {
                 if tx.send(event).is_err() {
-                    // Receiver dropped — main loop exited.
+                    // 受信側が落ちた = メインループが終了した。
                     break;
                 }
             } else {
@@ -141,7 +141,7 @@ impl CcNotifyListener {
 impl Drop for CcNotifyListener {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        // Connect to the socket to unblock the accept() call.
+        // accept() のブロックを解くためにソケットへ接続する。
         let _ = UnixStream::connect(&self.socket_path);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();

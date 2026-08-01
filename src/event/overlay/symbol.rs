@@ -12,10 +12,10 @@ use super::overlay_list_nav;
 // ── References overlay ──────────────────────────────────────────────────
 
 pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
-    let count = app.references_overlay.results.len();
+    let count = app.code_nav.references.results.len();
     if count == 0 {
         if key.code == KeyCode::Esc {
-            app.references_overlay.active = false;
+            app.code_nav.references.active = false;
         }
         return;
     }
@@ -23,7 +23,7 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
     if overlay_list_nav(
         &app.keymap,
         &key,
-        &mut app.references_overlay.selected,
+        &mut app.code_nav.references.selected,
         count,
     ) {
         adjust_references_scroll(app);
@@ -32,12 +32,12 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc => {
-            app.references_overlay.active = false;
+            app.code_nav.references.active = false;
         }
         KeyCode::Enter => {
-            let selected = app.references_overlay.selected;
-            if let Some(reference) = app.references_overlay.results.get(selected).cloned() {
-                app.references_overlay.active = false;
+            let selected = app.code_nav.references.selected;
+            if let Some(reference) = app.code_nav.references.results.get(selected).cloned() {
+                app.code_nav.references.active = false;
                 app.jump_to_location(&reference.file_path, reference.line, 0);
             }
         }
@@ -46,8 +46,8 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
 }
 
 fn adjust_references_scroll(app: &mut App) {
-    let selected = app.references_overlay.selected;
-    let scroll = &mut app.references_overlay.scroll;
+    let selected = app.code_nav.references.selected;
+    let scroll = &mut app.code_nav.references.scroll;
     // Assume ~20 visible lines in the popup.
     let visible = 20usize;
     if selected < *scroll {
@@ -63,21 +63,21 @@ fn adjust_references_scroll(app: &mut App) {
 pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
-            app.symbol_hint_overlay = Default::default();
+            app.code_nav.symbol_hint = Default::default();
         }
         KeyCode::Char(c) if c.is_ascii_lowercase() => {
-            app.symbol_hint_overlay.input.push(c);
-            let input = app.symbol_hint_overlay.input.clone();
+            app.code_nav.symbol_hint.input.push(c);
+            let input = app.code_nav.symbol_hint.input.clone();
             // Find matching hint.
             let matched = app
-                .symbol_hint_overlay
+                .code_nav.symbol_hint
                 .hints
                 .iter()
                 .find(|h| h.label == input)
                 .cloned();
             // Dismiss hints.
             let scroll = app.viewer_state.content.file_scroll;
-            app.symbol_hint_overlay = Default::default();
+            app.code_nav.symbol_hint = Default::default();
             if let Some(hint) = matched {
                 // Build action overlay for this symbol.
                 let screen_row = hint.line.saturating_sub(1).saturating_sub(scroll);
@@ -85,7 +85,7 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
             }
         }
         _ => {
-            app.symbol_hint_overlay = Default::default();
+            app.code_nav.symbol_hint = Default::default();
         }
     }
 }
@@ -98,7 +98,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
     let mut actions = Vec::new();
 
     // Definitions.
-    let defs = app.symbol_index.find_definitions(symbol_name);
+    let defs = app.code_nav.index.find_definitions(symbol_name);
     if defs.len() == 1 {
         actions.push(SymbolAction {
             key: 'd',
@@ -116,7 +116,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
     }
 
     // Implementations.
-    let impls = app.symbol_index.find_implementations(symbol_name);
+    let impls = app.code_nav.index.find_implementations(symbol_name);
     if impls.len() == 1 {
         actions.push(SymbolAction {
             key: 'i',
@@ -134,8 +134,8 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
     }
 
     // References (always show — count requires file scan).
-    let root = app.symbol_index.root();
-    let refs = app.symbol_index.find_references(symbol_name, &root);
+    let root = app.code_nav.index.root();
+    let refs = app.code_nav.index.find_references(symbol_name, &root);
     if !refs.is_empty() {
         actions.push(SymbolAction {
             key: 'r',
@@ -162,7 +162,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
         0
     };
 
-    app.symbol_action_overlay = SymbolActionOverlay {
+    app.code_nav.symbol_action = SymbolActionOverlay {
         active: true,
         symbol_name: symbol_name.to_string(),
         actions,
@@ -175,39 +175,39 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
 
 /// Handle key input in the symbol action overlay.
 pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
-    let count = app.symbol_action_overlay.actions.len();
+    let count = app.code_nav.symbol_action.actions.len();
 
     if overlay_list_nav(
         &app.keymap,
         &key,
-        &mut app.symbol_action_overlay.selected,
+        &mut app.code_nav.symbol_action.selected,
         count,
     ) {
         return;
     }
 
-    let symbol = app.symbol_action_overlay.symbol_name.clone();
-    let screen_row = app.symbol_action_overlay.source_screen_row;
+    let symbol = app.code_nav.symbol_action.symbol_name.clone();
+    let screen_row = app.code_nav.symbol_action.source_screen_row;
     match key.code {
         KeyCode::Esc => {
-            app.symbol_action_overlay = Default::default();
+            app.code_nav.symbol_action = Default::default();
         }
         KeyCode::Char('d') => {
-            app.symbol_action_overlay = Default::default();
+            app.code_nav.symbol_action = Default::default();
             jump_to_symbol_definition(app, &symbol, screen_row);
         }
         KeyCode::Char('i') => {
-            app.symbol_action_overlay = Default::default();
+            app.code_nav.symbol_action = Default::default();
             jump_to_symbol_implementation(app, &symbol, screen_row);
         }
         KeyCode::Char('r') => {
-            app.symbol_action_overlay = Default::default();
+            app.code_nav.symbol_action = Default::default();
             jump_to_symbol_references(app, &symbol);
         }
         KeyCode::Enter => {
-            let idx = app.symbol_action_overlay.selected;
-            if let Some(action) = app.symbol_action_overlay.actions.get(idx).cloned() {
-                app.symbol_action_overlay = Default::default();
+            let idx = app.code_nav.symbol_action.selected;
+            if let Some(action) = app.code_nav.symbol_action.actions.get(idx).cloned() {
+                app.code_nav.symbol_action = Default::default();
                 match action.key {
                     'd' => jump_to_symbol_definition(app, &symbol, screen_row),
                     'i' => jump_to_symbol_implementation(app, &symbol, screen_row),
@@ -221,7 +221,7 @@ pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
 }
 
 fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
-    let defs = app.symbol_index.find_definitions(symbol);
+    let defs = app.code_nav.index.find_definitions(symbol);
     match defs.len() {
         0 => {
             app.set_status(
@@ -237,9 +237,9 @@ fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
             );
         }
         _ => {
-            app.references_overlay.active = true;
-            app.references_overlay.symbol_name = format!("{symbol} (definitions)");
-            app.references_overlay.results = defs
+            app.code_nav.references.active = true;
+            app.code_nav.references.symbol_name = format!("{symbol} (definitions)");
+            app.code_nav.references.results = defs
                 .iter()
                 .map(|d| crate::symbol_index::Reference {
                     file_path: d.file_path.clone(),
@@ -247,14 +247,14 @@ fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
                     content: format!("{:?} {}", d.kind, d.name),
                 })
                 .collect();
-            app.references_overlay.selected = 0;
-            app.references_overlay.scroll = 0;
+            app.code_nav.references.selected = 0;
+            app.code_nav.references.scroll = 0;
         }
     }
 }
 
 fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize) {
-    let impls = app.symbol_index.find_implementations(symbol);
+    let impls = app.code_nav.index.find_implementations(symbol);
     match impls.len() {
         0 => {
             app.set_status(
@@ -270,9 +270,9 @@ fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize)
             );
         }
         _ => {
-            app.references_overlay.active = true;
-            app.references_overlay.symbol_name = format!("{symbol} (implementations)");
-            app.references_overlay.results = impls
+            app.code_nav.references.active = true;
+            app.code_nav.references.symbol_name = format!("{symbol} (implementations)");
+            app.code_nav.references.results = impls
                 .iter()
                 .map(|d| crate::symbol_index::Reference {
                     file_path: d.file_path.clone(),
@@ -280,15 +280,15 @@ fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize)
                     content: format!("{:?} {}", d.kind, d.name),
                 })
                 .collect();
-            app.references_overlay.selected = 0;
-            app.references_overlay.scroll = 0;
+            app.code_nav.references.selected = 0;
+            app.code_nav.references.scroll = 0;
         }
     }
 }
 
 fn jump_to_symbol_references(app: &mut App, symbol: &str) {
-    let root = app.symbol_index.root();
-    let refs = app.symbol_index.find_references(symbol, &root);
+    let root = app.code_nav.index.root();
+    let refs = app.code_nav.index.find_references(symbol, &root);
     if refs.is_empty() {
         app.set_status(
             format!("No references found for '{symbol}'"),
@@ -296,9 +296,9 @@ fn jump_to_symbol_references(app: &mut App, symbol: &str) {
         );
         return;
     }
-    app.references_overlay.active = true;
-    app.references_overlay.symbol_name = symbol.to_string();
-    app.references_overlay.results = refs;
-    app.references_overlay.selected = 0;
-    app.references_overlay.scroll = 0;
+    app.code_nav.references.active = true;
+    app.code_nav.references.symbol_name = symbol.to_string();
+    app.code_nav.references.results = refs;
+    app.code_nav.references.selected = 0;
+    app.code_nav.references.scroll = 0;
 }

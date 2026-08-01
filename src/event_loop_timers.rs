@@ -1,18 +1,18 @@
-//! Periodic timer handling and external-event-source polling for the main
-//! event loop ([`crate::event_loop::run_loop`]).
+//! メインイベントループ ([`crate::event_loop::run_loop`]) 向けの、周期タイマーの
+//! 処理と外部イベントソースのポーリング。
 //!
-//! Split out of the loop body purely to keep [`crate::event_loop`] from
-//! growing past a readable size — behavior is unchanged, this is the same
-//! per-iteration "background work" step as two extracted functions.
+//! ループ本体から切り出したのは [`crate::event_loop`] が読める大きさを超えないように
+//! するためだけで、挙動は変えていない。1 周ごとの「バックグラウンド処理」を
+//! 2 つの関数として括り出したもの。
 
 use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::event_loop::watch_paths_for;
 
-/// Run every periodic timer that's due this iteration: git/worktree polling,
-/// decoration/pulse/rich-glow redraw cadences, PTY cleanup, CC-waiting state,
-/// stats refresh, ccusage, and update-check.
+/// この周回で発火時刻に達した周期タイマーをすべて実行する。git と worktree の
+/// ポーリング、装飾・鼓動・rich グローの再描画周期、PTY の後始末、Claude Code の
+/// 待機状態、統計の更新、ccusage、アップデート確認。
 pub(crate) fn run_due_timers(
     app: &mut App,
     timers: &mut crate::timer::TimerRegistry,
@@ -24,13 +24,12 @@ pub(crate) fn run_due_timers(
 ) {
     for name in timers.check_due() {
         match name {
-            // Calm mode: only advance the decoration while the worktree panel
-            // is focused, so it never moves in the user's periphery during
-            // review/terminal work. It freezes in place otherwise and resumes
-            // when focus returns.
+            // 静かなモード: 装飾を進めるのは worktree パネルにフォーカスがあるときだけ。
+            // レビューや端末作業の最中に視界の端で動き続けることがないようにする。
+            // それ以外のときはその場で止まり、フォーカスが戻ったら再開する。
             "decoration" if app.focus == crate::app::Focus::Worktree => {
-                let left_w = app.layout_cache.columns[0].width;
-                let panel_h = app.layout_cache.main_area.height;
+                let left_w = app.layout.cache.columns[0].width;
+                let panel_h = app.layout.cache.main_area.height;
                 let list_h = (app.worktrees.len() as u16 + 2).max(5);
                 let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
                 let deco_h = panel_h.saturating_sub(list_h + detail_h);
@@ -38,19 +37,19 @@ pub(crate) fn run_due_timers(
                     app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
                 }
             }
-            // Drive notification-bar breathing while any session waits,
-            // regardless of focus or whether decoration is animating.
+            // どこかのセッションが待機している限り、フォーカスや装飾のアニメーション
+            // 有無にかかわらず通知バーの明滅を動かす。
             "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
                 app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
             }
-            // Drive party-mode animations (rainbow border, syntax, confetti).
+            // パーティモードのアニメーション (虹色の枠、シンタックス、紙吹雪) を動かす。
             "pulse" if app.party_mode => {
                 app.dirty.mark_all();
             }
-            // Drive the rich-mode gradient borders at a steady ~30fps. The
-            // effect is a whole-frame post-process, so a full repaint is
-            // required to advance it; the PTY raster stays cached (gated by
-            // `dirty_claude`/`dirty_shell`), so this is a cheap widget redraw.
+            // rich モードのグラデーション枠を約 30fps で安定して動かす。この効果は
+            // フレーム全体への後処理なので、進めるには全面の再描画が必要。PTY の
+            // ラスタはキャッシュされたまま (`dirty_claude` / `dirty_shell` で制御)
+            // なので、これはウィジェットの安い再描画で済む。
             "rich_glow" if rich_active => {
                 app.dirty.mark_all();
             }
@@ -69,17 +68,16 @@ pub(crate) fn run_due_timers(
                 }
                 app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
             }
-            // Expensive I/O timers — skip during active input to avoid scroll freezes.
+            // I/O の重いタイマー。入力中はスクロールが固まるので飛ばす。
             "worktree_poll" if !input_active => {
                 if app.refresh_worktrees() {
                     app.dirty.mark(
                         crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER,
                     );
                 }
-                // Rebuild the file watcher if the set of paths to watch
-                // changed (e.g. `git init` created the first worktree, or a
-                // worktree was added/removed). Without this the watcher would
-                // keep monitoring a stale set and miss new files.
+                // 監視対象のパス集合が変わったらファイル監視を作り直す (`git init` で
+                // 最初の worktree ができた、worktree が追加・削除された、など)。
+                // これが無いと古い集合を監視し続けて新しいファイルを取りこぼす。
                 let desired = watch_paths_for(app);
                 if desired != *current_watch_paths {
                     match crate::file_watcher::FileWatcher::new(&desired) {
@@ -88,9 +86,9 @@ pub(crate) fn run_due_timers(
                             *file_watcher = Some(w);
                         }
                         Err(e) => {
-                            // Keep the previous watcher (still valid for the
-                            // old path set) instead of silently downgrading
-                            // to no watcher at all; retry on the next poll.
+                            // 監視が丸ごと無くなる形に静かに劣化させるのではなく、
+                            // 前の監視 (古いパス集合に対してはまだ有効) を残す。
+                            // 次のポーリングで再試行する。
                             log::warn!("file watcher rebuild failed: {e}");
                             app.set_status(
                                 format!("File watcher rebuild failed ({e})"),
@@ -99,9 +97,9 @@ pub(crate) fn run_due_timers(
                         }
                     }
                 }
-                // Periodic fallback: re-walk the file tree so newly created
-                // files appear even if a watcher event was missed. Cheap
-                // (lazy child loading) and only repaints when it changed.
+                // 定期的な保険: ファイルツリーを歩き直して、監視イベントを取りこぼしても
+                // 新規作成されたファイルが現れるようにする。安い処理 (子は遅延読み込み)
+                // で、変化があったときだけ再描画する。
                 if app.refresh_viewer() {
                     app.dirty.mark(
                         crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER,
@@ -124,8 +122,8 @@ pub(crate) fn run_due_timers(
             "stats_refresh" if !input_active => {
                 if let Some(store) = &app.review_store {
                     let new_stats = store.get_today_stats().ok();
-                    if new_stats != app.today_stats {
-                        app.today_stats = new_stats;
+                    if new_stats != app.stats.today {
+                        app.stats.today = new_stats;
                         app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
                     }
                 }
@@ -150,9 +148,9 @@ pub(crate) fn run_due_timers(
     }
 }
 
-/// Poll all external event sources feeding the loop (file watcher, config
-/// watcher, CC-state notification socket, MCP refresh pipe), applying their
-/// debounced or immediate effects to `app`.
+/// ループに入力を供給する外部イベントソース (ファイル監視、設定ファイル監視、
+/// Claude Code の状態通知ソケット、MCP のリフレッシュパイプ) をすべてポーリングし、
+/// デバウンス済みまたは即時の効果を `app` へ反映する。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn poll_watchers(
     app: &mut App,
@@ -165,14 +163,14 @@ pub(crate) fn poll_watchers(
     cc_notify: &Option<crate::cc_notify::CcNotifyListener>,
     refresh_pipe: &Option<crate::refresh_pipe::RefreshPipe>,
 ) {
-    // Debounce file-watcher refreshes to avoid expensive git operations on
-    // every single file-system event.
+    // ファイルシステムのイベント 1 件ごとに高コストな git 操作が走らないよう、
+    // ファイル監視によるリフレッシュはデバウンスする。
     const FS_DEBOUNCE: Duration = Duration::from_millis(500);
-    // Separate debounce for config-file changes. Shorter than FS_DEBOUNCE and
-    // isolated so worktree-poll rebuilds don't reset it.
+    // 設定ファイル変更用の別のデバウンス。FS_DEBOUNCE より短く、独立させてあるので
+    // worktree ポーリングによる作り直しでリセットされない。
     const CONFIG_DEBOUNCE: Duration = Duration::from_millis(300);
 
-    // File system change events (debounced).
+    // ファイルシステムの変更イベント (デバウンスあり)。
     if let Some(watcher) = file_watcher {
         while watcher.poll().is_some() {
             if !*fs_pending {
@@ -196,9 +194,9 @@ pub(crate) fn poll_watchers(
         }
     }
 
-    // Config file change events (debounced). Shorter debounce than FS events
-    // because the two event streams are independent — a worktree-poll rebuild
-    // must not reset the config debounce timer.
+    // 設定ファイルの変更イベント (デバウンスあり)。FS のイベントより短いのは、
+    // 2 つのイベント列が独立しているから。worktree ポーリングによる作り直しが
+    // 設定側のデバウンスタイマーをリセットしてはいけない。
     if let Some(watcher) = config_watcher {
         while watcher.poll().is_some() {
             if !*cfg_pending {
@@ -216,7 +214,7 @@ pub(crate) fn poll_watchers(
         }
     }
 
-    // CC state notifications.
+    // Claude Code の状態通知。
     if let Some(cc_notify) = cc_notify {
         while let Some(event) = cc_notify.poll() {
             app.handle_cc_notify(event);
@@ -225,11 +223,11 @@ pub(crate) fn poll_watchers(
         }
     }
 
-    // MCP refresh pipe — reload review comments when MCP writes to the pipe.
+    // MCP のリフレッシュパイプ。MCP がパイプへ書いたらレビューコメントを読み直す。
     if let Some(refresh_pipe) = refresh_pipe
         && refresh_pipe.poll().is_some()
     {
-        // Drain any extra events (coalesce multiple rapid writes).
+        // 余分なイベントを吸い出す (連続した書き込みをまとめる)。
         while refresh_pipe.poll().is_some() {}
         app.refresh_reviews();
         app.dirty.mark_all();

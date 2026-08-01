@@ -15,16 +15,16 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     let theme = &app.theme;
     let wt_name = app
         .worktrees
-        .get(app.selected_worktree)
+        .get(app.worktrees.selected_index())
         .map(|w| w.branch.as_str())
         .unwrap_or("—");
     let wt_path = app
         .worktrees
-        .get(app.selected_worktree)
+        .get(app.worktrees.selected_index())
         .map(|w| w.path.display().to_string())
-        .unwrap_or_else(|| app.repo_path.display().to_string());
+        .unwrap_or_else(|| app.repo.path.display().to_string());
 
-    let (badge_bg, badge_fg, branch_fg) = name_to_color(&app.main_repo_name);
+    let (badge_bg, badge_fg, branch_fg) = name_to_color(&app.repo.main_name);
 
     // Use Color::Reset so the terminal's own background (including any
     // background image) shows through the title bar.
@@ -32,7 +32,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
     let conductor_bg = badge_bg;
     let conductor_fg = badge_fg;
 
-    let badge_text = format!(" {} ", app.main_repo_name);
+    let badge_text = format!(" {} ", app.repo.main_name);
     let line = Line::from(vec![
         Span::styled(
             &badge_text,
@@ -81,7 +81,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
             format!("v{}", crate::update_checker::current_version()),
             Style::default().fg(theme.warning).bg(bar_bg),
         ));
-        if let Some(ref info) = app.ccusage_info {
+        if let Some(ref info) = app.stats.ccusage {
             if !spans.is_empty() {
                 spans.push(sep.clone());
             }
@@ -97,7 +97,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
         }
         // Track the update badge text for position calculation.
         let mut update_badge_text: Option<String> = None;
-        if let Some(ref update) = app.update_info {
+        if let Some(ref update) = app.update.info {
             if !spans.is_empty() {
                 spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
             }
@@ -130,15 +130,15 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App
                     // Badge is at end of stats (before trailing padding space).
                     let badge_end = stats_x + stats_w - 1; // -1 for trailing " "
                     let badge_start = badge_end - badge_w;
-                    app.update_badge_cols = Some((badge_start, badge_end));
+                    app.update.badge_cols = Some((badge_start, badge_end));
                 } else {
-                    app.update_badge_cols = None;
+                    app.update.badge_cols = None;
                 }
             } else {
-                app.update_badge_cols = None;
+                app.update.badge_cols = None;
             }
         } else {
-            app.update_badge_cols = None;
+            app.update.badge_cols = None;
         }
     }
 }

@@ -97,7 +97,7 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
 /// - Move over any part → keep alive (cancel the transient grace window).
 /// - Scroll over the list → move the selection.
 fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
-    if !app.hover_info_overlay.is_shown() {
+    if !app.code_nav.hover_info.is_shown() {
         return false;
     }
     let col = mouse.column;
@@ -110,7 +110,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             && row >= r.y
             && row < r.y + r.height
     };
-    let pinned = app.hover_info_overlay.pinned;
+    let pinned = app.code_nav.hover_info.pinned;
 
     match mouse.kind {
         MouseEventKind::Moved => {
@@ -126,7 +126,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         MouseEventKind::Down(MouseButton::Left) => {
             // Level 2: click the preview → jump there and close everything.
             if let Some(pr) = app
-                .hover_info_overlay
+                .code_nav.hover_info
                 .refs
                 .as_ref()
                 .and_then(|r| r.preview.as_ref())
@@ -136,7 +136,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 return true;
             }
             // Level 1: click a reference row → open its preview.
-            if let Some(refs) = app.hover_info_overlay.refs.as_ref() {
+            if let Some(refs) = app.code_nav.hover_info.refs.as_ref() {
                 if let Some((idx, _)) = refs.row_hits.iter().find(|(_, r)| in_rect(*r)).copied() {
                     app.open_hover_preview(idx);
                     return true;
@@ -146,11 +146,11 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 }
             }
             // Base popup: click "N refs" → open the list; click body → keep.
-            if in_rect(app.hover_info_overlay.refs_hit) {
+            if in_rect(app.code_nav.hover_info.refs_hit) {
                 app.open_hover_refs();
                 return true;
             }
-            if in_rect(app.hover_info_overlay.info_rect) {
+            if in_rect(app.code_nav.hover_info.info_rect) {
                 return true;
             }
             // Outside everything: a pinned modal dismisses and swallows the
@@ -165,7 +165,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         }
         MouseEventKind::ScrollDown => {
             if app
-                .hover_info_overlay
+                .code_nav.hover_info
                 .refs
                 .as_ref()
                 .is_some_and(|r| in_rect(r.rect))
@@ -177,7 +177,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         }
         MouseEventKind::ScrollUp => {
             if app
-                .hover_info_overlay
+                .code_nav.hover_info
                 .refs
                 .as_ref()
                 .is_some_and(|r| in_rect(r.rect))
@@ -192,11 +192,11 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
 }
 
 fn has_blocking_overlay(app: &App) -> bool {
-    use crate::app::{UpdateState, WorktreeInputMode};
+    use crate::app::WorktreeInputMode;
     use crate::review_state::ReviewInputMode;
 
     app.worktree_mgr.skip_reason.is_some()
-        || app.update_state != UpdateState::Idle
+        || app.update.is_active()
         || app.review_state.comment_detail_active
         || app.review_state.input_mode != ReviewInputMode::Normal
         || app.worktree_mgr.input_mode != WorktreeInputMode::Normal
@@ -204,8 +204,8 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.viewer_state.filename_search.filename_search_active
         || app.review_state.search_active
         || app.review_state.template_picker_active
-        || app.references_overlay.active
-        || app.symbol_action_overlay.active
+        || app.code_nav.references.active
+        || app.code_nav.symbol_action.active
 }
 
 /// Whether `divider` can currently be grabbed for a mouse resize. Never while a
@@ -372,7 +372,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     }
 
     // Read layout from cache (computed during render).
-    let lc = &app.layout_cache;
+    let lc = &app.layout.cache;
     let notif_area = lc.notif_area;
     let wtbar_area = lc.wtbar_area;
     let main_area = lc.main_area;
@@ -416,16 +416,16 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // Wheel over the worktree strip pages it sideways by ~a screenful
             // (one chip of overlap) so trackpad bursts and wheel detents both
             // move a useful amount without skipping chips.
-            app.wtbar_scroll = app.wtbar_scroll.saturating_add(wtbar_page_step(app));
+            app.wtbar.scroll = app.wtbar.scroll.saturating_add(wtbar_page_step(app));
         }
         MouseEventKind::ScrollUp if wtbar_area.height > 0 && row == wtbar_area.y => {
-            app.wtbar_scroll = app.wtbar_scroll.saturating_sub(wtbar_page_step(app));
+            app.wtbar.scroll = app.wtbar.scroll.saturating_sub(wtbar_page_step(app));
         }
         MouseEventKind::ScrollDown => {
-            handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, terminal_split_y, 3);
+            handle_mouse_scroll(app, col, row, &geom, 3);
         }
         MouseEventKind::ScrollUp => {
-            handle_mouse_scroll(app, col, row, main_area, left_end, explorer_end, viewer_end, explorer_mid_y, terminal_split_y, -3);
+            handle_mouse_scroll(app, col, row, &geom, -3);
         }
         MouseEventKind::ScrollLeft
             // Horizontal scroll — only affects viewer panel.
@@ -470,8 +470,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             if let Some(divider) = geom.divider_at(col, row)
                 && divider_draggable(app, divider)
             {
-                app.divider_drag = Some(divider);
-                app.divider_hover = Some(divider);
+                app.layout.divider_drag = Some(divider);
+                app.layout.divider_hover = Some(divider);
                 return;
             }
 
@@ -511,7 +511,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // A divider drag takes priority: move the grabbed boundary to track
             // the cursor. The clamped mutators reject out-of-bounds targets, so
             // dragging past a panel's minimum simply pins the divider there.
-            if let Some(divider) = app.divider_drag {
+            if let Some(divider) = app.layout.divider_drag {
                 app.drag_divider_to(divider, col, row);
                 return;
             }
@@ -535,8 +535,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
         MouseEventKind::Up(MouseButton::Left) => {
             // Finish a divider drag: persist the final ratios once (the drag
             // itself intentionally skips the per-event config write).
-            if app.divider_drag.take().is_some() {
-                app.divider_hover = geom.divider_at(col, row);
+            if app.layout.divider_drag.take().is_some() {
+                app.layout.divider_hover = geom.divider_at(col, row);
                 app.persist_layout();
                 return;
             }
@@ -558,15 +558,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // Light up the divider under the cursor as a resize affordance — the
             // terminal stand-in for a col-/row-resize mouse cursor (a plain hover
             // never mutates a ratio; only a drag does).
-            app.divider_hover = geom
+            app.layout.divider_hover = geom
                 .divider_at(col, row)
                 .filter(|&d| divider_draggable(app, d));
 
             // Track hover for the worktree bar's chips / `[x]` (S7). Resolves
             // to `None` whenever the cursor isn't on the bar's single row,
             // which doubles as the "mouse left the bar" clear.
-            app.wtbar_hover = if wtbar_area.height > 0 && row == wtbar_area.y {
-                crate::ui::worktree_bar::hit_at(&app.wtbar_hits, col)
+            app.wtbar.hover = if wtbar_area.height > 0 && row == wtbar_area.y {
+                crate::ui::worktree_bar::hit_at(&app.wtbar.hits, col)
             } else {
                 None
             };
@@ -592,14 +592,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // is exactly what's needed to clear hover once the mouse leaves —
             // no separate "did we leave the tree" check required.
             let tree_scroll = app.viewer_state.tree.tree_scroll;
-            app.explorer_tree_hover
+            app.list_hover.explorer_tree
                 .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
 
             // Same idea for the Changed files (diff) list in the Explorer's
             // bottom half.
             let diff_scroll = app.viewer_state.explorer.diff_list_scroll;
             let diff_banner = app.viewer_state.explorer.explorer_diff_banner_rows;
-            app.diff_list_hover
+            app.list_hover.diff_list
                 .set(diff_list_row_at(&geom, diff_scroll, diff_banner, col, row));
 
             // Track hover line for gutter highlight in the viewer panel.

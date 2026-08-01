@@ -9,6 +9,7 @@
 mod color;
 pub mod list_row;
 mod notification_bar;
+mod panel_chrome;
 mod pty;
 mod status_bar;
 mod title_bar;
@@ -25,6 +26,7 @@ pub use title_bar::render_title_bar;
 // kept for parity with the pre-split module surface.
 #[allow(unused_imports)]
 pub use notification_bar::render_notification_bar;
+pub use panel_chrome::PanelChrome;
 pub use worktree_label::render_worktree_label;
 
 /// Braille spinner frames for in-progress (async) operations.

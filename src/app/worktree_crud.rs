@@ -39,7 +39,7 @@ impl App {
         );
 
         let tx = self.worktree_op_sender();
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         let branch = branch_name.to_string();
         let base_owned = base.to_string();
         let wt_dir = self.config.general.worktree_dir.clone();
@@ -85,7 +85,7 @@ impl App {
         );
 
         let tx = self.worktree_op_sender();
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
         let remote = remote_branch.to_string();
         let wt_dir = self.config.general.worktree_dir.clone();
 
@@ -105,7 +105,7 @@ impl App {
 
     /// Delete a branch (optionally force).
     pub fn delete_branch(&mut self, name: &str, force: bool) {
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.delete_branch(name, force) {
                 Ok(()) => {
                     let mode = if force { "force-deleted" } else { "deleted" };
@@ -122,7 +122,7 @@ impl App {
     }
 
     pub fn delete_selected_worktree(&mut self, delete_branch_after: bool) {
-        let wt = match self.worktrees.get(self.selected_worktree) {
+        let wt = match self.worktrees.selected() {
             Some(wt) => wt,
             None => return,
         };
@@ -176,7 +176,7 @@ impl App {
         );
 
         let tx = self.worktree_op_sender();
-        let repo_path = self.repo_path.clone();
+        let repo_path = self.repo.path.clone();
 
         std::thread::spawn(move || {
             let result = git_engine::GitEngine::open(&repo_path)
@@ -307,7 +307,7 @@ impl App {
                 self.refresh_worktrees();
                 // Preserve the current focus and selected worktree — don't
                 // switch the user's view to the newly created worktree.
-                let prev_selected = self.selected_worktree;
+                let prev_selected = self.worktrees.selected_index();
                 let prev_focus = self.focus;
                 self.set_status(
                     format!(
@@ -326,7 +326,7 @@ impl App {
                     // Use direct index assignment instead of select_worktree_by_path
                     // to avoid on_worktree_changed() clearing the 🌱 new-worktree badge.
                     if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
-                        self.selected_worktree = idx;
+                        self.worktrees.select(idx);
                     }
                     match self.spawn_claude_code_with_name(pending.session_name.as_deref()) {
                         Ok(idx) => {
@@ -341,7 +341,7 @@ impl App {
                         }
                     }
                     // Restore the previous worktree selection and focus.
-                    self.selected_worktree = prev_selected;
+                    self.worktrees.select(prev_selected);
                     self.on_worktree_changed();
                     self.focus = prev_focus;
                 }
@@ -372,7 +372,7 @@ impl App {
                 // switch would. (Deleting some *other* worktree leaves the
                 // selection intact, so this is a no-op then.)
                 let selected_branch = self.selected_worktree_branch();
-                let view_branch = self.current_view_branch.clone().unwrap_or_default();
+                let view_branch = self.view_restore.current_branch.clone().unwrap_or_default();
                 if selected_branch != view_branch {
                     self.on_worktree_changed();
                 }

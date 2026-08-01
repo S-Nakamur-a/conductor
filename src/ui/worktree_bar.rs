@@ -132,9 +132,9 @@ pub(crate) fn visible_window(
 }
 
 /// Render the worktree monitor strip and record its clickable regions into
-/// `app.wtbar_hits`.
+/// `app.wtbar.hits`.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    app.wtbar_hits.clear();
+    app.wtbar.hits.clear();
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -222,7 +222,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 del_width: w(del),
                 waiting,
                 active,
-                is_current: i == app.selected_worktree,
+                is_current: i == app.worktrees.selected_index(),
                 text,
             }
         })
@@ -254,9 +254,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             &slots,
             sep_w,
             avail,
-            app.wtbar_scroll,
-            app.selected_worktree,
-            app.wtbar_reveal_selected,
+            app.wtbar.scroll,
+            app.worktrees.selected_index(),
+            app.wtbar.reveal_selected,
         )
     };
 
@@ -304,7 +304,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // every theme). The current chip already has a strong fill, so it
         // isn't given a hover background on top of it — there's nothing left
         // to distinguish.
-        let chip_style = if !chip.is_current && app.wtbar_hover == Some(WtbarAction::Select(i)) {
+        let chip_style = if !chip.is_current && app.wtbar.hover == Some(WtbarAction::Select(i)) {
             chip_style.bg(app.theme.gutter_hover_bg)
         } else {
             chip_style
@@ -319,7 +319,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
         if !chip.del.is_empty() {
             let del_style = Style::default().fg(error);
-            let del_style = if app.wtbar_hover == Some(WtbarAction::Delete(i)) {
+            let del_style = if app.wtbar.hover == Some(WtbarAction::Delete(i)) {
                 del_style.bg(app.theme.gutter_hover_bg)
             } else {
                 del_style
@@ -367,9 +367,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         action: WtbarAction::Add,
     });
 
-    app.wtbar_scroll = start;
-    app.wtbar_reveal_selected = false;
-    app.wtbar_hits = hits;
+    app.wtbar.scroll = start;
+    app.wtbar.reveal_selected = false;
+    app.wtbar.hits = hits;
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

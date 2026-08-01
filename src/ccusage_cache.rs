@@ -1,8 +1,8 @@
-//! Global file-based cache for ccusage results.
+//! ccusage の結果をファイルに置くグローバルなキャッシュ。
 //!
-//! Multiple Conductor instances share a single cache file so that only one
-//! process actually runs `npx ccusage` at a time. The cache lives at
-//! `~/.cache/conductor/ccusage-YYYYMMDD.json` (one file per day).
+//! 複数の Conductor インスタンスで 1 つのキャッシュファイルを共有し、実際に
+//! `npx ccusage` を走らせるのが同時に 1 プロセスだけになるようにする。
+//! キャッシュは `~/.cache/conductor/ccusage-YYYYMMDD.json` に置く (1 日 1 ファイル)。
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -12,23 +12,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::CcusageInfo;
 
-/// On-disk representation of cached ccusage data.
+/// キャッシュした ccusage データのディスク上の表現。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
-    /// Unix timestamp (seconds) when this cache was written.
+    /// このキャッシュを書いた時刻 (Unix タイムスタンプ、秒)。
     updated_at: u64,
     total_tokens: u64,
     total_cost: f64,
 }
 
-/// Return the cache file path for today: `~/.cache/conductor/ccusage-YYYYMMDD.json`.
+/// 今日のキャッシュファイルのパスを返す: `~/.cache/conductor/ccusage-YYYYMMDD.json`。
 fn cache_path() -> Option<PathBuf> {
     let cache_dir = dirs::cache_dir()?.join("conductor");
     let today = chrono::Local::now().format("%Y%m%d").to_string();
     Some(cache_dir.join(format!("ccusage-{today}.json")))
 }
 
-/// Current Unix timestamp in seconds.
+/// 現在の Unix タイムスタンプ (秒)。
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -36,8 +36,8 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Try to read the cache file and return its contents if the entry is fresh
-/// enough (written within `max_age_secs` seconds ago).
+/// キャッシュファイルを読み、エントリが十分に新しければ (`max_age_secs` 秒以内に
+/// 書かれていれば) その内容を返す。
 pub fn read_if_fresh(max_age_secs: u64) -> Option<CcusageInfo> {
     let path = cache_path()?;
     let data = fs::read_to_string(&path).ok()?;
@@ -53,7 +53,7 @@ pub fn read_if_fresh(max_age_secs: u64) -> Option<CcusageInfo> {
     }
 }
 
-/// Read the cache regardless of freshness (for immediate startup display).
+/// 鮮度を問わずキャッシュを読む (起動直後にすぐ表示するため)。
 pub fn read_any() -> Option<CcusageInfo> {
     let path = cache_path()?;
     let data = fs::read_to_string(&path).ok()?;
@@ -64,7 +64,7 @@ pub fn read_any() -> Option<CcusageInfo> {
     })
 }
 
-/// Write a cache entry atomically (write to temp file, then rename).
+/// キャッシュエントリをアトミックに書く (一時ファイルに書いてからリネーム)。
 fn write_cache(info: &CcusageInfo) {
     let Some(path) = cache_path() else { return };
     if let Some(dir) = path.parent() {
@@ -78,27 +78,27 @@ fn write_cache(info: &CcusageInfo) {
     let Ok(json) = serde_json::to_string(&entry) else {
         return;
     };
-    // Atomic write: write to a sibling temp file, then rename.
+    // アトミックな書き込み: 隣に一時ファイルを作ってからリネームする。
     let tmp = path.with_extension("tmp");
     if fs::write(&tmp, &json).is_ok() {
         let _ = fs::rename(&tmp, &path);
     }
 }
 
-/// Return the lock file path: `~/.cache/conductor/ccusage.lock`.
+/// ロックファイルのパスを返す: `~/.cache/conductor/ccusage.lock`。
 fn lock_path() -> Option<PathBuf> {
     Some(dirs::cache_dir()?.join("conductor").join("ccusage.lock"))
 }
 
-/// Try to acquire an exclusive lock (create_new fails if file already exists).
-/// Returns the path on success so the caller can remove it when done.
+/// 排他ロックの取得を試みる (create_new はファイルが既にあると失敗する)。
+/// 成功したら、呼び出し側が終了時に消せるようパスを返す。
 fn try_lock() -> Option<PathBuf> {
     let path = lock_path()?;
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    // Stale lock guard: if the lock file is older than 60 seconds, a previous
-    // process likely crashed without cleaning up. Remove it so we can proceed.
+    // 取り残されたロックへの備え: ロックファイルが 60 秒より古ければ、前のプロセスが
+    // 後始末をせずにクラッシュした可能性が高い。消して先へ進む。
     if let Ok(meta) = fs::metadata(&path)
         && let Ok(modified) = meta.modified()
     {
@@ -109,7 +109,7 @@ fn try_lock() -> Option<PathBuf> {
             let _ = fs::remove_file(&path);
         }
     }
-    // create_new: atomic O_CREAT|O_EXCL — fails if another process holds the lock.
+    // create_new はアトミックな O_CREAT|O_EXCL。他プロセスがロックを持っていれば失敗する。
     File::create_new(&path).ok()?;
     Some(path)
 }
@@ -118,11 +118,11 @@ fn release_lock(path: &PathBuf) {
     let _ = fs::remove_file(path);
 }
 
-/// Run `npx ccusage` and return the parsed result, also writing it to cache.
+/// `npx ccusage` を実行し、パースした結果を返すとともにキャッシュへ書く。
 ///
-/// Uses a lock file to prevent multiple Conductor instances from running
-/// `npx ccusage` at the same time. If the lock is already held, returns
-/// `None` (the caller should fall back to the existing cache).
+/// ロックファイルを使って、複数の Conductor インスタンスが同時に `npx ccusage`
+/// を走らせないようにしている。既にロックが取られている場合は `None` を返す
+/// (呼び出し側は既存のキャッシュにフォールバックすること)。
 pub fn fetch_and_cache() -> Option<CcusageInfo> {
     let lock = try_lock()?;
 

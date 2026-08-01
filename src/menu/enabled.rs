@@ -25,18 +25,18 @@ use crate::command_palette::CommandId;
 /// Must stay allocation-light and side-effect free — see the module note on
 /// where this is called from.
 pub fn command_enabled(id: CommandId, app: &App) -> bool {
-    let selected_worktree = app.worktrees.get(app.selected_worktree);
+    let selected_worktree = app.worktrees.selected();
 
     match id {
         // ── App ──────────────────────────────────────────────────────────
         // `Action::UpdateAndRestart` is a no-op unless a release was found
-        // (`event/global.rs`, `if app.update_info.is_some()`).
-        CommandId::UpdateAndRestart => app.update_info.is_some(),
+        // (`event/global.rs`, `if app.update.info.is_some()`).
+        CommandId::UpdateAndRestart => app.update.info.is_some(),
 
         // ── Repository ───────────────────────────────────────────────────
         // The repo selector only opens with somewhere to switch to
-        // (`event/global.rs`, `if app.repo_list.len() > 1`).
-        CommandId::SwitchRepo => app.repo_list.len() > 1,
+        // (`event/global.rs`, `if app.repo.known.len() > 1`).
+        CommandId::SwitchRepo => app.repo.known.len() > 1,
 
         // ── Worktree ─────────────────────────────────────────────────────
         // The strip's delete button refuses the main worktree and one already

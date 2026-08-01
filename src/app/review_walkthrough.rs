@@ -149,7 +149,7 @@ impl App {
         // branch's row in `generating` forever. Generations for other branches
         // are none of this branch's business — they write disjoint rows, so
         // they run concurrently (see [`WalkthroughGenerations`]).
-        if self.walkthrough_gens.is_generating(&branch) {
+        if self.walkthrough.generations.is_generating(&branch) {
             self.set_status(
                 "A walkthrough is already being generated for this branch.".to_string(),
                 StatusLevel::Warning,
@@ -158,7 +158,7 @@ impl App {
         }
         let Some((wt_path, head_oid)) = self
             .worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| (w.path.clone(), w.head_oid.clone()))
         else {
             return;
@@ -238,7 +238,7 @@ impl App {
             let _ = tx.send(outcome);
         });
 
-        self.walkthrough_gens.insert(WalkthroughGeneration {
+        self.walkthrough.generations.insert(WalkthroughGeneration {
             branch: branch.clone(),
             result: rx,
             cancel,
@@ -261,7 +261,7 @@ impl App {
     /// it returns on `should_quit`) — a generation still running at that point
     /// would otherwise keep burning tokens with no one left to read its result.
     pub fn shutdown_walkthrough_generation(&mut self) {
-        self.walkthrough_gens.abort_all();
+        self.walkthrough.generations.abort_all();
     }
 
     /// Drain the in-flight generations' result channels and reconcile each
@@ -273,10 +273,10 @@ impl App {
     /// over the plain text seam, which is also why a malformed reply can no
     /// longer leave a row stuck in `generating`.
     pub fn poll_walkthrough_generation(&mut self) {
-        if self.walkthrough_gens.is_empty() {
+        if self.walkthrough.generations.is_empty() {
             return;
         }
-        let finished = self.walkthrough_gens.take_finished();
+        let finished = self.walkthrough.generations.take_finished();
         if finished.is_empty() {
             return;
         }

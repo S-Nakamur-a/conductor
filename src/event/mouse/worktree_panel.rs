@@ -11,7 +11,7 @@ pub(super) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &Click
     let relative_row = (row - main_area.y) as usize;
     let item_row = relative_row.saturating_sub(1); // row 0 is border
 
-    if !app.worktree_list_rows.is_empty() && item_row < app.worktree_list_rows.len() {
+    if !app.worktrees.rows.is_empty() && item_row < app.worktrees.rows.len() {
         // Double-click detection.
         let is_double = register_double_click_on(
             &mut app.worktree_mgr.item_last_click,
@@ -21,9 +21,9 @@ pub(super) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &Click
         );
 
         app.set_focus(Focus::Worktree);
-        app.worktree_list_selected = item_row;
+        app.worktrees.row_selected = item_row;
         app.sync_selected_worktree();
-        match app.worktree_list_rows[item_row] {
+        match app.worktrees.rows[item_row] {
             crate::app::WorktreeListRow::Session { pty_idx, .. } => {
                 app.on_worktree_changed();
                 app.switch_claude_session(pty_idx);

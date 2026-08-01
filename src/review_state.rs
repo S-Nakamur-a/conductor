@@ -1,125 +1,125 @@
-//! Review mode state — tracks the UI state for the Review panel.
+//! レビューモードの状態。レビューパネルの UI 状態を保持する。
 //!
-//! Manages the list of comments currently visible, selection, scrolling,
-//! and the input mode for adding or editing review comments.
+//! 現在表示しているコメントの一覧、選択、スクロール、そしてレビューコメントの
+//! 追加・編集のための入力モードを扱う。
 
 use std::collections::{HashMap, HashSet};
 
 use crate::review_store::{CommentKind, CommentTemplate, ReviewComment, ReviewReply, ReviewStore};
 use crate::text_input::TextInput;
 
-/// A single row in the virtual comment list.
+/// 仮想的なコメント一覧の 1 行。
 ///
-/// When a comment thread is expanded, reply rows appear after the parent
-/// comment row. This enum lets the UI and event handler treat the list
-/// as a flat sequence while preserving the parent–reply relationship.
+/// コメントのスレッドを展開すると、親コメントの行のあとに返信の行が並ぶ。この
+/// 列挙型のおかげで、UI とイベントハンドラは親と返信の関係を保ったまま一覧を
+/// 平坦な列として扱える。
 #[derive(Debug, Clone)]
 pub enum CommentListRow {
-    /// A top-level comment at the given index in `ReviewState::comments`.
+    /// `ReviewState::comments` の指定添字にあるトップレベルのコメント。
     Comment { comment_idx: usize },
-    /// A reply belonging to the comment at `comment_idx`.
+    /// `comment_idx` のコメントに属する返信。
     Reply {
         comment_idx: usize,
         reply_idx: usize,
     },
 }
 
-/// The input mode the review panel is in.
+/// レビューパネルの入力モード。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewInputMode {
-    /// Navigating the comment list.
+    /// コメント一覧を移動している。
     Normal,
-    /// Typing a new comment body (format: "file:line body").
+    /// 新しいコメント本文を入力している (形式: "file:line body")。
     AddingComment,
-    /// Editing the body of an existing comment.
+    /// 既存コメントの本文を編集している。
     EditingComment,
-    /// Editing the body of an existing reply.
+    /// 既存の返信の本文を編集している。
     EditingReply,
-    /// Replying to an existing comment.
+    /// 既存コメントへ返信している。
     ReplyingToComment,
-    /// Awaiting y/n confirmation before deleting a comment or reply.
+    /// コメントまたは返信を削除する前の y/n 確認を待っている。
     ConfirmingDelete,
 }
 
-/// What a pending (awaiting-confirmation) delete targets.
+/// 確認待ちの削除が何を対象にしているか。
 #[derive(Debug, Clone)]
 pub enum PendingDelete {
-    /// Delete a whole comment (cascades to its replies).
+    /// コメント全体を削除する (返信も連鎖して消える)。
     Comment { id: String },
-    /// Delete a single reply, leaving its parent comment intact.
+    /// 返信 1 件だけを削除し、親コメントは残す。
     Reply { id: String, parent_id: String },
 }
 
-/// UI state for the Review mode.
+/// レビューモードの UI 状態。
 pub struct ReviewState {
-    /// Comments for the current worktree, loaded from the database.
+    /// 現在の worktree のコメント。データベースから読み込む。
     pub comments: Vec<ReviewComment>,
-    /// Index of the currently selected comment.
+    /// 現在選択しているコメントの添字。
     pub selected: usize,
-    /// Current input mode.
+    /// 現在の入力モード。
     pub input_mode: ReviewInputMode,
-    /// Text buffer for the input field (used during adding/editing).
+    /// 入力欄のテキストバッファ (追加・編集中に使う)。
     pub input_buffer: TextInput,
-    /// The kind of comment being created (Suggest or Question).
+    /// 作成中のコメントの種別 (Suggest か Question)。
     pub input_kind: CommentKind,
-    /// Target of an in-progress **new** comment: `(file_path, line_start,
-    /// line_end)`. When set (during `AddingComment`), the compose box renders
-    /// inline at that line and the buffer holds only the body — no `file:line`
-    /// prefix. `None` falls back to the legacy prefix-in-buffer parse path
-    /// (template picker / command palette entry points).
+    /// 作成中の新規コメントの対象: `(file_path, line_start, line_end)`。
+    /// 設定されている (`AddingComment` の) あいだ、入力ボックスはその行に
+    /// インラインで描かれ、バッファは本文だけを持つ (`file:line` の接頭辞は無い)。
+    /// `None` のときは、バッファ内の接頭辞をパースする従来の経路
+    /// (テンプレートピッカーやコマンドパレットからの入口) に落ちる。
     pub input_anchor: Option<(String, u32, Option<u32>)>,
-    /// Optional flash message displayed at the bottom of the panel.
+    /// パネル下部に出す一時的なメッセージ。
     pub status_message: Option<String>,
-    /// Current search/filter query for comments.
+    /// コメントに対する現在の検索・絞り込みクエリ。
     pub search_query: TextInput,
-    /// Whether the search input is active.
+    /// 検索入力が有効かどうか。
     pub search_active: bool,
-    /// Filtered comment indices (into the `comments` vec).
+    /// 絞り込み後のコメントの添字 (`comments` に対する添字)。
     pub filtered_indices: Vec<usize>,
-    /// Available comment templates loaded from the database.
+    /// データベースから読み込んだ、利用可能なコメントテンプレート。
     pub templates: Vec<CommentTemplate>,
-    /// Whether the template picker is visible.
+    /// テンプレートピッカーが表示中かどうか。
     pub template_picker_active: bool,
-    /// Index of the currently selected template in the picker.
+    /// ピッカー内で現在選択しているテンプレートの添字。
     pub template_selected: usize,
-    /// Cached comments for the currently viewed file, keyed by 1-indexed line number.
+    /// 現在表示中のファイルのコメントのキャッシュ。1 始まりの行番号がキー。
     pub file_comments: HashMap<usize, Vec<ReviewComment>>,
-    /// The file path for which `file_comments` was built (for cache invalidation).
+    /// `file_comments` を作ったときのファイルパス (キャッシュ無効化のため)。
     pub file_comments_path: Option<String>,
-    /// Cached reply counts per comment ID, loaded alongside comments.
+    /// コメント ID ごとの返信数のキャッシュ。コメントと一緒に読み込む。
     pub reply_counts: HashMap<String, usize>,
-    /// Set of comment IDs whose reply threads are currently expanded.
+    /// 返信スレッドを展開しているコメント ID の集合。
     pub expanded_comments: HashSet<String>,
-    /// Cached replies for expanded comments, keyed by comment ID.
+    /// 展開中コメントの返信のキャッシュ。コメント ID がキー。
     pub cached_replies: HashMap<String, Vec<ReviewReply>>,
-    /// Virtual row list for the comment panel (rebuilt on expansion changes).
+    /// コメントパネルの仮想的な行一覧 (展開状態が変わるたびに作り直す)。
     pub comment_list_rows: Vec<CommentListRow>,
 
-    // ── Comment detail overlay ──────────────────────────────────
-    /// Whether the comment detail modal is visible.
+    // ── コメント詳細のオーバーレイ ──────────────────────────────
+    /// コメント詳細モーダルが表示中かどうか。
     pub comment_detail_active: bool,
-    /// Scroll offset within the detail modal.
+    /// 詳細モーダル内のスクロール位置。
     pub comment_detail_scroll: usize,
-    /// Maximum scroll offset (set by render).
+    /// スクロール位置の上限 (描画時に設定される)。
     pub comment_detail_max_scroll: usize,
-    /// Index of the comment being viewed in the detail modal.
+    /// 詳細モーダルで表示しているコメントの添字。
     pub comment_detail_idx: usize,
 
-    /// Branch-level change summary (the "what & why" of the whole diff), loaded
-    /// alongside comments and rendered as a banner above the diff. `None` when
-    /// the current branch has no summary written.
+    /// ブランチ単位の変更サマリ (差分全体の「何を・なぜ」)。コメントと一緒に
+    /// 読み込み、差分の上にバナーとして描画する。現在のブランチにサマリが
+    /// 書かれていなければ `None`。
     pub change_summary: Option<String>,
 
-    /// Target of an in-progress delete awaiting y/n confirmation (set while
-    /// `input_mode == ConfirmingDelete`).
+    /// y/n の確認を待っている削除の対象 (`input_mode == ConfirmingDelete` の
+    /// あいだ設定される)。
     pub pending_delete: Option<PendingDelete>,
-    /// `(reply_id, parent_comment_id)` of a reply being edited (set while
-    /// `input_mode == EditingReply`).
+    /// 編集中の返信の `(reply_id, parent_comment_id)`
+    /// (`input_mode == EditingReply` のあいだ設定される)。
     pub editing_reply: Option<(String, String)>,
 }
 
 impl ReviewState {
-    /// Create a new `ReviewState` with empty defaults.
+    /// 空の既定値で `ReviewState` を作る。
     pub fn new() -> Self {
         Self {
             comments: Vec::new(),
@@ -151,7 +151,7 @@ impl ReviewState {
         }
     }
 
-    /// Resolve a visual row to `(comment_idx, reply_idx)` when it is a reply row.
+    /// 見た目上の行が返信の行であれば `(comment_idx, reply_idx)` に解決する。
     pub fn selected_reply_at(&self, visual_idx: usize) -> Option<(usize, usize)> {
         match self.comment_list_rows.get(visual_idx) {
             Some(CommentListRow::Reply {
@@ -162,8 +162,8 @@ impl ReviewState {
         }
     }
 
-    /// Resolve `(comment_idx, reply_idx)` to `(reply_id, parent_comment_id)`
-    /// via the parent comment's cached replies.
+    /// 親コメントの返信キャッシュを介して、`(comment_idx, reply_idx)` を
+    /// `(reply_id, parent_comment_id)` に解決する。
     pub fn reply_id_at(&self, comment_idx: usize, reply_idx: usize) -> Option<(String, String)> {
         let comment = self.comments.get(comment_idx)?;
         let replies = self.cached_replies.get(&comment.id)?;
@@ -171,9 +171,8 @@ impl ReviewState {
         Some((reply.id.clone(), comment.id.clone()))
     }
 
-    /// Re-fetch the replies for one comment into the cache (after a reply was
-    /// added / edited / deleted), update its reply count, and rebuild the
-    /// virtual row list so the thread reflects the change.
+    /// (返信の追加・編集・削除のあとに) コメント 1 件の返信をキャッシュへ取り直し、
+    /// 返信数を更新し、変更がスレッドに反映されるよう仮想的な行一覧を作り直す。
     pub fn refresh_replies(&mut self, store: &ReviewStore, comment_id: &str) {
         match store.get_replies(comment_id) {
             Ok(replies) => {
@@ -190,13 +189,13 @@ impl ReviewState {
         self.rebuild_comment_list_rows();
     }
 
-    /// Reload comments from the database for the given worktree.
+    /// 指定した worktree のコメントをデータベースから読み直す。
     pub fn load_comments(&mut self, store: &ReviewStore, worktree: &str) {
         match store.reviews_for_worktree(worktree) {
             Ok(comments) => {
                 self.comments = comments;
                 self.filtered_indices = (0..self.comments.len()).collect();
-                // Clamp selection to valid range.
+                // 選択を有効な範囲に収める。
                 if !self.comments.is_empty() && self.selected >= self.comments.len() {
                     self.selected = self.comments.len() - 1;
                 }
@@ -208,7 +207,7 @@ impl ReviewState {
                 self.selected = 0;
             }
         }
-        // Load reply counts for all comments in this worktree.
+        // この worktree の全コメントについて返信数を読み込む。
         match store.reply_counts_for_worktree(worktree) {
             Ok(counts) => {
                 self.reply_counts = counts;
@@ -218,7 +217,7 @@ impl ReviewState {
                 self.reply_counts.clear();
             }
         }
-        // Load the branch-level change summary for this worktree.
+        // この worktree のブランチ単位の変更サマリを読み込む。
         match store.get_change_summary(worktree) {
             Ok(summary) => self.change_summary = summary,
             Err(e) => {
@@ -226,15 +225,15 @@ impl ReviewState {
                 self.change_summary = None;
             }
         }
-        // Clean up expansion state for comments that no longer exist.
+        // もう存在しないコメントの展開状態を掃除する。
         let current_ids: HashSet<String> = self.comments.iter().map(|c| c.id.clone()).collect();
         self.expanded_comments.retain(|id| current_ids.contains(id));
         self.cached_replies.retain(|id, _| current_ids.contains(id));
         self.rebuild_comment_list_rows();
     }
 
-    /// Rebuild the virtual row list from `comments`, `expanded_comments`,
-    /// and `cached_replies`.
+    /// `comments`, `expanded_comments`, `cached_replies` から仮想的な行一覧を
+    /// 作り直す。
     pub fn rebuild_comment_list_rows(&mut self) {
         self.comment_list_rows.clear();
         for (comment_idx, comment) in self.comments.iter().enumerate() {
@@ -253,7 +252,7 @@ impl ReviewState {
         }
     }
 
-    /// Resolve a visual row index to the parent comment index.
+    /// 見た目上の行の添字を、親コメントの添字に解決する。
     pub fn selected_comment_idx(&self, visual_idx: usize) -> Option<usize> {
         match self.comment_list_rows.get(visual_idx) {
             Some(CommentListRow::Comment { comment_idx }) => Some(*comment_idx),
@@ -262,12 +261,12 @@ impl ReviewState {
         }
     }
 
-    /// Return a reference to the currently selected comment, if any.
+    /// 現在選択しているコメントへの参照を返す (あれば)。
     pub fn selected_comment(&self) -> Option<&ReviewComment> {
         self.comments.get(self.selected)
     }
 
-    /// Apply the current search query to filter the comment list.
+    /// 現在の検索クエリを適用してコメント一覧を絞り込む。
     pub fn apply_filter(&mut self) {
         if self.search_query.is_empty() {
             self.filtered_indices = (0..self.comments.len()).collect();
@@ -284,19 +283,18 @@ impl ReviewState {
                 .map(|(i, _)| i)
                 .collect();
         }
-        // Clamp selection.
+        // 選択を範囲内に収める。
         if !self.filtered_indices.is_empty() && self.selected >= self.filtered_indices.len() {
             self.selected = self.filtered_indices.len() - 1;
         }
     }
 
-    /// Build the per-file comment cache from in-memory comments.
+    /// メモリ上のコメントから、ファイル単位のコメントキャッシュを作る。
     ///
-    /// Filters `self.comments` by `file_path` and maps each line in the
-    /// comment's range to a vec of comments covering that line. Resolved
-    /// comments are kept here so their badge still appears in the gutter;
-    /// the inline thread expansion (see `build_inline_thread_lines`) is what
-    /// hides resolved comments.
+    /// `self.comments` を `file_path` で絞り込み、コメントの範囲に含まれる各行を、
+    /// その行を覆うコメントの列へ対応づける。解決済みのコメントもここには残す。
+    /// 溝にバッジを出し続けるため。解決済みコメントを隠しているのはインラインの
+    /// スレッド展開のほう (`build_inline_thread_lines` を参照)。
     pub fn build_file_comment_cache(&mut self, file_path: &str) {
         self.file_comments.clear();
         self.file_comments_path = Some(file_path.to_string());
@@ -316,7 +314,7 @@ impl ReviewState {
         }
     }
 
-    /// Load comment templates from the database.
+    /// コメントテンプレートをデータベースから読み込む。
     pub fn load_templates(&mut self, store: &ReviewStore) {
         match store.list_templates() {
             Ok(templates) => {
@@ -376,17 +374,17 @@ mod tests {
 
         state.build_file_comment_cache("src/main.rs");
 
-        // Both lines keep a cache entry so the gutter badge still appears;
-        // resolved comments are only hidden from the inline thread expansion.
+        // どちらの行にもキャッシュエントリが残り、溝のバッジは出続ける。
+        // 解決済みコメントが隠れるのはインラインのスレッド展開だけ。
         assert!(state.file_comments.contains_key(&10));
         assert!(state.file_comments.contains_key(&20));
     }
 
     #[test]
     fn build_file_comment_cache_supports_overlapping_ranges() {
-        // Two comments whose ranges nest (L10-L20 and L11-L19) must coexist:
-        // shared lines carry both, and each keeps its own distinct end line
-        // (where its 💬 badge and inline thread live).
+        // 範囲が入れ子になる 2 つのコメント (L10-L20 と L11-L19) は共存できなければ
+        // ならない。共有する行は両方を持ち、それぞれが自分の終端行 (💬 バッジと
+        // インラインスレッドが置かれる行) を別々に保つ。
         let mut state = ReviewState::new();
         state.comments = vec![
             range_comment("outer", 10, Some(20), CommentStatus::Pending),
@@ -401,12 +399,12 @@ mod tests {
                 .map(|c| c.id.as_str())
                 .collect()
         };
-        // A line inside both ranges sees both comments.
+        // 両方の範囲に入る行は両方のコメントを見る。
         assert_eq!(on(15), vec!["outer", "inner"]);
-        // Boundary lines covered only by the outer range see just it.
+        // 外側の範囲だけが覆う境界行は、それだけを見る。
         assert_eq!(on(10), vec!["outer"]);
         assert_eq!(on(20), vec!["outer"]);
-        // Each comment's own end line is present with its comment.
+        // 各コメントの終端行には、そのコメント自身が入っている。
         assert!(on(19).contains(&"inner"));
     }
 }

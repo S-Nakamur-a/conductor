@@ -14,7 +14,7 @@ impl App {
         last_claude_size: &mut (u16, u16),
         last_shell_size: &mut (u16, u16),
     ) {
-        let cols = &self.layout_cache.columns;
+        let cols = &self.layout.cache.columns;
         let is_terminal_expanded = matches!(
             self.expanded_panel,
             Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
@@ -24,10 +24,10 @@ impl App {
         let right_w = cols[3].width;
         if right_w > border_cols {
             let right_cols = right_w.saturating_sub(border_cols);
-            let claude_pty_rows = self.layout_cache.terminal_split[0]
+            let claude_pty_rows = self.layout.cache.terminal_split[0]
                 .height
                 .saturating_sub(border_rows);
-            let shell_pty_rows = self.layout_cache.terminal_split[1]
+            let shell_pty_rows = self.layout.cache.terminal_split[1]
                 .height
                 .saturating_sub(border_rows);
 
@@ -132,7 +132,7 @@ impl App {
     /// Called after `refresh_worktrees()` in the polling loop, which already
     /// fetches HEAD oids and status counts as a side effect.
     pub fn check_diff_viewer_staleness(&mut self) {
-        let wt = match self.worktrees.get(self.selected_worktree) {
+        let wt = match self.worktrees.selected() {
             Some(wt) => wt,
             None => return,
         };

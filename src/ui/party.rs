@@ -97,7 +97,7 @@ pub fn apply_party_effects(frame: &mut Frame, app: &App) {
     }
 
     // ── Effect 2: rainbow title bar ───────────────────────────────────
-    let title = app.layout_cache.title_area;
+    let title = app.layout.cache.title_area;
     if title.height >= 1 {
         let y = title.y;
         for x in title.x..title.x.saturating_add(title.width) {
@@ -112,7 +112,7 @@ pub fn apply_party_effects(frame: &mut Frame, app: &App) {
     }
 
     // ── Effect 3: drifting confetti ───────────────────────────────────
-    draw_confetti(buf, app.layout_cache.main_area, tick);
+    draw_confetti(buf, app.layout.cache.main_area, tick);
 }
 
 /// Scatter sparkles across `area`, drifting downward as `tick` advances.

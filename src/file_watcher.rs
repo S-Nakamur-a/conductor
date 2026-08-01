@@ -1,7 +1,7 @@
-//! File system watcher for auto-refresh on file changes.
+//! ファイル変更を検知して自動リフレッシュするためのファイルシステム監視。
 //!
-//! Uses the `notify` crate to watch worktree directories and sends events
-//! through a channel to the main event loop.
+//! `notify` クレートで worktree のディレクトリを監視し、イベントを
+//! チャネル経由でメインイベントループへ送る。
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -9,21 +9,21 @@ use std::time::Duration;
 
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Events sent from the file watcher to the main loop.
+/// ファイル監視からメインループへ送られるイベント。
 #[derive(Debug)]
 pub enum FsEvent {
-    /// One or more files changed.
+    /// 1 つ以上のファイルが変更された。
     Changed,
 }
 
-/// File system watcher that monitors worktree directories.
+/// worktree のディレクトリを監視するファイルシステムウォッチャ。
 pub struct FileWatcher {
     _watcher: RecommendedWatcher,
     rx: mpsc::Receiver<FsEvent>,
 }
 
 impl FileWatcher {
-    /// Create a new file watcher monitoring the given paths.
+    /// 指定したパス群を監視するウォッチャを作る。
     pub fn new(paths: &[PathBuf]) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel();
 
@@ -31,20 +31,19 @@ impl FileWatcher {
         let mut watcher = RecommendedWatcher::new(
             move |result: Result<Event, notify::Error>| {
                 if let Ok(event) = result {
-                    // Only notify on modifications (not access-only events).
+                    // 変更系のイベントだけ通知する (アクセスのみのイベントは無視)。
                     if !(event.kind.is_modify()
                         || event.kind.is_create()
                         || event.kind.is_remove())
                     {
                         return;
                     }
-                    // Skip changes inside .git/ / .conductor directories — git
-                    // operations (e.g. `git status`) touch index files and
-                    // would otherwise trigger expensive refreshes. Check every
-                    // path in the event, not just the first: rename events
-                    // carry (from, to), and a move out of `.git` into the
-                    // working tree is a real change even when `paths[0]` is
-                    // the `.git` side.
+                    // .git/ と .conductor ディレクトリ内の変更は無視する。git の操作
+                    // (`git status` など) はインデックスファイルに触るので、そのままだと
+                    // 高コストなリフレッシュが走ってしまう。最初の 1 件だけでなく
+                    // イベント内の全パスを見るのは、リネームイベントが (from, to) を
+                    // 持つため — `.git` から作業ツリーへの移動は、`paths[0]` が `.git`
+                    // 側であっても実際の変更だから。
                     let any_real_path = event.paths.iter().any(|path| {
                         !path
                             .components()
@@ -70,7 +69,7 @@ impl FileWatcher {
         })
     }
 
-    /// Check for any pending file change events (non-blocking).
+    /// 未処理のファイル変更イベントがあれば取り出す (ノンブロッキング)。
     pub fn poll(&self) -> Option<FsEvent> {
         self.rx.try_recv().ok()
     }

@@ -71,12 +71,12 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             if let Some(entry) = app.viewer_state.tree.file_tree.get(idx).cloned() {
                 if entry.is_dir {
                     if !entry.is_expanded
-                        && let Some(wt) = app.worktrees.get(app.selected_worktree)
+                        && let Some(wt) = app.worktrees.selected()
                     {
                         app.viewer_state.ensure_children_loaded(idx, &wt.path);
                     }
                     app.viewer_state.toggle_dir(idx);
-                } else if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+                } else if let Some(wt) = app.worktrees.selected() {
                     let path = wt.path.clone();
                     let tab_width = app.config.viewer.tab_width;
                     app.viewer_state.open_file(&path, &entry.path, tab_width);
@@ -91,7 +91,7 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             if let Some(entry) = app.viewer_state.tree.file_tree.get(idx)
                 && entry.is_dir
                 && !entry.is_expanded
-                && let Some(wt) = app.worktrees.get(app.selected_worktree)
+                && let Some(wt) = app.worktrees.selected()
             {
                 app.viewer_state.ensure_children_loaded(idx, &wt.path);
             }

@@ -32,7 +32,7 @@ pub(super) fn handle_notification_bar_click(
     for (start_col, end_col, branch) in &app.notification_bar_badges {
         if col >= *start_col && col < *end_col {
             if let Some(wt_idx) = app.worktrees.iter().position(|w| w.branch == *branch) {
-                app.selected_worktree = wt_idx;
+                app.worktrees.select(wt_idx);
                 app.on_worktree_changed();
                 app.set_focus(Focus::TerminalClaude);
             }
@@ -48,7 +48,7 @@ pub(super) fn handle_notification_bar_click(
 pub(super) fn wtbar_page_step(app: &App) -> usize {
     use crate::ui::worktree_bar::WtbarAction;
     let visible = app
-        .wtbar_hits
+        .wtbar.hits
         .iter()
         .filter(|h| matches!(h.action, WtbarAction::Select(_)))
         .count();
@@ -71,22 +71,22 @@ pub(super) fn handle_wtbar_click(
     use crate::ui::worktree_bar::WtbarAction;
 
     let action = app
-        .wtbar_hits
+        .wtbar.hits
         .iter()
         .find(|h| col >= h.x0 && col < h.x1)
         .map(|h| h.action);
 
     match action {
         Some(WtbarAction::Select(i)) if i < app.worktrees.len() => {
-            app.selected_worktree = i;
+            app.worktrees.select(i);
             app.on_worktree_changed();
             app.set_focus(Focus::TerminalClaude);
         }
         Some(WtbarAction::ScrollLeft) => {
-            app.wtbar_scroll = app.wtbar_scroll.saturating_sub(1);
+            app.wtbar.scroll = app.wtbar.scroll.saturating_sub(1);
         }
         Some(WtbarAction::ScrollRight) => {
-            app.wtbar_scroll = app.wtbar_scroll.saturating_add(1);
+            app.wtbar.scroll = app.wtbar.scroll.saturating_add(1);
         }
         Some(WtbarAction::Add) => start_worktree_creation(app),
         Some(WtbarAction::Delete(i)) => {
@@ -103,7 +103,7 @@ pub(super) fn handle_wtbar_click(
                     );
                 } else {
                     let branch = wt.branch.clone();
-                    app.selected_worktree = i;
+                    app.worktrees.select(i);
                     app.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingDelete;
                     app.set_status(
                         format!("Delete worktree '{branch}'? (y/n)"),
@@ -141,10 +141,10 @@ pub(super) fn handle_title_bar_click(
     if row >= main_area.y {
         return false;
     }
-    if let Some((start, end)) = app.update_badge_cols
+    if let Some((start, end)) = app.update.badge_cols
         && col >= start
         && col < end
-        && app.update_info.is_some()
+        && app.update.info.is_some()
     {
         app.start_update_confirm();
     }

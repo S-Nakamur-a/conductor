@@ -7,25 +7,25 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::{App, UpdateState};
 
 pub(super) fn handle_update_key(app: &mut App, key: KeyEvent) {
-    match app.update_state {
+    match app.update.state {
         UpdateState::Confirming => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 app.start_update_download();
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.update_state = UpdateState::Idle;
+                app.update.state = UpdateState::Idle;
             }
             _ => {}
         },
         UpdateState::InProgress => {
             if key.code == KeyCode::Esc {
-                app.update_op.clear();
-                app.update_state = UpdateState::Idle;
+                app.update.op.clear();
+                app.update.state = UpdateState::Idle;
             }
         }
         UpdateState::Failed => {
             // Any key dismisses the error.
-            app.update_state = UpdateState::Idle;
+            app.update.state = UpdateState::Idle;
         }
         UpdateState::Restarting | UpdateState::Idle => {}
     }

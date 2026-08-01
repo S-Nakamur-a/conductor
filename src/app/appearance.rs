@@ -13,8 +13,8 @@ impl App {
     /// (`~/.config/conductor/config.toml`) so it survives restarts. A write
     /// failure is non-fatal: it is logged and surfaced as a warning flash.
     pub fn set_theme(&mut self, name: &str, persist: bool) {
-        self.theme = super::build_theme(name, self.high_contrast);
-        self.theme_name = name.to_string();
+        self.theme = super::build_theme(name, self.theme_sel.high_contrast);
+        self.theme_sel.name = name.to_string();
         self.config.ui.theme = Some(name.to_string());
         if persist
             && let Err(e) = crate::config::persist_ui_theme(name)
@@ -52,17 +52,17 @@ impl App {
         // ── UI / syntax theme ──────────────────────────────────────
         let new_theme_name = super::resolve_theme_name(new);
         let new_high_contrast = new.ui.high_contrast;
-        if new_theme_name != self.theme_name || new_high_contrast != self.high_contrast {
+        if new_theme_name != self.theme_sel.name || new_high_contrast != self.theme_sel.high_contrast {
             self.theme = super::build_theme(&new_theme_name, new_high_contrast);
-            self.theme_name = new_theme_name;
-            self.high_contrast = new_high_contrast;
+            self.theme_sel.name = new_theme_name;
+            self.theme_sel.high_contrast = new_high_contrast;
         }
 
         // Rebuild syntect theme when either the viewer theme or the custom
         // theme file changes (the two are bundled into a single re-construction
         // so there is never a half-updated state).
         let ts = ThemeSet::load_defaults();
-        self.syntect_theme = config::syntect_theme_for(&new.viewer, &ts);
+        self.highlight.theme = config::syntect_theme_for(&new.viewer, &ts);
 
         // Clear the Markdown cache so code blocks inside review comments pick
         // up the new syntect theme. The cache fingerprints the UI colour palette
@@ -91,7 +91,7 @@ impl App {
         // so an external edit to layout.terminal_split_pct takes effect live. Our
         // own resize-driven writes never reach here — they leave the appearance
         // snapshot unchanged, so reload_appearance_config short-circuits first.
-        self.terminal_split_pct = self
+        self.layout.terminal_split_pct = self
             .config
             .layout
             .terminal_split_pct

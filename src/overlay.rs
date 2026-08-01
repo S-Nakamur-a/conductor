@@ -1,10 +1,10 @@
-//! Overlay state types.
+//! オーバーレイの状態を表す型。
 //!
-//! Each overlay popup has its own state struct, extracted from the monolithic
-//! `App` struct to improve organization and reduce field count.
+//! オーバーレイのポップアップごとに専用の状態構造体を持つ。整理のためと
+//! フィールド数を減らすために、一枚岩の `App` 構造体から切り出したもの。
 //!
-//! The `ActiveOverlay` enum tracks which overlay is currently visible,
-//! replacing the previous `active: bool` field on each struct.
+//! どのオーバーレイが表示中かは `ActiveOverlay` 列挙型が持つ。以前は各構造体に
+//! `active: bool` を持たせていた。
 
 use crate::app::Focus;
 use crate::background::BackgroundOp;
@@ -15,7 +15,7 @@ use crate::review_store::SessionHistory;
 use crate::search_result_tree::SearchResultTree;
 use crate::text_input::TextInput;
 
-/// Which overlay is currently active (at most one at a time).
+/// 現在アクティブなオーバーレイ (同時に高々 1 つ)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActiveOverlay {
     #[default]
@@ -28,36 +28,36 @@ pub enum ActiveOverlay {
     ResumeSession,
     RepoSelector,
     OpenRepo,
-    /// PR-number/URL input for "Review: Review Pull Request…" — stays open
-    /// (with the typed input preserved) if the intake attempt fails, so the
-    /// user can correct and retry without retyping.
+    /// 「Review: Review Pull Request…」用の PR 番号・URL の入力。取り込みに
+    /// 失敗しても入力内容を保ったまま開いたままにするので、打ち直さずに
+    /// 修正して再試行できる。
     PrInput,
     GrepSearch,
     Help,
     CommandPalette,
-    /// Worktree switcher — the modal that replaced the left worktree column.
-    /// Reuses the existing worktree list state and `handle_worktree_key`.
+    /// worktree の切り替え。左の worktree カラムを置き換えたモーダル。
+    /// 既存の worktree 一覧の状態と `handle_worktree_key` を再利用する。
     WorktreeSwitcher,
-    /// Full-screen comment list — overview of all review comments on the branch
-    /// with jump-to-location. Reuses the comment list state + handler.
+    /// 全画面のコメント一覧。ブランチ上の全レビューコメントの俯瞰と、
+    /// 該当箇所へのジャンプ。コメント一覧の状態とハンドラを再利用する。
     CommentList,
-    /// Theme picker — Up/Down to browse, live preview on each move, Enter to
-    /// persist, Esc to revert to the theme that was active when the picker opened.
+    /// テーマピッカー。上下で切り替え、移動のたびにライブプレビュー、Enter で
+    /// 確定、Esc でピッカーを開いた時点のテーマへ戻す。
     ThemePicker,
 }
 
-/// Theme picker overlay state.
+/// テーマピッカーのオーバーレイ状態。
 #[derive(Default)]
 pub struct ThemePickerOverlay {
-    /// All available theme names in display order (see `Theme::all_names`).
+    /// 選べるテーマ名を表示順に並べたもの (`Theme::all_names` を参照)。
     pub themes: Vec<String>,
-    /// Currently highlighted index within `themes`.
+    /// `themes` 内で現在ハイライトしている添字。
     pub selected: usize,
-    /// The `theme_name` active when the picker was opened — used to revert on Esc.
+    /// ピッカーを開いた時点で有効だった `theme_name`。Esc で戻すのに使う。
     pub original: String,
 }
 
-/// Switch-branch overlay state.
+/// ブランチ切り替えのオーバーレイ状態。
 #[derive(Default)]
 pub struct SwitchBranchOverlay {
     pub branches: Vec<String>,
@@ -65,7 +65,7 @@ pub struct SwitchBranchOverlay {
     pub filter: TextInput,
 }
 
-/// Grab-branch overlay state.
+/// ブランチ grab のオーバーレイ状態。
 #[derive(Default)]
 pub struct GrabOverlay {
     pub branches: Vec<String>,
@@ -73,7 +73,7 @@ pub struct GrabOverlay {
     pub filter: TextInput,
 }
 
-/// Cherry-pick overlay state.
+/// チェリーピックのオーバーレイ状態。
 #[derive(Default)]
 pub struct CherryPickOverlay {
     pub source_branch: String,
@@ -81,13 +81,13 @@ pub struct CherryPickOverlay {
     pub selected: usize,
 }
 
-/// Prune overlay state.
+/// prune のオーバーレイ状態。
 #[derive(Default)]
 pub struct PruneOverlay {
     pub stale: Vec<String>,
 }
 
-/// Resume-session overlay state.
+/// セッション再開のオーバーレイ状態。
 #[derive(Default)]
 pub struct ResumeSessionOverlay {
     pub sessions: Vec<ResumableSession>,
@@ -96,7 +96,7 @@ pub struct ResumeSessionOverlay {
     pub all_projects: bool,
 }
 
-/// Grep full-text search overlay state.
+/// grep 全文検索のオーバーレイ状態。
 #[derive(Default)]
 pub struct GrepSearchOverlay {
     pub query: TextInput,
@@ -107,27 +107,28 @@ pub struct GrepSearchOverlay {
     pub bg_op: BackgroundOp<GrepProgress>,
     pub regex_mode: bool,
     pub case_sensitive: bool,
-    /// Debounce timer for incremental search.
+    /// インクリメンタル検索のデバウンスタイマー。
     pub debounce_deadline: Option<std::time::Instant>,
-    /// Whether phase1 (recently-modified files only) results are currently displayed.
+    /// 第 1 段階 (最近変更されたファイルのみ) の結果を表示中かどうか。
     pub phase1_active: bool,
-    /// Background op for phase2 (full search) when doing 2-phase incremental search.
+    /// 2 段階のインクリメンタル検索における、第 2 段階 (全体検索) の
+    /// バックグラウンド処理。
     pub bg_op_phase2: BackgroundOp<GrepProgress>,
-    /// Accumulates raw matches from background search, rebuilt into tree on completion.
+    /// バックグラウンド検索からの生のマッチを溜める。完了時にツリーへ組み直す。
     pub pending_matches: Vec<crate::grep_search::GrepMatch>,
-    /// Whether the query input field is focused (true) or the result list (false).
-    /// Defaults to true so the input field is focused when the overlay opens.
+    /// クエリの入力欄にフォーカスがあるか (true)、結果一覧にあるか (false)。
+    /// オーバーレイを開いたとき入力欄にフォーカスが来るよう既定は true。
     pub input_focused: bool,
 }
 
-/// Command palette overlay state.
+/// コマンドパレットのオーバーレイ状態。
 #[derive(Default)]
 pub struct CommandPaletteOverlay {
     pub filter: TextInput,
     pub selected: usize,
 }
 
-/// Session history overlay state.
+/// セッション履歴のオーバーレイ状態。
 #[derive(Default)]
 pub struct HistoryOverlay {
     pub records: Vec<SessionHistory>,
@@ -136,32 +137,33 @@ pub struct HistoryOverlay {
     pub search_active: bool,
 }
 
-/// Repository selector overlay state.
+/// リポジトリ選択のオーバーレイ状態。
 #[derive(Default)]
 pub struct RepoSelectorOverlay {
     pub selected: usize,
 }
 
-/// Open-repository path input overlay state.
+/// リポジトリを開くためのパス入力のオーバーレイ状態。
 #[derive(Default)]
 pub struct OpenRepoOverlay {
     pub buffer: TextInput,
 }
 
-/// PR-number/URL input overlay state ("Review: Review Pull Request…").
+/// PR 番号・URL 入力のオーバーレイ状態 (「Review: Review Pull Request…」)。
 #[derive(Default)]
 pub struct PrInputOverlay {
     pub buffer: TextInput,
-    /// Set while a background PR intake (gh/git) is running for this overlay.
+    /// このオーバーレイに対する PR 取り込み (gh / git) がバックグラウンドで
+    /// 動いているあいだ立つ。
     pub loading: bool,
-    /// Set on a failed intake attempt; cleared on the next Enter/edit. The
-    /// overlay stays open and `buffer` is left untouched so the user can
-    /// correct and retry.
+    /// 取り込みに失敗したときに設定し、次の Enter または編集でクリアする。
+    /// オーバーレイは開いたままで `buffer` にも触らないので、修正して
+    /// 再試行できる。
     pub error: Option<String>,
     pub bg_op: BackgroundOp<crate::pr_intake::PrIntakeOutcome>,
 }
 
-/// Code navigation: references overlay state (for `gr` — Find References).
+/// コードナビゲーション: 参照一覧のオーバーレイ状態 (`gr` = Find References)。
 #[derive(Default)]
 pub struct ReferencesOverlay {
     pub active: bool,
@@ -171,129 +173,129 @@ pub struct ReferencesOverlay {
     pub scroll: usize,
 }
 
-/// A single symbol hint shown during Vimium-style navigation.
+/// Vimium 風のナビゲーション中に表示するシンボルのヒント 1 件。
 #[derive(Debug, Clone)]
 pub struct SymbolHint {
-    /// 2-character label (e.g. "aa", "ab").
+    /// 2 文字のラベル (例: "aa", "ab")。
     pub label: String,
-    /// The symbol name (e.g. "AppState").
+    /// シンボル名 (例: "AppState")。
     pub symbol_name: String,
-    /// 1-indexed line number.
+    /// 1 始まりの行番号。
     pub line: usize,
-    /// 0-indexed start column in content.
+    /// 内容中の開始桁 (0 始まり)。
     pub start_col: usize,
-    /// 0-indexed end column (exclusive) in content.
+    /// 内容中の終了桁 (0 始まり、この桁は含まない)。
     #[allow(dead_code)]
     pub end_col: usize,
 }
 
-/// Vimium-style symbol hint overlay — shown when `g` is pressed in Viewer.
+/// Vimium 風のシンボルヒントのオーバーレイ。Viewer で `g` を押すと出る。
 #[derive(Default)]
 pub struct SymbolHintOverlay {
     pub active: bool,
-    /// All generated hints for visible symbols.
+    /// 見えているシンボルに対して生成した全ヒント。
     pub hints: Vec<SymbolHint>,
-    /// Characters typed so far for label matching (0-2 chars).
+    /// ラベル照合のためにここまで入力された文字 (0〜2 文字)。
     pub input: String,
 }
 
-/// An action available for a selected symbol.
+/// 選択したシンボルに対して実行できるアクション。
 #[derive(Debug, Clone)]
 pub struct SymbolAction {
-    /// Key to press (e.g. 'd', 'i', 'r').
+    /// 押すキー (例: 'd', 'i', 'r')。
     pub key: char,
-    /// Description (e.g. "Go to definition").
+    /// 説明 (例: "Go to definition")。
     pub label: String,
-    /// Target file path.
+    /// 対象のファイルパス。
     pub file_path: String,
-    /// Target line number (1-indexed).
+    /// 対象の行番号 (1 始まり)。
     pub line: usize,
 }
 
-/// Action selection modal shown after picking a symbol hint.
+/// シンボルのヒントを選んだあとに出るアクション選択モーダル。
 #[derive(Default)]
 pub struct SymbolActionOverlay {
     pub active: bool,
     pub symbol_name: String,
     pub actions: Vec<SymbolAction>,
     pub selected: usize,
-    /// Screen row (0-indexed) of the source symbol, used to preserve vertical
-    /// position when jumping.
+    /// 元のシンボルがあった画面上の行 (0 始まり)。ジャンプ時に縦位置を
+    /// 保つために使う。
     pub source_screen_row: usize,
 }
 
-/// A symbol the mouse/cursor is resting on, awaiting the idle debounce before
-/// its hover popup is resolved. `resolved` flips true once we've attempted the
-/// lookup (whether or not it produced a popup) so the per-frame tick doesn't
-/// recompute every frame while the cursor sits still.
+/// マウスやカーソルが乗っていて、待機のデバウンスが明けてホバーポップアップが
+/// 解決されるのを待っているシンボル。`resolved` は (ポップアップが出たかどうかに
+/// かかわらず) 検索を試みた時点で true になる。カーソルが止まっている間、
+/// フレームごとの処理が毎フレーム計算し直さないようにするため。
 pub struct HoverCandidate {
-    /// Identifier under the cursor/mouse.
+    /// カーソル・マウスの下にある識別子。
     pub symbol: String,
-    /// 1-indexed content line the symbol is on.
+    /// シンボルがある内容行 (1 始まり)。
     pub line: usize,
-    /// File the symbol is in, for definition disambiguation.
+    /// シンボルがあるファイル。定義の絞り込みに使う。
     pub file: Option<String>,
-    /// Absolute screen row of the symbol — the popup anchors just below (or
-    /// above, if there's no room) this row.
+    /// シンボルの画面上の絶対行。ポップアップはこの行のすぐ下 (余白が無ければ上)
+    /// に配置する。
     pub anchor_row: u16,
-    /// Absolute screen column of the symbol's start, for horizontal placement.
+    /// シンボル先頭の画面上の絶対桁。横方向の配置に使う。
     pub anchor_col: u16,
-    /// Start column (0-indexed, in content characters before h_scroll) of the
-    /// symbol in its source line — carried into `HoverInfoOverlay::target_*`
-    /// once resolved, so the popup's target can stay highlighted (A8)
-    /// independent of the mouse's current position.
+    /// ソース行におけるシンボルの開始桁 (0 始まり、h_scroll 適用前の内容文字での桁)。
+    /// 解決後に `HoverInfoOverlay::target_*` へ引き継がれ、マウスの現在位置とは
+    /// 無関係にポップアップの対象をハイライトし続けられるようにする。
     pub start_col: usize,
-    /// End column (exclusive), see `start_col`.
+    /// 終了桁 (この桁は含まない)。`start_col` を参照。
     pub end_col: usize,
-    /// When the cursor/mouse came to rest on this symbol.
+    /// カーソル・マウスがこのシンボル上で止まった時刻。
     pub since: std::time::Instant,
-    /// Whether the lookup has already run for this candidate.
+    /// この候補に対する検索が既に走ったか。
     pub resolved: bool,
 }
 
-/// A code preview (level 2): a window of source lines around a reference,
-/// shown when a row in the references list is clicked.
+/// コードプレビュー (第 2 階層)。参照の周辺のソース行の窓で、参照一覧の行を
+/// クリックすると表示される。
 pub struct HoverPreview {
-    /// File the preview is from (repo-relative).
+    /// プレビュー元のファイル (リポジトリ相対)。
     pub file: String,
-    /// 1-indexed reference line the preview is centered on.
+    /// プレビューの中心となる参照行 (1 始まり)。
     pub center_line: usize,
-    /// `(1-indexed line number, text)` for each shown line.
+    /// 表示する各行の `(1 始まりの行番号, テキスト)`。
     pub lines: Vec<(usize, String)>,
-    /// Rendered rect, written by the renderer for hit-testing.
+    /// 描画された矩形。当たり判定のために描画側が書き込む。
     pub rect: ratatui::layout::Rect,
 }
 
-/// The references list (level 1), opened by clicking `N refs` in the base hover
-/// popup. Mouse-first: rows are clickable to open a [`HoverPreview`].
+/// 参照一覧 (第 1 階層)。基本のホバーポップアップで `N refs` をクリックすると開く。
+/// マウス優先で、行をクリックすると [`HoverPreview`] が開く。
 pub struct HoverRefs {
-    /// Symbol whose references these are (list title).
+    /// これらの参照が属するシンボル (一覧のタイトル)。
     pub symbol: String,
-    /// All references found.
+    /// 見つかった全参照。
     pub results: Vec<crate::symbol_index::Reference>,
-    /// Highlighted row (for keyboard nav / preview target).
+    /// ハイライトしている行 (キーボード操作とプレビューの対象)。
     pub selected: usize,
-    /// First visible row index.
+    /// 最初に見えている行の添字。
     pub scroll: usize,
-    /// Rendered list-popup rect, written by the renderer.
+    /// 描画された一覧ポップアップの矩形。描画側が書き込む。
     pub rect: ratatui::layout::Rect,
-    /// `(result index, row rect)` for each visible row, written by the renderer.
+    /// 見えている各行の `(結果の添字, 行の矩形)`。描画側が書き込む。
     pub row_hits: Vec<(usize, ratatui::layout::Rect)>,
-    /// The open preview, if a row was clicked.
+    /// 行がクリックされていれば、開いているプレビュー。
     pub preview: Option<HoverPreview>,
 }
 
-/// Symbol hover-info popup — signature/doc/references for the symbol under the
-/// viewer cursor. Shown automatically when the mouse rests on a symbol or the
-/// keyboard cursor sits idle; `info` is the resolved popup (`None` = hidden),
-/// `pending` is the candidate counting down the idle debounce. `anchor_row`/
-/// `anchor_col` are the screen position of the resolved symbol, for placement.
+/// シンボルのホバー情報ポップアップ。Viewer のカーソル下にあるシンボルの
+/// シグネチャ・doc・参照。マウスがシンボル上で止まるか、キーボードのカーソルが
+/// 動かなくなると自動で表示される。`info` は解決済みのポップアップ
+/// (`None` は非表示)、`pending` は待機のデバウンスを数えている候補。
+/// `anchor_row` と `anchor_col` は配置に使う、解決したシンボルの画面上の位置。
 ///
-/// It can escalate into an interactive modal stack: clicking `N refs` pins the
-/// popup and opens [`HoverRefs`]; clicking a row opens a [`HoverPreview`].
-/// `pinned` popups survive focus/idle loss until Esc or a click outside;
-/// `leave_at` is the short grace window keeping a still-transient popup alive
-/// after the mouse leaves the symbol (so the cursor can reach it to click).
+/// ここから対話的なモーダルの階層へ発展し得る: `N refs` をクリックすると
+/// ポップアップが固定され [`HoverRefs`] が開き、行をクリックすると
+/// [`HoverPreview`] が開く。`pinned` のポップアップは Esc か外側のクリックまで
+/// フォーカスや待機の解除を生き延びる。`leave_at` は、まだ一時的なポップアップを
+/// マウスがシンボルから外れたあと少しだけ生かしておく猶予 (カーソルが
+/// ポップアップまで移動してクリックできるように)。
 #[derive(Default)]
 pub struct HoverInfoOverlay {
     pub info: Option<crate::hover_info::HoverInfo>,
@@ -302,35 +304,36 @@ pub struct HoverInfoOverlay {
     pub anchor_col: u16,
     pub pinned: bool,
     pub leave_at: Option<std::time::Instant>,
-    /// The viewed file the current `info` was resolved against. When the viewer
-    /// switches files underneath a (non-pinned) popup, this no longer matches
-    /// `content.current_file`, and the tick drops the now-stale popup.
+    /// 現在の `info` を解決したときに表示していたファイル。(固定されていない)
+    /// ポップアップの下で Viewer がファイルを切り替えると、これが
+    /// `content.current_file` と一致しなくなり、古くなったポップアップが
+    /// 毎フレームの処理で落とされる。
     pub shown_file: Option<String>,
-    /// 1-indexed source line of the symbol `info` describes (A8: lets the
-    /// renderer keep that symbol highlighted for as long as the popup is
-    /// shown, independent of `ClickTracker::hover_symbol` — the mouse may
-    /// have since moved off it, or be sitting in the popup's leave-grace
-    /// window, while the underline itself has no such grace).
+    /// `info` が説明しているシンボルのソース行 (1 始まり)。ポップアップが
+    /// 表示されているあいだ、`ClickTracker::hover_symbol` とは独立に描画側が
+    /// そのシンボルをハイライトし続けられるようにする。マウスは既にそこから
+    /// 外れているかもしれないし、ポップアップの離脱猶予の中にいるかもしれないが、
+    /// 下線そのものにはそうした猶予が無いため。
     pub target_line: usize,
-    /// Start column of `target_line`'s highlighted symbol (see `target_line`).
+    /// `target_line` 上のハイライト対象シンボルの開始桁 (`target_line` を参照)。
     pub target_start_col: usize,
-    /// End column (exclusive) of the highlighted symbol.
+    /// ハイライト対象シンボルの終了桁 (この桁は含まない)。
     pub target_end_col: usize,
-    /// Base popup rect, written by the renderer for hit-testing.
+    /// 基本ポップアップの矩形。当たり判定のために描画側が書き込む。
     pub info_rect: ratatui::layout::Rect,
-    /// The `N refs` clickable region within the base popup (zero-sized if the
-    /// symbol has no references), written by the renderer.
+    /// 基本ポップアップ内の `N refs` のクリック可能領域 (シンボルに参照が
+    /// 無ければ大きさ 0)。描画側が書き込む。
     pub refs_hit: ratatui::layout::Rect,
     pub refs: Option<HoverRefs>,
 }
 
 impl HoverInfoOverlay {
-    /// Whether any part of the hover modal stack is showing.
+    /// ホバーのモーダル階層のいずれかが表示中かどうか。
     pub fn is_shown(&self) -> bool {
         self.info.is_some()
     }
 
-    /// Reset the whole hover modal stack to hidden/unpinned.
+    /// ホバーのモーダル階層全体を非表示・非固定に戻す。
     pub fn reset(&mut self) {
         self.info = None;
         self.pending = None;
@@ -346,7 +349,7 @@ impl HoverInfoOverlay {
     }
 }
 
-/// Help overlay state.
+/// ヘルプオーバーレイの状態。
 pub struct HelpOverlay {
     pub context: Focus,
 }
@@ -359,10 +362,10 @@ impl Default for HelpOverlay {
     }
 }
 
-/// Container for all overlay state, replacing individual overlay fields on App.
+/// オーバーレイの状態をまとめて持つ入れ物。App にあった個別のフィールドを置き換える。
 #[derive(Default)]
 pub struct OverlayManager {
-    /// Which overlay is currently active.
+    /// 現在アクティブなオーバーレイ。
     pub active: ActiveOverlay,
     pub switch_branch: SwitchBranchOverlay,
     pub grab: GrabOverlay,

@@ -58,7 +58,7 @@ impl App {
             return;
         }
 
-        let wt_path = match self.worktrees.get(self.selected_worktree) {
+        let wt_path = match self.worktrees.selected() {
             Some(wt) => wt.path.clone(),
             None => return,
         };

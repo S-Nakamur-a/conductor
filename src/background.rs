@@ -1,11 +1,11 @@
-//! Generic wrapper for background operations using mpsc channels.
+//! mpsc チャネルを使うバックグラウンド処理の汎用ラッパー。
 //!
-//! Replaces ad-hoc `Option<mpsc::Receiver<T>>` patterns throughout the
-//! codebase with a unified `BackgroundOp<T>`.
+//! コードベース各所にあった場当たり的な `Option<mpsc::Receiver<T>>` を、
+//! 統一された `BackgroundOp<T>` に置き換える。
 
 use std::sync::mpsc;
 
-/// A background operation that produces results of type `T` via an mpsc channel.
+/// mpsc チャネル経由で `T` 型の結果を生むバックグラウンド処理。
 pub struct BackgroundOp<T> {
     rx: Option<mpsc::Receiver<T>>,
 }
@@ -17,10 +17,10 @@ impl<T> Default for BackgroundOp<T> {
 }
 
 impl<T: Send + 'static> BackgroundOp<T> {
-    /// Start a new background operation.
+    /// バックグラウンド処理を開始する。
     ///
-    /// Spawns a thread that executes `f` with a sender. The caller can then
-    /// use `poll()` or `poll_all()` to retrieve results.
+    /// 送信側を渡して `f` を実行するスレッドを立てる。呼び出し側はその後
+    /// `poll()` か `poll_all()` で結果を取り出す。
     pub fn start<F>(&mut self, f: F)
     where
         F: FnOnce(mpsc::Sender<T>) + Send + 'static,
@@ -30,8 +30,7 @@ impl<T: Send + 'static> BackgroundOp<T> {
         std::thread::spawn(move || f(tx));
     }
 
-    /// Start with an externally created receiver (for cases where the sender
-    /// is passed to a library function).
+    /// 外部で作った受信側を使って開始する (送信側をライブラリの関数へ渡す場合)。
     #[allow(dead_code)]
     pub fn start_with_rx(&mut self, rx: mpsc::Receiver<T>) {
         self.rx = Some(rx);
@@ -39,8 +38,8 @@ impl<T: Send + 'static> BackgroundOp<T> {
 }
 
 impl<T> BackgroundOp<T> {
-    /// Try to receive a single result. Returns `None` if no result is
-    /// available or the channel is closed.
+    /// 結果を 1 件受け取ろうとする。結果が無いかチャネルが閉じている場合は
+    /// `None` を返す。
     pub fn poll(&mut self) -> Option<T> {
         let rx = self.rx.as_ref()?;
         match rx.try_recv() {
@@ -53,7 +52,7 @@ impl<T> BackgroundOp<T> {
         }
     }
 
-    /// Drain all available results from the channel.
+    /// チャネルに溜まっている結果をすべて取り出す。
     pub fn poll_all(&mut self) -> Vec<T> {
         let mut results = Vec::new();
         let Some(ref rx) = self.rx else {
@@ -72,12 +71,12 @@ impl<T> BackgroundOp<T> {
         results
     }
 
-    /// Whether a background operation is active (has a receiver).
+    /// バックグラウンド処理が動いているか (受信側を持っているか)。
     pub fn is_running(&self) -> bool {
         self.rx.is_some()
     }
 
-    /// Drop the receiver, effectively cancelling/ignoring remaining results.
+    /// 受信側を捨てる。残りの結果は実質的にキャンセル・無視される。
     pub fn clear(&mut self) {
         self.rx = None;
     }
@@ -98,7 +97,7 @@ mod tests {
         });
         assert!(op.is_running());
 
-        // Give the thread a moment to send
+        // スレッドが送信するのを少し待つ
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert_eq!(op.poll(), Some(42));
     }

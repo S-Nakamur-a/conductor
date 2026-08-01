@@ -9,14 +9,20 @@ pub(super) fn handle_mouse_scroll(
     app: &mut App,
     col: u16,
     row: u16,
-    main_area: ratatui::layout::Rect,
-    left_end: u16,
-    explorer_end: u16,
-    viewer_end: u16,
-    explorer_mid_y: u16,
-    terminal_split_y: u16,
+    geom: &super::ClickGeometry,
     delta: i32,
 ) {
+    // 境界はクリック処理と同じ `ClickGeometry` から取る — 別々に渡していた頃は
+    // 片方だけ更新して当たり判定がズレる余地があった。
+    let super::ClickGeometry {
+        main_area,
+        left_end,
+        explorer_end,
+        viewer_end,
+        explorer_mid_y,
+        terminal_split_y,
+        ..
+    } = *geom;
     if row < main_area.y || row >= main_area.y + main_area.height {
         return;
     }
@@ -43,18 +49,18 @@ pub(super) fn handle_mouse_scroll(
 
     if col < left_end {
         // Worktree panel scroll.
-        let prev_wt = app.selected_worktree;
+        let prev_wt = app.worktrees.selected_index();
         if delta > 0 {
-            if !app.worktree_list_rows.is_empty() {
-                app.worktree_list_selected = (app.worktree_list_selected + 1)
-                    .min(app.worktree_list_rows.len().saturating_sub(1));
+            if !app.worktrees.rows.is_empty() {
+                app.worktrees.row_selected = (app.worktrees.row_selected + 1)
+                    .min(app.worktrees.rows.len().saturating_sub(1));
                 app.sync_selected_worktree();
             }
         } else {
-            app.worktree_list_selected = app.worktree_list_selected.saturating_sub(1);
+            app.worktrees.row_selected = app.worktrees.row_selected.saturating_sub(1);
             app.sync_selected_worktree();
         }
-        if app.selected_worktree != prev_wt {
+        if app.worktrees.selected_index() != prev_wt {
             app.on_worktree_changed();
         }
     } else if col < explorer_end {

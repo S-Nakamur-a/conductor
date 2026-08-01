@@ -11,16 +11,16 @@ use super::{App, StatusLevel};
 impl App {
     /// Switch to a different repository by index in `repo_list`.
     pub fn switch_repo(&mut self, index: usize) {
-        if index >= self.repo_list.len() {
+        if index >= self.repo.known.len() {
             return;
         }
         // Persist the outgoing repo's view before swapping the store.
         self.persist_view_state();
-        self.repo_list_index = index;
-        self.repo_path = self.repo_list[index].clone();
+        self.repo.known_index = index;
+        self.repo.path = self.repo.known[index].clone();
 
         // Re-open the review store for the new repo path.
-        let db = review_store::db_path(&self.repo_path);
+        let db = review_store::db_path(&self.repo.path);
         self.review_store = match ReviewStore::open(&db) {
             Ok(store) => Some(store),
             Err(e) => {
@@ -30,19 +30,19 @@ impl App {
         };
 
         // Update main repo name for the new repository.
-        self.main_repo_name = git_engine::GitEngine::open(&self.repo_path)
+        self.repo.main_name = git_engine::GitEngine::open(&self.repo.path)
             .and_then(|engine| engine.main_worktree_path())
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| {
-                self.repo_path
+                self.repo.path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| self.repo_path.display().to_string())
+                    .unwrap_or_else(|| self.repo.path.display().to_string())
             });
 
         // Refresh worktrees and reviews eagerly; viewer/diff will lazy-load.
-        self.selected_worktree = 0;
+        self.worktrees.select(0);
         self.refresh_worktrees();
         self.viewer_state = ViewerState::default();
         self.diff_state = crate::diff_state::DiffState::new(
@@ -64,7 +64,7 @@ impl App {
         self.terminal.active_shell_session = None;
 
         self.set_status(
-            format!("Switched to repository: {}", self.main_repo_name),
+            format!("Switched to repository: {}", self.repo.main_name),
             StatusLevel::Success,
         );
     }
@@ -97,10 +97,10 @@ impl App {
         match git_engine::GitEngine::open(&canonical) {
             Ok(_engine) => {
                 // Valid git repo — switch to it.
-                self.repo_path = canonical.clone();
+                self.repo.path = canonical.clone();
 
                 // Re-open the review store for the new repo path.
-                let db = review_store::db_path(&self.repo_path);
+                let db = review_store::db_path(&self.repo.path);
                 self.review_store = match ReviewStore::open(&db) {
                     Ok(store) => Some(store),
                     Err(e) => {
@@ -109,13 +109,13 @@ impl App {
                     }
                 };
 
-                self.selected_worktree = 0;
+                self.worktrees.select(0);
                 self.refresh_worktrees();
                 self.viewer_state = ViewerState::default();
                 // This repo gets no view restore, so drop any restore still
                 // armed for the *previous* repo — otherwise it could fire here
                 // and open a same-named path in the newly opened tree.
-                self.pending_view_restore = None;
+                self.view_restore.pending = None;
                 self.diff_state = crate::diff_state::DiffState::new(
                     &self.config.general.main_branch,
                     self.diff_state.view_mode,
@@ -125,12 +125,12 @@ impl App {
                 self.terminal.active_shell_session = None;
 
                 // Add to repo_list if not already present.
-                if !self.repo_list.contains(&canonical) {
-                    self.repo_list.push(canonical.clone());
+                if !self.repo.known.contains(&canonical) {
+                    self.repo.known.push(canonical.clone());
                 }
                 // Update repo_list_index to point to this repo.
-                self.repo_list_index = self
-                    .repo_list
+                self.repo.known_index = self
+                    .repo.known
                     .iter()
                     .position(|p| p == &canonical)
                     .unwrap_or(0);
@@ -164,7 +164,7 @@ impl App {
         // can pin the selection to it by identity afterwards (the list order can
         // shift when worktrees are added/removed).
         let prev_selected_branch = self.selected_worktree_branch();
-        match git_engine::GitEngine::open(&self.repo_path) {
+        match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
                 match engine.list_worktrees() {
                     Ok(worktrees) => {
@@ -184,7 +184,7 @@ impl App {
                                 }
                             }
                         }
-                        self.worktrees = worktrees;
+                        self.worktrees.replace(worktrees);
                         // Preserve the selection by *branch identity*, not list
                         // position: indices shift when worktrees are added or
                         // removed. Re-finding the branch keeps the selection
@@ -194,9 +194,9 @@ impl App {
                         if let Some(idx) = reselect_worktree_index(
                             &self.worktrees,
                             &prev_selected_branch,
-                            self.selected_worktree,
+                            self.worktrees.selected_index(),
                         ) {
-                            self.selected_worktree = idx;
+                            self.worktrees.select(idx);
                         }
                         // Detect commits by HEAD oid changes. The oid was
                         // captured while `list_worktrees` had each repo open,
@@ -282,7 +282,7 @@ impl App {
     pub(super) fn record_stat(&self, field: &str) {
         if let Some(store) = &self.review_store {
             let _ = store.increment_daily_stat(field);
-            if let Some(ref sid) = self.stats_session_id {
+            if let Some(ref sid) = self.stats.session_id {
                 let _ = store.increment_session_stat(sid, field);
             }
         }
@@ -291,9 +291,9 @@ impl App {
     /// Return `(worktree_name, working_dir)` for the currently selected worktree.
     pub(super) fn selected_worktree_info(&self) -> (String, std::path::PathBuf) {
         self.worktrees
-            .get(self.selected_worktree)
+            .get(self.worktrees.selected_index())
             .map(|w| (w.branch.clone(), w.path.clone()))
-            .unwrap_or_else(|| ("default".to_string(), self.repo_path.clone()))
+            .unwrap_or_else(|| ("default".to_string(), self.repo.path.clone()))
     }
 }
 

@@ -178,7 +178,7 @@ pub(in crate::event) fn navigate_to_comment_with_focus(
     if let Some(comment) = app.review_state.comments.get(comment_idx) {
         let file_path = comment.file_path.clone();
         let line = comment.line_start as usize;
-        if let Some(wt) = app.worktrees.get(app.selected_worktree) {
+        if let Some(wt) = app.worktrees.selected() {
             let wt_path = wt.path.clone();
             let tab_width = app.config.viewer.tab_width;
             app.viewer_state.open_file(&wt_path, &file_path, tab_width);
