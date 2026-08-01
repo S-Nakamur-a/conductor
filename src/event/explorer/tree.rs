@@ -69,18 +69,14 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
         Some(Action::Select) => {
             let idx = app.viewer_state.tree.tree_selected;
             if let Some(entry) = app.viewer_state.tree.file_tree.get(idx).cloned() {
-                // ツリーを構築したときと同じ根に対して開く。
-                // selected_worktree_path() は worktree 一覧が空ならリポジトリの
-                // パスへ落ちるので、git 管理外のディレクトリでも選択が伝わる。
-                let root = app.selected_worktree_path();
                 if entry.is_dir {
                     if !entry.is_expanded {
-                        app.viewer_state.ensure_children_loaded(idx, &root);
+                        app.viewer_state.ensure_children_loaded(idx);
                     }
                     app.viewer_state.toggle_dir(idx);
                 } else {
                     let tab_width = app.config.viewer.tab_width;
-                    app.viewer_state.open_file(&root, &entry.path, tab_width);
+                    app.viewer_state.open_file(&entry.path, tab_width);
                     app.rehighlight_viewer();
                     app.review_state.build_file_comment_cache(&entry.path);
                     app.set_focus(Focus::Viewer);
@@ -96,8 +92,7 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
                 .get(idx)
                 .is_some_and(|e| e.is_dir && !e.is_expanded);
             if needs_children {
-                let root = app.selected_worktree_path();
-                app.viewer_state.ensure_children_loaded(idx, &root);
+                app.viewer_state.ensure_children_loaded(idx);
             }
             app.viewer_state.expand_dir(idx);
         }

@@ -2,7 +2,7 @@
 //! flattened `Vec<FileTreeEntry>`, lazy-loading directory children, expand /
 //! collapse, and revealing a path in the tree.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::git_engine::status_map::GitStatusMap;
@@ -11,6 +11,38 @@ use super::file_tree::{FileTreeEntry, file_icon};
 use super::state::ViewerState;
 
 impl ViewerState {
+    /// 表示中のツリーを歩いた根。エントリの相対パスはここに繋いで絶対パスにする。
+    pub fn root(&self) -> &Path {
+        &self.tree.root
+    }
+
+    /// 根だけを差し替える。ツリーをまだ歩いていない場面 (リポジトリを開き直した
+    /// 直後など、走査は遅延させてある) 用。
+    ///
+    /// 根が空のまま相対パスを繋ぐとカレントディレクトリ相対になり、意図しない
+    /// ファイルを黙って開くので、ツリーを空にする側は必ずここも呼ぶ。
+    pub fn set_root(&mut self, root: PathBuf) {
+        self.tree.root = root;
+    }
+
+    /// 裏で歩き終えたツリーを丸ごと差し替える。
+    ///
+    /// 根・エントリ・git status は同じ 1 回の走査から出たものなので 3 つ揃って
+    /// 入れ替える。別々に書けるようにしておくと「根は新しいのにエントリは古い」
+    /// 状態が作れてしまい、その瞬間のクリックは別ブランチの同名ファイルを静かに
+    /// 開く (worktree 切り替えは走査を裏に回すので、この隙間は実在する)。
+    pub fn replace_tree(
+        &mut self,
+        root: PathBuf,
+        entries: Vec<FileTreeEntry>,
+        git_status: GitStatusMap,
+    ) {
+        self.tree.root = root;
+        self.tree.file_tree = entries;
+        self.tree.git_status = git_status;
+        self.invalidate_visible_cache();
+    }
+
     /// Build the file tree by walking the filesystem under `worktree_path`.
     ///
     /// Directories named `.git` are skipped. The tree is sorted so that
@@ -24,7 +56,12 @@ impl ViewerState {
     ///
     /// Returns `true` when the set of visible entries changed, so callers can
     /// skip a repaint when a periodic refresh found nothing new.
+    ///
+    /// 根を受け取る唯一の入口。ここで [`ViewerState::root`] を確定させ、以降
+    /// ファイルを開く・子を読む・検索候補を集めるのはすべてこの根に対して行う。
     pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) -> bool {
+        self.tree.root = worktree_path.to_path_buf();
+
         // Save state before clearing.
         let prev_file = self.content.current_file.clone();
         let prev_file_scroll = self.content.file_scroll;
@@ -86,7 +123,7 @@ impl ViewerState {
             {
                 self.tree.file_tree[idx].is_expanded = true;
                 if !self.tree.file_tree[idx].children_loaded {
-                    self.ensure_children_loaded(idx, worktree_path);
+                    self.ensure_children_loaded(idx);
                 }
             }
             idx += 1;
@@ -117,7 +154,7 @@ impl ViewerState {
                 // reader back to the top of the prose mid-read.
                 let prev_md_scroll = self.md_scroll;
 
-                self.open_file(worktree_path, rel_path, tab_width);
+                self.open_file(rel_path, tab_width);
                 self.content.file_scroll = prev_file_scroll;
                 self.content.h_scroll = prev_h_scroll;
                 self.md_scroll = prev_md_scroll;
@@ -252,7 +289,7 @@ impl ViewerState {
     /// Walks the path segments, expanding (and lazy-loading) each parent
     /// directory along the way, then sets `tree_selected` to the target
     /// entry and adjusts scroll so it is visible.
-    pub fn reveal_file_in_tree(&mut self, relative_path: &str, worktree_root: &Path) {
+    pub fn reveal_file_in_tree(&mut self, relative_path: &str) {
         let segments: Vec<&str> = relative_path.split('/').collect();
         if segments.is_empty() {
             return;
@@ -292,7 +329,7 @@ impl ViewerState {
                 }
             } else {
                 // Intermediate directory — ensure children are loaded and expand.
-                self.ensure_children_loaded(idx, worktree_root);
+                self.ensure_children_loaded(idx);
                 if let Some(entry) = self.tree.file_tree.get_mut(idx)
                     && !entry.is_expanded
                 {
@@ -338,18 +375,17 @@ impl ViewerState {
     /// Lazily load the immediate children of the directory at `idx` in
     /// `file_tree`. No-op if the entry is not a directory or if children are
     /// already loaded.
-    pub fn ensure_children_loaded(&mut self, idx: usize, worktree_root: &Path) {
-        let entry = match self.tree.file_tree.get(idx) {
-            Some(e) if e.is_dir && !e.children_loaded => e,
+    pub fn ensure_children_loaded(&mut self, idx: usize) {
+        let (rel_path, child_depth) = match self.tree.file_tree.get(idx) {
+            Some(e) if e.is_dir && !e.children_loaded => (e.path.clone(), e.depth + 1),
             _ => return,
         };
 
-        let full_path = worktree_root.join(&entry.path);
-        let child_depth = entry.depth + 1;
+        let full_path = self.tree.root.join(&rel_path);
 
         let mut children: Vec<FileTreeEntry> = Vec::new();
         Self::walk_dir(
-            worktree_root,
+            &self.tree.root,
             &full_path,
             child_depth,
             &mut children,
@@ -375,12 +411,12 @@ impl ViewerState {
     }
 
     /// Populate the filename search cache by walking the entire filesystem
-    /// tree under the given worktree root.
-    pub fn populate_filename_search_cache(&mut self, worktree_root: &Path) {
+    /// tree under the tree's root.
+    pub fn populate_filename_search_cache(&mut self) {
         self.filename_search.filename_search_all_files.clear();
         Self::collect_all_file_paths(
-            worktree_root,
-            worktree_root,
+            &self.tree.root,
+            &self.tree.root,
             0,
             &mut self.filename_search.filename_search_all_files,
         );

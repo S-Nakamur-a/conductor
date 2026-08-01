@@ -180,9 +180,8 @@ pub(in crate::event) fn navigate_to_comment_with_focus(
     };
     let file_path = comment.file_path.clone();
     let line = comment.line_start as usize;
-    let wt_path = app.selected_worktree_path();
     let tab_width = app.config.viewer.tab_width;
-    app.viewer_state.open_file(&wt_path, &file_path, tab_width);
+    app.viewer_state.open_file(&file_path, tab_width);
     app.rehighlight_viewer();
     app.viewer_state.content.file_scroll = line.saturating_sub(1);
     // A comment lives on a source line, so show source: rendered

@@ -58,9 +58,10 @@ impl App {
             return;
         }
 
-        // 検索範囲はツリーを構築したのと同じ根。worktree 一覧が空なら諦める、では
-        // git 管理外のディレクトリで grep が黙って何も返さなくなる。
-        let wt_path = self.selected_worktree_path();
+        // 検索範囲は Viewer が表示しているツリーの根。結果を選ぶと同じ相対パスで
+        // reveal と open をするので、別の根を歩くと「ヒットしたのに開けない」
+        // 結果が並ぶ。
+        let wt_path = self.viewer_state.root().to_path_buf();
 
         // Cancel any previous search.
         self.overlays.grep_search.bg_op.clear();

@@ -184,7 +184,7 @@ impl App {
                     });
                     let mut entries = Vec::new();
                     ViewerState::walk_dir(&path, &path, 0, &mut entries, &git_status);
-                    let _ = tx.send((entries, git_status));
+                    let _ = tx.send((path, entries, git_status));
                 });
             }
 
@@ -285,10 +285,10 @@ impl App {
     /// Poll background worktree-switch operations (file tree, diff, branch details).
     pub fn poll_worktree_switch_ops(&mut self) {
         // File tree result.
-        if let Some((entries, git_status)) = self.bg.file_tree.poll() {
-            self.viewer_state.tree.file_tree = entries;
-            self.viewer_state.tree.git_status = git_status;
-            self.viewer_state.invalidate_visible_cache();
+        if let Some((root, entries, git_status)) = self.bg.file_tree.poll() {
+            // 3 つまとめて差し替える。根だけ先に新しくなると、まだ古いエントリ
+            // を指しているクリックが別ブランチの同名ファイルを黙って開く。
+            self.viewer_state.replace_tree(root, entries, git_status);
             // Restore the previously viewed file + scroll for this worktree now
             // that its file tree is available (one-shot).
             self.consume_pending_view_restore();

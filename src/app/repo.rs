@@ -45,6 +45,10 @@ impl App {
         self.worktrees.select(0);
         self.refresh_worktrees();
         self.viewer_state = ViewerState::default();
+        // ツリーの走査は遅延させる (上のコメントのとおり) が、根だけは今ここで
+        // 入れておく。空のままだと、ツリーを歩く前に開いたファイル名検索が
+        // カレントディレクトリを歩いてしまう。
+        self.viewer_state.set_root(self.selected_worktree_path());
         self.diff_state = crate::diff_state::DiffState::new(
             &self.config.general.main_branch,
             self.diff_state.view_mode,
@@ -112,6 +116,8 @@ impl App {
                 self.worktrees.select(0);
                 self.refresh_worktrees();
                 self.viewer_state = ViewerState::default();
+                // 同上。ツリーは遅延させるが根は今決まっている。
+                self.viewer_state.set_root(self.selected_worktree_path());
                 // This repo gets no view restore, so drop any restore still
                 // armed for the *previous* repo — otherwise it could fire here
                 // and open a same-named path in the newly opened tree.

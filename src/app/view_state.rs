@@ -125,12 +125,14 @@ impl App {
                 return;
             }
         }
-        let wt_path = self.selected_worktree_path();
-        if !wt_path.join(&restore.file).is_file() {
+        // 復元先の存在確認は Viewer の根で行う。ここは「ツリーが揃った直後」に
+        // 呼ばれる (同期の refresh_viewer と、非同期の worktree 切り替えの両方)
+        // ので、そのツリーと同じ根で見ないと確認と実際に開く先がずれる。
+        if !self.viewer_state.root().join(&restore.file).is_file() {
             return;
         }
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(&wt_path, &restore.file, tab_width);
+        self.viewer_state.open_file(&restore.file, tab_width);
         let max = self.viewer_state.content.file_content.len().saturating_sub(1);
         self.viewer_state.content.file_scroll = restore.scroll.min(max);
     }
@@ -204,13 +206,10 @@ impl App {
     /// Optionally jumps to `line` (1-indexed). Reveals the file in the explorer
     /// tree, switches focus to Viewer, and shows a status message.
     pub fn open_file_in_viewer(&mut self, relative_path: &str, line: Option<usize>) {
-        let wt_path = self.selected_worktree_path();
         let tab_width = self.config.viewer.tab_width;
 
-        self.viewer_state
-            .open_file(&wt_path, relative_path, tab_width);
-        self.viewer_state
-            .reveal_file_in_tree(relative_path, &wt_path);
+        self.viewer_state.open_file(relative_path, tab_width);
+        self.viewer_state.reveal_file_in_tree(relative_path);
 
         if let Some(ln) = line {
             let max = self

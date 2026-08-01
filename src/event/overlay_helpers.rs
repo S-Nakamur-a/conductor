@@ -19,10 +19,7 @@ pub(in crate::event) fn open_filename_search(app: &mut App) {
         .filename_search_results
         .clear();
     app.viewer_state.filename_search.filename_search_selected = 0;
-    // 検索対象はツリーを構築したのと同じ根。ここで worktree 一覧の有無を条件に
-    // すると、git 管理外のディレクトリで候補が常に空になり、検索が黙って死ぬ。
-    let root = app.selected_worktree_path();
-    app.viewer_state.populate_filename_search_cache(&root);
+    app.viewer_state.populate_filename_search_cache();
     app.viewer_state.execute_filename_search();
 }
 

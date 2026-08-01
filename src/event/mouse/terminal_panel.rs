@@ -63,7 +63,9 @@ pub(super) fn handle_terminal_column_click(
                 t
             };
 
-            let wt_path = app.selected_worktree_path();
+            // 実在確認と実際に開く先を同じ根に揃える (キーボード側の
+            // open_file_from_terminal_output と同じ理由)。
+            let wt_path = app.viewer_state.root().to_path_buf();
             let links = terminal_link::detect_file_links(&text, &wt_path);
             // Prefer the link under the cursor; fall back to first on row.
             let link =
