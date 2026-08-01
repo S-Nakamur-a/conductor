@@ -1,7 +1,9 @@
 //! Gemini API client.
 //!
-//! Provides a blocking HTTP client for the Google Gemini API,
-//! replacing the previous `claude -p` CLI invocations for lower latency.
+//! Provides a blocking HTTP client for the Google Gemini API — one of the two
+//! providers behind the `[api]` seam (see `ai_caller.rs`). Being plain HTTP, it
+//! cannot read the repository, so tasks that need the code (walkthrough
+//! generation) want the `command` provider instead.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};

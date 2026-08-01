@@ -19,7 +19,6 @@ fn default_config_round_trips_through_toml() {
     assert!(!cfg2.viewer.word_wrap);
     assert_eq!(cfg2.diff.default_view, DiffView::Unified);
     assert!(cfg2.diff.word_diff);
-    assert_eq!(cfg2.review.prompt_action, PromptAction::Clipboard);
     assert!(!cfg2.ccusage.enabled);
     assert_eq!(cfg2.ccusage.poll_interval_secs, 120);
     assert!(cfg2.updates.check_on_startup);
@@ -39,10 +38,16 @@ fn diff_view_serde() {
     assert_eq!(cfg.default_view, DiffView::SideBySide);
 }
 
+/// A config file still carrying the removed review-prompt keys must load, not
+/// fail: they were written into every generated `config.toml` and dropping
+/// them cannot break an existing install.
 #[test]
-fn prompt_action_serde() {
-    let cfg: ReviewConfig = toml::from_str(r#"prompt_action = "send_to_session""#).expect("parse");
-    assert_eq!(cfg.prompt_action, PromptAction::SendToSession);
+fn removed_review_prompt_keys_are_ignored() {
+    let cfg: ReviewConfig = toml::from_str(
+        "prompt_template = \"…{comments}\"\nprompt_action = \"send_to_session\"\n",
+    )
+    .expect("stale keys should be ignored, not rejected");
+    assert!(cfg.walkthrough_language.is_none());
 }
 
 #[test]

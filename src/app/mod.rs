@@ -19,6 +19,7 @@ mod review_edit;
 mod review_history;
 mod review_publish;
 mod review_walkthrough;
+pub use review_walkthrough::WalkthroughGenerations;
 mod terminal;
 mod terminal_cc_state;
 mod terminal_resize;
@@ -99,11 +100,11 @@ pub struct App {
     /// [`App::exit_editor`] (the only two methods that pair this field with
     /// `Focus::Editor`, keeping the invariant local).
     pub editor: Option<EditorPanel>,
-    /// In-flight headless walkthrough generations, at most one per branch so
-    /// worktrees don't block each other. Polled by
-    /// [`App::poll_walkthrough_generation`]; the DB row is the source of
-    /// truth for completion, these handles only catch process failures.
-    pub walkthrough_gens: crate::walkthrough::WalkthroughGenerations,
+    /// In-flight walkthrough generations, at most one per branch so worktrees
+    /// don't block each other: each is a background thread's result channel
+    /// plus enough context to report against the right branch. Drained by
+    /// [`App::poll_walkthrough_generation`].
+    pub walkthrough_gens: WalkthroughGenerations,
     /// The selected worktree's walkthrough (header + steps), reloaded by
     /// [`App::refresh_reviews`] alongside the comment list.
     pub current_walkthrough: Option<(

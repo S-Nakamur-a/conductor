@@ -252,6 +252,98 @@ fn display_index_for_path_finds_committed_and_uncommitted_files() {
     assert_eq!(ds.display_index_for_path("src/missing.rs"), None);
 }
 
+// ── Tolerant path resolution (walkthrough steps / comment anchors) ──────
+
+/// A `DiffState` whose committed diff touches `paths`, display list built.
+fn diff_state_with(paths: &[&str]) -> super::DiffState {
+    use super::*;
+    let mut ds = DiffState::new("main", DiffViewMode::Unified);
+    ds.committed_files = paths
+        .iter()
+        .map(|p| FileDiff {
+            path: (*p).to_string(),
+            added_lines: 1,
+            deleted_lines: 0,
+            hunks: Vec::new(),
+        })
+        .collect();
+    ds.rebuild_display_list();
+    ds
+}
+
+/// The bug this whole change exists for: a step saved as `./src/b.rs` (or with
+/// a `git diff` `b/` prefix, or a doubled slash) names a file that *is* in the
+/// diff, and must resolve to the diff's own spelling of it.
+#[test]
+fn resolve_changed_path_accepts_alternate_spellings() {
+    let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs", "top.txt"]);
+
+    for spelling in ["src/a.rs", "./src/a.rs", "src//a.rs", "  src/a.rs  ", "src/a.rs/"] {
+        assert_eq!(
+            ds.resolve_changed_path(spelling).as_deref(),
+            Some("src/a.rs"),
+            "spelling: {spelling}"
+        );
+    }
+    // `git diff`'s a/ and b/ prefixes, left on the path by the generator.
+    assert_eq!(ds.resolve_changed_path("b/src/a.rs").as_deref(), Some("src/a.rs"));
+    assert_eq!(ds.resolve_changed_path("a/top.txt").as_deref(), Some("top.txt"));
+    // Written relative to a subdirectory rather than the repo root.
+    assert_eq!(ds.resolve_changed_path("deep/c.rs").as_deref(), Some("src/deep/c.rs"));
+}
+
+/// A file that genuinely isn't in the diff must stay unresolved — the tolerance
+/// above must not turn "not in this diff" into a jump to some other file.
+#[test]
+fn resolve_changed_path_refuses_files_outside_the_diff() {
+    let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs"]);
+    assert_eq!(ds.resolve_changed_path("src/untouched.rs"), None);
+    assert_eq!(ds.resolve_changed_path(""), None);
+    assert_eq!(ds.resolve_changed_path("./"), None);
+}
+
+/// An ambiguous suffix must not be guessed: two files ending the same way mean
+/// we don't know which one was meant, and picking either would silently land
+/// the reviewer on the wrong file.
+#[test]
+fn resolve_changed_path_refuses_an_ambiguous_suffix() {
+    let ds = diff_state_with(&["src/app/mod.rs", "src/ui/mod.rs"]);
+    assert_eq!(ds.resolve_changed_path("mod.rs"), None);
+    // Enough context to disambiguate resolves fine.
+    assert_eq!(ds.resolve_changed_path("ui/mod.rs").as_deref(), Some("src/ui/mod.rs"));
+}
+
+/// A real top-level `b/` in the repo wins over reading `b/` as a diff prefix,
+/// because exact matching is tried first.
+#[test]
+fn resolve_changed_path_prefers_an_exact_match_over_prefix_stripping() {
+    let ds = diff_state_with(&["b/src/a.rs", "src/a.rs"]);
+    assert_eq!(ds.resolve_changed_path("b/src/a.rs").as_deref(), Some("b/src/a.rs"));
+    assert_eq!(ds.resolve_changed_path("src/a.rs").as_deref(), Some("src/a.rs"));
+}
+
+/// A file inside a directory the reviewer collapsed has no display row. Jumping
+/// to it must expand the way down rather than read as "not in this diff".
+#[test]
+fn reveal_path_expands_collapsed_ancestors() {
+    let mut ds = diff_state_with(&["src/deep/nested/c.rs"]);
+    assert!(ds.display_index_for_path("src/deep/nested/c.rs").is_some());
+
+    ds.collapsed_dirs.insert("src".to_string());
+    ds.rebuild_display_list();
+    assert_eq!(
+        ds.display_index_for_path("src/deep/nested/c.rs"),
+        None,
+        "precondition: a collapsed ancestor hides the file's row"
+    );
+
+    let idx = ds.reveal_path("src/deep/nested/c.rs").expect("row after reveal");
+    assert_eq!(
+        ds.resolve_file(idx).map(|(f, _)| f.path.as_str()),
+        Some("src/deep/nested/c.rs")
+    );
+}
+
 // ── Base ref resolution ────────────────────────────────────────────────
 
 /// A worktree whose base was saved as `origin/main` (Conductor's normal case

@@ -53,14 +53,25 @@ impl App {
         }
         let cur = self.viewer_state.explorer.walkthrough_selected as isize;
         let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+        // The cursor moves whether or not the jump lands. A step whose file
+        // can't be resolved would otherwise pin `n`/`N` in place — every press
+        // retries the same unresolvable step and the reviewer can never reach
+        // the rest of the tour.
+        self.viewer_state.explorer.walkthrough_selected = next;
         self.jump_to_walkthrough_step(next);
     }
 
-    /// Shared implementation for jumping to walkthrough step `idx`: opens its
-    /// file in the diff pane, scrolls to its starting line, and marks it
-    /// viewed. Returns `false` (a no-op otherwise) if there's no walkthrough,
-    /// the index is out of range, or the step's file isn't part of the
-    /// current diff.
+    /// Shared implementation for jumping to walkthrough step `idx`: resolves
+    /// its file against the diff, opens it in the diff pane, scrolls to its
+    /// starting line, and marks it viewed. Returns `false` (a no-op otherwise)
+    /// if there's no walkthrough, the index is out of range, or the step's
+    /// file genuinely isn't part of the current diff.
+    ///
+    /// The step's path is matched *tolerantly* (see
+    /// [`crate::diff_state::DiffState::resolve_changed_path`]) because it was
+    /// written by a language model and the diff list matches by string
+    /// equality: a step spelled `./src/a.rs` names a file that is right there
+    /// in the list, and used to report itself as missing.
     fn jump_to_walkthrough_step(&mut self, idx: usize) -> bool {
         let Some((_, steps)) = &self.current_walkthrough else {
             return false;
@@ -68,26 +79,64 @@ impl App {
         let Some(step) = steps.get(idx) else {
             return false;
         };
-        let file_path = step.file_path.clone();
+        let step_path = step.file_path.clone();
         let line_start = step.line_start;
         let step_id = step.id.clone();
+        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
+            return false;
+        };
+        let wt_path = wt.path.clone();
 
+        // The step's spelling of the path and the diff's may differ (an older
+        // row saved before paths were normalised, a `git diff` `a/`/`b/`
+        // prefix); `resolve_changed_path` returns the diff's own spelling.
+        let Some(file_path) = self.diff_state.resolve_changed_path(&step_path) else {
+            // Ordered so the status bar's truncation eats the least useful part
+            // last: what was searched for first, the (potentially very long)
+            // base directory at the end. The full text always reaches the log.
+            let normalized = crate::repo_path::normalize(&step_path);
+            let searched = if normalized == step_path {
+                String::new()
+            } else {
+                format!(" (searched as {normalized})")
+            };
+            let msg = format!(
+                "Walkthrough step's file isn't in this diff: {step_path}{searched} — \
+                 {} changed file(s) vs {}, under {}",
+                self.diff_state.changed_paths().len(),
+                self.diff_state.base_branch,
+                wt_path.display(),
+            );
+            log::warn!("{msg}");
+            self.set_status(msg, StatusLevel::Warning);
+            return false;
+        };
+        // Adopt that spelling for the rest of the session: the Viewer's step
+        // banner and its line-range underline both test
+        // `current_file == step.file_path`, so leaving the step on its own
+        // spelling would jump correctly and then render neither.
+        if file_path != step_path
+            && let Some((_, steps)) = self.current_walkthrough.as_mut()
+            && let Some(step) = steps.get_mut(idx)
+        {
+            log::debug!("walkthrough step {idx}: resolved '{step_path}' to '{file_path}'");
+            step.file_path = file_path.clone();
+        }
+
+        // A file inside a collapsed directory has no display row until the
+        // directory is expanded, so reveal before looking the row up.
         let Some((file_diff, _)) = self
             .diff_state
-            .display_index_for_path(&file_path)
+            .reveal_path(&file_path)
             .and_then(|i| self.diff_state.resolve_file(i))
         else {
             self.set_status(
-                format!("Walkthrough step references a file not in this diff: {file_path}"),
+                format!("Walkthrough step's file is in the diff but has no row: {file_path}"),
                 StatusLevel::Warning,
             );
             return false;
         };
         let file_diff_clone = file_diff.clone();
-        let Some(wt) = self.worktrees.get(self.selected_worktree) else {
-            return false;
-        };
-        let wt_path = wt.path.clone();
         let tab_width = self.config.viewer.tab_width;
         self.viewer_state.open_file(&wt_path, &file_path, tab_width);
         self.viewer_state.reveal_file_in_tree(&file_path, &wt_path);

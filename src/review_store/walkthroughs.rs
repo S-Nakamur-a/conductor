@@ -246,11 +246,19 @@ fn row_to_walkthrough_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthro
         )
     })?;
 
+    // Normalised on the way out as well as on the way in: rows written before
+    // `save_walkthrough` normalised (a step stored as `./src/a.rs`) would
+    // otherwise never match `FileDiff::path` and the step could never be
+    // jumped to. Doing it here rather than in a migration means the same fix
+    // covers rows written by an older conductor against the same database.
+    let file_path: String = row.get(3)?;
+    let file_path = crate::repo_path::normalize(&file_path);
+
     Ok(WalkthroughStep {
         id: row.get(0)?,
         walkthrough_id: row.get(1)?,
         seq: row.get(2)?,
-        file_path: row.get(3)?,
+        file_path,
         line_start: row.get(4)?,
         line_end: row.get(5)?,
         kind,
@@ -338,6 +346,44 @@ mod tests {
         assert_eq!(
             walkthrough.error.as_deref(),
             Some("Claude Code exited early")
+        );
+    }
+
+    /// Rows written before paths were normalised on save must still resolve.
+    /// The step is inserted with the raw SQL the old `save_walkthrough` used,
+    /// so this is genuinely a legacy row rather than a value the current write
+    /// path could produce.
+    #[test]
+    fn legacy_step_paths_are_normalised_on_read() {
+        let store = test_store();
+        store
+            .save_walkthrough("feat/x", "title", "summary", &[])
+            .unwrap();
+        let (walkthrough, _) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        for (seq, stored) in ["./src/a.rs", "src//b.rs", "src/c.rs/"].iter().enumerate() {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO walkthrough_steps
+                        (id, walkthrough_id, seq, file_path, kind, title, body)
+                     VALUES (?1, ?2, ?3, ?4, 'core', 'legacy', 'body')",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        walkthrough.id,
+                        seq as i64,
+                        stored
+                    ],
+                )
+                .unwrap();
+        }
+
+        let (_, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        assert_eq!(
+            steps
+                .iter()
+                .map(|s| s.file_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/a.rs", "src/b.rs", "src/c.rs"]
         );
     }
 

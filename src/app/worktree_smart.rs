@@ -11,14 +11,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::*;
 
+/// Everything this task needs the model to do differently from other tasks
+/// lives here, not in the configured command.
+///
+/// The "no tools, no commands" line matters when `[api] command` is an *agentic*
+/// CLI (`claude -p` and the like): left to itself such a tool reaches for Bash
+/// and answers conversationally, which fails the parse. A pure completion API
+/// ignores the line harmlessly, so it is safe to state unconditionally rather
+/// than having the user encode it in a wrapper.
 const SMART_WORKTREE_SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name, a Claude Code prompt, and a session name from a task description.
+
+IMPORTANT: Do not use any tools. Do not run any commands. Do not explain. Answer immediately from the description alone.
+
 Output ONLY a JSON object with three fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
 - "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
 - "session_name": a short, descriptive session name (max 50 chars) for display in session lists. Write in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
-
-const SMART_WORKTREE_JSON_SCHEMA: &str = r#"{"type":"object","properties":{"branch":{"type":"string"},"prompt":{"type":"string"},"session_name":{"type":"string"}},"required":["branch","prompt","session_name"]}"#;
 
 /// Parse LLM raw output into `SmartGenResult`, extracting JSON even if surrounded by text.
 fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
@@ -51,29 +60,54 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
     ))
 }
 
+/// How many times to ask again when the reply contains no usable JSON.
+///
+/// An agentic CLI occasionally answers conversationally however firmly the
+/// prompt is worded, and one off-format turn should not sink the whole
+/// smart-worktree flow. Cheap to retry here — this task is seconds of pure text
+/// generation, which is exactly why walkthrough generation does *not* retry.
+const SMART_WORKTREE_ATTEMPTS: usize = 3;
+
 /// Run the LLM generation for smart worktree (branch name + prompt).
 ///
 /// The provider is selected from `[api]` config and built via [`crate::ai_caller`];
-/// this function owns the prompt, the output schema, and the parsing — the provider
-/// only returns raw text. Checks `cancel_token` before and after the (blocking) call.
+/// this function owns the prompt, the retry policy, and the parsing — the
+/// configured command is just the model. Checks `cancel_token` before and after
+/// each (blocking) call.
+///
+/// The task keeps `[api] command_timeout_secs` as-is: naming a branch is a few
+/// seconds of text generation, unlike walkthrough generation, which asks for its own
+/// far larger budget.
 fn run_smart_generation(
     desc: &str,
     cancel_token: &Arc<AtomicBool>,
     api: &crate::config::ApiConfig,
+    repo_path: &std::path::Path,
 ) -> Result<SmartGenResult, String> {
-    if cancel_token.load(Ordering::Relaxed) {
-        return Err("Cancelled".to_string());
+    let env = crate::ai_caller::TaskEnv {
+        timeout_secs: None,
+        working_dir: Some(repo_path.to_path_buf()),
+    };
+    let caller = crate::ai_caller::build_caller(api, &env)?;
+
+    let mut last_err = String::new();
+    for attempt in 1..=SMART_WORKTREE_ATTEMPTS {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Cancelled".to_string());
+        }
+        let raw = caller.complete(SMART_WORKTREE_SYSTEM_PROMPT, desc, cancel_token)?;
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Cancelled".to_string());
+        }
+        match parse_smart_gen_result(&raw) {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                log::warn!("smart worktree: unusable reply on attempt {attempt}: {e}");
+                last_err = e;
+            }
+        }
     }
-
-    let caller =
-        crate::ai_caller::build_caller(api, Some(SMART_WORKTREE_JSON_SCHEMA.to_string()))?;
-    let raw = caller.complete(SMART_WORKTREE_SYSTEM_PROMPT, desc, cancel_token)?;
-
-    if cancel_token.load(Ordering::Relaxed) {
-        return Err("Cancelled".to_string());
-    }
-
-    parse_smart_gen_result(&raw)
+    Err(last_err)
 }
 
 impl App {
@@ -124,7 +158,7 @@ impl App {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Phase 1: LLM generation.
                 let gen_result =
-                    match run_smart_generation(&desc, &cancel, &api) {
+                    match run_smart_generation(&desc, &cancel, &api, &repo_path) {
                         Ok(r) => r,
                         Err(e) => {
                             let _ = tx.send(WorktreeOpResult::SmartFailed {
@@ -236,6 +270,17 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// This task's constraints belong to the task, not to whatever `[api]
+    /// command` happens to be: an agentic CLI reaches for tools and chats
+    /// unless told not to, and that instruction used to live in a wrapper
+    /// script the user had to maintain.
+    #[test]
+    fn system_prompt_forbids_tools_and_demands_json() {
+        assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Do not use any tools"));
+        assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Do not run any commands"));
+        assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Output ONLY a JSON object"));
+    }
 
     #[test]
     fn test_parse_plain_json() {

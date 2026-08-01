@@ -128,52 +128,12 @@ pub enum DiffView {
 }
 
 /// `[review]` section.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReviewConfig {
-    /// Template string used to format review prompts.
-    ///
-    /// The placeholder `{comments}` is replaced with the actual review
-    /// comments at runtime.
-    pub prompt_template: String,
-    /// What to do with the rendered prompt.
-    pub prompt_action: PromptAction,
-    /// Model for the headless walkthrough-generation session, passed to
-    /// `claude --model` (alias like "opus"/"sonnet" or a full model id).
-    /// `None` uses the Claude CLI's session default.
-    pub walkthrough_model: Option<String>,
     /// Natural language the walkthrough should be written in (e.g. "日本語",
     /// "English"). `None` leaves the choice to the model.
     pub walkthrough_language: Option<String>,
-}
-
-impl Default for ReviewConfig {
-    fn default() -> Self {
-        Self {
-            prompt_template: default_prompt_template(),
-            prompt_action: PromptAction::Clipboard,
-            walkthrough_model: None,
-            walkthrough_language: None,
-        }
-    }
-}
-
-/// Default review prompt template (Japanese).
-pub(super) fn default_prompt_template() -> String {
-    String::from(
-        "\
-以下のレビューコメントに対応してください。
-
-{comments}",
-    )
-}
-
-/// Action taken with a rendered review prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PromptAction {
-    Clipboard,
-    SendToSession,
 }
 
 /// `[ccusage]` section.
@@ -220,17 +180,24 @@ impl Default for UpdatesConfig {
 pub struct ApiConfig {
     /// Model ID for the Gemini API.
     pub model: String,
-    /// Which LLM provider to use for smart worktree generation. Each provider stands
-    /// alone; a failure surfaces to the user rather than falling back to another.
+    /// Which LLM provider to use. Each provider stands alone; a failure surfaces to
+    /// the user rather than falling back to another.
     /// `"gemini"` (default): the Gemini HTTP API.
-    /// `"claude"`: the `claude -p` CLI.
     /// `"command"`: a user-supplied external command (see `command`).
-    pub provider: String,
-    /// External command to run when `provider = "command"`.
     ///
-    /// argv form (`["ollama", "run", "llama3"]`); run directly without a shell.
-    /// Conductor writes the prompt to the command's stdin and reads the completion
-    /// from stdout — see the "External LLM Command Protocol" in `ai_caller.rs`.
+    /// There is no built-in provider that runs the `claude` CLI: Conductor never
+    /// spawns it. A Claude-backed setup is just `provider = "command"` with
+    /// `command = ["claude", "-p", "{prompt}"]` — no wrapper script.
+    pub provider: String,
+    /// The AI tool to run when `provider = "command"`, in argv form, run
+    /// directly without a shell.
+    ///
+    /// `{prompt}` and `{workdir}` are substituted into any argument
+    /// (`["claude", "-p", "{prompt}"]`); with no `{prompt}` the
+    /// prompt goes to stdin instead (`["ollama", "run", "llama3"]`). The
+    /// completion is read from stdout. See the "External LLM Command Protocol"
+    /// in `ai_caller.rs` — and note that per-task behaviour (tool use, output
+    /// format) belongs to the feature's prompt, not to this command.
     pub command: Vec<String>,
     /// Wall-clock timeout (seconds) for the `command` provider. `0` disables it.
     pub command_timeout_secs: u64,

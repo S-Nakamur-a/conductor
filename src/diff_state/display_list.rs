@@ -212,6 +212,94 @@ impl DiffState {
         (0..self.display_list.len()).find(|&idx| self.resolve_file(idx).is_some_and(|(f, _)| f.path == path))
     }
 
+    /// Every changed path in the diff, both sections, deduplicated. Unlike
+    /// [`Self::display_index_for_path`] this ignores the display list, so a
+    /// file inside a *collapsed* directory still counts as present.
+    pub fn changed_paths(&self) -> Vec<&str> {
+        let mut paths: Vec<&str> = self
+            .committed_files
+            .iter()
+            .chain(self.uncommitted_files.iter())
+            .map(|f| f.path.as_str())
+            .collect();
+        paths.sort_unstable();
+        paths.dedup();
+        paths
+    }
+
+    /// Match an externally-supplied path (a walkthrough step's `file_path`, a
+    /// comment's anchor) against the diff, returning the diff's own spelling of
+    /// it.
+    ///
+    /// Exact equality first, so a real file always wins over any guess below.
+    /// Then, for values that name the right file the wrong way:
+    ///
+    /// 1. the normalised spelling (`./src/a.rs`, `src//a.rs`);
+    /// 2. the path minus its first segment, which is what strips a `git diff`
+    ///    `a/`/`b/` prefix — and, since it is tried only after exact matching,
+    ///    it cannot shadow a repository that really does have a top-level `b/`;
+    /// 3. a unique suffix match on a segment boundary, which is what catches a
+    ///    path written relative to a subdirectory (`app/foo.rs` for
+    ///    `src/app/foo.rs`). Ambiguity disqualifies it: two files ending the
+    ///    same way mean we don't know which was meant, and guessing would send
+    ///    the reviewer to the wrong file with no hint that it happened.
+    pub fn resolve_changed_path(&self, path: &str) -> Option<String> {
+        let paths = self.changed_paths();
+        let exact = |candidate: &str| -> Option<String> {
+            paths
+                .iter()
+                .find(|p| **p == candidate)
+                .map(|p| (*p).to_string())
+        };
+
+        if let Some(hit) = exact(path) {
+            return Some(hit);
+        }
+        let normalized = crate::repo_path::normalize(path);
+        if normalized.is_empty() {
+            return None;
+        }
+        if let Some(hit) = exact(&normalized) {
+            return Some(hit);
+        }
+        if let Some((_, rest)) = normalized.split_once('/')
+            && !rest.is_empty()
+            && let Some(hit) = exact(rest)
+        {
+            return Some(hit);
+        }
+        let suffix = format!("/{normalized}");
+        let mut matches = paths.iter().filter(|p| p.ends_with(&suffix));
+        match (matches.next(), matches.next()) {
+            (Some(only), None) => Some((*only).to_string()),
+            _ => None,
+        }
+    }
+
+    /// Expand whatever ancestor directories are collapsed so `path` has a row,
+    /// and return that row's display index.
+    ///
+    /// Without this, jumping to a file inside a directory the reviewer had
+    /// collapsed looks exactly like the file not being in the diff at all —
+    /// [`Self::display_index_for_path`] can only see rows the display list
+    /// currently has.
+    pub fn reveal_path(&mut self, path: &str) -> Option<usize> {
+        if let Some(idx) = self.display_index_for_path(path) {
+            return Some(idx);
+        }
+        let mut changed = false;
+        let mut prefix_end = 0;
+        while let Some(slash) = path[prefix_end..].find('/') {
+            prefix_end += slash;
+            changed |= self.collapsed_dirs.remove(&path[..prefix_end]);
+            prefix_end += 1;
+        }
+        if changed {
+            self.rebuild_display_list();
+        }
+        self.display_index_for_path(path)
+    }
+
     /// Toggle the collapsed state of the directory at the given display index.
     /// Returns `true` if a directory was toggled (so the caller knows the list
     /// changed). Non-directory rows (files, the summary) are a no-op.

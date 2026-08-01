@@ -29,14 +29,14 @@ pub use persist::{
     config_file_path, generate_default_config, persist_layout_proportions,
     persist_ui_high_contrast, persist_ui_theme,
 };
-// PromptAction and AppearanceSnapshot are not referenced by name anywhere else
-// in the crate yet (call sites use type inference / field access instead),
-// but they are part of this module's public surface, so keep re-exporting
-// them under `crate::config::*` rather than letting the split hide them.
+// AppearanceSnapshot is not referenced by name anywhere else in the crate yet
+// (call sites use type inference / field access instead), but it is part of
+// this module's public surface, so keep re-exporting it under
+// `crate::config::*` rather than letting the split hide it.
 #[allow(unused_imports)]
 pub use sections::{
-    ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, LayoutConfig, PromptAction,
-    ReviewConfig, RichConfig, TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
+    ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, LayoutConfig, ReviewConfig,
+    RichConfig, TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
 };
 #[allow(unused_imports)]
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};
