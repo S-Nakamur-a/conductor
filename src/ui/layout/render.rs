@@ -65,7 +65,10 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         if app.viewer_state.is_current_file_media()
             && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
         {
-            let full_path = app.selected_worktree_path().join(rel_path);
+            // 画像も本文と同じ根から読む。current_file は Viewer のツリーの
+            // 相対パスなので、別の根に繋ぐと「タイトルは A のファイル、絵は B の
+            // ファイル」になり得る。
+            let full_path = app.viewer_state.root().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
             // Tier B: pixel-quality rendering via the graphics protocol.

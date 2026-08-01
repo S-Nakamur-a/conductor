@@ -69,6 +69,45 @@ fn walk_still_skips_heavy_dirs() {
     );
 }
 
+/// 同名のファイルを持つ 2 つの worktree があるとき、開く先は「今表示している
+/// ツリーを歩いた根」で決まる。
+///
+/// worktree の切り替えはツリーの走査を裏のスレッドに回すので、選択が B に移って
+/// からエントリが届くまでの間、選択は B・表示しているエントリは A、という状態が
+/// 実在する。根を Viewer が持ち、エントリと一緒に差し替えることでこの隙間を潰す。
+/// 呼び出し側が開くたびに「今どの worktree か」を引き直していた頃は、その隙間の
+/// クリックが A の相対パスを B の根に繋いで、別ブランチの同名ファイルを黙って
+/// 開いていた。
+#[test]
+fn tree_root_and_entries_switch_together() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    std::fs::write(a.path().join("shared.txt"), "FROM_A\n").unwrap();
+    std::fs::write(b.path().join("shared.txt"), "FROM_B\n").unwrap();
+
+    let mut vs = ViewerState::default();
+    vs.load_file_tree(a.path(), 4);
+    vs.open_file("shared.txt", 4);
+    assert_eq!(vs.content.file_content, vec!["FROM_A"]);
+    assert_eq!(vs.root(), a.path(), "load_file_tree が根を確定させる");
+
+    // 裏の走査が返ってきたのと同じ形で B のツリーを適用する。
+    let mut entries = Vec::new();
+    ViewerState::walk_dir(
+        b.path(),
+        b.path(),
+        0,
+        &mut entries,
+        &GitStatusMap::default(),
+    );
+    vs.replace_tree(b.path().to_path_buf(), entries, GitStatusMap::default());
+
+    // 相対パスは同じでも、読むのは差し替え後の根の下のファイル。
+    vs.open_file("shared.txt", 4);
+    assert_eq!(vs.content.file_content, vec!["FROM_B"]);
+    assert_eq!(vs.root(), b.path());
+}
+
 /// A periodic / file-watcher tree refresh re-opens the previously viewed file
 /// to pick up on-disk edits, and `open_file` goes through `exit_diff_mode`,
 /// which clears every viewer mode flag. The SUMMARY pseudo-file view must
@@ -82,7 +121,7 @@ fn tree_refresh_preserves_summary_view() {
 
     let mut vs = ViewerState::default();
     vs.load_file_tree(root, 4);
-    vs.open_file(root, "a.txt", 4);
+    vs.open_file("a.txt", 4);
     vs.enter_summary_view();
     vs.summary_scroll = 7;
 
@@ -105,7 +144,7 @@ fn tree_refresh_preserves_diff_mode() {
 
     let mut vs = ViewerState::default();
     vs.load_file_tree(root, 4);
-    vs.open_file(root, "a.txt", 4);
+    vs.open_file("a.txt", 4);
     vs.diff_view.diff_mode = true;
     vs.diff_view.diff_view_scroll = 3;
 
@@ -129,7 +168,7 @@ fn tree_refresh_preserves_rendered_markdown_scroll() {
 
     let mut vs = ViewerState::default();
     vs.load_file_tree(root, 4);
-    vs.open_file(root, "README.md", 4);
+    vs.open_file("README.md", 4);
     vs.md_rendered = true;
     vs.md_scroll = 40;
     vs.content.file_scroll = 40;

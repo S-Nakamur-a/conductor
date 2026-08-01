@@ -70,13 +70,9 @@ impl App {
             Some((f, _)) => (f.path.clone(), f.clone()),
             None => return,
         };
-        let Some(wt) = self.worktrees.selected() else {
-            return;
-        };
-        let wt_path = wt.path.clone();
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(&wt_path, &file_path, tab_width);
-        self.viewer_state.reveal_file_in_tree(&file_path, &wt_path);
+        self.viewer_state.open_file(&file_path, tab_width);
+        self.viewer_state.reveal_file_in_tree(&file_path);
         self.rehighlight_viewer();
         self.review_state.build_file_comment_cache(&file_path);
         self.expand_threads_for_file(&file_path);

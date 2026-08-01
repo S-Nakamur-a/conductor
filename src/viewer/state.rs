@@ -6,6 +6,7 @@
 //! layout.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::git_engine::status_map::GitStatusMap;
@@ -20,6 +21,16 @@ use super::file_view::UnifiedDiffEntry;
 /// File tree management state.
 #[derive(Default)]
 pub struct FileTreeState {
+    /// このツリーを歩いた根。エントリの相対パスはすべてここからの相対で、
+    /// 絶対パスに戻せるのはこの値だけ。
+    ///
+    /// 読むのは [`ViewerState::root`]、書くのは [`ViewerState::load_file_tree`] /
+    /// [`ViewerState::replace_tree`] / [`ViewerState::set_root`] だけに限る。
+    /// 以前は根を持たず、ファイルを開くたびに呼び出し側が「今どの worktree か」
+    /// を引き直して渡していたので、表示中のツリーと開く先が食い違っても誰も
+    /// 気付けなかった (worktree 切り替えはツリーの走査を裏に回すため、古い
+    /// エントリと新しい根が同時に存在する瞬間がある)。
+    pub(in crate::viewer) root: PathBuf,
     /// Flattened file tree (directories + files, pre-order).
     pub file_tree: Vec<FileTreeEntry>,
     /// Index of the selected row in the *full* (unfiltered) tree.

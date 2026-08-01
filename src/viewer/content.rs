@@ -16,7 +16,10 @@ impl ViewerState {
     }
 
     /// Open (read) a file and store its lines in `file_content`.
-    pub fn open_file(&mut self, worktree_path: &Path, relative_path: &str, tab_width: usize) {
+    ///
+    /// `relative_path` は表示中のツリーの根からの相対。絶対パスに戻すのは
+    /// [`ViewerState::root`] だけで、呼び出し側は根を知らなくてよい。
+    pub fn open_file(&mut self, relative_path: &str, tab_width: usize) {
         self.exit_diff_mode();
         // `md_rendered` deliberately survives (the mode is sticky across files);
         // the scroll offset does not, since it indexes into the old document.
@@ -31,7 +34,7 @@ impl ViewerState {
         self.content.code_mask = crate::symbol_index::CodeMask::default();
         // 前のファイルの失敗理由を持ち越さない。以降の分岐が必要なら再度立てる。
         self.content.load_error = None;
-        let full = worktree_path.join(relative_path);
+        let full = self.tree.root.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
         if media_state::is_media_file(relative_path) {
@@ -208,7 +211,9 @@ mod tests {
         assert!(!dir.join(".git").exists(), "fixture must not be a git repo");
 
         let mut vs = ViewerState::default();
-        vs.open_file(&dir, "plain.txt", 4);
+
+        vs.set_root(dir.clone());
+        vs.open_file("plain.txt", 4);
 
         assert_eq!(vs.content.file_content, vec!["ALPHA", "BRAVO"]);
         assert_eq!(vs.content.current_file.as_deref(), Some("plain.txt"));
@@ -227,7 +232,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let mut vs = ViewerState::default();
-        vs.open_file(&dir, "missing.txt", 4);
+
+        vs.set_root(dir.clone());
+        vs.open_file("missing.txt", 4);
 
         assert!(vs.content.file_content.is_empty());
         assert_eq!(vs.content.current_file.as_deref(), Some("missing.txt"));
@@ -239,7 +246,7 @@ mod tests {
         // 次に成功したら理由は消える。持ち越すと直後の正常なファイルまで
         // エラー表示になる。
         std::fs::write(dir.join("ok.txt"), "OK\n").unwrap();
-        vs.open_file(&dir, "ok.txt", 4);
+        vs.open_file("ok.txt", 4);
         assert!(vs.content.load_error.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -262,7 +269,9 @@ mod tests {
         .unwrap();
 
         let mut vs = ViewerState::default();
-        vs.open_file(&dir, "sample.go", 4);
+
+        vs.set_root(dir.clone());
+        vs.open_file("sample.go", 4);
 
         // Walk each line the way `build_symbol_hints` does and collect the
         // words it would offer as jumpable.
@@ -308,10 +317,12 @@ mod tests {
         std::fs::write(dir.join("b.py"), "def keep():\n    pass\n").unwrap();
 
         let mut vs = ViewerState::default();
-        vs.open_file(&dir, "a.rs", 4);
+
+        vs.set_root(dir.clone());
+        vs.open_file("a.rs", 4);
         assert!(vs.content.code_mask.is_code(1, 0), "Rust file is masked");
 
-        vs.open_file(&dir, "b.py", 4);
+        vs.open_file("b.py", 4);
         assert!(
             !vs.content.code_mask.is_code(1, 0),
             "Python must not inherit the Rust file's mask"

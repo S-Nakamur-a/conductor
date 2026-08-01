@@ -200,7 +200,10 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
         return;
     };
 
-    let wt_path = app.selected_worktree_path();
+    // リンクの実在確認に使う根は Viewer のツリーのもの。ここで確認した相対パスを
+    // そのまま open_file_in_viewer に渡すので、別の根で確認すると「リンクとして
+    // 認識されたのに開くと空」になる。
+    let wt_path = app.viewer_state.root().to_path_buf();
 
     // Lock the parser, set scrollback, scan rows from cursor upward.
     let found = {

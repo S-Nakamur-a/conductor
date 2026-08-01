@@ -241,11 +241,16 @@ pub struct BackgroundOps {
     pub pr_url: BackgroundOp<Option<String>>,
     /// Background diff computation (worktree switch).
     pub diff: BackgroundOp<BgDiffResult>,
-    /// Background file tree walk (worktree switch), paired with the git
-    /// status snapshot taken alongside it so `poll_worktree_switch_ops()`
-    /// can populate `FileTreeEntry::git_state` without a second `statuses()`
-    /// call on the main thread.
+    /// Background file tree walk (worktree switch): the root that was walked,
+    /// the entries, and the git status snapshot taken alongside them so
+    /// `poll_worktree_switch_ops()` can populate `FileTreeEntry::git_state`
+    /// without a second `statuses()` call on the main thread.
+    ///
+    /// 根を結果に含めるのは、走査を始めた時点の選択と、結果が届いた時点の選択が
+    /// 一致するとは限らないため。届いたエントリの相対パスを解決できるのは、
+    /// それを歩いた根だけ。
     pub file_tree: BackgroundOp<(
+        std::path::PathBuf,
         Vec<crate::viewer::FileTreeEntry>,
         crate::git_engine::status_map::GitStatusMap,
     )>,

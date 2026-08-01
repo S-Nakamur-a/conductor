@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.98.2"
+version = "0.98.3"
 edition = "2024"
 
 [dependencies]
