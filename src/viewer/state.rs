@@ -46,6 +46,12 @@ pub struct FileContentState {
     pub h_scroll: usize,
     /// Relative path of the file currently displayed (if any).
     pub current_file: Option<String>,
+    /// なぜ `file_content` が空なのかの理由。読み込みに失敗したときだけ入る。
+    ///
+    /// 「未選択」「中身が空のファイル」「読めなかった」はどれも `file_content` が
+    /// 空になるので、これが無いと Viewer は 3 つを見分けられず、失敗が黙って
+    /// 「ファイル未選択」に丸められる。`open_file` が成功したら必ず消す。
+    pub load_error: Option<String>,
     /// Cached syntax-highlighted tokens per line (syntect output converted to ratatui styles).
     pub highlighted_lines: Vec<Vec<(ratatui::style::Style, String)>>,
     /// Hash of (current_file, file_content) used to skip redundant re-highlighting.

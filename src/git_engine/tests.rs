@@ -24,6 +24,35 @@ fn list_worktrees_includes_main() {
     );
 }
 
+/// `git init` した直後 (コミットが 1 つも無く HEAD が未生成) のリポジトリでも
+/// メインの worktree を 1 件返すこと。
+///
+/// ここが空を返すと、worktree を引いてからでないとファイルを開けない画面側は
+/// まるごと動かなくなる。HEAD を解決できないだけで一覧ごと落とさない、という
+/// のが `worktree_info_at` の設計 (head_oid は Option) なので、それを固定する。
+#[test]
+fn list_worktrees_handles_repo_without_commits() {
+    let tmp = tempfile::tempdir().expect("create temp dir");
+    let repo_path = tmp.path().join("fresh");
+    std::fs::create_dir_all(&repo_path).unwrap();
+    Repository::init(&repo_path).expect("init repo");
+    std::fs::write(repo_path.join("hello.txt"), "hi\n").unwrap();
+
+    let engine = GitEngine::open(&repo_path).expect("open fresh repo");
+    let worktrees = engine.list_worktrees().expect("list_worktrees() failed");
+
+    assert_eq!(
+        worktrees.len(),
+        1,
+        "a freshly initialised repo should still report its main worktree"
+    );
+    assert!(worktrees[0].is_main);
+    assert!(
+        worktrees[0].head_oid.is_none(),
+        "unborn HEAD has no oid, and that must not fail the listing"
+    );
+}
+
 /// Verify that `main_worktree_path()` returns the correct path even when
 /// opened from a linked worktree.
 #[test]

@@ -555,14 +555,13 @@ impl App {
             self.code_nav.history.push(loc);
         }
 
-        // Open the target file.
-        if let Some(wt) = self.worktrees.selected() {
-            let wt_path = wt.path.clone();
-            let tab_width = self.config.viewer.tab_width;
-            self.viewer_state.open_file(&wt_path, file_path, tab_width);
-            self.rehighlight_viewer();
-            self.viewer_state.reveal_file_in_tree(file_path, &wt_path);
-        }
+        // 対象ファイルを開く。索引を張ったのと同じ根に対して開く
+        // (start_symbol_index_build も selected_worktree_path を使っている)。
+        let root = self.selected_worktree_path();
+        let tab_width = self.config.viewer.tab_width;
+        self.viewer_state.open_file(&root, file_path, tab_width);
+        self.rehighlight_viewer();
+        self.viewer_state.reveal_file_in_tree(file_path, &root);
 
         // Scroll so the target line appears at the same screen row as the source symbol.
         let target_0 = line.saturating_sub(1);
@@ -588,15 +587,12 @@ impl App {
         };
 
         if let Some(loc) = self.code_nav.history.go_back(current) {
-            if let Some(wt) = self.worktrees.selected() {
-                let wt_path = wt.path.clone();
-                let tab_width = self.config.viewer.tab_width;
-                self.viewer_state
-                    .open_file(&wt_path, &loc.file_path, tab_width);
-                self.rehighlight_viewer();
-                self.viewer_state
-                    .reveal_file_in_tree(&loc.file_path, &wt_path);
-            }
+            let root = self.selected_worktree_path();
+            let tab_width = self.config.viewer.tab_width;
+            self.viewer_state
+                .open_file(&root, &loc.file_path, tab_width);
+            self.rehighlight_viewer();
+            self.viewer_state.reveal_file_in_tree(&loc.file_path, &root);
             let total = self.viewer_state.content.file_content.len();
             self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
             self.viewer_state.content.h_scroll = loc.h_scroll;
@@ -616,15 +612,12 @@ impl App {
         };
 
         if let Some(loc) = self.code_nav.history.go_forward(current) {
-            if let Some(wt) = self.worktrees.selected() {
-                let wt_path = wt.path.clone();
-                let tab_width = self.config.viewer.tab_width;
-                self.viewer_state
-                    .open_file(&wt_path, &loc.file_path, tab_width);
-                self.rehighlight_viewer();
-                self.viewer_state
-                    .reveal_file_in_tree(&loc.file_path, &wt_path);
-            }
+            let root = self.selected_worktree_path();
+            let tab_width = self.config.viewer.tab_width;
+            self.viewer_state
+                .open_file(&root, &loc.file_path, tab_width);
+            self.rehighlight_viewer();
+            self.viewer_state.reveal_file_in_tree(&loc.file_path, &root);
             let total = self.viewer_state.content.file_content.len();
             self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
             self.viewer_state.content.h_scroll = loc.h_scroll;

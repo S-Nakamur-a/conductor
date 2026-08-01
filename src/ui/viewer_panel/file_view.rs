@@ -157,9 +157,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     if vs.content.file_content.is_empty() {
-        let placeholder = Paragraph::new("Select a file to view its contents.")
-            .style(Style::default().fg(theme.muted))
-            .block(block);
+        // 本文が無い理由は 3 通りあり、どれなのかを言い当てる。読めなかった場合を
+        // 「ファイルを選んでください」と出すと、選んだのに反応しなかったように
+        // 見えてしまう (タイトルには選択中のファイル名が出ているのに、本文は
+        // 未選択の案内、という食い違いになる)。
+        let (text, style) = match (&vs.content.load_error, &vs.content.current_file) {
+            (Some(err), Some(path)) => (
+                format!("Could not read {path}\n{err}"),
+                Style::default().fg(theme.error),
+            ),
+            (_, Some(_)) => (
+                "This file is empty.".to_string(),
+                Style::default().fg(theme.muted),
+            ),
+            (_, None) => (
+                "Select a file to view its contents.".to_string(),
+                Style::default().fg(theme.muted),
+            ),
+        };
+        let placeholder = Paragraph::new(text).style(style).block(block);
         frame.render_widget(placeholder, area);
         return;
     }

@@ -29,6 +29,8 @@ impl ViewerState {
         // read-error branches below also replace `file_content`, and a mask
         // left over from the previous file would describe the wrong text.
         self.content.code_mask = crate::symbol_index::CodeMask::default();
+        // 前のファイルの失敗理由を持ち越さない。以降の分岐が必要なら再度立てる。
+        self.content.load_error = None;
         let full = worktree_path.join(relative_path);
 
         // Handle media files (images/videos) via aa-media.
@@ -73,8 +75,13 @@ impl ViewerState {
                 };
             }
             Err(e) => {
-                // Show error as file content so the user sees feedback.
-                self.content.file_content = vec![format!("Error reading file: {e}")];
+                // 失敗理由は専用のフィールドへ。以前はここで擬似的な 1 行を
+                // file_content に流し込んでいたが、それだと行番号もハイライトも
+                // 付いて本文と区別が付かず、Viewer 側からは「空 = 未選択」と
+                // 見分けられなかった。
+                log::warn!("failed to read {}: {e}", full.display());
+                self.content.file_content.clear();
+                self.content.load_error = Some(e.to_string());
                 self.content.current_file = Some(relative_path.to_string());
                 self.content.file_scroll = 0;
                 self.content.h_scroll = 0;
@@ -188,6 +195,55 @@ pub fn is_markdown_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ファイルの中身はワークツリーの実ファイルから読む。git を一切経由しないので
+    /// `.git` の無いディレクトリでも、git 管理下の未追跡・未コミットのファイルでも
+    /// 同じように開ける。これが崩れると「git 管理外だと Viewer が空のまま」に戻る。
+    #[test]
+    fn open_file_reads_from_disk_without_git() {
+        let dir = std::env::temp_dir().join(format!("nogit_open_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plain.txt"), "ALPHA\nBRAVO\n").unwrap();
+        assert!(!dir.join(".git").exists(), "fixture must not be a git repo");
+
+        let mut vs = ViewerState::default();
+        vs.open_file(&dir, "plain.txt", 4);
+
+        assert_eq!(vs.content.file_content, vec!["ALPHA", "BRAVO"]);
+        assert_eq!(vs.content.current_file.as_deref(), Some("plain.txt"));
+        assert!(vs.content.load_error.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 読み込みに失敗したら理由を `load_error` に残す。本文が空になるのは
+    /// 「未選択」「空ファイル」も同じなので、失敗をここで区別できないと
+    /// Viewer が「ファイル未選択」に丸めてしまう。
+    #[test]
+    fn open_file_records_why_it_failed() {
+        let dir = std::env::temp_dir().join(format!("nogit_err_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut vs = ViewerState::default();
+        vs.open_file(&dir, "missing.txt", 4);
+
+        assert!(vs.content.file_content.is_empty());
+        assert_eq!(vs.content.current_file.as_deref(), Some("missing.txt"));
+        assert!(
+            vs.content.load_error.is_some(),
+            "a failed read must record its reason, not look like 'nothing selected'"
+        );
+
+        // 次に成功したら理由は消える。持ち越すと直後の正常なファイルまで
+        // エラー表示になる。
+        std::fs::write(dir.join("ok.txt"), "OK\n").unwrap();
+        vs.open_file(&dir, "ok.txt", 4);
+        assert!(vs.content.load_error.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Opening a file must leave behind a mask that agrees with the tab-expanded
     /// lines the viewer will render, because every navigation query indexes into
