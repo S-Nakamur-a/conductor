@@ -13,10 +13,34 @@ use super::*;
 impl App {
     // ── Claude Code input-waiting detection ────────────────────────────
 
-    /// Handle a single CC state notification received via the Unix socket.
+    /// Handle a single CC notification received via the Unix socket.
     pub fn handle_cc_notify(&mut self, event: crate::cc_notify::CcNotifyEvent) {
+        let (kind, cwd) = match event {
+            crate::cc_notify::CcNotifyEvent::State { kind, cwd } => (kind, cwd),
+            // `/clear` や `/resume` でこのパネルのログが別 id に移った。
+            // スクロールバックが読むファイルを差し替えるだけで、waiting/active
+            // の状態には関係しない。
+            crate::cc_notify::CcNotifyEvent::SessionRotated {
+                panel_id,
+                session_id,
+            } => {
+                if self
+                    .terminal
+                    .pty_manager
+                    .set_claude_session_id(&panel_id, session_id)
+                {
+                    // 開きっぱなしのトランスクリプトは古いログを指したままなので
+                    // 畳む。次に開いたときに新しいログから読み直される。
+                    if self.reflow.active {
+                        self.close_reflow();
+                    }
+                }
+                return;
+            }
+        };
+
         // Normalize the cwd and match against known worktrees.
-        let event_normalized: PathBuf = event.cwd.components().collect();
+        let event_normalized: PathBuf = cwd.components().collect();
         let wt_path = self
             .worktrees
             .iter()
@@ -40,7 +64,7 @@ impl App {
             return;
         }
 
-        match event.kind {
+        match kind {
             crate::cc_notify::CcNotifyKind::Waiting => {
                 self.terminal.cc_active_worktrees.remove(&wt_path);
 

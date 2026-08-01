@@ -324,3 +324,61 @@ fn locale_non_utf8_lang_without_lc_all_keeps_lc_all_untouched() {
     assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
     assert!(removes.is_empty());
 }
+
+// ── Claude セッションフックの差し込み ──────────────────────────────────
+//
+// `/clear` は Claude Code の書き込み先を別 id の `.jsonl` に移すが、旧ログにも
+// 新ログにも相互参照が残らない。`SessionStart` フックだけがパネルと新しい
+// session id を確実に結べるので、spawn 時にこれを差し込む。
+
+#[test]
+fn hook_settings_declare_the_conductor_session_start_hook() {
+    let repo = tempfile::tempdir().expect("tmp repo");
+    let path = PtyManager::write_hook_settings(repo.path()).expect("write settings");
+
+    // Conductor 自身のディレクトリに置く (`.conductor/` は gitignore 済み)。
+    assert_eq!(
+        path,
+        repo.path().join(".conductor").join("claude-hooks.json")
+    );
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read back")).expect("valid json");
+    let cmd = v["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("hook command");
+    // conductor 自身を呼ぶ。シェルスクリプトにも jq にも依存しない。
+    assert!(cmd.ends_with(" cc-hook"), "{cmd}");
+    assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["type"], "command");
+}
+
+#[test]
+fn hook_settings_are_rewritten_each_spawn() {
+    // conductor を置き直しても追随できるよう、毎回書き直す。
+    let repo = tempfile::tempdir().expect("tmp repo");
+    let path = PtyManager::write_hook_settings(repo.path()).expect("first write");
+    std::fs::write(&path, b"{}").expect("clobber");
+    PtyManager::write_hook_settings(repo.path()).expect("second write");
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read back")).expect("valid json");
+    assert!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"].is_string());
+}
+
+#[test]
+fn hook_command_survives_awkward_executable_paths() {
+    // フックの command はシェルに渡されるので、空白や引用符を含む置き場所でも
+    // 1 語のままでなければならない。
+    assert_eq!(
+        PtyManager::shell_quote("/usr/bin/conductor"),
+        "'/usr/bin/conductor'"
+    );
+    assert_eq!(
+        PtyManager::shell_quote("/Users/me/my tools/conductor"),
+        "'/Users/me/my tools/conductor'"
+    );
+    assert_eq!(
+        PtyManager::shell_quote("/tmp/it's here/conductor"),
+        r"'/tmp/it'\''s here/conductor'"
+    );
+}

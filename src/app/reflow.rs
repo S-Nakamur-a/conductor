@@ -104,10 +104,12 @@ impl App {
     /// Enter the reflow transcript view for the active Claude panel's session.
     ///
     /// Resolves the log of the session backing the currently displayed Claude
-    /// panel — strictly by its pinned `claude_session_id` — then loads and parses
-    /// that `.jsonl` and activates the overlay. When the id does not resolve to a
-    /// log, or the log holds no displayable turn, a status flash explains why and
-    /// the view stays inactive; no other session's history is ever substituted.
+    /// panel from its pinned `claude_session_id` (following a `/clear`
+    /// rotation, see `claude_sessions::current_session_log`), then loads and
+    /// parses that `.jsonl` and activates the overlay. When the id does not
+    /// resolve to a log, or the log holds no displayable turn, a status flash
+    /// explains why and the view stays inactive; no other session's history is
+    /// ever substituted.
     pub fn open_reflow(&mut self) {
         // The transcript source is the session backing the *currently displayed*
         // Claude panel, identified only by its pinned session id (see
@@ -127,14 +129,27 @@ impl App {
         // session started later in the same worktree passed the test and
         // hijacked the view for as long as the subagent ran.
         //
-        // Consequence worth knowing: a mid-session `/clear` or an in-app
-        // `/resume` rotates Claude Code's live log to a new session id that
-        // Conductor cannot observe, so scrolling up then shows this session's
-        // pre-rotation transcript. Stale-but-own beats fresh-but-someone-else's.
-        let Some((working_dir, session_id)) = self
-            .terminal
-            .active_claude_session
-            .and_then(|idx| self.terminal.pty_manager.claude_session_ref(idx))
+        // 例外は `/clear` によるログのローテーションだけ。`/clear` は書き込み先
+        // を新しい session id の `.jsonl` に移すので、pin した id を据え置くと
+        // clear 前の会話を出したまま clear 後が一切出なくなる。
+        //
+        // pin は `SessionStart` フック (`cc_hook`) が更新する。フックはパネル
+        // 自身の Claude プロセスの中で走るので、これは推測ではなく事実 — 同一
+        // ワークツリーで複数パネルが同時に `/clear` しても取り違えない。
+        // フックが沈黙した環境ではここから `claude_sessions::rotation` の
+        // 推測にフォールバックするが、そちらも「先頭が `/clear` コマンドで、
+        // 前セッションの最終書き込み以降に始まり、他パネルが pin していない」
+        // ログしか後続と認めない。新規に起動しただけの `claude` はこの形に
+        // ならないので、上に書いた乗っ取りは起きない。
+        let Some(idx) = self.terminal.active_claude_session else {
+            self.set_status(
+                "No Claude session for this panel; transcript unavailable".to_string(),
+                StatusLevel::Warning,
+            );
+            return;
+        };
+        let Some((working_dir, session_id, spawned_at)) =
+            self.terminal.pty_manager.claude_session_ref(idx)
         else {
             self.set_status(
                 "No Claude session for this panel; transcript unavailable".to_string(),
@@ -142,9 +157,14 @@ impl App {
             );
             return;
         };
+        let claimed = self.terminal.pty_manager.other_claude_session_ids(idx);
 
-        let Some(path) = crate::claude_sessions::session_jsonl_path(&working_dir, &session_id)
-        else {
+        let Some(path) = crate::claude_sessions::current_session_log(
+            &working_dir,
+            &session_id,
+            spawned_at,
+            &claimed,
+        ) else {
             self.set_status(
                 format!("No session log on disk for {session_id}"),
                 StatusLevel::Warning,

@@ -198,4 +198,6 @@ pub fn find_latest_sessions_for_paths(
 // here. The reflow transcript view used to select its source that way and it
 // leaked other sessions' conversations into the view (see `App::open_reflow`);
 // a transcript is resolved from the panel's own session id via
-// `session_jsonl_path` instead.
+// `current_session_log` instead. That function does read the directory, but
+// only to follow a `/clear` rotation, and only across logs that begin with the
+// `/clear` record itself — see `super::rotation`.

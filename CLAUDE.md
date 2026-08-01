@@ -35,6 +35,26 @@ release channels and drifted apart.
 Never print to stdout from anything reachable by `mcp-serve`; it would corrupt the
 protocol. Logging goes to stderr (env_logger's default).
 
+### Session hook (`conductor cc-hook`, `src/cc_hook.rs`)
+
+`/clear` rotates Claude Code's log to a **new session id**, and nothing on disk
+links the old file to the new one — so a panel pinned to its spawn-time
+`--session-id` would keep showing the pre-clear transcript forever. The fix is a
+`SessionStart` hook that runs inside the panel's own Claude process and reports
+its current session id back.
+
+- **Who installs it:** `pty_manager/spawn.rs` writes `.conductor/claude-hooks.json`
+  and passes it as `--settings` on every Claude spawn, plus `CONDUCTOR_PANEL_ID`
+  and `CONDUCTOR_NOTIFY_SOCK` in the environment. `--settings` *adds a layer* —
+  the user's own settings and the project's `.claude/settings.json` keep working.
+- **Why the binary and not `plugins/`:** same reason `mcp-serve` lives here — a
+  separately released plugin drifts, and the failure is silent (scrollback just
+  shows stale history). `cargo install --path .` ships the binary and the hook
+  together.
+- **Fallback:** when the hook stays silent (hooks disabled, older CLI),
+  `claude_sessions/rotation.rs` infers the rotation from the logs instead. It is
+  deliberately conservative — see its module docs for what it refuses to guess.
+
 ## Architecture
 
 ### Application Structure
@@ -88,6 +108,8 @@ Status bar
 | `review_store.rs` | SQLite persistence (`.conductor/conductor.db`) for reviews, sessions, templates, history |
 | `pty_manager.rs` | PTY session management — spawn, read/write, resize; vt100 parser for rendering; output scanner for Claude Code |
 | `file_watcher.rs` | Filesystem change detection via `notify` crate, debounced at 500ms |
+| `cc_notify.rs` / `cc_hook.rs` | Unix-socket channel from Claude Code hooks — waiting/active state, and the `SessionStart` report that keeps a panel's session id correct across `/clear` |
+| `claude_sessions/` | Resolving which `.jsonl` transcript backs a panel (`rotation.rs` is the hook-less fallback for `/clear`) |
 | `config.rs` | Config loading from `~/.config/conductor/config.toml` |
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
 | `term_caps.rs` | Rich-mode terminal capability detection (truecolor / graphics protocol tiers) |
