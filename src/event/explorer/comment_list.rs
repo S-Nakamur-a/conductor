@@ -175,27 +175,26 @@ pub(in crate::event) fn navigate_to_comment_with_focus(
     comment_idx: usize,
     focus_viewer: bool,
 ) {
-    if let Some(comment) = app.review_state.comments.get(comment_idx) {
-        let file_path = comment.file_path.clone();
-        let line = comment.line_start as usize;
-        if let Some(wt) = app.worktrees.selected() {
-            let wt_path = wt.path.clone();
-            let tab_width = app.config.viewer.tab_width;
-            app.viewer_state.open_file(&wt_path, &file_path, tab_width);
-            app.rehighlight_viewer();
-            app.viewer_state.content.file_scroll = line.saturating_sub(1);
-            // A comment lives on a source line, so show source: rendered
-            // markdown would drop the reader at the top of the prose with the
-            // selection below invisible.
-            app.viewer_state.show_raw_for_line_target();
-            app.viewer_state.selection = crate::viewer::LineSelection::Selected {
-                start: line,
-                end: line,
-            };
-            app.review_state.build_file_comment_cache(&file_path);
-            if focus_viewer {
-                app.set_focus(Focus::Viewer);
-            }
-        }
+    let Some(comment) = app.review_state.comments.get(comment_idx) else {
+        return;
+    };
+    let file_path = comment.file_path.clone();
+    let line = comment.line_start as usize;
+    let wt_path = app.selected_worktree_path();
+    let tab_width = app.config.viewer.tab_width;
+    app.viewer_state.open_file(&wt_path, &file_path, tab_width);
+    app.rehighlight_viewer();
+    app.viewer_state.content.file_scroll = line.saturating_sub(1);
+    // A comment lives on a source line, so show source: rendered
+    // markdown would drop the reader at the top of the prose with the
+    // selection below invisible.
+    app.viewer_state.show_raw_for_line_target();
+    app.viewer_state.selection = crate::viewer::LineSelection::Selected {
+        start: line,
+        end: line,
+    };
+    app.review_state.build_file_comment_cache(&file_path);
+    if focus_viewer {
+        app.set_focus(Focus::Viewer);
     }
 }

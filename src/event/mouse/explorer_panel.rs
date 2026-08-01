@@ -219,15 +219,17 @@ pub(super) fn handle_explorer_column_click(
                 app.viewer_state.tree.tree_selected = tree_idx;
                 // Single-click opens the file in Viewer (or toggles dir).
                 if let Some(entry) = app.viewer_state.tree.file_tree.get(tree_idx).cloned() {
+                    // ツリーを構築したときと同じ根。worktree 一覧が空 (git 管理外の
+                    // ディレクトリ) でもリポジトリのパスへ落ちるので、クリックが
+                    // 何も起こさずに握り潰されることはない。
+                    let root = app.selected_worktree_path();
                     if entry.is_dir {
                         // Lazy-load children before expanding.
-                        if !entry.is_expanded
-                            && let Some(wt) = app.worktrees.selected()
-                        {
-                            app.viewer_state.ensure_children_loaded(tree_idx, &wt.path);
+                        if !entry.is_expanded {
+                            app.viewer_state.ensure_children_loaded(tree_idx, &root);
                         }
                         app.viewer_state.toggle_dir(tree_idx);
-                    } else if let Some(wt) = app.worktrees.selected() {
+                    } else {
                         // Double-click detection.
                         let is_double = register_double_click_on(
                             &mut app.viewer_state.click.last_tree_click_time,
@@ -236,9 +238,8 @@ pub(super) fn handle_explorer_column_click(
                             std::time::Instant::now(),
                         );
 
-                        let wt_path = wt.path.clone();
                         let tab_width = app.config.viewer.tab_width;
-                        app.viewer_state.open_file(&wt_path, &entry.path, tab_width);
+                        app.viewer_state.open_file(&root, &entry.path, tab_width);
                         app.rehighlight_viewer();
                         app.review_state.build_file_comment_cache(&entry.path);
                         // Single click: keep focus on Explorer.

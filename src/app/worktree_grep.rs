@@ -58,10 +58,9 @@ impl App {
             return;
         }
 
-        let wt_path = match self.worktrees.selected() {
-            Some(wt) => wt.path.clone(),
-            None => return,
-        };
+        // 検索範囲はツリーを構築したのと同じ根。worktree 一覧が空なら諦める、では
+        // git 管理外のディレクトリで grep が黙って何も返さなくなる。
+        let wt_path = self.selected_worktree_path();
 
         // Cancel any previous search.
         self.overlays.grep_search.bg_op.clear();

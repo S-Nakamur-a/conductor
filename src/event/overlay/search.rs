@@ -38,15 +38,12 @@ pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent)
                 app.viewer_state.filename_search.filename_search_active = false;
 
                 // Reveal and open the selected file (keep Focus on Explorer).
-                if let Some(wt) = app.worktrees.selected() {
-                    let wt_path = wt.path.clone();
-                    app.viewer_state.reveal_file_in_tree(&result.path, &wt_path);
-                    let tab_width = app.config.viewer.tab_width;
-                    app.viewer_state
-                        .open_file(&wt_path, &result.path, tab_width);
-                    app.rehighlight_viewer();
-                    app.review_state.build_file_comment_cache(&result.path);
-                }
+                let root = app.selected_worktree_path();
+                app.viewer_state.reveal_file_in_tree(&result.path, &root);
+                let tab_width = app.config.viewer.tab_width;
+                app.viewer_state.open_file(&root, &result.path, tab_width);
+                app.rehighlight_viewer();
+                app.review_state.build_file_comment_cache(&result.path);
             }
             app.viewer_state
                 .filename_search
@@ -188,30 +185,28 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.debounce_deadline = None;
                 app.overlays.grep_search.phase1_active = false;
 
-                if let Some(wt) = app.worktrees.selected() {
-                    let wt_path = wt.path.clone();
-                    app.viewer_state
-                        .reveal_file_in_tree(&result.file_path, &wt_path);
-                    let tab_width = app.config.viewer.tab_width;
-                    app.viewer_state
-                        .open_file(&wt_path, &result.file_path, tab_width);
-                    app.rehighlight_viewer();
-                    let hit_0 = result.line_number.saturating_sub(1);
-                    let max = app
-                        .viewer_state
-                        .content
-                        .file_content
-                        .len()
-                        .saturating_sub(1);
-                    app.viewer_state.content.file_scroll =
-                        result.line_number.saturating_sub(6).min(max);
-                    app.viewer_state.content.grep_highlight_line = Some(result.line_number);
-                    if app.viewer_state.content.file_scroll > hit_0 {
-                        app.viewer_state.content.file_scroll = hit_0;
-                    }
-                    app.viewer_state.show_raw_for_line_target();
-                    app.set_focus(Focus::Viewer);
+                let root = app.selected_worktree_path();
+                app.viewer_state
+                    .reveal_file_in_tree(&result.file_path, &root);
+                let tab_width = app.config.viewer.tab_width;
+                app.viewer_state
+                    .open_file(&root, &result.file_path, tab_width);
+                app.rehighlight_viewer();
+                let hit_0 = result.line_number.saturating_sub(1);
+                let max = app
+                    .viewer_state
+                    .content
+                    .file_content
+                    .len()
+                    .saturating_sub(1);
+                app.viewer_state.content.file_scroll =
+                    result.line_number.saturating_sub(6).min(max);
+                app.viewer_state.content.grep_highlight_line = Some(result.line_number);
+                if app.viewer_state.content.file_scroll > hit_0 {
+                    app.viewer_state.content.file_scroll = hit_0;
                 }
+                app.viewer_state.show_raw_for_line_target();
+                app.set_focus(Focus::Viewer);
             } else {
                 app.overlays.grep_search.result_tree.toggle_expand(selected);
             }
