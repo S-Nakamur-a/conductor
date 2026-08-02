@@ -1,13 +1,13 @@
-//! Menu bar rendering: the always-present strip of titles under the title bar,
-//! and the dropdown of the open menu.
+//! メニューバーの描画: タイトルバーの下に常時表示されるタイトルのストリップと、
+//! 開いているメニューのドロップダウン。
 //!
-//! Both passes record their hit regions onto `app.menu` so the mouse handler
-//! resolves clicks against exactly what was drawn, the same contract
-//! [`crate::ui::worktree_bar`] uses for the worktree strip.
+//! どちらのパスもヒット領域を app.menu に記録するので、マウスハンドラは
+//! 実際に描画されたものに対してクリックを解決できる — worktree ストリップで
+//! [crate::ui::worktree_bar] が使っているのと同じ契約。
 //!
-//! Styling follows the existing popups (`Clear` + `Borders::ALL` + an accent
-//! border, `selected_bg`/`selected_fg` for the highlight) so the dropdown reads
-//! as part of the same app rather than a bolted-on widget.
+//! スタイリングは既存のポップアップに合わせている（Clear + Borders::ALL +
+//! アクセントボーダー、ハイライトには selected_bg/selected_fg）。これにより
+//! ドロップダウンが後付けのウィジェットではなく同じアプリの一部として見える。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -20,18 +20,18 @@ use crate::app::App;
 use crate::menu::model::{MENUS, MenuItem};
 use crate::menu::state::{BarHit, ItemHit};
 
-/// Blank columns on each side of a top-level title, giving the highlight a bit
-/// of breathing room and widening the click target.
+/// トップレベルのタイトルの両側に置く空白カラム。ハイライトに少し余裕を
+/// 持たせ、クリック対象も広げる。
 const TITLE_PAD: u16 = 1;
 
-/// Columns between the end of a row's label and the start of its shortcut.
+/// 行のラベルの終わりからショートカットの始まりまでのカラム数。
 const LABEL_CHORD_GAP: u16 = 4;
 
 fn width(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
 }
 
-/// Draw the menu bar row and record the click regions of each title.
+/// メニューバーの行を描画し、各タイトルのクリック領域を記録する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.height == 0 || area.width == 0 {
         app.menu.bar_hits.clear();
@@ -42,8 +42,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let active = app.menu.focus.active_index();
     let hover = app.menu.hover;
 
-    // Color::Reset so the terminal's own background (including a background
-    // image) shows through, matching the title bar above it.
+    // Color::Reset にして、上のタイトルバーに合わせてターミナル自身の背景
+    // （背景画像も含む）が透けて見えるようにする。
     let bar_bg = ratatui::style::Color::Reset;
 
     let mut spans: Vec<Span> = Vec::new();
@@ -58,23 +58,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         );
         let w = width(&text);
 
-        // Stop before overflowing the row; a clipped, half-drawn title would
-        // record a hit region that doesn't match what's on screen.
+        // 行からはみ出す前に止める。途中で切れたタイトルを描くと、画面上の
+        // 見た目と一致しないヒット領域を記録してしまう。
         if x + w > area.x + area.width {
             break;
         }
 
         let style = if active == Some(i) {
-            // The open/focused menu is a *selection*, so it gets the same
-            // background treatment as any other selected row in the app.
+            // 開いている/フォーカス中のメニューは「選択状態」なので、アプリ内の
+            // 他の選択行と同じ背景の扱いにする。
             Style::default()
                 .fg(theme.selected_fg)
                 .bg(theme.selected_bg)
                 .add_modifier(Modifier::BOLD)
         } else if hover == Some(i) {
-            // Hover is expressed in the foreground only: several themes have a
-            // background-image-friendly transparent bar, and painting a hover
-            // background there fights the title bar's `Color::Reset`.
+            // hover は前景色だけで表現する: いくつかのテーマは背景画像に配慮した
+            // 透明なバーになっており、そこに hover の背景を塗るとタイトルバーの
+            // Color::Reset とぶつかってしまう。
             Style::default()
                 .fg(theme.accent)
                 .bg(bar_bg)
@@ -99,11 +99,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.menu.bar_hits = hits;
 }
 
-/// Draw the open menu's dropdown, if any, and record its row hit regions.
+/// 開いているメニューがあればそのドロップダウンを描画し、行のヒット領域を
+/// 記録する。
 ///
-/// Called after the panels so the popup lands on top of them. `frame_area` is
-/// the whole screen: the dropdown is clamped to it rather than to the main
-/// area, since it hangs off the menu bar which sits above the main area.
+/// パネルの後に呼ばれるので、ポップアップはそれらの上に乗る。frame_area は
+/// 画面全体: ドロップダウンはメインエリアの上にあるメニューバーから垂れ
+/// 下がるものなので、メインエリアではなく画面全体にクランプする。
 pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
     let (menu_idx, selected, scroll) = match app.menu.focus {
         crate::menu::MenuFocus::Open {
@@ -121,9 +122,8 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
         return;
     };
 
-    // Shortcut hints are resolved for the focused panel's layer, so a row shows
-    // the chord that would actually fire right now — the same rule the command
-    // palette uses.
+    // ショートカットのヒントはフォーカス中パネルのレイヤーに対して解決するので、
+    // 行には今まさに発火するチョードが表示される — コマンドパレットと同じ規則。
     let context = app.focus.key_context();
     let rows: Vec<Row> = menu
         .items
@@ -148,7 +148,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
         })
         .collect();
 
-    // ── Geometry ──────────────────────────────────────────────────────────
+    // ジオメトリの計算。
     let label_w = rows
         .iter()
         .map(|r| match r {
@@ -166,7 +166,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
         .max()
         .unwrap_or(0);
 
-    // 2 border columns + a leading and trailing pad column.
+    // ボーダー2カラム + 前後のパディング1カラムずつ。
     let content_w = label_w + LABEL_CHORD_GAP + chord_w;
     let popup_w = (content_w + 4).min(frame_area.width);
 
@@ -177,13 +177,13 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
         .find(|h| h.menu == menu_idx)
         .map(|h| h.x0)
         .unwrap_or(frame_area.x);
-    // Keep the popup on screen when a right-hand menu would overhang.
+    // 右側のメニューがはみ出す場合でもポップアップが画面内に収まるようにする。
     let max_x = (frame_area.x + frame_area.width).saturating_sub(popup_w);
     let popup_x = anchor_x.min(max_x);
 
     let popup_y = app.layout.cache.menubar_area.y + app.layout.cache.menubar_area.height;
     let avail_h = (frame_area.y + frame_area.height).saturating_sub(popup_y);
-    // 2 rows of border; at least one content row or there is nothing to show.
+    // ボーダー2行分; 最低1行のコンテンツ行がなければ表示するものがない。
     let popup_h = ((rows.len() as u16) + 2).min(avail_h);
     if popup_h < 3 || popup_w < 4 {
         app.menu.clear_dropdown_regions();
@@ -199,7 +199,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    // ── Rows ──────────────────────────────────────────────────────────────
+    // 各行の描画。
     let visible = inner.height as usize;
     let start = scroll.min(rows.len().saturating_sub(visible.max(1)));
     let theme = &app.theme;
@@ -224,9 +224,9 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
                 let is_selected = idx == selected;
                 let pad = (inner.width as usize)
                     .saturating_sub(width(label) as usize + width(chord) as usize + 2);
-                // A disabled row keeps its place and its label but loses the
-                // shortcut hint: showing a chord that currently does nothing
-                // would be a lie about what the key does.
+                // 無効化された行は位置とラベルは保つが、ショートカットのヒントは
+                // 失う: 今何もしないチョードを表示するのは、そのキーが何をする
+                // かについて嘘をつくことになる。
                 let shown_chord = if *enabled { chord.as_str() } else { "" };
                 let pad = if *enabled {
                     pad
@@ -242,8 +242,8 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
                             .add_modifier(Modifier::BOLD),
                         Style::default().fg(theme.selected_fg).bg(theme.selected_bg),
                     ),
-                    // A selected-but-disabled row still shows where the cursor
-                    // is, so arrowing through the menu never appears to stall.
+                    // 選択中だが無効化されている行でもカーソル位置は表示するので、
+                    // メニューを矢印キーでたどっていて止まったように見えることはない。
                     (true, false) => (
                         Style::default()
                             .fg(theme.selected_fg)
@@ -255,10 +255,9 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
                         Style::default().fg(theme.fg),
                         Style::default().fg(theme.hint),
                     ),
-                    // DIM over the normal foreground rather than `theme.muted`:
-                    // muted is at or near the background in several of the
-                    // bundled themes, which would make the row vanish instead
-                    // of reading as unavailable.
+                    // theme.muted ではなく通常の前景色に DIM をかける: muted は
+                    // 同梱テーマのいくつかで背景色と同じかそれに近く、それでは
+                    // 「利用不可」に見えるのではなく行そのものが消えてしまう。
                     (false, false) => (
                         Style::default().fg(theme.fg).add_modifier(Modifier::DIM),
                         Style::default().fg(theme.fg).add_modifier(Modifier::DIM),
@@ -284,7 +283,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
     app.menu.dropdown_area = popup_area;
 }
 
-/// A dropdown row resolved for rendering: label, live shortcut, availability.
+/// 描画用に解決したドロップダウンの1行: ラベル、有効なショートカット、利用可否。
 enum Row {
     Command {
         label: &'static str,
@@ -294,9 +293,9 @@ enum Row {
     Separator,
 }
 
-/// How many content rows the dropdown can show at `frame_height`, used by the
-/// key handler to keep the selection scrolled into view. Mirrors the clamp in
-/// [`render_dropdown`].
+/// frame_height のときにドロップダウンが表示できるコンテンツ行数。キー
+/// ハンドラが選択項目をスクロールして見える位置に保つために使う。
+/// [render_dropdown] のクランプと同じ計算をしている。
 pub fn visible_rows(app: &App, frame_height: u16) -> usize {
     let popup_y = app.layout.cache.menubar_area.y + app.layout.cache.menubar_area.height;
     let avail_h = frame_height.saturating_sub(popup_y);

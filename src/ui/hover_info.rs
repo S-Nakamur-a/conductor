@@ -1,10 +1,11 @@
-//! Hover-info popup — renders the symbol's signature, doc comment, and a
-//! clickable reference count (LSP-`hover`-style), and, when the user clicks
-//! into it, the interactive references list (level 1) and code preview (level
-//! 2). The popup anchors to the hovered symbol within the Viewer panel.
+//! ホバー情報ポップアップ — シンボルのシグネチャ・doc コメント・クリック
+//! 可能な参照件数（LSP のホバー表示のようなもの）を描画し、ユーザがそこを
+//! クリックすると、インタラクティブな参照一覧（レベル1）とコードプレビュー
+//! （レベル2）を表示する。ポップアップは Viewer パネル内のホバー中のシンボル
+//! を起点に配置される。
 //!
-//! Each level records its rendered `Rect` (and the refs list its per-row rects)
-//! back onto `app.code_nav.hover_info` so the mouse layer can hit-test clicks.
+//! マウス層がクリックのヒットテストを行えるよう、各レベルは自分の描画済み
+//! Rect（参照一覧は各行の Rect も）を app.code_nav.hover_info に書き戻す。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -14,7 +15,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::App;
 
-/// Render the hover popup and any open child levels over `area` (the frame).
+/// ホバーポップアップと、開いている子レベルがあればそれを area（フレーム）
+/// の上に描画する。
 pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.code_nav.hover_info.info.is_none() {
         return;
@@ -24,7 +26,7 @@ pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
         if vr.width > 0 && vr.height > 0 { vr } else { area }
     };
     render_base_popup(frame, host, app);
-    // Level 1: references list (pinned). Level 2: preview.
+    // レベル1: 参照一覧（ピン留め）。レベル2: プレビュー。
     if app.code_nav.hover_info.refs.is_some() {
         render_refs_list(frame, host, app);
         if app
@@ -38,11 +40,11 @@ pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-/// The base signature/doc popup, with a clickable `N refs` footer row.
+/// シグネチャ/doc の基本ポップアップ。クリック可能な「N refs」フッター行を持つ。
 fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
-    // Pull owned data so the immutable borrow of `info` ends before we write
-    // the hit-test rects back onto `app.code_nav.hover_info`.
+    // info への不変借用を先に終わらせてから app.code_nav.hover_info に
+    // ヒットテスト用の Rect を書き戻せるよう、所有データとして取り出しておく。
     let (symbol_name, signature_lines, doc_lines, loc, ref_count, ref_count_capped) = {
         let info = app.code_nav.hover_info.info.as_ref().unwrap();
         let mut loc = format!("{}  {}:{}", info.kind, info.file_path, info.line);
@@ -60,7 +62,7 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     };
     let refs_present = ref_count > 0;
 
-    // Body lines: signature, doc, then a location footer.
+    // 本文の行: シグネチャ、doc、そして場所のフッター。
     let mut body: Vec<Line> = Vec::new();
     for sig in &signature_lines {
         body.push(Line::from(Span::styled(
@@ -77,16 +79,16 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     body.push(Line::from(""));
     body.push(Line::from(Span::styled(loc, Style::default().fg(theme.muted))));
 
-    // The clickable refs row (drawn on its own reserved bottom line). The `+`
-    // marks a count that stopped at the cap, so a common name reads as "50+
-    // refs" rather than claiming an exact 50 it never finished counting.
+    // クリック可能な refs 行（専用に確保した最下行に描画する）。+ は件数が
+    // 上限で打ち切られたことを示す印で、ありふれた名前の場合に、数え終えて
+    // いないのにちょうど50件であるかのように見せず「50+ refs」と表示する。
     let refs_label = if ref_count_capped {
         format!("▸ {ref_count}+ refs — click to list")
     } else {
         format!("▸ {ref_count} refs — click to list")
     };
 
-    // Width fits the widest of body + refs row.
+    // 幅は本文 + refs 行のうち最も広いものに合わせる。
     let content_w = body
         .iter()
         .map(|l| l.width())
@@ -137,8 +139,8 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     app.code_nav.hover_info.refs_hit = refs_hit;
 }
 
-/// The references list (level 1) — anchored below the base popup (above if no
-/// room), with clickable rows.
+/// 参照一覧（レベル1） — 基本ポップアップの下に配置する（余白がなければ上）。
+/// 各行はクリック可能。
 fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     let base = app.code_nav.hover_info.info_rect;
@@ -149,14 +151,14 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
     let count = refs.results.len();
     let title = format!(" {} · {} refs ", refs.symbol, count);
 
-    // Width: fit the host, capped.
+    // 幅: host に収まるように、上限つきで調整する。
     let popup_width = host.width.saturating_sub(2).clamp(20, 90);
     let inner_w = popup_width.saturating_sub(2).max(1) as usize;
     let max_rows = (host.height / 2).clamp(3, 14);
     let visible = (count as u16).min(max_rows).max(1);
     let popup_height = visible + 2;
 
-    // Prefer below the base popup; else above; clamp into host.
+    // 基本ポップアップの下を優先し、収まらなければ上に; host 内にクランプする。
     let below_y = base.y + base.height;
     let y = if below_y + popup_height <= host.y + host.height {
         below_y
@@ -169,7 +171,7 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
         .max(host.x);
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Keep the selection visible.
+    // 選択中の項目が見える位置を保つ。
     let vis = visible as usize;
     if refs.selected < refs.scroll {
         refs.scroll = refs.selected;
@@ -204,8 +206,8 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
     refs.row_hits = row_hits;
 }
 
-/// The code preview (level 2) — surrounding source lines around the clicked
-/// reference, anchored to the right of the list if it fits, else below.
+/// コードプレビュー（レベル2） — クリックした参照の周辺ソース行。一覧の
+/// 右側に収まればそこに、収まらなければ下に配置する。
 fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     let list_rect = app
@@ -234,7 +236,7 @@ fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
     let popup_width = (content_w + 2).min(host.width.saturating_sub(2)).max(10);
     let popup_height = (preview.lines.len() as u16 + 2).min(host.height.saturating_sub(2)).max(3);
 
-    // Right of the list if it fits, else below it, clamped into host.
+    // 一覧の右側に収まればそこ、収まらなければ下、host 内にクランプする。
     let right_x = list_rect.x + list_rect.width;
     let (x, y) = if right_x + popup_width <= host.x + host.width {
         (right_x, list_rect.y)
@@ -282,8 +284,8 @@ fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
     preview.rect = popup_area;
 }
 
-/// Place a popup of the given size within `host`, anchored to a symbol screen
-/// position: just below the anchor row when there's room, otherwise above.
+/// 指定サイズのポップアップを、シンボルの画面上の位置を起点として host 内に
+/// 配置する: 余白があれば anchor 行のすぐ下、なければ上に置く。
 fn place(host: Rect, anchor_row: u16, anchor_col: u16, w: u16, h: u16) -> Rect {
     let host_top = host.y + 1;
     let host_bottom = host.y + host.height.saturating_sub(1);

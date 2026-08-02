@@ -1,7 +1,6 @@
-//! Code-navigation overlays: the references list popup, the single-key
-//! symbol-hint jump overlay (labeled hints over symbol occurrences), and the
-//! symbol action menu (go to definition/implementation/references) it opens
-//! into.
+//! コードナビゲーションのオーバーレイ群: 参照一覧ポップアップ、シンボル出現箇所に
+//! ラベル付きヒントを表示する単キーのシンボルヒントジャンプオーバーレイ、
+//! そこから開くシンボルアクションメニュー（定義/実装/参照へジャンプ）。
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -9,7 +8,7 @@ use crate::app::App;
 
 use super::overlay_list_nav;
 
-// ── References overlay ──────────────────────────────────────────────────
+// 参照オーバーレイ
 
 pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
     let count = app.code_nav.references.results.len();
@@ -48,7 +47,7 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
 fn adjust_references_scroll(app: &mut App) {
     let selected = app.code_nav.references.selected;
     let scroll = &mut app.code_nav.references.scroll;
-    // Assume ~20 visible lines in the popup.
+    // ポップアップ内に約20行表示される想定。
     let visible = 20usize;
     if selected < *scroll {
         *scroll = selected;
@@ -57,9 +56,9 @@ fn adjust_references_scroll(app: &mut App) {
     }
 }
 
-// ── Symbol hint overlay ─────────────────────────────────────────────────
+// シンボルヒントオーバーレイ
 
-/// Handle key input while the symbol hint overlay is waiting for the second label character.
+/// シンボルヒントオーバーレイがラベルの2文字目の入力を待っている間のキー入力を処理する。
 pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
@@ -68,18 +67,18 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c) if c.is_ascii_lowercase() => {
             app.code_nav.symbol_hint.input.push(c);
             let input = app.code_nav.symbol_hint.input.clone();
-            // Find matching hint.
+            // 入力に一致するヒントを探す。
             let matched = app
                 .code_nav.symbol_hint
                 .hints
                 .iter()
                 .find(|h| h.label == input)
                 .cloned();
-            // Dismiss hints.
+            // ヒント表示を消す。
             let scroll = app.viewer_state.content.file_scroll;
             app.code_nav.symbol_hint = Default::default();
             if let Some(hint) = matched {
-                // Build action overlay for this symbol.
+                // このシンボル向けのアクションオーバーレイを組み立てる。
                 let screen_row = hint.line.saturating_sub(1).saturating_sub(scroll);
                 open_symbol_action_overlay(app, &hint.symbol_name, screen_row);
             }
@@ -90,14 +89,14 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Build and show the symbol action overlay for the given symbol.
-/// `source_screen_row` is the screen row (0-indexed) where the symbol appeared.
+/// 指定シンボルのアクションオーバーレイを組み立てて表示する。
+/// source_screen_row はそのシンボルが表示されていた画面行 (0 始まり)。
 fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_row: usize) {
     use crate::overlay::{SymbolAction, SymbolActionOverlay};
 
     let mut actions = Vec::new();
 
-    // Definitions.
+    // 定義。
     let defs = app.code_nav.index.find_definitions(symbol_name);
     if defs.len() == 1 {
         actions.push(SymbolAction {
@@ -115,7 +114,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
         });
     }
 
-    // Implementations.
+    // 実装。
     let impls = app.code_nav.index.find_implementations(symbol_name);
     if impls.len() == 1 {
         actions.push(SymbolAction {
@@ -133,7 +132,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
         });
     }
 
-    // References (always show — count requires file scan).
+    // 参照 (件数を出すにはファイル走査が要るので、常に表示する)。
     let root = app.code_nav.index.root();
     let refs = app.code_nav.index.find_references(symbol_name, &root);
     if !refs.is_empty() {
@@ -153,8 +152,8 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
         return;
     }
 
-    // Context-aware default selection: if cursor is at the definition site,
-    // pre-select "Find references" so pressing Enter goes to references.
+    // 文脈に応じた初期選択。カーソルが定義位置にあるなら参照検索を選んでおき、
+    // Enter がそのまま参照一覧に飛ぶようにする。
     let at_def = app.is_cursor_at_definition(symbol_name);
     let default_idx = if at_def {
         actions.iter().position(|a| a.key == 'r').unwrap_or(0)
@@ -171,9 +170,9 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
     };
 }
 
-// ── Symbol action overlay ───────────────────────────────────────────────
+// シンボルアクションオーバーレイ
 
-/// Handle key input in the symbol action overlay.
+/// シンボルアクションオーバーレイでのキー入力を処理する。
 pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
     let count = app.code_nav.symbol_action.actions.len();
 

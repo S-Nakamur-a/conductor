@@ -1,13 +1,12 @@
-//! Tests for [`super::build::build_lines`] — the tool-rendering pipeline that
-//! turns a session log's [`LogEntry`] list into transcript lines. Exercised
-//! directly against a hand-built [`BuildCtx`], with no `App` in sight: the
-//! whole point of the `BuildCtx` split (S0) is that this pipeline is
-//! testable without constructing the application state.
+//! [super::build::build_lines] のテスト — セッションログの [LogEntry] 一覧を
+//! トランスクリプトの行に変換する tool レンダリングパイプライン。手組みの
+//! [BuildCtx] に対して直接検証しており、App は一切登場しない。BuildCtx を
+//! 分離した狙いはまさにこれで、アプリケーション状態を構築しなくてもこの
+//! パイプラインをテストできるようにするためである。
 //!
-//! The tool-call cases below assert against the classification table in
-//! `crate::claude_log::tool_class` (§2.1 of
-//! `docs/plans/2026-07-31-native-render-parity.md`), reconstructed from a
-//! raw-byte capture of Claude Code's own transcript — not a guess.
+//! 以下の tool-call のケースは crate::claude_log::tool_class の分類テーブルに
+//! 対して検証している。このテーブルは Claude Code 自身のトランスクリプトの
+//! 生バイトキャプチャから再構成したものであり、推測ではない。
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
@@ -35,9 +34,8 @@ fn fixtures() -> (
     (theme, syntax_set, syntect_theme)
 }
 
-/// `build_lines` must be callable with only borrowed fixtures — no `App`
-/// constructed anywhere in this test. An empty entry list is a degenerate
-/// but valid input.
+/// build_lines は借用したフィクスチャだけで呼び出せなければならない — このテストの
+/// どこにも App は構築されない。空の entry リストは退化しているが有効な入力である。
 #[test]
 fn build_lines_runs_without_an_app() {
     let (theme, syntax_set, syntect_theme) = fixtures();
@@ -58,7 +56,7 @@ fn build_lines_runs_without_an_app() {
     assert!(built.meta.is_empty());
 }
 
-// ── Fixture helpers for the tool-call rendering table below ──────────────
+// 以下の tool-call レンダリングテーブル用フィクスチャヘルパー
 
 fn tool_use(name: &str, input: serde_json::Value) -> DisplayBlock {
     tool_use_errored(name, input, false)
@@ -72,12 +70,11 @@ fn tool_use_errored(name: &str, input: serde_json::Value, errored: bool) -> Disp
     }
 }
 
-/// `kind` is the *already-resolved* pairing-map value — the same value
-/// `crate::claude_log::convert::content_to_display_blocks` would have
-/// written during parsing. Building it pre-resolved here keeps these tests
-/// focused on `build_lines`'s rendering rules rather than re-testing the
-/// pairing map (covered separately by `claude_log::tests` and
-/// `tool_class::tests`).
+/// kind はすでに解決済みのペアリングマップの値である — パース時に
+/// crate::claude_log::convert::content_to_display_blocks が書き込むのと同じ値。
+/// ここで解決済みの状態で組み立てることで、これらのテストは build_lines の
+/// レンダリングルールに集中でき、ペアリングマップを再テストせずに済む
+/// （そちらは claude_log::tests と tool_class::tests で別途カバーされている）。
 fn tool_result(kind: ResultKind, lines: &[&str], is_error: bool) -> DisplayBlock {
     DisplayBlock::ToolResult {
         kind,
@@ -126,8 +123,8 @@ fn line_text(line: &Line<'_>) -> String {
     line.spans.iter().map(|s| s.content.as_ref()).collect()
 }
 
-/// Every rendered line's text, trimmed and with blank (entry-separator)
-/// lines dropped — the shape most of these tests care about.
+/// レンダリングされたすべての行のテキストを trim し、空行（entry の区切り）を
+/// 除いたもの — これらのテストの大半が関心を持つ形である。
 fn non_blank_texts(lines: &[Line<'_>]) -> Vec<String> {
     lines
         .iter()
@@ -137,9 +134,9 @@ fn non_blank_texts(lines: &[Line<'_>]) -> Vec<String> {
         .collect()
 }
 
-/// The single visible (non-blank) line, panicking if there isn't exactly one
-/// — used by the style-assertion tests below, which need the actual `Line`
-/// (not just its text) to inspect span styles.
+/// 唯一の可視（非空白）行。ちょうど1つでなければ panic する — 以下のスタイル検証
+/// テストで使われる。それらは span のスタイルを調べるためにテキストだけでなく
+/// 実際の Line が必要になる。
 fn only_visible_line<'a>(lines: &'a [Line<'a>]) -> &'a Line<'a> {
     let visible: Vec<&Line<'_>> = lines
         .iter()
@@ -149,7 +146,7 @@ fn only_visible_line<'a>(lines: &'a [Line<'a>]) -> &'a Line<'a> {
     visible[0]
 }
 
-// ── Counted category: aggregation into one summary line ──────────────────
+// Counted カテゴリ: 1つのサマリー行への集約
 
 #[test]
 fn read_results_collapse_into_aggregated_count_line() {
@@ -186,8 +183,8 @@ fn read_results_singular_count_uses_singular_noun() {
 
 #[test]
 fn grep_and_glob_share_one_search_bucket_summary() {
-    // Both classify to `CountedBucket::Search`, so results from either
-    // resolve to the same bucket and merge here.
+    // どちらも CountedBucket::Search に分類されるので、どちらの結果も同じバケットに
+    // 解決されてここでまとまる。
     let entries = vec![entry(
         Role::User,
         vec![
@@ -220,8 +217,8 @@ fn bash_ls_collapses_to_listed_directories_summary() {
 
 #[test]
 fn bash_cat_merges_with_read_bucket_summary() {
-    // One result from a real `Read` tool call, one from `cat` via `Bash` —
-    // both resolve to the `Read` bucket and merge into one line.
+    // 1つは実際の Read tool call の結果、もう1つは Bash 経由の cat の結果 —
+    // どちらも Read バケットに解決され、1行にまとまる。
     let entries = vec![entry(
         Role::User,
         vec![
@@ -238,9 +235,9 @@ fn bash_cat_merges_with_read_bucket_summary() {
 
 #[test]
 fn counted_result_ignores_is_error_and_still_aggregates_normally() {
-    // Corrected spec (measured): `Counted` completely ignores `is_error` — a
-    // failed `Read` still folds into the plain gray summary line, with no
-    // error styling at all.
+    // 修正済みの仕様（実測）: Counted は is_error を完全に無視する — 失敗した
+    // Read でも、エラー用のスタイルを一切付けずに普通のグレーのサマリー行へ
+    // 折り込まれる。
     let entries = vec![entry(
         Role::User,
         vec![tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["boom: file not found"], true)],
@@ -254,7 +251,7 @@ fn counted_result_ignores_is_error_and_still_aggregates_normally() {
     }
 }
 
-// ── Inline category: per-call `⏺ Name(arg)` line ──────────────────────────
+// Inline カテゴリ: 呼び出しごとの ⏺ Name(arg) 行
 
 #[test]
 fn edit_tool_collapses_to_update_display_name() {
@@ -325,13 +322,13 @@ fn inline_tool_use_renders_bold_name_and_text_colored_arg_not_gray() {
         Style::default().fg(palette::TEXT).add_modifier(Modifier::BOLD)
     );
     assert_eq!(line.spans[2].content.as_ref(), "(/tmp/out.txt)");
-    // The native capture shows the argument in the same color as body text,
-    // not dimmed — this must NOT be `palette::INACTIVE`.
+    // ネイティブのキャプチャでは引数は暗く表示されるのではなく本文テキストと
+    // 同じ色で表示される — これは palette::INACTIVE であってはならない。
     assert_eq!(line.spans[2].style, Style::default().fg(palette::TEXT));
     assert_ne!(line.spans[2].style, Style::default().fg(palette::INACTIVE));
 }
 
-// ── Hidden category: draws nothing, in either position ────────────────────
+// Hidden カテゴリ: どちらの位置でも何も描画しない
 
 #[test]
 fn todowrite_renders_nothing_in_collapsed_mode() {
@@ -343,14 +340,14 @@ fn todowrite_renders_nothing_in_collapsed_mode() {
     assert!(non_blank_texts(&lines).is_empty());
 }
 
-// ── Errors: only `Inline` category draws a result line; `Counted` is
-// covered above (it ignores `is_error` completely) ────────────────────────
+// エラー: 結果行を描画するのは Inline カテゴリだけ。Counted は上で
+// カバー済み（is_error を完全に無視する）
 
 #[test]
 fn inline_error_result_draws_multiline_error_block() {
-    // Measured column layout for a failed `Bash(false)` call: `⎿` at col2,
-    // body (with a prepended "Error: ") from col4 on the first line, body
-    // from col5 on continuation lines, no "Error: " prefix past the first.
+    // 失敗した Bash(false) 呼び出しの実測カラムレイアウト: ⎿ は col2、本文は
+    // （先頭に "Error: " を付けて）1行目は col4 から、継続行は col5 から。
+    // "Error: " のプレフィックスは最初の行にしか付かない。
     let entries = vec![entry(
         Role::User,
         vec![tool_result(ResultKind::Inline,
@@ -414,7 +411,7 @@ fn errored_tool_use_marker_turns_error_colored() {
     assert_ne!(line.spans[0].style, Style::default().fg(palette::SUCCESS));
 }
 
-// ── Thinking blocks: collapsed one-liner vs. expanded header+body (S2b) ───
+// Thinking ブロック: 折り畳み時の1行 vs 展開時のヘッダー+本文
 
 #[test]
 fn thinking_block_collapsed_renders_one_line_summary() {
@@ -428,8 +425,8 @@ fn thinking_block_collapsed_renders_one_line_summary() {
 
 #[test]
 fn thinking_block_collapsed_has_no_glyph_and_starts_at_column_two() {
-    // Spec: col2, no glyph — a plain two-space indent, not the `*` marker the
-    // expanded header uses.
+    // 仕様: col2、グリフ無し — 展開時のヘッダーが使う * マーカーではなく、
+    // ただの2スペースインデント。
     let entries = vec![entry(Role::Assistant, vec![thinking("let me reason", 3)])];
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
@@ -456,9 +453,9 @@ fn thinking_block_collapsed_bolds_only_the_duration_span() {
                 !span.style.add_modifier.contains(Modifier::BOLD),
                 "only the duration span should be bold, got bold: {span:?}"
             );
-            // The leading gutter is blank and carries no style — native writes
-            // nothing there at all, jumping straight to column 3 — so only the
-            // text spans are checked for colour.
+            // 先頭のガターは空白でスタイルを持たない — ネイティブはそこに一切
+            // 何も書かず、直接カラム3へジャンプする — そのため色の検証は
+            // テキストの span だけに対して行う。
             if !span.content.trim().is_empty() {
                 assert_eq!(span.style.fg, Some(palette::INACTIVE));
             }
@@ -482,7 +479,7 @@ fn thinking_block_expanded_shows_header_and_body_unchanged() {
     );
 }
 
-// ── Teammate-message blocks: collapsed summary vs. expanded body (S4) ─────
+// Teammate-message ブロック: 折り畳み時のサマリー vs 展開時の本文
 
 #[test]
 fn teammate_message_collapsed_renders_one_line_summary() {
@@ -507,14 +504,14 @@ fn teammate_message_collapsed_line_is_entirely_inactive() {
     let line = only_visible_line(&lines);
     for span in &line.spans {
         assert_eq!(span.style.fg, Some(palette::INACTIVE));
-        assert_eq!(span.style.bg, None, "spec: no background block, unlike S3 user turns");
+        assert_eq!(span.style.bg, None, "spec: no background block, unlike user turns");
     }
 }
 
 #[test]
 fn teammate_message_collapsed_ignores_the_body_entirely() {
-    // Only the id renders in collapsed mode — the body text must not leak
-    // into the summary line even if short.
+    // 折り畳みモードでは id しかレンダリングされない — 本文テキストは短くても
+    // サマリー行に漏れてはならない。
     let entries = vec![entry(
         Role::User,
         vec![teammate_message("alice", "hi")],
@@ -544,12 +541,12 @@ fn teammate_message_expanded_shows_header_without_hint_then_body() {
     );
 }
 
-// ── Expanded mode (conductor's own ctrl+o-equivalent toggle) ──────────────
+// Expanded モード（conductor 独自の ctrl+o 相当のトグル）
 
 #[test]
 fn expanded_mode_shows_raw_tool_name_not_the_collapsed_alias() {
-    // Collapsed mode renders `Edit` as `Update`; expanded mode must show the
-    // tool's own raw name instead, since it draws every call individually.
+    // 折り畳みモードは Edit を Update として表示するが、展開モードは各呼び出しを
+    // 個別に描画するので、代わりに tool 自身の生の名前を表示しなければならない。
     let entries = vec![entry(
         Role::Assistant,
         vec![tool_use("Edit", json!({"file_path": "/tmp/out.txt"}))],
@@ -561,7 +558,7 @@ fn expanded_mode_shows_raw_tool_name_not_the_collapsed_alias() {
     );
 }
 
-// ── S3: user turns render as a full-width background block ────────────────
+// user ターンはフル幅の背景ブロックとして描画される
 
 #[test]
 fn user_text_renders_the_marker_glyph_not_the_assistant_bullet() {
@@ -585,8 +582,9 @@ fn user_text_marker_and_body_carry_the_background_fill_color() {
 
 #[test]
 fn user_text_bypasses_markdown_rendering() {
-    // Markdown syntax in a user prompt must render as literal characters —
-    // no bold/heading/etc. parsing — since user input is raw text, not prose.
+    // user のプロンプト内の Markdown 構文は、文字通りの文字として描画されなければ
+    // ならない — 太字や見出しなどのパースはしない。user 入力は文章ではなく生の
+    // テキストであるため。
     let entries = vec![entry(
         Role::User,
         vec![DisplayBlock::Text("**not bold** # not a heading".to_string())],
@@ -611,14 +609,13 @@ fn user_text_preserves_source_newlines_as_separate_lines() {
     assert_eq!(texts, vec!["\u{276f} first line", "second line"]);
 }
 
-// ── S2: no stray blank line for an entry with zero visible blocks ─────────
+// 可視ブロックが1つも無い entry のために余計な空行は生まれない
 
 #[test]
 fn entries_with_no_visible_blocks_produce_no_stray_blank_line() {
-    // A `TodoWrite`-only entry (`Hidden` category) sits between two visible
-    // text turns. It must contribute nothing — not even its own blank
-    // separator — so there is exactly one blank line between "hello" and
-    // "world", not two.
+    // TodoWrite だけの entry（Hidden カテゴリ）が2つの可視テキストターンの間に
+    // ある。それは何も生成してはならない — 自身の空行区切りすら含めて —
+    // そのため "hello" と "world" の間には空行がちょうど1つあり、2つではない。
     let entries = vec![
         entry(Role::User, vec![DisplayBlock::Text("hello".to_string())]),
         entry(
@@ -647,11 +644,10 @@ fn entries_with_no_visible_blocks_produce_no_stray_blank_line() {
 
 #[test]
 fn counted_only_tool_use_entry_produces_no_stray_blank_line() {
-    // A `Read` `tool_use` (Counted category) draws nothing at the
-    // `tool_use` position — the aggregated summary draws at the paired
-    // `tool_result`'s position instead (see the Counted-aggregation tests
-    // above). An entry holding only such a call must not contribute a
-    // blank separator either.
+    // Read の tool_use（Counted カテゴリ）は tool_use の位置には何も描画しない —
+    // 代わりに集約されたサマリーが、対になる tool_result の位置に描画される
+    // （上の Counted 集約テストを参照）。そのような呼び出しだけを持つ entry も
+    // 空行区切りを生成してはならない。
     let entries = vec![
         entry(Role::User, vec![DisplayBlock::Text("hello".to_string())]),
         entry(
@@ -698,9 +694,9 @@ fn expanded_mode_shows_every_result_line_with_no_cap() {
     }
 }
 
-// ── Aggregation rules measured against Claude Code (plan §4.9) ───────────
+// Claude Code に対して実測した集約ルール
 
-/// Build a user entry holding one result per `(kind, is_error)` pair.
+/// (kind, is_error) のペアごとに1つの結果を持つ user entry を組み立てる。
 fn results_entry(kinds: &[(ResultKind, bool)]) -> LogEntry {
     LogEntry {
         role: Role::User,
@@ -718,16 +714,16 @@ fn counted(bucket: CountedBucket, from_bash: bool) -> ResultKind {
 
 #[test]
 fn hidden_result_draws_nothing_even_when_it_errored() {
-    // Measured: a `TodoWrite` whose result carried `is_error` produced not a
-    // single line of native output. Hidden stays hidden on failure.
+    // 実測: is_error を持つ結果の TodoWrite は、ネイティブの出力を1行も
+    // 生成しなかった。Hidden は失敗時も隠れたままである。
     let entries = vec![results_entry(&[(ResultKind::Hidden, true)])];
     assert!(non_blank_texts(&build(&entries, false)).is_empty());
 }
 
 #[test]
 fn several_buckets_fold_into_one_comma_joined_line() {
-    // Measured: ls x2 + Grep + Read renders as a single line, clauses ordered
-    // search -> read -> list, only the first verb capitalised.
+    // 実測: ls×2 + Grep + Read は1行としてレンダリングされ、節は
+    // search -> read -> list の順で並び、先頭の動詞だけが大文字始まりになる。
     let entries = vec![results_entry(&[
         (counted(CountedBucket::List, true), false),
         (counted(CountedBucket::List, true), false),
@@ -742,7 +738,7 @@ fn several_buckets_fold_into_one_comma_joined_line() {
 
 #[test]
 fn two_buckets_keep_the_measured_order_and_casing() {
-    // Measured: ls + Read renders "Read 1 file, listed 1 directory".
+    // 実測: ls + Read は "Read 1 file, listed 1 directory" とレンダリングされる。
     let entries = vec![results_entry(&[
         (counted(CountedBucket::List, true), false),
         (counted(CountedBucket::Read, false), false),
@@ -755,7 +751,7 @@ fn two_buckets_keep_the_measured_order_and_casing() {
 
 #[test]
 fn shell_cat_counts_only_when_the_read_tool_is_absent() {
-    // The five measured combinations of `Bash(cat ...)` and `Read`.
+    // Bash(cat ...) と Read の実測された5通りの組み合わせ。
     let cases: [(&[(ResultKind, bool)], &str); 5] = [
         (&[(counted(CountedBucket::Read, true), false)], "Read 1 file"),
         (
@@ -802,7 +798,7 @@ fn shell_cat_counts_only_when_the_read_tool_is_absent() {
 
 #[test]
 fn counted_result_ignores_is_error_entirely() {
-    // Measured: a failed `Read` still folds into the plain summary.
+    // 実測: 失敗した Read でも普通のサマリーへ折り込まれる。
     let entries = vec![results_entry(&[(counted(CountedBucket::Read, false), true)])];
     assert_eq!(
         non_blank_texts(&build(&entries, false)),
@@ -810,7 +806,7 @@ fn counted_result_ignores_is_error_entirely() {
     );
 }
 
-// ── Compact boundary / annotations (measured, see `claude_log::tests`) ────
+// Compact 境界 / annotation（実測、claude_log::tests を参照）
 
 fn annotation(text: &str) -> DisplayBlock {
     DisplayBlock::Annotation {
@@ -818,9 +814,9 @@ fn annotation(text: &str) -> DisplayBlock {
     }
 }
 
-/// The whole `/compact` group, byte-for-byte as a resumed native transcript
-/// draws it — including the absence of blank lines between the command and
-/// its annotations, which is the reason for the separator-suppression rule.
+/// /compact のグループ全体を、再開されたネイティブトランスクリプトがバイト単位で
+/// 描くのと同じように検証する — コマンドとその annotation の間に空行が無いことも
+/// 含めて。これが区切り抑制ルールの理由である。
 #[test]
 fn compact_group_matches_the_native_layout() {
     let entries = vec![
@@ -860,9 +856,9 @@ fn compact_group_matches_the_native_layout() {
 
 #[test]
 fn an_annotation_never_starts_a_new_turn() {
-    // The blank separator that normally follows an entry is suppressed when
-    // the next entry is annotation-only, so `⏺ reply` and the `⎿` line the
-    // CLI attached to it stay glued together.
+    // entry の後に通常付く空行区切りは、次の entry が annotation のみの場合は
+    // 抑制される。そのため ⏺ reply と、CLI がそれに付随させた ⎿ 行は
+    // くっついたままになる。
     let entries = vec![
         entry(Role::Assistant, vec![DisplayBlock::Text("reply".into())]),
         entry(Role::User, vec![annotation("Read delta.rs (13 lines)")]),
@@ -897,8 +893,9 @@ fn a_notice_draws_an_assistant_bullet() {
 
 #[test]
 fn long_annotations_and_notices_stay_inside_the_panel() {
-    // Both forms carry CLI-supplied text of unbounded length (a `../../..`
-    // path outside the worktree runs long), so both must clip.
+    // どちらの形式も CLI から渡される長さに上限の無いテキストを持つ
+    // （worktree の外を指す ../../.. パスは長くなる）ため、どちらも
+    // クリップされなければならない。
     let entries = vec![
         entry(Role::User, vec![annotation(&"p".repeat(300))]),
         entry(Role::User, vec![DisplayBlock::Notice("n".repeat(300))]),
@@ -924,11 +921,11 @@ fn long_annotations_and_notices_stay_inside_the_panel() {
 
 #[test]
 fn a_long_annotation_wraps_instead_of_being_elided() {
-    // Measured: a file carried across a compact from outside the worktree gets
-    // a `../../../…` path too long for any panel, and Claude Code runs it onto
-    // a continuation line aligned under the body — it does not truncate. The
-    // break falls mid-path (a hard column split) and the `Read` verb keeps the
-    // rest of its own line rather than sitting alone.
+    // 実測: worktree の外から compact をまたいで持ち越されたファイルは、どんな
+    // パネルにも収まらないほど長い ../../../… パスを持つことがある。Claude Code は
+    // それを切り詰めるのではなく、本文の下に揃えた継続行へ流し込む。改行はパスの
+    // 途中（カラム単位の強制分割）で起こり、Read という動詞は単独で行に残るの
+    // ではなく、自分の行の残りを保持し続ける。
     let path = format!("../../../../private/tmp/{}/out.txt", "x".repeat(120));
     let entries = vec![entry(
         Role::User,
@@ -953,7 +950,7 @@ fn a_long_annotation_wraps_instead_of_being_elided() {
             "continuations align under the body at col5: {t:?}"
         );
     }
-    // Nothing elided: every character of the path survives somewhere.
+    // 何も省略されない: パスのすべての文字がどこかに残っている。
     let joined: String = texts.iter().map(|t| t.trim_start()).collect();
     assert!(joined.contains(&"x".repeat(120)), "path was cut: {joined}");
     assert!(!joined.contains('\u{2026}'), "unexpected ellipsis: {joined}");
@@ -961,10 +958,11 @@ fn a_long_annotation_wraps_instead_of_being_elided() {
 
 #[test]
 fn two_text_blocks_in_one_user_turn_are_separated() {
-    // Measured: a user message holding two text blocks — a prompt plus an
-    // appended `<system-reminder>`, say — is drawn as two `❯` turns with a
-    // blank line between them, not as one packed pair. The entry-level
-    // separator only fires between entries, so this covers the gap inside one.
+    // 実測: 例えばプロンプトと付加された <system-reminder> のように、2つの
+    // テキストブロックを持つ user メッセージは、詰まった1組としてではなく、
+    // 間に空行を挟んだ2つの ❯ ターンとして描画される。entry レベルの区切りは
+    // entry 間でしか発生しないので、このテストは1つの entry の内側の隙間を
+    // カバーする。
     let entries = vec![entry(
         Role::User,
         vec![

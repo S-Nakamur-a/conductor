@@ -1,36 +1,31 @@
-//! Reflow transcript view — read-only, word-wrapped rendering of a Claude Code
-//! session log inside the Claude PTY panel.
+//! リフロー版トランスクリプトビュー。Claude PTY パネル内で Claude Code のセッションログを
+//! 読み取り専用・折り返し表示する。
 //!
-//! `render` is called from `terminal_claude::render` whenever `app.reflow.active`
-//! is true.  It maintains a `cached_lines` vector inside `app.reflow` and
-//! rebuilds it only when the panel width changes, so there is no per-frame
-//! re-parse of the `.jsonl` file or re-invocation of the Markdown renderer.
+//! render は terminal_claude::render から app.reflow.active が true のときに呼ばれる。
+//! app.reflow 内に cached_lines ベクタを保持し、パネル幅が変わったときだけ再構築するため、
+//! .jsonl ファイルの再パースや Markdown レンダラの再実行は毎フレーム発生しない。
 //!
-//! ## Layout grammar
+//! レイアウトの規則
 //!
-//! Each conversation block is rendered in a two-column gutter layout:
+//! 各会話ブロックは2カラムのガター配置で描画される。
 //!
-//! ```text
 //! ⏺ assistant text line 1
 //!   continuation line 2
 //! ⏺ Bash(cargo build)
 //!   ⎿  12 lines
 //! ❯ user text line 1 (full-width background block)
 //!   continuation line 2
-//! ```
 //!
-//! The gutter (`MARKER_COLS = 2`) is always 2 display columns: marker glyph
-//! padded to 2 cols for the first line, two spaces for continuations.
-//! Markdown content is rendered at `width - MARKER_COLS` so the combined width
-//! is exactly `width`, preserving the "1 logical line = 1 visual row"
-//! invariant. User turns are the one exception: they bypass Markdown and
-//! paint a full-width background block instead (see [`user_text`]).
+//! ガター（MARKER_COLS = 2）は常に表示幅2カラムで、先頭行はマーカーグリフを2カラムに
+//! パディングし、継続行はスペース2つにする。Markdown コンテンツは width - MARKER_COLS の
+//! 幅で描画するため、合計幅はちょうど width になり「論理行1つ = 表示行1つ」の不変条件が
+//! 保たれる。ユーザーターンだけは例外で、Markdown を経由せず全幅の背景ブロックを描画する
+//! （[user_text] を参照）。
 //!
-//! Split by responsibility: [`glyphs`] holds the gutter-width constants,
-//! [`palette`] the fixed Claude Code color scheme, [`helpers`] the pure
-//! marker/truncation functions, [`build`] the per-width line cache builder,
-//! [`user_text`] the user-turn background-block renderer, and [`render`] the
-//! public entry point that blits the cache each frame.
+//! 責務ごとにモジュールを分割している。[glyphs] はガター幅の定数、[palette] は固定の
+//! Claude Code カラースキーム、[helpers] はマーカー・省略表示の純粋関数、[build] は幅ごとの
+//! 行キャッシュ構築、[user_text] はユーザーターンの背景ブロック描画、[render] はキャッシュを
+//! 毎フレーム転送する公開エントリポイントを持つ。
 
 mod block_render;
 mod build;

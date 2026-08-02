@@ -1,100 +1,100 @@
-//! Which identifier occurrences on a line sit in *code* position — as opposed
-//! to inside a comment or a string literal.
+//! 行上のどの識別子の出現が *コード* の位置にあるか — コメントや文字列
+//! リテラルの中にあるのとは対照的に。
 //!
-//! The symbol index knows where definitions are, but every query that starts
-//! from something on screen (`gd`, the hover popup, Cmd+Click, the `g`-prefix
-//! symbol hints) has to answer a different question first: *is the word the
-//! user is pointing at actually code?* Without that, an English word in a doc
-//! comment resolves to a same-named symbol and the UI offers a jump that means
-//! nothing.
+//! シンボルインデックスは定義がどこにあるかを知っているが、画面上の何かを
+//! 起点とするクエリ（gd、ホバーポップアップ、Cmd+Click、g プレフィックスの
+//! シンボルヒント）はすべて、まず別の問いに答えなければならない:
+//! *ユーザが指している単語は実際にコードなのか?* これがないと、doc
+//! コメント内の英単語が同名のシンボルに解決されてしまい、UI は意味のない
+//! ジャンプを提示することになる。
 //!
-//! # Why occurrence indices instead of byte ranges
+//! # バイト範囲ではなく出現インデックスを使う理由
 //!
-//! The viewer stores tab-expanded lines (`ViewerState::open_file` runs every
-//! line through `expand_tabs`), so a byte offset into the source does not line
-//! up with a column on screen — and Go, one of the indexed languages, is
-//! tab-indented by convention. Expanding tabs replaces `\t` with spaces, which
-//! changes columns but never reorders or rewrites identifiers. So "the k-th
-//! identifier on this line" survives expansion, and that is what this mask is
-//! keyed by. Both sides must agree on what counts as an identifier, which is
-//! why [`identifier_occurrences`] is the single definition of that and is used
-//! to build the mask *and* to query it.
+//! viewer はタブを展開した行を保持しており（ViewerState::open_file は
+//! すべての行を expand_tabs に通す）、そのためソース中のバイトオフセットは
+//! 画面上のカラムと一致しない — しかも対象言語の1つである Go は慣習として
+//! タブインデントされる。タブの展開は \t をスペースに置き換えるので、
+//! カラムは変わるが識別子の並び替えや書き換えは決して起きない。だから
+//! 「この行のk番目の識別子」は展開を生き延び、このマスクはそれをキーに
+//! している。両側が識別子とみなすものについて一致していなければならず、
+//! そのため [identifier_occurrences] がその唯一の定義となっており、
+//! マスクの構築 *と* 問い合わせの両方に使われる。
 //!
-//! # Why an allowlist
+//! # allowlist にする理由
 //!
-//! The mask records the occurrences that *are* code, not the ones that are
-//! masked out. The two are equivalent when everything works; they differ when
-//! something goes wrong. An empty allowlist means nothing is jumpable — the
-//! feature goes quiet. An empty blocklist would mean everything is jumpable,
-//! which is exactly the bug this module exists to fix, and it would come back
-//! silently. Failing toward "no jump offered" is the direction that costs the
-//! user least: a jump that does not happen is a non-event, while a jump to the
-//! wrong place displaces what they were reading.
+//! このマスクは、マスクされて除外された出現ではなく *コードである* 出現を
+//! 記録する。すべてが正しく動いている限り両者は等価だが、何かが壊れた
+//! ときに違いが出る。allowlist が空ということは何もジャンプできない
+//! ということであり、機能は黙って何もしなくなる。blocklist が空だと
+//! すべてがジャンプ可能になるということであり、これはまさにこのモジュール
+//! が修正しようとしているバグそのものであって、しかも黙って再発する。
+//! 「ジャンプを提示しない」方向に倒れて失敗するのが、ユーザにとって最も
+//! コストの低い方向である: 起きないジャンプは何も起きなかったのと同じだが、
+//! 間違った場所へのジャンプは読んでいたものを押しのけてしまう。
 //!
-//! That choice also settles files in languages we have no grammar for: they get
-//! no mask, so nothing in them is jumpable.
+//! この選択は、文法を持たない言語のファイルも同時に片付ける: それらには
+//! マスクが与えられないので、その中では何もジャンプできない。
 
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-/// Identifier occurrences beyond this index on a single line are treated as
-/// non-code. Real code does not come close — the widest line in this
-/// repository holds 76 identifiers — and the alternative to a fixed cap is a
-/// spill representation whose only purpose is to be exercised by nothing.
+/// 1行あたりこのインデックスを超える識別子の出現は、コードではないものとして
+/// 扱う。実際のコードはこれに近づくことすらない — このリポジトリで最も
+/// 幅の広い行でも識別子は76個 — 固定の上限を設けない代わりとなる溢れ表現は、
+/// 何にも使われないためだけに存在する構造になってしまう。
 const MAX_TRACKED_PER_LINE: usize = 128;
 
-/// The one definition of "an identifier occurrence", shared by mask
-/// construction and mask lookup.
+/// マスクの構築とマスクの問い合わせで共有される、「識別子の出現」の唯一の定義。
 ///
-/// Keeping a single implementation is not a tidiness preference: the mask is
-/// keyed by position in this sequence, so if the two sides ever disagreed
-/// about what counts as an identifier the indices would silently shift and the
-/// mask would answer for the wrong word.
+/// 実装を1つにまとめておくのは整理整頓の好みの問題ではない: マスクは
+/// この並びの中の位置をキーにしているので、もし両側が識別子とみなすものに
+/// ついて一致しなくなれば、インデックスは黙ってずれてしまい、マスクは
+/// 間違った単語について答えることになる。
 ///
-/// Yields `(start_byte, end_byte, text)` for each match, in order.
+/// 各一致について (start_byte, end_byte, text) を順に生成する。
 pub fn identifier_occurrences(line: &str) -> impl Iterator<Item = (usize, usize, &str)> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").unwrap());
     re.find_iter(line).map(|m| (m.start(), m.end(), m.as_str()))
 }
 
-/// Per-line record of which identifier occurrences are in code position.
+/// 各行ごとに、どの識別子の出現がコード位置にあるかを記録する。
 ///
-/// Dense in the line number (one entry per line of the file) because it
-/// describes exactly one open file, so the wasted words on comment-only lines
-/// are cheaper than the indirection of a map.
+/// 行番号に対して密である（ファイルの1行につき1エントリ）。ちょうど1つの
+/// 開いているファイルを記述するものだからで、コメントだけの行で無駄になる
+/// 分は、マップの間接参照よりも安く済む。
 #[derive(Debug, Default, Clone)]
 pub struct CodeMask {
-    /// `lines[i]` has bit `k` set when the k-th identifier on line `i + 1` is
-    /// code. Lines past the end of the vector hold nothing.
+    /// lines[i] は、行 i + 1 のk番目の識別子がコードであるときビットkが
+    /// 立つ。ベクタの末尾を超える行は何も持たない。
     lines: Vec<u128>,
-    /// Whether this mask is an answer at all, as opposed to the absence of one.
-    /// False for a language we have no grammar for.
+    /// このマスクがそもそも答えを持っているか、それとも答えが無いのかを表す。
+    /// 文法を持たない言語では false になる。
     supported: bool,
 }
 
 impl CodeMask {
-    /// Whether we could analyse this file's language at all.
+    /// このファイルの言語をそもそも解析できたかどうか。
     ///
-    /// Worth distinguishing from "no identifiers are code", because the two
-    /// call for opposite handling and the bits alone cannot tell them apart.
-    /// Offering a jump is a claim about one word, so silence is the safe
-    /// answer and an unanalysable file should offer nothing. Listing
-    /// references is a claim about the whole repository, and there "no
-    /// results" is not silence — it asserts that none exist. A caller
-    /// answering a search should fall back to unfiltered matches here rather
-    /// than report an empty result it cannot stand behind.
+    /// 「コードである識別子が1つもない」とは区別する価値がある。両者は
+    /// 扱いが正反対であり、ビットだけを見ても両者を区別できないからである。
+    /// ジャンプを提示することは1つの単語についての主張なので、沈黙が安全な
+    /// 答えであり、解析できないファイルは何も提示すべきではない。参照の
+    /// 一覧表示はリポジトリ全体についての主張であり、そこでは「結果なし」は
+    /// 沈黙ではない — それは「存在しない」と主張することになる。検索に答える
+    /// 呼び出し側は、ここでは自分が保証できない空の結果を報告するのではなく、
+    /// フィルタなしの一致にフォールバックすべきである。
     pub fn is_supported(&self) -> bool {
         self.supported
     }
 
-    /// Whether the `occurrence`-th identifier (0-based) on `line_1` (1-based)
-    /// is in code position.
+    /// line_1（1始まり）の occurrence 番目（0始まり）の識別子がコード位置に
+    /// あるかどうか。
     ///
-    /// Anything this mask does not know about answers `false`, which is what
-    /// makes the allowlist fail quiet: an out-of-range line, an occurrence past
-    /// [`MAX_TRACKED_PER_LINE`], and a file we could not parse all land here.
+    /// このマスクが知らないものはすべて false と答える。これが allowlist を
+    /// 静かに失敗させる仕組みになっている: 範囲外の行、[MAX_TRACKED_PER_LINE]
+    /// を超える出現、パースできなかったファイル、これらすべてがここに行き着く。
     pub fn is_code(&self, line_1: usize, occurrence: usize) -> bool {
         if line_1 == 0 || occurrence >= MAX_TRACKED_PER_LINE {
             return false;
@@ -105,12 +105,12 @@ impl CodeMask {
         }
     }
 
-    /// Whether the identifier covering `col` on `line_1` is in code position,
-    /// where `col` is a byte offset into the *rendered* line.
+    /// line_1 上で col をカバーする識別子がコード位置にあるかどうか。col は
+    /// *描画された* 行へのバイトオフセットである。
     ///
-    /// Resolves the column to an occurrence index using the same scan that
-    /// built the mask, so tab expansion — which shifts columns but not
-    /// ordering — does not matter.
+    /// マスクを構築したのと同じスキャンを使って col を出現インデックスに
+    /// 変換するので、タブ展開（カラムはずらすが順序は変えない）は問題に
+    /// ならない。
     pub fn is_code_at_column(&self, rendered_line: &str, line_1: usize, col: usize) -> bool {
         for (k, (start, end, _)) in identifier_occurrences(rendered_line).enumerate() {
             if col >= start && col < end {
@@ -120,10 +120,10 @@ impl CodeMask {
         false
     }
 
-    /// Build a mask for `source`, dispatching on `path`'s extension.
+    /// path の拡張子で振り分けて source のマスクを構築する。
     ///
-    /// Returns an empty mask (nothing is code) for a language we have no
-    /// grammar for, and for a file tree-sitter declines to parse.
+    /// 文法を持たない言語や、tree-sitter がパースを拒否したファイルに
+    /// 対しては、空のマスク（何もコードではない）を返す。
     pub fn compute(source: &str, path: &str) -> Self {
         let ext = std::path::Path::new(path)
             .extension()
@@ -144,15 +144,16 @@ impl CodeMask {
         Self::from_masked_ranges(source, &collect_masked_ranges(&tree, source, &grammar))
     }
 
-    /// Set a bit for every identifier occurrence that falls outside `masked`.
+    /// masked の外側にある識別子の出現すべてにビットを立てる。
     ///
-    /// `masked` must be sorted by start offset and non-overlapping, which is
-    /// what a pre-order walk that stops descending at a masked node produces.
+    /// masked は開始オフセットでソートされていて重複しないことが前提。
+    /// マスクされたノードで潜らずに止まる pre-order 走査はこの条件を満たす
+    /// 結果を生成する。
     fn from_masked_ranges(source: &str, masked: &[(usize, usize)]) -> Self {
         let mut lines = Vec::new();
         let mut line_start = 0usize;
-        // Index of the first range that could still cover the current line.
-        // Ranges and lines both advance monotonically, so this never rewinds.
+        // 現在の行をまだカバーし得る最初の範囲のインデックス。範囲も行も
+        // 単調に進むので、これは決して巻き戻らない。
         let mut cursor = 0usize;
 
         for line in source.split_inclusive('\n') {
@@ -168,9 +169,9 @@ impl CodeMask {
                     break;
                 }
                 let abs = line_start + start;
-                // A block comment or multi-line string can span many lines, so
-                // scan forward from `cursor` without consuming it — a later
-                // identifier on this same line may fall before the same range.
+                // ブロックコメントや複数行文字列は多くの行にまたがり得るので、
+                // cursor を消費せずに前方へスキャンする — この同じ行の後の
+                // 識別子が、同じ範囲より前に位置することがあり得るため。
                 let inside = masked[cursor..]
                     .iter()
                     .take_while(|(s, _)| *s <= abs)
@@ -191,25 +192,26 @@ impl CodeMask {
     }
 }
 
-/// Carve the captured identifiers of Rust's inline format arguments back out
-/// of a masked range.
+/// Rust のインライン format 引数として捕捉された識別子を、マスクされた範囲
+/// から改めて掘り出す。
 ///
-/// `format!("{widget:?}")` names a real binding, and the equivalent in every
-/// other language here stays navigable — TypeScript's `${...}` falls out of
-/// the grammar as its own node. tree-sitter-rust does not split the format
-/// string, so the whole literal arrives as one `string_content` and the
-/// identifiers inside it would be masked along with the prose. On a 2021-era
-/// codebase that is not an edge case: this repository has 945 such references
-/// across 159 files.
+/// format!("{widget:?}") は実在する束縛を名指ししており、ここにある他の
+/// すべての言語での相当物はナビゲート可能なままである — TypeScript の
+/// ${...} は文法上そもそも独立したノードとして現れる。tree-sitter-rust は
+/// format 文字列を分割しないので、リテラル全体が1つの string_content として
+/// 渡ってきてしまい、その中の識別子は地の文と一緒にマスクされてしまう。
+/// 2021年頃のコードベースにおいてこれは特殊なケースではない: このリポジトリ
+/// には159ファイルにわたり945件もそのような参照がある。
 ///
-/// Given one masked range, returns the sub-ranges that remain masked once each
-/// `{ident}` / `{ident:spec}` identifier is excluded. `{}` and `{0}` hold no
-/// identifier and are left alone, as is `{{`, which is an escaped brace.
+/// 1つのマスクされた範囲を受け取り、{ident} / {ident:spec} の各識別子を
+/// 除外した後もマスクされたままになる部分範囲を返す。{} と {0} は識別子を
+/// 保持していないのでそのままにし、エスケープされた波括弧である {{ も
+/// 同様にそのままにする。
 fn subtract_format_args(source: &str, start: usize, end: usize) -> Vec<(usize, usize)> {
     let text = &source[start..end];
     let bytes = text.as_bytes();
     let mut out = Vec::new();
-    let mut cut = 0usize; // start of the masked stretch being accumulated
+    let mut cut = 0usize; // 現在積み上げているマスク区間の開始位置
     let mut i = 0usize;
 
     while i < bytes.len() {
@@ -217,7 +219,7 @@ fn subtract_format_args(source: &str, start: usize, end: usize) -> Vec<(usize, u
             i += 1;
             continue;
         }
-        // `{{` escapes a literal brace — no argument here.
+        // {{ はリテラルの波括弧をエスケープしている — ここに引数はない。
         if bytes.get(i + 1) == Some(&b'{') {
             i += 2;
             continue;
@@ -232,8 +234,8 @@ fn subtract_format_args(source: &str, start: usize, end: usize) -> Vec<(usize, u
             {
                 j += 1;
             }
-            // Only a name terminated by `}` or a `:` format spec is a capture;
-            // anything else is prose that happens to follow a brace.
+            // } または : format spec で終わる名前だけが捕捉であり、それ以外は
+            // たまたま波括弧の後に続いた地の文である。
             if matches!(bytes.get(j), Some(b'}') | Some(b':')) {
                 if name_start > cut {
                     out.push((start + cut, start + name_start));
@@ -252,11 +254,12 @@ fn subtract_format_args(source: &str, start: usize, end: usize) -> Vec<(usize, u
     out
 }
 
-/// Node kinds whose contents are prose or literal text rather than code, per
-/// grammar. Verified against each grammar's actual output rather than guessed
-/// from the names — see the note on TypeScript below.
-/// A grammar's masked node kinds, plus the subset whose text may hold inline
-/// format captures that must stay navigable (see [`subtract_format_args`]).
+/// 文法ごとに、内容がコードではなく地の文やリテラルテキストであるノード
+/// 種別。名前からの推測ではなく、各文法の実際の出力に対して検証済み —
+/// 下にある TypeScript についての注記を参照。
+/// ある文法のマスク対象ノード種別と、その中でナビゲート可能なままで
+/// なければならないインライン format 捕捉をテキストに含み得る部分集合
+/// （[subtract_format_args] を参照）。
 struct Grammar {
     language: tree_sitter::Language,
     masked: &'static [&'static str],
@@ -272,23 +275,24 @@ fn grammar_for(ext: &str) -> Option<Grammar> {
         "raw_string_literal",
         "char_literal",
     ];
-    // Both string forms reach `format!`, so `format!(r#"{x}"#)` counts too.
-    // Comments do not: `{x}` in prose names nothing.
+    // どちらの文字列形式も format! に届くので、format!(r#"{x}"#) も対象。
+    // コメントは対象外: 地の文の中の {x} は何も名指ししていない。
     const RUST_FORMAT: &[&str] = &["string_content", "raw_string_literal"];
     const GO: &[&str] = &[
         "comment",
         "interpreted_string_literal_content",
         "raw_string_literal_content",
     ];
-    // Go's `%v` verbs carry no identifier, and TypeScript's interpolations are
-    // already separate nodes, so neither needs the Rust carve-out.
+    // Go の %v verb は識別子を持たず、TypeScript の補間はすでに独立した
+    // ノードになっているので、どちらも Rust 用の掘り出し処理は必要ない。
     const NONE: &[&str] = &[];
-    // `string_fragment` — deliberately not `template_string`. A template
-    // literal parses as ['`', string_fragment, template_substitution,
-    // string_fragment, '`'], so masking the whole node would swallow the
-    // interpolated expressions, which are ordinary code and should stay
-    // jumpable. Masking the fragments covers plain strings and the literal
-    // stretches of templates while leaving `${...}` alone.
+    // string_fragment — template_string ではないのは意図的。テンプレート
+    // リテラルは ['', string_fragment, template_substitution,
+    // string_fragment, ''] としてパースされるので、ノード全体をマスクすると
+    // 補間された式まで飲み込んでしまう。これらは普通のコードなので
+    // ジャンプ可能なままであるべき。fragment 単位でマスクすることで、普通の
+    // 文字列とテンプレートのリテラル部分をカバーしつつ ${...} には手を
+    // つけずに済む。
     const TS: &[&str] = &["comment", "string_fragment"];
 
     let (language, masked, format_capable) = match ext {
@@ -309,8 +313,8 @@ fn grammar_for(ext: &str) -> Option<Grammar> {
     })
 }
 
-/// Pre-order walk collecting the byte ranges of masked nodes, not descending
-/// into one once matched. Ranges come out sorted and non-overlapping.
+/// pre-order 走査でマスク対象ノードのバイト範囲を集める。一度一致したら
+/// その中には潜らない。範囲はソート済みで重複しない形で出てくる。
 fn collect_masked_ranges(
     tree: &tree_sitter::Tree,
     source: &str,
@@ -324,13 +328,13 @@ fn collect_masked_ranges(
         if grammar.masked.contains(&node.kind()) {
             let (start, stop) = (node.start_byte(), node.end_byte());
             if grammar.format_capable.contains(&node.kind()) {
-                // Emitted in ascending, non-overlapping order, which is what
-                // `from_masked_ranges` relies on.
+                // 昇順・重複なしの順で生成される。これは from_masked_ranges
+                // が前提としているものと同じ。
                 ranges.extend(subtract_format_args(source, start, stop));
             } else {
                 ranges.push((start, stop));
             }
-            // Masked: skip the subtree entirely.
+            // マスク対象: このサブツリーは丸ごとスキップする。
             while !cursor.goto_next_sibling() {
                 if !cursor.goto_parent() {
                     return ranges;
@@ -353,7 +357,7 @@ fn collect_masked_ranges(
 mod tests {
     use super::*;
 
-    /// Collect `(occurrence_index, text, is_code)` for one 1-based line.
+    /// 1つの1始まりの行について (occurrence_index, text, is_code) を集める。
     fn row(mask: &CodeMask, source: &str, line_1: usize) -> Vec<(usize, String, bool)> {
         let line = source.lines().nth(line_1 - 1).unwrap();
         identifier_occurrences(line)
@@ -362,9 +366,9 @@ mod tests {
             .collect()
     }
 
-    /// Expected values below are counted by hand from the fixture, not derived
-    /// from the implementation — a mask checked against its own construction
-    /// would pass no matter what it did.
+    /// 以下の期待値は実装から導出したものではなく、フィクスチャから手で数えた
+    /// もの — マスクを自身の構築方法に照らして検証しても、何をしても通って
+    /// しまう。
     #[test]
     fn rust_masks_comments_strings_and_chars() {
         let src = "\
@@ -377,7 +381,7 @@ fn real(x: i32) -> Foo {
 ";
         let mask = CodeMask::compute(src, "lib.rs");
 
-        // Every word in a line comment is prose.
+        // 行コメント内のすべての単語は地の文である。
         assert_eq!(
             row(&mask, src, 1),
             vec![
@@ -386,8 +390,8 @@ fn real(x: i32) -> Foo {
                 (2, "Foo".into(), false),
             ]
         );
-        // A declaration is entirely code, keyword included — filtering
-        // keywords is the caller's job, not the mask's.
+        // 宣言はキーワードを含めて丸ごとコードである — キーワードを
+        // フィルタするのは呼び出し側の仕事であり、マスクの仕事ではない。
         assert_eq!(
             row(&mask, src, 2),
             vec![
@@ -398,7 +402,7 @@ fn real(x: i32) -> Foo {
                 (4, "Foo".into(), true),
             ]
         );
-        // `let`/`s` are code; the three words inside the literal are not.
+        // let/s はコードだが、リテラル内の3単語はコードではない。
         assert_eq!(
             row(&mask, src, 3),
             vec![
@@ -409,7 +413,7 @@ fn real(x: i32) -> Foo {
                 (4, "string".into(), false),
             ]
         );
-        // Char literals hide identifiers too.
+        // char リテラルも識別子を隠す。
         assert_eq!(
             row(&mask, src, 4),
             vec![
@@ -418,7 +422,7 @@ fn real(x: i32) -> Foo {
                 (2, "x".into(), false),
             ]
         );
-        // Same name as the masked ones on line 3, but in code position.
+        // 3行目でマスクされたものと同じ名前だが、こちらはコード位置にある。
         assert_eq!(
             row(&mask, src, 5),
             vec![(0, "bar".into(), true), (1, "Foo".into(), true)]
@@ -442,12 +446,12 @@ fn real(x: i32) -> Foo {
             row(&mask, src, 3),
             vec![(0, "func".into(), true), (1, "Bar".into(), true)]
         );
-        // Interpreted string.
+        // 解釈済み文字列。
         assert_eq!(
             row(&mask, src, 4),
             vec![(0, "s".into(), true), (1, "Foo".into(), false)]
         );
-        // Raw string — a different node kind in the grammar, same treatment.
+        // raw 文字列 — 文法上は別のノード種別だが、扱いは同じ。
         assert_eq!(
             row(&mask, src, 5),
             vec![
@@ -458,9 +462,9 @@ fn real(x: i32) -> Foo {
         );
     }
 
-    /// The case a substring test on the node kind would get wrong: a template
-    /// literal's interpolations are code and must stay jumpable, even though
-    /// they sit inside a node whose name contains "string".
+    /// ノード種別への部分文字列一致テストでは間違えてしまうケース: テンプレート
+    /// リテラルの補間はコードであり、名前に "string" を含むノードの中に
+    /// 座っていてもジャンプ可能なままでなければならない。
     #[test]
     fn typescript_keeps_template_interpolations_jumpable() {
         let src = "// Foo comment\nconst t = `text ${realCode} more`;\nconst s = \"Foo\";\n";
@@ -476,7 +480,7 @@ fn real(x: i32) -> Foo {
                 (0, "const".into(), true),
                 (1, "t".into(), true),
                 (2, "text".into(), false),
-                (3, "realCode".into(), true), // ← inside ${ }, still code
+                (3, "realCode".into(), true), // ← ${ } の中だが、それでもコード
                 (4, "more".into(), false),
             ]
         );
@@ -490,10 +494,10 @@ fn real(x: i32) -> Foo {
         );
     }
 
-    /// Rust's counterpart to the TypeScript template case: an identifier
-    /// captured by a format string names a real binding and must stay
-    /// navigable, even though the grammar hands the whole literal over as one
-    /// `string_content` with no structure inside it.
+    /// TypeScript のテンプレートのケースに対応する Rust 版: format 文字列に
+    /// よって捕捉された識別子は実在する束縛を名指ししており、文法が
+    /// リテラル全体を構造のない1つの string_content として渡してくる
+    /// にもかかわらず、ナビゲート可能なままでなければならない。
     #[test]
     fn rust_keeps_inline_format_captures_jumpable() {
         let src = "\
@@ -513,12 +517,12 @@ fn f(widget: u32) {
                 (0, "let".into(), true),
                 (1, "s".into(), true),
                 (2, "format".into(), true),
-                (3, "widget".into(), true), // captured by `{widget}`
-                (4, "and".into(), false),   // prose between the braces
-                (5, "widget".into(), true), // ordinary trailing argument
+                (3, "widget".into(), true), // {widget} に取り込まれる
+                (4, "and".into(), false),   // 波括弧の間にある地の文
+                (5, "widget".into(), true), // 普通の末尾の引数
             ]
         );
-        // A format spec after `:` still leaves the name captured.
+        // : の後に format spec があっても名前は捕捉されたままである。
         assert_eq!(
             row(&mask, src, 3),
             vec![
@@ -529,8 +533,9 @@ fn f(widget: u32) {
                 (4, "prose".into(), false),
             ]
         );
-        // Raw strings reach `format!` too. The `r` prefix stays masked: it is
-        // part of the literal's own syntax, not a reference to anything.
+        // raw 文字列も format! に届く。r プレフィックスはマスクされたままに
+        // なる: それはリテラル自身の構文の一部であって、何かへの参照では
+        // ないからである。
         assert_eq!(
             row(&mask, src, 4),
             vec![
@@ -541,7 +546,7 @@ fn f(widget: u32) {
                 (4, "widget".into(), true),
             ]
         );
-        // `{{` is an escaped brace, so this names nothing.
+        // {{ はエスケープされた波括弧なので、これは何も名指ししていない。
         assert_eq!(
             row(&mask, src, 5),
             vec![
@@ -552,7 +557,7 @@ fn f(widget: u32) {
                 (4, "literal".into(), false),
             ]
         );
-        // `{0}` and `{}` carry no identifier; the real argument does.
+        // {0} と {} は識別子を持たない。実際の引数の方が持っている。
         assert_eq!(
             row(&mask, src, 6),
             vec![
@@ -580,9 +585,10 @@ fn f(widget: u32) {
         assert!(mask.is_code(5, 0)); // fn
     }
 
-    /// Tab expansion shifts columns but not ordering, which is the whole reason
-    /// the mask is keyed by occurrence index. Go is tab-indented by convention,
-    /// so this is the common case, not a corner.
+    /// タブ展開はカラムをずらすが順序は変えない。これがまさに、マスクが
+    /// occurrence index をキーにしている理由そのものである。Go は慣習として
+    /// タブインデントされるので、これは特殊なケースではなく一般的なケース
+    /// である。
     #[test]
     fn occurrence_indices_survive_tab_expansion() {
         let src = "package main\nfunc f() {\n\tx := \"Foo\"\n}\n";
@@ -592,7 +598,8 @@ fn f(widget: u32) {
         let expanded = raw.replace('\t', "    ");
         assert_ne!(raw, expanded, "fixture must actually contain a tab");
 
-        // Same verdicts whether the caller hands us the raw or rendered line.
+        // 呼び出し側が生の行を渡してきても、描画済みの行を渡してきても
+        // 判定は同じになる。
         assert!(mask.is_code_at_column(&expanded, 3, expanded.find('x').unwrap()));
         assert!(!mask.is_code_at_column(&expanded, 3, expanded.find("Foo").unwrap()));
     }

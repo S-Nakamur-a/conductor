@@ -1,20 +1,20 @@
-//! Rendered-markdown mode of the viewer panel — the `.md`/`.markdown` file
-//! shown as prose instead of source, plus the header Raw/Rendered toggle that
-//! switches between the two.
+//! ビューアパネルの Markdown 描画モード — .md/.markdown ファイルをソースではなく
+//! 文章として表示するモードと、両者を切り替えるヘッダーの Raw/Rendered トグル。
 //!
-//! The prose is produced by the same renderer the SUMMARY pseudo-file uses
-//! ([`crate::ui::markdown`], via `App::markdown_cache`), so headings, lists,
-//! tables, and fenced code blocks look identical in both places.
+//! 文章は SUMMARY 疑似ファイルと同じレンダラー（[crate::ui::markdown]、
+//! App::markdown_cache 経由）で生成しているので、見出し・リスト・テーブル・
+//! フェンス付きコードブロックはどちらの場所でも同じ見た目になる。
 //!
-//! **This mode has no line numbers, and therefore no line-oriented features.**
-//! Markdown rendering wraps, reflows, drops, and injects rows, so a screen row
-//! no longer corresponds to a source line: gutter, line selection, hover
-//! highlight, comment creation, inline comment threads, and line-anchored jumps
-//! are all meaningless here and are switched off at their sources — see
-//! [`crate::viewer::ViewerState::is_showing_rendered_markdown`], which every one
-//! of them gates on. Notably, this renderer never writes
-//! `content.screen_row_map`, which [`super::render`] clears on entry; that empty
-//! map is what makes every mouse row lookup resolve to "no line".
+//! **このモードには行番号がなく、したがって行単位の機能も一切ない。**
+//! Markdown の描画は行の折り返し・詰め直し・省略・挿入を行うので、画面上の1行が
+//! もはやソースの1行に対応しない: ガター、行選択、ホバーハイライト、コメント
+//! 作成、インラインコメントスレッド、行に紐づいたジャンプはすべてここでは
+//! 無意味であり、それぞれの発生源で無効化されている — 参照先は
+//! [crate::viewer::ViewerState::is_showing_rendered_markdown] で、上記すべてが
+//! これをゲートにしている。特筆すべきは、このレンダラーが
+//! content.screen_row_map を一切書き込まないことで（[super::render] が入口で
+//! これをクリアする）、その空のマップこそがマウスの行検索をすべて「行なし」に
+//! 解決させている。
 
 use std::ops::Range;
 
@@ -31,52 +31,52 @@ use ratatui::widgets::{
 const RAW_LABEL: &str = "Raw";
 const RENDERED_LABEL: &str = "Rendered";
 
-/// Display width of the toggle chip `[Raw|Rendered]`.
+/// トグルチップ [Raw|Rendered] の表示幅。
 const CHIP_W: u16 = 1 + RAW_LABEL.len() as u16 + 1 + RENDERED_LABEL.len() as u16 + 1;
 
-/// Width the toggle claims in the title row: the chip plus one space of
-/// separation from the `[<=>]` expand button to its right.
+/// タイトル行でトグルが占める幅: チップに加えて、右側の [<=>] 展開ボタンとの
+/// 間の1スペース分。
 pub(crate) const TOGGLE_W: u16 = CHIP_W + 1;
 
-/// Width of the `[<=>]` expand button the toggle is laid out against. Kept in
-/// sync with `event::mouse::ClickGeometry::expand_button_at`, which owns that
-/// button's own hit-test.
+/// トグルのレイアウトの基準になる [<=>] 展開ボタンの幅。このボタン自身の
+/// クリック判定を持つ event::mouse::ClickGeometry::expand_button_at と
+/// 同期させておくこと。
 const EXPAND_BTN_W: u16 = 5;
 
-/// Narrowest Viewer column that still gets a toggle. Below this the title would
-/// have no room left, so the toggle is dropped entirely (keyboard and palette
-/// still switch modes).
+/// トグルを表示できる Viewer 列の最小幅。これより狭いとタイトルの余地が
+/// なくなるので、トグルは完全に描画しない（キーボードとパレットからは
+/// 引き続きモードを切り替えられる）。
 const MIN_VIEWER_W: u16 = TOGGLE_W + EXPAND_BTN_W + 8;
 
-/// Screen columns of the toggle's two halves, in a Viewer column starting at
-/// `viewer_x` and `viewer_w` wide.
+/// viewer_x を起点に viewer_w 幅の Viewer 列における、トグルの2つの半分の
+/// 画面上の列。
 pub(crate) struct ToggleSegments {
-    /// Columns that select raw source (`[Raw`).
+    /// 生ソースを選ぶ列（[Raw）。
     pub raw: Range<u16>,
-    /// Columns that select rendered markdown (`|Rendered]`).
+    /// 描画済み markdown を選ぶ列（|Rendered]）。
     pub rendered: Range<u16>,
 }
 
-/// Where the header toggle sits, or `None` when the Viewer column is too narrow
-/// to draw it.
+/// ヘッダーのトグルが位置する場所。Viewer の列が狭すぎて描画できない場合は
+/// None。
 ///
-/// The renderer ([`toggle_spans`], gated on this returning `Some`) and the mouse
-/// hit-test in `event/mouse` both derive their layout from this one function, so
-/// a toggle that isn't drawn can never be clicked, and a drawn one is always
-/// clickable exactly where it appears.
+/// レンダラー（[toggle_spans]。これが Some を返すことをゲートにしている）と
+/// event/mouse 側のクリック判定は、どちらもこの1つの関数からレイアウトを
+/// 導出しているので、描画されないトグルが誤ってクリック可能になることは
+/// なく、描画されたトグルは常にその見た目どおりの位置でクリックできる。
 ///
-/// The title line is right-aligned and ends one cell inside the block's right
-/// border, laid out as `[Raw|Rendered] [<=>]`.
+/// タイトル行は右寄せで、ブロックの右枠の内側1セルで終わる。レイアウトは
+/// [Raw|Rendered] [<=>] の並び。
 pub(crate) fn toggle_segments(viewer_x: u16, viewer_w: u16) -> Option<ToggleSegments> {
     if viewer_w < MIN_VIEWER_W {
         return None;
     }
-    // Last drawable cell of the right-aligned title line, then step left past
-    // the expand button and the separating space to the chip's own right edge.
-    let line_end = viewer_x + viewer_w - 1; // exclusive
-    let chip_end = line_end - EXPAND_BTN_W - 1; // exclusive
+    // 右寄せタイトル行の最後の描画可能セルから始めて、展開ボタンと区切りの
+    // スペース分だけ左に進み、チップ自身の右端に着地する。
+    let line_end = viewer_x + viewer_w - 1; // 排他的
+    let chip_end = line_end - EXPAND_BTN_W - 1; // 排他的
     let chip_start = chip_end - CHIP_W;
-    // Split at the `|`: "[Raw" selects raw, "|Rendered]" selects rendered.
+    // | の位置で分割する: "[Raw" は raw を選び、"|Rendered]" は rendered を選ぶ。
     let split = chip_start + 1 + RAW_LABEL.len() as u16;
     Some(ToggleSegments {
         raw: chip_start..split,
@@ -84,9 +84,10 @@ pub(crate) fn toggle_segments(viewer_x: u16, viewer_w: u16) -> Option<ToggleSegm
     })
 }
 
-/// The toggle chip's spans, with the active mode highlighted, ready to be
-/// appended to the Viewer's right-aligned title line. Caller must have checked
-/// [`toggle_segments`] is `Some` for the current width.
+/// トグルチップの span 群。アクティブなモードをハイライトした状態で、
+/// Viewer の右寄せタイトル行にそのまま追加できる形になっている。呼び出し側は
+/// 現在の幅で [toggle_segments] が Some であることを事前に確認していなければ
+/// ならない。
 pub(crate) fn toggle_spans(rendered: bool, theme: &Theme) -> Vec<Span<'static>> {
     let chrome = Style::default().fg(theme.muted);
     let active = Style::default()
@@ -102,10 +103,10 @@ pub(crate) fn toggle_spans(rendered: bool, theme: &Theme) -> Vec<Span<'static>> 
     ]
 }
 
-/// Render the open markdown file as prose, filling the whole panel.
+/// 開いている markdown ファイルをパネル全体に文章として描画する。
 ///
-/// `block` is the Viewer's own block (title + toggle already on it), so this
-/// mode keeps the same frame as the raw view — only the contents change.
+/// block は Viewer 自身のブロック（タイトル＋トグルはすでに乗っている）なので、
+/// このモードでも生ビューと同じフレームを保ち、変わるのは中身だけになる。
 pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     let inner_width = area.width.saturating_sub(2) as usize;
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -120,8 +121,8 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
                 .unwrap_or("")
         );
         let body = app.viewer_state.content.file_content.join("\n");
-        // Reserve a column on the right so wrapped prose never collides with
-        // the scrollbar track (matching the summary view's inset).
+        // 折り返された文章がスクロールバーのトラックと決して衝突しないよう
+        // 右側に1列確保する（summary view のインセットに合わせている）。
         app.markdown_cache.render_window(
             &key,
             &body,
@@ -134,9 +135,10 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
         )
     };
 
-    // Record the total so the key handler can clamp scrolling, and write the
-    // clamped scroll back so navigation stays responsive if the document shrank
-    // (or re-wrapped shorter after the panel got wider).
+    // キー入力ハンドラがスクロールをクランプできるよう総行数を記録し、
+    // ドキュメントが縮んだ（あるいはパネルが広がって再折り返しで短くなった）
+    // 場合でもナビゲーションが応答し続けるよう、クランプ済みのスクロール位置を
+    // 書き戻す。
     app.viewer_state.md_total_lines = total;
     app.viewer_state.md_scroll = scroll;
 
@@ -161,10 +163,10 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
 mod tests {
     use super::*;
 
-    /// The chip must land immediately left of the `[<=>]` expand button, whose
-    /// hit-test (`expand_button_at`) claims the 5 cells ending 2 before the
-    /// column's right edge. Overlapping them would make one button eat the
-    /// other's clicks.
+    /// チップは [<=>] 展開ボタンのすぐ左に来なければならない。展開ボタンの
+    /// クリック判定（expand_button_at）は、その列の右端の2つ手前で終わる
+    /// 5セルを占有する。重なると、片方のボタンがもう片方のクリックを
+    /// 奪ってしまう。
     #[test]
     fn toggle_sits_just_left_of_the_expand_button() {
         let (x, w) = (40u16, 60u16);
@@ -182,7 +184,7 @@ mod tests {
     fn toggle_halves_are_adjacent_and_correctly_sized() {
         let seg = toggle_segments(0, 80).unwrap();
         assert_eq!(seg.raw.end, seg.rendered.start, "no dead gap between halves");
-        // "[Raw" and "|Rendered]".
+        // "[Raw" と "|Rendered]"。
         assert_eq!(seg.raw.end - seg.raw.start, 1 + RAW_LABEL.len() as u16);
         assert_eq!(
             seg.rendered.end - seg.rendered.start,
@@ -191,8 +193,8 @@ mod tests {
         assert_eq!(seg.rendered.end - seg.raw.start, CHIP_W);
     }
 
-    /// A toggle that isn't drawn must not be clickable: both the renderer and
-    /// the hit-test ask this same function, so `None` disables both at once.
+    /// 描画されないトグルはクリックもできてはならない: レンダラーとクリック
+    /// 判定はどちらも同じこの関数に尋ねているので、None は両方を同時に無効化する。
     #[test]
     fn narrow_columns_get_no_toggle() {
         assert!(toggle_segments(0, MIN_VIEWER_W - 1).is_none());
@@ -200,7 +202,7 @@ mod tests {
         assert!(toggle_segments(0, MIN_VIEWER_W).is_some());
     }
 
-    /// Whatever the column offset, the chip stays inside the panel.
+    /// 列のオフセットが何であれ、チップはパネルの内側に収まる。
     #[test]
     fn toggle_stays_within_the_column() {
         for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 100, 300] {
@@ -210,13 +212,13 @@ mod tests {
         }
     }
 
-    /// The decisive check: draw the header exactly as `file_view` does and
-    /// confirm each cell `toggle_segments` claims really holds that part of the
-    /// chip. Arithmetic agreement between the two is not enough — ratatui owns
-    /// where a right-aligned title actually lands, and a drift there would send
-    /// clicks to the wrong half (or into the `[<=>]` button) with nothing in the
-    /// unit maths to show for it. Titles include a wide-glyph case, since a CJK
-    /// filename costs 2 columns per character.
+    /// 決定的なチェック: file_view と全く同じ形でヘッダーを描画し、
+    /// toggle_segments が主張する各セルが実際にそのチップの部分を保持している
+    /// ことを確認する。両者の算術上の一致だけでは不十分である — 右寄せタイトルが
+    /// 実際にどこに着地するかは ratatui が決めており、そこにズレがあれば
+    /// クリックは誤った半分（あるいは [<=>] ボタン）に送られてしまうが、
+    /// 単体の計算だけではそれを検出できない。タイトルには幅広グリフのケースも
+    /// 含める。CJK のファイル名は1文字あたり2カラムを消費するため。
     #[test]
     fn drawn_columns_match_the_hit_test() {
         use ratatui::Terminal;
@@ -230,8 +232,8 @@ mod tests {
         for title in [" f.md ", " 設計メモ.md ", " a/very/deeply/nested/path/notes.md "] {
             for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 40, 60, 120] {
                 let mut term = Terminal::new(TestBackend::new(w, 5)).unwrap();
-                // Same budget the renderer gives the title: borders + toggle +
-                // `[<=>]` + one column of gap.
+                // レンダラーがタイトルに割り当てるのと同じ予算: 枠線 + トグル +
+                // [<=>] + 隙間1列。
                 let budget = (w as usize).saturating_sub(2 + TOGGLE_W as usize + 5 + 1);
                 let fitted = crate::ui::viewer_panel::file_view::fit_title(title, budget);
                 term.draw(|f| {
@@ -260,7 +262,7 @@ mod tests {
                     "]",
                     "{ctx}: rendered half ends at ']'"
                 );
-                // And the expand button really is where its own hit-test says.
+                // そして展開ボタンも、自身のクリック判定が言う位置に本当に存在する。
                 assert_eq!(cell(w - 6), "[", "{ctx}: [<=>] start");
                 assert_eq!(cell(w - 2), "]", "{ctx}: [<=>] end");
             }
@@ -272,12 +274,12 @@ mod tests {
         let theme = Theme::default();
         let raw_mode = toggle_spans(false, &theme);
         let rendered_mode = toggle_spans(true, &theme);
-        // Index 1 is "Raw", index 3 is "Rendered".
+        // インデックス1が "Raw"、インデックス3が "Rendered"。
         assert!(raw_mode[1].style.add_modifier.contains(Modifier::BOLD));
         assert!(!raw_mode[3].style.add_modifier.contains(Modifier::BOLD));
         assert!(!rendered_mode[1].style.add_modifier.contains(Modifier::BOLD));
         assert!(rendered_mode[3].style.add_modifier.contains(Modifier::BOLD));
-        // The drawn width must match what the hit-test reserves.
+        // 描画される幅は、クリック判定が確保する幅と一致していなければならない。
         let drawn: usize = raw_mode
             .iter()
             .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))

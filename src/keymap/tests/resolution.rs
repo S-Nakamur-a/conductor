@@ -1,6 +1,6 @@
-//! Tests that the default keymap resolves the expected action for a chord in
-//! each [`KeyContext`], including terminal/editor interception and
-//! context-to-global fallback.
+//! デフォルトのキーマップが、各 [KeyContext] においてチョードに対して期待
+//! どおりのアクションに解決されることのテスト。terminal/editor での横取りと、
+//! コンテキストからグローバルへのフォールバックを含む。
 
 use super::*;
 use super::super::map::DEFAULT_KEYBINDS;
@@ -15,8 +15,8 @@ fn defaults_build_without_warnings() {
 
 #[test]
 fn every_default_action_name_resolves() {
-    // Guards against a typo in default_keybinds.toml: an unknown action name
-    // would surface as a warning when the defaults are parsed.
+    // default_keybinds.toml のタイポを検知するガード: 未知のアクション名は
+    // デフォルトのパース時に警告として表面化するはずである。
     let build = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_name).unwrap();
     assert!(build.warnings.is_empty(), "{:?}", build.warnings);
 }
@@ -25,8 +25,8 @@ fn every_default_action_name_resolves() {
 fn critical_defaults_resolve() {
     let km = default_keymap();
 
-    // Quit moved to ctrl+q; bare q is unbound (passes through) so it can no
-    // longer kill the app by accident.
+    // Quit は ctrl+q に移動した。素の q は未バインド（そのまま通過）なので
+    // うっかりアプリを終了させることはもうできない。
     let key_ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
     assert_eq!(km.resolve(&key_ctrl_q, KeyContext::Global), Some(Action::Quit));
     let key_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
@@ -44,7 +44,7 @@ fn critical_defaults_resolve() {
         Some(Action::NewClaudeCode)
     );
 
-    // Ctrl+Esc leaves the terminal.
+    // Ctrl+Esc はターミナルから離れる。
     let key_ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
     assert_eq!(
         km.resolve(&key_ctrl_esc, KeyContext::Terminal),
@@ -54,9 +54,9 @@ fn critical_defaults_resolve() {
 
 #[test]
 fn worktree_switch_and_zoom_aliases_resolve() {
-    // alt+]/alt+[ are the kitty-protocol-free aliases for ctrl+tab worktree
-    // switching; ctrl+alt+z zooms the focused panel (tmux `prefix z`), joining
-    // the ctrl+alt pane-sizing family.
+    // alt+]/alt+[ は kitty プロトコルを使わない ctrl+tab ワークツリー切り替えの
+    // エイリアスである。ctrl+alt+z はフォーカス中のパネルをズームし（tmux の
+    // prefix z）、ctrl+alt によるペインサイズ変更ファミリーに加わる。
     let km = default_keymap();
     let cases = [
         (KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT), Action::NextWorktree),
@@ -95,9 +95,9 @@ fn explorer_walkthrough_layer_resolves() {
 fn terminal_intercepts_only_firing_actions() {
     let km = default_keymap();
 
-    // Quit (ctrl+q) is global but does NOT fire in the terminal — the chord
-    // reaches the PTY instead of killing the app (so the inner program keeps
-    // ctrl+q / XON). Same for switch_repo (ctrl+r → shell reverse-search).
+    // Quit（ctrl+q）はグローバルだがターミナルでは発火しない — このチョードは
+    // アプリを終了させず PTY に届く（内側のプログラムが ctrl+q / XON を保てる
+    // ように）。switch_repo（ctrl+r → シェルの逆方向検索）も同様。
     let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
     assert_eq!(km.resolve(&ctrl_q, KeyContext::Global), Some(Action::Quit));
     assert_eq!(km.resolve(&ctrl_q, KeyContext::Terminal), None);
@@ -105,7 +105,7 @@ fn terminal_intercepts_only_firing_actions() {
     assert_eq!(km.resolve(&ctrl_r, KeyContext::Global), Some(Action::SwitchRepo));
     assert_eq!(km.resolve(&ctrl_r, KeyContext::Terminal), None);
 
-    // Focus/navigation chords ARE stolen back from the PTY.
+    // フォーカス/ナビゲーションのチョードは PTY から奪い返される。
     let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
     assert_eq!(
         km.resolve(&ctrl_p, KeyContext::Terminal),
@@ -122,8 +122,9 @@ fn terminal_intercepts_only_firing_actions() {
         Some(Action::LeaveTerminal)
     );
 
-    // Rendered help stays honest with resolution: no chord is advertised for
-    // Quit in the terminal, but terminal-firing actions keep theirs.
+    // レンダリングされるヘルプは解決結果と食い違わない: ターミナルでは Quit に
+    // チョードは宣伝されないが、ターミナルで発火するアクションはそのチョードを
+    // 保つ。
     assert!(km.keys_for_action(KeyContext::Terminal, Action::Quit).is_empty());
     assert!(
         !km.keys_for_action(KeyContext::Terminal, Action::LeaveTerminal)
@@ -133,9 +134,9 @@ fn terminal_intercepts_only_firing_actions() {
 
 #[test]
 fn terminal_usable_actions_all_resolve_in_terminal() {
-    // Every action classified as firing in the terminal must actually have a
-    // chord that resolves there — guards against adding a variant to
-    // `fires_in_terminal` but forgetting to bind it (or vice versa).
+    // ターミナルで発火すると分類されたすべてのアクションは、実際にそこで解決
+    // するチョードを持たなければならない — fires_in_terminal にバリアントを
+    // 追加してバインドを忘れる（あるいはその逆の）ことへのガード。
     let km = default_keymap();
     let usable = [
         Action::LeaveTerminal,
@@ -168,9 +169,10 @@ fn terminal_usable_actions_all_resolve_in_terminal() {
 
 #[test]
 fn editor_context_steals_only_leave_and_globals() {
-    // The embedded editor forwards almost everything to vim/emacs. It steals
-    // back only Ctrl+Esc (leave) and the terminal-firing global chords; keys
-    // the editor needs — Esc, Ctrl+G, Shift+PageUp — pass through (None).
+    // 組み込みエディタはほぼすべてを vim/emacs に転送する。奪い返すのは
+    // Ctrl+Esc（離脱）とターミナルで発火するグローバルチョードだけ。
+    // エディタが必要とするキー — Esc、Ctrl+G、Shift+PageUp — はそのまま
+    // 通過する（None）。
     let km = default_keymap();
 
     let ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
@@ -179,22 +181,22 @@ fn editor_context_steals_only_leave_and_globals() {
         Some(Action::LeaveTerminal)
     );
 
-    // Bare Esc → vim mode changes; must not be stolen.
+    // 素の Esc → vim のモード変更。奪われてはならない。
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
     assert_eq!(km.resolve(&esc, KeyContext::Editor), None);
 
-    // Ctrl+G is open_file_from_terminal in the *terminal* layer and
-    // search_full_text globally — neither fires in the editor, so it reaches
-    // the inner program instead of being intercepted.
+    // Ctrl+G は *terminal* レイヤーでは open_file_from_terminal、グローバルでは
+    // search_full_text だが、どちらもエディタでは発火しないので、横取りされず
+    // 内側のプログラムに届く。
     let ctrl_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
     assert_eq!(km.resolve(&ctrl_g, KeyContext::Editor), None);
 
-    // Scrollback lives only in the terminal layer, so it does not leak into
-    // the editor.
+    // スクロールバックは terminal レイヤーにしか存在しないので、エディタには
+    // 漏れない。
     let shift_pgup = KeyEvent::new(KeyCode::PageUp, KeyModifiers::SHIFT);
     assert_eq!(km.resolve(&shift_pgup, KeyContext::Editor), None);
 
-    // Global focus/zoom chords still work over the editor.
+    // グローバルなフォーカス/ズームのチョードはエディタ上でも引き続き機能する。
     let alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
     assert_eq!(
         km.resolve(&alt_l, KeyContext::Editor),
@@ -210,8 +212,8 @@ fn editor_context_steals_only_leave_and_globals() {
 
 #[test]
 fn ctrl_esc_is_additive_in_viewer() {
-    // The app-wide "leave focus" chord is bound in non-PTY panels too, but
-    // additively: bare Esc keeps working alongside it.
+    // アプリ全体の「フォーカスを離れる」チョードは PTY 以外のパネルでも
+    // バインドされているが、加算的である: 素の Esc も引き続き機能する。
     let km = default_keymap();
     let ctrl_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL);
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
@@ -229,8 +231,9 @@ fn ctrl_esc_is_additive_in_viewer() {
 fn context_falls_back_to_global() {
     let km = default_keymap();
 
-    // Tab is bound per non-terminal context — resolves in Worktree but NOT
-    // in Terminal (terminal layer has no Tab, neither does global).
+    // Tab は非ターミナルの各コンテキストごとにバインドされている — Worktree
+    // では解決するが Terminal では解決しない（terminal レイヤーに Tab は無く、
+    // グローバルにも無い）。
     let key_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
     assert_eq!(
         km.resolve(&key_tab, KeyContext::Worktree),
@@ -238,7 +241,7 @@ fn context_falls_back_to_global() {
     );
     assert_eq!(km.resolve(&key_tab, KeyContext::Terminal), None);
 
-    // Alt+l resolves globally, including from the Terminal context.
+    // Alt+l は Terminal コンテキストからも含めてグローバルに解決する。
     let key_alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
     assert_eq!(
         km.resolve(&key_alt_l, KeyContext::Terminal),
@@ -250,7 +253,7 @@ fn context_falls_back_to_global() {
 fn context_shadows_are_per_context() {
     let km = default_keymap();
 
-    // 'c' = CherryPick in Worktree, ShowCommentList in Explorer.
+    // 'c' は Worktree では CherryPick、Explorer では ShowCommentList。
     let key_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
     assert_eq!(
         km.resolve(&key_c, KeyContext::Worktree),
@@ -264,22 +267,23 @@ fn context_shadows_are_per_context() {
 
 #[test]
 fn explorer_walkthrough_show_and_generate_keys_resolve() {
-    // w shows the walkthrough, Shift+W (re)generates it — the show/heavier
-    // pairing. Both resolve in the Explorer context (generate rides the
-    // global-action dispatch even though the chord lives in this layer).
+    // w が walkthrough を表示し、Shift+W が（再）生成する — 表示/より重い処理
+    // という組み合わせ。どちらも Explorer コンテキストで解決する（generate は
+    // チョード自体はこのレイヤーにあるが、グローバルなアクションディスパッチに
+    // 乗る）。
     let km = default_keymap();
     let key_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty());
     assert_eq!(
         km.resolve(&key_w, KeyContext::Explorer),
         Some(Action::ShowWalkthrough)
     );
-    // Shift+W arrives as the resolved glyph 'W' + redundant SHIFT.
+    // Shift+W は解決済みグリフ 'W' + 冗長な SHIFT として届く。
     let key_shift_w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
     assert_eq!(
         km.resolve(&key_shift_w, KeyContext::Explorer),
         Some(Action::GenerateWalkthrough)
     );
-    // Alt+w is the force-regenerate escape hatch past the same-commit skip.
+    // Alt+w は同一コミットでのスキップを飛び越える強制再生成の抜け道。
     let key_alt_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
     assert_eq!(
         km.resolve(&key_alt_w, KeyContext::Explorer),
@@ -289,18 +293,19 @@ fn explorer_walkthrough_show_and_generate_keys_resolve() {
 
 #[test]
 fn worktree_git_action_keys_resolve() {
-    // The intentional 0.67 remap of the worktree panel's git actions to
-    // more mnemonic chords. Pins the new bindings against silent regression.
+    // ワークツリーパネルの git アクションを、より覚えやすいチョードに付け替えた
+    // 0.67 の意図的な変更。新しいバインディングを静かな退行から守るために固定する。
     let km = default_keymap();
     let cases = [
         (KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty()), Action::PullWorktree),
         (KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()), Action::CherryPick),
         (KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()), Action::OpenPullRequest),
-        // 'X' arrives as the resolved glyph 'X' + redundant SHIFT, which
-        // keymap-core folds to match the "X" binding (cf. shift_g test).
+        // 'X' は解決済みグリフ 'X' + 冗長な SHIFT として届き、keymap-core が
+        // "X" のバインディングに合うよう畳み込む（shift_g のテストを参照）。
         (KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT), Action::PruneWorktrees),
-        // g/G are now go_to_top/bottom here too (was grab/ungrab), matching
-        // every other panel; grab/ungrab moved to b/B ("branch", do/undo).
+        // g/G はここでも go_to_top/bottom になった（以前は grab/ungrab）。
+        // 他のすべてのパネルと揃えるため; grab/ungrab は b/B（"branch"、do/undo）
+        // に移動した。
         (KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty()), Action::GoToTop),
         (KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT), Action::GoToBottom),
         (KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()), Action::GrabBranch),
@@ -310,9 +315,9 @@ fn worktree_git_action_keys_resolve() {
         assert_eq!(km.resolve(&key, KeyContext::Worktree), Some(action), "{key:?}");
     }
 
-    // The keys vacated by the remap are now unbound in the worktree panel
-    // (no global fallback for bare u/v/P) — a deliberate no-op, not a
-    // surprise reassignment.
+    // 付け替えで空いたキーは、ワークツリーパネルでは今は未バインドである
+    // （素の u/v/P にグローバルへのフォールバックは無い）— これは意図的な
+    // no-op であり、思いがけない再割り当てではない。
     for key in [
         KeyEvent::new(KeyCode::Char('u'), KeyModifiers::empty()),
         KeyEvent::new(KeyCode::Char('v'), KeyModifiers::empty()),
@@ -325,8 +330,8 @@ fn worktree_git_action_keys_resolve() {
 #[test]
 fn shift_g_resolves_uppercase_binding() {
     let km = default_keymap();
-    // A normal terminal delivers Shift+g as the resolved glyph 'G' + SHIFT;
-    // keymap-core folds the redundant SHIFT, matching the "G" binding.
+    // 通常の端末は Shift+g を解決済みグリフ 'G' + SHIFT として届ける。
+    // keymap-core が冗長な SHIFT を畳み込み、"G" のバインディングに合う。
     let key = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
     assert_eq!(
         km.resolve(&key, KeyContext::Worktree),
@@ -337,7 +342,7 @@ fn shift_g_resolves_uppercase_binding() {
 #[test]
 fn shift_tab_is_cycle_backward() {
     let km = default_keymap();
-    // BackTab and Tab+SHIFT both normalize to Tab+SHIFT in keymap-core.
+    // BackTab と Tab+SHIFT はどちらも keymap-core で Tab+SHIFT に正規化される。
     let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty());
     assert_eq!(
         km.resolve(&backtab, KeyContext::Worktree),
@@ -353,8 +358,9 @@ fn shift_tab_is_cycle_backward() {
 #[test]
 fn ctrl_tab_switches_worktree() {
     let km = default_keymap();
-    // Global layer, so it resolves in every non-terminal context. Ctrl+Tab
-    // jumps worktrees while plain Tab still cycles panel focus.
+    // グローバルレイヤーなので、すべての非ターミナルコンテキストで解決する。
+    // Ctrl+Tab はワークツリーを移動し、素の Tab は引き続きパネルフォーカスを
+    // 巡回する。
     let ctrl_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL);
     assert_eq!(
         km.resolve(&ctrl_tab, KeyContext::Explorer),
@@ -365,7 +371,7 @@ fn ctrl_tab_switches_worktree() {
         km.resolve(&plain_tab, KeyContext::Explorer),
         Some(Action::CycleFocusForward)
     );
-    // Ctrl+Shift+Tab and Ctrl+BackTab both normalize to Ctrl+Shift+Tab.
+    // Ctrl+Shift+Tab と Ctrl+BackTab はどちらも Ctrl+Shift+Tab に正規化される。
     let ctrl_shift_tab =
         KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
     assert_eq!(
@@ -409,15 +415,15 @@ fn viewer_c_is_add_comment() {
 
 #[test]
 fn f10_opens_the_menu_bar_from_every_context() {
-    // The menu bar is only discoverable if its chord actually resolves. It is
-    // also the one place a function key is used, so a parser that silently
-    // dropped `f10` would leave the bar keyboard-unreachable while every other
-    // binding kept working.
+    // メニューバーは、そのチョードが実際に解決してこそ発見可能になる。ここは
+    // ファンクションキーが使われる唯一の箇所でもあるので、f10 を静かに落とす
+    // パーサがあれば、他のすべてのバインディングが動き続ける中でバーだけが
+    // キーボードから到達不能になってしまう。
     let km = default_keymap();
     let f10 = KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE);
 
     assert_eq!(km.resolve(&f10, KeyContext::Global), Some(Action::FocusMenuBar));
-    // Including over a PTY, where most time is spent.
+    // 多くの時間が費やされる PTY 上でも含めて。
     assert_eq!(
         km.resolve(&f10, KeyContext::Terminal),
         Some(Action::FocusMenuBar),
@@ -425,7 +431,7 @@ fn f10_opens_the_menu_bar_from_every_context() {
     );
     assert_eq!(km.resolve(&f10, KeyContext::Explorer), Some(Action::FocusMenuBar));
 
-    // And it must be advertised in the generated cheatsheet.
+    // そして生成されるチートシートにも宣伝されなければならない。
     assert_eq!(
         km.keys_in_layer(KeyContext::Global, Action::FocusMenuBar),
         vec!["f10".to_string()],

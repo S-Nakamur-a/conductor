@@ -1,11 +1,12 @@
-//! Tree-structured search result model for grep search.
+//! grep 検索用の、ツリー構造を持つ検索結果モデル。
 //!
-//! Converts a flat list of `GrepMatch` results into a directory→file→match
-//! hierarchy with expand/collapse support.
+//! GrepMatch のフラットなリストを、ディレクトリ→ファイル→マッチという
+//! 階層構造に変換し、展開/折りたたみをサポートする。
 //!
-//! Split by responsibility: [`model`] holds the row/node types, [`helpers`]
-//! the flat-paths-to-nested-tree builder, and [`tree`] the [`SearchResultTree`]
-//! itself (construction, row flattening, and expand/collapse/navigation).
+//! 責務ごとに分割している。[model] は行/ノードの型を、[helpers] は
+//! フラットなパス群からネストしたツリーを組み立てる処理を、[tree] は
+//! [SearchResultTree] 自体(構築、行のフラット化、展開/折りたたみ/移動)を
+//! 持つ。
 
 mod helpers;
 mod model;

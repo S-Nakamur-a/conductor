@@ -1,6 +1,6 @@
-//! `SymbolIndex`: the thread-safe, tree-sitter-backed index itself — building
-//! it by walking the repository, and the definition/implementation/reference
-//! query methods used by code navigation.
+//! SymbolIndex: スレッドセーフで tree-sitter を使ったインデックス本体 —
+//! リポジトリを走査して構築する処理と、コードナビゲーションが使う
+//! 定義・実装・参照のクエリメソッド。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -13,27 +13,28 @@ use super::extract_rust::extract_rust_symbols;
 use super::extract_ts::extract_ts_symbols;
 use super::model::{Reference, Symbol, SymbolKind};
 
-/// Inner data protected by a mutex.
+/// mutex で保護された内部データ。
 pub(super) struct IndexData {
-    // `pub(super)` so the `tests` sibling module can seed/inspect symbols
-    // directly, mirroring the pre-split file where both lived in one module.
+    // 兄弟の tests モジュールが直接シンボルを仕込んだり調べたりできるように
+    // pub(super) にしてある。分割前のファイルで両者が1つのモジュールに
+    // あったのと同じ形。
     pub(super) symbols: Vec<Symbol>,
     pub(super) available: bool,
-    /// Bumped by [`SymbolIndex::set_root`]. A build stamps this at its start
-    /// and refuses to publish if it has moved on by the time it finishes.
+    /// [SymbolIndex::set_root] でインクリメントされる。ビルド開始時にこの値を
+    /// 記録し、完了時点でこれが進んでいたら公開を拒否する。
     pub(super) generation: u64,
 }
 
-/// Thread-safe tree-sitter-based symbol index.
+/// スレッドセーフな tree-sitter ベースのシンボルインデックス。
 pub struct SymbolIndex {
     root: Arc<Mutex<PathBuf>>,
-    // `pub(super)` for the same reason as `IndexData`'s fields — the `tests`
-    // module reaches directly into the mutex to seed fixture data.
+    // IndexData のフィールドと同じ理由で pub(super) にしてある — tests
+    // モジュールが mutex に直接手を伸ばしてフィクスチャデータを仕込む。
     pub(super) data: Arc<Mutex<IndexData>>,
 }
 
 impl SymbolIndex {
-    /// Create a new empty symbol index rooted at `root`.
+    /// root を起点とする新しい空のシンボルインデックスを作る。
     pub fn new(root: PathBuf) -> Self {
         Self {
             root: Arc::new(Mutex::new(root)),
@@ -45,19 +46,19 @@ impl SymbolIndex {
         }
     }
 
-    /// Point the index at a different tree, discarding what it holds.
+    /// インデックスの向き先を別のツリーに変更し、保持している内容を破棄する。
     ///
-    /// Marking it unavailable is the point, not a side effect: the symbols
-    /// describe the old tree, and answering from them after the viewer has
-    /// moved to another worktree is what produces a jump to the right file at
-    /// a line number computed from a different branch — silently, since
-    /// nothing about the result looks wrong. Going quiet until the rebuild
-    /// lands is the honest answer.
+    /// 利用不可としてマークするのは副作用ではなく、それ自体が目的である。
+    /// シンボルは古いツリーを説明するものであり、viewer が別の worktree に
+    /// 移った後もそれをもとに答え続けると、見た目には何もおかしくないまま、
+    /// 別のブランチで計算された行番号を使って正しいファイルへジャンプする
+    /// という結果が黙って生まれてしまう。再構築が終わるまで黙っているのが
+    /// 誠実な答え方である。
     ///
-    /// A rebuild already in flight cannot be stopped (`BackgroundOp` drops the
-    /// join handle, and the worker writes its result whether or not anyone is
-    /// still listening), so instead the generation moves and that worker's
-    /// result is refused on arrival.
+    /// すでに進行中の再構築は止められない（BackgroundOp は join handle を
+    /// drop するだけで、ワーカーは誰か聞いているかどうかに関わらず結果を
+    /// 書き込む）ので、代わりに generation を進め、そのワーカーの結果が
+    /// 到着した時点で拒否されるようにする。
     pub fn set_root(&self, root: PathBuf) {
         let mut current = self.root.lock().unwrap();
         if *current == root {
@@ -70,15 +71,15 @@ impl SymbolIndex {
         data.generation = data.generation.wrapping_add(1);
     }
 
-    /// Build the index by parsing source files with tree-sitter.
-    /// Returns the number of symbols indexed, or 0 if the build was superseded.
+    /// tree-sitter でソースファイルをパースしてインデックスを構築する。
+    /// インデックスされたシンボル数を返す。ビルドが上書きされていた場合は 0。
     pub fn build(&self) -> Result<usize> {
-        // Read as a pair, under the root lock, because `set_root` moves both
-        // together. Sampling them independently leaves a window where a build
-        // picks up the old root and the new generation, and then publishes a
-        // stale tree that the generation check waves through — the exact thing
-        // the counter exists to stop. `set_root` takes these two locks in this
-        // same order, so holding one to take the other cannot deadlock.
+        // root ロックの下でペアとして読む。set_root は両方を一緒に動かすため。
+        // それぞれを独立にサンプリングすると、ビルドが古い root と新しい
+        // generation を拾ってしまい、その結果 generation チェックをすり抜けた
+        // 古いツリーを公開してしまう窓ができる — これはまさにこのカウンタが
+        // 阻止するためにある事態である。set_root はこの2つのロックを同じ順序
+        // で取得するので、片方を保持したままもう片方を取ってもデッドロックしない。
         let (root, generation) = {
             let root = self.root.lock().unwrap();
             (root.clone(), self.data.lock().unwrap().generation)
@@ -153,30 +154,30 @@ impl SymbolIndex {
         Ok(self.publish(symbols, generation))
     }
 
-    /// The generation a build stamps itself with when it starts.
+    /// ビルドが開始時に自分自身へ刻む generation。
     ///
-    /// A test seam: `build` reads this under the root lock so the pair is
-    /// sampled atomically, which this accessor cannot do on its own.
+    /// テスト用の差し込み口: build はこれを root ロックの下で読むことで
+    /// ペアをアトミックにサンプリングするが、このアクセサ単体ではそれができない。
     #[cfg(test)]
     pub(super) fn generation(&self) -> u64 {
         self.data.lock().unwrap().generation
     }
 
-    /// Install `symbols` as the index contents, unless the root has moved since
-    /// `generation` was stamped. Returns how many were published — zero means
-    /// the result was thrown away.
+    /// generation が刻まれてから root が動いていない限り、symbols をインデックス
+    /// の内容として設置する。公開した件数を返す — 0 なら結果は捨てられたことを
+    /// 意味する。
     ///
-    /// Separate from [`Self::build`] so the discard rule can be exercised
-    /// without interleaving threads: the ordering that matters (a build starts,
-    /// the root moves, the build finishes) is expressible here as three plain
-    /// calls, whereas driving it through `build` would mean racing a slow walk
-    /// against a re-root and hoping the scheduler cooperates.
+    /// [Self::build] とは分離してある。これにより破棄ルールをスレッドを
+    /// 絡み合わせずに検証できる: 重要な順序（ビルド開始 → root が動く →
+    /// ビルド完了）は、ここでは3つの単純な呼び出しとして表現できるが、build
+    /// を通して駆動しようとすると、遅い走査と re-root を競合させてスケジューラ
+    /// の協力を期待することになってしまう。
     pub(super) fn publish(&self, symbols: Vec<Symbol>, generation: u64) -> usize {
         let mut data = self.data.lock().unwrap();
-        // The root moved while this build was walking it, so these symbols
-        // describe a tree nobody is looking at any more. Publishing them would
-        // overwrite whatever the newer build produces, if this one happens to
-        // finish second.
+        // このビルドがツリーを走査している間に root が動いたので、これらの
+        // シンボルはもう誰も見ていないツリーを説明している。公開すると、もし
+        // このビルドが後から終わった場合、より新しいビルドが生成したものを
+        // 上書きしてしまう。
         if data.generation != generation {
             return 0;
         }
@@ -186,7 +187,7 @@ impl SymbolIndex {
         count
     }
 
-    /// Find definition symbols matching the given name.
+    /// 指定した名前に一致する定義シンボルを探す。
     pub fn find_definitions(&self, name: &str) -> Vec<Symbol> {
         let data = self.data.lock().unwrap();
         data.symbols
@@ -198,7 +199,7 @@ impl SymbolIndex {
             .collect()
     }
 
-    /// Find implementation symbols matching the given name.
+    /// 指定した名前に一致する実装シンボルを探す。
     pub fn find_implementations(&self, name: &str) -> Vec<Symbol> {
         let data = self.data.lock().unwrap();
         data.symbols
@@ -208,35 +209,36 @@ impl SymbolIndex {
             .collect()
     }
 
-    /// Find references to a symbol name by searching source files.
-    /// Uses the `ignore` crate walker for respecting .gitignore.
+    /// ソースファイルを検索してシンボル名への参照を探す。.gitignore を
+    /// 尊重するため ignore クレートのウォーカーを使う。
     ///
-    /// Two passes per file, and the second one is skipped almost everywhere:
-    /// a plain regex line scan finds which files mention `name` at all, and
-    /// only *those* get parsed with [`CodeMask`] to tell a real usage from a
-    /// mention inside a comment or string. Most files in a repository don't
-    /// contain any given name, so this keeps the tree-sitter parse — the
-    /// expensive part, see `code_mask::CodeMask::compute` — off the common
-    /// path instead of paying for it on every file up front.
+    /// ファイルごとに2パス行い、2パス目はほぼ全ての場合スキップされる:
+    /// 素朴な正規表現の行スキャンで name に言及しているファイルだけを見つけ、
+    /// *それらだけ* を [CodeMask] でパースして、コメントや文字列内の言及と
+    /// 実際の使用箇所とを区別する。リポジトリのほとんどのファイルは指定の
+    /// 名前をまったく含まないので、これにより tree-sitter によるパース
+    /// （コストの高い部分、code_mask::CodeMask::compute を参照）を、
+    /// 全ファイルに対して事前に払うのではなく、共通経路から外しておける。
     ///
-    /// Skipping the parse "almost everywhere" holds for a distinctive name and
-    /// fails for a common one: `new` occurs in nearly 200 files here, and
-    /// parsing all of them costs ~157ms. Callers on the frame path must use
-    /// [`Self::count_references_upto`] rather than this.
+    /// パースを「ほぼ全ての場合」スキップできるのは、名前が特徴的な場合に
+    /// 限られ、ありふれた名前では成り立たない: new はここでは約200ファイルに
+    /// 出現し、それら全部をパースすると約157msかかる。フレーム経路にある
+    /// 呼び出し側は、これではなく [Self::count_references_upto] を使わなければ
+    /// ならない。
     pub fn find_references(&self, name: &str, root: &Path) -> Vec<Reference> {
         self.collect_references(name, root, usize::MAX)
     }
 
-    /// Count references, giving up once `cap` of them are found.
+    /// 参照を数える。cap 件見つかった時点で打ち切る。
     ///
-    /// The hover popup shows this number beside a symbol, and it is redrawn
-    /// whenever the pointer settles — on the UI thread, inside a 16ms frame
-    /// budget. An exact count for a name like `new` means parsing every file
-    /// that mentions it, which measured ~157ms and dropped ten frames. The
-    /// popup does not need the exact figure to be useful, so the scan stops
-    /// early and the caller renders the cap as "and more".
+    /// ホバーのポップアップはシンボルの横にこの数字を表示し、ポインタが
+    /// 止まるたびに再描画される — UI スレッド上で、16msのフレーム予算内で。
+    /// new のような名前の正確な件数を出すには、それに言及するすべての
+    /// ファイルをパースする必要があり、計測では約157msかかりフレームを
+    /// 10枚落とした。ポップアップが役に立つために正確な数字は必要ないので、
+    /// スキャンを早めに打ち切り、呼び出し側は上限を「他多数」として描画する。
     ///
-    /// Returns `(count, hit_cap)`.
+    /// (count, hit_cap) を返す。
     pub fn count_references_upto(&self, name: &str, root: &Path, cap: usize) -> (usize, bool) {
         let found = self.collect_references(name, root, cap);
         (found.len(), found.len() >= cap)
@@ -260,8 +262,8 @@ impl SymbolIndex {
                 continue;
             }
 
-            // Non-code extensions (docs, config) never hold a real reference,
-            // only text that happens to match the name.
+            // コード以外の拡張子（ドキュメント、設定ファイル）は本物の参照を
+            // 持つことはなく、たまたま名前に一致するテキストがあるだけ。
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !matches!(
                 ext,
@@ -290,9 +292,9 @@ impl SymbolIndex {
                 Err(_) => continue,
             };
 
-            // Pass 1: cheap regex scan, no parsing — same cost as before this
-            // change. `hits` borrows `content`, so it stays alive only for
-            // this file's iteration.
+            // パス1: 安価な正規表現スキャンで、パースはしない — この変更が
+            // 入る前と同じコスト。hits は content を借用するので、この
+            // ファイルのイテレーション中だけ生存する。
             let hits: Vec<(usize, &str)> = content
                 .lines()
                 .enumerate()
@@ -308,19 +310,19 @@ impl SymbolIndex {
                 .to_string_lossy()
                 .to_string();
 
-            // Pass 2: only for files that actually mention `name`. Dispatches
-            // on `rel_path`'s extension the same way the viewer's mask does.
+            // パス2: 実際に name に言及しているファイルに対してのみ行う。
+            // viewer のマスクと同じように rel_path の拡張子で振り分ける。
             //
-            // When there is no grammar for the language, the hits are kept
-            // unfiltered rather than dropped. Elsewhere an unanalysable file
-            // yields no navigation, which is the cautious answer because
-            // offering a jump asserts something about one word. A reference
-            // search asserts something about the whole repository, and there
-            // the cautious-looking answer is the dangerous one: "no results"
-            // reads as "there are none", so silently discarding every hit in
-            // a language we cannot parse would state something false with the
-            // same confidence as a real answer. Comment matches sitting in the
-            // list are visible and dismissable; a missing list is not.
+            // その言語の文法が存在しない場合、hits は捨てずにフィルタなしの
+            // まま残す。他の箇所では、解析できないファイルはナビゲーションを
+            // 提供しないという慎重な答えを返す。それはジャンプを提示することが
+            // 1語について何かを主張する行為だからである。参照検索はリポジトリ
+            // 全体について何かを主張する行為であり、そこでは一見慎重に見える
+            // 答えのほうが危険になる: 「結果なし」は「本当に存在しない」と
+            // 読まれてしまうので、パースできない言語のヒットを黙って全部
+            // 捨てることは、本物の答えと同じ確信度で偽の主張をすることになる。
+            // 一覧に残ったコメント内の一致は目に見えて無視もできるが、
+            // 欠落した一覧は見えない。
             let mask = CodeMask::compute(&content, &rel_path);
             for (i, line) in hits {
                 let line_1 = i + 1;
@@ -344,18 +346,18 @@ impl SymbolIndex {
         refs
     }
 
-    /// Whether the index has been built successfully.
+    /// インデックスが正常に構築済みかどうか。
     pub fn is_available(&self) -> bool {
         self.data.lock().unwrap().available
     }
 
-    /// Return the root path of this index.
+    /// このインデックスの root パスを返す。
     pub fn root(&self) -> PathBuf {
         self.root.lock().unwrap().clone()
     }
 }
 
-// Allow cloning for background thread usage.
+// バックグラウンドスレッドでの利用向けに clone を許可する。
 impl Clone for SymbolIndex {
     fn clone(&self) -> Self {
         Self {
@@ -365,7 +367,7 @@ impl Clone for SymbolIndex {
     }
 }
 
-// ── Language detection ────────────────────────────────────────────────
+// 言語検出
 
 #[derive(Debug, Clone, Copy)]
 enum Lang {

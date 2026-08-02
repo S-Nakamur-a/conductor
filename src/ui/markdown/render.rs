@@ -1,5 +1,5 @@
-//! Block-to-`Line` rendering: turns a single [`MdBlock`] into styled,
-//! word-wrapped `Line`s, including fenced-code-block syntax highlighting.
+//! ブロックから Line への変換: MdBlock 1つを、フェンス付きコードブロックの
+//! シンタックスハイライトも含めて、装飾付きで折り返し済みの Line 列に変換する。
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -31,10 +31,9 @@ pub(crate) fn render_block(
             "\u{2500}".repeat(width),
             Style::default().fg(theme.muted),
         ))],
-        // Transcript flavor: no colour bar, no underline rule — just bold
-        // body-colour text (H1 additionally gets italic + underline, matching
-        // native Claude Code; H2+ stay bold-only). The surrounding blank
-        // lines are added by `render_markdown_flavored`.
+        // Transcript フレーバー: 色バーも下線ルールもなし。太字の本文色テキストのみ
+        // （H1 はさらにイタリック+下線が付き、実物の Claude Code に合わせる。H2 以降は
+        // 太字のみ）。前後の空行は render_markdown_flavored 側で付与される。
         MdBlock::Heading { level, text } if flavor == MarkdownFlavor::Transcript => {
             let mut modifier = Modifier::BOLD;
             if *level == 1 {
@@ -45,9 +44,9 @@ pub(crate) fn render_block(
             wrap_cells(&cells, width, false)
         }
         MdBlock::Heading { level, text } => {
-            // Distinct colour per depth so the heading level reads at a glance
-            // (not just "bold text"): H1 accent, H2 info, H3 success, then warm
-            // and muted for the rarely-used deep levels.
+            // 深さごとに異なる色を付け、見出しレベルが一目で分かるようにする
+            // （単なる「太字テキスト」で終わらせない）: H1 は accent、H2 は info、
+            // H3 は success、それより深い滅多に使わないレベルは warning と hint。
             let color = match level {
                 1 => theme.accent,
                 2 => theme.info,
@@ -56,9 +55,8 @@ pub(crate) fn render_block(
                 _ => theme.hint,
             };
             let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
-            // A thin left colour bar (heavy box-drawing vertical) anchors the
-            // heading to its colour and makes sections pop out of the body text
-            // without the heaviness of a solid block.
+            // 左側の細い色バー（太字の罫線文字の縦線）が見出しをその色に結び付け、
+            // 塗りつぶしブロックほどの重さを出さずにセクションを本文から浮き上がらせる。
             let bar = Span::styled(
                 "\u{2503} ".to_string(),
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
@@ -67,9 +65,8 @@ pub(crate) fn render_block(
             let inner = width.saturating_sub(2).max(1);
             let cells = spans_to_cells(&inline_spans(text, style, theme, MarkdownFlavor::Rich));
             let mut out = with_prefix(wrap_cells(&cells, inner, false), bar, cont);
-            // GitHub draws a bottom border under H1/H2; mirror that with a
-            // full-width rule tinted toward the heading colour so the section
-            // reads as one coloured block.
+            // GitHub は H1/H2 の下に下線を引く。それに合わせて、見出しの色を帯びた
+            // 全幅のルールを引き、セクションが1つの色付きブロックとして読めるようにする。
             if *level <= 2 {
                 out.push(Line::from(Span::styled(
                     "\u{2500}".repeat(width),
@@ -83,10 +80,10 @@ pub(crate) fn render_block(
                 spans_to_cells(&inline_spans(text, Style::default().fg(theme.fg), theme, flavor));
             wrap_cells(&cells, width, false)
         }
-        // Native Claude Code marks a quote with a dim `▎` and renders the body
-        // in the terminal's default colour, italic (no muted grey — that's
-        // Rich-only chrome). Kept as its own arm rather than folding into the
-        // Rich arm below: the glyph, its style, and the body colour all differ.
+        // 実物の Claude Code は引用を dim な ▎ で示し、本文はターミナルのデフォルト色の
+        // イタリックで描画する（muted のグレーは付けない。それは Rich 専用の装飾）。
+        // 下の Rich 用の分岐に畳み込まず独立させているのは、グリフ・スタイル・本文色の
+        // すべてが異なるため。
         MdBlock::Quote(text) if flavor == MarkdownFlavor::Transcript => {
             let inner = width.saturating_sub(2).max(1);
             let style = Style::default().fg(theme.fg).add_modifier(Modifier::ITALIC);
@@ -110,17 +107,17 @@ pub(crate) fn render_block(
             indent,
         } => {
             let indent = (*indent).min(8);
-            // Bullet glyph: `•` in the rich UI, `-` in the Claude transcript
-            // (both one display column, so the marker-width math is unaffected).
+            // 箇条書きのグリフ: リッチ UI では •、Claude のトランスクリプトでは -
+            // （どちらも表示幅1桁なので、マーカー幅の計算には影響しない）。
             let bullet = match flavor {
                 MarkdownFlavor::Rich => "\u{2022} ",
                 MarkdownFlavor::Transcript => "- ",
             };
-            // Native Claude Code doesn't special-case GFM task-list syntax: a
-            // `- [ ] text`/`- [x] text` source line prints as an ordinary
-            // bullet item with the checkbox left in the text, unstyled. Fold
-            // the marker back into the body and drop `checked` so the rest of
-            // this arm's Rich-only styling below doesn't apply to it.
+            // 実物の Claude Code は GFM のタスクリスト構文を特別扱いしない。
+            // - [ ] text / - [x] text というソース行は、チェックボックスがテキストに
+            // 残ったまま無装飾の普通の箇条書き項目として表示される。マーカーを本文に
+            // 戻し checked を落として、以降にあるこの分岐の Rich 専用スタイリングが
+            // 適用されないようにする。
             let (checked, text): (Option<bool>, String) = if flavor == MarkdownFlavor::Transcript {
                 let literal = |mark: &str| {
                     if text.is_empty() {
@@ -137,21 +134,21 @@ pub(crate) fn render_block(
             } else {
                 (*checked, text.clone())
             };
-            // Marker is a truth table over (checked, ordered).
+            // マーカーは (checked, ordered) の組み合わせによる真理値表。
             let marker = match (checked, ordered) {
                 (Some(true), _) => "[x] ".to_string(),
                 (Some(false), _) => "[ ] ".to_string(),
                 (None, Some(num)) => format!("{num}. "),
                 (None, None) => bullet.to_string(),
             };
-            // Rich accents bullets/numbers; the transcript keeps them body-colour
-            // (like the real Claude Code CLI). A completed task always uses success.
+            // Rich では箇条書き/番号にアクセント色を付け、transcript では本文色のまま
+            // にする（実物の Claude Code CLI と同じ）。完了済みタスクは常に success 色。
             let marker_color = match (checked, flavor) {
                 (Some(true), _) => theme.success,
                 (_, MarkdownFlavor::Transcript) => theme.fg,
                 (_, MarkdownFlavor::Rich) => theme.accent,
             };
-            // Completed items recede so the eye lands on what's left.
+            // 完了済みの項目は控えめにし、目が残っているものに向くようにする。
             let text_color = if checked == Some(true) {
                 theme.muted
             } else {
@@ -189,11 +186,11 @@ pub(crate) fn render_block(
     }
 }
 
-/// Highlight a fenced code block with syntect and lay it out as a shaded
-/// "card" — every row filled to the full width with `theme.code_bg` and inset
-/// by one column on each side, the way GitHub frames a code block. Code is
-/// hard-wrapped (not word-wrapped) so nothing is hidden, and a blank padded row
-/// above and below gives the card vertical breathing room.
+/// syntect でフェンス付きコードブロックをハイライトし、影付きの「カード」として
+/// レイアウトする。各行を theme.code_bg で全幅に塗り、左右に1列ずつ字下げする。
+/// GitHub がコードブロックを枠で囲むのと同じやり方。コードは単語折り返しではなく
+/// ハードラップして何も隠れないようにし、上下の空パディング行でカードに縦方向の
+/// 余白を持たせる。
 fn render_code_block(
     lang: Option<&str>,
     lines: &[String],
@@ -202,7 +199,7 @@ fn render_code_block(
     syntax_set: &SyntaxSet,
     syntect_theme: &SyntectTheme,
 ) -> Vec<Line<'static>> {
-    // One column of inset on each side of the code; content wraps in between.
+    // コードの左右に1列ずつ字下げする。内容はその間で折り返す。
     let inner = width.saturating_sub(2).max(1);
     let code_bg = theme.code_bg;
     let syntax = lang
@@ -211,20 +208,20 @@ fn render_code_block(
     let mut highlighter = HighlightLines::new(syntax, syntect_theme);
     let fallback = Style::default().fg(theme.fg).bg(code_bg);
 
-    // A full-width blank row in the card colour (top/bottom padding).
+    // カード色で塗った全幅の空行（上下のパディング）。
     let pad_row = || Line::from(Span::styled(" ".repeat(width), Style::default().bg(code_bg)));
 
     let mut out = vec![pad_row()];
     for raw in lines {
-        // Expand tabs so display-width math (and thus wrapping) stays correct.
+        // タブを展開し、表示幅の計算（ひいては折り返し）が正しく行われるようにする。
         let expanded = raw.replace('\t', "    ");
         let with_nl = format!("{expanded}\n");
         let spans: Vec<Span<'static>> = match highlighter.highlight_line(&with_nl, syntax_set) {
             Ok(ranges) => ranges
                 .into_iter()
                 .map(|(style, piece)| {
-                    // Force the card background under every token so the whole
-                    // block reads as one surface regardless of syntect's theme.
+                    // すべてのトークンの下にカードの背景色を強制し、syntect のテーマに
+                    // 関わらず全体が1つの面として見えるようにする。
                     let st = syntect_tui::translate_style(style)
                         .unwrap_or_default()
                         .bg(code_bg);
@@ -240,8 +237,8 @@ fn render_code_block(
         } else {
             wrap_cells(&cells, inner, true)
         };
-        // Frame each wrapped row: left inset, content, right pad — all in the
-        // card colour so the background fills edge to edge.
+        // 折り返した各行を縁取る: 左の字下げ、内容、右のパディング — すべてカード色に
+        // し、背景が端から端まで塗られるようにする。
         for line in wrapped {
             out.push(frame_code_row(line, width, code_bg));
         }
@@ -250,9 +247,9 @@ fn render_code_block(
     out
 }
 
-/// Wrap one already-wrapped code row in the card: a leading inset space, the
-/// row's spans, then trailing padding — every cell carrying `code_bg` so the
-/// row fills `width` columns of solid card colour.
+/// 折り返し済みのコード行1本をカードで包む: 先頭の字下げ用スペース、その行の
+/// span 列、末尾のパディングという順で、すべてのセルに code_bg を持たせて
+/// 行が width 桁ぶん一色のカード色で埋まるようにする。
 fn frame_code_row(line: Line<'static>, width: usize, code_bg: Color) -> Line<'static> {
     let inset = Style::default().bg(code_bg);
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 2);

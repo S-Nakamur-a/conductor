@@ -1,9 +1,9 @@
 //! 起動と終了の各段取り。
 //!
-//! `main` から切り出してあるのは、順番に意味があるから — CLI の即答フラグは
+//! main から切り出してあるのは、順番に意味があるから — CLI の即答フラグは
 //! 端末に触る前に返さねばならず、端末ケイパビリティの問い合わせは raw mode に
 //! 入ったあと・イベントループが stdin を読み始める前でなければならない。
-//! 名前の付いた関数に分けておくと、`main` を読むだけでその順番が見える。
+//! 名前の付いた関数に分けておくと、main を読むだけでその順番が見える。
 
 use std::io;
 use std::path::PathBuf;
@@ -15,11 +15,11 @@ use crate::term_caps;
 
 /// CLI の即答フラグを処理する。
 ///
-/// 何か出力して終了すべきなら `Some(結果)`、TUI を起動して続けるなら `None`。
-/// 端末に触る前に呼ぶこと — `mcp-serve` は stdout で JSON-RPC を話すので、
+/// 何か出力して終了すべきなら Some(結果)、TUI を起動して続けるなら None。
+/// 端末に触る前に呼ぶこと — mcp-serve は stdout で JSON-RPC を話すので、
 /// 代替スクリーンに入ったりケイパビリティを問い合わせたりするとプロトコルが壊れる。
-/// `--version` は更新機能の検証プローブでもある (新しいバイナリに差し替える前に
-/// `--version` で起動して正常終了するか確かめている)。
+/// --version は更新機能の検証プローブでもある (新しいバイナリに差し替える前に
+/// --version で起動して正常終了するか確かめている)。
 pub fn handle_cli_fast_path() -> Option<Result<()>> {
     let arg = std::env::args().nth(1)?;
     match arg.as_str() {
@@ -32,7 +32,7 @@ pub fn handle_cli_fast_path() -> Option<Result<()>> {
             Some(Ok(()))
         }
         "mcp-serve" => Some(crate::mcp_serve::run()),
-        // Claude Code の SessionStart フックとして呼ばれる。`mcp-serve` と同じく
+        // Claude Code の SessionStart フックとして呼ばれる。mcp-serve と同じく
         // 端末に触る前に処理する必要がある (stdin/stdout を占有するため)。
         "cc-hook" => Some(crate::cc_hook::run()),
         _ => None,
@@ -73,11 +73,11 @@ Options:
 
 /// 引数 (または現在のディレクトリ) から、開くリポジトリのルートを決める。
 ///
-/// 囲っている worktree のルートまで登る。`repo_path` を基準にするものは
-/// すべてルートを前提にしている — 特に `.conductor/conductor.db` は探した場所に
+/// 囲っている worktree のルートまで登る。repo_path を基準にするものは
+/// すべてルートを前提にしている — 特に .conductor/conductor.db は探した場所に
 /// 作られるので、サブディレクトリから起動すると、そのサブディレクトリの隣に
 /// 空の 2 つ目のデータベースができてしまっていた (コメントもウォークスルーも
-/// 無く、`.conductor/` だけが残る)。`discover` は既にルートならそのまま返し、
+/// 無く、.conductor/ だけが残る)。discover は既にルートならそのまま返し、
 /// リンクされた worktree はメインではなく自分自身のルートに解決される。
 pub fn resolve_repo_path() -> Result<PathBuf> {
     let arg_path = match std::env::args().nth(1) {
@@ -102,7 +102,7 @@ pub fn resolve_repo_path() -> Result<PathBuf> {
 ///
 /// raw mode に入っていて、かつイベントループが stdin を読み始める前に呼ぶ必要が
 /// ある (下のグラフィックスプローブと同じ制約)。「設定されていないときだけ」の
-/// 判定と明暗のしきい値は `term_caps` 側にあるので、ここには分岐を持たない。
+/// 判定と明暗のしきい値は term_caps 側にあるので、ここには分岐を持たない。
 pub fn apply_auto_theme(app: &mut App) {
     let Some(lum) = term_caps::query_background_luminance() else {
         return;
@@ -122,7 +122,7 @@ pub fn apply_auto_theme(app: &mut App) {
     }
 }
 
-/// リッチモードのティアを決めて `app` に反映し、有効なら起動時に一言知らせる。
+/// リッチモードのティアを決めて app に反映し、有効なら起動時に一言知らせる。
 ///
 /// 代替スクリーンに入ったあと・イベントループが stdin を読み始める前に呼ぶこと:
 /// グラフィックスプローブは端末からの応答を自分で stdin から読むので、crossterm の
@@ -130,8 +130,8 @@ pub fn apply_auto_theme(app: &mut App) {
 pub fn detect_rich_mode(app: &mut App) {
     let caps = term_caps::TermCaps::detect_from_env();
     let mode = app.config.rich.mode.clone();
-    // `auto` は端末がグラフィックス対応らしいときだけ問い合わせる (未知の端末で
-    // 起動が遅くならないように)。`force` は常に問い合わせるので、ヒントの一覧に
+    // auto は端末がグラフィックス対応らしいときだけ問い合わせる (未知の端末で
+    // 起動が遅くならないように)。force は常に問い合わせるので、ヒントの一覧に
     // 載っていない端末での逃げ道になる。
     let probed = if mode == "force" || (mode != "off" && caps.graphics_likely) {
         match ratatui_image::picker::Picker::from_query_stdio() {
@@ -178,7 +178,7 @@ fn rich_mode_banner(has_graphics: bool, terminal_name: Option<&str>) -> String {
 
 /// 更新が入っていれば、同じ引数で自分自身を exec し直す (戻らない)。
 ///
-/// `exec` はプロセスイメージを置き換えるので、この先の Drop も後続のコードも
+/// exec はプロセスイメージを置き換えるので、この先の Drop も後続のコードも
 /// 走らない。永続化が必要なものはすべて呼び出し前に済ませておくこと。
 pub fn restart_if_updated(app: &App) {
     if !app.update.should_restart {
@@ -229,20 +229,20 @@ pub fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // まず端末を戻す。自分が失敗しうる I/O より先にやる: パニックは端末を
-        // `enter_tui` が設定したままにするし、`leave_tui` は `run_loop` が
+        // enter_tui が設定したままにするし、leave_tui は run_loop が
         // *return* したときにしか走らない — アンワインドは飛ばしてしまう。
-        // これが無いと、カーソルが見えず (ratatui は毎フレーム `\x1b[?25l` を
-        // 出す)、マウストラッキングが有効なまま (`\x1b[?1003h` で選択と
+        // これが無いと、カーソルが見えず (ratatui は毎フレーム \x1b[?25l を
+        // 出す)、マウストラッキングが有効なまま (\x1b[?1003h で選択と
         // ポインタが変になる)、代替スクリーンと raw mode も生きたままの
-        // シェルにユーザーが放り出され、`reset` を打つまで直らない。
+        // シェルにユーザーが放り出され、reset を打つまで直らない。
         //
-        // メインスレッドだけ。このクレートは `panic = "abort"` ではないので、
+        // メインスレッドだけ。このクレートは panic = "abort" ではないので、
         // ワーカー (バックグラウンド差分・シンボル索引・worktree 操作) は自分
         // だけをアンワインドし、イベントループは 60fps で描き続ける。*その*
         // パニックで端末を畳むと、まだ動いている TUI の下で代替スクリーンと
         // raw mode が解除された状態になり、フレームがユーザーの実シェルに
         // 書き殴られ始める。ワーカーが 1 つ死ぬのは復帰可能で、下のログを
-        // 残すだけで十分。`execute!` は内部で flush するので追加の flush は不要。
+        // 残すだけで十分。execute! は内部で flush するので追加の flush は不要。
         if std::thread::current().name() == Some("main") {
             let _ = crate::restore_terminal_modes(&mut io::stdout());
         }

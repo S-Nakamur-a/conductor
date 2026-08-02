@@ -1,10 +1,10 @@
-//! Scroll-position bookkeeping shared by the Explorer's file tree, diff list,
-//! and walkthrough step list — each keeps the selected index visible within
-//! its own scroll window.
+//! Explorer のファイルツリー・diff リスト・walkthrough ステップリストが共有する
+//! スクロール位置の管理。それぞれ選択中のインデックスを自分のスクロール窓の中に
+//! 収める。
 
 use crate::app::App;
 
-/// Adjust `tree_scroll` so that `tree_selected` stays visible.
+/// tree_selected が見える位置に収まるよう tree_scroll を調整する。
 pub(in crate::event) fn adjust_tree_scroll(app: &mut App) {
     let visible = app.viewer_state.visible_indices();
     let cur_vis = visible
@@ -21,7 +21,7 @@ pub(in crate::event) fn adjust_tree_scroll(app: &mut App) {
     }
 }
 
-/// Adjust `diff_list_scroll` so that `diff_list_selected` stays visible.
+/// diff_list_selected が見える位置に収まるよう diff_list_scroll を調整する。
 pub(in crate::event) fn adjust_diff_list_scroll(app: &mut App) {
     let selected = app.viewer_state.explorer.diff_list_selected;
     let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
@@ -33,10 +33,10 @@ pub(in crate::event) fn adjust_diff_list_scroll(app: &mut App) {
     }
 }
 
-/// Adjust `walkthrough_scroll` so that `walkthrough_selected` stays visible.
-/// Shares `explorer_diff_list_height` with the diff list since both views
-/// occupy the same Explorer bottom-pane rect (mutually exclusive, so the
-/// height is always current for whichever one is showing).
+/// walkthrough_selected が見える位置に収まるよう walkthrough_scroll を調整する。
+/// diff リストとは explorer_diff_list_height を共有している。両ビューは Explorer
+/// 下部ペインの同じ矩形を占有し（排他的に表示されるため、どちらが表示中でも
+/// 高さは常に最新の値になる）。
 pub(in crate::event) fn adjust_walkthrough_scroll(app: &mut App) {
     let selected = app.viewer_state.explorer.walkthrough_selected;
     let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);

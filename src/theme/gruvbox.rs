@@ -1,4 +1,4 @@
-//! Gruvbox palette.
+//! Gruvbox パレット。
 
 use super::Theme;
 use ratatui::style::Color;
@@ -64,7 +64,7 @@ impl Theme {
             reply_text: Color::Rgb(131, 165, 152),
 
             code_bg: Color::Rgb(29, 32, 33), // bg0_h
-            code_fg: Color::Rgb(211, 134, 155), // purple-pink
+            code_fg: Color::Rgb(211, 134, 155), // 紫がかったピンク
 
             panel_focused_bg: Color::Rgb(58, 55, 52),
         }

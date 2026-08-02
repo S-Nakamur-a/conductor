@@ -1,13 +1,12 @@
-//! Generic `Span`/`Line` manipulation helpers shared by the file and diff
-//! views: horizontal scroll clipping, underline/hint-label overlays, and
-//! digit-width calculation for the gutter.
+//! ファイルビューと diff ビューで共有する汎用の Span/Line 操作ヘルパー: 水平スクロール
+//! によるクリップ、下線・ヒントラベルのオーバーレイ、ガター用の桁数計算。
 
 use crate::theme::Theme;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
-/// Skip `offset` characters from the beginning of a sequence of `Span`s and
-/// truncate to at most `max_width` characters, preserving per-span styling.
+/// Span の並びの先頭から offset 文字ぶんスキップし、最大 max_width 文字に
+/// 切り詰める。span ごとのスタイルは保ったまま行う。
 pub(super) fn h_scroll_spans(
     spans: Vec<Span<'static>>,
     offset: usize,
@@ -21,7 +20,7 @@ pub(super) fn h_scroll_spans(
             break;
         }
         let char_count = span.content.chars().count();
-        // Left clipping: skip characters for horizontal scroll offset.
+        // 左側のクリッピング: 水平スクロールのオフセットぶん文字をスキップする。
         if remaining_skip > 0 {
             if remaining_skip >= char_count {
                 remaining_skip -= char_count;
@@ -39,7 +38,7 @@ pub(super) fn h_scroll_spans(
             }
             remaining_skip = 0;
         } else {
-            // Right clipping: truncate to remaining panel width.
+            // 右側のクリッピング: 残りのパネル幅に切り詰める。
             if char_count <= remaining_width {
                 remaining_width -= char_count;
                 result.push(span);
@@ -66,8 +65,8 @@ pub(super) fn digit_count(n: usize) -> usize {
     count
 }
 
-/// Apply underline + accent fg to spans within `[start_col..end_col)` of the original content.
-/// `h_scroll` is the horizontal scroll offset already applied to the spans.
+/// 元のコンテンツの start_col..end_col の範囲にある span に、下線とアクセント色の
+/// 前景色を適用する。h_scroll は span にすでに適用済みの水平スクロールオフセット。
 pub(super) fn apply_underline_range(
     spans: Vec<Span<'static>>,
     start_col: usize,
@@ -75,7 +74,7 @@ pub(super) fn apply_underline_range(
     h_scroll: usize,
     accent: Color,
 ) -> Vec<Span<'static>> {
-    // Convert original content cols to visible cols (after h_scroll).
+    // 元のコンテンツの列を、h_scroll 適用後の表示列に変換する。
     let vis_start = start_col.saturating_sub(h_scroll);
     let vis_end = end_col.saturating_sub(h_scroll);
     if vis_start >= vis_end {
@@ -89,27 +88,27 @@ pub(super) fn apply_underline_range(
         let span_end = pos + span_len;
 
         if span_end <= vis_start || pos >= vis_end {
-            // Entirely outside the underline range.
+            // 下線の範囲の外側にある。
             result.push(span);
         } else {
-            // This span overlaps the underline range.
+            // この span は下線の範囲と重なっている。
             let rel_start = vis_start.saturating_sub(pos);
             let rel_end = vis_end.saturating_sub(pos).min(span_len);
 
             let chars: Vec<char> = span.content.chars().collect();
 
-            // Before underline.
+            // 下線より前の部分。
             if rel_start > 0 {
                 let before: String = chars[..rel_start].iter().collect();
                 result.push(Span::styled(before, span.style));
             }
-            // Underline portion.
+            // 下線を引く部分。
             let underlined: String = chars[rel_start..rel_end].iter().collect();
             result.push(Span::styled(
                 underlined,
                 span.style.fg(accent).add_modifier(Modifier::UNDERLINED),
             ));
-            // After underline.
+            // 下線より後の部分。
             if rel_end < span_len {
                 let after: String = chars[rel_end..].iter().collect();
                 result.push(Span::styled(after, span.style));
@@ -120,8 +119,8 @@ pub(super) fn apply_underline_range(
     result
 }
 
-/// Apply Vimium-style hint labels to spans, replacing the first 2 characters of each
-/// hinted symbol with the label text in accent color + bold.
+/// span に Vimium 風のヒントラベルを適用し、ヒント対象シンボルの先頭2文字を
+/// ラベル文字（アクセント色＋太字）に置き換える。
 pub(super) fn apply_hint_labels(
     spans: Vec<Span<'static>>,
     hints: &[&crate::overlay::SymbolHint],
@@ -130,7 +129,8 @@ pub(super) fn apply_hint_labels(
     theme: &Theme,
 ) -> Vec<Span<'static>> {
     let mut result = spans;
-    // Process hints in reverse order so earlier replacements don't shift positions of later ones.
+    // ヒントを逆順に処理することで、先に行った置き換えが後のヒントの位置を
+    // ずらさないようにする。
     let mut sorted: Vec<&&crate::overlay::SymbolHint> = hints.iter().collect();
     sorted.sort_by_key(|h| std::cmp::Reverse(h.start_col));
 
@@ -139,7 +139,7 @@ pub(super) fn apply_hint_labels(
         let label_len = hint.label.chars().count();
         let vis_end = vis_start + label_len;
 
-        // Determine if this hint matches the current input.
+        // このヒントが現在の入力に一致するかを判定する。
         let is_matching = input.is_empty() || hint.label.starts_with(input);
         let label_style = if is_matching {
             Style::default()
@@ -150,14 +150,14 @@ pub(super) fn apply_hint_labels(
             Style::default().fg(theme.muted).bg(Color::Reset)
         };
 
-        // Replace characters at vis_start..vis_end with the label.
+        // vis_start..vis_end の文字をラベルに置き換える。
         result = replace_span_range(result, vis_start, vis_end, &hint.label, label_style);
     }
     result
 }
 
-/// Replace characters in the range `[start..end)` of the span list with `replacement` text
-/// in the given style.
+/// span のリストのうち [start..end) の範囲の文字を、指定スタイルの置換テキストで
+/// 置き換える。
 fn replace_span_range(
     spans: Vec<Span<'static>>,
     start: usize,
@@ -173,23 +173,23 @@ fn replace_span_range(
         let span_end = pos + span_len;
 
         if span_end <= start || pos >= end {
-            // Entirely outside the replacement range.
+            // 置換範囲の外側にある。
             result.push(span);
         } else {
             let chars: Vec<char> = span.content.chars().collect();
             let rel_start = start.saturating_sub(pos);
             let rel_end = end.saturating_sub(pos).min(span_len);
 
-            // Before replacement.
+            // 置換より前の部分。
             if rel_start > 0 {
                 let before: String = chars[..rel_start].iter().collect();
                 result.push(Span::styled(before, span.style));
             }
-            // Replacement portion (only emit once, from the first overlapping span).
+            // 置換部分（最初に重なった span からのみ1回出力する）。
             if pos <= start {
                 result.push(Span::styled(replacement.to_string(), style));
             }
-            // After replacement.
+            // 置換より後の部分。
             if rel_end < span_len {
                 let after: String = chars[rel_end..].iter().collect();
                 result.push(Span::styled(after, span.style));

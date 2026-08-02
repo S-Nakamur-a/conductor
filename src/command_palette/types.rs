@@ -1,5 +1,5 @@
-//! Command palette data model: the command taxonomy, categories, scope, and
-//! the `PaletteCommand`/`ScoredCommand` record types.
+//! コマンドパレットのデータモデル: コマンドの分類体系、カテゴリ、スコープ、
+//! および PaletteCommand/ScoredCommand のレコード型。
 
 use crate::keymap::Action;
 
@@ -57,7 +57,7 @@ pub enum CommandId {
     OpenRepo,
     SwitchRepo,
 
-    // Worktree (additional)
+    // Worktree (追加分)
     UngrabBranch,
 
     // Explorer
@@ -69,7 +69,7 @@ pub enum CommandId {
     AddReviewComment,
     ViewCommentDetail,
 
-    // Comment actions
+    // コメント操作
     DeleteComment,
     ToggleCommentResolve,
     EditComment,
@@ -123,9 +123,10 @@ impl CommandCategory {
     }
 }
 
-/// Where a command sits relative to the focused panel: bound globally, bound in
-/// the current panel's own layer, or bound only in some other panel's layer
-/// (still runnable from the palette). Drives the grouped display.
+/// コマンドがフォーカス中パネルから見てどこに位置するか: グローバルに
+/// バインドされているか、現在のパネル自身のレイヤーにバインドされているか、
+/// あるいは別のパネルのレイヤーにだけバインドされている (それでもパレットからは
+/// 実行できる) か。グループ表示の並び順を決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandScope {
     Current,
@@ -133,9 +134,9 @@ pub enum CommandScope {
     Other,
 }
 
-/// Sort rank for grouping filtered results by [`CommandScope`] (current panel
-/// first, then global, then other panels). Shared by `search::filter_commands`
-/// and its tests.
+/// フィルタ結果を [CommandScope] でグループ化するための並び順ランク
+/// (現在のパネル → グローバル → 他のパネルの順)。search::filter_commands と
+/// そのテストで共有する。
 pub(super) fn scope_rank(scope: CommandScope) -> u8 {
     match scope {
         CommandScope::Current => 0,
@@ -148,9 +149,9 @@ pub struct PaletteCommand {
     pub id: CommandId,
     pub label: &'static str,
     pub category: CommandCategory,
-    /// The keymap action this command runs, if it has a keybinding. `None` for
-    /// palette-only commands (no chord). The displayed shortcut and scope are
-    /// derived from this via the keymap.
+    /// このコマンドがキーバインドを持つ場合、実行する keymap のアクション。
+    /// パレット専用コマンド (チョードなし) では None。表示するショートカットと
+    /// スコープは、これを keymap 経由で見て導出する。
     pub action: Option<Action>,
     pub keywords: &'static str,
 }

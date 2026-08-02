@@ -1,4 +1,4 @@
-//! Grep (full-text search) overlay renderer — tree view.
+//! Grep（全文検索）オーバーレイの描画 — ツリービュー。
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::search_result_tree::SearchTreeRow;
 use crate::text_input::TextInput;
 
-/// Set the terminal cursor position for IME at the cursor position within a
-/// single-line `TextInput`.
+/// 単一行の TextInput 内のカーソル位置に合わせて、IME 用の端末カーソル位置を
+/// 設定する。
 fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
     let text_width = buffer.display_width_before_cursor() as u16;
     let cursor_x = area.x + text_width;
@@ -21,8 +21,8 @@ fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
     }
 }
 
-/// Find the largest byte index `<= pos` that is a valid UTF-8 character
-/// boundary in `s`.
+/// s 内で、pos 以下の最大のバイトインデックスであり、かつ有効な UTF-8
+/// 文字境界であるものを求める。
 fn floor_char_boundary(s: &str, pos: usize) -> usize {
     if pos >= s.len() {
         return s.len();
@@ -34,11 +34,11 @@ fn floor_char_boundary(s: &str, pos: usize) -> usize {
     i
 }
 
-/// Render the grep search overlay.
+/// grep 検索オーバーレイを描画する。
 pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
 
-    // 60% width, 70% height, centered.
+    // 幅60%、高さ70%、中央配置。
     let popup_width = ((area.width as u32 * 60 / 100) as u16)
         .max(40)
         .min(area.width.saturating_sub(4));
@@ -52,13 +52,13 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
     frame.render_widget(Clear, popup_area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(3), // Search bar (with mode indicators)
-        Constraint::Length(1), // Status line
-        Constraint::Min(3),    // Results list
+        Constraint::Length(3), // 検索バー（モードインジケータ付き）
+        Constraint::Length(1), // ステータス行
+        Constraint::Min(3),    // 結果一覧
     ])
     .split(popup_area);
 
-    // ── Search bar ──────────────────────────────────────────────
+    // 検索バー。
     let input_focused = app.overlays.grep_search.input_focused;
     let title = if input_focused {
         " Full-text Search (Tab: results, ↓: results, Esc: close) "
@@ -77,7 +77,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
     let search_inner = search_block.inner(chunks[0]);
     frame.render_widget(search_block, chunks[0]);
 
-    // Mode indicators: [.*] or [ab] for regex, [Aa] or [aa] for case
+    // モードインジケータ: 正規表現は [.*] または [ab]、大文字小文字は [Aa] または [aa]。
     let regex_indicator = if app.overlays.grep_search.regex_mode {
         "[.*]"
     } else {
@@ -141,7 +141,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
         }
     }
 
-    // ── Status line ─────────────────────────────────────────────
+    // ステータス行。
     let total_matches = app.overlays.grep_search.result_tree.match_count();
     let status_text = if app.overlays.grep_search.running {
         format!("  Searching... ({total_matches} matches so far)")
@@ -169,7 +169,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
         chunks[1],
     );
 
-    // ── Results tree ────────────────────────────────────────────
+    // 結果ツリー。
     let list_border_color = if !input_focused {
         theme.border_focused
     } else {
@@ -193,7 +193,7 @@ pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) 
         .selected
         .min(rows.len().saturating_sub(1));
 
-    // Compute scroll offset.
+    // スクロールオフセットを計算する。
     let scroll = {
         let mut s = app.overlays.grep_search.scroll;
         if selected < s {

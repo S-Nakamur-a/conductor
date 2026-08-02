@@ -1,31 +1,31 @@
-//! Unified diff view types.
+//! unified diff 表示の型定義。
 
 use crate::diff_state::{DiffLineTag, InlineSegment};
 
-/// An entry in the unified diff view.
+/// unified diff 表示中の1エントリ。
 #[derive(Debug, Clone)]
 pub enum UnifiedDiffEntry {
-    /// A separator between hunks (used when no lines are hidden).
+    /// ハンク間の区切り（隠れている行がない場合に使う）。
     HunkSeparator { func_header: Option<String> },
-    /// An expandable context block representing hidden lines between hunks.
+    /// ハンク間で隠れている行を表す、展開可能なコンテキストブロック。
     ExpandableContext {
-        /// Number of currently hidden lines.
+        /// 現在隠れている行数。
         hidden_count: usize,
-        /// First hidden line number in the new file (1-indexed).
+        /// 新ファイル側で最初に隠れている行番号（1始まり）。
         new_line_start: usize,
-        /// Last hidden line number in the new file (1-indexed, inclusive).
+        /// 新ファイル側で最後に隠れている行番号（1始まり、両端含む）。
         new_line_end: usize,
-        /// Function context header for the next hunk (displayed alongside).
+        /// 次のハンクの関数コンテキストヘッダ（併せて表示する）。
         func_header: Option<String>,
     },
-    /// A single line (context, addition, or deletion).
+    /// 1行分のエントリ（コンテキスト・追加・削除のいずれか）。
     Line {
         tag: DiffLineTag,
-        /// Line number in the new file. `Some` for Equal/Insert, `None` for Delete.
+        /// 新ファイル側の行番号。Equal/Insert では Some、Delete では None。
         new_line_no: Option<usize>,
-        /// The text content of this line.
+        /// この行のテキスト内容。
         content: String,
-        /// Intra-line change segments (word diff).
+        /// 行内の変更セグメント（単語単位の diff）。
         inline_segments: Vec<InlineSegment>,
     },
 }

@@ -1,5 +1,5 @@
-//! vt100 screen access, resize/reflow, alt-screen nudging, and Claude Code
-//! input-waiting detection.
+//! vt100 画面へのアクセス、リサイズ/リフロー、オルタネート画面のナッジ、
+//! Claude Code の入力待ち検出。
 
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
@@ -11,8 +11,8 @@ use portable_pty::PtySize;
 use super::{PtyManager, SessionKind};
 
 impl PtyManager {
-    /// Check whether the session at `idx` has produced any visible output
-    /// (i.e. the vt100 screen is not entirely blank).
+    /// idx のセッションが何か表示可能な出力を生成したか(vt100 画面が完全に
+    /// 空白ではないか)を確認する。
     pub fn session_has_visible_output(&self, idx: usize) -> bool {
         self.sessions.get(idx).is_some_and(|s| {
             let parser = s.screen.lock().unwrap_or_else(|e| e.into_inner());
@@ -28,7 +28,7 @@ impl PtyManager {
         })
     }
 
-    /// Get a snapshot of the output buffer for the session at the given index.
+    /// 指定インデックスのセッションの出力バッファのスナップショットを取得する。
     pub fn get_output(&self, idx: usize) -> Vec<String> {
         self.sessions
             .get(idx)
@@ -39,11 +39,12 @@ impl PtyManager {
             .unwrap_or_default()
     }
 
-    /// Whether the session at `idx` has application cursor keys mode (DECCKM)
-    /// enabled. Full-screen programs on the alternate screen — pagers (`less`,
-    /// `bat`), editors (`vim`) — commonly turn this on, after which they expect
-    /// the arrow keys as SS3 (`ESC O A`) and ignore the default CSI (`ESC [ A`)
-    /// form. Key forwarding consults this so the arrows actually drive them.
+    /// idx のセッションでアプリケーションカーソルキーモード(DECCKM)が
+    /// 有効かどうか。オルタネート画面上のフルスクリーンプログラム —
+    /// ページャ(less、bat)、エディタ(vim)— は通常これを有効にし、
+    /// 以降は矢印キーを SS3 (ESC O A) として期待し、デフォルトの CSI
+    /// (ESC [ A) 形式を無視する。キー転送はこれを見て、矢印キーが実際に
+    /// 効くようにしている。
     pub fn session_application_cursor(&self, idx: usize) -> bool {
         self.sessions.get(idx).is_some_and(|s| {
             let parser = s.screen.lock().unwrap_or_else(|e| e.into_inner());
@@ -51,31 +52,32 @@ impl PtyManager {
         })
     }
 
-    /// Get the vt100 screen parser for the session at the given index.
+    /// 指定インデックスのセッションの vt100 画面パーサを取得する。
     ///
-    /// Returns a clone of the `Arc` so the UI can lock it for rendering.
+    /// UI が描画のためにロックできるよう Arc のクローンを返す。
     pub fn get_screen(&self, idx: usize) -> Option<Arc<Mutex<vt100::Parser>>> {
         self.sessions.get(idx).map(|s| Arc::clone(&s.screen))
     }
 
-    /// Resize both the real PTY and the vt100 parser for the session at `idx`.
+    /// idx のセッションについて、実際の PTY と vt100 パーサの両方をリサイズする。
     ///
-    /// Returns `true` when the vt100 parser was rebuilt by replaying the raw
-    /// byte history (i.e. content was reflowed at a new width). Rows-only
-    /// changes, and sessions that don't record a raw history, return `false`.
+    /// vt100 パーサが生バイト履歴の再生によって再構築された(新しい幅で
+    /// 内容がリフローされた)場合に true を返す。行数のみの変更や、
+    /// 生バイト履歴を記録していないセッションでは false を返す。
     ///
-    /// vt100's `set_size` does not reflow: on a column change it clears each
-    /// row's wrap flag and truncates/pads rows in place, so previously wrapped
-    /// lines stay wrapped at the old width. To make old (autowrapped) content
-    /// follow the new width, we rebuild the parser from the recorded raw byte
-    /// stream, which re-wraps as it is re-parsed. Only sessions with a
-    /// `raw_history` (shells — see the field docs) take this path; everything
-    /// else falls back to `set_size`, which is exactly what a real terminal
-    /// does for in-place-repaint apps like Claude Code (they repaint their
-    /// current frame on the SIGWINCH the PTY resize delivers).
+    /// vt100 の set_size はリフローしない: 列数の変更時、各行のラップ
+    /// フラグをクリアし、その場で行を切り詰め/パディングするだけなので、
+    /// 以前ラップされていた行は旧幅のままラップされ続ける。旧い
+    /// (自動折り返しされた)内容を新しい幅に追従させるため、記録済みの
+    /// 生バイトストリームからパーサを再構築し、再パース時に再ラップさせる。
+    /// この経路を通るのは raw_history を持つセッション(シェル — フィールド
+    /// のドキュメントを参照)だけであり、それ以外は set_size へフォール
+    /// バックする。これは、Claude Code のようなその場描画型アプリに対して
+    /// 実際の端末が行うのとまったく同じ挙動である(PTY リサイズが配送する
+    /// SIGWINCH を受けて、自分の現在のフレームを再描画する)。
     pub fn resize_session(&mut self, idx: usize, rows: u16, cols: u16) -> bool {
-        // vt100::Parser::new requires non-zero dimensions; clamp defensively so
-        // the function is robust regardless of caller discipline.
+        // vt100::Parser::new は非ゼロの寸法を要求するため、呼び出し側の
+        // 規律に関わらず頑健であるよう防御的にクランプする。
         let rows = rows.max(1);
         let cols = cols.max(1);
         let scrollback = self.inactive_scrollback;
@@ -83,8 +85,8 @@ impl PtyManager {
             return false;
         };
 
-        // Resize the real PTY (delivers SIGWINCH so the child re-renders its
-        // live region).
+        // 実際の PTY をリサイズする(SIGWINCH を配送し、子プロセスがライブ
+        // 領域を再描画する)。
         let _ = session.master.resize(PtySize {
             rows,
             cols,
@@ -95,19 +97,19 @@ impl PtyManager {
         let mut parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
         let old_cols = parser.screen().size().1;
 
-        // Reflow only applies on a width change, and only for sessions that
-        // record a raw history. A rows-only change, or a session that opts out
-        // of recording (Claude, editor), is handled in place by `set_size`.
+        // リフローが適用されるのは幅が変わった場合のみで、かつ生バイト
+        // 履歴を記録しているセッションに限る。行数のみの変更、または記録を
+        // オプトアウトしているセッション(Claude、editor)は set_size で
+        // その場処理する。
         let reflow = old_cols != cols && session.raw_history.is_some();
         if !reflow {
             parser.set_size(rows, cols);
             return false;
         }
 
-        // Width changed — rebuild the parser at the new width by replaying the
-        // raw byte history. Holding the `screen` lock keeps this consistent
-        // with the reader thread, which appends to `raw_history` and processes
-        // into the parser under the same lock.
+        // 幅が変わった — 生バイト履歴を再生してパーサを新しい幅で再構築する。
+        // screen ロックを保持し続けることで、raw_history に追記しつつ
+        // 同じロック下でパーサへ処理を行っている reader スレッドとの整合を保つ。
         let history = session
             .raw_history
             .as_ref()
@@ -118,24 +120,24 @@ impl PtyManager {
         true
     }
 
-    /// Send periodic SIGWINCH nudges to sessions that recently entered
-    /// alternate screen mode.  Programs like fzf may not render their
-    /// initial UI until they receive a resize signal, and a single nudge
-    /// can arrive before the program is ready.  This method sends nudges
-    /// every ~100 ms for 500 ms after the transition, working around
-    /// macOS PTY buffering quirks.
+    /// 最近オルタネート画面モードに入ったセッションへ、定期的に SIGWINCH
+    /// ナッジを送る。fzf のようなプログラムは、リサイズシグナルを受け取る
+    /// まで初期 UI を描画しないことがあり、1回だけのナッジではプログラムの
+    /// 準備が整う前に届いてしまうことがある。このメソッドは遷移後 500 ms の
+    /// 間、約100msごとにナッジを送り、macOS の PTY バッファリングの癖を
+    /// 回避する。
     pub fn nudge_alt_screen_sessions(&mut self) {
         const NUDGE_WINDOW: Duration = Duration::from_millis(500);
         const NUDGE_INTERVAL: Duration = Duration::from_millis(100);
 
         for session in &mut self.sessions {
-            // Check if the reader thread detected a new alt-screen entry.
+            // reader スレッドが新しいオルタネート画面への突入を検出したか確認する。
             if session.alt_screen_entered.swap(false, Ordering::Relaxed) {
                 session.alt_screen_nudge_until = Some(Instant::now() + NUDGE_WINDOW);
                 session.last_nudge_time = None;
             }
 
-            // Send periodic nudges while within the window.
+            // ウィンドウ内である間、定期的にナッジを送る。
             let Some(until) = session.alt_screen_nudge_until else {
                 continue;
             };
@@ -154,8 +156,8 @@ impl PtyManager {
                     let parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
                     parser.screen().size()
                 };
-                // macOS only delivers SIGWINCH when the size actually changes,
-                // so we briefly shrink by one row then restore the real size.
+                // macOS はサイズが実際に変わったときにしか SIGWINCH を配送
+                // しないため、一瞬だけ1行縮めてから本来のサイズへ戻す。
                 if rows > 1 {
                     let _ = session.master.resize(PtySize {
                         rows: rows - 1,
@@ -174,26 +176,26 @@ impl PtyManager {
         }
     }
 
-    // -- Input waiting detection ---------------------------------------------
+    // 入力待ちの検出
 
-    /// Check whether the Claude Code session at `idx` appears to be waiting
-    /// for user input (idle prompt or tool-permission prompt).
+    /// idx の Claude Code セッションがユーザー入力待ち(アイドルプロンプト
+    /// またはツール許可プロンプト)に見えるかを確認する。
     ///
-    /// Returns `true` when **both** conditions are met:
-    /// 1. No PTY output has been received for at least 1.5 seconds.
-    /// 2. The cursor row of the vt100 screen matches a known prompt pattern.
+    /// 次の**両方**の条件を満たしたときに true を返す。
+    /// 1. 少なくとも 1.5 秒間 PTY 出力を受け取っていない。
+    /// 2. vt100 画面のカーソル行が既知のプロンプトパターンに一致する。
     pub fn is_waiting_for_input(&self, idx: usize) -> bool {
         let session = match self.sessions.get(idx) {
             Some(s) => s,
             None => return false,
         };
 
-        // Only applies to Claude Code sessions.
+        // Claude Code セッションにのみ適用する。
         if session.kind != SessionKind::ClaudeCode {
             return false;
         }
 
-        // Condition 1: output must have been stable for ≥ 1.5s.
+        // 条件1: 出力が少なくとも 1.5 秒間安定している必要がある。
         const IDLE_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(1500);
         {
             let t = session
@@ -205,7 +207,7 @@ impl PtyManager {
             }
         }
 
-        // Condition 2: cursor row matches a prompt pattern.
+        // 条件2: カーソル行がプロンプトパターンに一致する。
         let parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
         let screen = parser.screen();
         let cursor_row = screen.cursor_position().0;
@@ -213,12 +215,12 @@ impl PtyManager {
         let row_text = Self::extract_row_text(screen, cursor_row, cols);
         let trimmed = row_text.trim();
 
-        // Match: "> " prompt (Claude Code standard input)
+        // マッチ: "> " プロンプト(Claude Code の標準入力)
         if trimmed.starts_with("> ") || trimmed == ">" {
             return true;
         }
 
-        // Match: tool permission prompts containing [Y/n] or [y/N]
+        // マッチ: [Y/n] または [y/N] を含むツール許可プロンプト
         if trimmed.contains("[Y/n]") || trimmed.contains("[y/N]") {
             return true;
         }
@@ -226,7 +228,7 @@ impl PtyManager {
         false
     }
 
-    /// Extract the text content of a single row from the vt100 screen.
+    /// vt100 画面から1行分のテキスト内容を抽出する。
     fn extract_row_text(screen: &vt100::Screen, row: u16, cols: u16) -> String {
         let mut text = String::with_capacity(cols as usize);
         for col in 0..cols {
@@ -240,10 +242,10 @@ impl PtyManager {
         text
     }
 
-    /// Build a fresh vt100 parser of the given size by replaying the recorded
-    /// raw byte history, re-wrapping content at the new width. This is the core
-    /// of `resize_session`'s reflow path, factored out so it can be unit-tested
-    /// without spawning a real PTY.
+    /// 記録済みの生バイト履歴を再生することで、指定サイズの新しい vt100
+    /// パーサを組み立て、内容を新しい幅で再ラップする。これは
+    /// resize_session のリフロー経路の中核部分を、実際の PTY を起動せずに
+    /// 単体テストできるよう切り出したもの。
     pub(super) fn rebuild_parser(
         history: &VecDeque<u8>,
         rows: u16,

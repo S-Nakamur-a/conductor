@@ -1,16 +1,15 @@
-//! Party mode — a hidden, flashy easter-egg overlay.
+//! パーティモード — 隠しフラッシュなイースターエッグオーバーレイ。
 //!
-//! When [`crate::app::App::party_mode`] is on, this module post-processes the
-//! rendered frame buffer to add three effects, all animated by `ui_tick`:
+//! [crate::app::App::party_mode] が有効なとき、このモジュールは描画済みのフレーム
+//! バッファを後処理して、ui_tick でアニメーションする3つの効果を加える:
 //!
-//! 1. **Rainbow focused border** — every border glyph drawn in the theme's
-//!    focused-border colour is recoloured with a flowing rainbow, so the panel
-//!    that currently has focus glows and swirls.
-//! 2. **Rainbow title bar** — the top title bar's text shimmers.
-//! 3. **Confetti** — sparkles drift down across the main content area.
+//! 1. 虹色フォーカスボーダー — テーマのフォーカスボーダー色で描かれたすべてのボーダー
+//!    文字を流れる虹色に塗り替え、現在フォーカスされているパネルが光って揺らめくようにする。
+//! 2. 虹色タイトルバー — 画面上部のタイトルバーの文字がきらめく。
+//! 3. 紙吹雪 — メインコンテンツ領域に星がゆっくり降ってくる。
 //!
-//! The syntax-token rainbow (effect for the Viewer) lives in `viewer_panel.rs`
-//! and reuses [`rainbow`] from here.
+//! シンタックストークンの虹色効果（Viewer 向け）は viewer_panel.rs にあり、
+//! ここの [rainbow] を再利用している。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -18,10 +17,10 @@ use ratatui::style::{Color, Modifier};
 
 use crate::app::App;
 
-/// Convert HSL (h: 0-360, s: 0-1, l: 0-1) to an RGB [`Color`].
+/// HSL（h: 0-360, s: 0-1, l: 0-1）を RGB の [Color] に変換する。
 ///
-/// Local copy (the equivalent in `common.rs` is private); shared with the
-/// rich-mode effects in `rich.rs`. Pass `h` already normalized to 0-360.
+/// ローカルにコピーしたもの（common.rs 側の同等品は private）。rich.rs の
+/// リッチモード効果と共有している。h は 0-360 に正規化済みのものを渡すこと。
 pub(crate) fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h2 = h / 60.0;
@@ -42,23 +41,23 @@ pub(crate) fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
     )
 }
 
-/// A vivid rainbow colour for the given phase (interpreted as degrees of hue).
+/// 指定した phase（色相の度数として解釈する）に対応する鮮やかな虹色。
 ///
-/// Phases that differ by a multiple of 360 produce the same colour, so callers
-/// can freely mix position and time terms to get a flowing gradient.
+/// phase が360の倍数だけ異なっていても同じ色になるので、呼び出し側は位置の項と
+/// 時間の項を自由に組み合わせて流れるようなグラデーションを作れる。
 pub fn rainbow(phase: f64) -> Color {
     hsl_to_rgb(phase.rem_euclid(360.0), 1.0, 0.6)
 }
 
-/// Whether `s` begins with a box-drawing glyph (U+2500..=U+257F) — i.e. a panel
-/// border character. Used to target borders without touching text content.
-/// Shared with the rich-mode effects in `rich.rs`.
+/// s が罫線素片（U+2500..=U+257F）、つまりパネルのボーダー文字で始まるかどうか。
+/// テキスト内容に触れずボーダーだけを対象にするために使う。rich.rs の
+/// リッチモード効果と共有している。
 pub(crate) fn is_border_glyph(s: &str) -> bool {
     matches!(s.chars().next(), Some(c) if ('\u{2500}'..='\u{257F}').contains(&c))
 }
 
-/// Small deterministic hash for confetti placement — no `rand` dependency, and
-/// stable across frames (the only time term is added by the caller).
+/// 紙吹雪の配置用の小さな決定的ハッシュ — rand への依存はなく、フレームをまたいで
+/// 安定する（時間の項は呼び出し側が加えるだけ）。
 fn pseudo_random(seed: u64) -> u64 {
     let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
     x ^= x >> 16;
@@ -67,23 +66,22 @@ fn pseudo_random(seed: u64) -> u64 {
     x
 }
 
-/// Single-cell sparkle glyphs (each exactly one terminal column wide).
+/// 1セル分のきらめき文字（それぞれ端末上でちょうど1カラム幅）。
 const SPARKLES: &[&str] = &["✦", "✧", "·", "*", "+", "✩"];
 
-/// Apply all party-mode effects to the just-rendered frame buffer.
+/// 描画直後のフレームバッファに、パーティモードの効果をすべて適用する。
 ///
-/// Called at the very end of `render_ui` when `app.party_mode` is set, so it
-/// recolours whatever is currently on screen (including any open overlay whose
-/// border uses the focused-border colour).
+/// app.party_mode が有効なとき render_ui の最後で呼ばれるため、現在画面上にある
+/// もの（フォーカスボーダー色を使っているオーバーレイの枠も含む）を塗り替える。
 pub fn apply_party_effects(frame: &mut Frame, app: &App) {
     let tick = app.ui_tick as f64;
     let focused = app.theme.border_focused;
     let area = frame.area();
     let buf = frame.buffer_mut();
 
-    // ── Effect 1: rainbow focused border ──────────────────────────────
-    // Only the focused panel paints its border in `border_focused`, so matching
-    // that colour automatically scopes the rainbow to the active panel.
+    // 効果1: 虹色フォーカスボーダー。
+    // フォーカス中のパネルだけが border_focused でボーダーを描くので、その色に
+    // マッチさせるだけで自動的に虹色効果がアクティブパネルに限定される。
     for y in area.y..area.y.saturating_add(area.height) {
         for x in area.x..area.x.saturating_add(area.width) {
             if let Some(cell) = buf.cell_mut((x, y))
@@ -96,7 +94,7 @@ pub fn apply_party_effects(frame: &mut Frame, app: &App) {
         }
     }
 
-    // ── Effect 2: rainbow title bar ───────────────────────────────────
+    // 効果2: 虹色タイトルバー。
     let title = app.layout.cache.title_area;
     if title.height >= 1 {
         let y = title.y;
@@ -111,11 +109,11 @@ pub fn apply_party_effects(frame: &mut Frame, app: &App) {
         }
     }
 
-    // ── Effect 3: drifting confetti ───────────────────────────────────
+    // 効果3: 漂う紙吹雪。
     draw_confetti(buf, app.layout.cache.main_area, tick);
 }
 
-/// Scatter sparkles across `area`, drifting downward as `tick` advances.
+/// area 全体にきらめきを散らし、tick が進むにつれて下方向に漂わせる。
 fn draw_confetti(buf: &mut ratatui::buffer::Buffer, area: Rect, tick: f64) {
     if area.width < 4 || area.height < 3 {
         return;
@@ -127,17 +125,17 @@ fn draw_confetti(buf: &mut ratatui::buffer::Buffer, area: Rect, tick: f64) {
     for i in 0..count {
         let rx = pseudo_random(i.wrapping_mul(2654435761));
         let x = area.x + (rx % w) as u16;
-        // Each sparkle falls at a slightly different speed and wraps vertically.
-        let speed = 2 + (rx % 3); // ticks-per-row divisor variety
+        // 各きらめきはわずかに異なる速度で落ち、縦方向にラップする。
+        let speed = 2 + (rx % 3); // 1行あたりのtick数に幅を持たせる除数
         let drift = (tick as u64 / speed).wrapping_add(rx >> 8);
         let y = area.y + (drift % h) as u16;
         let glyph = SPARKLES[(rx as usize >> 4) % SPARKLES.len()];
 
         if let Some(cell) = buf.cell_mut((x, y)) {
-            // Leave graphics-protocol cells alone: rich mode's pixel image
-            // preview marks its area with Unicode placeholder characters
-            // (plane-16 private use); overwriting one would punch a hole in
-            // the image until the next full repaint.
+            // グラフィックスプロトコルのセルには触れない: リッチモードのピクセル画像
+            // プレビューは、その領域を Unicode のプレースホルダ文字（plane-16 の
+            // private use）でマークしている。上書きすると次の全画面再描画まで
+            // 画像に穴が開いてしまう。
             if cell
                 .symbol()
                 .chars()
@@ -171,12 +169,12 @@ mod tests {
 
     #[test]
     fn border_glyph_detection() {
-        // Box-drawing characters (plain + thick) are borders.
+        // 罫線素片（細線 + 太線）はボーダーである。
         assert!(is_border_glyph("│"));
         assert!(is_border_glyph("─"));
         assert!(is_border_glyph("┏"));
         assert!(is_border_glyph("┃"));
-        // Ordinary text and blanks are not.
+        // 普通のテキストや空白はボーダーではない。
         assert!(!is_border_glyph("a"));
         assert!(!is_border_glyph(" "));
         assert!(!is_border_glyph(""));

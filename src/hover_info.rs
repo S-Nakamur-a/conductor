@@ -1,17 +1,17 @@
 //! シンボルのホバー情報。Viewer のカーソル下にあるシンボルのシグネチャ、
 //! doc コメント、参照数。
 //!
-//! 既存の tree-sitter 製 [`SymbolIndex`](crate::symbol_index::SymbolIndex) の上に
+//! 既存の tree-sitter 製 [SymbolIndex](crate::symbol_index::SymbolIndex) の上に
 //! 作ってある (language server は使わない)。インデックスが定義位置を特定し、
 //! そのファイルを範囲を限って読んで宣言のシグネチャと直上の doc コメント
-//! ブロックを取り出す。何も見つからなければ `None` を返し、呼び出し側は
+//! ブロックを取り出す。何も見つからなければ None を返し、呼び出し側は
 //! 黙っていられる。
 
 use crate::symbol_index::SymbolIndex;
 
-/// シグネチャとして集める最大行数。超えたら `…` で切り詰める。
+/// シグネチャとして集める最大行数。超えたら … で切り詰める。
 const MAX_SIGNATURE_LINES: usize = 8;
-/// doc コメントとして集める最大行数。超えたら `…` で切り詰める。
+/// doc コメントとして集める最大行数。超えたら … で切り詰める。
 const MAX_DOC_LINES: usize = 12;
 /// ポップアップが参照を数えるのを諦めて「50+」と出すまでの件数。
 /// フレーム内で走る経路なので作業量に上限を設ける。呼び出し側を参照。
@@ -34,16 +34,16 @@ pub struct HoverInfo {
     /// 名前に一致した定義の数 (2 以上なら、表示しているのは複数あるうちの 1 つ)。
     pub def_count: usize,
     /// リポジトリ全体でのコード位置としての参照数。数えるのは
-    /// [`REF_COUNT_CAP`] まで。[`ref_count_capped`](Self::ref_count_capped) を参照。
+    /// [REF_COUNT_CAP] まで。[ref_count_capped](Self::ref_count_capped) を参照。
     pub ref_count: usize,
-    /// 上限で数えるのを止めたか。true のとき実際の総数は `ref_count` ちょうどではなく
-    /// 「それ以上」を意味する。末尾の `+` として描画する。
+    /// 上限で数えるのを止めたか。true のとき実際の総数は ref_count ちょうどではなく
+    /// 「それ以上」を意味する。末尾の + として描画する。
     pub ref_count_capped: bool,
 }
 
-/// `symbol` のホバー情報を組み立てる。複数箇所で定義されている名前については
-/// `current_file` 内の定義を優先する。インデックスが未完成、シンボルに定義が無い、
-/// ファイルが読めない、のいずれかなら (黙って) `None` を返す。
+/// symbol のホバー情報を組み立てる。複数箇所で定義されている名前については
+/// current_file 内の定義を優先する。インデックスが未完成、シンボルに定義が無い、
+/// ファイルが読めない、のいずれかなら (黙って) None を返す。
 pub fn build_hover_info(
     index: &SymbolIndex,
     symbol: &str,
@@ -68,7 +68,7 @@ pub fn build_hover_info(
 
     // 正確な数ではなく上限付き。これはポインタがシンボル上で止まるたびに UI
     // スレッドで走るが、ありふれた名前の正確な数を出すにはその名前が現れる全ファイルを
-    // パースすることになる (ここでの `new` は約 157ms = 10 フレーム落ち)。
+    // パースすることになる (ここでの new は約 157ms = 10 フレーム落ち)。
     // 上限を超えたぶんはポップアップに「50+」と出す。
     let (ref_count, ref_count_capped) = index.count_references_upto(symbol, &root, REF_COUNT_CAP);
 
@@ -85,9 +85,9 @@ pub fn build_hover_info(
     })
 }
 
-/// `def_idx` (0 始まり) から始まる宣言のシグネチャを取り出す。`{` で終わる最初の行
-/// (波括弧は除去) まで、または `;` / `=` で終わる宣言までを含め、上限は
-/// [`MAX_SIGNATURE_LINES`]。各行は最初の行のインデントぶんだけ左へ詰める。
+/// def_idx (0 始まり) から始まる宣言のシグネチャを取り出す。{ で終わる最初の行
+/// (波括弧は除去) まで、または ; / = で終わる宣言までを含め、上限は
+/// [MAX_SIGNATURE_LINES]。各行は最初の行のインデントぶんだけ左へ詰める。
 fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
     let indent = lines[def_idx].len() - lines[def_idx].trim_start().len();
     let mut out = Vec::new();
@@ -116,14 +116,14 @@ fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
     out
 }
 
-/// `def_idx` (0 始まり) の直上にあるコメントブロックを集める。属性・デコレータの行
-/// (`#[...]`, `@...`) は読み飛ばす。`///`, `//!`, `//` (Rust/Go) と
-/// `/** ... */` (TS/JS) の形式に対応し、記号は除去する。上限は [`MAX_DOC_LINES`]
+/// def_idx (0 始まり) の直上にあるコメントブロックを集める。属性・デコレータの行
+/// (#[...], @...) は読み飛ばす。///, //!, // (Rust/Go) と
+/// /** ... */ (TS/JS) の形式に対応し、記号は除去する。上限は [MAX_DOC_LINES]
 /// (概要を持つ先頭側を残す)。
 fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
     let mut collected: Vec<String> = Vec::new();
     let mut i = def_idx;
-    let mut in_block = false; // 下から上へ走査中の `/* ... */` の内側かどうか
+    let mut in_block = false; // 下から上へ走査中の /* ... */ の内側かどうか
     while i > 0 {
         i -= 1;
         let t = lines[i].trim();
@@ -145,7 +145,7 @@ fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
         }
         if t.ends_with("*/") && !t.starts_with("//") {
             let body = t.trim_end_matches("*/").trim_end();
-            // 同じ行に `/*` の開始があるなら、そのブロックは 1 行だったということ。
+            // 同じ行に /* の開始があるなら、そのブロックは 1 行だったということ。
             in_block = !body.starts_with("/*");
             let body = body
                 .trim_start_matches("/**")

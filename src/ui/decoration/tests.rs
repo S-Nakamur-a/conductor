@@ -1,9 +1,9 @@
-//! Tests for the decoration mode dispatch and each animated mode's tick
-//! behavior (initialization, activity-driven spawning, bounds).
+//! 装飾モードのディスパッチと、各アニメーションモードの tick の挙動
+//! （初期化、activity に応じた生成、境界）のテスト。
 
 use super::*;
 
-// ── DecorationMode ───────────────────────────────────────────────
+// DecorationMode
 
 #[test]
 fn mode_from_str_known_values() {
@@ -35,7 +35,7 @@ fn mode_has_animation() {
     assert!(!DecorationMode::None.has_animation());
 }
 
-// ── Aquarium ─────────────────────────────────────────────────────
+// Aquarium
 
 #[test]
 fn aquarium_initializes_on_first_tick() {
@@ -56,7 +56,7 @@ fn aquarium_skips_small_area() {
 #[test]
 fn aquarium_bubbles_spawn_faster_when_active() {
     let mut state = AquariumState::default();
-    // Calm — run 100 ticks.
+    // Calm — 100ティック実行する。
     for t in 0..100 {
         tick_aquarium(&mut state, t, 20, 6, DecorationActivity::Calm);
     }
@@ -67,11 +67,11 @@ fn aquarium_bubbles_spawn_faster_when_active() {
         tick_aquarium(&mut state2, t, 20, 6, DecorationActivity::Active);
     }
     let active_bubbles = state2.bubbles.len();
-    // Active should have at least as many (usually more) bubbles.
+    // Active は少なくとも同数（通常はより多く）の泡を持つはず。
     assert!(active_bubbles >= calm_bubbles);
 }
 
-// ── Space ────────────────────────────────────────────────────────
+// Space
 
 #[test]
 fn space_initializes_on_first_tick() {
@@ -93,13 +93,13 @@ fn space_skips_small_area() {
 #[test]
 fn space_shooting_stars_spawn_in_active() {
     let mut state = SpaceState::default();
-    // Run enough ticks to trigger shooting star spawning.
+    // 流れ星の生成をトリガーするのに十分なティック数を実行する。
     for t in 0..100 {
         tick_space(&mut state, t, 30, 8, DecorationActivity::Active);
     }
-    // At least one shooting star should have spawned over 100 ticks.
-    // (They may have already left the screen, but we should see the
-    // mechanism works by checking planets still exist.)
+    // 100ティックの間に少なくとも1つの流れ星が生成されているはず。
+    // （すでに画面外に出ている可能性はあるが、惑星がまだ存在することを
+    // 確認すれば仕組みが動いていることは分かる。）
     assert!(state.initialized);
 }
 
@@ -108,12 +108,12 @@ fn space_planets_bounce() {
     let mut state = SpaceState::default();
     tick_space(&mut state, 0, 10, 6, DecorationActivity::Calm);
     let initial_x = state.planets[0].x;
-    // Tick enough to move the planet.
+    // 惑星が動くのに十分な回数ティックする。
     for t in 1..200 {
         tick_space(&mut state, t, 10, 6, DecorationActivity::Calm);
     }
-    // Planet should have moved and bounced, ending at a different position.
-    // (It might be back near start after enough bounces, so just verify it moved.)
+    // 惑星は移動と跳ね返りを経て、開始位置とは異なる位置にいるはず。
+    // （跳ね返りを繰り返した結果、開始位置付近に戻ることもあり得るため、動いたことだけを確認する。）
     let final_x = state.planets[0].x;
     assert!(
         (final_x - initial_x).abs() > 0.01 || state.planets[0].direction != 1,
@@ -121,7 +121,7 @@ fn space_planets_bounce() {
     );
 }
 
-// ── Garden ───────────────────────────────────────────────────────
+// Garden
 
 #[test]
 fn garden_initializes_on_first_tick() {
@@ -146,8 +146,8 @@ fn garden_birds_appear_when_active() {
     for t in 0..100 {
         tick_garden(&mut state, t, 20, 6, DecorationActivity::Active);
     }
-    // Birds should have been spawned at least once during 100 Active ticks.
-    // They may have left the area, so we just check the system didn't panic.
+    // 100回の Active ティックの間に少なくとも1回は鳥が生成されているはず。
+    // すでにエリア外に出ている可能性があるため、ここではパニックしないことだけを確認する。
     assert!(state.initialized);
 }
 
@@ -167,7 +167,7 @@ fn garden_butterflies_stay_in_bounds() {
     }
 }
 
-// ── City ─────────────────────────────────────────────────────────
+// City
 
 #[test]
 fn city_initializes_on_first_tick() {
@@ -210,24 +210,24 @@ fn city_more_cars_when_active() {
 fn city_cars_wrap_around() {
     let mut state = CityState::default();
     tick_city(&mut state, 0, 10, 6, DecorationActivity::Calm);
-    // Force car to far right.
+    // 車を右端まで強制的に動かす。
     state.cars[0].x = 9.0;
     state.cars[0].direction = 1;
     state.cars[0].speed = 5.0;
     for t in 1..20 {
         tick_city(&mut state, t, 10, 6, DecorationActivity::Calm);
     }
-    // Car should have wrapped around to the left side.
+    // 車は左側へ回り込んでいるはず。
     assert!(state.cars[0].x < 9.0, "car should have wrapped");
 }
 
-// ── Dispatch ─────────────────────────────────────────────────────
+// Dispatch
 
 #[test]
 fn tick_decoration_dispatches_correctly() {
     let mut states = DecorationStates::default();
 
-    // Tick each mode and verify the corresponding state got initialized.
+    // 各モードをティックし、対応する状態が初期化されたことを確認する。
     tick_decoration(
         &mut states,
         0,

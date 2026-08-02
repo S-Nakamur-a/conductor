@@ -1,7 +1,6 @@
-//! Terminal panel helpers — PTY forwarding, session spawning, tab clicks.
+//! ターミナルパネルのヘルパー — PTY への転送、セッションの起動、タブクリック。
 //!
-//! The `KeyEvent` → ANSI byte sequence conversion used by
-//! [`forward_key_to_pty`] lives in the [`ansi`] submodule.
+//! forward_key_to_pty が使う KeyEvent → ANSI バイト列変換は ansi サブモジュールにある。
 
 mod ansi;
 
@@ -12,12 +11,13 @@ use crate::terminal_link;
 
 use ansi::key_event_to_ansi;
 
-/// Forward a key event to the PTY session at the given index.
+/// 指定インデックスの PTY セッションへキーイベントを転送する。
 pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
-    // Programs that enable application cursor keys mode (DECCKM) — pagers like
-    // `less`/`bat`, editors like `vim` — expect arrow/Home/End as SS3 (`ESC O`)
-    // rather than CSI (`ESC [`); honor the session's current mode so the keys
-    // actually register (e.g. arrow-key scrolling in `bat`).
+    // アプリケーションカーソルキーモード（DECCKM）を有効にするプログラム —
+    // less/bat のようなページャや vim のようなエディタ — は矢印キーや
+    // Home/End を CSI（ESC [）ではなく SS3（ESC O）として期待する。セッションの
+    // 現在のモードに従うことで、キーが実際に認識される（例: bat での矢印
+    // キースクロール）。
     let app_cursor = app
         .terminal
         .pty_manager
@@ -33,18 +33,18 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
     {
         log::warn!("failed to write to PTY session: {e}");
     } else {
-        // Snap to live view when the user types into the terminal.
+        // ユーザがターミナルに入力したらライブ表示に戻す。
         match app.focus {
             Focus::TerminalClaude => app.terminal.scroll_claude = 0,
             Focus::TerminalShell => app.terminal.scroll_shell = 0,
             _ => {}
         }
-        // Clear CC waiting signal when user sends input to a Claude Code session.
+        // Claude Code セッションにユーザ入力を送ったら CC 待機シグナルをクリアする。
         app.clear_cc_waiting_signal(session_idx);
     }
 }
 
-/// Spawn a new terminal session based on the current focus (Claude Code or Shell).
+/// 現在のフォーカス（Claude Code か Shell）に応じて新しいターミナルセッションを起動する。
 pub(super) fn spawn_terminal_session(app: &mut App) {
     match app.focus {
         Focus::TerminalClaude => {
@@ -72,12 +72,12 @@ pub(super) fn spawn_terminal_session(app: &mut App) {
     }
 }
 
-/// Handle a click on a terminal tab bar.
-/// `is_claude` is `true` for Claude panel, `false` for Shell panel.
+/// ターミナルのタブバーのクリックを処理する。
+/// is_claude は Claude パネルなら true、Shell パネルなら false。
 ///
-/// Click resolution is driven by the hit regions recorded during render
-/// (`tab_bar::render`), so it stays in lockstep with the scrolling tab strip
-/// — `click_col` is an absolute screen column (the recorded regions are too).
+/// クリック判定は描画時（tab_bar::render）に記録されたヒット領域に基づくので、
+/// スクロールするタブストリップと常に一致する — click_col は絶対スクリーン列
+/// （記録されている領域も同様）。
 pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude: bool) {
     use crate::ui::tab_bar::TabAction;
 
@@ -97,8 +97,8 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
 
     match action {
         TabAction::Select(global_idx) => {
-            // Switch to the session (resets scroll + render cache so the panel
-            // re-renders the newly selected session).
+            // セッションを切り替える（スクロールとレンダーキャッシュをリセットし、
+            // 新しく選択したセッションでパネルを再描画させる）。
             if is_claude {
                 app.switch_claude_session(global_idx);
             } else {
@@ -106,25 +106,26 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
             }
         }
         TabAction::Close(global_idx) => {
-            // One click closes, whichever tab it is. This deliberately drops an
-            // earlier guard that only closed the *active* session and merely
-            // selected an inactive one, so a second click was needed to close
-            // it. That guard was paired with the tab colour: the active `[x]`
-            // was `theme.error` ("this kills it") and an inactive one
-            // `theme.muted` ("this only selects"), so behaviour and appearance
-            // agreed. Making every `[x]` close on the first click therefore
-            // required repainting them all `theme.error` — done in
-            // `ui::tab_bar::render`, and not separable from this change. A
-            // grey glyph that silently kills a running session would be a far
-            // worse affordance than the two-click guard ever was.
+            // どのタブであっても1クリックで閉じる。これは、アクティブな
+            // セッションだけを閉じ、非アクティブなセッションは選択するだけに
+            // していた以前のガードを意図的に取り除いたもので、以前は閉じるのに
+            // もう一度クリックが必要だった。そのガードはタブの色分けと対で
+            // 成り立っていた — アクティブな [x] は theme.error（「これは
+            // killする」）、非アクティブなものは theme.muted（「これは選択する
+            // だけ」）で、挙動と見た目が一致していた。すべての [x] を初回
+            // クリックで閉じるようにするには、それらすべてを theme.error で
+            // 塗り直す必要があり（ui::tab_bar::render で実施済み）、この変更と
+            // 切り離せない。グレーのアイコンが黙って実行中セッションを kill
+            // するのは、2クリックのガードよりもはるかに悪いアフォーダンスに
+            // なってしまう。
             app.close_terminal_session(global_idx);
-            // Closing shifts every later session's index down by one, and the
-            // tab labels are fixed-width, so the next tab's `[x]` lands on the
-            // same screen column the one just clicked occupied. A second click
-            // there — a reflexive double-click, or two events drained in the
-            // same frame before a repaint — would resolve against the stale
-            // hit map and kill a session the user never aimed at. Dropping the
-            // hit regions forces the next click to wait for a fresh render.
+            // 閉じると以降のセッションのインデックスが1つずつ繰り上がり、
+            // タブのラベルは固定幅なので、次のタブの [x] はいま閉じたタブと
+            // 同じスクリーン列に来る。そこへの2回目のクリック — 反射的な
+            // ダブルクリックや、再描画前に同じフレームで2つのイベントが
+            // 処理された場合 — は古いヒットマップに対して解決され、ユーザが
+            // 狙っていなかったセッションを kill してしまう。ヒット領域を
+            // クリアすることで、次のクリックは新しい描画を待つことになる。
             if is_claude {
                 app.terminal.claude_tab_hits.clear();
             } else {
@@ -174,10 +175,10 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
     }
 }
 
-/// Scan recent terminal output for file paths and open the first found in Viewer.
+/// 直近のターミナル出力からファイルパスを探し、最初に見つかったものを Viewer で開く。
 ///
-/// Triggered by `Ctrl+G` (or user-configured key). Scans the visible screen
-/// rows of the active PTY session, starting from the cursor row upward.
+/// Ctrl+G（またはユーザ設定のキー）で発火する。アクティブな PTY セッションの
+/// 画面に表示されている行を、カーソル行から上方向へスキャンする。
 pub(super) fn open_file_from_terminal_output(app: &mut App) {
     let (session_idx, scroll_offset) = match app.focus {
         Focus::TerminalClaude => (
@@ -205,7 +206,7 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
     // 認識されたのに開くと空」になる。
     let wt_path = app.viewer_state.root().to_path_buf();
 
-    // Lock the parser, set scrollback, scan rows from cursor upward.
+    // パーサをロックし、scrollback を設定して、カーソル行から上方向に行をスキャンする。
     let found = {
         let mut parser = screen_arc.lock().unwrap_or_else(|e| e.into_inner());
         parser.set_scrollback(scroll_offset);
@@ -214,7 +215,7 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
         let cursor_row = screen.cursor_position().0;
 
         let mut result = None;
-        // Scan from cursor row upward to find the most recent file reference.
+        // カーソル行から上方向にスキャンし、直近のファイル参照を探す。
         for offset in 0..rows {
             let r = if cursor_row >= offset {
                 cursor_row - offset

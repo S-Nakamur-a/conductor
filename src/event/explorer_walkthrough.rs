@@ -1,5 +1,5 @@
-//! Explorer walkthrough-view key handling (the AI walkthrough shown in the
-//! Explorer's bottom pane, see `viewer::ExplorerBottomView::Walkthrough`).
+//! Explorer walkthrough ビューのキー処理（Explorer 下部ペインに表示される AI walkthrough、
+//! viewer::ExplorerBottomView::Walkthrough を参照）。
 
 use crossterm::event::KeyEvent;
 
@@ -8,7 +8,7 @@ use crate::keymap::{Action, KeyContext};
 
 use super::adjust_walkthrough_scroll;
 
-/// Handle keys while the Explorer's Walkthrough view is focused.
+/// Explorer の Walkthrough ビューにフォーカスがある間のキー処理。
 pub(super) fn handle_explorer_walkthrough_key(app: &mut App, key: KeyEvent) {
     let len = app
         .walkthrough.current
@@ -30,9 +30,9 @@ pub(super) fn handle_explorer_walkthrough_key(app: &mut App, key: KeyEvent) {
         Some(Action::Select) => app.walkthrough_jump_selected(),
         Some(Action::WalkthroughNextStep) => app.walkthrough_step(1),
         Some(Action::WalkthroughPrevStep) => app.walkthrough_step(-1),
-        // Reuses the comment list's detail-overlay action name (see
-        // default_keybinds.toml's `[layers.explorer_walkthrough]`) — the
-        // walkthrough view's own detail overlay, not the comment one.
+        // コメントリストの detail-overlay アクション名を流用している (default_keybinds.toml の
+        // [layers.explorer_walkthrough] を参照)。開くのは walkthrough ビュー自身の detail overlay
+        // であり、コメントの detail overlay ではない。
         Some(Action::ViewCommentDetail) if len > 0 => {
             app.viewer_state.explorer.walkthrough_detail_active = true;
         }

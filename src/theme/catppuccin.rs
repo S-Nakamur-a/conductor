@@ -1,12 +1,12 @@
-//! Catppuccin palettes: Mocha (dark, the app default) and Latte (light).
+//! Catppuccin パレット: Mocha(ダーク、アプリのデフォルト)と Latte(ライト)。
 
 use super::Theme;
 use ratatui::style::Color;
 
 impl Theme {
-    /// Default theme — the official Catppuccin Mocha palette.
+    /// デフォルトテーマ — 公式の Catppuccin Mocha パレット。
     ///
-    /// Palette reference (https://catppuccin.com/palette): Base #1e1e2e,
+    /// パレット参照(https://catppuccin.com/palette): Base #1e1e2e,
     /// Mantle #181825, Surface0 #313244, Surface1 #45475a, Surface2 #585b70,
     /// Overlay0 #6c7086, Overlay1 #7f849c, Text #cdd6f4, Subtext0 #a6adc8,
     /// Mauve #cba6f7, Blue #89b4fa, Sky #89dceb, Green #a6e3a1, Red #f38ba8,
@@ -67,19 +67,19 @@ impl Theme {
             status_bg_info: Color::Rgb(24, 36, 48),
 
             comment_preview_bg: Color::Rgb(49, 50, 68), // Surface0
-            comment_user_bg: Color::Rgb(40, 56, 58),    // teal-leaning surface
+            comment_user_bg: Color::Rgb(40, 56, 58),    // teal寄りの surface
             reply_text: Color::Rgb(166, 173, 200),      // Subtext0
 
             code_bg: Color::Rgb(17, 17, 27), // Crust
             code_fg: Color::Rgb(245, 194, 231), // Pink
 
-            panel_focused_bg: Color::Rgb(40, 41, 58), // between Base and Surface0
+            panel_focused_bg: Color::Rgb(40, 41, 58), // Base と Surface0 の中間
         }
     }
 
-    /// Catppuccin Latte — the official light variant of Catppuccin.
+    /// Catppuccin Latte — Catppuccin の公式ライトバリアント。
     ///
-    /// Palette reference (https://catppuccin.com/palette): Base #eff1f5,
+    /// パレット参照(https://catppuccin.com/palette): Base #eff1f5,
     /// Mantle #e6e9ef, Surface0 #ccd0da, Surface1 #bcc0cc, Surface2 #acb0be,
     /// Overlay0 #9ca0b0, Overlay1 #8c8fa1, Text #4c4f69, Subtext0 #6c6f85,
     /// Mauve #8839ef, Blue #1e66f5, Sky #04a5e5, Green #40a02b, Red #d20f39,
@@ -109,7 +109,7 @@ impl Theme {
             border_secondary: Color::Rgb(172, 176, 190), // Surface2
 
             selected_bg: Color::Rgb(136, 57, 239),  // Mauve
-            selected_fg: Color::Rgb(239, 241, 245), // Base (near-white)
+            selected_fg: Color::Rgb(239, 241, 245), // Base(白に近い)
             selected_bg_inactive: Color::Rgb(204, 208, 218), // Surface0
             selected_fg_inactive: Color::Rgb(76, 79, 105),   // Text
 
@@ -119,13 +119,13 @@ impl Theme {
             gutter_selected_bg: Color::Rgb(30, 102, 245), // Blue
             gutter_selected_fg: Color::Rgb(239, 241, 245), // Base
             gutter_hover_fg: Color::Rgb(140, 143, 161),   // Overlay1
-            gutter_hover_bg: Color::Rgb(224, 227, 236),   // between Base and Surface0
-            gutter_pending_bg: Color::Rgb(189, 211, 252), // light blue
-            line_pending_bg: Color::Rgb(236, 240, 252),   // very light blue
+            gutter_hover_bg: Color::Rgb(224, 227, 236),   // Base と Surface0 の中間
+            gutter_pending_bg: Color::Rgb(189, 211, 252), // 明るい青
+            line_pending_bg: Color::Rgb(236, 240, 252),   // ごく明るい青
 
             hint: Color::Rgb(156, 160, 176),            // Overlay0
             search_match_fg: Color::Rgb(223, 142, 29),  // Yellow
-            search_match_bg: Color::Rgb(252, 238, 190), // light yellow
+            search_match_bg: Color::Rgb(252, 238, 190), // 明るい黄色
             search_current_fg: Color::Rgb(76, 79, 105), // Text
 
             waiting_primary: Color::Rgb(254, 100, 11),  // Peach
@@ -140,13 +140,13 @@ impl Theme {
             status_bg_info: Color::Rgb(208, 232, 252),
 
             comment_preview_bg: Color::Rgb(204, 208, 218), // Surface0
-            comment_user_bg: Color::Rgb(196, 228, 220),    // teal-tinted light
+            comment_user_bg: Color::Rgb(196, 228, 220),    // teal がかった明るい色
             reply_text: Color::Rgb(108, 111, 133),         // Subtext0
 
             code_bg: Color::Rgb(230, 233, 239),  // Mantle
             code_fg: Color::Rgb(234, 118, 203),  // Pink
 
-            panel_focused_bg: Color::Rgb(220, 223, 232), // between Base and Surface0
+            panel_focused_bg: Color::Rgb(220, 223, 232), // Base と Surface0 の中間
         }
     }
 }

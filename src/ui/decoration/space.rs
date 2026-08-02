@@ -1,5 +1,4 @@
-//! Space decoration mode ⭐🌙🪐🌠🚀 — twinkling stars, drifting planets, and
-//! the occasional shooting star or rocket.
+//! スペース装飾モード ⭐🌙🪐🌠🚀 — 瞬く星、漂う惑星、時折現れる流れ星やロケット。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,24 +7,24 @@ use crate::theme::Theme;
 
 use super::{DecorationActivity, pseudo_random, render_grid};
 
-/// A twinkling star in the night sky.
+/// 夜空で瞬く星。
 #[derive(Debug, Clone)]
 pub struct Star {
     pub x: u16,
     pub y: u16,
-    /// Twinkling phase — the star is visible when this is above a threshold.
+    /// 瞬きの位相 — この値が閾値を超えると星が見える。
     pub phase: u16,
     pub emoji: &'static str,
 }
 
-/// A shooting star streaking across the sky.
+/// 空を横切る流れ星。
 #[derive(Debug, Clone)]
 pub struct ShootingStar {
     pub x: f32,
     pub y: f32,
 }
 
-/// A planet drifting horizontally.
+/// 水平に漂う惑星。
 #[derive(Debug, Clone)]
 pub struct Planet {
     pub x: f32,
@@ -35,7 +34,7 @@ pub struct Planet {
     pub emoji: &'static str,
 }
 
-/// Full space animation state.
+/// スペースアニメーションの状態全体。
 #[derive(Debug, Clone, Default)]
 pub struct SpaceState {
     pub stars: Vec<Star>,
@@ -93,7 +92,7 @@ fn initialize_space(state: &mut SpaceState, width: u16, height: u16) {
     state.initialized = true;
 }
 
-/// Advance space animation by one tick.
+/// スペースアニメーションを1ティック進める。
 pub(super) fn tick_space(
     state: &mut SpaceState,
     tick: u64,
@@ -108,14 +107,14 @@ pub(super) fn tick_space(
         initialize_space(state, width, height);
     }
 
-    // Twinkle stars — advance phase every tick.
+    // 星を瞬かせる — 毎ティック位相を進める。
     for (i, star) in state.stars.iter_mut().enumerate() {
-        // Each star has a different twinkle speed derived from its index.
+        // 各星はインデックスから導出した異なる瞬きの速さを持つ。
         let speed = 3 + (i as u16 % 5);
         star.phase = star.phase.wrapping_add(speed) % 100;
     }
 
-    // Move planets slowly.
+    // 惑星をゆっくり動かす。
     if tick.is_multiple_of(5) {
         let max_x = width.saturating_sub(2) as f32;
         for planet in &mut state.planets {
@@ -130,7 +129,7 @@ pub(super) fn tick_space(
         }
     }
 
-    // Move shooting stars (fast diagonal — every tick).
+    // 流れ星を動かす（毎ティック、速い斜め移動）。
     for ss in &mut state.shooting_stars {
         ss.x += 1.5;
         ss.y += 0.5;
@@ -139,7 +138,7 @@ pub(super) fn tick_space(
         .shooting_stars
         .retain(|ss| (ss.x as u16) < width && (ss.y as u16) < height);
 
-    // Spawn shooting stars based on activity.
+    // activity に応じて流れ星を生成する。
     let (spawn_interval, max_shooting) = match activity {
         DecorationActivity::Calm => (25_u64, 1_usize),
         DecorationActivity::Active => (10, 3),
@@ -150,11 +149,11 @@ pub(super) fn tick_space(
         state.shooting_stars.push(ShootingStar { x, y });
     }
 
-    // In Active mode, occasionally turn a shooting star into a rocket (reuse slot).
-    // We represent rockets as shooting stars with a flag via the emoji chosen at render time.
+    // アクティブモードでは、時々流れ星をロケットに変える（スロットを再利用）。
+    // ロケットは専用のフラグを持たず、描画時に選ぶ絵文字だけで流れ星と区別する。
 }
 
-/// Render the space scene.
+/// スペースのシーンを描画する。
 pub(super) fn render_space(frame: &mut Frame, area: Rect, state: &SpaceState, theme: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;
@@ -164,7 +163,7 @@ pub(super) fn render_space(frame: &mut Frame, area: Rect, state: &SpaceState, th
     let h = area.height as usize;
     let mut grid: Vec<Vec<Option<&str>>> = vec![vec![None; w]; h];
 
-    // Place stars (visible when phase > 40 — roughly 60% of the time).
+    // 星を配置する（phase > 40 のとき表示、おおよそ6割の時間）。
     for star in &state.stars {
         if star.phase > 40 {
             let col = (star.x as usize).min(w.saturating_sub(2));
@@ -175,7 +174,7 @@ pub(super) fn render_space(frame: &mut Frame, area: Rect, state: &SpaceState, th
         }
     }
 
-    // Place planets.
+    // 惑星を配置する。
     for planet in &state.planets {
         let col = (planet.x as usize).min(w.saturating_sub(2));
         let row = (planet.y as usize).min(h.saturating_sub(1));
@@ -184,12 +183,12 @@ pub(super) fn render_space(frame: &mut Frame, area: Rect, state: &SpaceState, th
         }
     }
 
-    // Place shooting stars / rockets.
+    // 流れ星・ロケットを配置する。
     for (i, ss) in state.shooting_stars.iter().enumerate() {
         let col = (ss.x as usize).min(w.saturating_sub(2));
         let row = (ss.y as usize).min(h.saturating_sub(1));
         if col + 1 < w {
-            // First shooting star in Active mode renders as a rocket.
+            // アクティブモードでは最初の流れ星をロケットとして描画する。
             let emoji = if i == 0 { ROCKET } else { SHOOTING_STAR };
             grid[row][col] = Some(emoji);
         }

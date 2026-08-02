@@ -1,10 +1,10 @@
-//! Theme-name resolution: maps the config `theme` string to a built-in
-//! palette constructor, and lists all built-in names for the theme picker.
+//! テーマ名の解決。設定ファイルの theme 文字列を組み込みパレットのコンストラクタに
+//! マッピングし、テーマピッカー用に全組み込み名を一覧できるようにする。
 
 use super::Theme;
 
 impl Theme {
-    /// Load a theme by name. Returns the built-in default if name is unrecognized.
+    /// 名前でテーマを読み込む。未知の名前なら組み込みのデフォルトを返す。
     pub fn from_name(name: &str) -> Self {
         match name {
             "catppuccin-mocha" => Self::catppuccin_mocha(),
@@ -22,8 +22,8 @@ impl Theme {
         }
     }
 
-    /// All built-in theme names in display order: dark themes first, then light.
-    /// Used by the theme-picker UI and OSC11 auto-detection switch.
+    /// 表示順に並んだ全組み込みテーマ名(先にダークテーマ、次にライトテーマ)。
+    /// テーマピッカー UI と OSC11 自動判定の切り替えで使う。
     pub fn all_names() -> &'static [&'static str] {
         &[
             "catppuccin-mocha",

@@ -1,6 +1,6 @@
-//! The `wt grab`/`wt ungrab` branch-swap workflow: moving a branch checked
-//! out in one worktree onto another, and reversing it, with persisted state
-//! for crash recovery and zsh `wt` compatibility.
+//! wt grab/wt ungrab によるブランチ入れ替えワークフロー: ある worktree で
+//! チェックアウト中のブランチを別の worktree へ移し、また元に戻す。クラッシュ
+//! からの復旧と zsh の wt との互換性のため状態を永続化する。
 
 use std::path::{Path, PathBuf};
 
@@ -10,14 +10,14 @@ use git2::Repository;
 use super::GitEngine;
 
 impl GitEngine {
-    // ── Grab / Ungrab ──────────────────────────────────────────────
+    // Grab / Ungrab
 
-    /// Check whether a worktree has uncommitted changes to tracked files.
+    /// worktree に tracked ファイルの未コミット変更があるか確認する。
     ///
-    /// Uses `git diff --quiet HEAD` (shell-out) to match the behaviour of the
-    /// `wt grab` zsh helper exactly.  libgit2's status API can report extra
-    /// entries (renames, type-changes, ignored-file edge-cases) that
-    /// `git diff HEAD` does not, causing false positives.
+    /// wt grab zsh ヘルパーの挙動と正確に一致させるため git diff --quiet
+    /// HEAD(シェルアウト)を使う。libgit2 の status API は git diff HEAD
+    /// が報告しない余分なエントリ(rename、type-change、ignored ファイルの
+    /// エッジケース)を報告することがあり、誤検知の原因になる。
     pub fn has_tracked_changes(&self, worktree_path: &Path) -> Result<bool> {
         use std::process::{Command, Stdio};
 
@@ -34,12 +34,12 @@ impl GitEngine {
         Ok(!status.success())
     }
 
-    /// Return the git common dir (`.git/` for main, resolved via commondir
-    /// for linked worktrees).  This is the shared directory where refs,
-    /// objects, and our `wt-grab` state file live.
+    /// git の共有ディレクトリを返す(main worktree なら .git/、linked
+    /// worktree なら commondir 経由で解決したパス)。ここが ref、object、
+    /// そして自前の wt-grab 状態ファイルが置かれる共有ディレクトリになる。
     pub fn git_common_dir(&self) -> Result<PathBuf> {
-        let git_dir = self.repo.path(); // .git/ or .git/worktrees/<name>/
-        // Check for .git/worktrees/<name>/commondir which points to the shared .git/.
+        let git_dir = self.repo.path(); // .git/ か .git/worktrees/<name>/
+        // .git/worktrees/<name>/commondir があれば、共有 .git/ を指しているか確認する。
         let commondir_file = git_dir.join("commondir");
         if commondir_file.exists() {
             let content =
@@ -48,13 +48,13 @@ impl GitEngine {
             let resolved = git_dir.join(relative);
             return Ok(resolved.canonicalize().unwrap_or(resolved));
         }
-        // Already the main repo's .git/ directory.
+        // すでに main リポジトリの .git/ ディレクトリである。
         Ok(git_dir.to_path_buf())
     }
 
-    /// Persist grab state to `$git_common_dir/wt-grab`.
-    /// Format: 3 mandatory lines (branch, worktree path, stash branch)
-    /// plus an optional 4th line (Claude Code session ID for resume).
+    /// grab の状態を $git_common_dir/wt-grab に永続化する。
+    /// フォーマット: 必須の3行(branch, worktree path, stash branch)に加え、
+    /// 任意の4行目(resume 用の Claude Code セッション ID)。
     pub fn save_grab_state(
         &self,
         branch: &str,
@@ -77,9 +77,10 @@ impl GitEngine {
             .with_context(|| format!("failed to write {}", grab_file.display()))
     }
 
-    /// Load grab state from `$git_common_dir/wt-grab`.
-    /// Returns `(branch, source_worktree_path, stash_branch, claude_session_id)` or `None`
-    /// if the file does not exist. The 4th field (session ID) is optional.
+    /// grab の状態を $git_common_dir/wt-grab から読み込む。
+    /// ファイルが存在しない場合は (branch, source_worktree_path,
+    /// stash_branch, claude_session_id) の代わりに None を返す。4番目の
+    /// フィールド(session ID)は任意。
     #[allow(clippy::type_complexity)]
     pub fn load_grab_state(&self) -> Result<Option<(String, PathBuf, String, Option<String>)>> {
         let grab_file = self.git_common_dir()?.join("wt-grab");
@@ -109,7 +110,7 @@ impl GitEngine {
         Ok(Some((branch, wt_path, stash_branch, claude_session_id)))
     }
 
-    /// Remove the `$git_common_dir/wt-grab` state file.
+    /// $git_common_dir/wt-grab の状態ファイルを削除する。
     pub fn remove_grab_state(&self) -> Result<()> {
         let grab_file = self.git_common_dir()?.join("wt-grab");
         if grab_file.exists() {
@@ -119,11 +120,11 @@ impl GitEngine {
         Ok(())
     }
 
-    /// Grab a branch: move the source worktree to a temporary `__grab`
-    /// branch, then checkout main to the original branch.
+    /// ブランチを grab する: source worktree を一時的な __grab ブランチへ
+    /// 移し、main を元のブランチへチェックアウトする。
     ///
-    /// Requires both worktrees to have no uncommitted tracked changes.
-    /// Persists state to `$git_common_dir/wt-grab`.
+    /// 両方の worktree に未コミットの tracked 変更がないことが前提。
+    /// 状態は $git_common_dir/wt-grab に永続化する。
     pub fn grab_branch(
         &self,
         main_path: &Path,
@@ -142,7 +143,7 @@ impl GitEngine {
 
         let grab_branch_name = format!("{branch_name}__grab");
 
-        // Create __grab branch on source worktree and checkout it.
+        // source worktree に __grab ブランチを作成してチェックアウトする。
         let source_repo = Repository::open(source_worktree_path).with_context(|| {
             format!("cannot open worktree at {}", source_worktree_path.display())
         })?;
@@ -157,7 +158,7 @@ impl GitEngine {
             .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .context("failed to checkout __grab branch")?;
 
-        // Checkout main worktree to the original branch.
+        // main worktree を元のブランチへチェックアウトする。
         let main_repo = Repository::open(main_path)
             .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
         main_repo
@@ -167,7 +168,7 @@ impl GitEngine {
             .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .with_context(|| format!("failed to checkout '{branch_name}' in main worktree"))?;
 
-        // Persist grab state for crash recovery and zsh `wt` compatibility.
+        // クラッシュ復旧と zsh の wt との互換性のため grab 状態を永続化する。
         self.save_grab_state(
             branch_name,
             source_worktree_path,
@@ -178,12 +179,12 @@ impl GitEngine {
         Ok(())
     }
 
-    /// Ungrab: return main to main branch, restore source worktree to
-    /// original branch, and delete the temporary `__grab` branch.
+    /// ungrab: main を main ブランチへ戻し、source worktree を元のブランチへ
+    /// 復元し、一時的な __grab ブランチを削除する。
     ///
-    /// Requires both worktrees to have no uncommitted tracked changes.
-    /// Uses `set_head` + hard `reset` so that the index and working tree
-    /// are reliably updated even when commits have been added after grab.
+    /// 両方の worktree に未コミットの tracked 変更がないことが前提。grab の後
+    /// にコミットが追加されていても index と working tree が確実に更新される
+    /// よう set_head + hard reset を使う。
     pub fn ungrab_branch(
         &self,
         main_path: &Path,
@@ -200,9 +201,9 @@ impl GitEngine {
             );
         }
 
-        // Checkout main worktree back to main branch.
-        // Scope the main_repo so it is dropped (and file handles released)
-        // before we open the source worktree repo.
+        // main worktree を main ブランチへ戻す。
+        // source worktree の repo を開く前に main_repo を drop(ファイル
+        // ハンドルを解放)させるためスコープで囲む。
         {
             let main_repo = Repository::open(main_path)
                 .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
@@ -215,7 +216,7 @@ impl GitEngine {
                 .with_context(|| format!("failed to reset main worktree to '{main_branch}'"))?;
         }
 
-        // Checkout source worktree back to original branch.
+        // source worktree を元のブランチへ戻す。
         let source_repo = Repository::open(source_worktree_path).with_context(|| {
             format!("cannot open worktree at {}", source_worktree_path.display())
         })?;
@@ -227,7 +228,7 @@ impl GitEngine {
             .reset(head_commit.as_object(), git2::ResetType::Hard, None)
             .with_context(|| format!("failed to reset worktree to '{branch_name}'"))?;
 
-        // Delete the temporary __grab branch.
+        // 一時的な __grab ブランチを削除する。
         let grab_branch_name = format!("{branch_name}__grab");
         if let Ok(mut grab_branch) =
             source_repo.find_branch(&grab_branch_name, git2::BranchType::Local)
@@ -235,7 +236,7 @@ impl GitEngine {
             let _ = grab_branch.delete();
         }
 
-        // Remove the persisted grab state file.
+        // 永続化していた grab 状態ファイルを削除する。
         self.remove_grab_state()?;
 
         Ok(())

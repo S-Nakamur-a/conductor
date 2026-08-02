@@ -1,14 +1,14 @@
-//! Menu table invariants and the pure navigation rules.
+//! メニューテーブルの不変条件と、純粋なナビゲーションのルール。
 //!
-//! `every_command_is_reachable` is the load-bearing one: it is what makes
-//! "every operation is reachable from the menu" a checked property rather than
-//! a claim that rots the next time a command is added.
+//! every_command_is_reachable が要となるテストである。「すべての操作は
+//! メニューから到達できる」を、コマンド追加のたびに陳腐化しかねない主張ではなく
+//! 検証済みの性質にしているのはこのテストである。
 
 use super::model::{INTENTIONALLY_UNLISTED, MENUS, MenuItem};
 use super::state::{find_by_initial, first_selectable, last_selectable, step_menu, step_selection};
 use crate::command_palette::{COMMANDS, CommandId};
 
-/// Every command in a menu, flattened.
+/// メニュー内のすべてのコマンドをフラットにしたもの。
 fn menu_command_ids() -> Vec<CommandId> {
     MENUS
         .iter()
@@ -60,9 +60,10 @@ fn no_command_appears_on_two_menus() {
 
 #[test]
 fn every_menu_command_exists_in_the_palette_table() {
-    // The menu runs commands through `execute_palette_command`, so a menu entry
-    // for an id absent from COMMANDS would be a row with no shortcut hint and
-    // no palette twin — a sign the two tables drifted.
+    // メニューは execute_palette_command 経由でコマンドを実行するため、
+    // COMMANDS に存在しない id のメニュー項目は、ショートカットのヒントも
+    // パレット側の対応項目も持たない行になってしまう。それは2つのテーブルが
+    // ずれてしまった兆候である。
     for id in menu_command_ids() {
         assert!(
             COMMANDS.iter().any(|c| c.id == id),
@@ -105,7 +106,7 @@ fn menus_have_no_leading_trailing_or_doubled_separators() {
     }
 }
 
-// ── Navigation ─────────────────────────────────────────────────────────────
+// ナビゲーション
 
 fn sample() -> Vec<MenuItem> {
     vec![
@@ -128,9 +129,9 @@ fn sample() -> Vec<MenuItem> {
 #[test]
 fn step_selection_skips_separators() {
     let items = sample();
-    // 0 → (skip the separator at 1) → 2
+    // 0 → (1にある区切りをスキップ) → 2
     assert_eq!(step_selection(&items, 0, 1), 2);
-    // and back up again
+    // 逆方向も同様
     assert_eq!(step_selection(&items, 2, -1), 0);
 }
 
@@ -159,7 +160,7 @@ fn step_selection_handles_an_empty_menu() {
 
 #[test]
 fn step_selection_clamps_an_out_of_range_start() {
-    // A stale index (menu table changed under a live selection) must not panic.
+    // 古いインデックス(選択中にメニューテーブルが変わった場合)でも panic しないこと。
     let items = sample();
     assert!(step_selection(&items, 99, 1) < items.len());
 }
@@ -184,9 +185,9 @@ fn first_and_last_selectable_find_the_edges() {
 #[test]
 fn find_by_initial_matches_case_insensitively_and_wraps() {
     let items = sample();
-    // From "Alpha" (0), the next 'a' is "Alto" (3) — not itself.
+    // "Alpha"(0)から見ると次の 'a' は "Alto"(3) — 自分自身ではない。
     assert_eq!(find_by_initial(&items, 0, 'a'), Some(3));
-    // From "Alto" (3) it wraps back around to "Alpha" (0).
+    // "Alto"(3)からはラップして "Alpha"(0) に戻る。
     assert_eq!(find_by_initial(&items, 3, 'A'), Some(0));
     assert_eq!(find_by_initial(&items, 0, 'b'), Some(2));
     assert_eq!(find_by_initial(&items, 0, 'z'), None);

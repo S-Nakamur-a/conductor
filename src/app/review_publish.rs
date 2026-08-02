@@ -1,8 +1,8 @@
-//! Publish-to-GitHub orchestration for [`App`]: computing what's publishable,
-//! driving the y/n confirm overlay (`App::publish_confirm`), and running the
-//! background `gh api` call. The actual `gh` CLI/JSON spelling lives in
-//! `crate::review_publish`, mirroring how `pr_intake.rs` is kept separate
-//! from its `app/worktree.rs` orchestration.
+//! [App] における GitHub への publish のオーケストレーション: 何が publish
+//! 可能かの算出、y/n 確認オーバーレイ(App::publish_confirm)の駆動、
+//! バックグラウンドでの gh api 呼び出しの実行を担う。実際の gh CLI/JSON の
+//! 綴りは crate::review_publish 側にある。pr_intake.rs がその
+//! app/worktree.rs のオーケストレーションと切り離されているのと同じ構成。
 
 use chrono::Utc;
 
@@ -11,11 +11,11 @@ use crate::review_publish::{PublishComment, PublishConfirm, PublishOutcome, Publ
 use super::*;
 
 impl App {
-    /// `Action::PublishReview`: compute the current branch's unpublished,
-    /// in-diff comments and open the y/n confirm overlay (`Enter`/`y`/`n`
-    /// handled in `event/mod.rs`'s `handle_publish_confirm_key`). A no-op
-    /// with a status message instead of an overlay when there's nothing to
-    /// confirm (no PR, no `gh`-publishable comments).
+    /// Action::PublishReview: 現在のブランチの、未公開かつ diff 内にある
+    /// コメントを算出し、y/n 確認オーバーレイを開く(Enter/y/n は
+    /// event/mod.rs の handle_publish_confirm_key で処理される)。確認する
+    /// ものが何もない場合(PR がない、gh に publish できるコメントがない)
+    /// はオーバーレイを出さずステータスメッセージのみを出す。
     pub fn cmd_publish_review(&mut self) {
         let Some(store) = self.review_store.as_ref() else {
             self.set_status(
@@ -102,9 +102,9 @@ impl App {
         });
     }
 
-    /// A comment's body with its replies appended (v1 has no GitHub-side
-    /// reply thread — a comment with replies is flattened into one comment
-    /// body, per ADR-6).
+    /// コメント本文に返信を付け足したもの(現バージョンには GitHub 側の
+    /// 返信スレッドがない — 返信付きのコメントは1つのコメント本文にまとめて
+    /// フラット化する、という設計判断による)。
     fn comment_body_with_replies(
         &self,
         store: &ReviewStore,
@@ -123,9 +123,9 @@ impl App {
         out
     }
 
-    /// Confirm the pending publish (`y`): hand the confirmed request off to a
-    /// background thread. A no-op if there's nothing pending or a publish is
-    /// already running.
+    /// 保留中の publish を確認する(y): 確認済みのリクエストをバックグラウンド
+    /// スレッドへ渡す。保留中のものがない、または既に publish が実行中の
+    /// 場合は何もしない。
     pub fn confirm_publish_review(&mut self) {
         let Some(confirm) = self.publish.confirm.take() else {
             return;
@@ -154,16 +154,17 @@ impl App {
         );
     }
 
-    /// Cancel the pending publish confirm (`n`/`Esc`).
+    /// 保留中の publish 確認をキャンセルする(n/Esc)。
     pub fn cancel_publish_review(&mut self) {
         self.publish.confirm = None;
         self.set_status("Publish cancelled.".to_string(), StatusLevel::Warning);
     }
 
-    /// Poll the background publish operation (if any) and apply its result:
-    /// mark whichever comments actually posted as published, then report
-    /// what happened. Called from
-    /// [`App::poll_all_background_ops`](Self::poll_all_background_ops).
+    /// バックグラウンドの publish 操作があればポーリングし、その結果を
+    /// 反映する: 実際に投稿できたコメントを published としてマークし、
+    /// 何が起きたかを報告する。
+    /// [App::poll_all_background_ops](Self::poll_all_background_ops) から
+    /// 呼ばれる。
     pub fn poll_publish_review(&mut self) {
         let Some(outcome) = self.publish.op.poll() else {
             return;
@@ -204,8 +205,8 @@ impl App {
         }
     }
 
-    /// Mark the given comment ids published and reload the comment list so
-    /// their new `published_at` is reflected immediately.
+    /// 指定したコメント id を published としてマークし、新しい published_at
+    /// が即座に反映されるようコメント一覧を再読み込みする。
     fn mark_published(&mut self, ids: &[String], timestamp: &str) {
         if ids.is_empty() {
             return;
@@ -219,10 +220,10 @@ impl App {
     }
 }
 
-/// Whether a confirmed publish should actually start a new background
-/// request: never while one is already running, since a stray double
-/// confirm (e.g. `Enter` pressed twice) before the first request completes
-/// would otherwise submit two `gh api` calls for the same comments.
+/// 確認済みの publish が実際に新しいバックグラウンドリクエストを開始すべき
+/// かどうか: 既に実行中の間は決して開始しない。そうしないと、最初の
+/// リクエストが完了する前に誤って二重確認(例えば Enter を2回押す)が
+/// 起きた場合、同じコメントに対して gh api の呼び出しが2回送られてしまう。
 fn should_start_publish(is_running: bool) -> bool {
     !is_running
 }

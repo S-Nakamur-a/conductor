@@ -1,5 +1,5 @@
-//! Listing resumable sessions: full history scan and per-worktree
-//! latest-session lookup.
+//! resume 可能なセッションの一覧化: 履歴全体のスキャンと worktree ごとの
+//! 最新セッション検索。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,8 +10,8 @@ use super::{
     ClaudeHistoryEntry, ResumableSession, format_time_ago, history_file_path, session_file_exists,
 };
 
-/// Load all resumable Claude sessions, optionally filtered to a specific project path.
-/// Returns sessions sorted by timestamp descending (most recent first).
+/// resume 可能な Claude セッションを、必要なら特定のプロジェクトパスで
+/// 絞り込んですべて読み込む。タイムスタンプの降順(最新が先)で返す。
 pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<ResumableSession>> {
     let history_path = match history_file_path() {
         Some(p) if p.exists() => p,
@@ -26,7 +26,7 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
 
     let mut seen_sessions = std::collections::HashSet::new();
 
-    // Parse all valid entries.
+    // 有効なエントリをすべてパースする。
     let mut entries: Vec<ClaudeHistoryEntry> = content
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -34,7 +34,7 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
         .filter(|e| !e.session_id.is_empty())
         .collect();
 
-    // Reverse so we process most-recent entries first for deduplication.
+    // 重複排除のため、最新のエントリから処理できるよう逆順にする。
     entries.reverse();
 
     let mut sessions = Vec::new();
@@ -43,7 +43,7 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
             continue;
         }
 
-        // Optional project filter.
+        // 任意のプロジェクトフィルタ。
         if let Some(proj) = filter_project {
             let proj_str = proj.to_string_lossy();
             if entry.project != *proj_str {
@@ -51,7 +51,7 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
             }
         }
 
-        // Verify the session file still exists on disk.
+        // セッションファイルがまだディスク上に存在するか確認する。
         if !session_file_exists(&entry.session_id, &entry.project) {
             continue;
         }
@@ -74,14 +74,16 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
         });
     }
 
-    // Already in reverse chronological order from the reversal above.
+    // 上の逆順化により、すでに新しい順に並んでいる。
     Ok(sessions)
 }
 
-/// Find the most recent resumable session for each of the given worktree paths.
+/// 指定した worktree パスそれぞれについて、最も新しい resume 可能な
+/// セッションを見つける。
 ///
-/// Reads `history.jsonl` once and returns a map from worktree path to its latest
-/// valid session. Only sessions whose JSONL file still exists on disk are included.
+/// history.jsonl を一度だけ読み、worktree パスからその最新の有効な
+/// セッションへのマップを返す。JSONL ファイルがディスク上に現存する
+/// セッションだけを含める。
 pub fn find_latest_sessions_for_paths(
     paths: &[PathBuf],
 ) -> Result<HashMap<PathBuf, ResumableSession>> {
@@ -99,7 +101,7 @@ pub fn find_latest_sessions_for_paths(
         .unwrap_or_default()
         .as_millis() as u64;
 
-    // Build a set of canonical path strings for fast lookup.
+    // 高速な検索のため、正規化済みパス文字列の集合を作る。
     let path_strs: HashMap<String, PathBuf> = paths
         .iter()
         .map(|p| {
@@ -113,7 +115,7 @@ pub fn find_latest_sessions_for_paths(
         })
         .collect();
 
-    // Parse all valid entries, most recent last (file is in chronological order).
+    // 有効なエントリをすべてパースする(ファイルは時系列順なので、最新は末尾)。
     let entries: Vec<ClaudeHistoryEntry> = content
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -125,14 +127,15 @@ pub fn find_latest_sessions_for_paths(
         entries.len()
     );
 
-    // Track latest entry per path whose session file actually exists.
-    // We validate existence eagerly so that ghost entries (session file
-    // deleted but history entry remains) don't shadow valid older sessions.
+    // セッションファイルが実際に存在するエントリの中で、パスごとに最新の
+    // ものを追跡する。存在確認をここで前もって行うのは、ゴーストエントリ
+    // (セッションファイルは削除済みだが履歴エントリは残っている)が
+    // 有効な古いセッションを覆い隠してしまわないようにするため。
     let mut best: HashMap<String, ClaudeHistoryEntry> = HashMap::new();
     let mut match_count = 0u32;
     let mut skipped_missing = 0u32;
     for entry in entries {
-        // Canonicalize the project path from the history entry for comparison.
+        // 比較のため、履歴エントリのプロジェクトパスを正規化する。
         let entry_path =
             std::fs::canonicalize(&entry.project).unwrap_or_else(|_| PathBuf::from(&entry.project));
         let entry_key = entry_path.to_string_lossy().to_string();
@@ -142,13 +145,13 @@ pub fn find_latest_sessions_for_paths(
         }
         match_count += 1;
 
-        // Skip entries whose session file no longer exists on disk.
+        // セッションファイルがディスク上にもう存在しないエントリはスキップする。
         if !session_file_exists(&entry.session_id, &entry.project) {
             skipped_missing += 1;
             continue;
         }
 
-        // Keep the entry with the highest timestamp.
+        // タイムスタンプが最も新しいエントリを保持する。
         let dominated = best
             .get(&entry_key)
             .is_none_or(|prev| entry.timestamp >= prev.timestamp);
@@ -163,7 +166,7 @@ pub fn find_latest_sessions_for_paths(
         best.len()
     );
 
-    // Convert to ResumableSession.
+    // ResumableSession へ変換する。
     let mut result = HashMap::new();
     for (key, entry) in best {
         let project_name = Path::new(&entry.project)
@@ -194,10 +197,11 @@ pub fn find_latest_sessions_for_paths(
     Ok(result)
 }
 
-// NOTE: there is deliberately no "list the project dir's logs by mtime" helper
-// here. The reflow transcript view used to select its source that way and it
-// leaked other sessions' conversations into the view (see `App::open_reflow`);
-// a transcript is resolved from the panel's own session id via
-// `current_session_log` instead. That function does read the directory, but
-// only to follow a `/clear` rotation, and only across logs that begin with the
-// `/clear` record itself — see `super::rotation`.
+// 注記: ここには意図的に「プロジェクトディレクトリのログを mtime で並べて
+// 一覧する」ヘルパーを置いていない。reflow トランスクリプトビューは以前
+// その方法でソースを選んでおり、他セッションの会話がビューに漏れ出して
+// いた(App::open_reflow を参照)。トランスクリプトは代わりに
+// current_session_log 経由で、パネル自身の session id から解決する。
+// この関数もディレクトリを読むが、それは /clear によるローテーションを
+// 追跡するためだけであり、対象は /clear の記録自体で始まるログに限る —
+// super::rotation を参照。

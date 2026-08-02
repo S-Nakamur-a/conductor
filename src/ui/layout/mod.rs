@@ -1,7 +1,7 @@
-//! Layout rendering — top-level UI orchestration and overlay helpers.
+//! レイアウト描画 — UI全体の統括とオーバーレイ用ヘルパー。
 //!
-//! Contains the main `render_ui` function that composes all panels and overlays,
-//! plus the `accordion_widths` helper for calculating column proportions.
+//! 全パネルとオーバーレイを組み立てる render_ui 関数と、
+//! カラムの比率計算を行う accordion_widths ヘルパーを含む。
 
 mod cache;
 mod overlays;
@@ -11,8 +11,8 @@ mod render;
 mod tests;
 
 pub use cache::LayoutCache;
-// Only consumed by `tests` (cfg(test)) today; kept pub(crate) for parity with
-// the pre-split module surface in case another crate::ui submodule needs it.
+// 現状 tests (cfg(test)) からしか使われていないが、分割前のモジュール構成と揃えるため
+// pub(crate) のまま残している。他の crate::ui サブモジュールが必要とする可能性への備え。
 #[allow(unused_imports)]
 pub(crate) use cache::accordion_widths;
 pub(crate) use render::render_ui;

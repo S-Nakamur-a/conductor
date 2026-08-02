@@ -1,5 +1,5 @@
-//! Worktree creation (from a base ref, an existing branch, or a remote
-//! branch) and keeping a base ref reasonably up to date.
+//! worktree の作成(ベース ref、既存ブランチ、リモートブランチから)と、
+//! ベース ref をそれなりに最新に保つこと。
 
 use std::path::{Path, PathBuf};
 
@@ -8,22 +8,22 @@ use anyhow::{Context, Result, anyhow};
 use super::GitEngine;
 
 impl GitEngine {
-    // ── Worktree creation / deletion ─────────────────────────────
+    // worktree の作成/削除
 
-    /// Create a new worktree branching from a base ref (wt new equivalent).
+    /// ベース ref から分岐する新しい worktree を作成する(wt new に相当)。
     ///
-    /// `branch_name` is the new local branch name.
-    /// `base_ref` is the starting point (e.g. "origin/main").
-    /// `worktree_dir_override` is an optional custom base directory for worktrees
-    /// (from config `general.worktree_dir`).
-    /// The worktree is placed at `<base_dir>/<dir_name>`.
+    /// branch_name は新しいローカルブランチ名。
+    /// base_ref は起点(例: "origin/main")。
+    /// worktree_dir_override は worktree 用のカスタムベースディレクトリ
+    /// (config の general.worktree_dir から)を任意で指定する。
+    /// worktree は <base_dir>/<dir_name> に配置される。
     pub fn create_worktree_from_base(
         &self,
         branch_name: &str,
         base_ref: &str,
         worktree_dir_override: Option<&Path>,
     ) -> Result<PathBuf> {
-        // Prevent accidental origin/ prefix on branch name.
+        // ブランチ名に誤って origin/ prefix が付くのを防ぐ。
         if branch_name.starts_with("origin/") {
             anyhow::bail!(
                 "Branch name starts with 'origin/'. Did you mean to use switch?\n\
@@ -39,14 +39,15 @@ impl GitEngine {
             anyhow::bail!("directory already exists: {}", wt_path.display());
         }
 
-        // Force-prune any existing worktree entry with this name.
+        // この名前の既存 worktree エントリがあれば強制的に整理する。
         self.force_prune_worktree_entry(dir_name);
 
-        // Use `git worktree add` CLI — more reliable than libgit2's worktree API.
-        // We use spawn()+wait() instead of output() to avoid blocking on
-        // post-checkout hooks that spawn background processes (e.g. `npm ci &`).
-        // output() reads pipes until EOF, which blocks if background processes
-        // inherit the pipe FDs. wait() only waits for the child process to exit.
+        // git worktree add の CLI を使う — libgit2 の worktree API より信頼できる。
+        // output() ではなく spawn()+wait() を使うのは、バックグラウンドプロセスを
+        // 立ち上げる post-checkout hook(例: npm ci &)でブロックしないため。
+        // output() はパイプが EOF になるまで読み続けるので、バックグラウンド
+        // プロセスがパイプの FD を継承しているとブロックしてしまう。wait() は
+        // 子プロセスの終了だけを待つ。
         let main_dir = self.main_worktree_path()?;
         let mut child = std::process::Command::new("git")
             .args([
@@ -66,8 +67,8 @@ impl GitEngine {
             .wait()
             .context("failed to wait for `git worktree add`")?;
         if !status.success() {
-            // Safe to read stderr: if git failed, post-checkout hook didn't run,
-            // so no background processes hold the pipe open.
+            // stderr を読んでも安全: git が失敗したなら post-checkout hook は
+            // 走っておらず、パイプを保持し続けるバックグラウンドプロセスもない。
             let mut stderr_buf = String::new();
             if let Some(mut stderr) = child.stderr.take() {
                 use std::io::Read;
@@ -79,13 +80,13 @@ impl GitEngine {
         Ok(wt_path)
     }
 
-    /// Create a worktree checking out a branch that already exists locally
-    /// (PR intake equivalent — the branch was created by a prior
-    /// `fetch_refspec`, so this is a plain `git worktree add <path> <branch>`
-    /// with no `-b`, unlike `create_worktree_from_base`/`create_worktree_from_remote`).
+    /// ローカルにすでに存在するブランチをチェックアウトする worktree を
+    /// 作成する(PR intake に相当 — ブランチは事前の fetch_refspec で
+    /// 作成済みなので、create_worktree_from_base/create_worktree_from_remote
+    /// と違い、これは -b なしの単純な git worktree add <path> <branch> になる)。
     ///
-    /// `wt_dir` is the full worktree directory to create (the caller decides
-    /// its name/location, e.g. via `worktrees_base_dir`).
+    /// wt_dir は作成する worktree ディレクトリのフルパス(名前/配置場所は
+    /// 呼び出し側が worktrees_base_dir などを使って決める)。
     pub fn create_worktree_for_existing_branch(
         &self,
         branch: &str,
@@ -103,7 +104,7 @@ impl GitEngine {
         })?;
         self.force_prune_worktree_entry(&name.to_string_lossy());
 
-        // See create_worktree_from_base() for why we use spawn()+wait() over output().
+        // output() ではなく spawn()+wait() を使う理由は create_worktree_from_base() を参照。
         let main_dir = self.main_worktree_path()?;
         let mut child = std::process::Command::new("git")
             .args(["worktree", "add", &wt_dir.display().to_string(), branch])
@@ -127,19 +128,20 @@ impl GitEngine {
         Ok(wt_dir.to_path_buf())
     }
 
-    /// Ensure a local branch for `base_branch` exists and is reasonably
-    /// up to date, without ever force-updating or checking it out.
+    /// base_branch のローカルブランチが存在し、それなりに最新であることを
+    /// 保証する。force-update やチェックアウトは一切行わない。
     ///
-    /// - If no local branch exists yet, fetch it straight into
-    ///   `refs/heads/<base_branch>`.
-    /// - If it exists, fetch the remote tip into a scratch ref first (fetching
-    ///   directly into `refs/heads/<base_branch>` would be rejected by git if
-    ///   that branch happens to be checked out in another worktree) and only
-    ///   fast-forward the local branch if the fetched tip is a strict
-    ///   descendant of it. A non-fast-forward (diverged, or already caught
-    ///   up) is left untouched — this is metadata for a diff base, not a
-    ///   branch the user is actively working on, so silently discarding local
-    ///   history would be the wrong failure mode.
+    /// - ローカルブランチがまだ無ければ、refs/heads/<base_branch> に直接
+    ///   fetch する。
+    /// - すでに存在する場合は、まずリモートの tip を scratch ref に fetch し
+    ///   (そのブランチが別の worktree でチェックアウトされていると、
+    ///   refs/heads/<base_branch> へ直接 fetch するのは git に拒否される)、
+    ///   fetch した tip がローカルの真の子孫である場合にのみローカル
+    ///   ブランチを fast-forward する。fast-forward できない場合(分岐して
+    ///   いる、あるいはすでに追いついている)はそのまま手を付けない —
+    ///   これは diff のベースとなるメタデータであってユーザが実際に作業中の
+    ///   ブランチではないので、ローカル履歴を黙って破棄するのは誤った
+    ///   失敗のしかたになる。
     pub fn ensure_base_ref_available(&self, base_branch: &str) -> Result<()> {
         if self
             .repo
@@ -182,16 +184,16 @@ impl GitEngine {
         Ok(())
     }
 
-    // ── Remote branch operations (wt switch) ─────────────────────
+    // リモートブランチ操作(wt switch)
 
-    /// List remote branches (refs/remotes/origin/*), excluding HEAD.
+    /// リモートブランチ(refs/remotes/origin/*)を、HEAD を除いて一覧する。
     pub fn list_remote_branches(&self) -> Result<Vec<String>> {
         let mut names = Vec::new();
         let branches = self.repo.branches(Some(git2::BranchType::Remote))?;
         for branch in branches {
             let (branch, _) = branch?;
             if let Some(name) = branch.name()? {
-                // Skip origin/HEAD.
+                // origin/HEAD はスキップする。
                 if name.ends_with("/HEAD") {
                     continue;
                 }
@@ -202,13 +204,14 @@ impl GitEngine {
         Ok(names)
     }
 
-    /// Resolve the best existing starting ref for a new worktree branching off
-    /// `main_branch`.
+    /// main_branch から分岐する新しい worktree のための、実在する起点 ref
+    /// のうち最良のものを解決する。
     ///
-    /// Prefers the remote-tracking branch `origin/<main_branch>`, falls back to
-    /// the local branch `<main_branch>`, then to `HEAD`. The returned ref is
-    /// guaranteed to resolve, so `git worktree add ... <ref>` won't fail with an
-    /// "invalid reference" error in a repo that has no remote.
+    /// リモート追跡ブランチ origin/<main_branch> を優先し、無ければローカル
+    /// ブランチ <main_branch>、それも無ければ HEAD にフォールバックする。
+    /// 返される ref は必ず解決できることが保証されるので、remote の無い
+    /// リポジトリでも git worktree add ... <ref> が「invalid reference」で
+    /// 失敗することはない。
     pub fn resolve_base_ref(&self, main_branch: &str) -> String {
         let remote = format!("origin/{main_branch}");
         if self.repo.revparse_single(&remote).is_ok() {
@@ -220,12 +223,12 @@ impl GitEngine {
         String::from("HEAD")
     }
 
-    /// Create a worktree from a remote branch (wt switch equivalent).
+    /// リモートブランチから worktree を作成する(wt switch に相当)。
     ///
-    /// `remote_branch` should be like "origin/feature-x".
-    /// `worktree_dir_override` is an optional custom base directory for worktrees
-    /// (from config `general.worktree_dir`).
-    /// Creates a local tracking branch and sets upstream.
+    /// remote_branch は "origin/feature-x" のような形式。
+    /// worktree_dir_override は worktree 用のカスタムベースディレクトリ
+    /// (config の general.worktree_dir から)を任意で指定する。
+    /// ローカルの追跡ブランチを作成し、upstream を設定する。
     pub fn create_worktree_from_remote(
         &self,
         remote_branch: &str,
@@ -243,12 +246,12 @@ impl GitEngine {
             anyhow::bail!("directory already exists: {}", wt_path.display());
         }
 
-        // Force-prune any existing worktree entry with this name.
+        // この名前の既存 worktree エントリがあれば強制的に整理する。
         self.force_prune_worktree_entry(dir_name);
 
-        // Use `git worktree add` CLI — more reliable than libgit2's worktree API
-        // which can fail in various edge cases (stale locks, index issues, etc.).
-        // See create_worktree_from_base() for why we use spawn()+wait() over output().
+        // git worktree add の CLI を使う — libgit2 の worktree API は古い
+        // ロックや index の問題など様々なエッジケースで失敗しうるより信頼できる。
+        // output() ではなく spawn()+wait() を使う理由は create_worktree_from_base() を参照。
         let main_dir = self.main_worktree_path()?;
         let mut child = std::process::Command::new("git")
             .args([
@@ -280,9 +283,10 @@ impl GitEngine {
         Ok(wt_path)
     }
 
-    /// Force-prune a worktree entry by name, regardless of validity.
-    /// Best-effort: silently ignores errors (entry may not exist).
-    /// Used before creating a new worktree to clean up lingering entries.
+    /// 名前で worktree エントリを、有効かどうかに関わらず強制的に
+    /// 整理する。ベストエフォート: エラーは黙って無視する(エントリが
+    /// 存在しないこともある)。新しい worktree を作成する前に、残って
+    /// いるエントリを片付けるために使う。
     fn force_prune_worktree_entry(&self, name: &str) {
         if let Ok(wt) = self.repo.find_worktree(name) {
             let _ = wt.prune(Some(

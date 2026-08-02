@@ -1,41 +1,41 @@
-//! Claude Code's fixed palette (dark theme), lifted verbatim from the CLI's
-//! hardcoded dark theme so the transcript reads like the real thing
-//! regardless of the user's conductor theme. (Conductor's own theme drives
-//! every other panel; only this overlay pins the Claude palette.)
+//! Claude Code の固定パレット（ダークテーマ）。CLI にハードコードされたダークテーマから
+//! そのまま持ってきており、conductor 側のテーマ設定に関わらずトランスクリプトが本物どおりに
+//! 見えるようにする。（conductor 自体のテーマは他の全パネルを支配するが、このオーバーレイだけ
+//! Claude のパレットに固定する。）
 
 use ratatui::style::Color;
 
 use crate::theme::Theme;
 
-/// Claude's signature coral/orange accent — `claude` token.
+/// Claude を象徴するコーラル/オレンジのアクセントカラー。claude トークン。
 pub(crate) const CLAUDE: Color = Color::Rgb(215, 119, 87);
-/// Primary text — follows the terminal's default foreground (`Color::Reset`),
-/// exactly like the live PTY view (`vt100::Color::Default → Color::Reset`).
-/// A hardcoded pure white here read as a harsh, brighter-than-live white when
-/// scrolling from the live panel into the transcript; deferring to the
-/// terminal default keeps the two views pixel-identical for body text.
+/// 本文テキスト。端末のデフォルト前景色に追従する（Color::Reset）。ライブの PTY 表示
+/// （vt100::Color::Default → Color::Reset）とまったく同じ扱いである。ここに純白を
+/// ハードコードすると、ライブパネルからトランスクリプトへスクロールした際にライブより
+/// 明るく粗く見えた。端末デフォルトに委ねることで、本文テキストについては両ビューが
+/// ピクセル単位で一致する。
 pub(crate) const TEXT: Color = Color::Reset;
-/// Tool-invocation bullet — `success` token (green).
+/// ツール呼び出しの箇条書きマーカー。success トークン（緑）。
 pub(crate) const SUCCESS: Color = Color::Rgb(78, 186, 101);
-/// Error connector — `error` token (coral red).
+/// エラー接続線。error トークン（コーラルレッド）。
 pub(crate) const ERROR: Color = Color::Rgb(255, 107, 128);
-/// Dimmed/secondary text — `inactive` token (grey).
+/// 淡色・補助テキスト。inactive トークン（グレー）。
 pub(crate) const INACTIVE: Color = Color::Rgb(153, 153, 153);
-/// Accent for headings/links — `permission` token (periwinkle).
+/// 見出し・リンク用のアクセント。permission トークン（ペリウィンクル）。
 pub(crate) const PERMISSION: Color = Color::Rgb(177, 185, 249);
-/// Inline-code / very dim — `subtle` token.
+/// インラインコード・ごく淡い色。subtle トークン。
 pub(crate) const SUBTLE: Color = Color::Rgb(80, 80, 80);
-/// Background fill for a user turn's full-width block (S3, measured).
+/// user ターンの全幅ブロックの背景色（実測値）。
 pub(crate) const USER_BG: Color = Color::Rgb(55, 55, 55);
-/// The `❯` prompt marker's color on a user turn's background block.
+/// user ターンの背景ブロック上での ❯ プロンプトマーカーの色。
 pub(crate) const USER_MARKER_FG: Color = Color::Rgb(80, 80, 80);
-/// Body text color on a user turn's background block.
+/// user ターンの背景ブロック上での本文テキストの色。
 pub(crate) const USER_TEXT: Color = Color::Rgb(255, 255, 255);
 
-/// Build a Claude-flavored [`Theme`] for the Markdown renderer so prose,
-/// headings, links and code in the transcript adopt Claude Code's palette
-/// instead of the active conductor theme. Only the fields the Markdown
-/// renderer consults are overridden; the rest are inherited from `base`.
+/// Markdown レンダラ向けに Claude 風の [Theme] を組み立てる。これにより、トランスクリプト内の
+/// 地の文・見出し・リンク・コードが、有効な conductor テーマではなく Claude Code の
+/// パレットを採用するようになる。Markdown レンダラが参照するフィールドだけを上書きし、
+/// それ以外は base から引き継ぐ。
 pub(crate) fn claude_markdown_theme(base: &Theme) -> Theme {
     let mut t = base.clone();
     t.fg = TEXT;

@@ -1,11 +1,11 @@
-//! Worktree switching core for [`App`].
+//! [App] のワークツリー切り替えの中核。
 //!
-//! Handles selecting a worktree (by index or path), the full
-//! `on_worktree_changed` refresh flow (view/session bookkeeping plus
-//! dispatching the background file-tree, diff, and branch-details work),
-//! polling those background results, and the small helpers (PR url lookup,
-//! `gh` availability, worktree-op channel) shared by the other `worktree_*`
-//! submodules.
+//! ワークツリーの選択（インデックスまたはパスによる）、on_worktree_changed による
+//! 一連のリフレッシュ処理（ビュー・セッションの後始末に加え、バックグラウンドの
+//! ファイルツリー・diff・ブランチ詳細の処理をディスパッチする）、それらの
+//! バックグラウンド結果のポーリング、そして他の worktree_* サブモジュールと共有する
+//! 小さなヘルパー（PR URL の取得、gh の可用性チェック、worktree 操作用チャンネル）
+//! を扱う。
 
 use std::sync::mpsc;
 
@@ -14,11 +14,11 @@ use crate::git_engine::status_map::GitStatusMap;
 use super::*;
 
 impl App {
-    // ── Worktree create / delete helpers ──────────────────────────
+    // ワークツリー作成・削除のヘルパー
 
-    /// Select a worktree by its path and trigger UI updates.
+    /// パスを指定してワークツリーを選択し、UI の更新をトリガーする。
     ///
-    /// `pub(super)` — shared with [`super::worktree_grab`] and [`super::worktree_pr`].
+    /// pub(super) — [super::worktree_grab] と [super::worktree_pr] で共有する。
     pub(super) fn select_worktree_by_path(&mut self, path: &std::path::Path) {
         if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
             self.worktrees.select(idx);
@@ -26,16 +26,15 @@ impl App {
         }
     }
 
-    /// Called when the selected worktree changes — refreshes viewer, diff, sessions.
+    /// 選択中のワークツリーが変わったときに呼ばれる — viewer・diff・セッションを更新する。
     ///
-    /// Heavy operations (file tree walk, diff computation, branch details) are
-    /// dispatched to background threads so the UI stays responsive. Results are
-    /// applied in `poll_worktree_switch_ops()`.
-    /// Switch the selection to the next worktree, wrapping around. Mirrors a
-    /// click on the strip (updates views + active sessions via
-    /// `on_worktree_changed`, which also makes the strip follow), but keeps the
-    /// current panel focus rather than jumping to the terminal. No-op with ≤1
-    /// worktree.
+    /// 重い処理（ファイルツリーの走査、diff の計算、ブランチ詳細の取得）はバックグラウンド
+    /// スレッドにディスパッチし、UI の応答性を保つ。結果は poll_worktree_switch_ops()
+    /// で反映される。
+    /// 選択を次のワークツリーへ切り替える（末尾で先頭に戻る）。ストリップのクリックと
+    /// 同じ効果を持つ（on_worktree_changed 経由でビューとアクティブセッションを更新し、
+    /// ストリップも追従する）が、ターミナルへフォーカスを移さず現在のパネルフォーカスを
+    /// 維持する点が異なる。ワークツリーが1つ以下なら何もしない。
     pub fn select_next_worktree(&mut self) {
         let n = self.worktrees.len();
         if n <= 1 {
@@ -45,8 +44,8 @@ impl App {
         self.on_worktree_changed();
     }
 
-    /// Switch the selection to the previous worktree, wrapping around. See
-    /// [`Self::select_next_worktree`].
+    /// 選択を前のワークツリーへ切り替える（先頭で末尾に戻る）。
+    /// [Self::select_next_worktree] を参照。
     pub fn select_prev_worktree(&mut self) {
         let n = self.worktrees.len();
         if n <= 1 {
@@ -57,55 +56,54 @@ impl App {
     }
 
     pub fn on_worktree_changed(&mut self) {
-        // A reflow transcript belongs to the previous worktree's session;
-        // switching worktrees must reset it before new session state loads.
+        // reflow トランスクリプトは前のワークツリーのセッションに属するものなので、
+        // ワークツリーを切り替えるときは新しいセッション状態を読み込む前にリセットする
+        // 必要がある。
         if self.reflow.active {
             self.close_reflow();
         }
 
-        // An embedded editor belongs to the worktree it was opened on; leaving
-        // that worktree would strand it editing the wrong tree, so close it
-        // first. The view reload below covers the new worktree.
+        // 埋め込みエディタはそれを開いたワークツリーに属している。そのワークツリーを
+        // 離れると誤ったツリーを編集し続けたまま取り残されるので、先に閉じる。
+        // 以降のビュー再読み込みが新しいワークツリーをカバーする。
         self.discard_editor_on_worktree_change();
 
-        // Reveal the newly selected worktree's chip in the bar on the next
-        // render (width-dependent panning happens there, where the area is known).
-        // This is only safe to set on *user-initiated* selection changes: if a
-        // background event ever drives selection while the user is free-scrolling
-        // the strip to peek elsewhere, setting this would yank the bar back.
+        // 次の描画で、新たに選択したワークツリーのチップをバーに表示する（幅に依存した
+        // パンニングはそこで行う。エリアのサイズがそこで分かるため）。これはユーザ操作
+        // による選択変更のときだけ安全に立ててよいフラグである。ユーザがストリップを
+        // 自由にスクロールして他を覗いている最中に、バックグラウンドのイベントが選択を
+        // 動かした場合にこれを立てると、バーが強制的に引き戻されてしまう。
         self.wtbar.reveal_selected = true;
 
-        // Persist the outgoing worktree's view before we wipe it.
+        // 消去する前に、離れるワークツリーのビューを保存しておく。
         if let Some(outgoing) = self.view_restore.current_branch.clone() {
             self.save_view_for(&outgoing);
         }
 
         self.viewer_state = ViewerState::default();
 
-        // Rebuild the symbol index over the tree the user is now looking at.
-        // Worktrees are siblings of the repository root, so an index built over
-        // one of them cannot see any of the others: without this, navigation
-        // keeps answering from the previous worktree and lands on the right
-        // file at a line number taken from a different branch. The worse the
-        // branches have diverged, the further off it is — which puts the error
-        // exactly where the diff is most worth reading.
+        // 今ユーザが見ているツリーに対してシンボルインデックスを再構築する。ワークツリーは
+        // リポジトリルートの兄弟ディレクトリなので、あるワークツリー上で構築したインデックス
+        // は他のワークツリーを見ることができない。これをしないとナビゲーションは常に前の
+        // ワークツリーを基準に答え続け、ファイル自体は正しくても行番号が別ブランチのものに
+        // なってしまう。ブランチの乖離が大きいほどそのズレも大きくなり、ちょうど diff を
+        // 読む価値が最も高い箇所でエラーが起きることになる。
         //
-        // Deliberately hung on this method rather than on assignments to
-        // `selected_worktree`: several of those are not worktree switches at
-        // all (a temporary hop while spawning a session, moving the highlight
-        // to open a delete prompt), and two more run on a 3-second poll and on
-        // every mouse wheel tick, where a rebuild would pile up.
+        // あえて selected_worktree への代入ではなく、このメソッドにぶら下げている。
+        // selected_worktree への代入の中にはワークツリーの切り替えとは言えないものが
+        // いくつかある（セッション起動中の一時的な退避、削除プロンプトを開くためのハイライト
+        // 移動）し、さらに2箇所は3秒ごとのポーリングとマウスホイールのすべてのティックで
+        // 走るため、そこで再構築すると積み上がってしまう。
         self.start_symbol_index_build();
 
-        // The file lists deliberately survive until the background diff lands
-        // (swapping them for an empty pane would flicker), but the error must
-        // not: it belongs to the worktree we just left, and leaving a red
-        // banner up would attribute the outgoing worktree's failure to the
-        // incoming one.
+        // ファイル一覧はバックグラウンドの diff が届くまで意図的に残す（空のペインに
+        // 差し替えるとちらつくため）。しかしエラーは残してはいけない。それはついさっき
+        // 離れたワークツリーのものであり、赤いバナーを出したままにすると離れた側の失敗を
+        // これから入るワークツリーのものと誤認させてしまう。
         self.diff_state.error = None;
 
-        // Track the worktree now being loaded and seed its saved file/scroll
-        // so it gets re-opened once the file tree arrives.
+        // 現在ロード中のワークツリーを記録し、保存済みのファイル・スクロール位置を
+        // 種として持たせておく。ファイルツリーが届き次第、それを再度開くために使う。
         let new_branch = self.selected_worktree_branch();
         self.view_restore.pending = None;
         self.view_restore.current_branch = if new_branch.is_empty() {
@@ -125,28 +123,28 @@ impl App {
             }
         }
 
-        // Clear "new" badge for the worktree the user just selected.
+        // 今選択したワークツリーの「new」バッジをクリアする。
         if let Some(wt) = self.worktrees.selected() {
             self.new_worktree_paths.remove(&wt.path);
         }
 
-        // Reviews are fast (SQLite) — keep synchronous.
+        // レビューは高速（SQLite）なので同期のままにする。
         self.refresh_reviews();
 
-        // Snapshot baseline so the next poll cycle doesn't trigger a redundant refresh.
+        // 次のポーリングサイクルで冗長なリフレッシュが起きないよう、基準値をスナップショットしておく。
         if let Some(wt) = self.worktrees.selected() {
             self.last_poll_head_oid = self.worktree_heads.get(&wt.branch).cloned();
             self.last_poll_status = Some((wt.added, wt.modified, wt.deleted, wt.staged));
         }
 
-        // Update active sessions to match the new worktree.
+        // アクティブなセッションを新しいワークツリーに合わせて更新する。
         let wt_name = self.selected_worktree_branch();
         let claude_sessions = self.current_worktree_claude_sessions();
         self.terminal.active_claude_session = claude_sessions.first().map(|(idx, _)| *idx);
         let shell_sessions = self.current_worktree_shell_sessions();
         self.terminal.active_shell_session = shell_sessions.first().map(|(idx, _)| *idx);
 
-        // Activate the PTY sessions.
+        // PTY セッションを有効化する。
         if let Some(idx) = self.terminal.active_claude_session {
             self.terminal.pty_manager.activate_session(idx);
         }
@@ -159,22 +157,20 @@ impl App {
         self.terminal.cache_claude = Default::default();
         self.terminal.cache_shell = Default::default();
 
-        // Dispatch heavy operations to background threads.
+        // 重い処理をバックグラウンドスレッドへディスパッチする。
         if let Some(wt) = self.worktrees.selected() {
             let wt_path = wt.path.clone();
             let wt_branch = wt.branch.clone();
 
-            // Background file tree walk.
+            // バックグラウンドでのファイルツリー走査。
             {
                 let path = wt_path.clone();
                 self.bg.file_tree.start(move |tx| {
-                    // Computed alongside the walk (not on the main thread)
-                    // so switching worktrees doesn't add a second, separate
-                    // git-status pause — see D5.
-                    // Same fallback-and-log rationale as the synchronous path
-                    // in `ViewerState::load_file_tree`: an empty map makes the
-                    // UI claim everything is tracked and committed, so a
-                    // failure here must not pass silently.
+                    // ツリー走査と同時に（メインスレッドではなく）計算することで、ワークツリー
+                    // 切り替えのたびに git status 取得だけの別の停止が追加で入るのを避けている。
+                    // ViewerState::load_file_tree の同期パスと同じフォールバック＋ログの方針:
+                    // 空のマップだと UI はすべてが追跡・コミット済みだと主張してしまうので、
+                    // ここでの失敗を黙って見逃してはいけない。
                     let git_status = GitStatusMap::load(&path).unwrap_or_else(|e| {
                         log::warn!(
                             "git status unavailable for {} during worktree switch — tree and Changed files will render as if everything is tracked and committed: {e}",
@@ -188,12 +184,12 @@ impl App {
                 });
             }
 
-            // Background diff computation.
+            // バックグラウンドでの diff 計算。
             {
                 let path = wt_path.clone();
-                // Same base as `refresh_diff`: using a different one here would
-                // make the file list change out from under the user moments
-                // after the switch. `diff_base_for` is the single decision point.
+                // refresh_diff と同じベースを使う。ここで別のベースを使うと、切り替えた
+                // 直後にユーザの目の前でファイル一覧が変わってしまう。diff_base_for が
+                // この判断を行う唯一の場所である。
                 let base_branch = self.diff_base_for(&wt_branch);
                 let word_diff = self.config.diff.word_diff;
                 let tab_width = self.config.viewer.tab_width;
@@ -202,7 +198,7 @@ impl App {
                 });
             }
 
-            // Background branch details computation.
+            // バックグラウンドでのブランチ詳細計算。
             self.start_bg_branch_details();
         }
 
@@ -212,7 +208,7 @@ impl App {
         );
     }
 
-    /// Spawn background branch details computation.
+    /// バックグラウンドでのブランチ詳細計算を起動する。
     fn start_bg_branch_details(&mut self) {
         let Some(wt) = self.worktrees.selected() else {
             self.branch_details = Default::default();
@@ -229,7 +225,7 @@ impl App {
             .map(|w| w.branch.clone())
             .collect();
 
-        // Check DB for cached parent/children before spawning the thread.
+        // スレッドを起動する前に、DB にキャッシュされた親・子ブランチがないか確認する。
         let db_initial_branch = if !is_main {
             self.review_store
                 .as_ref()
@@ -249,7 +245,7 @@ impl App {
             .filter(|c| active_branches.contains(c))
             .collect();
 
-        // Reset branch_details and start PR lookup (already async).
+        // branch_details をリセットし、PR の取得を開始する（すでに非同期）。
         self.branch_details = Default::default();
         if !is_main && self.gh_available {
             self.branch_details.pr_loading = true;
@@ -282,27 +278,27 @@ impl App {
         });
     }
 
-    /// Poll background worktree-switch operations (file tree, diff, branch details).
+    /// バックグラウンドで進むワークツリー切り替え処理（ファイルツリー、diff、ブランチ詳細）をポーリングする。
     pub fn poll_worktree_switch_ops(&mut self) {
-        // File tree result.
+        // ファイルツリーの結果。
         if let Some((root, entries, git_status)) = self.bg.file_tree.poll() {
             // 3 つまとめて差し替える。根だけ先に新しくなると、まだ古いエントリ
             // を指しているクリックが別ブランチの同名ファイルを黙って開く。
             self.viewer_state.replace_tree(root, entries, git_status);
-            // Restore the previously viewed file + scroll for this worktree now
-            // that its file tree is available (one-shot).
+            // このワークツリーのファイルツリーが揃ったので、以前見ていたファイルと
+            // スクロール位置を復元する（一度だけ）。
             self.consume_pending_view_restore();
             self.rehighlight_viewer();
         }
 
-        // Diff result.
+        // diff の結果。
         if let Some(result) = self.bg.diff.poll() {
             apply_bg_diff_result(&mut self.diff_state, result);
         }
 
-        // Branch details result.
+        // ブランチ詳細の結果。
         if let Some(details) = self.bg.branch_details.poll() {
-            // Preserve pr_url and pr_loading from the already-running PR lookup.
+            // すでに実行中の PR 取得から pr_url と pr_loading を保持する。
             let pr_url = self.branch_details.pr_url.take();
             let pr_loading = self.branch_details.pr_loading;
             self.branch_details = details;
@@ -311,9 +307,9 @@ impl App {
         }
     }
 
-    // ── Branch details (worktree detail panel) ───────────────────
+    // ブランチ詳細（ワークツリー詳細パネル）
 
-    /// Check whether the `gh` CLI is available on this system.
+    /// このシステムで gh CLI が利用可能かどうかを確認する。
     pub(super) fn check_gh_available() -> bool {
         std::process::Command::new("gh")
             .arg("--version")
@@ -324,9 +320,9 @@ impl App {
             .unwrap_or(false)
     }
 
-    /// Get (or lazily create) a sender for worktree operation results.
+    /// ワークツリー操作の結果を送る sender を取得する（なければ遅延生成する）。
     ///
-    /// `pub(super)` — shared with [`super::worktree_crud`] and [`super::worktree_smart`].
+    /// pub(super) — [super::worktree_crud] と [super::worktree_smart] で共有する。
     pub(super) fn worktree_op_sender(&mut self) -> mpsc::Sender<WorktreeOpResult> {
         if self.worktree_mgr.bg_worktree_tx.is_none() {
             let (tx, rx) = mpsc::channel();
@@ -336,7 +332,7 @@ impl App {
         self.worktree_mgr.bg_worktree_tx.as_ref().unwrap().clone()
     }
 
-    /// Spawn a background thread to look up the PR URL via `gh pr view`.
+    /// gh pr view 経由で PR の URL を取得するバックグラウンドスレッドを起動する。
     fn start_pr_url_lookup(&mut self, branch: &str) {
         let branch = branch.to_string();
         let repo_path = self.repo.path.clone();
@@ -363,7 +359,7 @@ impl App {
         });
     }
 
-    /// Poll the background PR URL lookup for a result.
+    /// バックグラウンドで進む PR URL の取得結果をポーリングする。
     pub fn poll_pr_url(&mut self) {
         if let Some(result) = self.bg.pr_url.poll() {
             self.branch_details.pr_url = result;
@@ -372,13 +368,13 @@ impl App {
     }
 }
 
-/// Compute both diff ranges for the background worktree-switch worker.
+/// バックグラウンドのワークツリー切り替えワーカーのために、両方の diff 範囲を計算する。
 ///
-/// Lifted out of the worker closure so it can be exercised directly: the rule it
-/// encodes — a committed failure records the error but must not stop the
-/// uncommitted diff, which doesn't depend on the base ref — is the one this
-/// module got wrong, and inside a `bg.diff.start` closure nothing could reach it
-/// to check. Mirrors [`DiffState::load_diff`]'s handling of the same two ranges.
+/// 直接テストできるようワーカーのクロージャから切り出してある。ここが表現している
+/// ルール — コミット済み側の失敗はエラーとして記録するが、ベース ref に依存しない
+/// 未コミット側の diff は止めてはいけない — をこのモジュールはかつて誤って実装して
+/// おり、bg.diff.start のクロージャの中では何もそれを確認できなかった。同じ2つの
+/// 範囲を扱う [DiffState::load_diff] と対応する。
 fn compute_bg_diff(
     path: &std::path::Path,
     base_branch: &str,
@@ -402,22 +398,24 @@ fn compute_bg_diff(
             files.sort_by(|a, b| a.path.cmp(&b.path));
             result.uncommitted = files;
         }
-        // Non-fatal on its own: the committed half may still be worth showing.
+        // これ単体では致命的ではない: コミット済み側はまだ表示する価値があるかもしれない。
         Err(e) => log::warn!("failed to compute uncommitted diff: {e:#}"),
     }
     result
 }
 
-/// Copy a finished background diff into the [`DiffState`].
+/// 完了したバックグラウンド diff を [DiffState] へ反映する。
 ///
-/// A free function rather than a `DiffState` method so it can be unit-tested
-/// without building a whole `App`, and so `diff_state` never has to depend on
-/// `app::types::BgDiffResult` — that would invert the module dependency.
+/// DiffState のメソッドではなくフリー関数にしているのは、App 全体を構築せずに
+/// 単体テストできるようにするためと、diff_state が app::types::BgDiffResult
+/// に依存しないで済むようにするため — 依存すればモジュールの依存関係が逆転して
+/// しまう。
 ///
-/// Both file lists are applied unconditionally, including when `error` is set:
-/// the error only ever comes from resolving the base ref, which the uncommitted
-/// list (HEAD vs workdir+index) does not depend on. Clearing it alongside the
-/// committed list is what made a bad base ref look identical to a clean tree.
+/// 2つのファイル一覧は error が設定されている場合も含めて無条件に反映する。
+/// エラーはベース ref の解決からしか発生せず、未コミット一覧（HEAD と
+/// workdir+index の比較）はベース ref に依存しない。コミット済み一覧と一緒に
+/// エラーをクリアしてしまうと、不正なベース ref とクリーンなツリーが見分け
+/// つかなくなっていた。
 fn apply_bg_diff_result(diff_state: &mut DiffState, result: BgDiffResult) {
     diff_state.committed_files = result.committed;
     diff_state.uncommitted_files = result.uncommitted;
@@ -439,8 +437,8 @@ mod tests {
         }
     }
 
-    /// The reported bug: a base ref that won't resolve used to wipe the
-    /// uncommitted list too, so 17 modified files rendered as `(0)`.
+    /// 報告されたバグ: 解決できないベース ref を指定すると、以前は未コミット一覧まで
+    /// 消えてしまい、17個の変更ファイルが (0) と表示されていた。
     #[test]
     fn bg_diff_result_with_error_keeps_uncommitted() {
         let mut ds = DiffState::new("origin/main", DiffViewMode::Unified);
@@ -463,24 +461,24 @@ mod tests {
         );
         assert!(ds.error.is_some(), "the failure must stay visible");
 
-        // Resolve every File entry back through the display list rather than
-        // just checking it's non-empty. `diff_list.rs` indexes
-        // `committed_files`/`uncommitted_files` by the entry's `file_index`, so
-        // a display list left un-rebuilt after swapping the file vectors is an
-        // out-of-bounds panic waiting for the next render — this pins the
-        // "always rebuild" invariant, not merely "something got listed".
+        // 単に空でないことを確認するのではなく、display list を通してすべての File
+        // エントリを解決する。diff_list.rs はエントリの file_index で
+        // committed_files/uncommitted_files を参照するため、ファイルのベクタを
+        // 差し替えたあとに display list を再構築し忘れていると、次の描画で
+        // out-of-bounds パニックが起きる。これは「何かがリストされた」ではなく
+        // 「常に再構築する」という不変条件を確かめるためのものである。
         let listed: Vec<&str> = (0..ds.display_list.len())
             .filter_map(|idx| ds.resolve_file(idx))
             .map(|(f, _section)| f.path.as_str())
             .collect();
-        // Directory-grouped order, not input order: files under a directory
-        // node come before top-level ones.
+        // 入力順ではなくディレクトリでグループ化した順序: ディレクトリノード配下の
+        // ファイルはトップレベルのファイルより前に来る。
         assert_eq!(listed, vec!["src/config.rs", "CLAUDE.md"]);
     }
 
-    /// Build a repo with one commit on `main`, HEAD on `feature`, and an
-    /// uncommitted file in the worktree. Returns the tempdir (kept alive by the
-    /// caller) — every path below needs a real repo, not a hand-built struct.
+    /// main に1コミット、HEAD は feature、ワークツリーに未コミットのファイルを
+    /// 持つリポジトリを構築する。tempdir を返す（呼び出し側が生存させ続ける）—
+    /// 以下のテストはどれも手組みの構造体ではなく実際のリポジトリを必要とする。
     fn repo_with_uncommitted_change() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
@@ -501,10 +499,10 @@ mod tests {
         dir
     }
 
-    /// The bg worker's half of the fix. `apply_bg_diff_result` only proves the
-    /// *reporting* side; this proves the worker still computes the uncommitted
-    /// diff after the committed one fails. Put the `return` back in the Err arm
-    /// and this is the test that catches it.
+    /// 修正のうち bg ワーカー側の半分を検証する。apply_bg_diff_result は
+    /// 「反映」側しか証明しないので、こちらはコミット済み側が失敗した後もワーカーが
+    /// 未コミット側の diff を計算し続けることを証明する。Err アームに return を
+    /// 戻すとこのテストが検知する。
     #[test]
     fn compute_bg_diff_keeps_uncommitted_when_base_is_unresolvable() {
         let dir = repo_with_uncommitted_change();
@@ -524,7 +522,7 @@ mod tests {
         );
     }
 
-    /// A resolvable base leaves no error behind, so the panel shows no banner.
+    /// 解決可能なベースならエラーは残らず、パネルにバナーは表示されない。
     #[test]
     fn compute_bg_diff_reports_no_error_for_a_resolvable_base() {
         let dir = repo_with_uncommitted_change();
@@ -543,8 +541,8 @@ mod tests {
         );
     }
 
-    /// A later successful result must clear a stale error, or the panel would
-    /// keep the error marker forever.
+    /// あとから来た成功結果は、古いエラーをクリアしなければならない。そうしないと
+    /// パネルにエラーマーカーが残り続けてしまう。
     #[test]
     fn bg_diff_result_without_error_clears_a_stale_one() {
         let mut ds = DiffState::new("main", DiffViewMode::Unified);

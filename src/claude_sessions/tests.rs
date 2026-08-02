@@ -1,10 +1,10 @@
-//! Tests for transcript-source resolution.
+//! トランスクリプト元解決のテスト。
 //!
-//! One Claude project directory holds the logs of every session ever run in a
-//! worktree, so these tests pin down the property the reflow transcript view
-//! depends on: the *session id* selects the log, and nothing about the sibling
-//! logs sharing the directory (count, mtime, first/last turn time) can change
-//! which one is picked.
+//! 1 つの Claude プロジェクトディレクトリには、あるワークツリーで走った
+//! 全セッションのログが同居する。ここでは reflow トランスクリプトビューが
+//! 依拠する性質を固定する: *session id* がログを選ぶのであって、同じ
+//! ディレクトリを共有する兄弟ログの何か(数、mtime、最初/最後のターン時刻)
+//! によって選ばれるログが変わってはならない。
 
 use std::collections::HashSet;
 use std::fs::{File, FileTimes};
@@ -16,8 +16,8 @@ use super::rotation::resolve_current_session_id;
 use super::session_log_in_dir;
 use crate::claude_log::{DisplayBlock, load_session};
 
-/// Write `<session_id>.jsonl` into `dir` with one user turn per line of `turns`,
-/// and force its mtime to `now - age`.
+/// dir に <session_id>.jsonl を書く。turns の各要素を1ユーザターンとして
+/// 1行ずつ書き、mtime は now - age に強制する。
 fn write_log(dir: &Path, session_id: &str, turns: &[&str], age: Duration) -> PathBuf {
     let path = dir.join(format!("{session_id}.jsonl"));
     let mut f = File::create(&path).expect("create log");
@@ -34,7 +34,7 @@ fn write_log(dir: &Path, session_id: &str, turns: &[&str], age: Duration) -> Pat
     path
 }
 
-/// The text of every entry in the transcript resolved for `session_id`.
+/// session_id について解決したトランスクリプト中の、全エントリのテキスト。
 fn transcript_texts(dir: &Path, session_id: &str) -> Vec<String> {
     let path = session_log_in_dir(dir, session_id).expect("session log resolves");
     load_session(&path)
@@ -49,8 +49,9 @@ fn transcript_texts(dir: &Path, session_id: &str) -> Vec<String> {
 
 #[test]
 fn session_id_selects_the_log_among_siblings() {
-    // Three sessions share the project dir (three Claude panels on the same
-    // worktree). Each id must resolve to its own log, whatever the mtimes.
+    // 3 つのセッションが同じプロジェクトディレクトリを共有する(同じ
+    // worktree の 3 つの Claude パネル)。mtime がどうであれ、それぞれの
+    // id は自分自身のログに解決すること。
     let dir = tempfile::tempdir().expect("tmp dir");
     write_log(dir.path(), "aaa", &["from aaa"], Duration::from_secs(3600));
     write_log(dir.path(), "bbb", &["from bbb"], Duration::from_secs(60));
@@ -63,13 +64,13 @@ fn session_id_selects_the_log_among_siblings() {
 
 #[test]
 fn idle_session_is_not_displaced_by_a_newer_sibling() {
-    // Regression: a panel whose main agent is stopped while a subagent still
-    // works writes nothing to its session log (subagent turns land in
-    // `<session-id>/subagents/*.jsonl`), so its log is both the stalest in the
-    // directory and frozen before a session started later in the same worktree.
-    // Resolution must still return *this* panel's log — the old view followed
-    // the freshest log, or the one starting after this one's last turn, and
-    // opened onto the other session's conversation.
+    // 回帰: メインエージェントが停止しサブエージェントだけ動いているパネルは
+    // 自分のセッションログに何も書かない (サブエージェントのターンは
+    // <session-id>/subagents/*.jsonl に入る)。その結果、このログはディレクトリ
+    // 内で最も古く、しかも同じ worktree で後から始まったセッションより前の
+    // 時点で更新が止まっている。それでも解決は *このパネル自身の* ログを
+    // 返さなければならない — 以前の実装は最新のログか、このパネルの最終
+    // ターンより後に始まったログを追いかけ、別セッションの会話を開いていた。
     let dir = tempfile::tempdir().expect("tmp dir");
     write_log(
         dir.path(),
@@ -83,7 +84,8 @@ fn idle_session_is_not_displaced_by_a_newer_sibling() {
         &["someone else's prompt"],
         Duration::ZERO,
     );
-    // A subagent transcript of the idle session, in its own subdirectory.
+    // idle なセッションのサブエージェントのトランスクリプトを、自分の
+    // サブディレクトリに置く。
     let sub = dir.path().join("idle-with-subagent").join("subagents");
     std::fs::create_dir_all(&sub).expect("subagent dir");
     write_log(&sub, "agent-aivy-1234", &["subagent work"], Duration::ZERO);
@@ -96,8 +98,8 @@ fn idle_session_is_not_displaced_by_a_newer_sibling() {
 
 #[test]
 fn unknown_session_id_resolves_to_nothing() {
-    // No history is the correct answer for an unresolvable id: falling back to
-    // whatever log the directory happens to hold shows another conversation.
+    // 解決不能な id に対しては「履歴なし」が正しい答え。ディレクトリに
+    // たまたまあるログにフォールバックすると別の会話を見せてしまう。
     let dir = tempfile::tempdir().expect("tmp dir");
     write_log(dir.path(), "aaa", &["from aaa"], Duration::ZERO);
 
@@ -110,31 +112,31 @@ fn empty_project_dir_resolves_to_nothing() {
     assert!(session_log_in_dir(dir.path(), "aaa").is_none());
 }
 
-// ── `/clear` によるログのローテーション追跡 ──────────────────────────────
+// /clear によるログのローテーション追跡
 //
-// `/clear` は Claude Code の書き込み先を新しい session id の `.jsonl` に移す。
-// 新ファイルの先頭に `/clear` のコマンドレコードが入り、以降の会話はすべて
+// /clear は Claude Code の書き込み先を新しい session id の .jsonl に移す。
+// 新ファイルの先頭に /clear のコマンドレコードが入り、以降の会話はすべて
 // そちらへ行く。旧ファイルには追記されないし、両者を結ぶ id もログに残らない。
 // pin した id だけを見ていると clear 前で止まる、というのがここで防ぐバグ。
 
-/// `age` 前を `SystemTime` で返す。
+/// age 前を SystemTime で返す。
 fn ago(age: Duration) -> SystemTime {
     SystemTime::now() - age
 }
 
-/// `SystemTime` をログ中のタイムスタンプ形式 (RFC3339) にする。
+/// SystemTime をログ中のタイムスタンプ形式 (RFC3339) にする。
 fn rfc3339(t: SystemTime) -> String {
     chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
 }
 
-/// タイムスタンプ付きの通常セッションログを書き、mtime を `last_write` に合わせる。
+/// タイムスタンプ付きの通常セッションログを書き、mtime を last_write に合わせる。
 fn write_plain_log(dir: &Path, session_id: &str, start: SystemTime, turns: &[&str]) -> PathBuf {
     write_records(dir, session_id, start, &[], turns)
 }
 
-/// `/clear` で始まるセッションログ (ローテーション先) を書く。
+/// /clear で始まるセッションログ (ローテーション先) を書く。
 ///
-/// 実物と同じ並び: `mode` → caveat (`isMeta`) → `/clear` コマンド → 会話。
+/// 実物と同じ並び: mode → caveat (isMeta) → /clear コマンド → 会話。
 fn write_cleared_log(dir: &Path, session_id: &str, start: SystemTime, turns: &[&str]) -> PathBuf {
     let ts = rfc3339(start);
     let head = [
@@ -149,8 +151,8 @@ fn write_cleared_log(dir: &Path, session_id: &str, start: SystemTime, turns: &[&
     write_records(dir, session_id, start, &head, turns)
 }
 
-/// `head` をそのまま出力したあと、`turns` を user レコードとして書く。
-/// mtime は最後のターンの時刻 (ターンが無ければ `start`) に合わせる。
+/// head をそのまま出力したあと、turns を user レコードとして書く。
+/// mtime は最後のターンの時刻 (ターンが無ければ start) に合わせる。
 fn write_records(
     dir: &Path,
     session_id: &str,
@@ -201,7 +203,7 @@ fn clear_rotation_is_followed() {
 
 #[test]
 fn repeated_clears_chain_to_the_newest_log() {
-    // `/clear` を複数回。連鎖の末端 (いま書かれているログ) まで辿ること。
+    // /clear を複数回。連鎖の末端 (いま書かれているログ) まで辿ること。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(900));
     write_plain_log(dir.path(), "first", spawned, &["最初"]);
@@ -219,7 +221,7 @@ fn repeated_clears_chain_to_the_newest_log() {
 #[test]
 fn clear_with_no_output_yet_still_resolves() {
     // clear 直後、まだ 1 ターンも書かれていない状態。ローテーション先は
-    // `/clear` レコードだけを持つが、それでもそちらへ移ること
+    // /clear レコードだけを持つが、それでもそちらへ移ること
     // (clear 前の会話を見せてはいけない)。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(60));
@@ -231,9 +233,9 @@ fn clear_with_no_output_yet_still_resolves() {
 
 #[test]
 fn fresh_sibling_session_does_not_hijack() {
-    // 回帰: 同じワークツリーで後から起動しただけの別セッション。`/clear` で
+    // 回帰: 同じワークツリーで後から起動しただけの別セッション。/clear で
     // 始まっていないので後続ではない。以前はこれを続きとみなして他人の会話を
-    // 表示していた (`idle_session_is_not_displaced_by_a_newer_sibling` 参照)。
+    // 表示していた (idle_session_is_not_displaced_by_a_newer_sibling 参照)。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(3600));
     write_plain_log(dir.path(), "mine", spawned, &["自分のプロンプト"]);
@@ -250,7 +252,7 @@ fn fresh_sibling_session_does_not_hijack() {
 #[test]
 fn log_pinned_by_another_panel_is_not_followed() {
     // 別パネルが自分のログとして pin している id は後続候補から外す
-    // (そのパネルが `--resume` で clear 済みセッションを開いている場合)。
+    // (そのパネルが --resume で clear 済みセッションを開いている場合)。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(600));
     write_plain_log(dir.path(), "mine", spawned, &["自分のプロンプト"]);
@@ -270,8 +272,8 @@ fn log_pinned_by_another_panel_is_not_followed() {
 
 #[test]
 fn clear_predating_the_spawn_is_not_followed() {
-    // 古いセッションを `--resume` した直後は pin したログの mtime が何日も前に
-    // なりうる。起動より前に始まっていた `/clear` 始まりのログは自分の続きでは
+    // 古いセッションを --resume した直後は pin したログの mtime が何日も前に
+    // なりうる。起動より前に始まっていた /clear 始まりのログは自分の続きでは
     // ないので辿らない。
     let dir = tempfile::tempdir().expect("tmp dir");
     write_plain_log(
@@ -293,8 +295,8 @@ fn clear_predating_the_spawn_is_not_followed() {
 
 #[test]
 fn clear_long_after_the_last_turn_is_not_followed() {
-    // 前のターンから何時間も空いて始まった `/clear` 始まりのログは、自分の
-    // 続きなのか、同じワークツリーで別に起動した `claude` なのかログからは
+    // 前のターンから何時間も空いて始まった /clear 始まりのログは、自分の
+    // 続きなのか、同じワークツリーで別に起動した claude なのかログからは
     // 区別できない。推測せず自分のログに留まる (この場合はこのバグの修正が
     // 効かず、clear 前が表示される — 他人の会話を出すよりはまし、という判断)。
     let dir = tempfile::tempdir().expect("tmp dir");
@@ -356,8 +358,9 @@ fn rotated_transcript_shows_only_post_clear_turns() {
 
 #[test]
 fn symlinked_session_log_resolves() {
-    // `migrate_session` symlinks a grabbed branch's session into the new
-    // worktree's project dir; resolution must follow the link.
+    // migrate_session は grab したブランチのセッションを、新しい worktree の
+    // プロジェクトディレクトリへシンボリックリンクする。解決はそのリンクを
+    // たどれなければならない。
     let source = tempfile::tempdir().expect("tmp dir");
     let target = tempfile::tempdir().expect("tmp dir");
     let real = write_log(source.path(), "aaa", &["from aaa"], Duration::ZERO);

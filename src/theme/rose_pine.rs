@@ -1,4 +1,4 @@
-//! Rosé Pine palette.
+//! Rosé Pine パレット。
 
 use super::Theme;
 use ratatui::style::Color;
@@ -64,7 +64,7 @@ impl Theme {
             reply_text: Color::Rgb(196, 167, 231),
 
             code_bg: Color::Rgb(20, 18, 30),
-            code_fg: Color::Rgb(235, 159, 188), // rose pink
+            code_fg: Color::Rgb(235, 159, 188), // ローズピンク
 
             panel_focused_bg: Color::Rgb(38, 35, 52),
         }

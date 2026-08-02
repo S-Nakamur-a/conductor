@@ -1,34 +1,34 @@
-//! Rich mode Tier A effects — rotating gradient borders.
+//! Rich mode Tier A のエフェクト — 回転するグラデーションボーダー。
 //!
-//! Post-processes the rendered frame buffer (same pattern as `party.rs`)
-//! when [`crate::term_caps::RichTier`] is Tier A or higher:
+//! [crate::term_caps::RichTier] が Tier A 以上のとき、描画済みのフレーム
+//! バッファに対して後処理を行う（party.rs と同じパターン）:
 //!
-//! 1. **Focused-panel border gradient** — the focused border's glyphs are
-//!    recoloured with a theme-derived conic gradient (a hue sweep around
-//!    `border_focused`) that slowly rotates around the panel, like a CSS
-//!    `conic-gradient` glow. Lightness only ever dips *below* the theme
-//!    colour, so the border never washes out to white. Slow and
-//!    low-saturation on purpose: it marks focus without shouting. Unfocused
-//!    borders are left untouched.
-//! 2. **Claude-waiting glow** — when the selected worktree's Claude session
-//!    waits for input, the Claude panel's border breathes in the theme's
-//!    waiting colours. Faster and warmer than the focus gradient so the two
-//!    states stay distinguishable in peripheral vision; it is applied after
-//!    (and therefore wins over) the focus gradient.
+//! 1. フォーカス中パネルのボーダーグラデーション — フォーカス中のボーダーの
+//!    グリフを、テーマから導出した円錐グラデーション（border_focused を中心
+//!    とした色相の揺れ）で再着色し、パネルの周りをゆっくり回転させる。CSS の
+//!    conic-gradient のグローのような見た目になる。明度はテーマの色より
+//!    *暗くなる* 方向にしか振れないので、ボーダーが白く飛ぶことはない。意図的に
+//!    ゆっくりで低彩度にしてある: 大きな主張をせずにフォーカスを示すため。
+//!    フォーカスされていないボーダーには手を付けない。
+//! 2. Claude 待機中のグロー — 選択中の worktree の Claude セッションが入力を
+//!    待っているとき、Claude パネルのボーダーがテーマの waiting 色で明滅する。
+//!    フォーカスグラデーションより速く暖色寄りにすることで、周辺視野でも
+//!    2つの状態を区別できるようにしてある。フォーカスグラデーションの後に
+//!    適用される（つまりそちらより優先される）。
 //!
-//! Both effects derive every colour from the active [`crate::theme::Theme`]
-//! at render time — no per-theme gradient data is stored.
+//! どちらのエフェクトも、描画時点でアクティブな [crate::theme::Theme] から
+//! すべての色を導出する — テーマごとのグラデーションデータは保持しない。
 //!
-//! Animation phases derive from wall-clock time (`App::rich_epoch`), not
-//! `ui_tick`, so the perceived speed never changes with the redraw rate.
-//! The effects only *advance visually* when something redraws the frame
-//! (input, PTY output, or the waiting pulse) — a fully idle screen freezes
-//! mid-gradient on purpose, keeping idle CPU at zero instead of forcing a
-//! redraw timer.
+//! アニメーションのフェーズは ui_tick ではなく壁時計時間（App::rich_epoch）
+//! から導出するので、体感速度が再描画レートによって変わることはない。
+//! エフェクトが *見た目上進む* のは何かがフレームを再描画したとき
+//! （入力、PTY 出力、待機中のパルス）だけ — 完全にアイドルな画面は意図的に
+//! グラデーションの途中で止まったままになり、再描画タイマーを強制する
+//! のではなくアイドル時の CPU 使用をゼロに保つ。
 //!
-//! The whole pass is skipped while party mode is active: party detects the
-//! focused border by colour equality with `border_focused`, which these
-//! effects would break.
+//! party モードが有効な間はこのパス全体をスキップする: party は
+//! border_focused との色の一致でフォーカス中のボーダーを検出しており、
+//! このエフェクトがあるとその判定が壊れてしまうため。
 
 use std::f64::consts::TAU;
 
@@ -39,44 +39,44 @@ use crate::app::App;
 
 use super::party::{hsl_to_rgb, is_border_glyph};
 
-/// Seconds for one full revolution of the focus gradient around the panel.
-/// Ursula's perception window is 4–6s: slower stops reading as motion,
-/// faster becomes distracting for an ambient cue.
+/// フォーカスグラデーションがパネルを1周する秒数。
+/// 人が動きとして知覚できる窓は4〜6秒: これより遅いと動きに見えなくなり、
+/// 速いとアンビエントな合図としては気が散ってしまう。
 const FOCUS_ROTATE_PERIOD_SECS: f64 = 6.0;
-/// Hue sweep amplitude (degrees either side of `border_focused`'s hue).
+/// 色相の揺れ幅（border_focused の色相を中心に、両側それぞれ何度か）。
 const FOCUS_HUE_SWEEP: f64 = 24.0;
-/// How far lightness dips below the theme colour at the gradient's trough
-/// (fraction of the theme lightness). The crest is the theme colour itself,
-/// so the gradient darkens but never brightens toward white.
+/// グラデーションの谷でテーマ色よりどれだけ明度が下がるか（テーマの明度に対する
+/// 割合）。山はテーマ色そのものなので、グラデーションは暗くなる一方で白へは
+/// 決して明るくならない。
 const FOCUS_LIGHTNESS_DIP: f64 = 0.30;
-/// Terminal cells are roughly twice as tall as wide; scale the y distance
-/// so the rotation reads as circular instead of squashed.
+/// ターミナルのセルは幅よりおおよそ2倍縦長なので、y方向の距離をスケールして
+/// 回転が縦につぶれずに円形に見えるようにする。
 const CELL_ASPECT: f64 = 2.0;
-/// Breathing period of the waiting glow, in seconds — deliberately faster
-/// than the focus breath so "Claude needs you" reads as urgent where "this
-/// panel has focus" reads as ambient.
+/// 待機中グローの明滅周期（秒）— フォーカスの明滅よりわざと速くしてあり、
+/// 「フォーカス中」がアンビエントに見えるのに対して「Claude があなたを
+/// 必要としている」が緊急に見えるようにしている。
 const WAITING_BREATH_PERIOD_SECS: f64 = 1.6;
 
-/// Apply all rich-mode Tier A effects to the just-rendered frame buffer.
+/// 描画直後のフレームバッファに rich mode Tier A のエフェクトをすべて適用する。
 ///
-/// Called at the end of `render_ui` (before the party-mode pass, which takes
-/// over completely when active).
+/// render_ui の終わり（party モードのパスの前）で呼ばれる。party モードが
+/// 有効なときはそちらが完全に上書きする。
 pub fn apply_rich_effects(frame: &mut Frame, app: &App) {
     let t = app.rich.epoch.elapsed().as_secs_f64();
     apply_focus_gradient(frame, app, t);
     apply_waiting_glow(frame, app, t);
 }
 
-/// Recolour every focused-border glyph with the rotating conic gradient.
+/// フォーカス中のボーダーのグリフをすべて、回転する円錐グラデーションで再着色する。
 ///
-/// Like party mode, glyphs are found by colour equality with
-/// `border_focused`: only the focused panel paints its border in that colour,
-/// so the match automatically scopes the effect (including overlays that
-/// deliberately use the focused colour).
+/// party モードと同様、グリフは border_focused との色の一致で見つける:
+/// フォーカス中のパネルだけがその色でボーダーを塗るので、この一致だけで
+/// エフェクトの適用範囲が自動的に絞られる（意図的にフォーカス色を使っている
+/// オーバーレイも含む）。
 ///
-/// The gradient's centre is the bounding box of the matched glyphs (i.e. the
-/// focused panel's rectangle), so the bright crest visibly orbits the panel
-/// rather than sweeping diagonally across the screen.
+/// グラデーションの中心は一致したグリフのバウンディングボックス（つまり
+/// フォーカス中パネルの矩形）なので、明るい山は画面を斜めに横切るのではなく、
+/// パネルの周りを目に見えて周回する。
 fn apply_focus_gradient(frame: &mut Frame, app: &App, t: f64) {
     let focused = app.theme.border_focused;
     let Some((h, s, l)) = rgb_to_hsl(focused) else {
@@ -86,7 +86,7 @@ fn apply_focus_gradient(frame: &mut Frame, app: &App, t: f64) {
     let area = frame.area();
     let buf = frame.buffer_mut();
 
-    // Pass 1: bounding box of the focused-border glyphs → gradient centre.
+    // パス1: フォーカス中ボーダーのグリフのバウンディングボックス → グラデーションの中心。
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (u16::MAX, u16::MAX, 0u16, 0u16);
     for y in area.y..area.y.saturating_add(area.height) {
         for x in area.x..area.x.saturating_add(area.width) {
@@ -102,12 +102,12 @@ fn apply_focus_gradient(frame: &mut Frame, app: &App, t: f64) {
         }
     }
     if min_x > max_x {
-        return; // no focused border on screen
+        return; // 画面上にフォーカス中のボーダーがない
     }
     let cx = (min_x as f64 + max_x as f64) / 2.0;
     let cy = (min_y as f64 + max_y as f64) / 2.0;
 
-    // Pass 2: conic gradient around the centre, rotating with time.
+    // パス2: 中心を軸に、時間とともに回転する円錐グラデーション。
     let rotation = t * TAU / FOCUS_ROTATE_PERIOD_SECS;
     for y in min_y..=max_y {
         for x in min_x..=max_x {
@@ -123,10 +123,10 @@ fn apply_focus_gradient(frame: &mut Frame, app: &App, t: f64) {
     }
 }
 
-/// Hue and lightness of the focus gradient at `phase` radians around the
-/// panel. The crest (`sin(phase)` = 1) is the theme colour itself; the trough
-/// dips `FOCUS_LIGHTNESS_DIP` darker, so the gradient never brightens past
-/// the theme and never washes out to white.
+/// パネルの周りの位相 phase ラジアンにおける、フォーカスグラデーションの
+/// 色相と明度。山（sin(phase) = 1）はテーマ色そのものであり、谷は
+/// FOCUS_LIGHTNESS_DIP だけ暗くなる。そのためグラデーションはテーマ色より
+/// 明るくなることはなく、白く飛ぶこともない。
 fn conic_gradient_hsl(h: f64, l: f64, phase: f64) -> (f64, f64) {
     let wave = phase.sin();
     let hue = (h + wave * FOCUS_HUE_SWEEP).rem_euclid(360.0);
@@ -134,13 +134,13 @@ fn conic_gradient_hsl(h: f64, l: f64, phase: f64) -> (f64, f64) {
     (hue, lightness)
 }
 
-/// Make the Claude panel's border breathe in the waiting colours while the
-/// selected worktree's session waits for input.
+/// 選択中の worktree のセッションが入力を待っている間、Claude パネルの
+/// ボーダーを waiting 色で明滅させる。
 ///
-/// Targets the panel rectangle from the layout cache (not colour matching)
-/// so it works whether the panel is focused or not. Skipped while an overlay
-/// is open: the glow would otherwise recolour overlay borders crossing the
-/// panel area, and the user is already mid-interaction anyway.
+/// パネルが焦点を持つかどうかにかかわらず動くよう、色の一致ではなく layout
+/// キャッシュのパネル矩形を対象にする。オーバーレイが開いている間はスキップ
+/// する: そうしないとグローがパネル領域を横切るオーバーレイのボーダーまで
+/// 再着色してしまうし、そもそもユーザは既にオーバーレイを操作中であるため。
 fn apply_waiting_glow(frame: &mut Frame, app: &App, t: f64) {
     if app.terminal.cc_waiting_worktrees.is_empty()
         || !app
@@ -173,8 +173,8 @@ fn apply_waiting_glow(frame: &mut Frame, app: &App, t: f64) {
         }
     };
 
-    // Perimeter walk. The Claude panel has no top border line (the session
-    // tabs row sits there), so the top edge simply finds no border glyphs.
+    // 外周を走査する。Claude パネルには上端のボーダー行がない（そこには
+    // セッションタブの行がある）ので、上端はボーダーのグリフを見つけないだけ。
     for x in left..=right {
         paint(x, top, buf);
         paint(x, bottom, buf);
@@ -185,9 +185,9 @@ fn apply_waiting_glow(frame: &mut Frame, app: &App, t: f64) {
     }
 }
 
-/// Convert an RGB [`Color`] to HSL (h: 0-360, s: 0-1, l: 0-1).
-/// Returns `None` for non-RGB colours (indexed/named), which rich effects
-/// leave untouched.
+/// RGB の [Color] を HSL（h: 0-360, s: 0-1, l: 0-1）に変換する。
+/// RGB でない色（indexed/named）には None を返し、rich エフェクトは
+/// それらに手を付けない。
 fn rgb_to_hsl(color: Color) -> Option<(f64, f64, f64)> {
     let Color::Rgb(r, g, b) = color else {
         return None;
@@ -201,7 +201,7 @@ fn rgb_to_hsl(color: Color) -> Option<(f64, f64, f64)> {
     let l = (max + min) / 2.0;
 
     if max == min {
-        return Some((0.0, 0.0, l)); // achromatic
+        return Some((0.0, 0.0, l)); // 無彩色
     }
 
     let d = max - min;
@@ -220,8 +220,8 @@ fn rgb_to_hsl(color: Color) -> Option<(f64, f64, f64)> {
     Some((h * 60.0, s, l))
 }
 
-/// Linear interpolation between two RGB colours (`t`: 0 = `a`, 1 = `b`).
-/// Falls back to `b` when either colour is not RGB.
+/// 2つの RGB 色の間の線形補間（t: 0 = a, 1 = b）。
+/// どちらかが RGB でない場合は b にフォールバックする。
 fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
     let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
         return b;
@@ -235,13 +235,14 @@ fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
 mod tests {
     use super::*;
 
-    /// Maximum per-channel error tolerated in an RGB → HSL → RGB round trip.
+    /// RGB → HSL → RGB のラウンドトリップで許容する、チャンネルごとの最大誤差。
     const ROUND_TRIP_TOLERANCE: i32 = 2;
 
     #[test]
     fn rgb_hsl_round_trips_theme_colors() {
-        // Every built-in theme's border/waiting colors must survive the
-        // round trip, or the gradient would visibly shift the theme.
+        // すべての組み込みテーマの border/waiting 色がラウンドトリップに耐えな
+        // ければならない。さもないとグラデーションがテーマの色を目に見えて
+        // ずらしてしまう。
         for name in [
             "catppuccin-mocha",
             "dracula",
@@ -294,7 +295,7 @@ mod tests {
         assert_eq!(lerp_rgb(a, b, 0.0), a);
         assert_eq!(lerp_rgb(a, b, 1.0), b);
         assert_eq!(lerp_rgb(a, b, 0.5), Color::Rgb(100, 50, 150));
-        // Out-of-range t is clamped.
+        // 範囲外の t はクランプされる。
         assert_eq!(lerp_rgb(a, b, -1.0), a);
         assert_eq!(lerp_rgb(a, b, 2.0), b);
     }
@@ -309,8 +310,8 @@ mod tests {
 
     #[test]
     fn focus_gradient_stays_near_theme_hue() {
-        // The gradient must never wander far from the theme's hue: sample a
-        // full revolution and check the hue distance.
+        // グラデーションはテーマの色相から大きく離れてはならない: 1周分
+        // サンプリングして色相の距離を検証する。
         let theme = crate::theme::Theme::from_name("catppuccin-mocha");
         let (h0, _, _) = rgb_to_hsl(theme.border_focused).unwrap();
         for step in 0..360 {
@@ -326,9 +327,9 @@ mod tests {
 
     #[test]
     fn focus_gradient_never_brightens_past_theme() {
-        // The old breathing effect pushed lightness above the theme colour
-        // and washed the border out to white; the rotating gradient must only
-        // ever darken.
+        // 以前の明滅エフェクトは明度をテーマ色より上に押し上げてボーダーを
+        // 白く飛ばしていた。回転グラデーションは常に暗くなる方向にしか
+        // 振れてはならない。
         for step in 0..360 {
             let phase = (step as f64).to_radians();
             let (_, lightness) = conic_gradient_hsl(260.0, 0.8, phase);

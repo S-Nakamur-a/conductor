@@ -1,9 +1,9 @@
-//! Private char-boundary helpers shared by `edit` and `movement`.
+//! edit と movement が共有する、非公開の文字境界ヘルパー。
 
 use super::TextInput;
 
 impl TextInput {
-    /// Find the byte position of the previous character boundary.
+    /// 直前の文字境界のバイト位置を求める。
     pub(super) fn prev_char_boundary(&self) -> usize {
         let mut pos = self.cursor;
         if pos == 0 {
@@ -16,7 +16,7 @@ impl TextInput {
         pos
     }
 
-    /// Find the byte position of the next character boundary.
+    /// 直後の文字境界のバイト位置を求める。
     pub(super) fn next_char_boundary(&self) -> usize {
         let mut pos = self.cursor + 1;
         while pos < self.buffer.len() && !self.buffer.is_char_boundary(pos) {

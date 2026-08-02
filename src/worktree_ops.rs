@@ -1,7 +1,7 @@
 //! worktree 管理の状態。
 //!
 //! worktree の作成・削除に関する UI 状態と、バックグラウンド処理のチャネルを
-//! まとめたもの。以前は `App` 構造体に散らばっていた。
+//! まとめたもの。以前は App 構造体に散らばっていた。
 
 use std::sync::mpsc;
 
@@ -17,7 +17,7 @@ pub struct WorktreeManager {
     /// worktree の空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
     pub blank_last_click: std::time::Instant,
     /// worktree バーの空白部分を最後にクリックした時刻 (ダブルクリックでの作成の
-    /// 判定用)。`blank_last_click` と分けてあるのは、カラムの空白へのクリックと
+    /// 判定用)。blank_last_click と分けてあるのは、カラムの空白へのクリックと
     /// バーの空白へのクリックが誤ってダブルクリックとして結合しないようにするため。
     pub wtbar_blank_last_click: std::time::Instant,
     /// worktree 一覧の項目を最後にクリックした時刻 (ダブルクリック判定用)。
@@ -48,7 +48,7 @@ pub struct WorktreeManager {
     /// worktree 操作の結果を受け取る側。
     pub bg_worktree_rx: Option<mpsc::Receiver<WorktreeOpResult>>,
 
-    // ── Smart Worktree ──────────────────────────────────────────
+    // Smart Worktree 関連のフィールド
     /// スマート worktree 作成で使う、複数行のタスク説明バッファ。
     pub smart_description_buffer: TextInput,
 }

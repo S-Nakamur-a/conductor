@@ -6,12 +6,12 @@
 //!   waiting <cwd>
 //!   session <panel id> <claude session id>
 //!
-//! 前の 2 つは waiting/active 表示用。3 つ目は `SessionStart` フック
-//! ([`crate::cc_hook`]) が送る「このパネルが書き込んでいる Claude セッションが
-//! 変わった」通知で、`/clear` や `/resume` によるログのローテーションを
+//! 前の 2 つは waiting/active 表示用。3 つ目は SessionStart フック
+//! ([crate::cc_hook]) が送る「このパネルが書き込んでいる Claude セッションが
+//! 変わった」通知で、/clear や /resume によるログのローテーションを
 //! 推測ではなく事実として受け取るためのもの。
 //!
-//! バックグラウンドスレッドが接続を受け付け、パースしたイベントを `mpsc`
+//! バックグラウンドスレッドが接続を受け付け、パースしたイベントを mpsc
 //! チャネルでメインループへ転送する。
 
 use std::io::Read;
@@ -40,10 +40,10 @@ pub enum CcNotifyEvent {
     State { kind: CcNotifyKind, cwd: PathBuf },
     /// このパネルが書き込んでいる Claude セッションの id が変わった。
     ///
-    /// `panel_id` は spawn 時に `CONDUCTOR_PANEL_ID` として PTY に注入した
-    /// [`crate::pty_manager::PtySession::id`]。フックはそのパネル自身の
+    /// panel_id は spawn 時に CONDUCTOR_PANEL_ID として PTY に注入した
+    /// [crate::pty_manager::PtySession::id]。フックはそのパネル自身の
     /// Claude プロセスの中で走るので、パネルと session id の対応は推測ではなく
-    /// 同一性として得られる — 同一ワークツリーで複数パネルが同時に `/clear`
+    /// 同一性として得られる — 同一ワークツリーで複数パネルが同時に /clear
     /// しても取り違えない。
     SessionRotated {
         panel_id: String,
@@ -61,10 +61,10 @@ pub struct CcNotifyListener {
 
 /// このリポジトリの cc-notify ソケットのパス。
 ///
-/// bind 側 ([`CcNotifyListener::new`]) と、フックへ渡す側
-/// ([`crate::pty_manager`]) の両方がここを使う。片方だけ変わって行き違うことが
+/// bind 側 ([CcNotifyListener::new]) と、フックへ渡す側
+/// ([crate::pty_manager]) の両方がここを使う。片方だけ変わって行き違うことが
 /// 無いように定義は 1 箇所に置く。ワークツリーではなくメインワークツリーの
-/// `.conductor/` に置くのは、1 リポジトリにつきリスナが 1 つだからで、
+/// .conductor/ に置くのは、1 リポジトリにつきリスナが 1 つだからで、
 /// 同じ理由でフック側も同じ解決をしなければならない。
 pub fn socket_path(repo_path: &Path) -> PathBuf {
     crate::git_engine::GitEngine::open(repo_path)
@@ -75,7 +75,7 @@ pub fn socket_path(repo_path: &Path) -> PathBuf {
 }
 
 impl CcNotifyListener {
-    /// 指定したリポジトリルート配下の `.conductor/cc-notify.sock` に bind した
+    /// 指定したリポジトリルート配下の .conductor/cc-notify.sock に bind した
     /// リスナを作る。
     pub fn new(repo_path: &Path) -> anyhow::Result<Self> {
         let socket_path = socket_path(repo_path);
@@ -141,8 +141,8 @@ impl CcNotifyListener {
             // 行儀の悪いクライアントでブロックしないよう、読み取りタイムアウトは短く。
             let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
 
-            // 相手が閉じるまで読む。1 回の `read` で足りるとは限らない —
-            // 送り手が複数回 `write` すると (フォーマット済み文字列を書く場合に
+            // 相手が閉じるまで読む。1 回の read で足りるとは限らない —
+            // 送り手が複数回 write すると (フォーマット済み文字列を書く場合に
             // 起きる) 先頭だけ拾って残りを捨ててしまう。
             let mut buf = Vec::new();
             let mut chunk = [0u8; 1024];

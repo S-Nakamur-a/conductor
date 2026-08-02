@@ -5,7 +5,7 @@ use crate::ui::common::list_row::HoverRow;
 /// どの行にマウスが乗っているかと、いま離れた行のフェードアウト状態。
 ///
 /// ツリーと Changed files がホバー / 選択の優先規則をそれぞれ実装しないよう、
-/// 共通の追跡型 (`HoverRow`) を 2 つ並べて持つ。
+/// 共通の追跡型 (HoverRow) を 2 つ並べて持つ。
 #[derive(Default)]
 pub struct ListHover {
     /// Explorer 上半分のファイルツリー (可視リストの添字で追う)。

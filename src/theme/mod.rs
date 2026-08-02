@@ -1,16 +1,14 @@
-//! Theme configuration for UI colors.
+//! UI カラーのテーマ設定。
 //!
-//! Defines a set of named colors used throughout the UI, with support for
-//! loading custom themes from the configuration.
+//! UI 全体で使う名前付きカラーの集合を定義し、設定からのカスタムテーマ読み込みにも対応する。
 //!
-//! Split by responsibility: this file holds the `Theme` struct itself and its
-//! `Default` impl; `registry` resolves theme names to built-in palettes;
-//! `color_ops` holds the generic color-math methods (darken/lighten/
-//! complement/lerp/high_contrast); `hsl` holds the private RGB↔HSL
-//! conversion used by `complement`; and one file per built-in palette
-//! (`catppuccin`, `dracula`, `nord`, `solarized`, `tokyo_night`, `gruvbox`,
-//! `rose_pine`, `kanagawa`, `github`) holds that theme's constructor(s) as an
-//! `impl Theme` block.
+//! 責務ごとにファイルを分割している: このファイルは Theme 構造体本体と Default 実装を
+//! 持つ。registry はテーマ名を組み込みパレットに解決する。color_ops は汎用のカラー演算
+//! メソッド(darken/lighten/complement/lerp/high_contrast)を持つ。hsl は complement
+//! が使う非公開の RGB↔HSL 変換を持つ。組み込みパレットごとのファイル
+//! (catppuccin, dracula, nord, solarized, tokyo_night, gruvbox,
+//! rose_pine, kanagawa, github) はそれぞれのテーマのコンストラクタを impl Theme
+//! ブロックとして持つ。
 
 use ratatui::style::Color;
 
@@ -30,147 +28,143 @@ mod tokyo_night;
 #[cfg(test)]
 mod tests;
 
-/// A color theme for the application.
+/// アプリケーションのカラーテーマ。
 #[derive(Debug, Clone)]
 pub struct Theme {
-    // ── Meta ─────────────────────────────────────────────────────────
-    /// The canonical name of this theme (matches the key used in `from_name`
-    /// and returned by `all_names`). Primarily used to detect registration
-    /// drift between `from_name` and `all_names` at test time.
+    // メタ情報
+    /// このテーマの正式名(from_name のキーおよび all_names の返り値と一致する)。
+    /// 主に from_name と all_names の登録漏れをテストで検出するために使う。
     #[allow(dead_code)]
     pub name: &'static str,
-    /// Whether this is a light (true) or dark (false) background theme.
-    /// Used by OSC 11 auto-detection and by the theme-picker light/dark tag.
+    /// 明るい背景のテーマなら true、暗い背景なら false。
+    /// OSC 11 自動判定とテーマピッカーの明暗タグで使う。
     pub light: bool,
 
-    // ── Core ─────────────────────────────────────────────────────────
-    /// Foreground color for normal text.
+    // 基本色
+    /// 通常テキストの前景色。
     pub fg: Color,
-    /// Accent color (used for highlights, selections).
+    /// アクセントカラー(ハイライトや選択に使う)。
     pub accent: Color,
-    /// Color for muted/dimmed text.
+    /// 目立たない/薄いテキストの色。
     pub muted: Color,
-    /// Color for success indicators.
+    /// 成功表示の色。
     pub success: Color,
-    /// Color for error/danger indicators.
+    /// エラー/危険表示の色。
     pub error: Color,
-    /// Color for warning indicators.
+    /// 警告表示の色。
     pub warning: Color,
-    /// Color for informational text.
+    /// 情報テキストの色。
     pub info: Color,
 
-    // ── Diff ─────────────────────────────────────────────────────────
-    /// Color for added/inserted lines in diffs.
+    // diff 表示
+    /// diff の追加行の色。
     pub diff_add: Color,
-    /// Background color for added lines.
+    /// 追加行の背景色。
     pub diff_add_bg: Color,
-    /// Color for deleted/removed lines in diffs.
+    /// diff の削除行の色。
     pub diff_del: Color,
-    /// Background color for deleted lines.
+    /// 削除行の背景色。
     pub diff_del_bg: Color,
-    /// Brighter background for emphasized (word-level) additions.
+    /// 強調表示(単語単位)の追加箇所の、より明るい背景色。
     pub diff_add_bg_emphasis: Color,
-    /// Brighter background for emphasized (word-level) deletions.
+    /// 強調表示(単語単位)の削除箇所の、より明るい背景色。
     pub diff_del_bg_emphasis: Color,
-    /// Color for diff hunk section headers (function names, etc.) — brighter than muted.
+    /// diff ハンクのセクションヘッダ(関数名など)の色。muted より明るい。
     pub diff_section_header: Color,
 
-    // ── Border ───────────────────────────────────────────────────────
-    /// Border color when panel is focused.
+    // 枠線
+    /// パネルがフォーカスされている時の枠線色。
     pub border_focused: Color,
-    /// Border color when panel is unfocused.
+    /// パネルがフォーカスされていない時の枠線色。
     pub border_unfocused: Color,
-    /// Secondary border color (separator between sub-areas).
+    /// 補助的な枠線色(サブエリア間の区切り)。
     pub border_secondary: Color,
 
-    // ── Selection ────────────────────────────────────────────────────
-    /// Background for the currently selected item (active panel).
+    // 選択
+    /// 現在選択中の項目の背景色(アクティブなパネル)。
     pub selected_bg: Color,
-    /// Foreground for the currently selected item (active panel).
+    /// 現在選択中の項目の前景色(アクティブなパネル)。
     pub selected_fg: Color,
-    /// Background for the currently selected item (inactive panel).
+    /// 現在選択中の項目の背景色(非アクティブなパネル)。
     pub selected_bg_inactive: Color,
-    /// Foreground for the currently selected item (inactive panel).
+    /// 現在選択中の項目の前景色(非アクティブなパネル)。
     pub selected_fg_inactive: Color,
 
-    // ── Line selection (viewer) ──────────────────────────────────────
-    /// Background for selected lines in the viewer.
+    // 行選択 (Viewer)
+    /// ビューアで選択中の行の背景色。
     pub line_selected_bg: Color,
-    /// Foreground for selected lines in the viewer.
+    /// ビューアで選択中の行の前景色。
     pub line_selected_fg: Color,
 
-    // ── Gutter ───────────────────────────────────────────────────────
-    /// Background for gutter of selected lines.
+    // 行番号ガター
+    /// 選択中の行のガター背景色。
     pub gutter_selected_bg: Color,
-    /// Foreground for gutter of selected lines.
+    /// 選択中の行のガター前景色。
     pub gutter_selected_fg: Color,
-    /// Foreground for gutter line numbers on hover (slightly brighter than muted).
+    /// ホバー時のガター行番号の前景色(muted よりやや明るい)。
     pub gutter_hover_fg: Color,
-    /// Background for gutter line numbers on hover (subtle highlight to indicate clickability).
+    /// ホバー時のガター行番号の背景色(クリック可能であることを示す控えめなハイライト)。
     pub gutter_hover_bg: Color,
-    /// Background for gutter of pending range lines (dimmer than selected).
+    /// 保留中範囲の行のガター背景色(選択中より暗い)。
     pub gutter_pending_bg: Color,
-    /// Background for pending range lines in the viewer (dimmer than selected).
+    /// ビューアの保留中範囲行の背景色(選択中より暗い)。
     pub line_pending_bg: Color,
 
-    // ── Text ─────────────────────────────────────────────────────────
-    /// Color for hint / muted helper text.
+    // テキスト
+    /// ヒント/補助テキストの色。
     pub hint: Color,
-    /// Foreground for non-current search matches.
+    /// 現在位置以外の検索マッチの前景色。
     pub search_match_fg: Color,
-    /// Background for the current search match.
+    /// 現在の検索マッチの背景色。
     pub search_match_bg: Color,
-    /// Foreground for the current search match.
+    /// 現在の検索マッチの前景色。
     pub search_current_fg: Color,
 
-    // ── Waiting / pulse ──────────────────────────────────────────────
-    /// Primary waiting indicator color (bright orange).
+    // 待機中のパルス表示
+    /// waiting インジケータの主色(明るいオレンジ)。
     pub waiting_primary: Color,
-    /// Secondary waiting indicator color (dimmer orange).
+    /// waiting インジケータの副色(暗めのオレンジ)。
     pub waiting_secondary: Color,
 
-    // ── Title bar ────────────────────────────────────────────────────
-    /// Title bar background color.
+    // タイトルバー
+    /// タイトルバーの背景色。
     pub titlebar_bg: Color,
-    /// Directory path text color in the title bar.
+    /// タイトルバー内のディレクトリパス文字色。
     pub dir_fg: Color,
 
-    // ── Status bar backgrounds ───────────────────────────────────────
-    /// Flash background for success status messages.
+    // ステータスバーの背景
+    /// 成功ステータスメッセージのフラッシュ背景色。
     pub status_bg_success: Color,
-    /// Flash background for error status messages.
+    /// エラーステータスメッセージのフラッシュ背景色。
     pub status_bg_error: Color,
-    /// Flash background for warning status messages.
+    /// 警告ステータスメッセージのフラッシュ背景色。
     pub status_bg_warning: Color,
-    /// Flash background for info status messages.
+    /// 情報ステータスメッセージのフラッシュ背景色。
     pub status_bg_info: Color,
 
-    // ── Comment overlays ─────────────────────────────────────────────
-    /// Background for comment preview popups — also the inline-thread surface
-    /// for **Claude**-authored comments and replies (the neutral default).
+    // コメントオーバーレイ
+    /// コメントプレビューポップアップの背景色。Claude が書いたコメント・返信の
+    /// インラインスレッド面(既定の中立色)でもある。
     pub comment_preview_bg: Color,
-    /// Inline-thread surface for **user**-authored comments and replies. A
-    /// distinct tint from `comment_preview_bg` so "who wrote this" reads at a
-    /// glance without parsing the byline.
+    /// user が書いたコメント・返信のインラインスレッド面。comment_preview_bg とは
+    /// 異なる色味にすることで、誰が書いたかを署名を読まずに一目で判別できるようにする。
     pub comment_user_bg: Color,
-    /// Text color for reply content.
+    /// 返信本文の文字色。
     pub reply_text: Color,
 
-    // ── Markdown ─────────────────────────────────────────────────────
-    /// Background for rendered code — fenced blocks and inline `code` — in
-    /// Markdown (change summary, comment bodies). A shaded "card" a step darker
-    /// than each theme's base so code reads as inset, GitHub-style, regardless
-    /// of the surface drawn behind it.
+    // Markdown 表示
+    /// Markdown(変更サマリやコメント本文)内の、コードブロックとインライン code の背景色。
+    /// 背後に何が描画されていても GitHub 風に凹んで見えるよう、各テーマの基調色より
+    /// 一段暗いカード状の色にしている。
     pub code_bg: Color,
-    /// Foreground for inline `code` chips. A soft pink, distinct from the
-    /// heading/accent colours, so code references read as code at a glance.
+    /// インライン code チップの前景色。見出し/アクセント色とは異なるソフトピンクにして、
+    /// コード参照だと一目で分かるようにしている。
     pub code_fg: Color,
 
-    // ── Panel surface ────────────────────────────────────────────────
-    /// Subtle background for the focused list panel (worktree / explorer).
-    /// Retained in the struct for theme compatibility; the layout.rs surface
-    /// fill was removed in the transparency sweep so the terminal background
-    /// shows through instead.
+    // パネルの下地
+    /// フォーカス中のリストパネル(worktree / explorer)の控えめな背景色。
+    /// テーマ互換性のためフィールドとしては残しているが、layout.rs 側の面塗りは
+    /// 透過化の整理で撤去済みで、代わりに端末の背景が透けて見える。
     #[allow(dead_code)]
     pub panel_focused_bg: Color,
 }

@@ -1,5 +1,5 @@
-//! Writing input to a PTY session: raw bytes, chunked large payloads,
-//! sanitized clipboard pastes, and mouse-wheel scroll forwarding.
+//! PTY セッションへの入力書き込み: 生バイト、大きなペイロードのチャンク分割、
+//! サニタイズ済みクリップボードペースト、マウスホイールのスクロール転送。
 
 use std::io::Write;
 use std::thread;
@@ -11,7 +11,7 @@ use super::locale::utf8_chunks;
 use super::PtyManager;
 
 impl PtyManager {
-    /// Send input data to the PTY at the given session index.
+    /// 指定セッションインデックスの PTY へ入力データを送る。
     pub fn write_to_session(&mut self, idx: usize, data: &[u8]) -> Result<()> {
         let session = self
             .sessions
@@ -23,28 +23,28 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Forward a mouse-wheel scroll to a PTY session that owns the screen,
-    /// returning `true` when the scroll was handled (the caller must then **not**
-    /// adjust the local scrollback offset).
+    /// マウスホイールのスクロールを、画面を所有する PTY セッションへ転送する。
+    /// スクロールを処理した場合は true を返し、呼び出し側はローカルの
+    /// スクロールバックオフセットを調整して**はいけない**。
     ///
-    /// Three cases, matching how tmux / iTerm2 behave:
+    /// tmux / iTerm2 の挙動に合わせた3つのケースがある。
     ///
-    /// 1. **Child requested mouse reporting** (vim/neovim with `mouse=`,
-    ///    `less --mouse`, fzf, …): forward the wheel as a properly encoded mouse
-    ///    event (SGR `1006` or legacy X10) at `col`/`row` so the application
-    ///    scrolls itself. This is the fix for full-screen apps where the wheel
-    ///    used to be swallowed entirely. Applies on both the normal and
-    ///    alternate screen — if the app turned mouse reporting on, it wants the
-    ///    event.
-    /// 2. **Alternate screen, no mouse reporting** (pagers like `less`, `bat`,
-    ///    `man`): the alternate screen has no scrollback of its own, so translate
-    ///    each wheel notch into `lines` Up/Down arrow presses sent to the child
-    ///    (the classic "alternate-scroll").
-    /// 3. **Normal screen, no mouse reporting**: not handled here — return
-    ///    `false` so the caller scrolls the panel's local scrollback buffer.
+    /// 1. **子プロセスがマウスレポートを要求している**場合(mouse= を設定した
+    ///    vim/neovim、less --mouse、fzf など): ホイールを col/row での
+    ///    正しくエンコードされたマウスイベント(SGR 1006 またはレガシー X10)
+    ///    として転送し、アプリケーション自身にスクロールさせる。これは
+    ///    フルスクリーンアプリでホイールが丸ごと飲み込まれていた問題への
+    ///    修正である。通常画面・オルタネート画面のどちらでも適用する —
+    ///    アプリがマウスレポートを有効にしている以上、そのイベントを望んでいる。
+    /// 2. **オルタネート画面かつマウスレポート無し**(less、bat、man などの
+    ///    ページャ): オルタネート画面は自前のスクロールバックを持たないため、
+    ///    ホイールの1ノッチごとに lines 回の Up/Down 矢印キー入力に変換して
+    ///    子プロセスへ送る(古典的な "alternate-scroll")。
+    /// 3. **通常画面かつマウスレポート無し**: ここでは処理せず false を返す。
+    ///    呼び出し側がパネルのローカルスクロールバックバッファをスクロールする。
     ///
-    /// `col` / `row` are 1-based coordinates within the PTY grid, used only for
-    /// the mouse-event encoding in case 1.
+    /// col / row は PTY グリッド内の 1-based 座標で、ケース1のマウスイベント
+    /// エンコードにのみ使う。
     pub fn forward_scroll_to_session(
         &mut self,
         idx: usize,
@@ -53,8 +53,8 @@ impl PtyManager {
         col: u16,
         row: u16,
     ) -> bool {
-        // Read the relevant terminal modes, then drop the session/parser
-        // borrow before writing (write_to_session needs &mut self).
+        // 関連する端末モードを読み取ってから、書き込み前に session/parser の
+        // 借用を解放する(write_to_session は &mut self を要求する)。
         let (is_alt, app_cursor, mouse_mode, mouse_encoding) = {
             let Some(session) = self.sessions.get(idx) else {
                 return false;
@@ -69,7 +69,7 @@ impl PtyManager {
             )
         };
 
-        // Case 1: the child captures the wheel itself — hand it an encoded event.
+        // ケース1: 子プロセスが自分でホイールを捕捉する — エンコード済みイベントを渡す。
         if mouse_mode != vt100::MouseProtocolMode::None {
             let seq = encode_mouse_wheel(up, col, row, mouse_encoding);
             if let Err(e) = self.write_to_session(idx, &seq) {
@@ -78,13 +78,13 @@ impl PtyManager {
             return true;
         }
 
-        // Case 3: ordinary screen with no mouse reporting → caller scrolls
-        // the local scrollback buffer.
+        // ケース3: マウスレポート無しの通常画面 → 呼び出し側がローカルの
+        // スクロールバックバッファをスクロールする。
         if !is_alt {
             return false;
         }
 
-        // Case 2: alternate-screen pager → synthesize arrow keys.
+        // ケース2: オルタネート画面のページャ → 矢印キーを合成する。
         let arrow = scroll_arrow_sequence(up, app_cursor);
         let mut buf = Vec::with_capacity(arrow.len() * lines);
         for _ in 0..lines {
@@ -96,13 +96,13 @@ impl PtyManager {
         true
     }
 
-    /// Send a large text payload to the PTY as regular typed input (no
-    /// bracketed paste) using chunked writes to avoid hitting the kernel's
-    /// PTY input buffer limit (typically 4096 bytes on macOS / Linux).
+    /// 大きなテキストペイロードを、通常のタイプ入力として(bracketed paste は
+    /// 使わずに)チャンク書き込みで PTY へ送る。カーネルの PTY 入力バッファ上限
+    /// (macOS/Linux では通常 4096 バイト)に触れないようにするため。
     ///
-    /// This is used for programmatic prompt injection (e.g. smart worktree)
-    /// where we want the text to be displayed in full by the receiving
-    /// application instead of being collapsed as a paste event.
+    /// これはプログラムによるプロンプト注入(smart worktree など)で、テキストを
+    /// ペーストイベントとして畳み込むのではなく、受け手のアプリケーションに
+    /// 全文表示させたい場合に使う。
     pub fn write_chunked_to_session(&mut self, idx: usize, text: &str) -> Result<()> {
         const CHUNK_SIZE: usize = 1024;
         const CHUNK_DELAY: Duration = Duration::from_millis(5);
@@ -113,11 +113,11 @@ impl PtyManager {
             .context("Session index out of bounds")?;
         let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Write the payload in small chunks (no bracketed paste markers).
-        // Chunk on UTF-8 character boundaries: a chunk that ends mid-character
-        // would be flushed (and, at the chunk limit, followed by a delay) with a
-        // truncated multi-byte sequence, which the receiving application can
-        // mis-decode — corrupting full-width / multi-byte input.
+        // ペイロードを小さなチャンクに分けて書き込む(bracketed paste マーカーは無し)。
+        // UTF-8 の文字境界でチャンクを分ける: 文字の途中で終わるチャンクは
+        // (チャンク上限に達した場合は遅延の後に)不完全なマルチバイトシーケンスと
+        // してフラッシュされてしまい、受け手のアプリケーションが誤ってデコード
+        // する可能性がある — 全角文字やマルチバイト入力が壊れる原因になる。
         for chunk in utf8_chunks(text, CHUNK_SIZE) {
             writer
                 .write_all(chunk.as_bytes())
@@ -131,24 +131,25 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Send a clipboard paste payload to the PTY, sanitizing it first and using
-    /// chunked writes to avoid hitting the kernel's PTY input buffer limit
-    /// (typically 4096 bytes on macOS / Linux).
+    /// クリップボードのペーストペイロードをサニタイズしたうえで、チャンク書き込み
+    /// で PTY へ送る。カーネルの PTY 入力バッファ上限(macOS/Linux では通常 4096
+    /// バイト)に触れないようにするため。
     ///
-    /// Two safety steps mirror what a well-behaved terminal does with a paste:
+    /// 挙動の良い端末がペースト時に行う2つの安全策をここでも踏襲する。
     ///
-    /// 1. **Sanitize** (`sanitize_pasted_text`): clipboard content can carry
-    ///    ANSI escape sequences and other non-printable control bytes (copied
-    ///    from a colorized terminal, a web page, etc.). Forwarding those raw
-    ///    lets them move the cursor, change modes, or — worst — smuggle a
-    ///    `\x1b[201~` that ends bracketed paste early so the remainder runs as
-    ///    typed commands. We strip escape sequences and control characters,
-    ///    keeping only tabs and newlines (CR is normalized to LF).
-    /// 2. **Conditional bracketing**: the `\x1b[200~` / `\x1b[201~` markers are
-    ///    only emitted when the foreground application has actually enabled
-    ///    bracketed paste (DECSET 2004), exactly as a real terminal gates them.
-    ///    Wrapping unconditionally would dump literal `[200~` / `[201~` text
-    ///    into apps that never asked for it (a bare prompt, `cat`, …).
+    /// 1. **サニタイズ** (sanitize_pasted_text): クリップボードの内容には
+    ///    ANSI エスケープシーケンスやその他の非表示制御バイトが混じることが
+    ///    ある(色付きの端末や TUI、スタイル付きのウェブページからのコピーなど)。
+    ///    これらをそのまま転送すると、カーソル移動やモード変更、最悪の場合は
+    ///    \x1b[201~ を紛れ込ませて bracketed paste を早期終了させ、残りが
+    ///    タイプされたコマンドとして実行されてしまう。エスケープシーケンスは
+    ///    丸ごと取り除き、制御文字のうちタブと改行だけを残す(CR は LF に正規化)。
+    /// 2. **条件付きブラケット化**: \x1b[200~ / \x1b[201~ マーカーは、
+    ///    フォアグラウンドのアプリケーションが実際に bracketed paste
+    ///    (DECSET 2004) を有効にしている場合にのみ出力する。本物の端末が
+    ///    ゲートしているのと同じである。無条件でラップすると、それを要求
+    ///    していないアプリ(素のプロンプトや cat など)にリテラルな
+    ///    [200~ / [201~ テキストが流れ込んでしまう。
     pub fn write_paste_to_session(&mut self, idx: usize, text: &str) -> Result<()> {
         const CHUNK_SIZE: usize = 1024;
         const CHUNK_DELAY: Duration = Duration::from_millis(5);
@@ -160,8 +161,8 @@ impl PtyManager {
             .get_mut(idx)
             .context("Session index out of bounds")?;
 
-        // Read the bracketed-paste mode flag under the screen lock, then drop it
-        // before taking the writer lock.
+        // bracketed paste モードのフラグを screen ロック下で読み取ってから、
+        // writer ロックを取る前に解放する。
         let bracketed = {
             let parser = session.screen.lock().unwrap_or_else(|e| e.into_inner());
             parser.screen().bracketed_paste()
@@ -169,7 +170,7 @@ impl PtyManager {
 
         let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Begin bracketed paste mode (only if the app understands it).
+        // bracketed paste モードを開始する(アプリが対応している場合のみ)。
         if bracketed {
             writer
                 .write_all(b"\x1b[200~")
@@ -177,10 +178,11 @@ impl PtyManager {
             writer.flush().context("Failed to flush PTY writer")?;
         }
 
-        // Write the payload in small chunks. Split on UTF-8 character
-        // boundaries so a flushed chunk never ends with a truncated multi-byte
-        // sequence (see `utf8_chunks`) — otherwise full-width / multi-byte text
-        // split across the 1 KiB boundary can be mis-decoded by the receiver.
+        // ペイロードを小さなチャンクに分けて書き込む。UTF-8 の文字境界で
+        // 分割し、フラッシュされたチャンクが不完全なマルチバイトシーケンスで
+        // 終わらないようにする(utf8_chunks を参照) — さもないと 1 KiB
+        // 境界をまたぐ全角文字やマルチバイトテキストが受け手側で誤デコード
+        // される可能性がある。
         for chunk in utf8_chunks(&cleaned, CHUNK_SIZE) {
             writer
                 .write_all(chunk.as_bytes())
@@ -191,7 +193,7 @@ impl PtyManager {
             }
         }
 
-        // End bracketed paste mode.
+        // bracketed paste モードを終了する。
         if bracketed {
             writer
                 .write_all(b"\x1b[201~")
@@ -203,42 +205,40 @@ impl PtyManager {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Free helper functions
-// ---------------------------------------------------------------------------
+// 自由関数のヘルパー
 
-/// Sanitize clipboard text before it is written to a PTY as a paste.
+/// クリップボードのテキストを、ペーストとして PTY へ書き込む前にサニタイズする。
 ///
-/// Clipboard content frequently carries bytes that are unsafe to forward
-/// verbatim into a terminal's input stream:
-/// * **ANSI escape sequences** (copied from a colorized terminal, a TUI, a web
-///   page that styled its text): these move the cursor, switch modes, or — most
-///   dangerously — can contain a `\x1b[201~` that prematurely *ends* bracketed
-///   paste, after which the rest of the clipboard is interpreted as typed
-///   commands. Whole escape sequences are dropped.
-/// * **Other C0/C1 control characters and DEL**: forwarded raw they can ring
-///   bells, send signals (via the line discipline), or corrupt the input.
+/// クリップボードの内容には、端末の入力ストリームへそのまま転送するのが
+/// 危険なバイトがしばしば混じっている。
+/// * **ANSI エスケープシーケンス**(色付きの端末や TUI、スタイル付きの
+///   ウェブページからのコピー): これらはカーソルを移動させたり、モードを
+///   切り替えたり、最も危険なケースでは bracketed paste を途中で*終了*
+///   させる \x1b[201~ を含んでいて、その後のクリップボード内容がタイプ
+///   されたコマンドとして解釈されてしまう。エスケープシーケンスは丸ごと
+///   取り除く。
+/// * **その他の C0/C1 制御文字と DEL**: そのまま転送するとベルを鳴らしたり、
+///   (line discipline 経由で)シグナルを送ったり、入力を壊したりする。
 ///
-/// What is preserved: ordinary printable text, **tabs** (`\t`), and **newlines**
-/// (`\n`). Carriage returns are normalized — `\r\n` and lone `\r` both become a
-/// single `\n` — so multi-line pastes keep their line structure without
-/// injecting bare CRs.
+/// 残すもの: 通常の表示可能テキスト、**タブ** (\t)、**改行** (\n)。
+/// キャリッジリターンは正規化する — \r\n と単独の \r はどちらも単一の
+/// \n になる — ので、複数行のペーストは裸の CR を紛れ込ませずに行構造を保つ。
 pub(super) fn sanitize_pasted_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            // ESC introduces an escape sequence — drop the whole thing.
+            // ESC はエスケープシーケンスの開始 — 丸ごと読み飛ばす。
             '\u{1b}' => skip_escape_sequence(&mut chars),
             '\t' | '\n' => out.push(c),
-            // Normalize CR / CRLF to a single LF.
+            // CR / CRLF を単一の LF に正規化する。
             '\r' => {
                 if chars.peek() == Some(&'\n') {
                     chars.next();
                 }
                 out.push('\n');
             }
-            // Drop every other control character (remaining C0, DEL, C1).
+            // それ以外の制御文字はすべて破棄する(残りの C0、DEL、C1)。
             c if c.is_control() => {}
             c => out.push(c),
         }
@@ -246,14 +246,14 @@ pub(super) fn sanitize_pasted_text(text: &str) -> String {
     out
 }
 
-/// Consume the remainder of an ANSI escape sequence whose introducing `ESC` has
-/// already been read from `chars`. Handles the common sequence shapes so that no
-/// stray bytes of a dropped sequence leak into the sanitized output:
-/// * `CSI` (`ESC [`) — parameters/intermediates up to a final byte `0x40..=0x7E`.
-/// * String sequences `OSC/DCS/SOS/PM/APC` (`ESC ] P X ^ _`) — up to `BEL` or
-///   the String Terminator `ESC \`.
-/// * `SS2/SS3` (`ESC N` / `ESC O`) — exactly one following byte.
-/// * Anything else (`ESC` + a single byte, e.g. `ESC 7`) — already consumed.
+/// 導入の ESC がすでに chars から読み取られている状態で、ANSI エスケープ
+/// シーケンスの残りを読み進めて消費する。破棄したシーケンスの余りバイトが
+/// サニタイズ後の出力に漏れないよう、代表的なシーケンス形状を扱う。
+/// * CSI (ESC [) — 最終バイト 0x40..=0x7E までのパラメータ/中間バイト。
+/// * 文字列シーケンス OSC/DCS/SOS/PM/APC (ESC ] P X ^ _) — BEL または
+///   文字列終端 ESC \ まで。
+/// * SS2/SS3 (ESC N / ESC O) — 続く1バイトのみ。
+/// * それ以外(ESC + 単一バイト、例: ESC 7) — すでに消費済み。
 fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars>) {
     match chars.next() {
         Some('[') => {
@@ -277,21 +277,21 @@ fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars>) {
             }
         }
         Some('N') | Some('O') => {
-            // Single-shift: skip the one character it selects.
+            // シングルシフト: それが選択する1文字を読み飛ばす。
             chars.next();
         }
         _ => {}
     }
 }
 
-/// Encode a single mouse-wheel notch as the byte sequence a terminal sends to a
-/// child program that has enabled mouse reporting.
+/// マウスホイールの1ノッチを、マウスレポートを有効にした子プログラムへ端末が
+/// 送るバイトシーケンスとしてエンコードする。
 ///
-/// `up` selects wheel-up (xterm button 64) vs wheel-down (65). `col` / `row` are
-/// 1-based cell coordinates. The `encoding` follows the child's requested mode:
-/// SGR (`1006`, the modern default that has no 223-column limit) emits
-/// `CSI < b ; col ; row M`; otherwise the legacy X10 form `CSI M Cb Cx Cy` is
-/// used, with each value offset by 32 and clamped to one byte.
+/// up はホイールアップ(xterm ボタン 64)かホイールダウン(65)かを選ぶ。
+/// col / row は 1-based のセル座標。encoding は子プロセスが要求した
+/// モードに従う: SGR (1006、223列制限のない現代的なデフォルト)は
+/// CSI < b ; col ; row M を出力し、それ以外はレガシーな X10 形式
+/// CSI M Cb Cx Cy を使う。各値は 32 だけオフセットして1バイトにクランプする。
 pub(super) fn encode_mouse_wheel(
     up: bool,
     col: u16,
@@ -305,9 +305,9 @@ pub(super) fn encode_mouse_wheel(
         vt100::MouseProtocolEncoding::Sgr => {
             format!("\x1b[<{button};{col};{row}M").into_bytes()
         }
-        // Default (X10) and Utf8: CSI M Cb Cx Cy, each byte offset by 32.
-        // Values above 223 cannot be represented in the legacy form; clamp so
-        // we never emit a byte that wraps the coordinate.
+        // デフォルト(X10)と Utf8: CSI M Cb Cx Cy、各バイトは 32 だけオフセットする。
+        // 223 を超える値はレガシー形式では表現できないため、座標が
+        // ラップしないようクランプする。
         _ => {
             let cb = (32 + button).min(255) as u8;
             let cx = (32 + col).min(255) as u8;
@@ -317,14 +317,14 @@ pub(super) fn encode_mouse_wheel(
     }
 }
 
-/// Return the escape sequence for an Up/Down arrow key press used to scroll a
-/// pager on the alternate screen.
+/// オルタネート画面上でページャをスクロールするのに使う、Up/Down 矢印キー
+/// 押下のエスケープシーケンスを返す。
 ///
-/// `up` selects Up (`true`) vs Down (`false`). `app_cursor` honors DECCKM
-/// (application cursor keys mode): when set, terminals send SS3 (`ESC O`)
-/// sequences; otherwise CSI (`ESC [`). Pagers like `less` enable application
-/// cursor mode and bind the SS3 forms, so respecting it is necessary for the
-/// arrow keys to register reliably across programs.
+/// up は Up (true) か Down (false) かを選ぶ。app_cursor は DECCKM
+/// (アプリケーションカーソルキーモード)に従う: 有効な場合、端末は SS3
+/// (ESC O) シーケンスを送る。そうでなければ CSI (ESC [)。less などの
+/// ページャはアプリケーションカーソルモードを有効にして SS3 形式にバインド
+/// しているため、これを尊重しないと矢印キーが確実に効かなくなる。
 pub(super) fn scroll_arrow_sequence(up: bool, app_cursor: bool) -> &'static [u8] {
     match (up, app_cursor) {
         (true, true) => b"\x1bOA",   // Up   (SS3)

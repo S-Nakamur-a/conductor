@@ -1,6 +1,6 @@
-//! Panel number overlay — toggled via Alt+/, auto-dismisses after 2 seconds.
+//! パネル番号オーバーレイ — Alt+/ で切り替え、2秒後に自動的に消える。
 //!
-//! Shows a large number centered on each panel to indicate the Alt+N shortcut.
+//! 各パネルの中央に大きな数字を表示し、Alt+N ショートカットを示す。
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Focus};
 
-/// Panel descriptor: (area, label, associated Focus).
+/// パネル情報: (領域, ラベル, 対応する Focus)。
 struct PanelInfo {
     area: Rect,
     number: &'static str,
@@ -18,13 +18,13 @@ struct PanelInfo {
     is_focused: bool,
 }
 
-/// Render the panel number overlay on all panels.
+/// すべてのパネルにパネル番号オーバーレイを描画する。
 pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
     let columns = app.layout.cache.columns;
     let terminal_split = app.layout.cache.terminal_split;
     let explorer_mid_y = app.layout.cache.explorer_mid_y;
 
-    // Split Explorer column (columns[1]) into top (file tree) and bottom (diff list).
+    // Explorer カラム（columns[1]）を上（ファイルツリー）と下（差分リスト）に分割する。
     let explorer_col = columns[1];
     let explorer_top = Rect::new(
         explorer_col.x,
@@ -93,11 +93,11 @@ fn render_single_panel_overlay(frame: &mut Frame, panel: &PanelInfo, theme: &cra
     let area = panel.area;
     let is_focused = panel.is_focused;
 
-    // Clear the underlying content to avoid bleed-through.
+    // 下の内容が透けて見えないようクリアする。
     frame.render_widget(Clear, area);
 
-    // Background color: focused panels get the accent color (dimmed),
-    // unfocused panels get a dark overlay.
+    // 背景色: フォーカス中のパネルはアクセントカラー（暗め）、
+    // フォーカスされていないパネルは暗いオーバーレイにする。
     let bg = if is_focused {
         Color::Rgb(40, 60, 80)
     } else {
@@ -121,7 +121,7 @@ fn render_single_panel_overlay(frame: &mut Frame, panel: &PanelInfo, theme: &cra
         return;
     }
 
-    // Build the number + label text, vertically centered.
+    // 数字 + ラベルのテキストを作成し、垂直方向に中央揃えする。
     let number_style = Style::default()
         .fg(if is_focused {
             theme.fg
@@ -141,7 +141,7 @@ fn render_single_panel_overlay(frame: &mut Frame, panel: &PanelInfo, theme: &cra
         Line::from(Span::styled(panel.label, label_style)),
     ];
 
-    // Vertically center the 2-line content.
+    // 2行分のコンテンツを垂直方向に中央揃えする。
     let content_height = lines.len() as u16;
     let top_pad = inner.height.saturating_sub(content_height) / 2;
     let text_area = Rect::new(

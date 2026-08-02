@@ -1,11 +1,11 @@
-//! Review comment/reply editing, status toggling, and thread expansion for
-//! [`App`].
+//! [App] におけるレビューコメント/返信の編集、ステータスの切り替え、
+//! スレッドの展開。
 
 use super::*;
 use crate::review_store::Author;
 
 impl App {
-    /// Update the body of the currently selected review comment.
+    /// 現在選択中のレビューコメントの本文を更新する。
     pub fn update_selected_review_body(&mut self, new_body: &str) {
         let id = self.review_state.selected_comment().map(|c| c.id.clone());
 
@@ -24,8 +24,8 @@ impl App {
         }
     }
 
-    /// Start editing the item under the comment-list selection — a reply if a
-    /// reply row is selected, otherwise the comment.
+    /// コメント一覧の選択位置にある項目の編集を開始する — 返信の行が選択
+    /// されていれば返信を、そうでなければコメントを対象にする。
     pub fn start_edit_selected_review_item(&mut self) {
         use crate::review_state::ReviewInputMode;
         let visual = self.viewer_state.explorer.comment_list_selected;
@@ -56,7 +56,7 @@ impl App {
         }
     }
 
-    /// Save the edited body of the reply being edited (`EditingReply` mode).
+    /// 編集中の返信(EditingReply モード)の本文を保存する。
     pub fn update_selected_reply_body(&mut self, new_body: &str) {
         let Some((reply_id, parent_id)) = self.review_state.editing_reply.clone() else {
             return;
@@ -79,7 +79,7 @@ impl App {
         self.review_state.status_message = Some(msg);
     }
 
-    /// Toggle the status of the currently selected review comment (Pending <-> Resolved).
+    /// 現在選択中のレビューコメントのステータスを切り替える(Pending <-> Resolved)。
     pub fn toggle_selected_review_status(&mut self) {
         let comment_idx = self
             .review_state
@@ -117,7 +117,7 @@ impl App {
         }
     }
 
-    /// Add a reply to the currently selected comment (from explorer comment list).
+    /// (Explorer のコメント一覧から)現在選択中のコメントに返信を追加する。
     pub fn add_reply_to_selected_comment(&mut self, body: &str) {
         let comment_idx = self
             .review_state
@@ -144,11 +144,11 @@ impl App {
                     ));
                 }
             }
-            // Invalidate cached replies and reload.
+            // キャッシュ済みの返信を無効化して再読み込みする。
             self.review_state.cached_replies.remove(&review_id);
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
-            // Reload replies for this comment if it was expanded.
+            // このコメントが展開されていれば返信を再読み込みする。
             if self.review_state.expanded_comments.contains(&review_id)
                 && let Ok(replies) = store.get_replies(&review_id)
             {
@@ -158,11 +158,11 @@ impl App {
         }
     }
 
-    /// Toggle expansion of the comment thread at the current visual selection.
+    /// 現在の表示上の選択位置にあるコメントスレッドの展開状態を切り替える。
     ///
-    /// Only acts on `CommentListRow::Comment` rows that have replies.
-    /// On expand: loads replies from DB, caches them, and rebuilds row list.
-    /// On collapse: removes from expanded set and rebuilds.
+    /// 返信を持つ CommentListRow::Comment の行にのみ作用する。展開時は
+    /// DB から返信を読み込んでキャッシュし、行リストを再構築する。折り畳み時は
+    /// 展開済み集合から取り除いて再構築する。
     pub fn toggle_comment_expansion(&mut self) {
         use crate::review_state::CommentListRow;
 
@@ -190,16 +190,16 @@ impl App {
         let comment_id = comment.id.clone();
 
         if self.review_state.expanded_comments.contains(&comment_id) {
-            // Collapse.
+            // 折り畳む。
             self.review_state.expanded_comments.remove(&comment_id);
             self.review_state.rebuild_comment_list_rows();
-            // Clamp selection.
+            // 選択位置を範囲内に収める。
             let row_count = self.review_state.comment_list_rows.len();
             if row_count > 0 && self.viewer_state.explorer.comment_list_selected >= row_count {
                 self.viewer_state.explorer.comment_list_selected = row_count - 1;
             }
         } else {
-            // Expand — load replies from DB if not cached.
+            // 展開する — キャッシュされていなければ DB から返信を読み込む。
             if !self.review_state.cached_replies.contains_key(&comment_id)
                 && let Some(store) = &self.review_store
             {

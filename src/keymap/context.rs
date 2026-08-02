@@ -1,8 +1,6 @@
-//! `KeyContext` — selects which keymap layer a key event is resolved against.
+//! KeyContext — キーイベントをどのキーマップレイヤーに対して解決するかを選ぶ。
 
-// ---------------------------------------------------------------------------
-// KeyContext — selects which layer to consult
-// ---------------------------------------------------------------------------
+// KeyContext — どのレイヤーを参照するかを選ぶ
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
@@ -11,22 +9,22 @@ pub enum KeyContext {
     Explorer,
     ExplorerDiffList,
     ExplorerCommentList,
-    /// The Explorer bottom pane showing the AI walkthrough step list.
+    /// AI walkthrough のステップ一覧を表示する Explorer 下段ペイン。
     ExplorerWalkthrough,
     Viewer,
     ViewerDiffMode,
     Terminal,
-    /// The embedded editor panel. Like `Terminal`, almost every chord is
-    /// forwarded to the inner program (vim/emacs) — its own layer binds only the
-    /// "leave focus" chord; the rest fall through to the global layer (filtered
-    /// to terminal-firing actions) or to the PTY.
+    /// 埋め込みエディタパネル。Terminal と同様、ほとんどのチョードは内側の
+    /// プログラム（vim/emacs）へ転送される — 自分自身のレイヤーは「フォーカスを
+    /// 抜ける」チョードだけをバインドし、残りはグローバルレイヤー
+    /// （terminal で発火する操作にフィルタされたもの）か PTY へ落ちる。
     Editor,
-    /// Shared navigation context for overlay popups (list/tree navigation).
-    /// Falls back to Global like other contexts.
+    /// オーバーレイのポップアップ（リスト/ツリーのナビゲーション）で共有される
+    /// コンテキスト。他のコンテキストと同じく Global にフォールバックする。
     Overlay,
 }
 
-/// The non-global contexts, each backed by a named `[layers.<name>]` table.
+/// グローバル以外のコンテキスト。それぞれ名前付きの [layers.<name>] テーブルで裏打ちされる。
 pub(crate) const PANEL_CONTEXTS: [KeyContext; 10] = [
     KeyContext::Worktree,
     KeyContext::Explorer,
@@ -41,8 +39,8 @@ pub(crate) const PANEL_CONTEXTS: [KeyContext; 10] = [
 ];
 
 impl KeyContext {
-    /// The keymap-suite layer name backing this context. `Global` lives in the
-    /// bare `[keys]` table, which the suite exposes as the `GLOBAL_LAYER`.
+    /// このコンテキストを裏打ちする keymap-suite のレイヤー名。Global は
+    /// 素の [keys] テーブルにあり、suite はこれを GLOBAL_LAYER として公開する。
     pub(crate) fn layer_name(self) -> &'static str {
         match self {
             KeyContext::Global => keymap_suite::GLOBAL_LAYER,

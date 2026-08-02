@@ -1,9 +1,11 @@
-//! Event handling — maps keyboard and mouse events to application actions.
+//! イベント処理 — キーボード・マウスイベントをアプリケーションの
+//! アクションへマッピングする。
 //!
-//! Focus-based dispatching: Tab / Shift+Tab cycle between non-terminal panels;
-//! Alt+h / Alt+l cycle between all panels including terminals.
-//! Overlay handlers (worktree input, cherry-pick, etc.) take priority.
-//! Terminal-focused panels forward keys to the active PTY session.
+//! フォーカスベースのディスパッチ: Tab / Shift+Tab は terminal 以外の
+//! パネル間を、Alt+h / Alt+l は terminal を含む全パネル間を巡回する。
+//! オーバーレイのハンドラ (worktree 入力、cherry-pick など) が最優先。
+//! terminal がフォーカスされているパネルは、キーをアクティブな PTY
+//! セッションへ転送する。
 
 mod clipboard;
 mod dialogs;
@@ -41,49 +43,49 @@ use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use self::viewer::handle_viewer_key;
 use self::worktree::handle_worktree_key;
 
-// Re-export items whose original path was `crate::event::X` but which now
-// live in a sibling submodule, so sibling modules' existing `super::X`
-// references keep resolving without modification.
+// 元は crate::event::X だったが、今は隣接するサブモジュールへ移った項目を
+// re-export する。こうすることで、隣接モジュール側の既存の super::X 参照が
+// 変更なしに解決され続ける。
 pub(in crate::event) use self::clipboard::clipboard_paste;
 pub(in crate::event) use self::overlay_helpers::open_filename_search;
 pub(in crate::event) use self::scroll::{
     adjust_diff_list_scroll, adjust_tree_scroll, adjust_walkthrough_scroll,
 };
 
-// ── Effective overlay ───────────────────────────────────────────────────
+// 有効なオーバーレイ
 
-/// Unified overlay/modal state for dispatch. Collapses the multiple
-/// boolean/enum checks into a single discriminant.
+/// ディスパッチ用に統一したオーバーレイ/モーダルの状態。複数の
+/// bool/enum チェックを単一の判別子に集約する。
 enum EffectiveOverlay {
-    /// Skip-reason modal (worktree creation failure detail).
+    /// スキップ理由モーダル (worktree 作成失敗の詳細)。
     SkipReason,
-    /// Update confirmation/progress/failure dialog.
+    /// アップデートの確認/進行状況/失敗ダイアログ。
     UpdateState,
-    /// Publish-to-GitHub confirmation dialog.
+    /// GitHub への publish 確認ダイアログ。
     PublishConfirm,
-    /// Comment detail popup.
+    /// コメント詳細ポップアップ。
     CommentDetail,
-    /// Walkthrough step detail popup (Explorer walkthrough view's `space`).
+    /// walkthrough ステップ詳細ポップアップ (Explorer walkthrough ビューの領域)。
     WalkthroughDetail,
-    /// Review text input (add/edit/reply).
+    /// レビューのテキスト入力 (追加/編集/返信)。
     ReviewInput,
-    /// Worktree text input (create/confirm/smart).
+    /// worktree のテキスト入力 (作成/確認/スマート)。
     WorktreeInput,
-    /// An `ActiveOverlay` variant (switch-branch, cherry-pick, etc.).
+    /// ActiveOverlay のバリアント (switch-branch, cherry-pick など)。
     Active(ActiveOverlay),
-    /// Filename search sub-modal.
+    /// ファイル名検索のサブモーダル。
     FilenameSearch,
-    /// Viewer in-file search sub-modal.
+    /// Viewer 内ファイル検索のサブモーダル。
     ViewerSearch,
-    /// Review comment search sub-modal.
+    /// レビューコメント検索のサブモーダル。
     ReviewSearch,
-    /// Review template picker sub-modal.
+    /// レビューテンプレート選択のサブモーダル。
     ReviewTemplate,
-    /// No overlay — dispatch to focused panel.
+    /// オーバーレイなし — フォーカスされたパネルへディスパッチする。
     None,
 }
 
-/// Determine the single effective overlay/modal that should consume input.
+/// 入力を消費すべき、唯一の有効なオーバーレイ/モーダルを判定する。
 fn effective_overlay(app: &App) -> EffectiveOverlay {
     if app.worktree_mgr.skip_reason.is_some() {
         return EffectiveOverlay::SkipReason;
@@ -125,11 +127,12 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
     EffectiveOverlay::None
 }
 
-/// True when a text-entry field is currently focused and expects printable
-/// characters to be inserted as literal text — every input target enumerated in
-/// [`handle_paste_event`]. Kept in lockstep with that function: a destination
-/// added there must be added here too. Notably this is `false` for the
-/// `WorktreeInputMode::Confirming*` y/n sub-modes, which are NOT text entry.
+/// テキスト入力欄が現在フォーカスされていて、印字可能な文字をリテラル
+/// テキストとして挿入することを期待している場合に true。[handle_paste_event]
+/// に列挙されている入力先すべてに対応する。あの関数と歩調を合わせてある:
+/// あちらに宛先を追加したらここにも追加すること。なお
+/// WorktreeInputMode::Confirming* の y/n サブモードはテキスト入力では
+/// ないので、これは false になる点に注意。
 fn is_text_input_active(app: &App) -> bool {
     if app.viewer_state.explorer.inline_reply_line.is_some()
         || app.review_state.input_mode != ReviewInputMode::Normal
@@ -159,24 +162,28 @@ fn is_text_input_active(app: &App) -> bool {
     )
 }
 
-// Re-export public API.
+// 公開 API の re-export。
 pub use self::mouse::handle_mouse_event;
 pub use self::paste::handle_paste_event;
 
-/// Process a single key event, updating application state as needed.
+/// キーイベントを1つ処理し、必要に応じてアプリケーション状態を更新する。
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
-    // ── 0. Global focus-switching — available over non-text overlays (y/n
-    // confirms, list pickers), but NOT while a text field is focused. A focused
-    // text field is a modal grab: it owns every key, so the global focus layer
-    // is not consulted and chords can't pierce it (press Esc to leave first).
+    // 0. グローバルなフォーカス切り替え — テキスト以外のオーバーレイ
+    // (y/n 確認、リスト選択) の上では有効だが、テキストフィールドが
+    // フォーカスされている間は無効。フォーカス済みのテキストフィールドは
+    // モーダルグラブであり、すべてのキーを握るので、グローバルフォーカス
+    // 層は参照されず、コード入力中はコード (chord) も突き抜けられない
+    // (抜けるにはまず Esc を押す)。
     //
-    // This is what stops focus theft mid-IME-input. Under the kitty keyboard
-    // protocol, macOS reports Option-composed input with the ALT bit set, so a
-    // composed glyph ('∞' → Claude panel) or a Meta-mode digit ('alt+5') would
-    // otherwise resolve to a focus action and yank focus away while typing.
-    // Grabbing on `is_text_input_active` closes the whole category at once,
-    // without enumerating which key shapes a terminal might emit. Non-text
-    // overlays stay pierceable because `is_text_input_active` is false for them.
+    // これが IME 入力中のフォーカス奪取を止めている仕組み。kitty
+    // keyboard protocol のもとでは、macOS は Option で合成した入力を
+    // ALT ビット付きで報告するため、合成されたグリフ ('∞' → Claude
+    // パネル) や Meta モードの数字 ('alt+5') が、そうでなければフォーカス
+    // アクションとして解決され、入力中にフォーカスをかっさらってしまう。
+    // is_text_input_active でグラブすることで、terminal がどんなキー形状
+    // を出しうるか列挙することなく、このカテゴリ全体を一括で塞げる。
+    // テキスト以外のオーバーレイでは is_text_input_active が false のため、
+    // 引き続き突き抜けられる。
     if !is_text_input_active(app)
         && let Some(action) = app.keymap.resolve(&key, KeyContext::Global)
     {
@@ -195,17 +202,18 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
     }
 
-    // ── 0.5. Menu bar — consumes ALL keys while focused ───────────────
+    // 0.5. メニューバー — フォーカスされている間はすべてのキーを消費する
     //
-    // Ahead of the overlay dispatch because the menu is only ever active when
-    // no overlay is (opening it is gated on that below), so reaching this first
-    // costs nothing and keeps the menu's own Esc/arrow handling in one place.
+    // オーバーレイのディスパッチより先に置いている。メニューはオーバーレイが
+    // 何も出ていないときにしかアクティブにならない (開く条件は下でそちらを
+    // ゲートにしている) ので、ここを先に通しても何もコストがかからず、
+    // メニュー自身の Esc/矢印処理を一箇所にまとめておける。
     if app.menu.focus.is_active() {
         handle_menu_key(app, key);
         return;
     }
 
-    // ── 1. Overlay / modal dispatch — consume ALL keys when active ────
+    // 1. オーバーレイ / モーダルのディスパッチ — アクティブな間はすべてのキーを消費する
 
     match effective_overlay(app) {
         EffectiveOverlay::SkipReason => {
@@ -280,20 +288,21 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             handle_review_template_key(app, key);
             return;
         }
-        EffectiveOverlay::None => {} // Fall through to panel dispatch.
+        EffectiveOverlay::None => {} // パネルのディスパッチへフォールスルー。
     }
 
-    // ── 1b. References overlay (panel-level popup, not part of OverlayManager) ──
+    // 1b. References オーバーレイ (パネルレベルのポップアップで、OverlayManager の一部ではない)
     if app.code_nav.references.active {
         handle_references_key(app, key);
         return;
     }
 
-    // ── 1b1. Hover modal. When pinned (the user clicked into it), keys drive
-    // the modal stack — Esc pops a level, arrows navigate the refs list, Enter
-    // drills in / jumps — and are consumed. Otherwise it's a transient auto
-    // popup: any key dismisses it (Esc consumed; other keys fall through to do
-    // their normal job as the popup vanishes). ──
+    // 1b1. Hover モーダル。pinned (ユーザがクリックして固定した) 状態では、
+    // キーはモーダルスタックを操作する — Esc は1段階戻る、矢印は refs
+    // リストのナビゲーション、Enter は掘り下げ/ジャンプ — そしてキーは
+    // 消費される。そうでなければ一時的な自動ポップアップであり、どの
+    // キーでも消える (Esc は消費し、他のキーはポップアップが消えつつ
+    // 通常どおりの役目を果たすようフォールスルーする)。
     if app.code_nav.hover_info.pinned {
         handle_hover_modal_key(app, key);
         return;
@@ -305,28 +314,29 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
     }
 
-    // ── 1b2. Symbol action overlay (after hint selection) ──
+    // 1b2. Symbol アクションオーバーレイ (ヒント選択後)
     if app.code_nav.symbol_action.active {
         handle_symbol_action_key(app, key);
         return;
     }
 
-    // ── 1b3. Symbol hint overlay input (second char of label) ──
+    // 1b3. Symbol ヒントオーバーレイの入力 (ラベルの2文字目)
     if app.code_nav.symbol_hint.active && !app.code_nav.symbol_hint.input.is_empty() {
         handle_symbol_hint_key(app, key);
         return;
     }
 
-    // ── 1b4/1c. Reflow transcript view and PTY focus ──────────────────────
-    // Must sit before the Focus dispatch below so keys are not forwarded to
-    // Claude. Factored into `dispatch_pty_key` so both the reflow-over-Claude
-    // case and the plain PTY-focus case share one code path.
+    // 1b4/1c. Reflow トランスクリプトビューと PTY フォーカス
+    // 下の Focus ディスパッチより先に置く必要がある。そうしないとキーが
+    // Claude へ転送されてしまう。dispatch_pty_key に括り出すことで、
+    // reflow-over-Claude のケースと素の PTY フォーカスのケースが1つの
+    // コードパスを共有する。
     if (app.reflow.active && app.focus == Focus::TerminalClaude) || app.focus.is_pty() {
         dispatch_pty_key(app, key);
         return;
     }
 
-    // ── 2. Non-terminal panels — resolve via keymap ──────────────────
+    // 2. terminal 以外のパネル — keymap で解決する
 
     let context = match app.focus {
         Focus::Worktree => KeyContext::Worktree,
@@ -341,7 +351,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── 3. Focus-specific keybindings ────────────────────────────────
+    // 3. フォーカス固有のキーバインド
 
     match app.focus {
         Focus::Worktree => handle_worktree_key(app, key),
@@ -351,10 +361,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Keyboard driver for the pinned interactive hover modal stack. Esc pops the
-/// deepest open level (preview → refs list → the whole popup); Up/Down (or k/j)
-/// move the references selection; Enter opens the selected reference's preview,
-/// or — when a preview is already showing — jumps to that location.
+/// pinned 状態のインタラクティブな hover モーダルスタックのキー操作。
+/// Esc は開いている最も深い階層を1段階戻す (プレビュー → refs リスト →
+/// ポップアップ全体)。Up/Down (または k/j) は references の選択を動かす。
+/// Enter は選択中の reference のプレビューを開くか、プレビューが既に
+/// 表示されていればその位置へジャンプする。
 fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
@@ -380,16 +391,17 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Dispatch a key event for a PTY-focused panel (Claude/Shell/Editor), or for
-/// the reflow transcript view layered over the Claude terminal. Callers must
-/// only invoke this when `app.focus.is_pty()` or the reflow-over-Claude
-/// condition holds — `handle_key_event`'s panel dispatch guarantees this.
+/// PTY がフォーカスされているパネル (Claude/Shell/Editor) 向け、または
+/// Claude terminal の上に重なる reflow トランスクリプトビュー向けに、
+/// キーイベントをディスパッチする。呼び出し側は app.focus.is_pty() か
+/// reflow-over-Claude の条件が成り立つときにしかこれを呼んではならない
+/// — handle_key_event のパネルディスパッチがこれを保証する。
 fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
-    // Reflow transcript view — consume all keys while active. Pane
-    // resize/zoom/panel-overlay still work while scrolled back — they don't
-    // conflict with reflow's plain-key navigation (j/k/arrows), so let those
-    // chords (Ctrl+Alt+Arrow, etc.) through instead of letting reflow
-    // silently swallow them.
+    // Reflow トランスクリプトビュー — アクティブな間はすべてのキーを
+    // 消費する。ペインのリサイズ/ズーム/パネルオーバーレイは、スクロール
+    // バック中でも引き続き効く — reflow の素のキーナビゲーション
+    // (j/k/矢印) とは衝突しないので、reflow に黙って飲み込ませるのでは
+    // なく、こうしたコード (Ctrl+Alt+Arrow など) は素通しする。
     if app.reflow.active && app.focus == Focus::TerminalClaude {
         if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
             && matches!(
@@ -414,33 +426,34 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
     }
     let pty_context = app.focus.key_context();
 
-    // If the selected worktree is grabbed, block all terminal input
-    // except navigation keys (focus switching is handled above in §0).
-    // (The editor never opens on a grabbed worktree, so this only guards
-    // the Claude/Shell terminals in practice.)
+    // 選択中の worktree が grab されている場合、ナビゲーションキー以外の
+    // すべての terminal 入力をブロックする (フォーカス切り替えは上の §0 で
+    // 扱い済み)。(editor は grab された worktree では決して開かないので、
+    // 実際にはこれは Claude/Shell の terminal だけをガードしている。)
     if app.is_selected_worktree_grabbed() {
-        // Allow Esc to leave terminal, but block everything else.
+        // Esc で terminal を抜けることは許すが、それ以外はすべてブロックする。
         if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, pty_context) {
             app.set_focus(Focus::Explorer);
         }
         return;
     }
 
-    // Resolve via the keymap (panel layer + global fallback, already
-    // filtered to actions that fire in the terminal). Terminal-only actions
-    // need terminal state; everything else reuses the shared global
-    // dispatch. A miss falls through to the PTY below — the keymap is the
-    // single source of truth for what the panel steals from the inner
-    // program (no hand-maintained allowlist).
+    // keymap で解決する (パネル層 + グローバルフォールバックで、terminal で
+    // 発火するアクションだけに絞り込み済み)。terminal 専用のアクションは
+    // terminal の状態を必要とし、それ以外は共有のグローバルディスパッチを
+    // 再利用する。マッチしなければ下の PTY へフォールスルーする — このパネル
+    // が内部のプログラムから何を奪うかについて、keymap が唯一の正とする
+    // 情報源 (手作業で維持する許可リストは持たない)。
     if let Some(action) = app.keymap.resolve(&key, pty_context)
         && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
     {
         return;
     }
 
-    // Courtesy hint: Ctrl+Q is Conductor's quit chord, but in a terminal it's
-    // forwarded to the inner program (XON / flow-control), so a user pressing
-    // it here gets no quit. Flash how to actually quit, then forward as usual.
+    // 親切のためのヒント: Ctrl+Q は Conductor の終了コードだが、terminal
+    // 内では内部のプログラムへ転送される (XON / フロー制御) ので、ここで
+    // 押しても終了しない。実際の終了方法をフラッシュ表示してから、通常
+    // どおり転送する。
     if key.code == KeyCode::Char('q')
         && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
     {
@@ -449,7 +462,7 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
         );
     }
 
-    // Forward all remaining keys to the active PTY session.
+    // 残りのキーはすべてアクティブな PTY セッションへ転送する。
     let session_idx = match app.focus {
         Focus::TerminalClaude => app.terminal.active_claude_session,
         Focus::TerminalShell => app.terminal.active_shell_session,
@@ -463,19 +476,19 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Handle the terminal-only actions (scrollback, leave, open-file) that need
-/// terminal state and have no meaning in any other panel, so they cannot route
-/// through `dispatch_global_action`. Returns `true` if handled; `false` for any
-/// other action (which the caller then sends to `dispatch_global_action`).
-/// Only called while a terminal panel is focused, so the `unreachable!()` arms
-/// hold.
+/// terminal 専用のアクション (スクロールバック、離脱、ファイルを開く) を
+/// 処理する。terminal の状態が必要で、他のどのパネルでも意味を持たないため
+/// dispatch_global_action を経由できない。処理したら true を返す。それ以外
+/// のアクションでは false を返す (呼び出し側はそれを dispatch_global_action
+/// へ渡す)。terminal パネルがフォーカスされている間しか呼ばれないので、
+/// unreachable!() の分岐は成立する。
 fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     match action {
         Action::LeaveTerminal => {
-            // While the editor panel is open, Ctrl+Esc toggles between it and
-            // Claude (the editor stays open so you can chat and return); from
-            // the editor itself it steps over to Claude. Otherwise it leaves a
-            // terminal back to the Explorer as before.
+            // editor パネルが開いている間、Ctrl+Esc はそれと Claude を
+            // トグルする (editor は開いたままなので、チャットしてから
+            // 戻れる)。editor 自身からは Claude へ移る。それ以外の場合は、
+            // 従来どおり terminal から Explorer へ抜ける。
             let target = if app.editor.is_some() {
                 match app.focus {
                     Focus::Editor => Focus::TerminalClaude,
@@ -487,21 +500,24 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             app.set_focus(target);
         }
         Action::ScrollbackUp => {
-            // Intercept the first upward scroll on the live Claude terminal
-            // (scroll_claude == 0) to enter the infinite-scrollback reflow view
-            // instead of the limited vt100 scrollback buffer.
+            // ライブの Claude terminal での最初の上スクロール
+            // (scroll_claude == 0) を横取りし、上限のある vt100
+            // スクロールバックバッファではなく無限スクロールバックの
+            // reflow ビューに入る。
             if app.focus == Focus::TerminalClaude
                 && app.terminal.scroll_claude == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
-                // `open_reflow` bails out (with a status flash) when the panel
-                // has no pinned session or its log is missing on disk. Claiming
-                // the key regardless used to strand the user: `scroll_claude`
-                // stayed 0, so the next press re-entered this branch and failed
-                // identically — scroll-up went permanently dead rather than
-                // degrading to the vt100 buffer. Only claim it if the view
-                // actually opened.
+                // open_reflow は、パネルに pinned なセッションがない、
+                // またはそのログがディスク上に見当たらない場合、
+                // (ステータス表示をフラッシュして) 処理を打ち切る。
+                // このとき無条件にキーを消費したことにすると、ユーザは
+                // 立ち往生していた: scroll_claude は 0 のままなので、
+                // 次に押しても同じ分岐に再度入って同じように失敗する
+                // — scroll-up が vt100 バッファへ縮退するのではなく
+                // 完全に死んでしまっていた。ビューが実際に開いたときだけ
+                // キーを消費したことにする。
                 if app.reflow.active {
                     return true;
                 }
@@ -532,13 +548,13 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             *scroll = scroll.saturating_sub(page.max(1));
         }
         Action::ScrollbackTop => {
-            // Same hijack as ScrollbackUp: jump straight to reflow on Claude live view.
+            // ScrollbackUp と同じ横取り: Claude ライブ表示から reflow へ直接ジャンプする。
             if app.focus == Focus::TerminalClaude
                 && app.terminal.scroll_claude == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
-                // Same fall-through as ScrollbackUp when the view can't open.
+                // ビューが開けなかった場合の扱いは ScrollbackUp と同じフォールスルー。
                 if app.reflow.active {
                     return true;
                 }
@@ -562,7 +578,8 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     true
 }
 
-// NOTE: the focus-grab decision now lives in `is_text_input_active` (a function
-// of `App` state) gating §0 of `handle_key_event`. There is no cheap pure-fn
-// seam to unit-test it in isolation here — `App::new` does real git work — so it
-// is covered by manual/integration testing rather than a unit test in this file.
+// NOTE: フォーカスグラブの判断は今、handle_key_event の §0 をゲートする
+// is_text_input_active (App 状態の関数) に集約されている。ここで単独
+// unit test するための安価な pure-fn の切れ目がない — App::new は実際に
+// git 処理を行うため — なので、このファイル内の unit test ではなく
+// 手動/統合テストでカバーしている。

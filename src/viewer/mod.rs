@@ -1,14 +1,13 @@
-//! Viewer state — file tree model and file content buffer.
+//! Viewer の状態 — ファイルツリーのモデルとファイル内容バッファ。
 //!
-//! Manages the state for the Viewer mode: a hierarchical file tree built from
-//! the filesystem (skipping `.git` directories) and the content of the
-//! currently selected file.
+//! Viewer モードの状態を管理する: ファイルシステムから構築する階層的なファイルツリー
+//! （.git ディレクトリはスキップ）と、現在選択中のファイルの内容。
 //!
-//! [`ViewerState`] and its sub-structs live in [`state`]; behavior is split
-//! by concern across the other submodules ([`content`] for opening files,
-//! [`tree`] for walking/expanding the file tree, [`search`] for in-file and
-//! filename search, [`diff_view`] for the unified diff view, [`highlight`]
-//! for syntect highlighting, [`selection`] for gutter line selection).
+//! [ViewerState] とそのサブ構造体は [state] にある。振る舞いは関心事ごとに
+//! 他のサブモジュールへ分割されている（[content] はファイルを開く処理、
+//! [tree] はファイルツリーの走査・展開、[search] はファイル内検索とファイル名検索、
+//! [diff_view] は unified diff 表示、[highlight] は syntect によるシンタックスハイライト、
+//! [selection] はガター行選択）。
 
 mod content;
 mod diff_view;

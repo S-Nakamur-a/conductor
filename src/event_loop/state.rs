@@ -14,7 +14,7 @@ use crate::timer;
 
 /// 画面領域の持ち主が変わったことを検出するための鍵。
 ///
-/// `(最大化, エディタ, リフロー, explorer幅, viewer幅, ターミナル分割, explorer分割)`。
+/// (最大化, エディタ, リフロー, explorer幅, viewer幅, ターミナル分割, explorer分割)。
 /// このどれかが変わると、ある領域の描画主体が別のパネルに移る。ratatui のセル差分は
 /// その受け渡しを見られないので、明け渡された縁に前の持ち主のグリフが残ってしまう
 /// (復帰した Explorer にエディタのコード片が見える、リサイズしたパネルの旧い縁に
@@ -23,7 +23,7 @@ type LayoutKey = (Option<Focus>, bool, bool, u16, u16, u16, u16);
 
 /// ファイル監視 / config 監視のイベントのデバウンス状態。
 ///
-/// 実際のデバウンス間隔は [`crate::event_loop_timers::poll_watchers`] 側にある。
+/// 実際のデバウンス間隔は [crate::event_loop_timers::poll_watchers] 側にある。
 #[derive(Default)]
 pub(super) struct DebounceState {
     pub pending: bool,
@@ -34,7 +34,7 @@ pub(super) struct DebounceState {
 pub(super) struct EventSources {
     /// worktree 配下のファイル変更監視。監視対象は worktree の増減に応じて作り直す。
     pub file_watcher: Option<crate::file_watcher::FileWatcher>,
-    /// 現在監視しているパス。`file_watcher` の作り直しの判断に使う。
+    /// 現在監視しているパス。file_watcher の作り直しの判断に使う。
     pub watch_paths: Vec<PathBuf>,
     /// conductor の config ファイル専用の監視。
     ///
@@ -92,7 +92,7 @@ impl LoopState {
 
     fn open_event_sources(app: &mut App) -> EventSources {
         // 監視対象は後で (worktree_poll タイマーの中で) 変化に応じて作り直す —
-        // ユーザーが素のフォルダで `git init` したり worktree を増減させたりしても
+        // ユーザーが素のフォルダで git init したり worktree を増減させたりしても
         // 新しいファイルが見えるように。
         let watch_paths = watch_paths_for(app);
         let file_watcher = match crate::file_watcher::FileWatcher::new(&watch_paths) {
@@ -135,7 +135,7 @@ impl LoopState {
         timers
     }
 
-    /// ccusage は複数の Conductor で `npx ccusage` を重複起動しないよう
+    /// ccusage は複数の Conductor で npx ccusage を重複起動しないよう
     /// グローバルなファイルキャッシュを使う。起動時はキャッシュの中身をそのまま出し、
     /// 鮮度の確認は即座にスケジュールする。
     fn bootstrap_ccusage(app: &mut App, timers: &mut timer::TimerRegistry) {

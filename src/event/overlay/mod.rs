@@ -1,11 +1,11 @@
-//! Overlay handlers — worktree input, cherry-pick, history, resume session,
-//! repo selector, open repo, comment detail, help, filename search, grep search,
-//! viewer search, review input, review search, review template, switch branch,
-//! grab, prune, command palette.
+//! オーバーレイハンドラ群 — worktree 入力、cherry-pick、履歴、セッション再開、
+//! リポジトリセレクタ、リポジトリオープン、コメント詳細、ヘルプ、ファイル名検索、
+//! grep 検索、viewer 検索、レビュー入力、レビュー検索、レビューテンプレート、
+//! ブランチ切り替え、grab、prune、コマンドパレット。
 //!
-//! Split into per-topic submodules; this file holds shared list-navigation
-//! helpers used across overlays and re-exports each handler so callers keep
-//! using `crate::event::overlay::handle_*` unchanged.
+//! トピックごとのサブモジュールに分割している。このファイルはオーバーレイ間で
+//! 共有するリスト操作ヘルパーを持ち、各ハンドラを再エクスポートすることで
+//! 呼び出し側は crate::event::overlay::handle_* をそのまま使い続けられる。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -38,12 +38,12 @@ pub(super) use vcs::{
 };
 pub(super) use worktree::handle_worktree_input_key;
 
-// ── Shared overlay list navigation ────────────────────────────────────
+// オーバーレイ間で共有するリストナビゲーション
 
-/// Handle common list-navigation keys for overlay popups via the keymap.
+/// keymap 経由でオーバーレイポップアップ共通のリストナビゲーションキーを処理する。
 ///
-/// Resolves the key against `KeyContext::Overlay` and adjusts `*selected`
-/// within `0..count`. Returns `true` if the key was consumed.
+/// KeyContext::Overlay に対してキーを解決し、*selected を 0..count の範囲で
+/// 調整する。キーを消費した場合は true を返す。
 fn overlay_list_nav(keymap: &KeyMap, key: &KeyEvent, selected: &mut usize, count: usize) -> bool {
     let Some(action) = keymap.resolve(key, KeyContext::Overlay) else {
         return false;
@@ -51,9 +51,9 @@ fn overlay_list_nav(keymap: &KeyMap, key: &KeyEvent, selected: &mut usize, count
     apply_list_nav(action, selected, count)
 }
 
-/// Would this key event produce a literal character for a text field? A bare
-/// printable char (no Ctrl/Alt/Super) is typed input. SHIFT is intentionally
-/// NOT disqualifying: `Shift+G` is a literal `G` to type into a filter.
+/// このキーイベントはテキストフィールドにそのまま文字を入力するものか？
+/// 素の印字可能文字（Ctrl/Alt/Super なし）はタイプ入力とみなす。SHIFT はあえて
+/// 除外条件にしていない。Shift+G はフィルタに入力すべき文字 G そのものだから。
 fn is_text_input_key(key: &KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char(_))
         && !key
@@ -61,9 +61,9 @@ fn is_text_input_key(key: &KeyEvent) -> bool {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
-/// List navigation for overlays that ALSO have a text filter (command palette,
-/// filename search, …). A bare printable key falls through to the filter, so
-/// only non-text keys (arrows, PageUp/Down) navigate — `j`/`k`/`g` get typed.
+/// テキストフィルタも持つオーバーレイ（コマンドパレット、ファイル名検索など）の
+/// リストナビゲーション。素の印字可能キーはフィルタ側に落ちるため、非テキスト
+/// キー（矢印、PageUp/Down）だけがナビゲーションになる。j/k/g はタイプされる。
 fn filterable_overlay_list_nav(
     keymap: &KeyMap,
     key: &KeyEvent,
@@ -111,19 +111,19 @@ mod nav_guard_tests {
 
     #[test]
     fn bare_printable_char_is_text_input() {
-        // In a filterable overlay these must be typed, not treated as navigation.
+        // フィルタ可能なオーバーレイでは、これらはナビゲーションではなくタイプ入力として扱う。
         for c in ['j', 'k', 'g', 'G'] {
             let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty());
             assert!(is_text_input_key(&key), "{c:?} should be text input");
         }
-        // Shift is not disqualifying: Shift+G is a literal 'G' to type.
+        // Shift は除外条件にならない。Shift+G はタイプすべき文字 'G' そのもの。
         let shift_g = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
         assert!(is_text_input_key(&shift_g));
     }
 
     #[test]
     fn modified_and_named_keys_are_not_text_input() {
-        // These should still drive list navigation in a filterable overlay.
+        // これらはフィルタ可能なオーバーレイでもリストナビゲーションを駆動すべき。
         let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
         let alt_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT);
         let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());

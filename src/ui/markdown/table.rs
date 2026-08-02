@@ -1,6 +1,6 @@
-//! GFM table layout: borderless rendering (bold header, a rule, aligned rows)
-//! with column widths fitted to the panel width and over-wide cells wrapped
-//! onto extra lines.
+//! GFM テーブルのレイアウト: 罫線なしで描画する（太字ヘッダー、区切り線、
+//! アライメント済みの各行）。列幅はパネル幅に合わせて決め、はみ出すセルは
+//! 追加の行に折り返す。
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -12,17 +12,15 @@ use super::inline::inline_spans;
 use super::parse::Align;
 use super::wrap::{Cell, cells_to_line, spans_to_cells, wrap_cells_raw};
 
-/// Render a GFM table borderless: a bold header row, a horizontal rule, then
-/// aligned body rows with columns separated by two spaces. Box-drawing borders
-/// are intentionally omitted — they cost too much width in the narrow summary
-/// column.
+/// GFM テーブルを罫線なしで描画する: 太字のヘッダー行、水平の区切り線、その後に
+/// 2スペース区切りでアライメント済みの本体行を続ける。罫線を意図的に省いているのは、
+/// 幅の狭いサマリー列では罫線のコストが大きすぎるため。
 ///
-/// A cell too wide for its column **wraps** rather than truncating, so a row
-/// occupies as many lines as its tallest cell needs. Truncation was the earlier
-/// behaviour and silently destroyed content — in a table the cut text is often
-/// the whole point of the row, and there is no way to reveal it (no horizontal
-/// scroll, no expand). Height is the cheaper thing to spend: the views that
-/// render markdown all scroll vertically.
+/// 列に収まらないセルは切り詰めるのではなく折り返すので、行の高さは一番背の高い
+/// セルに合わせて必要な行数になる。以前は切り詰める挙動だったが、それだと内容が
+/// 黙って失われてしまう — テーブルでは切られたテキストこそがその行の要点である
+/// ことが多く、それを表に出す手段がない（横スクロールも展開もない）。高さの方が
+/// 消費して安いコスト: markdown を描画するビューはすべて縦スクロールする。
 pub(crate) fn render_table(
     headers: &[String],
     aligns: &[Align],
@@ -35,8 +33,8 @@ pub(crate) fn render_table(
         return vec![Line::from("")];
     }
 
-    // Normalise alignments and body rows to exactly `ncols` columns so the
-    // render side never indexes past the header column count.
+    // アライメントと本体行を、ちょうど ncols 列に正規化する。描画側が
+    // ヘッダーの列数を超えてインデックスすることがないようにするため。
     let aligns: Vec<Align> = (0..ncols)
         .map(|k| aligns.get(k).copied().unwrap_or(Align::Left))
         .collect();
@@ -63,7 +61,7 @@ pub(crate) fn render_table(
         width,
         theme,
     ));
-    // Rule under the header, clamped to the panel width.
+    // ヘッダー下の区切り線。パネル幅に収まるようクランプする。
     let rule_w = (widths.iter().sum::<usize>() + 2 * ncols.saturating_sub(1)).min(width);
     out.push(Line::from(Span::styled(
         "\u{2500}".repeat(rule_w),
@@ -82,8 +80,8 @@ pub(crate) fn render_table(
     out
 }
 
-/// Natural width of each column = max rendered (markup-stripped) display width
-/// over the header and every body cell.
+/// 各列の自然な幅 = ヘッダーとすべての本体セルにわたる、描画後（マークアップ除去後）
+/// の表示幅の最大値。
 fn natural_col_widths(headers: &[String], rows: &[Vec<String>], theme: &Theme) -> Vec<usize> {
     let mut w: Vec<usize> = headers.iter().map(|h| rendered_width(h, theme)).collect();
     for row in rows {
@@ -96,8 +94,8 @@ fn natural_col_widths(headers: &[String], rows: &[Vec<String>], theme: &Theme) -
     w
 }
 
-/// Display width of `text` after inline markup is stripped, so column widths
-/// match what actually renders (not the raw `**bold**` source).
+/// インラインマークアップを取り除いた後のテキストの表示幅。列幅が実際の
+/// 描画結果に一致するようにする（生の **bold** ソースとは一致させない）。
 fn rendered_width(text: &str, theme: &Theme) -> usize {
     cells_width(&spans_to_cells(&inline_spans(
         text,
@@ -107,21 +105,21 @@ fn rendered_width(text: &str, theme: &Theme) -> usize {
     )))
 }
 
-/// Shrink natural column widths so the row (cells + 2-space separators) fits
-/// `width`. Repeatedly trims the widest column by one (not proportional —
-/// overkill for a rare wide table); every column keeps at least 1 column.
+/// 行（セル + 2スペース区切り）が width に収まるよう、自然な列幅を縮める。
+/// 最も広い列を1ずつ繰り返し削る（比例配分ではない — 稀にしかない幅広テーブルの
+/// ためにそこまでやる必要はない）。どの列も最低1列は確保する。
 fn fit_col_widths(natural: &[usize], width: usize) -> Vec<usize> {
     let ncols = natural.len();
     if ncols == 0 {
         return vec![];
     }
     let seps = 2 * (ncols - 1);
-    let avail = width.saturating_sub(seps).max(ncols); // >= 1 per column
+    let avail = width.saturating_sub(seps).max(ncols); // 各列最低1
     let mut w: Vec<usize> = natural.iter().map(|&x| x.max(1).min(avail)).collect();
     while w.iter().sum::<usize>() > avail {
         let maxw = *w.iter().max().unwrap();
         if maxw <= 1 {
-            break; // can't shrink further; the final clip guards the width bound
+            break; // これ以上は縮められない。最後のクリップが幅の上限を保証する
         }
         let idx = w.iter().position(|&x| x == maxw).unwrap();
         w[idx] -= 1;
@@ -129,13 +127,12 @@ fn fit_col_widths(natural: &[usize], width: usize) -> Vec<usize> {
     w
 }
 
-/// Render one table row into as many `Line`s as its tallest cell needs.
+/// テーブルの行1本を、一番背の高いセルに必要な数だけの Line に描画する。
 ///
-/// Each cell is wrapped to its column width and padded per its alignment, so
-/// every column contributes the same number of columns on every line and the
-/// grid stays aligned. Short cells are padded with blank lines at the bottom.
-/// Each produced line is hard-clipped to `width` as a final guard for
-/// degenerate (tiny) widths.
+/// 各セルは列幅で折り返し、アライメントに従ってパディングするので、どの列も
+/// すべての行で同じ列数を提供し、グリッドが揃った状態を保つ。丈の短いセルは
+/// 下側を空行でパディングする。生成された各行は、極端に小さい幅に対する最終的な
+/// 防御として width にハードクリップする。
 fn render_table_row(
     cells: &[String],
     widths: &[usize],
@@ -177,10 +174,10 @@ fn render_table_row(
         .collect()
 }
 
-/// Wrap `text` into lines of exactly `col_w` display columns: render its inline
-/// markup, wrap at word boundaries, then pad each line per `align`. Always
-/// returns at least one line (empty cells become one blank line), so a row's
-/// height is `max` over its cells and never zero.
+/// テキストを、ちょうど col_w 桁の表示幅の行に折り返す: インラインマークアップを
+/// 描画し、単語境界で折り返し、align に従って各行をパディングする。常に最低1行を
+/// 返す（空セルは空行1つになる）ので、行の高さはセルの最大値になり、決してゼロには
+/// ならない。
 fn wrap_cell(
     text: &str,
     col_w: usize,
@@ -198,7 +195,7 @@ fn wrap_cell(
         .collect()
 }
 
-/// Pad one wrapped line out to `col_w` columns according to `align`.
+/// 折り返し済みの行1本を align に従って col_w 桁までパディングする。
 fn pad_cell_line(cells: Vec<Cell>, col_w: usize, align: Align, base: Style) -> Vec<Cell> {
     let pad = col_w.saturating_sub(cells_width(&cells));
     let space = |n: usize| -> Vec<Cell> {
@@ -225,9 +222,9 @@ fn pad_cell_line(cells: Vec<Cell>, col_w: usize, align: Align, base: Style) -> V
     }
 }
 
-/// Hard-clip `cells` to at most `width` display columns (no ellipsis). The final
-/// guard that keeps every table line within the width bound even when the column
-/// math can't fit (e.g. a 4-column table in a 3-wide panel).
+/// セルを最大 width 桁の表示幅までハードクリップする（省略記号なし）。列の計算が
+/// 収まりきらない場合（例: 幅3のパネルに4列のテーブル）でも、すべてのテーブル行を
+/// 幅の上限内に収める最終防御。
 fn clip_cells(cells: Vec<Cell>, width: usize) -> Vec<Cell> {
     let mut out = Vec::new();
     let mut w = 0;
@@ -242,7 +239,7 @@ fn clip_cells(cells: Vec<Cell>, width: usize) -> Vec<Cell> {
     out
 }
 
-/// Total display width of a cell slice.
+/// セル列全体の表示幅の合計。
 fn cells_width(cells: &[Cell]) -> usize {
     cells.iter().map(|c| c.width()).sum()
 }

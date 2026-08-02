@@ -1,17 +1,16 @@
-//! Tests for the gutter-glyph width defence.
+//! ガターグリフの幅対策についてのテスト。
 //!
-//! Two independent halves, because either one alone would be misleading:
+//! 独立した2つの半分に分かれている。どちらか片方だけでは誤解を招くため:
 //!
-//! * [`marks_the_hole`] — the builder marks the right cell.
-//! * [`skipping_forces_an_absolute_move`] — marking that cell actually makes
-//!   the real crossterm backend emit an absolute cursor move.
+//! * [marks_the_hole] — ビルダーが正しいセルに印を付けているか。
+//! * [skipping_forces_an_absolute_move] — そのセルに印を付けることで、実際の
+//!   crossterm バックエンドが絶対位置のカーソル移動を発行するか。
 //!
-//! Note what these *cannot* show: whether a terminal draws `⏺` one column or
-//! two. `ratatui::buffer::Buffer::set_stringn` measures with the same
-//! `unicode-width` crate the builder does, so no in-process test can escape
-//! that model. The point of the mechanism is that it makes the answer
-//! irrelevant — the body is positioned absolutely either way — but confirming
-//! it *looks* right still needs a human at a real terminal.
+//! これらが示せないことに注意: 端末が ⏺ を1カラムで描くか2カラムで描くかは分からない。
+//! ratatui::buffer::Buffer::set_stringn はビルダーと同じ unicode-width クレートで
+//! 計測するので、プロセス内テストではこのモデルから逃れられない。この仕組みの狙いは
+//! その答えを無関係にすることである — 本文はどちらの場合も絶対位置に配置される —
+//! だが「見た目が正しいか」の確認には結局のところ実端末上での人間による確認が要る。
 
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::buffer::Buffer;
@@ -24,8 +23,8 @@ use crate::ui::markdown::MarkdownCache;
 use super::build::{BuildCtx, MAX_GUTTER_GLYPH_COL, build_lines};
 use super::glyphs::{ASSISTANT_MARKER, TOOL_RESULT_GLYPH};
 
-/// Render `prev` → `next` through a real `CrosstermBackend` and return the
-/// bytes it wrote.
+/// prev → next を実際の CrosstermBackend に通して描画し、それが書き出した
+/// バイト列を返す。
 fn flush(prev: &Buffer, next: &Buffer) -> Vec<u8> {
     let mut out = Vec::new();
     {
@@ -46,16 +45,16 @@ fn one_row(glyph: &str, skip: bool) -> Buffer {
     b
 }
 
-/// Skipping the cell after the glyph must make the backend jump to column 3
-/// (1-based) absolutely, instead of writing straight on from the glyph. The
-/// non-skipped case is asserted too: without it this test would still pass if
-/// `MoveTo` were emitted unconditionally, proving nothing about `set_skip`.
+/// グリフの直後のセルをスキップすると、バックエンドはグリフからそのまま書き続けるのではなく、
+/// 絶対位置で（1始まりの）カラム3へジャンプしなければならない。スキップしないケースも
+/// 検証する: それが無いと、MoveTo が無条件に発行されている場合でもこのテストは通って
+/// しまい、set_skip について何も証明しないことになる。
 #[test]
 fn skipping_forces_an_absolute_move() {
-    // The previous frame must *differ* at the cell under test. Diffing two
-    // blank buffers would leave column 1 unchanged, so the diff would omit it
-    // and emit the absolute move anyway — the control case has to actually
-    // have something to overwrite for it to be a control at all.
+    // 前フレームは検証対象のセルで実際に違いを持たなければならない。空のバッファ2つを
+    // 比較すると、カラム1は変化なしのままなので diff がそこを省略し、いずれにせよ
+    // 絶対位置の移動が発行されてしまう — 対照群として成立するには、上書きすべき何かが
+    // 実際にそこに存在している必要がある。
     let mut prev = Buffer::empty(Rect::new(0, 0, 20, 1));
     prev[(1u16, 0u16)].set_char('X');
 
@@ -75,9 +74,9 @@ fn skipping_forces_an_absolute_move() {
     );
 }
 
-/// A skipped cell is never erased either — which is why every path that can
-/// leave foreign content under one has to force a hard repaint (see
-/// `App::open_reflow` and `super::render`).
+/// スキップされたセルは決して消去もされない — だからこそ、その下に無関係なコンテンツを
+/// 残しうるすべての経路は強制的な再描画を行う必要がある
+/// （App::open_reflow と super::render を参照）。
 #[test]
 fn skipped_cell_is_not_repainted() {
     let mut prev = Buffer::empty(Rect::new(0, 0, 20, 1));
@@ -122,11 +121,11 @@ fn entry(role: Role, blocks: Vec<DisplayBlock>) -> LogEntry {
     }
 }
 
-/// The hole goes immediately after the glyph, wherever the glyph sits — which
-/// is not always column 0: a `⎿` result line indents it to column 2.
+/// 穴はグリフがどこにあってもその直後に置かれる — グリフの位置は常にカラム0とは
+/// 限らない: ⎿ の結果行はカラム2までインデントされる。
 #[test]
 fn marks_the_hole() {
-    // Assistant prose: `⏺` at col0, so the hole is col1.
+    // assistant のプロース: ⏺ は col0 にあるので、穴は col1。
     let assistant = build(
         &[entry(
             Role::Assistant,
@@ -136,7 +135,7 @@ fn marks_the_hole() {
     );
     assert_eq!(assistant.first().copied().flatten(), Some(1));
 
-    // Expanded tool result: `  ⎿  ` puts the glyph at col2, so the hole is col3.
+    // 展開された tool result:   ⎿   はグリフを col2 に置くので、穴は col3。
     let result = build(
         &[entry(
             Role::User,
@@ -151,8 +150,8 @@ fn marks_the_hole() {
     assert_eq!(result.first().copied().flatten(), Some(3));
 }
 
-/// A user turn is a full-width background block; an unwritten cell inside it
-/// would read as a notch, and `❯` is not width-ambiguous anyway.
+/// user ターンはフル幅の背景ブロックなので、その内側に未書き込みのセルがあると
+/// 欠けとして見えてしまう。そもそも ❯ は幅が曖昧なグリフでもない。
 #[test]
 fn user_turns_get_no_hole() {
     let holes = build(
@@ -162,8 +161,8 @@ fn user_turns_get_no_hole() {
     assert!(holes.iter().all(Option::is_none), "{holes:?}");
 }
 
-/// Guards the constants themselves: if a glyph were ever swapped for one the
-/// hole logic doesn't know about, the defence would silently stop applying.
+/// 定数自体をガードする: もしグリフが穴のロジックの知らないものに差し替えられたら、
+/// この対策は黙って効かなくなってしまう。
 #[test]
 fn every_ambiguous_gutter_glyph_is_registered() {
     for glyph in [ASSISTANT_MARKER, TOOL_RESULT_GLYPH, super::glyphs::THINKING_GLYPH] {
@@ -174,29 +173,29 @@ fn every_ambiguous_gutter_glyph_is_registered() {
             ch as u32
         );
     }
-    // …and the two that deliberately are not.
+    // ……そして意図的にそうでない2つ。
     for glyph in [super::glyphs::USER_MARKER, super::glyphs::TEAMMATE_MESSAGE_GLYPH] {
         let ch = glyph.chars().next().unwrap();
         assert!(!super::glyphs::is_width_ambiguous(ch), "{glyph:?}");
     }
 }
 
-/// A `⏺`/`⎿`/`✻` in **body text** is content, not a gutter marker. The scan
-/// used to run the whole line, so a transcript quoting Claude Code output —
-/// which this app's own transcripts do constantly — had a cell blanked in the
-/// middle of a sentence: an unwritten cell is never painted, so the character
-/// vanished and whatever the previous frame drew there stayed put.
+/// 本文テキスト内の ⏺/⎿/✻ はコンテンツであって、ガターのマーカーではない。以前は
+/// 走査が行全体に対して行われていたため、Claude Code の出力を引用したトランスクリプト
+/// （このアプリ自身のトランスクリプトが常にそうしている）は文の途中でセルが空白化
+/// されてしまっていた: 未書き込みのセルは決して塗られないので、その文字が消え、
+/// 前フレームがそこに描いていたものがそのまま残ってしまう。
 #[test]
 fn a_glyph_in_body_text_gets_no_hole() {
-    // Long enough that the `⏺` lands on a continuation line, which carries a
-    // blank indent instead of a marker — so nothing else on it wants a hole.
+    // ⏺ が継続行に落ちるくらい十分長くする。継続行はマーカーではなく空白インデントを
+    // 持つので、その行の他の何もそこに穴を望まない。
     let text = format!("{} \u{23fa} tail", "word ".repeat(20));
     let holes = build(
         &[entry(Role::Assistant, vec![DisplayBlock::Text(text)])],
         false,
     );
-    // The first line legitimately has one (its own `⏺` marker at column 0);
-    // no other line may.
+    // 最初の行は正当に穴を持つ（列0に自分自身の ⏺ マーカーがある）。
+    // それ以外の行は持ってはならない。
     assert_eq!(holes.first().copied().flatten(), Some(1), "{holes:?}");
     assert!(
         holes.iter().skip(1).all(Option::is_none),
@@ -204,20 +203,18 @@ fn a_glyph_in_body_text_gets_no_hole() {
     );
 }
 
-/// The hole belongs to the gutter glyph and must not move when the body holds
-/// characters whose width is not 1 — full-width CJK, ZWJ sequences, variation
-/// selectors, skin-tone modifiers, combining marks.
+/// 穴はガターのグリフに属するものであり、本文が幅1でない文字（全角 CJK、ZWJ
+/// シーケンス、異体字セレクタ、肌色修飾子、結合文字）を含んでいても動いてはならない。
 ///
-/// Note what this does *not* prove: the scan now stops at the gutter, so the
-/// per-`char` → per-grapheme change in `width_risk_hole` is not independently
-/// observable here (the gutter is ASCII spaces plus the marker, where the two
-/// agree). It is kept for consistency with `helpers::truncate_to_width` and
-/// `user_text::wrap_plain_text`; this test pins the invariant those two
-/// together are meant to preserve.
+/// これが証明しないことに注意: 走査は今やガターで止まるので、width_risk_hole の
+/// 1文字単位から1グラフェム単位への変更はここでは単独では観測できない（ガターは
+/// ASCII のスペースとマーカーのみで、両者の間に差は無い）。この確認は
+/// helpers::truncate_to_width と user_text::wrap_plain_text との整合性のために
+/// 残してある。このテストは、その2つが揃って守るべき不変条件を固定するものである。
 #[test]
 fn wide_and_multi_char_clusters_do_not_shift_the_hole() {
-    // `⎿` sits at column 2 of a `  ⎿  ` prefix regardless of what follows it,
-    // so the hole is at column 3 for every one of these bodies.
+    // ⎿ は続くものが何であれ   ⎿   プレフィックスのカラム2に位置するので、
+    // これらすべての本文について穴はカラム3にある。
     for body in [
         "plain",
         "日本語の全角テキスト",                            // width-2 CJK
@@ -245,9 +242,9 @@ fn wide_and_multi_char_clusters_do_not_shift_the_hole() {
     }
 }
 
-/// The hole must land on a cell the row does not otherwise use, and every
-/// built line must still fit the panel — the two invariants the mechanism
-/// exists to protect, checked together on wide-character content.
+/// 穴はその行が他に使っていないセルに置かれなければならず、構築後の各行はパネルに
+/// 収まっていなければならない — この2つの不変条件をまとめて、幅広文字のコンテンツで
+/// 検証する。これこそがこの仕組みの存在理由である。
 #[test]
 fn holes_stay_inside_the_line_for_wide_content() {
     use unicode_width::UnicodeWidthStr;
@@ -299,11 +296,11 @@ fn holes_stay_inside_the_line_for_wide_content() {
         }
     }
 }
-// ── Detached badge ──────────────────────────────────────────────────────────
+// 離脱バッジ
 //
-// The badge is the only signal that the view is not showing the newest turn,
-// and the only pointer route back to it, so both its presence rule and its
-// reported hit region are asserted rather than eyeballed.
+// このバッジは、ビューが最新のターンを表示していないことを示す唯一の合図であり、
+// そこへ戻るための唯一のポインタ経路でもある。そのため、表示されるかどうかのルールも
+// 報告されるヒット領域も、目視ではなくアサーションで確認する。
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -311,8 +308,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::render::{JUMP_BADGE_LABELS, render_jump_badge};
 
-/// Draw the badge into a `width x height` frame and return what it reported
-/// plus the rendered screen.
+/// width x height のフレームにバッジを描画し、報告された値と描画後の画面を返す。
 fn draw_badge(width: u16, height: u16, following: bool) -> (Option<Rect>, Buffer) {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     let mut hit = None;
@@ -335,8 +331,9 @@ fn screen_text(buf: &Buffer) -> String {
         .join("\n")
 }
 
-/// Following the newest turn is the quiet state: no badge, and — just as
-/// importantly — no hit region, or a click on that spot would keep firing.
+/// 最新のターンに追従している状態は静かな状態である: バッジは無く、そしてそれと
+/// 同じくらい重要なこととして、ヒット領域も無い — そうでないと、その場所への
+/// クリックが動作し続けてしまう。
 #[test]
 fn no_badge_while_following() {
     let (hit, buf) = draw_badge(40, 6, true);
@@ -353,13 +350,13 @@ fn detached_draws_the_badge_bottom_right_and_reports_its_rect() {
     let (hit, buf) = draw_badge(40, 6, false);
     let rect = hit.expect("detached view must offer a way back");
 
-    // Bottom-right corner, flush with the right edge.
+    // 右下の角、右端に接するように配置される。
     assert_eq!(rect.y, 5, "badge belongs on the last row");
     assert_eq!(rect.x + rect.width, 40, "badge is right-aligned");
     assert_eq!(rect.height, 1);
 
-    // The reported rect is where the text actually is — this is the contract
-    // the click handler relies on.
+    // 報告される矩形はテキストが実際にある場所である — これはクリックハンドラが
+    // 依存している契約である。
     let text = screen_text(&buf);
     let last_row = text.lines().last().unwrap();
     assert!(last_row.contains("Jump to latest (G)"), "{last_row:?}");
@@ -369,24 +366,23 @@ fn detached_draws_the_badge_bottom_right_and_reports_its_rect() {
     );
 }
 
-/// The badge steps down through shorter labels rather than being truncated
-/// into something unreadable, and disappears entirely when even the shortest
-/// would not fit — the Claude column can be narrow.
+/// バッジは読めないほど切り詰められるのではなく、より短いラベルへと段階的に縮んでいき、
+/// 最短のものすら収まらない場合には完全に消える — Claude 用のカラムは狭くなりうる。
 #[test]
 fn badge_shrinks_with_the_panel_and_eventually_gives_up() {
-    // Wide enough for the full label (20 cols + 1 of slack).
+    // フルラベルに十分な幅（20カラム + 余裕1）。
     assert_eq!(draw_badge(21, 3, false).0.map(|r| r.width), Some(20));
-    // One column short of it: falls back to " Latest (G) " (12).
+    // それより1カラム足りない: " Latest (G) "（12）にフォールバック。
     assert_eq!(draw_badge(20, 3, false).0.map(|r| r.width), Some(12));
-    // Only room for " (G) " (5).
+    // " (G) "（5）が入るだけの余地しかない。
     assert_eq!(draw_badge(12, 3, false).0.map(|r| r.width), Some(5));
-    // Not even that.
+    // それすら入らない。
     assert_eq!(draw_badge(5, 3, false).0, None);
 }
 
-/// Every label must measure exactly what `unicode-width` says, because the
-/// badge is positioned against the panel's right edge — a glyph the terminal
-/// draws wider would push its tail onto the border.
+/// すべてのラベルは unicode-width が示す通りに正確に計測されなければならない。
+/// バッジはパネルの右端に接して配置されるため、端末がそれより広く描くグリフがあると
+/// 末尾が境界線にはみ出してしまう。
 #[test]
 fn badge_labels_are_plain_ascii() {
     for label in JUMP_BADGE_LABELS {
@@ -398,8 +394,8 @@ fn badge_labels_are_plain_ascii() {
     }
 }
 
-/// Labels are ordered longest-first; `render_jump_badge` picks the first that
-/// fits, so a mis-ordered list would silently prefer a shorter one.
+/// ラベルは長い順に並んでいる。render_jump_badge は収まる最初のものを選ぶので、
+/// 並び順を誤ると、黙ってより短いものが優先されてしまう。
 #[test]
 fn badge_labels_are_ordered_longest_first() {
     let widths: Vec<usize> = JUMP_BADGE_LABELS
@@ -412,23 +408,23 @@ fn badge_labels_are_ordered_longest_first() {
     );
 }
 
-// ── Scroll placement across a reflow ────────────────────────────────────────
+// リフローをまたぐスクロール位置
 //
-// The pure arithmetic is covered in `event::reflow`; these run the real line
-// builder at two widths and check the two outcomes that matter to a reader:
-// a detached one stays on their line, a following one stays on the newest.
+// 純粋な算術部分は event::reflow でカバーされている。ここでは実際の行ビルダーを
+// 2つの幅で実行し、読者にとって重要な2つの結果を検証する: 離脱している読者は自分の
+// 行に留まり、追従している読者は最新に留まる。
 
 use crate::event::reflow::{at_bottom, scroll_after_reflow};
 
 use super::build::BuiltLines;
 use super::render::anchor_index;
 
-/// Prose long enough that the wrap positions genuinely differ between the two
-/// widths under test — the fixture's whole job.
+/// テスト対象の2つの幅で折り返し位置が実際に異なるくらい長いプロース — この
+/// フィクスチャの仕事はそれだけである。
 fn reflow_fixture() -> Vec<LogEntry> {
-    // Long enough that a 20-row viewport is a small slice of it — with a short
-    // log, "three quarters down" is already the bottom and the clamp, not the
-    // anchor, would decide where the reader lands.
+    // 20行のビューポートがそのほんの一部でしかないくらい長くする — ログが短いと、
+    // 「4分の3まで下がった位置」がすでに末尾になってしまい、読者の着地点を決めるのが
+    // アンカーではなくクランプになってしまう。
     (0..40)
         .map(|i| {
             entry(
@@ -461,17 +457,17 @@ fn build_at(entries: &[LogEntry], width: usize) -> BuiltLines {
     build_lines(&ctx, width)
 }
 
-/// The reported bug, end to end: a reader parked in the history must come out
-/// of a width change looking at the same turn — not at the newest one, and not
-/// at whatever unrelated text inherited their old line number.
+/// 報告されたバグをエンドツーエンドで再現する: 履歴のどこかに留まっている読者は、
+/// 幅の変更後も同じターンを見ていなければならない — 最新のターンでもなく、
+/// 古い行番号を偶然引き継いだ無関係なテキストでもない。
 #[test]
 fn narrowing_keeps_a_detached_reader_on_the_same_turn() {
     const INNER: usize = 20;
     let entries = reflow_fixture();
 
     let before = build_at(&entries, 80);
-    // Three quarters in: far enough down that the extra wrapped lines the
-    // narrower width introduces have accumulated into real drift.
+    // 4分の3の位置: 狭い幅によって追加された折り返し行が実際のズレとして蓄積する
+    // くらい十分に下の方。
     let scroll = before.meta.len() * 3 / 4;
     let anchor = before.meta[scroll];
 
@@ -481,8 +477,9 @@ fn narrowing_keeps_a_detached_reader_on_the_same_turn() {
         "fixture must wrap into more lines at the narrower width"
     );
 
-    // Carrying the raw line number across is the behaviour being replaced —
-    // assert it would actually have been wrong, or this test proves nothing.
+    // 生の行番号をそのまま引き継ぐのが、置き換えようとしている挙動である —
+    // それが実際に誤りであったことを検証する。そうしないとこのテストは何も
+    // 証明しない。
     let naive = after.meta[scroll];
     assert_ne!(
         (naive.entry, naive.block, naive.offset),
@@ -509,8 +506,8 @@ fn narrowing_keeps_a_detached_reader_on_the_same_turn() {
     );
 }
 
-/// The other half: someone riding the newest turn must still be riding it, or
-/// the fix would have traded one broken case for another.
+/// もう半分のケース: 最新のターンに乗っていた人は、その後も乗っていなければならない。
+/// さもないと、この修正は1つの壊れたケースを別の壊れたケースに置き換えただけになる。
 #[test]
 fn narrowing_keeps_a_follower_on_the_newest_turn() {
     const INNER: usize = 20;
@@ -536,8 +533,8 @@ fn narrowing_keeps_a_follower_on_the_newest_turn() {
         after.lines.len(),
         "the last built line must sit on the last visual row"
     );
-    // And the anchor alone would have left the newest lines off-screen — which
-    // is exactly why `follow` overrides it.
+    // そしてアンカーだけに従っていたら、最新の行は画面外に置かれてしまっていた —
+    // だからこそ follow がそれを上書きする。
     let anchored_only = anchor_index(&after.meta, anchor);
     assert!(
         anchored_only < placed,
@@ -545,8 +542,8 @@ fn narrowing_keeps_a_follower_on_the_newest_turn() {
     );
 }
 
-/// Growing the panel is the mirror case: fewer wrapped lines, and the follower
-/// must not be left short of the end.
+/// パネルを広げるのは鏡合わせのケースである: 折り返し行が減り、追従している読者は
+/// 末尾より手前に取り残されてはならない。
 #[test]
 fn widening_keeps_a_follower_on_the_newest_turn() {
     const INNER: usize = 20;

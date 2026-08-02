@@ -1,6 +1,6 @@
 //! 端末出力のテキストからファイルパスを検出する。
 //!
-//! 端末のテキスト (典型的にはコンパイラの出力、`grep` の結果、エディタ形式の
+//! 端末のテキスト (典型的にはコンパイラの出力、grep の結果、エディタ形式の
 //! 参照) からファイルパスを抽出する。行番号・桁番号が付いていれば併せて取る。
 
 use std::path::Path;
@@ -24,20 +24,20 @@ pub struct FileLink {
 
 /// テキスト 1 行の中からファイルパスの参照を検出する。
 ///
-/// 見つかったマッチを位置順に返す。パスは渡された `worktree_root` を基準に
+/// 見つかったマッチを位置順に返す。パスは渡された worktree_root を基準に
 /// 検証し、解決した先が実在するものだけを返す。
 pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
     // パターンは必要時にコンパイルする。順番に意味があり、限定的なものが先。
     let patterns: &[&str] = &[
-        // Rust など一般的なコンパイラ: `--> src/app.rs:42:10`
+        // Rust など一般的なコンパイラ: "--> src/app.rs:42:10"
         r#"-->\s+([^\s:]+):(\d+):(\d+)"#,
-        // path:line:col
+        // path:line:col 形式
         r#"(?:^|[\s"'`(,])([./]?[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+):(\d+):(\d+)"#,
-        // path:line
+        // path:line 形式
         r#"(?:^|[\s"'`(,])([./]?[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+):(\d+)"#,
-        // `./` または `/` で始まる裸のパス
+        // ./ または / で始まる裸のパス
         r#"(?:^|[\s"'`(,])([./][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+)"#,
-        // `/` を含む裸の相対パス (例: `src/app.rs`)
+        // / を含む裸の相対パス (例: src/app.rs)
         r#"(?:^|[\s"'`(,])([a-zA-Z0-9_][a-zA-Z0-9_.\-]*/[a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+)"#,
     ];
 
@@ -51,7 +51,7 @@ pub fn detect_file_links(text: &str, worktree_root: &Path) -> Vec<FileLink> {
             let path_str = m_path.as_str();
             let match_start = m_path.start();
 
-            // マッチ全体の終端 (`line:col` の接尾辞を含む)。
+            // マッチ全体の終端 (line:col の接尾辞を含む)。
             let match_end = caps.get(caps.len() - 1).unwrap().end();
 
             // 既に検出したリンクと範囲が重なるものは飛ばす。

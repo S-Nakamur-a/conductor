@@ -1,5 +1,5 @@
-//! Unit tests for the mouse hit-testing geometry, double-click detection, and
-//! left-margin click classification.
+//! マウスのヒットテストジオメトリ、ダブルクリック判定、左マージンの
+//! クリック分類に対する単体テスト。
 
 use super::explorer_panel::{diff_list_row_at, explorer_tree_row_at};
 use super::viewer_panel::{
@@ -8,9 +8,8 @@ use super::viewer_panel::{
 use super::{ClickGeometry, Column, register_double_click, register_double_click_on};
 use std::time::{Duration, Instant};
 
-/// Build a `ClickGeometry` with the given column boundaries. Widths/heights
-/// are set so that the `[<=>]` expand button (last 5 cols before each column
-/// border, requiring width >= 7) is testable.
+/// 指定したカラム境界でClickGeometryを構築する。幅/高さは、[<=>] 展開ボタン
+/// （各カラム境界の手前5列、幅7以上が必要）がテスト可能になるよう設定する。
 fn geom(left_end: u16, explorer_end: u16, viewer_end: u16) -> ClickGeometry {
     ClickGeometry {
         main_area: ratatui::layout::Rect::new(0, 1, viewer_end + 20, 40),
@@ -28,10 +27,10 @@ fn geom(left_end: u16, explorer_end: u16, viewer_end: u16) -> ClickGeometry {
 
 #[test]
 fn gutter_and_badge_clicks_always_start_a_comment() {
-    // The core of the overlap fix: a line inside an existing comment's
-    // range (has_comment = true) must still start a NEW comment from the
-    // number gutter and the "+" badge column — never get swallowed by
-    // thread focus. The affordance is identical on every line.
+    // 重なりの修正の核心部分: 既存のコメント範囲に含まれる行（has_comment = true）
+    // であっても、行番号ガターと「+」バッジ列からは常に新しいコメントを開始
+    // しなければならず、スレッドのフォーカスに飲み込まれてはならない。
+    // このアフォーダンスはどの行でも同じ。
     for zone in [MarginZone::NumberGutter, MarginZone::Badge] {
         for has_comment in [false, true] {
             assert_eq!(
@@ -44,7 +43,7 @@ fn gutter_and_badge_clicks_always_start_a_comment() {
             );
         }
     }
-    // Even on a runnable-test line, the number gutter comments.
+    // テストが実行可能な行であっても、行番号ガターはコメントを開始する。
     assert_eq!(
         classify_margin_click(MarginZone::NumberGutter, false, true, false),
         MarginClickAction::StartComment { extend: false }
@@ -53,18 +52,18 @@ fn gutter_and_badge_clicks_always_start_a_comment() {
 
 #[test]
 fn marker_click_focuses_existing_thread() {
-    // The far-left 💬/│ marker column is the ONLY place thread focus lives.
+    // 一番左の💬/│マーカー列だけがスレッドのフォーカスを持つ唯一の場所。
     assert_eq!(
         classify_margin_click(MarginZone::Marker, true, false, false),
         MarginClickAction::ToggleThread
     );
-    // Comment wins even on a commented test line (▶ lives in the badge
-    // column, not here).
+    // コメント済みのテスト行でもコメントが優先される（▶はバッジ列にあり、
+    // ここにはない）。
     assert_eq!(
         classify_margin_click(MarginZone::Marker, true, true, false),
         MarginClickAction::ToggleThread
     );
-    // An empty marker cell falls back to starting a comment.
+    // 空のマーカーセルはコメント開始にフォールバックする。
     assert_eq!(
         classify_margin_click(MarginZone::Marker, false, false, false),
         MarginClickAction::StartComment { extend: false }
@@ -77,8 +76,9 @@ fn badge_click_on_test_line_runs_the_test() {
         classify_margin_click(MarginZone::Badge, false, true, false),
         MarginClickAction::RunTest
     );
-    // A commented test line: ▶ still renders in the badge column, so the
-    // click there still runs the test (thread focus is the marker's job).
+    // コメント済みのテスト行でも: ▶はバッジ列に描画され続けるので、そこへの
+    // クリックはやはりテストを実行する（スレッドのフォーカスはマーカーの
+    // 仕事）。
     assert_eq!(
         classify_margin_click(MarginZone::Badge, true, true, false),
         MarginClickAction::RunTest
@@ -103,14 +103,14 @@ fn thread_anchor_redirects_mid_range_lines_to_nearest_end_line() {
         created_at: String::new(),
         updated_at: String::new(),
     };
-    // Nested ranges L10-L20 and L11-L19: a mid-range │ click lands on the
-    // nearest end line (💬), where both views render the thread.
+    // 入れ子になった範囲 L10-L20 と L11-L19: 範囲の途中の│クリックは、両方の
+    // 表示でスレッドが描画される、最も近い終了行（💬）に着地する。
     let both = [range("outer", 10, 20), range("inner", 11, 19)];
     assert_eq!(thread_anchor_line(&both, 15), 19);
-    // A line covered only by the outer range anchors at its end.
+    // 外側の範囲にしか含まれない行は、その終了行に固定される。
     let outer_only = [range("outer", 10, 20)];
     assert_eq!(thread_anchor_line(&outer_only, 10), 20);
-    // An end line anchors at itself.
+    // 終了行自体は自分自身に固定される。
     assert_eq!(thread_anchor_line(&both, 19), 19);
     assert_eq!(thread_anchor_line(&outer_only, 20), 20);
 }
@@ -118,14 +118,13 @@ fn thread_anchor_redirects_mid_range_lines_to_nearest_end_line() {
 #[test]
 fn divider_at_hits_both_cells_of_a_vertical_boundary() {
     use crate::app::Divider;
-    // main_area spans y in [1, 41); a vertical boundary is a 2-cell zone at
-    // {edge-1, edge}.
+    // main_areaはyが[1, 41)の範囲。縦の境界は{edge-1, edge}の2セル分のゾーン。
     let g = geom(0, 24, 62);
     assert_eq!(g.divider_at(23, 10), Some(Divider::ExplorerViewer));
     assert_eq!(g.divider_at(24, 10), Some(Divider::ExplorerViewer));
     assert_eq!(g.divider_at(61, 10), Some(Divider::ViewerTerminal));
     assert_eq!(g.divider_at(62, 10), Some(Divider::ViewerTerminal));
-    // One cell either side of the zone is not a hit.
+    // ゾーンの両側1セルはヒットしない。
     assert_eq!(g.divider_at(22, 10), None);
     assert_eq!(g.divider_at(25, 10), None);
 }
@@ -134,13 +133,13 @@ fn divider_at_hits_both_cells_of_a_vertical_boundary() {
 fn divider_at_hits_horizontal_splits_within_their_column() {
     use crate::app::Divider;
     let g = geom(0, 24, 62); // explorer_mid_y=20, terminal_split_y=33
-    // Explorer split: only inside the Explorer column [0, 24).
+    // Explorerの分割線: Explorer列 [0, 24) の内側でのみ。
     assert_eq!(g.divider_at(10, 19), Some(Divider::ExplorerSplit));
     assert_eq!(g.divider_at(10, 20), Some(Divider::ExplorerSplit));
     assert_eq!(g.divider_at(10, 18), None);
-    // The Explorer split does not extend into the Viewer/Terminal columns.
+    // Explorerの分割線はViewer/Terminal列には広がらない。
     assert_eq!(g.divider_at(40, 20), None);
-    // Terminal split: only inside the Terminal column [62, right).
+    // Terminalの分割線: Terminal列 [62, 右端) の内側でのみ。
     assert_eq!(g.divider_at(70, 32), Some(Divider::TerminalSplit));
     assert_eq!(g.divider_at(70, 33), Some(Divider::TerminalSplit));
     assert_eq!(g.divider_at(40, 33), None);
@@ -149,8 +148,8 @@ fn divider_at_hits_horizontal_splits_within_their_column() {
 #[test]
 fn divider_at_vertical_boundary_wins_at_a_corner() {
     use crate::app::Divider;
-    // (explorer_end-1, explorer_mid_y) is both a vertical-boundary cell and
-    // on the Explorer split row — the vertical divider must take priority.
+    // (explorer_end-1, explorer_mid_y) は縦の境界セルであると同時にExplorerの
+    // 分割線の行でもある — 縦の境界が優先されなければならない。
     let g = geom(0, 24, 62);
     assert_eq!(g.divider_at(23, 20), Some(Divider::ExplorerViewer));
 }
@@ -178,24 +177,24 @@ fn column_at_maps_columns_by_boundary() {
 #[test]
 fn expand_button_hits_last_cols_of_each_column() {
     use crate::app::Focus;
-    // main_area.x == 0, so the worktree button spans [left_w-6, left_w-1).
+    // main_area.x == 0 なので、worktreeボタンは [left_w-6, left_w-1) にまたがる。
     let g = geom(20, 50, 90);
-    // Worktree button: cols 14..19.
+    // worktreeボタン: 列 14..19。
     assert_eq!(g.expand_button_at(14), Some(Focus::Worktree));
     assert_eq!(g.expand_button_at(18), Some(Focus::Worktree));
-    assert_eq!(g.expand_button_at(19), None); // btn_end is exclusive
+    assert_eq!(g.expand_button_at(19), None); // btn_endは含まない
     assert_eq!(g.expand_button_at(13), None);
-    // Explorer button: [left_end + explorer_w - 6, ...) = [44, 49).
+    // Explorerボタン: [left_end + explorer_w - 6, ...) = [44, 49)。
     assert_eq!(g.expand_button_at(44), Some(Focus::Explorer));
     assert_eq!(g.expand_button_at(48), Some(Focus::Explorer));
-    // Viewer button: [explorer_end + viewer_w - 6, ...) = [84, 89).
+    // Viewerボタン: [explorer_end + viewer_w - 6, ...) = [84, 89)。
     assert_eq!(g.expand_button_at(84), Some(Focus::Viewer));
     assert_eq!(g.expand_button_at(88), Some(Focus::Viewer));
 }
 
 #[test]
 fn expand_button_absent_for_narrow_columns() {
-    // A column narrower than 7 has no expand button.
+    // 幅7未満のカラムには展開ボタンがない。
     let g = geom(5, 50, 90);
     assert_eq!(g.expand_button_at(0), None);
     assert_eq!(g.expand_button_at(4), None);
@@ -203,18 +202,18 @@ fn expand_button_absent_for_narrow_columns() {
 
 #[test]
 fn explorer_tree_row_at_rejects_the_border_row() {
-    let g = geom(20, 50, 90); // main_area.y = 1, so the top border is row 1.
+    let g = geom(20, 50, 90); // main_area.y = 1 なので、上枠は行1。
     assert_eq!(explorer_tree_row_at(&g, 0, 30, 1), None);
-    // The first row inside the border resolves to visible index 0.
+    // 枠の内側の最初の行は表示上のインデックス0に解決される。
     assert_eq!(explorer_tree_row_at(&g, 0, 30, 2), Some(0));
 }
 
 #[test]
 fn explorer_tree_row_at_rejects_columns_outside_the_explorer() {
     let g = geom(20, 50, 90);
-    assert_eq!(explorer_tree_row_at(&g, 0, 19, 5), None); // Worktree column
-    assert_eq!(explorer_tree_row_at(&g, 0, 50, 5), None); // Viewer column
-    // The Explorer's own edge columns are still in-bounds.
+    assert_eq!(explorer_tree_row_at(&g, 0, 19, 5), None); // worktree列
+    assert_eq!(explorer_tree_row_at(&g, 0, 50, 5), None); // Viewer列
+    // Explorer自身の端の列は依然として範囲内。
     assert_eq!(explorer_tree_row_at(&g, 0, 20, 5), Some(3));
     assert_eq!(explorer_tree_row_at(&g, 0, 49, 5), Some(3));
 }
@@ -222,18 +221,18 @@ fn explorer_tree_row_at_rejects_columns_outside_the_explorer() {
 #[test]
 fn explorer_tree_row_at_rejects_the_bottom_half() {
     let g = geom(20, 50, 90); // explorer_mid_y = 20
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 18), Some(16)); // last row actually drawn
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 19), None); // the tree's own bottom border
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 20), None); // Changed files starts here
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 18), Some(16)); // 実際に描画される最後の行
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 19), None); // ツリー自身の下枠
+    assert_eq!(explorer_tree_row_at(&g, 0, 30, 20), None); // ここからChanged filesが始まる
     assert_eq!(explorer_tree_row_at(&g, 0, 30, 25), None);
 }
 
-/// Tie both hit-testers to the number of rows their panel actually renders,
-/// derived the same way the renderers derive it (`height - 2` for the two
-/// borders). A plain "row N maps to index M" assertion restates whatever the
-/// function happens to do; this one fails the moment either panel accepts a
-/// border row or drops a content row, which is exactly the class of bug that
-/// let a click open a file that was never on screen.
+/// 両方のヒットテスタを、そのパネルが実際に描画する行数（レンダラが導出するのと
+/// 同じ方法、2つの枠ぶんの height - 2）に結び付ける。単に「行Nはインデックス
+/// Mに対応する」というだけのアサーションは、その関数がたまたまやっていることを
+/// なぞるにすぎない。このテストは、どちらかのパネルが枠の行を受け入れたり
+/// コンテンツ行を落としたりした瞬間に失敗する — これはまさに、画面に表示されて
+/// いなかったファイルをクリックで開いてしまうという類のバグにつながるもの。
 #[test]
 fn row_at_helpers_accept_exactly_the_rows_their_panel_draws() {
     let g = geom(20, 50, 90);
@@ -263,42 +262,42 @@ fn explorer_tree_row_at_adds_the_scroll_offset() {
 #[test]
 fn diff_list_row_at_rejects_the_top_half_and_its_border() {
     let g = geom(20, 50, 90); // explorer_mid_y = 20
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 19), None); // still the file tree
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 20), None); // the diff list's own top border
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 21), Some(0)); // first diff-list row
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 19), None); // まだファイルツリー
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 20), None); // diffリスト自身の上枠
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 21), Some(0)); // diffリストの最初の行
 }
 
 #[test]
 fn diff_list_row_at_rejects_columns_outside_the_explorer() {
     let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 19, 25), None); // Worktree column
-    assert_eq!(diff_list_row_at(&g, 0, 0, 50, 25), None); // Viewer column
+    assert_eq!(diff_list_row_at(&g, 0, 0, 19, 25), None); // worktree列
+    assert_eq!(diff_list_row_at(&g, 0, 0, 50, 25), None); // Viewer列
     assert_eq!(diff_list_row_at(&g, 0, 0, 20, 25), Some(4));
     assert_eq!(diff_list_row_at(&g, 0, 0, 49, 25), Some(4));
 }
 
 #[test]
 fn diff_list_row_at_rejects_the_bottom_border() {
-    // main_area = Rect::new(0, 1, .., 40) → bottom border row is 1 + 40 - 1 = 40,
-    // which is where the "Ask Claude All" button lives, not a list row.
+    // main_area = Rect::new(0, 1, .., 40) → 下枠の行は 1 + 40 - 1 = 40 で、
+    // これはリストの行ではなく「Ask Claude All」ボタンが置かれている場所。
     let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 39), Some(18)); // last diff-list row
+    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 39), Some(18)); // diffリストの最後の行
     assert_eq!(diff_list_row_at(&g, 0, 0, 30, 40), None);
     assert_eq!(diff_list_row_at(&g, 0, 0, 30, 45), None);
 }
 
-/// The error banner sits inside the list's inner area without occupying an
-/// entry, so entries start that many rows lower. Getting this wrong lands the
-/// click one file off and makes the banner itself open whatever is scrolled to
-/// the top. Both the click handler and the hover tracker go through here, so
-/// the offset only has to be right once.
+/// エラーバナーはリストの内側領域にエントリを1つ消費せずに収まるので、
+/// エントリはその分だけ下の行から始まる。ここを間違えるとクリックが1ファイル分
+/// ずれ、バナー自体が、スクロールして一番上に来ているものを開いてしまう。
+/// クリックハンドラとホバートラッカーの両方がここを通るので、オフセットは
+/// 一箇所だけ正しければよい。
 #[test]
 fn diff_list_row_at_skips_the_error_banner() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20, first inner row = 21
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 21), None); // banner, not an entry
+    let g = geom(20, 50, 90); // explorer_mid_y = 20、最初の内側行は21
+    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 21), None); // エントリではなくバナー
     assert_eq!(diff_list_row_at(&g, 0, 2, 30, 22), None);
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 23), Some(0)); // first real entry
-    assert_eq!(diff_list_row_at(&g, 5, 2, 30, 23), Some(5)); // banner then scroll
+    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 23), Some(0)); // 最初の実エントリ
+    assert_eq!(diff_list_row_at(&g, 5, 2, 30, 23), Some(5)); // バナーの後にスクロール分
 }
 
 #[test]
@@ -312,7 +311,7 @@ fn diff_list_row_at_adds_the_scroll_offset() {
 fn double_click_within_threshold() {
     let t0 = Instant::now();
     let mut last = t0;
-    // A click 100ms after the previous one is a double-click.
+    // 前回のクリックから100ms後のクリックはダブルクリックになる。
     let is_double = register_double_click(&mut last, t0 + Duration::from_millis(100));
     assert!(is_double);
     assert_eq!(last, t0 + Duration::from_millis(100));
@@ -322,12 +321,12 @@ fn double_click_within_threshold() {
 fn single_click_beyond_threshold() {
     let t0 = Instant::now();
     let mut last = t0;
-    // A click 400ms later is *not* a double-click (boundary is exclusive).
+    // 400ms後のクリックはダブルクリックにならない（境界は含まない）。
     assert!(!register_double_click(
         &mut last,
         t0 + Duration::from_millis(400)
     ));
-    // And one well beyond the threshold is not either.
+    // しきい値を大きく超えたクリックも同様。
     let t1 = t0 + Duration::from_millis(400);
     assert!(!register_double_click(
         &mut last,
@@ -340,13 +339,13 @@ fn indexed_double_click_requires_same_idx() {
     let t0 = Instant::now();
     let mut last = t0;
     let mut last_idx = 0usize;
-    // First click on idx 5: even within the time window, the stored idx (0)
-    // differs, so it is not a double-click.
+    // idx 5への最初のクリック: 時間窓の中であっても、記録されているidx（0）と
+    // 異なるのでダブルクリックにはならない。
     let first =
         register_double_click_on(&mut last, &mut last_idx, 5, t0 + Duration::from_millis(50));
     assert!(!first);
     assert_eq!(last_idx, 5);
-    // Second click on the same idx within the window: double-click.
+    // 窓の中で同じidxへの2回目のクリック: ダブルクリックになる。
     let second =
         register_double_click_on(&mut last, &mut last_idx, 5, t0 + Duration::from_millis(100));
     assert!(second);
@@ -357,15 +356,15 @@ fn indexed_double_click_resets_on_different_idx() {
     let t0 = Instant::now();
     let mut last = t0;
     let mut last_idx = 3usize;
-    // Quick click but on a different row → not a double-click, and the
-    // stored index/time update so the next click compares against this one.
+    // 素早いクリックだが行が異なる → ダブルクリックにはならず、記録される
+    // インデックス/時刻が更新されるので、次のクリックはこれと比較される。
     let hit = register_double_click_on(&mut last, &mut last_idx, 7, t0 + Duration::from_millis(10));
     assert!(!hit);
     assert_eq!(last_idx, 7);
     assert_eq!(last, t0 + Duration::from_millis(10));
 }
 
-// ── Menu bar clicks ──────────────────────────────────────────────────────
+// メニューバーのクリック
 
 mod menu_clicks {
     use super::super::menu::{MenuClick, classify_menu_click};
@@ -374,8 +373,8 @@ mod menu_clicks {
 
     const BAR_ROW: u16 = 1;
 
-    /// A state with two titles on row 1 and, optionally, menu 1's dropdown open
-    /// at rows 2..6 with one enabled row (3) and one disabled row (4).
+    /// 行1に2つのタイトルがあり、任意でメニュー1のドロップダウンが行2..6で
+    /// 開いている状態。有効な行が1つ（3）、無効な行が1つ（4）ある。
     fn state(open: bool) -> MenuState {
         let mut s = MenuState {
             bar_hits: vec![
@@ -476,8 +475,8 @@ mod menu_clicks {
 
     #[test]
     fn clicking_the_dropdown_border_is_inert() {
-        // Row 2 and 5 are the popup's own border rows: inside the rect but
-        // carrying no item hit.
+        // 行2と5はポップアップ自身の枠の行: 矩形の内側だが、項目のヒットは
+        // 持たない。
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 10, 2),
@@ -507,8 +506,8 @@ mod menu_clicks {
 
     #[test]
     fn a_stale_dropdown_rect_cannot_swallow_clicks_after_closing() {
-        // Regression guard: `close()` clears the recorded regions, so the rect
-        // from the last render can't keep eating clicks.
+        // リグレッション防止: close()は記録された領域をクリアするので、
+        // 最後の描画時の矩形がクリックを飲み込み続けることはない。
         let mut s = state(true);
         s.close();
         assert_eq!(classify_menu_click(&s, Some(BAR_ROW), 10, 3), MenuClick::Pass);
@@ -516,8 +515,8 @@ mod menu_clicks {
 
     #[test]
     fn the_bar_row_is_claimed_even_with_no_menu_open() {
-        // Otherwise the click falls through to `handle_title_bar_click`, which
-        // consumes every row above the main area.
+        // そうしないと、クリックはhandle_title_bar_clickまで素通りしてしまい、
+        // そちらはmain area より上のすべての行を消費してしまう。
         let s = state(false);
         assert!(matches!(
             classify_menu_click(&s, Some(BAR_ROW), 8, BAR_ROW),

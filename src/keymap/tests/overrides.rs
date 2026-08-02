@@ -1,13 +1,13 @@
-//! Tests for the user `[keybinds]` overlay: additive overrides, chord
-//! tombstones, unknown actions/layers, legacy config format detection, and
-//! in-layer chord conflicts.
+//! ユーザの [keybinds] オーバーレイのテスト: 加算的なオーバーライド、チョードの
+//! トゥームストーン、未知のアクション/レイヤー、レガシー設定形式の検出、
+//! レイヤー内でのチョード衝突。
 
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
 fn user_override_adds_a_chord() {
-    // Bind "n" -> navigate_down in the worktree layer.
+    // ワークツリーレイヤーで "n" -> navigate_down をバインドする。
     let mut layer = toml::Table::new();
     layer.insert(
         "n".to_string(),
@@ -21,13 +21,13 @@ fn user_override_adds_a_chord() {
     let (km, warnings) = KeyMap::with_warnings(&user);
     assert!(warnings.is_empty(), "{warnings:?}");
 
-    // 'n' now navigates down …
+    // 'n' で下に移動するようになり…
     let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
     assert_eq!(
         km.resolve(&key_n, KeyContext::Worktree),
         Some(Action::NavigateDown)
     );
-    // … and the default 'j' still works (layering, not replacement).
+    // …デフォルトの 'j' も引き続き動く（置き換えではなく重ね合わせ）。
     let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
     assert_eq!(
         km.resolve(&key_j, KeyContext::Worktree),
@@ -37,7 +37,7 @@ fn user_override_adds_a_chord() {
 
 #[test]
 fn user_override_shadows_a_default_chord() {
-    // Rebind "g" -> go_to_top in worktree (default is grab_branch).
+    // ワークツリーで "g" -> go_to_top に再バインドする（デフォルトは grab_branch）。
     let mut layer = toml::Table::new();
     layer.insert("g".to_string(), toml::Value::String("go_to_top".to_string()));
     let mut layers = toml::Table::new();
@@ -55,9 +55,10 @@ fn user_override_shadows_a_default_chord() {
 
 #[test]
 fn user_tombstone_unbinds_a_default_chord() {
-    // `"ctrl+q" = false` removes the default Quit binding outright (the
-    // keymap-suite `merge` tombstone), so the chord passes through instead of
-    // being shadowed by another action. This is a no-op warning-wise.
+    // "ctrl+q" = false はデフォルトの Quit バインディングを完全に取り除く
+    // （keymap-suite のマージにおけるトゥームストーン）。そのためこのチョードは
+    // 別のアクションに覆われるのではなく、そのまま通過するようになる。これは
+    // 警告面では no-op である。
     let mut keys = toml::Table::new();
     keys.insert("ctrl+q".to_string(), toml::Value::Boolean(false));
     let mut user = toml::Table::new();
@@ -68,7 +69,7 @@ fn user_tombstone_unbinds_a_default_chord() {
 
     let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
     assert_eq!(km.resolve(&ctrl_q, KeyContext::Global), None);
-    // A default the tombstone did not touch still resolves.
+    // トゥームストーンが触れていないデフォルトは引き続き解決される。
     let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
     assert_eq!(
         km.resolve(&ctrl_n, KeyContext::Global),
@@ -78,7 +79,8 @@ fn user_tombstone_unbinds_a_default_chord() {
 
 #[test]
 fn user_tombstone_in_panel_layer_unbinds() {
-    // Tombstones work in a named layer too: drop worktree 'c' (cherry-pick).
+    // トゥームストーンは名前付きレイヤーでも機能する: ワークツリーの 'c'
+    // （チェリーピック）を落とす。
     let mut layer = toml::Table::new();
     layer.insert("c".to_string(), toml::Value::Boolean(false));
     let mut layers = toml::Table::new();
@@ -114,8 +116,8 @@ fn user_unknown_action_is_warned() {
 
 #[test]
 fn legacy_format_is_reported_not_silent() {
-    // Old schema: [keybinds.worktree] navigate_down = "j" — a top-level
-    // table named "worktree" rather than "keys"/"layers".
+    // 旧スキーマ: [keybinds.worktree] navigate_down = "j" — "keys"/"layers"
+    // ではなく "worktree" という名前のトップレベルテーブル。
     let mut wt = toml::Table::new();
     wt.insert(
         "navigate_down".to_string(),
@@ -135,8 +137,8 @@ fn legacy_format_is_reported_not_silent() {
 
 #[test]
 fn in_layer_conflict_is_warned() {
-    // Two spellings of the same chord in one layer: keymap-config reports a
-    // Conflict and the last binding wins.
+    // 1つのレイヤー内で同じチョードの2通りの綴り: keymap-config が Conflict
+    // を報告し、後の方のバインディングが勝つ。
     let mut keys = toml::Table::new();
     keys.insert("ctrl+x".to_string(), toml::Value::String("quit".to_string()));
     keys.insert(
@@ -153,7 +155,7 @@ fn in_layer_conflict_is_warned() {
             .any(|w| matches!(w, KeybindWarning::Conflict { .. })),
         "expected Conflict, got {warnings:?}"
     );
-    // Whichever won, ctrl+x must resolve to one of the two contenders.
+    // どちらが勝ったにせよ、ctrl+x は2つの候補のどちらかに解決されなければならない。
     let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
     let resolved = km.resolve(&key, KeyContext::Global);
     assert!(
@@ -164,8 +166,8 @@ fn in_layer_conflict_is_warned() {
 
 #[test]
 fn unknown_layer_with_bindings_is_warned() {
-    // Guards the empty-GLOBAL_LAYER suppression: a non-empty unrecognized
-    // layer name must warn (an empty one, always injected, must not).
+    // 空の GLOBAL_LAYER を抑制する仕組みを検証する: 空でない未認識のレイヤー名は
+    // 警告になり、常に注入される空のレイヤーは警告にならない。
     let mut layer = toml::Table::new();
     layer.insert(
         "j".to_string(),

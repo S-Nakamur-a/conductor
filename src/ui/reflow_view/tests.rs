@@ -1,5 +1,5 @@
-//! Tests for the marker/indent/truncation helpers in [`super::helpers`] and
-//! the gutter-width invariant of [`super::glyphs`].
+//! [super::helpers] のマーカー/インデント/切り詰めヘルパーと、[super::glyphs] の
+//! ガター幅の不変条件についてのテスト。
 
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
@@ -11,11 +11,11 @@ use super::glyphs::{
 };
 use super::helpers::{pad_glyph_to, truncate_to_width, with_marker};
 
-// ── pad_glyph_to ─────────────────────────────────────────────────────────
+// pad_glyph_to
 
 #[test]
 fn pad_glyph_ascii_pads_to_target() {
-    // ">" is 1 col wide; padded to 2 should give "> ".
+    // ">" は幅1カラム。2までパディングすると "> " になるはず。
     assert_eq!(pad_glyph_to(">", 2), "> ");
 }
 
@@ -31,25 +31,24 @@ fn pad_glyph_wider_than_target_unchanged() {
 
 #[test]
 fn pad_glyph_assistant_marker_produces_two_cols() {
-    // ⏺ (U+23FA) has unicode_width of 1; padded to 2 should append one space.
+    // ⏺ (U+23FA) の unicode_width は1。2までパディングするとスペースが1個付くはず。
     let padded = pad_glyph_to(ASSISTANT_MARKER, MARKER_COLS);
     assert_eq!(UnicodeWidthStr::width(padded.as_str()), MARKER_COLS);
 }
 
 #[test]
 fn gutter_markers_are_exactly_one_column() {
-    // The gutter markers MUST measure as a single column, because every line's
-    // body budget is computed as `width - MARKER_COLS`. If a marker measured
-    // >1 here, each transcript line would be one column short and its last
-    // char would bleed past the panel edge.
+    // ガターのマーカーは必ず1カラムとして計測されなければならない。すべての行の本文
+    // 予算が width - MARKER_COLS として計算されるため。ここでマーカーが1より
+    // 大きく計測されると、各トランスクリプト行が1カラム分足りなくなり、最後の文字が
+    // パネル端をはみ出してしまう。
     //
-    // Measuring 1 is not the same as *rendering* as 1: `⏺`/`⎿`/`✻` are drawn
-    // two columns wide by many terminals and fonts. That gap is not closed
-    // here (an earlier comment claimed a U+FE0E text-presentation suffix did
-    // it — no such suffix exists on these constants). It is handled instead by
-    // leaving the cell after the glyph unwritten so the body is positioned
-    // absolutely; see `glyphs::WIDTH_AMBIGUOUS_GLYPHS` and
-    // `build::width_risk_hole`.
+    // 「1として計測される」ことと「実際に1として描画される」ことは別である: ⏺/⎿/✻ は
+    // 多くの端末やフォントで2カラム幅に描かれる。そのギャップはここでは埋めていない
+    // （以前のコメントは U+FE0E のテキスト表示セレクタがそれを埋めていると主張していたが、
+    // これらの定数にそのようなセレクタは存在しない）。代わりにグリフの直後のセルを
+    // 未書き込みのままにして本文を絶対位置で配置することで対処している。
+    // glyphs::WIDTH_AMBIGUOUS_GLYPHS と build::width_risk_hole を参照。
     for (name, m) in [
         ("assistant", ASSISTANT_MARKER),
         ("tool-result", TOOL_RESULT_GLYPH),
@@ -65,7 +64,7 @@ fn gutter_markers_are_exactly_one_column() {
     }
 }
 
-// ── with_marker ──────────────────────────────────────────────────────────
+// with_marker
 
 #[test]
 fn with_marker_prepends_glyph_to_first_line() {
@@ -76,9 +75,9 @@ fn with_marker_prepends_glyph_to_first_line() {
     ];
     let result = with_marker(lines, ">", style);
     assert_eq!(result.len(), 2);
-    // First span of first line is the marker.
+    // 最初の行の最初の span がマーカー。
     assert_eq!(result[0].spans[0].content, "> ");
-    // Second line gets a blank indent.
+    // 2行目は空白インデントになる。
     assert_eq!(result[1].spans[0].content, "  ");
 }
 
@@ -97,7 +96,7 @@ fn with_marker_single_line_no_continuation() {
     assert_eq!(result[0].spans[0].content, "> ");
 }
 
-// ── truncate_to_width ────────────────────────────────────────────────────
+// truncate_to_width
 
 #[test]
 fn truncate_fits_returns_unchanged() {
@@ -118,14 +117,14 @@ fn truncate_zero_budget_returns_empty() {
 
 #[test]
 fn truncate_keeps_a_string_that_fits_exactly() {
-    // Used to reserve the ellipsis column unconditionally and return "hell…".
+    // 以前は省略記号のカラムを無条件に確保していて "hell…" を返していた。
     assert_eq!(truncate_to_width("hello", 5), "hello");
 }
 
 #[test]
 fn truncate_does_not_cut_inside_a_cluster() {
-    // Cutting between `⚠` and its U+FE0F selector would leave a dangling
-    // combining mark and mis-measure the result.
+    // ⚠ とその U+FE0F セレクタの間で切ると、宙に浮いた結合文字が残り、結果の
+    // 計測も誤ることになる。
     let s = "\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}";
     let out = truncate_to_width(s, 5);
     assert!(UnicodeWidthStr::width(out.as_str()) <= 5, "{out:?}");

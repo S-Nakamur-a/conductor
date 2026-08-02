@@ -1,4 +1,4 @@
-//! Tests for [`super::list::truncate_to_width`].
+//! [super::list::truncate_to_width] のテスト。
 
 use super::list::truncate_to_width;
 
@@ -14,19 +14,19 @@ fn truncate_ascii_over_limit() {
 
 #[test]
 fn truncate_multibyte_within_limit() {
-    // Each CJK char is 2 columns wide; 3 chars = 6 columns
+    // CJK文字は1文字2桁幅。3文字で6桁。
     assert_eq!(truncate_to_width("日本語", 10), "日本語");
 }
 
 #[test]
 fn truncate_multibyte_over_limit() {
-    // "日本語テスト" = 12 columns; limit to 6 => "日本語..."
+    // "日本語テスト" は12桁幅、上限6桁なら "日本語..." になる。
     assert_eq!(truncate_to_width("日本語テスト", 6), "日本語...");
 }
 
 #[test]
 fn truncate_multibyte_boundary() {
-    // Limit 5: "日"(2) + "本"(2) = 4, next "語"(2) would exceed 5
+    // 上限5桁: "日"(2) + "本"(2) = 4、次の "語"(2) を足すと5を超える。
     assert_eq!(truncate_to_width("日本語", 5), "日本...");
 }
 
@@ -37,6 +37,6 @@ fn truncate_empty_string() {
 
 #[test]
 fn truncate_mixed_ascii_and_multibyte() {
-    // "a日b" = 1 + 2 + 1 = 4 columns
+    // "a日b" は 1 + 2 + 1 = 4桁幅。
     assert_eq!(truncate_to_width("a日b本c", 4), "a日b...");
 }

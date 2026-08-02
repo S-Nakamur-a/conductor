@@ -1,5 +1,6 @@
-//! Session migration for grab/ungrab: symlinks a session into another
-//! project directory so `claude --resume` finds it, and reverses that.
+//! grab/ungrab のためのセッション移行: あるセッションを別のプロジェクト
+//! ディレクトリへシンボリックリンクして claude --resume から見つかるようにし、
+//! またそれを元に戻す。
 
 use std::path::Path;
 
@@ -7,19 +8,20 @@ use anyhow::{Context, Result};
 
 use super::{history_file_path, projects_dir_for};
 
-/// Migrate a Claude Code session from one project directory to another by
-/// creating symlinks. This allows `claude --resume <id>` to find the session
-/// when run from a different working directory (e.g. main worktree after grab).
+/// シンボリックリンクを作ることで、Claude Code のセッションをあるプロジェクト
+/// ディレクトリから別のディレクトリへ移す。これにより、別の working
+/// directory から実行した claude --resume <id> でもそのセッションが見つかる
+/// ようになる(例: grab 後のメイン worktree)。
 ///
-/// Creates symlinks for:
-///   - `<session_id>.jsonl` (the conversation log)
-///   - `<session_id>/` directory (subagent data, if present)
+/// 以下にシンボリックリンクを作る:
+///   - <session_id>.jsonl (会話ログ)
+///   - <session_id>/ ディレクトリ (サブエージェントのデータ、存在すれば)
 ///
-/// Also appends an entry to `history.jsonl` so the session appears in the
-/// resume list for the destination project.
+/// history.jsonl にもエントリを追記し、移行先プロジェクトの resume 一覧に
+/// このセッションが現れるようにする。
 ///
-/// Returns `Ok(true)` if migration was performed, `Ok(false)` if skipped
-/// (e.g. session file not found), and `Err` on I/O failure.
+/// 移行を実行した場合は Ok(true)、スキップした場合(セッションファイルが
+/// 見つからない、など)は Ok(false)、I/O 失敗時は Err を返す。
 pub fn migrate_session(
     session_id: &str,
     source_working_dir: &Path,
@@ -41,12 +43,12 @@ pub fn migrate_session(
         return Ok(false);
     }
 
-    // Ensure destination directory exists.
+    // 移行先ディレクトリが存在することを保証する。
     if !dst_dir.exists() {
         std::fs::create_dir_all(&dst_dir)?;
     }
 
-    // Symlink the .jsonl file.
+    // .jsonl ファイルをシンボリックリンクする。
     let dst_jsonl = dst_dir.join(&session_file);
     if !dst_jsonl.exists() {
         std::os::unix::fs::symlink(&src_jsonl, &dst_jsonl).with_context(|| {
@@ -55,7 +57,7 @@ pub fn migrate_session(
         log::info!("migrate_session: symlinked {}", dst_jsonl.display());
     }
 
-    // Symlink the subagent directory if it exists.
+    // サブエージェントのディレクトリが存在すればシンボリックリンクする。
     let src_subdir = src_dir.join(session_id);
     if src_subdir.is_dir() {
         let dst_subdir = dst_dir.join(session_id);
@@ -71,22 +73,21 @@ pub fn migrate_session(
         }
     }
 
-    // Append a history entry so `claude --resume` lists this session
-    // under the destination project.
+    // claude --resume が移行先プロジェクト配下にこのセッションを一覧
+    // できるよう、履歴エントリを追記する。
     append_history_entry(session_id, dest_working_dir, display_hint)?;
 
     Ok(true)
 }
 
-/// Remove symlinks created by `migrate_session` and copy back any session
-/// data that Claude Code may have written as real files (replacing the
-/// original symlinks).
+/// migrate_session が作ったシンボリックリンクを取り除き、Claude Code が
+/// (元のシンボリックリンクを置き換えて)実ファイルとして書き込んだかも
+/// しれないセッションデータをコピーして戻す。
 ///
-/// When Claude Code atomically writes session files (temp + rename), the
-/// symlink is replaced with a real file.  In that case the latest
-/// conversation lives only in the *destination* directory.  We copy it back
-/// to the source so the session is complete when viewed from the original
-/// worktree.
+/// Claude Code がセッションファイルをアトミックに書く場合(一時ファイル+
+/// リネーム)、シンボリックリンクは実ファイルに置き換わる。その場合、
+/// 最新の会話は移行先ディレクトリにしか存在しない。元の worktree から
+/// 見たときにセッションが揃うよう、それを移行元へコピーし戻す。
 pub fn unmigrate_session(
     session_id: &str,
     source_working_dir: &Path,
@@ -102,12 +103,13 @@ pub fn unmigrate_session(
 
     if let Ok(meta) = dst_jsonl.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            // Still a symlink — writes went through to the source file.
+            // まだシンボリックリンクのまま — 書き込みは移行元ファイルへ
+            // そのまま通っている。
             std::fs::remove_file(&dst_jsonl)?;
             log::info!("unmigrate_session: removed symlink {}", dst_jsonl.display());
         } else {
-            // Real file — Claude Code replaced the symlink.  Copy content
-            // back to the source project directory, then remove.
+            // 実ファイル — Claude Code がシンボリックリンクを置き換えた。
+            // 内容を移行元プロジェクトディレクトリへコピーし戻してから削除する。
             if let Some(src_dir) = projects_dir_for(source_working_dir) {
                 let src_jsonl = src_dir.join(&session_file);
                 std::fs::copy(&dst_jsonl, &src_jsonl).with_context(|| {
@@ -131,7 +133,8 @@ pub fn unmigrate_session(
         }
     }
 
-    // Handle subagent directory: symlink → remove, real dir → copy back.
+    // サブエージェントのディレクトリを処理する: シンボリックリンクなら削除、
+    // 実ディレクトリならコピーし戻す。
     let dst_subdir = dst_dir.join(session_id);
     if let Ok(meta) = dst_subdir.symlink_metadata() {
         if meta.file_type().is_symlink() {
@@ -167,7 +170,7 @@ pub fn unmigrate_session(
     Ok(())
 }
 
-/// Recursively copy a directory tree, merging into the destination.
+/// ディレクトリツリーを再帰的にコピーし、移行先へマージする。
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     if !dst.exists() {
         std::fs::create_dir_all(dst)?;
@@ -185,7 +188,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Append a single entry to `~/.claude/history.jsonl`.
+/// ~/.claude/history.jsonl にエントリを1件追記する。
 fn append_history_entry(session_id: &str, project_path: &Path, display: &str) -> Result<()> {
     use std::io::Write;
     let history_path =

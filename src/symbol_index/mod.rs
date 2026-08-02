@@ -1,18 +1,17 @@
-//! Tree-sitter-based symbol indexing for code navigation.
+//! コードナビゲーション用の tree-sitter ベースのシンボルインデックス。
 //!
-//! Provides `SymbolIndex` which parses Rust source files using tree-sitter,
-//! extracts symbol definitions, and supports definition/implementation/reference
-//! lookups.
+//! tree-sitter で Rust ソースファイルを構文解析してシンボル定義を抽出し、
+//! 定義/実装/参照のルックアップを提供する SymbolIndex を提供する。
 //!
-//! Split by responsibility: [`model`] holds the public data types (`Symbol`,
-//! `SymbolKind`, `Reference`), [`index`] holds the `SymbolIndex` type and its
-//! build/query methods, `extract_common` holds the shared tree-sitter
-//! AST-walking helpers, and `extract_rust`/`extract_go`/`extract_ts` hold the
-//! per-language symbol extractors.
+//! 責務ごとに分割している。[model] は公開データ型（Symbol、SymbolKind、
+//! Reference）、[index] は SymbolIndex 本体とその構築/クエリメソッド、
+//! extract_common は各言語共通の tree-sitter AST 走査ヘルパー、
+//! extract_rust/extract_go/extract_ts は言語ごとのシンボル抽出器を持つ。
 //!
-//! [`code_mask`] answers the question the index cannot: given a word on screen,
-//! is it code at all, or prose inside a comment or string? Every navigation
-//! query needs that before a name lookup means anything.
+//! [code_mask] はインデックス側では答えられない問いに答える。画面上の
+//! ある単語が本当にコードなのか、それともコメントや文字列の中の地の文なのか。
+//! 名前のルックアップが意味を持つ前に、どのナビゲーションクエリもこれを
+//! 必要とする。
 
 mod code_mask;
 mod extract_common;
@@ -26,9 +25,9 @@ mod tests;
 
 pub use code_mask::{CodeMask, identifier_occurrences};
 pub use index::SymbolIndex;
-// `Reference` is consumed externally today (via `crate::symbol_index::Reference`
-// in `app/`). `Symbol`/`SymbolKind` are currently only used within this module
-// tree via `super::model::X`, but stay re-exported at the module root to
-// preserve the pre-split `crate::symbol_index::X` path for any future caller.
+// Reference は現在 app/ から crate::symbol_index::Reference として外部利用されている。
+// Symbol/SymbolKind は今のところこのモジュールツリー内で super::model::X としてのみ
+// 使われているが、分割前の crate::symbol_index::X というパスを将来の呼び出し元のために
+// 維持すべく、モジュールルートで再エクスポートしたままにしてある。
 #[allow(unused_imports)]
 pub use model::{Reference, Symbol, SymbolKind};

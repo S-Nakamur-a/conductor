@@ -1,10 +1,10 @@
-//! Decoration rendering for the worktree panel's empty space.
+//! ワークツリーパネルの空きスペースに表示する装飾の描画。
 //!
-//! Supports multiple animated modes: aquarium, space, garden, city.
-//! Each mode has its own state struct, `tick_*` (animation update), and
-//! `render_*` (drawing) function, split into one submodule per mode.
-//! The top-level [`tick_decoration`] and [`render_decoration`] dispatch to
-//! the active mode.
+//! aquarium・space・garden・city の複数のアニメーションモードをサポートする。
+//! 各モードはそれぞれ独自の状態構造体と、アニメーション更新用の tick_* 関数、
+//! 描画用の render_* 関数を持ち、モードごとに1サブモジュールに分割されている。
+//! トップレベルの [tick_decoration] と [render_decoration] が、実行中の
+//! モードへディスパッチする。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -22,10 +22,9 @@ mod space;
 #[cfg(test)]
 mod tests;
 
-// These per-mode types are only ever reached through their `*State` struct
-// fields (`DecorationStates::aquarium.fish`, etc.), never named directly
-// outside this module — same as before the split, when they were `pub`
-// struct definitions living directly in this file.
+// これらのモード別の型は DecorationStates::aquarium.fish のように *State
+// 構造体のフィールド経由でのみ到達し、このモジュール外から直接名指しされることは
+// ない。ファイル分割前、このファイルに直接 pub 構造体定義があった頃と同じ扱い。
 #[allow(unused_imports)]
 pub use aquarium::{AquariumState, Bubble, Fish};
 #[allow(unused_imports)]
@@ -40,11 +39,9 @@ use city::{render_city, tick_city};
 use garden::{render_garden, tick_garden};
 use space::{render_space, tick_space};
 
-// ═══════════════════════════════════════════════════════════════════════
-// Shared types
-// ═══════════════════════════════════════════════════════════════════════
+// 共通の型
 
-/// Decoration mode parsed from config.
+/// config から解釈した装飾モード。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecorationMode {
     Aquarium,
@@ -65,27 +62,26 @@ impl DecorationMode {
         }
     }
 
-    /// Returns `true` when the mode runs an animation that needs periodic ticks.
+    /// このモードが定期的な tick を必要とするアニメーションを実行するなら true を返す。
     pub fn has_animation(self) -> bool {
         !matches!(self, Self::None)
     }
 }
 
-/// Activity level that affects animation intensity across all modes.
+/// 全モード共通で、アニメーションの活発さに影響する activity レベル。
 ///
-/// `Active` — Claude Code is waiting for user input (more lively).
-/// `Calm`   — Claude Code is busy working (relaxed animation).
+/// Active — Claude Code がユーザー入力待ちの状態（動きが活発になる）。
+/// Calm   — Claude Code が作業中の状態（動きが落ち着く）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecorationActivity {
     Calm,
     Active,
 }
 
-/// Container holding state for every decoration mode.
+/// 全ての装飾モードの状態を保持するコンテナ。
 ///
-/// Only the state corresponding to the active mode is actually used;
-/// the others stay at their default (uninitialised) values until the
-/// user switches modes.
+/// 実際に使われるのは実行中のモードに対応する状態だけであり、
+/// それ以外はユーザーがモードを切り替えるまでデフォルト（未初期化）値のままとなる。
 #[derive(Debug, Clone, Default)]
 pub struct DecorationStates {
     pub aquarium: AquariumState,
@@ -94,7 +90,7 @@ pub struct DecorationStates {
     pub city: CityState,
 }
 
-/// Advance the active decoration by one tick.
+/// 実行中の装飾を1ティック進める。
 pub fn tick_decoration(
     states: &mut DecorationStates,
     tick: u64,
@@ -120,7 +116,7 @@ pub fn tick_decoration(
     }
 }
 
-/// Dispatch decoration rendering based on config mode.
+/// config のモードに基づき装飾の描画をディスパッチする。
 pub fn render_decoration(
     frame: &mut Frame,
     area: Rect,
@@ -165,11 +161,10 @@ pub fn render_decoration(
     }
 }
 
-/// Build a row-major grid of emoji cells and render it as a [`Paragraph`].
+/// 絵文字セルの行優先グリッドを組み立て、[Paragraph] として描画する。
 ///
-/// This helper is shared by all modes.  Each grid cell is either `None`
-/// (rendered as a space) or `Some(emoji)` (rendered as a 2-column-wide
-/// styled span).
+/// このヘルパーは全モードで共有される。各グリッドセルは None（スペースとして
+/// 描画）か Some(emoji)（幅2カラムのスタイル付き span として描画）のいずれか。
 fn render_grid(frame: &mut Frame, area: Rect, grid: &[Vec<Option<&str>>], theme: &Theme) {
     let lines: Vec<Line> = grid
         .iter()
@@ -179,7 +174,7 @@ fn render_grid(frame: &mut Frame, area: Rect, grid: &[Vec<Option<&str>>], theme:
             while col < row.len() {
                 if let Some(emoji) = row[col] {
                     spans.push(Span::styled(emoji, Style::default().fg(theme.fg)));
-                    col += 2; // emoji is 2 cells wide
+                    col += 2; // 絵文字は幅2セル分
                 } else {
                     spans.push(Span::raw(" "));
                     col += 1;
@@ -193,9 +188,9 @@ fn render_grid(frame: &mut Frame, area: Rect, grid: &[Vec<Option<&str>>], theme:
     frame.render_widget(paragraph, area);
 }
 
-/// Simple pseudo-random number derived from the tick counter.
+/// tick カウンタから導出する単純な疑似乱数。
 ///
-/// Not cryptographically secure — just good enough for animation variety.
+/// 暗号学的な安全性はない — アニメーションに変化をつけられれば十分という位置づけ。
 fn pseudo_random(tick: u64, seed: u64) -> u64 {
     let mut x = tick.wrapping_mul(6364136223846793005).wrapping_add(seed);
     x ^= x >> 16;

@@ -1,20 +1,20 @@
-//! PR intake and browser hand-off for [`App`].
+//! [App] における PR intake とブラウザへの受け渡し。
 //!
-//! Drives the "Review Pull Request" overlay: fetches PR metadata + git refs
-//! and prepares a worktree for review in the background, then applies the
-//! result (persisting metadata, switching to the worktree, entering review
-//! focus). Also supports opening the selected worktree's PR page directly in
-//! the browser.
+//! 「Review Pull Request」オーバーレイを駆動する: PR のメタデータと git の
+//! ref を取得し、バックグラウンドでレビュー用の worktree を準備した後、
+//! 結果を反映する(メタデータの永続化、worktree への切り替え、review
+//! フォーカスへの遷移)。選択中の worktree の PR ページを直接ブラウザで
+//! 開く機能もここにある。
 
 use super::*;
 
 impl App {
-    // ── PR intake (Review Pull Request) ───────────────────────────
+    // PR intake(Review Pull Request オーバーレイ)
 
-    /// Kick off a background PR intake (gh metadata + git fetch + worktree
-    /// creation) for the "Review Pull Request" overlay. Safe to call again
-    /// for a retry after a failed attempt — the previous `bg_op` is just
-    /// replaced.
+    /// 「Review Pull Request」オーバーレイのために、バックグラウンドの PR
+    /// intake(gh メタデータ + git fetch + worktree 作成)を開始する。
+    /// 失敗後の再試行として再度呼んでも安全 — 以前の bg_op は単に
+    /// 置き換わるだけである。
     pub fn start_pr_intake(&mut self, input: &str) {
         self.overlays.pr_input.loading = true;
         self.overlays.pr_input.error = None;
@@ -29,13 +29,13 @@ impl App {
         });
     }
 
-    /// Poll the background PR intake for a result and apply it: persist any
-    /// freshly-fetched PR metadata, switch to the worktree, and auto-launch
-    /// review mode.
+    /// バックグラウンドの PR intake の結果をポーリングし、あれば反映する:
+    /// 新しく取得した PR メタデータを永続化し、worktree に切り替え、
+    /// review モードを自動起動する。
     ///
-    /// Applies even if the overlay was dismissed (Esc) while the intake was
-    /// still running — the fetch/worktree-creation already succeeded by
-    /// then, so it shouldn't be discarded.
+    /// intake がまだ実行中の間にオーバーレイが(Esc で)閉じられていても
+    /// 結果は反映される — その時点で fetch/worktree 作成はすでに成功して
+    /// いるので、破棄すべきではない。
     pub fn poll_pr_intake(&mut self) {
         let Some(outcome) = self.overlays.pr_input.bg_op.poll() else {
             return;
@@ -81,10 +81,10 @@ impl App {
         }
     }
 
-    // ── Open PR in browser ───────────────────────────────────────
+    // PR をブラウザで開く
 
-    /// Open the pull-request page for the selected worktree's branch in the
-    /// default web browser.
+    /// 選択中の worktree のブランチに対応するプルリクエストページを
+    /// デフォルトの Web ブラウザで開く。
     pub fn open_pr_in_browser(&mut self) {
         let branch = self.selected_worktree_branch();
         if branch.is_empty() {

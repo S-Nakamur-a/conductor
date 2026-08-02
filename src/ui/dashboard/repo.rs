@@ -1,5 +1,5 @@
-//! Repository selection overlays: switch-repo picker, open-repo path input,
-//! and the PR-review intake input.
+//! リポジトリ選択のオーバーレイ群: switch-repo ピッカー、open-repo のパス入力、
+//! PRレビュー取り込みの入力。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input};
 use crate::app::App;
@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the repo selector overlay.
+/// リポジトリセレクタのオーバーレイを描画する。
 pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
@@ -92,7 +92,7 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
-/// Render the "open repository" path input overlay.
+/// 「リポジトリを開く」パス入力オーバーレイを描画する。
 pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
@@ -118,11 +118,12 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     set_cursor_for_input(frame, inner, &app.overlays.open_repo.buffer);
 }
 
-/// Render the PR-number/URL input overlay ("Review: Review Pull Request…").
+/// PR番号/URL入力オーバーレイ（「Review: Review Pull Request…」）を描画する。
 ///
-/// Below the input line, shows either a loading notice while the background
-/// gh/git intake runs, or the last failure's message — the overlay stays
-/// open on failure (input preserved) so the user can correct and retry.
+/// 入力行の下には、バックグラウンドの gh/git 取り込みが実行中であることを示す
+/// ローディング通知か、直近の失敗メッセージのどちらかを表示する — 失敗時は
+/// オーバーレイを開いたまま（入力内容も保持したまま）にして、ユーザが修正して
+/// 再試行できるようにする。
 pub fn render_pr_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let overlay = &app.overlays.pr_input;

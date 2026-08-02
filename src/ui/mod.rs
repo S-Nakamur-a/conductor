@@ -1,6 +1,6 @@
-//! UI module — organises all TUI rendering.
+//! UI モジュール — TUI の描画全体を統括する。
 //!
-//! Each sub-module corresponds to one panel in the unified layout.
+//! 各サブモジュールは統合レイアウト内の1つのパネルに対応する。
 
 use crate::app::{App, Focus};
 use crate::theme::Theme;
@@ -22,10 +22,10 @@ pub mod walkthrough_pane;
 pub mod worktree_bar;
 pub mod worktree_panel;
 
-// Top-level layout orchestration (render_ui, accordion_widths).
+// トップレベルのレイアウト統括（render_ui, accordion_widths）。
 pub mod layout;
 
-// Overlay renderers (used from layout::render_ui overlays).
+// オーバーレイの描画（layout::render_ui のオーバーレイから呼ばれる）。
 pub mod dashboard;
 pub mod grep_search;
 pub mod hover_info;
@@ -35,10 +35,10 @@ pub mod review;
 pub mod symbol_action;
 pub mod theme_picker;
 
-/// Shared read-only context extracted from `App` for UI rendering.
+/// UI 描画のために App から抽出した、共有の読み取り専用コンテキスト。
 ///
-/// Provides common fields that almost every render function needs,
-/// without requiring a reference to the full `App` struct.
+/// App 構造体全体への参照を要求せずに、ほぼすべての描画関数が必要とする
+/// 共通フィールドを提供する。
 #[allow(dead_code)]
 pub struct RenderContext<'a> {
     pub theme: &'a Theme,
@@ -58,12 +58,12 @@ impl<'a> RenderContext<'a> {
         }
     }
 
-    /// Whether the given panel is currently focused.
+    /// 指定したパネルが現在フォーカスされているかどうか。
     pub fn is_focused(&self, panel: Focus) -> bool {
         self.focus == panel
     }
 
-    /// Whether the given panel is currently expanded to fill the screen.
+    /// 指定したパネルが現在画面全体に拡大表示されているかどうか。
     pub fn is_expanded(&self, panel: Focus) -> bool {
         self.expanded_panel == Some(panel)
     }

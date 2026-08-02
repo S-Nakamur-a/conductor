@@ -1,9 +1,9 @@
-//! Wheel-scroll handling for every panel (worktree list, explorer, viewer,
-//! terminals, embedded editor, reflow transcript view).
+//! 全パネル（worktreeリスト、explorer、viewer、ターミナル、埋め込みエディタ、
+//! reflowトランスクリプトビュー）のホイールスクロール処理。
 
 use crate::app::{App, Focus};
 
-/// Scroll the panel under the mouse cursor.
+/// マウスカーソル下のパネルをスクロールする。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_mouse_scroll(
     app: &mut App,
@@ -12,7 +12,7 @@ pub(super) fn handle_mouse_scroll(
     geom: &super::ClickGeometry,
     delta: i32,
 ) {
-    // 境界はクリック処理と同じ `ClickGeometry` から取る — 別々に渡していた頃は
+    // 境界はクリック処理と同じ ClickGeometry から取る — 別々に渡していた頃は
     // 片方だけ更新して当たり判定がズレる余地があった。
     let super::ClickGeometry {
         main_area,
@@ -27,13 +27,13 @@ pub(super) fn handle_mouse_scroll(
         return;
     }
 
-    // The editor occupies the merged Explorer+Viewer region. Translate the wheel
-    // into arrow keys for the inner program (it runs on the alternate screen);
-    // never scroll the hidden Explorer/Viewer state beneath it.
+    // エディタはExplorer+Viewerの合体領域を占有する。ホイールを内部プログラム用の
+    // 矢印キーに変換する（オルタネートスクリーン上で動くため）。裏に隠れている
+    // Explorer/Viewerの状態は絶対にスクロールしない。
     if app.editor.is_some() && col >= left_end && col < viewer_end {
         if let Some(idx) = app.editor.as_ref().map(|e| e.session_idx) {
-            // PTY grid is 1-based; the merged editor region starts at left_end
-            // (left border) with content one cell in and one row down.
+            // PTYグリッドは1始まり。合体したエディタ領域は left_end（左枠）から始まり、
+            // コンテンツはそこから1セル内側・1行下。
             let pty_col = col.saturating_sub(left_end).max(1);
             let pty_row = row.saturating_sub(main_area.y).max(1);
             app.terminal.pty_manager.forward_scroll_to_session(
@@ -48,7 +48,7 @@ pub(super) fn handle_mouse_scroll(
     }
 
     if col < left_end {
-        // Worktree panel scroll.
+        // Worktreeパネルのスクロール。
         let prev_wt = app.worktrees.selected_index();
         if delta > 0 {
             if !app.worktrees.rows.is_empty() {
@@ -64,10 +64,10 @@ pub(super) fn handle_mouse_scroll(
             app.on_worktree_changed();
         }
     } else if col < explorer_end {
-        // Explorer scroll.
-        // Determine if scroll is in top half (file tree) or bottom half (diff list).
+        // Explorerのスクロール。
+        // スクロールが上半分（ファイルツリー）か下半分（差分リスト）かを判定する。
         if row >= explorer_mid_y {
-            // Diff list scroll.
+            // 差分リストのスクロール。
             let file_count = app.diff_state.display_list.len();
             if file_count > 0 {
                 if delta > 0 {
@@ -86,7 +86,7 @@ pub(super) fn handle_mouse_scroll(
                 }
             }
         } else {
-            // File tree scroll.
+            // ファイルツリーのスクロール。
             let visible_count = app.viewer_state.visible_indices().len();
             let page = app.viewer_state.explorer.explorer_tree_height.max(1);
             let max_scroll = visible_count.saturating_sub(page);
@@ -106,12 +106,12 @@ pub(super) fn handle_mouse_scroll(
             }
         }
     } else if col < viewer_end {
-        // Viewer scroll.
+        // Viewerのスクロール。
         //
-        // The summary pseudo-file is checked first: it renders over the whole
-        // panel while `diff_mode` is false and `current_file` still points at
-        // whatever was open behind it, so without this the wheel would scroll
-        // that hidden file and the summary would sit motionless.
+        // まずSUMMARY擬似ファイルを確認する。これは diff_mode がfalseのままパネル
+        // 全体に描画され、current_file は裏で開かれていたファイルを指し続けている。
+        // これがないとホイールがその隠れたファイルをスクロールしてしまい、サマリーは
+        // 動かないままになる。
         if app.viewer_state.is_summary() {
             let total = app.viewer_state.summary_total_lines;
             if total > 0 {
@@ -127,8 +127,8 @@ pub(super) fn handle_mouse_scroll(
                 }
             }
         } else if app.viewer_state.is_showing_rendered_markdown() {
-            // Rendered markdown scrolls its own wrapped-line count, which has no
-            // relation to the source line count `file_scroll` indexes.
+            // レンダリング済みmarkdownは折り返し後の行数でスクロールするため、
+            // file_scroll が指すソースの行数とは無関係。
             let total = app.viewer_state.md_total_lines;
             if total > 0 {
                 if delta > 0 {
@@ -143,7 +143,7 @@ pub(super) fn handle_mouse_scroll(
                 }
             }
         } else if app.viewer_state.diff_view.diff_mode {
-            // Unified diff view scroll.
+            // 統合差分ビューのスクロール。
             let total = app.viewer_state.diff_view.diff_view_lines.len();
             if total > 0 {
                 if delta > 0 {
@@ -176,14 +176,14 @@ pub(super) fn handle_mouse_scroll(
             }
         }
     } else {
-        // Terminal panels (right column).
+        // ターミナルパネル（右カラム）。
         //
-        // Focus the panel being scrolled so that wheel events take immediate
-        // effect even when the panel does not currently hold keyboard focus.
-        // This also satisfies the `focus == TerminalClaude` render guard in
-        // terminal_claude.rs so reflow entry and display are consistent.
-        // Note: set_focus(TerminalShell) closes reflow if it was active, which
-        // is intentional — the user is deliberately scrolling away from Claude.
+        // スクロール対象のパネルにフォーカスを移し、そのパネルが現在キーボード
+        // フォーカスを持っていなくてもホイールイベントが即座に反映されるようにする。
+        // これは terminal_claude.rs の focus == TerminalClaude という描画ガードも
+        // 満たすので、reflowへの入場と表示の整合性が保たれる。
+        // 補足: set_focus(TerminalShell) はreflowがアクティブなら閉じるが、これは
+        // 意図的なもの — ユーザは意図的にClaudeから離れてスクロールしている。
         if row < terminal_split_y {
             if app.focus != Focus::TerminalClaude {
                 app.set_focus(Focus::TerminalClaude);
@@ -193,7 +193,7 @@ pub(super) fn handle_mouse_scroll(
         }
 
         let abs_delta = delta.unsigned_abs() as usize;
-        // ScrollUp (delta < 0) moves toward older content / into history.
+        // ScrollUp（delta < 0）は古いコンテンツ方向 / 履歴方向へ移動する。
         let up = delta < 0;
         let (session_idx, content_y) = if row < terminal_split_y {
             (app.terminal.active_claude_session, main_area.y + 1)
@@ -201,12 +201,12 @@ pub(super) fn handle_mouse_scroll(
             (app.terminal.active_shell_session, terminal_split_y + 1)
         };
 
-        // Full-screen apps that own the screen handle the wheel themselves:
-        // apps with mouse reporting on (vim/neovim, `less --mouse`) get an
-        // encoded mouse event; alt-screen pagers without mouse reporting get
-        // arrow keys. Either way the local scrollback offset is left alone.
-        // PTY grid is 1-based; the terminal column starts at `viewer_end` (left
-        // border) and the panel content starts at `content_y`.
+        // 画面全体を占有するフルスクリーンアプリはホイールを自分で処理する:
+        // マウスレポートが有効なアプリ（vim/neovim、less --mouse）にはエンコード
+        // されたマウスイベントを渡し、マウスレポートなしのalt-screenページャーには
+        // 矢印キーを渡す。いずれの場合もローカルのスクロールバックオフセットには
+        // 触れない。PTYグリッドは1始まり。ターミナルの列は viewer_end（左枠）から
+        // 始まり、パネルのコンテンツは content_y から始まる。
         let pty_col = col.saturating_sub(viewer_end).max(1);
         let pty_row = row.saturating_sub(content_y).saturating_add(1);
         if let Some(idx) = session_idx
@@ -220,16 +220,16 @@ pub(super) fn handle_mouse_scroll(
 
         if row < terminal_split_y {
             if app.reflow.active {
-                // While the reflow view is active, route wheel events into its
-                // scroll offset.
+                // reflowビューがアクティブな間は、ホイールイベントをそのスクロール
+                // オフセットへ流し込む。
                 //
-                // Scroll convention: scroll=0 is the oldest/top content; max is
-                // newest/bottom. Wheel-up moves toward older content (subtract).
+                // スクロールの規約: scroll=0が最も古い/一番上のコンテンツ、maxが
+                // 最新/一番下。ホイールアップは古いコンテンツ方向へ移動する（減算）。
                 //
-                // Wheel-down past the logical bottom begins the exit sweep so
-                // trackpad inertia carries the user naturally back to the live
-                // tail (same experience as scrolling past the end of a document).
-                // Wheel-up and wheel-down above the bottom adjust scroll normally.
+                // 論理的な一番下を超えてホイールダウンすると退出スイープを開始する。
+                // これによりトラックパッドの慣性でユーザが自然に最新のライブ末尾へ
+                // 戻れる（ドキュメントの末尾を超えてスクロールするのと同じ体感）。
+                // 一番下より上でのホイールアップ・ダウンは通常通りスクロール値を調整する。
                 if up {
                     app.reflow.scroll = app.reflow.scroll.saturating_sub(abs_delta);
                 } else {
@@ -239,7 +239,7 @@ pub(super) fn handle_mouse_scroll(
                         app.reflow.total_lines,
                         inner,
                     ) {
-                        // Already at the bottom — exit sweep on further down scroll.
+                        // 既に一番下 — さらに下スクロールすると退出スイープに入る。
                         app.request_close_reflow();
                         return;
                     }
@@ -251,26 +251,25 @@ pub(super) fn handle_mouse_scroll(
                     app.reflow.total_lines,
                     inner,
                 );
-                // Wheel-up detaches the view from the tail, wheel-down re-attaches
-                // once the newest line is back on screen. Without this a resize
-                // after a wheel-up would re-pin to the bottom and undo the scroll.
+                // ホイールアップでビューは末尾から切り離され、ホイールダウンで最新行が
+                // 画面に戻ると再び追従する。これがないと、ホイールアップの後にリサイズ
+                // すると一番下に再固定されてスクロールが取り消されてしまう。
                 app.reflow.follow =
                     crate::event::reflow::at_bottom(app.reflow.scroll, app.reflow.total_lines, inner);
             } else if up {
-                // Enter the reflow transcript view on the first upward scroll
-                // from the live tail (scroll_claude == 0) instead of the
-                // limited vt100 scrollback buffer. Wheel-down never triggers
-                // entry; accidental upward inertia still opens the view but
-                // the user can Esc back immediately.
+                // 制限のあるvt100スクロールバックバッファではなく、ライブ末尾
+                // （scroll_claude == 0）からの最初の上スクロールでreflowトランス
+                // クリプトビューに入る。ホイールダウンは入場のトリガーにならない。
+                // 意図しない上方向の慣性でもビューは開くが、ユーザはすぐEscで戻れる。
                 //
-                // Skip entry when the worktree is grabbed: the visible PTY
-                // runs on the main worktree's session while open_reflow would
-                // look up the grabbed (source) worktree's history, producing a
-                // mismatch.  Keyboard entry is already blocked by the grabbed-
-                // worktree gate in handle_terminal_only_action.
-                // `open_reflow` is a no-op (plus a status flash) when the panel
-                // has no pinned session or its log is missing, so fall back to
-                // the vt100 buffer rather than swallowing the wheel forever.
+                // worktreeがgrabされている間は入場をスキップする: 表示中のPTYは
+                // メインworktreeのセッション上で動いているが、open_reflowはgrab元
+                // （ソース）worktreeの履歴を参照してしまい、不整合が起きるため。
+                // キーボードからの入場は既に handle_terminal_only_action の
+                // grabbed-worktreeゲートでブロックされている。
+                // open_reflow はパネルにピン留めされたセッションがない、またはログが
+                // 見つからない場合は何もしない（ステータス表示のみ）ので、ホイールを
+                // 永遠に飲み込むのではなくvt100バッファへフォールバックする。
                 let opened = if app.terminal.scroll_claude == 0
                     && !app.is_selected_worktree_grabbed()
                 {

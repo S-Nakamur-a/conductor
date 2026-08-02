@@ -1,29 +1,29 @@
-//! Key handling for the infinite-scrollback reflow transcript view, layered
-//! over the Claude terminal panel.
+//! Claude terminal パネルの上に重なる、無限スクロールバック reflow
+//! トランスクリプトビューのキー処理。
 
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::App;
 
-/// Handle a key event while the reflow transcript view is active.
+/// reflow トランスクリプトビューがアクティブな間のキーイベントを処理する。
 ///
-/// All keys are consumed here and never forwarded to the PTY — the reflow
-/// view is a pure read-only overlay. Navigation:
+/// すべてのキーはここで消費され、PTY へは転送されない — reflow ビューは
+/// 純粋な読み取り専用オーバーレイ。ナビゲーション:
 ///
-/// * `j` / Down — scroll down one line.
-/// * `k` / Up — scroll up one line.
-/// * `Ctrl-d` / PageDown — scroll down half a page.
-/// * `Ctrl-u` / PageUp — scroll up half a page.
-/// * `g` / Home — jump to the oldest turn (top).
-/// * `G` / End — jump to the newest turn (bottom) and resume following it.
-/// * `Esc` — close reflow view and return to live PTY.
-/// * `j` / Down / PageDown at the bottom — close reflow (live return).
+/// * j / Down — 1行下へスクロール。
+/// * k / Up — 1行上へスクロール。
+/// * Ctrl-d / PageDown — 半ページ下へスクロール。
+/// * Ctrl-u / PageUp — 半ページ上へスクロール。
+/// * g / Home — 一番古いターン (先頭) へジャンプ。
+/// * G / End — 一番新しいターン (最下部) へジャンプし、following を再開する。
+/// * Esc — reflow ビューを閉じてライブ PTY へ戻る。
+/// * 最下部での j / Down / PageDown — reflow を閉じる (ライブへ戻る)。
 ///
-/// Every arm also maintains [`ReflowView::follow`](crate::app::ReflowView::follow):
-/// moving up detaches, and landing on the bottom re-attaches. That flag is what
-/// a later reflow consults to decide between re-pinning to the newest turn and
-/// restoring the reader's logical position, so leaving it stale here would
-/// resurrect the snap-to-bottom this view exists to avoid.
+/// どの分岐も [ReflowView::follow](crate::app::ReflowView::follow) を維持する:
+/// 上へ動くと解除され、最下部に着くと再度アタッチされる。このフラグは、後の
+/// reflow が最新ターンへの再固定と読者の論理位置の復元のどちらを取るか判断
+/// する際に参照するものなので、ここで古いままにしておくと、このビューが
+/// 避けようとしている最下部への強制スナップが復活してしまう。
 pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     use crossterm::event::KeyModifiers;
     use crate::event::reflow::{at_bottom, clamp_scroll};
@@ -35,10 +35,10 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     let old_scroll = app.reflow.scroll;
 
     match key.code {
-        // ── Line scroll ─────────────────────────────────────────────────────
+        // 行スクロール
         KeyCode::Char('j') | KeyCode::Down => {
             if bottom {
-                // Bottom + discrete down-key → begin exit sweep back to live PTY.
+                // 最下部 + 単発の down キー → ライブ PTY へ戻る退場スイープを開始。
                 app.request_close_reflow();
                 return;
             }
@@ -48,7 +48,7 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
             app.reflow.scroll = app.reflow.scroll.saturating_sub(1);
         }
 
-        // ── Page scroll ──────────────────────────────────────────────────────
+        // ページスクロール
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if bottom {
                 app.request_close_reflow();
@@ -70,55 +70,56 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
             app.reflow.scroll = app.reflow.scroll.saturating_sub(page);
         }
 
-        // ── Jump to top / bottom ─────────────────────────────────────────────
+        // 先頭 / 最下部へジャンプ
         KeyCode::Char('g') | KeyCode::Home => {
             app.reflow.scroll = 0;
         }
         KeyCode::Char('G') | KeyCode::End => {
-            // Snap to the newest turn (logical bottom) without leaving the view,
-            // and resume following so the next resize keeps it there.
+            // ビューを離れることなく最新ターン (論理的な最下部) にスナップし、
+            // following を再開して次のリサイズでもそこに留まるようにする。
             app.reflow_jump_to_latest();
             return;
         }
 
-        // ── Expand / collapse ────────────────────────────────────────────────
-        // Claude Code's own transcript folds tool results and thinking blocks
-        // and offers `ctrl+o` to expand; conductor reuses the key but expands
-        // in place rather than switching to a separate full-screen view. It is
-        // a single view-wide toggle: this panel has no per-block cursor to
-        // aim a finer-grained one at.
+        // 展開 / 折りたたみ
+        // Claude Code 自身のトランスクリプトはツール結果や thinking ブロックを
+        // 折りたたみ、ctrl+o で展開できる。conductor は同じキーを再利用するが、
+        // 別の全画面ビューへ切り替えるのではなくその場で展開する。ビュー全体で
+        // 1つのトグルであり、このパネルにはブロック単位のカーソルがないので
+        // それより細かい粒度で狙うことはできない。
         KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.reflow.expanded = !app.reflow.expanded;
             app.reflow.needs_rebuild = true;
             return;
         }
 
-        // ── Leave ────────────────────────────────────────────────────────────
+        // 離脱
         KeyCode::Esc => {
-            // Play the exit sweep before returning to the live PTY.
+            // ライブ PTY へ戻る前に退場スイープを再生する。
             app.request_close_reflow();
             return;
         }
 
-        _ => {} // All other keys are silently consumed.
+        _ => {} // それ以外のキーはすべて黙って消費する。
     }
 
-    // Clamp scroll after any adjustment.  Upper bound is total - inner, not
-    // total - 1: aligns with the render path and at_bottom logic.
+    // 調整後に scroll をクランプする。上限は total - 1 ではなく total - inner
+    // — 描画パスと at_bottom のロジックに合わせてある。
     app.reflow.scroll = clamp_scroll(app.reflow.scroll, total, inner);
 
-    // Re-derive the follow state from where the scroll actually landed, rather
-    // than per-arm: the reader is following exactly when the newest line is on
-    // screen, whichever key put it there. (`G`/`End` returned early above —
-    // that one sets the flag itself, because a bottom that is only *reachable*
-    // once the panel is re-measured still has to count as following.)
+    // アーム単位ではなく、実際に scroll が着地した位置から follow 状態を
+    // 再導出する: どのキーで動いたかに関わらず、最新行が画面上にあれば
+    // ちょうど following になる。(G/End は上で早期リターンしている —
+    // そちらは自分でフラグをセットする。パネルの再計測を経て初めて
+    // *到達可能* になる最下部でも following として扱う必要があるため。)
     app.reflow.follow = at_bottom(app.reflow.scroll, total, inner);
 
-    // On each scroll step, force a hard clear (presented atomically thanks to
-    // synchronized output). The transcript is arbitrary Unicode; a glyph the
-    // terminal renders wider than counted can drift a line and leave stale cells
-    // that ratatui's diff — comparing only its own buffers — never repaints.
-    // Re-clearing per step keeps the scrolled view free of that residue.
+    // スクロールのたびに強制的にハードクリアする (synchronized output のおかげで
+    // アトミックに表示される)。トランスクリプトは任意の Unicode であり、
+    // terminal がカウントより幅広く描画するグリフがあると行がずれ、ratatui の
+    // diff (自分のバッファ同士しか比較しない) では決して再描画されない古い
+    // セルが残ることがある。ステップごとに再クリアすることで、スクロール後の
+    // ビューをそうした残留物から守る。
     if app.reflow.scroll != old_scroll {
         app.terminal.needs_clear = true;
     }

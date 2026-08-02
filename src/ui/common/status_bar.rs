@@ -1,6 +1,6 @@
-//! The status bar at the bottom of the screen: transient flash messages, or
-//! (when idle) the keybinding hint for the focused panel derived live from
-//! the keymap.
+//! 画面下部のステータスバー: 一時的なフラッシュメッセージ、
+//! アイドル時はキーマップから動的に導出したフォーカス中パネルの
+//! キーバインドヒントを表示する。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
-/// Render a status bar at the bottom of the screen.
+/// 画面下部にステータスバーを描画する。
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     use crate::app::StatusLevel;
 
@@ -17,7 +17,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     if let Some(ref msg) = app.status_message {
         let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
 
-        // Color based on level.
+        // レベルに応じた色。
         let fg_color = match msg.level {
             StatusLevel::Success => theme.success,
             StatusLevel::Error => theme.error,
@@ -25,7 +25,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
             StatusLevel::Info => theme.info,
         };
 
-        // Flash background for the first ~500ms (30 ticks).
+        // 最初の約500ms（30 tick）は背景をフラッシュさせる。
         let bg_color = if age < 30 {
             if (age / 5) % 2 == 0 {
                 match msg.level {
@@ -41,7 +41,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
             Color::Reset
         };
 
-        // Fade: after 2.5 seconds (150 ticks), dimmed style.
+        // フェード: 2.5秒（150 tick）経過後は薄暗いスタイルにする。
         let style = if age >= 150 {
             Style::default().fg(theme.muted).bg(Color::Reset)
         } else {
@@ -56,25 +56,26 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
         let span = Span::styled(display_text, style);
         frame.render_widget(Paragraph::new(span), area);
     } else {
-        // Default keybinding hint text, derived live from the keymap so it
-        // never drifts from the actual bindings (including user overrides).
+        // デフォルトのキーバインドヒントテキスト。実際のバインディング
+        // （ユーザによる上書きを含む）から常にずれないよう、キーマップから
+        // その都度動的に導出する。
         let hint = status_bar_hint(app.focus, &app.keymap);
         let span = Span::styled(hint, Style::default().fg(theme.hint));
         frame.render_widget(Paragraph::new(span), area);
     }
 }
 
-/// Build the footer keybinding hint for the focused panel from the live keymap.
+/// フォーカス中のパネルのフッター用キーバインドヒントを、現在のキーマップから組み立てる。
 ///
-/// Each panel has an ordered list of `(label, actions)`; for each entry we show
-/// one representative chord per action (joined by `/`), e.g. `j/k: nav`. Entries
-/// whose actions are all unbound are dropped, so the hint can never advertise a
-/// key that does nothing.
+/// 各パネルは (ラベル, アクション) の順序付きリストを持ち、各エントリごとに
+/// アクション1つにつき代表的なキーコードを1つ表示する（/ で連結、例: j/k: nav）。
+/// アクションがすべて未割り当てのエントリは除外されるので、ヒントが何も起きない
+/// キーを案内することはない。
 pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::KeyMap) -> String {
     use crate::app::Focus;
     use crate::keymap::Action;
 
-    // (label, actions whose representative chords are shown joined by '/').
+    // (ラベル, 代表的なキーコードを '/' で連結して表示するアクション群)。
     let entries: &[(&str, &[Action])] = match focus {
         Focus::Worktree => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
@@ -130,10 +131,10 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
         }
     }
 
-    // Always advertise the command palette and the cheatsheet — they're the
-    // entry points to every other action, so they belong in every context's
-    // footer (the palette even fires over a PTY; `?` is shown only where it
-    // actually fires, i.e. not in the terminal/editor).
+    // コマンドパレットとチートシートは常に案内する — これらは他のすべての
+    // アクションへの入口であり、どのコンテキストのフッターにも含めるべきもの
+    // （パレットはPTY越しでも発火するが、? は実際に発火する場所、つまり
+    // ターミナル/エディタ以外でのみ表示する）。
     if let Some(c) = representative_chord(keymap, context, Action::CommandPalette) {
         parts.push(format!("{c}: cmds"));
     }
@@ -141,7 +142,7 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
         parts.push(format!("{c}: keys"));
     }
 
-    // Terminals forward everything else to the PTY — set that expectation.
+    // ターミナルはそれ以外のキーをすべてPTYへ転送する — その旨を案内しておく。
     if matches!(focus, Focus::TerminalClaude | Focus::TerminalShell) {
         parts.push("keys → terminal".to_string());
     }
@@ -149,10 +150,10 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
     parts.join(" | ")
 }
 
-/// The single chord best suited to show a user for `action` in `context`:
-/// shortest, ASCII-only. The macOS Option-glyph fallbacks (`¬`, `˙`, …) and
-/// other non-ASCII chords round-trip through the keymap but are meaningless on
-/// screen, so a plain chord is preferred whenever one exists.
+/// コンテキスト内のアクションに対してユーザに見せるのに最も適したキーコード1つ:
+/// 最短の ASCII のみのもの。macOS の Option グリフのフォールバック（¬, ˙, …）や
+/// その他の非ASCIIキーコードもキーマップを往復はするが画面上では意味をなさないため、
+/// 素のキーコードが存在する限りそちらを優先する。
 pub(crate) fn representative_chord(
     keymap: &crate::keymap::KeyMap,
     context: crate::keymap::KeyContext,

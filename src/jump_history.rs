@@ -45,7 +45,7 @@ impl JumpHistory {
     }
 
     /// 直前の位置へ戻る。
-    /// `current` を「進む」スタックへ積み、直前の位置を返す。
+    /// current を「進む」スタックへ積み、直前の位置を返す。
     pub fn go_back(&mut self, current: Location) -> Option<Location> {
         let prev = self.back.pop()?;
         self.forward.push(current);
@@ -53,7 +53,7 @@ impl JumpHistory {
     }
 
     /// 次の位置へ進む。
-    /// `current` を「戻る」スタックへ積み、次の位置を返す。
+    /// current を「戻る」スタックへ積み、次の位置を返す。
     pub fn go_forward(&mut self, current: Location) -> Option<Location> {
         let next = self.forward.pop()?;
         self.back.push(current);
@@ -74,12 +74,12 @@ impl JumpHistory {
 
     /// UI 描画用のパンくずリストを組み立てる。
     ///
-    /// `(entries, current_index)` を返す。`entries` は「戻る」スタック +
-    /// `current` + 「進む」スタックを順に並べたもので、`current_index` が
-    /// `current` を指す。
+    /// (entries, current_index) を返す。entries は「戻る」スタック +
+    /// current + 「進む」スタックを順に並べたもので、current_index が
+    /// current を指す。
     ///
-    /// 返すのは現在位置の周辺 `max_visible` 件までで、先頭側を切り詰めた場合は
-    /// 番兵として `None` を先頭に挿入する。
+    /// 返すのは現在位置の周辺 max_visible 件までで、先頭側を切り詰めた場合は
+    /// 番兵として None を先頭に挿入する。
     pub fn breadcrumb_trail(
         &self,
         current: &Location,

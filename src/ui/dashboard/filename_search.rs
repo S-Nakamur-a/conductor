@@ -1,4 +1,4 @@
-//! Fuzzy filename-search ("jump to file") overlay.
+//! あいまいファイル名検索（ファイルへジャンプ）のオーバーレイ。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input};
 use crate::app::App;
@@ -8,11 +8,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the fuzzy filename-search ("jump to file") modal as a centered popup.
+/// あいまいファイル名検索（ファイルへジャンプ）のモーダルを中央のポップアップとして
+/// 描画する。
 ///
-/// Rendered at the top level so it stays visible regardless of which panel is
-/// focused or maximized — in particular, when the viewer is maximized and the
-/// file tree column is collapsed to zero width.
+/// どのパネルがフォーカス・最大化されていても表示され続けるよう、トップレベルで
+/// 描画する — 特に、viewer が最大化されてファイルツリー列の幅がゼロに潰れている
+/// 場合でも表示できる。
 pub fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let vs = &app.viewer_state.filename_search;
@@ -26,12 +27,12 @@ pub fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(3), // Search input
-        Constraint::Min(1),    // Results
+        Constraint::Length(3), // 検索入力
+        Constraint::Min(1),    // 結果一覧
     ])
     .split(popup_area);
 
-    // Search input.
+    // 検索入力。
     let total_files = vs.filename_search_all_files.len();
     let match_count = vs.filename_search_results.len();
     let input_block = Block::default()
@@ -50,7 +51,7 @@ pub fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) 
     );
     set_cursor_for_input(frame, input_inner, &vs.filename_search_query);
 
-    // Results list.
+    // 結果一覧。
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));

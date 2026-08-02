@@ -1,12 +1,12 @@
-//! Worktree status bar — a compact, full-width strip that replaces the old
-//! left-hand worktree column.
+//! Worktree ステータスバー — 以前の左カラムのworktree一覧を置き換える、
+//! コンパクトで全幅のストリップ。
 //!
-//! Shows every worktree at a glance (branch, dirty count, ahead/behind, and
-//! Claude Code waiting/active state) so multiple parallel sessions can be
-//! monitored peripherally. The strip is interactive: clicking a worktree jumps
-//! to it (and its Claude session), `[+]` creates a worktree, and the per-chip
-//! `✕` deletes one (with confirmation). The fuller list/detail UI lives in the
-//! switcher modal (`render_switcher_overlay`).
+//! すべての worktree を一目で把握できる（ブランチ、変更ファイル数、ahead/behind、
+//! Claude Code の待機/稼働状態）ので、複数の並行セッションを視界の端で監視
+//! できる。ストリップは操作可能: worktree をクリックするとそこ（とその
+//! Claude セッション）にジャンプし、[+] で worktree を作成し、チップごとの
+//! ✕ で削除する（確認あり）。より詳細な一覧/詳細UIはスイッチャーモーダル
+//! （render_switcher_overlay）にある。
 
 use crate::app::App;
 use ratatui::Frame;
@@ -16,23 +16,23 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-/// What a clickable region of the worktree bar does.
+/// worktree バーのクリック可能領域が何をするか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WtbarAction {
-    /// Jump to the worktree at this index (and its Claude session).
+    /// このインデックスの worktree（とその Claude セッション）にジャンプする。
     Select(usize),
-    /// Delete the worktree at this index (with confirmation).
+    /// このインデックスの worktree を削除する（確認あり）。
     Delete(usize),
-    /// Create a new worktree.
+    /// 新しい worktree を作成する。
     Add,
-    /// Scroll the strip to reveal worktrees hidden off the left edge.
+    /// 左端に隠れている worktree を見せるためにストリップをスクロールする。
     ScrollLeft,
-    /// Scroll the strip to reveal worktrees hidden off the right edge.
+    /// 右端に隠れている worktree を見せるためにストリップをスクロールする。
     ScrollRight,
 }
 
-/// A clickable region of the worktree bar, in absolute screen columns
-/// (`x0` inclusive, `x1` exclusive) on the bar's single row.
+/// worktree バーのクリック可能領域。バーの1行における絶対画面カラム
+/// （x0 は含む、x1 は含まない）で表す。
 #[derive(Clone, Copy, Debug)]
 pub struct WtbarHit {
     pub x0: u16,
@@ -40,11 +40,11 @@ pub struct WtbarHit {
     pub action: WtbarAction,
 }
 
-/// Determine which `WtbarAction` the given absolute screen column falls on,
-/// from the hit regions recorded by the bar's last `render` call. Pure, so the
-/// hover-target logic is unit-testable even though `render()` itself takes
-/// `&mut App` and can't be exercised in a `TestBackend` test (the bar's visual
-/// hover result is left to manual/real-machine confirmation).
+/// 与えられた絶対画面カラムがどの WtbarAction に該当するかを、バーの直前の
+/// render 呼び出しで記録されたヒット領域から判定する。純粋関数なので、
+/// render() 自体は &mut App を取り TestBackend のテストでは検証できなくても
+/// （バーの見た目上の hover 結果は手動/実機での確認に委ねる）、hover対象の
+/// ロジックはユニットテスト可能。
 pub fn hit_at(hits: &[WtbarHit], col: u16) -> Option<WtbarAction> {
     hits.iter()
         .find(|h| col >= h.x0 && col < h.x1)
@@ -55,12 +55,12 @@ fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
 }
 
-/// Per-worktree data gathered before rendering, so the variable-width window
-/// can be computed without holding a borrow on `app`.
+/// 描画前に集めた worktree ごとのデータ。可変幅のウィンドウを app への
+/// 借用を保持したまま計算できるようにする。
 struct Chip {
     text: String,
     width: u16,
-    /// Delete button (`✕ `), empty for the main worktree.
+    /// 削除ボタン（✕）。main worktree では空。
     del: &'static str,
     del_width: u16,
     waiting: bool,
@@ -68,14 +68,14 @@ struct Chip {
     is_current: bool,
 }
 
-/// Compute the visible chip window `[start, end)` for the bar.
+/// バーに表示するチップのウィンドウ [start, end) を計算する。
 ///
-/// `slots[i]` is the full rendered width of chip `i` (chip + its delete button)
-/// and `sep_w` the width of the separator drawn before every chip except the
-/// first visible one. `avail` is the width left for chips and separators (the
-/// caller has already reserved room for the overflow hints). `desired_start` is
-/// the current scroll position; when `reveal` is set the window is panned the
-/// minimum amount needed to include `selected`.
+/// slots[i] はチップ i の描画幅全体（チップ本体＋削除ボタン）、sep_w は
+/// 最初に表示するチップ以外の各チップの前に描く区切り文字の幅。avail は
+/// チップと区切り文字に使える残り幅（呼び出し側がオーバーフローヒントの
+/// 分を既に確保済み）。desired_start は現在のスクロール位置。reveal が
+/// 立っている場合、selected を含むために必要な最小限だけウィンドウを
+/// パンする。
 pub(crate) fn visible_window(
     slots: &[u16],
     sep_w: u16,
@@ -89,7 +89,7 @@ pub(crate) fn visible_window(
         return (0, 0);
     }
 
-    // Greedily fill forward from `start`; always show at least one chip.
+    // start から貪欲に前方へ埋めていく。少なくとも1つのチップは常に表示する。
     let fill = |start: usize| -> usize {
         let mut used = 0u16;
         let mut end = start;
@@ -104,10 +104,10 @@ pub(crate) fn visible_window(
         end.max(start + 1).min(total)
     };
 
-    // Smallest start that still reaches the last chip — clamps over-scrolling so
-    // we never leave blank space on the right while chips stay hidden left.
-    // A larger start can only push the window's end later or equal, so scanning
-    // upward the first `start` that reaches the end is the smallest such start.
+    // 最後のチップまで到達できる最小の start — オーバースクロールをクランプ
+    // することで、左側にチップが隠れたまま右側に空白が残る事態を防ぐ。
+    // start を大きくするとウィンドウの end は同じか後ろにしか動かないので、
+    // 昇順に走査して最初に end に到達した start がそのまま最小の start になる。
     let mut tail_start = 0;
     for s in 0..total {
         if fill(s) == total {
@@ -131,8 +131,8 @@ pub(crate) fn visible_window(
     (start, fill(start))
 }
 
-/// Render the worktree monitor strip and record its clickable regions into
-/// `app.wtbar.hits`.
+/// worktree モニターストリップを描画し、そのクリック可能領域を
+/// app.wtbar.hits に記録する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.wtbar.hits.clear();
     if area.width == 0 || area.height == 0 {
@@ -145,8 +145,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let border = app.theme.border_secondary;
     let error = app.theme.error;
 
-    // A smart/normal worktree is being created in the background → spin the
-    // far-left marker so the activity is visible at a glance.
+    // スマート/通常の worktree がバックグラウンドで作成中 → 一目でわかる
+    // よう最も左のマーカーを回転させる。
     let creating = app.worktree_mgr.pending_worktrees.iter().any(|p| {
         matches!(
             p.op,
@@ -159,7 +159,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut spans: Vec<Span> = Vec::new();
     let mut hits: Vec<WtbarHit> = Vec::new();
 
-    // Identity marker (spins while a worktree is being created).
+    // 識別マーカー（worktree 作成中は回転する）。
     {
         let icon = if creating {
             format!("{} ", crate::ui::common::spinner_frame(app.ui_tick))
@@ -174,14 +174,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         x += w(&icon);
         spans.push(Span::styled(icon, style));
     }
-    // The new-worktree button is pinned at the right edge (consistent with the
-    // Claude/Shell session tab bars); reserve room for it here and render it at
-    // the end. " [+]" = leading gap + button.
+    // 新規 worktree ボタンは右端に固定する（Claude/Shell セッションタブバーと
+    // 一貫させている）。ここで場所を確保しておき、最後に描画する。
+    // " [+]" = 前方の空白 + ボタン。
     let add = " [+]";
     let add_w = w(add);
     let chips_max_x = max_x.saturating_sub(add_w);
 
-    // Gather chip data up front (releases the borrow on `app.worktrees`).
+    // 先にチップのデータを集めておく（app.worktrees への借用を解放するため）。
     let chips: Vec<Chip> = app
         .worktrees
         .iter()
@@ -212,9 +212,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             }
             text.push(' ');
 
-            // `[x]` to match the Claude/Shell session tabs (was `✕`); it sits
-            // just past the chip's filled background, so the danger red stays
-            // readable.
+            // Claude/Shell セッションタブに合わせて [x]（以前は ✕）。チップの
+            // 塗りつぶし背景のすぐ外側に置くので、危険色の赤が読みやすいまま
+            // になる。
             let del = if wt.is_main { "" } else { "[x]" };
             Chip {
                 width: w(&text),
@@ -229,17 +229,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .collect();
 
     let total = chips.len();
-    // Separator drawn before every chip except the first visible one; its width
-    // and the literal are defined together so they can't drift apart.
+    // 最初に表示するチップ以外の前に描く区切り文字。幅とリテラルを一緒に
+    // 定義することで両者がずれないようにしている。
     let sep = "\u{2502} ";
     let sep_w = w(sep);
     let avail_full = chips_max_x.saturating_sub(x);
 
-    // Does everything fit with no overflow hints? If so, skip the hint reserve.
+    // オーバーフローヒントなしですべて収まるか？収まるならヒント分の確保を省く。
     let slots: Vec<u16> = chips.iter().map(|c| c.width + c.del_width).collect();
     let all_fit = visible_window(&slots, sep_w, avail_full, 0, 0, false).1 == total;
 
-    // Reserve room for the left/right overflow hints when scrolling is needed.
+    // スクロールが必要な場合、左右のオーバーフローヒントの分の場所を確保する。
     let hint_reserve_per_side = 5u16;
     let avail = if all_fit {
         avail_full
@@ -260,8 +260,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         )
     };
 
-    // Left overflow hint (clickable: scroll left). Tinted with warning if any
-    // hidden worktree on that side is waiting for the user.
+    // 左側のオーバーフローヒント（クリックで左スクロール）。その側に隠れている
+    // worktree のいずれかがユーザ入力待ちなら warning 色で強調する。
     if start > 0 {
         let waiting_left = chips[..start].iter().any(|c| c.waiting);
         let hint = format!("\u{2039}{} ", start);
@@ -286,8 +286,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
 
         let chip_style = if chip.is_current {
-            // Filled chip so the active worktree reads at a glance, not just a
-            // color shift — the chip text carries its own surrounding spaces.
+            // アクティブな worktree が単なる色変化ではなく一目でわかるよう、
+            // 塗りつぶしたチップにする — チップのテキスト自身が前後の空白を
+            // 持っている。
             Style::default()
                 .fg(app.theme.selected_fg)
                 .bg(app.theme.selected_bg)
@@ -299,11 +300,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         } else {
             Style::default().fg(muted)
         };
-        // Hover background (D1 revised: bars/tabs reuse `gutter_hover_bg`,
-        // distinguishable from the current chip's own `selected_bg` fill in
-        // every theme). The current chip already has a strong fill, so it
-        // isn't given a hover background on top of it — there's nothing left
-        // to distinguish.
+        // hover 時の背景（bar/タブ類は gutter_hover_bg を再利用しており、
+        // どのテーマでも現在のチップ自身の selected_bg の塗りとは区別できる）。
+        // 現在のチップは既に強い塗りつぶしを持っているので、その上に hover
+        // 背景を重ねてはいない — それ以上区別する余地がないため。
         let chip_style = if !chip.is_current && app.wtbar.hover == Some(WtbarAction::Select(i)) {
             chip_style.bg(app.theme.gutter_hover_bg)
         } else {
@@ -334,7 +334,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Right overflow hint (clickable: scroll right).
+    // 右側のオーバーフローヒント（クリックで右スクロール）。
     if end < total {
         let waiting_right = chips[end..].iter().any(|c| c.waiting);
         let hint = format!(" {}\u{203a}", total - end);
@@ -351,7 +351,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         x += hw;
     }
 
-    // Pin the new-worktree [+] button flush against the right edge.
+    // 新規 worktree の [+] ボタンを右端にぴったり固定する。
     if x < chips_max_x {
         let pad = (chips_max_x - x) as usize;
         spans.push(Span::raw(" ".repeat(pad)));
@@ -373,12 +373,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Render the worktree switcher modal: a centered popup that reuses the full
-/// worktree panel (list + detail + sessions) so selection/creation/etc. keep
-/// their existing UI and key handling.
+/// worktree スイッチャーモーダルを描画する: 中央に配置したポップアップで、
+/// worktree パネル全体（一覧＋詳細＋セッション）をそのまま再利用するため
+/// 選択/作成などは既存のUIとキー操作をそのまま保つ。
 pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Clamp lower bounds to `area` so a tiny terminal can't make min > max
-    // (which would panic in `u16::clamp`).
+    // 小さすぎるターミナルで min > max になって u16::clamp が panic しない
+    // よう、下限を area にクランプする。
     let w = ((area.width as u32 * 60 / 100) as u16).clamp(24.min(area.width), area.width);
     let h = ((area.height as u32 * 70 / 100) as u16).clamp(6.min(area.height), area.height);
     let x = area.x + area.width.saturating_sub(w) / 2;
@@ -392,19 +392,19 @@ pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
 mod tests {
     use super::{WtbarAction, WtbarHit, hit_at, visible_window};
 
-    // Ten uniform-width chips, separator width 1.
+    // 幅が均一な10個のチップ、区切り文字幅は1。
     const W: &[u16] = &[10, 10, 10, 10, 10, 10, 10, 10, 10, 10];
 
     #[test]
     fn everything_fits_when_avail_is_large() {
-        // Plenty of room → full window, no panning.
+        // 十分な余白がある → ウィンドウ全体を表示、パンなし。
         let (start, end) = visible_window(W, 1, 1000, 0, 0, false);
         assert_eq!((start, end), (0, 10));
     }
 
     #[test]
     fn greedy_fill_stops_at_available_width() {
-        // avail 32: chip(10) + sep1+chip(10) + sep1+chip(10) = 32 → 3 chips.
+        // avail 32: chip(10) + sep1+chip(10) + sep1+chip(10) = 32 → チップ3個。
         let (start, end) = visible_window(W, 1, 32, 0, 0, false);
         assert_eq!((start, end), (0, 3));
     }
@@ -423,15 +423,15 @@ mod tests {
 
     #[test]
     fn over_scroll_is_clamped_to_keep_right_edge_full() {
-        // Desired start 9 would waste space; clamp so the last chip sits at the
-        // right edge (window of 3 ending at the tail).
+        // desired start が 9 だと空間が無駄になるので、最後のチップが右端に
+        // 来るようクランプする（末尾で終わる3個分のウィンドウになる）。
         let (start, end) = visible_window(W, 1, 32, 9, 0, false);
         assert_eq!((start, end), (7, 10));
     }
 
     #[test]
     fn reveal_pans_left_when_selected_is_before_window() {
-        // Window currently at [4,7); select chip 1 → pan back so it's visible.
+        // ウィンドウは現在 [4,7) にある; チップ1を選択 → 見えるよう後方にパンする。
         let (start, end) = visible_window(W, 1, 32, 4, 1, true);
         assert_eq!(start, 1);
         assert!((start..end).contains(&1));
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn reveal_pans_right_when_selected_is_after_window() {
-        // Window at [0,3); select chip 8 → advance until it's visible.
+        // ウィンドウは [0,3) にある; チップ8を選択 → 見えるようになるまで進める。
         let (start, end) = visible_window(W, 1, 32, 0, 8, true);
         assert!((start..end).contains(&8));
     }

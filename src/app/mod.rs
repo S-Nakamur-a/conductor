@@ -1,7 +1,7 @@
-//! App state and focus management.
+//! アプリケーション状態とフォーカス管理。
 //!
-//! This module defines the top-level application state, the unified panel
-//! layout focus model, and transitions between panels.
+//! このモジュールはトップレベルのアプリケーション状態、統一されたパネル
+//! レイアウトのフォーカスモデル、パネル間の遷移を定義する。
 
 mod appearance;
 mod code_nav;
@@ -74,28 +74,28 @@ pub use types::{
 };
 pub use update::UpdateState;
 
-/// Top-level application state shared across all UI panels.
+/// すべてのUIパネルで共有されるトップレベルのアプリケーション状態。
 pub struct App {
-    /// Tracks which panels need re-rendering.
+    /// どのパネルが再描画を必要としているかを追跡する。
     pub dirty: DirtyPanels,
-    /// Current panel focus.
+    /// 現在のパネルフォーカス。
     pub focus: Focus,
     /// フォーカスが直前にあったパネルと、移った時刻。ボーダー色のグライド
-    /// アニメーション (`animated_border_color`) だけがこの 2 つを読む。
+    /// アニメーション (animated_border_color) だけがこの 2 つを読む。
     pub focus_prev: Focus,
-    /// When focus last changed, for timing the border transition.
+    /// フォーカスが最後に変わった時刻。境界線遷移のタイミング計測に使う。
     pub focus_changed_at: std::time::Instant,
-    /// All overlay popup states (switch-branch, grab, prune, help, etc.).
+    /// すべてのオーバーレイポップアップ状態（ブランチ切り替え、grab、prune、ヘルプなど）。
     pub overlays: OverlayManager,
     /// いま開いているリポジトリの同一性と、切り替え先の候補。
     pub repo: RepoState,
-    /// Whether the application should quit on the next tick.
+    /// 次のティックでアプリケーションを終了すべきかどうか。
     pub should_quit: bool,
-    /// The embedded editor panel, when active. `Some` ⟺ an editor PTY is running
-    /// and occupying the merged Explorer+Viewer region; `None` is the normal
-    /// (no-editor) layout. Set by [`App::open_in_editor`] and torn down by
-    /// [`App::exit_editor`] (the only two methods that pair this field with
-    /// `Focus::Editor`, keeping the invariant local).
+    /// 有効時の埋め込みエディタパネル。Some ⟺ エディタのPTYが動作していて、
+    /// マージされたExplorer+Viewer領域を占有している状態。None は通常の
+    /// （エディタなしの）レイアウト。[App::open_in_editor] でセットされ、
+    /// [App::exit_editor] で解体される（このフィールドと Focus::Editor を
+    /// 対にする唯一の2つのメソッドであり、不変条件をこの中に閉じ込めている）。
     pub editor: Option<EditorPanel>,
     /// AI ウォークスルー: 生成中のものと、いま読み込まれているもの。
     pub walkthrough: WalkthroughState,
@@ -103,42 +103,42 @@ pub struct App {
     pub publish: PublishState,
     /// 発見済みの worktree 一覧と、そこへの選択 (行の平坦化リストを含む)。
     pub worktrees: WorktreeList,
-    /// Application configuration loaded from config file.
+    /// 設定ファイルから読み込まれたアプリケーション設定。
     pub config: config::Config,
-    /// Resolved keybinding map (defaults + user overrides).
+    /// 解決済みのキーバインドマップ（デフォルト + ユーザーによる上書き）。
     pub keymap: KeyMap,
     /// 描画に使う配色。フレームごとに読まれるので 1 階層浅いところに置く。
-    /// 組み立ての元データは [`Self::theme_sel`]。
+    /// 組み立ての元データは [Self::theme_sel]。
     pub theme: Theme,
-    /// [`Self::theme`] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
+    /// [Self::theme] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
     pub theme_sel: ThemeSelection,
-    /// State for the Explorer/Viewer panel (file tree + file content).
+    /// Explorer/Viewerパネルの状態（ファイルツリー + ファイル内容）。
     pub viewer_state: ViewerState,
-    /// State for the Diff data (used for inline highlights in Viewer).
+    /// Diffデータの状態（Viewerのインラインハイライトに使われる）。
     pub diff_state: DiffState,
-    /// SQLite-backed review comment store. `None` if the DB could not be opened.
+    /// SQLiteによるレビューコメントストア。DBを開けなかった場合は None。
     pub review_store: Option<ReviewStore>,
-    /// UI state for review comments.
+    /// レビューコメントのUI状態。
     pub review_state: ReviewState,
-    /// Terminal / PTY state.
+    /// ターミナル / PTYの状態。
     pub terminal: TerminalState,
-    /// Worktree management state (creation, deletion, smart worktree, etc.).
+    /// worktree管理の状態（作成、削除、スマートworktreeなど）。
     pub worktree_mgr: WorktreeManager,
-    /// Status message (flash message) shown in the status bar.
+    /// ステータスバーに表示されるステータスメッセージ（フラッシュメッセージ）。
     pub status_message: Option<StatusMessage>,
-    /// Last known HEAD oid for the selected worktree (for change-detection polling).
+    /// 選択中worktreeの最後に確認したHEAD oid（変更検知ポーリング用）。
     pub last_poll_head_oid: Option<String>,
-    /// Last known status signature (added, modified, deleted) for the selected worktree.
+    /// 選択中worktreeの最後に確認したステータス署名（追加・変更・削除件数）。
     pub last_poll_status: Option<(usize, usize, usize, usize)>,
 
     /// syntect によるシンタックスハイライトの共有資源。
     pub highlight: Highlighting,
-    /// Per-id cache of rendered Markdown (comment/reply bodies), so the inline
-    /// thread box doesn't re-parse/highlight every frame.
+    /// レンダリング済みMarkdown（コメント/返信の本文）のID別キャッシュ。
+    /// インラインスレッドボックスが毎フレーム再パース・再ハイライトしないため。
     pub markdown_cache: crate::ui::markdown::MarkdownCache,
 
-    /// Which panel is currently expanded to 100% (via the [<=>] button).
-    /// `None` means no panel is expanded (default layout).
+    /// 現在100%に拡大されているパネル（[<=>]ボタン経由）。
+    /// None はどのパネルも拡大されていない（デフォルトレイアウト）ことを表す。
     pub expanded_panel: Option<Focus>,
 
     /// パネルの幾何: レイアウト矩形のキャッシュ、ターミナル列の分割比、
@@ -148,37 +148,37 @@ pub struct App {
     /// Explorer の 2 つのリスト (ファイルツリー / Changed files) のホバー追跡。
     pub list_hover: ListHover,
 
-    /// Frame counter for UI animations (e.g. waiting-state pulse).
+    /// UIアニメーション用のフレームカウンタ（例: waiting状態のパルス）。
     pub ui_tick: u64,
-    /// Independent tick counter for decoration animation (incremented at fixed interval).
+    /// デコレーションアニメーション用の独立したティックカウンタ（一定間隔で増加）。
     pub decoration_tick: u64,
 
-    /// Notification bar badge positions: (start_col, end_col, branch_name).
-    /// Populated during rendering for click-to-jump.
+    /// 通知バーのバッジ位置: (start_col, end_col, branch_name)。
+    /// クリックでジャンプするために描画時に設定される。
     pub notification_bar_badges: Vec<(u16, u16, String)>,
 
     /// セッション統計 (ゲーミフィケーション) と ccusage のキャッシュ。
     pub stats: SessionStats,
-    /// HEAD oid per worktree branch (for commit detection).
+    /// worktreeのブランチごとのHEAD oid（コミット検知用）。
     pub worktree_heads: HashMap<String, String>,
 
     /// 自己更新フロー: 新バージョンの検出 → 確認 → インストール → 再起動。
     pub update: UpdateFlow,
 
-    /// System clipboard context for Ctrl+V paste support.
+    /// Ctrl+V貼り付けをサポートするためのシステムクリップボードコンテキスト。
     pub clipboard: Option<copypasta::ClipboardContext>,
 
-    /// Animation state for all decoration modes.
+    /// すべてのデコレーションモードのアニメーション状態。
     pub decoration_states: crate::ui::decoration::DecorationStates,
 
-    // ── Branch details (worktree detail panel) ────────────────────
-    /// Computed branch lineage and PR info for the selected worktree.
+    // ブランチ詳細 (worktree詳細パネル)
+    /// 選択中worktreeの計算済みブランチ系譜とPR情報。
     pub branch_details: git_engine::BranchDetails,
-    /// Whether the `gh` CLI is available on this system.
+    /// このシステムで gh CLIが利用可能かどうか。
     pub gh_available: bool,
 
-    // ── Auto-resume Claude sessions ─────────────────────────────
-    /// Whether auto-resume should run on the next frame (one-shot).
+    // Claudeセッションの自動再開
+    /// 次のフレームで自動再開を実行すべきかどうか（一度きり）。
     pub pending_auto_resume: bool,
 
     /// 「ユーザーがどこを見ていたか」の保存と復元。
@@ -187,43 +187,43 @@ pub struct App {
     /// 画面上端の worktree モニタストリップ (横スクロール位置 + 当たり判定)。
     pub wtbar: WtbarState,
 
-    /// Menu bar interaction state: which menu is focused or open, and the
-    /// click regions recorded by the last bar/dropdown render.
+    /// メニューバーの操作状態: どのメニューがフォーカス/オープン中か、
+    /// 直近のバー/ドロップダウン描画で記録されたクリック領域。
     pub menu: crate::menu::MenuState,
 
     /// コードナビゲーション: シンボル索引、ジャンプ履歴、付随するポップアップ。
     pub code_nav: CodeNav,
 
-    // ── Background operations (polled by the event loop) ─────────
+    // バックグラウンド処理 (イベントループがポーリング)
     pub bg: BackgroundOps,
 
-    // ── New worktree badge ──────────────────────────────────────
-    /// Paths of worktrees recently created (for badge display). Cleared on selection.
+    // 新規worktreeバッジ
+    /// 最近作成されたworktreeのパス（バッジ表示用）。選択時にクリアされる。
     pub new_worktree_paths: HashSet<PathBuf>,
 
     /// Alt+/ で出す、各パネル上の番号バッジ (2 秒で自動的に消える)。
     pub panel_number_overlay: PanelNumberOverlay,
 
-    // ── Party mode (hidden easter egg) ───────────────────────────
-    /// When true, the UI goes full party: the focused panel's border
-    /// glows in a flowing rainbow, syntax tokens turn rainbow, the title
-    /// bar shimmers, and confetti drifts across the screen. Toggled from
-    /// the command palette; not persisted (session-only secret).
+    // パーティーモード (隠しイースターエッグ)
+    /// trueのとき、UIは全開のパーティー状態になる: フォーカス中パネルの境界が
+    /// 流れる虹色に光り、シンタックストークンが虹色になり、タイトルバーが
+    /// きらめき、紙吹雪が画面を漂う。コマンドパレットから切り替える。
+    /// 永続化はしない（セッション限定の秘密）。
     pub party_mode: bool,
 
     /// リッチモード (端末グラフィックス) の描画ティアと、それに紐づく資源。
     pub rich: RichState,
 
-    // ── Reflow transcript view ───────────────────────────────────────────
-    /// State for the read-only, word-wrapped session-log viewer that
-    /// overlays the Claude PTY panel during infinite-scrollback mode.
+    // リフロー・トランスクリプトビュー
+    /// 無限スクロールバックモード中にClaude PTYパネルへオーバーレイされる、
+    /// 読み取り専用・折り返し表示のセッションログビューアの状態。
     pub reflow: ReflowView,
 }
 
-/// Resolve the active UI theme name from config.
+/// configから有効なUIテーマ名を解決する。
 ///
-/// `[ui] theme` takes precedence; when absent, `[viewer] theme` is used for
-/// backward compatibility with configs that predate the `[ui]` section.
+/// [ui] theme が優先される。存在しない場合は、[ui] セクション導入前の
+/// configとの後方互換性のために [viewer] theme が使われる。
 fn resolve_theme_name(cfg: &config::Config) -> String {
     cfg.ui
         .theme
@@ -232,9 +232,9 @@ fn resolve_theme_name(cfg: &config::Config) -> String {
         .to_string()
 }
 
-/// Build the active [`Theme`] from a name, applying the high-contrast transform
-/// when enabled. The single construction point so every call site (startup,
-/// theme picker, live reload, OSC11 auto-switch) honors the toggle identically.
+/// 名前から有効な [Theme] を組み立て、有効ならハイコントラスト変換を
+/// 適用する。すべての呼び出し元（起動時、テーマピッカー、ライブリロード、
+/// OSC11自動切り替え）がこのトグルを同一に扱うための唯一の構築ポイント。
 fn build_theme(name: &str, high_contrast: bool) -> Theme {
     let theme = Theme::from_name(name);
     if high_contrast {
@@ -255,24 +255,24 @@ impl App {
             || self.worktree_mgr.skip_reason.is_some()
     }
 
-    /// Request the application to quit.
+    /// アプリケーションの終了をリクエストする。
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
 
-    /// Set a styled status message.
+    /// スタイル付きのステータスメッセージを設定する。
     pub fn set_status(&mut self, text: String, level: StatusLevel) {
         self.status_message = Some(StatusMessage::new(text, level, self.ui_tick));
     }
 
-    /// Set a plain info status message (backward-compatible shorthand).
+    /// 通常のinfoステータスメッセージを設定する（後方互換のための省略形）。
     pub fn set_status_info(&mut self, text: String) {
         self.set_status(text, StatusLevel::Info);
     }
 
-    // ── Public accessor helpers ─────────────────────────────────────
+    // 公開アクセサヘルパー
 
-    /// Return the branch name used as the worktree identifier.
+    /// worktreeの識別子として使われるブランチ名を返す。
     pub fn selected_worktree_branch(&self) -> String {
         self.worktrees
             .get(self.worktrees.selected_index())
@@ -280,8 +280,8 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Return `true` if the currently selected worktree is on a `__grab` branch
-    /// (i.e. its real branch was grabbed away to main and it holds a temporary checkout).
+    /// 現在選択中のworktreeが __grab ブランチ上にある場合 true を返す
+    /// （つまり実際のブランチがmainへgrabされ、一時的なチェックアウトを保持している状態）。
     pub fn is_selected_worktree_grabbed(&self) -> bool {
         self.worktrees
             .get(self.worktrees.selected_index())
@@ -289,7 +289,7 @@ impl App {
             .unwrap_or(false)
     }
 
-    /// Return the directory path for the currently selected worktree.
+    /// 現在選択中のworktreeのディレクトリパスを返す。
     pub fn selected_worktree_path(&self) -> PathBuf {
         self.worktrees
             .get(self.worktrees.selected_index())
@@ -297,23 +297,23 @@ impl App {
             .unwrap_or_else(|| self.repo.path.clone())
     }
 
-    /// Return all Claude Code sessions grouped by worktree.
+    /// worktreeごとにグループ化されたすべてのClaude Codeセッションを返す。
     ///
-    /// Returns `Vec<(wt_index, branch_name, sessions)>` where each session is
-    /// `(pty_index, label)`, sorted by worktree index.
+    /// Vec<(wt_index, branch_name, sessions)> を返す。各セッションは
+    /// (pty_index, label) で、worktreeインデックス順にソートされている。
     #[allow(clippy::type_complexity)]
     pub fn all_cc_sessions_by_worktree(&self) -> Vec<(usize, String, Vec<(usize, String)>)> {
         use std::collections::BTreeMap;
 
         let sessions = self.terminal.pty_manager.sessions();
-        // Group by worktree index.
+        // worktreeインデックスでグループ化する。
         let mut groups: BTreeMap<usize, Vec<(usize, String)>> = BTreeMap::new();
 
         for (pty_idx, session) in sessions.iter().enumerate() {
             if session.kind != pty_manager::SessionKind::ClaudeCode {
                 continue;
             }
-            // Match session working_dir to a worktree.
+            // セッションのworking_dirをworktreeに突き合わせる。
             if let Some(wt_idx) = self
                 .worktrees
                 .iter()
@@ -339,13 +339,13 @@ impl App {
             .collect()
     }
 
-    /// Rebuild the flat list of worktree + inline session rows.
+    /// worktree + インラインセッション行のフラットなリストを再構築する。
     pub fn rebuild_worktree_list_rows(&mut self) {
         let groups = self.all_cc_sessions_by_worktree();
         let mut rows = Vec::new();
         for (i, _wt) in self.worktrees.iter().enumerate() {
             rows.push(WorktreeListRow::Worktree(i));
-            // Find sessions belonging to this worktree.
+            // このworktreeに属するセッションを探す。
             if let Some((_, _, sessions)) = groups.iter().find(|(wt_idx, _, _)| *wt_idx == i) {
                 for (pty_idx, _label) in sessions {
                     rows.push(WorktreeListRow::Session {
@@ -359,7 +359,7 @@ impl App {
         self.worktrees.set_rows(rows);
     }
 
-    /// 行の選択 (`row_selected`) から worktree の選択を導出する。
+    /// 行の選択 (row_selected) から worktree の選択を導出する。
     pub fn sync_selected_worktree(&mut self) {
         if let Some(row) = self.worktrees.rows.get(self.worktrees.row_selected) {
             let wt_idx = match *row {

@@ -1,5 +1,5 @@
-//! AI walkthrough generation lifecycle: start, save, fail, and fetch a
-//! branch's walkthrough (the `walkthroughs` and `walkthrough_steps` tables).
+//! AI walkthrough 生成のライフサイクル: ブランチの walkthrough の開始・保存・
+//! 失敗記録・取得（walkthroughs テーブルと walkthrough_steps テーブル）。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -12,14 +12,13 @@ use crate::walkthrough::{
 use super::{Author, ReviewStore};
 
 impl ReviewStore {
-    /// Start (or restart) walkthrough generation for a branch: delete any
-    /// existing walkthrough for it (no generation history is kept — see the
-    /// v6 migration note) and insert a fresh `generating` row, so the caller
-    /// has an id to poll for completion / detect a stuck generation.
-    /// Start a fresh walkthrough for `branch`, recording the branch tip
-    /// (`head_commit`, the HEAD commit OID) it's being generated against so a
-    /// later same-commit regenerate can be skipped. Pass `None` when the tip
-    /// is unknown.
+    /// ブランチの walkthrough 生成を開始（または再開始）する。既存の
+    /// walkthrough があれば削除し（生成履歴は保持しない。v6 マイグレーションの
+    /// 注記を参照）、生成中の新しい行を挿入する。これにより呼び出し側は
+    /// 完了をポーリングしたり、生成が止まっていることを検知したりできる id
+    /// を得る。生成対象のブランチ先端（head_commit、HEAD コミットの OID）も
+    /// 記録し、後で同一コミットに対する再生成をスキップできるようにする。
+    /// 先端が不明な場合は None を渡す。
     pub fn begin_walkthrough(
         &self,
         branch: &str,
@@ -38,26 +37,25 @@ impl ReviewStore {
         self.walkthrough_row_by_id(&id)
     }
 
-    /// Save a completed walkthrough for `branch`: upserts the walkthrough
-    /// row and replaces its steps, in one transaction. This is production's
-    /// write path — the conductor `mcp-serve` binary's `save_walkthrough`
-    /// tool calls this method directly (in-process, no separate
-    /// implementation to keep in sync). `begin_walkthrough` is no longer a
-    /// prerequisite: calling this on a branch with no prior walkthrough
-    /// creates one, and calling it again replaces the previous one entirely
-    /// (matching the "no generation history" model described on the v6
-    /// migration).
+    /// ブランチの完成した walkthrough を保存する。walkthrough 行を upsert し、
+    /// そのステップを1つのトランザクション内で置き換える。これは本番の
+    /// 書き込み経路であり、conductor mcp-serve バイナリの save_walkthrough
+    /// ツールがこのメソッドをプロセス内で直接呼び出す（同期を取るための
+    /// 別実装は存在しない）。begin_walkthrough はもはや前提条件ではなく、
+    /// 事前の walkthrough がないブランチに対して呼べば新規作成され、
+    /// 再度呼べば以前のものを完全に置き換える（v6 マイグレーションで
+    /// 説明した「生成履歴は保持しない」というモデルどおり）。
     ///
-    /// Returns the walkthrough's id — on an upsert that hit an existing row
-    /// this is that row's id, not the one generated here, so the caller can
-    /// report the id actually in effect.
+    /// walkthrough の id を返す。既存行に当たった upsert の場合、これは
+    /// ここで生成した id ではなくその既存行の id であり、呼び出し側は
+    /// 実際に有効な id を報告できる。
     ///
-    /// `summary` is written twice on purpose: onto the walkthrough row (for
-    /// round-trip fidelity) and into `change_summary`, which backs the SUMMARY
-    /// pseudo-file. Generating a walkthrough is the only thing that writes that
-    /// table, so the two must land together — hence inside the same
-    /// transaction, so a failed save leaves no summary describing a walkthrough
-    /// that was never stored.
+    /// summary は意図的に2箇所に書き込まれる。walkthrough 行自体（往復の
+    /// 忠実性のため）と、SUMMARY 疑似ファイルの裏にある change_summary の
+    /// 両方である。change_summary テーブルに書き込むのは walkthrough の
+    /// 生成だけなので、この2つは同時に反映されなければならない。だから
+    /// 同じトランザクション内で行い、保存に失敗した場合に、実際には
+    /// 保存されなかった walkthrough を説明するサマリだけが残る事態を防ぐ。
     pub fn save_walkthrough(
         &self,
         branch: &str,
@@ -67,12 +65,12 @@ impl ReviewStore {
     ) -> Result<String> {
         let candidate_id = Uuid::new_v4().to_string();
 
-        // BEGIN IMMEDIATE (not a bare BEGIN) takes the write lock up front.
-        // Under WAL, a deferred transaction that reads before it writes can
-        // get SQLITE_BUSY_SNAPSHOT instead of SQLITE_BUSY on a concurrent
-        // writer — and busy_timeout's retry handler only fires for the
-        // latter, so a deferred transaction here could fail instead of
-        // waiting.
+        // 素の BEGIN ではなく BEGIN IMMEDIATE を使い、先に書き込みロックを
+        // 取得する。WAL の下では、書き込みより先に読み込みを行う deferred な
+        // トランザクションは、他の書き込みが競合した際に SQLITE_BUSY ではなく
+        // SQLITE_BUSY_SNAPSHOT を受け取ることがある。busy_timeout のリトライ
+        // 処理は後者にしか反応しないため、ここで deferred なトランザクションを
+        // 使うと待たずに失敗しかねない。
         self.conn.execute_batch("BEGIN IMMEDIATE;")?;
         let result = (|| -> Result<String> {
             self.conn.execute(
@@ -87,9 +85,8 @@ impl ReviewStore {
             )?;
             self.save_change_summary(branch, summary, Author::Claude)?;
 
-            // On conflict the INSERT keeps the existing row's id rather than
-            // `candidate_id`, so re-read the id actually in effect instead of
-            // assuming the one just generated.
+            // 競合時、INSERT は candidate_id ではなく既存行の id を保持する
+            // ため、今生成した id を前提にせず、実際に有効な id を読み直す。
             let walkthrough_id: String = self.conn.query_row(
                 "SELECT id FROM walkthroughs WHERE branch = ?1",
                 params![branch],
@@ -100,13 +97,14 @@ impl ReviewStore {
                 "DELETE FROM walkthrough_steps WHERE walkthrough_id = ?1",
                 params![walkthrough_id],
             )?;
-            // `seq` comes from the slice's order, not from anything the caller
-            // supplied: the MCP tool accepts a per-step `seq`, and a model that
-            // numbers steps within each kind (intent 0,1 / core 0,1,2 / …) would
-            // otherwise interleave the whole tour — rendered perfectly, reported
-            // as success, with nothing to indicate the narrative order was lost.
-            // Deriving it here also keeps `seq` dense and unique per walkthrough,
-            // so `get_walkthrough`'s `ORDER BY seq` needs no tie-break.
+            // seq は呼び出し側が渡した値ではなく、スライスの並び順から決める。
+            // MCP ツールはステップごとの seq を受け付けるため、種類ごとに
+            // 番号を振るモデル（intent 0,1 / core 0,1,2 / …）だと、それを
+            // そのまま使った場合ツアー全体の順序が入り乱れてしまう。しかも
+            // 見た目はきれいにレンダリングされ、成功したと報告され、物語の
+            // 順序が失われたことを示すものは何もない。ここで導出することで
+            // walkthrough ごとに seq が密で一意にもなり、get_walkthrough の
+            // ORDER BY seq にタイブレークが不要になる。
             for (seq, step) in steps.iter().enumerate() {
                 let step_id = Uuid::new_v4().to_string();
                 self.conn.execute(
@@ -130,10 +128,11 @@ impl ReviewStore {
         })();
 
         match result {
-            // A failing COMMIT still leaves the transaction open, so it needs
-            // the same rollback as a failing statement: otherwise every later
-            // write on this connection joins the stranded transaction, reports
-            // success, and is discarded when the process exits.
+            // COMMIT が失敗してもトランザクションは開いたままになるため、
+            // ステートメントの失敗と同じくロールバックが必要になる。そうしない
+            // と、この接続でのその後の書き込みがすべて取り残されたトランザク
+            // ションに巻き込まれ、成功したと報告されつつも、プロセス終了時に
+            // 破棄されてしまう。
             Ok(walkthrough_id) => match self.conn.execute_batch("COMMIT;") {
                 Ok(()) => Ok(walkthrough_id),
                 Err(e) => {
@@ -148,8 +147,8 @@ impl ReviewStore {
         }
     }
 
-    /// Mark a branch's walkthrough as failed, recording why. Requires
-    /// `begin_walkthrough` to have created the row first.
+    /// ブランチの walkthrough を失敗としてマークし、理由を記録する。事前に
+    /// begin_walkthrough がその行を作成していることが前提。
     pub fn fail_walkthrough(&self, branch: &str, error: &str) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE walkthroughs
@@ -163,8 +162,8 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Retrieve a branch's walkthrough header and its steps (ordered by
-    /// `seq`), or `None` if no walkthrough has been started for it.
+    /// ブランチの walkthrough ヘッダーとそのステップ（seq 順）を取得する。
+    /// walkthrough が開始されていなければ None を返す。
     pub fn get_walkthrough(
         &self,
         branch: &str,
@@ -180,11 +179,11 @@ impl ReviewStore {
             Err(e) => return Err(e.into()),
         };
 
-        // `seq` is assigned from the slice's order on write, so it is dense and
-        // unique within a walkthrough — `ORDER BY seq` alone is total here, and
-        // needs no tie-break. (`, id` would actively hurt: step ids are random
-        // UUIDs, so tie-breaking on them would order steps at random rather
-        // than by the order they were saved in.)
+        // seq は書き込み時にスライスの並び順から割り当てられるため、
+        // walkthrough 内で密かつ一意になる。ORDER BY seq だけで十分な全順序
+        // であり、タイブレークは不要（id でのタイブレークはむしろ有害。
+        // ステップの id はランダムな UUID なので、それでタイブレークすると
+        // 保存された順序ではなくランダムな順序になってしまう）。
         let mut stmt = self.conn.prepare(
             "SELECT id, walkthrough_id, seq, file_path, line_start, line_end, kind, title, body
              FROM walkthrough_steps
@@ -199,8 +198,8 @@ impl ReviewStore {
         Ok(Some((walkthrough, steps)))
     }
 
-    /// Fetch a walkthrough row by id (used right after `begin_walkthrough`
-    /// inserts it, to read back server-side defaults like `created_at`).
+    /// id で walkthrough 行を取得する（begin_walkthrough が挿入した直後に、
+    /// created_at のようなサーバ側のデフォルト値を読み戻すために使う）。
     fn walkthrough_row_by_id(&self, id: &str) -> Result<Walkthrough> {
         self.conn
             .query_row(
@@ -246,11 +245,12 @@ fn row_to_walkthrough_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthro
         )
     })?;
 
-    // Normalised on the way out as well as on the way in: rows written before
-    // `save_walkthrough` normalised (a step stored as `./src/a.rs`) would
-    // otherwise never match `FileDiff::path` and the step could never be
-    // jumped to. Doing it here rather than in a migration means the same fix
-    // covers rows written by an older conductor against the same database.
+    // 書き込み時だけでなく読み出し時にも正規化する。save_walkthrough が
+    // 正規化するようになる前に書かれた行（./src/a.rs として保存された
+    // ステップなど）は、そうしないと FileDiff::path に決して一致せず、
+    // ステップへジャンプできなくなってしまう。マイグレーションではなくここで
+    // 行うことで、同じ修正が同じデータベースに対して古い conductor が
+    // 書いた行もカバーする。
     let file_path: String = row.get(3)?;
     let file_path = crate::repo_path::normalize(&file_path);
 
@@ -276,13 +276,13 @@ mod tests {
     fn walkthrough_lifecycle() {
         let store = test_store();
 
-        // No walkthrough yet.
+        // まだ walkthrough はない。
         assert!(store.get_walkthrough("feat/x").unwrap().is_none());
 
         let started = store.begin_walkthrough("feat/x", Some("abc1234")).unwrap();
         assert_eq!(started.branch, "feat/x");
         assert_eq!(started.status, WalkthroughStatus::Generating);
-        // The branch tip is recorded so a same-commit regenerate can be skipped.
+        // ブランチ先端を記録しておき、同一コミットでの再生成をスキップできるようにする。
         assert_eq!(started.head_commit.as_deref(), Some("abc1234"));
 
         let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
@@ -329,8 +329,8 @@ mod tests {
         assert_eq!(steps[1].seq, 1);
         assert_eq!(steps[1].kind, WalkthroughStepKind::Core);
 
-        // Re-generating replaces the row entirely (no history kept); passing
-        // no tip leaves head_commit null.
+        // 再生成は行全体を置き換える（履歴は保持しない）。先端を渡さなければ
+        // head_commit は null のままになる。
         let restarted = store.begin_walkthrough("feat/x", None).unwrap();
         assert_ne!(restarted.id, started.id);
         assert_eq!(restarted.head_commit, None);
@@ -349,10 +349,10 @@ mod tests {
         );
     }
 
-    /// Rows written before paths were normalised on save must still resolve.
-    /// The step is inserted with the raw SQL the old `save_walkthrough` used,
-    /// so this is genuinely a legacy row rather than a value the current write
-    /// path could produce.
+    /// 保存時にパスを正規化するようになる前に書かれた行も解決できなければ
+    /// ならない。このステップは古い save_walkthrough が使っていた生の SQL で
+    /// 挿入しているので、現在の書き込み経路が生成し得る値ではなく、正真正銘の
+    /// レガシー行になっている。
     #[test]
     fn legacy_step_paths_are_normalised_on_read() {
         let store = test_store();
@@ -393,9 +393,9 @@ mod tests {
         assert!(store.fail_walkthrough("feat/x", "boom").is_err());
     }
 
-    /// `save_walkthrough` no longer requires `begin_walkthrough` — it upserts
-    /// the walkthrough row itself, so it's a valid entry point on its own
-    /// (this is what the `mcp-serve` tool calls directly).
+    /// save_walkthrough はもう begin_walkthrough を必要としない。walkthrough
+    /// 行自体を upsert するので、単独でも有効なエントリポイントになる
+    /// （mcp-serve ツールが直接呼ぶのはこれ）。
     #[test]
     fn save_walkthrough_without_begin_upserts() {
         let store = test_store();
@@ -410,9 +410,9 @@ mod tests {
         assert_eq!(walkthrough.title.as_deref(), Some("title"));
     }
 
-    /// Saving twice must replace the steps outright (the `DELETE` +
-    /// re-`INSERT` inside the transaction, backed by the CASCADE on
-    /// `walkthrough_steps.walkthrough_id`), not append to them.
+    /// 2回保存すると、ステップは追記されるのではなく完全に置き換わらなければ
+    /// ならない（トランザクション内の DELETE + 再 INSERT で、
+    /// walkthrough_steps.walkthrough_id の CASCADE に支えられている）。
     #[test]
     fn save_walkthrough_replaces_previous_steps() {
         let store = test_store();
@@ -456,10 +456,10 @@ mod tests {
         assert_eq!(steps[0].body, "New body.");
     }
 
-    /// The walkthrough's `summary` is also the branch's change summary — the
-    /// SUMMARY pseudo-file's content. Generating a walkthrough is the only
-    /// thing that writes it, so if this link breaks the SUMMARY pane silently
-    /// stays empty forever.
+    /// walkthrough の summary はブランチの change summary でもある —
+    /// SUMMARY 疑似ファイルの内容そのものである。walkthrough の生成だけが
+    /// これを書き込むので、この結びつきが壊れると SUMMARY ペインは何も言わず
+    /// 永遠に空のままになってしまう。
     #[test]
     fn save_walkthrough_also_writes_the_change_summary() {
         let store = test_store();
@@ -475,8 +475,8 @@ mod tests {
             Some("何をなぜ変えたか。")
         );
 
-        // Re-generating replaces it, so the pane always shows the latest
-        // overview rather than accumulating stale ones.
+        // 再生成すると置き換わるので、ペインは古いものを溜め込むのではなく
+        // 常に最新の概要を表示する。
         store.begin_walkthrough("feat/x", None).unwrap();
         store
             .save_walkthrough("feat/x", "Fix startup crash", "更新後の概要。", &[])
@@ -487,13 +487,13 @@ mod tests {
         );
     }
 
-    /// Proves the transaction-safety claim in `save_walkthrough`'s doc
-    /// comment: a step insert that fails must roll back the walkthrough row
-    /// and the change summary written alongside it in the same transaction,
-    /// not leave a summary describing a walkthrough that was never actually
-    /// stored. The failure is injected with a trigger rather than a bad
-    /// argument, since every argument shape `save_walkthrough` itself would
-    /// reject is already caught before any write happens.
+    /// save_walkthrough の doc コメントにあるトランザクション安全性の主張を
+    /// 証明する: ステップの挿入が失敗した場合、同じトランザクション内で
+    /// 一緒に書き込まれた walkthrough 行と change summary もロールバック
+    /// されなければならず、実際には保存されなかった walkthrough を説明する
+    /// summary だけが残ってはならない。失敗は不正な引数ではなくトリガーで
+    /// 注入している。save_walkthrough 自身が拒否するような引数の形は、
+    /// どんな書き込みが起きるより前にすでに弾かれてしまうため。
     #[test]
     fn failed_step_insert_leaves_no_change_summary() {
         let store = test_store();
@@ -519,16 +519,16 @@ mod tests {
                 .is_err()
         );
 
-        // ROLLBACK undoes both the walkthrough upsert and the change summary
-        // write, not just the step insert that actually failed.
+        // ROLLBACK は、実際に失敗したステップの挿入だけでなく、walkthrough の
+        // upsert と change summary の書き込みの両方を取り消す。
         assert_eq!(store.get_change_summary("feat/x").unwrap(), None);
         assert!(store.get_walkthrough("feat/x").unwrap().is_none());
     }
 
-    /// The slice's order is the walkthrough's order, and `seq` is derived from
-    /// it — so steps always come back in the order they were handed over, with
-    /// a dense `0..n`. This is what stops a caller that numbers steps per-kind
-    /// from silently interleaving the tour.
+    /// スライスの順序が walkthrough の順序であり、seq はそこから導出される
+    /// — だからステップは常に渡された順序どおりに、密な 0..n として返って
+    /// くる。これにより、種類ごとにステップ番号を振る呼び出し側がツアーを
+    /// 気づかぬうちに入り乱れさせてしまうのを防いでいる。
     #[test]
     fn save_walkthrough_numbers_steps_by_slice_order() {
         let store = test_store();
@@ -578,11 +578,11 @@ mod tests {
         );
     }
 
-    /// `WalkthroughStepKind::as_str()` and the schema's
-    /// `CHECK (kind IN ('intent','core','ripple','test'))` are two separately
-    /// written string lists; if they ever drift apart, only the kinds absent
-    /// from the CHECK fail — and only at save time, not at compile time. This
-    /// exercises all four so such a drift is caught immediately.
+    /// WalkthroughStepKind::as_str() とスキーマ側の
+    /// CHECK (kind IN ('intent','core','ripple','test')) は別々に書かれた
+    /// 2つの文字列リストであり、両者がずれた場合、CHECK に欠けている
+    /// 種類だけが失敗する — しかもコンパイル時ではなく保存時にである。
+    /// これは4種類すべてを試すことで、そのようなずれを即座に検出する。
     #[test]
     fn save_and_load_round_trips_every_step_kind() {
         let store = test_store();
@@ -612,8 +612,8 @@ mod tests {
         assert_eq!(loaded.len(), kinds.len());
         for (step, kind) in loaded.iter().zip(kinds.iter()) {
             assert_eq!(step.kind, *kind);
-            // Round trip through the string form too, not just the enum
-            // value already deserialized off the row.
+            // 行からすでに deserialize された enum 値だけでなく、文字列形式
+            // 経由の往復もテストする。
             assert_eq!(WalkthroughStepKind::from_str(kind.as_str()), Some(*kind));
         }
     }

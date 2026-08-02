@@ -1,5 +1,5 @@
-//! Garden decoration mode 🌳🌸🦋🐦 — a planted border with drifting
-//! butterflies/bees and the occasional passing bird.
+//! ガーデン装飾モード 🌳🌸🦋🐦 — 植物を並べた縁取りに、漂う蝶や蜂、
+//! 時折通り過ぎる鳥を添える。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,14 +8,14 @@ use crate::theme::Theme;
 
 use super::{DecorationActivity, pseudo_random, render_grid};
 
-/// A stationary plant on the garden floor.
+/// ガーデンの地面に固定して生える植物。
 #[derive(Debug, Clone)]
 pub struct GardenPlant {
     pub x: u16,
     pub emoji: &'static str,
 }
 
-/// A butterfly floating in the air.
+/// 空中を漂う蝶。
 #[derive(Debug, Clone)]
 pub struct Butterfly {
     pub x: f32,
@@ -24,7 +24,7 @@ pub struct Butterfly {
     pub dy: f32,
 }
 
-/// A bird flying horizontally.
+/// 水平に飛ぶ鳥。
 #[derive(Debug, Clone)]
 pub struct Bird {
     pub x: f32,
@@ -33,7 +33,7 @@ pub struct Bird {
     pub direction: i8,
 }
 
-/// Full garden animation state.
+/// ガーデンアニメーションの状態全体。
 #[derive(Debug, Clone, Default)]
 pub struct GardenState {
     pub plants: Vec<GardenPlant>,
@@ -63,7 +63,7 @@ fn initialize_garden(state: &mut GardenState, width: u16, height: u16) {
         return;
     }
 
-    // Place plants along the bottom row: trees, flowers, herbs.
+    // 最下段に植物を並べる: 木、花、ハーブ。
     state.plants.clear();
     let all_plants: Vec<&str> = TREE_EMOJIS
         .iter()
@@ -73,7 +73,7 @@ fn initialize_garden(state: &mut GardenState, width: u16, height: u16) {
     let mut col: u16 = 0;
     let mut idx = 0;
     while col + 1 < width {
-        // Alternate between named plants and herb filler.
+        // 名前付きの植物とハーブの詰め物を交互に配置する。
         let emoji = if idx % 3 == 0 {
             HERB
         } else {
@@ -84,7 +84,7 @@ fn initialize_garden(state: &mut GardenState, width: u16, height: u16) {
         idx += 1;
     }
 
-    // Initial butterflies.
+    // 初期配置の蝶。
     state.butterflies.clear();
     let butterfly_count = 2.min((width / 6) as usize).max(1);
     for i in 0..butterfly_count {
@@ -102,7 +102,7 @@ fn initialize_garden(state: &mut GardenState, width: u16, height: u16) {
     state.initialized = true;
 }
 
-/// Advance garden animation by one tick.
+/// ガーデンアニメーションを1ティック進める。
 pub(super) fn tick_garden(
     state: &mut GardenState,
     tick: u64,
@@ -118,16 +118,16 @@ pub(super) fn tick_garden(
     }
 
     let max_x = width.saturating_sub(2) as f32;
-    // Leave bottom row for plants; usable rows = 0 .. height-2.
+    // 最下段は植物用に空けておく。使用可能な行は 0 .. height-2。
     let max_y = height.saturating_sub(2) as f32;
 
-    // Move butterflies every 2nd tick.
+    // 2ティックごとに蝶を移動させる。
     if tick.is_multiple_of(2) {
         for (i, bf) in state.butterflies.iter_mut().enumerate() {
             bf.x += bf.dx;
             bf.y += bf.dy;
 
-            // Bounce off boundaries.
+            // 境界で跳ね返す。
             if bf.x < 0.0 {
                 bf.x = 0.0;
                 bf.dx = bf.dx.abs();
@@ -143,7 +143,7 @@ pub(super) fn tick_garden(
                 bf.dy = -bf.dy.abs();
             }
 
-            // Occasionally change direction for organic movement.
+            // 自然な動きに見せるため、時々向きを変える。
             if tick % 11 == (i as u64 % 11) {
                 let r = pseudo_random(tick, i as u64 + 100);
                 bf.dx = ((r % 7) as f32 - 3.0) * 0.15;
@@ -152,7 +152,7 @@ pub(super) fn tick_garden(
         }
     }
 
-    // Birds — fly horizontally and leave the area.
+    // 鳥 — 水平に飛び、エリア外へ抜けていく。
     if tick.is_multiple_of(2) {
         for bird in &mut state.birds {
             bird.x += bird.speed * bird.direction as f32;
@@ -162,7 +162,7 @@ pub(super) fn tick_garden(
             .retain(|b| b.x >= -2.0 && (b.x as u16) < width + 2);
     }
 
-    // Spawn butterflies/bees to match activity.
+    // activity に応じて蝶や蜂を生成する。
     let target_count = match activity {
         DecorationActivity::Calm => 2_usize,
         DecorationActivity::Active => 4,
@@ -179,7 +179,7 @@ pub(super) fn tick_garden(
         });
     }
 
-    // Active mode: spawn a bird occasionally.
+    // アクティブモードでは、時々鳥を生成する。
     if activity == DecorationActivity::Active && tick.is_multiple_of(30) && state.birds.len() < 2 {
         let r = pseudo_random(tick, 77);
         let y = ((r % height.saturating_sub(2) as u64) as u16).min(height / 2);
@@ -193,7 +193,7 @@ pub(super) fn tick_garden(
     }
 }
 
-/// Render the garden scene.
+/// ガーデンのシーンを描画する。
 pub(super) fn render_garden(frame: &mut Frame, area: Rect, state: &GardenState, theme: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;
@@ -203,7 +203,7 @@ pub(super) fn render_garden(frame: &mut Frame, area: Rect, state: &GardenState, 
     let h = area.height as usize;
     let mut grid: Vec<Vec<Option<&str>>> = vec![vec![None; w]; h];
 
-    // Bottom row: plants.
+    // 最下段: 植物。
     if h >= 1 {
         let bottom = h - 1;
         for plant in &state.plants {
@@ -214,12 +214,12 @@ pub(super) fn render_garden(frame: &mut Frame, area: Rect, state: &GardenState, 
         }
     }
 
-    // Butterflies / bees.
+    // 蝶・蜂。
     for (i, bf) in state.butterflies.iter().enumerate() {
         let col = (bf.x as usize).min(w.saturating_sub(2));
         let row = (bf.y as usize).min(h.saturating_sub(2));
         if col + 1 < w && row < h {
-            // Every 3rd butterfly is a bee for variety.
+            // 変化をつけるため3匹に1匹は蜂にする。
             let emoji = if i % 3 == 2 {
                 BEE_EMOJI
             } else {
@@ -229,7 +229,7 @@ pub(super) fn render_garden(frame: &mut Frame, area: Rect, state: &GardenState, 
         }
     }
 
-    // Birds.
+    // 鳥。
     for bird in &state.birds {
         let col = (bird.x as usize).min(w.saturating_sub(2));
         let row = (bird.y as usize).min(h.saturating_sub(2));

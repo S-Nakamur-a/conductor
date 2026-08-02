@@ -1,33 +1,32 @@
-//! Syntect syntax-highlighting theme resolution.
+//! syntect のシンタックスハイライトテーマ解決。
 
 use super::ViewerConfig;
 
-/// Resolve the syntect syntax-highlighting theme for a given viewer config.
+/// viewer 設定から syntect のシンタックスハイライトテーマを解決する。
 ///
-/// When `viewer.syntax_theme_file` is set, the file is loaded directly
-/// (falling back to a built-in theme on error). Otherwise, the built-in
-/// syntect theme that best matches `viewer.theme` is returned.
+/// viewer.syntax_theme_file が設定されていればそのファイルを直接読み込む
+/// (失敗時は組み込みテーマにフォールバック)。未設定なら viewer.theme に
+/// 最も近い組み込み syntect テーマを返す。
 ///
-/// The mapping from conductor UI theme names to syntect names covers the four
-/// original dark themes; all other names fall back to `base16-mocha.dark`
-/// (the same drift that existed before this helper was extracted — expanding
-/// the mapping table is out of scope here).
+/// conductor の UI テーマ名から syntect テーマ名への対応は元々あった4つの
+/// ダークテーマのみをカバーしており、それ以外は base16-mocha.dark に
+/// フォールバックする。このヘルパーを切り出す前からあったずれであり、
+/// 対応表を拡充するのはここでは対象外。
 pub fn syntect_theme_for(
     viewer: &ViewerConfig,
     ts: &syntect::highlighting::ThemeSet,
 ) -> syntect::highlighting::Theme {
-    // Map the conductor viewer theme name to the corresponding syntect key.
-    // Dark themes map to matching dark syntect themes; light themes map to
-    // light syntect built-ins so code blocks remain readable on a light UI.
+    // conductor の viewer テーマ名を対応する syntect キーにマップする。
+    // ダークテーマは対応するダークな syntect テーマへ、ライトテーマは
+    // 明るい UI でもコードブロックが読めるようライトな syntect 組み込みへ。
     let builtin_name = |theme: &str| -> &str {
         match theme {
-            // Dark themes
+            // ダークテーマ
             "catppuccin-mocha" => "base16-mocha.dark",
             "dracula" => "base16-eighties.dark",
             "nord" => "base16-ocean.dark",
             "solarized-dark" => "Solarized (dark)",
-            // Light themes — map to light syntect built-ins to preserve
-            // readability on a light background.
+            // ライトテーマ — 明るい背景でも読めるようライトな syntect 組み込みへ。
             "catppuccin-latte" => "base16-ocean.light",
             "solarized-light" => "Solarized (light)",
             "github-light" => "InspiredGitHub",

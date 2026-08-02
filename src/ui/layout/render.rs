@@ -1,5 +1,5 @@
-//! Top-level frame renderer: composes the 3-column accordion, the status/title
-//! bars, and the resize-divider highlight.
+//! トップレベルのフレームレンダラ: 3カラムアコーディオン、ステータス/タイトルバー、
+//! リサイズ用ディバイダのハイライトを組み立てる。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,14 +8,14 @@ use crate::app::App;
 
 use super::overlays::render_overlays;
 
-/// Top-level UI renderer — 3-column accordion layout + status bar.
+/// トップレベルの UI レンダラ — 3カラムアコーディオンレイアウト + ステータスバー。
 pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let has_notifications = !app.terminal.cc_waiting_worktrees.is_empty();
 
-    // Update layout cache (no-op if nothing changed).
-    // Disjoint field borrows: `app.layout.cache` mutably, `app.config.layout`
-    // immutably — Rust allows this because they are separate struct fields.
+    // レイアウトキャッシュを更新する（変化がなければ何もしない）。
+    // app.layout.cache を可変、app.config.layout を不変で借用しているが、
+    // 別々の構造体フィールドなので Rust ではこれが許される。
     app.layout.cache.update(
         area,
         app.expanded_panel,
@@ -30,26 +30,26 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let main_area = app.layout.cache.main_area;
     let status_area = app.layout.cache.status_area;
 
-    // ── Title bar ───────────────────────────────────────────────────
+    // タイトルバー
     super::super::common::render_title_bar(frame, title_area, app);
 
-    // ── Menu bar (always present, directly under the title) ─────────
+    // メニューバー（常に表示、タイトル直下）
     super::super::menu_bar::render(frame, menubar_area, app);
 
-    // ── Worktree monitor strip (replaces the old left column and the
-    //    former CC-waiting notification bar) ─────────────────────────
+    // worktree 監視ストリップ（旧左カラムと、以前あった
+    // CC 待機通知バーの後継）
     super::super::worktree_bar::render(frame, wtbar_area, app);
 
-    // ── Accordion column widths (from cache) ───────────────────────
+    // アコーディオンのカラム幅（キャッシュから取得）
     let columns = app.layout.cache.columns;
 
-    // ── Column 0 (worktree) is gone — its status is in the top strip. ──
+    // カラム0（worktree）は廃止済み――その状態は上部ストリップにある。
 
     if app.editor.is_some() {
-        // The embedded editor replaces the Explorer + Viewer columns with one
-        // merged PTY panel (the terminal column stays put). When maximized,
-        // accordion_widths gives the explorer slot the full width and the
-        // viewer slot zero, so the union below is the whole main area.
+        // 組み込みエディタは Explorer + Viewer カラムを1つの結合された PTY パネルに
+        // 置き換える（ターミナルカラムはそのまま）。最大化時は accordion_widths が
+        // explorer 側に全幅を、viewer 側に0を与えるので、以下の union はメイン領域
+        // 全体になる。
         let region = Rect {
             x: columns[1].x,
             y: columns[1].y,
@@ -58,10 +58,10 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         };
         super::super::editor_panel::render(frame, region, app);
     } else {
-        // ── Column 1: Explorer (file tree + diff list) ──────────────────
+        // カラム1: Explorer（ファイルツリー + 差分リスト）
         super::super::explorer_panel::render(frame, columns[1], app);
 
-        // ── Column 2: Viewer (file content) ─────────────────────────────
+        // カラム2: Viewer（ファイル内容）
         if app.viewer_state.is_current_file_media()
             && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
         {
@@ -71,7 +71,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             let full_path = app.viewer_state.root().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
-            // Tier B: pixel-quality rendering via the graphics protocol.
+            // Tier B: グラフィックスプロトコル経由のピクセル品質レンダリング。
             let picker = if app.rich.has_graphics() {
                 app.rich.picker
             } else {
@@ -84,16 +84,16 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         super::super::viewer_panel::render(frame, columns[2], app);
     }
 
-    // ── Column 3: Terminal split (Claude 80% / Shell 20%) ───────────
+    // カラム3: ターミナル分割（Claude 80% / Shell 20%）
     let terminal_split = app.layout.cache.terminal_split;
     super::super::terminal_claude::render(frame, terminal_split[0], app);
     super::super::terminal_shell::render(frame, terminal_split[1], app);
 
-    // ── Resize affordance: light up a hovered/dragged divider ────────
+    // リサイズのアフォーダンス: hover/ドラッグ中のディバイダを点灯させる
     highlight_active_divider(frame, app);
 
-    // ── Panel number overlay (Alt+/ toggle) ──────────────────────────
-    // Only show when no other overlay/modal is active.
+    // パネル番号オーバーレイ（Alt+/ でトグル）
+    // 他のオーバーレイ/モーダルが有効でない時だけ表示する。
     if app.panel_number_overlay.is_visible()
         && app.overlays.active == crate::overlay::ActiveOverlay::None
         && app.worktree_mgr.input_mode == crate::app::WorktreeInputMode::Normal
@@ -107,14 +107,13 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     render_overlays(frame, main_area, app);
 
-    // ── Menu dropdown ────────────────────────────────────────────────
-    // Drawn last among content so it sits over the panels. It hangs off the
-    // menu bar row, which is above `main_area`, so it is clamped to the whole
-    // frame rather than to the main area.
+    // メニューのドロップダウン
+    // コンテンツの中で最後に描画し、各パネルの上に乗せる。main_area より上にある
+    // メニューバー行から垂れ下がるので、main_area ではなくフレーム全体でクランプする。
     super::super::menu_bar::render_dropdown(frame, area, app);
 
-    // ── Status bar ──────────────────────────────────────────────────
-    // Show worktree branch + repo on the right of status bar.
+    // ステータスバー
+    // ステータスバー右側に worktree のブランチとリポジトリを表示する。
     let _worktree_branch = app
         .worktrees
         .get(app.worktrees.selected_index())
@@ -129,30 +128,30 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         &app.theme,
     );
 
-    // ── Rich mode (Tier A) ───────────────────────────────────────────
-    // Post-process the finished frame with the gradient breathing border
-    // and Claude-waiting glow. Skipped while party mode is active: party
-    // finds the focused border by colour equality with `border_focused`,
-    // which the gradient would break.
+    // リッチモード（Tier A）
+    // 完成したフレームに、グラデーションの呼吸するボーダーと Claude 待機時の
+    // グロー効果を後処理として加える。パーティモード有効時はスキップする。
+    // パーティモードはフォーカス中のボーダーを border_focused との色の一致で
+    // 見つけるため、グラデーションを加えるとそれが壊れてしまう。
     if app.rich.is_rich() && !app.party_mode {
         super::super::rich::apply_rich_effects(frame, app);
     }
 
-    // ── Party mode (hidden) ──────────────────────────────────────────
-    // Post-process the finished frame so rainbow borders, a shimmering
-    // title bar, and confetti land on top of everything (including overlays).
+    // パーティモード（隠しコマンド）
+    // 完成したフレームに、レインボーボーダー・きらめくタイトルバー・紙吹雪を
+    // （オーバーレイも含めた）全体の上に後処理として重ねる。
     if app.party_mode {
         super::super::party::apply_party_effects(frame, app);
     }
 }
 
-/// Paint the divider currently hovered or being dragged in the theme accent
-/// colour — the terminal stand-in for the `col-resize`/`row-resize` cursor a GUI
-/// would show, since crossterm can't switch the OS cursor shape. A live drag
-/// wins over hover and keeps the boundary lit even if the cursor slips a cell
-/// off it mid-drag. Only border glyphs are recoloured, so panel content is never
-/// touched. Runs before the rich/party post-processing, which only recolours
-/// cells matching the focused-border colour and so leaves the accent line alone.
+/// 現在 hover 中またはドラッグ中のディバイダをテーマのアクセントカラーで塗る。
+/// crossterm では OS のカーソル形状を切り替えられないので、GUI でいう
+/// col-resize/row-resize カーソルの代わりの表現になる。ドラッグ中はホバーより
+/// 優先され、ドラッグ中にカーソルが1セルずれても境界を光らせたままにする。
+/// ボーダーのグリフだけ再着色するので、パネルの内容には触れない。
+/// リッチ/パーティの後処理より前に実行される。それらはフォーカス中ボーダー色に
+/// 一致するセルだけを再着色するので、このアクセント線には影響しない。
 fn highlight_active_divider(frame: &mut Frame, app: &App) {
     use crate::app::Divider;
 
@@ -162,9 +161,8 @@ fn highlight_active_divider(frame: &mut Frame, app: &App) {
     let lc = &app.layout.cache;
     let color = app.theme.accent;
 
-    // Resolve the divider to (is_vertical, fixed coordinate, span area). The
-    // fixed coordinate is the top/left panel's border cell (`edge - 1`), which
-    // is the visible divider line.
+    // ディバイダを (is_vertical, 固定座標, 対象領域) に解決する。固定座標は
+    // 上/左パネルのボーダーセル（edge - 1）で、これが目に見えるディバイダ線になる。
     let (vertical, fixed, area) = match divider {
         Divider::ExplorerViewer => {
             let edge = lc.columns[1].x.saturating_add(lc.columns[1].width);

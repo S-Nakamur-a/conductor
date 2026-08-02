@@ -1,17 +1,17 @@
-//! Unified key event handler for `TextInput`.
+//! TextInput の統一されたキーイベントハンドラ。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::TextInput;
 
 impl TextInput {
-    /// Handle common editing key events (character input, cursor movement,
-    /// deletion, word movement, select-all-clear).
+    /// 一般的な編集用キーイベント（文字入力、カーソル移動、削除、単語移動、
+    /// 全選択クリア）を処理する。
     ///
-    /// Returns `true` if the key was consumed by this handler.
-    /// Clipboard paste (Ctrl+V) and Cmd+Backspace (clear) are **not** handled
-    /// here because they require external clipboard/app state — callers should
-    /// handle those before delegating to this method.
+    /// このハンドラがキーを消費した場合は true を返す。
+    /// クリップボード貼り付け（Ctrl+V）と Cmd+Backspace（クリア）はここでは扱わない。
+    /// 外部のクリップボードやアプリ状態が必要なため、呼び出し側がこのメソッドに
+    /// 委譲する前に処理すること。
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Backspace => {

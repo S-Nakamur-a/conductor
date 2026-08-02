@@ -1,15 +1,14 @@
-//! Invariant sweep over real Claude Code session logs.
+//! 実際の Claude Code セッションログに対する不変条件のスイープ。
 //!
-//! This writes down no expected output at all — it asserts properties that
-//! must hold for *any* transcript, at every width. That is the point: real
-//! logs contain inputs nobody would think to write by hand (broken UTF-8,
-//! ZWJ emoji, nested code fences, megabyte tool results), and the properties
-//! below are exactly the ones whose violation shows up as the panel visibly
-//! corrupting itself.
+//! ここでは期待する出力を一切書き下さない — あらゆる幅で、あらゆるトランスクリプトが
+//! 満たすべき性質だけを検証する。これが狙いである: 実際のログには手書きでは思いつかない
+//! ような入力が含まれる（壊れた UTF-8、ZWJ 絵文字、ネストしたコードフェンス、数メガバイトの
+//! tool result）。以下の性質は、まさにそれらが破られたときにパネルが目に見えて壊れる
+//! ものばかりである。
 //!
-//! Opt-in: set `CONDUCTOR_TRANSCRIPT_CORPUS` to a directory of `.jsonl`
-//! session logs. Skipped when unset. The logs are **not** in the repository
-//! and must never be — they carry file paths, prompts and tool output.
+//! オプトイン: CONDUCTOR_TRANSCRIPT_CORPUS に .jsonl セッションログのディレクトリを
+//! 設定する。未設定ならスキップする。ログはリポジトリに含まれておらず、決して含めては
+//! いけない — ファイルパス、プロンプト、tool の出力を含むため。
 
 use std::path::PathBuf;
 
@@ -23,9 +22,9 @@ use super::build::{BuildCtx, build_lines};
 
 const WIDTHS: [usize; 6] = [20, 40, 60, 80, 120, 200];
 
-/// Cap the sweep so a `cargo test` run stays in seconds. A corpus can hold
-/// hundreds of logs; the invariants are about *shapes* of content, and the
-/// biggest files repeat the same shapes rather than adding new ones.
+/// cargo test の実行が数秒で終わるよう、スイープに上限を設ける。コーパスは
+/// 数百のログを持ちうるが、不変条件はコンテンツの「形」についてのものであり、
+/// 大きなファイルほど新しい形を追加するのではなく同じ形を繰り返す。
 const MAX_FILES: usize = 30;
 const MAX_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -40,7 +39,7 @@ fn corpus_files() -> Option<Vec<PathBuf>> {
             std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
         })
         .collect();
-    // Sort so a failure is reproducible rather than depending on readdir order.
+    // readdir の順序に依存せず、失敗が再現可能になるようソートする。
     files.sort();
     files.truncate(MAX_FILES);
     Some(files)
@@ -118,9 +117,8 @@ fn real_transcripts_hold_the_layout_invariants() {
                 let cache = MarkdownCache::new();
                 let built = h.build(&cache, &entries, width, expanded);
 
-                // (1) Nothing may exceed the panel. This is the direct
-                // detector for the bleed class of bug, and the reason the
-                // width-1 safety margin could be removed.
+                // (1) パネルをはみ出すものがあってはならない。これがはみ出し系バグの
+                // 直接的な検出器であり、幅-1の安全マージンを外せた理由でもある。
                 for (i, line) in built.lines.iter().enumerate() {
                     let w = line_width(line);
                     assert!(
@@ -131,8 +129,8 @@ fn real_transcripts_hold_the_layout_invariants() {
                     );
                 }
 
-                // (2) Every line must carry metadata: the renderer zips the
-                // two, and a short `meta` would silently truncate the view.
+                // (2) すべての行がメタデータを持たなければならない: レンダラは両者を
+                // zip するので、meta が短いとビューが黙って切り詰められてしまう。
                 assert_eq!(
                     built.lines.len(),
                     built.meta.len(),
@@ -140,8 +138,8 @@ fn real_transcripts_hold_the_layout_invariants() {
                     path.display()
                 );
 
-                // (3) Building twice must agree — the Markdown cache sits in
-                // the middle of this path and a stale hit would show up here.
+                // (3) 2回構築した結果は一致しなければならない — Markdown キャッシュが
+                // この経路の途中に挟まっており、古いキャッシュヒットがあればここに現れる。
                 let again = h.build(&cache, &entries, width, expanded);
                 assert_eq!(
                     texts(&built.lines),
@@ -171,9 +169,9 @@ fn rebuilding_at_a_previous_width_reproduces_it() {
         if entries.is_empty() {
             continue;
         }
-        // One cache across all three builds, exactly as the real render path
-        // uses it: a width round-trip must land back on the original layout
-        // rather than on whatever the intermediate width left cached.
+        // 実際の描画経路と同じく、3回の構築すべてで同じキャッシュを1つ使う: 幅を
+        // 行って戻したとき、途中の幅がキャッシュに残した何かではなく、元のレイアウトに
+        // 戻らなければならない。
         let cache = MarkdownCache::new();
         let first = texts(&h.build(&cache, &entries, 80, false).lines);
         let _ = h.build(&cache, &entries, 40, false);

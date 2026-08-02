@@ -1,26 +1,26 @@
-//! Cursor navigation for `TextInput`: character, line, and word movement.
+//! TextInput のカーソルナビゲーション: 文字単位・行単位・単語単位の移動。
 
 use super::TextInput;
 
 impl TextInput {
-    /// Move cursor one character to the left.
+    /// カーソルを1文字左へ移動する。
     pub fn move_left(&mut self) {
         if self.cursor > 0 {
             self.cursor = self.prev_char_boundary();
         }
     }
 
-    /// Move cursor one character to the right.
+    /// カーソルを1文字右へ移動する。
     pub fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
             self.cursor = self.next_char_boundary();
         }
     }
 
-    /// Move cursor to the beginning of the line (Home).
+    /// カーソルを行頭へ移動する（Home）。
     pub fn move_home(&mut self) {
         if self.multiline {
-            // Move to the start of the current line.
+            // 現在行の先頭へ移動する。
             let before = &self.buffer[..self.cursor];
             if let Some(nl) = before.rfind('\n') {
                 self.cursor = nl + 1;
@@ -32,10 +32,10 @@ impl TextInput {
         }
     }
 
-    /// Move cursor to the end of the line (End).
+    /// カーソルを行末へ移動する（End）。
     pub fn move_end(&mut self) {
         if self.multiline {
-            // Move to the end of the current line.
+            // 現在行の末尾へ移動する。
             let after = &self.buffer[self.cursor..];
             if let Some(nl) = after.find('\n') {
                 self.cursor += nl;
@@ -47,29 +47,29 @@ impl TextInput {
         }
     }
 
-    /// Move cursor one word to the left (Ctrl+Left / Alt+Left).
+    /// カーソルを1単語分左へ移動する（Ctrl+Left / Alt+Left）。
     pub fn move_word_left(&mut self) {
         if self.cursor == 0 {
             return;
         }
         let bytes = self.buffer.as_bytes();
         let mut pos = self.cursor;
-        // Skip whitespace/punctuation to the left.
+        // 左方向に空白/記号をスキップする。
         while pos > 0 && !bytes[pos - 1].is_ascii_alphanumeric() {
             pos -= 1;
-            // Align to char boundary.
+            // 文字境界に合わせる。
             while pos > 0 && !self.buffer.is_char_boundary(pos) {
                 pos -= 1;
             }
         }
-        // Skip word characters to the left.
+        // 左方向に単語文字をスキップする。
         while pos > 0 && bytes[pos - 1].is_ascii_alphanumeric() {
             pos -= 1;
         }
         self.cursor = pos;
     }
 
-    /// Move cursor one word to the right (Ctrl+Right / Alt+Right).
+    /// カーソルを1単語分右へ移動する（Ctrl+Right / Alt+Right）。
     pub fn move_word_right(&mut self) {
         let len = self.buffer.len();
         if self.cursor >= len {
@@ -77,11 +77,11 @@ impl TextInput {
         }
         let bytes = self.buffer.as_bytes();
         let mut pos = self.cursor;
-        // Skip word characters to the right.
+        // 右方向に単語文字をスキップする。
         while pos < len && bytes[pos].is_ascii_alphanumeric() {
             pos += 1;
         }
-        // Skip whitespace/punctuation to the right.
+        // 右方向に空白/記号をスキップする。
         while pos < len && !bytes[pos].is_ascii_alphanumeric() {
             pos += 1;
         }

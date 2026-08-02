@@ -1,22 +1,22 @@
-//! Acceptance tests for Transcript-flavor fenced-code-block colouring
-//! (`code_colors.rs`): exact source fixtures and expected 8-basic-ANSI-colour
-//! tokens, matched against a native Claude Code capture. Kept as its own
-//! file (rather than appended to `rendering.rs`, already at the project's
-//! size guideline) since these are a distinct, self-contained fixture set.
+//! Transcript フレーバーのフェンス付きコードブロックの色付け（code_colors.rs）に
+//! 関する受け入れテスト: 実物の Claude Code のキャプチャと突き合わせた、
+//! ソースフィクスチャと期待される8色基本 ANSI カラーのトークン。rendering.rs
+//! （プロジェクトのサイズ目安に既に達している）へ追記せず独立ファイルにしているのは、
+//! これらが独立して完結した別種のフィクスチャ群であるため。
 
 use super::*;
 use ratatui::style::Color;
 
-/// Render one fenced code block in Transcript flavor.
+/// Transcript フレーバーでフェンス付きコードブロック1つを描画する。
 fn code_lines(lang: &str, source: &str) -> Vec<Line<'static>> {
     let text = format!("```{lang}\n{source}\n```");
     render_transcript(&text, 100)
 }
 
-/// Find the single span whose content is exactly `text` — not a substring
-/// match, since same-style adjacent syntect tokens coalesce into one span
-/// (`wrap.rs`'s `cells_to_line`). Callers ask for the merged run they expect
-/// (e.g. `"hi"` for a whole string literal, not just `hi`).
+/// content がちょうど text と一致する単一の span を探す — 部分一致ではない。
+/// 隣接する同スタイルの syntect トークンは1つの span に融合するため
+/// （wrap.rs の cells_to_line）。呼び出し側は融合後に期待する連続文字列を
+/// 渡す（文字列リテラル全体なら hi ではなく "hi" のように）。
 fn span<'a>(lines: &'a [Line<'static>], text: &str) -> &'a Span<'static> {
     lines
         .iter()
@@ -36,18 +36,17 @@ fn assert_fg_dim(lines: &[Line<'static>], text: &str, color: Color) {
     assert!(s.style.add_modifier.contains(Modifier::DIM), "{text:?} expected DIM modifier");
 }
 
-/// Find the colour of `word` as a standalone identifier, even where it was
-/// coalesced into a wider same-style span together with neighbouring
-/// punctuation/whitespace (`wrap.rs` merges adjacent same-style spans, so an
-/// unstyled identifier like a struct name commonly ends up glued to the
-/// braces/colons/spaces around it). Tokenizes each span's content on
-/// non-word characters and looks for an exact-word occurrence.
+/// word を単独の識別子として見たときの色を探す。周囲の句読点/空白と一緒に
+/// より広い同スタイルの span へ融合されている場合でも対応する（wrap.rs は
+/// 隣接する同スタイルの span をまとめるので、struct 名のようなスタイルなしの
+/// 識別子は、周りの括弧/コロン/スペースにくっついてしまうことがよくある）。
+/// 各 span の content を単語以外の文字で分割し、単語が完全一致する箇所を探す。
 ///
-/// Also asserts DIM is absent — checking `fg` alone would silently accept a
-/// span that's actually `Type` (Cyan + DIM) where the fixture expects
-/// `Builtin` (Cyan, no DIM), since both share the same foreground colour.
-/// All current callers expect a non-dim colour; if a future fixture needs a
-/// dim word-based check, extend this rather than adding an unchecked twin.
+/// DIM が付いていないことも検査する — fg だけを見ていると、フィクスチャが
+/// Builtin（Cyan、DIM なし）を期待している箇所で、実際には同じ前景色を持つ
+/// Type（Cyan + DIM）の span を黙って通してしまう。現状のすべての呼び出し元は
+/// DIM なしの色を期待しているので、将来 DIM 付きの単語ベースの検査が必要に
+/// なったら、検査なしの双子を増やすのではなくこの関数を拡張すること。
 fn assert_word_fg(lines: &[Line<'static>], word: &str, color: Color) {
     let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
     for line in lines {
@@ -67,8 +66,8 @@ fn assert_word_fg(lines: &[Line<'static>], word: &str, color: Color) {
 
 #[test]
 fn transcript_code_block_has_no_card_chrome() {
-    // No background colour, no inset, no blank padding rows — content starts
-    // at column 0 and the block is exactly as many rows as source lines.
+    // 背景色なし、字下げなし、空のパディング行なし — 内容は0列目から始まり、
+    // ブロックはソースの行数ぴったりの行数になる。
     let lines = code_lines("rust", "let x = 1;");
     assert_eq!(lines.len(), 1, "no top/bottom padding rows");
     for span in &lines[0].spans {
@@ -108,10 +107,9 @@ struct S { field: Vec<u8> }";
 
     assert_fg(&lines, "\"hi\"", Color::Red);
 
-    // Struct name reads unstyled, not as a function/type name. These plain
-    // identifiers get coalesced into a wider Reset span alongside the
-    // punctuation/whitespace around them, so look them up by word rather
-    // than by exact span content.
+    // struct 名は関数/型名としてではなく、スタイルなしとして読まれる。
+    // これらの素の識別子は周囲の句読点/空白と一緒により広い Reset span へ
+    // 融合されるので、正確な span 内容ではなく単語単位で探す。
     assert_word_fg(&lines, "S", Color::Reset);
     for ident in ["s", "N", "b", "field"] {
         assert_word_fg(&lines, ident, Color::Reset);
@@ -142,9 +140,8 @@ class C(object):\n\
         assert_fg(&lines, num, Color::Green);
     }
 
-    // Interpolated f-string: literal run before the embedded expression is
-    // red; from the first embedded-expression token onward — including the
-    // closing quote — it reverts to the default colour.
+    // 補間された f 文字列: 埋め込み式より前のリテラル部分は赤。埋め込み式の
+    // 最初のトークン以降は、閉じ引用符を含めて既定色に戻る。
     assert_fg(&lines, "f\"val ", Color::Red);
     assert_fg(&lines, "{x}\"", Color::Reset);
 
@@ -172,14 +169,13 @@ fi";
     }
 
     assert_fg(&lines, "\"yes\"", Color::Red);
-    // Opening quote of the second string: red up to (not including) the
-    // interruption by `$HOME` — the rest of that string, including its
-    // closing quote, reverts to the default colour (coalesced with the
-    // trailing `];` into one Reset span, so check it by word).
+    // 2つ目の文字列の開き引用符: $HOME による中断の直前まで（それ自体は含まない）
+    // 赤。その文字列の残り部分は、閉じ引用符も含めて既定色に戻る
+    // （末尾の ]; と一緒に1つの Reset span へ融合されるので、単語単位で検査する）。
     assert_fg(&lines, "\"", Color::Red);
     assert_word_fg(&lines, "zshrc", Color::Reset);
 
-    // `grep` isn't a recognised builtin, unlike `ls`/`echo`/`export`.
+    // grep は ls/echo/export と違い、組み込みコマンドとして認識されない。
     assert_word_fg(&lines, "grep", Color::Reset);
 }
 

@@ -1,7 +1,7 @@
-//! メインイベントループ ([`crate::event_loop::run_loop`]) 向けの、周期タイマーの
+//! メインイベントループ ([crate::event_loop::run_loop]) 向けの、周期タイマーの
 //! 処理と外部イベントソースのポーリング。
 //!
-//! ループ本体から切り出したのは [`crate::event_loop`] が読める大きさを超えないように
+//! ループ本体から切り出したのは [crate::event_loop] が読める大きさを超えないように
 //! するためだけで、挙動は変えていない。1 周ごとの「バックグラウンド処理」を
 //! 2 つの関数として括り出したもの。
 
@@ -48,7 +48,7 @@ pub(crate) fn run_due_timers(
             }
             // rich モードのグラデーション枠を約 30fps で安定して動かす。この効果は
             // フレーム全体への後処理なので、進めるには全面の再描画が必要。PTY の
-            // ラスタはキャッシュされたまま (`dirty_claude` / `dirty_shell` で制御)
+            // ラスタはキャッシュされたまま (dirty_claude / dirty_shell で制御)
             // なので、これはウィジェットの安い再描画で済む。
             "rich_glow" if rich_active => {
                 app.dirty.mark_all();
@@ -75,7 +75,7 @@ pub(crate) fn run_due_timers(
                         crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER,
                     );
                 }
-                // 監視対象のパス集合が変わったらファイル監視を作り直す (`git init` で
+                // 監視対象のパス集合が変わったらファイル監視を作り直す (git init で
                 // 最初の worktree ができた、worktree が追加・削除された、など)。
                 // これが無いと古い集合を監視し続けて新しいファイルを取りこぼす。
                 let desired = watch_paths_for(app);
@@ -150,7 +150,7 @@ pub(crate) fn run_due_timers(
 
 /// ループに入力を供給する外部イベントソース (ファイル監視、設定ファイル監視、
 /// Claude Code の状態通知ソケット、MCP のリフレッシュパイプ) をすべてポーリングし、
-/// デバウンス済みまたは即時の効果を `app` へ反映する。
+/// デバウンス済みまたは即時の効果を app へ反映する。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn poll_watchers(
     app: &mut App,

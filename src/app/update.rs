@@ -1,35 +1,35 @@
-//! In-app self-update flow: checking GitHub Releases, downloading and
-//! installing a pre-built binary, and polling background operations for the
-//! main event loop.
+//! アプリ内自己更新フロー: GitHub Releasesの確認、ビルド済みバイナリの
+//! ダウンロードとインストール、メインイベントループのためのバックグラウンド
+//! 処理のポーリング。
 
 use std::sync::mpsc;
 
 use super::{App, StatusLevel};
 
-/// State of the in-app update flow.
+/// アプリ内更新フローの状態。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UpdateState {
-    /// Normal operation — no update in progress.
+    /// 通常運用 — 更新は進行していない。
     #[default]
     Idle,
-    /// Confirmation dialog is shown.
+    /// 確認ダイアログを表示中。
     Confirming,
-    /// Download & build running in background thread.
+    /// バックグラウンドスレッドでダウンロード＆ビルドを実行中。
     InProgress,
-    /// About to restart the process.
+    /// プロセスを再起動しようとしている。
     Restarting,
-    /// An error occurred — message shown until dismissed.
+    /// エラーが発生した — 解除されるまでメッセージを表示する。
     Failed,
 }
 
-/// Messages sent from the background update thread.
+/// バックグラウンド更新スレッドから送られるメッセージ。
 #[derive(Debug, Clone)]
 pub enum UpdateProgress {
-    /// Intermediate status message.
+    /// 途中経過のステータスメッセージ。
     Status(String),
-    /// Update completed successfully.
+    /// 更新が正常に完了した。
     Done(String),
-    /// Update failed with an error message.
+    /// 更新がエラーメッセージとともに失敗した。
     Error(String),
 }
 
@@ -42,10 +42,11 @@ impl App {
         }
     }
 
-    /// Manually check GitHub Releases for a newer version, on demand. Unlike the
-    /// silent startup/interval check, this flashes explicit feedback for every
-    /// outcome (update available / already current / check failed) when the
-    /// background result lands in [`poll_all_background_ops`](Self::poll_all_background_ops).
+    /// GitHub Releasesに新しいバージョンがないか、要求に応じて手動で確認する。
+    /// 起動時/一定間隔でのサイレントな確認と違い、これはバックグラウンドの
+    /// 結果が [poll_all_background_ops](Self::poll_all_background_ops) に届いた
+    /// 時点で、どの結果（更新あり／既に最新／確認失敗）でも明示的なフィード
+    /// バックを出す。
     pub(super) fn cmd_check_for_update(&mut self) {
         self.update.check_requested = true;
         self.set_status_info(format!(
@@ -57,12 +58,12 @@ impl App {
         });
     }
 
-    /// Show the update confirmation dialog.
+    /// 更新確認ダイアログを表示する。
     pub fn start_update_confirm(&mut self) {
         self.update.state = UpdateState::Confirming;
     }
 
-    /// Kick off the background update thread.
+    /// バックグラウンド更新スレッドを起動する。
     pub fn start_update_download(&mut self) {
         let Some(ref info) = self.update.info else {
             return;
@@ -78,7 +79,7 @@ impl App {
         });
     }
 
-    /// Poll for progress messages from the background update thread.
+    /// バックグラウンド更新スレッドからの進捗メッセージをポーリングする。
     pub fn poll_update_progress(&mut self) {
         for msg in self.update.op.poll_all() {
             match msg {
@@ -99,10 +100,10 @@ impl App {
         }
     }
 
-    /// Poll all background operations and apply their results.
+    /// すべてのバックグラウンド処理をポーリングし、その結果を反映する。
     ///
-    /// Consolidates the scattered `poll_*()` calls that were previously
-    /// spread across `run_loop()` in `main.rs`.
+    /// 以前はmain.rsのrun_loop()に散らばっていたpoll_*()呼び出しを、
+    /// ここに集約している。
     pub fn poll_all_background_ops(&mut self) {
         self.poll_bg_branches();
         self.poll_bg_pull();
@@ -121,7 +122,7 @@ impl App {
             self.stats.ccusage = Some(info);
         }
 
-        // symbol index
+        // シンボル索引
         if let Some(result) = self.bg.symbol_index.poll() {
             match result {
                 Ok(count) => {
@@ -135,23 +136,24 @@ impl App {
                     log::warn!("Symbol index build failed: {msg}");
                 }
             }
-            // The root can move while a build is walking the old one, and
-            // `start_symbol_index_build` declines to pile a second build on
-            // top of a running one. That combination leaves the finished build
-            // discarding its own result with nothing queued behind it, so the
-            // index would sit empty until the next filesystem event. Kicking
-            // off the catch-up build here is what closes that gap: by now the
-            // slot is free, and if the root never moved this is a no-op
-            // because the index is already marked available.
+            // ビルドが古い根を走査している間に根が動くことがあり、かつ
+            // start_symbol_index_buildは実行中のビルドの上に2つ目を積む
+            // ことを拒む。この組み合わせにより、完了したビルドが自分の
+            // 結果を何もキューに積まずに捨ててしまい、次のファイルシステム
+            // イベントまで索引が空のままになる。ここで追いつきビルドを
+            // 起動するのがその隙間を塞ぐ方法だ: この時点でスロットは
+            // 空いており、根が一度も動いていなければ索引はすでに利用可能
+            // とマークされているのでこれは何もしない。
             if !self.code_nav.index.is_available() {
                 self.start_symbol_index_build();
             }
         }
 
-        // update check. The outer Option is "a result is ready"; the inner is
-        // the check itself (Some(info) on success, None on network/parse error).
+        // 更新確認。外側のOptionは「結果が届いた」ことを表し、内側は確認
+        // そのものの結果（成功ならSome(info)、ネットワーク/パースエラー
+        // ならNone）。
         if let Some(result) = self.bg.update_check.poll() {
-            // Whether the user asked for explicit feedback this round.
+            // 今回、ユーザーが明示的なフィードバックを要求していたかどうか。
             let requested = std::mem::take(&mut self.update.check_requested);
             let current = crate::update_checker::current_version();
             match result {
@@ -187,9 +189,9 @@ impl App {
     }
 }
 
-/// Run the update download-and-build in a background thread.
+/// ダウンロードとビルドの更新処理をバックグラウンドスレッドで実行する。
 ///
-/// Sends [`UpdateProgress`] messages via the channel to report status.
+/// ステータス報告のため、チャンネル経由で [UpdateProgress] メッセージを送る。
 fn perform_update(
     tx: &mpsc::Sender<UpdateProgress>,
     version: &str,
@@ -212,9 +214,9 @@ fn perform_update(
             "v{version} installed successfully! Restarting..."
         )));
     } else {
-        // Deliberately no in-app source build: compiling inside the TUI is
-        // slow and fragile, and anyone able to build from source can run the
-        // command themselves. Point them at the manual path instead.
+        // あえてアプリ内でのソースビルドはしない: TUI内でのコンパイルは
+        // 遅く壊れやすく、ソースからビルドできる人なら自分でコマンドを
+        // 実行できる。代わりに手動での手順を案内する。
         let _ = tx.send(UpdateProgress::Error(
             "Could not install the pre-built binary. Update manually with \
              `cargo install --path .` or download a binary from the releases page."
@@ -223,7 +225,7 @@ fn perform_update(
     }
 }
 
-/// Attempt to install via pre-built binary. Returns `true` on success.
+/// ビルド済みバイナリ経由でのインストールを試みる。成功時trueを返す。
 fn try_binary_update(
     tx: &mpsc::Sender<UpdateProgress>,
     version: &str,
@@ -253,11 +255,11 @@ fn try_binary_update(
         archive.to_string_lossy().to_string(),
     ];
 
-    // Use GITHUB_TOKEN if available. The token is fed to curl via a config
-    // read from stdin (`--config -`), never as an argv header: command-line
-    // arguments are world-readable (`ps`/`/proc/<pid>/cmdline`), so an argv
-    // `-H "Authorization: token …"` would expose the credential to every
-    // local process for the duration of the download.
+    // GITHUB_TOKENがあれば使う。トークンはargvのヘッダーとしてではなく、
+    // 標準入力から読む設定(--config -)経由でcurlに渡す: コマンドライン
+    // 引数は誰でも読める(ps//proc/<pid>/cmdline)ので、argvで
+    // -H "Authorization: token …" とすると、ダウンロードしている間ずっと
+    // ローカルの全プロセスに資格情報がさらされてしまう。
     let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
     if token.is_some() {
         curl_args.push("--config".to_string());
@@ -277,7 +279,7 @@ fn try_binary_update(
                 if let Some(stdin) = child.stdin.take() {
                     use std::io::Write;
                     let mut stdin = stdin;
-                    // curl config syntax; a GitHub token never contains `"`.
+                    // curlの設定構文。GitHubトークンに " が含まれることはない。
                     let _ = writeln!(stdin, "header = \"Authorization: token {token}\"");
                 }
                 child.wait_with_output()
@@ -299,7 +301,7 @@ fn try_binary_update(
         _ => {}
     }
 
-    // Extract.
+    // 展開する。
     let _ = tx.send(UpdateProgress::Status("Extracting binary...".to_string()));
     let extract = Command::new("tar")
         .arg("xzf")
@@ -319,17 +321,18 @@ fn try_binary_update(
         _ => {}
     }
 
-    // The tar.gz contains the `conductor` binary at the top level.
+    // tar.gzの最上位にconductorバイナリが入っている。
     let new_binary = tmpdir.join("conductor");
     if !new_binary.exists() {
         log::warn!("conductor binary not found in archive");
         return false;
     }
 
-    // Install over the *currently running* executable, resolved to its real
-    // path. Guessing `~/.cargo/bin/conductor` would silently update the wrong
-    // file when conductor was launched from elsewhere (Homebrew prefix,
-    // /usr/local/bin, a symlink), leaving the user's actual binary untouched.
+    // *現在実行中の*実行ファイルを、その実パスに解決した上で上書きする。
+    // ~/.cargo/bin/conductorだと決め打ちすると、conductorが別の場所
+    // （Homebrewのprefix、/usr/local/bin、シンボリックリンクなど）から
+    // 起動されていた場合に間違ったファイルを黙って更新してしまい、
+    // ユーザーの実際のバイナリは手つかずのまま残ってしまう。
     let dest = match std::env::current_exe().and_then(|p| p.canonicalize()) {
         Ok(p) => p,
         Err(e) => {
@@ -342,9 +345,10 @@ fn try_binary_update(
         return false;
     };
 
-    // Stage the new binary in the *same directory* as `dest` so the final swap
-    // can be an atomic rename(2). A cross-filesystem rename fails with EXDEV
-    // and would silently degrade to a copy, which is exactly the bug we avoid.
+    // 新しいバイナリをdestと*同じディレクトリ*に置いておくことで、最終的な
+    // 入れ替えをアトミックなrename(2)にできる。ファイルシステムをまたぐ
+    // renameはEXDEVで失敗し、黙ってcopyに劣化してしまう — それはまさに
+    // 避けたいバグそのものだ。
     let staged = dest_dir.join(format!(".conductor-update-{}", std::process::id()));
     let _ = std::fs::remove_file(&staged);
     let _ = tx.send(UpdateProgress::Status("Installing binary...".to_string()));
@@ -353,37 +357,37 @@ fn try_binary_update(
         return false;
     }
 
-    // Executable permission on the staged file (set before the swap).
+    // 配置したファイルに実行権限を付与する（入れ替えの前に設定する）。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
     }
 
-    // Strip the macOS quarantine xattr so Gatekeeper won't block it. (The code
-    // signature itself is embedded in the Mach-O, not an xattr; this only
-    // clears `com.apple.quarantine`.)
+    // macOSのquarantine xattrを外し、Gatekeeperに止められないようにする。
+    // （コード署名そのものはxattrではなくMach-Oに埋め込まれているので、
+    // ここではcom.apple.quarantineだけを消す。）
     #[cfg(target_os = "macos")]
     {
         let _ = Command::new("xattr").args(["-cr"]).arg(&staged).output();
     }
 
-    // Verify the staged binary actually launches before swapping it in — this
-    // catches corrupt/truncated downloads. (It does NOT exercise the
-    // in-place-overwrite SIGKILL; that class is prevented structurally by the
-    // atomic rename below, since `staged` is a brand-new inode.)
+    // 入れ替える前に、配置したバイナリが実際に起動できることを確認する
+    // — これは壊れた/途中で切れたダウンロードを検出する。（インプレース
+    // 上書きによるSIGKILLは検証しない。そのクラスの問題は下のアトミック
+    // renameによって構造的に防がれている。stagedは新規のinodeだからだ。）
     if !verify_runnable(&staged) {
         log::warn!("staged binary failed to launch; aborting install");
         let _ = std::fs::remove_file(&staged);
         return false;
     }
 
-    // Back up the current binary, then atomically swap in the new one.
-    // `rename(2)` rebinds the path to a fresh inode, so the still-running
-    // process keeps executing from the old (now-unlinked) inode and the next
-    // `exec` sees a clean, validly-signed file. Overwriting `dest` in place
-    // (the previous `fs::copy`) corrupted the running binary's code-signing
-    // state on macOS arm64 and got it SIGKILLed on every subsequent launch.
+    // 現在のバイナリをバックアップしてから、新しいものをアトミックに
+    // 入れ替える。rename(2)はパスを新しいinodeに結び直すので、実行中の
+    // プロセスは古い（今はunlinkされた）inodeから実行され続け、次の
+    // execはクリーンで正しく署名されたファイルを見る。（前身の
+    // fs::copyのように）destをインプレース上書きすると、macOS arm64上で
+    // 実行中バイナリのコード署名状態が壊れ、以降起動するたびにSIGKILLされた。
     let backup = dest_dir.join(".conductor.bak");
     let _ = std::fs::remove_file(&backup);
     if let Err(e) = std::fs::rename(&dest, &backup) {
@@ -397,17 +401,17 @@ fn try_binary_update(
         let _ = std::fs::remove_file(&staged);
         return false;
     }
-    // Success — the new binary is verified and in place; discard the backup.
+    // 成功 — 新しいバイナリは検証済みで配置済みなので、バックアップは破棄する。
     let _ = std::fs::remove_file(&backup);
 
     true
 }
 
-/// Spawn `path --version` and report whether it exits successfully.
+/// pathに対して --version を実行し、正常終了したかどうかを報告する。
 ///
-/// Used as a pre-install smoke test: a freshly downloaded binary that can't
-/// even print its version (corrupt download, wrong arch, bad signature) must
-/// not replace the working one.
+/// インストール前のスモークテストとして使う: バージョンすら出力できない
+/// (ダウンロードが壊れている、アーキテクチャ違い、署名不正などの)
+/// できたてのバイナリで、動いているものを置き換えてはならない。
 fn verify_runnable(path: &std::path::Path) -> bool {
     use std::process::{Command, Stdio};
     match Command::new(path)

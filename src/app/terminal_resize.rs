@@ -1,14 +1,14 @@
-//! PTY size syncing and diff/viewer staleness polling for [`App`].
+//! [App] の PTY サイズ同期と diff/viewer の陳腐化ポーリング。
 //!
-//! Keeps Claude/Shell/editor PTY grids sized to their rendered panel area,
-//! and the lightweight per-tick check that decides whether the diff and
-//! viewer panels need refreshing.
+//! Claude/Shell/エディタの PTY グリッドを、実際に描画されるパネル領域に
+//! 合わせたサイズに保つ。また、diff パネルと viewer パネルの更新要否を
+//! 判定する、tick ごとの軽量なチェックも担う。
 
 use super::*;
 
 impl App {
-    /// Sync PTY session sizes with cached layout dimensions.
-    /// Only resizes when dimensions actually changed.
+    /// PTY セッションのサイズを、キャッシュ済みレイアウトの寸法と同期させる。
+    /// 寸法が実際に変わったときだけリサイズする。
     pub fn sync_pty_sizes(
         &mut self,
         last_claude_size: &mut (u16, u16),
@@ -47,9 +47,9 @@ impl App {
             }
         }
 
-        // Keep the embedded editor PTY sized to its (merged Explorer+Viewer)
-        // region. Computed from the cached layout, so it tracks panel resizes
-        // and the maximize toggle.
+        // 埋め込みエディタの PTY を、その(Explorer+Viewer が統合された)領域に
+        // 合わせたサイズに保つ。キャッシュ済みレイアウトから計算するため、
+        // パネルのリサイズと最大化トグルの両方に追従する。
         if let Some(idx) = self.editor.as_ref().map(|e| e.session_idx) {
             let size = self.editor_pty_size();
             if size != self.terminal.size_editor && size.0 > 0 && size.1 > 0 {
@@ -61,49 +61,49 @@ impl App {
         }
     }
 
-    /// Update the terminal content area size for Claude PTY sessions and resize them.
+    /// Claude の PTY セッションの端末コンテンツ領域サイズを更新し、リサイズする。
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_claude = (rows, cols);
         if self.resize_sessions_of_kind(pty_manager::SessionKind::ClaudeCode, rows, cols) {
-            // The grid was rebuilt at a new width, so the cached render is stale.
+            // グリッドが新しい幅で再構築されたので、キャッシュ済みの描画は古くなっている。
             //
-            // The *scroll offset* is deliberately left alone. This used to
-            // reset it to 0, which snapped a reader who had scrolled back to
-            // the live tail on every width change — and width changes are not
-            // rare events here: a window resize, a panel maximize, a divider
-            // drag, even moving focus between panels (column widths are
-            // focus-driven) all reach this path. Losing your place because you
-            // glanced at another window was the whole complaint.
+            // *スクロールオフセット* は意図的にそのままにしている。かつてはこれを
+            // 0 にリセットしていたが、それだと幅が変わるたびに、過去にスクロール
+            // していた読者がライブの末尾へ引き戻されてしまっていた。しかもここでは
+            // 幅の変化は珍しい出来事ではない: ウィンドウのリサイズ、パネルの最大化、
+            // 分割線のドラッグ、パネル間のフォーカス移動(列幅はフォーカス駆動)、
+            // これらが全てこの経路に到達する。別のウィンドウをちらっと見ただけで
+            // 自分の位置を見失う、というのがまさにこの不満の正体だった。
             //
-            // Keeping the number is approximate — re-wrapping renumbers the
-            // rows above the viewport, so the view can shift by a few lines —
-            // but it lands near where the reader was instead of at the far end
-            // of the history. Anchoring it exactly, the way the transcript view
-            // does with `LineMeta`, would mean probing `vt100::Parser::
-            // set_scrollback` across candidate offsets, and that API underflows
-            // (`Grid::visible_rows`, vt100 0.15.2) for any offset past one
-            // screenful — it only survives today because release builds wrap on
-            // overflow. See the note in `docs/pty-reflow-design.md`.
+            // 数値をそのまま保持するのは近似的でしかない — 再ラップはビューポート
+            // より上の行の番号を振り直すため、表示位置が数行ずれることがある —
+            // が、それでも履歴の末端ではなく読者がいた位置の近くに着地する。
+            // トランスクリプトビューが LineMeta でやっているように正確にアンカー
+            // するには、vt100::Parser::set_scrollback を候補オフセットに対して
+            // 総当たりで試す必要があり、その API は1画面分を超えるオフセットでは
+            // アンダーフローする(Grid::visible_rows, vt100 0.15.2) — 今のところ
+            // リリースビルドがオーバーフロー時にラップしてくれるおかげで生きて
+            // いるだけである。docs/pty-reflow-design.md の記述を参照。
             self.terminal.cache_claude = Default::default();
             self.terminal.dirty_claude = true;
         }
     }
 
-    /// Update the terminal content area size for Shell PTY sessions and resize them.
+    /// Shell の PTY セッションの端末コンテンツ領域サイズを更新し、リサイズする。
     pub fn update_shell_terminal_size(&mut self, rows: u16, cols: u16) {
         self.terminal.size_shell = (rows, cols);
         if self.resize_sessions_of_kind(pty_manager::SessionKind::Shell, rows, cols) {
-            // Same as the Claude panel above: invalidate the render cache, keep
-            // the reader's scroll offset. The shell is where this actually
-            // fires today — only shell sessions record the `raw_history` that
-            // makes `resize_session` report a reflow at all.
+            // 上の Claude パネルと同様: 描画キャッシュを無効化し、読者のスクロール
+            // オフセットは保持する。実際にこれが発火するのは今のところ shell だけ
+            // であり、resize_session が reflow を報告する契機となる
+            // raw_history を記録しているのは shell セッションだけである。
             self.terminal.cache_shell = Default::default();
             self.terminal.dirty_shell = true;
         }
     }
 
-    /// Resize every session of `kind` for the selected worktree to (rows, cols).
-    /// Returns `true` if any session reflowed (a width change rebuilt its grid).
+    /// 選択中の worktree について kind の全セッションを (rows, cols) にリサイズする。
+    /// いずれかのセッションが reflow した(幅の変化でグリッドが再構築された)場合 true を返す。
     fn resize_sessions_of_kind(
         &mut self,
         kind: pty_manager::SessionKind,
@@ -122,15 +122,16 @@ impl App {
         reflowed
     }
 
-    // ── Lightweight change-detection polling ─────────────────────────────
+    // 変更検出の軽量ポーリング
 
-    /// Check whether the diff and viewer panels need refreshing by comparing
-    /// the current worktree's HEAD oid and status counts against the last
-    /// known values.  Only triggers the expensive `refresh_diff()` and
-    /// `refresh_viewer()` when an actual change is detected.
+    /// 選択中の worktree の HEAD oid とステータス件数を前回の既知値と比較し、
+    /// diff パネルと viewer パネルの更新が必要かを判定する。実際に変化が
+    /// 検出された場合のみ、コストの高い refresh_diff() と refresh_viewer()
+    /// を呼び出す。
     ///
-    /// Called after `refresh_worktrees()` in the polling loop, which already
-    /// fetches HEAD oids and status counts as a side effect.
+    /// ポーリングループ内で refresh_worktrees() の後に呼ばれる。
+    /// refresh_worktrees() はその副作用として既に HEAD oid とステータス
+    /// 件数を取得済みである。
     pub fn check_diff_viewer_staleness(&mut self) {
         let wt = match self.worktrees.selected() {
             Some(wt) => wt,
@@ -138,13 +139,13 @@ impl App {
         };
 
         let current_head = self.worktree_heads.get(&wt.branch).cloned();
-        // `staged` is here specifically so `git add` / `git reset` are visible.
-        // The other three count one bucket per file with the index checked
-        // first, so staging a modified file leaves all of them unchanged — and
-        // the file watcher can't help either, since it ignores `.git/` and
-        // staging touches nothing else. Without this component the Explorer's
-        // stage-state colours (D6) would only ever update when some unrelated
-        // edit happened to trigger a refresh.
+        // staged をここに含めているのは、git add / git reset を可視化するため。
+        // 他の3つはインデックスを先にチェックして1ファイルにつき1バケットで
+        // 数えるため、変更済みファイルをステージしても値は変わらない — かつ
+        // ファイルウォッチャーも .git/ を無視するので役に立たず、ステージング
+        // は他に何も触らない。この要素がなければ、Explorer のステージ状態の
+        // 色は、たまたま無関係な編集が更新をトリガーしたときにしか更新されない
+        // ことになる。
         let current_status = (wt.added, wt.modified, wt.deleted, wt.staged);
 
         let head_changed = self.last_poll_head_oid.as_ref() != current_head.as_ref();

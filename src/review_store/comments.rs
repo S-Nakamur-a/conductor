@@ -1,4 +1,4 @@
-//! CRUD and queries for review comments (the `reviews` table).
+//! レビューコメント（reviews テーブル）の CRUD とクエリ。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -7,14 +7,14 @@ use uuid::Uuid;
 use super::ReviewStore;
 use super::model::{Author, CommentKind, CommentStatus, ReviewComment};
 
-/// Shortest id prefix [`ReviewStore::resolve_id_prefix`] will match on.
+/// [ReviewStore::resolve_id_prefix] がマッチさせる最短の id プレフィックス長。
 ///
-/// Comment ids are surfaced to Claude as their first 8 characters, so 8 is both
-/// what the MCP tools advertise and what a caller has actually seen.
+/// コメント id は Claude には先頭8文字として見えているので、8 は MCP ツールが
+/// 公表している長さであり、かつ呼び出し側が実際に目にしている長さでもある。
 pub const MIN_ID_PREFIX_LEN: usize = 8;
 
 impl ReviewStore {
-    /// Insert a new review comment and return it.
+    /// 新しいレビューコメントを挿入して返す。
     #[allow(clippy::too_many_arguments)]
     pub fn add_review(
         &self,
@@ -47,11 +47,11 @@ impl ReviewStore {
             ],
         )?;
 
-        // Read back to get the server-side defaults (created_at, updated_at).
+        // サーバ側のデフォルト値（created_at, updated_at）を得るために読み直す。
         self.get_review(&id)
     }
 
-    /// Fetch a single review by id.
+    /// id を指定してレビュー1件を取得する。
     pub fn get_review(&self, id: &str) -> Result<ReviewComment> {
         self.conn
             .query_row(
@@ -64,7 +64,7 @@ impl ReviewStore {
             .map_err(Into::into)
     }
 
-    /// Edit the body text of a review comment.
+    /// レビューコメントの本文テキストを編集する。
     pub fn update_review_body(&self, id: &str, body: &str) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE reviews SET body = ?1, updated_at = datetime('now') WHERE id = ?2",
@@ -76,7 +76,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Delete a review comment by id.
+    /// id を指定してレビューコメントを1件削除する。
     pub fn delete_review(&self, id: &str) -> Result<()> {
         let changed = self
             .conn
@@ -87,7 +87,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Update the status of a review comment.
+    /// レビューコメントの状態を更新する。
     pub fn update_review_status(&self, id: &str, status: CommentStatus) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE reviews SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
@@ -99,7 +99,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Return all reviews for a given worktree, ordered by file then line.
+    /// 指定した worktree の全レビューを、ファイル→行の順で返す。
     pub fn reviews_for_worktree(&self, worktree: &str) -> Result<Vec<ReviewComment>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
@@ -111,7 +111,7 @@ impl ReviewStore {
         collect_reviews(&mut stmt, params![worktree])
     }
 
-    /// Return reviews for a specific file within a worktree.
+    /// worktree 内の特定ファイルについてのレビューを返す。
     #[allow(dead_code)]
     pub fn reviews_for_file(&self, worktree: &str, file_path: &str) -> Result<Vec<ReviewComment>> {
         let mut stmt = self.conn.prepare(
@@ -124,10 +124,10 @@ impl ReviewStore {
         collect_reviews(&mut stmt, params![worktree, file_path])
     }
 
-    /// Mark the given review comments as published to GitHub, stamping them
-    /// all with the same `timestamp` (one publish batch = one moment in
-    /// time). Once set, `unpublished_reviews` no longer returns them, so a
-    /// retried publish doesn't repost the same comment.
+    /// 指定したレビューコメント群を GitHub に投稿済みとしてマークし、全件に
+    /// 同じタイムスタンプを刻む（1回の投稿バッチ＝1つの時刻）。一度設定されると
+    /// unpublished_reviews はそれらを返さなくなるので、投稿をリトライしても
+    /// 同じコメントを二重投稿することはない。
     pub fn mark_published(&self, comment_ids: &[String], timestamp: &str) -> Result<()> {
         self.conn.execute_batch("BEGIN;")?;
         let result = (|| -> Result<()> {
@@ -151,8 +151,8 @@ impl ReviewStore {
         }
     }
 
-    /// Return a branch's review comments that have not yet been posted to
-    /// GitHub (`published_at IS NULL`).
+    /// ブランチのレビューコメントのうち、まだ GitHub に投稿されていないもの
+    /// （published_at IS NULL）を返す。
     pub fn unpublished_reviews(&self, branch: &str) -> Result<Vec<ReviewComment>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
@@ -164,33 +164,33 @@ impl ReviewStore {
         collect_reviews(&mut stmt, params![branch])
     }
 
-    /// Resolve a full comment id or a unique prefix of one to the full id.
+    /// コメントの完全な id、またはその一意なプレフィックスを、完全な id に解決する。
     ///
-    /// Shorter than [`MIN_ID_PREFIX_LEN`] is rejected: that is the length the
-    /// tools advertise, and it is also how comment ids are printed back, so
-    /// anything shorter is a mistake rather than a legitimate shorthand.
+    /// [MIN_ID_PREFIX_LEN] より短いものは拒否する。これはツールが公表している
+    /// 長さであり、かつコメント id が実際に表示される際の長さでもあるため、
+    /// それより短いものは正当な省略ではなく単なる入力ミスとみなす。
     ///
-    /// `prefix` must consist only of hex digits and `-` (the alphabet a UUID
-    /// is drawn from) or this returns `Ok(None)` without touching the
-    /// database — a bare `LIKE` pattern built from an unvalidated prefix
-    /// would let `%`/`_` act as SQL wildcards (e.g. `prefix = "%"` matching
-    /// any comment), and rejecting that shape up front costs nothing a
-    /// legitimate id or id-prefix would ever need. When multiple rows match,
-    /// the first by `id` is returned rather than treated as ambiguous — this
-    /// mirrors the Node MCP server it replaces, just made deterministic with
-    /// an explicit `ORDER BY`.
+    /// prefix は16進数の文字と - のみ（UUID を構成する文字集合）でなければ
+    /// ならず、そうでなければデータベースに触れずに Ok(None) を返す。未検証の
+    /// プレフィックスからそのまま LIKE パターンを組み立てると、%/_ が SQL の
+    /// ワイルドカードとして働いてしまう（例えば prefix = "%" が任意のコメントに
+    /// マッチする）ため、この形を事前に弾いておく。この制限によって正当な
+    /// id や id プレフィックスが困ることは一切ない。複数行がマッチした場合は
+    /// あいまいとして扱わず id 順で最初の1件を返す。これは置き換え元の Node
+    /// 製 MCP サーバの挙動を踏襲したもので、明示的な ORDER BY によって
+    /// 決定的にしている点だけが異なる。
     pub fn resolve_id_prefix(&self, prefix: &str) -> Result<Option<String>> {
-        // The tools advertise "ID or unique prefix (min 8 chars)" — enforce it
-        // rather than just documenting it. A one- or two-character prefix
-        // matches whichever id happens to sort first, so a model that mistypes
-        // an id would resolve or reply to *someone else's* comment and be told
-        // it succeeded.
+        // ツール側は「ID または一意なプレフィックス（最短8文字）」と公表している。
+        // それをドキュメントに書くだけでなく実際に強制する。1〜2文字の
+        // プレフィックスだと、たまたま id順で最初に来たものにマッチしてしまい、
+        // id を打ち間違えたモデルが他人のコメントを解決・返信してしまい、
+        // しかも成功したと報告されることになる。
         if prefix.len() < MIN_ID_PREFIX_LEN {
             return Ok(None);
         }
-        // Ids are UUIDs, so anything outside hex-and-dashes cannot match one.
-        // Rejecting it here also keeps `%` and `_` — LIKE's wildcards — from
-        // reaching the pattern below, where they would match unrelated rows.
+        // id は UUID なので、16進数とハイフン以外の文字を含むものは絶対に
+        // マッチしない。ここで拒否しておけば、LIKE のワイルドカードである
+        // % と _ が下のパターンに紛れ込んで無関係な行にマッチすることも防げる。
         if !prefix.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             return Ok(None);
         }
@@ -207,17 +207,17 @@ impl ReviewStore {
         }
     }
 
-    /// Return pending review comments, optionally narrowed by branch,
-    /// worktree, and/or file path.
+    /// 未解決のレビューコメントを返す。branch、worktree、file_path で
+    /// 任意に絞り込める。
     ///
-    /// `branch` matches the `branch` column **or** the `worktree` column
-    /// (`OR`, both bound to the same value). Under the v4 schema's `CHECK
-    /// (branch IS NULL OR worktree = branch)` the `branch = ?` side can never
-    /// be the one that makes a match — a non-null `branch` always agrees with
-    /// `worktree` already — so the `OR` is redundant against this schema. It
-    /// is kept anyway for parity with the Node MCP server this replaces,
-    /// which predates that CHECK and could see rows where the two disagreed
-    /// (see `docs/spec-s6-mcp-tools.md` §1).
+    /// branch は branch カラムまたは worktree カラムのどちらかにマッチする
+    /// （OR で、両方とも同じ値にバインドする）。v4 スキーマの CHECK
+    /// （branch IS NULL OR worktree = branch）の下では、非 null な branch は
+    /// 常に既に worktree と一致しているため、branch = ? 側だけがマッチの
+    /// 決め手になることは起こり得ず、この OR は現行スキーマ上は冗長になる。
+    /// それでも残しているのは、置き換え元である Node 製 MCP サーバとの
+    /// 互換性のためで、あちらはこの CHECK が入る前から存在し、両者が
+    /// 食い違う行が見えることもあった。
     pub fn pending_reviews(
         &self,
         branch: Option<&str>,
@@ -250,9 +250,9 @@ impl ReviewStore {
     }
 }
 
-/// Convert a `rusqlite::Row` into a `ReviewComment`.
+/// rusqlite::Row を ReviewComment に変換する。
 ///
-/// Expected column order (13 columns):
+/// 想定しているカラム順（13カラム）:
 ///   0:id, 1:worktree, 2:file_path, 3:line_start, 4:line_end,
 ///   5:kind, 6:body, 7:status, 8:commit_ref, 9:author, 10:branch,
 ///   11:created_at, 12:updated_at
@@ -314,7 +314,7 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
     })
 }
 
-/// Execute a prepared statement and collect all matching rows into a `Vec<ReviewComment>`.
+/// 準備済みステートメントを実行し、マッチした全行を Vec<ReviewComment> に集める。
 pub(super) fn collect_reviews(
     stmt: &mut rusqlite::Statement<'_>,
     params: impl rusqlite::Params,
@@ -361,17 +361,17 @@ mod tests {
         assert_eq!(review.author, Author::User);
         assert_eq!(review.branch, None);
 
-        // Retrieve by worktree
+        // worktree で取得する
         let reviews = store.reviews_for_worktree("wt1").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].id, review.id);
 
-        // Retrieve by file
+        // ファイルで取得する
         let reviews = store.reviews_for_file("wt1", "src/main.rs").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].id, review.id);
 
-        // No reviews for a different file
+        // 別のファイルにはレビューがない
         let reviews = store.reviews_for_file("wt1", "src/lib.rs").unwrap();
         assert!(reviews.is_empty());
     }
@@ -403,8 +403,8 @@ mod tests {
     fn line_range_and_author() {
         let store = test_store();
 
-        // worktree and branch carry the same branch name (the v4 CHECK enforces
-        // this); the comment column stores it in both.
+        // worktree と branch には同じブランチ名を持たせる（v4 の CHECK が強制
+        // している）。コメントのカラムにも両方に格納される。
         let review = store
             .add_review(
                 "feature/x",
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(review.author, Author::Claude);
         assert_eq!(review.branch.as_deref(), Some("feature/x"));
 
-        // Single-line (line_end = None)
+        // 単一行（line_end = None）
         let r2 = store
             .add_review(
                 "wt1",
@@ -526,22 +526,23 @@ mod tests {
         assert_eq!(rows[0].id, pending.id);
     }
 
-    /// Exercises the `(branch = ? OR worktree = ?)` clause. Under the v4
-    /// CHECK (`branch IS NULL OR worktree = branch`), `branch = ?` can never
-    /// be the side that produces a match on its own — a non-null `branch`
-    /// always already agrees with `worktree` — so this test only isolates
-    /// the `worktree = ?` half (`via_worktree`, whose `branch` is NULL); the
-    /// `via_branch` row happens to also satisfy `worktree = ?`, it does not
-    /// prove the `branch = ?` side does anything under this schema. Both
-    /// rows must still come back for a `branch` filter of `"feat/x"`.
+    /// (branch = ? OR worktree = ?) 句を検証する。v4 の CHECK
+    /// （branch IS NULL OR worktree = branch）の下では、branch = ? 単独が
+    /// マッチの決め手になることはない（非 null な branch は常に既に
+    /// worktree と一致している）。そのためこのテストは worktree = ? 側
+    /// （via_worktree、branch は NULL）だけを切り分けている。via_branch の
+    /// 行はたまたま worktree = ? も満たしてしまうため、branch = ? 側が
+    /// このスキーマ上で何か効いていることの証明にはならない。それでも
+    /// branch フィルタ "feat/x" に対しては両方の行が返ってこなければ
+    /// ならない。
     #[test]
     fn pending_reviews_matches_branch_or_worktree_column() {
         let store = test_store();
 
-        // The v4 CHECK (`branch IS NULL OR worktree = branch`) forces
-        // `worktree` to agree with a non-null `branch`, so this row matches
-        // both columns — the row below is what isolates the `worktree`-only
-        // path.
+        // v4 の CHECK（branch IS NULL OR worktree = branch）は worktree を
+        // 非 null な branch と一致させることを強制するため、この行は両方の
+        // カラムにマッチする。worktree のみの経路を切り分けているのは
+        // 下の行の方。
         let via_branch = store
             .add_review(
                 "feat/x",
@@ -674,8 +675,8 @@ mod tests {
             )
             .unwrap();
 
-        // Without the hex/`-` validation this would resolve to whichever
-        // comment sorts first by id — a security-relevant escape.
+        // 16進数と - の検証がなければ、id順で最初に来たコメントに解決されて
+        // しまう。セキュリティ上重要な抜け穴。
         assert_eq!(store.resolve_id_prefix("%").unwrap(), None);
     }
 
@@ -683,12 +684,12 @@ mod tests {
     fn resolve_id_prefix_is_deterministic_with_multiple_matches() {
         let store = test_store();
 
-        // Hand-crafted ids sharing a prefix — real UUIDs are random, so this
-        // is the only way to reliably provoke an ambiguous prefix. Inserted
-        // in descending id order on purpose: inserting ascending would let
-        // rowid order (SQLite's default without an ORDER BY) coincide with
-        // id order and pass even if the `ORDER BY id` were dropped from the
-        // query.
+        // プレフィックスを共有するように手作りした id。実際の UUID は
+        // ランダムなので、あいまいなプレフィックスを確実に起こす唯一の方法が
+        // これになる。意図的に id の降順で挿入している。昇順で挿入すると、
+        // rowid の順序（ORDER BY がない場合の SQLite のデフォルト）が id の
+        // 順序と一致してしまい、クエリから ORDER BY id を外しても
+        // テストが通ってしまう。
         for id in [
             "aaaaaaaa-2222-0000-0000-000000000000",
             "aaaaaaaa-1111-0000-0000-000000000000",
@@ -724,9 +725,9 @@ mod tests {
             )
             .unwrap();
 
-        // `_` is `LIKE`'s single-character wildcard — the other one besides
-        // `%`, and just as much an escape if a bare LIKE pattern were built
-        // from an unvalidated prefix.
+        // _ は LIKE の1文字ワイルドカードで、% のもう一方に当たる。未検証の
+        // プレフィックスからそのまま LIKE パターンを組み立てれば、こちらも
+        // 同様に抜け穴になる。
         assert_eq!(store.resolve_id_prefix("_").unwrap(), None);
     }
 
@@ -767,16 +768,16 @@ mod tests {
             )
             .unwrap();
 
-        // Contains no `%`/`_` at all — a validator that only strips LIKE
-        // wildcard characters (rather than actually checking the alphabet
-        // is hex digits + `-`) would let this slip through unchanged.
+        // %/_ を一切含まない。LIKE のワイルドカード文字を取り除くだけで
+        // （文字集合が16進数+-であることを実際にはチェックしない）
+        // バリデータを実装していた場合、これはそのまま素通りしてしまう。
         assert_eq!(store.resolve_id_prefix("xyz").unwrap(), None);
     }
 
-    /// A prefix shorter than the advertised 8 characters resolves to nothing.
-    /// Without this, a mistyped id like `"a"` silently matches whichever
-    /// comment sorts first — resolving or replying to someone else's comment
-    /// and reporting success.
+    /// 公表している8文字より短いプレフィックスは何にも解決されない。この
+    /// チェックがなければ、"a" のような打ち間違いの id が、id順で最初に
+    /// 来たコメントにサイレントにマッチしてしまい、他人のコメントを
+    /// 解決・返信した上で成功したと報告することになる。
     #[test]
     fn resolve_id_prefix_rejects_prefixes_shorter_than_advertised() {
         let store = test_store();
@@ -794,7 +795,7 @@ mod tests {
             )
             .unwrap();
 
-        // Genuine leading characters of a real id, and still refused.
+        // 実在する id の先頭文字そのものであっても、それでも拒否される。
         for len in 1..MIN_ID_PREFIX_LEN {
             let short_prefix = &review.id[..len];
             assert_eq!(
@@ -803,8 +804,8 @@ mod tests {
                 "{len}-char prefix must not resolve"
             );
         }
-        // The advertised length does resolve, so the bound is the only thing
-        // being tested here.
+        // 公表している長さちょうどなら解決される。ここでテストしているのは
+        // その境界だけである。
         assert_eq!(
             store
                 .resolve_id_prefix(&review.id[..MIN_ID_PREFIX_LEN])

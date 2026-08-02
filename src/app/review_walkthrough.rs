@@ -1,12 +1,13 @@
-//! AI walkthrough generation orchestration for [`App`].
+//! [App] における AI ウォークスルー生成のオーケストレーション。
 //!
-//! Runs [`crate::walkthrough::generate`] on a background thread — which asks
-//! whichever model `[api]` names, never a `claude` process Conductor spawns
-//! itself — and reflects the result into the review database via
-//! [`crate::review_store::ReviewStore`].
+//! バックグラウンドスレッドで [crate::walkthrough::generate] を実行する — 問い合わせ
+//! 先は [api] で指定されたモデルであり、Conductor 自身が起動する claude プロセスでは
+//! 決してない — そして結果を [crate::review_store::ReviewStore] 経由でレビュー
+//! データベースへ反映する。
 //!
-//! One generation may be in flight per branch ([`WalkthroughGenerations`]), so
-//! a reviewer touring one worktree can still start a walkthrough in another.
+//! 生成はブランチごとに最大1件まで同時実行できる（[WalkthroughGenerations]）ため、
+//! あるワークツリーを見て回っているレビュアーも、別のワークツリーでウォークスルー
+//! 生成を開始できる。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,8 +16,8 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use super::*;
 
-/// An in-flight generation: where its result will arrive, which branch it is
-/// for, and the flag that stops it.
+/// 実行中の生成: 結果がどこに届くか、どのブランチのためのものか、そして
+/// 停止させるためのフラグを持つ。
 pub struct WalkthroughGeneration {
     pub branch: String,
     result: Receiver<Result<crate::walkthrough::Generated, String>>,
@@ -24,50 +25,49 @@ pub struct WalkthroughGeneration {
 }
 
 impl WalkthroughGeneration {
-    /// Signal the worker to stop. The AI caller checks this between polls of
-    /// its child, so an external command is killed rather than left running.
+    /// ワーカーに停止を通知する。AI 呼び出し側は子プロセスをポーリングする合間に
+    /// これを確認するので、外部コマンドは動かしっぱなしにされず確実にkillされる。
     fn abort(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
 }
 
-/// A generation that stopped running, as handed back by
-/// [`WalkthroughGenerations::take_finished`]. Carries the branch it was for,
-/// because the handle itself is gone by the time the caller reconciles the
-/// database row it left behind.
+/// 実行を終えた生成。[WalkthroughGenerations::take_finished] が返す。
+/// 対象のブランチを保持しているのは、呼び出し側が残されたデータベースの行を
+/// 整合させる時点で、ハンドル自体はすでになくなっているため。
 pub struct FinishedGeneration {
     pub branch: String,
     pub outcome: Result<crate::walkthrough::Generated, String>,
 }
 
-/// Every walkthrough generation in flight in this Conductor instance, at most
-/// one per branch.
+/// この Conductor インスタンスで実行中の全ウォークスルー生成。ブランチごとに
+/// 最大1件まで。
 ///
-/// Keyed by branch, not by "one at a time", because the branch is the only
-/// thing a generation actually contends for: `begin_walkthrough` deletes and
-/// re-inserts the `walkthroughs` row for its branch and `save_walkthrough`
-/// replaces it, so two generations on one branch would race for a single row
-/// and the loser's steps would vanish. Generations for *different* branches —
-/// which means different worktrees, since git won't check one branch out
-/// twice — touch disjoint rows and a database that is already WAL +
-/// `busy_timeout` (see `review_store::schema`), so they can run side by side.
-/// Serializing them was over-broad: it made a reviewer touring one worktree
-/// unable to start a walkthrough in another.
+/// 「同時に1件まで」ではなくブランチをキーにしているのは、生成が実際に競合する
+/// 対象がブランチだけだからである。begin_walkthrough は対象ブランチの
+/// walkthroughs 行を削除して作り直し、save_walkthrough がそれを置き換える。
+/// つまり同じブランチで2つの生成が走ると1つの行を奪い合い、負けた側の手順が
+/// 消えてしまう。*別の*ブランチの生成 — git は同じブランチを二重にチェックアウト
+/// できないので、これは別のワークツリーを意味する — は別々の行に触れ、データベースは
+/// すでに WAL + busy_timeout（review_store::schema 参照）になっているので
+/// 並行して走らせて構わない。すべてを直列化するのはやりすぎで、あるワークツリーを
+/// 見て回っているレビュアーが別のワークツリーでウォークスルーを開始できなくなって
+/// しまっていた。
 #[derive(Default)]
 pub struct WalkthroughGenerations {
     by_branch: HashMap<String, WalkthroughGeneration>,
 }
 
 impl WalkthroughGenerations {
-    /// Whether a generation for `branch` is currently in flight.
+    /// branch の生成が現在実行中かどうか。
     pub fn is_generating(&self, branch: &str) -> bool {
         self.by_branch.contains_key(branch)
     }
 
-    /// Register a freshly spawned generation. The caller is expected to have
-    /// checked [`Self::is_generating`] first: inserting over a live handle
-    /// would drop its receiver, so the worker's result would go nowhere and
-    /// strand that branch's row in `generating` forever.
+    /// 起動したばかりの生成を登録する。呼び出し側は事前に [Self::is_generating]
+    /// を確認している前提。稼働中のハンドルに上書き挿入すると receiver が drop され、
+    /// ワーカーの結果が行き場を失い、そのブランチの行が generating のまま
+    /// 永久に取り残されてしまう。
     pub fn insert(&mut self, generation: WalkthroughGeneration) {
         debug_assert!(
             !self.is_generating(&generation.branch),
@@ -78,21 +78,21 @@ impl WalkthroughGenerations {
             .insert(generation.branch.clone(), generation);
     }
 
-    /// Drain every in-flight generation's result channel, removing the ones
-    /// that are no longer running and returning what each one produced.
+    /// 実行中の全生成の結果チャンネルを取り出し、すでに終わったものを取り除いて
+    /// それぞれが生成した結果を返す。
     ///
-    /// Removal is what makes a dead worker self-healing: a thread that panicked
-    /// or dropped its sender without a result releases its slot here, so the
-    /// next request for that branch starts a fresh generation instead of being
-    /// told one is already running.
+    /// この「取り除く」処理が、死んだワーカーを自己修復にしている。パニックした
+    /// スレッドや結果を送らずに sender を drop したスレッドは、ここで自分の枠を
+    /// 解放するので、同じブランチへの次のリクエストは「すでに実行中」と言われる
+    /// のではなく新しい生成を開始できる。
     pub fn take_finished(&mut self) -> Vec<FinishedGeneration> {
         let mut finished = Vec::new();
         self.by_branch.retain(|branch, generation| {
             let outcome = match generation.result.try_recv() {
                 Ok(outcome) => outcome,
                 Err(TryRecvError::Empty) => return true,
-                // The worker died without sending: treat it as a failure rather
-                // than leaving the row in `generating` forever.
+                // 送信せずにワーカーが死んだ場合: generating のまま永久に放置するのではなく
+                // 失敗として扱う。
                 Err(TryRecvError::Disconnected) => {
                     Err("walkthrough generation ended without a result".to_string())
                 }
@@ -106,12 +106,12 @@ impl WalkthroughGenerations {
         finished
     }
 
-    /// Whether nothing is in flight (lets the caller skip polling entirely).
+    /// 何も実行中でないかどうか（呼び出し側がポーリングを丸ごとスキップできるようにする）。
     pub fn is_empty(&self) -> bool {
         self.by_branch.is_empty()
     }
 
-    /// Stop every in-flight generation (used when the app shuts down).
+    /// 実行中の全生成を停止する（アプリのシャットダウン時に使用）。
     pub fn abort_all(&mut self) {
         for (_, generation) in self.by_branch.drain() {
             generation.abort();
@@ -120,14 +120,14 @@ impl WalkthroughGenerations {
 }
 
 impl App {
-    /// Kick off walkthrough generation for the selected worktree's branch:
-    /// insert the `generating` row, then start the background worker.
-    /// Re-running regenerates from scratch — except when a `ready` walkthrough
-    /// already exists for the current branch tip, which is a no-op that just
-    /// re-shows it (the diff, and so the walkthrough, hasn't changed). While a
-    /// generation for *this* branch is already in flight it's a no-op with a
-    /// status hint; other branches' generations are unaffected and keep
-    /// running, so several worktrees can be generating at once.
+    /// 選択中のワークツリーのブランチに対してウォークスルー生成を開始する:
+    /// generating 行を挿入してからバックグラウンドワーカーを起動する。
+    /// 再実行はゼロから生成し直す — ただし現在のブランチ先端に対してすでに ready
+    /// なウォークスルーが存在する場合は何もせず、それを再表示するだけである
+    /// （diff が変わっていなければウォークスルーも変わっていないため）。
+    /// *このブランチ*の生成がすでに実行中の場合は何もせずステータスヒントを出す。
+    /// 他のブランチの生成には影響せず走り続けるので、複数のワークツリーで同時に
+    /// 生成できる。
     pub fn cmd_generate_walkthrough(&mut self, force: bool) {
         if self.review_store.is_none() {
             self.set_status(
@@ -144,11 +144,11 @@ impl App {
             );
             return;
         }
-        // Only one generation may be in flight *per branch*: replacing the
-        // handle would drop the running worker's receiver, stranding its
-        // branch's row in `generating` forever. Generations for other branches
-        // are none of this branch's business — they write disjoint rows, so
-        // they run concurrently (see [`WalkthroughGenerations`]).
+        // 実行中の生成は*ブランチごとに*1件までしか許されない: ハンドルを置き換えると
+        // 実行中のワーカーの receiver が drop され、そのブランチの行が generating
+        // のまま永久に取り残されてしまう。他のブランチの生成はこのブランチには
+        // 関係ない — 別々の行に書き込むので並行して走らせられる
+        // （[WalkthroughGenerations] 参照）。
         if self.walkthrough.generations.is_generating(&branch) {
             self.set_status(
                 "A walkthrough is already being generated for this branch.".to_string(),
@@ -164,11 +164,12 @@ impl App {
             return;
         };
 
-        // Skip regeneration when a ready walkthrough already covers this exact
-        // branch tip: the diff hasn't moved, so the walkthrough hasn't either.
-        // Only when the current HEAD is actually known — an unknown tip (or a
-        // pre-tracking row) never matches, so it always regenerates. `force`
-        // (Alt+w / the palette's force entry) bypasses this to rebuild anyway.
+        // この正確なブランチ先端をすでに ready なウォークスルーがカバーしている場合は
+        // 再生成をスキップする: diff が動いていなければウォークスルーも動いていない。
+        // これは現在の HEAD が実際に分かっている場合のみ成立する — 未知の先端
+        // （またはトラッキング開始前の行）は決して一致しないので、常に再生成される。
+        // force（Alt+w、またはパレットの force エントリ）はこれを迂回して
+        // 強制的に再構築する。
         let up_to_date = !force
             && head_oid.as_deref().is_some_and(|head| {
             self.review_store
@@ -196,10 +197,10 @@ impl App {
             return;
         }
 
-        // Insert the `generating` row first so the UI (and a timeout) always
-        // have a row to reflect, then spawn. Base ref comes from the PR meta
-        // when this branch was taken in via PR intake. Record the branch tip
-        // so the next same-commit regenerate short-circuits above.
+        // UI（とタイムアウト処理）が反映する行を常に持てるよう、先に generating
+        // 行を挿入してから起動する。ベース ref は、このブランチが PR intake 経由で
+        // 取り込まれた場合には PR のメタ情報から得る。次回同じコミットで再生成した
+        // ときに上の分岐で短絡できるよう、ブランチ先端を記録しておく。
         let store = self.review_store.as_ref().expect("checked above");
         if let Err(e) = store.begin_walkthrough(&branch, head_oid.as_deref()) {
             let msg = format!("Failed to start walkthrough: {e}");
@@ -213,9 +214,9 @@ impl App {
             .and_then(|m| m.base_ref);
         let api = self.config.api.clone();
         let language = self.config.review.walkthrough_language.clone();
-        // `[review] walkthrough_model` is not passed on: which model answers is
-        // the configured command's business now, not Conductor's. A user who
-        // wants a specific model puts it in `[api] command`.
+        // [review] walkthrough_model はここには渡さない: どのモデルが答えるかは、
+        // 今や設定されたコマンド側の責務であり Conductor の責務ではない。特定のモデルを
+        // 使いたいユーザは [api] command の側で指定する。
         let worktree = wt_path.clone();
         let branch_for_thread = branch.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -233,8 +234,8 @@ impl App {
                 )
             }))
             .unwrap_or_else(|_| Err("walkthrough generation thread panicked".to_string()));
-            // A closed receiver means the app moved on (or shut down); nothing
-            // to report to, and nothing to clean up.
+            // receiver が閉じているのはアプリが先に進んだ（またはシャットダウンした）
+            // ことを意味する。報告先も後始末すべきものもない。
             let _ = tx.send(outcome);
         });
 
@@ -243,10 +244,9 @@ impl App {
             result: rx,
             cancel,
         });
-        // Display-only switch — no `set_focus`, so kicking off a generation
-        // from the palette never steals focus from an active terminal input;
-        // it just makes the in-progress state visible once the reviewer does
-        // look at the Explorer.
+        // 表示だけを切り替える — set_focus は呼ばない。そのためパレットから生成を
+        // 開始してもアクティブなターミナル入力からフォーカスを奪うことはない。
+        // レビュアーが実際に Explorer を見たときに進行中の状態が見えるようにするだけ。
         self.viewer_state.explorer.explorer_bottom_view =
             crate::viewer::ExplorerBottomView::Walkthrough;
         self.set_status(
@@ -256,22 +256,21 @@ impl App {
         self.refresh_reviews();
     }
 
-    /// Stop every in-flight generation so none outlives the app as an orphaned
-    /// subprocess. Called once on shutdown (see `event_loop.rs`, right before
-    /// it returns on `should_quit`) — a generation still running at that point
-    /// would otherwise keep burning tokens with no one left to read its result.
+    /// 実行中の生成をすべて停止し、孤児サブプロセスとしてアプリより長生きしないように
+    /// する。シャットダウン時に一度だけ呼ばれる（event_loop.rs の should_quit で
+    /// 返る直前を参照）— その時点でまだ生成が動いていると、結果を読む者が誰もいない
+    /// まま延々とトークンを消費し続けてしまう。
     pub fn shutdown_walkthrough_generation(&mut self) {
         self.walkthrough.generations.abort_all();
     }
 
-    /// Drain the in-flight generations' result channels and reconcile each
-    /// one's database row with it. Called from
-    /// [`App::poll_all_background_ops`](Self::poll_all_background_ops).
+    /// 実行中の生成の結果チャンネルを取り出し、それぞれのデータベース行と整合させる。
+    /// [App::poll_all_background_ops](Self::poll_all_background_ops) から呼ばれる。
     ///
-    /// Unlike the old headless-session path, the row's `ready` state is written
-    /// *here*, from the parsed reply — the model has no way to write it itself
-    /// over the plain text seam, which is also why a malformed reply can no
-    /// longer leave a row stuck in `generating`.
+    /// 旧来の headless セッション経由の方式と異なり、行の ready 状態はパースした
+    /// 返信から*ここで*書き込まれる — モデル自身には、素のテキストというインタフェースを
+    /// 越えてそれを書き込む手段がない。これが、壊れた返信によって行が generating
+    /// のまま止まってしまうことがもはや起きない理由でもある。
     pub fn poll_walkthrough_generation(&mut self) {
         if self.walkthrough.generations.is_empty() {
             return;
@@ -287,11 +286,11 @@ impl App {
         self.refresh_reviews();
     }
 
-    /// Turn one finished generation into the status message to flash, writing
-    /// a `failed` row when it did not produce a usable walkthrough.
+    /// 完了した1件の生成をフラッシュ表示用のステータスメッセージへ変換する。
+    /// 使えるウォークスルーを生成できなかった場合は failed 行を書き込む。
     ///
-    /// Messages name the branch: with several worktrees generating at once,
-    /// the one that finishes is often not the one the reviewer is looking at.
+    /// メッセージにはブランチ名を含める: 複数のワークツリーで同時に生成していると、
+    /// 完了するのはレビュアーが見ているものとは限らないことが多いため。
     fn reconcile_finished_generation(
         &mut self,
         finished: FinishedGeneration,
@@ -311,12 +310,11 @@ impl App {
         }
     }
 
-    /// Write a parsed generation into the review database, returning the status
-    /// line to show for it.
+    /// パースした生成結果をレビューデータベースへ書き込み、表示するステータス行を返す。
     ///
-    /// The inline comments are best-effort on purpose: they are the optional
-    /// extra on top of the tour, so a comment that fails to insert must not
-    /// turn a perfectly good walkthrough into a failed one.
+    /// インラインコメントの挿入はあえてベストエフォートにしている。あくまでツアーに
+    /// 対するおまけの追加要素なので、コメントの挿入に失敗しても、それ自体が
+    /// 問題のないウォークスルーを失敗扱いにしてしまってはいけない。
     fn save_generated_walkthrough(
         &mut self,
         branch: &str,
@@ -381,10 +379,10 @@ mod tests {
 
     type Outcome = Result<crate::walkthrough::Generated, String>;
 
-    /// A registered generation plus the sender its worker thread would hold.
-    /// Keeping the sender alive is what "still running" means to
-    /// [`WalkthroughGenerations::take_finished`]; dropping it is how a worker
-    /// that died without a result looks from here.
+    /// 登録済みの生成と、そのワーカースレッドが保持するはずの sender のペア。
+    /// sender を生かしておくことが [WalkthroughGenerations::take_finished] にとって
+    /// 「まだ実行中」を意味し、drop することがここから見た「結果を残さずに死んだ
+    /// ワーカー」の見え方になる。
     fn generation(branch: &str) -> (WalkthroughGeneration, Sender<Outcome>, Arc<AtomicBool>) {
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -410,8 +408,8 @@ mod tests {
 
     #[test]
     fn different_branches_generate_side_by_side() {
-        // The bug this replaced: one in-flight generation blocked every other
-        // worktree's branch, not just its own.
+        // これが置き換えたバグ: 実行中の生成が1件あると、自分のブランチだけでなく
+        // 他のすべてのワークツリーのブランチもブロックされていた。
         let mut generations = WalkthroughGenerations::default();
         let (a, _tx_a, _) = generation("feature/a");
         let (b, _tx_b, _) = generation("feature/b");
@@ -420,7 +418,7 @@ mod tests {
 
         assert!(generations.is_generating("feature/a"));
         assert!(generations.is_generating("feature/b"));
-        // Neither displaced nor finished the other.
+        // どちらも相手を置き換えたり終了させたりしていない。
         assert!(generations.take_finished().is_empty());
 
         generations.abort_all();
@@ -433,7 +431,7 @@ mod tests {
         let (a, _tx_a, _) = generation("feature/a");
         generations.insert(a);
 
-        // This predicate is the guard `cmd_generate_walkthrough` consults.
+        // この述語が cmd_generate_walkthrough が参照するガードである。
         assert!(generations.is_generating("feature/a"));
         assert!(!generations.is_generating("feature/b"));
     }
@@ -454,9 +452,9 @@ mod tests {
 
     #[test]
     fn a_dead_worker_frees_its_branch() {
-        // Stale-lock recovery: a thread that panicked (or otherwise dropped its
-        // sender without a result) must release its slot, so the next request
-        // regenerates rather than being told one is already running.
+        // 古いロックからの回復: パニックした（あるいは何らかの理由で結果を送らずに
+        // sender を drop した）スレッドは自分の枠を解放しなければならず、次のリクエストは
+        // 「すでに実行中」と言われるのではなく再生成される。
         let mut generations = WalkthroughGenerations::default();
         let (a, tx, _) = generation("feature/a");
         generations.insert(a);
@@ -468,7 +466,7 @@ mod tests {
         assert!(err.contains("without a result"), "got: {err}");
         assert!(!generations.is_generating("feature/a"));
 
-        // And the branch accepts a fresh generation immediately.
+        // そしてそのブランチは即座に新しい生成を受け付ける。
         let (again, _tx, _) = generation("feature/a");
         generations.insert(again);
         assert!(generations.is_generating("feature/a"));
@@ -484,7 +482,7 @@ mod tests {
 
         generations.abort_all();
 
-        // The flag each worker (and, through it, the AI caller's child) polls.
+        // 各ワーカー（そしてそれを通じて AI 呼び出し側の子プロセス）がポーリングするフラグ。
         assert!(cancel_a.load(Ordering::Relaxed));
         assert!(cancel_b.load(Ordering::Relaxed));
         assert!(generations.is_empty());

@@ -1,15 +1,15 @@
-//! Standalone helper for finding recently touched files in a worktree.
+//! worktree 内で最近触れられたファイルを見つける独立ヘルパー。
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use git2::{Repository, StatusOptions, StatusShow};
 
-/// Return a list of recently modified file paths (relative to worktree root).
+/// 最近変更されたファイルパス(worktree ルートからの相対パス)の一覧を返す。
 ///
-/// Collects dirty files from `git status` and then files changed in the most
-/// recent commits (up to `limit` total unique paths).  This is a standalone
-/// function that opens the repo itself, matching patterns used elsewhere.
+/// git status の dirty なファイルと、直近のコミットで変更されたファイルを
+/// 合わせて (limit 件の一意なパスまで) 収集する。他の箇所と同じパターンで
+/// 自前でリポジトリを開く独立関数。
 pub fn recently_modified_files(worktree_path: &Path, limit: usize) -> Result<Vec<String>> {
     let repo = Repository::discover(worktree_path)
         .with_context(|| format!("failed to discover repo from {}", worktree_path.display()))?;
@@ -17,7 +17,7 @@ pub fn recently_modified_files(worktree_path: &Path, limit: usize) -> Result<Vec
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
 
-    // 1. Dirty files from working tree status.
+    // 1. ワーキングツリーの状態から dirty なファイルを集める。
     let mut opts = StatusOptions::new();
     opts.show(StatusShow::IndexAndWorkdir)
         .include_untracked(true);
@@ -34,7 +34,7 @@ pub fn recently_modified_files(worktree_path: &Path, limit: usize) -> Result<Vec
         }
     }
 
-    // 2. Files changed in recent commits (walk up to 10 commits).
+    // 2. 直近のコミット(最大10件)で変更されたファイル。
     if result.len() < limit
         && let Ok(head) = repo.head()
         && let Some(oid) = head.target()
@@ -63,7 +63,7 @@ pub fn recently_modified_files(worktree_path: &Path, limit: usize) -> Result<Vec
                 Err(_) => continue,
             };
 
-            // Diff against first parent (or empty tree for root commit).
+            // 第一親との差分を取る(ルートコミットなら空ツリーとの差分)。
             let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
             if let Ok(diff) = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) {
                 for delta in diff.deltas() {

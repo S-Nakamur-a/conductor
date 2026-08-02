@@ -1,7 +1,7 @@
 //! パネル共通の枠 (タイトル・ボーダー・右上の展開ボタン)。
 //!
 //! Explorer / Viewer / Terminal / Worktree の各パネルは同じ体裁の枠を持つ:
-//! 左上にタイトル、フォーカス中は太いボーダー、右上に `[<=>]` の最大化トグル。
+//! 左上にタイトル、フォーカス中は太いボーダー、右上に [<=>] の最大化トグル。
 //! これを各ファイルで手書きしていたので、フォーカス時の字形や展開ボタンの
 //! 表記を変えるたびに全パネルを追いかける必要があった。
 
@@ -20,9 +20,9 @@ const EXPAND_LABEL: &str = "[<=>]";
 /// 最大化中のパネルの復帰ボタン。
 const COLLAPSE_LABEL: &str = "[>=<]";
 
-/// パネル枠の組み立て。[`Self::into_block`] で ratatui の [`Block`] にする。
+/// パネル枠の組み立て。[Self::into_block] で ratatui の [Block] にする。
 ///
-/// 追加の装飾 (`title_bottom` など) が要るパネルは、得られた `Block` に
+/// 追加の装飾 (title_bottom など) が要るパネルは、得られた Block に
 /// そのまま生やせばよい — ここで面倒を見るのは全パネルに共通する部分だけ。
 pub struct PanelChrome<'a> {
     theme: &'a Theme,
@@ -30,7 +30,7 @@ pub struct PanelChrome<'a> {
     title_style: Option<Style>,
     focused: bool,
     border_color: Color,
-    /// `Some(最大化中か)` なら右上に展開ボタンを出す。`None` なら出さない。
+    /// Some(最大化中か) なら右上に展開ボタンを出す。None なら出さない。
     expanded: Option<bool>,
 }
 
@@ -51,7 +51,7 @@ impl<'a> PanelChrome<'a> {
         }
     }
 
-    /// 右上に最大化トグルを出す。`expanded` は「いま最大化されているか」。
+    /// 右上に最大化トグルを出す。expanded は「いま最大化されているか」。
     pub fn with_expand_button(mut self, expanded: bool) -> Self {
         self.expanded = Some(expanded);
         self

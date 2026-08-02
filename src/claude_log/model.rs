@@ -1,97 +1,96 @@
-//! Display-ready types normalised from the raw session log schema.
+//! 生のセッションログスキーマから正規化した、表示用の型。
 
 use super::tool_class::ResultKind;
 
-/// Speaker of a conversation turn.
+/// 会話ターンの発話者。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
     User,
     Assistant,
 }
 
-/// A display-ready conversation entry normalised from one raw log record.
+/// 生のログレコード1件から正規化した、表示用の会話エントリ。
 #[derive(Debug, Clone)]
 pub struct LogEntry {
     pub role: Role,
-    /// Model name, when present on an assistant message.
-    /// Retained for future use (e.g. per-entry model display); not rendered in the
-    /// current CLI-style glyph layout.
+    /// アシスタントメッセージに付いていた場合のモデル名。
+    /// 将来の用途（エントリごとのモデル表示など）のために保持しているだけで、
+    /// 現状の CLI 風グリフレイアウトでは描画しない。
     #[allow(dead_code)]
     pub model: Option<String>,
     pub blocks: Vec<DisplayBlock>,
 }
 
-/// A display-ready content fragment within a [`LogEntry`].
+/// LogEntry 内の、表示用コンテンツの断片。
 #[derive(Debug, Clone)]
 pub enum DisplayBlock {
-    /// Markdown prose (user input or assistant text response).
+    /// Markdown 本文（ユーザ入力またはアシスタントのテキスト応答）。
     Text(String),
-    /// A tool invocation. The renderer classifies it (see
-    /// `crate::claude_log::classify`) using `name` and the raw `input` JSON
-    /// to decide how — or whether — it draws a line.
+    /// ツール呼び出し。レンダラは name と生の input JSON を使ってこれを分類し
+    /// （crate::claude_log::classify 参照）、行をどう描く／描かないか決める。
     ToolUse {
         name: String,
         input: serde_json::Value,
-        /// Whether this call's paired `tool_result` reported an error.
-        /// Resolved by a pre-scan pass over the whole session (see
-        /// `session.rs::scan_errored_tool_use_ids`), since the result record
-        /// always comes *after* the call — `false` if the call had no id, or
-        /// no matching result was found (e.g. a truncated log).
+        /// この呼び出しに対応する tool_result がエラーを報告したかどうか。
+        /// result レコードは必ず呼び出しの後に来るため、セッション全体を
+        /// 事前スキャンして解決する（session.rs::scan_errored_tool_use_ids 参照）。
+        /// 呼び出しに id が無い、または対応する result が見つからない場合
+        /// （ログが途中で切れているなど）は false になる。
         errored: bool,
     },
-    /// The result returned by a tool, mirroring Claude Code's collapsed `⎿`
-    /// block (or, for a `Counted` tool, folding into the result-side count).
+    /// ツールが返した結果。Claude Code の折りたたまれた ⎿ ブロックを模す
+    /// （Counted なツールの場合は結果側のカウントに畳み込まれる）。
     ToolResult {
-        /// What this result draws, resolved from its paired `tool_use` at
-        /// parse time (the call's `input` — which `Bash`'s classification
-        /// depends on — is gone by render time). `Hidden` when pairing failed:
-        /// an unpaired result has no way to know its tool, and drawing a bare
-        /// error block for it would be noise.
+        /// この結果が何を描画するかは、パース時にペアとなる tool_use から
+        /// 解決する（Bash の分類が依存する呼び出しの input は、描画時点では
+        /// もう残っていない）。ペアリングに失敗した場合は Hidden になる。
+        /// 対応が取れない result はどのツールのものか分からず、そこに素の
+        /// エラーブロックを描いてもノイズにしかならないため。
         kind: ResultKind,
-        /// The tool's full output, one entry per line (unlike the old capped
-        /// preview, expansion needs every line).
+        /// ツールの出力全文を1行ずつ格納したもの。以前の件数上限付きプレビュー
+        /// と違い、展開表示には全行が必要になる。
         lines: Vec<String>,
-        /// Whether the tool reported an error.
+        /// ツールがエラーを報告したかどうか。
         is_error: bool,
     },
-    /// A thinking block — the assistant's reasoning text (may be empty).
+    /// thinking ブロック — アシスタントの思考テキスト（空のこともある）。
     Thinking {
         text: String,
-        /// Collapsed-mode "Thought for {N}s" duration: the whole-second diff
-        /// between this record's timestamp and the previous *displayed*
-        /// record's (see `session.rs`), minimum 1.
+        /// 折りたたみ表示の「Thought for {N}s」に使う秒数。このレコードの
+        /// タイムスタンプと、直前に表示されたレコードのタイムスタンプとの
+        /// 秒単位の差分（session.rs 参照）で、最小値は1。
         duration_secs: u64,
     },
-    /// A message from another agent teammate, embedded in a user turn via
-    /// Conductor's own `<teammate-message teammate_id="...">` wrapper (not a
-    /// Claude Code CLI construct — see `crate::claude_log::convert`). The
-    /// wrapper's `summary` attribute, if present, is always ignored; `body`
-    /// is the full message text, shown only when expanded.
+    /// 別のエージェントチームメイトからのメッセージ。ユーザターンの中に
+    /// Conductor 独自の <teammate-message teammate_id="..."> ラッパーで
+    /// 埋め込まれる（Claude Code CLI 自体の構造ではない。
+    /// crate::claude_log::convert 参照）。ラッパーの summary 属性が
+    /// あっても常に無視し、body がメッセージ全文で展開時のみ表示する。
     TeammateMessage { id: String, body: String },
-    /// A `⎿`-prefixed annotation attached to the block above it: the output of
-    /// a slash command (`<local-command-stdout>`) or a file the CLI carried
-    /// into the conversation (a `file`/`compact_file_reference` attachment).
+    /// 直前のブロックに付随する ⎿ 始まりの注釈: スラッシュコマンドの出力
+    /// （<local-command-stdout>）や、CLI が会話に持ち込んだファイル
+    /// （file / compact_file_reference の添付）。
     ///
-    /// Measured — `/model` followed by its stdout renders as
+    /// 実測では、/model とその stdout は
     /// ```text
     /// ❯ /model
     ///   ⎿  Set model to Opus 5
     /// ```
-    /// with **no** blank line between them, which is why an entry made only of
-    /// these suppresses the separator that would normally precede it (see the
-    /// line builder).
+    /// のように間に空行を挟まずに描画される。そのため、これだけで構成される
+    /// エントリは、本来手前に入るはずの区切りを抑制する（ライン構築側を参照）。
     ///
-    /// Multi-line stdout is unmeasured; it is laid out like an expanded tool
-    /// result (glyph on the first line, 5-column indent after).
+    /// 複数行の stdout については実測できていないため、展開済みツール結果と
+    /// 同じレイアウト（1行目にグリフ、以降5カラムインデント）にしている。
     Annotation { lines: Vec<String> },
-    /// A one-line `⏺` notice the CLI generated itself rather than the model —
-    /// currently only a background-task completion, whose `<task-notification>`
-    /// wrapper collapses to just its `<summary>` text.
+    /// モデルではなく CLI 自身が生成した1行の ⏺ 通知 — 現状はバックグラウンド
+    /// タスク完了のみで、その <task-notification> ラッパーは <summary> の
+    /// テキストだけに畳み込まれる。
     ///
-    /// Measured: the whole XML wrapper is replaced by
-    /// `⏺ Background command "…" completed (exit code 0)`.
+    /// 実測では、XML ラッパー全体が
+    /// ⏺ Background command "…" completed (exit code 0)
+    /// に置き換わる。
     Notice(String),
-    /// The `✻ Conversation compacted` marker written where a `/compact` cut
-    /// the context.
+    /// /compact でコンテキストが切られた箇所に書かれる
+    /// ✻ Conversation compacted マーカー。
     CompactBoundary,
 }

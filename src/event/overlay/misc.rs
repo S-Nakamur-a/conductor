@@ -1,5 +1,5 @@
-//! Small standalone overlays: the help popup, the command palette, and the
-//! theme picker (with live preview).
+//! 小さな独立オーバーレイ群: ヘルプポップアップ、コマンドパレット、
+//! テーマピッカー（ライブプレビュー付き）。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -11,14 +11,14 @@ use crate::event::clipboard_paste;
 use super::filterable_overlay_list_nav;
 use super::overlay_list_nav;
 
-// ── Overlay: help ───────────────────────────────────────────────────────
+// オーバーレイ: ヘルプ
 
 pub(in crate::event) fn handle_help_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
             app.overlays.active = ActiveOverlay::None;
         }
-        // Allow scrolling through help pages by switching context.
+        // コンテキストを切り替えることでヘルプページを行き来できるようにする。
         KeyCode::Char('1') => app.overlays.help.context = Focus::Worktree,
         KeyCode::Char('2') => app.overlays.help.context = Focus::Explorer,
         KeyCode::Char('3') => app.overlays.help.context = Focus::Viewer,
@@ -27,7 +27,7 @@ pub(in crate::event) fn handle_help_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: command palette ─────────────────────────────────────────────
+// オーバーレイ: コマンドパレット
 
 pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
     use crate::command_palette;
@@ -82,19 +82,19 @@ pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent)
     }
 }
 
-// ── Overlay: theme picker ────────────────────────────────────────────────
+// オーバーレイ: テーマピッカー
 
-/// Handle keys for the theme picker overlay.
+/// テーマピッカーオーバーレイのキーを処理する。
 ///
-/// Up/Down (or j/k) browse the list with live preview — each movement calls
-/// `set_theme(name, false)` so the UI updates immediately without persisting.
-/// Enter confirms and persists the selected theme; Esc reverts to the theme
-/// that was active when the picker was opened.
+/// Up/Down（または j/k）でライブプレビューしながらリストを閲覧する。移動する
+/// たびに set_theme(name, false) を呼ぶことで、永続化せずに即座に UI へ反映する。
+/// Enter で選択したテーマを確定・永続化し、Esc でピッカーを開いた時点の
+/// テーマに戻す。
 pub(in crate::event) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) {
     let count = app.overlays.theme_picker.themes.len();
 
     if overlay_list_nav(&app.keymap, &key, &mut app.overlays.theme_picker.selected, count) {
-        // Live preview: apply the newly highlighted theme without persisting.
+        // ライブプレビュー: 永続化せずに新しくハイライトされたテーマを適用する。
         let name = app
             .overlays
             .theme_picker

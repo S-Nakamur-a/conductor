@@ -1,6 +1,6 @@
-//! Tests for `AppearanceSnapshot` / `adopt_appearance` / `has_restart_changes`
-//! invariants: every field must be live-reloadable or restart-required, never
-//! neither.
+//! AppearanceSnapshot / adopt_appearance / has_restart_changes の不変条件の
+//! テスト: すべてのフィールドは live で再読込可能か restart が必要かの
+//! どちらかに必ず属し、どちらでもないことは許されない。
 
 use std::path::PathBuf;
 
@@ -16,22 +16,23 @@ fn appearance_snapshot_includes_layout() {
     assert_eq!(snap.layout_terminal_split_pct, 80);
 }
 
-// ── adopt_appearance / appearance_snapshot invariants / has_restart_changes ──
+// adopt_appearance / appearance_snapshot の不変条件 / has_restart_changes
 
-/// AC4 往復不変条件: adopt_appearance 後に snapshot が new と一致すること。
-/// AppearanceSnapshot に足してadopt_appearance のコピーに足し忘れた場合を検出する。
+/// 往復不変条件: adopt_appearance 後に snapshot が new と一致すること。
+/// AppearanceSnapshot にフィールドを足したのに adopt_appearance のコピーに
+/// 足し忘れた場合を検出する。
 #[test]
 fn adopt_appearance_round_trip_invariant() {
     let mut cur = Config::default();
     let mut new = Config::default();
-    // Change every live field to a non-default value.
+    // すべての live フィールドをデフォルトでない値に変更する。
     new.ui.theme = Some(String::from("dracula"));
     new.viewer.theme = String::from("dracula");
     new.viewer.syntax_theme_file = Some(String::from("/tmp/custom.tmTheme"));
-    new.viewer.tab_width = 4; // default is 2
-    new.viewer.word_wrap = true; // default is false
-    new.diff.word_diff = false; // default is true
-    new.diff.default_view = DiffView::SideBySide; // default is Unified
+    new.viewer.tab_width = 4; // デフォルトは2
+    new.viewer.word_wrap = true; // デフォルトは false
+    new.diff.word_diff = false; // デフォルトは true
+    new.diff.default_view = DiffView::SideBySide; // デフォルトは Unified
     new.general.decoration = String::from("space");
     new.layout.explorer_width_pct = 30;
     new.layout.viewer_width_pct = 42;
@@ -75,15 +76,15 @@ fn appearance_snapshot_detects_each_live_field_change() {
     );
 
     let mut c = base.clone();
-    c.viewer.tab_width = 4; // default is 2
+    c.viewer.tab_width = 4; // デフォルトは2
     assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "viewer.tab_width");
 
     let mut c = base.clone();
-    c.diff.word_diff = false; // default is true
+    c.diff.word_diff = false; // デフォルトは true
     assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "diff.word_diff");
 
     let mut c = base.clone();
-    c.diff.default_view = DiffView::SideBySide; // default is Unified
+    c.diff.default_view = DiffView::SideBySide; // デフォルトは Unified
     assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "diff.default_view");
 
     let mut c = base.clone();
@@ -110,8 +111,8 @@ fn has_restart_changes_false_for_live_only_diff() {
     let mut new = Config::default();
     new.ui.theme = Some(String::from("dracula"));
     new.viewer.theme = String::from("nord");
-    new.viewer.tab_width = 4; // default is 2
-    new.diff.word_diff = false; // default is true
+    new.viewer.tab_width = 4; // デフォルトは2
+    new.diff.word_diff = false; // デフォルトは true
     new.general.decoration = String::from("space");
     new.layout.explorer_width_pct = 30;
     assert!(!has_restart_changes(&old, &new));
@@ -135,7 +136,7 @@ fn has_restart_changes_true_for_each_restart_field() {
     assert!(has_restart_changes(&base, &c), "general.repo");
 
     let mut c = base.clone();
-    c.general.auto_resume = false; // default is true
+    c.general.auto_resume = false; // デフォルトは true
     assert!(has_restart_changes(&base, &c), "general.auto_resume");
 
     let mut c = base.clone();
@@ -147,7 +148,7 @@ fn has_restart_changes_true_for_each_restart_field() {
     assert!(has_restart_changes(&base, &c), "terminal.active_scrollback");
 
     let mut c = base.clone();
-    c.api.provider = String::from("claude"); // default is "gemini"
+    c.api.provider = String::from("claude"); // デフォルトは "gemini"
     assert!(has_restart_changes(&base, &c), "api.provider");
 
     let mut c = base.clone();
@@ -155,7 +156,7 @@ fn has_restart_changes_true_for_each_restart_field() {
     assert!(has_restart_changes(&base, &c), "ccusage.enabled");
 }
 
-/// Partition test: すべてのフィールドが live か restart のどちらかに必ず属する。
+/// 分割テスト: すべてのフィールドが live か restart のどちらかに必ず属する。
 /// フィールドを 1 つ変えた new で snapshot != か has_restart_changes が必ず true になること。
 #[test]
 fn every_field_is_either_live_or_restart() {
@@ -194,7 +195,7 @@ fn every_field_is_either_live_or_restart() {
     }
     {
         let mut c = base.clone();
-        c.general.auto_resume = false; // default is true
+        c.general.auto_resume = false; // デフォルトは true
         assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.auto_resume");
     }
     {
@@ -216,19 +217,19 @@ fn every_field_is_either_live_or_restart() {
     }
     {
         let mut c = base.clone();
-        c.viewer.tab_width = 4; // default is 2
+        c.viewer.tab_width = 4; // デフォルトは2
         assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "viewer.tab_width");
     }
     // diff (live)
     {
         let mut c = base.clone();
-        c.diff.word_diff = false; // default is true
+        c.diff.word_diff = false; // デフォルトは true
         assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "diff.word_diff");
     }
     // api
     {
         let mut c = base.clone();
-        c.api.provider = String::from("claude"); // default is "gemini"
+        c.api.provider = String::from("claude"); // デフォルトは "gemini"
         assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "api.provider");
     }
     // ccusage

@@ -1,10 +1,10 @@
-//! `gh api` 経由でレビューコメントを GitHub へ公開する。
+//! gh api 経由でレビューコメントを GitHub へ公開する。
 //!
-//! `app/review_publish.rs` (確認オーバーレイの状態、バックグラウンドスレッドの起動、
-//! DB への書き込みといった `App` 側の段取り) とは分けてある。`pr_intake.rs` を
-//! `app/worktree.rs` から分けているのと同じ理由で、`gh` の CLI と JSON の正確な
-//! 綴りを 1 か所にまとめるため。ここにあるのは素のデータと `gh` のサブプロセス
-//! 呼び出しだけで `App` に依存しないので、アプリを起動せずに単体テストできる。
+//! app/review_publish.rs (確認オーバーレイの状態、バックグラウンドスレッドの起動、
+//! DB への書き込みといった App 側の段取り) とは分けてある。pr_intake.rs を
+//! app/worktree.rs から分けているのと同じ理由で、gh の CLI と JSON の正確な
+//! 綴りを 1 か所にまとめるため。ここにあるのは素のデータと gh のサブプロセス
+//! 呼び出しだけで App に依存しないので、アプリを起動せずに単体テストできる。
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -25,8 +25,8 @@ pub struct PublishComment {
     pub body: String,
 }
 
-/// 確認済みで実行できる公開リクエスト。[`publish`] が必要とするものが、呼び出し側で
-/// 既に解決されている (owner と repo は `pr_review_meta.pr_url` 由来、コメントは
+/// 確認済みで実行できる公開リクエスト。[publish] が必要とするものが、呼び出し側で
+/// 既に解決されている (owner と repo は pr_review_meta.pr_url 由来、コメントは
 /// 実際に差分に含まれる行だけに絞り込み済み)。
 pub struct PublishRequest {
     pub owner: String,
@@ -35,9 +35,9 @@ pub struct PublishRequest {
     pub comments: Vec<PublishComment>,
 }
 
-/// `App::publish_confirm` の y/n オーバーレイを支える状態。確認後の公開が送る
+/// App::publish_confirm の y/n オーバーレイを支える状態。確認後の公開が送る
 /// 絞り込み済みのコメントと、現在の差分が覆っていない行にあったために飛ばした件数。
-/// ユーザーが確認したあと [`PublishRequest`] を組み立てる元にもなる。
+/// ユーザーが確認したあと [PublishRequest] を組み立てる元にもなる。
 pub struct PublishConfirm {
     pub owner: String,
     pub repo: String,
@@ -62,11 +62,11 @@ pub enum PublishOutcome {
     Failed { error: String },
 }
 
-/// `comments` を、公開して安全なものと、飛ばした件数に分ける。
+/// comments を、公開して安全なものと、飛ばした件数に分ける。
 ///
 /// GitHub のレビューコメントは現在の差分のハンクに含まれる行に紐づいていなければ
 /// ならない。差分の外の行にコメントが 1 件でもあると一括全体が 422 で失敗するので、
-/// 差分外のコメントは失敗してから捨てるのではなく、[`publish`] に届く前に
+/// 差分外のコメントは失敗してから捨てるのではなく、[publish] に届く前に
 /// 除いておかねばならない。
 pub fn filter_publishable(
     comments: Vec<PublishComment>,
@@ -85,7 +85,7 @@ pub fn filter_publishable(
     (publishable, skipped)
 }
 
-/// `[start, end]` (新側の行番号) の両方が、`file_path` の同一の差分ハンクに
+/// [start, end] (新側の行番号) の両方が、file_path の同一の差分ハンクに
 /// 収まるかどうか。どちらの差分セクション (コミット済み・未コミット) も対象にする。
 /// レビューコメントはどちらのセクションに対して付けられたかを記録しないため、
 /// 両方を調べる。
@@ -109,8 +109,8 @@ fn line_range_in_diff(file_path: &str, start: u32, end: u32, diff: &DiffState) -
         })
 }
 
-/// GitHub の PR URL (`https://github.com/{owner}/{repo}/pull/{n}`) から
-/// `owner` と `repo` を取り出す。
+/// GitHub の PR URL (https://github.com/{owner}/{repo}/pull/{n}) から
+/// owner と repo を取り出す。
 pub fn owner_repo_from_pr_url(url: &str) -> Option<(String, String)> {
     let rest = url.strip_prefix("https://github.com/")?;
     let mut parts = rest.splitn(3, '/');
@@ -122,9 +122,7 @@ pub fn owner_repo_from_pr_url(url: &str) -> Option<(String, String)> {
     Some((owner.to_string(), repo.to_string()))
 }
 
-// ---------------------------------------------------------------------------
 // ペイロードの形 (フィールド名は実際の gh api の応答で確認済み)
-// ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 struct ReviewCommentPayload<'a> {
@@ -163,7 +161,7 @@ impl<'a> ReviewCommentPayload<'a> {
     }
 }
 
-/// `POST /repos/{owner}/{repo}/pulls/{N}/reviews` のボディ。
+/// POST /repos/{owner}/{repo}/pulls/{N}/reviews のボディ。
 #[derive(Serialize)]
 struct BatchReviewPayload<'a> {
     commit_id: &'a str,
@@ -172,8 +170,8 @@ struct BatchReviewPayload<'a> {
     comments: Vec<ReviewCommentPayload<'a>>,
 }
 
-/// `POST /repos/{owner}/{repo}/pulls/{N}/comments` のボディ (コメント 1 件ずつの
-/// フォールバック)。一括エンドポイントが `line` / `side` を受け付けるかは未検証だが、
+/// POST /repos/{owner}/{repo}/pulls/{N}/comments のボディ (コメント 1 件ずつの
+/// フォールバック)。一括エンドポイントが line / side を受け付けるかは未検証だが、
 /// こちらは必ず受け付ける。
 #[derive(Serialize)]
 struct SingleCommentPayload<'a> {
@@ -182,11 +180,9 @@ struct SingleCommentPayload<'a> {
     comment: ReviewCommentPayload<'a>,
 }
 
-// ---------------------------------------------------------------------------
 // gh CLI の配管
-// ---------------------------------------------------------------------------
 
-/// PR の head コミットの sha を `gh pr view <N> --json headRefOid` で明示的に取る。
+/// PR の head コミットの sha を gh pr view <N> --json headRefOid で明示的に取る。
 /// レビュー API の既定 (投稿時点の HEAD が何であれそれを使う) に任せないのは、
 /// 既定だと同時に走る push と競合するため。
 fn fetch_head_commit_id(pr_number: u64) -> Result<String, String> {
@@ -214,7 +210,7 @@ fn fetch_head_commit_id(pr_number: u64) -> Result<String, String> {
     Ok(oid)
 }
 
-/// `gh api <path> --input -`。JSON のボディは CLI の引数ではなく stdin へ流す。
+/// gh api <path> --input -。JSON のボディは CLI の引数ではなく stdin へ流す。
 /// コメントの本文は長かったり複数行だったりするため。
 fn gh_api_post(path: &str, body: &str) -> Result<(), GhApiError> {
     let mut child = Command::new("gh")
@@ -246,8 +242,8 @@ fn gh_api_post(path: &str, body: &str) -> Result<(), GhApiError> {
 
 struct GhApiError {
     /// 失敗が GitHub の 422 Unprocessable Entity に見えるかどうか。コメント 1 件ずつの
-    /// 投稿へフォールバックする合図になる。`gh api` はこれを stderr に
-    /// `gh: Validation Failed (HTTP 422): ...` のような形で報告する。`gh` 自身の
+    /// 投稿へフォールバックする合図になる。gh api はこれを stderr に
+    /// gh: Validation Failed (HTTP 422): ... のような形で報告する。gh 自身の
     /// エラー整形をパースせずに済む中では、部分一致がいちばん壊れにくい判定。
     is_422: bool,
     message: String,
@@ -255,7 +251,7 @@ struct GhApiError {
 
 /// 公開リクエストを実行する。コミット ID を解決し、一括レビューを POST し、
 /// 一括が 422 で拒否されたらコメントを 1 件ずつ投稿する方式へフォールバックする
-/// (実装前に `gh api` で確かめたなかで、一括エンドポイントが `line` / `side` を
+/// (実装前に gh api で確かめたなかで、一括エンドポイントが line / side を
 /// 受け付けるかどうかだけが未検証のまま残っていた)。
 pub fn publish(req: PublishRequest) -> PublishOutcome {
     if req.comments.is_empty() {
@@ -301,7 +297,7 @@ pub fn publish(req: PublishRequest) -> PublishOutcome {
     }
 }
 
-/// 各コメントを `/pulls/{N}/comments` へ個別に投稿する。こちらは `line` / `side` を
+/// 各コメントを /pulls/{N}/comments へ個別に投稿する。こちらは line / side を
 /// 無条件で受け付ける。GitHub API が一括レビューを拒否したときのフォールバック。
 fn publish_fallback(req: &PublishRequest, commit_id: &str) -> PublishOutcome {
     let comments_path = format!(
@@ -447,9 +443,9 @@ mod tests {
 
     #[test]
     fn publish_with_no_comments_succeeds_without_calling_gh() {
-        // コメントが空ならコミット ID の問い合わせは起きないはず。本物の `gh` も
+        // コメントが空ならコミット ID の問い合わせは起きないはず。本物の gh も
         // ネットワークも無いサンドボックスのテスト環境ではそれがハングまたは
-        // 失敗するので、ここで動かせる `publish()` の経路はこれだけ。
+        // 失敗するので、ここで動かせる publish() の経路はこれだけ。
         let outcome = publish(PublishRequest {
             owner: "o".to_string(),
             repo: "r".to_string(),

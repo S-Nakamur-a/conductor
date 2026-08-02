@@ -1,4 +1,4 @@
-//! Worktree/branch enumeration and per-worktree status snapshotting.
+//! worktree / ブランチの列挙と、worktree ごとのステータススナップショット。
 
 use std::path::{Path, PathBuf};
 
@@ -8,14 +8,14 @@ use git2::{Repository, StatusOptions, StatusShow};
 use super::{GitEngine, WorktreeInfo};
 
 impl GitEngine {
-    // ── Worktree enumeration ─────────────────────────────────────────
+    // worktree の列挙
 
-    /// List all worktrees (the main one and any linked ones) with their
-    /// branch, status counts, and last commit info.
+    /// 全 worktree(main と linked のすべて)を、ブランチ・ステータス件数・
+    /// 最終コミット情報とともに一覧する。
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
         let mut infos: Vec<WorktreeInfo> = Vec::new();
 
-        // 1. Main worktree — the one that owns .git/
+        // 1. main worktree — .git/ を所有しているもの
         let main_path = self.main_worktree_path()?;
         match self.worktree_info_at(&main_path, true) {
             Ok(info) => infos.push(info),
@@ -27,7 +27,7 @@ impl GitEngine {
             }
         }
 
-        // 2. Linked worktrees reported by libgit2
+        // 2. libgit2 が報告する linked worktree
         if let Ok(worktree_names) = self.repo.worktrees() {
             for name in worktree_names.iter().flatten() {
                 match self.linked_worktree_info(name) {
@@ -42,9 +42,9 @@ impl GitEngine {
         Ok(infos)
     }
 
-    // ── Local branch listing ────────────────────────────────────
+    // ローカルブランチの一覧取得
 
-    /// Return a sorted list of all local branch names.
+    /// ローカルブランチ名すべてをソート済みの一覧として返す。
     pub fn list_local_branches(&self) -> Result<Vec<String>> {
         let branches = self.repo.branches(Some(git2::BranchType::Local))?;
         let mut names: Vec<String> = branches
@@ -57,10 +57,10 @@ impl GitEngine {
         Ok(names)
     }
 
-    // ── Branch prefix helpers ────────────────────────────────────
+    // ブランチ prefix のヘルパー
 
-    /// Strip common branch prefixes (feature/, fix/, etc.) to derive a
-    /// short directory name.
+    /// 短いディレクトリ名を得るため、よくあるブランチ prefix(feature/、
+    /// fix/ など)を取り除く。
     pub fn strip_branch_prefix(branch: &str) -> &str {
         for prefix in &[
             "feature/", "fix/", "bugfix/", "hotfix/", "release/", "chore/",
@@ -72,14 +72,14 @@ impl GitEngine {
         branch
     }
 
-    /// Return the base directory for worktrees.
+    /// worktree のベースディレクトリを返す。
     ///
-    /// Resolution order:
-    /// 1. `CONDUCTOR_WORKTREE_DIR` environment variable
-    /// 2. `override_dir` (from config `general.worktree_dir`)
-    /// 3. Default: `<main-repo-parent>/<repo-name>-worktrees/`
+    /// 解決順序:
+    /// 1. 環境変数 CONDUCTOR_WORKTREE_DIR
+    /// 2. override_dir(config の general.worktree_dir から)
+    /// 3. デフォルト: <main-repo-parent>/<repo-name>-worktrees/
     ///
-    /// Creates the directory if it does not exist.
+    /// ディレクトリが存在しなければ作成する。
     pub fn worktrees_base_dir(&self, override_dir: Option<&Path>) -> Result<PathBuf> {
         let base = if let Ok(env_dir) = std::env::var("CONDUCTOR_WORKTREE_DIR") {
             PathBuf::from(env_dir)
@@ -104,10 +104,10 @@ impl GitEngine {
         Ok(base)
     }
 
-    // ── Internal: per-worktree status snapshot ────────────────────────
+    // 内部: worktree ごとのステータススナップショット
 
-    /// Build `WorktreeInfo` for a linked worktree identified by its
-    /// libgit2 name.
+    /// libgit2 の名前で識別される linked worktree の WorktreeInfo を
+    /// 構築する。
     pub(super) fn linked_worktree_info(&self, name: &str) -> Result<WorktreeInfo> {
         let wt = self.repo.find_worktree(name)?;
         let wt_path = wt.path().to_path_buf();
@@ -115,7 +115,7 @@ impl GitEngine {
         self.worktree_info_at(&wt_path, false)
     }
 
-    /// Build `WorktreeInfo` by opening the repository at `path`.
+    /// path のリポジトリを開いて WorktreeInfo を構築する。
     pub(super) fn worktree_info_at(&self, path: &Path, is_main: bool) -> Result<WorktreeInfo> {
         let repo = Repository::open(path)
             .with_context(|| format!("cannot open repo at {}", path.display()))?;
@@ -145,8 +145,8 @@ impl GitEngine {
         })
     }
 
-    /// Compute ahead/behind counts relative to the upstream tracking branch.
-    /// Returns `(None, None)` if there is no upstream or on error.
+    /// upstream の追跡ブランチに対する ahead/behind の件数を計算する。
+    /// upstream が無い場合やエラー時は (None, None) を返す。
     fn ahead_behind_upstream(repo: &Repository) -> (Option<usize>, Option<usize>) {
         let head = match repo.head() {
             Ok(h) if h.is_branch() => h,
@@ -178,7 +178,7 @@ impl GitEngine {
         }
     }
 
-    /// Get the current branch name, or `"HEAD (detached)"` if detached.
+    /// 現在のブランチ名を取得する。detached の場合は "HEAD (detached)"。
     fn current_branch_name(repo: &Repository) -> String {
         if let Ok(head) = repo.head()
             && head.is_branch()
@@ -189,9 +189,10 @@ impl GitEngine {
         "HEAD (detached)".to_string()
     }
 
-    /// Compute `(added, modified, deleted, staged)` status counts for a repository.
-    /// The first three pick one bucket per file; `staged` overlaps them and is
-    /// the only one that reacts to `git add` / `git reset` (see `WorktreeInfo`).
+    /// リポジトリの (added, modified, deleted, staged) ステータス件数を
+    /// 計算する。最初の3つはファイルごとに1つのバケットを選ぶが、staged
+    /// はそれらと重複してよく、git add / git reset に反応する唯一の値
+    /// である(WorktreeInfo を参照)。
     fn status_counts(repo: &Repository) -> Result<(usize, usize, usize, usize)> {
         let mut opts = StatusOptions::new();
         opts.show(StatusShow::IndexAndWorkdir)
@@ -207,12 +208,12 @@ impl GitEngine {
 
         for entry in statuses.iter() {
             let s = entry.status();
-            // Counted separately from (and overlapping with) the three totals
-            // below: those pick one bucket per file with the index checked
-            // first, so staging a modified file keeps every one of them the
-            // same. This is the only number that moves on `git add` / `git
-            // reset`, and it is what tells the poll loop to re-read git status
-            // so the Explorer's stage colours follow along.
+            // 以下の3つの合計とは別に(そして重複して)数える: あちらは
+            // index を先にチェックしてファイルごとに1つのバケットを選ぶので、
+            // 変更済みファイルをステージしてもどれも変わらない。これは
+            // git add / git reset で動く唯一の数値で、poll ループに
+            // git status を読み直させ、Explorer のステージ色を追従させる
+            // トリガーになる。
             if s.intersects(
                 git2::Status::INDEX_NEW
                     | git2::Status::INDEX_MODIFIED
@@ -222,7 +223,7 @@ impl GitEngine {
             ) {
                 staged += 1;
             }
-            // Index changes
+            // index の変更
             if s.intersects(git2::Status::INDEX_NEW) {
                 added += 1;
             } else if s.intersects(
@@ -234,9 +235,9 @@ impl GitEngine {
             } else if s.intersects(git2::Status::INDEX_DELETED) {
                 deleted += 1;
             }
-            // Working-directory changes (only count if not already counted
-            // from the index side above).  We use `else if` chains so each
-            // file is counted at most once.
+            // working-directory の変更(上の index 側ですでにカウント済み
+            // でなければカウントする)。各ファイルが高々1回しか数えられ
+            // ないよう else if チェーンを使う。
             else if s.intersects(git2::Status::WT_NEW) {
                 added += 1;
             } else if s.intersects(
@@ -251,19 +252,18 @@ impl GitEngine {
         Ok((added, modified, deleted, staged))
     }
 
-    // ── Main worktree path resolution ──────────────────────────────────
+    // main worktree のパス解決
 
-    /// Determine the absolute path to the main (primary) worktree.
+    /// main(プライマリ)worktree の絶対パスを求める。
     ///
-    /// When opened from a linked worktree, `repo.workdir()` returns *that*
-    /// worktree's path, not the main one.  We detect this by inspecting the
-    /// git dir structure: linked worktrees have their git dir at
-    /// `<main>/.git/worktrees/<name>/`.
+    /// linked worktree から開かれた場合、repo.workdir() は main ではなく
+    /// *その* worktree のパスを返す。これは git dir の構造を調べて検出する:
+    /// linked worktree の git dir は <main>/.git/worktrees/<name>/ にある。
     pub fn main_worktree_path(&self) -> Result<PathBuf> {
         let git_dir = self.repo.path(); // linked: <main>/.git/worktrees/<name>/
         // main:   <main>/.git/
 
-        // If git_dir is inside .git/worktrees/, walk up to the main repo root.
+        // git_dir が .git/worktrees/ の中にあれば、main リポジトリのルートまで遡る。
         if let Some(worktrees_dir) = git_dir.parent()
             && worktrees_dir.file_name() == Some("worktrees".as_ref())
             && let Some(dot_git) = worktrees_dir.parent()
@@ -272,15 +272,15 @@ impl GitEngine {
             return Ok(main_repo.to_path_buf());
         }
 
-        // Normal (non-bare) repository.
-        // `repo.workdir()` may return a path with a trailing slash (libgit2
-        // convention).  Normalize via `components().collect()` so the path
-        // is consistent with linked-worktree paths and shell `$PWD` values.
+        // 通常の(bare でない)リポジトリ。
+        // repo.workdir() は末尾スラッシュ付きのパスを返すことがある
+        // (libgit2 の慣習)。linked-worktree のパスやシェルの $PWD の値と
+        // 一致させるため components().collect() で正規化する。
         if let Some(workdir) = self.repo.workdir() {
             return Ok(workdir.components().collect());
         }
 
-        // Bare repo — the "main worktree" is the git dir's parent.
+        // bare リポジトリ — "main worktree" は git dir の親ディレクトリになる。
         git_dir
             .parent()
             .map(|p| p.to_path_buf())

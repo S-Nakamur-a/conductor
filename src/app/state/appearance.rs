@@ -2,17 +2,17 @@
 
 use syntect::parsing::SyntaxSet;
 
-/// 実際の [`crate::theme::Theme`] を組み立てるための「元データ」。
+/// 実際の [crate::theme::Theme] を組み立てるための「元データ」。
 ///
-/// `Theme` そのものは `App::theme` に置いてある — 描画のたびに読まれる
+/// Theme そのものは App::theme に置いてある — 描画のたびに読まれる
 /// ホットな値なので、1 階層浅いところに置く価値がある。こちらはそれを
 /// 再構築するための入力で、テーマ切り替え・config のライブリロード・
-/// OSC11 による自動切り替えのどれもがこの 2 つから `Theme` を作り直す。
+/// OSC11 による自動切り替えのどれもがこの 2 つから Theme を作り直す。
 #[derive(Default)]
 pub struct ThemeSelection {
-    /// 有効なテーマ名。`Theme` を引くための正準キー。
+    /// 有効なテーマ名。Theme を引くための正準キー。
     pub name: String,
-    /// ハイコントラスト変換を適用するか。`config.ui.high_contrast` の写し。
+    /// ハイコントラスト変換を適用するか。config.ui.high_contrast の写し。
     pub high_contrast: bool,
 }
 

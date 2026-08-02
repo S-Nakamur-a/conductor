@@ -1,11 +1,11 @@
-//! Shared test helper for the `review_store` submodule test suites.
+//! review_store 配下のサブモジュールのテストスイートが共有するテストヘルパー。
 #![cfg(test)]
 
 use std::path::Path;
 
 use super::ReviewStore;
 
-/// Create an in-memory ReviewStore for testing.
+/// テスト用にインメモリの ReviewStore を作る。
 pub(super) fn test_store() -> ReviewStore {
     ReviewStore::open(Path::new(":memory:")).expect("open in-memory DB")
 }

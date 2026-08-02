@@ -1,4 +1,4 @@
-//! vt100 PTY screen snapshotting and rendering into cached ratatui `Line`s.
+//! vt100 PTY 画面のスナップショット取得と、キャッシュされた ratatui の Line への描画。
 
 use std::sync::{Arc, Mutex};
 
@@ -11,39 +11,40 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-/// Cached PTY render output to avoid expensive vt100 snapshots every frame.
+/// 毎フレーム高コストな vt100 スナップショットを取らずに済むよう、PTY の描画結果を
+/// キャッシュしたもの。
 ///
-/// When a terminal panel is not focused, we reuse the previously built
-/// ratatui `Line` data instead of re-locking the vt100 parser mutex and
-/// copying thousands of cells.
+/// ターミナルパネルがフォーカスされていないときは、vt100 パーサの mutex を
+/// 再度ロックして数千セルをコピーする代わりに、以前構築した ratatui の Line
+/// データを再利用する。
 #[derive(Default)]
 pub struct PtyRenderCache {
     pub lines: Vec<Line<'static>>,
     pub effective_offset: usize,
-    /// Cursor position (row, col) from the vt100 parser, used for IME positioning.
+    /// vt100 パーサから得たカーソル位置（row, col）。IME の位置決めに使う。
     pub cursor_position: Option<(u16, u16)>,
 }
 
-/// A snapshot of a single cell's content and style, extracted from the vt100 screen.
+/// vt100 の画面から抽出した、1セル分の内容とスタイルのスナップショット。
 struct CellSnapshot {
     text: String,
     style: Style,
 }
 
-/// A snapshot of the vt100 screen contents, captured while holding the lock
-/// so that the lock can be released before the (slower) ratatui rendering step.
+/// vt100 画面の内容のスナップショット。ロックを保持している間に取得することで、
+/// （より低速な）ratatui の描画ステップの前にロックを解放できるようにしている。
 struct ScreenSnapshot {
     rows: Vec<Vec<CellSnapshot>>,
     effective_offset: usize,
-    /// Cursor position (row, col) from the vt100 parser.
+    /// vt100 パーサから得たカーソル位置（row, col）。
     cursor_position: (u16, u16),
 }
 
-/// Take a point-in-time snapshot of the vt100 screen contents.
+/// vt100 画面の内容の、その時点でのスナップショットを取得する。
 ///
-/// Uses `try_lock` to avoid blocking when the PTY reader thread holds
-/// the mutex. Returns `None` if the lock is contended — the caller
-/// should reuse the previous cached render in that case.
+/// PTY リーダースレッドが mutex を保持しているときにブロックしないよう
+/// try_lock を使う。ロックが競合している場合は None を返す — その場合
+/// 呼び出し側は以前キャッシュした描画結果を再利用すべき。
 fn snapshot_screen(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,
@@ -60,14 +61,14 @@ fn snapshot_screen(
     let requested_offset = if is_alt_screen { 0 } else { scroll_offset };
 
     parser.set_scrollback(requested_offset);
-    // vt100 internally clamps to the actual scrollback buffer length.
-    // Read back the effective offset so our cache reflects the real position.
+    // vt100 は内部で実際のスクロールバックバッファ長にクランプする。
+    // キャッシュが実際の位置を反映するよう、実効オフセットを読み戻す。
     let effective_offset = parser.screen().scrollback();
 
     let screen = parser.screen();
     let (rows, cols) = screen.size();
 
-    // Debug: log alternate screen state periodically.
+    // デバッグ用: alternate screen の状態を定期的にログ出力する。
     if is_alt_screen {
         let has_content = (0..rows.min(5)).any(|r| {
             (0..cols).any(|c| {
@@ -87,7 +88,7 @@ fn snapshot_screen(
         );
     }
 
-    // Extract cell data into local snapshot.
+    // セルデータをローカルのスナップショットへ抽出する。
     let mut snapshot_rows: Vec<Vec<CellSnapshot>> = Vec::with_capacity(rows.min(max_rows) as usize);
     for row in 0..rows.min(max_rows) {
         let mut row_cells: Vec<CellSnapshot> = Vec::new();
@@ -103,14 +104,14 @@ fn snapshot_screen(
         snapshot_rows.push(row_cells);
     }
 
-    // Capture cursor position before restoring scrollback.
+    // スクロールバックを元に戻す前にカーソル位置を記録する。
     let cursor = screen.cursor_position();
     let cursor_position = (cursor.0, cursor.1);
 
-    // Restore live view so other readers see the current screen.
+    // 他の読み手が現在の画面を見られるよう、ライブビューへ戻す。
     parser.set_scrollback(0);
 
-    // Lock is dropped here when `parser` goes out of scope.
+    // parser がスコープを抜けるここでロックが解放される。
     Some(ScreenSnapshot {
         rows: snapshot_rows,
         effective_offset,
@@ -118,15 +119,15 @@ fn snapshot_screen(
     })
 }
 
-/// Build ratatui `Line`s from a vt100 PTY screen snapshot.
+/// vt100 PTY 画面のスナップショットから ratatui の Line を構築する。
 ///
-/// This is the expensive operation: it locks the vt100 parser mutex,
-/// copies cell data, then builds styled `Line` objects. The result can
-/// be cached in a [`PtyRenderCache`] and reused across frames.
+/// これが高コストな処理: vt100 パーサの mutex をロックし、セルデータを
+/// コピーしてからスタイル付きの Line オブジェクトを構築する。結果は
+/// [PtyRenderCache] にキャッシュしてフレームをまたいで再利用できる。
 ///
-/// Returns `None` if the vt100 parser mutex is currently held by the
-/// PTY reader thread. The caller should keep using the previous cache
-/// instead of blocking the main thread.
+/// vt100 パーサの mutex を現在 PTY リーダースレッドが保持している場合は
+/// None を返す。呼び出し側はメインスレッドをブロックする代わりに、
+/// 以前のキャッシュを使い続けるべき。
 pub fn build_pty_lines(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,
@@ -147,17 +148,19 @@ pub fn build_pty_lines(
     })
 }
 
-/// Render previously built PTY lines from a [`PtyRenderCache`].
+/// [PtyRenderCache] から、以前構築した PTY の Line を描画する。
 ///
-/// This is cheap: the cached `Line`s are blitted straight into the frame
-/// buffer by reference. (It used to `clone()` the whole line vector into a
-/// `Paragraph` — a full deep copy of every span string, twice per frame at
-/// the terminal-focus tick rate, for zero benefit.)
+/// これは低コスト: キャッシュされた Line を参照のままフレームバッファへ
+/// 直接転送するだけ。（以前は行ベクタ全体を clone() して Paragraph に
+/// 渡していた — ターミナルフォーカス時の tick レートで毎フレーム2回、
+/// すべての span の文字列を丸ごとディープコピーしていたが、得るものは
+/// 何もなかった。）
 pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache, theme: &Theme) {
-    // Clear first: when scrolled back the snapshot can have fewer/shorter lines
-    // than the live view, and bare line blitting leaves the uncovered cells
-    // showing the previous frame's text (the "scrollback bleed"). Mirrors the
-    // viewer panel, which clears for the same reason.
+    // まずクリアする: スクロールバックしているときはスナップショットが
+    // ライブビューより行数や幅が少なくなることがあり、そのまま行を転送すると
+    // 覆われないセルに前フレームのテキストが残ってしまう
+    // （「スクロールバックのにじみ」）。同じ理由でクリアしている viewer
+    // パネルと同様の対処。
     frame.render_widget(ratatui::widgets::Clear, area);
     let buf = frame.buffer_mut();
     for (i, line) in cache.lines.iter().enumerate().take(area.height as usize) {
@@ -176,7 +179,7 @@ pub fn render_pty_cached(frame: &mut Frame, area: Rect, cache: &PtyRenderCache, 
     }
 }
 
-/// Build `Vec<Line<'static>>` from a `ScreenSnapshot`.
+/// ScreenSnapshot から Vec<Line<'static>> を構築する。
 fn lines_from_snapshot(snapshot: &ScreenSnapshot) -> Vec<Line<'static>> {
     let mut text_lines: Vec<Line> = Vec::new();
     for row_cells in &snapshot.rows {

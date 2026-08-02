@@ -1,11 +1,12 @@
-//! Keyboard handling while the menu bar has focus.
+//! メニューバーがフォーカスされている間のキーボード処理。
 //!
-//! Once the menu is active it consumes every key, so the letter-jump shortcuts
-//! here can use bare characters without colliding with any panel binding.
+//! メニューがアクティブになるとすべてのキーを消費するので、ここでの文字
+//! ジャンプショートカットは、どのパネルのバインドとも衝突せずに生の文字を
+//! 使える。
 //!
-//! `Esc` unwinds one level at a time (dropdown → bar → app) rather than
-//! dismissing everything at once, matching how the app's other nested modals
-//! behave and giving a mistyped `Down` an obvious way back.
+//! Esc は一度にすべて閉じるのではなく、1段階ずつ (ドロップダウン → バー →
+//! アプリ) 巻き戻す。アプリの他の入れ子モーダルの挙動に合わせてあり、
+//! 誤って Down を押しても分かりやすく戻れる。
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -15,12 +16,12 @@ use crate::menu::state::{
     MenuFocus, find_by_initial, first_selectable, last_selectable, step_menu, step_selection,
 };
 
-/// Items of the menu at `index`, or an empty slice if the index is stale.
+/// index にあるメニューの項目。index が古くなっていれば空スライスを返す。
 fn items_of(index: usize) -> &'static [MenuItem] {
     MENUS.get(index).map(|m| m.items).unwrap_or(&[])
 }
 
-/// Index of the first menu whose title starts with `ch`, case-insensitively.
+/// タイトルが ch から始まる (大文字小文字を無視) 最初のメニューのインデックス。
 fn menu_by_initial(ch: char) -> Option<usize> {
     let target = ch.to_ascii_lowercase();
     MENUS.iter().position(|m| {
@@ -31,36 +32,36 @@ fn menu_by_initial(ch: char) -> Option<usize> {
     })
 }
 
-/// Run the command on `item_idx` of menu `menu_idx`, if it has one and it is
-/// currently available.
+/// メニュー menu_idx の項目 item_idx にコマンドがあり、かつ現在利用可能なら
+/// それを実行する。
 fn activate(app: &mut App, menu_idx: usize, item_idx: usize) {
     let Some(id) = items_of(menu_idx).get(item_idx).and_then(MenuItem::command) else {
         return;
     };
-    // A greyed-out row stays selectable so its existence is visible, but
-    // activating it does nothing — the same as clicking a disabled GUI item.
+    // グレーアウトした行は存在が見えるように選択可能なままにしてあるが、
+    // 実行しても何も起きない — 無効化された GUI 項目をクリックするのと同じ。
     if !crate::menu::command_enabled(id, app) {
         return;
     }
-    // Close first: commands like `OpenRepo` push an overlay, and closing
-    // afterwards would clear the state they just set up.
+    // 先にメニューを閉じる: OpenRepo のようなコマンドはオーバーレイを積むので、
+    // 後から閉じるとそのコマンドが設定した状態ごと消えてしまう。
     app.menu.close();
     app.execute_palette_command(id);
 }
 
-/// Keep the highlighted row inside the visible window of the dropdown.
+/// ハイライトされた行をドロップダウンの可視ウィンドウ内に保つ。
 fn rescroll(app: &mut App) {
     let visible = crate::ui::menu_bar::visible_rows(app, app.layout.cache.frame_area.height);
     app.menu.scroll_selection_into_view(visible);
 }
 
-/// Handle a key while [`MenuFocus`] is active. The caller has already
-/// established that the menu owns input.
+/// [MenuFocus] がアクティブな間のキーを処理する。呼び出し側は、メニューが
+/// 入力を握っていることをすでに確認済み。
 pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) {
     match app.menu.focus {
         MenuFocus::Closed => {}
 
-        // ── Bar focused, nothing dropped down ────────────────────────────
+        // バーにフォーカス、何も開いていない
         MenuFocus::Bar { index } => match key.code {
             KeyCode::Esc => app.menu.close(),
             KeyCode::Left => app.menu.focus_bar(step_menu(MENUS.len(), index, -1)),
@@ -70,8 +71,8 @@ pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) {
             KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.menu.open(index, items_of(index));
             }
-            // A letter jumps straight to that menu and opens it — the fastest
-            // route for someone who knows where they are going.
+            // 文字を押すとそのメニューへ直接ジャンプして開く — 行き先を
+            // 知っている人にとって最速の経路。
             KeyCode::Char(c) => {
                 if let Some(idx) = menu_by_initial(c) {
                     app.menu.open(idx, items_of(idx));
@@ -80,7 +81,7 @@ pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) {
             _ => {}
         },
 
-        // ── Dropdown open ────────────────────────────────────────────────
+        // ドロップダウンが開いている
         MenuFocus::Open {
             index,
             selected,
@@ -143,8 +144,8 @@ pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Mouse-side activation, shared with the click handler so a clicked row and an
-/// `Enter`-ed row go through exactly the same path.
+/// マウス側からの実行。クリックハンドラと共有し、クリックされた行と Enter で
+/// 選択された行がまったく同じ経路を通るようにする。
 pub(in crate::event) fn activate_item(app: &mut App, menu_idx: usize, item_idx: usize) {
     activate(app, menu_idx, item_idx);
 }

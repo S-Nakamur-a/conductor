@@ -1,19 +1,19 @@
-//! Overlay/modal dispatch and the small generic confirm/skip-reason popups
-//! shared by them.
+//! オーバーレイ/モーダルの振り分けと、それらが共有する汎用の小さな
+//! confirm/skip-reason ポップアップ。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::app::App;
 
-/// Render every overlay/modal that can appear on top of the panels: worktree
-/// and review text-input modals, the `ActiveOverlay` popups (switch-branch,
-/// cherry-pick, help, etc.), the filename-search modal, the update dialog, the
-/// references/symbol-action popups, and the skip-reason modal. Shared by the
-/// normal accordion layout and review mode, so overlays keep working
-/// (comments, help, the command palette, …) no matter which layout is showing.
+/// パネルの上に表示され得るあらゆるオーバーレイ/モーダルを描画する: worktree と
+/// review のテキスト入力モーダル、ActiveOverlay 系ポップアップ（ブランチ切替、
+/// cherry-pick、ヘルプなど）、ファイル名検索モーダル、更新ダイアログ、
+/// references/symbol-action ポップアップ、skip-reason モーダル。通常のアコーディオン
+/// レイアウトと review モードの両方で共有されるため、どちらのレイアウトが
+/// 表示されていてもオーバーレイ（コメント、ヘルプ、コマンドパレットなど）は動き続ける。
 pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Worktree input mode overlays (not part of ActiveOverlay enum).
+    // worktree の入力モードオーバーレイ（ActiveOverlay enum には含まれない）。
     match app.worktree_mgr.input_mode {
         crate::app::WorktreeInputMode::CreatingWorktree => {
             super::super::dashboard::render_worktree_input_overlay(frame, area, app);
@@ -38,9 +38,9 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
         }
         crate::app::WorktreeInputMode::Normal => {}
     }
-    // Review input overlays (not part of ActiveOverlay enum). A new comment with
-    // an anchor renders as an inline compose box in the viewer instead of this
-    // modal, so suppress the modal in that case.
+    // review の入力モードオーバーレイ（ActiveOverlay enum には含まれない）。
+    // アンカー付きの新規コメントは、このモーダルではなく viewer 内のインライン
+    // コンポーズボックスとして描画されるため、その場合はモーダルを抑制する。
     if app.review_state.input_mode == crate::review_state::ReviewInputMode::ConfirmingDelete {
         super::super::review::render_delete_confirm_overlay(frame, area, app);
     } else if app.review_state.input_mode != crate::review_state::ReviewInputMode::Normal {
@@ -71,7 +71,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.viewer_state.explorer.walkthrough_detail_active {
         super::super::walkthrough_pane::render_detail_overlay(frame, area, app);
     }
-    // ActiveOverlay-based overlays.
+    // ActiveOverlay に基づくオーバーレイ群。
     match app.overlays.active {
         crate::overlay::ActiveOverlay::None => {}
         crate::overlay::ActiveOverlay::History => {
@@ -120,8 +120,8 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             super::super::theme_picker::render_theme_picker_overlay(frame, area, app);
         }
     }
-    // Fuzzy filename-search ("jump to file") modal — rendered at the top level
-    // so it works even when the explorer column is collapsed (viewer maximized).
+    // ファジーなファイル名検索（「ジャンプ先」）モーダル ―― explorer カラムが
+    // 折りたたまれていて（viewer 最大化時）も動くようトップレベルで描画する。
     if app.viewer_state.filename_search.filename_search_active {
         super::super::dashboard::render_filename_search_overlay(frame, area, app);
     }
@@ -140,33 +140,33 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
         super::super::dashboard::render_publish_confirm_overlay(frame, area, app);
     }
 
-    // ── References overlay (panel-level, not part of OverlayManager) ──
+    // References オーバーレイ（パネルレベル、OverlayManager には含まれない）
     if app.code_nav.references.active {
         crate::ui::references::render_references_overlay(frame, area, app);
     }
 
-    // ── Symbol action overlay (after hint selection) ──
+    // シンボルアクションオーバーレイ（ヒント選択後）
     if app.code_nav.symbol_action.active {
         crate::ui::symbol_action::render_symbol_action_overlay(frame, area, app);
     }
 
-    // ── Hover-info popup (K in the viewer) ──
+    // ホバー情報ポップアップ（viewer での K）
     if app.code_nav.hover_info.info.is_some() {
         crate::ui::hover_info::render_hover_info_overlay(frame, area, app);
     }
 
-    // ── Skip reason modal ────────────────────────────────────────────
+    // skip reason モーダル
     if let Some(ref reason) = app.worktree_mgr.skip_reason {
         render_skip_reason_overlay(frame, area, reason, &app.theme);
     }
 }
 
-/// Render a small confirmation overlay for worktree deletion.
+/// worktree 削除用の小さな確認オーバーレイを描画する。
 fn render_confirming_delete_overlay(frame: &mut Frame, area: Rect, app: &App) {
     render_confirm_overlay(frame, area, app, " Confirm Delete ", app.theme.error);
 }
 
-/// Generic small confirmation overlay with a customizable title and border color.
+/// タイトルとボーダー色をカスタマイズできる、汎用の小さな確認オーバーレイ。
 fn render_confirm_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -200,7 +200,7 @@ fn render_confirm_overlay(
     }
 }
 
-/// Render a skip-reason informational popup.
+/// skip-reason の情報ポップアップを描画する。
 fn render_skip_reason_overlay(
     frame: &mut Frame,
     area: Rect,

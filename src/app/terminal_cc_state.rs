@@ -1,9 +1,9 @@
-//! Claude Code waiting/active state tracking for [`App`].
+//! [App] における Claude Code の waiting/active 状態の追跡。
 //!
-//! Consumes CC state notifications (both the direct Unix-socket event and the
-//! filesystem hook-signal fallback) to maintain `cc_waiting_worktrees` /
-//! `cc_active_worktrees`, and flushes prompts that were deferred until a
-//! session became ready for input.
+//! CC の状態通知(直接の Unix ソケットイベントと、ファイルシステム上の
+//! フック信号フォールバックの両方)を受け取り、cc_waiting_worktrees /
+//! cc_active_worktrees を維持する。また、セッションが入力可能になるまで
+//! 保留していたプロンプトを送信する。
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -11,13 +11,13 @@ use std::path::PathBuf;
 use super::*;
 
 impl App {
-    // ── Claude Code input-waiting detection ────────────────────────────
+    // Claude Code の入力待ち検出
 
-    /// Handle a single CC notification received via the Unix socket.
+    /// Unix ソケット経由で受け取った1件の CC 通知を処理する。
     pub fn handle_cc_notify(&mut self, event: crate::cc_notify::CcNotifyEvent) {
         let (kind, cwd) = match event {
             crate::cc_notify::CcNotifyEvent::State { kind, cwd } => (kind, cwd),
-            // `/clear` や `/resume` でこのパネルのログが別 id に移った。
+            // /clear や /resume でこのパネルのログが別 id に移った。
             // スクロールバックが読むファイルを差し替えるだけで、waiting/active
             // の状態には関係しない。
             crate::cc_notify::CcNotifyEvent::SessionRotated {
@@ -39,7 +39,7 @@ impl App {
             }
         };
 
-        // Normalize the cwd and match against known worktrees.
+        // cwd を正規化し、既知の worktree と照合する。
         let event_normalized: PathBuf = cwd.components().collect();
         let wt_path = self
             .worktrees
@@ -52,10 +52,10 @@ impl App {
 
         let wt_path = match wt_path {
             Some(p) => p,
-            None => return, // Unknown worktree — ignore.
+            None => return, // 未知の worktree — 無視する。
         };
 
-        // Verify a CC session exists for this worktree.
+        // この worktree に CC セッションが存在することを確認する。
         let has_session =
             self.terminal.pty_manager.sessions().iter().any(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == wt_path
@@ -68,7 +68,7 @@ impl App {
             crate::cc_notify::CcNotifyKind::Waiting => {
                 self.terminal.cc_active_worktrees.remove(&wt_path);
 
-                // Check ack suppression.
+                // ack による抑制をチェックする。
                 if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(&wt_path)
                     && let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
                         s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == wt_path
@@ -79,12 +79,12 @@ impl App {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
                     if current == ack_time {
-                        return; // Suppressed — no new output since ack.
+                        return; // 抑制対象 — ack 以降、新しい出力がない。
                     }
                     self.terminal.cc_waiting_ack_time.remove(&wt_path);
                 }
 
-                // Focus suppression: if user is focused on this terminal, auto-ack.
+                // フォーカスによる抑制: ユーザがこのターミナルにフォーカスしているなら自動 ack する。
                 let is_focused = matches!(self.focus, Focus::TerminalClaude)
                     && self.selected_worktree_path() == wt_path;
                 if is_focused {
@@ -112,27 +112,26 @@ impl App {
         }
     }
 
-    /// Scan hook signal files and update `cc_waiting_worktrees` and
-    /// `cc_active_worktrees`.
+    /// フック信号ファイルをスキャンして cc_waiting_worktrees と
+    /// cc_active_worktrees を更新する。
     ///
-    /// Reads signal files from `.conductor/cc-waiting/` and
-    /// `.conductor/cc-active/` directories written by plugin hooks.
+    /// プラグインのフックが書き込む .conductor/cc-waiting/ および
+    /// .conductor/cc-active/ ディレクトリから信号ファイルを読む。
     ///
-    /// If a worktree newly enters the waiting state and the user is not
-    /// currently focused on that worktree's terminal, a status message is
-    /// shown as a notification.
+    /// worktree が新たに waiting 状態に入り、かつユーザがその worktree の
+    /// ターミナルにフォーカスしていない場合、ステータスメッセージを通知として表示する。
     pub fn check_cc_waiting_state(&mut self) -> bool {
         let old_waiting = self.terminal.cc_waiting_worktrees.clone();
         let old_active = self.terminal.cc_active_worktrees.clone();
 
-        // Resolve the main repo root so we look in the right place even
-        // when Conductor was launched from a linked worktree.
+        // Conductor がリンクされた worktree から起動された場合でも正しい場所を
+        // 見るように、メインリポジトリのルートを解決する。
         let conductor_dir = git_engine::GitEngine::open(&self.repo.path)
             .and_then(|e| e.main_worktree_path())
             .unwrap_or_else(|_| self.repo.path.clone())
             .join(".conductor");
 
-        // Helper: scan a signal directory and collect matching worktree paths.
+        // ヘルパー: 信号ディレクトリをスキャンし、一致する worktree のパスを集める。
         let scan_signal_dir =
             |dir_name: &str, worktrees: &[crate::git_engine::WorktreeInfo]| -> HashSet<PathBuf> {
                 let mut result = HashSet::new();
@@ -156,9 +155,9 @@ impl App {
         let mut new_waiting = scan_signal_dir("cc-waiting", &self.worktrees);
         let mut new_active = scan_signal_dir("cc-active", &self.worktrees);
 
-        // Ignore states for worktrees that have no CC session open.
-        // Signal files may persist after a session has exited; without this
-        // filter the UI would animate for a non-existent panel.
+        // CC セッションが開かれていない worktree の状態は無視する。
+        // 信号ファイルはセッション終了後も残ることがあり、このフィルタがないと
+        // 存在しないパネルに対して UI がアニメーションしてしまう。
         let has_cc_session = |wt_path: &PathBuf| -> bool {
             self.terminal.pty_manager.sessions().iter().any(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == *wt_path
@@ -167,16 +166,16 @@ impl App {
         new_waiting.retain(&has_cc_session);
         new_active.retain(has_cc_session);
 
-        // Detect worktrees that newly entered waiting state.
+        // 新たに waiting 状態に入った worktree を検出する。
         let current_wt_path = self.selected_worktree_path();
         let is_terminal_focused = matches!(self.focus, Focus::TerminalClaude);
 
-        // When the user is focused on a CC terminal, treat the waiting state
-        // as acknowledged — remove it so the notification bar and worktree
-        // animation are fully cleared (not just pulse-suppressed).
+        // ユーザが CC ターミナルにフォーカスしている場合、waiting 状態は ack
+        // されたものとして扱う — 通知バーと worktree アニメーションが(pulse の
+        // 抑制だけでなく)完全にクリアされるよう取り除く。
         if is_terminal_focused && new_waiting.remove(&current_wt_path) {
-            // Record ack so the notification is not re-triggered by the
-            // PTY pattern-match source until new output arrives.
+            // 新しい出力が来るまで PTY のパターンマッチ由来で通知が
+            // 再発火しないよう、ack を記録しておく。
             if let Some(session) = self.terminal.pty_manager.sessions().iter().find(|s| {
                 s.kind == pty_manager::SessionKind::ClaudeCode && s.working_dir == current_wt_path
             }) {
@@ -190,8 +189,8 @@ impl App {
             }
         }
 
-        // Suppress re-triggering for worktrees the user already acknowledged
-        // if the PTY has not produced any new output since that acknowledgment.
+        // ユーザが既に ack した worktree について、その ack 以降 PTY が
+        // 新しい出力を出していなければ再発火を抑制する。
         let mut ack_expired: Vec<PathBuf> = Vec::new();
         new_waiting.retain(|wt_path| {
             if let Some(&ack_time) = self.terminal.cc_waiting_ack_time.get(wt_path) {
@@ -203,10 +202,10 @@ impl App {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
                     if current == ack_time {
-                        return false; // no new output — suppress
+                        return false; // 新しい出力がない — 抑制する
                     }
                 }
-                // New output arrived or session gone — ack is stale.
+                // 新しい出力が来た、またはセッションが消えた — ack は失効している。
                 ack_expired.push(wt_path.clone());
             }
             true
@@ -217,14 +216,14 @@ impl App {
 
         for wt_path in &new_waiting {
             if !self.terminal.cc_waiting_worktrees.contains(wt_path) {
-                // Resolve display name from worktree list.
+                // worktree 一覧から表示名を解決する。
                 let display_name = self
                     .worktrees
                     .iter()
                     .find(|w| &w.path == wt_path)
                     .map(|w| w.branch.clone())
                     .unwrap_or_else(|| "?".to_string());
-                // Newly waiting — notify if user is not focused on that terminal.
+                // 新たに waiting になった — そのターミナルにフォーカスしていなければ通知する。
                 let skip_notify = is_terminal_focused && *wt_path == current_wt_path;
                 if !skip_notify {
                     self.set_status(
@@ -242,13 +241,13 @@ impl App {
             || self.terminal.cc_active_worktrees != old_active
     }
 
-    /// Flush deferred prompts for CC sessions that are now ready for input.
+    /// 入力可能になった CC セッションに対して、保留していたプロンプトを送信する。
     ///
-    /// Checks two conditions (either is sufficient):
-    /// 1. `is_waiting_for_input` — the session is idle with a "> " prompt
-    ///    (reliable for normal operation).
-    /// 2. `session_has_visible_output` — the session has rendered anything
-    ///    (faster for freshly spawned sessions that haven't reached idle yet).
+    /// 次の2条件のいずれかを満たせばよい:
+    /// 1. is_waiting_for_input — セッションがアイドルで "> " プロンプトが出ている
+    ///    (通常運用では信頼できる)。
+    /// 2. session_has_visible_output — セッションが何かを描画済み
+    ///    (まだアイドルに達していない起動直後のセッションではこちらの方が速い)。
     pub fn flush_deferred_prompts(&mut self) {
         let ready: Vec<usize> = self
             .terminal
@@ -270,8 +269,8 @@ impl App {
         }
     }
 
-    /// Remove the hook signal file for a given session and clear its
-    /// waiting state. Called when user sends input to a CC terminal.
+    /// 指定セッションのフック信号ファイルを削除し、waiting 状態を解除する。
+    /// ユーザが CC ターミナルへ入力を送ったときに呼ばれる。
     pub fn clear_cc_waiting_signal(&mut self, session_idx: usize) {
         let session = match self.terminal.pty_manager.sessions().get(session_idx) {
             Some(s) => s,
@@ -280,8 +279,8 @@ impl App {
         if session.kind != pty_manager::SessionKind::ClaudeCode {
             return;
         }
-        // Record the PTY output timestamp so that the periodic scan does not
-        // re-trigger the notification until new output actually arrives.
+        // PTY 出力のタイムスタンプを記録し、実際に新しい出力が来るまで
+        // 定期スキャンが通知を再発火させないようにする。
         let last_output = *session
             .last_output_time
             .lock()
@@ -295,7 +294,7 @@ impl App {
             .and_then(|e| e.main_worktree_path())
             .unwrap_or_else(|_| self.repo.path.clone())
             .join(".conductor");
-        // Normalize the path (strip trailing slash) to match the shell's $PWD encoding.
+        // シェルの $PWD エンコーディングに合わせてパスを正規化する(末尾のスラッシュを除去)。
         let normalized: PathBuf = session.working_dir.components().collect();
         let sanitized = normalized.display().to_string().replace('/', "__");
         let _ = std::fs::remove_file(conductor_dir.join("cc-waiting").join(&sanitized));

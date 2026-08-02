@@ -1,9 +1,9 @@
-//! Tests for `syntect_theme_for`'s dark/light theme mapping and its
-//! fallback behavior on unknown themes or missing theme files.
+//! syntect_theme_for のダーク/ライトテーマ対応と、未知テーマ・theme ファイル
+//! 不在時のフォールバック挙動のテスト。
 
 use super::*;
 
-/// Helper: estimate background luminance of a syntect theme (0–255 range).
+/// ヘルパー: syntect テーマの背景輝度を推定する(0〜255の範囲)。
 fn theme_bg_luma(theme: &syntect::highlighting::Theme) -> f32 {
     theme
         .settings
@@ -42,7 +42,7 @@ fn syntect_theme_for_light_themes_use_light_syntect() {
         ..Default::default()
     };
 
-    // Light UI themes must map to light syntect built-ins.
+    // ライト UI テーマはライトな syntect 組み込みテーマにマップされること。
     for name in &["catppuccin-latte", "solarized-light", "github-light"] {
         let theme = syntect_theme_for(&viewer_with(name), &ts);
         assert!(
@@ -62,7 +62,7 @@ fn syntect_theme_for_unknown_falls_back_without_panic() {
         syntax_theme_file: None,
         ..Default::default()
     };
-    let _ = syntect_theme_for(&viewer, &ts); // must not panic
+    let _ = syntect_theme_for(&viewer, &ts); // パニックしないこと
 }
 
 /// syntect_theme_for: 存在しないパスの syntax_theme_file はパニックしないこと。
@@ -74,5 +74,5 @@ fn syntect_theme_for_missing_theme_file_falls_back_without_panic() {
         syntax_theme_file: Some(String::from("/nonexistent/path/theme.tmTheme")),
         ..Default::default()
     };
-    let _ = syntect_theme_for(&viewer, &ts); // must not panic
+    let _ = syntect_theme_for(&viewer, &ts); // パニックしないこと
 }

@@ -1,11 +1,11 @@
-//! Global action dispatch shared across non-terminal panels.
+//! terminal 系以外のパネルで共有されるグローバルアクションのディスパッチ。
 
 use crate::app::{App, Focus, StatusLevel};
 use crate::keymap::Action;
 use crate::overlay::ActiveOverlay;
 
-/// Dispatch global actions that are shared across non-terminal panels.
-/// Returns `true` if the action was handled.
+/// terminal 系以外のパネルで共有されるグローバルアクションをディスパッチする。
+/// アクションを処理したら true を返す。
 pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
     match action {
         Action::Quit => {
@@ -24,9 +24,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::FocusMenuBar => {
-            // Focus the bar without dropping a list open; Down/Enter does that.
-            // Gated on no overlay being up, which is the invariant the key
-            // dispatcher relies on when it checks the menu ahead of overlays.
+            // リストを開かずにバーへフォーカスするだけ。開くのは Down/Enter の
+            // 役目。オーバーレイが出ていないことをゲートにしている点は、キー
+            // ディスパッチャがオーバーレイより先にメニューをチェックする際に
+            // 依拠している不変条件と同じ。
             if app.overlays.active == ActiveOverlay::None {
                 app.menu.focus_bar(0);
             }
@@ -195,6 +196,6 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.cmd_publish_review();
             true
         }
-        _ => false, // Not a global action — let panel-specific handler try.
+        _ => false, // グローバルアクションではない — パネル固有のハンドラに任せる。
     }
 }

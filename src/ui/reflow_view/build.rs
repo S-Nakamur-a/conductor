@@ -1,7 +1,7 @@
-//! Line builder — turns a [`BuildCtx`]'s session-log entries into the cached
-//! `Vec<Line<'static>>` that [`render`](super::render::render) blits each
-//! frame. Rebuilt only when the panel width (or the expand toggle) changes.
-//! Independent of `App` so it can be constructed and tested without one.
+//! 行ビルダー。BuildCtx のセッションログエントリを、render が毎フレーム転送する
+//! キャッシュ済みの Vec<Line<'static>> に変換する。パネル幅（あるいは展開トグル）が
+//! 変わったときだけ再構築する。App から独立しているので、App を構築せずに単体で
+//! 生成・テストできる。
 
 
 use ratatui::text::Line;
@@ -15,60 +15,58 @@ use super::block_render::{BlockPos, TranscriptStyles, render_block};
 use super::palette::claude_markdown_theme;
 use super::tool_lines::count_buckets;
 
-/// Everything [`build_lines`] needs to turn a session log into rendered
-/// lines, borrowed independently of `App` so the builder can be called (and
-/// tested) without constructing one. All fields are shared references —
-/// [`crate::ui::markdown::MarkdownCache::render_flavored`] takes `&self`
-/// (its cache is a `RefCell` internally), so no field needs `&mut`.
+/// build_lines がセッションログを描画済みの行に変換するために必要なものすべて。App から
+/// 独立して借用するので、App を構築せずにビルダーを呼び出し（テストし）できる。
+/// すべてのフィールドは共有参照である。
+/// crate::ui::markdown::MarkdownCache::render_flavored は &self を取る
+/// （キャッシュは内部的に RefCell）ので、&mut を必要とするフィールドはない。
 pub(crate) struct BuildCtx<'a> {
     pub entries: &'a [LogEntry],
     pub cache: &'a crate::ui::markdown::MarkdownCache,
     pub theme: &'a crate::theme::Theme,
     pub syntax_set: &'a syntect::parsing::SyntaxSet,
     pub syntect_theme: &'a syntect::highlighting::Theme,
-    /// Whether to expand tool_use/tool_result blocks (conductor's own
-    /// ctrl+o-equivalent toggle; wired up in S1).
+    /// tool_use/tool_result ブロックを展開するかどうか（conductor 独自の
+    /// ctrl+o 相当のトグル）。
     pub expanded: bool,
 }
 
-/// Block index standing for the blank separator line between entries.
+/// エントリ間の空白の区切り行を表すブロックインデックス。
 pub(crate) const SEPARATOR_BLOCK: usize = usize::MAX;
 
-/// Rightmost column a gutter marker can start at, and so the last column
-/// [`width_risk_hole`] scans. Markers are emitted at column 0 by
-/// [`helpers::with_marker`](super::helpers::with_marker) and
-/// [`fit_glyph_line`](super::helpers::fit_glyph_line), and at column 2 by
-/// [`tool_lines`](super::tool_lines)' `"  ⎿  "` / `" ⎿  "` prefixes. Anything
-/// past this is body text, where the same characters are content.
+/// ガターマーカーが開始しうる最も右のカラム。すなわち width_risk_hole が走査する
+/// 最後のカラムでもある。マーカーは helpers::with_marker と
+/// helpers::fit_glyph_line によってカラム0に、tool_lines の "  ⎿  " / " ⎿  " という
+/// プレフィックスによってカラム2に出力される。それより先は本文テキストであり、
+/// 同じ文字であってもそこでは内容そのものである。
 pub(crate) const MAX_GUTTER_GLYPH_COL: usize = 2;
 
-/// Where one rendered line came from, plus the one thing the renderer needs
-/// to know about its shape.
+/// 描画済みの1行がどこから来たかと、レンダラがその形状について知る必要のある唯一の情報。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineMeta {
-    /// Index into `ctx.entries`.
+    /// ctx.entries へのインデックス。
     pub entry: usize,
-    /// Index of the block within that entry, or [`SEPARATOR_BLOCK`].
+    /// そのエントリ内でのブロックのインデックス、または SEPARATOR_BLOCK。
     pub block: usize,
-    /// Index of this line within its block — the third component of the
-    /// scroll anchor, so a rebuild at a different width lands back inside the
-    /// same block rather than just at its top.
+    /// そのブロック内でのこの行のインデックス。スクロールアンカーの第3要素であり、
+    /// これがあることで異なる幅での再構築が、ブロックの先頭ではなく同じブロック内の
+    /// 位置に戻ってこられる。
     pub offset: usize,
-    /// Column that must be left *unwritten* so ratatui's diff sees a
-    /// discontinuity and the crossterm backend emits an absolute cursor move
-    /// before the text that follows. See [`width_risk_hole`].
+    /// ratatui の diff が不連続を検出し、crossterm バックエンドが後続テキストの前に
+    /// 絶対カーソル移動を発行するよう、書き込まずに残す必要のあるカラム。
+    /// width_risk_hole を参照。
     pub skip_col: Option<u16>,
 }
 
-/// [`build_lines`]'s output: the lines to blit and one [`LineMeta`] each.
+/// build_lines の出力。転送する行と、行ごとの LineMeta。
 pub(crate) struct BuiltLines {
     pub lines: Vec<Line<'static>>,
     pub meta: Vec<LineMeta>,
 }
 
-/// Rebuild the full line list from `ctx.entries`.
+/// ctx.entries から行リスト全体を再構築する。
 ///
-/// Called only when the panel width changes (or the expand toggle flips).
+/// パネル幅が変わった（あるいは展開トグルが切り替わった）ときにのみ呼ばれる。
 pub(crate) fn build_lines(ctx: &BuildCtx<'_>, width: usize) -> BuiltLines {
     let entries = ctx.entries;
     let styles = TranscriptStyles::default();
@@ -80,12 +78,12 @@ pub(crate) fn build_lines(ctx: &BuildCtx<'_>, width: usize) -> BuiltLines {
 
     for (ei, entry) in entries.iter().enumerate() {
         let lines_before_entry = all_lines.len();
-        // 折りたたんだ `Counted` 系ツール結果 (§2.1) のためのエントリ単位の集計。
-        // `ctx.expanded` が true でも作るが参照されるのは false のときだけ —
-        // どのみち走査するブロック列を 1 度なめるだけのコスト。
+        // 折りたたんだ Counted 系ツール結果のためのエントリ単位の集計。
+        // ctx.expanded が true のときも作るが参照されるのは false のときだけである。
+        // どのみちブロック列を1度なめるだけのコストなので気にしない。
         let bucket_counts = count_buckets(entry);
-        // エントリ内のすべての `Counted` 結果を 1 本の要約行がまとめて表す
-        // (実測: 複数バケットがカンマ区切りの節の列として 1 行に描かれる) ので、
+        // エントリ内のすべての Counted 結果は1本の要約行にまとめて表される
+        // （実測: 複数バケットがカンマ区切りの節の列として1行に描かれる）ので、
         // バケットごとの集合ではなく単一のラッチで足りる。
         let mut summary_emitted = false;
 
@@ -115,16 +113,16 @@ pub(crate) fn build_lines(ctx: &BuildCtx<'_>, width: usize) -> BuiltLines {
             all_lines.extend(lines);
         }
 
-        // ── エントリ間の空行 ────────────────────────────────────────────────
-        // 注釈だけのエントリは、その上のエントリの *継続* であって独立したターン
-        // ではない — CLI はスラッシュコマンド・その標準出力・引き継いだ各ファイルを
-        // 別々のレコードとして記録するが、描画は途切れない 1 つのまとまりとして行う:
+        // エントリ間の空行
+        // 注釈だけのエントリは、その上のエントリの継続であって独立したターンではない。
+        // CLI はスラッシュコマンド・その標準出力・引き継いだ各ファイルを別々のレコードとして
+        // 記録するが、描画は途切れない1つのまとまりとして行う。
         //
         //     ❯ /compact
         //       ⎿  Compacted (ctrl+o to see full summary)
         //       ⎿  Read alpha.rs (42 lines)
         //
-        // なので、その手前に入るはずの区切りは抑制する。
+        // そのため、その手前に入るはずの区切りは抑制する。
         let next_is_continuation = entries.get(ei + 1).is_some_and(is_annotation_only);
         if !next_is_continuation && all_lines.len() > lines_before_entry {
             all_lines.push(Line::from(""));
@@ -150,8 +148,8 @@ pub(crate) fn build_lines(ctx: &BuildCtx<'_>, width: usize) -> BuiltLines {
     }
 }
 
-/// Whether `entry` consists solely of [`DisplayBlock::Annotation`] blocks, and
-/// so glues to the entry above it instead of starting a new turn.
+/// entry が DisplayBlock::Annotation ブロックだけで構成されているかどうか。そうであれば
+/// 新しいターンを始めるのではなく、上のエントリに接着する。
 fn is_annotation_only(entry: &LogEntry) -> bool {
     !entry.blocks.is_empty()
         && entry
@@ -160,44 +158,41 @@ fn is_annotation_only(entry: &LogEntry) -> bool {
             .all(|b| matches!(b, DisplayBlock::Annotation { .. }))
 }
 
-/// The column immediately after the first width-ambiguous gutter glyph on
-/// `line`, if it has one.
+/// line 上で最初に現れる幅の曖昧なガターグリフの直後のカラム。存在しなければ None。
 ///
-/// `⏺`/`⎿`/`✻` measure one column in `unicode-width` but many terminals draw
-/// them two columns wide, which used to shift the whole row (the scrollback
-/// "bleed"). Claude Code itself sidesteps this by emitting an absolute column
-/// (CHA) right after the glyph; leaving this one cell unwritten makes
-/// ratatui's diff discontinuous there, which makes the crossterm backend emit
-/// an absolute `MoveTo` — the same trick. Verified against the real backend
-/// in `super::render`'s tests.
+/// ⏺/⎿/✻ は unicode-width では1カラムと計測されるが、多くの端末は2カラム幅で描画するため、
+/// かつては行全体がずれる「scrollback のにじみ」が起きていた。Claude Code 自身はグリフの
+/// 直後に絶対カラム（CHA）を発行することでこれを回避している。このセルを1つ未書き込みの
+/// ままにしておくと、その位置で ratatui の diff が不連続になり、crossterm バックエンドが
+/// 絶対位置指定の MoveTo を発行する。同じ手口である。super::render のテストで実際の
+/// バックエンドに対して検証済み。
 ///
-/// Two things this must get right, both of which a naive scan gets wrong:
+/// これには正しく処理すべき点が2つあり、素朴な走査ではどちらも間違える。
 ///
-/// * **Only the gutter counts.** `⏺`/`⎿`/`✻` are also ordinary characters that
-///   appear in body text — this app's own transcripts are full of pasted Claude
-///   Code output. A hole is an *unwritten cell*, so punching one into body text
-///   both drops a character and leaves whatever the previous frame had there.
-///   A marker only ever sits at column 0 (`helpers::with_marker`,
-///   `helpers::fit_glyph_line`) or column 2 (`tool_lines`' `"  ⎿  "` and
-///   `" ⎿  "` prefixes), so the scan stops after [`MAX_GUTTER_GLYPH_COL`].
-/// * **Columns advance by grapheme cluster, not by `char`.** Summing per `char`
-///   over-counts a ZWJ sequence (a family emoji is 2 columns but 7 `char`s) and
-///   under-counts an emoji-presentation sequence, which would put the hole on
-///   the wrong cell. Same reasoning as `helpers::truncate_to_width` and
-///   `user_text::wrap_plain_text`.
+/// ガターだけを対象にすること。⏺/⎿/✻ は本文テキストにも普通の文字として現れる。
+/// このアプリ自身のトランスクリプトは、貼り付けられた Claude Code の出力であふれている。
+/// 穴は未書き込みのセルなので、本文にそれを開けると文字が1つ欠けるうえ、前フレームで
+/// そこにあったものが残ってしまう。マーカーは必ずカラム0（helpers::with_marker、
+/// helpers::fit_glyph_line）かカラム2（tool_lines の "  ⎿  " と " ⎿  " プレフィックス）
+/// にしか置かれないので、走査は MAX_GUTTER_GLYPH_COL の後で止める。
+///
+/// カラムは char ではなく書記素クラスタ単位で進めること。char ごとに合計すると、
+/// ZWJ シーケンス（家族の絵文字は2カラムだが7 char ある）を過大に数え、emoji
+/// presentation シーケンスを過小に数えてしまい、穴が誤ったセルに置かれてしまう。
+/// helpers::truncate_to_width や user_text::wrap_plain_text と同じ理屈である。
 fn width_risk_hole(line: &Line<'_>) -> Option<u16> {
     let mut col: usize = 0;
     for span in &line.spans {
         for cluster in span.content.graphemes(true) {
             if col > MAX_GUTTER_GLYPH_COL {
-                return None; // past the gutter — everything here is content
+                return None; // ガターを過ぎたので、ここから先はすべて内容
             }
             let w = UnicodeWidthStr::width(cluster);
-            // `w == 1` *is* the ambiguity: the defence exists for glyphs
-            // `unicode-width` calls one column while the terminal may draw two.
-            // A marker carrying a variation selector already measures two, so
-            // measurement and terminal agree and no hole is wanted — punching
-            // one there would blank the body's first cell instead.
+            // w == 1 であること自体が曖昧さの正体である。この防御策は、
+            // unicode-width が1カラムと呼ぶが端末は2カラムで描画しうるグリフのために
+            // 存在する。異体字セレクタを伴うマーカーはすでに2カラムと計測されており、
+            // 計測値と端末の描画が一致しているので穴は不要である。そこに穴を開けると
+            // むしろ本文の先頭セルを空白にしてしまう。
             if w == 1
                 && cluster
                     .chars()

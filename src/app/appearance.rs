@@ -1,5 +1,5 @@
-//! Runtime theme switching and live config-file reload for appearance
-//! settings (theme, syntax highlighting, diff view mode, layout ratios).
+//! 外観設定（テーマ、シンタックスハイライト、diff表示モード、レイアウト比率）の
+//! ランタイムでのテーマ切り替えと、設定ファイルのライブリロード。
 
 use syntect::highlighting::ThemeSet;
 
@@ -7,11 +7,11 @@ use super::App;
 use crate::config;
 
 impl App {
-    /// Switch the active UI theme at runtime.
+    /// アクティブなUIテーマをランタイムで切り替える。
     ///
-    /// When `persist` is `true`, the selection is written to the config file
-    /// (`~/.config/conductor/config.toml`) so it survives restarts. A write
-    /// failure is non-fatal: it is logged and surfaced as a warning flash.
+    /// persistがtrueのとき、選択は設定ファイル (~/.config/conductor/config.toml)
+    /// に書き込まれ、再起動後も残る。書き込み失敗は致命的ではない: ログに
+    /// 残し、警告フラッシュとして表示する。
     pub fn set_theme(&mut self, name: &str, persist: bool) {
         self.theme = super::build_theme(name, self.theme_sel.high_contrast);
         self.theme_sel.name = name.to_string();
@@ -27,29 +27,30 @@ impl App {
         }
     }
 
-    // ── Live config reload ─────────────────────────────────────────
+    // 設定ファイルのライブリロード
 
-    /// Apply appearance (live-reloadable) fields from `new` to the running app.
+    /// 新しい設定から、外観に関する（ライブリロード可能な）フィールドを
+    /// 実行中のアプリへ適用する。
     ///
-    /// Only the fields classified as LIVE are copied; restart-required fields
-    /// (shell, scrollback limits, API settings, etc.) are intentionally left
-    /// untouched so that `refresh_diff`, which reads `config.general.main_branch`
-    /// on every call, never sees a stale or transitional value.
+    /// LIVEに分類されたフィールドだけをコピーする。再起動が必要なフィールド
+    /// （シェル、スクロールバック上限、API設定など）はあえて手つかずにする。
+    /// これにより、呼び出しのたびにconfig.general.main_branchを読む
+    /// refresh_diffが、古い値や過渡的な値を目にすることがなくなる。
     ///
-    /// ## LIVE fields applied here
-    /// - `ui.theme` / `viewer.theme` → theme + theme_name + syntect rebuild
-    /// - `viewer.syntax_theme_file`  → syntect rebuild (same path as theme)
-    /// - `viewer.tab_width`          → config copy + refresh_viewer + refresh_diff
-    /// - `diff.word_diff`            → config copy + refresh_diff
-    /// - `diff.default_view`         → diff_state.view_mode + refresh_diff
-    /// - `general.decoration`        → config copy (drawn directly each frame)
-    /// - `layout.*`                  → config copy; LayoutCache auto-invalidates
+    /// ここで適用されるLIVEフィールドは次のとおり。
+    /// - ui.theme / viewer.theme → theme + theme_name + syntectの再構築
+    /// - viewer.syntax_theme_file → syntectの再構築（themeと同じ経路）
+    /// - viewer.tab_width → configのコピー + refresh_viewer + refresh_diff
+    /// - diff.word_diff → configのコピー + refresh_diff
+    /// - diff.default_view → diff_state.view_mode + refresh_diff
+    /// - general.decoration → configのコピー（毎フレーム直接描画される）
+    /// - layout.* → configのコピー。LayoutCacheは自動的に無効化される
     ///
-    /// `viewer.word_wrap` is copied into config via `adopt_appearance` but is not
-    /// in `AppearanceSnapshot` and has no rendering effect until the render path
-    /// is implemented.
+    /// viewer.word_wrapはadopt_appearance経由でconfigにはコピーされるが、
+    /// AppearanceSnapshotには含まれておらず、描画経路が実装されるまでは
+    /// 描画への影響を持たない。
     pub fn apply_appearance(&mut self, new: &config::Config) {
-        // ── UI / syntax theme ──────────────────────────────────────
+        // UI / シンタックステーマ
         let new_theme_name = super::resolve_theme_name(new);
         let new_high_contrast = new.ui.high_contrast;
         if new_theme_name != self.theme_sel.name || new_high_contrast != self.theme_sel.high_contrast {
@@ -58,72 +59,82 @@ impl App {
             self.theme_sel.high_contrast = new_high_contrast;
         }
 
-        // Rebuild syntect theme when either the viewer theme or the custom
-        // theme file changes (the two are bundled into a single re-construction
-        // so there is never a half-updated state).
+        // viewerテーマかカスタムテーマファイルのいずれかが変わったらsyntect
+        // テーマを再構築する（両者を1回の再構築にまとめることで、半端に
+        // 更新された状態が生じないようにしている）。
         let ts = ThemeSet::load_defaults();
         self.highlight.theme = config::syntect_theme_for(&new.viewer, &ts);
 
-        // Clear the Markdown cache so code blocks inside review comments pick
-        // up the new syntect theme. The cache fingerprints the UI colour palette
-        // only; a syntax-only change would otherwise leave stale highlighted spans.
+        // レビューコメント内のコードブロックが新しいsyntectテーマを反映
+        // できるよう、Markdownキャッシュをクリアする。このキャッシュは
+        // UIのカラーパレットだけを指紋にしているので、シンタックスのみの
+        // 変更ではそうしないと古いハイライトのspanが残ってしまう。
         self.markdown_cache.clear();
 
-        // Force a full rebuild of the reflow transcript on the next render so
-        // that Markdown spans pick up the new theme colours and syntect palette.
-        // Setting last_width=0 makes build_lines run on the next frame regardless
-        // of whether the panel width changed.
+        // 次の描画でreflowトランスクリプトを完全に再構築させ、Markdown
+        // のspanが新しいテーマ色とsyntectパレットを反映するようにする。
+        // last_width=0にすることで、パネル幅が変わったかどうかに関わらず
+        // 次のフレームでbuild_linesが必ず実行される。
         self.reflow.last_width = 0;
         self.reflow.cache.clear();
 
-        // ── Diff view mode ──────────────────────────────────────────
-        // Apply view_mode directly. `diff_state.view_mode` is written only in
-        // `DiffState::new` and here — there is no runtime interactive toggle —
-        // so overwriting it is safe.
+        // diff表示モード
+        // view_modeを直接適用する。diff_state.view_modeが書き込まれるのは
+        // DiffState::newとここだけで、実行時のインタラクティブな切り替えは
+        // 無いので、上書きしても安全。
         self.diff_state.view_mode = crate::diff_state::DiffViewMode::from(new.diff.default_view);
 
-        // Copy all live config fields (no-op for restart-required fields).
-        // LayoutCache keyed on layout proportions detects changes automatically
-        // and recomputes on the next frame; no explicit invalidation needed.
+        // すべてのライブ設定フィールドをコピーする（再起動が必要なフィールドに
+        // 対しては何もしない）。LayoutCacheはレイアウト比率をキーにしており
+        // 変化を自動検出して次のフレームで再計算するので、明示的な無効化は
+        // 不要。
         self.config.adopt_appearance(new);
 
-        // The Claude/Shell split is a runtime field seeded from config; resync it
-        // so an external edit to layout.terminal_split_pct takes effect live. Our
-        // own resize-driven writes never reach here — they leave the appearance
-        // snapshot unchanged, so reload_appearance_config short-circuits first.
+        // Claude/Shellの分割はconfigから種を取るランタイムフィールドなので、
+        // layout.terminal_split_pctへの外部からの編集がライブに反映される
+        // よう再同期する。自分自身のリサイズ操作による書き込みはここには
+        // 決して届かない — それらはappearanceスナップショットを変えない
+        // ままにするので、reload_appearance_configが先に早期リターンする。
         self.layout.terminal_split_pct = self
             .config
             .layout
             .terminal_split_pct
             .clamp(Self::TERMINAL_SPLIT_MIN, Self::TERMINAL_SPLIT_MAX);
 
-        // Refresh the viewer file tree + diff to pick up tab_width / word_diff.
-        // refresh_viewer calls rehighlight_viewer unconditionally, so the new
-        // syntect theme is applied to the open file as part of this call.
+        // tab_width / word_diffを反映するため、viewerのファイルツリーと
+        // diffをリフレッシュする。refresh_viewerは無条件にrehighlight_viewer
+        // を呼ぶので、この呼び出しの一部として新しいsyntectテーマが開いている
+        // ファイルに適用される。
         self.refresh_viewer();
         self.refresh_diff();
 
-        // Trigger a full redraw.
+        // 全体の再描画を発生させる。
         self.dirty.mark_all();
     }
 
-    /// Reload the config file and apply any appearance changes.
+    /// 設定ファイルを再読み込みし、外観に関する変更を適用する。
     ///
-    /// 1. Guards against the config file being absent (e.g., a remove event from
-    ///    a delete-then-write atomic save): skips loading to avoid `Config::load()`
-    ///    writing a default file and clobbering the user's in-progress edits.
-    /// 2. Loads `~/.config/conductor/config.toml`; on parse error, flashes an
-    ///    error message and returns without modifying the running config.
-    /// 3. Computes whether appearance fields and/or restart-required fields changed.
-    ///    True no-op (neither changed) → returns silently, which is also the guard
-    ///    that absorbs the self-write loop from the in-app theme picker.
-    /// 4. If restart-required fields changed, flashes a warning.
-    /// 5. If appearance fields changed, calls `apply_appearance` and (when no
-    ///    restart warning was issued) flashes an info confirmation.
+    /// 設定ファイルが存在しない場合（削除してから書き込むアトミック保存に
+    /// よるremoveイベントなど）はガードする: 読み込みをスキップし、
+    /// Config::load()がデフォルトファイルを書き込んでユーザーの編集途中の
+    /// 内容を上書きしてしまうのを避ける。
+    ///
+    /// ~/.config/conductor/config.tomlを読み込む。パースエラーの場合は
+    /// エラーメッセージをフラッシュし、実行中の設定を変更せずに戻る。
+    ///
+    /// 外観フィールドと再起動が必要なフィールドのどちらが変わったかを
+    /// 計算する。どちらも変わっていない（真の無変化）場合は、何もせず
+    /// 静かに戻る。これはアプリ内テーマピッカーによる自己書き込みループを
+    /// 吸収するガードでもある。
+    ///
+    /// 再起動が必要なフィールドが変わっていれば警告をフラッシュする。
+    /// 外観フィールドが変わっていればapply_appearanceを呼び、
+    /// （再起動警告を出していない場合は）情報メッセージをフラッシュする。
     pub fn reload_appearance_config(&mut self) {
-        // Guard: skip if the file was just deleted (remove event from an atomic
-        // editor save). Config::load() on a missing file would write defaults and
-        // return Config::default(), clobbering the user's work.
+        // ガード: ファイルがちょうど削除された直後（アトミックなエディタ
+        // 保存によるremoveイベント）ならスキップする。ファイルが無い状態で
+        // Config::load()を呼ぶとデフォルトを書き込んでConfig::default()を
+        // 返してしまい、ユーザーの作業を上書きしてしまう。
         if !config::config_file_path().exists() {
             return;
         }
@@ -143,9 +154,10 @@ impl App {
         let appearance_changed = new.appearance_snapshot() != self.config.appearance_snapshot();
         let restart_changed = config::has_restart_changes(&self.config, &new);
 
-        // True no-op: nothing changed. This absorbs the FS event from the in-app
-        // theme picker (ui.theme is appearance-only, so both flags are false when
-        // the picker persists a theme that the running config already reflects).
+        // 真の無変化: 何も変わっていない。これはアプリ内テーマピッカーからの
+        // ファイルシステムイベントを吸収する（ui.themeは外観専用フィールド
+        // なので、ピッカーが実行中の設定にすでに反映済みのテーマを永続化
+        // した場合、両方のフラグがfalseになる）。
         if !appearance_changed && !restart_changed {
             return;
         }

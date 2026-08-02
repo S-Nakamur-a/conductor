@@ -1,6 +1,6 @@
-//! Rendering of a single unified-diff content line (context / addition /
-//! deletion row), including gutter, comment badge, syntax/word-diff styled
-//! content, and GitHub-style full-width background fill.
+//! unified diff の1行分（コンテキスト/追加/削除の行）の描画。
+//! ガター、コメントバッジ、syntax/word-diff によるスタイル付きコンテンツ、
+//! GitHub 風の全幅背景塗りつぶしを含む。
 
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use crate::theme::Theme;
@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use super::span_utils::h_scroll_spans;
 use super::syntax::{merge_syntax_with_inline, render_inline_diff_spans, syntax_spans_for_line};
 
-/// Shared per-frame context for rendering a single unified-diff content line.
+/// unified diff の1行分を描画するためのフレーム共有コンテキスト。
 pub(super) struct DiffLineRenderCtx<'a> {
     pub(super) vs: &'a crate::viewer::ViewerState,
     pub(super) theme: &'a Theme,
@@ -19,17 +19,17 @@ pub(super) struct DiffLineRenderCtx<'a> {
     pub(super) area_width: u16,
     pub(super) comment_lines: &'a std::collections::HashSet<usize>,
     pub(super) comment_end_lines: &'a std::collections::HashSet<usize>,
-    /// Inclusive new-side line range of the walkthrough step currently
-    /// selected in review mode, when it points at the file being rendered.
-    /// `None` outside review mode, with no walkthrough, or for other files.
+    /// レビューモードで現在選択されている walkthrough ステップの、new 側の行範囲（両端含む）。
+    /// このファイルを指している場合のみ値を持つ。レビューモード外・walkthrough なし・
+    /// 他ファイルを指している場合は None。
     pub(super) walkthrough_highlight: Option<(usize, usize)>,
-    /// Party-mode rainbow phase (`None` when party mode is off).
+    /// パーティーモードのレインボーフェーズ（パーティーモード OFF なら None）。
     pub(super) party: Option<f64>,
 }
 
-/// Build the display line for a single diff content line (context / addition /
-/// deletion), including the gutter, comment badge, syntax/word-diff styled
-/// content, and GitHub-style full-width background fill.
+/// diff の1行分（コンテキスト/追加/削除）の表示行を組み立てる。
+/// ガター、コメントバッジ、syntax/word-diff によるスタイル付きコンテンツ、
+/// GitHub 風の全幅背景塗りつぶしを含む。
 pub(super) fn render_diff_content_line(
     tag: &DiffLineTag,
     new_line_no: &Option<usize>,
@@ -73,7 +73,7 @@ pub(super) fn render_diff_content_line(
             .is_some_and(|(lo, hi)| n >= lo && n <= hi)
     });
 
-    // Gutter marker.
+    // ガターのマーカー。
     let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
         DiffLineTag::Insert => (
             "+",
@@ -88,7 +88,7 @@ pub(super) fn render_diff_content_line(
         DiffLineTag::Equal => (" ", None, None),
     };
 
-    // Line number (blank for Delete lines).
+    // 行番号（削除行では空白）。
     let line_num_str = match new_line_no {
         Some(n) => format!("{n:>gutter_width$}"),
         None => " ".repeat(gutter_width),
@@ -119,8 +119,8 @@ pub(super) fn render_diff_content_line(
     };
     let gutter_span = Span::styled(num, gutter_style);
 
-    // Comment-marker column (far left, BEFORE the line numbers): 💬 on end
-    // lines, │ on earlier range lines. Clicking it toggles the thread.
+    // コメントマーカー列（最左端、行番号より前）: 範囲の終端行には 💬、
+    // それより前の範囲行には │ を表示する。クリックするとスレッドの開閉を切り替える。
     let marker = if new_line_no.is_some_and(|n| ctx.comment_end_lines.contains(&n)) {
         Span::styled("💬", Style::default().fg(theme.accent))
     } else if new_line_no.is_some_and(|n| ctx.comment_lines.contains(&n)) {
@@ -129,9 +129,9 @@ pub(super) fn render_diff_content_line(
         Span::raw("  ")
     };
 
-    // Badge column (right of the line numbers): a GitHub-style "+" button on
-    // hovered gutter (click to start a comment) — regardless of existing
-    // comments. (The diff view draws no ▶ test markers.)
+    // バッジ列（行番号の右）: ガターにホバーしたとき GitHub 風の "+" ボタンを表示する
+    // （クリックでコメント作成を開始）。既存コメントの有無は問わない。
+    // （diff ビューでは ▶ テストマーカーは描画しない）
     let badge = if is_gutter_hovered {
         Span::styled(
             "+ ",
@@ -144,7 +144,7 @@ pub(super) fn render_diff_content_line(
         Span::raw("  ")
     };
 
-    // Content styling.
+    // コンテンツのスタイリング。
     let content_spans: Vec<Span> = if is_selected {
         vec![Span::styled(
             content.to_string(),
@@ -162,7 +162,7 @@ pub(super) fn render_diff_content_line(
     } else if !inline_segments.is_empty() {
         match tag {
             DiffLineTag::Insert => {
-                // Try syntax highlighting + word-diff merge.
+                // シンタックスハイライトと word-diff のマージを試みる。
                 if let Some(line_no) = new_line_no {
                     let idx = line_no - 1;
                     vs.content
@@ -217,7 +217,7 @@ pub(super) fn render_diff_content_line(
             }
         }
     } else {
-        // No inline segments — use syntax highlighting or plain.
+        // インラインセグメントがない場合はシンタックスハイライトかプレーン表示を使う。
         match tag {
             DiffLineTag::Insert => {
                 if let Some(line_no) = new_line_no {
@@ -252,15 +252,13 @@ pub(super) fn render_diff_content_line(
         }
     };
 
-    // Apply horizontal scroll, clipping to panel width
-    // (borders + marker column + gutter + badge).
+    // 水平スクロールを適用し、パネル幅（枠線 + マーカー列 + ガター + バッジ）でクリップする。
     let content_max_w = (ctx.area_width as usize)
         .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
-    // Underline the current walkthrough step's line range — a highlight that
-    // doesn't fight the existing selection/diff background colors, since it
-    // only lasts while this step stays current.
+    // 現在の walkthrough ステップの行範囲に下線を引く。既存の選択/diff の背景色と
+    // 競合しないハイライトで、そのステップがカレントである間だけ表示される。
     let content_spans: Vec<Span> = if is_in_walkthrough_highlight {
         content_spans
             .into_iter()
@@ -273,8 +271,7 @@ pub(super) fn render_diff_content_line(
     let mut spans = vec![marker, gutter_span, badge];
     spans.extend(content_spans);
 
-    // Extend background color to the end of the line for
-    // Insert/Delete rows (GitHub-style block coloring).
+    // Insert/Delete 行では、背景色を行末まで伸ばす（GitHub 風のブロック塗り）。
     if let Some(bg) = diff_bg {
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         let panel_inner_w = ctx.area_width.saturating_sub(2) as usize;

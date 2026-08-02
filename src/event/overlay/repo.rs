@@ -1,5 +1,5 @@
-//! Overlays for repo selection and opening: the multi-repo switcher, the
-//! open-repo-by-path prompt, and PR intake (Review Pull Request).
+//! リポジトリの選択と開始のオーバーレイ: 複数リポジトリ切り替え、パス指定での
+//! リポジトリオープン入力、PR intake (Review Pull Request)。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -10,7 +10,7 @@ use crate::event::clipboard_paste;
 
 use super::overlay_list_nav;
 
-// ── Overlay: repo selector ──────────────────────────────────────────────
+// オーバーレイ: リポジトリセレクタ
 
 pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
     let count = app.repo.known.len();
@@ -37,7 +37,7 @@ pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: open repo path input ───────────────────────────────────────
+// オーバーレイ: リポジトリパス入力
 
 pub(in crate::event) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
     match key.code {
@@ -63,11 +63,11 @@ pub(in crate::event) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: PR intake (Review Pull Request) ────────────────────────────
+// オーバーレイ: PR intake (Review Pull Request)
 
 pub(in crate::event) fn handle_pr_input_key(app: &mut App, key: KeyEvent) {
-    // While a gh/git intake is running, only Esc is honored — the input
-    // itself is frozen so a stray keystroke can't race the background thread.
+    // gh/git の intake 実行中は Esc のみ受け付ける。入力自体をフリーズさせることで、
+    // 誤操作のキー入力がバックグラウンドスレッドと競合するのを防ぐ。
     if app.overlays.pr_input.loading {
         if key.code == KeyCode::Esc {
             app.overlays.active = ActiveOverlay::None;
@@ -94,8 +94,8 @@ pub(in crate::event) fn handle_pr_input_key(app: &mut App, key: KeyEvent) {
             clipboard_paste(app, |a| &mut a.overlays.pr_input.buffer, false);
         }
         _ => {
-            // Any edit after a failed attempt clears the stale error so it
-            // doesn't linger next to input the user has already changed.
+            // 失敗後に何か編集したら古いエラーを消す。ユーザが既に変更した入力の
+            // 隣に、古いエラーが居座り続けないようにするため。
             app.overlays.pr_input.error = None;
             app.overlays.pr_input.buffer.handle_key(key);
         }

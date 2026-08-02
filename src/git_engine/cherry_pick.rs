@@ -1,5 +1,5 @@
-//! Listing recent commits on a branch and cherry-picking one of them into a
-//! worktree.
+//! ブランチの直近コミットの一覧取得と、その中の1つを worktree へ
+//! cherry-pick する処理。
 
 use std::path::Path;
 
@@ -10,9 +10,9 @@ use git2::Repository;
 use super::{CommitInfo, GitEngine};
 
 impl GitEngine {
-    // ── Cherry-pick helpers ───────────────────────────────────────────
+    // cherry-pick 関連のヘルパー
 
-    /// List up to `limit` commits from the given branch, newest first.
+    /// 指定ブランチから最大 limit 件のコミットを新しい順に一覧する。
     pub fn list_branch_commits(&self, branch_name: &str, limit: usize) -> Result<Vec<CommitInfo>> {
         let branch = self
             .repo
@@ -69,12 +69,11 @@ impl GitEngine {
         Ok(commits)
     }
 
-    /// Cherry-pick a commit (identified by OID hex string) into the repo
-    /// at `worktree_path`.
+    /// OID の16進文字列で指定したコミットを worktree_path のリポジトリへ
+    /// cherry-pick する。
     ///
-    /// On success, creates a new commit with the original message and returns
-    /// a success description. If conflicts arise, aborts and returns an error
-    /// message.
+    /// 成功時は元のメッセージで新しいコミットを作成し、成功を表す説明文を
+    /// 返す。コンフリクトが起きた場合は中止してエラーメッセージを返す。
     pub fn cherry_pick_to_worktree(
         &self,
         worktree_path: &Path,
@@ -89,16 +88,16 @@ impl GitEngine {
             .find_commit(oid)
             .with_context(|| format!("commit {commit_oid_str} not found"))?;
 
-        // Perform the cherry-pick (applies changes to index and workdir).
+        // cherry-pick を実行する(index と workdir に変更を適用する)。
         repo.cherrypick(&commit, None)
             .with_context(|| format!("cherry-pick failed for {commit_oid_str}"))?;
 
-        // Check for conflicts.
+        // コンフリクトの有無を確認する。
         let index = repo.index()?;
         if index.has_conflicts() {
-            // Abort by cleaning up the cherry-pick state.
+            // cherry-pick の状態をクリーンアップして中止する。
             repo.cleanup_state()?;
-            // Reset workdir to HEAD to undo partial changes.
+            // 部分的な変更を取り消すため workdir を HEAD にリセットする。
             let head = repo.head()?.peel_to_commit()?;
             repo.reset(head.as_object(), git2::ResetType::Hard, None)?;
             return Ok(format!(
@@ -107,7 +106,7 @@ impl GitEngine {
             ));
         }
 
-        // No conflicts — create a commit.
+        // コンフリクトなし — コミットを作成する。
         let mut index = repo.index()?;
         let tree_oid = index.write_tree()?;
         let tree = repo.find_tree(tree_oid)?;
@@ -128,7 +127,7 @@ impl GitEngine {
             &[&head_commit],
         )?;
 
-        // Clean up cherry-pick state.
+        // cherry-pick の状態をクリーンアップする。
         repo.cleanup_state()?;
 
         let short = &commit_oid_str[..8.min(commit_oid_str.len())];
@@ -138,12 +137,12 @@ impl GitEngine {
         ))
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────
+    // 内部ヘルパー
 
-    /// Resolve a ref string (branch name, remote ref, or tag) to a `Commit`.
+    /// ref 文字列(ブランチ名、リモート ref、タグ)を Commit に解決する。
     #[allow(dead_code)]
     fn resolve_ref_to_commit(&self, refspec: &str) -> Result<git2::Commit<'_>> {
-        // Try as a direct reference first (e.g. "refs/remotes/origin/main").
+        // まず直接参照として試す(例: "refs/remotes/origin/main")。
         if let Ok(reference) = self.repo.find_reference(&format!("refs/remotes/{refspec}")) {
             return reference
                 .peel_to_commit()
@@ -154,7 +153,7 @@ impl GitEngine {
                 .peel_to_commit()
                 .with_context(|| format!("ref '{refspec}' does not point to a commit"));
         }
-        // Try revparse as a fallback.
+        // フォールバックとして revparse を試す。
         let obj = self
             .repo
             .revparse_single(refspec)
@@ -163,7 +162,7 @@ impl GitEngine {
             .with_context(|| format!("'{refspec}' does not point to a commit"))
     }
 
-    /// Format a `chrono::Duration` as a human-readable "X ago" string.
+    /// chrono::Duration を人間に読みやすい "X ago" 形式の文字列にする。
     fn format_duration_ago(duration: chrono::Duration) -> String {
         let seconds = duration.num_seconds();
         if seconds < 0 {

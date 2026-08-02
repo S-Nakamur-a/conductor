@@ -15,9 +15,9 @@ use crate::text_input::TextInput;
 /// 平坦な列として扱える。
 #[derive(Debug, Clone)]
 pub enum CommentListRow {
-    /// `ReviewState::comments` の指定添字にあるトップレベルのコメント。
+    /// ReviewState::comments の指定添字にあるトップレベルのコメント。
     Comment { comment_idx: usize },
-    /// `comment_idx` のコメントに属する返信。
+    /// comment_idx のコメントに属する返信。
     Reply {
         comment_idx: usize,
         reply_idx: usize,
@@ -62,10 +62,10 @@ pub struct ReviewState {
     pub input_buffer: TextInput,
     /// 作成中のコメントの種別 (Suggest か Question)。
     pub input_kind: CommentKind,
-    /// 作成中の新規コメントの対象: `(file_path, line_start, line_end)`。
-    /// 設定されている (`AddingComment` の) あいだ、入力ボックスはその行に
-    /// インラインで描かれ、バッファは本文だけを持つ (`file:line` の接頭辞は無い)。
-    /// `None` のときは、バッファ内の接頭辞をパースする従来の経路
+    /// 作成中の新規コメントの対象: (file_path, line_start, line_end)。
+    /// 設定されている (AddingComment の) あいだ、入力ボックスはその行に
+    /// インラインで描かれ、バッファは本文だけを持つ (file:line の接頭辞は無い)。
+    /// None のときは、バッファ内の接頭辞をパースする従来の経路
     /// (テンプレートピッカーやコマンドパレットからの入口) に落ちる。
     pub input_anchor: Option<(String, u32, Option<u32>)>,
     /// パネル下部に出す一時的なメッセージ。
@@ -74,7 +74,7 @@ pub struct ReviewState {
     pub search_query: TextInput,
     /// 検索入力が有効かどうか。
     pub search_active: bool,
-    /// 絞り込み後のコメントの添字 (`comments` に対する添字)。
+    /// 絞り込み後のコメントの添字 (comments に対する添字)。
     pub filtered_indices: Vec<usize>,
     /// データベースから読み込んだ、利用可能なコメントテンプレート。
     pub templates: Vec<CommentTemplate>,
@@ -84,7 +84,7 @@ pub struct ReviewState {
     pub template_selected: usize,
     /// 現在表示中のファイルのコメントのキャッシュ。1 始まりの行番号がキー。
     pub file_comments: HashMap<usize, Vec<ReviewComment>>,
-    /// `file_comments` を作ったときのファイルパス (キャッシュ無効化のため)。
+    /// file_comments を作ったときのファイルパス (キャッシュ無効化のため)。
     pub file_comments_path: Option<String>,
     /// コメント ID ごとの返信数のキャッシュ。コメントと一緒に読み込む。
     pub reply_counts: HashMap<String, usize>,
@@ -95,7 +95,7 @@ pub struct ReviewState {
     /// コメントパネルの仮想的な行一覧 (展開状態が変わるたびに作り直す)。
     pub comment_list_rows: Vec<CommentListRow>,
 
-    // ── コメント詳細のオーバーレイ ──────────────────────────────
+    // コメント詳細のオーバーレイ
     /// コメント詳細モーダルが表示中かどうか。
     pub comment_detail_active: bool,
     /// 詳細モーダル内のスクロール位置。
@@ -107,19 +107,19 @@ pub struct ReviewState {
 
     /// ブランチ単位の変更サマリ (差分全体の「何を・なぜ」)。コメントと一緒に
     /// 読み込み、差分の上にバナーとして描画する。現在のブランチにサマリが
-    /// 書かれていなければ `None`。
+    /// 書かれていなければ None。
     pub change_summary: Option<String>,
 
-    /// y/n の確認を待っている削除の対象 (`input_mode == ConfirmingDelete` の
+    /// y/n の確認を待っている削除の対象 (input_mode == ConfirmingDelete の
     /// あいだ設定される)。
     pub pending_delete: Option<PendingDelete>,
-    /// 編集中の返信の `(reply_id, parent_comment_id)`
-    /// (`input_mode == EditingReply` のあいだ設定される)。
+    /// 編集中の返信の (reply_id, parent_comment_id)
+    /// (input_mode == EditingReply のあいだ設定される)。
     pub editing_reply: Option<(String, String)>,
 }
 
 impl ReviewState {
-    /// 空の既定値で `ReviewState` を作る。
+    /// 空の既定値で ReviewState を作る。
     pub fn new() -> Self {
         Self {
             comments: Vec::new(),
@@ -151,7 +151,7 @@ impl ReviewState {
         }
     }
 
-    /// 見た目上の行が返信の行であれば `(comment_idx, reply_idx)` に解決する。
+    /// 見た目上の行が返信の行であれば (comment_idx, reply_idx) に解決する。
     pub fn selected_reply_at(&self, visual_idx: usize) -> Option<(usize, usize)> {
         match self.comment_list_rows.get(visual_idx) {
             Some(CommentListRow::Reply {
@@ -162,8 +162,8 @@ impl ReviewState {
         }
     }
 
-    /// 親コメントの返信キャッシュを介して、`(comment_idx, reply_idx)` を
-    /// `(reply_id, parent_comment_id)` に解決する。
+    /// 親コメントの返信キャッシュを介して、(comment_idx, reply_idx) を
+    /// (reply_id, parent_comment_id) に解決する。
     pub fn reply_id_at(&self, comment_idx: usize, reply_idx: usize) -> Option<(String, String)> {
         let comment = self.comments.get(comment_idx)?;
         let replies = self.cached_replies.get(&comment.id)?;
@@ -232,7 +232,7 @@ impl ReviewState {
         self.rebuild_comment_list_rows();
     }
 
-    /// `comments`, `expanded_comments`, `cached_replies` から仮想的な行一覧を
+    /// comments, expanded_comments, cached_replies から仮想的な行一覧を
     /// 作り直す。
     pub fn rebuild_comment_list_rows(&mut self) {
         self.comment_list_rows.clear();
@@ -291,10 +291,10 @@ impl ReviewState {
 
     /// メモリ上のコメントから、ファイル単位のコメントキャッシュを作る。
     ///
-    /// `self.comments` を `file_path` で絞り込み、コメントの範囲に含まれる各行を、
+    /// self.comments を file_path で絞り込み、コメントの範囲に含まれる各行を、
     /// その行を覆うコメントの列へ対応づける。解決済みのコメントもここには残す。
     /// 溝にバッジを出し続けるため。解決済みコメントを隠しているのはインラインの
-    /// スレッド展開のほう (`build_inline_thread_lines` を参照)。
+    /// スレッド展開のほう (build_inline_thread_lines を参照)。
     pub fn build_file_comment_cache(&mut self, file_path: &str) {
         self.file_comments.clear();
         self.file_comments_path = Some(file_path.to_string());

@@ -1,4 +1,4 @@
-//! Command palette overlay: fuzzy-searchable list of all keymap actions.
+//! コマンドパレットのオーバーレイ: keymap のすべてのアクションをあいまい検索できる一覧。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input};
 use crate::app::App;
@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the command palette overlay with search bar and command list.
+/// 検索バーとコマンド一覧を持つコマンドパレットのオーバーレイを描画する。
 pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::command_palette;
 
@@ -22,12 +22,12 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(3), // Search bar
-        Constraint::Min(3),    // Command list
+        Constraint::Length(3), // 検索バー
+        Constraint::Min(3),    // コマンド一覧
     ])
     .split(popup_area);
 
-    // Search bar
+    // 検索バー
     let search_block = Block::default()
         .title(" Command Palette (Enter: run, Esc: close) ")
         .borders(Borders::ALL)
@@ -42,7 +42,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     );
     set_cursor_for_input(frame, search_inner, &app.overlays.command_palette.filter);
 
-    // Command list
+    // コマンド一覧
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));
@@ -77,9 +77,9 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         command_palette::CommandScope::Other => "Other",
     };
 
-    // Interleave non-selectable scope headers between the (selectable) command
-    // rows. `selected` indexes the command rows only, so track the visual row
-    // index of the selected command to drive the highlight.
+    // 選択不可なスコープ見出しを、（選択可能な）コマンド行の間に差し込む。
+    // selected はコマンド行のみをインデックスするので、選択中コマンドの
+    // 見た目上の行インデックスを別途追跡してハイライトに使う。
     let selected = app.overlays.command_palette.selected;
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected_row: Option<usize> = None;
@@ -109,8 +109,9 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
             Style::default().fg(theme.fg)
         };
 
-        // Live keybinding from the keymap for the focused context (blank for
-        // palette-only commands and commands not bound in this context).
+        // フォーカス中のコンテキストに対する、keymap 由来の実際のキーバインド
+        // （パレット専用コマンドや、このコンテキストで割り当てられていない
+        // コマンドは空欄）。
         let kb = cmd
             .action
             .and_then(|a| crate::ui::common::representative_chord(&app.keymap, context, a))

@@ -1,53 +1,51 @@
-//! Mouse handling for the menu bar and its dropdown.
+//! メニューバーとそのドロップダウンのマウス処理。
 //!
-//! Both entry points run *before* the other bar handlers in
-//! [`handle_mouse_event`](super::handle_mouse_event). That order is load
-//! bearing: `handle_title_bar_click` treats every row above `main_area` as its
-//! own and returns `true` unconditionally, so a menu-bar click placed after it
-//! would never be seen.
+//! この2つの入口は [handle_mouse_event](super::handle_mouse_event) 内で他のバー用
+//! ハンドラより先に実行される。この順序には意味がある。handle_title_bar_click は
+//! main_area より上の全ての行を無条件に自分のものとして true を返すため、これより
+//! 後にメニューバーのクリック処理を置くと絶対に呼ばれない。
 //!
-//! The decision of *what* a click means is [`classify_menu_click`], a pure
-//! function over the recorded hit regions — same shape as
-//! [`classify_margin_click`](super::viewer_panel::classify_margin_click), and
-//! for the same reason: the interesting rules (toggle, dismiss, inert row) are
-//! then testable without standing up an `App` or a terminal.
+//! クリックが何を意味するかの判断は [classify_menu_click] が担う。記録済みの
+//! ヒット領域に対する純粋関数であり、
+//! [classify_margin_click](super::viewer_panel::classify_margin_click) と同じ形。
+//! 理由も同じで、興味深いルール（トグル・閉じる・無反応行）を App やターミナルを
+//! 立ち上げずにテストできるようにするため。
 
 use crate::app::App;
 use crate::menu::MenuFocus;
 use crate::menu::model::MENUS;
 use crate::menu::state::MenuState;
 
-/// What a left click at a given point should do to the menu.
+/// 指定した位置への左クリックがメニューに対して何をすべきかを表す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuClick {
-    /// Run `item` of `menu`.
+    /// menu の item を実行する。
     Activate { menu: usize, item: usize },
-    /// Open `menu`'s dropdown.
+    /// menu のドロップダウンを開く。
     Open(usize),
-    /// Leave the menu entirely.
+    /// メニューから完全に抜ける。
     Close,
-    /// Consumed, but nothing happens — a disabled row, a separator, or the
-    /// dropdown's own border. Keeps the menu open under a near-miss instead of
-    /// blinking it shut.
+    /// 消費はするが何も起きない — 無効化された行、セパレータ、ドロップダウン自体の枠。
+    /// 惜しいクリックで即座に閉じてしまわず、メニューを開いたままにする。
     Inert,
-    /// Not the menu's click; let the rest of the dispatcher have it.
+    /// メニューへのクリックではない。残りのディスパッチャに渡す。
     Pass,
 }
 
-/// Items of the menu at `index`, or an empty slice if the index is stale.
+/// index にあるメニューの項目一覧。インデックスが古い場合は空スライス。
 fn items_of(index: usize) -> &'static [crate::menu::MenuItem] {
     MENUS.get(index).map(|m| m.items).unwrap_or(&[])
 }
 
-/// Decide what a click at `(col, row)` means. `bar_row` is the menu bar's
-/// screen row, or `None` when the bar isn't drawn.
+/// (col, row) へのクリックが何を意味するかを決定する。bar_row はメニューバーの
+/// 画面上の行で、バーが描画されていない場合は None。
 pub(super) fn classify_menu_click(
     state: &MenuState,
     bar_row: Option<u16>,
     col: u16,
     row: u16,
 ) -> MenuClick {
-    // Inside the open dropdown.
+    // 開いているドロップダウンの内側。
     if state.in_dropdown(col, row) {
         return match (state.focus.open_index(), state.item_hit_at(row)) {
             (Some(menu), Some(hit)) if hit.enabled => MenuClick::Activate {
@@ -58,22 +56,21 @@ pub(super) fn classify_menu_click(
         };
     }
 
-    // On the bar row itself.
+    // バーの行そのもの。
     if bar_row == Some(row) {
         return match state.bar_hit_at(col) {
-            // Clicking the open menu closes it, so one target toggles rather
-            // than re-opening what is already there.
+            // 開いているメニューをクリックすると閉じる。既に開いているものを
+            // 開き直すのではなく、同じ対象へのクリックがトグルとして働く。
             Some(idx) if state.focus.open_index() == Some(idx) => MenuClick::Close,
             Some(idx) => MenuClick::Open(idx),
-            // Blank stretch of the bar: nothing to open, and any open menu goes
-            // away.
+            // バーの空白部分: 開くものは何もなく、開いているメニューがあれば閉じる。
             None => MenuClick::Close,
         };
     }
 
-    // Anywhere else: dismiss if a menu is up, otherwise not our event. The
-    // dismissing click is swallowed on purpose — closing a menu should not also
-    // press whatever sat underneath it.
+    // それ以外の場所: メニューが開いていれば閉じる。開いていなければこのイベントの
+    // 対象外。閉じるためのクリックは意図的に飲み込む — メニューを閉じる操作が、
+    // その下にあったものまで押してしまってはいけない。
     if state.focus.is_active() {
         MenuClick::Close
     } else {
@@ -81,8 +78,8 @@ pub(super) fn classify_menu_click(
     }
 }
 
-/// Handle a left click against the menu bar and any open dropdown. Returns
-/// `true` when the click was consumed.
+/// メニューバーと開いているドロップダウンへの左クリックを処理する。クリックを
+/// 消費した場合は true を返す。
 pub(super) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
     let bar = app.layout.cache.menubar_area;
     let bar_row = (bar.height > 0).then_some(bar.y);
@@ -105,23 +102,23 @@ pub(super) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
     }
 }
 
-/// Track hover for the menu bar. Returns `true` when the menu owns this
-/// movement, so the caller skips the other panels' hover bookkeeping (whatever
-/// is under the dropdown shouldn't light up).
+/// メニューバーのホバーを追跡する。このマウス移動をメニューが専有する場合は true を
+/// 返し、呼び出し側は他パネルのホバー処理をスキップする（ドロップダウンの下にあるものが
+/// 光ってはいけない）。
 pub(super) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
     let bar = app.layout.cache.menubar_area;
     let on_bar = bar.height > 0 && row == bar.y;
 
-    // Highlight the title under the cursor; resolving to `None` off the row
-    // doubles as the "mouse left the bar" clear.
+    // カーソル下のタイトルをハイライトする。行から外れると None になるが、
+    // これは同時に「マウスがバーから離れた」ことのクリアも兼ねている。
     app.menu.hover = if on_bar { app.menu.bar_hit_at(col) } else { None };
 
     match app.menu.focus {
         MenuFocus::Closed => false,
 
-        // With a menu open, sliding along the bar switches which one is shown —
-        // the behaviour that makes a menu bar browsable rather than a series of
-        // click-open-click-close trips.
+        // メニューが開いている状態でバー上をなぞると表示中のメニューが切り替わる —
+        // これによりメニューバーは「クリックで開いて閉じて」を繰り返すのではなく、
+        // ブラウズできるものになる。
         MenuFocus::Open { index, .. } => {
             if on_bar {
                 if let Some(idx) = app.menu.bar_hit_at(col)
@@ -130,8 +127,8 @@ pub(super) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
                     app.menu.open(idx, items_of(idx));
                 }
             } else if app.menu.in_dropdown(col, row) {
-                // Hovering a row moves the selection, so the keyboard and the
-                // pointer share one notion of "current item".
+                // 行にホバーすると選択が移動する。これによりキーボードとポインタで
+                // 「現在の項目」という概念を共有できる。
                 if let Some(hit) = app.menu.item_hit_at(row)
                     && let MenuFocus::Open {
                         ref mut selected, ..
@@ -143,10 +140,9 @@ pub(super) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
             true
         }
 
-        // Bar focused via F10 but nothing dropped down. Hover only highlights;
-        // opening still takes a click or Down/Enter, so drifting the mouse
-        // across the top of the screen can't pop a menu the user never asked
-        // for.
+        // F10でバーにフォーカスしているが何も開いていない状態。ホバーはハイライトのみ
+        // 行い、開くには依然としてクリックまたはDown/Enterが必要。これにより画面上部で
+        // マウスを動かしただけでユーザが望んでいないメニューが開くことはない。
         MenuFocus::Bar { .. } => on_bar,
     }
 }

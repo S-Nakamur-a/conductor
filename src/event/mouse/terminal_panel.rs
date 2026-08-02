@@ -1,4 +1,4 @@
-//! Click handling for the right column (Claude Code / Shell terminals).
+//! 右カラム（Claude Code / Shellターミナル）のクリック処理。
 
 use crossterm::event::{KeyModifiers, MouseEvent};
 
@@ -8,7 +8,7 @@ use crate::terminal_link;
 use super::super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
 use super::{ClickGeometry, register_double_click};
 
-/// Handle a left click in the right column (Claude terminal / Shell).
+/// 右カラム（Claudeターミナル / Shell）内の左クリックを処理する。
 pub(super) fn handle_terminal_column_click(
     app: &mut App,
     mouse: MouseEvent,
@@ -21,10 +21,10 @@ pub(super) fn handle_terminal_column_click(
     let terminal_claude_y = geom.terminal_claude_y;
     let terminal_split_y = geom.terminal_split_y;
 
-    // Right column: top 80% = Claude, bottom 20% = Shell.
+    // 右カラム: 上80% = Claude、下20% = Shell。
     let terminal_x = viewer_end;
 
-    // Cmd+Click (macOS) / Ctrl+Click (Linux) — open file from terminal output.
+    // Cmd+Click (macOS) / Ctrl+Click (Linux) — ターミナル出力からファイルを開く。
     let has_open_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
         || mouse.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -51,7 +51,7 @@ pub(super) fn handle_terminal_column_click(
             let pty_row = row - content_y;
             let pty_col = col.saturating_sub(terminal_x) as usize;
 
-            // Drop lock and re-acquire with scrollback.
+            // ロックを解放し、スクロールバック付きで再取得する。
             drop(parser);
 
             let text = {
@@ -67,7 +67,7 @@ pub(super) fn handle_terminal_column_click(
             // open_file_from_terminal_output と同じ理由)。
             let wt_path = app.viewer_state.root().to_path_buf();
             let links = terminal_link::detect_file_links(&text, &wt_path);
-            // Prefer the link under the cursor; fall back to first on row.
+            // カーソル下のリンクを優先し、なければその行の最初のリンクにフォールバックする。
             let link =
                 terminal_link::file_link_at_offset(&links, pty_col).or_else(|| links.first());
             if let Some(link) = link {
@@ -77,16 +77,16 @@ pub(super) fn handle_terminal_column_click(
                 return;
             }
         }
-        // If no link found, fall through to normal click behavior.
+        // リンクが見つからなければ、通常のクリック挙動にフォールスルーする。
     }
 
     if row < terminal_split_y {
         app.set_focus(Focus::TerminalClaude);
-        // The transcript's "jump to latest" chip, drawn only while the reader
-        // has scrolled away from the newest turn. Checked before the tab strip
-        // and the blank-area double-click so a click on the chip is never also
-        // read as one of those; `jump_hit` is `None` whenever the chip is not
-        // on screen, so this costs nothing the rest of the time.
+        // トランスクリプトの「最新へジャンプ」チップ。読み手が最新のターンから
+        // スクロールして離れている間だけ描画される。タブ帯や空白領域のダブル
+        // クリックより先に確認することで、チップへのクリックがそれらとしても
+        // 解釈されることはない。jump_hit はチップが画面上にない限り常に
+        // None なので、それ以外の場合のコストはゼロ。
         if app.reflow.active
             && let Some(hit) = app.reflow.jump_hit
             && hit.contains(ratatui::layout::Position::new(col, row))
@@ -94,11 +94,11 @@ pub(super) fn handle_terminal_column_click(
             app.reflow_jump_to_latest();
             return;
         }
-        // Click on tab bar (first row of Claude panel).
+        // タブ帯（Claudeパネルの1行目）へのクリック。
         if row == terminal_claude_y {
             handle_terminal_tab_click(app, col, true);
         } else if app.current_worktree_claude_sessions().is_empty() {
-            // Double-click required to spawn a new Claude Code session.
+            // 新しいClaude Codeセッションを起動するにはダブルクリックが必要。
             if register_double_click(
                 &mut app.terminal.claude_blank_last_click,
                 std::time::Instant::now(),
@@ -108,11 +108,11 @@ pub(super) fn handle_terminal_column_click(
         }
     } else {
         app.set_focus(Focus::TerminalShell);
-        // Click on tab bar (first row of Shell panel).
+        // タブ帯（Shellパネルの1行目）へのクリック。
         if row == terminal_split_y {
             handle_terminal_tab_click(app, col, false);
         } else if app.current_worktree_shell_sessions().is_empty() {
-            // Double-click required to spawn a new Shell session.
+            // 新しいShellセッションを起動するにはダブルクリックが必要。
             if register_double_click(
                 &mut app.terminal.shell_blank_last_click,
                 std::time::Instant::now(),

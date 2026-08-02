@@ -1,5 +1,5 @@
-//! Rendering of the review-comment list — both as the explorer's bottom pane
-//! (toggled via `c`) and as the centered full-screen `C` overlay.
+//! レビューコメント一覧の描画。c で切り替えるエクスプローラ下部ペインと、
+//! 中央全画面表示の C オーバーレイの両方で使う。
 
 use crate::app::App;
 use ratatui::Frame;
@@ -8,12 +8,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem};
 
-/// Render the comment list as a centered full-screen modal (the `C` overlay) —
-/// an overview of every review comment on the branch with jump-to-location.
-/// Reuses the same comment-list rendering as the explorer bottom pane.
+/// コメント一覧を中央全画面モーダル（C オーバーレイ）として描画する。
+/// ブランチ上の全レビューコメントの一覧を表示し、該当箇所へジャンプできる。
+/// エクスプローラ下部ペインと同じ描画ロジックを再利用する。
 pub fn render_comment_list_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    // Clamp lower bounds to `area` so a tiny terminal can't make min > max
-    // (which would panic in `u16::clamp`).
+    // 下限を area にクランプする。そうしないと極小ターミナルで min > max になり
+    // u16::clamp が panic する。
     let w = ((area.width as u32 * 70 / 100) as u16).clamp(24.min(area.width), area.width);
     let h = ((area.height as u32 * 80 / 100) as u16).clamp(6.min(area.height), area.height);
     let x = area.x + area.width.saturating_sub(w) / 2;
@@ -23,7 +23,7 @@ pub fn render_comment_list_overlay(frame: &mut Frame, area: Rect, app: &App) {
     render_comment_list(frame, popup, app, true);
 }
 
-/// Render the comment list (bottom half, when toggled via `c`).
+/// コメント一覧を描画する（c で切り替えたときの下半分）。
 pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::review_state::CommentListRow;
 
@@ -46,8 +46,8 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
         .filter(|c| c.status == crate::review_store::CommentStatus::Pending)
         .count();
     let title = format!(" Comments ({pending}/{total}) ");
-    // Bulk-send button for the whole list — distinct from the per-comment
-    // "ask claude" action defined in `viewer_panel::thread_actions`.
+    // 一覧全体に対する一括送信ボタン。viewer_panel::thread_actions にある
+    // コメント単位の「ask claude」アクションとは別物。
     const ASK_CLAUDE_ALL_LABEL: &str = " ✨ Ask Claude All ";
 
     // ボーダーの太さは Explorer カラム全体、タイトルの強調はその下半分に
@@ -72,7 +72,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
             .alignment(Alignment::Right),
         );
 
-    // Scroll position indicator (only when the list overflows).
+    // スクロール位置インジケータ（一覧が溢れているときのみ）。
     if total_rows > inner_height {
         let first = scroll + 1;
         let last = (scroll + inner_height).min(total_rows);
@@ -118,15 +118,15 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         .get(&comment.id)
                         .copied()
                         .unwrap_or(0);
-                    // Reply count rides at the end of the row, out of the way
-                    // of the location + body the eye scans for.
+                    // 返信数は行末に置き、目が追う場所（位置情報と本文）の
+                    // 邪魔にならないようにする。
                     let reply_suffix = if reply_count > 0 {
                         format!(" \u{21a9}{reply_count}")
                     } else {
                         String::new()
                     };
 
-                    // Expansion indicator (only meaningful when replies exist).
+                    // 展開インジケータ（返信がある場合のみ意味を持つ）。
                     let expand_indicator = if reply_count > 0 {
                         if app.review_state.expanded_comments.contains(&comment.id) {
                             "\u{25bc} " // ▼
@@ -137,8 +137,9 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         "  "
                     };
 
-                    // First body line only; collapsing newlines to spaces hid
-                    // the fact that a comment had structure. `+N` marks it.
+                    // 本文は最初の行のみ表示する。改行をスペースに潰すと
+                    // コメントに構造があったことが分からなくなるため、
+                    // +N で残りの行数を示す。
                     let first_line = comment.body.lines().next().unwrap_or("");
                     let extra_lines = comment.body.lines().count().saturating_sub(1);
                     let more_suffix = if extra_lines > 0 {
@@ -152,13 +153,13 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         unicode_width::UnicodeWidthStr::width(fixed.as_str())
                             + unicode_width::UnicodeWidthStr::width(more_suffix.as_str())
                             + unicode_width::UnicodeWidthStr::width(reply_suffix.as_str())
-                            + 2, // block borders
+                            + 2, // ブロックの枠線分
                     );
                     let body: String = first_line.chars().take(max_body).collect();
 
                     let selected = row_idx == vs_explorer.comment_list_selected;
                     let item = if selected {
-                        // Selected rows keep a uniform highlight for legibility.
+                        // 選択中の行は視認性のため一律のハイライトを維持する。
                         let style = if list_focused {
                             Style::default()
                                 .fg(theme.selected_fg)
@@ -175,11 +176,11 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                             style,
                         ))
                     } else {
-                        // Unselected rows use semantic colours so status and
-                        // location recede and the body dominates the scan.
-                        // Resolved rows recede *entirely* (marker included):
-                        // a bright ✓ over a muted body would pull the eye to
-                        // exactly the rows that no longer need attention.
+                        // 非選択行は意味色を使い、ステータスと位置情報を後退させて
+                        // 本文がスキャンの主役になるようにする。解決済みの行は
+                        // マーカーも含めて完全に後退させる。ミュートな本文の上に
+                        // 明るい ✓ が乗ると、もう注意を払う必要のない行にこそ
+                        // 目が引き寄せられてしまうため。
                         let marker_style = if resolved {
                             Style::default().fg(theme.muted)
                         } else {
@@ -218,7 +219,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         crate::review_store::Author::Claude => "Claude",
                     };
 
-                    // "    ↳ " indent (6) + author + " " (1) + block borders (2).
+                    // "    ↳ " のインデント(6) + author + " "(1) + ブロック枠線(2)。
                     let reply_prefix_w =
                         6 + unicode_width::UnicodeWidthStr::width(author_label) + 1;
                     let max_body = (area.width as usize).saturating_sub(reply_prefix_w + 2);
@@ -249,8 +250,8 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                             style,
                         ))
                     } else {
-                        // Deeper indent + bold author make the thread
-                        // structure visible without reading the text.
+                        // 深いインデントと author の太字表示により、本文を
+                        // 読まなくてもスレッド構造が分かるようにする。
                         ListItem::new(Line::from(vec![
                             Span::styled(
                                 format!("    \u{21b3} {author_label} "),
@@ -268,9 +269,9 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
         })
         .collect();
 
-    // Clear first so rows below the last item (or stale rows after scrolling /
-    // a height change) don't show the previous frame's glyphs — the same
-    // scroll-bleed guard the viewer uses.
+    // 最後の項目より下の行（またはスクロールや高さ変更後の古い行）に
+    // 前フレームの文字が残らないよう、先にクリアする。viewer と同じ
+    // スクロール残像対策。
     frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);

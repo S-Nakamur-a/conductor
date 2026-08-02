@@ -1,5 +1,5 @@
-//! Go-to-definition, go-to-implementation, and find-references handlers,
-//! triggered from the viewer panel by the `g` prefix (gd / gi / gr).
+//! Viewer パネルの g プレフィックス（gd / gi / gr）から呼ばれる、定義へ移動・
+//! 実装へ移動・参照検索のハンドラ。
 
 use crate::app::{App, StatusLevel};
 
@@ -20,7 +20,7 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
         return;
     }
 
-    // Context-aware: if cursor is at a definition site, show references instead.
+    // 文脈依存: カーソルが定義位置にある場合は代わりに参照一覧を表示する。
     if app.is_cursor_at_definition(&symbol) {
         let root = app.code_nav.index.root();
         let refs = app.code_nav.index.find_references(&symbol, &root);
@@ -63,7 +63,7 @@ pub(super) fn handle_go_to_definition(app: &mut App) {
             );
         }
         n => {
-            // Multiple definitions — show in references overlay.
+            // 定義が複数ある場合は参照オーバーレイに表示する。
             app.code_nav.references.active = true;
             app.code_nav.references.symbol_name = format!("{symbol} (definitions)");
             app.code_nav.references.results = defs

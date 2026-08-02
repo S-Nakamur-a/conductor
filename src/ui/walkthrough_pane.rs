@@ -1,13 +1,11 @@
-//! The AI walkthrough view — one of the Explorer's three bottom-pane views
-//! (alongside the diff list and comment list; see
-//! `viewer::ExplorerBottomView`).
+//! AI ウォークスルービュー — Explorer の下部ペインが持つ3つのビュー
+//! （差分一覧・コメント一覧と並ぶ; viewer::ExplorerBottomView を参照）の1つ。
 //!
-//! Renders as a single flat list, one row per step, with only the selected
-//! step's body inlined (word-wrapped, clipped) directly below its row —
-//! there is no fixed-percentage split between "list" and "body" areas, so a
-//! narrow pane still shows as much of the selected step as fits. The full
-//! body is available via the `space` detail overlay for anything the clip
-//! cuts off.
+//! ステップごとに1行のフラットな一覧として描画し、選択中のステップの本文
+//! だけをその行のすぐ下にインライン表示する（ワードラップ、クリップあり）
+//! — 「一覧」と「本文」のエリアを固定比率で分割することはしていないので、
+//! 狭いペインでも選択中のステップをできる限り表示できる。クリップで
+//! 切れた分は space の詳細オーバーレイから全文を見られる。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -18,7 +16,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragr
 use crate::app::{App, Focus};
 use crate::walkthrough::{WalkthroughStatus, WalkthroughStep, WalkthroughStepKind};
 
-/// Render the walkthrough view into the Explorer's bottom pane.
+/// ウォークスルービューを Explorer の下部ペインに描画する。
 pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     let theme = &app.theme;
     let vs_explorer = &app.viewer_state.explorer;
@@ -90,9 +88,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     }
 }
 
-/// The icon shown next to a walkthrough step, matching this UI's existing
-/// emoji-badge convention (comment badges, file-tree icons, …). Shared with
-/// the Viewer's walkthrough step banner (`ui::viewer_panel`).
+/// ウォークスルーステップの隣に表示するアイコン。このUIの既存の絵文字バッジ
+/// の慣習（コメントバッジ、ファイルツリーのアイコンなど）に合わせている。
+/// Viewer のウォークスルーステップバナー（ui::viewer_panel）とも共有している。
 pub(crate) fn step_icon(kind: WalkthroughStepKind) -> &'static str {
     match kind {
         WalkthroughStepKind::Intent => "\u{1f3af}", // 🎯
@@ -102,8 +100,8 @@ pub(crate) fn step_icon(kind: WalkthroughStepKind) -> &'static str {
     }
 }
 
-/// Greedily word-wrap `text` to `width` columns, splitting on existing
-/// newlines first so intentional paragraph breaks in the step body survive.
+/// テキストを width カラムに貪欲にワードラップする。ステップ本文中の意図的な
+/// 段落区切りが残るよう、まず既存の改行で分割してから処理する。
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
@@ -132,14 +130,14 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// The ready walkthrough's flat step list: one row per step, with the
-/// selected step's word-wrapped body inlined directly below its row (clipped
-/// to at most 6 lines and whatever fits the remaining pane height). Scrolling
-/// is in step units — `walkthrough_scroll`/`walkthrough_selected` share the
-/// same index space the diff list uses, and since only the selected step
-/// ever expands, every row before it is exactly one line, so the clamp in
-/// `event::adjust_walkthrough_scroll` keeps the selected step's header
-/// visible.
+/// 準備完了したウォークスルーのフラットなステップ一覧: ステップごとに1行、
+/// 選択中のステップだけワードラップした本文をその行のすぐ下にインライン表示
+/// する（最大6行、かつペインの残り高さに収まる範囲にクリップ）。スクロールは
+/// ステップ単位で行う — walkthrough_scroll/walkthrough_selected は差分一覧が
+/// 使うのと同じインデック空間を共有しており、選択中のステップだけが展開
+/// するので、それより前の行は常にちょうど1行になる。そのため
+/// event::adjust_walkthrough_scroll のクランプで選択中ステップのヘッダを
+/// 表示し続けられる。
 fn render_steps(
     frame: &mut Frame,
     area: Rect,
@@ -215,9 +213,9 @@ fn render_steps(
     frame.render_widget(List::new(items), inner);
 }
 
-/// Full-text detail overlay for the selected walkthrough step (`space` in the
-/// walkthrough view — the same detail-overlay pattern the comment list uses
-/// for `view_comment_detail`, applied to a step's untruncated body).
+/// 選択中のウォークスルーステップの全文詳細オーバーレイ（ウォークスルー
+/// ビューの space キー — コメント一覧が view_comment_detail に使うのと同じ
+/// 詳細オーバーレイのパターンを、ステップの省略なしの本文に適用したもの）。
 pub fn render_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
     let Some(steps) = app.walkthrough.current.as_ref().map(|wt| &wt.steps) else {

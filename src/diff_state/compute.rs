@@ -1,7 +1,7 @@
-//! `git2`/`similar`-based diff computation: loading a `DiffState` from a
-//! repository, building per-file hunks/lines, function-context header
-//! detection, and case-only rename filtering (for case-insensitive
-//! filesystems).
+//! git2/similar ベースの diff 計算。リポジトリからの DiffState の読み込み、
+//! ファイル単位のハンク/行の構築、関数コンテキストヘッダーの検出、
+//! 大文字小文字の違いだけのリネームのフィルタリング(大文字小文字を区別しない
+//! ファイルシステム向け)を行う。
 
 use std::path::Path;
 
@@ -14,31 +14,32 @@ use super::model::{
     DiffHunk, DiffLine, DiffLineTag, DiffRange, DiffState, FileDiff, InlineSegment,
 };
 
-/// Resolve `base` — a branch name, a remote-tracking ref, a tag, or a raw OID —
-/// to the commit the diff should be based on.
+/// base(ブランチ名、リモート追跡 ref、タグ、または生の OID)を diff の
+/// 基準となるコミットに解決する。
 ///
-/// `revparse_single` rather than `find_branch` because worktrees Conductor
-/// creates record `origin/<main>` as their base (see
-/// `GitEngine::resolve_base_ref`), and a remote-tracking ref is not a local
-/// branch — that mismatch is what made the changed-files list come back empty.
+/// find_branch ではなく revparse_single を使う理由: Conductor が作成する
+/// worktree はベースを origin/<main> として記録しており(GitEngine::resolve_base_ref
+/// 参照)、リモート追跡 ref はローカルブランチではない。この不一致が変更ファイル
+/// リストを空で返す原因になっていた。
 ///
-/// The name is resolved exactly as recorded, so a base of `origin/main` uses
-/// the remote-tracking ref even when a stale local `main` exists. Note the
-/// converse: PR intake records the PR's base as a bare name (`main`), and that
-/// *does* resolve to the local branch, which may lag the remote. The `origin/`
-/// retry is only for names with no local ref at all — a configured base like
-/// `develop` that exists solely as `refs/remotes/origin/develop`.
+/// 名前は記録された通りに厳密に解決するので、ベースが origin/main であれば
+/// 古いローカルの main が存在してもリモート追跡 ref の方を使う。逆に PR intake
+/// は PR のベースを裸の名前(main)として記録しており、こちらはローカルブランチに
+/// 解決される(リモートより遅れている可能性がある)。origin/ を付けての再試行は、
+/// develop のように refs/remotes/origin/develop としてしか存在しないローカル
+/// ref を持たない名前のためだけに行う。
 ///
-/// Ordering follows git's own revspec rules, so a *tag* named `main` wins over
-/// a branch named `main`, matching what `git rev-parse main` would pick.
+/// 解決の優先順位は git 自体の revspec ルールに従うので、main という名前の
+/// タグは main という名前のブランチより優先される。これは git rev-parse main
+/// が選ぶものと一致する。
 fn resolve_base_commit(repo: &Repository, base: &str) -> Result<git2::Oid> {
     let resolved = repo.revparse_single(base).or_else(|primary| {
-        // A base recorded as a bare name (`develop`) can exist only as
-        // `refs/remotes/origin/develop`: git's revspec rules stop at
-        // `refs/remotes/<name>` and won't fill in the remote for you. Skip the
-        // retry for an already-qualified name so the error the user reads never
-        // says `origin/origin/main`, and keep the first failure as the cause —
-        // that's the one naming the ref they actually configured.
+        // 裸の名前(develop)で記録されたベースは refs/remotes/origin/develop
+        // としてしか存在しないことがある。git の revspec ルールは
+        // refs/remotes/<name> までしか探さず、リモートを自動補完してはくれない。
+        // 既に修飾済みの名前では再試行をスキップし、ユーザが読むエラーが
+        // 決して origin/origin/main にならないようにする。原因としては
+        // 最初の失敗を保持する。それがユーザが実際に設定した ref を指しているからだ。
         if base.starts_with("origin/") {
             return Err(primary);
         }
@@ -53,11 +54,11 @@ fn resolve_base_commit(repo: &Repository, base: &str) -> Result<git2::Oid> {
 }
 
 impl DiffState {
-    /// Load the diff between `base_branch` and HEAD for the repository at
-    /// `worktree_path`, replacing any previously stored diff data.
+    /// worktree_path のリポジトリについて base_branch と HEAD の diff を読み込み、
+    /// 以前に保持していた diff データを置き換える。
     ///
-    /// Computes both committed (merge-base..HEAD) and uncommitted (HEAD vs
-    /// workdir+index) diffs.
+    /// コミット済み(merge-base..HEAD)と未コミット(HEAD vs workdir+index)の
+    /// 両方の diff を計算する。
     pub fn load_diff(
         &mut self,
         worktree_path: &Path,
@@ -68,7 +69,7 @@ impl DiffState {
         self.base_branch = base_branch.to_string();
         self.error = None;
 
-        // Compute committed diff.
+        // コミット済みの diff を計算する。
         match Self::compute_diff_range(
             worktree_path,
             base_branch,
@@ -83,13 +84,13 @@ impl DiffState {
             Err(e) => {
                 self.committed_files.clear();
                 self.error = Some(format!("{e:#}"));
-                // Fall through to the uncommitted computation below: it
-                // doesn't depend on `base_branch`, so a bad base must not
-                // hide uncommitted changes too.
+                // 下の未コミット計算にはそのまま進む。未コミット側は base_branch
+                // に依存しないので、不正なベースが未コミットの変更まで隠してしまっては
+                // ならない。
             }
         }
 
-        // Compute uncommitted diff.
+        // 未コミットの diff を計算する。
         match Self::compute_diff_range(
             worktree_path,
             base_branch,
@@ -103,7 +104,7 @@ impl DiffState {
             }
             Err(e) => {
                 self.uncommitted_files.clear();
-                // Non-fatal: committed diff was loaded successfully.
+                // 致命的ではない: コミット済みの diff は正常に読み込めている。
                 log::warn!("failed to compute uncommitted diff: {e:#}");
             }
         }
@@ -112,8 +113,8 @@ impl DiffState {
         self.scroll = 0;
     }
 
-    /// Return a regex pattern for detecting function/class/struct headers
-    /// based on the file extension. Returns `None` for unsupported extensions.
+    /// ファイル拡張子に基づいて、関数/クラス/構造体のヘッダーを検出するための
+    /// 正規表現パターンを返す。対応していない拡張子には None を返す。
     fn func_pattern_for_ext(ext: &str) -> Option<Regex> {
         let pattern = match ext {
             // Rust
@@ -145,16 +146,16 @@ impl DiffState {
         Regex::new(pattern).ok()
     }
 
-    /// Scan upward from `start_line` (0-indexed) to find the nearest function
-    /// header in the old file content.
+    /// start_line(0始まり)から上方向に走査し、旧ファイル内容から最も近い
+    /// 関数ヘッダーを見つける。
     fn find_func_header(old_lines: &[&str], start_line: usize, pattern: &Regex) -> Option<String> {
         for i in (0..=start_line).rev() {
             let line = old_lines[i].trim_end();
             if pattern.is_match(line) {
-                // Truncate very long headers for display.
+                // 表示用に、長すぎるヘッダーは切り詰める。
                 let trimmed = line.trim();
                 let header = if trimmed.len() > 80 {
-                    // Find the last char boundary at or before byte 80.
+                    // バイト位置80以下で最後の文字境界を探す。
                     let mut end = 80;
                     while !trimmed.is_char_boundary(end) {
                         end -= 1;
@@ -169,9 +170,9 @@ impl DiffState {
         None
     }
 
-    /// Public wrapper for background diff computation.
+    /// バックグラウンドでの diff 計算用の公開ラッパー。
     ///
-    /// `committed`: if true, computes merge-base..HEAD; if false, HEAD vs workdir+index.
+    /// committed: true なら merge-base..HEAD、false なら HEAD vs workdir+index を計算する。
     pub fn compute_diff_range_static(
         worktree_path: &Path,
         base_branch: &str,
@@ -187,7 +188,7 @@ impl DiffState {
         Self::compute_diff_range(worktree_path, base_branch, range, word_diff, tab_width)
     }
 
-    /// Use `git2` + `similar` to compute file-level diffs for a given range.
+    /// git2 + similar を使い、指定した範囲についてファイル単位の diff を計算する。
     pub(super) fn compute_diff_range(
         worktree_path: &Path,
         base_branch: &str,
@@ -198,7 +199,7 @@ impl DiffState {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open repo at {}", worktree_path.display()))?;
 
-        // Resolve HEAD.
+        // HEAD を解決する。
         let head_commit = repo
             .head()
             .with_context(|| "cannot resolve HEAD")?
@@ -206,7 +207,7 @@ impl DiffState {
             .with_context(|| "cannot peel HEAD to commit")?;
         let head_oid = head_commit.id();
 
-        // Build the git2 diff depending on range.
+        // range に応じて git2 の diff を構築する。
         let diff = match range {
             DiffRange::Committed => {
                 // merge-base(base, HEAD)..HEAD
@@ -231,17 +232,16 @@ impl DiffState {
             }
         };
 
-        // Determine if we need to read from workdir (for unstaged/untracked files).
+        // workdir から読む必要があるか(未ステージ/未追跡ファイル向け)を判定する。
         let use_workdir = range == DiffRange::Uncommitted;
 
         let mut file_diffs = Vec::new();
 
-        // Build a set of delta indices to skip: case-only path differences
-        // with identical content.  On case-insensitive filesystems (macOS),
-        // git may report a delete + add pair where the paths differ only in
-        // case (e.g. "Photo.png" deleted, "photo.png" added) even though
-        // the file content is identical.  We detect these pairs by comparing
-        // blob OIDs and lowercased paths.
+        // スキップするデルタのインデックス集合を作る: 大文字小文字だけ異なり
+        // 内容が同一のパス。大文字小文字を区別しないファイルシステム(macOS)では、
+        // ファイル内容が同一でもパスの大文字小文字だけが異なる削除+追加のペア
+        // (例: "Photo.png" 削除、"photo.png" 追加)を git が報告することがある。
+        // blob の OID と小文字化したパスを比較してこれらのペアを検出する。
         let skip_indices = Self::find_case_only_rename_indices(&diff);
 
         let num_deltas = diff.deltas().len();
@@ -252,7 +252,7 @@ impl DiffState {
 
             let delta = diff.get_delta(delta_idx).unwrap();
 
-            // Determine file path.
+            // ファイルパスを決定する。
             let path = delta
                 .new_file()
                 .path()
@@ -260,11 +260,11 @@ impl DiffState {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| "(unknown)".to_string());
 
-            // Get old content from the blob.
+            // blob から旧内容を取得する。
             let old_content = Self::blob_content(&repo, &delta.old_file());
 
-            // Get new content: for workdir diffs, read from disk when the
-            // blob id is zero (unstaged / untracked).
+            // 新内容を取得する: workdir との diff では、blob id がゼロ
+            // (未ステージ/未追跡)の場合はディスクから読む。
             let new_content = if use_workdir && delta.new_file().id().is_zero() {
                 let full_path = worktree_path.join(&path);
                 match std::fs::read(&full_path) {
@@ -276,22 +276,23 @@ impl DiffState {
                 Self::blob_content(&repo, &delta.new_file())
             };
 
-            // Also skip single-delta case-only renames (when rename detection
-            // merges delete+add into one delta).
+            // リネーム検出が削除+追加を1つのデルタに統合した場合の、単一デルタでの
+            // 大文字小文字違いリネームもスキップする。
             if Self::is_case_only_rename(&delta) && old_content == new_content {
                 continue;
             }
 
-            // Skip files with no actual content changes.
-            // Catches spurious deltas from case-insensitive FS stat mismatches.
+            // 実質的な内容変更のないファイルはスキップする。
+            // 大文字小文字を区別しないファイルシステムの stat 不一致による、
+            // 偽のデルタを弾くためのもの。
             if old_content == new_content {
                 continue;
             }
 
-            // Use `similar` to compute line-level diff with context.
+            // similar を使って行単位の diff をコンテキスト付きで計算する。
             let text_diff = TextDiff::from_lines(&old_content, &new_content);
 
-            // Prepare function context extraction.
+            // 関数コンテキストの抽出を準備する。
             let ext = Path::new(&path)
                 .extension()
                 .and_then(|e| e.to_str())
@@ -333,7 +334,7 @@ impl DiffState {
                                 })
                                 .collect();
 
-                            // Build content by joining segment texts.
+                            // セグメントのテキストを連結して content を組み立てる。
                             let content: String = segments
                                 .iter()
                                 .map(|s| s.text.trim_end_matches('\n').trim_end_matches('\r'))
@@ -383,9 +384,9 @@ impl DiffState {
                     }
                 }
 
-                // Extract function context header for this hunk.
+                // このハンクの関数コンテキストヘッダーを抽出する。
                 let func_header = func_pattern.as_ref().and_then(|pat| {
-                    // Find the first line number in the hunk (old side).
+                    // ハンク内で最初の行番号を求める(旧側)。
                     let first_old_line = hunk_lines.iter().find_map(|l| l.old_line_no);
                     let first_new_line = hunk_lines.iter().find_map(|l| l.new_line_no);
                     let start = first_old_line.or(first_new_line).unwrap_or(1);
@@ -414,18 +415,18 @@ impl DiffState {
         Ok(file_diffs)
     }
 
-    /// Find delta indices that form case-only rename pairs (delete + add with
-    /// paths differing only in case and identical blob content).
+    /// 大文字小文字だけ異なるリネームのペア(パスが大文字小文字のみ異なり、
+    /// blob の内容が同一な削除+追加)を構成するデルタのインデックスを見つける。
     ///
-    /// Returns a set of indices to skip during diff processing.
+    /// diff 処理でスキップすべきインデックスの集合を返す。
     fn find_case_only_rename_indices(diff: &git2::Diff<'_>) -> std::collections::HashSet<usize> {
         use std::collections::HashMap;
 
         let mut skip = std::collections::HashSet::new();
 
-        // Collect deleted entries: lowercased path → (index, blob oid).
+        // 削除エントリを集める: 小文字化したパス → (インデックス, blob oid)。
         let mut deleted: HashMap<String, Vec<(usize, git2::Oid)>> = HashMap::new();
-        // Collect added entries: lowercased path → (index, blob oid).
+        // 追加エントリを集める: 小文字化したパス → (インデックス, blob oid)。
         let mut added: HashMap<String, Vec<(usize, git2::Oid)>> = HashMap::new();
 
         for (idx, delta) in diff.deltas().enumerate() {
@@ -449,13 +450,13 @@ impl DiffState {
             }
         }
 
-        // Match pairs: same lowercased path, same blob OID, different actual path.
+        // ペアを照合する: 小文字化したパスと blob OID が同じで、実際のパスが異なるもの。
         for (lower_path, del_entries) in &deleted {
             if let Some(add_entries) = added.get(lower_path) {
                 for &(del_idx, del_oid) in del_entries {
                     for &(add_idx, add_oid) in add_entries {
                         if !del_oid.is_zero() && del_oid == add_oid {
-                            // Verify actual paths differ (not the same exact path).
+                            // 実際のパスが(完全に同一ではなく)異なることを確認する。
                             let del_delta = diff.get_delta(del_idx).unwrap();
                             let add_delta = diff.get_delta(add_idx).unwrap();
                             let del_path = del_delta.old_file().path().unwrap();
@@ -473,9 +474,9 @@ impl DiffState {
         skip
     }
 
-    /// Check whether a delta represents a case-only rename, i.e. old_path and
-    /// new_path are equal when compared case-insensitively but differ in their
-    /// exact bytes.  Returns `false` if either path is absent.
+    /// デルタが大文字小文字だけのリネームを表すかどうかを判定する。すなわち
+    /// old_path と new_path が大文字小文字を無視すれば一致するが、実際のバイト列は
+    /// 異なる場合。どちらかのパスが存在しなければ false を返す。
     fn is_case_only_rename(delta: &git2::DiffDelta<'_>) -> bool {
         if let (Some(old_path), Some(new_path)) = (delta.old_file().path(), delta.new_file().path())
         {
@@ -487,15 +488,15 @@ impl DiffState {
         }
     }
 
-    /// Read blob content for a diff file entry, returning an empty string if
-    /// the blob is absent (new or deleted file).
+    /// diff のファイルエントリから blob の内容を読む。blob が存在しない場合
+    /// (新規または削除されたファイル)は空文字列を返す。
     fn blob_content(repo: &Repository, file: &git2::DiffFile<'_>) -> String {
         if file.id().is_zero() {
             return String::new();
         }
         match repo.find_blob(file.id()) {
             Ok(blob) => {
-                // Attempt UTF-8; fall back to lossy conversion.
+                // UTF-8 として試み、失敗したら非可逆変換にフォールバックする。
                 String::from_utf8(blob.content().to_vec())
                     .unwrap_or_else(|_| String::from_utf8_lossy(blob.content()).to_string())
             }

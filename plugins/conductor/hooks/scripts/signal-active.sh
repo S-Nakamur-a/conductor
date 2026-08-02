@@ -1,24 +1,24 @@
 #!/bin/bash
-# Signal to Conductor TUI that this Claude Code session is active (working).
-# Sends a socket message for instant delivery, with file-based fallback.
+# この Claude Code セッションが作業中であることを Conductor の TUI に伝える。
+# 即時に届くソケット通知を送り、届かない場合に備えてファイルにも書く。
 
 REPO_ROOT=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)
 if [ -z "$REPO_ROOT" ]; then
   exit 0
 fi
 
-# Guard: only fire in Conductor-managed repos
+# Conductor が管理しているリポジトリでだけ動かす
 if [ ! -d "$REPO_ROOT/.conductor" ]; then
   exit 0
 fi
 
-# Socket-based notification (instant)
+# ソケット経由の通知 (即時)
 SOCK="$REPO_ROOT/.conductor/cc-notify.sock"
 if [ -S "$SOCK" ]; then
   echo "active $PWD" | nc -U "$SOCK" 2>/dev/null
 fi
 
-# File-based fallback (always write for safety)
+# ファイル経由のフォールバック (念のため常に書く)
 ENCODED_CWD=$(echo "$PWD" | sed 's|/|__|g')
 mkdir -p "$REPO_ROOT/.conductor/cc-active"
 touch "$REPO_ROOT/.conductor/cc-active/$ENCODED_CWD"

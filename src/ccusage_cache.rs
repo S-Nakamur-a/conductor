@@ -1,8 +1,8 @@
 //! ccusage の結果をファイルに置くグローバルなキャッシュ。
 //!
 //! 複数の Conductor インスタンスで 1 つのキャッシュファイルを共有し、実際に
-//! `npx ccusage` を走らせるのが同時に 1 プロセスだけになるようにする。
-//! キャッシュは `~/.cache/conductor/ccusage-YYYYMMDD.json` に置く (1 日 1 ファイル)。
+//! npx ccusage を走らせるのが同時に 1 プロセスだけになるようにする。
+//! キャッシュは ~/.cache/conductor/ccusage-YYYYMMDD.json に置く (1 日 1 ファイル)。
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -21,7 +21,7 @@ struct CacheEntry {
     total_cost: f64,
 }
 
-/// 今日のキャッシュファイルのパスを返す: `~/.cache/conductor/ccusage-YYYYMMDD.json`。
+/// 今日のキャッシュファイルのパスを返す: ~/.cache/conductor/ccusage-YYYYMMDD.json。
 fn cache_path() -> Option<PathBuf> {
     let cache_dir = dirs::cache_dir()?.join("conductor");
     let today = chrono::Local::now().format("%Y%m%d").to_string();
@@ -36,7 +36,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// キャッシュファイルを読み、エントリが十分に新しければ (`max_age_secs` 秒以内に
+/// キャッシュファイルを読み、エントリが十分に新しければ (max_age_secs 秒以内に
 /// 書かれていれば) その内容を返す。
 pub fn read_if_fresh(max_age_secs: u64) -> Option<CcusageInfo> {
     let path = cache_path()?;
@@ -85,7 +85,7 @@ fn write_cache(info: &CcusageInfo) {
     }
 }
 
-/// ロックファイルのパスを返す: `~/.cache/conductor/ccusage.lock`。
+/// ロックファイルのパスを返す: ~/.cache/conductor/ccusage.lock。
 fn lock_path() -> Option<PathBuf> {
     Some(dirs::cache_dir()?.join("conductor").join("ccusage.lock"))
 }
@@ -118,10 +118,10 @@ fn release_lock(path: &PathBuf) {
     let _ = fs::remove_file(path);
 }
 
-/// `npx ccusage` を実行し、パースした結果を返すとともにキャッシュへ書く。
+/// npx ccusage を実行し、パースした結果を返すとともにキャッシュへ書く。
 ///
-/// ロックファイルを使って、複数の Conductor インスタンスが同時に `npx ccusage`
-/// を走らせないようにしている。既にロックが取られている場合は `None` を返す
+/// ロックファイルを使って、複数の Conductor インスタンスが同時に npx ccusage
+/// を走らせないようにしている。既にロックが取られている場合は None を返す
 /// (呼び出し側は既存のキャッシュにフォールバックすること)。
 pub fn fetch_and_cache() -> Option<CcusageInfo> {
     let lock = try_lock()?;

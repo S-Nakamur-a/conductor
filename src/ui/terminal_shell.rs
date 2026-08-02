@@ -1,6 +1,6 @@
-//! Terminal Shell panel — bottom-right area showing shell PTY sessions.
+//! ターミナルシェルパネル — 右下エリアに shell の PTY セッションを表示する。
 //!
-//! Displays session tabs and the PTY output of the active shell session.
+//! セッションタブとアクティブな shell セッションの PTY 出力を表示する。
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::app::{App, Focus};
 
-/// Render the Shell terminal panel into the given area.
+/// 指定した領域にシェルターミナルパネルを描画する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -28,7 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
     );
 
-    // If the selected worktree is grabbed, show a locked overlay instead of sessions.
+    // 選択中の worktree が grab されている場合は、セッションの代わりにロック表示を出す。
     if is_grabbed {
         let block = if is_expanded {
             Block::default().title(" Shell \u{1f512} ")
@@ -78,10 +78,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    // Layout: session tabs (1 row) + PTY output (fill).
+    // レイアウト: セッションタブ（1行） + PTY出力（残り全部）。
     let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
 
-    // Session tabs — scrolling strip with pinned [+]/expand (see `tab_bar`).
+    // セッションタブ — [+]/展開を固定表示するスクロール可能なストリップ（tab_bar 参照）。
     let tab_items: Vec<crate::ui::tab_bar::TabItem> = sessions
         .iter()
         .map(|(global_idx, session)| crate::ui::tab_bar::TabItem {
@@ -105,7 +105,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.terminal.shell_tab_scroll = scroll;
     app.terminal.shell_tab_reveal = false;
 
-    // PTY output.
+    // PTY出力。
     let output_area = chunks[1];
     let output_block = if is_expanded {
         Block::default()
@@ -121,9 +121,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
 
-            // Rebuild PTY snapshot only when new output arrives (dirty flag)
-            // or cache is empty. Uses try_lock to avoid blocking when the
-            // PTY reader thread holds the vt100 mutex.
+            // 新しい出力が届いた（dirtyフラグ）か、キャッシュが空のときだけ PTY
+            // スナップショットを再構築する。PTYリーダースレッドが vt100 の mutex を
+            // 保持している間にブロックしないよう try_lock を使う。
             let scroll_changed =
                 app.terminal.cache_shell.effective_offset != app.terminal.scroll_shell;
             if (app.terminal.cache_shell.lines.is_empty()
@@ -136,8 +136,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     inner.width,
                 )
             {
-                // Sync scroll offset with the actual clamped position from vt100
-                // to prevent infinite rebuilds when scroll exceeds scrollback buffer.
+                // スクロールオフセットを vt100 側で実際にクランプされた位置と同期させ、
+                // スクロールがスクロールバックバッファを超えたときに無限に再構築される
+                // のを防ぐ。
                 app.terminal.scroll_shell = cache.effective_offset;
                 app.terminal.cache_shell = cache;
                 app.terminal.dirty_shell = false;
@@ -149,8 +150,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 &app.theme,
             );
 
-            // Set cursor position for IME when focused, not scrolled back,
-            // and no overlay is covering this panel.
+            // フォーカスがあり、スクロールバックしておらず、オーバーレイがこのパネルを
+            // 覆っていないときに IME 用のカーソル位置を設定する。
             if focused
                 && !app.is_any_overlay_active()
                 && let Some((row, col)) = app.terminal.cache_shell.cursor_position

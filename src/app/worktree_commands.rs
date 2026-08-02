@@ -1,7 +1,6 @@
-//! Worktree-management command handlers: create/delete/switch/grab/prune
-//! worktrees, merge-to-main, reset-main-to-origin, and cherry-pick — the
-//! confirmation-gated entry points invoked from the command palette and
-//! keybindings.
+//! worktree 管理コマンドのハンドラ群: worktree の create/delete/switch/
+//! grab/prune、merge-to-main、reset-main-to-origin、cherry-pick — コマンド
+//! パレットとキーバインドから呼ばれる、確認をゲートに持つ入口。
 
 use super::{App, StatusLevel, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
@@ -96,10 +95,11 @@ impl App {
         }
     }
 
-    /// Ask before resetting main — this discards local commits, so it must not
-    /// fire on a bare keystroke (`R` sits next to `r` refresh). The actual reset
-    /// runs in [`perform_reset_main_to_origin`](Self::perform_reset_main_to_origin)
-    /// once confirmed. Both the `R` key and the palette enter through here.
+    /// main のリセット前に確認を求める — これはローカルのコミットを破棄する
+    /// ので、単なるキー入力だけで発火してはならない(R は refresh の r の隣に
+    /// ある)。実際のリセットは確認後に
+    /// [perform_reset_main_to_origin](Self::perform_reset_main_to_origin) で
+    /// 実行される。R キーもパレットもここを通る。
     pub fn cmd_reset_main_to_origin(&mut self) {
         let main_branch = self.config.general.main_branch.clone();
         self.worktree_mgr.input_mode = WorktreeInputMode::ConfirmingReset;
@@ -108,8 +108,9 @@ impl App {
         ));
     }
 
-    /// Perform the hard reset of main to its origin tracking branch. Call only
-    /// after the user confirms (see [`cmd_reset_main_to_origin`](Self::cmd_reset_main_to_origin)).
+    /// main をその origin 追跡ブランチへハードリセットする。ユーザが確認した
+    /// 後にのみ呼ぶこと
+    /// ([cmd_reset_main_to_origin](Self::cmd_reset_main_to_origin) 参照)。
     pub fn perform_reset_main_to_origin(&mut self) {
         let main_branch = self.config.general.main_branch.clone();
         match crate::git_engine::GitEngine::open(&self.repo.path) {

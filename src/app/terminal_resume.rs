@@ -1,15 +1,15 @@
-//! Claude Code session resume for [`App`].
+//! [App] における Claude Code セッションの resume。
 //!
-//! Loading and filtering resumable sessions from Claude's on-disk history,
-//! resuming a chosen session by ID, and the startup auto-resume flow that
-//! reattaches the previous session for each worktree.
+//! Claude のディスク上の履歴から resume 可能なセッションを読み込み・
+//! フィルタリングすること、選んだセッションを ID で resume すること、
+//! 各 worktree に以前のセッションを再アタッチする起動時の自動 resume フロー。
 
 use std::path::PathBuf;
 
 use super::*;
 
 impl App {
-    /// Load resumable Claude Code sessions from Claude's history.
+    /// Claude の履歴から resume 可能な Claude Code セッションを読み込む。
     pub fn load_resume_sessions(&mut self) {
         let filter = if self.overlays.resume_session.all_projects {
             None
@@ -30,7 +30,7 @@ impl App {
         }
     }
 
-    /// Return the filtered list of resume sessions based on the current filter string.
+    /// 現在のフィルタ文字列に基づいて絞り込んだ resume セッションの一覧を返す。
     pub fn filtered_resume_sessions(
         &self,
     ) -> Vec<(usize, &crate::claude_sessions::ResumableSession)> {
@@ -57,7 +57,7 @@ impl App {
         }
     }
 
-    /// Resume a Claude Code session by its session ID.
+    /// Claude Code セッションをセッション ID で resume する。
     pub fn resume_claude_session(
         &mut self,
         session_id: &str,
@@ -88,8 +88,8 @@ impl App {
         Ok(idx)
     }
 
-    /// Automatically resume Claude Code sessions for all worktrees that had a
-    /// previous session. Called once after the first frame render.
+    /// 以前セッションがあった全ての worktree について Claude Code セッションを
+    /// 自動的に resume する。最初のフレーム描画後に一度だけ呼ばれる。
     pub fn perform_auto_resume(&mut self) {
         if !self.pending_auto_resume {
             return;
@@ -113,9 +113,9 @@ impl App {
             return;
         }
 
-        // If we have a grabbed branch with a session ID, use it for the main worktree
-        // instead of whatever auto-resume would normally find (since the session was
-        // created in the source worktree, not the main worktree).
+        // セッション ID を持つ grab 済みブランチがあれば、通常の auto-resume が
+        // 見つけるものの代わりにそちらを main worktree に使う(セッションは
+        // main worktree ではなく元の worktree で作られたものだから)。
         let grabbed_session_for_main = self
             .worktree_mgr
             .grabbed_branch
@@ -131,7 +131,8 @@ impl App {
         for wt in &self.worktrees.to_vec() {
             let canonical = std::fs::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
 
-            // For main worktree with a grabbed session, prefer the grabbed session ID.
+            // grab 済みセッションを持つ main worktree では、grab 済みのセッション
+            // ID を優先する。
             if wt.is_main
                 && let Some(ref grabbed_id) = grabbed_session_for_main
             {
@@ -161,8 +162,8 @@ impl App {
                 continue;
             }
 
-            // Skip normal auto-resume for the main worktree unless explicitly
-            // opted in.  Grabbed sessions (handled above) are always resumed.
+            // 明示的にオプトインしない限り、main worktree の通常の auto-resume は
+            // スキップする。grab 済みのセッション(上で処理済み)は常に resume する。
             if wt.is_main && !self.config.general.auto_resume_main {
                 continue;
             }
@@ -196,7 +197,7 @@ impl App {
             ) {
                 Ok(idx) => {
                     resumed_count += 1;
-                    // Only switch to this session for the currently selected worktree.
+                    // 現在選択中の worktree の場合のみこのセッションに切り替える。
                     if wt.path == selected_wt_path {
                         self.switch_claude_session(idx);
                     }

@@ -1,5 +1,5 @@
-//! Top-level Explorer key handling: file tree navigation, and delegating to
-//! the diff-list / comment-list / walkthrough sub-panels.
+//! Explorer のトップレベルキー処理: ファイルツリーのナビゲーションと、
+//! diff 一覧・コメント一覧・walkthrough の各サブパネルへの委譲。
 
 use crossterm::event::KeyEvent;
 
@@ -10,14 +10,14 @@ use crate::viewer::ExplorerBottomView;
 use super::comment_list::handle_explorer_comment_list_key;
 use super::diff_list::handle_explorer_diff_list_key;
 
-/// Handle keys when the Explorer panel is focused.
+/// Explorer パネルがフォーカスされているときのキーを処理する。
 pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
     if app.viewer_state.tree.file_tree.is_empty() {
         app.refresh_viewer();
     }
 
-    // Check for show-diff / show-comments / show-walkthrough before delegating
-    // to sub-panels.
+    // サブパネルへ委譲する前に show-diff / show-comments / show-walkthrough を
+    // チェックする。
     let action = app.keymap.resolve(&key, KeyContext::Explorer);
     match action {
         Some(Action::ShowDiffList) => {

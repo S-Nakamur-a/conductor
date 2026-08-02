@@ -1,42 +1,42 @@
-//! Viewer/diff refresh and the persisted "where the user was" view state
-//! (open file + scroll position) per worktree branch.
+//! Viewer/diffのリフレッシュと、worktreeブランチごとに永続化される
+//! 「ユーザーがどこを見ていたか」のビュー状態（開いていたファイル + スクロール位置）。
 
 use super::focus::Focus;
 use super::{App, PendingViewRestore, StatusLevel};
 
 impl App {
-    /// Reload the viewer file tree for the currently selected worktree.
+    /// 現在選択中のworktreeのViewerファイルツリーを再読み込みする。
     ///
-    /// Preserves the currently open file and scroll position so that
-    /// file-watcher refreshes don't disrupt the user's view.
+    /// 現在開いているファイルとスクロール位置を保持するので、ファイル
+    /// ウォッチャーによるリフレッシュがユーザーの表示を乱すことはない。
     ///
-    /// Returns `true` when the file tree's visible entries changed. Uses
-    /// [`Self::selected_worktree_path`], which falls back to `repo_path` when
-    /// there is no worktree, so the Explorer still shows the current folder's
-    /// contents in a plain (non-git) directory.
+    /// ファイルツリーの表示エントリが変わった場合は true を返す。
+    /// [Self::selected_worktree_path] を使う。これはworktreeが無いとき
+    /// repo_path にフォールバックするので、非gitディレクトリでもExplorerは
+    /// カレントフォルダの内容を表示し続ける。
     pub fn refresh_viewer(&mut self) -> bool {
         let path = self.selected_worktree_path();
         let tab_width = self.config.viewer.tab_width;
         let changed = self.viewer_state.load_file_tree(&path, tab_width);
-        // Startup restore: this is the lazy (synchronous) tree-load path
-        // (e.g. first time the viewer is focused), so re-open any pending
-        // file here. The async worktree-switch path does this in
-        // `poll_worktree_switch_ops`.
+        // 起動時の復元: これは遅延（同期的な）ツリー読み込み経路
+        // （例えばViewerが初めてフォーカスされたときなど）なので、保留中の
+        // ファイルがあればここで再度開く。非同期のworktree切り替え経路では
+        // poll_worktree_switch_ops がこれを行う。
         self.consume_pending_view_restore();
         self.rehighlight_viewer();
         changed
     }
 
-    /// Restore the previously selected worktree and seed its saved view
-    /// (open file + scroll) for the current repo. Safe to call when nothing
-    /// was persisted — it just leaves the defaults in place.
+    /// 以前選択していたworktreeを復元し、現在のリポジトリの保存済みビュー
+    /// （開いていたファイル + スクロール）を仕込む。何も永続化されていない
+    /// ときに呼んでも安全 — デフォルトのままになるだけ。
     ///
-    /// Used at startup and when switching repos. The worktree list is already
-    /// populated synchronously by [`App::refresh_worktrees`], so the selection
-    /// is restored without a frame of flicker. The file itself is restored
-    /// lazily once its tree loads (see [`App::consume_pending_view_restore`]).
+    /// 起動時とリポジトリ切り替え時に使われる。worktreeリストは
+    /// [App::refresh_worktrees] によってすでに同期的に埋まっているので、
+    /// 選択の復元にフレームのちらつきは生じない。ファイル自体は、そのツリーが
+    /// 読み込まれた後に遅延復元される（[App::consume_pending_view_restore] 参照）。
     pub fn restore_selected_worktree_and_view(&mut self) {
-        // Restore which worktree was selected (fall back to current on miss).
+        // 選択されていたworktreeを復元する（見つからなければ現在のまま）。
         let saved_branch = self
             .review_store
             .as_ref()
@@ -47,7 +47,7 @@ impl App {
             self.worktrees.select(idx);
         }
 
-        // Point the worktree-list cursor at the restored worktree.
+        // worktreeリストのカーソルを復元したworktreeへ合わせる。
         self.rebuild_worktree_list_rows();
         let sel = self.worktrees.selected_index();
         if let Some(pos) = self
@@ -58,7 +58,7 @@ impl App {
             self.worktrees.row_selected = pos;
         }
 
-        // Track the loaded worktree and seed its saved file/scroll.
+        // 読み込んだworktreeを記録し、保存済みのファイル/スクロールを仕込む。
         let branch = self.selected_worktree_branch();
         self.view_restore.pending = None;
         if branch.is_empty() {
@@ -76,11 +76,11 @@ impl App {
         }
     }
 
-    /// Persist the in-memory view (open file + scroll) for `branch`.
+    /// branch のメモリ上のビュー（開いていたファイル + スクロール）を永続化する。
     ///
-    /// If a restore is still pending (the user never opened the viewer for this
-    /// worktree this session), the unconsumed pending value is written back
-    /// unchanged so we don't clobber the saved state with an empty view.
+    /// まだ復元待ちの場合（このセッションでこのworktreeのViewerを一度も
+    /// 開いていない場合）、未消費の保留値をそのまま書き戻すことで、保存済みの
+    /// 状態を空のビューで上書きしないようにする。
     pub(super) fn save_view_for(&self, branch: &str) {
         let Some(store) = &self.review_store else {
             return;
@@ -95,8 +95,8 @@ impl App {
         let _ = store.save_view_state(branch, file.as_deref(), line);
     }
 
-    /// Save the current worktree's view and selection. Called before exit /
-    /// restart and before switching repos.
+    /// 現在のworktreeのビューと選択を保存する。終了/再起動前、および
+    /// リポジトリ切り替え前に呼ばれる。
     pub fn persist_view_state(&self) {
         if let Some(branch) = &self.view_restore.current_branch {
             self.save_view_for(branch);
@@ -106,10 +106,10 @@ impl App {
         }
     }
 
-    /// Consume a one-shot [`PendingViewRestore`]: open the saved file and
-    /// scroll to the saved line. No-op if nothing is pending or the file no
-    /// longer exists. The scroll target is clamped to the file length so a
-    /// shrunken file doesn't leave a blank viewer.
+    /// 一度きりの [PendingViewRestore] を消費する: 保存済みのファイルを開き、
+    /// 保存済みの行までスクロールする。保留中のものが無い、またはファイルが
+    /// もう存在しない場合は no-op。スクロール先はファイル長でクランプされるので、
+    /// 縮小されたファイルでViewerが空白のままにならない。
     pub fn consume_pending_view_restore(&mut self) {
         let Some(restore) = self.view_restore.pending.take() else {
             return;
@@ -137,27 +137,27 @@ impl App {
         self.viewer_state.content.file_scroll = restore.scroll.min(max);
     }
 
-    /// Run syntect highlighting on the currently loaded file content.
+    /// 現在読み込まれているファイル内容にsyntectハイライトを実行する。
     pub fn rehighlight_viewer(&mut self) {
-        // Use disjoint field borrows to satisfy the borrow checker.
+        // borrow checkerを満たすため、フィールドを分離して借用する。
         let syntax_set = &self.highlight.syntax_set;
         let theme = &self.highlight.theme;
         self.viewer_state.highlight_content(syntax_set, theme);
     }
 
-    /// The ref `branch`'s diff should be computed against.
+    /// branch のdiffを計算すべき対象ref。
     ///
-    /// Every diff path must go through here. There are two of them — this one,
-    /// reached by `refresh_diff`, and the background computation on worktree
-    /// switch — and they used to decide the base differently, so the same
-    /// worktree showed one file list right after the switch and a different one
-    /// after the next refresh. Keeping the decision in a single method is what
-    /// stops that from silently coming back.
+    /// diffを計算するすべての経路はここを通らなければならない。経路は2つある
+    /// — refresh_diff から呼ばれるこれと、worktree切り替え時のバックグラウンド
+    /// 計算 — かつては両者が異なる基準でbaseを決めていたため、同じworktreeが
+    /// 切り替え直後は片方のファイル一覧を、次のリフレッシュ後は別のファイル
+    /// 一覧を表示するということが起きていた。決定ロジックを単一のメソッドに
+    /// 保つことで、この不具合が静かにぶり返すのを防いでいる。
     pub(super) fn diff_base_for(&self, branch: &str) -> String {
-        // A PR-review worktree may target a base other than the configured main
-        // branch (e.g. a release/develop branch); prefer the base ref recorded
-        // at intake time and only fall back to main_branch when none was saved
-        // (regular worktrees, or DB unavailable).
+        // PRレビュー用のworktreeは、設定されたmainブランチ以外を対象にすることが
+        // ある（例: release/developブランチ）。intake時に記録されたbase refを
+        // 優先し、保存されていない場合（通常のworktreeやDBが使えない場合）のみ
+        // main_branchへフォールバックする。
         let saved_base = self
             .review_store
             .as_ref()
@@ -165,8 +165,8 @@ impl App {
         resolve_diff_base_branch(saved_base, &self.config.general.main_branch)
     }
 
-    /// Load (or reload) the diff for the currently selected worktree
-    /// against its resolved base ref.
+    /// 現在選択中のworktreeについて、解決済みのbase refに対するdiffを
+    /// 読み込む（または再読み込みする）。
     pub fn refresh_diff(&mut self) {
         let word_diff = self.config.diff.word_diff;
         if let Some(wt) = self.worktrees.selected() {
@@ -179,11 +179,12 @@ impl App {
         }
     }
 
-    /// Switch the Viewer between raw markdown source and rendered prose.
+    /// Viewerを、生のMarkdownソースとレンダリング済みの文章表示の間で切り替える。
     ///
-    /// Only meaningful for a markdown file in the plain-file view; anywhere else
-    /// it flashes a hint rather than silently latching a mode the user can't
-    /// see, since the header toggle is hidden in exactly those cases.
+    /// プレーンファイル表示中のMarkdownファイルでのみ意味を持つ。それ以外の
+    /// 場面ではヒントをフラッシュ表示する。ユーザーから見えないモードを黙って
+    /// ラッチするのではなく、というのもヘッダーのトグルはまさにそうした場面で
+    /// 隠れているからである。
     pub fn cmd_toggle_markdown_render(&mut self) {
         if !self.viewer_state.markdown_toggle_available() {
             self.set_status(
@@ -201,10 +202,11 @@ impl App {
         self.set_status(msg.to_string(), StatusLevel::Info);
     }
 
-    /// Open a file path (relative to the current worktree) in the Viewer panel.
+    /// ファイルパス（現在のworktreeからの相対パス）をViewerパネルで開く。
     ///
-    /// Optionally jumps to `line` (1-indexed). Reveals the file in the explorer
-    /// tree, switches focus to Viewer, and shows a status message.
+    /// 指定があれば line（1始まり）へジャンプする。Explorerツリー内で
+    /// ファイルを表示し、フォーカスをViewerへ切り替え、ステータスメッセージを
+    /// 表示する。
     pub fn open_file_in_viewer(&mut self, relative_path: &str, line: Option<usize>) {
         let tab_width = self.config.viewer.tab_width;
 
@@ -233,30 +235,32 @@ impl App {
     }
 }
 
-/// What to do with a pending [`PendingViewRestore`] that has come due.
+/// 期限が来た保留中の [PendingViewRestore] をどう扱うか。
 #[derive(Debug, PartialEq, Eq)]
 enum RestoreDisposition {
-    /// Nothing is showing — open the saved file as intended.
+    /// 何も表示されていない — 意図どおり保存済みのファイルを開く。
     Apply,
-    /// The user opened a real file during the window between the worktree
-    /// switch and the tree finishing its walk. The saved view is obsolete, so
-    /// forget it; keeping it armed would make [`App::save_view_for`] persist
-    /// the stale pending path instead of the file the user ended up on.
+    /// worktree切り替えとツリーの走査完了の間の隙間で、ユーザーが実際の
+    /// ファイルを開いた場合。保存済みのビューはもう古いので破棄する。
+    /// 保持したままにすると、[App::save_view_for] がユーザーが最終的に
+    /// 開いたファイルではなく、古びた保留パスを永続化してしまう。
     Drop,
-    /// Only the SUMMARY pseudo-file is showing, with no file behind it. Don't
-    /// open over it, but stay armed: the view-state schema has no way to say
-    /// "was viewing SUMMARY", so dropping here would persist an empty view and
-    /// lose the saved file outright. The caller re-runs this on every later
-    /// consume, so the restore can still land once the viewer is empty again.
+    /// SUMMARY疑似ファイルだけが表示されていて、背後に実ファイルが無い場合。
+    /// それを上書きして開くことはしないが、保留状態は保つ: ビュー状態の
+    /// スキーマには「SUMMARYを見ていた」を表す方法が無いので、ここで破棄すると
+    /// 空のビューが永続化されて保存済みファイルを完全に失ってしまう。呼び出し側は
+    /// この後もconsumeのたびに再実行するので、Viewerが再び空になれば復元は
+    /// 成立し得る。
     Keep,
 }
 
-/// Decide the fate of a due view restore from what the viewer is showing.
+/// Viewerがいま何を表示しているかから、期限が来たビュー復元の運命を決める。
 ///
-/// Split out from [`App::consume_pending_view_restore`] because both wrong
-/// answers are silent: `Drop` where `Keep` belongs quietly erases a branch's
-/// saved file, and `Keep` where `Drop` belongs quietly freezes it at a stale
-/// value. Neither surfaces as a crash, so the truth table is pinned by tests.
+/// [App::consume_pending_view_restore] から切り出しているのは、どちらの
+/// 誤答も静かに起きるため: Keep であるべきところで Drop すると
+/// ブランチの保存済みファイルを黙って消してしまい、Drop であるべき
+/// ところで Keep すると古い値のまま黙って固定してしまう。どちらも
+/// クラッシュとして表面化しないので、この真理値表はテストで固定している。
 fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDisposition {
     if has_open_file {
         RestoreDisposition::Drop
@@ -267,12 +271,12 @@ fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDis
     }
 }
 
-/// Resolve the base branch a diff should be computed against: a worktree's
-/// saved base ref (recorded at PR-intake time — see `save_worktree_base_branch`)
-/// takes priority, since a PR may target something other than the configured
-/// main branch (e.g. release/develop); `main_branch` is only used as a
-/// fallback for worktrees with no saved base (regular worktrees, or when the
-/// review DB is unavailable).
+/// diffを計算すべき対象のbaseブランチを解決する: worktreeの保存済み
+/// base ref（PR intake時に記録される — save_worktree_base_branch 参照）が
+/// 優先される。PRは設定されたmainブランチ以外（例: release/develop）を
+/// 対象にすることがあるため。main_branch は、保存済みbaseが無いworktree
+/// （通常のworktree、またはレビューDBが使えない場合）のフォールバックとして
+/// のみ使われる。
 fn resolve_diff_base_branch(saved_base: Option<String>, main_branch: &str) -> String {
     saved_base.unwrap_or_else(|| main_branch.to_string())
 }
@@ -294,20 +298,20 @@ mod tests {
         assert_eq!(resolve_diff_base_branch(None, "main"), "main");
     }
 
-    /// The full truth table. Startup and worktree switch both reset the viewer
-    /// before arming a restore, so `Apply` is the ordinary path; the other two
-    /// rows only occur when the user got there first during the tree walk.
+    /// 完全な真理値表。起動時とworktree切り替えはどちらも、復元をセットする前に
+    /// Viewerをリセットするので Apply が通常経路である。残り2行は、ツリー
+    /// 走査中にユーザーが先に動いた場合にのみ発生する。
     #[test]
     fn restore_disposition_truth_table() {
         use RestoreDisposition::*;
-        // Viewer empty: the restore does its job.
+        // Viewerが空: 復元が仕事をする。
         assert_eq!(restore_disposition(false, false), Apply);
-        // Only SUMMARY open: don't clobber it, but stay armed so the branch's
-        // saved file isn't erased by a later save.
+        // SUMMARYだけが開いている: 上書きはしないが、後のsaveでブランチの
+        // 保存済みファイルが消されないよう保留状態を保つ。
         assert_eq!(restore_disposition(false, true), Keep);
-        // A real file is open: the saved view is obsolete either way, including
-        // when SUMMARY is layered over that file — dropping keeps persistence
-        // tracking what the user actually opened.
+        // 実ファイルが開いている: 保存済みビューはいずれにせよ古い。SUMMARYが
+        // そのファイルの上に重なっている場合も含む — 破棄することで、永続化は
+        // ユーザーが実際に開いたものを追跡し続ける。
         assert_eq!(restore_disposition(true, false), Drop);
         assert_eq!(restore_disposition(true, true), Drop);
     }

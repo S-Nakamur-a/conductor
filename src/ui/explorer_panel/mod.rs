@@ -1,14 +1,14 @@
-//! Explorer panel — file tree browser in the middle column.
+//! Explorer パネル — 中央カラムのファイルツリーブラウザ。
 //!
-//! Displays the file tree of the currently selected worktree in the top half,
-//! and a list of changed (diff) files in the bottom half. Enter on a file
-//! opens it in the Viewer panel.
+//! 上半分に現在選択中の worktree のファイルツリーを、下半分に変更
+//! （diff）ファイルの一覧を表示する。ファイル上で Enter を押すと
+//! Viewer パネルで開く。
 //!
-//! Split by rendering responsibility: [`file_tree`] draws the top-half file
-//! tree, [`diff_list`] the bottom-half changed-files list (and its comment
-//! badge), [`comment_list`] the toggled review-comment list (both as the
-//! bottom pane and as the full-screen `C` overlay), and [`search_box`] the
-//! in-panel filename search input.
+//! 描画の責務ごとに分割している: [file_tree] が上半分のファイルツリーを、
+//! [diff_list] が下半分の変更ファイル一覧（とそのコメントバッジ）を、
+//! [comment_list] が切り替え式のレビューコメント一覧（下部ペインと
+//! 全画面 C オーバーレイの両方）を、[search_box] がパネル内の
+//! ファイル名検索入力欄を描画する。
 
 use crate::app::{App, Focus};
 use ratatui::Frame;
@@ -21,16 +21,16 @@ mod search_box;
 
 pub use comment_list::render_comment_list_overlay;
 
-/// Render the explorer (file tree) panel into the given area.
+/// 指定領域に Explorer (ファイルツリー) パネルを描画する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let focused = app.focus == Focus::Explorer;
 
-    // Split into top (file tree) and bottom (diff list), using the configured,
-    // runtime-resizable ratio (Ctrl+Alt+↑/↓). Must match `LayoutCache`'s
-    // `explorer_mid_y` so mouse routing lines up with what's drawn.
+    // 上 (ファイルツリー) と下 (変更ファイル一覧) に分割する。比率は設定値で、
+    // 実行中に Ctrl+Alt+↑/↓ で変えられる。マウスの当たり判定を描画と一致させる
+    // ため LayoutCache の explorer_mid_y と同じ計算にすること。
     let tree_pct = app.config.layout.explorer_split_pct;
     let changed_pct = 100u16.saturating_sub(tree_pct);
     let chunks = Layout::vertical([
@@ -39,12 +39,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     ])
     .split(area);
 
-    // Record actual panel heights for scroll calculations in event handling.
+    // イベント処理側のスクロール計算のために、実際のパネル高さを記録する。
     let tree_inner_height = chunks[0].height.saturating_sub(2) as usize;
-    // The diff list gives its top row to the error banner, which is not a
-    // `display_list` entry. Both the scroll page size and the mouse handler's
-    // row→index conversion have to know that, so publish the row count from
-    // here — the one place that also knows which view is on screen.
+    // 変更ファイル一覧は先頭行をエラーバナーに使うが、これは display_list の
+    // 要素ではない。スクロールのページ幅とマウスの行→インデックス変換の両方が
+    // この行数を知る必要があるので、どのビューが表示中かを唯一知っている
+    // ここから公開する。
     let shows_error_banner = app.viewer_state.explorer.explorer_bottom_view
         == crate::viewer::ExplorerBottomView::DiffList
         && app.diff_state.error.is_some();
@@ -67,7 +67,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Show search input overlay (skip cursor positioning when a global overlay covers us).
+    // 検索入力のオーバーレイを出す (全体オーバーレイに覆われている間はカーソル配置をしない)。
     let overlay_active = app.is_any_overlay_active();
     if app.viewer_state.search.search_active {
         search_box::render_search_box(
@@ -79,7 +79,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         );
     }
 
-    // The fuzzy filename-search modal is rendered at the top level
-    // (see `layout::render_ui`) so it stays visible even when this panel is
-    // collapsed to zero width (e.g. while the viewer is maximized).
+    // ファイル名のあいまい検索モーダルは最上位で描画している
+    // (layout::render_ui を参照)。このパネルが幅ゼロまで畳まれていても
+    // (Viewer 最大化中など) 見えたままにするため。
 }

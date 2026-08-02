@@ -1,11 +1,11 @@
-//! Full-width background block rendering for user turns (S3, measured):
-//! Claude Code's live UI paints the whole row behind a user prompt, not just
-//! the marker and text — this module reproduces that here.
+//! user ターン向けのフル幅背景ブロック描画（実測）。Claude Code のライブ UI は user の
+//! プロンプトの背後の行全体を塗る。マーカーとテキストだけではない — このモジュールは
+//! それをここで再現する。
 //!
-//! User input is raw text, not prose to be parsed: it bypasses the Markdown
-//! renderer entirely (see [`build`](super::build)) and is word-wrapped by
-//! this module instead, preserving every source newline as its own wrapped
-//! line rather than reflowing them the way Markdown's paragraph-fill would.
+//! user 入力はパースすべき文章ではなく生のテキストなので、Markdown レンダラを完全に
+//! バイパスし（[build](super::build) を参照）、代わりにこのモジュールが単語単位で
+//! 折り返す。Markdown の段落詰め直しのようにリフローするのではなく、元のテキストの
+//! 改行を1つずつ独立した折り返し行として保持する。
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -15,21 +15,18 @@ use unicode_width::UnicodeWidthStr;
 use super::glyphs::MARKER_COLS;
 use super::helpers::pad_glyph_to;
 
-/// Columns of background-only padding kept to the right of a user turn's
-/// text, inside the block. Measured: at width 60 the body is 57 columns
-/// (`60 - MARKER_COLS - 1`) and column 59 is a bare background cell; at
-/// width 100 it is 97. Assistant text has no such reserve — it wraps at
-/// `width - MARKER_COLS` — so this is specific to the user block.
+/// user ターンのテキストの右側、ブロック内に確保しておく背景のみのパディングのカラム数。
+/// 実測: 幅60では本文は57カラム（60 - MARKER_COLS - 1）で、カラム59は背景だけのセルに
+/// なる。幅100では97になる。assistant のテキストにはこのような予約は無く、
+/// width - MARKER_COLS で折り返すので、これは user ブロック固有のものである。
 const USER_TRAILING_PAD: usize = 1;
 
-/// Render one user-turn text block as full-width background lines: `glyph`
-/// on the first line only (two-space blank indent on continuations, same as
-/// every other block type's gutter), body text word-wrapped at
-/// `width - MARKER_COLS - USER_TRAILING_PAD` but padded back out to
-/// `width - MARKER_COLS` so the background still reaches the panel edge.
-/// `marker_style` and `body_style` must already carry the background color —
-/// this function only supplies the text content, so the caller controls the
-/// palette (mirrors `tool_lines::ToolStyles`).
+/// user ターンのテキストブロックを1つ、フル幅の背景行として描画する: グリフは最初の行
+/// だけ（継続行は他すべてのブロック種別のガターと同じく2スペースの空白インデント）、
+/// 本文は width - MARKER_COLS - USER_TRAILING_PAD で単語単位に折り返した上で、
+/// 背景がパネル端まで届くよう width - MARKER_COLS まで詰め戻す。marker_style と
+/// body_style はあらかじめ背景色を持っている必要がある — この関数はテキスト内容だけを
+/// 供給し、パレットの制御は呼び出し側が行う（tool_lines::ToolStyles と対をなす形）。
 pub(crate) fn render_user_text(
     text: &str,
     width: usize,
@@ -37,9 +34,9 @@ pub(crate) fn render_user_text(
     marker_style: Style,
     body_style: Style,
 ) -> Vec<Line<'static>> {
-    // Painted width of the body column (background reaches the panel edge)…
+    // 本文カラムの塗る幅（背景はパネル端まで届く）……
     let body_width = width.saturating_sub(MARKER_COLS);
-    // …but text stops one column short of it.
+    // ……だがテキストはその1カラム手前で止める。
     let wrap_width = body_width.saturating_sub(USER_TRAILING_PAD);
     let marker_prefix = pad_glyph_to(glyph, MARKER_COLS);
     let cont_prefix = " ".repeat(MARKER_COLS);
@@ -53,10 +50,9 @@ pub(crate) fn render_user_text(
             } else {
                 cont_prefix.clone()
             };
-            // Pad the body out to the full column budget so the background
-            // color fills the row instead of stopping at the last glyph — a
-            // `Style` with only `bg()` set doesn't paint columns a span
-            // doesn't cover.
+            // 本文をカラム予算いっぱいまでパディングし、背景色が最後のグリフで止まらず
+            // 行全体を塗るようにする — bg() だけを設定した Style は、span がカバーして
+            // いないカラムを塗らないため。
             let padded_body = pad_to_width(&body, body_width);
             Line::from(vec![
                 Span::styled(prefix, marker_style),
@@ -66,19 +62,17 @@ pub(crate) fn render_user_text(
         .collect()
 }
 
-/// Greedily word-wrap `text` to `width` display columns (measured with
-/// `unicode_width`), splitting on existing newlines first so the source's
-/// own line breaks survive as independent wrapped lines rather than being
-/// folded into a reflowed paragraph.
+/// テキストを width 表示カラム（unicode_width で計測）まで貪欲に単語折り返しする。まず
+/// 既存の改行で分割してから処理するので、元のテキスト自身の改行は詰め直した段落へ
+/// 折り込まれることなく、独立した折り返し行として残る。
 ///
-/// A word wider than `width` is **hard-split at the column boundary**, not
-/// left to overflow: measured, `W`×150 at width 60 comes back as 57 / 57 / 36.
-/// (This differs from `ui::walkthrough_pane::wrap_text`, which lets such a
-/// word overflow — parity with Claude Code wins here.) The split walks
-/// grapheme clusters and never breaks one across two lines, and it **fills
-/// the remainder of the current line first** rather than flushing it: measured
-/// on a `⎿ Read <very long path>` annotation, where the path begins on the
-/// `Read` line and breaks at the column boundary.
+/// width より広い単語はあふれさせず、カラム境界で強制的に分割する。実測: 幅60で
+/// W×150 は 57 / 57 / 36 に分かれる。（これは ui::walkthrough_pane::wrap_text とは
+/// 異なる挙動で、そちらはそのような単語をあふれさせる — ここでは Claude Code との
+/// 一致を優先している。）分割はグラフェムクラスタ単位で歩き、1クラスタが2行にまたがって
+/// 分かれることはない。また、現在行を先に吐き出すのではなく、まず現在行の残りを
+/// 埋めてから分割する: ⎿ Read <非常に長いパス> という注釈で実測したところ、パスは
+/// Read の行から始まり、カラム境界で改行される。
 pub(crate) fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
@@ -92,10 +86,9 @@ pub(crate) fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
         for word in source_line.split_whitespace() {
             let word_w = UnicodeWidthStr::width(word);
             if word_w > width {
-                // Fill the rest of the current line before spilling over,
-                // rather than flushing it first. Measured on a `⎿ Read <long
-                // path>` annotation: the path starts on the `Read` line and
-                // breaks at the column boundary, so the verb never sits alone.
+                // 吐き出す前に、まず現在行の残りを埋める。⎿ Read <長いパス> という
+                // 注釈で実測したところ、パスは Read の行から始まりカラム境界で
+                // 改行されるので、動詞だけが単独で行に残ることはない。
                 if !current.is_empty() {
                     if current_w + 1 < width {
                         current.push(' ');
@@ -137,8 +130,8 @@ pub(crate) fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Pad `s` with trailing spaces until it fills exactly `width` display
-/// columns; left unchanged if it already meets or exceeds `width`.
+/// s の末尾にスペースを足し、ちょうど width 表示カラムを満たすまでパディングする。
+/// すでに width 以上ある場合は変更しない。
 pub(crate) fn pad_to_width(s: &str, width: usize) -> String {
     let w = UnicodeWidthStr::width(s);
     if w >= width {

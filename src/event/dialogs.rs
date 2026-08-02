@@ -1,6 +1,5 @@
-//! Key handling for the two simple modal confirm dialogs that aren't part of
-//! the `overlay` submodule tree: the self-update dialog and the
-//! publish-review-to-GitHub confirmation.
+//! overlay サブモジュールツリーに属さない、2つの単純な確認モーダル用のキー処理。
+//! 自己更新ダイアログと、GitHub へのレビュー公開確認。
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -24,7 +23,7 @@ pub(super) fn handle_update_key(app: &mut App, key: KeyEvent) {
             }
         }
         UpdateState::Failed => {
-            // Any key dismisses the error.
+            // 何かキーを押せばエラーを閉じられる。
             app.update.state = UpdateState::Idle;
         }
         UpdateState::Restarting | UpdateState::Idle => {}

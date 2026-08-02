@@ -1,4 +1,4 @@
-//! Nord palette.
+//! Nord パレット。
 
 use super::Theme;
 use ratatui::style::Color;
@@ -60,13 +60,13 @@ impl Theme {
             status_bg_info: Color::Rgb(15, 30, 45),
 
             comment_preview_bg: Color::Rgb(56, 62, 82),
-            // nord15 (aurora purple): distinct from `info` (129,161,193), which
-            // styles reply *authors* — identical colours made them merge.
+            // nord15(オーロラパープル)。info (129,161,193) と同色だと返信の投稿者名が
+            // 埋もれてしまうため、あえて別色にしている。
             comment_user_bg: Color::Rgb(48, 66, 68),
             reply_text: Color::Rgb(180, 142, 173),
 
             code_bg: Color::Rgb(40, 45, 56),
-            code_fg: Color::Rgb(212, 150, 180), // muted pink
+            code_fg: Color::Rgb(212, 150, 180), // 落ち着いたピンク
 
             panel_focused_bg: Color::Rgb(56, 62, 78),
         }

@@ -1,19 +1,19 @@
-//! Grab/ungrab flow for [`App`].
+//! [App] の grab/ungrab フロー。
 //!
-//! "Grab" checks out a worktree's branch onto the main worktree (so it can be
-//! driven from the primary working copy) and, if the source worktree has a
-//! Claude Code session, migrates and auto-resumes it there too. "Ungrab"
-//! reverses both steps.
+//! 「Grab」は worktree のブランチを main worktree にチェックアウトし(これに
+//! よりメインの作業コピーから操作できるようになる)、元の worktree に
+//! Claude Code セッションがあればそれも移行して自動的に resume する。
+//! 「Ungrab」はその両方を巻き戻す。
 
 use super::*;
 
 impl App {
-    /// Execute grab: checkout main to the selected worktree's branch.
+    /// grab を実行する: main を選択中の worktree のブランチにチェックアウトする。
     ///
-    /// Also looks up the source worktree's latest Claude Code session and,
-    /// if found, auto-resumes it on the main worktree after grabbing.
+    /// あわせて元の worktree の最新の Claude Code セッションを探し、見つかれば
+    /// grab 後に main worktree 上で自動 resume する。
     pub fn execute_grab(&mut self, branch_name: &str) {
-        // Pre-check: already grabbing another branch
+        // 事前チェック: 既に別のブランチを grab 中
         if let Some(ref grabbed) = self.worktree_mgr.grabbed_branch {
             self.set_status(
                 format!("Already grabbed: {}. Ungrab first (Y).", grabbed.branch),
@@ -40,7 +40,7 @@ impl App {
             }
         };
 
-        // Look up the latest Claude Code session for the source worktree.
+        // 元の worktree の最新の Claude Code セッションを探す。
         log::info!(
             "grab: looking up session for source_path={}",
             source_path.display()
@@ -79,7 +79,8 @@ impl App {
                             claude_session_id: claude_session_id.clone(),
                         });
 
-                        // Migrate session files so `claude --resume` works from main cwd.
+                        // main の cwd から claude --resume が使えるようセッション
+                        // ファイルを移行する。
                         if let Some(ref session) = claude_session
                             && let Err(e) = crate::claude_sessions::migrate_session(
                                 &session.session_id,
@@ -91,7 +92,7 @@ impl App {
                             log::warn!("grab: session migration failed: {e}");
                         }
 
-                        // Auto-resume the Claude Code session on main worktree.
+                        // main worktree 上で Claude Code セッションを自動 resume する。
                         let resume_msg = if let Some(ref session) = claude_session {
                             match self.resume_claude_session_on_main(&session.session_id) {
                                 Ok(_) => format!(
@@ -128,7 +129,7 @@ impl App {
         }
     }
 
-    /// Resume a Claude Code session on the main worktree.
+    /// main worktree 上で Claude Code セッションを resume する。
     fn resume_claude_session_on_main(&mut self, session_id: &str) -> anyhow::Result<usize> {
         let main_wt = self.worktrees.iter().find(|w| w.is_main);
         let (worktree_name, working_dir) = match main_wt {
@@ -136,7 +137,7 @@ impl App {
             None => anyhow::bail!("main worktree not found"),
         };
 
-        // Use a short numbered label consistent with spawn_claude_code.
+        // spawn_claude_code と一貫する、短い連番付きラベルを使う。
         let cc_count = self
             .terminal
             .pty_manager
@@ -165,7 +166,8 @@ impl App {
         Ok(idx)
     }
 
-    /// Execute ungrab: return main to main branch, restore worktree to original branch.
+    /// ungrab を実行する: main を main ブランチに戻し、worktree を元の
+    /// ブランチに復元する。
     pub fn execute_ungrab(&mut self) {
         let grabbed = match self.worktree_mgr.grabbed_branch.clone() {
             Some(g) => g,
@@ -195,8 +197,9 @@ impl App {
                     &main_branch,
                 ) {
                     Ok(()) => {
-                        // Clean up migrated session files and copy back any
-                        // conversation data that Claude Code wrote as real files.
+                        // 移行したセッションファイルを片付け、Claude Code が
+                        // 実ファイルとして書き込んだ会話データがあればコピーし
+                        // 戻す。
                         if let Some(ref sid) = grabbed.claude_session_id
                             && let Err(e) = crate::claude_sessions::unmigrate_session(
                                 sid,

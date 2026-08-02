@@ -1,11 +1,12 @@
-//! Claude Code session discovery.
+//! Claude Code セッションの発見。
 //!
-//! Reads `~/.claude/history.jsonl` to find resumable Claude Code sessions.
-//! Each line in the history file is a JSON object with:
+//! ~/.claude/history.jsonl を読んで resume 可能な Claude Code セッションを
+//! 探す。履歴ファイルの各行は次の形の JSON オブジェクト:
 //!   { "display": "...", "timestamp": ..., "project": "...", "sessionId": "..." }
 //!
-//! Shared data types and path helpers live here; session listing is in
-//! [`discovery`] and grab/ungrab session symlinking is in [`migrate`].
+//! 共有のデータ型とパスヘルパーはここに置く。セッション一覧化は
+//! [discovery]、grab/ungrab のセッションシンボリックリンクは [migrate] に
+//! ある。
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ mod tests;
 pub use discovery::{find_latest_sessions_for_paths, load_resumable_sessions};
 pub use migrate::{migrate_session, unmigrate_session};
 
-/// A single entry from `~/.claude/history.jsonl`.
+/// ~/.claude/history.jsonl の1エントリ。
 #[derive(Debug, Clone, Deserialize)]
 struct ClaudeHistoryEntry {
     display: String,
@@ -32,34 +33,35 @@ struct ClaudeHistoryEntry {
     project: String,
 }
 
-/// A resumable Claude session with derived display info.
+/// resume 可能な Claude セッションと、そこから導出した表示用情報。
 #[derive(Debug, Clone)]
 pub struct ResumableSession {
     pub session_id: String,
-    /// The original prompt text (last user message in the session).
+    /// 元のプロンプトのテキスト(セッション内の最後のユーザメッセージ)。
     pub display: String,
-    /// Short name (last path component).
+    /// 短い名前(パスの末尾コンポーネント)。
     pub project_name: String,
-    /// Human-readable time ago string (e.g. "3h ago").
+    /// 人が読める形の経過時間文字列(例: "3h ago")。
     pub time_ago: String,
-    /// The full project path from the history entry.
+    /// 履歴エントリに入っていたプロジェクトパスそのもの。
     #[allow(dead_code)]
     pub project_path: String,
 }
 
-/// Return the path to the Claude history file.
+/// Claude 履歴ファイルへのパスを返す。
 fn history_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("history.jsonl"))
 }
 
-/// Encode a project path the way Claude Code does for its project directories.
-/// All `/` and `.` are replaced with `-`.
-/// E.g. `/Users/foo/github.com/proj` → `-Users-foo-github-com-proj`.
+/// プロジェクトパスを Claude Code のプロジェクトディレクトリと同じ方式で
+/// エンコードする。/ と . はすべて - に置き換わる。
+/// 例: /Users/foo/github.com/proj → -Users-foo-github-com-proj。
 fn encode_project_path(path: &str) -> String {
     path.replace(['/', '.'], "-")
 }
 
-/// Check if a session JSONL file exists for the given session ID and project.
+/// 指定した session ID とプロジェクトについて、セッションの JSONL
+/// ファイルが存在するか確認する。
 fn session_file_exists(session_id: &str, project: &str) -> bool {
     if let Some(home) = dirs::home_dir() {
         let encoded = encode_project_path(project);
@@ -76,19 +78,19 @@ fn session_file_exists(session_id: &str, project: &str) -> bool {
 
 /// パネルがいま書き込んでいるセッションログのパス。
 ///
-/// 起点は `pinned_session_id` — 起動時に `--session-id` で決め打ちした、この
+/// 起点は pinned_session_id — 起動時に --session-id で決め打ちした、この
 /// パネル自身の id。1 つのプロジェクトディレクトリにはそのワークツリーで走った
 /// 全セッションのログが同居するので、解決をディレクトリ単位の条件 (最新の
 /// ログ、など) に広げてはならない。それをやると別の会話を表示する
-/// ([`session_log_in_dir`] 参照)。
+/// ([session_log_in_dir] 参照)。
 ///
-/// 唯一の例外が `/clear` によるローテーション。`/clear` は Claude Code の
-/// 書き込み先を別 id の `.jsonl` に移すので、pin した id だけを見ていると
-/// clear 前の会話で止まる。後続と認める条件は [`rotation`] にあり、いずれも
+/// 唯一の例外が /clear によるローテーション。/clear は Claude Code の
+/// 書き込み先を別 id の .jsonl に移すので、pin した id だけを見ていると
+/// clear 前の会話で止まる。後続と認める条件は [rotation] にあり、いずれも
 /// 「このパネルのログの続き」であることを担保するもの。
 ///
-/// * `spawned_at` — このパネルの Claude プロセスを起動した時刻。
-/// * `claimed` — 他の Claude パネルが pin している session id。
+/// * spawned_at — このパネルの Claude プロセスを起動した時刻。
+/// * claimed — 他の Claude パネルが pin している session id。
 ///
 /// working dir を先に canonicalize するのは、Claude Code が *解決後* の cwd を
 /// エンコードしてディレクトリ名にするため。シンボリックリンク越しのワークツリー
@@ -98,7 +100,7 @@ fn session_file_exists(session_id: &str, project: &str) -> bool {
 /// 「どのセッションを見せるか」ではない。
 ///
 /// 後続が無ければ pin した id のログを返す。pin した id にログが無ければ
-/// `None`。
+/// None。
 pub fn current_session_log(
     working_dir: &Path,
     pinned_session_id: &str,
@@ -125,21 +127,22 @@ pub fn current_session_log(
     None
 }
 
-/// The log of exactly `session_id` inside an already-resolved Claude project
-/// directory, or `None` when that session has no log there.
+/// 解決済みの Claude プロジェクトディレクトリの中にある、ちょうど
+/// session_id のログ。そのディレクトリにそのセッションのログが無ければ
+/// None。
 ///
-/// Deliberately ignores every sibling `.jsonl` in the directory. Siblings are
-/// *different conversations* — other Conductor panels on the same worktree,
-/// earlier runs, plain `claude` invocations — so picking one by mtime or by any
-/// other directory-level heuristic shows the user someone else's history. When
-/// the id does not resolve, the answer is "no history", not "some history".
+/// 同じディレクトリ内の他の .jsonl はすべて意図的に無視する。兄弟ファイルは
+/// *別の会話* — 同じ worktree の別の Conductor パネル、以前の実行、素の
+/// claude 起動など — なので、mtime やその他のディレクトリ単位のヒューリス
+/// ティクスで1つを選ぶと、他人の履歴をユーザに見せてしまう。id が解決しない
+/// ときの答えは「履歴あり(別のもの)」ではなく「履歴なし」であるべき。
 pub fn session_log_in_dir(project_dir: &Path, session_id: &str) -> Option<PathBuf> {
     let path = project_dir.join(format!("{session_id}.jsonl"));
     path.exists().then_some(path)
 }
 
-/// Return the Claude projects directory for a given working directory path.
-/// E.g. `/Users/foo/project` → `~/.claude/projects/-Users-foo-project/`.
+/// 指定した working directory に対応する Claude プロジェクトディレクトリを
+/// 返す。例: /Users/foo/project → ~/.claude/projects/-Users-foo-project/。
 fn projects_dir_for(working_dir: &Path) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let encoded = encode_project_path(&working_dir.to_string_lossy());

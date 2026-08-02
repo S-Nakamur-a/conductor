@@ -1,4 +1,4 @@
-//! Tests for `Config` and its section structs: TOML round-tripping and defaults.
+//! Config とその各セクション構造体のテスト: TOML の往復変換とデフォルト値。
 
 use std::path::PathBuf;
 
@@ -38,9 +38,9 @@ fn diff_view_serde() {
     assert_eq!(cfg.default_view, DiffView::SideBySide);
 }
 
-/// A config file still carrying the removed review-prompt keys must load, not
-/// fail: they were written into every generated `config.toml` and dropping
-/// them cannot break an existing install.
+/// 削除済みの review-prompt キーが残った設定ファイルも読み込みに失敗しては
+/// いけない。生成される config.toml すべてに書き込まれていたキーなので、
+/// 削除しても既存インストールを壊してはならない。
 #[test]
 fn removed_review_prompt_keys_are_ignored() {
     let cfg: ReviewConfig = toml::from_str(
@@ -81,8 +81,8 @@ check_interval_secs = 3600"#,
 
 #[test]
 fn keybinds_parse() {
-    // The [keybinds] section is captured as a raw table (key→action schema)
-    // and handed to keymap::KeyMap, which owns parsing.
+    // [keybinds] セクションは生のテーブル(key→action のスキーマ)として取り込み、
+    // パースを担う keymap::KeyMap に渡す。
     let toml_str = r#"
 [keybinds.keys]
 "ctrl+q" = "quit"
@@ -112,7 +112,7 @@ fn keybinds_parse() {
 fn generated_default_config_is_valid_toml() {
     let content = generate_default_config();
     let cfg: Config = toml::from_str(&content).expect("generated config must be valid TOML");
-    // All values should match defaults since everything is commented out.
+    // 全部コメントアウトされているので、値はすべてデフォルトと一致するはず。
     assert_eq!(cfg.general.main_branch, "main");
     assert_eq!(cfg.terminal.inactive_scrollback, 1000);
     assert_eq!(cfg.viewer.tab_width, 2);
@@ -134,8 +134,8 @@ fn ui_config_high_contrast_defaults_off_and_round_trips() {
     let cfg: Config = toml::from_str(toml_str).expect("parse");
     assert!(cfg.ui.high_contrast);
 
-    // high_contrast is a live appearance field, so flipping it must register
-    // in the snapshot (and never as a restart change).
+    // high_contrast は即時反映される見た目のフィールドなので、切り替えは
+    // スナップショットに現れなければならない (再起動が要る変更として扱ってはいけない)。
     let base = Config::default();
     assert_ne!(cfg.appearance_snapshot(), base.appearance_snapshot());
     assert!(!has_restart_changes(&base, &cfg));
@@ -149,7 +149,7 @@ theme = "catppuccin-latte"
     let cfg: Config = toml::from_str(toml_str).expect("parse");
     assert_eq!(cfg.ui.theme.as_deref(), Some("catppuccin-latte"));
 
-    // Serialize and deserialize again.
+    // もう一度シリアライズしてデシリアライズする。
     let serialized = toml::to_string_pretty(&cfg).expect("serialize");
     let cfg2: Config = toml::from_str(&serialized).expect("round-trip");
     assert_eq!(cfg2.ui.theme.as_deref(), Some("catppuccin-latte"));

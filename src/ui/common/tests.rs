@@ -1,5 +1,5 @@
-//! Unit tests for `ui::common`: the status bar's keybinding hint and the
-//! badge color math's WCAG contrast guarantees.
+//! ui::common のユニットテスト: ステータスバーのキーバインドヒントと
+//! バッジ色計算の WCAG コントラスト保証。
 
 mod status_bar_tests {
     use crate::app::Focus;
@@ -14,12 +14,12 @@ mod status_bar_tests {
     #[test]
     fn representative_chord_prefers_short_ascii_over_unicode() {
         let km = keymap();
-        // cycle_focus_backward is bound to alt+h AND the macOS glyph '˙'; the
-        // glyph must never be shown.
+        // cycle_focus_backward は alt+h と macOS 特有のグリフ '˙' の両方に割り当てられているが、
+        // グリフの方は絶対に表示してはならない。
         let chord = representative_chord(&km, KeyContext::Global, Action::CycleFocusBackward);
         assert_eq!(chord, Some("alt+h".to_string()));
 
-        // nav prefers the bare 'j' over the 'down' alias.
+        // nav はエイリアスの 'down' より素の 'j' を優先する。
         let nav = representative_chord(&km, KeyContext::Worktree, Action::NavigateDown);
         assert_eq!(nav, Some("j".to_string()));
     }
@@ -30,7 +30,7 @@ mod status_bar_tests {
         assert!(hint.contains("j/k: nav"), "{hint}");
         assert!(hint.contains("tab: panel"), "{hint}");
         assert!(hint.contains("w: new"), "{hint}");
-        // The old hardcoded lie must be gone, and no fallback glyphs leak in.
+        // 古いハードコードされた嘘の記述は消えていて、フォールバックのグリフも混ざらない。
         assert!(!hint.contains("Cmd+1-5"), "{hint}");
         assert!(hint.is_ascii(), "footer must be ASCII-only: {hint}");
     }
@@ -39,7 +39,7 @@ mod status_bar_tests {
     fn terminal_footer_notes_passthrough_and_leave_key() {
         let hint = status_bar_hint(Focus::TerminalClaude, &keymap());
         assert!(hint.contains("keys → terminal"), "{hint}");
-        // leave_terminal is ctrl+esc, not a bare Esc.
+        // leave_terminal は ctrl+esc であり、単なる Esc ではない。
         assert!(hint.contains("ctrl+esc: leave"), "{hint}");
     }
 }
@@ -49,7 +49,7 @@ mod color_tests {
 
     use crate::ui::common::color::{hsl_to_rgb, readable_fg_on, relative_luminance};
 
-    /// Contrast ratio between two relative-luminance values per WCAG 2.1.
+    /// WCAG 2.1 に基づく、2つの相対輝度値間のコントラスト比。
     fn contrast_ratio(l1: f64, l2: f64) -> f64 {
         (l1.max(l2) + 0.05) / (l1.min(l2) + 0.05)
     }
@@ -58,21 +58,21 @@ mod color_tests {
     fn relative_luminance_endpoints() {
         assert!(relative_luminance(0, 0, 0).abs() < 1e-9);
         assert!((relative_luminance(255, 255, 255) - 1.0).abs() < 1e-9);
-        // Green contributes far more luminance than blue at full intensity.
+        // 緑は最大強度のとき青よりはるかに大きく輝度に寄与する。
         assert!(relative_luminance(0, 255, 0) > relative_luminance(0, 0, 255));
     }
 
     #[test]
     fn readable_fg_matches_higher_contrast_choice() {
-        // Bright background → black text wins.
+        // 明るい背景 → 黒文字が勝つ。
         assert_eq!(readable_fg_on(255, 255, 0), Color::Rgb(0, 0, 0));
-        // Dark background → white text wins.
+        // 暗い背景 → 白文字が勝つ。
         assert_eq!(readable_fg_on(20, 20, 120), Color::Rgb(255, 255, 255));
     }
 
-    /// Across every hue the badge can take, the chosen text color must beat the
-    /// rejected one — guaranteeing the project name never collides with its
-    /// background, whether the badge lands light or dark.
+    /// バッジが取り得るすべての色相について、選ばれた文字色は選ばれなかった方より
+    /// 優れていなければならない — これにより、バッジが明るくても暗くても、
+    /// プロジェクト名が背景と衝突しないことを保証する。
     #[test]
     fn badge_fg_is_always_the_more_readable_choice() {
         for hue in 0..360 {
@@ -88,8 +88,8 @@ mod color_tests {
                 contrast_ratio(bg, chosen) >= contrast_ratio(bg, rejected),
                 "hue {hue}: chosen fg has worse contrast than the alternative",
             );
-            // Sanity: the badge stays comfortably above the 3:1 large-text /
-            // UI-component floor for every hue.
+            // 健全性チェック: すべての色相でバッジは、大きい文字/UIコンポーネントの
+            // 下限である 3:1 を余裕を持って上回る。
             assert!(
                 contrast_ratio(bg, chosen) >= 3.0,
                 "hue {hue}: contrast {:.2} fell below 3:1",

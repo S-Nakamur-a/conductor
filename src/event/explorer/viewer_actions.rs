@@ -1,13 +1,12 @@
-//! Viewer-panel-triggered comment actions: opening the add-comment input
-//! pre-filled with the current location, opening the comment detail modal
-//! for the current line, and parsing submitted comment text into a new
-//! review comment.
+//! Viewer パネルから起動するコメント操作: 現在位置をプレフィルしたコメント
+//! 追加入力欄を開く、現在行のコメント詳細モーダルを開く、送信されたコメント
+//! テキストをパースして新しいレビューコメントにする。
 
 use crate::app::App;
 use crate::review_state::ReviewInputMode;
 use crate::review_store::{Author, CommentKind};
 
-/// Open the review comment input from the Viewer, pre-filling the location.
+/// Viewer からレビューコメント入力欄を開き、位置をプレフィルする。
 pub(in crate::event) fn open_viewer_comment(app: &mut App) {
     let file_path = match app.viewer_state.content.current_file.clone() {
         Some(p) => p,
@@ -32,22 +31,22 @@ pub(in crate::event) fn open_viewer_comment(app: &mut App) {
     app.review_state.status_message = Some("Add comment: [s:|q:]file:line body".to_string());
 }
 
-/// Open the comment detail modal from the Viewer panel for the current line.
+/// Viewer パネルから、現在行のコメント詳細モーダルを開く。
 pub(in crate::event) fn open_viewer_comment_detail(app: &mut App) {
-    // Determine which line the cursor is on (same logic as preview).
+    // カーソルがどの行にあるかを求める (プレビューと同じロジック)。
     let cursor_line = if let Some((start, _)) = app.viewer_state.selected_range() {
         start
     } else {
         app.viewer_state.content.file_scroll + 1
     };
 
-    // Find a comment on that line.
+    // その行にあるコメントを探す。
     let comments = match app.review_state.file_comments.get(&cursor_line) {
         Some(c) if !c.is_empty() => c,
         _ => return,
     };
 
-    // Find the index of the first comment in the master comment list.
+    // マスターのコメント一覧における先頭コメントのインデックスを探す。
     let target_id = &comments[0].id;
     let comment_idx = match app
         .review_state
@@ -59,7 +58,7 @@ pub(in crate::event) fn open_viewer_comment_detail(app: &mut App) {
         None => return,
     };
 
-    // Load replies if not cached.
+    // キャッシュされていなければ返信を読み込む。
     let cid = target_id.clone();
     if !app.review_state.cached_replies.contains_key(&cid)
         && let Some(store) = app.review_store.as_ref()
@@ -73,9 +72,9 @@ pub(in crate::event) fn open_viewer_comment_detail(app: &mut App) {
     app.review_state.comment_detail_active = true;
 }
 
-/// Parse the input buffer and add a new review comment.
+/// 入力バッファをパースして新しいレビューコメントを追加する。
 ///
-/// Format: `[s:|q:]file_path:line[-end] body_text`
+/// フォーマット: [s:|q:]file_path:line[-end] body_text
 pub(in crate::event) fn submit_new_comment(app: &mut App, input: &str) {
     let input = input.trim();
     if input.is_empty() {
@@ -114,7 +113,7 @@ pub(in crate::event) fn submit_new_comment(app: &mut App, input: &str) {
     let file_path = &location[..colon_pos];
     let line_part = &location[colon_pos + 1..];
 
-    // Parse line range: "42" or "42-50".
+    // 行範囲をパースする: "42" または "42-50"。
     let (line_start, line_end) = if let Some(dash_pos) = line_part.find('-') {
         let start_str = &line_part[..dash_pos];
         let end_str = &line_part[dash_pos + 1..];

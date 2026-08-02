@@ -1,6 +1,6 @@
 //! 設定ファイルの監視。
 //!
-//! `config.toml` の親ディレクトリのファイルシステムイベントを監視し、設定
+//! config.toml の親ディレクトリのファイルシステムイベントを監視し、設定
 //! ファイル名に一致するイベントだけを転送する。ファイルそのものではなく親
 //! ディレクトリを監視するのは、エディタが「書いてリネーム」でアトミックに
 //! 保存したとき (inode が入れ替わる) に監視が外れないようにするため。
@@ -29,9 +29,9 @@ pub struct ConfigWatcher {
 }
 
 impl ConfigWatcher {
-    /// `config_path` を対象にしたウォッチャを作る。
+    /// config_path を対象にしたウォッチャを作る。
     ///
-    /// 監視するのは `config_path` の親ディレクトリで、[`ConfigEvent`] を出すのは
+    /// 監視するのは config_path の親ディレクトリで、[ConfigEvent] を出すのは
     /// パスが設定ファイル名に一致したイベントだけ。
     pub fn new(config_path: &Path) -> anyhow::Result<Self> {
         let config_filename = config_path
@@ -77,7 +77,7 @@ impl ConfigWatcher {
     }
 }
 
-/// `path` が指定した設定ファイル名を指しているとき `true` を返す。
+/// path が指定した設定ファイル名を指しているとき true を返す。
 ///
 /// ファイル名の一致判定をファイルシステムと切り離して単体テストできるよう、
 /// 純粋な関数として切り出してある。
@@ -85,9 +85,7 @@ fn matches_config_file(path: &Path, config_filename: &OsStr) -> bool {
     path.file_name() == Some(config_filename)
 }
 
-// ---------------------------------------------------------------------------
 // テスト
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

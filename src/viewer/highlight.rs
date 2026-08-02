@@ -1,5 +1,5 @@
-//! Syntax highlighting — runs syntect over `content.file_content` and caches
-//! the resulting ratatui-styled spans.
+//! シンタックスハイライト — content.file_content に syntect をかけ、
+//! 結果の ratatui スタイル付きスパンをキャッシュする。
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -13,10 +13,10 @@ use syntect::util::LinesWithEndings;
 use super::state::ViewerState;
 
 impl ViewerState {
-    /// Run syntect highlighting on `file_content` and cache the result.
+    /// file_content に syntect のハイライトをかけ、結果をキャッシュする。
     ///
-    /// Computes a hash of `(current_file, file_content)` and skips
-    /// re-highlighting when the content has not changed since the last call.
+    /// (current_file, file_content) のハッシュを計算し、前回呼び出し以降
+    /// 内容が変わっていなければ再ハイライトをスキップする。
     pub fn highlight_content(&mut self, syntax_set: &SyntaxSet, theme: &SyntectTheme) {
         if self.content.file_content.is_empty() {
             self.content.highlighted_lines.clear();
@@ -24,7 +24,7 @@ impl ViewerState {
             return;
         }
 
-        // Compute a cache key from the file path and content.
+        // ファイルパスと内容からキャッシュキーを計算する。
         let hash = {
             let mut hasher = DefaultHasher::new();
             self.content.current_file.hash(&mut hasher);
@@ -33,12 +33,12 @@ impl ViewerState {
         };
 
         if self.content.highlighted_cache_key == Some(hash) {
-            return; // Content unchanged — skip redundant highlighting.
+            return; // 内容が変わっていないので無駄なハイライトをスキップする。
         }
 
         self.content.highlighted_lines.clear();
 
-        // Determine syntax from file extension.
+        // ファイル拡張子からシンタックスを決定する。
         let ext = self
             .content
             .current_file
@@ -53,7 +53,7 @@ impl ViewerState {
 
         let mut h = HighlightLines::new(syntax, theme);
 
-        // Reconstruct the full text with newlines for syntect (it expects them).
+        // syntect は改行付きのテキストを期待するので、改行を補いながら全文を組み立てる。
         let full_text: String = self
             .content
             .file_content
@@ -65,7 +65,7 @@ impl ViewerState {
             let ranges = match h.highlight_line(line, syntax_set) {
                 Ok(r) => r,
                 Err(_) => {
-                    // Fallback: plain white.
+                    // フォールバック: 白一色。
                     self.content.highlighted_lines.push(vec![(
                         ratatui::style::Style::default().fg(ratatui::style::Color::White),
                         line.trim_end_matches('\n').to_string(),
@@ -80,7 +80,7 @@ impl ViewerState {
                     let ratatui_style = syntect_tui::translate_style(style)
                         .unwrap_or_default()
                         .bg(ratatui::style::Color::Reset);
-                    // Strip trailing newline from the last token.
+                    // 最後のトークンの末尾改行を取り除く。
                     let text = text.trim_end_matches('\n').to_string();
                     (ratatui_style, text)
                 })

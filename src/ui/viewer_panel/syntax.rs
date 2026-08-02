@@ -1,21 +1,21 @@
-//! Syntax highlighting and diff-annotation helpers, backed by the cached
-//! syntect data on `ViewerState`: the diff-annotation cache builder, the
-//! word-diff span renderers, and syntax-token-to-`Span` conversion.
+//! ViewerState にキャッシュされた syntect のデータを使うシンタックスハイライトと
+//! diff 注釈のヘルパー: diff 注釈キャッシュの構築、word-diff の span レンダラー、
+//! シンタックストークンから Span への変換。
 
 use crate::app::App;
 use crate::diff_state::{DiffLineTag, InlineSegment};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
-/// Ensure the diff annotations cache in `ViewerState` is populated for the
-/// currently viewed file. Only rebuilds if the file changed or the cache was
-/// invalidated (e.g. after `load_diff()`).
+/// ViewerState の diff 注釈キャッシュを、現在表示中のファイルについて確実に
+/// 埋める。ファイルが変わったかキャッシュが無効化された場合（load_diff() の後
+/// など）のみ再構築する。
 pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
     use crate::diff_state::FileDiff;
 
     let current_file = app.viewer_state.content.current_file.clone();
 
-    // Check if cache is still valid.
+    // キャッシュがまだ有効かどうかを確認する。
     if app.viewer_state.content.cached_diff_annotations.is_some()
         && app.viewer_state.content.cached_diff_annotations_file == current_file
     {
@@ -42,7 +42,7 @@ pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
             }
         };
 
-        // Uncommitted first (takes priority in the viewer).
+        // 未コミット分を先に処理する（ビューアでは未コミット分が優先される）。
         for file_diff in &app.diff_state.uncommitted_files {
             if file_diff.path == *current {
                 insert_annotations(file_diff, &mut annotations);
@@ -50,7 +50,7 @@ pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
             }
         }
 
-        // Committed second (or_insert prevents overwriting uncommitted).
+        // コミット済み分は後で処理する（or_insert により未コミット分の上書きは起きない）。
         for file_diff in &app.diff_state.committed_files {
             if file_diff.path == *current {
                 insert_annotations(file_diff, &mut annotations);
@@ -63,9 +63,9 @@ pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
     app.viewer_state.content.cached_diff_annotations_file = current_file;
 }
 
-/// Render intra-line diff segments with emphasis highlighting.
-/// Used for Delete lines where syntax tokens are unavailable; `fg` is the
-/// plain text color (the active theme's foreground).
+/// 行内の diff セグメントを強調ハイライト付きで描画する。
+/// シンタックストークンが使えない Delete 行向け。fg はプレーンテキストの色
+/// （アクティブなテーマの前景色）。
 pub(super) fn render_inline_diff_spans(
     segments: &[InlineSegment],
     diff_bg: Color,
@@ -86,9 +86,9 @@ pub(super) fn render_inline_diff_spans(
         .collect()
 }
 
-/// Merge syntax highlighting foreground colours with word-diff background
-/// colours. Returns `None` if the expanded segment text does not match the
-/// syntax token text (so the caller can fall back to plain rendering).
+/// シンタックスハイライトの前景色と word-diff の背景色をマージする。展開後の
+/// セグメントテキストがシンタックストークンのテキストと一致しない場合は None を
+/// 返す（呼び出し側はプレーン描画にフォールバックできる）。
 pub(super) fn merge_syntax_with_inline(
     segments: &[InlineSegment],
     syntax_tokens: &[(Style, String)],
@@ -97,9 +97,9 @@ pub(super) fn merge_syntax_with_inline(
     tab_width: usize,
     party: Option<f64>,
 ) -> Option<Vec<Span<'static>>> {
-    // Build expanded text and per-byte emphasis flag from inline segments.
-    // Tabs are expanded with a *shared* column counter across segments so the
-    // result matches the column-correct expansion of the syntax tokens below.
+    // インラインセグメントから展開後のテキストと、バイトごとの強調フラグを
+    // 構築する。タブはセグメントをまたいだ共有の列カウンタで展開するので、
+    // 結果が下のシンタックストークンの列一致した展開と揃う。
     let mut expanded_text = String::new();
     let mut byte_emphasis: Vec<bool> = Vec::new();
 
@@ -111,10 +111,10 @@ pub(super) fn merge_syntax_with_inline(
         expanded_text.push_str(&expanded);
     }
 
-    // Build per-byte fg style from syntax tokens. The syntax cache stores raw
-    // (un-expanded) tabs, so expand them here too — using the same shared
-    // column counter — otherwise any line containing a tab would fail the
-    // equality check below and silently lose its syntax + emphasis colouring.
+    // シンタックストークンからバイトごとの前景スタイルを構築する。シンタックス
+    // キャッシュは生の（未展開の）タブを保持しているので、ここでも同じ共有の
+    // 列カウンタで展開する — さもないとタブを含む行は下の一致判定に必ず失敗し、
+    // シンタックス＋強調の色付けが黙って失われてしまう。
     let mut syntax_text = String::new();
     let mut byte_fg: Vec<Style> = Vec::new();
 
@@ -126,7 +126,7 @@ pub(super) fn merge_syntax_with_inline(
         syntax_text.push_str(&expanded);
     }
 
-    // The texts must match after tab expansion; bail out otherwise.
+    // タブ展開後にテキストが一致していなければならない。一致しなければ諦める。
     if expanded_text != syntax_text {
         return None;
     }
@@ -151,7 +151,7 @@ pub(super) fn merge_syntax_with_inline(
             i += 1;
         }
 
-        // Ensure we land on a UTF-8 char boundary.
+        // UTF-8 の文字境界に必ず着地させる。
         while i < len && !expanded_text.is_char_boundary(i) {
             i += 1;
         }
@@ -159,8 +159,8 @@ pub(super) fn merge_syntax_with_inline(
         result.push(Span::styled(expanded_text[start..i].to_string(), fg.bg(bg)));
     }
 
-    // Party mode: recolour the merged tokens with a flowing rainbow while
-    // keeping their diff backgrounds intact.
+    // パーティーモード: マージ済みトークンの diff 背景色は保ったまま、流れる
+    // レインボーで前景色を塗り替える。
     if let Some(phase) = party {
         for (idx, span) in result.iter_mut().enumerate() {
             span.style.fg = Some(crate::ui::party::rainbow(phase + idx as f64 * 23.0));
@@ -170,7 +170,7 @@ pub(super) fn merge_syntax_with_inline(
     Some(result)
 }
 
-/// Expand tab characters to spaces, matching the viewer's tab expansion.
+/// タブ文字をスペースに展開する。ビューアのタブ展開と同じ挙動。
 fn expand_tabs(line: &str, tab_width: usize) -> String {
     if !line.contains('\t') {
         return line.to_string();
@@ -179,11 +179,11 @@ fn expand_tabs(line: &str, tab_width: usize) -> String {
     expand_tabs_at(line, tab_width, &mut col)
 }
 
-/// Expand tabs starting from column `col`, advancing `col` past the piece.
+/// 列 col から始めてタブを展開し、col をその断片ぶん進める。
 ///
-/// Threading a shared `col` across consecutive pieces of one line keeps tab
-/// stops column-correct, so two different tokenisations of the same line
-/// (word-diff segments vs. syntax tokens) expand to identical text.
+/// 1行の連続する断片間で共有の col を引き継ぐことで、タブ位置が常に列として
+/// 正しく保たれる。これにより、同じ行に対する2種類のトークン化
+/// （word-diff のセグメントとシンタックストークン）が同一のテキストに展開される。
 fn expand_tabs_at(piece: &str, tab_width: usize, col: &mut usize) -> String {
     let mut result = String::with_capacity(piece.len());
     for ch in piece.chars() {
@@ -201,11 +201,11 @@ fn expand_tabs_at(piece: &str, tab_width: usize, col: &mut usize) -> String {
     result
 }
 
-/// Return ratatui `Span`s for a single line from the syntect highlight cache.
+/// syntect のハイライトキャッシュから、1行ぶんの ratatui Span を返す。
 ///
-/// If a `diff_bg` is provided, the token foreground colours are preserved but
-/// the background is overridden with the diff colour.  When no cache entry
-/// exists for the line, a plain white fallback is returned.
+/// diff_bg が指定されていれば、トークンの前景色は保ったまま背景色を diff の色で
+/// 上書きする。その行のキャッシュエントリが無ければ、プレーンな白色にフォール
+/// バックする。
 pub(super) fn syntax_spans_for_line(
     vs: &crate::viewer::ViewerState,
     line_no: usize,
@@ -219,13 +219,13 @@ pub(super) fn syntax_spans_for_line(
             .enumerate()
             .map(|(idx, (style, text))| {
                 let mut s = if let Some(bg) = diff_bg {
-                    // Keep token fg, override bg with diff colour.
+                    // トークンの前景色は保ち、背景色を diff の色で上書きする。
                     style.bg(bg)
                 } else {
                     *style
                 };
-                // Party mode: recolour each token (boundaries preserved) with a
-                // flowing rainbow so the whole line goes flashy.
+                // パーティーモード: 各トークン（境界は保持）を流れるレインボーで
+                // 塗り替えて、行全体を派手にする。
                 if let Some(phase) = party {
                     s.fg = Some(crate::ui::party::rainbow(
                         phase + line_no as f64 * 7.0 + idx as f64 * 23.0,
@@ -235,7 +235,7 @@ pub(super) fn syntax_spans_for_line(
             })
             .collect()
     } else {
-        // Fallback: plain text in the theme foreground.
+        // フォールバック: テーマの前景色でプレーンテキストを表示する。
         let text = vs
             .content
             .file_content
@@ -263,9 +263,10 @@ mod tests {
 
     #[test]
     fn merge_handles_tabbed_lines() {
-        // A line "\tlet x" highlighted as two syntax tokens carrying a raw tab.
-        // The word-diff segments expand the tab; the syntax tokens must be
-        // expanded the same way or the merge silently drops to plain rendering.
+        // 生のタブを含む2つのシンタックストークンとしてハイライトされた
+        // "\tlet x" という行。word-diff のセグメントはタブを展開するので、
+        // シンタックストークン側も同じ方法で展開しなければ、マージは黙って
+        // プレーン描画にフォールバックしてしまう。
         let segments = vec![seg("\tlet ", false), seg("x", true)];
         let syntax_tokens = vec![
             (Style::default().fg(Color::Red), "\t".to_string()),
@@ -279,16 +280,16 @@ mod tests {
             4,
             None,
         );
-        // Before the tab fix this returned None (texts mismatched on the tab).
+        // このタブ修正の前は None が返っていた（タブの部分でテキストが不一致になっていた）。
         let spans = merged.expect("tabbed line should merge, not fall back to plain");
         let joined: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(joined, "    let x"); // tab expanded to 4 spaces at column 0
+        assert_eq!(joined, "    let x"); // タブが列0で4スペースに展開される
     }
 
     #[test]
     fn merge_bails_on_text_mismatch() {
-        // Genuinely different text (not just tabs) must still bail out so the
-        // caller can fall back to plain rendering.
+        // タブだけでなく本当にテキストが異なる場合も、呼び出し側がプレーン描画に
+        // フォールバックできるよう諦めなければならない。
         let segments = vec![seg("foo", false)];
         let syntax_tokens = vec![(Style::default(), "bar".to_string())];
         let merged = merge_syntax_with_inline(

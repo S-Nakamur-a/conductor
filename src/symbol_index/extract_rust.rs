@@ -1,5 +1,4 @@
-//! Rust symbol extraction: functions, structs, enums, traits, impls, and
-//! related items.
+//! Rust のシンボル抽出: 関数、構造体、enum、トレイト、impl、および関連アイテム。
 
 use super::extract_common::{extract_named_symbol, node_text, walk_tree};
 use super::model::{Symbol, SymbolKind};
