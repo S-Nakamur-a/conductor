@@ -1,25 +1,16 @@
 //! Viewer パネルのメディア描画の状態。
 //!
-//! image クレートで画像を読み込み、次の 2 つの経路のどちらかで Viewer パネル
-//! 向けに描画する:
-//!
-//! - ハーフブロック (既定): aa_media::Renderer の ANSI 文字列を ratatui の
-//!   Line へ変換する。truecolor の端末ならどれでも動く。
-//! - ピクセル (rich モードの Tier B): ratatui_image のグラフィックスプロトコル
-//!   (kitty / iTerm2 / sixel) のペイロードを、(ファイル, パネルサイズ) の組ごとに
-//!   1 度だけバックグラウンドスレッドで作る。エンコード済みのエスケープ列は
-//!   ratatui の通常のセル差分に乗るので、変化していない画像が再送されることはない。
+//! image クレートで画像を読み込み、aa_media::Renderer のハーフブロック ANSI
+//! 文字列を ratatui の Line へ変換して Viewer パネルへ描画する。描画は
+//! (ファイル, パネルサイズ) の組ごとに 1 度だけバックグラウンドスレッドで行い、
+//! 結果をキャッシュする。
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui_image::Resize;
-use ratatui_image::picker::Picker;
-use ratatui_image::protocol::Protocol;
 
 use aa_media::renderer::{Mode, Renderer};
 
@@ -67,16 +58,6 @@ pub enum MediaContent {
         /// ファイルサイズ (バイト)。
         file_size: u64,
     },
-    /// ピクセル品質のグラフィックスプロトコルのペイロード (rich モードの Tier B)。
-    /// Arc にしてあるのは [Protocol] が Clone でなく、描画経路が毎フレーム
-    /// mutex から中身を clone して取り出すため。
-    Pixel {
-        protocol: Arc<Protocol>,
-        /// 画像の寸法 (幅 x 高さ、ピクセル)。
-        dimensions: (u32, u32),
-        /// ファイルサイズ (バイト)。
-        file_size: u64,
-    },
     /// 描画に失敗した。このエラーメッセージを表示する。
     Error(String),
 }
@@ -87,9 +68,6 @@ pub struct MediaState {
     pub rendered_path: Option<String>,
     /// 直近の描画に使った端末サイズ (桁数, 行数)。
     pub rendered_size: (u16, u16),
-    /// 直近の描画がピクセル (グラフィックスプロトコル) 経路だったか。実行中に
-    /// rich モードを切り替えるとキャッシュが無効になるようにするため。
-    pub rendered_pixel: bool,
     /// 共有の描画結果。バックグラウンドスレッドが更新する。
     pub content: Arc<Mutex<MediaContent>>,
 }
@@ -99,7 +77,6 @@ impl Default for MediaState {
         Self {
             rendered_path: None,
             rendered_size: (0, 0),
-            rendered_pixel: false,
             content: Arc::new(Mutex::new(MediaContent::Loading)),
         }
     }
@@ -108,31 +85,18 @@ impl Default for MediaState {
 impl MediaState {
     /// メディアファイルの描画をバックグラウンドスレッドで開始する。
     ///
-    /// picker が Some (rich モードの Tier B) なら画像をグラフィックス
-    /// プロトコルのペイロードとしてエンコードし、そうでなければハーフブロックの
-    /// ANSI にフォールバックする。ファイル・サイズ・描画経路のいずれも変わって
-    /// いなければ何もしない (キャッシュを再利用する)。
-    pub fn render_if_needed(
-        &mut self,
-        full_path: &Path,
-        rel_path: &str,
-        cols: u16,
-        rows: u16,
-        picker: Option<Picker>,
-    ) {
+    /// ファイルとパネルサイズのどちらも変わっていなければ何もしない
+    /// (キャッシュを再利用する)。
+    pub fn render_if_needed(&mut self, full_path: &Path, rel_path: &str, cols: u16, rows: u16) {
         let size = (cols, rows);
 
-        // ファイル・サイズ・描画経路が変わっていなければキャッシュを使う。
-        if self.rendered_path.as_deref() == Some(rel_path)
-            && self.rendered_size == size
-            && self.rendered_pixel == picker.is_some()
-        {
+        // ファイルもサイズも変わっていなければキャッシュを使う。
+        if self.rendered_path.as_deref() == Some(rel_path) && self.rendered_size == size {
             return;
         }
 
         self.rendered_path = Some(rel_path.to_string());
         self.rendered_size = size;
-        self.rendered_pixel = picker.is_some();
         // poison からの復帰: デコードスレッドがロックを持ったまま panic した場合でも、
         // Viewer を生かしたまま poison された値を上書きする。
         *self.content.lock().unwrap_or_else(|e| e.into_inner()) = MediaContent::Loading;
@@ -141,10 +105,7 @@ impl MediaState {
         let content = Arc::clone(&self.content);
 
         thread::spawn(move || {
-            let result = match picker {
-                Some(mut picker) => render_image_to_pixels(&path, &mut picker, cols, rows),
-                None => render_image_to_lines(&path, cols, rows),
-            };
+            let result = render_image_to_lines(&path, cols, rows);
             *content.lock().unwrap_or_else(|e| e.into_inner()) = result;
         });
     }
@@ -153,39 +114,6 @@ impl MediaState {
     pub fn clear(&mut self) {
         self.rendered_path = None;
         self.rendered_size = (0, 0);
-        self.rendered_pixel = false;
-    }
-}
-
-/// 画像ファイルをグラフィックスプロトコルのペイロードへ描画する
-/// (rich モードの Tier B)。
-///
-/// プロトコルのデータは Viewer のメディア領域、すなわちパネルサイズから枠と
-/// 情報行を引いた大きさに合わせる。ハーフブロック経路のレイアウトと揃えてある。
-fn render_image_to_pixels(path: &Path, picker: &mut Picker, cols: u16, rows: u16) -> MediaContent {
-    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-
-    let img = match image::open(path) {
-        Ok(img) => img,
-        Err(e) => return MediaContent::Error(format!("Failed to load image: {e}")),
-    };
-    let dimensions = (img.width(), img.height());
-
-    let avail_cols = cols.saturating_sub(2);
-    let avail_rows = rows.saturating_sub(3); // 枠と情報行のぶん
-    let area = Rect::new(0, 0, avail_cols, avail_rows);
-
-    match picker.new_protocol(
-        img,
-        area,
-        Resize::Fit(Some(image::imageops::FilterType::Triangle)),
-    ) {
-        Ok(protocol) => MediaContent::Pixel {
-            protocol: Arc::new(protocol),
-            dimensions,
-            file_size,
-        },
-        Err(e) => MediaContent::Error(format!("Graphics render error: {e}")),
     }
 }
 

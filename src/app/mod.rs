@@ -23,7 +23,7 @@ pub use review_walkthrough::WalkthroughGenerations;
 mod state;
 pub use state::{
     CodeNav, Highlighting, ListHover, LoadedWalkthrough, PanelLayout, PanelNumberOverlay,
-    PublishState, RepoState, RichState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore,
+    PublishState, RepoState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore,
     WalkthroughState, WorktreeList, WtbarState,
 };
 mod terminal;
@@ -206,9 +206,6 @@ pub struct App {
     /// きらめき、紙吹雪が画面を漂う。コマンドパレットから切り替える。
     /// 永続化はしない（セッション限定の秘密）。
     pub party_mode: bool,
-
-    /// リッチモード (端末グラフィックス) の描画ティアと、それに紐づく資源。
-    pub rich: RichState,
 
     // リフロー・トランスクリプトビュー
     /// 無限スクロールバックモード中にClaude PTYパネルへオーバーレイされる、

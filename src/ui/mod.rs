@@ -10,7 +10,6 @@ pub mod markdown;
 pub mod menu_bar;
 pub mod party;
 pub mod reflow_view;
-pub mod rich;
 pub mod tab_bar;
 pub mod terminal_claude;
 pub mod terminal_shell;

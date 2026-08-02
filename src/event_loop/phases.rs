@@ -15,8 +15,8 @@ use ratatui::backend::CrosstermBackend;
 
 use super::state::LoopState;
 use super::{
-    ACTIVITY_TIMEOUT, DECORATION_TICK_INTERVAL, PULSE_TICK_INTERVAL, RICH_REFRESH_INTERVAL,
-    TICK_RATE_ACTIVE, TICK_RATE_IDLE, TICK_RATE_TERMINAL,
+    ACTIVITY_TIMEOUT, DECORATION_TICK_INTERVAL, PULSE_TICK_INTERVAL, TICK_RATE_ACTIVE,
+    TICK_RATE_IDLE, TICK_RATE_TERMINAL,
 };
 use crate::app::{App, DirtyPanels, Focus};
 use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
@@ -39,10 +39,6 @@ const STATUS_FADE_TICKS: u64 = 180;
 pub(super) struct FrameSignals {
     /// 装飾アニメーションが動いているか。
     pub decoration_active: bool,
-    /// リッチモードのグラデーション効果が画面に出ているか。
-    ///
-    /// パーティモードは自前のアニメーション経路を持つので除外する。
-    pub rich_active: bool,
     /// PTY から新しい出力が届いたか。
     pub pty_dirty: bool,
 }
@@ -53,7 +49,6 @@ impl FrameSignals {
         let decoration_active =
             crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
                 .has_animation();
-        let rich_active = app.rich.is_rich() && !app.party_mode;
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
 
         if pty_dirty {
@@ -73,7 +68,6 @@ impl FrameSignals {
 
         Self {
             decoration_active,
-            rich_active,
             pty_dirty,
         }
     }
@@ -83,7 +77,7 @@ impl FrameSignals {
 ///
 /// 描くものがあるなら待たない。無いときは「いちばん速い理由」を上から選ぶ:
 /// ターミナル系のフォーカス > 進行中の操作 > 直前の入力 > フォーカス遷移 >
-/// リッチグラデーション > 待機パルス > 装飾 > アイドル。
+/// 待機パルス > 装飾 > アイドル。
 pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignals) -> Duration {
     if app.dirty.any() || signals.pty_dirty {
         return Duration::ZERO;
@@ -96,9 +90,6 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
         _ if loop_state.last_input_time.elapsed() < ACTIVITY_TIMEOUT => TICK_RATE_ACTIVE,
         // フォーカスのボーダーが遷移中はフレームを流し続ける。
         _ if app.has_active_transition() => TICK_RATE_ACTIVE,
-        // リッチのグラデーションはアイドル時も 30fps 欲しい (回転が引っかからない
-        // ように)。上のターミナル / アクティブより下、待機・装飾・アイドルより上。
-        _ if signals.rich_active => RICH_REFRESH_INTERVAL,
         _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
         // パーティモードはアイドルでも動き続ける。
         _ if app.party_mode => PULSE_TICK_INTERVAL,
@@ -248,11 +239,7 @@ fn expire_status_message(app: &mut App) {
 
 /// 遅くてよい後始末。描画のあとに置いてあるので、ここが重くても入力の
 /// 応答性には効かない。
-pub(super) fn run_background_work(
-    app: &mut App,
-    loop_state: &mut LoopState,
-    signals: &FrameSignals,
-) {
+pub(super) fn run_background_work(app: &mut App, loop_state: &mut LoopState) {
     // PTY のサイズをキャッシュ済みレイアウトに合わせる。
     app.sync_pty_sizes(
         &mut loop_state.last_claude_size,
@@ -274,7 +261,6 @@ pub(super) fn run_background_work(
         &mut loop_state.timers,
         &mut sources.file_watcher,
         &mut sources.watch_paths,
-        signals.rich_active,
         input_active,
         loop_state.ccusage_poll_secs,
     );

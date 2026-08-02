@@ -88,7 +88,6 @@ pub enum CommandId {
     UpdateAndRestart,
     CheckForUpdate,
     TogglePartyMode,
-    ToggleRichMode,
     Quit,
 
     // UI

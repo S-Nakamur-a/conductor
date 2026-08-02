@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::app::{self, App};
+use crate::app::App;
 use crate::term_caps;
 
 /// CLI の即答フラグを処理する。
@@ -119,60 +119,6 @@ pub fn apply_auto_theme(app: &mut App) {
         None => {
             log::info!("OSC11 auto-detected background (luminance={lum:.2}): keeping current theme");
         }
-    }
-}
-
-/// リッチモードのティアを決めて app に反映し、有効なら起動時に一言知らせる。
-///
-/// 代替スクリーンに入ったあと・イベントループが stdin を読み始める前に呼ぶこと:
-/// グラフィックスプローブは端末からの応答を自分で stdin から読むので、crossterm の
-/// イベントループが動いているとそれを横取りされてしまう。
-pub fn detect_rich_mode(app: &mut App) {
-    let caps = term_caps::TermCaps::detect_from_env();
-    let mode = app.config.rich.mode.clone();
-    // auto は端末がグラフィックス対応らしいときだけ問い合わせる (未知の端末で
-    // 起動が遅くならないように)。force は常に問い合わせるので、ヒントの一覧に
-    // 載っていない端末での逃げ道になる。
-    let probed = if mode == "force" || (mode != "off" && caps.graphics_likely) {
-        match ratatui_image::picker::Picker::from_query_stdio() {
-            Ok(picker) => Some(picker),
-            Err(e) => {
-                log::warn!("graphics protocol probe failed: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    let protocol = probed.map(|p| p.protocol_type());
-    app.rich.tier = term_caps::resolve_rich_tier(&mode, &caps, protocol);
-    app.rich.available = app.rich.tier;
-    if app.rich.has_graphics() {
-        app.rich.picker = probed;
-    }
-    log::info!(
-        "rich mode: tier={:?} terminal={:?} protocol={:?}",
-        app.rich.tier,
-        caps.terminal_name,
-        protocol
-    );
-
-    if app.rich.is_rich() {
-        app.status_message = Some(app::StatusMessage::new(
-            rich_mode_banner(app.rich.has_graphics(), caps.terminal_name.as_deref()),
-            app::StatusLevel::Info,
-            app.ui_tick,
-        ));
-    }
-}
-
-fn rich_mode_banner(has_graphics: bool, terminal_name: Option<&str>) -> String {
-    match (has_graphics, terminal_name) {
-        (true, Some(name)) => format!("✨ Rich mode — {name} graphics detected"),
-        (true, None) => String::from("✨ Rich mode — terminal graphics detected"),
-        (false, Some(name)) => format!("✨ Rich mode — {name} truecolor"),
-        (false, None) => String::from("✨ Rich mode — truecolor"),
     }
 }
 

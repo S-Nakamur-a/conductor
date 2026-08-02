@@ -394,13 +394,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         keywords: "party rainbow fun secret celebration mode hidden festive disco",
     },
     PaletteCommand {
-        id: CommandId::ToggleRichMode,
-        label: "✨ Toggle Rich Mode",
-        category: CommandCategory::App,
-        action: None,
-        keywords: "rich mode graphics gradient border glow visual effects truecolor",
-    },
-    PaletteCommand {
         id: CommandId::Quit,
         label: "Quit Conductor",
         category: CommandCategory::App,

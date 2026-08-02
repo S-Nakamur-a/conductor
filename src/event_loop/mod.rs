@@ -35,13 +35,6 @@ const PULSE_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// フォーカスしていない terminal パネルを更新する間隔 (~2fps)。バックグラウンドの
 /// PTY 出力の可視性と CPU 使用量のバランスを取る。
 const UNFOCUSED_TERMINAL_REFRESH: Duration = Duration::from_millis(500);
-/// rich モードのグラデーション枠を再描画する間隔 (~30fps)。回転するフォーカスの
-/// グラデーションと waiting の輝き (ui::rich) は壁時計時刻から位相を導出するが、
-/// フレームが再描画されたときにしか進まない。専用の間隔を用意しないと、
-/// アイドル/装飾用の tick 間隔でグラデーションがカクつく。rich モードでのみ
-/// 有効化し (terminal/active のより速い間隔を上書きすることは決してない)、
-/// rich の演出が見えている間だけ安定した 30fps の再描画というコストを払う。
-const RICH_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
 
 /// file watcher が監視すべきパス: 通常は各 worktree のパス。worktree が
 /// 1 つもない場合 (例: 素の非 git ディレクトリ) はリポジトリのパス自身にする。
@@ -79,7 +72,7 @@ pub(crate) fn run_loop(
         loop_state.note_layout_change(app);
         phases::mark_continuous_dirty(app);
         phases::render_frame(terminal, app, &mut loop_state)?;
-        phases::run_background_work(app, &mut loop_state, &signals);
+        phases::run_background_work(app, &mut loop_state);
 
         if app.should_quit {
             // 生成中のウォークスルーはヘッドレスの claude 子プロセス。

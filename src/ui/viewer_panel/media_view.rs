@@ -1,6 +1,5 @@
 //! ビューアパネルのメディアファイル（画像/動画）表示モード。
-//! term_caps に応じて ASCII アートまたはターミナルグラフィックスプロトコルによる
-//! ピクセル表示を行う。
+//! ハーフブロックによるカラーの ASCII アートとして描画する。
 
 use crate::app::App;
 use crate::media_state::MediaContent;
@@ -50,28 +49,6 @@ pub(super) fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block:
             let visible_lines: Vec<Line> = lines.into_iter().take(media_height).collect();
             let paragraph = Paragraph::new(visible_lines);
             frame.render_widget(paragraph, media_area);
-
-            render_media_info_bar(frame, info_area, dimensions, file_size, theme);
-        }
-        MediaContent::Pixel {
-            protocol,
-            dimensions,
-            file_size,
-        } => {
-            frame.render_widget(ratatui::widgets::Clear, area);
-
-            let inner = block.inner(area);
-            frame.render_widget(block, area);
-
-            // 最終行は情報バー用に確保する。
-            let media_height = inner.height.saturating_sub(1);
-            let media_area = Rect::new(inner.x, inner.y, inner.width, media_height);
-            let info_area = Rect::new(inner.x, inner.y + media_height, inner.width, 1);
-
-            // ターミナルグラフィックスプロトコルによるピクセル品質の画像。エスケープ
-            // ペイロードはバッファのセルに埋め込まれるため、ratatui の diffing により
-            // セルが実際に変化したときだけ再送信される。
-            frame.render_widget(ratatui_image::Image::new(protocol.as_ref()), media_area);
 
             render_media_info_bar(frame, info_area, dimensions, file_size, theme);
         }

@@ -36,7 +36,7 @@ pub use persist::{
 #[allow(unused_imports)]
 pub use sections::{
     ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, LayoutConfig, ReviewConfig,
-    RichConfig, TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
+    TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
 };
 #[allow(unused_imports)]
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};
@@ -73,8 +73,6 @@ pub struct Config {
     pub updates: UpdatesConfig,
     /// [api] -- Gemini API の設定。
     pub api: ApiConfig,
-    /// [rich] -- rich モード(ターミナルグラフィックス)の設定。
-    pub rich: RichConfig,
     /// [ui] -- UI 外観の設定(テーマなど)。
     #[serde(default)]
     pub ui: UiConfig,

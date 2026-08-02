@@ -112,7 +112,7 @@ Status bar
 | `claude_sessions/` | Resolving which `.jsonl` transcript backs a panel (`rotation.rs` is the hook-less fallback for `/clear`) |
 | `config.rs` | Config loading from `~/.config/conductor/config.toml` |
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
-| `term_caps.rs` | Rich-mode terminal capability detection (truecolor / graphics protocol tiers) |
+| `term_caps.rs` | Terminal capability probing — OSC 11 background-colour query driving light/dark theme auto-selection |
 | `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
 | `walkthrough.rs` | AI walkthrough data model, generation prompt, and reply parser — generation runs through the `[api]` seam (`ai_caller.rs`) on a background thread, never by spawning a CLI |
 | `app/walkthrough_view.rs` | Explorer walkthrough-view methods for `App` — step selection, jumping to a step's diff location, and the "viewed" file/step toggle |

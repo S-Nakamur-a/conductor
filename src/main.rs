@@ -88,10 +88,9 @@ fn main() -> Result<()> {
     let mut app = App::new(startup::resolve_repo_path()?);
     execute!(io::stdout(), SetTitle(format!("conductor - {}", app.repo.main_name)))?;
 
-    // どちらも raw mode に入ったあと・イベントループが stdin を読み始める前で
-    // なければならない。端末への問い合わせの応答を自分で stdin から読むため。
+    // raw mode に入ったあと・イベントループが stdin を読み始める前でなければ
+    // ならない。端末への問い合わせの応答を自分で stdin から読むため。
     startup::apply_auto_theme(&mut app);
-    startup::detect_rich_mode(&mut app);
 
     app.start_symbol_index_build();
 

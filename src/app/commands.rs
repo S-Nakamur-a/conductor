@@ -1,5 +1,5 @@
 //! コマンドパレットのディスパッチと、worktree やレビューコメントに紐づかない
-//! 雑多なコマンドハンドラ群: テーマ/rich-mode の切り替え、terminal/search の
+//! 雑多なコマンドハンドラ群: テーマの切り替え、terminal/search の
 //! 入口、リポジトリ/コメント一覧のナビゲーションショートカット。
 
 use super::focus::Focus;
@@ -71,7 +71,6 @@ impl App {
             CommandId::ToggleHighContrast => self.cmd_toggle_high_contrast(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
             CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
-            CommandId::ToggleRichMode => self.cmd_toggle_rich_mode(),
             CommandId::Quit => self.should_quit = true,
             CommandId::SwitchTheme => self.cmd_open_theme_picker(),
         }
@@ -109,25 +108,6 @@ impl App {
             self.set_status("🎉 Party mode ON! 🎉".to_string(), StatusLevel::Success);
         } else {
             self.set_status_info("Party mode off.".to_string());
-        }
-        self.dirty.mark_all();
-    }
-
-    /// rich mode を、オフと起動時に検出したティアの間で切り替える。検出で
-    /// 何も見つからなかった端末では、オンにすると Tier A にフォールバック
-    /// する([rich] mode = "force" と同じ挙動)。
-    fn cmd_toggle_rich_mode(&mut self) {
-        use crate::term_caps::RichTier;
-        if self.rich.is_rich() {
-            self.rich.tier = RichTier::Off;
-            self.set_status_info("Rich mode off.".to_string());
-        } else {
-            self.rich.tier = if self.rich.available.is_rich() {
-                self.rich.available
-            } else {
-                RichTier::TierA
-            };
-            self.set_status("✨ Rich mode ON".to_string(), StatusLevel::Success);
         }
         self.dirty.mark_all();
     }

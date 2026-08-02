@@ -215,23 +215,6 @@ impl Default for ApiConfig {
     }
 }
 
-/// [rich] セクション。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RichConfig {
-    /// Rich mode の有効化: "auto"(端末の性能を検出)、"off"(常に無効)、
-    /// "force"(truecolor が無くても Tier A を有効化)。
-    pub mode: String,
-}
-
-impl Default for RichConfig {
-    fn default() -> Self {
-        Self {
-            mode: String::from("auto"),
-        }
-    }
-}
-
 /// [layout] セクション — パネル比率の上書き。
 ///
 /// 値はパーセンテージ(0〜100)。worktree 列は常に幅0(worktree モニターは
