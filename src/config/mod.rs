@@ -40,7 +40,7 @@ pub use sections::{
 };
 #[allow(unused_imports)]
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};
-pub use syntax_theme::syntect_theme_for;
+pub use syntax_theme::{syntax_theme_id, syntect_theme_for};
 
 use persist::write_atomic;
 
@@ -82,6 +82,18 @@ pub struct Config {
 }
 
 impl Config {
+    /// 有効な UI テーマ名。
+    ///
+    /// [ui] theme が優先される。存在しない場合は、[ui] セクション導入前の
+    /// config との後方互換性のために [viewer] theme が使われる。
+    ///
+    /// UI の配色もシンタックスハイライトのテーマも、必ずここを通して名前を
+    /// 決める。片方が viewer.theme を直接読んでいたせいで、テーマピッカーで
+    /// ui.theme を切り替えてもコードの配色だけが取り残されていた。
+    pub fn theme_name(&self) -> &str {
+        self.ui.theme.as_deref().unwrap_or(&self.viewer.theme)
+    }
+
     /// ~/.config/conductor/config.toml から設定を読み込む。
     ///
     /// ファイルが存在しない場合は Config::default() にフォールバックする。

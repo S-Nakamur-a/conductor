@@ -1,13 +1,51 @@
 //! 外観設定（テーマ、シンタックスハイライト、diff表示モード、レイアウト比率）の
 //! ランタイムでのテーマ切り替えと、設定ファイルのライブリロード。
 
-use syntect::highlighting::ThemeSet;
-
 use super::App;
 use crate::config;
 
 impl App {
+    /// 現在のconfigからsyntectのハイライトテーマを組み直す。
+    ///
+    /// 解決結果が前回と同じなら何もしない。変わっていれば、テーマを差し替えた
+    /// うえでハイライト済みspanを持つキャッシュをすべて無効化する。
+    ///
+    /// 「無効化」まで含めてここでやるのが肝。span色はキャッシュに焼き込まれる
+    /// ので、テーマだけ差し替えても画面には古い配色が残り続ける。テーマを
+    /// 触る経路(テーマピッカー・OSC11自動判定・configライブリロード)は必ず
+    /// ここを通す。
+    fn rebuild_syntect_theme(&mut self) {
+        let new_id = config::syntax_theme_id(&self.config);
+        if new_id == self.highlight.theme_id {
+            return;
+        }
+
+        self.highlight.theme = config::syntect_theme_for(&self.config, &self.highlight.themes);
+        self.highlight.theme_id = new_id;
+        // Viewerのハイライトキャッシュのキーに混ざる。これを進めないと、
+        // ファイル内容が同じままなのでrehighlight_viewerがキャッシュヒットで
+        // 素通りしてしまう。
+        self.highlight.generation = self.highlight.generation.wrapping_add(1);
+
+        // レビューコメント内のコードブロックが新しいsyntectテーマを反映
+        // できるよう、Markdownキャッシュをクリアする。このキャッシュは
+        // UIのカラーパレットだけを指紋にしているので、シンタックスのみの
+        // 変更ではそうしないと古いハイライトのspanが残ってしまう。
+        self.markdown_cache.clear();
+
+        // 次の描画でreflowトランスクリプトを完全に再構築させ、Markdown
+        // のspanが新しいテーマ色とsyntectパレットを反映するようにする。
+        // last_width=0にすることで、パネル幅が変わったかどうかに関わらず
+        // 次のフレームでbuild_linesが必ず実行される。
+        self.reflow.last_width = 0;
+        self.reflow.cache.clear();
+    }
+
     /// アクティブなUIテーマをランタイムで切り替える。
+    ///
+    /// UIパレットとsyntectのシンタックスハイライトテーマの両方を切り替える。
+    /// 以前はUIパレットだけを組み直していたので、テーマを変えてもViewerの
+    /// コードの配色が変わらなかった。
     ///
     /// persistがtrueのとき、選択は設定ファイル (~/.config/conductor/config.toml)
     /// に書き込まれ、再起動後も残る。書き込み失敗は致命的ではない: ログに
@@ -16,9 +54,16 @@ impl App {
         self.theme = super::build_theme(name, self.theme_sel.high_contrast);
         self.theme_sel.name = name.to_string();
         self.config.ui.theme = Some(name.to_string());
-        if persist
-            && let Err(e) = crate::config::persist_ui_theme(name)
-        {
+
+        // syntectテーマはconfigの現在値から解決されるので、ui.themeを書いた
+        // 後に呼ぶ。
+        self.rebuild_syntect_theme();
+        // 開いているファイルを新しいテーマで塗り直す。generationが進んで
+        // いるのでキャッシュは素通りしない。
+        self.rehighlight_viewer();
+        self.dirty.mark_all();
+
+        if persist && let Err(e) = crate::config::persist_ui_theme(name) {
             log::warn!("failed to persist theme '{name}': {e}");
             self.set_status(
                 format!("Theme saved in session but could not write config: {e}"),
@@ -39,6 +84,8 @@ impl App {
     ///
     /// ここで適用されるLIVEフィールドは次のとおり。
     /// - ui.theme / viewer.theme → theme + theme_name + syntectの再構築
+    ///   （syntect側もui.themeを優先する。以前はviewer.themeだけを見ていた
+    ///   ので、ui.themeだけを設定するとコードの配色が取り残されていた）
     /// - viewer.syntax_theme_file → syntectの再構築（themeと同じ経路）
     /// - viewer.tab_width → configのコピー + refresh_viewer + refresh_diff
     /// - diff.word_diff → configのコピー + refresh_diff
@@ -53,30 +100,13 @@ impl App {
         // UI / シンタックステーマ
         let new_theme_name = super::resolve_theme_name(new);
         let new_high_contrast = new.ui.high_contrast;
-        if new_theme_name != self.theme_sel.name || new_high_contrast != self.theme_sel.high_contrast {
+        if new_theme_name != self.theme_sel.name
+            || new_high_contrast != self.theme_sel.high_contrast
+        {
             self.theme = super::build_theme(&new_theme_name, new_high_contrast);
             self.theme_sel.name = new_theme_name;
             self.theme_sel.high_contrast = new_high_contrast;
         }
-
-        // viewerテーマかカスタムテーマファイルのいずれかが変わったらsyntect
-        // テーマを再構築する（両者を1回の再構築にまとめることで、半端に
-        // 更新された状態が生じないようにしている）。
-        let ts = ThemeSet::load_defaults();
-        self.highlight.theme = config::syntect_theme_for(&new.viewer, &ts);
-
-        // レビューコメント内のコードブロックが新しいsyntectテーマを反映
-        // できるよう、Markdownキャッシュをクリアする。このキャッシュは
-        // UIのカラーパレットだけを指紋にしているので、シンタックスのみの
-        // 変更ではそうしないと古いハイライトのspanが残ってしまう。
-        self.markdown_cache.clear();
-
-        // 次の描画でreflowトランスクリプトを完全に再構築させ、Markdown
-        // のspanが新しいテーマ色とsyntectパレットを反映するようにする。
-        // last_width=0にすることで、パネル幅が変わったかどうかに関わらず
-        // 次のフレームでbuild_linesが必ず実行される。
-        self.reflow.last_width = 0;
-        self.reflow.cache.clear();
 
         // diff表示モード
         // view_modeを直接適用する。diff_state.view_modeが書き込まれるのは
@@ -89,6 +119,10 @@ impl App {
         // 変化を自動検出して次のフレームで再計算するので、明示的な無効化は
         // 不要。
         self.config.adopt_appearance(new);
+
+        // syntectテーマの再構築。テーマ名もsyntax_theme_fileも self.config から
+        // 読むので、adopt_appearance の後に呼ぶ必要がある。
+        self.rebuild_syntect_theme();
 
         // Claude/Shellの分割はconfigから種を取るランタイムフィールドなので、
         // layout.terminal_split_pctへの外部からの編集がライブに反映される

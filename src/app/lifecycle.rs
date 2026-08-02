@@ -4,7 +4,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use syntect::highlighting::ThemeSet;
 
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
@@ -46,8 +45,9 @@ impl App {
 
         // syntect のシンタックスセットとテーマを初期化する。
         let syntax_set = two_face::syntax::extra_newlines();
-        let ts = ThemeSet::load_defaults();
-        let syntect_theme = config::syntect_theme_for(&config.viewer, &ts);
+        let syntect_themes = two_face::theme::extra();
+        let syntect_theme = config::syntect_theme_for(&config, &syntect_themes);
+        let syntect_theme_id = config::syntax_theme_id(&config);
 
         // 既知リポジトリの一覧を作る: まず現在のリポジトリ、続けて config の追加分。
         let mut repo_list = vec![repo_path.clone()];
@@ -131,7 +131,10 @@ impl App {
             last_poll_status: None,
             highlight: Highlighting {
                 syntax_set,
+                themes: syntect_themes,
                 theme: syntect_theme,
+                theme_id: syntect_theme_id,
+                generation: 0,
             },
             markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             expanded_panel: None,

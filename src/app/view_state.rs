@@ -142,7 +142,9 @@ impl App {
         // borrow checkerを満たすため、フィールドを分離して借用する。
         let syntax_set = &self.highlight.syntax_set;
         let theme = &self.highlight.theme;
-        self.viewer_state.highlight_content(syntax_set, theme);
+        let generation = self.highlight.generation;
+        self.viewer_state
+            .highlight_content(syntax_set, theme, generation);
     }
 
     /// branch のdiffを計算すべき対象ref。
