@@ -209,14 +209,11 @@ pub struct App {
 
 /// configから有効なUIテーマ名を解決する。
 ///
-/// [ui] theme が優先される。存在しない場合は、[ui] セクション導入前の
-/// configとの後方互換性のために [viewer] theme が使われる。
+/// 解決規則そのものは [config::Config::theme_name] が持つ。シンタックス
+/// ハイライト側も同じ関数を通すので、UIとコードで別のテーマ名を見てしまう
+/// ことはない。
 fn resolve_theme_name(cfg: &config::Config) -> String {
-    cfg.ui
-        .theme
-        .as_deref()
-        .unwrap_or(&cfg.viewer.theme)
-        .to_string()
+    cfg.theme_name().to_string()
 }
 
 /// 名前から有効な [Theme] を組み立て、有効ならハイコントラスト変換を
