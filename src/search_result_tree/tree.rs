@@ -1,6 +1,6 @@
-//! `SearchResultTree` — the directory→file→match hierarchy itself: building
-//! it from a flat match list, flattening it into visible rows, and the
-//! expand/collapse/navigation operations the search-results panel drives.
+//! SearchResultTree — ディレクトリ→ファイル→マッチという階層構造そのもの。
+//! フラットなマッチリストからの構築、表示行へのフラット化、そして検索結果
+//! パネルが操作する展開/折りたたみ/移動を担う。
 
 use std::collections::BTreeMap;
 
@@ -9,23 +9,23 @@ use crate::grep_search::GrepMatch;
 use super::helpers::{NestedDir, build_nested_dirs, split_dir_file};
 use super::model::{DirNode, SearchTreeRow};
 
-/// Tree-structured search results with expand/collapse state.
+/// 展開/折りたたみ状態を持つ、ツリー構造の検索結果。
 #[derive(Default)]
 pub struct SearchResultTree {
-    /// All matches (the original flat list, kept for reference).
+    /// すべてのマッチ(元のフラットなリストを参照用に保持)。
     matches: Vec<GrepMatch>,
-    /// Internal tree structure: directory path → files.
+    /// 内部のツリー構造: ディレクトリパス → ファイル群。
     dirs: BTreeMap<String, DirNode>,
-    /// Expand/collapse state for directories (key: dir path).
+    /// ディレクトリの展開/折りたたみ状態(キー: ディレクトリパス)。
     dir_expanded: BTreeMap<String, bool>,
-    /// Expand/collapse state for files (key: file path).
+    /// ファイルの展開/折りたたみ状態(キー: ファイルパス)。
     file_expanded: BTreeMap<String, bool>,
-    /// Cached flattened visible rows.
+    /// フラット化した表示行のキャッシュ。
     cached_rows: Option<Vec<SearchTreeRow>>,
 }
 
 impl SearchResultTree {
-    /// Build the tree from a flat list of grep matches.
+    /// grep マッチのフラットなリストからツリーを構築する。
     pub fn build(matches: &[GrepMatch]) -> Self {
         let mut dirs: BTreeMap<String, DirNode> = BTreeMap::new();
 
@@ -37,7 +37,7 @@ impl SearchResultTree {
             dir_node.files.entry(file).or_default().push(i);
         }
 
-        // All directories and files start expanded.
+        // すべてのディレクトリとファイルは最初は展開状態。
         let mut dir_expanded = BTreeMap::new();
         let mut file_expanded = BTreeMap::new();
         for (dir_path, dir_node) in &dirs {
@@ -61,17 +61,17 @@ impl SearchResultTree {
         }
     }
 
-    /// Return the original matches.
+    /// 元のマッチ一覧を返す。
     pub fn matches(&self) -> &[GrepMatch] {
         &self.matches
     }
 
-    /// Total match count.
+    /// マッチの総数。
     pub fn match_count(&self) -> usize {
         self.matches.len()
     }
 
-    /// Get the flattened visible rows, computing if needed.
+    /// フラット化した表示行を取得する。未計算なら計算する。
     pub fn visible_rows(&mut self) -> &[SearchTreeRow] {
         if self.cached_rows.is_none() {
             self.rebuild_rows();
@@ -79,17 +79,17 @@ impl SearchResultTree {
         self.cached_rows.as_deref().unwrap_or(&[])
     }
 
-    /// Invalidate the cached rows (call after expand/collapse changes).
+    /// キャッシュした行を無効化する(展開/折りたたみ変更後に呼ぶ)。
     fn invalidate_cache(&mut self) {
         self.cached_rows = None;
     }
 
-    /// Rebuild the flattened visible rows from the tree structure.
+    /// ツリー構造からフラット化した表示行を再構築する。
     fn rebuild_rows(&mut self) {
         let mut rows = Vec::new();
 
-        // We need to render a nested directory tree. We split multi-component
-        // dir paths into segments and group by prefix.
+        // ネストしたディレクトリツリーを描画する必要がある。複数階層を持つ
+        // ディレクトリパスをセグメントに分割し、プレフィックスでグループ化する。
         let mut tree: BTreeMap<String, Vec<(String, &DirNode)>> = BTreeMap::new();
         for (dir_path, dir_node) in &self.dirs {
             let segments: Vec<&str> = if dir_path == "." {
@@ -99,7 +99,7 @@ impl SearchResultTree {
             };
 
             if segments.is_empty() {
-                // Root-level files (no directory).
+                // トップレベルのファイル(ディレクトリなし)。
                 tree.entry(String::new())
                     .or_default()
                     .push((dir_path.clone(), dir_node));
@@ -110,7 +110,7 @@ impl SearchResultTree {
             }
         }
 
-        // Collect all unique directory prefixes for proper nesting.
+        // 正しくネストさせるため、全ての一意なディレクトリプレフィックスを集める。
         let dir_paths: Vec<String> = self.dirs.keys().cloned().collect();
         let nested = build_nested_dirs(&dir_paths);
 
@@ -120,7 +120,7 @@ impl SearchResultTree {
     }
 
     fn render_nested_dir(&self, node: &NestedDir, rows: &mut Vec<SearchTreeRow>, depth: usize) {
-        // Sort children: directories first, then files.
+        // 子要素をソートする: ディレクトリを先に、次にファイル。
         let mut child_names: Vec<&String> = node.children.keys().collect();
         child_names.sort();
 
@@ -144,13 +144,13 @@ impl SearchResultTree {
                 });
 
                 if expanded {
-                    // Render files directly in this directory.
+                    // このディレクトリ直下のファイルを描画する。
                     if child.is_leaf_dir
                         && let Some(dir_node) = self.dirs.get(&child_path)
                     {
                         self.render_files(dir_node, &child_path, rows, depth + 1);
                     }
-                    // Render subdirectories.
+                    // サブディレクトリを描画する。
                     if child.has_subdirs() {
                         self.render_nested_dir(child, rows, depth + 1);
                     }
@@ -158,9 +158,9 @@ impl SearchResultTree {
             }
         }
 
-        // Render files directly in this node (if it's a leaf dir in self.dirs).
+        // このノード直下のファイルを描画する(self.dirs 内で leaf dir の場合)。
         if node.is_leaf_dir {
-            // Root node has path "" but root-level files are stored under key ".".
+            // ルートノードのパスは "" だが、トップレベルのファイルはキー "." の下に保存されている。
             let lookup_key = if node.path.is_empty() {
                 "."
             } else {
@@ -227,7 +227,7 @@ impl SearchResultTree {
         count
     }
 
-    /// Toggle expand/collapse for the row at the given visible index.
+    /// 指定した表示インデックスの行の展開/折りたたみを切り替える。
     pub fn toggle_expand(&mut self, visible_idx: usize) {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
@@ -253,7 +253,7 @@ impl SearchResultTree {
         self.invalidate_cache();
     }
 
-    /// Expand the row at the given visible index.
+    /// 指定した表示インデックスの行を展開する。
     pub fn expand(&mut self, visible_idx: usize) {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
@@ -283,7 +283,7 @@ impl SearchResultTree {
         }
     }
 
-    /// Collapse the row at the given visible index.
+    /// 指定した表示インデックスの行を折りたたむ。
     pub fn collapse(&mut self, visible_idx: usize) {
         let rows = self.visible_rows().to_vec();
         if let Some(row) = rows.get(visible_idx) {
@@ -313,7 +313,7 @@ impl SearchResultTree {
         }
     }
 
-    /// Check if the row at the given visible index is collapsed (for smart j/k navigation).
+    /// 指定した表示インデックスの行が折りたたまれているか(賢い j/k ナビゲーション用)。
     pub fn is_collapsed(&mut self, visible_idx: usize) -> bool {
         let rows = self.visible_rows().to_vec();
         match rows.get(visible_idx) {
@@ -323,7 +323,7 @@ impl SearchResultTree {
         }
     }
 
-    /// Find the next sibling at the same or lower depth (for skipping collapsed subtrees).
+    /// 同じかそれより浅い深さの次の兄弟要素を探す(折りたたまれたサブツリーを飛ばすため)。
     pub fn next_sibling_index(&mut self, visible_idx: usize) -> Option<usize> {
         let rows = self.visible_rows().to_vec();
         let current_depth = match rows.get(visible_idx) {
@@ -345,7 +345,7 @@ impl SearchResultTree {
         None
     }
 
-    /// Resolve the full directory path from a visible row's name and depth.
+    /// 表示行の name と depth から、ディレクトリのフルパスを求める。
     fn resolve_dir_path(
         &self,
         rows: &[SearchTreeRow],
@@ -353,7 +353,7 @@ impl SearchResultTree {
         name: &str,
         depth: usize,
     ) -> String {
-        // Walk backwards to find parent dirs and reconstruct the full path.
+        // 逆順に走査して親ディレクトリを見つけ、フルパスを再構築する。
         let mut segments = vec![name.to_string()];
         let mut target_depth = depth;
 
@@ -377,7 +377,7 @@ impl SearchResultTree {
         segments.join("/")
     }
 
-    /// Get the GrepMatch for a Match row at the given visible index.
+    /// 指定した表示インデックスの Match 行に対応する GrepMatch を取得する。
     pub fn get_match_at(&mut self, visible_idx: usize) -> Option<&GrepMatch> {
         let rows = self.visible_rows().to_vec();
         match rows.get(visible_idx) {

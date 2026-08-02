@@ -1,23 +1,23 @@
-//! Incremental grep search for [`App`]'s grep-search overlay.
+//! [App] の grep 検索オーバーレイのためのインクリメンタル grep 検索。
 //!
-//! Short queries (≤3 chars) run a fast 2-phase search — recently modified
-//! files first, then a full search in parallel that replaces the phase-1
-//! results — while longer queries go straight to a single full search.
-//! Input is debounced by 200ms so rapid typing doesn't spawn a search per
-//! keystroke.
+//! 短いクエリ(3文字以下)は高速な2段階検索を行う — まず最近変更された
+//! ファイルを検索し、それと並行してフル検索を走らせてフェーズ1の結果を
+//! 置き換える — 一方、長いクエリは最初から単一のフル検索に進む。
+//! 入力は200msでデバウンスされ、素早いタイピングでキー入力ごとに検索が
+//! 走ることはない。
 
 use super::*;
 use crate::grep_search::GrepProgress;
 
 impl App {
-    /// Schedule an incremental grep search with debounce (200ms).
+    /// デバウンス(200ms)付きでインクリメンタル grep 検索をスケジュールする。
     ///
-    /// Called on every keystroke that modifies the query. Sets a deadline;
-    /// `check_grep_debounce()` fires the actual search when the deadline passes.
+    /// クエリを変更するキー入力のたびに呼ばれる。締切をセットし、
+    /// check_grep_debounce() が締切を過ぎたら実際の検索を発火させる。
     pub fn schedule_grep_search(&mut self) {
         let query = self.overlays.grep_search.query.text().to_string();
         if query.is_empty() {
-            // Clear everything immediately.
+            // 即座に全てクリアする。
             self.overlays.grep_search.result_tree = Default::default();
             self.overlays.grep_search.pending_matches.clear();
             self.overlays.grep_search.selected = 0;
@@ -33,8 +33,8 @@ impl App {
             Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
     }
 
-    /// Check if the debounce deadline has passed; if so, start the search.
-    /// Returns `true` if a search was started (caller should trigger redraw).
+    /// デバウンスの締切を過ぎたか確認する。過ぎていれば検索を開始する。
+    /// 検索を開始した場合 true を返す(呼び出し側は再描画をトリガーすべき)。
     pub fn check_grep_debounce(&mut self) -> bool {
         if let Some(deadline) = self.overlays.grep_search.debounce_deadline
             && std::time::Instant::now() >= deadline
@@ -46,12 +46,12 @@ impl App {
         false
     }
 
-    /// Start an incremental grep search.
+    /// インクリメンタル grep 検索を開始する。
     ///
-    /// For short queries (≤3 chars), uses 2-phase search:
-    ///   phase1 — search only recently modified files (fast)
-    ///   phase2 — full search (runs in parallel, replaces phase1 results)
-    /// For longer queries, runs only a full search.
+    /// 短いクエリ(3文字以下)では2段階検索を使う:
+    ///   phase1 — 最近変更されたファイルだけを検索する(高速)
+    ///   phase2 — フル検索(並行して実行し、phase1 の結果を置き換える)
+    /// 長いクエリではフル検索だけを実行する。
     fn start_incremental_grep_search(&mut self) {
         let query = self.overlays.grep_search.query.text().to_string();
         if query.is_empty() {
@@ -63,11 +63,11 @@ impl App {
         // 結果が並ぶ。
         let wt_path = self.viewer_state.root().to_path_buf();
 
-        // Cancel any previous search.
+        // 以前の検索があればキャンセルする。
         self.overlays.grep_search.bg_op.clear();
         self.overlays.grep_search.bg_op_phase2.clear();
 
-        // Reset results.
+        // 結果をリセットする。
         self.overlays.grep_search.result_tree = Default::default();
         self.overlays.grep_search.pending_matches.clear();
         self.overlays.grep_search.selected = 0;
@@ -78,14 +78,14 @@ impl App {
         let case_sensitive = self.overlays.grep_search.case_sensitive;
 
         if query.chars().count() <= 3 {
-            // 2-phase search for short queries.
+            // 短いクエリには2段階検索を使う。
             self.overlays.grep_search.phase1_active = true;
 
-            // Get recently modified files (synchronous, fast).
+            // 最近変更されたファイルを取得する(同期・高速)。
             let recent_files =
                 crate::git_engine::recently_modified_files(&wt_path, 200).unwrap_or_default();
 
-            // Phase1: search only recent files.
+            // フェーズ1: 最近のファイルだけを検索する。
             if !recent_files.is_empty() {
                 let wt1 = wt_path.clone();
                 let q1 = query.clone();
@@ -102,14 +102,14 @@ impl App {
                 });
             }
 
-            // Phase2: full search (runs in parallel).
+            // フェーズ2: フル検索(並行して実行する)。
             let wt2 = wt_path.clone();
             let q2 = query.clone();
             self.overlays.grep_search.bg_op_phase2.start(move |tx| {
                 crate::grep_search::run_search(&wt2, &q2, regex_mode, case_sensitive, tx);
             });
         } else {
-            // Single-phase full search for longer queries.
+            // 長いクエリには単一段階のフル検索を使う。
             self.overlays.grep_search.phase1_active = false;
             let wt2 = wt_path.clone();
             let q2 = query.clone();
@@ -119,11 +119,11 @@ impl App {
         }
     }
 
-    /// Poll for background grep search results.
+    /// バックグラウンドの grep 検索結果をポーリングする。
     pub fn poll_grep_search(&mut self) {
         let mut tree_dirty = false;
 
-        // Poll phase1 / single-phase bg_op.
+        // phase1 / 単一段階の bg_op をポーリングする。
         let messages = self.overlays.grep_search.bg_op.poll_all();
         for msg in messages {
             match msg {
@@ -132,7 +132,7 @@ impl App {
                     tree_dirty = true;
                 }
                 GrepProgress::Done(total) => {
-                    // If phase1 completed but phase2 is still running, keep running = true.
+                    // phase1 は完了したが phase2 がまだ実行中なら running = true のままにする。
                     if !self.overlays.grep_search.phase1_active
                         || !self.overlays.grep_search.bg_op_phase2.is_running()
                     {
@@ -157,7 +157,7 @@ impl App {
             }
         }
 
-        // Poll phase2 bg_op.
+        // phase2 の bg_op をポーリングする。
         if self.overlays.grep_search.phase1_active {
             let messages2 = self.overlays.grep_search.bg_op_phase2.poll_all();
             let mut got_phase2_results = false;
@@ -165,7 +165,7 @@ impl App {
                 match msg {
                     GrepProgress::Results(batch) => {
                         if !got_phase2_results {
-                            // Replace phase1 results with phase2 results.
+                            // phase1 の結果を phase2 の結果で置き換える。
                             self.overlays.grep_search.pending_matches.clear();
                             self.overlays.grep_search.selected = 0;
                             self.overlays.grep_search.scroll = 0;
@@ -199,7 +199,7 @@ impl App {
             }
         }
 
-        // Rebuild the tree when new results arrived.
+        // 新しい結果が届いたらツリーを再構築する。
         if tree_dirty {
             self.overlays.grep_search.result_tree =
                 crate::search_result_tree::SearchResultTree::build(

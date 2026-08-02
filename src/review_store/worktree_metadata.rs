@@ -1,5 +1,5 @@
-//! Per-branch metadata: base branch (`worktree_metadata`), the branch-level
-//! change summary (`change_summary`), and PR review metadata (`pr_review_meta`).
+//! ブランチごとのメタデータ: ベースブランチ（worktree_metadata）、ブランチ単位の
+//! 変更サマリ（change_summary）、PR レビューメタデータ（pr_review_meta）。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -8,7 +8,7 @@ use super::ReviewStore;
 use super::model::{Author, PrReviewMeta};
 
 impl ReviewStore {
-    /// Persist the base branch for a worktree branch.
+    /// worktree ブランチのベースブランチを保存する。
     pub fn save_worktree_base_branch(&self, branch: &str, base_branch: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO worktree_metadata (branch, base_branch) VALUES (?1, ?2)",
@@ -17,7 +17,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Retrieve the persisted base branch for a worktree branch.
+    /// worktree ブランチについて保存済みのベースブランチを取得する。
     pub fn get_worktree_base_branch(&self, branch: &str) -> Result<Option<String>> {
         let mut stmt = self
             .conn
@@ -28,16 +28,14 @@ impl ReviewStore {
         Ok(result)
     }
 
-    /// Persist (or replace) the branch-level change summary — the "what & why"
-    /// of the whole diff, shown as a banner above the diff and reusable as a PR
-    /// body. `updated_at` is bumped on every write; `created_at` is preserved on
-    /// replace via the COALESCE against the existing row.
+    /// ブランチ単位の変更サマリ（差分全体の「何を・なぜ」）を保存（または置き換え）する。
+    /// diff の上にバナーとして表示され、PR 本文としても再利用できる。書き込みのたびに
+    /// updated_at を更新し、既存行に対する COALESCE により置き換え時も created_at を保持する。
     ///
-    /// Two paths write it, both through this method: the `set_change_summary`
-    /// MCP tool for a standalone overview, and `save_walkthrough`, which writes
-    /// the walkthrough's summary here so the SUMMARY pseudo-file is filled in as
-    /// a side effect of generating a walkthrough. Since `mcp-serve` is this same
-    /// binary, there is no second implementation of this upsert to keep in sync.
+    /// このメソッドを経由して書き込む経路は2つある。単独の概要を書く set_change_summary
+    /// MCP ツールと、walkthrough のサマリをここに書き込む save_walkthrough で、後者では
+    /// walkthrough 生成の副作用として SUMMARY 疑似ファイルが埋まる。mcp-serve は同じ
+    /// バイナリなので、この upsert の実装を二重に持って同期を取る必要はない。
     pub fn save_change_summary(&self, branch: &str, body: &str, author: Author) -> Result<()> {
         self.conn.execute(
             "INSERT INTO change_summary (branch, body, author, created_at, updated_at)
@@ -53,7 +51,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Retrieve the change summary for a branch, if one has been written.
+    /// ブランチの変更サマリを取得する（書き込まれていれば）。
     pub fn get_change_summary(&self, branch: &str) -> Result<Option<String>> {
         let mut stmt = self
             .conn
@@ -64,7 +62,7 @@ impl ReviewStore {
         Ok(result)
     }
 
-    /// Retrieve all branches whose base_branch equals the given branch (direct children).
+    /// base_branch が指定ブランチと一致する全ブランチ（直接の子）を取得する。
     pub fn get_worktree_children(&self, base: &str) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
@@ -77,7 +75,7 @@ impl ReviewStore {
         Ok(out)
     }
 
-    /// Insert or replace the PR metadata for a branch.
+    /// ブランチの PR メタデータを挿入または置き換える。
     #[allow(clippy::too_many_arguments)]
     #[allow(dead_code)]
     pub fn save_pr_review_meta(
@@ -106,7 +104,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Retrieve the PR metadata for a branch, if any has been saved.
+    /// ブランチの PR メタデータを取得する（保存されていれば）。
     pub fn get_pr_review_meta(&self, branch: &str) -> Result<Option<PrReviewMeta>> {
         match self.conn.query_row(
             "SELECT branch, pr_number, pr_url, pr_title, base_ref, head_ref, author, created_at
@@ -143,7 +141,7 @@ mod tests {
     fn change_summary_save_get_and_replace() {
         let store = test_store();
 
-        // Absent until written.
+        // 書き込まれるまでは存在しない。
         assert_eq!(store.get_change_summary("feat/x").unwrap(), None);
 
         store
@@ -154,7 +152,7 @@ mod tests {
             Some("Refactor the parser for clarity.")
         );
 
-        // Replacing keeps the same key and overwrites the body (PK upsert).
+        // 置き換えは同じキーのまま body を上書きする（主キーによる upsert）。
         store
             .save_change_summary("feat/x", "Updated summary.", Author::User)
             .unwrap();
@@ -163,7 +161,7 @@ mod tests {
             Some("Updated summary.")
         );
 
-        // Independent per branch.
+        // ブランチごとに独立している。
         assert_eq!(store.get_change_summary("feat/y").unwrap(), None);
     }
 
@@ -190,7 +188,7 @@ mod tests {
         assert_eq!(meta.pr_url.as_deref(), Some("https://github.com/o/r/pull/42"));
         assert_eq!(meta.author.as_deref(), Some("octocat"));
 
-        // Upsert overwrites rather than duplicating.
+        // upsert なので重複せず上書きされる。
         store
             .save_pr_review_meta(
                 "feat/x",

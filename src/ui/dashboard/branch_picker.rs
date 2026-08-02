@@ -1,5 +1,5 @@
-//! Branch-list picker overlays: cherry-pick source commits, switch-branch,
-//! grab-from-branch, and the stale-worktree prune confirmation.
+//! ブランチ一覧のピッカーオーバーレイ群: cherry-pick の元コミット、switch-branch、
+//! grab-from-branch、古い worktree の削除確認。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input};
 use crate::app::App;
@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the cherry-pick commit picker overlay.
+/// cherry-pick のコミットピッカーオーバーレイを描画する。
 pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
@@ -83,7 +83,7 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
-/// Render the switch-branch (remote branch checkout) overlay.
+/// switch-branch（リモートブランチのチェックアウト）オーバーレイを描画する。
 pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
@@ -94,10 +94,10 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    // Split into filter bar + list.
+    // フィルタバーと一覧に分割する。
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
-    // Filter bar.
+    // フィルタバー。
     let filter_block = Block::default()
         .title(" Switch Branch (type to filter, Enter: checkout, Esc: cancel) ")
         .borders(Borders::ALL)
@@ -111,7 +111,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.overlays.switch_branch.filter);
 
-    // Branch list.
+    // ブランチ一覧。
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.info));
@@ -153,7 +153,7 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// Render the grab branch picker overlay.
+/// grab のブランチピッカーオーバーレイを描画する。
 pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
@@ -164,10 +164,10 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    // Split into filter bar + list.
+    // フィルタバーと一覧に分割する。
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
-    // Filter bar.
+    // フィルタバー。
     let filter_block = Block::default()
         .title(" Grab \u{2192} main (type to filter, Enter: grab, Esc: cancel) ")
         .borders(Borders::ALL)
@@ -181,7 +181,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.overlays.grab.filter);
 
-    // Branch list.
+    // ブランチ一覧。
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.success));
@@ -223,7 +223,7 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// Render the prune confirmation overlay.
+/// 削除確認オーバーレイを描画する。
 pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let stale_count = app.overlays.prune.stale.len() as u16;

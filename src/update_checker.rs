@@ -1,7 +1,7 @@
 //! 起動時に GitHub Releases と照らしてバージョンを確認する。
 //!
-//! 起動時に `curl` で `GET /repos/S-Nakamur-a/conductor/releases/latest` を叩く
-//! (追加の依存は無し)。結果は `~/.cache/conductor/update-check.json` に
+//! 起動時に curl で GET /repos/S-Nakamur-a/conductor/releases/latest を叩く
+//! (追加の依存は無し)。結果は ~/.cache/conductor/update-check.json に
 //! キャッシュするので、バックグラウンドで最新を取りに行っているあいだも
 //! バッジをすぐ出せる。
 
@@ -28,7 +28,7 @@ pub struct UpdateInfo {
     pub assets: Vec<ReleaseAsset>,
 }
 
-/// キャッシュ用にシリアライズできる [`ReleaseAsset`] の形。
+/// キャッシュ用にシリアライズできる [ReleaseAsset] の形。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedAsset {
     name: String,
@@ -47,12 +47,12 @@ struct CacheEntry {
     assets: Vec<CachedAsset>,
 }
 
-/// `Cargo.toml` にある現在のクレートのバージョンを返す。
+/// Cargo.toml にある現在のクレートのバージョンを返す。
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// キャッシュファイルのパスを返す: `~/.cache/conductor/update-check.json`。
+/// キャッシュファイルのパスを返す: ~/.cache/conductor/update-check.json。
 fn cache_path() -> Option<PathBuf> {
     Some(
         dirs::cache_dir()?
@@ -121,9 +121,9 @@ fn write_cache(info: &UpdateInfo) {
     }
 }
 
-/// `curl` で GitHub Releases API に問い合わせ、キャッシュを書いて結果を返す。
+/// curl で GitHub Releases API に問い合わせ、キャッシュを書いて結果を返す。
 ///
-/// ネットワークエラー、404 (まだリリースが無い)、パース失敗のときは `None` を返す。
+/// ネットワークエラー、404 (まだリリースが無い)、パース失敗のときは None を返す。
 pub fn check_for_update() -> Option<UpdateInfo> {
     use std::process::Stdio;
 
@@ -218,10 +218,10 @@ pub fn check_for_update() -> Option<UpdateInfo> {
     Some(info)
 }
 
-/// semver 形式の文字列 (`major.minor.patch`) を 2 つ比較する。
+/// semver 形式の文字列 (major.minor.patch) を 2 つ比較する。
 ///
-/// `latest` が `current` より厳密に新しければ `true` を返す。
-/// パースできないバージョンは `false` を返す。
+/// latest が current より厳密に新しければ true を返す。
+/// パースできないバージョンは false を返す。
 pub fn is_newer(latest: &str, current: &str) -> bool {
     let parse = |s: &str| -> Option<(u64, u64, u64)> {
         let parts: Vec<&str> = s.split('.').collect();
@@ -247,8 +247,8 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 
 /// 現在のプラットフォームに対応する Rust のターゲットトリプルを返す。
 ///
-/// `(std::env::consts::OS, std::env::consts::ARCH)` を、リリースのアセット名で
-/// 使われるトリプル (例: `aarch64-apple-darwin`) へ対応づける。
+/// (std::env::consts::OS, std::env::consts::ARCH) を、リリースのアセット名で
+/// 使われるトリプル (例: aarch64-apple-darwin) へ対応づける。
 pub fn current_target_triple() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
@@ -261,7 +261,7 @@ pub fn current_target_triple() -> Option<&'static str> {
 
 /// 現在のプラットフォームに合うビルド済みバイナリのアセットを探す。
 ///
-/// 名前にターゲットトリプルを含み `.tar.gz` で終わるアセットを探す。
+/// 名前にターゲットトリプルを含み .tar.gz で終わるアセットを探す。
 /// 見つかればそれを返す。
 pub fn find_binary_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     let triple = current_target_triple()?;
@@ -269,10 +269,6 @@ pub fn find_binary_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
         .iter()
         .find(|a| a.name.contains(triple) && a.name.ends_with(".tar.gz"))
 }
-
-// ---------------------------------------------------------------------------
-// テスト
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

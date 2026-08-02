@@ -1,9 +1,9 @@
-//! Tests for block parsing ([`parse_blocks`]), inline emphasis/link parsing
-//! ([`inline_spans`]), task checkboxes, and GFM tables.
+//! ブロック解析 (parse_blocks)、インラインの強調/リンク解析
+//! (inline_spans)、タスクチェックボックス、GFM テーブルのテスト。
 
 use super::*;
 
-// ── Parsing ──
+// パース
 
 #[test]
 fn plain_text_is_paragraphs_unchanged() {
@@ -19,7 +19,7 @@ fn plain_text_is_paragraphs_unchanged() {
 
 #[test]
 fn hash_without_space_is_not_a_heading() {
-    // Issue refs / C# / #nofilter must stay paragraphs.
+    // issue 参照 / C# / #nofilter は段落のままでなければならない。
     assert_eq!(
         parse_blocks("fix issue #242 now"),
         vec![MdBlock::Paragraph("fix issue #242 now".to_string())]
@@ -56,7 +56,7 @@ fn list_items_bullet_and_ordered() {
             MdBlock::ListItem { ordered: Some("2".to_string()), checked: None, text: "d".to_string(), indent: 0 },
         ]
     );
-    // No space after the marker → plain paragraph.
+    // マーカーの後にスペースがない → 普通の段落。
     assert_eq!(
         parse_blocks("-5 degrees"),
         vec![MdBlock::Paragraph("-5 degrees".to_string())]
@@ -109,17 +109,17 @@ fn horizontal_rule_vs_text() {
     );
 }
 
-// ── Inline ──
+// インライン
 
 #[test]
 fn snake_case_and_bare_star_stay_literal() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
-    // Underscores are never emphasis.
+    // アンダースコアは強調にならない。
     let spans = inline_spans("call set_change_summary here", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "call set_change_summary here");
     assert_eq!(spans.len(), 1, "no styled split for snake_case");
-    // `2 * 3`: space-flanked star is literal.
+    // 2 * 3: 両側にスペースがあるアスタリスクはそのまま文字として扱われる。
     let spans = inline_spans("rate is 2 * 3", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "rate is 2 * 3");
     assert_eq!(spans.len(), 1);
@@ -146,8 +146,8 @@ fn bold_italic_code_are_styled() {
     );
 
     let spans = inline_spans("use `git` now", base, &theme, MarkdownFlavor::Rich);
-    // Inline code is padded with NBSP into a pink-on-card chip; match on the
-    // trimmed content rather than the exact padded string.
+    // インラインコードは NBSP でパディングされ、カード上のピンクのチップになる。
+    // パディング込みの文字列そのものではなく、トリム後の内容で照合する。
     assert!(
         spans
             .iter()
@@ -184,8 +184,8 @@ fn strikethrough_is_styled_and_muted() {
 
 #[test]
 fn strikethrough_does_not_nest_inner_markup() {
-    // Like bold/italic, strikethrough emits its content literally (no
-    // nesting) — but inline markup OUTSIDE the strike still works.
+    // 太字/斜体と同様、取り消し線もその内容をそのまま出力する（ネストしない）
+    // — ただし取り消し線の外側にあるインラインマークアップは引き続き機能する。
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     let spans = inline_spans("~~old **bold**~~ and **real**", base, &theme, MarkdownFlavor::Rich);
@@ -206,14 +206,14 @@ fn strikethrough_does_not_nest_inner_markup() {
 
 #[test]
 fn bare_tilde_run_is_fence_not_strikethrough() {
-    // `~~~` at line start is a code fence, parsed before inline strike.
+    // 行頭の ~~~ はコードフェンスであり、インラインの取り消し線より先に解析される。
     assert!(matches!(
         parse_blocks("~~~\ncode\n~~~").as_slice(),
         [MdBlock::CodeBlock { .. }]
     ));
 }
 
-// ── Task checkboxes ──
+// タスクチェックボックス
 
 #[test]
 fn task_checkboxes_parse() {
@@ -230,7 +230,8 @@ fn task_checkboxes_parse() {
 
 #[test]
 fn non_checkboxes_stay_plain_items() {
-    // Malformed markers must NOT become checkboxes; text is preserved verbatim.
+    // 不正な形式のマーカーはチェックボックスになってはいけない。テキストは
+    // そのまま保持される。
     for (input, want_text) in [
         ("- [y] thing", "[y] thing"),
         ("- [] thing", "[] thing"),
@@ -265,9 +266,9 @@ fn empty_task_checkbox_parses() {
 
 #[test]
 fn checkbox_renders_within_width() {
-    // At widths comfortably above the `[x] ` marker, lines stay in bounds.
-    // (Like all list items, a width narrower than the marker can't be
-    // honoured — that degenerate case is covered by `never_panics`.)
+    // [x]  マーカーより十分に大きい幅では、行が範囲内に収まる。
+    // （他のすべてのリスト項目と同様、マーカーより狭い幅は守れない — その
+    // 極端なケースは never_panics でカバーする。）
     for width in [8usize, 20, 40] {
         for line in render("- [x] done\n- [ ] あいうえお task", width) {
             assert!(display_width(&line_text(&line)) <= width);
@@ -275,7 +276,7 @@ fn checkbox_renders_within_width() {
     }
 }
 
-// ── Tables ──
+// テーブル
 
 #[test]
 fn table_parses_headers_aligns_rows() {
@@ -294,7 +295,7 @@ fn table_parses_headers_aligns_rows() {
 
 #[test]
 fn pipe_paragraph_is_not_a_table() {
-    // No delimiter row → not a table; no source line is eaten.
+    // デリミタ行がない → テーブルではない。ソース行は1行も消費されない。
     assert_eq!(
         parse_blocks("a | b\nc | d"),
         vec![
@@ -302,12 +303,12 @@ fn pipe_paragraph_is_not_a_table() {
             MdBlock::Paragraph("c | d".to_string()),
         ]
     );
-    // Header-looking line at EOF with no delimiter.
+    // デリミタなしで EOF に達する、ヘッダーらしき行。
     assert_eq!(
         parse_blocks("| h1 | h2 |"),
         vec![MdBlock::Paragraph("| h1 | h2 |".to_string())]
     );
-    // Delimiter with zero dashes is not a delimiter.
+    // ハイフンが0個のデリミタはデリミタとして扱わない。
     assert_eq!(
         parse_blocks("| a | b |\n| : | : |").len(),
         2,
@@ -325,7 +326,7 @@ fn table_cell_splitting_normalizes_outer_pipes() {
 
 #[test]
 fn table_renders_within_width_and_truncates() {
-    // Header + rule + 2 body rows = 4 lines, all within width.
+    // ヘッダー + 区切り線 + 本体2行 = 4行、すべて width に収まる。
     let table = "| name | id |\n| --- | --: |\n| alice | 1 |\n| bob | 22 |";
     for width in [0usize, 1, 2, 3, 8, 20, 80] {
         let lines = render(table, width);
@@ -338,9 +339,9 @@ fn table_renders_within_width_and_truncates() {
     }
 }
 
-/// The point of wrapping instead of truncating: **no content is lost.** Every
-/// word of an over-wide cell must appear somewhere in the rendered table, at
-/// every width that can hold the column at all.
+/// 切り詰めずに折り返す狙い: 内容が一切失われないこと。幅が広すぎるセルの
+/// どの単語も、その列を保持できるだけの幅さえあれば、描画されたテーブルの
+/// どこかに必ず現れなければならない。
 #[test]
 fn wide_table_cells_wrap_instead_of_losing_content() {
     let table = "| feature | notes |\n| --- | --- |\n\
@@ -368,8 +369,8 @@ fn wide_table_cells_wrap_instead_of_losing_content() {
     }
 }
 
-/// Wrapping makes a row taller, so the columns must stay a grid: every line of
-/// a row has to be the same display width, or the second column ends up ragged.
+/// 折り返しによって行は高くなるが、列はグリッドのままでなければならない:
+/// 行内のどの行も同じ表示幅でなければ、2列目がガタガタになってしまう。
 #[test]
 fn wrapped_table_rows_keep_their_columns_aligned() {
     let table = "| a | b |\n| --- | --- |\n\
@@ -377,7 +378,7 @@ fn wrapped_table_rows_keep_their_columns_aligned() {
         | x | seven eight nine ten eleven |";
     for width in [24usize, 36, 50] {
         let lines = render(table, width);
-        // Skip the leading blank the renderer puts before a block.
+        // レンダラがブロックの前に入れる先頭の空行をスキップする。
         let body: Vec<usize> = lines
             .iter()
             .map(|l| display_width(&line_text(l)))
@@ -390,8 +391,8 @@ fn wrapped_table_rows_keep_their_columns_aligned() {
     }
 }
 
-/// A single unbreakable token wider than its column still has to appear in
-/// full — hard-split across lines rather than cut short.
+/// 列より幅の広い、分割不能な1つのトークンでも全文が現れなければならない
+/// — 途中で切るのではなく、複数行にハード分割する。
 #[test]
 fn overlong_unbreakable_cell_is_split_not_cut() {
     let url = "https://example.com/a/very/long/path/that/never/breaks";
@@ -401,15 +402,15 @@ fn overlong_unbreakable_cell_is_split_not_cut() {
         .map(|l| line_text(l))
         .collect::<Vec<_>>()
         .join("");
-    // Reassembled across lines (padding stripped), the whole URL is present.
+    // 複数行を（パディングを除いて）つなぎ合わせると、URL 全体が存在する。
     let joined: String = text.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(joined.contains(url), "URL was cut: {text:?}");
 }
 
 #[test]
 fn table_cell_truncation_never_splits_multibyte() {
-    // Force CJK / accented cells below their content width — must not panic
-    // and must respect the width bound.
+    // CJK / アクセント付き文字のセルを、その内容幅より狭い幅に押し込める
+    // — panic せず、幅の上限を守らなければならない。
     let table = "| name |\n| ---- |\n| café |\n| 日本語テスト |\n| 🧑‍🤝‍🧑x |";
     for width in [1usize, 2, 3, 4, 5, 6, 10] {
         for line in render(table, width) {
@@ -420,18 +421,18 @@ fn table_cell_truncation_never_splits_multibyte() {
 
 #[test]
 fn table_alignment_does_not_change_cell_width() {
-    // Same content under each alignment yields identical column widths.
+    // どのアライメントでも同じ内容なら同じ列幅になる。
     let mk = |delim: &str| render(&format!("| h |\n| {delim} |\n| ab |"), 20);
     let widths: Vec<usize> = ["---", ":--", "--:", ":-:"]
         .iter()
         .map(|d| line_text(&mk(d)[2]).trim_end().chars().count())
         .collect();
-    // Left/right/center pad differently but the trimmed body content is "ab".
+    // 左寄せ/右寄せ/中央寄せでパディングは異なるが、トリム後の本体内容は "ab"。
     for d in ["---", ":--", "--:", ":-:"] {
         let body = line_text(&mk(d)[2]);
         assert!(body.contains("ab"), "alignment {d} lost content");
     }
-    // The full (untrimmed) row width is identical across alignments.
+    // （トリムしていない）行全体の幅は、どのアライメントでも同じ。
     let full: Vec<usize> = ["---", ":--", "--:", ":-:"]
         .iter()
         .map(|d| display_width(&line_text(&mk(d)[2])))
@@ -442,10 +443,11 @@ fn table_alignment_does_not_change_cell_width() {
 
 #[test]
 fn table_ragged_rows_are_normalized() {
-    // Short and long rows render without panic, padded/truncated to header.
+    // 短い行も長い行も panic せずに描画され、ヘッダーに合わせてパディング/
+    // 切り詰めされる。
     let table = "| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |";
     let lines = render(table, 40);
-    // header + rule + 2 rows.
+    // ヘッダー + 区切り線 + 2行。
     assert_eq!(lines.len(), 4);
 }
 
@@ -454,7 +456,7 @@ fn links_render_text_and_url() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
-    // Link text shown, URL kept in a recessive parenthetical.
+    // リンクテキストを表示し、URL は控えめな括弧書きで保持する。
     let spans = inline_spans("see [the docs](https://example.com) now", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "see the docs (https://example.com) now");
     assert!(
@@ -463,7 +465,7 @@ fn links_render_text_and_url() {
         "link text is underlined"
     );
 
-    // Inline markup inside the link text is still styled.
+    // リンクテキスト内のインラインマークアップにも引き続きスタイルが付く。
     let spans = inline_spans("[**bold** link](https://x.io)", base, &theme, MarkdownFlavor::Rich);
     assert!(
         spans
@@ -482,7 +484,7 @@ fn self_titled_and_empty_links_show_url_once() {
     let spans = inline_spans("[https://x.com](https://x.com)", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "https://x.com");
 
-    // Trailing-slash / case differences still collapse.
+    // 末尾のスラッシュや大文字小文字の違いがあっても1つにまとまる。
     let spans = inline_spans("[https://x.com/](https://x.com)", base, &theme, MarkdownFlavor::Rich);
     assert_eq!(joined(&spans), "https://x.com");
 

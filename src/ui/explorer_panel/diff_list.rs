@@ -1,5 +1,5 @@
-//! Rendering of the explorer's bottom-half changed-files list (Committed /
-//! Uncommitted sections) and its per-file review-comment count badge.
+//! エクスプローラ下半分の変更ファイル一覧（Committed / Uncommitted セクション）と
+//! ファイルごとのレビューコメント数バッジの描画。
 
 use crate::app::{App, Focus};
 use crate::viewer::file_icon;
@@ -9,10 +9,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem};
 
-/// Which of the 4 git stage-states a Changed-files row's filename color
-/// represents (D6, ADR in the plan doc). Distinct from `DiffSection`
-/// (committed/uncommitted, which section a row is diffed against) — a file
-/// can be `Uncommitted` and still color as `Staged` here.
+/// Changed-files の各行のファイル名色が表す、4種類の git ステージ状態のいずれか。
+/// DiffSection（committed/uncommitted、どちらのセクションに対して diff を
+/// 取るか）とは別物 — ファイルが Uncommitted でも、ここでの色は Staged に
+/// なりうる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FileStageState {
     Untracked,
@@ -21,13 +21,13 @@ enum FileStageState {
     Committed,
 }
 
-/// Classify a file's stage state from its raw git status bits. `None` means
-/// `GitStatusMap` had no entry for the path at all, i.e. it's clean relative
-/// to HEAD — which is exactly what `Committed` represents here.
+/// git のステータスビットからファイルのステージ状態を分類する。None は
+/// GitStatusMap にそのパスのエントリが全く無かったことを意味し、つまり
+/// HEAD に対してクリーンな状態 — それがここでの Committed にあたる。
 ///
-/// Order matters: a file can carry both `WT_*` and `INDEX_*` bits at once
-/// (edited, `git add`-ed, then edited again) — D6 says unstaged must win in
-/// that case, so the `WT_*` check runs first.
+/// 判定順序が重要: 編集して git add し、さらに編集する、といった操作を
+/// すると WT_* と INDEX_* の両方のビットが立つことがある。この場合は
+/// unstaged を優先させたいので WT_* のチェックを先に行う。
 fn file_stage_state(status: Option<git2::Status>) -> FileStageState {
     let Some(status) = status else {
         return FileStageState::Committed;
@@ -52,7 +52,7 @@ fn file_stage_state(status: Option<git2::Status>) -> FileStageState {
     }
 }
 
-/// Map a stage state to its D6-assigned theme color.
+/// ステージ状態を対応するテーマ色にマッピングする。
 fn status_color(theme: &crate::theme::Theme, state: FileStageState) -> ratatui::style::Color {
     match state {
         FileStageState::Untracked => theme.hint,
@@ -62,7 +62,7 @@ fn status_color(theme: &crate::theme::Theme, state: FileStageState) -> ratatui::
     }
 }
 
-/// Render the diff file list (bottom half) with Committed / Uncommitted sections.
+/// diff 対象ファイル一覧（下半分）を Committed / Uncommitted セクション付きで描画する。
 pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
     use crate::diff_state::{DiffListEntry, DiffSection};
 
@@ -97,14 +97,13 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.diff_list_scroll;
 
-    // Base-resolution failures used to be completely silent: the committed
-    // section just came back empty and read as "no changes". Pin the message to
-    // the top row so the two are never confused. The banner is not part of
-    // `display_list`, so it can't be selected and doesn't shift any index the
-    // navigation keys work with — it only costs one row of list height.
-    // Newlines are flattened because a multi-line `ListItem` would silently
-    // consume more rows than the one reserved here; the List widget clips the
-    // overflow at the panel edge.
+    // 以前は base 解決の失敗が完全に無音だった: committed セクションが単に
+    // 空で返ってきて「変更なし」に見えてしまっていた。メッセージを先頭行に
+    // 固定して両者を混同しないようにする。このバナーは display_list の
+    // 一部ではないため選択もできず、ナビゲーションキーが扱うインデックスも
+    // ずらさない — コストはリストの高さ1行分だけ。改行はスペースに潰す。
+    // 複数行の ListItem はここで確保した1行より多くの行を静かに消費して
+    // しまい、List ウィジェットはパネル端で溢れた分を切り捨てるだけだから。
     let error_banner: Option<ListItem> = app.diff_state.error.as_deref().map(|msg| {
         ListItem::new(Span::styled(
             format!("  \u{26a0} {}", msg.replace('\n', " ")),
@@ -139,8 +138,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     app.list_hover.diff_list.phase(idx),
                 );
 
-                // Prefix split off so the hover underline stops at the name
-                // (see `list_row::decoration_style`).
+                // prefix を切り離すことで、hover 時の下線が名前の位置で
+                // 止まるようにする（list_row::decoration_style を参照）。
                 Some(ListItem::new(Line::from(vec![
                     Span::styled(
                         prefix,
@@ -158,30 +157,31 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     DiffSection::Committed => &app.diff_state.committed_files,
                     DiffSection::Uncommitted => &app.diff_state.uncommitted_files,
                 };
-                // `.get`, not an index: `display_list` and the per-section
-                // file vectors are rebuilt on different ticks, so a frame can
-                // render the older of the two. Skipping the row costs a
-                // flicker; indexing would take the whole app down from inside
-                // the render pass. The file tree above already does this.
+                // インデックスアクセスではなく .get を使う: display_list と
+                // セクションごとのファイル vector は異なるティックで再構築される
+                // ため、片方が古いままレンダリングされるフレームがありうる。
+                // 行をスキップすればチラつきで済むが、インデックスアクセスだと
+                // 描画処理の内側からアプリ全体を落としかねない。上のファイル
+                // ツリーも同様の対応をしている。
                 let file_diff = files.get(*file_index)?;
 
                 let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
 
                 let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
-                // Origin marker: C = committed (in HEAD), U = uncommitted
-                // (working tree). A file changed both ways appears twice.
+                // 由来マーカー: C = committed（HEAD にある）、U = uncommitted
+                // （作業ツリー）。両方で変更されたファイルは2回表示される。
                 let marker = match section {
                     DiffSection::Committed => "C",
                     DiffSection::Uncommitted => "U",
                 };
                 let prefix = format!("  {indent}{marker} {icon} ");
 
-                // D6: the filename color reports the file's git stage state
-                // (untracked / unstaged / staged / committed), not the
-                // is_new/is_deleted section split — a file already tracked
-                // and only modified is neither "new" nor "deleted" and used
-                // to fall through to a flat `theme.fg`.
+                // ファイル名の色はファイルの git ステージ状態
+                // （untracked / unstaged / staged / committed）を表す。
+                // is_new/is_deleted によるセクション分けとは連動しない —
+                // 既に追跡済みで単に変更されただけのファイルは "new" でも
+                // "deleted" でもなく、以前は一律 theme.fg に落ちていた。
                 let stage_state =
                     file_stage_state(app.viewer_state.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
@@ -192,21 +192,20 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     diff_focused,
                     app.list_hover.diff_list.phase(idx),
                 );
-                // Everything that isn't the filename — indent, origin marker,
-                // icon, line counts — drops the hover underline so the rule
-                // sits under the name alone.
+                // ファイル名以外の部分 — インデント、由来マーカー、アイコン、
+                // 行数 — は hover の下線を外し、下線がファイル名だけに
+                // 付くようにする。
                 let decoration = crate::ui::common::list_row::decoration_style(style);
-                // The row's background/selection styling comes from `style`
-                // (via `row_style`), but +added/-deleted keep their own
-                // foreground regardless of stage state, so they're split into
-                // separate spans rather than baked into the label.
+                // 行の背景/選択スタイルは style（row_style 経由）から来るが、
+                // +added/-deleted はステージ状態に関わらず自前の前景色を保つ
+                // ため、ラベルに焼き込まず別の span に分けている。
                 let counts_style = |fg| Style {
                     fg: Some(fg),
                     ..decoration
                 };
 
-                // GitHub-style comment badge: 💬N for files with review comments,
-                // coloured by whether any are still unresolved.
+                // GitHub 風のコメントバッジ: レビューコメントがあるファイルには
+                // 💬N を表示し、未解決のものが残っているかで色を変える。
                 let mut spans = vec![
                     Span::styled(prefix, decoration),
                     Span::styled(filename.to_string(), style),
@@ -239,8 +238,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     diff_focused,
                     app.list_hover.diff_list.phase(idx),
                 );
-                // The unselected SUMMARY row is bold regardless of hover;
-                // `row_style` doesn't apply BOLD outside the selected cases.
+                // 非選択の SUMMARY 行は hover の有無に関わらず太字にする。
+                // row_style は選択時以外は BOLD を適用しないため。
                 if !selected {
                     style = style.add_modifier(Modifier::BOLD);
                 }
@@ -255,19 +254,20 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
         });
     let items: Vec<ListItem> = error_banner.into_iter().chain(entry_items).collect();
 
-    // Clear first so rows below the last item (or stale rows after scrolling /
-    // a height change) don't show the previous frame's glyphs — the same
-    // scroll-bleed guard the viewer uses.
+    // 最後の項目より下の行（またはスクロールや高さ変更後の古い行）に
+    // 前フレームの文字が残らないよう、先にクリアする。viewer と同じ
+    // スクロール残像対策。
     frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
 }
 
-/// Title for the changed-files block. The `— diff error` suffix distinguishes
-/// "the committed section is missing because something failed" from a genuine
-/// `(0)`; without it the two render identically. Deliberately not "base error":
-/// resolving the base ref is the common failure but not the only one — an
-/// unresolvable HEAD or a missing merge-base land here too.
+/// changed-files ブロックのタイトルを組み立てる。— diff error サフィックスは
+/// 「何かが失敗して committed セクションが欠けている」場合と、本当に
+/// (0) である場合を区別するためのもの。これが無いと両者は同じ見た目になる。
+/// あえて "base error" とはしていない: base ref の解決失敗はよくある原因の
+/// 一つに過ぎず、HEAD が解決できない場合や merge-base が見つからない場合も
+/// ここに含まれるため。
 fn diff_list_title(total: usize, has_error: bool) -> String {
     if has_error {
         format!(" Changed files ({total}) — diff error ")
@@ -276,20 +276,20 @@ fn diff_list_title(total: usize, has_error: bool) -> String {
     }
 }
 
-/// Rows the error banner occupies at the top of the changed-files list.
+/// changed-files 一覧の先頭でエラーバナーが占める行数。
 ///
-/// The single source of truth for that geometry. Three places have to agree on
-/// it: the renderer (how many entry rows fit), the scroll page size, and the
-/// mouse handler (which screen row maps to which `display_list` index). They
-/// used to be able to drift, and a one-row disagreement silently opens the
-/// wrong file on click.
+/// この寸法に関する単一の情報源。3箇所がここに合わせる必要がある:
+/// レンダラ（何行分のエントリが収まるか）、スクロールのページサイズ、
+/// マウスハンドラ（画面上のどの行が display_list のどのインデックスに
+/// 対応するか）。以前はこれらがずれてしまうことがあり、1行のずれが
+/// クリック時に別のファイルを静かに開いてしまっていた。
 pub(super) fn diff_list_banner_rows(has_error: bool) -> usize {
     usize::from(has_error)
 }
 
-/// Build a GitHub-style comment-count badge (e.g. ` 💬3`) for a file path, or
-/// `None` when the file has no review comments. Unresolved comments colour the
-/// badge with the accent; an all-resolved file uses muted.
+/// ファイルパスに対して GitHub 風のコメント数バッジ（例:  💬3）を組み立てる。
+/// レビューコメントが無ければ None。未解決のコメントがあればバッジは
+/// accent 色になり、全て解決済みなら muted 色になる。
 fn comment_badge(app: &App, file_path: &str, theme: &crate::theme::Theme) -> Option<Span<'static>> {
     use crate::review_store::CommentStatus;
     let mut total = 0usize;
@@ -324,8 +324,8 @@ mod tests {
     use super::*;
     use crate::theme::Theme;
 
-    /// The whole point of the error suffix: a failed base resolution and a
-    /// genuinely clean tree must not render the same title.
+    /// エラーサフィックスの存在意義そのもの: base 解決の失敗と、本当に
+    /// クリーンなツリーが同じタイトルにレンダリングされてはならない。
     #[test]
     fn error_title_differs_from_a_genuine_zero() {
         assert_ne!(diff_list_title(0, true), diff_list_title(0, false));
@@ -333,8 +333,8 @@ mod tests {
         assert!(diff_list_title(0, true).contains("error"));
     }
 
-    /// With the uncommitted section surviving a base failure, the count is
-    /// non-zero *and* the error marker is present — both must show.
+    /// base 解決が失敗しても uncommitted セクションは生き残るので、件数は
+    /// 0 以外になり、かつエラーマーカーも表示される — 両方が出ていること。
     #[test]
     fn error_title_keeps_the_count() {
         let title = diff_list_title(17, true);
@@ -342,18 +342,18 @@ mod tests {
         assert!(title.contains("error"), "{title}");
     }
 
-    /// The renderer, the scroll page size, and the mouse row→index conversion
-    /// all derive the banner's row cost from here. If they ever disagree by one,
-    /// a click opens the wrong file — so pin the contract.
+    /// レンダラ、スクロールのページサイズ、マウスの行→インデックス変換は
+    /// いずれもバナーの行コストをここから導出する。1行でもずれると
+    /// クリックで別のファイルが開いてしまうので、契約として固定する。
     #[test]
     fn banner_costs_exactly_one_row_and_only_when_erroring() {
         assert_eq!(diff_list_banner_rows(false), 0);
         assert_eq!(diff_list_banner_rows(true), 1);
     }
 
-    /// D6's color table, independent of `status_color`'s own implementation —
-    /// re-deriving the expected color from the theme here means a bug that
-    /// swapped two colors in `status_color` would still be caught.
+    /// 色の対応表を status_color の実装から独立して再現する — 期待する色を
+    /// ここでテーマから再導出しておけば、status_color 内で2色を取り違えた
+    /// バグも検出できる。
     fn diff_file_status_color(
         theme: &Theme,
         status: Option<git2::Status>,
@@ -385,16 +385,16 @@ mod tests {
     #[test]
     fn diff_file_status_color_committed_is_success() {
         let theme = Theme::default();
-        // `None` stands in for "GitStatusMap has no entry for this path",
-        // i.e. clean relative to HEAD.
+        // None は「GitStatusMap にこのパスのエントリが無い」ことを表し、
+        // つまり HEAD に対してクリーンな状態。
         assert_eq!(diff_file_status_color(&theme, None), theme.success);
     }
 
-    /// D6: a file edited, `git add`-ed, then edited again again carries both
-    /// WT_* and INDEX_* bits at once. It must resolve to unstaged (error),
-    /// not staged — the working-tree edit is the more recent, more relevant
-    /// state, and showing "staged" would hide that there's an uncommitted
-    /// change on top of what's staged.
+    /// 編集して git add し、さらに編集したファイルは WT_* と INDEX_* の
+    /// 両方のビットを同時に持つ。この場合 staged ではなく unstaged（error）
+    /// に解決されなければならない — 作業ツリーの編集の方がより新しく重要な
+    /// 状態であり、"staged" と表示すると staged の上にさらに uncommitted な
+    /// 変更があることが隠れてしまう。
     #[test]
     fn diff_file_status_color_staged_and_unstaged_resolves_to_unstaged() {
         let theme = Theme::default();

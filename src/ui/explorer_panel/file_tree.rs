@@ -1,4 +1,4 @@
-//! Rendering of the explorer's top-half file tree.
+//! エクスプローラ上半分のファイルツリーの描画。
 
 use crate::app::{App, Focus};
 use ratatui::Frame;
@@ -9,7 +9,7 @@ use ratatui::widgets::{
     List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-/// Cached indent strings by depth level to avoid repeated allocation.
+/// 深さレベルごとのインデント文字列のキャッシュ。確保の繰り返しを避ける。
 const INDENT_CACHE: &[&str] = &[
     "",
     "  ",
@@ -23,7 +23,7 @@ const INDENT_CACHE: &[&str] = &[
     "                  ",
 ];
 
-/// Get an indent string for a given depth, using cache for common depths.
+/// 指定した深さのインデント文字列を返す。よくある深さはキャッシュを使う。
 fn indent_for_depth(depth: usize) -> std::borrow::Cow<'static, str> {
     if depth < INDENT_CACHE.len() {
         std::borrow::Cow::Borrowed(INDENT_CACHE[depth])
@@ -32,13 +32,14 @@ fn indent_for_depth(depth: usize) -> std::borrow::Cow<'static, str> {
     }
 }
 
-/// Render the file tree (top half).
+/// ファイルツリー（上半分）を描画する。
 pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused: bool) {
     let on_diff = app.viewer_state.explorer.explorer_focus_on_diff_list;
     let tree_focused = panel_focused && !on_diff;
-    // Glide the column-level focus color; the tree is the "active" element when
-    // not focused on the diff list, so it eases both when the column gains and
-    // when it loses focus. The inactive sub-panel keeps the static secondary tint.
+    // カラム単位のフォーカス色をアニメーションさせる。ツリーは diff list に
+    // フォーカスがないときの「アクティブ」要素なので、カラムがフォーカスを
+    // 得るときも失うときも滑らかに遷移する。非アクティブなサブパネルは
+    // 静的な secondary の色調のままにする。
     let border_color = if tree_focused {
         app.animated_border_color(Focus::Explorer)
     } else if panel_focused {
@@ -63,9 +64,9 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
     } else {
         " Explorer ".to_string()
     };
-    // Walkthrough-ready signal, mirroring the comment badge's "there's
-    // something here you haven't opened" pattern — hidden once the
-    // walkthrough view is already showing since the badge would be redundant.
+    // walkthrough 準備完了のサイン。コメントバッジの「まだ開いていないものが
+    // ある」というパターンを踏襲する。walkthrough ビューを既に表示している
+    // ときはバッジが冗長になるので隠す。
     let walkthrough_ready = matches!(
         app.walkthrough.current.as_ref().map(|wt| wt.header.status),
         Some(crate::walkthrough::WalkthroughStatus::Ready)
@@ -101,8 +102,8 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
             let entry = app.viewer_state.tree.file_tree.get(tree_idx)?;
             let indent = indent_for_depth(entry.depth);
 
-            // Split from the name so the hover underline can be confined to
-            // the name itself (see `list_row::decoration_style`).
+            // 名前部分と切り離すことで、hover 時の下線を名前自体に限定できる
+            // (list_row::decoration_style を参照)。
             let prefix = if entry.is_dir {
                 let arrow = if entry.is_expanded {
                     "\u{25bc}" // ▼
@@ -114,12 +115,11 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 format!("{indent}  {} ", entry.icon)
             };
 
-            // Untracked/ignored entries dim regardless of file-vs-directory,
-            // taking priority over the directory/file color split below.
-            // `theme.muted` is deliberately avoided here: it's the same RGB
-            // as the background on solarized-dark (effectively invisible)
-            // and reads as a border color on github-light — see S4 in the
-            // plan doc.
+            // 未追跡/無視エントリはファイルかディレクトリかに関わらず暗く表示し、
+            // 下のディレクトリ/ファイルの色分けより優先する。ここで
+            // theme.muted を意図的に避けているのは、solarized-dark では
+            // 背景と同じ RGB で事実上見えなくなり、github-light では
+            // ボーダー色に見えてしまうため。
             let base_fg = match entry.git_state {
                 crate::git_engine::status_map::TreeGitState::Untracked
                 | crate::git_engine::status_map::TreeGitState::Ignored => theme.hint,
@@ -150,14 +150,14 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         })
         .collect();
 
-    // Clear first so rows below the last item (or stale rows after scrolling /
-    // a height change) don't show the previous frame's glyphs — the same
-    // scroll-bleed guard the viewer uses.
+    // 最後の項目より下の行（またはスクロールや高さ変更後の古い行）に
+    // 前フレームの文字が残らないよう、先にクリアする。viewer と同じ
+    // スクロール残像対策。
     frame.render_widget(ratatui::widgets::Clear, area);
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
 
-    // Render scrollbar when there are more items than fit in the panel.
+    // パネルに収まりきらない数の項目があるときだけスクロールバーを描画する。
     if visible.len() > inner_height {
         let inner_area = area.inner(ratatui::layout::Margin {
             horizontal: 0,

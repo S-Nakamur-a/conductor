@@ -1,5 +1,5 @@
-//! Pulling (fetch + fast-forward), merging a branch into main, and hard
-//! resetting main to origin.
+//! pull(fetch + fast-forward)、ブランチを main へマージする処理、
+//! main を origin へハードリセットする処理。
 
 use anyhow::{Context, Result};
 use git2::Repository;
@@ -7,28 +7,27 @@ use git2::Repository;
 use super::GitEngine;
 
 impl GitEngine {
-    // ── Pull (fetch + fast-forward) ────────────────────────────────────
+    // Pull (fetch + fast-forward)
 
-    /// Fetch from origin and fast-forward the branch in the given worktree.
+    /// origin から fetch し、指定した worktree のブランチを fast-forward する。
     ///
-    /// Returns a human-readable status message describing the outcome.
-    /// Only fast-forward merges are performed; non-FF situations are reported
-    /// so the user can resolve them manually.
+    /// 結果を説明する人間が読めるステータスメッセージを返す。fast-forward
+    /// マージのみを行い、non-FF な状況はユーザが手動で解決できるよう報告する。
     ///
-    /// NOTE: calls `fetch_origin()` internally, so this performs network I/O.
-    /// Must be called from a background thread.
+    /// NOTE: 内部で fetch_origin() を呼ぶのでネットワーク I/O が発生する。
+    /// バックグラウンドスレッドから呼ぶこと。
     pub fn pull_worktree(&self, worktree_path: &std::path::Path) -> Result<String> {
         let wt_repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open worktree at {}", worktree_path.display()))?;
 
-        // Ensure HEAD points to a branch (not detached).
+        // HEAD がブランチを指していることを確認する(detached でないこと)。
         let head = wt_repo.head().context("cannot read HEAD")?;
         if !head.is_branch() {
             anyhow::bail!("Cannot pull: HEAD is detached");
         }
         let branch_name = head.shorthand().unwrap_or("unknown").to_string();
 
-        // Ensure the branch has an upstream configured.
+        // ブランチに upstream が設定されていることを確認する。
         let local_branch = wt_repo
             .find_branch(&branch_name, git2::BranchType::Local)
             .with_context(|| format!("branch '{branch_name}' not found"))?;
@@ -37,14 +36,14 @@ impl GitEngine {
             .with_context(|| format!("No upstream configured for '{branch_name}'"))?;
         let upstream_name = upstream.name()?.unwrap_or("unknown").to_string();
 
-        // Fetch from origin (updates all remote refs).
+        // origin から fetch する(全リモート ref を更新する)。
         self.fetch_origin()?;
 
-        // Re-open the repo to pick up the updated remote refs.
+        // 更新されたリモート ref を取り込むためリポジトリを開き直す。
         let wt_repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot re-open worktree at {}", worktree_path.display()))?;
 
-        // Resolve upstream OID after fetch.
+        // fetch 後に upstream の OID を解決する。
         let upstream_ref = wt_repo
             .find_reference(&format!("refs/remotes/{upstream_name}"))
             .with_context(|| {
@@ -58,7 +57,7 @@ impl GitEngine {
             .find_annotated_commit(upstream_oid)
             .context("failed to find annotated commit for upstream")?;
 
-        // Merge analysis.
+        // マージの分析を行う。
         let (analysis, _preference) = wt_repo.merge_analysis(&[&annotated])?;
 
         if analysis.is_up_to_date() {
@@ -66,7 +65,7 @@ impl GitEngine {
         }
 
         if analysis.is_fast_forward() {
-            // Count commits for the status message.
+            // ステータスメッセージ用にコミット数を数える。
             let head_oid = wt_repo.head()?.peel_to_commit()?.id();
             let count = {
                 let mut revwalk = wt_repo.revwalk()?;
@@ -75,9 +74,9 @@ impl GitEngine {
                 revwalk.count()
             };
 
-            // Update working directory & index first, then move branch ref.
-            // (checkout_tree works on the target tree directly, avoiding stale
-            //  HEAD state that can cause checkout_head to skip file updates.)
+            // 先に working directory と index を更新してから branch ref を動かす。
+            // (checkout_tree は対象の tree に直接作用するので、checkout_head が
+            //  ファイル更新をスキップする原因になる古い HEAD 状態を避けられる。)
             let target_commit = wt_repo.find_commit(upstream_oid)?;
             wt_repo.checkout_tree(
                 target_commit.as_object(),
@@ -102,22 +101,22 @@ impl GitEngine {
         anyhow::bail!("pull: unexpected merge analysis result for '{branch_name}'");
     }
 
-    // ── Merge / Reset operations ─────────────────────────────────────
+    // Merge / Reset 操作
 
-    /// Merge `branch_name` into the main branch using a fast-forward-only merge.
+    /// fast-forward のみのマージで branch_name を main ブランチへマージする。
     ///
-    /// Steps:
-    /// 1. Record ORIG_HEAD for safety
-    /// 2. Attempt fast-forward merge; if not possible, attempt a normal merge
-    /// 3. If conflicts occur, abort and report
+    /// 手順:
+    /// 1. 安全のため ORIG_HEAD を記録する
+    /// 2. fast-forward マージを試み、できなければ normal マージを試みる
+    /// 3. コンフリクトが起きたら中止して報告する
     ///
-    /// Returns a description of what happened.
+    /// 結果の説明文を返す。
     pub fn merge_into_main(&self, branch_name: &str, main_branch: &str) -> Result<String> {
         let main_path = self.main_worktree_path()?;
         let main_repo = Repository::open(&main_path)
             .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
 
-        // Record ORIG_HEAD for safety
+        // 安全のため ORIG_HEAD を記録する
         let head = main_repo.head().context("no HEAD on main worktree")?;
         let head_commit = head.peel_to_commit().context("HEAD is not a commit")?;
         main_repo
@@ -127,9 +126,9 @@ impl GitEngine {
                 true,
                 "conductor: save ORIG_HEAD before merge",
             )
-            .ok(); // best-effort
+            .ok(); // ベストエフォート
 
-        // Find the branch to merge
+        // マージ対象のブランチを見つける
         let branch_ref = main_repo
             .find_branch(branch_name, git2::BranchType::Local)
             .with_context(|| format!("branch '{branch_name}' not found"))?;
@@ -138,7 +137,7 @@ impl GitEngine {
             .find_annotated_commit(branch_commit_oid)
             .context("failed to find annotated commit for branch")?;
 
-        // Perform merge analysis
+        // マージ分析を行う
         let (analysis, _preference) = main_repo.merge_analysis(&[&branch_annotated])?;
 
         if analysis.is_up_to_date() {
@@ -148,13 +147,13 @@ impl GitEngine {
         }
 
         if analysis.is_fast_forward() {
-            // Fast-forward: just move the main branch ref
+            // fast-forward: main ブランチの ref を動かすだけ
             let mut main_ref = main_repo.find_reference(&format!("refs/heads/{main_branch}"))?;
             main_ref.set_target(
                 branch_commit_oid,
                 &format!("conductor: fast-forward merge {branch_name} into {main_branch}"),
             )?;
-            // Update HEAD / working directory
+            // HEAD / working directory を更新する
             main_repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
             return Ok(format!(
                 "Fast-forward merged {branch_name} into {main_branch}."
@@ -162,9 +161,9 @@ impl GitEngine {
         }
 
         if analysis.is_normal() {
-            // Normal merge — this is more complex and can conflict.
-            // For safety, we'll report that a non-fast-forward merge is needed
-            // and recommend the user do it manually.
+            // normal マージ — これはより複雑でコンフリクトの可能性がある。
+            // 安全のため non-fast-forward マージが必要であることを報告し、
+            // ユーザに手動で行うよう案内する。
             return Ok(format!(
                 "Cannot fast-forward. Manual merge needed: cd {} && git merge {}",
                 main_path.display(),
@@ -175,15 +174,15 @@ impl GitEngine {
         anyhow::bail!("merge analysis returned unexpected result for {branch_name}");
     }
 
-    /// Hard-reset the main branch to `origin/<main_branch>`.
+    /// main ブランチを origin/<main_branch> へハードリセットする。
     ///
-    /// This is equivalent to: `cd <main_worktree> && git reset --hard origin/<main_branch>`
+    /// cd <main_worktree> && git reset --hard origin/<main_branch> と等価。
     pub fn reset_main_to_origin(&self, main_branch: &str) -> Result<String> {
         let main_path = self.main_worktree_path()?;
         let main_repo = Repository::open(&main_path)
             .with_context(|| format!("cannot open main worktree at {}", main_path.display()))?;
 
-        // Record ORIG_HEAD for safety
+        // 安全のため ORIG_HEAD を記録する
         if let Ok(head) = main_repo.head()
             && let Ok(commit) = head.peel_to_commit()
         {
@@ -197,7 +196,7 @@ impl GitEngine {
                 .ok();
         }
 
-        // Find origin/<main_branch>
+        // origin/<main_branch> を見つける
         let remote_ref_name = format!("refs/remotes/origin/{main_branch}");
         let remote_ref = main_repo
             .find_reference(&remote_ref_name)
@@ -208,7 +207,7 @@ impl GitEngine {
             .peel_to_commit()
             .context("remote ref does not point to a commit")?;
 
-        // Reset to the remote commit
+        // リモートのコミットへリセットする
         let obj = remote_commit.as_object();
         main_repo
             .reset(obj, git2::ResetType::Hard, None)

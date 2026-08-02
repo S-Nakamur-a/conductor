@@ -1,56 +1,47 @@
-//! Minimal markdown renderer for the change-summary view.
+//! change-summary ビュー向けの最小限の markdown レンダラ。
 //!
-//! Renders a change summary written in Markdown into styled, word-wrapped
-//! ratatui `Line`s. It is deliberately **not** a CommonMark implementation: the
-//! summary is a short, self-authored PR-description-style note, so a small
-//! line-oriented parser covers the useful subset (headings, lists, task-list
-//! checkboxes, block quotes, fenced code blocks, horizontal rules, GFM tables,
-//! links, and inline `code`/**bold**/*italic*/~~strikethrough~~) without
-//! pulling in a markdown crate.
+//! Markdown で書かれた change summary を、装飾付きで折り返し済みの ratatui Line 列に変換する。
+//! 意図的に CommonMark 実装にはしていない。summary は短く自筆の PR 説明文のようなものなので、
+//! 行単位の小さなパーサで実用上必要な範囲（見出し、リスト、タスクリストのチェックボックス、
+//! 引用ブロック、フェンス付きコードブロック、水平線、GFM テーブル、リンク、インラインの
+//! code/bold/italic/strikethrough）をカバーすれば足り、markdown クレートを導入するまでもない。
 //!
-//! - **Links `[text](url)`** render the text as an underlined `info`-coloured
-//!   run followed by the URL in a recessive, muted parenthetical. Terminals
-//!   can't reliably click links, so keeping the URL visible lets the reader
-//!   copy it; a self-titled or empty link collapses to just the URL.
-//! - **Task checkboxes `- [ ]`/`- [x]`** use ASCII brackets (not `☐`/`☑`,
-//!   whose East-Asian *ambiguous* width misaligns in CJK-wide terminals); the
-//!   `[x]` is coloured and completed items' text is muted so the eye lands on
-//!   what's left.
-//! - **Strikethrough `~~x~~`** applies `CROSSED_OUT` *and* a muted colour, so
-//!   the "removed/deprecated" meaning survives even where the terminal ignores
-//!   the SGR 9 escape.
-//!   summary column. A cell too wide for its column **wraps** onto extra lines
-//!   (the row grows to its tallest cell) rather than truncating — in a table
-//!   the cut text is usually the point of the row, and nothing in these views
-//!   can reveal it afterwards.
-//! - **Headings** colour and bold their text; H1/H2 also get a full-width
-//!   underline rule, echoing GitHub's bottom border on top-level sections.
-//! - **Code — fenced and inline `code`** sits on a shaded `code_bg` "card"
-//!   (the background carries the signal, not a lone accent colour). A fenced
-//!   block fills every row edge-to-edge with that card colour, padded above and
-//!   below, the way GitHub frames a code block. Callers rendering onto a tinted
-//!   surface (the comment thread box) use [`apply_background`] to fill the
-//!   non-code gaps so the whole block shares one background.
+//! - リンク [text](url) は、下線付きで info 色のテキストの後ろに、控えめな muted 色の括弧書きで
+//!   URL を続けて表示する。ターミナルではリンクを確実にクリックできないため、URL を見える形で
+//!   残しておくことで読者がコピーできるようにしている。テキストが URL と同じか空のリンクは
+//!   URL だけに縮退する。
+//! - タスクチェックボックス - [ ] / - [x] は ASCII の角括弧を使う（☐/☑ は使わない）。
+//!   これらは East-Asian Ambiguous 幅を持つため CJK 幅のターミナルで表示がずれる。[x] は色付けし、
+//!   完了項目の本文は muted にして、残っているものに目が行くようにしている。
+//! - 打ち消し線 ~~x~~ は CROSSED_OUT に加えて muted 色も適用する。ターミナルが SGR 9
+//!   エスケープを無視する環境でも「削除済み/非推奨」という意味が伝わるようにするため。
+//!   summary 列。セルの内容がその列に収まらない場合は、切り詰めずに折り返して行を増やす
+//!   （行はその中で最も高いセルに合わせて伸びる）。テーブルでは切り詰められた文字列こそが
+//!   その行の要点であることが多く、これらのビューには後から全文を確認する手段がないため。
+//! - 見出しはテキストに色と太字を付ける。H1/H2 はさらに全幅の下線ルールも付け、GitHub の
+//!   トップレベルセクションの下線を模している。
+//! - フェンス付き/インラインのコードは、影付きの code_bg「カード」の上に乗る（信号を担うのは
+//!   単なるアクセントカラーではなく背景色）。フェンス付きブロックは各行の端から端までその
+//!   カード色で埋め、上下にパディングを入れる。GitHub がコードブロックを枠で囲むのと同じ考え方。
+//!   色付きの面（コメントスレッドのボックスなど）の上に描画する呼び出し元は、apply_background
+//!   を使ってコード以外の隙間も塗り、ブロック全体で背景を統一する。
 //!
-//! Design notes:
-//! - **Backward compatible.** Plain text containing no Markdown syntax flows
-//!   through as ordinary paragraphs — visually identical to the old plain-text
-//!   summary, one author line per output paragraph.
-//! - **Fenced code blocks reuse syntect** (the same engine the file viewer
-//!   uses) via the caller-provided `SyntaxSet`/`Theme`. An unknown or missing
-//!   language falls back to plain text — never a panic.
-//! - **Total function.** Any input string, for any width (including 0), yields
-//!   a `Vec<Line>` without panicking. Each produced line's display width stays
-//!   within `width`.
-//! - Underscore emphasis (`_x_`) is intentionally **not** supported so that
-//!   `snake_case` identifiers in prose are never mangled. Inline emphasis uses
-//!   `*`/`**` only and requires non-space flanking, so `2 * 3` stays literal.
+//! 設計メモ:
+//! - 後方互換性。Markdown 構文を含まない普通のテキストは、そのまま通常の段落として流れる。
+//!   これは旧来のプレーンテキスト summary と見た目が同一で、出力段落ごとに著者の行が1つ入る。
+//! - フェンス付きコードブロックは syntect を再利用する（ファイルビューアと同じエンジン）。
+//!   呼び出し元が渡す SyntaxSet/Theme を使う。言語が不明または未指定の場合はプレーンテキストに
+//!   フォールバックし、パニックはしない。
+//! - 全域関数である。どんな入力文字列でも、どんな幅（0 を含む）でも、パニックせずに Vec<Line>
+//!   を返す。生成される各行の表示幅は width 以内に収まる。
+//! - アンダースコアによる強調（_x_）は意図的にサポートしない。snake_case の識別子が文中で
+//!   誤って強調されないようにするため。インラインの強調は */** のみを使い、前後に空白がない
+//!   ことを要求するので、2 * 3 のような式はそのまま文字として残る。
 //!
-//! The single public entry point is [`render_markdown`]. Everything else is a
-//! private, individually testable helper, split across submodules: [`parse`]
-//! (line-oriented block parsing), [`inline`] (inline emphasis/links/code),
-//! [`render`] (block-to-`Line` rendering), [`table`] (GFM table layout), and
-//! [`wrap`] (display-width-aware span wrapping).
+//! 公開エントリポイントは render_markdown の1つだけ。それ以外はすべて非公開で個別にテスト
+//! 可能なヘルパーで、サブモジュールに分かれている: parse（行単位のブロック解析）、
+//! inline（インラインの強調/リンク/コード）、render（ブロックから Line への変換）、
+//! table（GFM テーブルのレイアウト）、wrap（表示幅を考慮したスパンの折り返し）。
 
 mod code_colors;
 mod inline;
@@ -70,25 +61,25 @@ use syntect::parsing::SyntaxSet;
 
 use crate::theme::Theme;
 
-/// Which visual dialect to render in. The renderer is shared between conductor's
-/// own rich UI (change summaries, review comments, walkthrough) and the Claude
-/// Code transcript overlay (the reflow scroll-up view); the two want different
-/// list-marker and heading chrome.
+/// どちらの見た目で描画するか。このレンダラは conductor 自身のリッチな UI
+/// （change summary、レビューコメント、walkthrough）と Claude Code のトランスクリプト
+/// オーバーレイ（reflow のスクロールアップビュー）の両方で共用されており、両者は
+/// リストマーカーと見出しの装飾に異なる見た目を求める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkdownFlavor {
-    /// Conductor UI: `•` bullets in the accent colour; headings get a coloured
-    /// left bar and (H1/H2) a full-width underline rule.
+    /// conductor の UI 向け。箇条書きはアクセント色の•、見出しには色付きの左バーが付き、
+    /// H1/H2 にはさらに全幅の下線ルールが付く。
     Rich,
-    /// Claude Code transcript: `-` bullets in the body colour; headings render as
-    /// bold body-colour text with a blank line above and below and no bar or
-    /// rule — matching how the real Claude Code CLI prints markdown.
+    /// Claude Code のトランスクリプト向け。箇条書きは本文色の-、見出しは上下に空行を挟んだ
+    /// 本文色の太字テキストになり、バーや下線は付かない。実物の Claude Code CLI が
+    /// markdown を表示するときの見た目に合わせている。
     Transcript,
 }
 
-/// Render Markdown `text` into word-wrapped, styled lines no wider than `width`.
+/// Markdown の text を、width を超えない幅で折り返した装飾付きの行に変換する。
 ///
-/// `syntax_set`/`syntect_theme` are used to highlight fenced code blocks and are
-/// expected to be the application's shared instances (see `App::syntax_set`).
+/// syntax_set/syntect_theme はフェンス付きコードブロックのハイライトに使われ、
+/// アプリケーション全体で共有されているインスタンス（App::syntax_set 参照）を渡す想定。
 pub fn render_markdown(
     text: &str,
     width: usize,
@@ -106,9 +97,9 @@ pub fn render_markdown(
     )
 }
 
-/// [`render_markdown`] with an explicit [`MarkdownFlavor`]. The 5-arg
-/// [`render_markdown`] is this with [`MarkdownFlavor::Rich`]; the Claude
-/// transcript overlay passes [`MarkdownFlavor::Transcript`].
+/// render_markdown に MarkdownFlavor を明示的に渡せる版。引数5個の render_markdown は
+/// これに MarkdownFlavor::Rich を渡したものにあたる。Claude のトランスクリプト
+/// オーバーレイは MarkdownFlavor::Transcript を渡す。
 pub fn render_markdown_flavored(
     text: &str,
     width: usize,
@@ -119,12 +110,11 @@ pub fn render_markdown_flavored(
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut out: Vec<Line<'static>> = Vec::new();
-    // Track whether the previous block was blank so headings get one (and only
-    // one) blank line of breathing room above them — GitHub-style section
-    // separation that makes the structure scannable at a glance.
+    // 直前のブロックが空行だったかを追跡する。見出しの前に空行を1つだけ（かつ必ず1つ）
+    // 挟んで余白を作るため。構造が一目で追えるようにする GitHub 流のセクション区切り。
     let mut prev_blank = true;
-    // In Transcript flavor a heading also gets a blank line *below* it; if the
-    // source already has a blank line next, swallow it so the two don't stack.
+    // Transcript フレーバーでは見出しの後ろにも空行を入れる。元の文書に元々空行が続く
+    // 場合は、それを飲み込んで二重に空行が並ばないようにする。
     let mut swallow_next_blank = false;
     for block in parse_blocks(text) {
         let is_blank = matches!(block, MdBlock::Blank);
@@ -160,11 +150,11 @@ pub fn render_markdown_flavored(
     out
 }
 
-/// Caches [`render_markdown`] output per stable id, so comment/reply bodies in
-/// the inline thread box aren't re-parsed/highlighted every frame (the diff is
-/// re-rendered at 60fps). Stores the **background-agnostic** lines — callers
-/// apply [`apply_background`] afterwards (cheap) — and invalidates an entry when
-/// its body or wrap width changes, or the whole cache when the theme changes.
+/// render_markdown の出力を安定 id ごとにキャッシュする。インラインのスレッドボックス内の
+/// コメント/返信本文が毎フレーム再パース・再ハイライトされないようにするため（diff は
+/// 60fps で再描画される）。保持するのは背景色を含まない行で、呼び出し元は後から
+/// apply_background を適用する（コストは小さい）。本文または折り返し幅が変わるとその
+/// エントリを、テーマが変わるとキャッシュ全体を無効化する。
 #[derive(Default)]
 pub struct MarkdownCache {
     entries: std::cell::RefCell<std::collections::HashMap<String, CacheEntry>>,
@@ -182,19 +172,19 @@ impl MarkdownCache {
         Self::default()
     }
 
-    /// Clear all cached entries.
+    /// キャッシュされたエントリをすべて破棄する。
     ///
-    /// Called by `App::apply_appearance` after the syntect theme is replaced so
-    /// that the next render re-highlights code blocks with the new theme. The
-    /// cache fingerprint only tracks the UI theme colour palette; a syntect-only
-    /// change (e.g. `[viewer] syntax_theme_file`) would otherwise leave stale
-    /// highlighted spans in the cache.
+    /// syntect のテーマが差し替えられた後、App::apply_appearance から呼ばれ、次の描画で
+    /// コードブロックを新しいテーマで再ハイライトさせる。キャッシュのフィンガープリントは
+    /// UI テーマの配色パレットしか見ていないため、syntect 側だけの変更（[viewer]
+    /// syntax_theme_file など）ではこれを呼ばないとハイライト済みのスパンが古いままキャッシュに
+    /// 残ってしまう。
     pub fn clear(&self) {
         self.entries.borrow_mut().clear();
     }
 
-    /// Cached lines for `key` when body/width/theme are unchanged, else render
-    /// and store. Returned lines carry no explicit background.
+    /// key に対応する本文/幅/テーマが変わっていなければキャッシュ済みの行を返し、
+    /// そうでなければ描画して保存する。返す行は背景色を明示的には持たない。
     pub fn render(
         &self,
         key: &str,
@@ -215,10 +205,9 @@ impl MarkdownCache {
         )
     }
 
-    /// [`render`](Self::render) with an explicit [`MarkdownFlavor`]. A given cache
-    /// instance is used with a single flavor throughout (conductor's `markdown_cache`
-    /// is Rich, the reflow transcript's cache is Transcript), so flavor is not part
-    /// of the cache key.
+    /// render に MarkdownFlavor を明示的に渡せる版。1つのキャッシュインスタンスは常に
+    /// 単一のフレーバーで使われる（conductor の markdown_cache は Rich、reflow の
+    /// トランスクリプト用キャッシュは Transcript）ため、flavor はキャッシュキーには含めない。
     #[allow(clippy::too_many_arguments)]
     pub fn render_flavored(
         &self,
@@ -234,18 +223,18 @@ impl MarkdownCache {
         self.entries.borrow()[key].lines.clone()
     }
 
-    /// Render a scrollable document and return only the visible window:
-    /// `(total_lines, clamped_skip, lines[clamped_skip..][..take])`.
+    /// スクロール可能なドキュメントを描画し、見えている部分の窓だけを返す:
+    /// (total_lines, clamped_skip, lines[clamped_skip..][..take])。
     ///
-    /// Same caching and invalidation as [`render`](Self::render); it exists
-    /// because the Viewer's rendered-markdown mode re-draws a whole file every
-    /// frame, where `render`'s clone-the-entire-document cost would scale with
-    /// file length instead of with the viewport.
+    /// キャッシュと無効化の仕組みは render と同じ。これが別に存在するのは、Viewer の
+    /// markdown 描画モードでは毎フレームファイル全体を描き直すため、render のように
+    /// ドキュメント全体を clone するコストがビューポートではなくファイル長に比例して
+    /// しまうのを避けるため。
     ///
-    /// `skip` is clamped to the last line *here*, where the true total is known.
-    /// A caller clamping beforehand would have to use the previous frame's total
-    /// — stale exactly when it matters (the document or the wrap width just
-    /// changed), which shows up as a blank viewport the user can't scroll out of.
+    /// skip はここで、真の総行数が分かっている時点でクランプする。呼び出し元が先に
+    /// クランプしようとすると前フレームの総行数を使うことになり、まさに問題になる場面
+    /// （ドキュメントや折り返し幅が変わった直後）で古い値になり、ユーザがスクロールで
+    /// 抜け出せない空白のビューポートが表示されてしまう。
     #[allow(clippy::too_many_arguments)]
     pub fn render_window(
         &self,
@@ -277,8 +266,8 @@ impl MarkdownCache {
         )
     }
 
-    /// Populate `key`'s entry if absent or stale. On return the entry is
-    /// guaranteed present and current, so callers may index it directly.
+    /// key のエントリが存在しないか古ければ埋める。呼び出しから戻った時点で、
+    /// エントリの存在と最新性が保証されるので、呼び出し元は直接インデックスしてよい。
     #[allow(clippy::too_many_arguments)]
     fn ensure(
         &self,
@@ -290,8 +279,8 @@ impl MarkdownCache {
         syntect_theme: &SyntectTheme,
         flavor: MarkdownFlavor,
     ) {
-        // A theme switch changes colours baked into the cached spans, so drop
-        // every entry when the theme fingerprint moves.
+        // テーマの切り替えはキャッシュ済みスパンに焼き込まれた色を変えてしまうので、
+        // フィンガープリントが変わったらエントリを全部破棄する。
         let fp = theme_fingerprint(theme);
         if self.theme_fp.get() != fp {
             self.entries.borrow_mut().clear();
@@ -315,8 +304,8 @@ impl MarkdownCache {
     }
 }
 
-/// Fold the theme colours that affect Markdown rendering into one number, so a
-/// theme change is detectable without storing the whole theme per entry.
+/// Markdown 描画に影響するテーマの色を1つの数値に畳み込む。エントリごとにテーマ全体を
+/// 保持しなくても、テーマの変化を検知できるようにするため。
 fn theme_fingerprint(theme: &Theme) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -341,13 +330,13 @@ fn theme_fingerprint(theme: &Theme) -> u64 {
     h.finish()
 }
 
-/// Paint `bg` behind every span that doesn't already carry its own background.
+/// まだ自前の背景色を持っていないすべての span の背後に bg を塗る。
 ///
-/// [`render_markdown`] leaves ordinary text with no background (so it sits on
-/// whatever surface is drawn behind it) but gives code its own `code_bg` card.
-/// Callers that render markdown onto a tinted surface — e.g. the comment thread
-/// box's `comment_preview_bg` — use this to fill the gaps so the whole block
-/// shares one background, while code cards keep their distinct shade.
+/// [render_markdown] は通常のテキストに背景色を付けずに残す（背後に描かれている面が
+/// そのまま透けるように）が、コードには専用の code_bg カードを与える。色付きの面
+/// （コメントスレッドボックスの comment_preview_bg など）の上に markdown を描画する
+/// 呼び出し元は、これを使って隙間を埋め、コードカードは独自の色味を保ちつつ
+/// ブロック全体で背景を統一する。
 pub fn apply_background(lines: &mut [Line<'static>], bg: Color) {
     for line in lines {
         for span in &mut line.spans {

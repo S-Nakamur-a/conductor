@@ -1,5 +1,5 @@
-//! Marker/indent/truncation helpers — pure functions, testable independently
-//! of `App`, used by [`build`](super::build) to lay out transcript lines.
+//! マーカー・インデント・省略表示のヘルパー群。App から独立してテスト可能な純粋関数で、
+//! [build](super::build) がトランスクリプト行のレイアウトに使う。
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -8,12 +8,12 @@ use unicode_width::UnicodeWidthStr;
 
 use super::glyphs::MARKER_COLS;
 
-/// Prepend a `MARKER_COLS`-wide marker to the first line of `lines` and a
-/// same-width blank indent to all continuation lines.
+/// lines の先頭行に MARKER_COLS 幅のマーカーを付け、継続行すべてに同じ幅の空白インデントを
+/// 付ける。
 ///
-/// `glyph` is measured with `unicode_width` and padded with spaces to exactly
-/// `MARKER_COLS` display columns before being inserted as the leading span.
-/// Content spans on each line keep their original styling.
+/// glyph は unicode_width で幅を測り、先頭スパンとして挿入する前にスペースで
+/// ちょうど MARKER_COLS 表示カラムまでパディングする。各行のコンテンツスパンは元のスタイルを
+/// 保持する。
 pub(crate) fn with_marker(
     lines: Vec<Line<'static>>,
     glyph: &str,
@@ -37,9 +37,8 @@ pub(crate) fn with_marker(
         .collect()
 }
 
-/// Pad `glyph` with trailing spaces until it occupies exactly `target_cols`
-/// display columns.  If the glyph is already `target_cols` wide or wider,
-/// returns it unchanged.
+/// glyph の末尾にスペースを足して、ちょうど target_cols 表示カラムを占めるまでパディングする。
+/// glyph がすでに target_cols 以上の幅であれば、そのまま返す。
 pub(crate) fn pad_glyph_to(glyph: &str, target_cols: usize) -> String {
     let w = UnicodeWidthStr::width(glyph);
     if w >= target_cols {
@@ -53,26 +52,25 @@ pub(crate) fn pad_glyph_to(glyph: &str, target_cols: usize) -> String {
     }
 }
 
-/// Truncate `s` to at most `max_cols` display columns, appending `…` if cut.
+/// s を高々 max_cols 表示カラムに切り詰め、切った場合は … を末尾に付ける。
 ///
-/// Walks Unicode scalar values, accumulates display width, and cuts before the
-/// first character that would overflow.  Returns a `String` (owned) so callers
-/// can pass it directly to `Span::styled`.
+/// Unicode スカラ値を順に走査して表示幅を積算し、はみ出す直前の文字の手前で切る。
+/// 呼び出し側が Span::styled にそのまま渡せるよう、所有権のある String を返す。
 pub(crate) fn truncate_to_width(s: &str, max_cols: usize) -> String {
     if max_cols == 0 {
         return String::new();
     }
-    // Reserve the ellipsis column only when there is something to elide.
-    // Reserving it unconditionally cut strings that fit exactly —
-    // `truncate_to_width("hello", 5)` used to return `"hell…"`.
+    // 省略記号用のカラムは、実際に削る文字がある場合のみ確保する。
+    // 無条件に確保すると、ちょうど収まる文字列まで切り詰められてしまう
+    // （truncate_to_width("hello", 5) がかつて "hell…" を返していた）。
     if UnicodeWidthStr::width(s) <= max_cols {
         return s.to_string();
     }
     let mut width = 0usize;
     let budget = max_cols - 1;
-    // Grapheme clusters, not `char`s: cutting between a base character and
-    // its variation selector (or mid-ZWJ-sequence) both mis-measures the
-    // width and leaves a dangling combining mark on screen.
+    // char 単位ではなく書記素クラスタ単位で切る。基底文字と異体字セレクタの間
+    // （あるいは ZWJ シーケンスの途中）で切ると、幅の計測を誤るうえ、
+    // 結合文字が画面上に浮いた状態で残ってしまう。
     for (i, cluster) in s.grapheme_indices(true) {
         let cw = UnicodeWidthStr::width(cluster);
         if width + cw > budget {
@@ -82,20 +80,19 @@ pub(crate) fn truncate_to_width(s: &str, max_cols: usize) -> String {
         }
         width += cw;
     }
-    // String fits within max_cols without truncation.
+    // max_cols に収まっているので切り詰め不要。
     s.to_string()
 }
 
-/// Assemble `parts` into one line behind `indent_cols` blank columns,
-/// degrading to a single truncated span if the result would exceed `width`.
+/// parts を indent_cols 個の空白カラムの後ろに並べて1行に組み立てる。結果が width を
+/// 超える場合は、切り詰めた単一スパンにフォールバックする。
 ///
-/// The fixed-format summary lines (`Read 3 files (ctrl+o to expand)`,
-/// `Thought for 8s (ctrl+o to expand)`) are built from several spans so that
-/// only the count is bold. At a narrow panel the whole thing has to be cut,
-/// and cutting span-by-span would leave those bold/plain boundaries in
-/// nonsense places — so the fallback keeps the text and drops the styling.
-/// Without this the line is simply emitted over-width, which is the bleed the
-/// corpus sweep exists to catch.
+/// 固定フォーマットのサマリ行（Read 3 files (ctrl+o to expand)、
+/// Thought for 8s (ctrl+o to expand) など）は、件数の部分だけ太字にするため複数のスパンから
+/// 組み立てられている。パネルが狭いと全体を切る必要が出るが、スパンごとに切ると
+/// 太字/通常の境界が意味不明な位置に残ってしまう。そのためフォールバックではテキストを
+/// 保持しつつスタイルを捨てる。これをしないと行がそのまま width を超えて出力されてしまい、
+/// それが corpus sweep で検出しようとしている「にじみ」である。
 pub(crate) fn fit_styled_line(
     indent_cols: usize,
     parts: &[(String, Style)],
@@ -118,12 +115,12 @@ pub(crate) fn fit_styled_line(
     ])
 }
 
-/// [`fit_styled_line`] with `glyph` in the marker gutter instead of blanks —
-/// for the single-line blocks that own a marker of their own (`⏺ {notice}`,
-/// `✻ Conversation compacted …`). The glyph takes the style of the first part.
+/// [fit_styled_line] の空白の代わりにマーカーガターへ glyph を置くバージョン。自前のマーカーを
+/// 持つ単一行ブロック（⏺ {notice}、✻ Conversation compacted … など）向け。glyph は
+/// 先頭パートのスタイルを引き継ぐ。
 ///
-/// Both of `fit_styled_line`'s branches put the indent in span 0, so replacing
-/// it in place keeps the fitted body untouched.
+/// fit_styled_line のどちらの分岐もインデントを span 0 に置くので、そこをその場で
+/// 置き換えれば、収まったあとの本文には手を加えずに済む。
 pub(crate) fn fit_glyph_line(
     glyph: &str,
     parts: &[(String, Style)],

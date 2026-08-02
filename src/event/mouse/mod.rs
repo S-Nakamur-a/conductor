@@ -1,11 +1,11 @@
-//! Mouse event handling — clicks, scrolls, drag interactions.
+//! マウスイベント処理 — クリック、スクロール、ドラッグ操作。
 //!
-//! This module is the entry point (`handle_mouse_event`) plus the shared
-//! hit-testing geometry (`ClickGeometry`/`Column`) and double-click helpers
-//! used across the per-panel submodules. Each submodule owns one region of
-//! the layout: [`bars`] (notification/worktree/title bars), [`worktree_panel`],
-//! [`explorer_panel`], [`viewer_panel`], [`terminal_panel`], and [`scroll`]
-//! (wheel scrolling for every panel).
+//! このモジュールはエントリポイント（handle_mouse_event）と、各パネル別サブ
+//! モジュールで共有するヒットテスト用ジオメトリ（ClickGeometry/Column）、
+//! ダブルクリック判定のヘルパーを持つ。各サブモジュールはレイアウトの1領域を
+//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[worktree_panel]、
+//! [explorer_panel]、[viewer_panel]、[terminal_panel]、そして [scroll]
+//! （全パネル共通のホイールスクロール）。
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -34,24 +34,24 @@ use terminal_panel::handle_terminal_column_click;
 use viewer_panel::handle_viewer_column_click;
 use worktree_panel::handle_worktree_column_click;
 
-// Re-exported so `event::viewer`'s keyboard toggle can share the exact same
-// thread-focus logic as the mouse's marker-column click.
+// event::viewer のキーボードトグルがマウスのマーカー列クリックと全く同じ
+// スレッドフォーカスのロジックを共有できるよう再エクスポートしている。
 pub(in crate::event) use viewer_panel::toggle_inline_thread_at;
 
-/// Maximum gap between two clicks (in milliseconds) to register as a double-click.
+/// 2回のクリックをダブルクリックとみなす最大間隔（ミリ秒）。
 const DOUBLE_CLICK_MS: u128 = 400;
 
-/// Record a click at `now` and report whether it forms a double-click with the
-/// previous one stored in `last` (i.e. the gap is under [`DOUBLE_CLICK_MS`]).
-/// Updates `*last` to `now`.
+/// now にクリックを記録し、last に保存されている前回のクリックとダブル
+/// クリックを構成するか（つまり間隔が [DOUBLE_CLICK_MS] 未満か）を返す。
+/// *last を now に更新する。
 fn register_double_click(last: &mut std::time::Instant, now: std::time::Instant) -> bool {
     let is_double = now.duration_since(*last).as_millis() < DOUBLE_CLICK_MS;
     *last = now;
     is_double
 }
 
-/// Like [`register_double_click`] but also requires the click to land on the
-/// same `idx` as the previous one. Updates both `*last` and `*last_idx`.
+/// [register_double_click] と同様だが、さらにクリックが前回と同じ idx に
+/// 当たっていることを要求する。*last と *last_idx の両方を更新する。
 fn register_double_click_on(
     last: &mut std::time::Instant,
     last_idx: &mut usize,
@@ -60,13 +60,13 @@ fn register_double_click_on(
 ) -> bool {
     let same_idx = *last_idx == idx;
     *last_idx = idx;
-    // `register_double_click` always runs first so `*last` is updated regardless.
+    // register_double_click は必ず先に実行するので、*last はどちらにせよ更新される。
     register_double_click(last, now) && same_idx
 }
 
-/// Resolve a screen row offset (relative to inner_y) to a 1-indexed file line
-/// number, accounting for inline thread rows. Falls back to simple arithmetic
-/// when no screen-row mapping is available.
+/// 画面上の行オフセット（inner_yからの相対値）を、インラインスレッド行を
+/// 考慮した1始まりのファイル行番号に解決する。画面行マッピングが無い場合は
+/// 単純な算術にフォールバックする。
 fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
     let map = &app.viewer_state.content.screen_row_map;
     if !map.is_empty() {
@@ -84,18 +84,18 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
     }
 }
 
-/// Returns true if any overlay/modal is active and should consume all mouse events,
-/// preventing them from reaching background panels.
-/// Route a mouse event against the interactive hover modal stack. Returns
-/// `true` when the event was consumed (the caller then returns early).
+/// 何らかのオーバーレイ/モーダルがアクティブな場合に true を返す。この場合は
+/// マウスイベントを全て消費し、背景のパネルに届かないようにする。
+/// マウスイベントをインタラクティブなホバーモーダルのスタックに対して振り分ける。
+/// イベントを消費した場合は true を返す（呼び出し側はその場合早期returnする）。
 ///
-/// - Left click on `N refs` → open the references list (pins the popup).
-/// - Left click on a list row → open its code preview.
-/// - Left click on the preview → jump to that location, closing the stack.
-/// - Left click on empty popup padding → kept (consumed).
-/// - Left click anywhere else while pinned → dismiss (swallowed).
-/// - Move over any part → keep alive (cancel the transient grace window).
-/// - Scroll over the list → move the selection.
+/// - N refs への左クリック → 参照リストを開く（ポップアップを固定する）。
+/// - リストの行への左クリック → そのコードプレビューを開く。
+/// - プレビューへの左クリック → その場所へジャンプし、スタック全体を閉じる。
+/// - ポップアップの余白への左クリック → そのまま維持する（消費する）。
+/// - 固定中に他の場所への左クリック → 閉じる（クリックは飲み込む）。
+/// - 任意の部分の上でマウスを動かす → 生存を維持する（一時的な猶予ウィンドウを解除）。
+/// - リスト上でのスクロール → 選択を移動する。
 fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.code_nav.hover_info.is_shown() {
         return false;
@@ -118,13 +118,13 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 app.hover_keep_alive();
                 return true;
             }
-            // Off the popup: while pinned, still consume so a stray move can't
-            // clobber the modal; while transient, let the normal move handler
-            // manage the candidate/grace.
+            // ポップアップの外: 固定中はそれでも消費し、はぐれたマウス移動が
+            // モーダルを壊さないようにする。一時的な状態なら通常のmoveハンドラに
+            // 候補/猶予の管理を任せる。
             pinned
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            // Level 2: click the preview → jump there and close everything.
+            // レベル2: プレビューをクリックするとそこへジャンプし、全部閉じる。
             if let Some(pr) = app
                 .code_nav.hover_info
                 .refs
@@ -135,17 +135,17 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 app.hover_jump_to_preview();
                 return true;
             }
-            // Level 1: click a reference row → open its preview.
+            // レベル1: 参照行をクリックするとそのプレビューを開く。
             if let Some(refs) = app.code_nav.hover_info.refs.as_ref() {
                 if let Some((idx, _)) = refs.row_hits.iter().find(|(_, r)| in_rect(*r)).copied() {
                     app.open_hover_preview(idx);
                     return true;
                 }
                 if in_rect(refs.rect) {
-                    return true; // list padding — keep open
+                    return true; // リストの余白 — 開いたままにする
                 }
             }
-            // Base popup: click "N refs" → open the list; click body → keep.
+            // 基本ポップアップ: 「N refs」をクリックするとリストを開く。本文をクリックすると維持する。
             if in_rect(app.code_nav.hover_info.refs_hit) {
                 app.open_hover_refs();
                 return true;
@@ -153,9 +153,9 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             if in_rect(app.code_nav.hover_info.info_rect) {
                 return true;
             }
-            // Outside everything: a pinned modal dismisses and swallows the
-            // click; a transient popup lets the click through (the top-level
-            // non-Moved clear will drop it).
+            // 全ての要素の外側: 固定中のモーダルは閉じてクリックを飲み込む。
+            // 一時的なポップアップはクリックを通過させる（トップレベルの
+            // 非Movedクリアがそれを消してくれる）。
             if pinned {
                 app.clear_hover();
                 app.dirty.mark_all();
@@ -208,10 +208,10 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.code_nav.symbol_action.active
 }
 
-/// Whether `divider` can currently be grabbed for a mouse resize. Never while a
-/// panel is maximized (the columns collapse to the edges, so the boundaries are
-/// meaningless), and not the Explorer-side boundaries while the editor has
-/// merged the Explorer+Viewer columns into a single PTY.
+/// 指定した divider が現在マウスリサイズのためにつかめる状態かどうか。パネルが
+/// 最大化されている間は常に不可（列が両端に折りたたまれ、境界の意味が失われるため）。
+/// また、エディタがExplorer+Viewer列を1つのPTYに合体させている間は、Explorer側の
+/// 境界も不可。
 fn divider_draggable(app: &App, divider: crate::app::Divider) -> bool {
     use crate::app::Divider;
     if app.expanded_panel.is_some() {
@@ -223,7 +223,7 @@ fn divider_draggable(app: &App, divider: crate::app::Divider) -> bool {
     true
 }
 
-/// Which of the four main columns a screen column falls into.
+/// 画面上の列が、メインの4カラムのうちどれに属するか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Column {
     Worktree,
@@ -232,9 +232,10 @@ enum Column {
     Terminal,
 }
 
-/// Per-frame layout geometry used for mouse hit-testing, snapshotted from the
-/// layout cache at the start of [`handle_mouse_event`]. Bundling these values
-/// keeps the per-column click handlers from each taking a long argument list.
+/// マウスのヒットテストに使うフレームごとのレイアウトジオメトリ。
+/// [handle_mouse_event] の冒頭でレイアウトキャッシュからスナップショットする。
+/// これらの値をまとめておくことで、各カラムのクリックハンドラが長い引数リストを
+/// 取らずに済む。
 #[derive(Debug, Clone, Copy)]
 struct ClickGeometry {
     main_area: ratatui::layout::Rect,
@@ -250,7 +251,7 @@ struct ClickGeometry {
 }
 
 impl ClickGeometry {
-    /// Determine which column the screen column `col` belongs to.
+    /// 画面上の列 col がどのカラムに属するかを決定する。
     fn column_at(&self, col: u16) -> Column {
         if col < self.left_end {
             Column::Worktree
@@ -263,14 +264,13 @@ impl ClickGeometry {
         }
     }
 
-    /// Hit-test a draggable panel divider at screen cell (`col`, `row`).
+    /// 画面上のセル (col, row) にドラッグ可能なパネル境界があるかをヒットテストする。
     ///
-    /// Adjacent columns each render their own border, so a vertical boundary is
-    /// a two-cell-thick line (the left panel's right border at `edge - 1` and
-    /// the right panel's left border at `edge`); both cells count as a grab
-    /// zone, and likewise for horizontal boundaries. Vertical dividers (column
-    /// boundaries) win over horizontal ones (interior column splits) where they
-    /// meet at a corner. Editor-merge and maximize gating is left to the caller.
+    /// 隣接するカラムはそれぞれ自分の枠を描画するため、縦の境界線は2セル分の
+    /// 厚みを持つ線になる（左パネルの右枠が edge - 1、右パネルの左枠が edge）。
+    /// どちらのセルもつかむ対象とみなし、横の境界も同様。縦の境界（カラム境界）と
+    /// 横の境界（カラム内部の分割）が角で重なる場合は、縦の境界を優先する。
+    /// エディタ合体時・最大化時のゲーティングは呼び出し側の責務。
     fn divider_at(&self, col: u16, row: u16) -> Option<crate::app::Divider> {
         use crate::app::Divider;
 
@@ -279,7 +279,7 @@ impl ClickGeometry {
         let right = self.main_area.x.saturating_add(self.main_area.width);
         let on_boundary = |v: u16, edge: u16| edge > 0 && (v == edge - 1 || v == edge);
 
-        // Vertical dividers: the full-height column boundaries.
+        // 縦の境界: 画面高さ全体にわたるカラム境界。
         if row >= top && row < bottom {
             if on_boundary(col, self.explorer_end) {
                 return Some(Divider::ExplorerViewer);
@@ -288,7 +288,7 @@ impl ClickGeometry {
                 return Some(Divider::ViewerTerminal);
             }
         }
-        // Horizontal dividers: splits interior to a single column.
+        // 横の境界: 1つのカラム内部の分割。
         if col >= self.left_end && col < self.explorer_end && on_boundary(row, self.explorer_mid_y)
         {
             return Some(Divider::ExplorerSplit);
@@ -299,9 +299,9 @@ impl ClickGeometry {
         None
     }
 
-    /// Hit-test the `[<=>]` expand button on the top border row, returning the
-    /// panel whose button was clicked (if any). The caller must ensure the click
-    /// is on the top border row before calling.
+    /// 上枠の行にある [<=>] 展開ボタンをヒットテストし、クリックされたボタンの
+    /// パネルを返す（あれば）。呼び出し側は、呼ぶ前にクリックが上枠の行上に
+    /// あることを保証する必要がある。
     fn expand_button_at(&self, col: u16) -> Option<Focus> {
         if col < self.left_end && self.left_w >= 7 {
             let btn_start = self.main_area.x + self.left_w - 6;
@@ -321,14 +321,13 @@ impl ClickGeometry {
     }
 }
 
-/// Handle a click on the Viewer header's `[Raw|Rendered]` toggle, returning
-/// whether it was consumed.
+/// Viewerヘッダーの [Raw|Rendered] トグルへのクリックを処理し、消費したかを返す。
 ///
-/// Each half selects its mode outright instead of flipping the current one, so
-/// clicking the label you can already see is a no-op rather than a surprise.
-/// The chip's columns come from the same `toggle_segments` the renderer uses,
-/// and `markdown_toggle_available` gates it exactly as the renderer does — so a
-/// toggle that isn't on screen has no click target.
+/// 現在のモードを反転させるのではなく、どちらの半分をクリックしてもそのモードを
+/// そのまま選択する。そのため、既に見えているラベルをクリックしても驚きのある
+/// 動作にはならず、何も起きないだけになる。チップの列はレンダラが使うのと同じ
+/// toggle_segments から取得しており、markdown_toggle_available によるゲーティングも
+/// レンダラと全く同じ — なので画面に出ていないトグルにはクリック対象が存在しない。
 fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool {
     if !app.viewer_state.markdown_toggle_available() {
         return false;
@@ -350,28 +349,28 @@ fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool
     true
 }
 
-/// Process a single mouse event, updating application state as needed.
+/// 1件のマウスイベントを処理し、必要に応じてアプリケーション状態を更新する。
 pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui::layout::Rect) {
-    // Interactive hover modal stack (popup → refs list → preview) gets first
-    // crack at the mouse: clicks on its parts drill in, moving over it keeps it
-    // alive, and a pinned modal swallows clicks outside it (to dismiss).
+    // インタラクティブなホバーモーダルスタック（ポップアップ → 参照リスト → プレビュー）が
+    // マウスを最初に受け取る: その各部分へのクリックはさらに下の階層へ潜り、上での移動は
+    // 生存を維持し、固定中のモーダルは外側へのクリックを飲み込む（閉じるため）。
     if handle_hover_modal_mouse(app, mouse) {
         return;
     }
 
-    // When any overlay/modal is active, consume all mouse events to prevent
-    // them from reaching background panels (scroll, click, etc.).
+    // 何らかのオーバーレイ/モーダルがアクティブな場合、マウスイベントを全て消費して
+    // 背景のパネル（スクロール、クリックなど）に届かないようにする。
     if has_blocking_overlay(app) {
-        // D7(c): once we return here, the background panels stop receiving
-        // `Moved` events for as long as the overlay is open — the `Moved`
-        // handler is what naturally clears tree/diff-list row highlights,
-        // the jump underline, and the hover popup when the mouse leaves them.
-        // Clear it up front instead, so nothing is left lit behind the modal.
+        // ここでreturnすると、オーバーレイが開いている間は背景のパネルがMovedイベントを
+        // 受け取らなくなる。Movedハンドラはマウスがそこから離れたときにツリー/差分リストの
+        // 行ハイライトやジャンプ下線、ホバーポップアップを自然にクリアする役目を持つが、
+        // それが働かなくなるということ。なので先にここでクリアしておき、モーダルの裏に
+        // 何も光ったまま残らないようにする。
         app.clear_all_hover();
         return;
     }
 
-    // Read layout from cache (computed during render).
+    // レイアウトをキャッシュから読み込む（描画時に計算済み）。
     let lc = &app.layout.cache;
     let notif_area = lc.notif_area;
     let wtbar_area = lc.wtbar_area;
@@ -391,9 +390,9 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     let col = mouse.column;
     let row = mouse.row;
 
-    // Any mouse action other than a plain move (scroll, click, drag) invalidates
-    // the auto-hover popup: it was tied to a now-stale line. Moved manages its
-    // own candidate below.
+    // 単なる移動以外のマウス操作（スクロール、クリック、ドラッグ）は自動ホバー
+    // ポップアップを無効化する: それは今は古くなった行に紐づいていたもの。
+    // Movedは下で自分のcandidateを別途管理する。
     if !matches!(mouse.kind, MouseEventKind::Moved) && app.clear_hover() {
         app.dirty.mark_all();
     }
@@ -413,9 +412,9 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
 
     match mouse.kind {
         MouseEventKind::ScrollDown if wtbar_area.height > 0 && row == wtbar_area.y => {
-            // Wheel over the worktree strip pages it sideways by ~a screenful
-            // (one chip of overlap) so trackpad bursts and wheel detents both
-            // move a useful amount without skipping chips.
+            // worktreeストリップ上でのホイールは、横方向に約1画面ぶん
+            // （チップ1つぶん重ねて）ページングする。トラックパッドの連続入力も
+            // ホイールの1段も、チップを飛ばさずに意味のある量だけ動くようにする。
             app.wtbar.scroll = app.wtbar.scroll.saturating_add(wtbar_page_step(app));
         }
         MouseEventKind::ScrollUp if wtbar_area.height > 0 && row == wtbar_area.y => {
@@ -428,7 +427,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             handle_mouse_scroll(app, col, row, &geom, -3);
         }
         MouseEventKind::ScrollLeft
-            // Horizontal scroll — only affects viewer panel.
+            // 横スクロール — viewerパネルのみに作用する。
             if col >= explorer_end && col < viewer_end => {
                 app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
             }
@@ -437,17 +436,18 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 app.viewer_state.scroll_right(4);
             }
         MouseEventKind::Down(MouseButton::Left) => {
-            // The menu bar goes first, for the same reason the worktree strip
-            // beats the title bar below: `handle_title_bar_click` claims every
-            // row above `main_area`. It also owns the dismiss-on-outside-click,
-            // which has to see the click before any panel does.
+            // メニューバーを最初にチェックする。理由は、下でworktreeストリップが
+            // タイトルバーより先にチェックされるのと同じ: handle_title_bar_click は
+            // main_areaより上の行を全て「タイトル」として扱ってしまう。メニューバーは
+            // 外側クリックでの閉じる処理も持っており、それはどのパネルより先に
+            // クリックを見る必要がある。
             if menu::handle_menu_click(app, col, row) {
                 return;
             }
-            // Notification / worktree / title bar clicks are consumed first.
-            // The worktree bar must be checked before the title bar: the latter
-            // treats every row above `main_area` as "title" and would otherwise
-            // swallow the worktree strip's row.
+            // 通知/worktree/タイトルバーへのクリックを最初に消費する。
+            // worktreeバーはタイトルバーより先にチェックする必要がある。後者は
+            // main_areaより上の全ての行を「タイトル」として扱ってしまい、そうしないと
+            // worktreeストリップの行を飲み込んでしまう。
             if handle_notification_bar_click(app, col, row, notif_area) {
                 return;
             }
@@ -458,15 +458,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
-            // Only handle clicks in the main area.
+            // main_area内のクリックのみを処理する。
             if row < main_area.y || row >= main_area.y + main_area.height {
                 return;
             }
 
-            // Grab a panel divider to begin a mouse resize. Checked before the
-            // editor-refocus and column routing below so a boundary always wins
-            // over the panel that sits on it (the [<=>] expand buttons live a few
-            // cells inward, so they don't overlap the grab zone).
+            // パネル境界をつかんでマウスリサイズを開始する。下のエディタ再フォーカスや
+            // カラムのルーティングより先にチェックすることで、境界は常にその上に
+            // 乗っているパネルより優先される（[<=>] 展開ボタンは境界より数セル内側に
+            // あるので、つかむ範囲と重ならない）。
             if let Some(divider) = geom.divider_at(col, row)
                 && divider_draggable(app, divider)
             {
@@ -475,18 +475,18 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
-            // The embedded editor occupies the merged Explorer+Viewer region; a
-            // click anywhere in it just (re)focuses the editor — the Explorer and
-            // Viewer panels behind it are hidden, so their click handlers must
-            // not run. Clicks on the terminal column still fall through.
+            // 埋め込みエディタは合体したExplorer+Viewer領域を占有する。この中への
+            // クリックは単にエディタを(再)フォーカスするだけ — その裏にあるExplorerと
+            // Viewerのパネルは隠れているので、それらのクリックハンドラは動いては
+            // ならない。ターミナル列へのクリックはそのまま通過する。
             if app.editor.is_some() && col >= left_end && col < viewer_end {
                 app.set_focus(Focus::Editor);
                 return;
             }
 
-            // Check for the Viewer's Raw/Rendered toggle and the [<=>] expand
-            // button, both on the top border row. The toggle is checked first;
-            // it sits left of the expand button and the two never overlap.
+            // Viewerの [Raw|Rendered] トグルと [<=>] 展開ボタン、どちらも上枠の行に
+            // ある。トグルを先にチェックする。展開ボタンより左にあり、両者は
+            // 重ならない。
             if row == main_area.y && handle_md_toggle_click(app, col, &geom) {
                 return;
             }
@@ -508,14 +508,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            // A divider drag takes priority: move the grabbed boundary to track
-            // the cursor. The clamped mutators reject out-of-bounds targets, so
-            // dragging past a panel's minimum simply pins the divider there.
+            // divider（境界）のドラッグを最優先する: つかんだ境界をカーソルに
+            // 追従させる。クランプされたミューテータは範囲外のターゲットを
+            // 拒否するので、パネルの最小サイズを超えてドラッグしても、境界は
+            // そこにピン留めされるだけになる。
             if let Some(divider) = app.layout.divider_drag {
                 app.drag_divider_to(divider, col, row);
                 return;
             }
-            // Extend an in-progress gutter range selection to the dragged line.
+            // 進行中のガター範囲選択を、ドラッグ先の行まで延長する。
             if let Some(anchor) = app.viewer_state.click.gutter_drag_anchor {
                 let inner_y = main_area.y + 1;
                 if row >= inner_y && col >= explorer_end && col < viewer_end {
@@ -533,48 +534,48 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
-            // Finish a divider drag: persist the final ratios once (the drag
-            // itself intentionally skips the per-event config write).
+            // dividerのドラッグを終える: 最終的な比率を一度だけ永続化する
+            // （ドラッグ中はイベントごとの設定書き込みを意図的に省略している）。
             if app.layout.divider_drag.take().is_some() {
                 app.layout.divider_hover = geom.divider_at(col, row);
                 app.persist_layout();
                 return;
             }
-            // Finish a gutter drag: commit the (single-line or range) selection
-            // by opening the comment composer for it.
+            // ガターのドラッグを終える: そのための（単一行または範囲の）選択を
+            // 確定させ、コメント作成欄を開く。
             let was_dragging = app.viewer_state.click.gutter_drag_anchor.take().is_some();
             if was_dragging {
                 open_viewer_comment(app);
             }
         }
         MouseEventKind::Moved => {
-            // Menu hover first, and it takes the whole event when a menu is up
-            // — panels under an open dropdown must not light up as if they were
-            // reachable.
+            // メニューのホバーを最初にチェックし、メニューが開いている間はイベント
+            // 全体を横取りする — 開いているドロップダウンの下にあるパネルが、
+            // あたかも到達可能であるかのように光ってはいけない。
             if menu::handle_menu_hover(app, col, row) {
                 return;
             }
 
-            // Light up the divider under the cursor as a resize affordance — the
-            // terminal stand-in for a col-/row-resize mouse cursor (a plain hover
-            // never mutates a ratio; only a drag does).
+            // カーソル下のdividerをリサイズのアフォーダンスとして光らせる —
+            // col-/row-resizeマウスカーソルのターミナル上の代替表現（単なるホバーは
+            // 比率を変更しない。変更するのはドラッグのみ）。
             app.layout.divider_hover = geom
                 .divider_at(col, row)
                 .filter(|&d| divider_draggable(app, d));
 
-            // Track hover for the worktree bar's chips / `[x]` (S7). Resolves
-            // to `None` whenever the cursor isn't on the bar's single row,
-            // which doubles as the "mouse left the bar" clear.
+            // worktreeバーのチップ / [x]のホバーを追跡する。カーソルがバーの1行上に
+            // ない限り常にNoneになり、これは「マウスがバーから離れた」ことの
+            // クリアも兼ねる。
             app.wtbar.hover = if wtbar_area.height > 0 && row == wtbar_area.y {
                 crate::ui::worktree_bar::hit_at(&app.wtbar.hits, col)
             } else {
                 None
             };
 
-            // Same idea for the Claude/Shell terminal tab bars' `[x]` close
-            // buttons — gated on the terminal column too, since their tab-bar
-            // rows could otherwise coincide with an unrelated row in the
-            // Explorer/Viewer columns.
+            // Claude/Shellターミナルのタブバーの [x] 閉じるボタンも同様。
+            // ターミナル列であることもゲート条件に含めている。そうしないと、
+            // タブバーの行がExplorer/Viewer列の無関係な行と一致してしまう
+            // ことがある。
             app.terminal.claude_tab_hover = if col >= viewer_end && row == terminal_claude_y {
                 crate::ui::tab_bar::hit_at(&app.terminal.claude_tab_hits, col)
             } else {
@@ -586,42 +587,41 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 None
             };
 
-            // Track hover for the Explorer file tree's row highlight. Resolves
-            // to `None` whenever the cursor isn't over a tree row (wrong
-            // column, the Explorer's bottom half, above the list, ...), which
-            // is exactly what's needed to clear hover once the mouse leaves —
-            // no separate "did we leave the tree" check required.
+            // Explorerファイルツリーの行ハイライトのホバーを追跡する。カーソルが
+            // ツリーの行の上にない場合（列が違う、Explorerの下半分、リストより
+            // 上、など）は常にNoneになり、これがマウスが離れたときにホバーを
+            // クリアするのに必要な処理そのものになる — 「ツリーから離れたか」を
+            // 別途チェックする必要はない。
             let tree_scroll = app.viewer_state.tree.tree_scroll;
             app.list_hover.explorer_tree
                 .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
 
-            // Same idea for the Changed files (diff) list in the Explorer's
-            // bottom half.
+            // Explorerの下半分にある変更ファイル（diff）リストについても同様。
             let diff_scroll = app.viewer_state.explorer.diff_list_scroll;
             let diff_banner = app.viewer_state.explorer.explorer_diff_banner_rows;
             app.list_hover.diff_list
                 .set(diff_list_row_at(&geom, diff_scroll, diff_banner, col, row));
 
-            // Track hover line for gutter highlight in the viewer panel.
-            // Rendered markdown draws no gutter and no per-line highlight, and
-            // its rows aren't source lines, so it takes the clear-everything
-            // branch below exactly as if the cursor were outside the panel.
+            // viewerパネルのガターハイライト用にホバー行を追跡する。レンダリング
+            // 済みmarkdownはガターも行単位のハイライトも描画せず、その行は
+            // ソース行でもないので、カーソルがパネルの外にあるかのように下の
+            // 「全てクリアする」分岐に入る。
             let inner_y = main_area.y + 1;
             if !app.viewer_state.is_showing_rendered_markdown() && col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
                 let line_offset = (row - inner_y) as usize;
                 let inner_x = explorer_end + 1;
                 let gutter_w = app.viewer_state.gutter_total_width();
-                // Include the comment-marker column (left) and the 2-cell "+"
-                // badge column (right) so the "+" button stays lit (and
-                // clickable) while the cursor is over the whole left margin.
+                // コメントマーカー列（左）と2セル分の「+」バッジ列（右）を含める
+                // ことで、カーソルが左マージン全体の上にある間は「+」ボタンが
+                // 光ったまま（かつクリック可能）になる。
                 let badge_w: u16 = 2;
                 let marker_w = crate::viewer::COMMENT_MARKER_W;
                 let on_gutter =
                     col >= inner_x && col < inner_x + marker_w + gutter_w + badge_w;
 
-                // Both diff and file-content views now populate `screen_row_map`
-                // (the diff view injects inline comment threads), so a single
-                // screen-row lookup resolves the hovered line in both modes.
+                // diff表示とファイル内容表示はどちらもscreen_row_mapを埋めるように
+                // なった（diff表示はインラインのコメントスレッドを差し込む）ので、
+                // 1回の画面行の参照でどちらのモードでもホバー中の行を解決できる。
                 let resolved = resolve_screen_line(app, line_offset);
                 app.viewer_state.click.hover_line = resolved;
                 app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
@@ -629,11 +629,11 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
                     || mouse.modifiers.contains(KeyModifiers::CONTROL);
 
-                // Shared extraction: the symbol (if any) under the mouse's
-                // content column, plus its line and 0-indexed content cols.
-                // Both the jump underline and the auto-hover popup below need
-                // this; they differ only in which candidate setter consumes it
-                // and in the diff-mode restriction (see below).
+                // 共有の抽出処理: マウスのcontent列の下にあるシンボル（あれば）と、
+                // その行、0始まりのcontent列。下のジャンプ下線と自動ホバー
+                // ポップアップの両方がこれを必要とする。違うのはどのcandidate
+                // setterがそれを消費するかと、diffモードによる制限（下記参照）
+                // だけ。
                 let gutter_w = app.viewer_state.gutter_total_width();
                 let inner_x = explorer_end + 1;
                 let badge_w: u16 = 2;
@@ -661,23 +661,23 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                     None
                 };
 
-                // Jump underline (D8/D9): shown on any rest over a jumpable
-                // symbol, no modifier required — only its color depends on
-                // `has_jump_modifier` (resolved in `tick_underline_hover`).
-                // Still restricted to `!diff_mode`, because the actual
-                // Cmd+click jump handler (`viewer_panel.rs`) is itself
-                // `!diff_mode`-only; showing the underline in diff view would
-                // promise a jump that click can't deliver there.
+                // ジャンプ用の下線: ジャンプ可能なシンボルの上に静止すれば修飾キー
+                // なしで表示される。色だけがhas_jump_modifierに依存する
+                // （tick_underline_hoverで解決）。ここでも!diff_modeに限定して
+                // いるのは、実際のCmd+クリックによるジャンプハンドラ
+                // （viewer_panel.rs）自体が!diff_mode限定だから。diff表示で下線を
+                // 出すと、クリックしても実現できないジャンプを約束することに
+                // なってしまう。
                 if app.viewer_state.diff_view.diff_mode {
                     app.set_underline_candidate(None, has_jump_modifier);
                 } else {
                     app.set_underline_candidate(symbol_here.clone(), has_jump_modifier);
                 }
 
-                // Auto-hover popup candidate: same extraction, no diff-mode
-                // restriction (the popup is read-only, so it's never a false
-                // affordance) and no modifier required — unchanged from
-                // before D8.
+                // 自動ホバーポップアップの候補: 同じ抽出結果を使うが、diffモードに
+                // よる制限はない（ポップアップは読み取り専用なので、実行できない
+                // アフォーダンスを見せてしまうことはない）。修飾キーも不要 —
+                // 以前から変わっていない。
                 let auto_cand = symbol_here.map(|(symbol, line_1, start, end)| {
                     let anchor_col = content_start_x
                         + (start.saturating_sub(app.viewer_state.content.h_scroll)) as u16;

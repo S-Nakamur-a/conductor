@@ -1,6 +1,6 @@
-//! Review overlay renderers — input box, template picker, and comment detail.
+//! レビューのオーバーレイ描画 — 入力ボックス、テンプレート選択、コメント詳細。
 //!
-//! These are rendered as overlays on top of the main layout when active.
+//! これらはアクティブなときにメインレイアウトの上にオーバーレイとして描画される。
 
 use crate::app::App;
 use crate::review_state::{ReviewInputMode, ReviewState};
@@ -12,7 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-/// Emoji icon for a comment kind.
+/// コメント種別の絵文字アイコン。
 pub fn kind_icon(kind: CommentKind) -> &'static str {
     match kind {
         CommentKind::Suggest => "\u{1f4a1}", // 💡
@@ -20,7 +20,7 @@ pub fn kind_icon(kind: CommentKind) -> &'static str {
     }
 }
 
-/// Styled span for a comment kind badge.
+/// コメント種別バッジのスタイル付き Span。
 pub fn kind_badge_span(kind: CommentKind, theme: &Theme) -> Span<'static> {
     match kind {
         CommentKind::Suggest => Span::styled(
@@ -34,7 +34,7 @@ pub fn kind_badge_span(kind: CommentKind, theme: &Theme) -> Span<'static> {
     }
 }
 
-/// Render an input box overlay when adding or editing a comment.
+/// コメントの追加/編集時に入力ボックスのオーバーレイを描画する。
 pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_height = 12_u16.min(area.height.saturating_sub(4));
@@ -59,7 +59,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
         ReviewInputMode::ReplyingToComment => {
             " Reply to Comment (Shift+Enter: newline) ".to_string()
         }
-        // ConfirmingDelete uses a dedicated y/n overlay, never this composer.
+        // ConfirmingDelete は専用の y/n オーバーレイを使い、この入力欄は使わない。
         ReviewInputMode::Normal | ReviewInputMode::ConfirmingDelete => unreachable!(),
     };
 
@@ -73,7 +73,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // When replying, show a preview of the parent comment's first line.
+    // 返信時は、親コメントの最初の行のプレビューを表示する。
     if app.review_state.input_mode == ReviewInputMode::ReplyingToComment
         && let Some(parent) = app.review_state.comments.get(app.review_state.selected)
     {
@@ -94,7 +94,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(""));
     }
 
-    // Build multi-line display with block cursor at the cursor position.
+    // カーソル位置にブロックカーソルを入れた複数行の表示を組み立てる。
     let buf = &app.review_state.input_buffer;
     let prefix_line_count = lines.len();
     let display = format!(
@@ -114,7 +114,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     lines.extend(input_lines);
 
-    // Hint line at the bottom.
+    // 下部のヒント行。
     let hint = match app.review_state.input_mode {
         ReviewInputMode::AddingComment => "Enter: submit | Esc: cancel | Tab: toggle kind",
         _ => "Enter: submit | Esc: cancel",
@@ -127,7 +127,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, inner);
 
-    // Set cursor position for IME.
+    // IME 用にカーソル位置を設定する。
     {
         let (cursor_row_in_buf, _) = buf.cursor_row_col();
         let cursor_row = prefix_line_count + cursor_row_in_buf;
@@ -139,7 +139,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// Render the y/n confirmation popup before deleting a comment or reply.
+/// コメントまたは返信を削除する前の y/n 確認ポップアップを描画する。
 pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::review_state::PendingDelete;
     let theme = &app.theme;
@@ -184,7 +184,7 @@ pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Render a centered popup for the comment template picker.
+/// コメントテンプレート選択の中央ポップアップを描画する。
 pub fn render_template_picker_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -251,7 +251,7 @@ pub fn render_template_picker_overlay(
     frame.render_widget(paragraph, inner);
 }
 
-/// Render a centered detail modal for viewing a full comment and its replies.
+/// コメント全文とその返信を表示する中央詳細モーダルを描画する。
 pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
@@ -285,8 +285,9 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         " {icon} {kind_label} \u{2502} {status_label} (Esc/q: close, e: edit, R: reply, r: resolve, Del: delete) "
     );
 
-    // border_focused (not info): every review modal — input, template picker,
-    // detail — shares the focused-border colour so they read as one family.
+    // border_focused（info ではない）: レビュー系のモーダル — 入力、テンプレート
+    // 選択、詳細 — はすべてフォーカス時のボーダー色を共有し、同じ一族として
+    // 見えるようにしている。
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -299,14 +300,14 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Location header.
+    // 位置情報のヘッダ。
     let line_range = if let Some(end) = comment.line_end {
         format!("{}:{}-{}", comment.file_path, comment.line_start, end)
     } else {
         format!("{}:{}", comment.file_path, comment.line_start)
     };
-    // Location and author share one header line: the author matters less
-    // than the body, so it rides along in muted instead of claiming a line.
+    // 位置情報と著者は1つのヘッダ行を共有する: 著者は本文ほど重要ではないので、
+    // 独立した行を持たせず muted 色に乗せるだけにしている。
     let author_label = match comment.author {
         crate::review_store::Author::User => "You",
         crate::review_store::Author::Claude => "Claude",
@@ -320,17 +321,17 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         ),
     ]));
 
-    // Separator.
+    // 区切り線。
     let sep: String = "\u{2500}".repeat(inner_width.saturating_sub(2));
     lines.push(Line::from(Span::styled(
         format!(" {sep}"),
         Style::default().fg(theme.muted),
     )));
 
-    // Comment body, rendered as GitHub-style Markdown (same renderer as the
-    // SUMMARY view and the inline thread box): headings, lists, fenced code
-    // cards, inline `code`, links, tables. Indented one column to clear the
-    // popup border.
+    // コメント本文は GitHub 風の Markdown として描画する（SUMMARY ビューや
+    // インラインスレッドボックスと同じレンダラー）: 見出し、リスト、fenced
+    // code カード、インラインコード、リンク、テーブル。ポップアップの
+    // ボーダーを避けるため1カラム分インデントする。
     let body_md = crate::ui::markdown::render_markdown(
         &comment.body,
         inner_width.saturating_sub(1),
@@ -344,7 +345,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         lines.push(Line::from(spans));
     }
 
-    // Replies section.
+    // 返信のセクション。
     let replies = app.review_state.cached_replies.get(&comment.id);
     if let Some(replies) = replies
         && !replies.is_empty()
@@ -370,7 +371,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 format!("  \u{21b3} {r_author}"),
                 Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
             )]));
-            // Reply body Markdown, indented under its byline.
+            // 返信本文の Markdown。署名行の下にインデントする。
             let reply_md = crate::ui::markdown::render_markdown(
                 &reply.body,
                 inner_width.saturating_sub(4),
@@ -387,13 +388,13 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         }
     }
 
-    // Compute total content height accounting for word-wrap.
+    // ワードラップを考慮したコンテンツ全体の高さを計算する。
     let content_width = inner.width as usize;
     let total_lines: usize = lines
         .iter()
         .map(|line| {
-            // Display width (not byte length) — multibyte bodies otherwise
-            // overestimate wrapping and leave dead scroll range.
+            // 表示幅を使う（バイト長ではない）— そうしないとマルチバイトの
+            // 本文でラップ量を過大評価し、無駄なスクロール範囲が残ってしまう。
             let line_len: usize = line
                 .spans
                 .iter()
@@ -409,7 +410,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
     let visible_height = inner.height as usize;
     let max_scroll = total_lines.saturating_sub(visible_height);
 
-    // Store max_scroll and clamp scroll offset.
+    // max_scroll を保存し、スクロールオフセットをクランプする。
     app.review_state.comment_detail_max_scroll = max_scroll;
     if app.review_state.comment_detail_scroll > max_scroll {
         app.review_state.comment_detail_scroll = max_scroll;
@@ -421,7 +422,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         .scroll((scroll, 0));
     frame.render_widget(paragraph, inner);
 
-    // Scroll indicator on the bottom border.
+    // 下部ボーダーのスクロールインジケーター。
     if total_lines > visible_height {
         let current = app.review_state.comment_detail_scroll;
         let indicator = format!(

@@ -1,5 +1,5 @@
-//! Help overlay: per-panel keybinding cheatsheet, auto-generated from the
-//! keymap.
+//! ヘルプオーバーレイ: keymap から自動生成される、パネルごとのキーバインド
+//! チートシート。
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-/// Render the help overlay showing keybindings for the current context.
+/// 現在のコンテキストのキーバインドを表示するヘルプオーバーレイを描画する。
 pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::Focus;
 
@@ -22,7 +22,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    // Tab bar showing which panel's help is displayed.
+    // どのパネルのヘルプを表示しているかを示すタブバー。
     let tabs = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(popup_area);
 
     let tab_labels = [
@@ -56,7 +56,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(theme.titlebar_bg));
     frame.render_widget(tab_line, tabs[0]);
 
-    // Main content block.
+    // メインの内容ブロック。
     let block = Block::default()
         .title(" Help (?/Esc: close, 1-4: switch panel) ")
         .borders(Borders::ALL)
@@ -70,7 +70,7 @@ pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, inner);
 }
 
-/// Add a section header line.
+/// セクション見出しの行を追加する。
 fn help_section(lines: &mut Vec<Line<'static>>, title: &'static str, theme: &Theme) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -79,7 +79,7 @@ fn help_section(lines: &mut Vec<Line<'static>>, title: &'static str, theme: &The
     )));
 }
 
-/// Add a key binding line (dynamic: keys from KeyMap).
+/// キーバインドの行を追加する（動的: キーは KeyMap から取得する）。
 fn help_key_dyn(lines: &mut Vec<Line<'static>>, keys: String, desc: &'static str, theme: &Theme) {
     lines.push(Line::from(vec![
         Span::styled(
@@ -92,11 +92,12 @@ fn help_key_dyn(lines: &mut Vec<Line<'static>>, keys: String, desc: &'static str
     ]));
 }
 
-/// Build the cheatsheet lines for a help tab, **auto-generated** from the
-/// keymap so it always lists every binding that fires in that panel — nothing
-/// is hand-curated, so no action can be silently missing (the old curated list
-/// showed only a fraction). One section per layer, listing that layer's own
-/// bindings (global chords are shown once, under "Global").
+/// ヘルプタブのチートシート行を組み立てる。keymap から自動生成しているので、
+/// そのパネルで発火するすべてのバインドを常に漏れなく列挙できる — 手作業での
+/// 選別は一切していないので、アクションが黙って抜け落ちることがない（以前の
+/// 手作りリストは一部しか表示できていなかった）。レイヤーごとに1セクションで、
+/// そのレイヤー自身のバインドを列挙する（グローバルなコード進行は「Global」の
+/// 下に1回だけ表示する）。
 fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>> {
     use crate::app::Focus;
     use crate::keymap::{Action, KeyContext};
@@ -120,8 +121,8 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
         }
     };
 
-    // Panel-specific layers first (most relevant to where you are), then the
-    // always-available global chords.
+    // まずパネル固有のレイヤー（今いる場所に一番関係が深い）、その後に
+    // 常に使えるグローバルなコード進行を並べる。
     let panel_ctxs: &[(&'static str, KeyContext)] = match focus {
         Focus::Worktree => &[("Worktree panel", KeyContext::Worktree)],
         Focus::Explorer => &[
@@ -149,12 +150,12 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
     lines
 }
 
-/// Keys for the Claude transcript, reached by scrolling up from the live tail.
+/// ライブの末尾から上にスクロールして入る、Claude のトランスクリプトのキー。
 ///
-/// Hand-written for the same reason as the section below: `handle_reflow_key`
-/// owns these directly instead of going through `app.keymap`, so `section()` —
-/// which walks the keymap — cannot see any of them. They were invisible in the
-/// help until this existed, `G` included.
+/// 下のセクションと同じ理由で手書きにしている: handle_reflow_key が
+/// app.keymap を経由せずこれらを直接扱っているため、keymap を辿る section()
+/// からは1つも見えない。これができるまでは help に一切表示されておらず、
+/// G も例外ではなかった。
 fn help_transcript_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     help_section(lines, "Claude transcript (scroll up to enter)", theme);
     for (keys, desc) in [
@@ -169,11 +170,10 @@ fn help_transcript_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     }
 }
 
-/// The PR-intake, walkthrough-generation, and publish commands have no
-/// default keybinding (see `default_keybinds.toml`) — they're reached only
-/// through the command palette, so `section()` above (which walks
-/// `app.keymap`) never finds them. Listed here instead so the help screen
-/// still surfaces them.
+/// PR取り込み、ウォークスルー生成、公開の各コマンドにはデフォルトのキーバインドが
+/// ない（default_keybinds.toml 参照） — コマンドパレット経由でしか到達できないため、
+/// app.keymap を辿る上の section() では見つからない。それでも help 画面に
+/// 表示されるよう、ここに列挙している。
 fn help_review_commands_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     help_section(lines, "Review (via command palette)", theme);
     help_key_dyn(

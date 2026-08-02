@@ -1,10 +1,10 @@
-//! Configuration loading and persistence.
+//! 設定の読み込みと永続化。
 //!
-//! Reads a TOML configuration file from `~/.config/conductor/config.toml` and
-//! exposes strongly-typed settings for the rest of the application.
+//! ~/.config/conductor/config.toml から TOML 設定ファイルを読み込み、
+//! アプリケーションの他部分に型付けされた設定を公開する。
 //!
-//! Every field carries a serde default so the config file can be empty or
-//! partially specified.
+//! すべてのフィールドが serde のデフォルト値を持つため、設定ファイルは
+//! 空でも一部だけの指定でもよい。
 
 mod persist;
 mod sections;
@@ -29,10 +29,10 @@ pub use persist::{
     config_file_path, generate_default_config, persist_layout_proportions,
     persist_ui_high_contrast, persist_ui_theme,
 };
-// AppearanceSnapshot is not referenced by name anywhere else in the crate yet
-// (call sites use type inference / field access instead), but it is part of
-// this module's public surface, so keep re-exporting it under
-// `crate::config::*` rather than letting the split hide it.
+// AppearanceSnapshot はまだクレート内のどこからも名前で参照されていない
+// (呼び出し側は型推論やフィールドアクセスを使っている)が、このモジュールの
+// 公開インタフェースの一部なので、分割によって隠れてしまわないよう
+// crate::config::* 配下で re-export し続ける。
 #[allow(unused_imports)]
 pub use sections::{
     ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, LayoutConfig, ReviewConfig,
@@ -44,51 +44,49 @@ pub use syntax_theme::syntect_theme_for;
 
 use persist::write_atomic;
 
-// ---------------------------------------------------------------------------
-// Top-level Config
-// ---------------------------------------------------------------------------
+// トップレベルの Config
 
-/// Application-level configuration.
+/// アプリケーション全体の設定。
 ///
-/// Mirrors the `[section]` layout of `config.toml`.
+/// config.toml の [section] 構成をそのまま反映している。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
 pub struct Config {
-    /// `[general]` -- repository path, main branch, shell.
+    /// [general] -- リポジトリパス、メインブランチ、シェル。
     pub general: GeneralConfig,
-    /// `[terminal]` -- scrollback limits.
+    /// [terminal] -- スクロールバックの上限。
     pub terminal: TerminalConfig,
-    /// `[viewer]` -- syntax theme, tab width, word wrap.
+    /// [viewer] -- シンタックステーマ、タブ幅、折り返し。
     pub viewer: ViewerConfig,
-    /// `[diff]` -- diff presentation options.
+    /// [diff] -- diff 表示のオプション。
     pub diff: DiffConfig,
-    /// `[review]` -- code-review prompt settings.
+    /// [review] -- コードレビュー用プロンプトの設定。
     pub review: ReviewConfig,
-    /// `[keybinds]` -- optional user key-bind overrides, in keymap-config's
-    /// key→action TOML schema (`[keybinds.keys]`, `[keybinds.layers.<name>]`).
-    /// Kept as a raw table and handed to `keymap::KeyMap`, which owns the schema.
+    /// [keybinds] -- ユーザによるキーバインド上書き(任意)。keymap-config の
+    /// key→action TOML スキーマ([keybinds.keys], [keybinds.layers.<name>])。
+    /// 生のテーブルとして保持し、スキーマを所有する keymap::KeyMap に渡す。
     pub keybinds: toml::Table,
-    /// `[ccusage]` -- Claude Code token usage display.
+    /// [ccusage] -- Claude Code のトークン使用量表示。
     pub ccusage: CcusageConfig,
-    /// `[updates]` -- startup version check settings.
+    /// [updates] -- 起動時バージョンチェックの設定。
     pub updates: UpdatesConfig,
-    /// `[api]` -- Gemini API settings.
+    /// [api] -- Gemini API の設定。
     pub api: ApiConfig,
-    /// `[rich]` -- rich mode (terminal graphics) settings.
+    /// [rich] -- rich モード(ターミナルグラフィックス)の設定。
     pub rich: RichConfig,
-    /// `[ui]` -- UI appearance settings (theme, etc.).
+    /// [ui] -- UI 外観の設定(テーマなど)。
     #[serde(default)]
     pub ui: UiConfig,
-    /// `[layout]` -- panel proportion overrides.
+    /// [layout] -- パネル比率の上書き。
     #[serde(default)]
     pub layout: LayoutConfig,
 }
 
 impl Config {
-    /// Load configuration from `~/.config/conductor/config.toml`.
+    /// ~/.config/conductor/config.toml から設定を読み込む。
     ///
-    /// Falls back to `Config::default()` when the file does not exist.
+    /// ファイルが存在しない場合は Config::default() にフォールバックする。
     pub fn load() -> Result<Self> {
         let config_path = config_file_path();
 
@@ -98,7 +96,7 @@ impl Config {
             config.expand_paths();
             Ok(config)
         } else {
-            // Generate a default config file with comments.
+            // コメント付きのデフォルト設定ファイルを生成する。
             if let Some(parent) = config_path.parent()
                 && let Err(e) = std::fs::create_dir_all(parent)
             {
@@ -114,7 +112,7 @@ impl Config {
         }
     }
 
-    /// Expand tilde (`~`) prefixes in path-valued fields.
+    /// パス値を持つフィールドの先頭にあるチルダ(~)を展開する。
     fn expand_paths(&mut self) {
         if let Some(ref repo) = self.general.repo {
             self.general.repo = Some(persist::expand_tilde(repo));

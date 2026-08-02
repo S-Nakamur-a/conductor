@@ -1,6 +1,6 @@
-//! Enums and plain data structs shared across the `review_store` submodules.
+//! review_store 配下のサブモジュールが共有する enum と単純なデータ構造体。
 
-/// The kind of review comment.
+/// レビューコメントの種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentKind {
     Suggest,
@@ -8,7 +8,7 @@ pub enum CommentKind {
 }
 
 impl CommentKind {
-    /// Convert to the string representation stored in the database.
+    /// データベースに保存される文字列表現に変換する。
     pub fn as_str(&self) -> &'static str {
         match self {
             CommentKind::Suggest => "suggest",
@@ -23,7 +23,7 @@ impl std::fmt::Display for CommentKind {
     }
 }
 
-/// The author of a review comment or reply.
+/// レビューコメントまたは返信の投稿者。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Author {
     User,
@@ -31,7 +31,7 @@ pub enum Author {
 }
 
 impl Author {
-    /// Convert to the string representation stored in the database.
+    /// データベースに保存される文字列表現に変換する。
     pub fn as_str(&self) -> &'static str {
         match self {
             Author::User => "user",
@@ -46,7 +46,7 @@ impl std::fmt::Display for Author {
     }
 }
 
-/// The resolution status of a review comment.
+/// レビューコメントの解決状態。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentStatus {
     Pending,
@@ -68,7 +68,7 @@ impl std::fmt::Display for CommentStatus {
     }
 }
 
-/// A single review comment attached to a file and line range.
+/// ファイルと行範囲に紐づく単一のレビューコメント。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ReviewComment {
@@ -87,7 +87,7 @@ pub struct ReviewComment {
     pub updated_at: String,
 }
 
-/// A reusable comment template (saved feedback pattern).
+/// 再利用可能なコメントテンプレート（保存済みのフィードバックパターン）。
 #[derive(Debug, Clone)]
 pub struct CommentTemplate {
     pub id: String,
@@ -96,7 +96,7 @@ pub struct CommentTemplate {
     pub kind: CommentKind,
 }
 
-/// A reply to a review comment.
+/// レビューコメントへの返信。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ReviewReply {
@@ -107,7 +107,7 @@ pub struct ReviewReply {
     pub created_at: String,
 }
 
-/// Daily activity statistics.
+/// 日次のアクティビティ統計。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DailyStats {
     pub reviews_created: i64,
@@ -115,7 +115,7 @@ pub struct DailyStats {
     pub commits_made: i64,
 }
 
-/// Summary statistics for the current session.
+/// 現在のセッションの集計統計。
 #[derive(Debug, Clone, Default)]
 pub struct SessionStatsSnapshot {
     pub reviews_created: i64,
@@ -123,16 +123,16 @@ pub struct SessionStatsSnapshot {
     pub commits_made: i64,
 }
 
-/// Streak information.
+/// 連続活動日数の情報。
 #[derive(Debug, Clone)]
 pub struct StreakInfo {
     pub consecutive_days: u32,
 }
 
-/// PR metadata for a review-mode branch (`pr_review_meta` table) — the facts
-/// needed to render the review header and, later, to publish comments back
-/// to the right PR. Unlike `worktree_metadata`, every field but `branch` is
-/// optional since a review can start from a bare branch name without a PR.
+/// レビューモード用ブランチの PR メタデータ（pr_review_meta テーブル）。
+/// レビューヘッダーの表示と、後でコメントを正しい PR に投稿する際に
+/// 必要になる情報を持つ。worktree_metadata と異なり、branch 以外の全フィールドが
+/// optional になっている。レビューは PR のないブランチ名だけからも始められるため。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct PrReviewMeta {
@@ -146,7 +146,7 @@ pub struct PrReviewMeta {
     pub created_at: String,
 }
 
-/// A saved session history record.
+/// 保存されたセッション履歴レコード。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SessionHistory {

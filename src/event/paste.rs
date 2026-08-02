@@ -1,4 +1,4 @@
-//! Bracketed-paste event handling.
+//! bracketed-paste イベントの処理。
 
 use crate::app::{App, Focus, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
@@ -6,25 +6,26 @@ use crate::review_state::ReviewInputMode;
 
 use super::is_text_input_active;
 
-/// Handle a bracketed paste event. A text-input overlay/modal takes the paste
-/// first (so IME-committed multi-byte text reaches the input field rather than a
-/// terminal sitting behind the modal); otherwise, when a terminal panel is
-/// focused, the entire pasted text is forwarded to the PTY in one write, wrapped
-/// with bracketed-paste escape sequences so the shell/application treats it as a
-/// single paste rather than individual keystrokes.
+/// bracketed-paste イベントを処理する。テキスト入力のオーバーレイ/モーダルが
+/// あればまずそちらがペーストを受け取る (これにより IME 確定済みのマルチ
+/// バイトテキストが、モーダルの裏にいる terminal ではなく入力欄へ届く)。
+/// そうでなくて terminal パネルがフォーカスされている場合は、ペースト全体を
+/// 1回の書き込みで PTY へ転送する。bracketed-paste のエスケープシーケンスで
+/// 包むことで、shell/アプリケーション側が個々のキー入力ではなく1回の
+/// ペーストとして扱うようにする。
 pub fn handle_paste_event(app: &mut App, data: String) {
-    // A text-input overlay/modal owns paste regardless of which panel holds
-    // focus underneath it — the same modal grab that §0 of `handle_key_event`
-    // applies to key events. This matters because macOS terminals deliver
-    // IME-committed multi-byte text (kana/kanji, especially 2+ chars or a
-    // conversion) as a bracketed paste, not as individual key events. Gating on
-    // focus alone would forward that paste into the focused Claude/Shell PTY
-    // sitting behind the modal, so typed Japanese would vanish from the input
-    // field and surface in the terminal instead. Half-width ASCII is unaffected
-    // because it arrives as ordinary key events. Kept in lockstep with
-    // `is_text_input_active`: every destination below is enumerated there.
+    // テキスト入力のオーバーレイ/モーダルは、その裏でどのパネルがフォーカス
+    // されていてもペーストを握る — handle_key_event の §0 がキーイベントに
+    // 適用しているのと同じモーダルグラブ。これが重要なのは、macOS の
+    // terminal は IME 確定済みのマルチバイトテキスト (かな漢字、特に2文字
+    // 以上や変換を経たもの) を個々のキーイベントではなく bracketed paste
+    // として届けるため。フォーカスだけをゲートにすると、そのペーストが
+    // モーダルの裏にいる Claude/Shell の PTY へ転送されてしまい、入力した
+    // 日本語が入力欄から消えて terminal 側に出てしまう。半角 ASCII は
+    // 通常のキーイベントとして届くので影響を受けない。is_text_input_active
+    // と歩調を合わせてある: 以下の宛先はすべてそちらにも列挙されている。
     if is_text_input_active(app) {
-        // Dispatch paste data to the active overlay input buffer.
+        // ペーストデータをアクティブなオーバーレイの入力バッファへ振り分ける。
         let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
 
         if app.viewer_state.explorer.inline_reply_line.is_some() {
@@ -33,10 +34,10 @@ pub fn handle_paste_event(app: &mut App, data: String) {
                 .inline_reply_buffer
                 .insert_str(&single_line);
         } else if app.review_state.input_mode != ReviewInputMode::Normal {
-            // Review input is multiline.
+            // レビュー入力は複数行。
             app.review_state.input_buffer.insert_str(&data);
         } else if app.worktree_mgr.input_mode == WorktreeInputMode::SmartDescription {
-            // Smart description is multiline.
+            // スマート説明は複数行。
             app.worktree_mgr.smart_description_buffer.insert_str(&data);
         } else if app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktree
             || app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktreeBase
@@ -92,14 +93,14 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         _ => None,
     };
 
-    // Block paste into grabbed worktree terminals.
+    // grab されている worktree の terminal へのペーストはブロックする。
     if app.is_selected_worktree_grabbed() {
         return;
     }
 
     if let Some(idx) = session_idx {
-        // Use chunked write with bracketed-paste wrapping so large pastes
-        // don't overflow the kernel PTY input buffer.
+        // 大きなペーストがカーネルの PTY 入力バッファを溢れさせないよう、
+        // bracketed-paste で包んだチャンク書き込みを使う。
         if let Err(e) = app.terminal.pty_manager.write_paste_to_session(idx, &data) {
             log::warn!("failed to write paste data to PTY session: {e}");
         } else {

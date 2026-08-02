@@ -1,11 +1,11 @@
-//! Config file path resolution, default-file generation, and comment-preserving
-//! in-place persistence of individual settings (theme, high-contrast, layout).
+//! 設定ファイルのパス解決、デフォルトファイルの生成、および個別設定
+//! (テーマ、high-contrast、layout)のコメントを保持したままの in-place 永続化。
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-/// Return the canonical path to the configuration file.
+/// 設定ファイルの正規パスを返す。
 pub fn config_file_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -14,7 +14,7 @@ pub fn config_file_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// Expand a leading `~` to the user's home directory.
+/// 先頭の ~ をユーザのホームディレクトリに展開する。
 pub(super) fn expand_tilde(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     if s.starts_with('~')
@@ -25,7 +25,7 @@ pub(super) fn expand_tilde(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Generate a default configuration file with all settings commented out.
+/// すべての設定をコメントアウトした状態のデフォルト設定ファイルを生成する。
 pub fn generate_default_config() -> String {
     String::from(
         r#"# Conductor configuration file
@@ -160,20 +160,20 @@ pub fn generate_default_config() -> String {
     )
 }
 
-/// Persist a theme selection to `~/.config/conductor/config.toml`.
+/// テーマ選択を ~/.config/conductor/config.toml に永続化する。
 ///
-/// Uses text-based minimal editing to preserve existing comments and structure:
-/// - If the `[ui]` section already has an uncommented `theme = ...` line, it is
-///   replaced in place.
-/// - If the `[ui]` section exists but has no uncommented `theme` line (e.g. only
-///   comments), the line is inserted immediately after the `[ui]` header.
-/// - If no `[ui]` section exists, `\n[ui]\ntheme = "..."\n` is appended.
+/// 既存のコメントと構造を保つため、テキストベースの最小限の編集を行う:
+/// - [ui] セクションに既にコメントアウトされていない theme = ... 行が
+///   あれば、その場で置き換える。
+/// - [ui] セクションはあるがコメントアウトされていない theme 行がない
+///   場合(コメントのみなど)は、[ui] ヘッダの直後に行を挿入する。
+/// - [ui] セクション自体が存在しない場合は \n[ui]\ntheme = "..."\n を追記する。
 pub fn persist_ui_theme(name: &str) -> Result<()> {
     let path = config_file_path();
     let contents = if path.exists() {
         std::fs::read_to_string(&path)?
     } else {
-        // Config file doesn't exist yet; generate defaults and proceed.
+        // 設定ファイルがまだ存在しない場合はデフォルトを生成して進める。
         generate_default_config()
     };
     let updated = upsert_ui_theme(&contents, name);
@@ -181,11 +181,11 @@ pub fn persist_ui_theme(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Write `contents` to `path` atomically: write to a sibling temp file, fsync,
-/// then rename over the target. A crash, kill, or full disk mid-write can no
-/// longer leave the user's hand-edited config truncated or half-written —
-/// `std::fs::write` truncates in place, so the old direct writes could destroy
-/// the whole file on a mistimed failure.
+/// contents を path へアトミックに書き込む: 隣に一時ファイルを作って
+/// 書き込み、fsync してから対象へ rename する。クラッシュ・kill・書き込み中の
+/// ディスクフルが起きても、ユーザが手編集した設定ファイルが途中で切れたり
+/// 壊れたりしなくなる — std::fs::write はその場で切り詰めるため、旧来の
+/// 直接書き込みはタイミングによっては失敗時にファイル全体を破壊しかねなかった。
 pub(super) fn write_atomic(path: &std::path::Path, contents: &str) -> Result<()> {
     let tmp = path.with_extension("toml.tmp");
     {
@@ -198,30 +198,33 @@ pub(super) fn write_atomic(path: &std::path::Path, contents: &str) -> Result<()>
     Ok(())
 }
 
-/// Return `true` when `line` is a bare `[section]` TOML header, possibly
-/// followed by whitespace and/or an inline comment (e.g. `[ui]  # colors`).
-/// Sub-sections like `[ui.fonts]` are deliberately excluded.
+/// line が素の [section] TOML ヘッダ(後ろに空白やインラインコメントが
+/// 続く場合を含む、例: [ui]  # colors)であれば true を返す。
+/// [ui.fonts] のようなサブセクションは意図的に除外する。
 pub(super) fn is_section_header(line: &str, section: &str) -> bool {
     let trimmed = line.trim();
     let bracket = format!("[{section}]");
     if !trimmed.starts_with(&bracket) {
         return false;
     }
-    // After `[section]` only whitespace and/or a `#` comment may follow.
+    // [section] の後には空白か # コメントしか続かないはず。
     let after = trimmed[bracket.len()..].trim_start();
     after.is_empty() || after.starts_with('#')
 }
 
-/// Pure function: upsert `<key> = <value>` in the `[section]` table of a config
-/// file string, preserving all comments and surrounding content.
+/// 純粋関数: 設定ファイル文字列の [section] テーブル内で <key> = <value>
+/// を upsert する。すべてのコメントと周辺の内容は保持する。
 ///
-/// - If the section has an uncommented `key = ...` line, it is replaced in place.
-/// - If the section exists but has no uncommented `key` line (e.g. only the
-///   commented default), the line is inserted right after the section header.
-/// - If the section does not exist, `\n[section]\n<key> = <value>\n` is appended.
+/// - セクションにコメントアウトされていない key = ... 行があれば、その場で
+///   置き換える。
+/// - セクションはあるがコメントアウトされていない key 行がない場合
+///   (コメントアウトされたデフォルトのみなど)は、セクションヘッダの直後に
+///   行を挿入する。
+/// - セクションが存在しない場合は \n[section]\n<key> = <value>\n を追記する。
 ///
-/// `value` must already be formatted as valid TOML (quote strings yourself).
-/// Extracted as a testable helper so file I/O stays separable from the edit.
+/// value はあらかじめ有効な TOML として整形しておくこと(文字列は自分で
+/// クォートする)。ファイル I/O と編集ロジックを分離できるよう、テスト可能な
+/// ヘルパーとして切り出している。
 pub(super) fn upsert_section_kv(contents: &str, section: &str, key: &str, value: &str) -> String {
     let kv_line = format!("{key} = {value}");
     let lines: Vec<&str> = contents.lines().collect();
@@ -229,7 +232,7 @@ pub(super) fn upsert_section_kv(contents: &str, section: &str, key: &str, value:
     let sec_start = lines.iter().position(|l| is_section_header(l, section));
 
     if let Some(sec_idx) = sec_start {
-        // End of section = next bare `[...]` header (not a comment).
+        // セクションの終わりは次の素の [...] ヘッダ(コメントでないもの)。
         let sec_end = lines[sec_idx + 1..]
             .iter()
             .position(|l| {
@@ -239,7 +242,7 @@ pub(super) fn upsert_section_kv(contents: &str, section: &str, key: &str, value:
             .map(|i| sec_idx + 1 + i)
             .unwrap_or(lines.len());
 
-        // Look for an existing uncommented `key = ...` line within the section.
+        // セクション内にコメントアウトされていない key = ... 行がないか探す。
         let key_eq = format!("{key} =");
         let key_eq_tight = format!("{key}=");
         let existing_idx = lines[sec_idx + 1..sec_end]
@@ -254,7 +257,7 @@ pub(super) fn upsert_section_kv(contents: &str, section: &str, key: &str, value:
         if let Some(idx) = existing_idx {
             result_lines[idx] = kv_line;
         } else {
-            // No uncommented key line in the section — insert right after the header.
+            // セクション内にコメントアウトされていない key 行がない — ヘッダの直後に挿入する。
             result_lines.insert(sec_idx + 1, kv_line);
         }
 
@@ -264,7 +267,7 @@ pub(super) fn upsert_section_kv(contents: &str, section: &str, key: &str, value:
         }
         result
     } else {
-        // No such section at all — append one.
+        // そのセクション自体が存在しない — 新しく追記する。
         let mut result = contents.to_string();
         if !result.ends_with('\n') && !result.is_empty() {
             result.push('\n');
@@ -274,15 +277,17 @@ pub(super) fn upsert_section_kv(contents: &str, section: &str, key: &str, value:
     }
 }
 
-/// Pure function: upsert `theme = "<name>"` in the `[ui]` section. Thin wrapper
-/// over [`upsert_section_kv`] kept for call-site clarity and its dedicated tests.
+/// 純粋関数: [ui] セクションで theme = "<name>" を upsert する。呼び出し
+/// 側の分かりやすさと専用テストのために [upsert_section_kv] を薄くラップ
+/// したもの。
 pub(super) fn upsert_ui_theme(contents: &str, name: &str) -> String {
     upsert_section_kv(contents, "ui", "theme", &format!("\"{name}\""))
 }
 
-/// Persist the high-contrast toggle to the `[ui]` section of the config file,
-/// preserving comments and structure. Mirrors [`persist_ui_theme`]; called by
-/// the in-app "Toggle High Contrast" command so the choice survives restarts.
+/// high-contrast のトグルを、コメントと構造を保ったまま設定ファイルの
+/// [ui] セクションに永続化する。[persist_ui_theme] と対をなす関数で、
+/// 選択が再起動後も残るようアプリ内の "Toggle High Contrast" コマンドから
+/// 呼ばれる。
 pub fn persist_ui_high_contrast(enabled: bool) -> Result<()> {
     let path = config_file_path();
     let contents = if path.exists() {
@@ -295,14 +300,15 @@ pub fn persist_ui_high_contrast(enabled: bool) -> Result<()> {
     Ok(())
 }
 
-/// Persist the runtime panel proportions to the `[layout]` section of
-/// `~/.config/conductor/config.toml`, preserving comments and structure.
+/// 実行時のパネル比率を、コメントと構造を保ったまま
+/// ~/.config/conductor/config.toml の [layout] セクションに永続化する。
 ///
-/// Called after a tmux-style pane resize so the chosen ratios survive restarts.
-/// The three values are the explorer/viewer column width percentages and the
-/// Claude-area height percentage within the terminal column. Writing this file
-/// trips the config watcher, but `reload_appearance_config` no-ops because the
-/// running config already holds these values (the appearance snapshot matches).
+/// tmux 式のペインリサイズの後に呼ばれ、選んだ比率が再起動後も残るようにする。
+/// 3つの値は explorer/viewer カラムの幅パーセントと、terminal カラム内での
+/// Claude エリアの高さパーセント。このファイルへの書き込みは config
+/// watcher を発火させるが、実行中の config は既にこれらの値を持っている
+/// (appearance snapshot が一致する)ため reload_appearance_config は
+/// no-op になる。
 pub fn persist_layout_proportions(
     explorer_width_pct: u16,
     viewer_width_pct: u16,

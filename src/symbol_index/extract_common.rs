@@ -1,14 +1,13 @@
-//! Shared tree-sitter AST-walking helpers used by the per-language symbol
-//! extractors (`extract_rust`, `extract_go`, `extract_ts`).
+//! 言語ごとのシンボル抽出器（extract_rust、extract_go、extract_ts）が共有する
+//! tree-sitter AST 走査ヘルパー。
 
 use super::model::{Symbol, SymbolKind};
 
-/// Generic AST walker that calls `visitor` for each node, in pre-order.
+/// 各ノードに対して pre-order で visitor を呼ぶ汎用 AST ウォーカー。
 ///
-/// Iterative rather than recursive so that one `TreeCursor` is threaded
-/// through the whole traversal. The recursive form called `node.walk()` at
-/// every node, and each of those allocates — on this repository that was tens
-/// of thousands of short-lived cursors and about 30% of the extraction pass.
+/// 走査全体を通して1つの TreeCursor を使い回すため、再帰ではなく反復で実装している。
+/// 再帰版はノードごとに node.walk() を呼んでおり、その1回1回がアロケーションを伴う。
+/// このリポジトリでは数万個の短命なカーソルが生成され、抽出処理全体の約30%を占めていた。
 pub(super) fn walk_tree(
     node: tree_sitter::Node,
     source: &str,
@@ -22,8 +21,8 @@ pub(super) fn walk_tree(
         if cursor.goto_first_child() {
             continue;
         }
-        // No children: climb until a sibling appears, or until we run out of
-        // parents, which means the subtree rooted at `node` is exhausted.
+        // 子がない場合は兄弟ノードが見つかるまで親を辿って登る。
+        // 親がなくなったら node を根とする部分木を走り終えたということ。
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
                 return;
@@ -32,7 +31,7 @@ pub(super) fn walk_tree(
     }
 }
 
-/// Extract a named symbol from a node that has a "name" field child.
+/// "name" フィールドを子に持つノードから、名前付きシンボルを抽出する。
 pub(super) fn extract_named_symbol(
     node: tree_sitter::Node,
     source: &str,
@@ -57,7 +56,7 @@ pub(super) fn extract_named_symbol(
     })
 }
 
-/// Get the text content of a tree-sitter node.
+/// tree-sitter ノードのテキスト内容を取得する。
 pub(super) fn node_text<'a>(node: tree_sitter::Node, source: &'a str) -> &'a str {
     &source[node.byte_range()]
 }

@@ -1,4 +1,4 @@
-//! Save, list, and search session output history (the `session_history` table).
+//! セッション出力履歴（session_history テーブル）の保存・一覧・検索。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -8,7 +8,7 @@ use super::ReviewStore;
 use super::model::SessionHistory;
 
 impl ReviewStore {
-    /// Save a snapshot of a session's output to the history database.
+    /// セッション出力のスナップショットを履歴データベースに保存する。
     pub fn save_session_history(
         &self,
         session_id: &str,
@@ -26,7 +26,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Return recent session history records (newest first), limited to `limit`.
+    /// 直近のセッション履歴レコードを新しい順に返す。件数は limit で制限する。
     pub fn list_session_history(&self, limit: usize) -> Result<Vec<SessionHistory>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, worktree, label, kind, output_text, saved_at
@@ -54,8 +54,8 @@ impl ReviewStore {
         Ok(out)
     }
 
-    /// Full-text search on output_text and label (SQL LIKE with % wildcards).
-    /// Limited to 50 results.
+    /// output_text と label を対象に全文検索する（SQL LIKE で % ワイルドカード）。
+    /// 結果は50件まで。
     pub fn search_session_history(&self, query: &str) -> Result<Vec<SessionHistory>> {
         let pattern = format!("%{query}%");
         let mut stmt = self.conn.prepare(
@@ -94,11 +94,11 @@ mod tests {
     fn session_history_save_list_search() {
         let store = test_store();
 
-        // Initially empty.
+        // 最初は空。
         let history = store.list_session_history(50).unwrap();
         assert!(history.is_empty());
 
-        // Save some history records.
+        // 履歴レコードをいくつか保存する。
         store
             .save_session_history("sess-1", "wt1", "CC:1", "claude_code", "Hello world output")
             .unwrap();
@@ -115,29 +115,29 @@ mod tests {
             )
             .unwrap();
 
-        // List returns all three (newest first).
+        // 一覧は3件全て返す（新しい順）。
         let history = store.list_session_history(50).unwrap();
         assert_eq!(history.len(), 3);
-        // Newest first — sess-3 should be first.
+        // 新しい順なので sess-3 が先頭のはず。
         assert_eq!(history[0].session_id, "sess-3");
         assert_eq!(history[0].worktree, "wt2");
         assert_eq!(history[0].kind, "claude_code");
 
-        // Limit works.
+        // limit が効く。
         let history = store.list_session_history(2).unwrap();
         assert_eq!(history.len(), 2);
 
-        // Search by output text.
+        // 出力テキストで検索する。
         let results = store.search_session_history("Error").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id, "sess-3");
 
-        // Search by label.
+        // label で検索する。
         let results = store.search_session_history("SH:1").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id, "sess-2");
 
-        // Search with no matches.
+        // 該当なしの検索。
         let results = store.search_session_history("nonexistent").unwrap();
         assert!(results.is_empty());
     }

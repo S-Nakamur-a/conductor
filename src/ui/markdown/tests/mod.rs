@@ -1,6 +1,6 @@
-//! Test fixtures shared by the markdown renderer's test suite, split by
-//! concern into [`parsing`] (block/inline/table parsing) and [`rendering`]
-//! (wrapping, robustness, code-block/transcript rendering, caching).
+//! markdown レンダラのテストスイートが共有するテスト用フィクスチャ。
+//! parsing（ブロック/インライン/テーブルの解析）と rendering（折り返し・
+//! 堅牢性・コードブロック/transcript の描画・キャッシュ）に関心事ごとに分けてある。
 
 use super::*;
 use super::inline::inline_spans;
@@ -24,7 +24,7 @@ fn fixtures() -> (Theme, SyntaxSet, SyntectTheme) {
     (theme, syntax_set, syntect_theme)
 }
 
-/// Concatenate all span contents of a line into a single string.
+/// 行内のすべての span の内容を1つの文字列に連結する。
 fn line_text(line: &Line) -> String {
     line.spans.iter().map(|s| s.content.as_ref()).collect()
 }

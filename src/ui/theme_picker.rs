@@ -1,7 +1,7 @@
-//! Theme picker overlay — a compact list popup for switching UI themes at runtime.
+//! テーマピッカーオーバーレイ — 実行時に UI テーマを切り替えるコンパクトなリストポップアップ。
 //!
-//! Each entry shows the theme name and a light/dark tag. Up/Down moves the
-//! selection with a live preview; Enter confirms and persists; Esc reverts.
+//! 各エントリはテーマ名と light/dark タグを表示する。上下キーでライブプレビュー付きの
+//! 選択移動、Enter で確定・永続化、Esc で元に戻す。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -12,12 +12,12 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use crate::app::App;
 use crate::theme::Theme;
 
-/// Render the theme picker overlay as a centered modal popup.
+/// テーマピッカーオーバーレイを画面中央のモーダルポップアップとして描画する。
 pub fn render_theme_picker_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let themes = &app.overlays.theme_picker.themes;
 
-    // Size the popup to fit all themes comfortably.
+    // すべてのテーマが余裕を持って収まるようポップアップのサイズを決める。
     let popup_height = (themes.len() as u16 + 2).min(area.height.saturating_sub(4));
     let popup_width = 38_u16.min(area.width.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;

@@ -1,11 +1,11 @@
 //! mpsc チャネルを使うバックグラウンド処理の汎用ラッパー。
 //!
-//! コードベース各所にあった場当たり的な `Option<mpsc::Receiver<T>>` を、
-//! 統一された `BackgroundOp<T>` に置き換える。
+//! コードベース各所にあった場当たり的な Option<mpsc::Receiver<T>> を、
+//! 統一された BackgroundOp<T> に置き換える。
 
 use std::sync::mpsc;
 
-/// mpsc チャネル経由で `T` 型の結果を生むバックグラウンド処理。
+/// mpsc チャネル経由で T 型の結果を生むバックグラウンド処理。
 pub struct BackgroundOp<T> {
     rx: Option<mpsc::Receiver<T>>,
 }
@@ -19,8 +19,8 @@ impl<T> Default for BackgroundOp<T> {
 impl<T: Send + 'static> BackgroundOp<T> {
     /// バックグラウンド処理を開始する。
     ///
-    /// 送信側を渡して `f` を実行するスレッドを立てる。呼び出し側はその後
-    /// `poll()` か `poll_all()` で結果を取り出す。
+    /// 送信側を渡して f を実行するスレッドを立てる。呼び出し側はその後
+    /// poll() か poll_all() で結果を取り出す。
     pub fn start<F>(&mut self, f: F)
     where
         F: FnOnce(mpsc::Sender<T>) + Send + 'static,
@@ -39,7 +39,7 @@ impl<T: Send + 'static> BackgroundOp<T> {
 
 impl<T> BackgroundOp<T> {
     /// 結果を 1 件受け取ろうとする。結果が無いかチャネルが閉じている場合は
-    /// `None` を返す。
+    /// None を返す。
     pub fn poll(&mut self) -> Option<T> {
         let rx = self.rx.as_ref()?;
         match rx.try_recv() {

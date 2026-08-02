@@ -1,6 +1,6 @@
-//! Command-palette dispatch and miscellaneous command handlers not tied to
-//! worktrees or review comments: theme/rich-mode toggles, terminal/search
-//! entry points, and repo/comment-list navigation shortcuts.
+//! コマンドパレットのディスパッチと、worktree やレビューコメントに紐づかない
+//! 雑多なコマンドハンドラ群: テーマ/rich-mode の切り替え、terminal/search の
+//! 入口、リポジトリ/コメント一覧のナビゲーションショートカット。
 
 use super::focus::Focus;
 use super::panel_resize::ResizeDir;
@@ -11,7 +11,7 @@ impl App {
     pub fn execute_palette_command(&mut self, id: crate::command_palette::CommandId) {
         use crate::command_palette::CommandId;
         match id {
-            // Navigation
+            // ナビゲーション
             CommandId::FocusWorktree => self.set_focus(Focus::Worktree),
             CommandId::FocusExplorer => self.set_focus(Focus::Explorer),
             CommandId::FocusViewer => self.set_focus(Focus::Viewer),
@@ -77,10 +77,10 @@ impl App {
         }
     }
 
-    /// Open the theme picker overlay.
+    /// テーマ選択オーバーレイを開く。
     ///
-    /// Captures `theme_name` as the revert target so Esc can restore the theme
-    /// that was active when the picker opened (even after live-preview moves).
+    /// theme_name を復元先として保持しておくことで、(ライブプレビューで動いた
+    /// 後でも)Esc でピッカーを開いた時点で有効だったテーマに戻せる。
     pub fn cmd_open_theme_picker(&mut self) {
         let themes: Vec<String> = crate::theme::Theme::all_names()
             .iter()
@@ -98,11 +98,11 @@ impl App {
         self.overlays.active = ActiveOverlay::ThemePicker;
     }
 
-    // ── Command palette handler methods ──────────────────────────────
+    // コマンドパレットのハンドラメソッド
 
-    /// Toggle the hidden party theme mode (rainbow borders, flashy syntax,
-    /// confetti). A flash message confirms the new state; the whole UI is
-    /// re-rendered so the effect appears/disappears immediately.
+    /// 隠しパーティーテーマモード(虹色の枠線、派手なシンタックス、紙吹雪)を
+    /// 切り替える。新しい状態はフラッシュメッセージで確認でき、UI 全体を
+    /// 再描画するので効果は即座に現れる/消える。
     fn cmd_toggle_party_mode(&mut self) {
         self.party_mode = !self.party_mode;
         if self.party_mode {
@@ -113,9 +113,9 @@ impl App {
         self.dirty.mark_all();
     }
 
-    /// Toggle rich mode between off and the tier detected at startup. On
-    /// terminals where detection found nothing, toggling on falls back to
-    /// Tier A (same behaviour as `[rich] mode = "force"`).
+    /// rich mode を、オフと起動時に検出したティアの間で切り替える。検出で
+    /// 何も見つからなかった端末では、オンにすると Tier A にフォールバック
+    /// する([rich] mode = "force" と同じ挙動)。
     fn cmd_toggle_rich_mode(&mut self) {
         use crate::term_caps::RichTier;
         if self.rich.is_rich() {
@@ -132,14 +132,14 @@ impl App {
         self.dirty.mark_all();
     }
 
-    /// Toggle the high-contrast theme transform live, persist the choice, and
-    /// rebuild the theme-dependent caches so the change is visible immediately.
+    /// ハイコントラストのテーマ変換をその場で切り替え、選択を永続化し、
+    /// テーマ依存のキャッシュを再構築して変更を即座に反映させる。
     fn cmd_toggle_high_contrast(&mut self) {
         self.theme_sel.high_contrast = !self.theme_sel.high_contrast;
         self.config.ui.high_contrast = self.theme_sel.high_contrast;
         self.theme = super::build_theme(&self.theme_sel.name, self.theme_sel.high_contrast);
 
-        // Caches that bake theme colours into rendered spans must be rebuilt.
+        // テーマの色を描画済みの span に焼き込んでいるキャッシュは再構築が必要。
         self.markdown_cache.clear();
         self.reflow.last_width = 0;
         self.reflow.cache.clear();
@@ -262,11 +262,12 @@ impl App {
         self.set_focus(Focus::Explorer);
     }
 
-    /// Palette/keybinding entry point: switch the Explorer's bottom pane to
-    /// the AI walkthrough view and focus the Explorer, mirroring
-    /// `cmd_show_diff_list`/`cmd_show_comment_list`. `cmd_generate_walkthrough`
-    /// uses a display-only variant instead (see its doc comment) so kicking
-    /// off a generation never steals focus from an active terminal input.
+    /// パレット/キーバインドの入口: Explorer の下段ペインを AI walkthrough
+    /// ビューに切り替え、Explorer にフォーカスする。
+    /// cmd_show_diff_list/cmd_show_comment_list と同じ構図。
+    /// cmd_generate_walkthrough は代わりに表示専用のバリアントを使う
+    /// (そちらのドキュメントコメント参照)ので、生成の開始が実行中の
+    /// terminal 入力からフォーカスを奪うことは決してない。
     fn cmd_show_walkthrough(&mut self) {
         self.viewer_state.explorer.explorer_bottom_view =
             crate::viewer::ExplorerBottomView::Walkthrough;

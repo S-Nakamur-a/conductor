@@ -1,20 +1,17 @@
-//! Transcript-flavor fenced-code-block rendering: native Claude Code draws
-//! code with no card chrome at all (no background, no inset, no blank
-//! padding rows) and colours tokens with only the terminal's 8 basic ANSI
-//! colours, chosen by classifying syntect's *scope names* rather than by
-//! translating its RGB theme output (see `render.rs::render_code_block` for
-//! the Rich-flavor "card" this deliberately does not touch). Kept as its own
-//! module since the scope-classification logic here is unrelated to the
-//! card-layout code next to it.
+//! Transcript フレーバーのフェンス付きコードブロック描画。実物の Claude Code はコードを
+//! カードの装飾なしで（背景も、字下げも、余白の空行もなし）描画し、トークンの色付けは
+//! ターミナルの基本 ANSI 8色だけを使う。色の選択は syntect の RGB テーマ出力を変換する
+//! のではなく、スコープ名を分類することで行う（render.rs の render_code_block にある
+//! Rich フレーバーの「カード」は、これとは意図的に無関係）。ここでのスコープ分類ロジックは
+//! 隣にあるカードレイアウトのコードとは関係がないため、独立したモジュールにしている。
 //!
-//! The classification rules below were built by inspecting the scope stacks
-//! `two_face::syntax::extra_newlines()` actually produces for Rust, Python,
-//! Bash and JSON (see the module's tests for the exact fixtures), matched
-//! against a native capture's token-by-token colours. Several of the
-//! required distinctions (`let` vs `str`, `ls` vs `grep`, `Some`/`None` vs
-//! `Option`/`String`) are simply not encoded in these syntaxes' scope names
-//! — the sublime-syntax packages reuse one scope for both — so a handful of
-//! literal-token overrides fill the gap the scopes can't.
+//! 以下の分類ルールは、two_face::syntax::extra_newlines() が Rust/Python/Bash/JSON に
+//! 対して実際に出力するスコープスタックを調べ（正確なフィクスチャはこのモジュールの
+//! テストを参照）、それを実物のキャプチャのトークンごとの色と突き合わせて作った。
+//! 必要な区別のいくつか（let と str、ls と grep、Some/None と Option/String）は、
+//! これらのシンタックス（sublime-syntax パッケージ）のスコープ名だけでは表現されておらず
+//! 両方に同じスコープが使い回されている。そのためスコープでは埋められない部分を、
+//! 少数のリテラルトークンによる特例で補っている。
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -23,31 +20,29 @@ use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxSet};
 
 use super::wrap::{spans_to_cells, wrap_cells};
 
-/// Rust primitive type names: the bundled `rust.sublime-syntax` scopes these
-/// identically to the `let`/`const` storage keywords (`storage.type.rust`,
-/// no further suffix), so only the literal text tells them apart. This list
-/// covers every primitive Rust actually has, so it's complete on its own
-/// terms — but it was written to make the acceptance fixtures pass, not
-/// cross-checked token-by-token against a native capture, so treat it as a
-/// best guess rather than a verified table.
+/// Rust のプリミティブ型名。同梱の rust.sublime-syntax はこれらを let/const の
+/// ストレージキーワードと同じスコープ（storage.type.rust、それ以上のサフィックスなし）に
+/// 分類するため、リテラルのテキストでしか見分けられない。このリストは Rust に実在する
+/// プリミティブを網羅しているという意味では完全だが、受け入れフィクスチャを通すために
+/// 書いたものであり、実物のキャプチャとトークンごとに突き合わせて検証したわけではない。
+/// 検証済みの表ではなく、あくまで最善の推測として扱うこと。
 const RUST_PRIMITIVE_TYPES: &[&str] = &[
     "str", "bool", "char", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64",
     "i128", "isize", "f32", "f64",
 ];
 
-/// Bash command names the grammar leaves scoped as plain
-/// `variable.function.shell` — indistinguishable from an arbitrary external
-/// command like `grep` — but that native still colours as a builtin.
+/// 文法上は単なる variable.function.shell としかスコープされない（grep のような任意の
+/// 外部コマンドと見分けがつかない）が、実物ではビルトインとして色付けされる Bash の
+/// コマンド名。
 ///
-/// This is **not** a builtin-command reference list: it only contains the
-/// one word (`ls`) the acceptance fixture happens to exercise. Anything not
-/// listed here (`cd`, `pwd`, `export` is handled separately below, ...)
-/// falls through to `Category::Reset`, which may or may not match native —
-/// unverified. Extend this list only from an actual native capture, not from
-/// guessing at what "should" be a builtin.
+/// これはビルトインコマンドの網羅的な参照表ではない。受け入れフィクスチャがたまたま
+/// 使っている1語（ls）だけを含む。ここに載っていないもの（cd、pwd。export は下で別途
+/// 扱う、など）は Category::Reset にフォールスルーするが、それが実物と一致するかは
+/// 未検証。このリストは実際の実物キャプチャから拡張すること。「これはビルトインの
+/// はず」という推測で足さないこと。
 const BASH_COMMANDS_MEASURED_AS_BUILTIN: &[&str] = &["ls"];
 
-/// One native basic-ANSI-colour token category.
+/// 実物の基本 ANSI 色に対応するトークンのカテゴリ1つ分。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Category {
     Comment,
@@ -75,12 +70,10 @@ impl Category {
     }
 }
 
-/// Tracks whether the token stream is currently inside a `string.quoted.*`
-/// run and whether that run has been interrupted by an embedded expression
-/// (f-string interpolation, shell `$VAR` expansion). Native's own quirk,
-/// confirmed against the capture: once a string is interrupted, everything
-/// from that point on — including the closing delimiter — reverts to the
-/// default colour instead of staying string-red.
+/// トークン列が現在 string.quoted.* の範囲内にあるかどうか、またその範囲が埋め込み式
+/// （f文字列の展開、シェルの $VAR 展開）によって中断されたかどうかを追跡する。
+/// 実物のキャプチャで確認した実物特有の癖: 文字列が一度中断されると、その時点から
+/// 閉じデリミタを含めて文字列の赤色ではなくデフォルト色に戻る。
 #[derive(Default)]
 struct StringState {
     in_string: bool,
@@ -88,14 +81,13 @@ struct StringState {
 }
 
 impl StringState {
-    /// Update bookkeeping from one token's scope stack. Returns `Some(true)`
-    /// if this token sits on an uninterrupted (red) part of a string,
-    /// `Some(false)` if it's part of an interrupted string (delimiter or
-    /// literal text after the embedded expression), or `None` if the token
-    /// isn't itself scoped as `string.quoted.*` (so the caller should keep
-    /// evaluating other classification rules — this covers embedded
-    /// expression tokens, e.g. Python's `{x}`, which drop the string scope
-    /// entirely while still living inside the string run).
+    /// トークン1つ分のスコープスタックから状態を更新する。このトークンが中断されていない
+    /// （赤色の）文字列部分にあれば Some(true)、中断された文字列の一部（デリミタや
+    /// 埋め込み式の後のリテラルテキスト）であれば Some(false)、トークン自体が
+    /// string.quoted.* にスコープされていなければ None を返す（呼び出し元は他の分類
+    /// ルールの評価を続けるべき、ということ。これは Python の {x} のような、文字列の
+    /// スコープを完全に外れつつも文字列の範囲内には留まっている埋め込み式トークンを
+    /// カバーするため）。
     fn observe(&mut self, scopes: &[String]) -> Option<bool> {
         let has_quoted = scopes.iter().any(|s| s.starts_with("string.quoted."));
         if has_quoted && !self.in_string {
@@ -127,25 +119,25 @@ fn is_identifier(text: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Classify one token given its full scope stack (outermost first) and the
-/// raw text of the next token on the line (for the call-site fallback).
+/// トークン1つを、そのスコープスタック全体（最も外側が先頭）と行内の次のトークンの
+/// 生テキスト（呼び出し箇所フォールバック用）から分類する。
 fn classify(
     text: &str,
     scopes: &[String],
     next_text: Option<&str>,
     string_state: &mut StringState,
 ) -> Category {
-    // Comments win regardless of what else is nested inside them.
+    // コメントは、その中に他の何がネストしていても優先される。
     if scopes.iter().any(|s| s.starts_with("comment.")) {
         return Category::Comment;
     }
-    // JSON object keys: scoped as a string, but native colours them like a
-    // builtin/keyword, not like a string value. Must be checked before the
-    // generic string rule below.
+    // JSON のオブジェクトキー: 文字列としてスコープされるが、実物では文字列値ではなく
+    // ビルトイン/キーワードのように色付けされる。下の汎用の文字列ルールより前に
+    // チェックする必要がある。
     if scopes.iter().any(|s| s.starts_with("meta.mapping.key.")) {
         return Category::Builtin;
     }
-    // String literal content and delimiters (state machine; see `StringState`).
+    // 文字列リテラルの中身とデリミタ（状態機械。StringState を参照）。
     if let Some(uninterrupted) = string_state.observe(scopes) {
         return if uninterrupted {
             Category::StringLit
@@ -153,15 +145,15 @@ fn classify(
             Category::Reset
         };
     }
-    // A format-string prefix (Python's `f` before the opening quote) reads
-    // as part of the string even though it sits before `string.quoted.*`.
+    // フォーマット文字列の接頭辞（Python の開き引用符の前の f）は string.quoted.* より
+    // 前に来るが、文字列の一部として読める。
     if scopes.iter().any(|s| s.starts_with("storage.type.string.")) {
         return Category::StringLit;
     }
     if scopes.iter().any(|s| s.starts_with("constant.numeric.")) {
         return Category::Number;
     }
-    // `true`/`false`/`null` and similar (JSON).
+    // true/false/null など（JSON）。
     if scopes.iter().any(|s| s.starts_with("constant.language.")) {
         return Category::Keyword;
     }
@@ -171,16 +163,16 @@ fn classify(
     {
         return Category::Keyword;
     }
-    // Rust `fn`/`struct`: their own unambiguous `storage.type.*` sub-scopes.
+    // Rust の fn/struct: それぞれ曖昧さのない独自の storage.type.* サブスコープを持つ。
     if scopes
         .iter()
         .any(|s| s.starts_with("storage.type.function.") || s.starts_with("storage.type.struct."))
     {
         return Category::Keyword;
     }
-    // Bare `storage.type.rust`: Rust's grammar reuses this identical scope
-    // for both storage keywords (`let`, `const`) and primitive type names
-    // (`str`, `bool`, `usize`, ...) — only the literal text distinguishes them.
+    // 素の storage.type.rust: Rust の文法はこの同じスコープを、ストレージキーワード
+    // （let、const）とプリミティブ型名（str、bool、usize、...）の両方に使い回す。
+    // リテラルのテキストでしか見分けられない。
     if scopes.iter().any(|s| s == "storage.type.rust") {
         return if RUST_PRIMITIVE_TYPES.contains(&text) {
             Category::Type
@@ -191,28 +183,25 @@ fn classify(
     if scopes.iter().any(|s| s.starts_with("entity.name.function.")) {
         return Category::FunctionName;
     }
-    // Builtin functions the grammar tags explicitly (Python's `range`, Bash's
-    // `echo`). Guarded to word-like text so scopes that reuse the
-    // `support.function.` prefix for punctuation (Bash's `[ ]` test
-    // brackets) don't get swept in.
+    // 文法が明示的にタグ付けするビルトイン関数（Python の range、Bash の echo）。
+    // 単語らしいテキストに絞っているのは、support.function. プレフィックスが句読点
+    // （Bash の [ ] テストブラケット）にも使い回されるスコープを巻き込まないため。
     if is_identifier(text) && scopes.iter().any(|s| s.starts_with("support.function.")) {
         return Category::Builtin;
     }
-    // Bash's generic command-name scope covers both builtins (`ls`) and
-    // ordinary external commands (`grep`) identically; only a literal
-    // allow-list tells them apart.
+    // Bash の汎用コマンド名スコープは、ビルトイン（ls）と通常の外部コマンド（grep）を
+    // 同一に扱う。リテラルの許可リストでしか見分けられない。
     if scopes.iter().any(|s| s == "variable.function.shell")
         && BASH_COMMANDS_MEASURED_AS_BUILTIN.contains(&text)
     {
         return Category::Builtin;
     }
-    // Bash builtin keywords like `export`.
+    // export のような Bash のビルトインキーワード。
     if scopes.iter().any(|s| s == "storage.modifier.shell") {
         return Category::Builtin;
     }
-    // Types — Rust overloads this scope for enum variants too (`Some` is a
-    // call, `None` is a language constant); everything else here really is
-    // a type name (`Option`, `String`, `Vec`, ...).
+    // 型 — Rust はこのスコープを enum のバリアントにも使い回す（Some は呼び出し、
+    // None は言語定数）。それ以外はここでは本当に型名（Option、String、Vec、...）。
     if scopes.iter().any(|s| s.starts_with("support.type.")) {
         return match text {
             "None" => Category::Keyword,
@@ -220,21 +209,20 @@ fn classify(
             _ => Category::Type,
         };
     }
-    // Class/struct names print unstyled, not as a function name — important
-    // since a definition like `class C(object):` immediately follows the
-    // name with a `(`, which would otherwise trip the call-site fallback below.
+    // クラス/構造体の名前は関数名としてではなく無装飾で表示する。class C(object): の
+    // ような定義では名前の直後に ( が続くため、これを外すと下の呼び出し箇所
+    // フォールバックに誤って引っかかってしまう。
     if scopes
         .iter()
         .any(|s| s.starts_with("entity.name.class.") || s.starts_with("entity.name.struct."))
     {
         return Category::Reset;
     }
-    // Python base-class position: only recognised builtins (`object`) read
-    // as a language constant; a custom base class stays unstyled. `object`
-    // is the only builtin the acceptance fixture exercises here — this is
-    // not a verified list of every Python builtin that reads this way
-    // (`int`, `Exception`, ...); extend it only from an actual native
-    // capture.
+    // Python の基底クラス位置: 認識済みのビルトイン（object）だけが言語定数として
+    // 読まれ、カスタムの基底クラスは無装飾のまま。ここで受け入れフィクスチャが
+    // 使っているビルトインは object のみで、この位置で同様に読まれる Python の
+    // 全ビルトイン（int、Exception、...）を網羅した検証済みリストではない。
+    // 実際の実物キャプチャからのみ拡張すること。
     if scopes.iter().any(|s| s.starts_with("entity.other.inherited-class.")) {
         return if text == "object" {
             Category::Keyword
@@ -242,37 +230,35 @@ fn classify(
             Category::Reset
         };
     }
-    // Rust's `as` cast keyword shares its scope with symbol operators (`&`,
-    // `+`, ...) that must stay unstyled, so only the literal token can pick
-    // it out. `as` is the only `keyword.operator.rust` token the fixture
-    // exercises; other word-like operators under this scope (if any exist
-    // in the grammar) aren't verified against native and would currently
-    // fall through to `Category::Reset`.
+    // Rust の as キャストキーワードは、無装飾のままであるべき記号演算子（&、+、...）と
+    // 同じスコープを共有するため、リテラルトークンでしか判別できない。フィクスチャが
+    // 使う keyword.operator.rust のトークンは as のみで、このスコープ下に他の
+    // 単語らしい演算子が文法上存在するとしても実物とは未検証で、現状は
+    // Category::Reset にフォールスルーする。
     if text == "as" && scopes.iter().any(|s| s.starts_with("keyword.operator.")) {
         return Category::Keyword;
     }
-    // Fallback: the grammar didn't tag this as a function name (e.g. Rust's
-    // `String::from(...)`, a path-qualified call it doesn't recognise), but
-    // an identifier directly followed by `(` reads as a call in every
-    // language captured natively.
+    // フォールバック: 文法がこれを関数名としてタグ付けしなかった場合（Rust の
+    // String::from(...) のような、認識されないパス修飾つき呼び出しなど）でも、
+    // 識別子の直後に ( が続けば、どの言語でも実物では呼び出しとして読まれる。
     if is_identifier(text) && next_text.is_some_and(|n| n.starts_with('(')) {
         return Category::FunctionName;
     }
     Category::Reset
 }
 
-/// Highlight one already-newline-terminated source line, threading `stack`
-/// and `string_state` across calls so multi-token constructs (and, in
-/// principle, multi-line strings) classify consistently.
+/// 既に改行で終端されたソース行1つをハイライトする。stack と string_state を呼び出し
+/// 間で引き継ぐことで、複数トークンにまたがる構文（原理的には複数行文字列も）を
+/// 一貫して分類できるようにする。
 fn classify_line(
     line: &str,
     ops: &[(usize, ScopeStackOp)],
     stack: &mut ScopeStack,
     string_state: &mut StringState,
 ) -> Vec<Span<'static>> {
-    // First pass: apply every op and record each non-empty region's text and
-    // scope stack. A second pass (below) then classifies with one token of
-    // lookahead, needed for the call-site fallback.
+    // 1回目のパス: すべての op を適用し、空でない各領域のテキストとスコープスタックを
+    // 記録する。2回目のパス（下）ではトークン1個分の先読みで分類する。これは
+    // 呼び出し箇所フォールバックに必要。
     let mut tokens: Vec<(String, Vec<String>)> = Vec::new();
     for (text, op) in ScopeRegionIterator::new(ops, line) {
         let _ = stack.apply(op);
@@ -294,10 +280,9 @@ fn classify_line(
     spans
 }
 
-/// Render a fenced code block the way native Claude Code does: no card
-/// chrome (background/inset/padding), source indentation preserved, hard
-/// wrap at `width`, tokens coloured with the 8 basic ANSI colours per
-/// [`classify`].
+/// フェンス付きコードブロックを実物の Claude Code と同じ見た目で描画する:
+/// カードの装飾（背景/字下げ/パディング）なし、ソースの字下げは保持、width で
+/// ハードラップ、トークンは classify に従って基本 ANSI 8色で色付けする。
 pub(crate) fn render_code_block_transcript(
     lang: Option<&str>,
     lines: &[String],
@@ -313,7 +298,7 @@ pub(crate) fn render_code_block_transcript(
 
     let mut out = Vec::with_capacity(lines.len());
     for raw in lines {
-        // Expand tabs so display-width math (and thus wrapping) stays correct.
+        // タブを展開し、表示幅の計算（ひいては折り返し）が正しく行われるようにする。
         let expanded = raw.replace('\t', "    ");
         let with_nl = format!("{expanded}\n");
         let spans = match parse_state.parse_line(&with_nl, syntax_set) {

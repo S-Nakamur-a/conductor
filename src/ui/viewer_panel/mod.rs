@@ -1,17 +1,15 @@
-//! Viewer panel — file content display with diff highlights and review comments.
+//! ビューアパネル — diff ハイライトとレビューコメント付きのファイル内容表示。
 //!
-//! Shows the content of the selected file in the middle column. Lines that
-//! have been modified (according to diff_state) are highlighted inline.
-//! Review comments are shown as inline badges.
+//! 中央カラムに選択中ファイルの内容を表示する。diff_state 上で変更のあった行は
+//! インラインでハイライトされる。レビューコメントはインラインバッジとして表示される。
 //!
-//! Split by rendering responsibility: [`file_view`] draws the plain/annotated
-//! file content (the panel's default mode), [`diff_view`] the unified-diff
-//! mode, [`summary_view`] the branch change-summary pseudo-file,
-//! [`markdown_view`] a markdown file rendered as prose (and its Raw/Rendered
-//! header toggle), [`media_view`] images/video, [`comment_thread`] inline
-//! review-comment threads and the new-comment compose box, [`syntax`]
-//! syntax/diff annotation helpers, [`span_utils`] generic `Span` manipulation,
-//! and [`search_box`] the in-panel search input.
+//! 描画の責務ごとに分割されている: [file_view] はプレーン/注釈付きファイル内容
+//! （パネルのデフォルトモード）、[diff_view] は unified-diff モード、[summary_view]
+//! はブランチの変更概要疑似ファイル、[markdown_view] は markdown ファイルを文章として
+//! 描画する（Raw/Rendered ヘッダー切り替えも含む）、[media_view] は画像/動画、
+//! [comment_thread] はインラインのレビューコメントスレッドと新規コメント作成ボックス、
+//! [syntax] は syntax/diff の注釈ヘルパー、[span_utils] は汎用の Span 操作、
+//! [search_box] はパネル内検索入力。
 
 mod code_line;
 mod comment_thread;
@@ -28,45 +26,44 @@ mod syntax;
 pub use file_view::render;
 pub(crate) use markdown_view::toggle_segments;
 
-/// Shared definition of the inline-thread action row.
+/// インラインスレッドのアクション行の共有定義。
 ///
-/// The renderer ([`comment_thread::build_inline_thread_lines`]) and the mouse
-/// hit-testing in `event/mouse.rs` must agree on where each action sits; both
-/// derive their layout from these constants so a label change cannot silently
-/// break click targets.
+/// レンダラー（[comment_thread::build_inline_thread_lines]）と event/mouse.rs の
+/// マウスヒットテストは、各アクションの位置について一致していなければならない。
+/// どちらもこれらの定数からレイアウトを導出するので、ラベルを変更してもクリック対象が
+/// 気づかぬうちに壊れることはない。
 pub(crate) mod thread_actions {
     pub const REPLY: &str = "\u{21a9} reply"; // ↩ reply
     pub const RESOLVE: &str = "\u{2713} resolve"; // ✓ resolve
     pub const UNRESOLVE: &str = "\u{21ba} unresolve"; // ↺ unresolve
     pub const DELETE: &str = "\u{2717} delete"; // ✗ delete
     pub const ASK_CLAUDE: &str = "\u{2728} ask claude"; // ✨ ask claude
-    /// Columns of spacing between actions.
+    /// アクション間の間隔（列数）。
     pub const GAP: usize = 2;
 
     fn w(s: &str) -> usize {
         unicode_width::UnicodeWidthStr::width(s)
     }
 
-    /// Width the status (resolve/unresolve) slot is padded to, so the delete
-    /// action starts at a stable column regardless of the current status.
+    /// status（resolve/unresolve）スロットのパディング先の幅。現在の status に
+    /// 関わらず delete アクションが常に同じ列から始まるようにする。
     pub fn status_slot_width() -> usize {
         w(RESOLVE).max(w(UNRESOLVE))
     }
 
-    /// Clicks left of this column (relative to the action-row content start)
-    /// hit "reply".
+    /// この列（アクション行コンテンツ開始位置からの相対位置）より左側のクリックは
+    /// "reply" に当たる。
     pub fn reply_end() -> usize {
         w(REPLY) + GAP
     }
 
-    /// Clicks in `reply_end()..resolve_end()` hit "resolve"/"unresolve";
-    /// clicks at or beyond it hit "delete" (or "ask claude" on the far right).
+    /// reply_end()..resolve_end() の範囲のクリックは "resolve"/"unresolve" に、
+    /// それ以降は "delete"（さらに右端なら "ask claude"）に当たる。
     pub fn resolve_end() -> usize {
         reply_end() + status_slot_width() + GAP
     }
 
-    /// Display width of the right-aligned "ask claude" button, for hit-testing
-    /// against the panel's right edge.
+    /// 右寄せの "ask claude" ボタンの表示幅。パネル右端に対するヒットテストに使う。
     pub fn ask_claude_width() -> usize {
         w(ASK_CLAUDE)
     }

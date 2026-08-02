@@ -1,56 +1,54 @@
-//! Cached per-frame layout rectangles and the accordion width calculation
-//! they're built from.
+//! フレーム毎にキャッシュされるレイアウト矩形と、その元になるアコーディオン幅の計算。
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
-/// Rows the menu bar occupies. Constant — the bar is always drawn, so it is not
-/// a cache key (nothing about the app state can change it).
+/// メニューバーが占める行数。定数――バーは常に描画されるためキャッシュキーには含めない
+/// （アプリ状態がこれを変えることはない）。
 const MENUBAR_HEIGHT: u16 = 1;
 
-/// Cached layout rectangles computed once per frame.
-/// Shared between render_ui, mouse event handler, PTY sizing, and decoration.
+/// フレーム毎に一度だけ計算されるレイアウト矩形のキャッシュ。
+/// render_ui、マウスイベントハンドラ、PTY サイジング、装飾表示で共有される。
 #[derive(Default, Clone)]
 pub struct LayoutCache {
-    /// Frame area used to compute this cache (cache key).
+    /// このキャッシュを計算した時のフレーム領域（キャッシュキー）。
     pub frame_area: Rect,
-    /// Expanded panel state when cache was computed (cache key).
+    /// このキャッシュを計算した時の最大化パネル状態（キャッシュキー）。
     pub expanded_panel: Option<crate::app::Focus>,
-    /// Whether notification bar was visible (cache key).
+    /// 通知バーが表示されていたか（キャッシュキー）。
     pub has_notifications: bool,
-    /// Explorer column width % used when computing this cache (cache key).
+    /// このキャッシュ計算時に使った Explorer カラム幅の割合（キャッシュキー）。
     pub explorer_width_pct: u16,
-    /// Viewer column width % used when computing this cache (cache key).
+    /// このキャッシュ計算時に使った Viewer カラム幅の割合（キャッシュキー）。
     pub viewer_width_pct: u16,
-    /// Claude Code area height % within the terminal column (cache key).
+    /// ターミナルカラム内での Claude Code 領域の高さの割合（キャッシュキー）。
     pub terminal_split_pct: u16,
-    /// File-tree height % within the Explorer column (cache key).
+    /// Explorer カラム内でのファイルツリー高さの割合（キャッシュキー）。
     pub explorer_split_pct: u16,
-    /// Title bar area.
+    /// タイトルバー領域。
     pub title_area: Rect,
-    /// Menu bar area — one row directly under the title bar. Unlike the
-    /// worktree strip this is *not* hidden while a panel is maximized: a menu
-    /// you can only reach by un-maximizing is a menu you stop reaching for, and
-    /// the maximized panel is exactly where you are most likely to want a
-    /// command you don't have memorised.
+    /// メニューバー領域――タイトルバー直下の1行。worktree ストリップと違い、
+    /// パネル最大化中でも非表示にしない。最大化を解除しないと開けないメニューは
+    /// 使われなくなるし、覚えていないコマンドを呼びたくなるのはまさに
+    /// パネルを最大化している時だからである。
     pub menubar_area: Rect,
-    /// Notification bar area.
+    /// 通知バー領域。
     pub notif_area: Rect,
-    /// Worktree monitor strip area (full-width, between notif and main).
+    /// worktree 監視ストリップ領域（全幅、notif と main の間）。
     pub wtbar_area: Rect,
-    /// Main content area (between title and status bars).
+    /// メインコンテンツ領域（タイトルバーとステータスバーの間）。
     pub main_area: Rect,
-    /// Status bar area.
+    /// ステータスバー領域。
     pub status_area: Rect,
-    /// Column areas: [worktree, explorer, viewer, terminal].
+    /// カラム領域: [worktree, explorer, viewer, terminal]。
     pub columns: [Rect; 4],
-    /// Explorer panel vertical split mid-point Y coordinate.
+    /// Explorer パネルの垂直分割の中間 Y 座標。
     pub explorer_mid_y: u16,
-    /// Terminal split: [claude_area, shell_area].
+    /// ターミナル分割: [claude_area, shell_area]。
     pub terminal_split: [Rect; 2],
 }
 
 impl LayoutCache {
-    /// Recompute layout if inputs changed. Returns true if cache was updated.
+    /// 入力が変化していればレイアウトを再計算する。更新した場合は true を返す。
     pub fn update(
         &mut self,
         frame_area: Rect,
@@ -75,16 +73,16 @@ impl LayoutCache {
         self.has_notifications = has_notifications;
         self.explorer_width_pct = layout.explorer_width_pct;
         self.viewer_width_pct = layout.viewer_width_pct;
-        // The terminal split is runtime-adjustable (grow/shrink shell), so it
-        // comes in as a parameter rather than straight from the config.
+        // ターミナル分割は実行時に調整可能（shell の拡大縮小）なので、
+        // config からではなくパラメータとして渡ってくる。
         self.terminal_split_pct = terminal_split_pct;
         self.explorer_split_pct = layout.explorer_split_pct;
 
-        // The notification bar is gone — Claude-waiting state is now shown by
-        // the worktree strip (the waiting worktree is highlighted there).
+        // 通知バーは廃止済み――Claude の待機状態は worktree ストリップ側で表示する
+        // （待機中の worktree がそこでハイライトされる）。
         let notif_height: u16 = 0;
-        // The worktree monitor strip is hidden while a panel is maximized, to
-        // give the expanded panel the full height.
+        // worktree 監視ストリップは、パネル最大化中は非表示にして
+        // 最大化パネルに全高を与える。
         let wtbar_height: u16 = if expanded_panel.is_some() { 0 } else { 1 };
 
         let outer = Layout::vertical([
@@ -125,7 +123,7 @@ impl LayoutCache {
 
         self.columns = [cols[0], cols[1], cols[2], cols[3]];
 
-        // Explorer 50/50 vertical split
+        // Explorer 50/50 の垂直分割
         let changed_files_pct = 100u16.saturating_sub(self.explorer_split_pct);
         let explorer_split = Layout::vertical([
             Constraint::Percentage(self.explorer_split_pct),
@@ -134,8 +132,8 @@ impl LayoutCache {
         .split(self.columns[1]);
         self.explorer_mid_y = explorer_split[1].y;
 
-        // Terminal vertical split: Claude Code gets `terminal_split_pct`%,
-        // shell gets the remainder.
+        // ターミナルの垂直分割: Claude Code が terminal_split_pct%、
+        // 残りを shell が受け取る。
         let shell_pct = 100u16.saturating_sub(terminal_split_pct);
         let terminal_split = Layout::vertical([
             Constraint::Percentage(terminal_split_pct),
@@ -148,11 +146,11 @@ impl LayoutCache {
     }
 }
 
-/// Calculate accordion panel widths based on panel expansion state.
+/// パネルの最大化状態に基づいてアコーディオンパネルの幅を計算する。
 ///
-/// Returns `(left_width, explorer_width, viewer_width)`. The right panel gets
-/// whatever remains. `explorer_pct` and `viewer_pct` are the configured
-/// percentages (0–100) used only in the default (non-maximized) layout.
+/// (left_width, explorer_width, viewer_width) を返す。right パネルは残り全部を
+/// 受け取る。explorer_pct と viewer_pct は設定された割合（0〜100）で、
+/// デフォルト（未最大化）のレイアウトでのみ使われる。
 pub(crate) fn accordion_widths(
     expanded_panel: Option<crate::app::Focus>,
     total_width: u16,
@@ -165,16 +163,16 @@ pub(crate) fn accordion_widths(
         Some(Focus::Worktree) => (total_width, 0, 0),
         Some(Focus::Explorer) => (0, total_width, 0),
         Some(Focus::Viewer) => (0, 0, total_width),
-        // The maximized editor takes the whole width via the explorer slot;
-        // `render_ui` unions the explorer+viewer columns into one editor area,
-        // so giving the explorer slot the full width (viewer 0) yields a
-        // full-screen editor with the terminal column collapsed.
+        // 最大化したエディタは explorer 側の枠を通じて全幅を得る。
+        // render_ui は explorer+viewer カラムを1つの editor 領域として統合するので、
+        // explorer 側の枠に全幅を与える（viewer は0）ことで、ターミナルカラムが
+        // 消えたフルスクリーンのエディタになる。
         Some(Focus::Editor) => (0, total_width, 0),
         Some(Focus::TerminalClaude | Focus::TerminalShell) => (0, 0, 0),
         None => {
-            // Default proportions. The worktree column is gone (its status now
-            // lives in the top strip), so it gets width 0 and the freed space
-            // goes to the explorer and viewer review panes.
+            // デフォルトの比率。worktree カラムは廃止済み（その状態は上部ストリップに
+            // 移った）ので幅は0になり、空いたスペースは explorer と viewer の
+            // レビューペインに回る。
             let min_col = 3_u16;
             let explorer =
                 ((total_width as u32 * explorer_pct as u32 / 100) as u16).max(min_col);

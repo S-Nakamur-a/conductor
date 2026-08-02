@@ -1,11 +1,11 @@
-//! In-panel filename search input, rendered at the bottom of the explorer.
+//! エクスプローラ下部に表示するパネル内ファイル名検索の入力欄。
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-/// Render a search input box at the bottom of the given area.
+/// 指定領域の下部に検索入力欄を描画する。
 pub(super) fn render_search_box(
     frame: &mut Frame,
     area: Rect,
@@ -30,7 +30,7 @@ pub(super) fn render_search_box(
     ));
     frame.render_widget(paragraph, search_area);
     if !suppress_cursor {
-        // +1 for the leading '/' character
+        // 先頭の '/' 文字の分だけ +1
         let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
         if cursor_x < search_area.x + search_area.width {
             frame.set_cursor_position(Position::new(cursor_x, search_area.y));

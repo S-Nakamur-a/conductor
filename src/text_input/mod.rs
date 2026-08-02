@@ -1,14 +1,12 @@
-//! Reusable text input buffer with cursor movement and editing.
+//! カーソル移動と編集ができる、再利用可能なテキスト入力バッファ。
 //!
-//! Provides a `TextInput` struct that supports cursor navigation,
-//! insertion at the cursor position, forward/backward deletion,
-//! word-level movement, and clipboard paste.
+//! カーソルナビゲーション、カーソル位置への挿入、前方/後方の削除、
+//! 単語単位の移動、クリップボードからの貼り付けをサポートする TextInput 構造体を提供する。
 //!
-//! Split into: `construct` (creation/state accessors), `edit` (insertion and
-//! deletion), `movement` (cursor navigation), `key_handler` (the unified key
-//! event handler), and `boundary` (private char-boundary helpers shared by
-//! `edit`/`movement`). The `impl TextInput` blocks in each submodule merge
-//! automatically, so `crate::text_input::TextInput` needs no re-export.
+//! construct（生成・状態アクセサ）、edit（挿入と削除）、movement（カーソルナビゲーション）、
+//! key_handler（統一されたキーイベントハンドラ）、boundary（edit/movement が共有する
+//! 非公開の文字境界ヘルパー）に分割している。各サブモジュールの impl TextInput ブロックは
+//! 自動的にマージされるので、crate::text_input::TextInput の再エクスポートは不要。
 
 mod boundary;
 mod construct;
@@ -21,16 +19,16 @@ mod tests;
 use std::fmt;
 use std::ops::Deref;
 
-/// A text input buffer with cursor position tracking.
+/// カーソル位置を追跡するテキスト入力バッファ。
 ///
-/// Supports single-line and multi-line modes, cursor movement,
-/// insertion/deletion at cursor position, and word-level navigation.
+/// 単一行モードと複数行モード、カーソル移動、カーソル位置への挿入/削除、
+/// 単語単位のナビゲーションをサポートする。
 #[derive(Clone, Debug)]
 pub struct TextInput {
     buffer: String,
-    /// Cursor position as a byte offset into `buffer`.
+    /// カーソル位置。buffer 内へのバイトオフセットとして表す。
     cursor: usize,
-    /// Whether this input supports multi-line editing.
+    /// この入力が複数行編集をサポートするかどうか。
     multiline: bool,
 }
 

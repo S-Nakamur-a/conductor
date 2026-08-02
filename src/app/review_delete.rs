@@ -1,16 +1,16 @@
-//! Review comment/reply deletion for [`App`].
+//! [App] におけるレビューコメント/返信の削除。
 //!
-//! Deletion always goes through a y/n confirmation: `request_delete_*`
-//! records the pending target and prompts, `confirm_pending_delete` performs
-//! it, and `cancel_pending_delete` backs out without deleting anything.
+//! 削除は常に y/n の確認を経る: request_delete_* が保留中の対象を記録して
+//! プロンプトを出し、confirm_pending_delete が実際に削除し、
+//! cancel_pending_delete は何も削除せずに取り消す。
 
 use super::*;
 
 impl App {
-    /// Begin deleting the item under the comment-list selection — a *reply* if a
-    /// reply row is selected, otherwise the whole comment. Opens a y/n
-    /// confirmation; the delete itself happens in [`Self::confirm_pending_delete`].
-    /// (Previously a reply row deleted its parent comment — a data-loss bug.)
+    /// コメント一覧の選択位置にある項目の削除を開始する — 返信の行が選択
+    /// されていれば返信そのものを、そうでなければコメント全体を対象にする。
+    /// y/n の確認を開く。削除自体は [Self::confirm_pending_delete] で行われる。
+    /// (以前は返信の行を選んでも親コメントが削除されるデータロスのバグがあった。)
     pub fn request_delete_selected_review_item(&mut self) {
         use crate::review_state::PendingDelete;
         let visual = self.viewer_state.explorer.comment_list_selected;
@@ -29,8 +29,8 @@ impl App {
         }
     }
 
-    /// Begin deleting a specific comment by id (e.g. the inline-thread delete
-    /// button), via the same y/n confirmation.
+    /// (インラインスレッドの削除ボタンなど)id で指定した特定のコメントの
+    /// 削除を、同じ y/n 確認を通して開始する。
     pub fn request_delete_comment_by_id(&mut self, comment_id: String) {
         self.begin_delete_confirmation(crate::review_state::PendingDelete::Comment {
             id: comment_id,
@@ -48,14 +48,14 @@ impl App {
         self.set_status(prompt.to_string(), StatusLevel::Warning);
     }
 
-    /// Cancel a pending delete confirmation without deleting anything.
+    /// 何も削除せずに保留中の削除確認をキャンセルする。
     pub fn cancel_pending_delete(&mut self) {
         self.review_state.pending_delete = None;
         self.review_state.input_mode = crate::review_state::ReviewInputMode::Normal;
         self.review_state.status_message = None;
     }
 
-    /// Perform the confirmed delete (comment or single reply) and refresh.
+    /// 確認済みの削除(コメントまたは単一の返信)を実行し、再読み込みする。
     pub fn confirm_pending_delete(&mut self) {
         use crate::review_state::{PendingDelete, ReviewInputMode};
         let Some(target) = self.review_state.pending_delete.take() else {

@@ -1,5 +1,5 @@
-//! The static command table backing the palette — one entry per invocable
-//! command, grouped by category.
+//! パレットを支える静的なコマンドテーブル。実行可能なコマンド 1 つにつき
+//! 1 エントリで、カテゴリごとにまとめてある。
 
 use super::types::{CommandCategory, CommandId, PaletteCommand};
 use crate::keymap::Action;
@@ -161,7 +161,7 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::PullWorktree),
         keywords: "pull fetch update fast-forward ff sync",
     },
-    // Worktree (additional)
+    // Worktree (追加分)
     PaletteCommand {
         id: CommandId::UngrabBranch,
         label: "Worktree: Ungrab Branch",

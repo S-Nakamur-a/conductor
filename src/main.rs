@@ -74,7 +74,7 @@ fn main() -> Result<()> {
     startup::install_panic_hook();
     env_logger::init();
 
-    // 端末に触る前に。`mcp-serve` は stdout で JSON-RPC を話すので、
+    // 端末に触る前に。mcp-serve は stdout で JSON-RPC を話すので、
     // 代替スクリーンに入ったあとでは手遅れになる。
     if let Some(result) = startup::handle_cli_fast_path() {
         return result;
@@ -103,7 +103,7 @@ fn main() -> Result<()> {
     let _ = execute!(terminal.backend_mut(), SetTitle(""));
     let _ = terminal.show_cursor();
 
-    // 再起動より前に。`exec` はプロセスイメージを置き換えるので、
+    // 再起動より前に。exec はプロセスイメージを置き換えるので、
     // その先では Drop も後続のコードも走らない。
     app.persist_view_state();
     startup::restart_if_updated(&app); // 更新済みなら戻らない
@@ -112,12 +112,12 @@ fn main() -> Result<()> {
     result
 }
 
-// ── 端末モードの設定と後始末 ─────────────────────────────────────────────
+// 端末モードの設定と後始末
 //
-// `enter_tui` と `leave_tui` は厳密に逆の操作で、拡張フラグの push/pop が
+// enter_tui と leave_tui は厳密に逆の操作で、拡張フラグの push/pop が
 // raw mode・代替スクリーン・マウス/ペーストの捕捉を挟む形になっている。
 // これにより中断から復帰までが綺麗に往復する。両方を 1 か所に置いてあるので、
-// `main` の起動・終了と、エディタ中断時のガードがまったく同じ対称な手順を
+// main の起動・終了と、エディタ中断時のガードがまったく同じ対称な手順を
 // 共有できる。片方にだけフラグが増えると、戻ってきた端末が微妙に壊れる。
 
 /// 全画面 TUI の端末モードに入る (raw mode、代替スクリーン、マウスと
@@ -137,7 +137,7 @@ fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
         // crossterm はマウスが端末ウィンドウから出たことを報告しない。そのため
-        // `Event::FocusLost` (端末がフォーカスを完全に失う、alt-tab など) が、
+        // Event::FocusLost (端末がフォーカスを完全に失う、alt-tab など) が、
         // 「今この瞬間、マウスは描画されたどの要素の上にも乗っていない」と
         // イベントループが確信できる唯一の信号になる。古くなったホバー状態
         // (Viewer の下線、ポップアップ、ツリーや差分の行ハイライト) を消すのに使う。
@@ -156,7 +156,7 @@ fn enter_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
 }
 
 /// 全画面 TUI の端末モードを抜け、端末を cooked / 通常スクリーンの状態へ戻す。
-/// [`enter_tui`] の厳密な逆操作。
+/// [enter_tui] の厳密な逆操作。
 fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()> {
     if keyboard_enhanced {
         execute!(w, PopKeyboardEnhancementFlags)?;
@@ -166,22 +166,22 @@ fn leave_tui<W: io::Write>(w: &mut W, keyboard_enhanced: bool) -> io::Result<()>
     Ok(())
 }
 
-/// [`leave_tui`] が依存するモードのリセットをすべて書き出し、raw mode を抜ける。
+/// [leave_tui] が依存するモードのリセットをすべて書き出し、raw mode を抜ける。
 ///
-/// `leave_tui` から切り出してあるのは、パニックフックが再利用するため。フックは
-/// `Terminal` にも `keyboard_enhanced` にも触れないが、`enter_tui` が設定した
+/// leave_tui から切り出してあるのは、パニックフックが再利用するため。フックは
+/// Terminal にも keyboard_enhanced にも触れないが、enter_tui が設定した
 /// モードは元に戻さねばならない。戻さないとアンワインドでユーザーの tty が
 /// 取り残される。ジェネリックな writer を取ることで、実際の端末に触らずに
 /// 出力されるシーケンスをテストで検証できるようにもなっている。
 ///
-/// `cursor::Show` を含めているのは、ratatui が毎フレーム カーソルを隠すため
-/// (ウィジェットがカーソル位置を要求しない限り `Terminal::draw` が
-/// `hide_cursor` を呼ぶ)。つまり `\x1b[?25l` が事実上いつも最後に設定した
-/// カーソル状態になる。通常の終了経路では `terminal.show_cursor()` で戻すが、
-/// パニック経路には `Terminal` が無いのでここでやる必要がある。
+/// cursor::Show を含めているのは、ratatui が毎フレーム カーソルを隠すため
+/// (ウィジェットがカーソル位置を要求しない限り Terminal::draw が
+/// hide_cursor を呼ぶ)。つまり \x1b[?25l が事実上いつも最後に設定した
+/// カーソル状態になる。通常の終了経路では terminal.show_cursor() で戻すが、
+/// パニック経路には Terminal が無いのでここでやる必要がある。
 pub(crate) fn restore_terminal_modes<W: io::Write>(w: &mut W) -> io::Result<()> {
-    // `disable_raw_mode` はエスケープシーケンスではなく libc / termios の呼び出しなので
-    // `w` には何も書かない。`leave_tui` が既に呼んだあとでも無害 (かつ冪等)。
+    // disable_raw_mode はエスケープシーケンスではなく libc / termios の呼び出しなので
+    // w には何も書かない。leave_tui が既に呼んだあとでも無害 (かつ冪等)。
     let _ = disable_raw_mode();
     execute!(
         w,
@@ -199,8 +199,8 @@ pub(crate) fn restore_terminal_modes<W: io::Write>(w: &mut W) -> io::Result<()> 
 mod tests {
     use super::restore_terminal_modes;
 
-    /// パニックフックの存在意義は、`leave_tui` が一度も走らなくてもこれらの
-    /// モードが元に戻ること。`execute!` の並びが完全であり続けることを信じる
+    /// パニックフックの存在意義は、leave_tui が一度も走らなくてもこれらの
+    /// モードが元に戻ること。execute! の並びが完全であり続けることを信じる
     /// のではなく、生のバイト列に対して検証する。異常終了のあとユーザーが実際に
     /// 報告してくる症状は「カーソルが見えない」と「マウスの挙動がおかしい」の
     /// 2 つで、それがちょうどこの 2 つのリセットに対応する。

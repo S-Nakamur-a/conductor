@@ -1,7 +1,7 @@
-//! Test fixtures shared by the keymap's test suite, split by concern into
-//! [`resolution`] (default-keymap resolution across contexts), [`overrides`]
-//! (user `[keybinds]` overlay/tombstone/warning behavior), and [`edge_cases`]
-//! (chord-normalization and miscellaneous edge cases).
+//! keymap のテストスイートが共有するフィクスチャ。関心ごとに [resolution]
+//! （各コンテキストにおけるデフォルトキーマップの解決）、[overrides]
+//! （ユーザの [keybinds] オーバーレイ/トゥームストーン/警告の挙動）、
+//! [edge_cases]（チョード正規化とその他の細かなエッジケース）に分割している。
 
 use super::*;
 

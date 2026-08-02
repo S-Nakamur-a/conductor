@@ -1,9 +1,9 @@
-//! Wire-level arguments for the eight tools, deserialized straight off the
-//! `tools/call` request.
+//! 8個のツールが受け取る、ワイヤレベルの引数。tools/call リクエストから直接
+//! デシリアライズされる。
 //!
-//! Doc comments on these fields become the JSON Schema `description` the
-//! model reads, so they are written for that audience and kept verbatim from
-//! the Node server's `.describe(...)` calls.
+//! これらのフィールドの doc コメントはそのまま JSON Schema の description に
+//! なりモデルが読むので、その読み手に向けて書いてあり、Node サーバの
+//! .describe(...) 呼び出しの文面を逐語的に受け継いでいる。
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -13,46 +13,46 @@ use crate::walkthrough::WalkthroughStepKind;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetPendingComments {
-    /// Filter by worktree name
+    /// worktree 名で絞り込む
     #[serde(default)]
     pub worktree: Option<String>,
-    /// Filter by branch name. If omitted, defaults to the current git branch (auto-detected).
+    /// ブランチ名で絞り込む。省略時は現在の git ブランチ（自動検出）が使われる。
     #[serde(default)]
     pub branch: Option<String>,
-    /// Set to true to return comments from all branches (disables auto branch filter)
+    /// true にすると全ブランチのコメントを返す（自動ブランチ絞り込みを無効化する）
     #[serde(default)]
     pub all_branches: Option<bool>,
-    /// Filter by file path (exact match)
+    /// ファイルパスで絞り込む（完全一致）
     #[serde(default)]
     pub file_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CommentIdOnly {
-    /// Comment ID or unique prefix (min 8 chars)
+    /// コメント ID、または一意に定まるプレフィックス（8文字以上）
     pub comment_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReplyToComment {
-    /// Comment ID or unique prefix (min 8 chars)
+    /// コメント ID、または一意に定まるプレフィックス（8文字以上）
     pub comment_id: String,
-    /// Reply text
+    /// 返信の本文
     pub body: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateComment {
-    /// Repo-relative file path the comment attaches to (e.g. src/foo.rs)
+    /// コメントを付けるファイルの、リポジトリルートからの相対パス（例: src/foo.rs）
     pub file_path: String,
-    /// 1-based line number the comment starts on
+    /// コメントが始まる行番号（1始まり）
     pub line_start: u32,
-    /// 1-based end line for a multi-line range; omit for a single-line comment
+    /// 複数行にわたる範囲の終了行（1始まり）。単一行のコメントなら省略する
     #[serde(default)]
     pub line_end: Option<u32>,
-    /// The comment text
+    /// コメントの本文
     pub body: String,
-    /// 'suggest' (default) for a note/observation/tradeoff; 'question' when you want the human to answer something
+    /// メモ・所感・トレードオフなら 'suggest'（デフォルト）、人間に答えてほしい問いなら 'question'
     #[serde(default)]
     pub kind: Option<CommentKindArg>,
 }
@@ -75,45 +75,45 @@ impl From<CommentKindArg> for CommentKind {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetChangeSummary {
-    /// The change summary in Markdown. It is rendered with headings (#), lists (-, 1.), block
-    /// quotes (>), inline code (`x`), bold/italic (**/*), and fenced code blocks (```lang) that
-    /// get syntax highlighting in the Conductor Viewer. Note: `_` does not produce emphasis (so
-    /// snake_case stays intact). Write a concise overview of what the change does and why; may
-    /// span multiple lines.
+    /// Markdown で書いた change summary。Conductor Viewer では見出し (#)、リスト (-, 1.)、
+    /// 引用 (>)、インラインコード (`x`)、太字/斜体 (**/*)、そして構文ハイライトの付く
+    /// フェンス付きコードブロック (```lang) がレンダリングされる。注意: _ は強調にならない
+    /// (snake_case がそのまま保たれる)。変更が何をするのか、なぜするのかの概要を簡潔に
+    /// 書くこと。複数行にまたがってよい。
     pub body: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetChangeSummary {
-    /// Branch to read the summary for. Omit to use the current git branch.
+    /// summary を読み出すブランチ。省略時は現在の git ブランチを使う。
     #[serde(default)]
     pub branch: Option<String>,
 }
 
-/// A step as supplied by the model, before it is anchored to a walkthrough.
+/// モデルから渡された時点のステップ。まだウォークスルーに紐付けられる前の形。
 ///
-/// `seq` is part of the wire schema (kept so an older prompt continues to
-/// validate) but is not read: `SaveWalkthrough::steps`'s own slice order is
-/// what determines the saved order — see
-/// [`crate::walkthrough::NewWalkthroughStep`]'s doc for why.
+/// seq はワイヤスキーマの一部だが（古いプロンプトが引き続き通用するように
+/// 残してある）実際には読まれない。保存される順序を決めるのは
+/// SaveWalkthrough::steps 自身のスライス順である — 理由は
+/// [crate::walkthrough::NewWalkthroughStep] の doc を参照。
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalkthroughStep {
-    /// Step order within the walkthrough, 0-based
+    /// ウォークスルー内でのステップ順序（0始まり）
     pub seq: i64,
-    /// Repo-relative file path the step points at (e.g. src/foo.rs)
+    /// ステップが指すファイルの、リポジトリルートからの相対パス（例: src/foo.rs）
     pub file_path: String,
-    /// 1-based line number the step points at, if file-anchored
+    /// ファイルに紐付くステップの場合、ステップが指す行番号（1始まり）
     #[serde(default)]
     pub line_start: Option<i64>,
-    /// 1-based end line for a multi-line range; omit for a single line
+    /// 複数行にわたる範囲の終了行（1始まり）。単一行なら省略する
     #[serde(default)]
     pub line_end: Option<i64>,
-    /// 'intent' (why this change), 'core' (the main implementation), 'ripple' (knock-on changes
-    /// elsewhere), or 'test' (what the tests cover)
+    /// 'intent'（なぜこの変更をしたか）、'core'（実装の中心部分）、
+    /// 'ripple'（他箇所への波及的な変更）、'test'（テストが何をカバーしているか）のいずれか
     pub kind: StepKindArg,
-    /// Short step heading
+    /// ステップの短い見出し
     pub title: String,
-    /// Step explanation, following the kind's content contract
+    /// ステップの説明。kind ごとの内容の取り決めに従う
     pub body: String,
 }
 
@@ -139,14 +139,15 @@ impl From<StepKindArg> for WalkthroughStepKind {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SaveWalkthrough {
-    /// Branch the walkthrough belongs to
+    /// ウォークスルーが属するブランチ
     pub branch: String,
-    /// One-line walkthrough title
+    /// ウォークスルーの1行タイトル
     pub title: String,
-    /// Overview of the change. Also stored as the branch's change summary and shown full-panel as
-    /// Conductor's SUMMARY pseudo-file, so write it like a PR description (what the change is for,
-    /// why these files, what is out of scope). Markdown is rendered.
+    /// 変更の概要。ブランチの change summary としても保存され、Conductor の
+    /// SUMMARY 疑似ファイルとしてパネル全体に表示されるので、PR の説明文の
+    /// ように書くこと（この変更が何のためか、なぜこれらのファイルを触るのか、
+    /// 対象外にしたことは何か）。Markdown としてレンダリングされる。
     pub summary: String,
-    /// Ordered walkthrough steps (see save_walkthrough's step fields)
+    /// 順序付きのウォークスルーのステップ（各ステップのフィールドは save_walkthrough を参照）
     pub steps: Vec<WalkthroughStep>,
 }

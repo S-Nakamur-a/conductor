@@ -1,4 +1,4 @@
-//! Resume Claude Code session picker overlay.
+//! Claude Code セッション再開ピッカーのオーバーレイ。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input};
 use crate::app::App;
@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the resume Claude Code session picker overlay.
+/// Claude Code セッション再開ピッカーのオーバーレイを描画する。
 pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 80_u16.min(area.width.saturating_sub(4));
@@ -19,10 +19,10 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    // Split into filter bar + list.
+    // フィルタバーと一覧に分割する。
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
-    // Filter bar.
+    // フィルタバー。
     let scope_label = if app.overlays.resume_session.all_projects {
         "all projects"
     } else {
@@ -42,7 +42,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.overlays.resume_session.filter);
 
-    // Session list.
+    // セッション一覧。
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent));
@@ -70,7 +70,7 @@ pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme.fg)
             };
 
-            // Truncate display to fit within the popup.
+            // ポップアップ内に収まるよう表示を切り詰める。
             let max_display = (popup_width as usize).saturating_sub(30);
             let display_text: String = session.display.chars().take(max_display).collect();
 

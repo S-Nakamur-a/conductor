@@ -1,23 +1,24 @@
-//! Git operations powered by libgit2.
+//! libgit2 による git 操作。
 //!
-//! Provides a high-level interface over `git2` for repository inspection:
-//! worktree listing, status counts, commit info, diff generation, and more.
+//! worktree の一覧、ステータス件数、コミット情報、diff 生成など、
+//! リポジトリ調査のための git2 の高レベルインターフェースを提供する。
 //!
-//! The functionality is split by responsibility across sibling submodules,
-//! all implementing methods on the shared [`GitEngine`] handle:
+//! 機能は責務ごとに兄弟サブモジュールへ分割されており、いずれも共有の
+//! [GitEngine] ハンドルにメソッドを実装している:
 //!
-//! - [`worktree_ops`]: worktree/branch enumeration and status snapshotting
-//! - [`worktree_create`]: worktree creation (from a base ref, a remote branch,
-//!   or an already-fetched branch) and base-ref freshness
-//! - [`worktree_delete`]: branch deletion and worktree removal/pruning
-//! - [`grab`]: the `wt grab`/`wt ungrab` branch-swap workflow
-//! - [`branch_lineage`]: parent/derived branch detection and PR URL building
-//! - [`fetch`]: shelling out to `git fetch`
-//! - [`merge`]: pull, merge-into-main, and hard-reset-to-origin
-//! - [`cherry_pick`]: listing commits and cherry-picking them into a worktree
-//! - [`recently_modified`]: recently touched file paths for a worktree
-//! - [`status_map`]: path -> git status lookup shared by the Explorer file
-//!   tree (dimming) and the Changed files list (stage-state coloring)
+//! - [worktree_ops]: worktree/ブランチの列挙とステータススナップショット
+//! - [worktree_create]: worktree の作成(ベース ref、リモートブランチ、
+//!   または fetch 済みブランチから)とベース ref の鮮度確認
+//! - [worktree_delete]: ブランチ削除と worktree の削除/整理
+//! - [grab]: wt grab/wt ungrab のブランチ入れ替えワークフロー
+//! - [branch_lineage]: 親/派生ブランチの検出と PR URL の構築
+//! - [fetch]: git fetch へのシェルアウト
+//! - [merge]: pull、main へのマージ、origin へのハードリセット
+//! - [cherry_pick]: コミットの一覧取得と worktree への cherry-pick
+//! - [recently_modified]: worktree の最近変更されたファイルパス
+//! - [status_map]: Explorer のファイルツリー(薄暗い表示)と Changed
+//!   files 一覧(ステージ状態の色分け)で共有される、パス -> git status
+//!   のルックアップ
 
 mod branch_lineage;
 mod cherry_pick;
@@ -39,84 +40,87 @@ use git2::Repository;
 
 pub use recently_modified::recently_modified_files;
 
-/// Info about a single worktree.
+/// 1つの worktree に関する情報。
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
-    /// Absolute path to the worktree root directory.
+    /// worktree のルートディレクトリの絶対パス。
     pub path: PathBuf,
-    /// Branch name checked out in this worktree (e.g. "main", "feature-x").
+    /// この worktree でチェックアウト中のブランチ名(例: "main", "feature-x")。
     pub branch: String,
-    /// Whether this is the main (bare/primary) worktree.
+    /// main(bare/primary)worktree かどうか。
     pub is_main: bool,
-    /// Number of newly added (untracked or index-new) files.
+    /// 新規追加された(untracked または index-new な)ファイルの数。
     pub added: usize,
-    /// Number of modified files (index or working directory).
+    /// 変更されたファイルの数(index または working directory)。
     pub modified: usize,
-    /// Number of deleted files (index or working directory).
+    /// 削除されたファイルの数(index または working directory)。
     pub deleted: usize,
-    /// Number of files with anything staged in the index.
+    /// index に何かステージされているファイルの数。
     ///
-    /// Deliberately overlaps with `added`/`modified`/`deleted`, which count
-    /// each file once and check the index side first — so `git add` on a
-    /// modified file moves it from the working-directory branch of that chain
-    /// to the index branch and leaves all three totals identical. Without a
-    /// separate staged count there is no observable signal that staging
-    /// happened, and the Explorer's stage-state colours (D6) never refresh:
-    /// the file watcher ignores `.git/`, so `git add` produces no event at
-    /// all, and the 3s poll compares only those three numbers.
+    /// added/modified/deleted と意図的に重複する。あちらは各ファイルを
+    /// 1回だけ数え、index 側を先にチェックするので、変更済みファイルに
+    /// git add してもそのファイルは working-directory 側の分岐から
+    /// index 側の分岐へ移るだけで、3つの合計値はすべて同じままになる。
+    /// staged を別に数えなければ、ステージが起きたことを観測できる信号が
+    /// なくなり、Explorer のステージ状態の色分けが更新されなくなる:
+    /// ファイルウォッチャーは .git/ を無視するので git add はイベントを
+    /// 一切発生させず、3秒ごとのポーリングはこの3つの数値しか比較しない。
     pub staged: usize,
-    /// True when the working directory has no uncommitted changes.
+    /// working directory にコミットされていない変更が無いとき true。
     pub is_clean: bool,
-    /// Commits ahead of upstream (local commits not yet pushed). `None` if no upstream.
+    /// upstream に対して ahead なコミット数(まだ push していないローカル
+    /// コミット)。upstream が無ければ None。
     pub ahead: Option<usize>,
-    /// Commits behind upstream (remote commits not yet pulled). `None` if no upstream.
+    /// upstream に対して behind なコミット数(まだ pull していないリモート
+    /// コミット)。upstream が無ければ None。
     pub behind: Option<usize>,
-    /// HEAD commit OID (hex). `None` on an unborn branch. Captured while the
-    /// repo is already open so callers don't need a second `Repository::open`
-    /// per worktree just to detect new commits.
+    /// HEAD コミットの OID(16進)。unborn ブランチでは None。呼び出し側が
+    /// 新しいコミットを検出するためだけに worktree ごとに2回目の
+    /// Repository::open をしなくて済むよう、repo をすでに開いている
+    /// タイミングで取得する。
     pub head_oid: Option<String>,
 }
 
-/// Summary info for a single commit.
+/// 1つのコミットの要約情報。
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
-    /// Short hex OID (first 8 chars).
+    /// 短い16進 OID(先頭8文字)。
     pub short_oid: String,
-    /// Full hex OID.
+    /// 完全な16進 OID。
     pub oid: String,
-    /// First line of commit message.
+    /// コミットメッセージの1行目。
     pub message: String,
-    /// Commit author name.
+    /// コミット作者名。
     pub author: String,
-    /// Timestamp as a human-readable string.
+    /// 人が読める形式のタイムスタンプ。
     pub time_ago: String,
 }
 
-/// Branch lineage and PR information for the detail panel.
+/// 詳細パネル用の、ブランチの系譜と PR 情報。
 #[derive(Debug, Clone, Default)]
 pub struct BranchDetails {
-    /// The base (initial) branch this branch was created from.
+    /// このブランチの作成元となったベース(最初の)ブランチ。
     pub initial_branch: Option<String>,
-    /// Branches that were forked from this branch.
+    /// このブランチから分岐したブランチ。
     pub derived_branches: Vec<String>,
-    /// GitHub PR URL for this branch (fetched via `gh`).
+    /// このブランチの GitHub PR URL(gh 経由で取得)。
     pub pr_url: Option<String>,
-    /// Whether a PR URL lookup is currently in progress.
+    /// PR URL の検索が現在進行中かどうか。
     pub pr_loading: bool,
 }
 
-/// Wrapper around a `git2::Repository` that exposes conductor-specific helpers.
+/// conductor 固有のヘルパーを公開する、git2::Repository のラッパー。
 pub struct GitEngine {
     repo: Repository,
 }
 
 impl GitEngine {
-    // ── Construction ───────────────────────────────────────────────────
+    // 構築
 
-    /// Open an existing repository, discovering it from the given path.
+    /// 指定したパスから探索して、既存のリポジトリを開く。
     ///
-    /// This works whether `path` points at the main worktree, a linked
-    /// worktree, or any subdirectory inside either.
+    /// path が main worktree、linked worktree、あるいはそのどちらかの
+    /// サブディレクトリのいずれを指していても動作する。
     pub fn open(path: &Path) -> Result<Self> {
         let repo = Repository::discover(path).with_context(|| {
             format!("failed to discover git repository from {}", path.display())

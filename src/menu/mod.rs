@@ -1,26 +1,26 @@
-//! Menu bar — the pointer-and-arrow-key route to every command.
+//! メニューバー — ポインタと矢印キーであらゆるコマンドにたどり着ける経路。
 //!
-//! Conductor already had two ways to run a command: a chord from
-//! `default_keybinds.toml`, and the fuzzy command palette. Both require knowing
-//! what you are looking for. The menu bar is the browsable third route: a
-//! permanent strip under the title bar whose dropdowns list the operations
-//! grouped by what they act on.
+//! Conductor にはすでに2つのコマンド実行手段があった。default_keybinds.toml
+//! によるチョードと、あいまい検索のコマンドパレットだ。どちらも何を探しているか
+//! 事前に知っている必要がある。メニューバーはブラウズ可能な第三の経路であり、
+//! タイトルバー直下に常時表示される帯で、ドロップダウンが操作対象ごとに
+//! コマンドを分類して並べる。
 //!
-//! It adds no behaviour of its own. Every row carries a
-//! [`CommandId`](crate::command_palette::CommandId) and activating it calls
-//! [`App::execute_palette_command`](crate::app::App::execute_palette_command) —
-//! the same entry point the palette uses and the same methods the keyboard
-//! actions in `event::global` call. The shortcut shown at the right of a row is
-//! read live from the keymap, so a rebind in the user's config is reflected
-//! without touching this module.
+//! メニューバー自体は独自の振る舞いを持たない。各行は
+//! [CommandId](crate::command_palette::CommandId) を持ち、実行時には
+//! [App::execute_palette_command](crate::app::App::execute_palette_command) を
+//! 呼ぶ。これはパレットが使うのと同じエントリポイントであり、event::global の
+//! キーボード操作が呼ぶメソッドとも同じである。行の右側に表示されるショートカットは
+//! キーマップからその都度読み取るので、ユーザ設定でのリバインドはこのモジュールに
+//! 手を入れずとも反映される。
 //!
-//! - [`model`] — the static table: which command sits under which menu.
-//! - [`state`] — interaction state ([`MenuFocus`]) and the pure navigation
-//!   helpers shared by the keyboard and mouse handlers.
-//! - [`enabled`] — whether a command can run right now, for the greyed-out rows.
+//! - [model] — 静的テーブル。どのコマンドがどのメニューに属するか。
+//! - [state] — インタラクション状態([MenuFocus])と、キーボード/マウス
+//!   両ハンドラが共有する純粋なナビゲーションヘルパー。
+//! - [enabled] — コマンドが今実行可能かどうか。グレーアウト行の判定に使う。
 //!
-//! Rendering lives in [`crate::ui::menu_bar`]; input handling in
-//! [`crate::event::menu`] (keys) and `crate::event::mouse` (clicks and hover).
+//! 描画は [crate::ui::menu_bar]、入力処理は [crate::event::menu](キー)と
+//! crate::event::mouse(クリックとホバー)が担う。
 
 pub mod enabled;
 pub mod model;

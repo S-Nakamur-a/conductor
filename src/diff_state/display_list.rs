@@ -1,13 +1,13 @@
-//! Building and navigating `DiffState`'s flattened explorer display list: the
-//! merged committed/uncommitted directory tree, section collapse/expand, and
-//! resolving between display-list indices and file references.
+//! DiffState のフラット化された explorer 表示リストの構築とナビゲーション:
+//! コミット済み/未コミットを統合したディレクトリツリー、セクションの折りたたみ/展開、
+//! 表示リストのインデックスとファイル参照との相互解決を扱う。
 
 use std::collections::{BTreeMap, HashSet};
 
 use super::model::{DiffListEntry, DiffSection, DiffState, DiffViewMode, FileDiff};
 
 impl DiffState {
-    /// Create a new, empty `DiffState`.
+    /// 空の DiffState を新規作成する。
     pub fn new(base_branch: &str, view_mode: DiffViewMode) -> Self {
         let mut state = Self {
             committed_files: Vec::new(),
@@ -24,14 +24,14 @@ impl DiffState {
         state
     }
 
-    /// Rebuild the flattened display list, merging committed and uncommitted
-    /// changes into a single directory tree. Files keep their origin
-    /// (`DiffSection`) for the C/U marker and resolution; directories are merged
-    /// across origins so `src/` appears once even with both kinds of change.
+    /// フラット化した表示リストを再構築する。コミット済みと未コミットの変更を
+    /// 1つのディレクトリツリーに統合する。ファイルは C/U マークと解決のために
+    /// 出自(DiffSection)を保持し、ディレクトリは出自をまたいで統合されるので
+    /// src/ は両方の種類の変更があっても1回しか現れない。
     pub fn rebuild_display_list(&mut self) {
         self.display_list.clear();
 
-        // Change-summary pseudo-file, pinned at the very top when present.
+        // 変更サマリーの疑似ファイル。存在すれば最上部に固定表示する。
         if self.has_summary {
             self.display_list.push(DiffListEntry::Summary {});
         }
@@ -44,16 +44,16 @@ impl DiffState {
         );
     }
 
-    /// Build one directory tree over both origins' files. A file that changed
-    /// in both committed and uncommitted form appears twice (once per origin)
-    /// under the same merged directory node, distinguished by its marker.
+    /// 両方の出自のファイルにまたがる1つのディレクトリツリーを構築する。
+    /// コミット済みと未コミットの両方で変更されたファイルは、統合された同じ
+    /// ディレクトリノード配下に、出自ごとに2回(マークで区別して)現れる。
     fn build_tree_entries(
         committed: &[FileDiff],
         uncommitted: &[FileDiff],
         collapsed_dirs: &HashSet<String>,
         display_list: &mut Vec<DiffListEntry>,
     ) {
-        // A leaf of the merged tree: which origin list + index it resolves to.
+        // 統合ツリーの葉: どの出自リスト・インデックスに解決されるかを保持する。
         struct Leaf {
             section: DiffSection,
             index: usize,
@@ -74,11 +74,11 @@ impl DiffState {
                 path: f.path.clone(),
             });
         }
-        // Group siblings together; stable so committed precedes uncommitted at
-        // the same path.
+        // 同じパスの兄弟をまとめる。安定ソートなので同一パスではコミット済みが
+        // 未コミットより先に来る。
         leaves.sort_by(|a, b| a.path.cmp(&b.path));
 
-        // Collect directory paths and the leaf indices living directly in each.
+        // ディレクトリパスと、そこに直接属する葉のインデックスを集める。
         let mut dir_set: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut top_level: Vec<usize> = Vec::new();
         for (li, leaf) in leaves.iter().enumerate() {
@@ -92,7 +92,7 @@ impl DiffState {
             }
         }
 
-        // Ensure all ancestor directories exist as nodes.
+        // すべての祖先ディレクトリがノードとして存在することを保証する。
         let all_dirs: Vec<String> = dir_set.keys().cloned().collect();
         for dir in &all_dirs {
             let mut current = dir.as_str();
@@ -136,7 +136,7 @@ impl DiffState {
         root_dirs.sort();
         for node in nodes.values_mut() {
             node.child_dirs.sort();
-            // `leaves` already in path/origin order from the global sort.
+            // leaves は全体ソートの結果、既にパス/出自順になっている。
         }
 
         fn emit_dir(
@@ -184,9 +184,9 @@ impl DiffState {
         }
     }
 
-    /// Resolve a display list index to a file reference and its section.
+    /// 表示リストのインデックスをファイル参照とそのセクションに解決する。
     ///
-    /// Returns `None` for section headers or out-of-range indices.
+    /// セクションヘッダーまたは範囲外のインデックスの場合は None を返す。
     pub fn resolve_file(&self, display_idx: usize) -> Option<(&FileDiff, DiffSection)> {
         match self.display_list.get(display_idx)? {
             DiffListEntry::File {
@@ -204,17 +204,17 @@ impl DiffState {
         }
     }
 
-    /// Find the display list index for a file by its repo-relative path
-    /// (the reverse of [`Self::resolve_file`]). Used to keep the diff list's
-    /// cursor in sync when a file is opened by path rather than by list
-    /// index (e.g. jumping to a walkthrough step's file).
+    /// リポジトリ相対パスから表示リストのインデックスを探す
+    /// ([Self::resolve_file] の逆引き)。リストのインデックスではなくパスで
+    /// ファイルを開いた際(例: walkthrough のステップのファイルへジャンプする場合)に、
+    /// diff リストのカーソルを同期させておくために使う。
     pub fn display_index_for_path(&self, path: &str) -> Option<usize> {
         (0..self.display_list.len()).find(|&idx| self.resolve_file(idx).is_some_and(|(f, _)| f.path == path))
     }
 
-    /// Every changed path in the diff, both sections, deduplicated. Unlike
-    /// [`Self::display_index_for_path`] this ignores the display list, so a
-    /// file inside a *collapsed* directory still counts as present.
+    /// diff 内の全ての変更パス。両セクションを合わせて重複を除いたもの。
+    /// [Self::display_index_for_path] と違い表示リストを無視するので、
+    /// 折りたたまれたディレクトリ内のファイルも存在するものとして数える。
     pub fn changed_paths(&self) -> Vec<&str> {
         let mut paths: Vec<&str> = self
             .committed_files
@@ -227,22 +227,20 @@ impl DiffState {
         paths
     }
 
-    /// Match an externally-supplied path (a walkthrough step's `file_path`, a
-    /// comment's anchor) against the diff, returning the diff's own spelling of
-    /// it.
+    /// 外部から渡されたパス(walkthrough ステップの file_path、コメントの
+    /// アンカーなど)を diff と突き合わせ、diff 側の正式な表記を返す。
     ///
-    /// Exact equality first, so a real file always wins over any guess below.
-    /// Then, for values that name the right file the wrong way:
+    /// まず完全一致を試みる。これにより実在するファイルが常に以下のどの推測よりも
+    /// 優先される。次に、正しいファイルを違う書き方で指しているケースを扱う:
     ///
-    /// 1. the normalised spelling (`./src/a.rs`, `src//a.rs`);
-    /// 2. the path minus its first segment, which is what strips a `git diff`
-    ///    `a/`/`b/` prefix — and, since it is tried only after exact matching,
-    ///    it cannot shadow a repository that really does have a top-level `b/`;
-    /// 3. a unique suffix match on a segment boundary, which is what catches a
-    ///    path written relative to a subdirectory (`app/foo.rs` for
-    ///    `src/app/foo.rs`). Ambiguity disqualifies it: two files ending the
-    ///    same way mean we don't know which was meant, and guessing would send
-    ///    the reviewer to the wrong file with no hint that it happened.
+    /// 1. 正規化した表記(./src/a.rs, src//a.rs など)。
+    /// 2. 先頭セグメントを除いたパス。これは git diff の a//b/ プレフィックスを
+    ///    取り除く処理に相当する。完全一致の後にしか試さないため、本当にトップレベルに
+    ///    b/ を持つリポジトリを誤って覆い隠すことはない。
+    /// 3. セグメント境界での一意なサフィックス一致。サブディレクトリからの相対パス
+    ///    (src/app/foo.rs に対する app/foo.rs など)を拾うための処理。曖昧な場合は
+    ///    不採用にする。末尾が同じファイルが2つあれば、どちらを指しているか分からず、
+    ///    推測で決めるとレビュアーを何の手がかりもなく誤ったファイルへ送ってしまう。
     pub fn resolve_changed_path(&self, path: &str) -> Option<String> {
         let paths = self.changed_paths();
         let exact = |candidate: &str| -> Option<String> {
@@ -276,13 +274,12 @@ impl DiffState {
         }
     }
 
-    /// Expand whatever ancestor directories are collapsed so `path` has a row,
-    /// and return that row's display index.
+    /// path に行が存在するよう、折りたたまれている祖先ディレクトリを展開し、
+    /// その行の表示インデックスを返す。
     ///
-    /// Without this, jumping to a file inside a directory the reviewer had
-    /// collapsed looks exactly like the file not being in the diff at all —
-    /// [`Self::display_index_for_path`] can only see rows the display list
-    /// currently has.
+    /// これがないと、レビュアーが折りたたんでいたディレクトリ内のファイルへの
+    /// ジャンプは、そのファイルが diff に存在しない場合と見分けがつかなくなる。
+    /// [Self::display_index_for_path] は表示リストに今ある行しか見えないためだ。
     pub fn reveal_path(&mut self, path: &str) -> Option<usize> {
         if let Some(idx) = self.display_index_for_path(path) {
             return Some(idx);
@@ -300,9 +297,9 @@ impl DiffState {
         self.display_index_for_path(path)
     }
 
-    /// Toggle the collapsed state of the directory at the given display index.
-    /// Returns `true` if a directory was toggled (so the caller knows the list
-    /// changed). Non-directory rows (files, the summary) are a no-op.
+    /// 指定した表示インデックスのディレクトリの折りたたみ状態を切り替える。
+    /// ディレクトリを切り替えた場合は true を返す(呼び出し側がリストの変化を
+    /// 検知できるように)。ディレクトリ以外の行(ファイル、サマリー)は何もしない。
     pub fn toggle_section(&mut self, display_idx: usize) -> bool {
         if let Some(DiffListEntry::Directory { path, .. }) = self.display_list.get(display_idx) {
             let key = path.clone();
@@ -318,7 +315,7 @@ impl DiffState {
         }
     }
 
-    /// Collapse the directory at the given display index (no-op for other rows).
+    /// 指定した表示インデックスのディレクトリを折りたたむ(他の行では何もしない)。
     pub fn collapse_section(&mut self, display_idx: usize) {
         if let Some(DiffListEntry::Directory { path, collapsed, .. }) =
             self.display_list.get(display_idx)
@@ -330,7 +327,7 @@ impl DiffState {
         }
     }
 
-    /// Expand the directory at the given display index (no-op for other rows).
+    /// 指定した表示インデックスのディレクトリを展開する(他の行では何もしない)。
     pub fn expand_section(&mut self, display_idx: usize) {
         if let Some(DiffListEntry::Directory { path, collapsed, .. }) =
             self.display_list.get(display_idx)
@@ -342,9 +339,9 @@ impl DiffState {
         }
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────
+    // ヘルパー
 
-    /// Expand tab characters to spaces, matching the viewer's tab expansion.
+    /// タブ文字をスペースに展開する。viewer のタブ展開と挙動を合わせる。
     pub fn expand_tabs(line: &str, tab_width: usize) -> String {
         if !line.contains('\t') {
             return line.to_string();

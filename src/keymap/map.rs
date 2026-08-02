@@ -1,6 +1,6 @@
-//! `KeyMap` — resolves a `KeyEvent` to an `Action` for a given `KeyContext`,
-//! built from the embedded defaults merged with the user's `[keybinds]`
-//! config overlay.
+//! KeyMap — 与えられた KeyContext に対して KeyEvent を Action に解決する。
+//! 埋め込みのデフォルトと、ユーザの [keybinds] 設定オーバーレイをマージして
+//! 構築する。
 
 use crossterm::event::KeyEvent;
 use keymap_suite::{ActionName, KeyInput, Keymap, Loaded, resolve_layered};
@@ -9,38 +9,37 @@ use super::action::Action;
 use super::context::{KeyContext, PANEL_CONTEXTS};
 use super::warning::KeybindWarning;
 
-// ---------------------------------------------------------------------------
 // KeyMap
-// ---------------------------------------------------------------------------
 
-/// Embedded default bindings (keymap-suite key→action TOML). See the file for
-/// the schema; it is the reference for what users can write under `[keybinds]`.
+/// 埋め込みのデフォルトバインディング（keymap-suite の key→action TOML）。
+/// スキーマはそのファイルを参照。[keybinds] 配下でユーザが書ける内容の基準になる。
 pub(crate) const DEFAULT_KEYBINDS: &str = include_str!("../default_keybinds.toml");
 
 pub struct KeyMap {
-    /// The merged keymap: defaults (`default_keybinds.toml`) with the user's
-    /// `[keybinds]` overlaid via [`keymap_suite::merge`]. Its `layers` map is
-    /// keyed by layer name; [`KeyContext::layer_name`] selects one per event and
-    /// `global()` is consulted last. Holding the facade's own `Loaded` value
-    /// (rather than re-bucketing it) is the suite's intended shape.
+    /// マージ済みのキーマップ: デフォルト（default_keybinds.toml）にユーザの
+    /// [keybinds] を keymap_suite::merge で重ねたもの。layers マップはレイヤー名
+    /// をキーにしており、KeyContext::layer_name がイベントごとに1つを選び、
+    /// global() は最後に参照される。facade 自身の Loaded 値をそのまま保持する
+    /// （バケットを詰め替えたりしない）のが suite が意図する形。
     loaded: Loaded<Action>,
 }
 
 impl KeyMap {
-    /// Build a `KeyMap` from defaults plus the user's `[keybinds]` config table,
-    /// discarding any warnings. See [`KeyMap::with_warnings`] to inspect them.
-    #[allow(dead_code)] // convenience constructor; the app uses `with_warnings`.
+    /// デフォルトとユーザの [keybinds] 設定テーブルから KeyMap を構築し、
+    /// 警告は捨てる。警告を調べたい場合は with_warnings を使う。
+    #[allow(dead_code)] // 簡易コンストラクタ。アプリ側は with_warnings を使う。
     pub fn new(user: &toml::Table) -> Self {
         Self::with_warnings(user).0
     }
 
-    /// Build a `KeyMap`, returning any non-fatal problems found in the user's
-    /// config so the caller can surface them (the app flashes them on startup).
+    /// KeyMap を構築し、ユーザ設定内で見つかった致命的でない問題を返す。
+    /// 呼び出し側がそれを表示できるようにする（アプリは起動時にフラッシュ表示する）。
     pub fn with_warnings(user: &toml::Table) -> (Self, Vec<KeybindWarning>) {
         let mut warnings = Vec::new();
 
-        // 1. Embedded defaults — the merge base. Authored in-repo, so any
-        //    warning is a build bug: fail loudly in debug, never reach the user.
+        // 1. 埋め込みのデフォルト — マージの土台。リポジトリ内で書かれている
+        //    ものなので、警告が出るのはビルドのバグである: debug ではその場で
+        //    落ち、ユーザには決して届かない。
         let defaults = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_name)
             .expect("embedded default keybinds must be valid TOML");
         debug_assert!(
@@ -52,10 +51,10 @@ impl KeyMap {
             log::error!("default keybinds produced a warning (bug): {w:?}");
         }
 
-        // 2. Parse the user's `[keybinds]` overlay and merge it onto the
-        //    defaults. `merge` does the per-chord override and applies any
-        //    `= false` tombstones; we keep only real problems as warnings (its
-        //    override/unbind notes are informational, not warnings).
+        // 2. ユーザの [keybinds] オーバーレイをパースし、デフォルトの上に
+        //    マージする。merge がチョードごとの上書きと = false のトゥームストーン
+        //    の適用を行う。ここでは本当に問題のあるものだけを警告として残す
+        //    （override/unbind の注記は情報であって警告ではない）。
         let loaded = match parse_user_keybinds(user, &mut warnings) {
             Some(overlay) => {
                 warn_unknown_layers(&overlay, &mut warnings);
@@ -69,9 +68,10 @@ impl KeyMap {
         (KeyMap { loaded }, warnings)
     }
 
-    /// The active layer chain for `context`: the context's own layer first (when
-    /// it has one and is not `Global`), then the always-on global layer. This is
-    /// the per-event stack the suite asks the caller to assemble.
+    /// あるコンテキストのアクティブなレイヤーチェーン: そのコンテキスト自身の
+    /// レイヤー（存在し、かつ Global でない場合）を先に、その後に常時有効な
+    /// グローバルレイヤーを続ける。これは、suite が呼び出し側に組み立てさせる
+    /// イベントごとのスタックである。
     fn chain(&self, context: KeyContext) -> Vec<&Keymap<Action>> {
         let global = self.loaded.global();
         if context == KeyContext::Global {
@@ -83,21 +83,21 @@ impl KeyMap {
         }
     }
 
-    /// Resolve a key event to an action in the given context. The context layer
-    /// is consulted first, then the global layer; an unmappable key event or a
-    /// total miss yields `None` (the caller passes the key through).
+    /// 与えられたコンテキストでキーイベントをアクションに解決する。まずコンテキスト
+    /// のレイヤーが参照され、次にグローバルレイヤーが参照される。解決不能な
+    /// キーイベントや完全な不一致は None を返す（呼び出し側はキーをそのまま通す）。
     ///
-    /// In the terminal context, an action that does not [fire in the
-    /// terminal](Action::fires_in_terminal) resolves to `None` so the chord
-    /// reaches the PTY — the global fallback stays, but globally-bound actions
-    /// the terminal shouldn't steal (quit, switch-repo, …) are filtered here
-    /// rather than by an allowlist in the dispatcher.
+    /// terminal コンテキストでは、terminal で発火しないアクション
+    /// （Action::fires_in_terminal）は None に解決され、そのチョードは PTY に
+    /// 届く — グローバルへのフォールバックは残るが、terminal が奪うべきでない
+    /// グローバルバインドのアクション（quit、switch-repo、…）はここでフィルタ
+    /// され、ディスパッチャ側の許可リストによるものではない。
     pub fn resolve(&self, key: &KeyEvent, context: KeyContext) -> Option<Action> {
         let input = KeyInput::try_from(*key).ok()?;
         let action = resolve_layered(self.chain(context).iter().copied(), &input).copied()?;
-        // The editor panel forwards keys to its PTY exactly like the terminal,
-        // so it honors the same "only steal terminal-firing actions" filter —
-        // everything else (Esc, Ctrl+G, …) reaches vim/emacs untouched.
+        // エディタパネルは terminal とまったく同じように自分の PTY へキーを転送
+        // するので、同じ「terminal で発火するアクションだけを奪う」フィルタに
+        // 従う — それ以外（Esc、Ctrl+G、…）は手つかずのまま vim/emacs に届く。
         if matches!(context, KeyContext::Terminal | KeyContext::Editor)
             && !action.fires_in_terminal()
         {
@@ -106,22 +106,22 @@ impl KeyMap {
         Some(action)
     }
 
-    /// Display strings for every key bound to an action in a context (context
-    /// layer plus the global layer), for the help screen. Strings are
-    /// keymap-core canonical form (e.g. `"ctrl+d"`, `"down"`, `"G"`), which
-    /// round-trips back through the config grammar.
+    /// あるコンテキスト（コンテキストのレイヤーとグローバルレイヤー）内で、
+    /// あるアクションにバインドされているすべてのキーの表示文字列。ヘルプ
+    /// 画面向け。文字列は keymap-core の正規形式（例: "ctrl+d"、"down"、"G"）
+    /// で、設定の文法に逆変換できる。
     pub fn keys_for_action(&self, context: KeyContext, action: Action) -> Vec<String> {
-        // Keep the rendered help honest with `resolve`: in the terminal and
-        // editor contexts, a globally-bound action that doesn't fire there has
-        // no working chord.
+        // 表示するヘルプを resolve と一致させておく: terminal と editor の
+        // コンテキストでは、そこで発火しないグローバルバインドのアクション
+        // には有効なチョードがない。
         if matches!(context, KeyContext::Terminal | KeyContext::Editor)
             && !action.fires_in_terminal()
         {
             return Vec::new();
         }
 
-        // The reverse of resolution, over the same chain `resolve` consults, so
-        // the rendered help can never advertise a chord that would not fire.
+        // resolve が参照するのと同じチェーンを逆にたどるので、レンダリング
+        // されたヘルプが実際には発火しないチョードを宣伝することは決してない。
         let mut keys: Vec<String> = self
             .chain(context)
             .iter()
@@ -134,10 +134,11 @@ impl KeyMap {
         keys
     }
 
-    /// Keys bound to `action` in `context`'s OWN layer only — unlike
-    /// [`keys_for_action`](Self::keys_for_action), this does NOT fold in the
-    /// global layer. Lets a caller tell "bound in this panel" from "bound
-    /// globally and merely reachable here" (used to scope the command palette).
+    /// コンテキスト自身のレイヤーだけにバインドされているキー — keys_for_action
+    /// と違い、グローバルレイヤーを含めない。「このパネルにバインドされて
+    /// いる」のか「グローバルにバインドされていて、ここからも単に到達できる」
+    /// だけなのかを呼び出し側が区別できるようにする（コマンドパレットの
+    /// スコープ絞り込みに使う）。
     pub fn keys_in_layer(&self, context: KeyContext, action: Action) -> Vec<String> {
         let layer = if context == KeyContext::Global {
             self.loaded.global()
@@ -157,10 +158,10 @@ impl KeyMap {
     }
 }
 
-/// Warn about any user `[keybinds.layers.<name>]` whose name matches no
-/// [`KeyContext`] — its bindings are merged but never consulted. The empty
-/// `GLOBAL_LAYER` the loader always injects is skipped, so only a genuinely
-/// unrecognized, non-empty named layer warns.
+/// ユーザの [keybinds.layers.<name>] のうち、どの KeyContext の名前にも
+/// 一致しないものについて警告する — そのバインディングはマージはされるが
+/// 決して参照されない。ローダが常に注入する空の GLOBAL_LAYER はスキップ
+/// されるので、本当に未知で空でない名前付きレイヤーだけが警告になる。
 fn warn_unknown_layers(overlay: &Loaded<Action>, warnings: &mut Vec<KeybindWarning>) {
     for (name, layer) in &overlay.layers {
         if name == keymap_suite::GLOBAL_LAYER || layer.is_empty() {
@@ -174,10 +175,10 @@ fn warn_unknown_layers(overlay: &Loaded<Action>, warnings: &mut Vec<KeybindWarni
     }
 }
 
-/// Parse the user's `[keybinds]` table into a keymap-suite overlay. Returns
-/// `None` (no overrides) when the table is empty or cannot be parsed; a parse
-/// failure is recorded as a [`KeybindWarning::InvalidConfig`] so the app can
-/// tell the user their customizations were ignored.
+/// ユーザの [keybinds] テーブルを keymap-suite のオーバーレイにパースする。
+/// テーブルが空かパースできない場合は None（上書きなし）を返す。パース失敗は
+/// KeybindWarning::InvalidConfig として記録し、アプリがユーザにカスタマイズが
+/// 無視されたことを伝えられるようにする。
 fn parse_user_keybinds(
     user: &toml::Table,
     warnings: &mut Vec<KeybindWarning>,
@@ -186,9 +187,10 @@ fn parse_user_keybinds(
         return None;
     }
 
-    // keymap-suite parses a standalone document; re-emit just the [keybinds]
-    // subtree as TOML text. (Conductor's `toml` and the suite's may differ in
-    // version, so the interface between them is text, not types.)
+    // keymap-suite は独立したドキュメントをパースするので、[keybinds]
+    // サブツリーだけを TOML テキストとして再出力する（Conductor 側の toml と
+    // suite 側の toml でバージョンが異なる可能性があるため、両者の間の
+    // インターフェースは型ではなくテキストにしてある）。
     let toml_text = match toml::to_string(user) {
         Ok(text) => text,
         Err(e) => {
@@ -214,8 +216,8 @@ fn parse_user_keybinds(
     }
 }
 
-/// Translate the keymap-suite warnings Conductor cares about into its own
-/// warning type, dropping sequence-related variants it does not use.
+/// keymap-suite の警告のうち Conductor が関心を持つものを、自前の警告型に
+/// 変換する。Conductor が使わないシーケンス関連のバリアントは捨てる。
 fn collect_warnings(from: &[keymap_suite::Warning], into: &mut Vec<KeybindWarning>) {
     for w in from {
         match w {
@@ -230,8 +232,8 @@ fn collect_warnings(from: &[keymap_suite::Warning], into: &mut Vec<KeybindWarnin
                     chord: chord.clone(),
                 });
             }
-            // PrefixShadow / EmptySequence / SequenceShadow concern sequences,
-            // which Conductor does not use. `Warning` is #[non_exhaustive].
+            // PrefixShadow / EmptySequence / SequenceShadow はシーケンスに
+            // 関するもので、Conductor は使わない。Warning は #[non_exhaustive]。
             _ => {}
         }
     }

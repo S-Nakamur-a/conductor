@@ -1,4 +1,4 @@
-//! CRUD for replies to review comments (the `review_replies` table).
+//! レビューコメントへの返信（review_replies テーブル）の CRUD。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -8,7 +8,7 @@ use super::ReviewStore;
 use super::model::{Author, ReviewReply};
 
 impl ReviewStore {
-    /// Insert a reply to a review comment.
+    /// レビューコメントへの返信を挿入する。
     pub fn add_reply(&self, review_id: &str, body: &str, author: Author) -> Result<()> {
         let id = Uuid::new_v4().to_string();
         self.conn.execute(
@@ -19,7 +19,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Return all replies for a given review comment, ordered by creation time.
+    /// 指定したレビューコメントの全返信を作成日時順で返す。
     pub fn get_replies(&self, review_id: &str) -> Result<Vec<ReviewReply>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, review_id, body, author, created_at
@@ -55,9 +55,8 @@ impl ReviewStore {
         Ok(out)
     }
 
-    /// Delete a single reply by id, leaving the parent comment and its other
-    /// replies intact. (Contrast with `delete_review`, which cascade-deletes
-    /// every reply.)
+    /// id を指定して返信を1件削除する。親コメントと他の返信はそのまま残る
+    /// （全返信をカスケード削除する delete_review とは対照的）。
     pub fn delete_reply(&self, id: &str) -> Result<()> {
         let changed = self
             .conn
@@ -68,7 +67,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Edit the body text of a single reply.
+    /// 返信1件の本文テキストを編集する。
     pub fn update_reply_body(&self, id: &str, body: &str) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE review_replies SET body = ?1 WHERE id = ?2",
@@ -80,9 +79,9 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Return reply counts for all comments in a given worktree.
+    /// 指定した worktree の全コメントについて返信数を返す。
     ///
-    /// Returns a map of review_id → reply count.
+    /// review_id から返信数への map を返す。
     pub fn reply_counts_for_worktree(
         &self,
         worktree: &str,
@@ -132,14 +131,14 @@ mod tests {
             )
             .unwrap();
 
-        // Initially no replies.
+        // 最初は返信なし。
         let replies = store.get_replies(&review.id).unwrap();
         assert!(replies.is_empty());
 
         let counts = store.reply_counts_for_worktree("wt1").unwrap();
         assert!(counts.is_empty());
 
-        // Add a user reply.
+        // ユーザからの返信を追加する。
         store
             .add_reply(&review.id, "I'll fix it", Author::User)
             .unwrap();
@@ -150,7 +149,7 @@ mod tests {
         assert_eq!(replies[0].author, Author::User);
         assert_eq!(replies[0].review_id, review.id);
 
-        // Add another reply (from Claude).
+        // もう1件、Claude からの返信を追加する。
         store
             .add_reply(&review.id, "Thanks!", Author::Claude)
             .unwrap();
@@ -158,11 +157,11 @@ mod tests {
         let replies = store.get_replies(&review.id).unwrap();
         assert_eq!(replies.len(), 2);
 
-        // Check counts.
+        // 件数を確認する。
         let counts = store.reply_counts_for_worktree("wt1").unwrap();
         assert_eq!(counts.get(&review.id), Some(&2));
 
-        // No replies for a different worktree.
+        // 別の worktree には返信がない。
         let counts = store.reply_counts_for_worktree("wt2").unwrap();
         assert!(counts.is_empty());
     }
@@ -190,7 +189,7 @@ mod tests {
             .unwrap();
         assert_eq!(store.get_replies(&review.id).unwrap().len(), 1);
 
-        // Deleting the review should cascade-delete the replies.
+        // レビューを削除すると返信もカスケード削除されるはず。
         store.delete_review(&review.id).unwrap();
         let replies = store.get_replies(&review.id).unwrap();
         assert!(replies.is_empty());
@@ -218,12 +217,12 @@ mod tests {
         let replies = store.get_replies(&review.id).unwrap();
         assert_eq!(replies.len(), 2);
 
-        // Delete only the first reply.
+        // 最初の返信だけを削除する。
         store.delete_reply(&replies[0].id).unwrap();
         let after = store.get_replies(&review.id).unwrap();
         assert_eq!(after.len(), 1, "only the targeted reply should be removed");
         assert_eq!(after[0].body, "second");
-        // The parent comment must still exist (the old bug deleted it).
+        // 親コメントはまだ存在していなければならない（かつてのバグはこれを消していた）。
         assert!(
             store
                 .reviews_for_worktree("wt1")
@@ -254,7 +253,7 @@ mod tests {
 
         store.update_reply_body(&id, "fixed").unwrap();
         assert_eq!(store.get_replies(&review.id).unwrap()[0].body, "fixed");
-        // Editing a non-existent reply is an error, not a silent no-op.
+        // 存在しない返信の編集はサイレントな no-op ではなくエラーになる。
         assert!(store.update_reply_body("nope", "x").is_err());
         assert!(store.delete_reply("nope").is_err());
     }

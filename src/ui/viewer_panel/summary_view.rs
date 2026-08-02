@@ -1,5 +1,5 @@
-//! The "SUMMARY" pseudo-file view — the full-panel branch change-summary
-//! renderer, counterpart to the line-anchored review comments.
+//! "SUMMARY" 疑似ファイルビュー。行に紐づくレビューコメントの対となる、
+//! ブランチの変更概要を全面表示するレンダラー。
 
 use crate::app::App;
 use ratatui::Frame;
@@ -8,10 +8,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-/// Render the full change summary as a dedicated, scrollable, full-panel view —
-/// the "SUMMARY" pseudo-file. This is the PR-description counterpart to the
-/// line-anchored review comments; it gets the whole panel (no truncation) and
-/// reuses the same j/k scroll the diff/file views use.
+/// 変更概要全体を、専用のスクロール可能な全面ビュー（"SUMMARY" 疑似ファイル）として
+/// 描画する。これは行に紐づくレビューコメントに対する PR 説明文の対で、パネル全体を
+/// 使い（省略しない）、diff/file ビューと同じ j/k スクロールを再利用する。
 pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
     let inner_width = area.width.saturating_sub(2) as usize;
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -59,10 +58,10 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
                 )));
             }
         } else {
-            // Render the summary as Markdown: headings/lists/quotes are
-            // decorated and fenced code blocks are syntax-highlighted. Plain
-            // text (no Markdown syntax) renders as ordinary paragraphs, so
-            // existing summaries are unaffected.
+            // 概要を Markdown として描画する: 見出し/リスト/引用は装飾され、
+            // フェンスコードブロックはシンタックスハイライトされる。Markdown 記法を
+            // 含まないプレーンテキストは通常の段落として描画されるので、既存の
+            // 概要は影響を受けない。
             lines = crate::ui::markdown::render_markdown(
                 summary,
                 inner_width.saturating_sub(1),
@@ -74,8 +73,8 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
         (block, lines)
     };
 
-    // Record the total so the key handler can clamp scrolling, and write the
-    // clamped scroll back so navigation stays responsive if the summary shrank.
+    // キーハンドラがスクロールをクランプできるよう総行数を記録し、概要が短くなっても
+    // ナビゲーションが正しく効くようクランプ後のスクロール値を書き戻す。
     app.viewer_state.summary_total_lines = lines.len();
     let scroll = app
         .viewer_state

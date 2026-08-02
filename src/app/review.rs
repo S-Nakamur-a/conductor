@@ -1,36 +1,33 @@
-//! Review comment core / diff navigation for [`App`].
+//! [App] のレビューコメントの中核処理と diff ナビゲーション。
 //!
-//! Reloading comments from the database, opening a diff file from the diff
-//! list (landing on its first comment or change), jumping between changed
-//! files, auto-expanding unresolved threads, and adding a new comment.
-//! Deletion lives in [`super::review_delete`], editing/status/replies in
-//! [`super::review_edit`], template/history helpers in
-//! [`super::review_history`], and AI walkthrough generation in
-//! [`super::review_walkthrough`].
+//! DB からのコメント再読み込み、diff リストからの diff ファイルオープン(その最初の
+//! コメントまたは変更箇所へ着地)、変更ファイル間のジャンプ、未解決スレッドの自動展開、
+//! 新規コメントの追加を担う。削除は [super::review_delete]、編集/ステータス/返信は
+//! [super::review_edit]、テンプレート/履歴のヘルパーは [super::review_history]、
+//! AI walkthrough 生成は [super::review_walkthrough] にある。
 
 use super::*;
 use crate::review_store::{Author, CommentKind};
 
 impl App {
-    /// Reload review comments from the database for the currently selected worktree.
+    /// 現在選択中の worktree について、DB からレビューコメントを再読み込みする。
     pub fn refresh_reviews(&mut self) {
         if let Some(store) = &self.review_store {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
-            // Walkthrough (if any) rides along with the same branch scope.
+            // walkthrough があれば同じブランチスコープで一緒に読み込む。
             self.walkthrough.current = store
                 .get_walkthrough(&wt)
                 .ok()
                 .flatten()
                 .map(crate::app::LoadedWalkthrough::from);
-            // Re-anchor each step onto the diff's own spelling of its file
-            // while we have both in hand. The Viewer's step banner and its
-            // line-range underline compare `current_file` against
-            // `step.file_path` directly, so a step whose stored path only
-            // *resolves* to a diff file (a `git diff` `b/` prefix, a path
-            // written relative to a subdirectory) would jump correctly and
-            // then render neither. Steps that already match, and steps whose
-            // file isn't in the diff at all, are left exactly as they are.
+            // 両方が手元にあるうちに、各ステップを diff 側のファイル表記に再アンカーする。
+            // Viewer のステップバナーと行範囲の下線表示は current_file を
+            // step.file_path と直接比較するため、保存済みパスが diff ファイルに
+            // *解決される* だけの場合(git diff の b/ プレフィックス、サブディレクトリ
+            // 相対で書かれたパスなど)、ジャンプ自体は正しくても表示は何も出ない。
+            // 既に一致しているステップと、そもそもファイルが diff に含まれないステップは
+            // そのままにする。
             if let Some(steps) = self.walkthrough.current.as_mut().map(|wt| &mut wt.steps) {
                 for step in steps.iter_mut() {
                     if let Some(resolved) = self.diff_state.resolve_changed_path(&step.file_path)
@@ -40,30 +37,31 @@ impl App {
                     }
                 }
             }
-            // Rebuild per-file cache for the currently viewed file.
+            // 現在表示中のファイルについて、ファイル単位のキャッシュを再構築する。
             if let Some(file_path) = self.viewer_state.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);
             }
-            // Keep the diff list's SUMMARY pseudo-file in sync with whether this
-            // branch has a change summary. Only rebuild when it actually flips,
-            // so we don't disturb the display list on every reload.
+            // diff リストの SUMMARY 疑似ファイルを、このブランチに change summary が
+            // あるかどうかと同期させる。実際に切り替わったときだけ再構築し、
+            // 毎回のリロードで表示リストを乱さないようにする。
             let has_summary = self.review_state.change_summary.is_some();
             if self.diff_state.has_summary != has_summary {
                 self.diff_state.has_summary = has_summary;
                 self.diff_state.rebuild_display_list();
             }
-            // Deliberately no "summary vanished, so close the view" branch here.
-            // A data reload must never close a view the user opened: `None` here
-            // means "this reload found no summary", which also covers reloads
-            // against a branch that failed to resolve, and closing on that threw
-            // the user onto an unrelated file. The summary pane renders its own
-            // empty state, so an orphaned view explains itself and Esc closes it.
+            // ここには意図的に「summary が消えたのでビューを閉じる」分岐を置かない。
+            // データの再読み込みがユーザの開いたビューを勝手に閉じてはならない。ここでの
+            // None は「今回の読み込みでは summary が見つからなかった」ことを意味するに
+            // 過ぎず、ブランチの解決に失敗した再読み込みも同様に None になる。それで
+            // 閉じてしまうと、ユーザは無関係なファイルへ放り出される。summary ペインは
+            // 自身の空状態を描画するので、迷子になったビューはそれ自体で状況を説明でき、
+            // Esc で閉じられる。
         }
     }
 
-    /// Open the diff file currently selected in the diff list (the entry at
-    /// `diff_list_selected`) into the Viewer. Shared by the file-jump keys; a
-    /// no-op if the selected entry isn't a file.
+    /// diff リストで現在選択中のファイル(diff_list_selected のエントリ)を Viewer で
+    /// 開く。ファイルジャンプ系のキーから共有される。選択エントリがファイルでなければ
+    /// 何もしない。
     pub fn open_diff_file_at_selected(&mut self) {
         let idx = self.viewer_state.explorer.diff_list_selected;
         let (file_path, file_diff_clone) = match self.diff_state.resolve_file(idx) {
@@ -77,9 +75,8 @@ impl App {
         self.review_state.build_file_comment_cache(&file_path);
         self.expand_threads_for_file(&file_path);
         self.viewer_state.build_unified_diff_view(&file_diff_clone);
-        // Land on the first review comment if the file has any (so the reviewer
-        // sees it immediately — answers "jump to the file's first comment"),
-        // otherwise on the first change.
+        // ファイルにレビューコメントがあれば最初のコメントへ着地させ(レビュアーが
+        // すぐ気付けるようにする)、なければ最初の変更箇所へ着地させる。
         let first_comment_line = self
             .review_state
             .comments
@@ -110,15 +107,15 @@ impl App {
         }
     }
 
-    /// Jump to the next (or previous) changed file in the diff list and open it.
-    /// Skips non-file rows (section headers, directories, the SUMMARY entry).
-    /// The lightweight substitute for GitHub-style cross-file scrolling.
+    /// diff リストで次(または前)の変更ファイルへジャンプして開く。
+    /// ファイル以外の行(セクション見出し、ディレクトリ、SUMMARY エントリ)はスキップする。
+    /// GitHub 風のファイル横断スクロールの簡易代替。
     pub fn jump_to_changed_file(&mut self, forward: bool) {
         use crate::diff_state::DiffListEntry;
         let len = self.diff_state.display_list.len();
-        // Clamp the cursor: a stale `diff_list_selected` (e.g. after the list
-        // shrank on refresh) must never index past the list in the backward
-        // scan below, or `display_list[i]` panics.
+        // カーソルをクランプする: 古い diff_list_selected(リフレッシュでリストが
+        // 縮んだ場合など)が下の後方スキャンでリスト範囲を超えてはならない。
+        // 超えると display_list[i] がパニックする。
         let cur = self.viewer_state.explorer.diff_list_selected.min(len);
         let target = if forward {
             (cur + 1..len)
@@ -134,15 +131,15 @@ impl App {
         }
     }
 
-    /// Default-expand the inline comment threads for a freshly opened file, so
-    /// review comments are visible at a glance instead of starting collapsed.
-    /// Only the opened file's threads are expanded (not every file's), matching
-    /// "the selected file's comments are open by default". The user can still
-    /// collapse individual threads afterward.
+    /// 新しく開いたファイルのインラインコメントスレッドをデフォルトで展開し、レビュー
+    /// コメントが折りたたまれた状態で始まらず一目で見えるようにする。展開するのは
+    /// 開いたファイルのスレッドだけ(全ファイルではない)で、「選択中ファイルのコメントは
+    /// デフォルトで開く」という仕様に合わせている。個々のスレッドは後からユーザが
+    /// 折りたためる。
     pub fn expand_threads_for_file(&mut self, file_path: &str) {
-        // Only auto-expand lines with at least one *unresolved* comment.
-        // Resolved comments are collapsed by default (their gutter badge still
-        // shows, and clicking it opens the thread on demand).
+        // 未解決のコメントが1件以上ある行だけを自動展開する。
+        // 解決済みのコメントはデフォルトで折りたたまれる(ガター上のバッジは表示され続け、
+        // クリックするとスレッドがオンデマンドで開く)。
         let lines: Vec<usize> = self
             .review_state
             .comments
@@ -161,8 +158,7 @@ impl App {
         }
     }
 
-    /// Add a new review comment for the current worktree and refresh the
-    /// comment list.
+    /// 現在の worktree に新しいレビューコメントを追加し、コメント一覧を更新する。
     pub fn add_review_comment(
         &mut self,
         file_path: &str,
@@ -178,10 +174,10 @@ impl App {
             .map(|w| w.branch.clone());
 
         if let Some(store) = &self.review_store {
-            // Invariant: a comment's `worktree` column stores the branch name,
-            // `commit_ref` is the symbolic "HEAD", and `branch` is the same
-            // branch. The MCP `create_comment` tool (plugins/.../mcp) is a
-            // sibling writer that mirrors this exactly — keep the two in sync.
+            // 不変条件: コメントの worktree カラムはブランチ名を保存し、commit_ref は
+            // シンボリックな "HEAD"、branch も同じブランチ。MCP の create_comment
+            // ツール(plugins/.../mcp)はこれと全く同じ形で書き込む姉妹実装であり、
+            // 両者を同期させ続けること。
             let wt = self.selected_worktree_branch();
             match store.add_review(
                 &wt,
@@ -204,10 +200,10 @@ impl App {
                 }
             }
             self.review_state.load_comments(store, &wt);
-            // Rebuild per-file cache for the commented file.
+            // コメントを追加したファイルについて、ファイル単位のキャッシュを再構築する。
             self.review_state.build_file_comment_cache(file_path);
-            // Keep the just-created thread expanded so the comment is visible
-            // immediately instead of collapsing into a gutter badge.
+            // 作成直後のスレッドは展開したままにし、ガターバッジに折りたたまれず
+            // コメントがすぐに見えるようにする。
             let line = line_end.unwrap_or(line_start) as usize;
             self.viewer_state
                 .explorer

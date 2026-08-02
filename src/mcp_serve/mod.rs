@@ -1,14 +1,14 @@
-//! `conductor mcp-serve` — the review database as a stdio MCP server.
+//! conductor mcp-serve — レビューデータベースを stdio 上の MCP サーバとして提供する。
 //!
-//! The headless walkthrough session (and any Claude Code session running inside
-//! the TUI) reaches the review database through this subcommand rather than
-//! through a separately-published Node package. Shipping the tools inside the
-//! binary is what makes it impossible for the two to disagree about the schema:
-//! there is only one artifact to install.
+//! ヘッドレスなウォークスルーセッション（および TUI 内で動く Claude Code
+//! セッション）は、別に配布された Node パッケージ経由ではなく、このサブコマンド
+//! を通してレビューデータベースにアクセスする。ツールをバイナリの中に同梱する
+//! ことで、両者がスキーマについて食い違うことがそもそも起こり得なくなる —
+//! インストールすべき成果物が1つしかないため。
 //!
-//! stdout belongs to JSON-RPC. Nothing in here may print to it — logging goes to
-//! stderr (env_logger's default), and `main` must reach [`run`] before any of
-//! the terminal setup runs.
+//! stdout は JSON-RPC が占有する。ここから stdout に書き込んではならない —
+//! ログは stderr に出す（env_logger のデフォルト）。main は端末セットアップの
+//! いずれよりも先に [run] に到達しなければならない。
 
 mod args;
 mod reply;
@@ -21,11 +21,11 @@ use rmcp::transport::stdio;
 
 use crate::review_store::ReviewStore;
 
-/// Serve the review database on stdin/stdout until the client disconnects.
+/// クライアントが切断するまで、レビューデータベースを stdin/stdout 上で提供する。
 ///
-/// Returns once stdin reaches EOF, which is how the parent session shuts us
-/// down: the process must not outlive the `claude` that spawned it, or it would
-/// sit holding a connection to the database.
+/// stdin が EOF に達したら返る。親セッションはこうやって自分をシャットダウン
+/// する — このプロセスは自分を起動した claude より長生きしてはならない。
+/// そうしないとデータベースへの接続を握ったまま居座ることになる。
 pub fn run() -> Result<()> {
     let db_arg = resolve::parse_db_arg(std::env::args());
     let db_path = resolve::resolve_db_path(db_arg)?;
@@ -34,10 +34,10 @@ pub fn run() -> Result<()> {
 
     log::info!("mcp-serve: using database {}", db_path.display());
 
-    // One client on one pipe — a current-thread runtime is all this needs, and
-    // it keeps the binary from pulling in the multi-threaded scheduler.
-    // Timers are not optional: rmcp's service loop arms them for request
-    // timeouts and panics on a runtime without them.
+    // 1本のパイプに1クライアントだけなので、current-thread ランタイムで足りる。
+    // これによりバイナリがマルチスレッドスケジューラを引き込まずに済む。
+    // タイマーは省略できない — rmcp のサービスループはリクエストのタイムアウト
+    // のためにタイマーをセットするので、無いランタイムでは panic する。
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()

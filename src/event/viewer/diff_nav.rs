@@ -1,13 +1,12 @@
-//! Pure navigation helpers for the unified diff view: locating the next/
-//! previous changed block and the next/previous commented line, independent
-//! of any `App` state so they're cheap to test in isolation.
+//! 統合 diff ビュー向けの純粋なナビゲーションヘルパー: 次/前の変更ブロック、
+//! 次/前のコメント付き行を探す。App の状態に依存しないため単体テストが容易。
 
 use std::collections::HashMap;
 
 use crate::diff_state::DiffLineTag;
 use crate::viewer::UnifiedDiffEntry;
 
-/// A changed (added or removed) line in the unified diff.
+/// 統合 diff 内の変更行（追加または削除）かどうか。
 fn is_change_line(entry: &UnifiedDiffEntry) -> bool {
     matches!(
         entry,
@@ -18,25 +17,26 @@ fn is_change_line(entry: &UnifiedDiffEntry) -> bool {
     )
 }
 
-/// `true` when index `i` is the first line of a contiguous block of changes.
+/// インデックス i が連続した変更ブロックの先頭行なら true。
 fn is_change_block_start(lines: &[UnifiedDiffEntry], i: usize) -> bool {
     is_change_line(&lines[i]) && (i == 0 || !is_change_line(&lines[i - 1]))
 }
 
-/// Index of the next change block strictly after `from`.
+/// from より後にある次の変更ブロックのインデックス。
 pub(super) fn next_change_block(lines: &[UnifiedDiffEntry], from: usize) -> Option<usize> {
     (from + 1..lines.len()).find(|&i| is_change_block_start(lines, i))
 }
 
-/// Index of the previous change block strictly before `from`.
+/// from より前にある直前の変更ブロックのインデックス。
 pub(super) fn prev_change_block(lines: &[UnifiedDiffEntry], from: usize) -> Option<usize> {
     (0..from).rev().find(|&i| is_change_block_start(lines, i))
 }
 
-/// `true` when the diff entry carries a review comment. A `Line` matches when
-/// its new-file line number has a comment; a collapsed `ExpandableContext`
-/// matches when any hidden line in its range does, so a comment that currently
-/// sits inside a fold is still reachable (the jump lands on the fold to expand).
+/// diff のエントリがレビューコメントを持つなら true。Line は新ファイル側の
+/// 行番号にコメントがあれば一致し、折りたたまれた ExpandableContext はその
+/// 範囲内の隠れた行のいずれかにコメントがあれば一致する。これにより、
+/// 現在折りたたみの中に入っているコメントにもジャンプできる（着地先は
+/// 展開できるよう折りたたみ自体になる）。
 fn entry_has_comment<V>(entry: &UnifiedDiffEntry, comments: &HashMap<usize, V>) -> bool {
     match entry {
         UnifiedDiffEntry::Line {
@@ -52,7 +52,7 @@ fn entry_has_comment<V>(entry: &UnifiedDiffEntry, comments: &HashMap<usize, V>) 
     }
 }
 
-/// Index of the next commented diff entry strictly after `from`.
+/// from より後にある、次にコメントが付いた diff エントリのインデックス。
 pub(super) fn next_comment_line<V>(
     lines: &[UnifiedDiffEntry],
     comments: &HashMap<usize, V>,
@@ -61,7 +61,7 @@ pub(super) fn next_comment_line<V>(
     (from + 1..lines.len()).find(|&i| entry_has_comment(&lines[i], comments))
 }
 
-/// Index of the previous commented diff entry strictly before `from`.
+/// from より前にある、直前にコメントが付いた diff エントリのインデックス。
 pub(super) fn prev_comment_line<V>(
     lines: &[UnifiedDiffEntry],
     comments: &HashMap<usize, V>,
@@ -96,7 +96,7 @@ mod tests {
     fn sep() -> UnifiedDiffEntry {
         UnifiedDiffEntry::HunkSeparator { func_header: None }
     }
-    /// A `Line` carrying an explicit new-file line number.
+    /// 新ファイル側の行番号を明示的に持つ Line。
     fn line_no(tag: DiffLineTag, n: usize) -> UnifiedDiffEntry {
         UnifiedDiffEntry::Line {
             tag,
@@ -105,7 +105,7 @@ mod tests {
             inline_segments: Vec::new(),
         }
     }
-    /// A `Line` for a deletion (no new-file line number).
+    /// 削除行の Line（新ファイル側の行番号を持たない）。
     fn del_no_line() -> UnifiedDiffEntry {
         UnifiedDiffEntry::Line {
             tag: DiffLineTag::Delete,
@@ -127,10 +127,10 @@ mod tests {
     fn change_block_start_detection() {
         assert!(is_change_block_start(&[ins()], 0));
         assert!(is_change_block_start(&[eq(), ins()], 1));
-        assert!(!is_change_block_start(&[ins(), ins()], 1)); // mid-block
-        assert!(!is_change_block_start(&[eq()], 0)); // not a change line
-        assert!(is_change_block_start(&[sep(), ins()], 1)); // separator breaks runs
-        assert!(!is_change_block_start(&[del(), ins()], 1)); // del+ins = one modified block
+        assert!(!is_change_block_start(&[ins(), ins()], 1)); // ブロックの途中
+        assert!(!is_change_block_start(&[eq()], 0)); // 変更行ではない
+        assert!(is_change_block_start(&[sep(), ins()], 1)); // セパレータで区切られる
+        assert!(!is_change_block_start(&[del(), ins()], 1)); // del+ins は1つの変更ブロック
     }
 
     #[test]
@@ -141,10 +141,10 @@ mod tests {
         assert_eq!(next_change_block(&v, 0), Some(1));
         assert_eq!(next_change_block(&v, 1), Some(3));
         assert_eq!(next_change_block(&v, 3), None);
-        // From mid-block, skip the rest of the current block.
+        // ブロックの途中からは、現在のブロックの残りをスキップする。
         let v = vec![ins(), ins(), ins(), eq(), ins()];
         assert_eq!(next_change_block(&v, 1), Some(4));
-        // A separator splits two otherwise-adjacent change lines.
+        // セパレータは隣接する2つの変更行を分断する。
         assert_eq!(next_change_block(&[ins(), sep(), ins()], 0), Some(2));
     }
 
@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(prev_change_block(&v, 4), Some(3));
         assert_eq!(prev_change_block(&v, 3), Some(1));
         assert_eq!(prev_change_block(&v, 1), None);
-        // From mid-block, land on the current block's start.
+        // ブロックの途中からは、そのブロックの先頭に着地する。
         assert_eq!(prev_change_block(&[ins(), ins(), ins()], 2), Some(0));
         assert_eq!(prev_change_block(&[ins(), ins()], 0), None);
     }
@@ -164,37 +164,37 @@ mod tests {
     fn comment_navigation() {
         let comments: HashMap<usize, ()> = [(5, ()), (8, ())].into_iter().collect();
         let v = vec![
-            line_no(DiffLineTag::Equal, 4),  // 0: no comment
-            line_no(DiffLineTag::Insert, 5), // 1: commented
-            del_no_line(),                   // 2: delete, never commented
-            line_no(DiffLineTag::Equal, 8),  // 3: commented
+            line_no(DiffLineTag::Equal, 4),  // 0: コメントなし
+            line_no(DiffLineTag::Insert, 5), // 1: コメントあり
+            del_no_line(),                   // 2: 削除行、コメントは付かない
+            line_no(DiffLineTag::Equal, 8),  // 3: コメントあり
         ];
         assert_eq!(next_comment_line(&v, &comments, 0), Some(1));
         assert_eq!(next_comment_line(&v, &comments, 1), Some(3));
         assert_eq!(next_comment_line(&v, &comments, 3), None);
         assert_eq!(prev_comment_line(&v, &comments, 3), Some(1));
         assert_eq!(prev_comment_line(&v, &comments, 1), None);
-        // Empty comment set → nothing found.
+        // コメント集合が空なら何も見つからない。
         let none: HashMap<usize, ()> = HashMap::new();
         assert_eq!(next_comment_line(&v, &none, 0), None);
     }
 
     #[test]
     fn delete_line_is_never_commented() {
-        // A deletion has no new-file line number, so it can't carry a comment
-        // even if that line number is in the map.
+        // 削除行は新ファイル側の行番号を持たないため、その行番号がマップに
+        // あってもコメントは付けられない。
         let comments: HashMap<usize, ()> = [(1, ())].into_iter().collect();
         assert!(!entry_has_comment(&del_no_line(), &comments));
     }
 
     #[test]
     fn comment_hidden_in_fold_is_reachable() {
-        // A comment on line 7 sits inside a collapsed context spanning 5..=10;
-        // the jump should land on the fold so it can be expanded.
+        // 7行目のコメントは 5..=10 の折りたたまれたコンテキストの中にある。
+        // ジャンプは展開できるよう折りたたみ自体に着地するべき。
         let comments: HashMap<usize, ()> = [(7, ())].into_iter().collect();
         let v = vec![ins(), fold(5, 10)];
         assert_eq!(next_comment_line(&v, &comments, 0), Some(1));
-        // No comment in the fold's range → not matched.
+        // 折りたたみの範囲内にコメントがなければマッチしない。
         let comments: HashMap<usize, ()> = [(99, ())].into_iter().collect();
         assert_eq!(next_comment_line(&v, &comments, 0), None);
     }

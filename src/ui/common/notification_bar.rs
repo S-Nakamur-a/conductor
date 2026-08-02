@@ -1,5 +1,5 @@
-//! The Claude-Code-waiting notification bar (currently unwired — superseded
-//! by the worktree monitor strip, kept for a possible future revival).
+//! Claude Code 待機通知バー（現在は未配線 — worktree モニタストリップに
+//! 置き換えられたが、将来復活させる可能性を考えて残してある）。
 
 use std::path::PathBuf;
 
@@ -12,13 +12,13 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-/// Render the notification bar showing CC waiting badges.
-/// Returns the height consumed (0 if no notifications, 1 if shown).
-/// Records badge positions in `app.notification_bar_badges` for click handling.
+/// CC 待機バッジを表示する通知バーを描画する。
+/// 消費した高さを返す（通知がなければ0、表示すれば1）。
+/// クリック処理のためにバッジの位置を app.notification_bar_badges に記録する。
 ///
-/// Retained but no longer wired: the CC-waiting notification bar was replaced
-/// by the worktree monitor strip (which highlights the waiting worktree). Kept
-/// for now to keep the diff focused; safe to delete in a follow-up cleanup.
+/// 残してはいるが配線はしていない: CC待機通知バーは worktree モニタストリップ
+/// （待機中の worktree をハイライトする）に置き換えられた。差分を絞るため
+/// 今はそのままにしている。以降のクリーンアップで削除して構わない。
 #[allow(dead_code)]
 pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> u16 {
     app.notification_bar_badges.clear();
@@ -29,7 +29,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     let theme = &app.theme;
 
-    // Determine the worktree path shown in the focused CC panel (if any).
+    // フォーカス中の CC パネルに表示されている worktree のパスを求める（あれば）。
     let focused_cc_wt: Option<std::path::PathBuf> =
         if app.focus == crate::app::Focus::TerminalClaude {
             Some(app.selected_worktree_path())
@@ -37,7 +37,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
             None
         };
 
-    // Suppress the entire bar pulse when the only waiting session(s) are all focused.
+    // 唯一の待機セッションがすべてフォーカスされている場合、バー全体の点滅を抑制する。
     let all_suppressed = focused_cc_wt.is_some()
         && app.terminal.cc_waiting_worktrees.len() == 1
         && focused_cc_wt.as_deref()
@@ -48,9 +48,9 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
                 .next()
                 .map(|p| p.as_path());
 
-    // Orange-tinted background for the notification bar.
-    // Breathing pulse: a smooth triangle wave rather than a hard on/off blink,
-    // so the bar gently rises and falls instead of flickering in the periphery.
+    // 通知バーのオレンジがかった背景色。
+    // 呼吸するような点滅: 完全なオン/オフの点滅ではなく滑らかな三角波にすることで、
+    // 周辺視野でちらつくのではなく穏やかに強弱がつくようにしている。
     let cycle = 56u64;
     let phase = (app.ui_tick % cycle) as f64 / cycle as f64;
     let breath = 1.0 - (2.0 * phase - 1.0).abs(); // 0.0 → 1.0 → 0.0
@@ -60,14 +60,14 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         Theme::darken(theme.waiting_primary, 0.14 + 0.06 * breath)
     };
 
-    // Fill background.
+    // 背景を塗りつぶす。
     let bg_line = Line::from(Span::styled(
         " ".repeat(area.width as usize),
         Style::default().bg(bar_bg),
     ));
     frame.render_widget(Paragraph::new(bg_line), area);
 
-    // Leading indicator.
+    // 先頭のインジケータ。
     let prefix = " ⏳ ";
     let prefix_style = Style::default()
         .fg(theme.waiting_primary)
@@ -79,7 +79,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         prefix_area,
     );
 
-    // Collect waiting worktrees sorted by branch name.
+    // 待機中の worktree をブランチ名でソートして集める。
     let mut waiting: Vec<(&PathBuf, String)> = app
         .terminal
         .cc_waiting_worktrees
@@ -101,7 +101,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         .collect();
     waiting.sort_by(|a, b| a.1.cmp(&b.1));
 
-    // Badge colors: breathing vs static (for focused session).
+    // バッジの色: 点滅する場合と固定の場合（フォーカス中のセッション用）。
     let badge_bg_pulse = Theme::darken(theme.waiting_secondary, 0.85 + 0.15 * breath);
     let badge_bg_static = theme.waiting_secondary;
 
@@ -113,7 +113,7 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
 
     for (i, (path, name)) in waiting.iter().enumerate() {
         if i > 0 {
-            // Separator between badges.
+            // バッジ間のセパレータ。
             let sep_area = Rect::new(x, area.y, 1, 1);
             frame.render_widget(Paragraph::new(Span::styled(" ", sep_style)), sep_area);
             x += 1;
@@ -123,10 +123,10 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
         let w = UnicodeWidthStr::width(badge_str.as_str()) as u16;
 
         if x + w > area.x + area.width {
-            break; // not enough room
+            break; // 表示スペースが足りない
         }
 
-        // Suppress blinking for the badge matching the focused CC session.
+        // フォーカス中の CC セッションに一致するバッジは点滅を抑制する。
         let suppress = focused_cc_wt.as_deref() == Some(path.as_path());
         let bg = if suppress {
             badge_bg_static
@@ -144,13 +144,13 @@ pub fn render_notification_bar(frame: &mut Frame, area: Rect, app: &mut crate::a
             badge_area,
         );
 
-        // Record position for click handling.
+        // クリック処理のために位置を記録する。
         app.notification_bar_badges.push((x, x + w, name.clone()));
 
         x += w;
     }
 
-    // Trailing hint text.
+    // 末尾のヒントテキスト。
     let hint = " (click to jump)";
     let hint_w = UnicodeWidthStr::width(hint) as u16;
     if x + hint_w < area.x + area.width {

@@ -34,7 +34,7 @@ const STATUS_FADE_TICKS: u64 = 180;
 
 /// 「いま画面が動いている理由」— tick 速度と再描画の要否を決める材料。
 ///
-/// 1 周の頭で 1 度だけ求めて、フェーズ間で使い回す (`decoration` の設定文字列の
+/// 1 周の頭で 1 度だけ求めて、フェーズ間で使い回す (decoration の設定文字列の
 /// パースや PTY の通知フラグの取得は、1 周に 1 回しかやってはいけない)。
 pub(super) struct FrameSignals {
     /// 装飾アニメーションが動いているか。
@@ -107,7 +107,7 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
     }
 }
 
-/// 溜まっているイベントを [`MAX_DRAIN`] の予算まで捌く。
+/// 溜まっているイベントを [MAX_DRAIN] の予算まで捌く。
 ///
 /// まとめて捌くのは、高速スクロールで 1 イベント 1 フレームにならないようにするため。
 pub(super) fn drain_events(app: &mut App, loop_state: &mut LoopState, tick: Duration) -> Result<()> {
@@ -146,7 +146,7 @@ fn handle_event(app: &mut App, loop_state: &mut LoopState, event: Event) {
             // ユーザーがキーボードに移ったあともずっと点いたままになる。
             //
             // 消すのはポインタ由来のハイライトだけ。ホバー *ポップアップ* は
-            // 下の `handle_key_event` の担当で、pin されたモーダル (キーで操作)
+            // 下の handle_key_event の担当で、pin されたモーダル (キーで操作)
             // と一時的なもの (任意のキーで消え、Esc は握り潰す) を区別するのに
             // スタックが要る。
             app.clear_pointer_hover();
@@ -296,7 +296,7 @@ pub(super) fn run_background_work(
     // 猶予時間と無効化を管理する。
     app.tick_hover();
     // ジャンプ用アンダーライン (D8/D9): ポップアップとは別の、より速い
-    // (150ms・猶予なし) デバウンス。`tick_underline_hover` を参照。
+    // (150ms・猶予なし) デバウンス。tick_underline_hover を参照。
     app.tick_underline_hover();
 
     if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch && app.check_grep_debounce()

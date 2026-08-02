@@ -1,4 +1,4 @@
-//! Tests for `LayoutCache::update` and `accordion_widths`.
+//! LayoutCache::update と accordion_widths のテスト。
 
 use ratatui::layout::Rect;
 
@@ -6,7 +6,7 @@ use super::{LayoutCache, accordion_widths};
 use crate::app::Focus;
 use crate::config::LayoutConfig;
 
-/// Build a minimal LayoutConfig with the given proportions.
+/// 指定した比率で最小限の LayoutConfig を組み立てる。
 fn layout(explorer: u16, viewer: u16, terminal: u16) -> LayoutConfig {
     LayoutConfig {
         explorer_width_pct: explorer,
@@ -16,12 +16,12 @@ fn layout(explorer: u16, viewer: u16, terminal: u16) -> LayoutConfig {
     }
 }
 
-/// A non-zero Rect large enough to produce non-trivial layout splits.
+/// 非自明なレイアウト分割を発生させるのに十分大きい、非ゼロの Rect。
 fn rect(w: u16, h: u16) -> Rect {
     Rect::new(0, 0, w, h)
 }
 
-// ── LayoutCache::update ──────────────────────────────────────────
+// LayoutCache::update
 
 #[test]
 fn layout_cache_update_returns_true_first_call() {
@@ -66,8 +66,8 @@ fn layout_cache_invalidates_on_viewer_pct_change() {
 
 #[test]
 fn layout_cache_invalidates_on_terminal_split_change() {
-    // The terminal split now arrives as a runtime parameter (grow/shrink
-    // shell), so vary that argument rather than the config field.
+    // ターミナル分割は今や実行時パラメータ（shell の拡大縮小）として渡ってくるので、
+    // config フィールドではなくその引数の方を変える。
     let mut cache = LayoutCache::default();
     let cfg = layout(24, 38, 80);
     cache.update(rect(200, 50), None, false, &cfg, 80);
@@ -84,38 +84,38 @@ fn layout_cache_invalidates_on_explorer_split_change() {
     cfg.explorer_split_pct = 30;
     let changed = cache.update(rect(200, 50), None, false, &cfg, 80);
     assert!(changed, "explorer_split_pct change must invalidate");
-    // The mid-point moves up when the file tree shrinks.
+    // ファイルツリーが縮むと中間点は上に移動する。
     assert!(cache.explorer_mid_y > 0);
 }
 
-// ── accordion_widths: abnormal percentages ───────────────────────
+// accordion_widths: 異常な割合
 
 #[test]
 fn accordion_widths_does_not_panic_on_large_percentages() {
-    // Percentages exceeding 100 must not panic (Percentage constraint clamps).
+    // 100 を超える割合でも panic してはならない（Percentage 制約側でクランプされる）。
     let _ = accordion_widths(None, 200, 240, 0);
     let _ = accordion_widths(None, 100, 60, 60);
 }
 
 #[test]
 fn terminal_split_pct_over_100_does_not_panic() {
-    // terminal_split_pct > 100 makes shell_pct saturate to 0; must not panic.
+    // terminal_split_pct が 100 を超えると shell_pct は 0 に飽和するが panic してはならない。
     let mut cache = LayoutCache::default();
     let _ = cache.update(rect(200, 50), None, false, &layout(24, 38, 200), 200);
 }
 
 #[test]
 fn maximized_editor_takes_full_width_via_explorer_slot() {
-    // render_ui unions the explorer+viewer columns into the editor area, so
-    // the maximized editor puts all width on the explorer slot (viewer 0),
-    // collapsing the terminal column to zero remaining.
+    // render_ui は explorer+viewer カラムを editor 領域として統合するので、
+    // 最大化したエディタは explorer 側の枠に全幅を割り当て（viewer は0）、
+    // ターミナルカラムは残りゼロに縮む。
     let (left, explorer, viewer) = accordion_widths(Some(Focus::Editor), 120, 24, 38);
     assert_eq!((left, explorer, viewer), (0, 120, 0));
 }
 
 #[test]
 fn default_layout_uses_configured_percentages() {
-    // With default percentages (24/38) and 200-column terminal.
+    // デフォルトの割合（24/38）、幅200カラムのターミナルの場合。
     let (left, explorer, viewer) = accordion_widths(None, 200, 24, 38);
     assert_eq!(left, 0, "worktree column is always hidden");
     assert_eq!(explorer, 48, "200 * 24 / 100 = 48");
@@ -124,14 +124,14 @@ fn default_layout_uses_configured_percentages() {
 
 #[test]
 fn custom_percentages_are_respected() {
-    // Wider explorer (30%) and narrower viewer (30%).
+    // explorer を広く（30%）、viewer を狭く（30%）。
     let (left, explorer, viewer) = accordion_widths(None, 100, 30, 30);
     assert_eq!(left, 0);
     assert_eq!(explorer, 30);
     assert_eq!(viewer, 30);
 }
 
-// ── Menu bar row ─────────────────────────────────────────────────
+// メニューバーの行
 
 #[test]
 fn menu_bar_sits_directly_under_the_title_bar() {
@@ -153,9 +153,8 @@ fn menu_bar_sits_directly_under_the_title_bar() {
 
 #[test]
 fn menu_bar_stays_visible_while_a_panel_is_maximized() {
-    // Unlike the worktree strip, which collapses to give the expanded panel
-    // its rows back. A menu reachable only after un-maximizing is a menu that
-    // stops being used.
+    // worktree ストリップは折りたたまれて最大化パネルに行を返すが、こちらは違う。
+    // 最大化解除後にしか開けないメニューは、使われなくなるメニューである。
     let mut cache = LayoutCache::default();
     cache.update(
         rect(200, 50),
@@ -170,8 +169,8 @@ fn menu_bar_stays_visible_while_a_panel_is_maximized() {
 
 #[test]
 fn menu_bar_row_comes_out_of_the_main_area() {
-    // The bar takes its row from the content region, not from the status bar
-    // or by overdrawing the worktree strip.
+    // このバーはステータスバーから行を取るのでも worktree ストリップに
+    // 上書き描画するのでもなく、コンテンツ領域から行を取る。
     let mut cache = LayoutCache::default();
     let cfg = layout(24, 38, 80);
     cache.update(rect(200, 50), None, false, &cfg, 80);
@@ -182,14 +181,14 @@ fn menu_bar_row_comes_out_of_the_main_area() {
         cache.status_area.y,
         "main area must still butt up against the status bar"
     );
-    // title(1) + menubar(1) + wtbar(1) + status(1) = 4 rows of chrome.
+    // title(1) + menubar(1) + wtbar(1) + status(1) = クロム部分の合計4行。
     assert_eq!(cache.main_area.height, 50 - 4);
 }
 
 #[test]
 fn every_vertical_row_is_accounted_for() {
-    // No gaps and no overlaps between the stacked regions, at a couple of
-    // heights including one short enough to squeeze the main area.
+    // 積み重なった各領域の間に隙間も重複もないことを、main area が圧迫されるほど
+    // 短い高さも含むいくつかの高さで確認する。
     for h in [50_u16, 10, 6] {
         let mut cache = LayoutCache::default();
         cache.update(rect(120, h), None, false, &layout(24, 38, 80), 80);

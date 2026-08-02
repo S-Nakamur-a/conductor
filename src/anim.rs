@@ -3,8 +3,8 @@
 //! Conductor は即時モードで描画し、待機中は再描画を 2fps 程度まで落とす。
 //! つまり「遷移」は 2 つの仕組みの合わせ技になる: 経過実時間から求めた
 //! イージング済みの値 (このモジュール) と、遷移が続いている間だけフレームを
-//! 流し続けるメインループ側の再描画ポンプ (`App::has_active_transition` /
-//! `main.rs` を参照)。色の補間は `Theme::lerp` で行い、対象としている
+//! 流し続けるメインループ側の再描画ポンプ (App::has_active_transition /
+//! main.rs を参照)。色の補間は Theme::lerp で行い、対象としている
 //! 高 FPS・truecolor の端末ではこれが実際に滑らかなグラデーションになる。
 
 use std::time::Duration;
@@ -12,8 +12,8 @@ use std::time::Duration;
 /// フォーカスとパネル枠の遷移にかける時間 (ミリ秒)。
 pub const FOCUS_MS: u64 = 180;
 
-/// `elapsed` 前に始まった `duration_ms` の遷移について、smoothstep で
-/// イージングした `[0.0, 1.0]` の進捗を返す。両端で傾きが 0 になるので、
+/// elapsed 前に始まった duration_ms の遷移について、smoothstep で
+/// イージングした [0.0, 1.0] の進捗を返す。両端で傾きが 0 になるので、
 /// 線形のランプではなく緩やかな ease-in / ease-out の感触になる。
 pub fn eased_progress(elapsed: Duration, duration_ms: u64) -> f64 {
     if duration_ms == 0 {

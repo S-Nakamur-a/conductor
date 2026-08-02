@@ -1,8 +1,8 @@
-//! Worktree create/delete lifecycle for [`App`].
+//! [App] における worktree の作成・削除ライフサイクル。
 //!
-//! Owns the background-thread create/delete flow: kicking off the git
-//! operation on a worker thread, tracking [`PendingWorktree`] entries while
-//! it runs, and applying the result (or timeout) once it completes.
+//! バックグラウンドスレッドでの作成・削除フローを担う: git 操作をワーカー
+//! スレッドで起動し、実行中は [PendingWorktree] エントリで追跡し、完了
+//! (またはタイムアウト)したら結果を反映する。
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use super::*;
 
 impl App {
-    /// Create a worktree from a base ref (2-step flow) — runs in a background thread.
+    /// ベース ref から worktree を作成する(2段階フロー) — バックグラウンドスレッドで実行する。
     pub fn create_worktree_from_base(&mut self, branch_name: &str, base_ref: &str) {
         let base = if base_ref.is_empty() {
             "origin/main"
@@ -59,7 +59,7 @@ impl App {
         });
     }
 
-    /// Create a worktree from a remote branch — runs in a background thread.
+    /// リモートブランチから worktree を作成する — バックグラウンドスレッドで実行する。
     pub fn create_worktree_from_remote(&mut self, remote_branch: &str) {
         let local_branch = remote_branch
             .strip_prefix("origin/")
@@ -103,7 +103,7 @@ impl App {
         });
     }
 
-    /// Delete a branch (optionally force).
+    /// ブランチを削除する(force 指定可)。
     pub fn delete_branch(&mut self, name: &str, force: bool) {
         match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.delete_branch(name, force) {
@@ -138,9 +138,9 @@ impl App {
         let wt_path = wt.path.clone();
         let branch = wt.branch.clone();
 
-        // Kill all PTY sessions (Claude Code + Shell) associated with this worktree
-        // before removing the worktree directory. Walk backwards so removals don't
-        // shift indices we haven't processed yet.
+        // worktree ディレクトリを取り除く前に、この worktree に紐づく全ての PTY
+        // セッション(Claude Code + Shell)を kill する。まだ処理していない
+        // インデックスがずれないよう後ろから走査する。
         let session_indices: Vec<usize> = self
             .terminal
             .pty_manager
@@ -155,7 +155,7 @@ impl App {
             self.close_terminal_session(idx);
         }
 
-        // Add pending entry and run git removal in a background thread.
+        // 保留エントリを追加し、git の削除をバックグラウンドスレッドで実行する。
         let pending = PendingWorktree {
             branch: branch.clone(),
             op: PendingWorktreeOp::Deleting,
@@ -192,14 +192,14 @@ impl App {
         });
     }
 
-    /// Check if a worktree at the given path is pending deletion.
+    /// 指定パスの worktree が削除待ちかどうかを確認する。
     pub fn is_worktree_pending_delete(&self, path: &std::path::Path) -> bool {
         self.worktree_mgr.pending_worktrees.iter().any(|p| {
             p.op == PendingWorktreeOp::Deleting && p.worktree_path.as_deref() == Some(path)
         })
     }
 
-    /// Poll for completed background worktree create/delete results.
+    /// バックグラウンドの worktree 作成/削除結果が完了していないか確認する。
     pub fn poll_worktree_ops(&mut self) {
         let rx = match self.worktree_mgr.bg_worktree_rx.as_ref() {
             Some(rx) => rx,
@@ -213,7 +213,7 @@ impl App {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.worktree_mgr.bg_worktree_rx = None;
                     self.worktree_mgr.bg_worktree_tx = None;
-                    // Clean up any pending create/smart-create entries that will never complete.
+                    // 二度と完了することのない保留中の create/smart-create エントリを片付ける。
                     let orphaned: Vec<_> = self
                         .worktree_mgr
                         .pending_worktrees
@@ -250,7 +250,7 @@ impl App {
             self.handle_worktree_op_result(result);
         }
 
-        // Timeout detection: warn if any pending create/smart-create has been running too long.
+        // タイムアウト検出: 保留中の create/smart-create が長時間実行され続けていたら警告する。
         const TIMEOUT_SECS: u64 = 120;
         let now = std::time::Instant::now();
         let timed_out: Vec<_> = self
@@ -290,7 +290,7 @@ impl App {
     fn handle_worktree_op_result(&mut self, result: WorktreeOpResult) {
         match result {
             WorktreeOpResult::Created { path, pending } => {
-                // Remove from pending list (matches both Creating and SmartCreating).
+                // 保留リストから取り除く(Creating と SmartCreating の両方にマッチする)。
                 self.worktree_mgr.pending_worktrees.retain(|p| {
                     !((p.op == PendingWorktreeOp::Creating
                         || p.op == PendingWorktreeOp::SmartCreating)
@@ -305,8 +305,8 @@ impl App {
                     let _ = store.save_worktree_base_branch(&pending.branch, &pending.base_ref);
                 }
                 self.refresh_worktrees();
-                // Preserve the current focus and selected worktree — don't
-                // switch the user's view to the newly created worktree.
+                // 現在のフォーカスと選択中の worktree を保つ — 作成したばかりの
+                // worktree へユーザのビューを切り替えたりしない。
                 let prev_selected = self.worktrees.selected_index();
                 let prev_focus = self.focus;
                 self.set_status(
@@ -318,13 +318,14 @@ impl App {
                     StatusLevel::Success,
                 );
 
-                // Smart Worktree: auto-spawn Claude Code and defer prompt
-                // until the session is ready for input.
+                // Smart Worktree: Claude Code を自動起動し、セッションが入力可能に
+                // なるまでプロンプトを保留する。
                 if pending.auto_spawn {
-                    // Temporarily select the new worktree so spawn_claude_code
-                    // picks up the correct working directory.
-                    // Use direct index assignment instead of select_worktree_by_path
-                    // to avoid on_worktree_changed() clearing the 🌱 new-worktree badge.
+                    // spawn_claude_code が正しい working directory を拾えるよう、
+                    // 一時的に新しい worktree を選択する。
+                    // on_worktree_changed() が 🌱 の新規 worktree バッジを消して
+                    // しまわないよう、select_worktree_by_path ではなくインデックスの
+                    // 直接代入を使う。
                     if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
                         self.worktrees.select(idx);
                     }
@@ -340,7 +341,7 @@ impl App {
                             log::warn!("Failed to auto-spawn Claude Code: {e}");
                         }
                     }
-                    // Restore the previous worktree selection and focus.
+                    // 元の worktree 選択とフォーカスを復元する。
                     self.worktrees.select(prev_selected);
                     self.on_worktree_changed();
                     self.focus = prev_focus;
@@ -364,13 +365,13 @@ impl App {
                     .pending_worktrees
                     .retain(|p| !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch));
                 self.refresh_worktrees();
-                // If the worktree currently shown in the Explorer/Claude/Shell
-                // panels was the one removed, `refresh_worktrees` has slid the
-                // selection onto a surviving worktree (e.g. main) — but the
-                // panels still point at the gone worktree and render blank.
-                // Reload them to match the new selection, exactly as a normal
-                // switch would. (Deleting some *other* worktree leaves the
-                // selection intact, so this is a no-op then.)
+                // 今 Explorer/Claude/Shell の各パネルに表示中の worktree が削除
+                // された当のものだった場合、refresh_worktrees は選択を生き残って
+                // いる worktree(例えば main)へずらしている — が、各パネルは
+                // まだ消えた worktree を指したままで空表示になる。通常の切り替え
+                // と全く同じように、新しい選択に合わせて再読み込みする。
+                // (それ以外の worktree を削除した場合は選択がそのままなので、
+                // ここは何もしない。)
                 let selected_branch = self.selected_worktree_branch();
                 let view_branch = self.view_restore.current_branch.clone().unwrap_or_default();
                 if selected_branch != view_branch {
@@ -403,7 +404,7 @@ impl App {
                 ref prompt,
                 ref session_name,
             } => {
-                // Update the pending entry: set branch name, prompt, and session name.
+                // 保留中のエントリを更新する: ブランチ名、プロンプト、セッション名をセットする。
                 for p in &mut self.worktree_mgr.pending_worktrees {
                     if p.op == PendingWorktreeOp::SmartCreating && p.description == *description {
                         p.branch = branch.clone();
@@ -424,7 +425,7 @@ impl App {
                 self.worktree_mgr.pending_worktrees.retain(|p| {
                     !(p.op == PendingWorktreeOp::SmartCreating && p.description == *description)
                 });
-                // Suppress error message if the operation was cancelled by user.
+                // 操作がユーザによってキャンセルされた場合はエラーメッセージを抑制する。
                 if error == "Cancelled" {
                     log::info!("Smart worktree cancelled for: {description}");
                 } else {
@@ -439,17 +440,18 @@ impl App {
     }
 }
 
-/// Whether `base_ref` is meaningful as a *diff* base, as opposed to merely a
-/// valid starting point for `git worktree add`.
+/// base_ref が、単に git worktree add の有効な起点であるというだけでなく、
+/// *diff* のベースとして意味を持つかどうか。
 ///
-/// `GitEngine::resolve_base_ref` falls back to the literal string `"HEAD"` when
-/// neither `origin/<main>` nor `<main>` exists — correct for creating the
-/// worktree, useless for diffing it. Persisted as a base, `"HEAD"` resolves to
-/// the worktree's *own* head, so `merge-base(HEAD, HEAD) == HEAD` and the
-/// committed section is empty forever with no error to explain it: exactly the
-/// silent `(0)` this whole change exists to kill, arriving by another door.
-/// Dropping it here falls back to `main_branch`, which either works or fails
-/// loudly in the panel.
+/// GitEngine::resolve_base_ref は origin/<main> も <main> も存在しないとき
+/// リテラル文字列 "HEAD" にフォールバックする — worktree の作成としては
+/// 正しいが、それを diff のベースにしても意味がない。ベースとして永続化
+/// された "HEAD" は worktree *自身* の head に解決されるため、
+/// merge-base(HEAD, HEAD) == HEAD となり、committed セクションは永遠に空
+/// のままエラーも出ない: これはまさに、この変更全体が潰そうとしている
+/// 「エラーの出ない空表示」が別口から入り込んでくるケースそのものである。
+/// ここで弾いておけば main_branch にフォールバックし、それは動くか、
+/// あるいはパネル上ではっきり失敗するかのどちらかになる。
 fn is_usable_diff_base(base_ref: &str) -> bool {
     !base_ref.is_empty() && base_ref != "HEAD"
 }

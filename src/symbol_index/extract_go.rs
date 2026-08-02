@@ -1,5 +1,5 @@
-//! Go symbol extraction: functions, methods, type declarations (structs and
-//! interfaces), consts, and vars.
+//! Go のシンボル抽出: 関数、メソッド、型宣言（構造体・インターフェース）、
+//! 定数、変数。
 
 use super::extract_common::{extract_named_symbol, walk_tree};
 use super::model::{Symbol, SymbolKind};
@@ -35,13 +35,13 @@ fn visit_go_node(
             }
         }
         "type_declaration" => {
-            // type_declaration contains type_spec children.
+            // type_declaration は子として type_spec を持つ。
         }
         "type_spec" => {
             if let Some(sym) =
                 extract_named_symbol(node, source, file_path, SymbolKind::Type, "name")
             {
-                // Check if it's a struct or interface.
+                // 構造体かインターフェースかを判定する。
                 let kind = node
                     .child_by_field_name("type")
                     .map(|t| match t.kind() {

@@ -1,4 +1,4 @@
-//! References overlay popup — shows search results for "Find References".
+//! 参照オーバーレイポップアップ — 「Find References」の検索結果を表示する。
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -8,12 +8,12 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
 use crate::app::App;
 
-/// Render the references overlay popup centered over `area`.
+/// area の中央に参照オーバーレイポップアップを描画する。
 pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let overlay = &app.code_nav.references;
     let theme = &app.theme;
 
-    // Calculate popup dimensions: 70% width, 60% height, centered.
+    // ポップアップの寸法を計算する: 幅70%、高さ60%、中央寄せ。
     let popup_width = (area.width as f32 * 0.7).clamp(40.0, 100.0) as u16;
     let popup_height = (area.height as f32 * 0.6).clamp(10.0, 40.0) as u16;
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -41,7 +41,7 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Split inner area: list area + hint line at bottom.
+    // 内側の領域を分割する: リスト領域 + 下部のヒント行。
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     let list_area = chunks[0];
@@ -92,7 +92,7 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let list = List::new(items);
     frame.render_widget(list, list_area);
 
-    // Hint line.
+    // ヒント行。
     let hint = Paragraph::new(Line::from(vec![
         Span::styled("j/k", Style::default().fg(theme.accent)),
         Span::styled(": navigate  ", Style::default().fg(theme.muted)),

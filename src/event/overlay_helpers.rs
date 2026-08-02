@@ -1,13 +1,13 @@
-//! Cross-panel overlay entry/exit helpers — opening the filename-search
-//! modal and dismissing whatever overlay is currently active.
+//! パネル横断のオーバーレイ開閉ヘルパー。ファイル名検索モーダルを開く処理と、
+//! 現在アクティブなオーバーレイを閉じる処理。
 
 use crate::app::{App, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
-/// Open the fuzzy filename-search modal and seed it with the current
-/// worktree's file list. Triggerable from both the Explorer (file tree) and
-/// the Viewer, so files can be switched even while the viewer is maximized.
+/// あいまいファイル名検索モーダルを開き、現在の worktree のファイル一覧で初期化する。
+/// Explorer（ファイルツリー）と Viewer の両方から起動できるため、viewer が最大化されて
+/// いてもファイルを切り替えられる。
 pub(in crate::event) fn open_filename_search(app: &mut App) {
     app.viewer_state.filename_search.filename_search_active = true;
     app.viewer_state
@@ -23,7 +23,7 @@ pub(in crate::event) fn open_filename_search(app: &mut App) {
     app.viewer_state.execute_filename_search();
 }
 
-/// Dismiss all active overlays so that focus-switching keys work globally.
+/// フォーカス切り替えキーがどこでも機能するよう、アクティブなオーバーレイを全て閉じる。
 pub(super) fn dismiss_overlays(app: &mut App) {
     app.worktree_mgr.skip_reason = None;
     app.review_state.comment_detail_active = false;
@@ -35,6 +35,6 @@ pub(super) fn dismiss_overlays(app: &mut App) {
     app.review_state.search_active = false;
     app.review_state.template_picker_active = false;
     app.code_nav.references.active = false;
-    // A deliberate focus switch closes the hover modal stack too.
+    // 意図的なフォーカス切り替えでは hover モーダルのスタックも閉じる。
     app.clear_hover();
 }

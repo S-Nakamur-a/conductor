@@ -1,43 +1,43 @@
-//! Embedded editor panel: spawning `$VISUAL`/`$EDITOR` in a PTY that occupies
-//! the merged Explorer+Viewer region, and tearing it down on exit.
+//! 埋め込みエディタパネル: マージされたExplorer+Viewer領域を占有するPTYで
+//! $VISUAL/$EDITORを起動し、終了時に解体する。
 
 use std::path::PathBuf;
 
 use super::focus::Focus;
 use super::{App, StatusLevel};
 
-/// State for an active embedded editor panel (vim/emacs in a PTY).
+/// 稼働中の埋め込みエディタパネル（PTY内のvim/emacs）の状態。
 ///
-/// Transient: created when the user opens a file in `$EDITOR` and dropped when
-/// the editor process exits. Owns the render cache so the editor panel renders
-/// independently of the Claude/Shell terminal caches.
+/// 一時的な存在: ユーザーが$EDITORでファイルを開いたときに作られ、エディタ
+/// プロセスが終了したときに破棄される。描画キャッシュを自前で持つので、
+/// エディタパネルはClaude/Shellターミナルのキャッシュとは独立に描画される。
 pub struct EditorPanel {
-    /// Index of the editor's PTY session in the `PtyManager` session list.
-    /// Kept in sync (shifted/cleared) when other sessions are removed.
+    /// PtyManagerのセッション一覧内での、エディタのPTYセッションのインデックス。
+    /// 他のセッションが削除されたときに（ずれた分を補正して/クリアして）
+    /// 同期を保つ。
     pub session_idx: usize,
-    /// Absolute path of the file being edited — used for the reload-on-exit and
-    /// the panel title.
+    /// 編集中のファイルの絶対パス — 終了時の再読み込みとパネルタイトルに使う。
     pub path: PathBuf,
-    /// Cached PTY render output for the editor panel (mirrors the Claude/Shell
-    /// caches in `TerminalState`).
+    /// エディタパネル用にキャッシュされたPTY描画出力（TerminalState内の
+    /// Claude/Shellキャッシュに相当）。
     pub cache: crate::ui::common::PtyRenderCache,
-    /// Set when the PTY reader thread produced new output to re-render.
+    /// PTYリーダースレッドが再描画すべき新しい出力を出したときにセットされる。
     pub dirty: bool,
 }
 
 impl App {
-    /// Open the file currently shown in the Viewer in an embedded editor panel
-    /// (`$VISUAL` / `$EDITOR` in a PTY occupying the merged Explorer+Viewer
-    /// region). Resolves the viewer's relative `current_file` against the
-    /// selected worktree; if no file is open, flashes a hint instead. A no-op if
-    /// an editor is already open.
+    /// 現在Viewerに表示されているファイルを埋め込みエディタパネルで開く
+    /// （マージされたExplorer+Viewer領域を占有するPTY内の$VISUAL/$EDITOR）。
+    /// viewerの相対パスcurrent_fileを選択中のworktreeに対して解決する。
+    /// 開いているファイルが無ければ代わりにヒントを表示する。エディタが
+    /// すでに開いている場合は何もしない。
     pub fn open_in_editor(&mut self) {
         if self.editor.is_some() {
             return;
         }
-        // A grabbed worktree's terminals are locked (its sessions run on main),
-        // and §1c would freeze an editor opened here. Refuse rather than trap the
-        // user in an undrivable editor.
+        // grabされたworktreeのターミナルはロックされている（そのセッションは
+        // main側で動く）ので、ここでエディタを開くとフリーズしてしまう。
+        // 操作不能なエディタにユーザーを閉じ込めるより、拒否した方がよい。
         if self.is_selected_worktree_grabbed() {
             self.set_status(
                 "Cannot edit while this worktree is grabbed".to_string(),
@@ -58,7 +58,7 @@ impl App {
             std::env::var("EDITOR").ok().as_deref(),
             "vi",
         );
-        // `resolve_editor_command` never returns an empty vec.
+        // resolve_editor_commandは空のvecを返すことはない。
         let (program, args) = argv.split_first().expect("editor command is non-empty");
 
         let (rows, cols) = self.editor_pty_size();
@@ -85,8 +85,8 @@ impl App {
                     dirty: true,
                 });
                 self.set_focus(Focus::Editor);
-                // Repaint from scratch so the editor's alternate screen draws
-                // cleanly over the panels it replaces.
+                // 置き換えるパネルの上にエディタの代替スクリーンがきれいに
+                // 描画されるよう、ゼロから再描画する。
                 self.terminal.needs_clear = true;
                 self.dirty.mark_all();
                 self.set_status(
@@ -100,14 +100,16 @@ impl App {
         }
     }
 
-    /// Tear down the embedded editor panel: kill/remove its PTY session, restore
-    /// focus to the Viewer, and reload the just-edited file so the change is
-    /// visible immediately (mirrors the debounced file-watcher refresh pair).
+    /// 埋め込みエディタパネルを解体する: PTYセッションをkill/削除し、
+    /// フォーカスをViewerへ戻し、変更が即座に見えるよう編集直後のファイルを
+    /// 再読み込みする（デバウンスされたファイルウォッチャーのリフレッシュと
+    /// 対をなす）。
     pub fn exit_editor(&mut self) {
         let Some(path) = self.take_down_editor() else {
             return;
         };
-        // Reload the just-edited file immediately (mirror the file-watcher pair).
+        // 編集直後のファイルを即座に再読み込みする（ファイルウォッチャーの対と
+        // 同じ扱い）。
         self.refresh_viewer();
         self.refresh_diff();
         self.dirty.mark_all();
@@ -118,20 +120,22 @@ impl App {
         self.set_status(format!("Edited {fname}"), StatusLevel::Success);
     }
 
-    /// Tear down the editor PTY and drop the panel, returning the edited path
-    /// (or `None` if no editor was open). Shared core of [`Self::exit_editor`]
-    /// (which adds reload + status) and worktree switching (which discards the
-    /// editor silently because the surrounding context is being reloaded anyway).
+    /// エディタのPTYを解体してパネルを破棄し、編集していたパスを返す
+    /// （エディタが開いていなければNone）。[Self::exit_editor]
+    /// （再読み込みとステータス表示を追加する）とworktree切り替え
+    /// （周囲の文脈がどのみち再読み込みされるので、エディタを黙って破棄する）
+    /// が共有する中核部分。
     fn take_down_editor(&mut self) -> Option<PathBuf> {
         let panel = self.editor.take()?;
-        // Remove the editor PTY (kill is harmless if the child already exited),
-        // adjusting other session indices.
+        // エディタのPTYを削除する（子プロセスがすでに終了していてもkillは
+        // 無害）。他のセッションのインデックスも調整する。
         self.close_terminal_session(panel.session_idx);
-        // Move focus off the (now-gone) editor only if it was focused — the usual
-        // `:q` flow. If the user had stepped over to Claude and the editor exited
-        // from under them, leave their focus put; just drop any stale "editor
-        // maximized" state. Assigned directly (not via `set_focus`) so callers
-        // control any reload.
+        // フォーカスが（今は無くなった）エディタにあった場合のみViewerへ
+        // 移す — これが通常の:qの流れ。ユーザーがClaudeへ移っていて、
+        // エディタが足元で終了した場合はフォーカスをそのままにする。
+        // 「エディタが最大化されている」という古い状態だけを落とす。
+        // （set_focus経由ではなく）直接代入することで、呼び出し側が
+        // 再読み込みの制御権を持つ。
         if self.focus == Focus::Editor {
             self.focus = Focus::Viewer;
         }
@@ -142,17 +146,17 @@ impl App {
         Some(panel.path)
     }
 
-    /// Discard the editor panel when the worktree it belongs to is being left.
-    /// No reload/flash — the caller ([`on_worktree_changed`]) reloads the new
-    /// worktree's view regardless.
+    /// 所属するworktreeから離れるときにエディタパネルを破棄する。
+    /// 再読み込みや通知はしない — 呼び出し側（[on_worktree_changed]）が
+    /// どのみち新しいworktreeのビューを再読み込みするため。
     pub fn discard_editor_on_worktree_change(&mut self) {
         self.take_down_editor();
     }
 
-    /// If an embedded editor is open and its process has exited (e.g. `:q`),
-    /// tear it down and restore the normal layout. Returns `true` if it closed.
-    /// Called every main-loop iteration so the panel disappears promptly rather
-    /// than waiting on the slow dead-session cleanup timer.
+    /// 埋め込みエディタが開いていて、そのプロセスが終了していれば
+    /// （例: :q）解体し、通常のレイアウトへ戻す。閉じた場合はtrueを返す。
+    /// メインループの反復ごとに呼ばれるので、遅い停止セッション掃除
+    /// タイマーを待つのではなく、パネルは速やかに消える。
     pub fn poll_editor_exit(&mut self) -> bool {
         let Some(idx) = self.editor.as_ref().map(|e| e.session_idx) else {
             return false;
@@ -164,9 +168,9 @@ impl App {
         true
     }
 
-    /// Compute the editor PTY's content size (rows, cols) from the cached
-    /// layout: the editor occupies the merged Explorer+Viewer region, minus the
-    /// title row and borders (which collapse when the panel is maximized).
+    /// キャッシュされたレイアウトから、エディタPTYのコンテンツサイズ
+    /// (rows, cols)を計算する: エディタはマージされたExplorer+Viewer領域を
+    /// 占有し、タイトル行と境界線（パネル最大化時は消える）を差し引く。
     pub(super) fn editor_pty_size(&self) -> (u16, u16) {
         let cols = &self.layout.cache.columns;
         let region_w = cols[1].width.saturating_add(cols[2].width);
@@ -176,10 +180,10 @@ impl App {
     }
 }
 
-/// Resolve the absolute path to hand an external editor from the viewer's
-/// relative `current_file` and the worktree root. `None` (no file open, or an
-/// empty path) means "nothing to edit" — the caller flashes a hint rather than
-/// launching an editor on a bogus target.
+/// viewerの相対パスcurrent_fileとworktreeの根から、外部エディタに渡す
+/// 絶対パスを解決する。None（開いているファイルが無い、またはパスが空）は
+/// 「編集対象なし」を意味し、呼び出し側は不正な対象に対してエディタを起動
+/// する代わりにヒントを表示する。
 fn editor_target(current_file: Option<&str>, worktree_root: &std::path::Path) -> Option<PathBuf> {
     let rel = current_file?;
     if rel.is_empty() {
@@ -188,12 +192,11 @@ fn editor_target(current_file: Option<&str>, worktree_root: &std::path::Path) ->
     Some(worktree_root.join(rel))
 }
 
-/// Content size (rows, cols) for the embedded editor PTY given its region size
-/// and whether it is maximized. The title row is always present; non-maximized
-/// also has a bottom border row and left/right border columns. A zero region
-/// (layout not computed yet) seeds a reasonable default — the per-frame resize
-/// in `sync_pty_sizes` corrects it. Never returns 0 in either dimension (vt100
-/// needs at least 1×1).
+/// 埋め込みエディタPTYのコンテンツサイズ (rows, cols) を、リージョンサイズと
+/// 最大化状態から計算する。タイトル行は常に存在し、非最大化時はさらに下の
+/// 境界行と左右の境界列を持つ。ゼロのリージョン（レイアウト未計算）には
+/// 妥当なデフォルト値を与える — sync_pty_sizesでの毎フレームのリサイズが
+/// 後で補正する。どちらの次元も0を返すことはない（vt100は最低1×1が必要）。
 fn editor_content_size(region_w: u16, region_h: u16, expanded: bool) -> (u16, u16) {
     if region_w == 0 || region_h == 0 {
         return (24, 80);
@@ -206,12 +209,12 @@ fn editor_content_size(region_w: u16, region_h: u16, expanded: bool) -> (u16, u1
     )
 }
 
-/// Resolve the editor command line from `$VISUAL` / `$EDITOR`, falling back to
-/// `fallback`. Empty or whitespace-only values are ignored so a stray
-/// `EDITOR=""` doesn't produce an empty command. The chosen value is split on
-/// whitespace into program + arguments (so `"code -w"` works); an editor whose
-/// *path* contains spaces is intentionally not supported (no shell-style
-/// quoting — editor-flavor handling is out of scope).
+/// $VISUAL / $EDITORからエディタのコマンドラインを解決し、無ければfallback
+/// にフォールバックする。空または空白のみの値は無視するので、意図しない
+/// EDITOR=""が空のコマンドを生まない。選ばれた値は空白で区切ってプログラム
+/// ＋引数に分割する（これで"code -w"のような指定が動く）。パスそのものに
+/// 空白を含むエディタは意図的にサポートしない（シェル風のクォート解釈は
+/// スコープ外）。
 fn resolve_editor_command(
     visual: Option<&str>,
     editor: Option<&str>,
@@ -246,7 +249,7 @@ mod tests {
 
     #[test]
     fn editor_target_is_none_when_no_file_open() {
-        // The load-bearing branch: no current file → no editor launch.
+        // 決め手となる分岐: 開いているファイルが無ければ → エディタは起動しない。
         assert_eq!(editor_target(None, std::path::Path::new("/repo/wt")), None);
     }
 
@@ -287,8 +290,8 @@ mod tests {
 
     #[test]
     fn resolve_editor_ignores_blank_values() {
-        // A blank/whitespace-only VISUAL is skipped so EDITOR (or the fallback)
-        // still wins, rather than producing an empty command.
+        // 空白のみのVISUALはスキップされる。空のコマンドを生むのではなく、
+        // EDITOR（またはfallback）が優先されるようにするため。
         assert_eq!(resolve_editor_command(Some(""), None, "vi"), vec!["vi"]);
         assert_eq!(resolve_editor_command(Some("   "), None, "vi"), vec!["vi"]);
         assert_eq!(
@@ -300,9 +303,9 @@ mod tests {
 
     #[test]
     fn editor_content_size_subtracts_borders() {
-        // Non-maximized: title row + bottom border (2 rows) and L/R borders (2 cols).
+        // 非最大化: タイトル行＋下境界（2行）と左右境界（2列）。
         assert_eq!(editor_content_size(80, 40, false), (38, 78));
-        // Maximized: only the title row, no borders.
+        // 最大化: タイトル行のみで境界線は無い。
         assert_eq!(editor_content_size(80, 40, true), (39, 80));
     }
 
@@ -314,7 +317,7 @@ mod tests {
 
     #[test]
     fn editor_content_size_never_returns_zero() {
-        // Tiny regions clamp to 1×1 rather than underflowing (vt100 needs ≥1).
+        // 極小のリージョンはアンダーフローせず1×1にクランプされる（vt100は≥1が必要）。
         for w in 1..=3u16 {
             for h in 1..=3u16 {
                 let (rows, c) = editor_content_size(w, h, false);
@@ -325,8 +328,8 @@ mod tests {
 
     #[test]
     fn resolve_editor_naive_split_does_not_honor_quotes() {
-        // Documented limitation: no shell-style quoting. A quoted argument is
-        // split on its inner spaces. This pins the intentional behavior.
+        // 既知の制限: シェル風のクォート解釈は行わない。クォートされた引数も
+        // 内部の空白で分割される。これは意図的な挙動を固定するテスト。
         assert_eq!(
             resolve_editor_command(Some("vim -c 'set ft=rust'"), None, "vi"),
             vec!["vim", "-c", "'set", "ft=rust'"]

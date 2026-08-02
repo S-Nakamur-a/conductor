@@ -1,10 +1,10 @@
-//! Clipboard-paste helper shared by every text-entry overlay/modal.
+//! すべてのテキスト入力オーバーレイ/モーダルが共有するクリップボード貼り付けヘルパー。
 
 use crate::app::App;
 
-/// Paste clipboard contents into the `TextInput` returned by `get_buffer`.
+/// クリップボードの内容を get_buffer が返す TextInput に貼り付ける。
 ///
-/// If `multiline` is false, newlines are stripped from the pasted text.
+/// multiline が false の場合、貼り付けたテキストから改行を取り除く。
 pub(in crate::event) fn clipboard_paste<F>(app: &mut App, get_buffer: F, multiline: bool)
 where
     F: FnOnce(&mut App) -> &mut crate::text_input::TextInput,

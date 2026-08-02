@@ -1,19 +1,19 @@
-//! The eight review-database tools exposed over stdio.
+//! stdio 越しに公開される、8個のレビューデータベースツール。
 //!
-//! These are a port of the Node server that used to ship as a separate
-//! marketplace plugin package. The wire contract — argument names, defaults,
-//! and the exact reply text — is deliberately unchanged, because sessions and
-//! slash commands in the wild already depend on it; `docs/spec-s6-mcp-tools.md`
-//! records that contract and wins over this file if the two disagree.
+//! これらは、かつて別のマーケットプレイスプラグインパッケージとして配布されて
+//! いた Node サーバの移植版である。ワイヤ上の契約 — 引数名、デフォルト値、
+//! 返信文の一字一句 — はあえて変えていない。既に世に出ているセッションや
+//! スラッシュコマンドがそれに依存しているため。この契約を記録しているのは
+//! docs/spec-s6-mcp-tools.md であり、両者が食い違う場合はそちらが優先する。
 //!
-//! Every tool that writes also pokes the TUI's refresh FIFO, so a comment shows
-//! up in the Explorer without the reviewer having to do anything.
+//! 書き込みを行うツールは全て TUI のリフレッシュ用 FIFO も突く。これにより、
+//! レビュー担当者が何もしなくてもコメントが Explorer に表示される。
 //!
-//! Every handler body below is fully synchronous; `async fn` is only there
-//! because rmcp's `#[tool]` trait requires it. Blocking the single-threaded
-//! runtime on SQLite is safe precisely because there is exactly one pipe and
-//! one client — supporting a second concurrent caller would need this
-//! reworked (e.g. `spawn_blocking`) first.
+//! 以下のハンドラの本体は全て完全に同期的である。async fn なのは rmcp の
+//! #[tool] トレイトがそれを要求するからにすぎない。シングルスレッド
+//! ランタイムを SQLite でブロックしても安全なのは、まさにパイプもクライアント
+//! も1つずつしかないからである — 2つ目の同時呼び出し元をサポートするには、
+//! 先にこれを作り直す必要がある（例えば spawn_blocking を使うなど）。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -35,33 +35,34 @@ use super::resolve;
 use crate::review_store::{Author, CommentKind, CommentStatus, ReviewStore};
 use crate::walkthrough::NewWalkthroughStep;
 
-/// Above this many unresolved self-review comments on one branch, the success
-/// message adds a nudge so the author notices the density is getting high.
-/// A soft signal, not a hard cap.
+/// 1ブランチ上の未解決な自己レビューコメントがこの件数を超えると、成功
+/// メッセージに軽い注意書きが添えられ、作者が密度の高まりに気づけるように
+/// なる。ハードな上限ではなく、あくまでソフトなシグナルである。
 const SELF_REVIEW_SOFT_LIMIT: usize = 5;
 
-/// Widest line range a single comment may cover.
+/// 1つのコメントがカバーできる最も広い行範囲。
 ///
-/// A review comment anchors to a hunk, not to a whole file. The cap exists
-/// because `review_state`'s per-line comment cache materialises one entry per
-/// line in the range, so a nonsense `line_end` (a model emitting 4_000_000_000)
-/// freezes the TUI on the next refresh — with no user action involved, since
-/// every write pokes the refresh FIFO.
+/// レビューコメントはファイル全体ではなくハンクに紐づく。この上限がある
+/// のは、review_state の行ごとのコメントキャッシュが範囲内の各行に1エント
+/// リを実体化するためで、でたらめな line_end（モデルが 4_000_000_000 を
+/// 出力するなど）は次のリフレッシュで TUI を固まらせてしまう — しかも
+/// 全ての書き込みがリフレッシュ FIFO を突くので、ユーザ操作を介さずに
+/// それが起こる。
 const MAX_COMMENT_SPAN: u32 = 10_000;
 
-/// A store failure the model can do nothing about: reported as a protocol
-/// error rather than a tool-level one.
+/// モデル側では何もできない種類のストア障害: ツールレベルのエラーではなく
+/// プロトコルエラーとして報告する。
 fn db_error(e: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error(format!("database error: {e}"), None)
 }
 
-// ── Server ──────────────────────────────────────────────────────────
+// サーバ
 
-/// Shared state behind the tool handlers.
+/// ツールハンドラの背後にある共有状態。
 ///
-/// The store is behind a mutex because `rusqlite::Connection` is `Send` but not
-/// `Sync`, and rmcp hands the handler to the transport as shared state. There is
-/// exactly one client on one pipe, so this never actually contends.
+/// ストアが mutex の背後にあるのは、rusqlite::Connection が Send だが
+/// Sync ではなく、rmcp がハンドラを共有状態としてトランスポートに渡すため。
+/// パイプもクライアントも1つしかないので、実際に競合することはない。
 struct Inner {
     store: Mutex<ReviewStore>,
     db_path: PathBuf,
@@ -84,34 +85,36 @@ impl McpServer {
         }
     }
 
-    /// The review store, recovering from mutex poisoning rather than
-    /// propagating it. A panic could only leave the mutex poisoned mid
-    /// statement or mid transaction; `rusqlite::Connection` rolls back an
-    /// incomplete transaction on drop, so the data behind a poisoned lock is
-    /// never left half-written, and recovering via `into_inner()` is safe.
+    /// レビューストア。mutex の汚染を伝播させるのではなく回復する。panic が
+    /// 起こり得るのは文の途中またはトランザクションの途中で mutex が
+    /// 汚染される場合だけであり、rusqlite::Connection は drop 時に未完了
+    /// のトランザクションをロールバックするので、汚染されたロックの背後の
+    /// データが書きかけのまま残ることはなく、into_inner() での回復は安全
+    /// である。
     fn store(&self) -> MutexGuard<'_, ReviewStore> {
         self.inner.store.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The branch the server's working directory has checked out.
+    /// サーバの作業ディレクトリがチェックアウトしているブランチ。
     ///
-    /// Re-read per call rather than cached at startup: a session can switch
-    /// branches under us, and `git2::Repository` is not `Sync` so there is
-    /// nothing to gain by holding one open.
+    /// 起動時にキャッシュせず呼び出しごとに読み直す: セッションは裏で
+    /// ブランチを切り替えることがあり得るし、git2::Repository は Sync
+    /// ではないので、開いたまま保持しておく利点も無い。
     fn branch(&self) -> Option<String> {
         let repo = resolve::discover_repo().ok()?;
         resolve::current_branch(&repo)
     }
 
-    /// Nudge the TUI to reload review data. Best-effort by design — no reader
-    /// on the FIFO simply means conductor is not running.
+    /// TUI にレビューデータの再読み込みを促す。設計上ベストエフォートである
+    /// — FIFO の読み手がいないのは単に conductor が動いていないだけである。
     fn signal_refresh(&self) {
         if let Some(pipe) = resolve::refresh_pipe_path(&self.inner.db_path) {
             crate::refresh_pipe::signal_refresh(&pipe);
         }
     }
 
-    /// Resolve a full id or a prefix to a full id, or report it as missing.
+    /// 完全な id またはプレフィックスを完全な id に解決する。見つからなければ
+    /// そう報告する。
     fn resolve_comment_id(&self, comment_id: &str) -> Result<Option<String>, ErrorData> {
         self.store().resolve_id_prefix(comment_id).map_err(db_error)
     }
@@ -126,8 +129,9 @@ impl McpServer {
         &self,
         Parameters(args): Parameters<GetPendingComments>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Explicit `branch` wins over `all_branches`; only when neither is
-        // given do we fall back to the checked-out branch.
+        // 明示的な branch は all_branches より優先される。どちらも
+        // 与えられていない場合にのみ、チェックアウト中のブランチにフォール
+        // バックする。
         let effective_branch = match (&args.branch, args.all_branches) {
             (Some(b), _) => Some(b.clone()),
             (None, Some(true)) => None,
@@ -208,9 +212,9 @@ impl McpServer {
             .map_err(db_error)?;
         self.signal_refresh();
 
-        // The Node server reported the new reply's own id here; ours is
-        // generated inside `add_reply` and not handed back, so the reply is
-        // identified by the comment it landed on.
+        // Node サーバはここで新しい返信自身の id を報告していたが、こちらの
+        // 実装では id は add_reply の内部で生成され呼び出し元には返らない
+        // ため、返信はそれが付いたコメントで識別する。
         ok_text(format!("Reply added to comment {}.", short_id(&id)))
     }
 
@@ -240,11 +244,11 @@ impl McpServer {
         &self,
         Parameters(args): Parameters<CreateComment>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Line numbers are 1-based. `u32` alone would accept 0, which the
-        // schema's `minimum` cannot express as "positive" — and a 0 would be
-        // stored and then silently clamp to the first line everywhere it is
-        // read back (every consumer uses `saturating_sub(1)`), so a comment
-        // would land one line off with nothing to indicate why.
+        // 行番号は1始まり。u32 だけでは 0 を受け入れてしまい、スキーマの
+        // minimum では「正の数」として表現できない — そして 0 が保存されると、
+        // 読み戻すあらゆる箇所で黙って最初の行にクランプされてしまい
+        // （全ての利用箇所が saturating_sub(1) を使っているため）、コメントが
+        // 理由も分からないまま1行ずれた位置に付いてしまう。
         if args.line_start == 0 {
             return err_text("line_start must be 1-based (got 0).");
         }
@@ -280,8 +284,9 @@ impl McpServer {
 
         let kind = args.kind.map_or(CommentKind::Suggest, Into::into);
 
-        // `worktree` and `branch` both carry the branch name: schema v4 has a
-        // CHECK enforcing they agree, and `commit_ref` defaults to 'HEAD'.
+        // worktree と branch のどちらもブランチ名を持つ: スキーマ v4 には
+        // 両者が一致することを強制する CHECK があり、commit_ref はデフォルト
+        // で 'HEAD' になる。
         let created = self.store().add_review(
             &branch,
             &rel_path,
@@ -298,9 +303,9 @@ impl McpServer {
             Err(e) => return err_text(format!("Failed to create comment: {e}")),
         };
 
-        // Best-effort: a failed count must not block reporting the comment
-        // that was just created successfully, so a lookup error silently
-        // reads as 0 rather than failing the whole call.
+        // ベストエフォート: 件数集計の失敗が、今しがた成功裏に作成された
+        // コメントの報告を妨げてはならないので、検索エラーは呼び出し全体を
+        // 失敗させるのではなく黙って 0 として扱う。
         let count = self
             .store()
             .pending_reviews(Some(&branch), None, None)
@@ -308,8 +313,8 @@ impl McpServer {
             .unwrap_or(0);
         self.signal_refresh();
 
-        // Handing the running count back is a stronger restraint than a static
-        // "use sparingly" instruction — the author can see its own density.
+        // 現在の件数をそのまま返すのは、「控えめに使うこと」という静的な指示
+        // よりも強い抑止力になる — 作者は自分自身の密度を目にできる。
         let nudge = if count > SELF_REVIEW_SOFT_LIMIT {
             " — that's a lot; make sure each one is genuinely high-signal before adding more"
         } else {
@@ -391,14 +396,16 @@ impl McpServer {
                 return err_text(msg);
             }
         }
-        // Validate every step before writing any of them, so a bad step late in
-        // the list cannot leave a half-saved walkthrough. `file_path` is also
-        // normalised here, and the normalised form is what gets stored: steps
-        // are matched against `FileDiff::path` by string equality when the
-        // Explorer jumps to one, so a step saved as `./src/a.rs` would validate,
-        // save, render — and then report "not in this diff" for a file sitting
-        // in the list. `create_comment` has always normalised; this is the same
-        // call, on the same helper.
+        // 1つでも書き込む前に全てのステップを検証する。そうしないと、リスト
+        // の後方にある不正なステップのせいで、半端に保存されたウォークスルー
+        // が残ってしまう。file_path もここで正規化しており、保存されるのは
+        // その正規化後の形である: Explorer がステップにジャンプするとき、
+        // ステップは文字列の等価比較で FileDiff::path と照合される。そのため
+        // ./src/a.rs として保存されたステップは検証・保存・描画までは通って
+        // しまい、そのファイルがリストに存在するにもかかわらず「この diff
+        // には無い」と報告することになる。create_comment は昔から正規化して
+        // おり、これはそれと同じ呼び出しを、同じヘルパーで行っているだけ
+        // である。
         let mut normalized_paths: Vec<String> = Vec::with_capacity(args.steps.len());
         for step in &args.steps {
             if let Err(msg) = ensure_repo_relative(&step.file_path, "step file_path") {
@@ -425,8 +432,8 @@ impl McpServer {
                     step.seq, step.file_path
                 ));
             }
-            // Same 1-based contract as `create_comment`; here the fields are
-            // optional, so only a present-but-zero value is wrong.
+            // create_comment と同じ、1始まりという取り決め。ここではフィールド
+            // が任意なので、値が存在していてかつ 0 である場合だけが不正。
             if let Some(start) = step.line_start
                 && start < 1
             {
@@ -497,7 +504,7 @@ mod tests {
     use super::*;
     use crate::mcp_serve::args::{StepKindArg, WalkthroughStep};
 
-    // ── tools/list ──────────────────────────────────────────────────
+    // tools/list
 
     #[test]
     fn tool_router_lists_exactly_the_eight_tools() {
@@ -521,15 +528,14 @@ mod tests {
         );
     }
 
-    // ── handlers ────────────────────────────────────────────────────
+    // ハンドラ
     //
-    // Only the four tools that don't call `self.branch()` are covered here —
-    // the rest key off the cwd's checked-out git branch, which a unit test has
-    // no stable way to control.
+    // ここでカバーしているのは self.branch() を呼ばない4つのツールだけ
+    // である — 残りは cwd がチェックアウトしている git ブランチを基準に
+    // 動くが、ユニットテストにはそれを安定して制御する方法が無い。
 
-    /// `tokio` is pulled in without the `macros` feature (see
-    /// `mcp_serve/mod.rs`), so `#[tokio::test]` isn't available; build the
-    /// runtime by hand instead.
+    /// tokio は macros フィーチャ無しで取り込まれているので（mcp_serve/mod.rs
+    /// 参照）、#[tokio::test] は使えない。代わりにランタイムを手で組み立てる。
     fn block_on<F: std::future::Future>(fut: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .enable_time()
@@ -538,9 +544,9 @@ mod tests {
             .block_on(fut)
     }
 
-    /// An `McpServer` backed by a fresh tempdir database. The tempdir has no
-    /// refresh FIFO, so `signal_refresh`'s `libc::open` fails silently — no
-    /// stub needed.
+    /// 新規の tempdir データベースを背後に持つ McpServer。tempdir には
+    /// refresh FIFO が無いので、signal_refresh の libc::open は黙って失敗
+    /// する — スタブは不要。
     fn test_server() -> (McpServer, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("conductor.db");
@@ -661,11 +667,11 @@ mod tests {
         assert!(text.contains(&format!("(id: {}, 2 step(s))", short_id(&walkthrough.id))));
     }
 
-    /// The regression this fixes: a step whose `file_path` is spelled any way
-    /// other than git's own spelling used to be stored verbatim, and the
-    /// Explorer — which matches it against `FileDiff::path` by string equality
-    /// — then reported the file as not being in the diff. What lands in the
-    /// database has to be the canonical spelling.
+    /// このテストが検出する退行: 以前は、file_path が git 自身の綴りとは
+    /// 異なる書き方をされたステップがそのまま保存されてしまい、それを
+    /// 文字列の等価比較で FileDiff::path と照合する Explorer が、そのファイル
+    /// は diff に無いと報告していた。データベースに入るのは正規の綴りで
+    /// なければならない。
     #[test]
     fn save_walkthrough_stores_canonical_paths() {
         let (server, _dir) = test_server();
@@ -699,8 +705,8 @@ mod tests {
         );
     }
 
-    /// A step path that normalises away to nothing anchors to no file at all,
-    /// so it is refused rather than saved.
+    /// 正規化すると何も残らなくなるステップのパスは、どのファイルにも
+    /// 紐づかないので、保存せず拒否する。
     #[test]
     fn save_walkthrough_rejects_a_path_that_normalises_to_empty() {
         let (server, _dir) = test_server();

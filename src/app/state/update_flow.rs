@@ -8,9 +8,9 @@ use crate::update_checker::UpdateInfo;
 
 /// 更新チェックから再起動までを 1 本のフローとして持つ状態。
 ///
-/// `startup_exe` / `startup_args` / `should_restart` もここに含めているのは、
-/// 再起動がこのフローの最後の一歩だから。再起動は `exec` でプロセスイメージを
-/// 置き換えるので、`main` はループを抜けたあとにこの 3 つを読む。
+/// startup_exe / startup_args / should_restart もここに含めているのは、
+/// 再起動がこのフローの最後の一歩だから。再起動は exec でプロセスイメージを
+/// 置き換えるので、main はループを抜けたあとにこの 3 つを読む。
 #[derive(Default)]
 pub struct UpdateFlow {
     /// より新しいバージョンが見つかったときのリリース情報。
@@ -32,7 +32,7 @@ pub struct UpdateFlow {
     pub startup_exe: PathBuf,
     /// 起動時のコマンドライン引数 (exec による再起動に使う)。
     pub startup_args: Vec<String>,
-    /// 更新が完了し、再起動すべき状態になったら `true`。
+    /// 更新が完了し、再起動すべき状態になったら true。
     pub should_restart: bool,
 }
 

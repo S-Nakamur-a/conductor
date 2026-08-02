@@ -1,5 +1,5 @@
-//! Search overlays: filename (fuzzy file finder), grep (project-wide
-//! full-text search), and the in-viewer text search.
+//! 検索系オーバーレイ: ファイル名（あいまいファイルファインダ）、grep
+//! （プロジェクト全体の全文検索）、viewer 内テキスト検索。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -11,7 +11,7 @@ use crate::event::clipboard_paste;
 
 use super::filterable_overlay_list_nav;
 
-// ── Overlay: filename search ────────────────────────────────────────────
+// オーバーレイ: ファイル名検索
 
 pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
     match key.code {
@@ -37,7 +37,7 @@ pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent)
             {
                 app.viewer_state.filename_search.filename_search_active = false;
 
-                // Reveal and open the selected file (keep Focus on Explorer).
+                // 選択したファイルをツリー上に表示して開く（Focus は Explorer のまま）。
                 app.viewer_state.reveal_file_in_tree(&result.path);
                 let tab_width = app.config.viewer.tab_width;
                 app.viewer_state.open_file(&result.path, tab_width);
@@ -101,7 +101,7 @@ pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent)
                 .filename_search_query
                 .handle_key(key)
             {
-                // Text-modifying keys reset selection and re-run search.
+                // テキストを変更するキーは選択をリセットして検索を再実行する。
                 match key.code {
                     KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
                         app.viewer_state.filename_search.filename_search_selected = 0;
@@ -114,16 +114,16 @@ pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent)
     }
 }
 
-// ── Overlay: grep (full-text) search ────────────────────────────────────
+// オーバーレイ: grep（全文）検索
 
 pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
     use crate::search_result_tree::SearchTreeRow;
 
-    // ── Keys handled regardless of input/result focus ────────────────
+    // 入力/結果どちらにフォーカスがあっても処理するキー
     match key.code {
         KeyCode::Esc => {
             if !app.overlays.grep_search.input_focused {
-                // Return focus to input field instead of closing.
+                // 閉じずに入力フィールドへフォーカスを戻す。
                 app.overlays.grep_search.input_focused = true;
             } else {
                 app.overlays.active = ActiveOverlay::None;
@@ -139,7 +139,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             app.overlays.grep_search.input_focused = !app.overlays.grep_search.input_focused;
             return;
         }
-        // Ctrl+r / Ctrl+i / Ctrl+v / Cmd+Backspace — always available.
+        // Ctrl+r / Ctrl+i / Ctrl+v / Cmd+Backspace — 常に利用可能。
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
             app.schedule_grep_search();
@@ -162,12 +162,12 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             app.schedule_grep_search();
             return;
         }
-        // Arrow Down from input moves focus to results.
+        // 入力欄で下矢印を押すとフォーカスが結果側に移る。
         KeyCode::Down if app.overlays.grep_search.input_focused => {
             app.overlays.grep_search.input_focused = false;
             return;
         }
-        // Enter — jump to result or toggle expand (works in both modes).
+        // Enter — 結果へジャンプするか展開を切り替える（両モードで動作）。
         KeyCode::Enter => {
             let selected = app.overlays.grep_search.selected;
             let result = app
@@ -211,7 +211,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 
-    // ── Input-focused mode: all keys go to the text input ────────────
+    // 入力フォーカスモード: すべてのキーがテキスト入力に送られる
     if app.overlays.grep_search.input_focused {
         if app.overlays.grep_search.query.handle_key(key) {
             match key.code {
@@ -224,7 +224,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // ── Result-focused mode: vim-style navigation ────────────────────
+    // 結果フォーカスモード: vim スタイルのナビゲーション
     if let Some(action) = app.keymap.resolve(&key, KeyContext::Overlay) {
         match action {
             Action::NavigateDown => {
@@ -332,7 +332,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 .result_tree
                 .expand(app.overlays.grep_search.selected);
         }
-        // Any other character key in result-focused mode: switch to input and type.
+        // 結果フォーカスモードでのその他の文字キー: 入力に切り替えてタイプする。
         KeyCode::Char(_) => {
             app.overlays.grep_search.input_focused = true;
             if app.overlays.grep_search.query.handle_key(key) {
@@ -349,7 +349,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: viewer search ──────────────────────────────────────────────
+// オーバーレイ: viewer 検索
 
 pub(in crate::event) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
     match key.code {

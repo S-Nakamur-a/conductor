@@ -1,11 +1,11 @@
-//! Dashboard overlays — history viewer, worktree input, cherry-pick,
-//! repo selector, and open-repo popups.
+//! ダッシュボードのオーバーレイ群 — 履歴ビューア、worktree 入力、cherry-pick、
+//! リポジトリセレクタ、open-repo ポップアップ。
 //!
-//! These are rendered as overlays on top of the main 3-column layout.
+//! これらはメインの3カラムレイアウトの上にオーバーレイとして描画される。
 //!
-//! Split by overlay group into submodules; `input` holds the text-input
-//! rendering helpers shared across all of them. Re-exported here so callers
-//! keep using `crate::ui::dashboard::render_x`.
+//! オーバーレイのグループごとにサブモジュールへ分割している。input には全体で
+//! 共有するテキスト入力の描画ヘルパーを置く。呼び出し元が引き続き
+//! crate::ui::dashboard::render_x を使えるよう、ここで re-export する。
 
 mod branch_picker;
 mod command_palette;

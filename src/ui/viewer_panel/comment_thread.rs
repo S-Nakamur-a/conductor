@@ -1,6 +1,6 @@
-//! Inline review-comment thread rendering: the expanded thread box shown
-//! under a commented line, replies, per-comment action row, and the
-//! new-comment compose box.
+//! インラインのレビューコメントスレッド描画: コメント付きの行の下に表示される
+//! 展開済みスレッドボックス、返信、コメントごとのアクション行、新規コメント
+//! 作成ボックス。
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -9,10 +9,10 @@ use ratatui::text::{Line, Span};
 
 use super::thread_actions;
 
-/// Build inline thread rows for a comment at the given line.
+/// 指定行のコメントに対するインラインスレッド行を組み立てる。
 ///
-/// Returns a vec of `Line`s representing the thread box:
-/// top border, each comment + replies + action icons, bottom border.
+/// スレッドボックスを表す Line の列を返す:
+/// 上枠線、各コメント + 返信 + アクションアイコン、下枠線。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_inline_thread_lines<'a>(
     line_1: usize,
@@ -26,10 +26,10 @@ pub(super) fn build_inline_thread_lines<'a>(
     syntect_theme: &syntect::highlighting::Theme,
     md_cache: &crate::ui::markdown::MarkdownCache,
 ) -> Vec<(Line<'a>, crate::viewer::ScreenRow)> {
-    // An expanded thread shows ALL its comments, resolved included. Resolved
-    // ones are merely collapsed *by default* (see `expand_threads_for_file`),
-    // so once the user clicks the badge open they must be visible (with a
-    // "resolved" marker in the byline) — otherwise the box renders empty.
+    // 展開されたスレッドは resolved を含む全コメントを表示する。resolved なコメントは
+    // あくまで「デフォルトで」折りたたまれているだけなので（expand_threads_for_file 参照）、
+    // ユーザがバッジをクリックして開いたら（byline に "resolved" マーカーを付けて）
+    // 表示しなければならない。さもないと箱が空のまま描画されてしまう。
     let comments: Vec<&crate::review_store::ReviewComment> =
         match review_state.file_comments.get(&line_1) {
             Some(c) if !c.is_empty() => c.iter().collect(),
@@ -38,22 +38,22 @@ pub(super) fn build_inline_thread_lines<'a>(
 
     use crate::viewer::ScreenRow;
     let mut out: Vec<(Line, ScreenRow)> = Vec::new();
-    let left_pad = crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 4 + 2; // marker + gutter + badge
+    let left_pad = crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 4 + 2; // マーカー + ガター + バッジ
     let gutter_pad: String = " ".repeat(left_pad);
     let border_style = Style::default().fg(theme.accent);
-    // Per-author surface tint so "who wrote this" reads at a glance: Claude's
-    // comments/replies on the neutral surface, the user's on a distinct one.
+    // 執筆者ごとに面の色味を変え、「誰が書いたか」を一目でわかるようにする。Claude の
+    // コメント/返信はニュートラルな面、ユーザのものは別の色味の面に載せる。
     let author_bg = |a: crate::review_store::Author| match a {
         crate::review_store::Author::Claude => theme.comment_preview_bg,
         crate::review_store::Author::User => theme.comment_user_bg,
     };
-    // Box inner width (between │ and │).
-    let box_inner = panel_width.saturating_sub(left_pad + 4 + 2); // "  │ " left + " │" right
-    // Indent inside the box, but never wider than the box itself (a fixed
-    // floor of 20 used to overflow the border on narrow panels).
+    // ボックス内側の幅（│ と │ の間）。
+    let box_inner = panel_width.saturating_sub(left_pad + 4 + 2); // 左の "  │ " + 右の " │"
+    // ボックス内のインデント。ただしボックス自体より広くはしない（固定下限の 20 は、
+    // 狭いパネルで枠線をはみ出していたため）。
     let wrap_width = box_inner.saturating_sub(6).max(10).min(box_inner.max(1));
 
-    // Helper: bordered content line with left │, filled to full width in `bg`.
+    // ヘルパー: 左に │ を持ち、bg で全幅を埋めた枠付きコンテンツ行。
     let make_line = |spans: Vec<Span<'a>>, bg: Color| -> (Line<'a>, ScreenRow) {
         let bg_style = Style::default().bg(bg);
         let mut all = vec![
@@ -61,19 +61,19 @@ pub(super) fn build_inline_thread_lines<'a>(
             Span::styled("  │ ", border_style),
         ];
         all.extend(spans);
-        // Pad the line to panel_width so the background color fills the entire row.
+        // 背景色が行全体を埋めるよう、panel_width までパディングする。
         let used: usize = all
             .iter()
             .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
             .sum();
-        let remaining = panel_width.saturating_sub(used + 2); // +2 for block borders
+        let remaining = panel_width.saturating_sub(used + 2); // +2 はブロックの枠線分
         if remaining > 0 {
             all.push(Span::styled(" ".repeat(remaining), bg_style));
         }
         (Line::from(all).style(bg_style), ScreenRow::ThreadContent)
     };
 
-    // Helper: full-width border line, filled in `bg`.
+    // ヘルパー: bg で塗った全幅の枠線行。
     let make_border = |content: String, bg: Color| -> (Line<'a>, ScreenRow) {
         let bg_style = Style::default().bg(bg);
         let text = format!("{gutter_pad}{content}");
@@ -89,7 +89,7 @@ pub(super) fn build_inline_thread_lines<'a>(
         (Line::from(spans).style(bg_style), ScreenRow::ThreadContent)
     };
 
-    // Top border — tinted to the first comment's author.
+    // 上枠線 — 最初のコメントの執筆者の色味で塗る。
     let top_fill = "─".repeat(box_inner.saturating_sub(1));
     out.push(make_border(
         format!("  ┌{top_fill}┐"),
@@ -97,12 +97,12 @@ pub(super) fn build_inline_thread_lines<'a>(
     ));
 
     for (ci, comment) in comments.iter().enumerate() {
-        // This comment's author surface; all of its rows use it.
+        // このコメントの執筆者の面。全ての行がこれを使う。
         let cbg = author_bg(comment.author);
         let content_style = Style::default().fg(theme.fg).bg(cbg);
         let info_style = Style::default().fg(theme.info).bg(cbg);
 
-        // Blank spacer line between comments in the same thread.
+        // 同じスレッド内のコメント間の空行スペーサー。
         if ci > 0 {
             out.push(make_line(vec![Span::styled("", content_style)], cbg));
         }
@@ -112,9 +112,9 @@ pub(super) fn build_inline_thread_lines<'a>(
             crate::review_store::Author::Claude => "claude",
         };
 
-        // Author byline: kind badge (💡/❓) + author, like a GitHub comment
-        // header. A muted "✓ resolved" marker trails the byline for resolved
-        // comments (these only appear when the thread is explicitly opened).
+        // 執筆者の byline: 種別バッジ（💡/❓）+ 執筆者名。GitHub のコメントヘッダーに
+        // 似た形。resolved なコメントには byline の末尾に控えめな「✓ resolved」マーカーが
+        // 付く（これはスレッドを明示的に開いたときのみ表示される）。
         let kind = crate::ui::review::kind_icon(comment.kind);
         let mut byline = vec![
             Span::styled(format!("{kind} "), content_style),
@@ -131,9 +131,9 @@ pub(super) fn build_inline_thread_lines<'a>(
         }
         out.push(make_line(byline, cbg));
 
-        // Comment body, rendered as GitHub-style Markdown onto the author
-        // surface (headings, lists, fenced code cards, inline `code`, links, …).
-        // Cached per comment id so it isn't re-parsed/highlighted every frame.
+        // コメント本文。執筆者の面に GitHub 風の Markdown として描画する
+        // （見出し、リスト、コードカード、インラインの code、リンクなど）。
+        // 毎フレーム再パース/再ハイライトしないよう comment id ごとにキャッシュする。
         let mut body_md =
             md_cache.render(&comment.id, &comment.body, wrap_width, theme, syntax_set, syntect_theme);
         crate::ui::markdown::apply_background(&mut body_md, cbg);
@@ -141,8 +141,8 @@ pub(super) fn build_inline_thread_lines<'a>(
             out.push(make_line(line.spans, cbg));
         }
 
-        // Show replies if cached — each tinted to ITS OWN author, so a user
-        // reply under a Claude comment (or vice-versa) is visibly distinct.
+        // キャッシュされていれば返信を表示する。それぞれ自分自身の執筆者の色味で塗るので、
+        // Claude のコメントへのユーザの返信（あるいはその逆）が見た目で区別できる。
         if let Some(replies) = review_state.cached_replies.get(&comment.id) {
             for reply in replies {
                 let rbg = author_bg(reply.author);
@@ -152,7 +152,7 @@ pub(super) fn build_inline_thread_lines<'a>(
                     crate::review_store::Author::User => "you",
                     crate::review_store::Author::Claude => "claude",
                 };
-                // Reply byline, indented under its parent with a ↳ marker.
+                // 返信の byline。親コメントの下に ↳ マーカー付きでインデントする。
                 out.push(make_line(
                     vec![Span::styled(
                         format!("  \u{21b3} {reply_author}"),
@@ -160,8 +160,7 @@ pub(super) fn build_inline_thread_lines<'a>(
                     )],
                     rbg,
                 ));
-                // Reply body Markdown, indented two columns under the byline.
-                // Cached per reply id.
+                // 返信本文の Markdown。byline の下に2列分インデントする。reply id ごとにキャッシュする。
                 let mut reply_md = md_cache.render(
                     &reply.id,
                     &reply.body,
@@ -179,15 +178,15 @@ pub(super) fn build_inline_thread_lines<'a>(
             }
         }
 
-        // Per-comment action icons row or active reply input.
+        // コメントごとのアクションアイコン行、または返信入力中の表示。
         let is_replying_to_this = reply_comment_id == Some(comment.id.as_str());
         let action_row_type = ScreenRow::ThreadActions {
             comment_id: comment.id.clone(),
         };
         if is_replying_to_this {
-            // GitHub-style multi-line reply form: a byline, the buffer rendered
-            // line by line with a block cursor, then a key hint. The thread above
-            // stays visible, so the parent comment is always in view while typing.
+            // GitHub 風の複数行返信フォーム: byline、ブロックカーソル付きで1行ずつ描画される
+            // バッファ、そしてキーヒント。上のスレッドは表示されたままなので、入力中も
+            // 親コメントが常に見える。
             let muted = Style::default().fg(theme.muted).bg(cbg);
             out.push(make_line(
                 vec![Span::styled(
@@ -205,7 +204,7 @@ pub(super) fn build_inline_thread_lines<'a>(
                     cbg,
                 ));
             } else {
-                // Block cursor sits between before/after text, like the modal.
+                // モーダルと同様、ブロックカーソルは前後のテキストの間に置く。
                 let display = format!(
                     "{}\u{2588}{}",
                     reply_buffer.text_before_cursor(),
@@ -233,9 +232,9 @@ pub(super) fn build_inline_thread_lines<'a>(
                 cbg,
             ));
         } else {
-            // Clickable action row. Labels and hit ranges both come from the
-            // shared `thread_actions` module so the mouse handler stays in
-            // sync with what is drawn here.
+            // クリック可能なアクション行。ラベルとヒット範囲はどちらも共有の
+            // thread_actions モジュールから来ているので、マウスハンドラは
+            // ここで描画される内容と常に一致する。
             let bg_style = Style::default().bg(cbg);
             let muted_style = Style::default().fg(theme.muted).bg(cbg);
             let reply_style = Style::default().fg(theme.info).bg(cbg);
@@ -246,8 +245,8 @@ pub(super) fn build_inline_thread_lines<'a>(
                 crate::review_store::CommentStatus::Pending => thread_actions::RESOLVE,
                 crate::review_store::CommentStatus::Resolved => thread_actions::UNRESOLVE,
             };
-            // Pad the status slot to a constant width so "delete" starts at a
-            // stable column regardless of resolve/unresolve being shown.
+            // resolve/unresolve のどちらが表示されても "delete" が常に同じ列から
+            // 始まるよう、status のスロットを一定幅にパディングする。
             let status_pad = thread_actions::status_slot_width()
                 .saturating_sub(unicode_width::UnicodeWidthStr::width(status_label));
 
@@ -269,7 +268,7 @@ pub(super) fn build_inline_thread_lines<'a>(
                 .iter()
                 .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                 .sum();
-            let prefix_w = left_pad + 4; // gutter_pad + "  │ "
+            let prefix_w = left_pad + 4; // gutter_pad + "  │ " の分
             let fill = panel_width.saturating_sub(prefix_w + left_w + right_label_w + 2 + 1);
 
             let mut spans = vec![
@@ -281,14 +280,14 @@ pub(super) fn build_inline_thread_lines<'a>(
                 spans.push(Span::styled(" ".repeat(fill), bg_style));
             }
             spans.push(Span::styled(right_label.to_string(), claude_style));
-            spans.push(Span::styled(" ", bg_style)); // trailing pad
+            spans.push(Span::styled(" ", bg_style)); // 末尾のパディング
 
             let line = Line::from(spans).style(bg_style);
             out.push((line, action_row_type));
         }
     }
 
-    // Bottom border — tinted to the last comment's author.
+    // 下枠線 — 最後のコメントの執筆者の色味で塗る。
     let bot_fill = "─".repeat(box_inner.saturating_sub(1));
     out.push(make_border(
         format!("  └{bot_fill}┘"),
@@ -298,9 +297,8 @@ pub(super) fn build_inline_thread_lines<'a>(
     out
 }
 
-/// The line under which the new-comment compose box should render, if a new
-/// comment is being composed and its anchor is in the current file. Returns the
-/// end line of the anchored range (where the box is injected).
+/// 新規コメントを作成中で、そのアンカーが現在のファイル内にある場合、新規コメント
+/// 作成ボックスを描画すべき行を返す。アンカー範囲の終端行（ボックスを差し込む位置）を返す。
 pub(super) fn new_comment_anchor_end(app: &App) -> Option<usize> {
     if app.review_state.input_mode != crate::review_state::ReviewInputMode::AddingComment {
         return None;
@@ -312,10 +310,10 @@ pub(super) fn new_comment_anchor_end(app: &App) -> Option<usize> {
     Some(end.unwrap_or(*start) as usize)
 }
 
-/// Build the inline **new-comment** compose box, injected under the anchored
-/// line when `ReviewInputMode::AddingComment` is active. A GitHub-style form:
-/// a kind header, the body buffer with a block cursor, and a key hint — drawn
-/// on the user surface (`comment_user_bg`) like a user-authored comment.
+/// インラインの新規コメント作成ボックスを組み立てる。ReviewInputMode::AddingComment
+/// が有効なとき、アンカー行の下に差し込まれる。GitHub 風のフォームで、種別ヘッダー、
+/// ブロックカーソル付きの本文バッファ、キーヒントからなり、ユーザ作成コメントと同様に
+/// ユーザの面（comment_user_bg）に描画する。
 pub(super) fn build_inline_compose_lines<'a>(
     kind: crate::review_store::CommentKind,
     input: &crate::text_input::TextInput,
@@ -367,7 +365,7 @@ pub(super) fn build_inline_compose_lines<'a>(
     let top_fill = "\u{2500}".repeat(box_inner.saturating_sub(1));
     out.push(make_border(format!("  \u{250c}{top_fill}\u{2510}")));
 
-    // Kind header (toggle with Tab).
+    // 種別ヘッダー（Tab で切り替え）。
     let (icon, label) = match kind {
         crate::review_store::CommentKind::Suggest => ("\u{1f4a1}", "New Suggest"),
         crate::review_store::CommentKind::Question => ("\u{2753}", "New Question"),
@@ -381,7 +379,7 @@ pub(super) fn build_inline_compose_lines<'a>(
         Span::styled("  (Tab: toggle kind)".to_string(), muted),
     ]));
 
-    // Body with a block cursor between before/after text.
+    // 本文。前後のテキストの間にブロックカーソルを置く。
     if input.is_empty() {
         out.push(make_line(vec![
             Span::styled("> ".to_string(), accent_bg),

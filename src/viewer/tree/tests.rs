@@ -1,27 +1,27 @@
 use super::*;
 
-/// The explorer must list files purely from the filesystem, independent of
-/// git state. A directory ignored by `.gitignore` (i.e. not under git
-/// management) and the files nested inside it must still be reachable.
+/// Explorer は git の状態とは無関係に、純粋にファイルシステムからファイルを
+/// 一覧しなければならない。.gitignore で無視されている（つまり git 管理外の）
+/// ディレクトリと、その中に入っているファイルも到達可能でなければならない。
 #[test]
 fn walk_includes_gitignored_directories_and_recurses() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
 
-    // A `.gitignore` that excludes `generated/` (and `*.log`) from git
-    // management. `generated` is deliberately NOT one of the heavy
-    // `SKIP_DIRS`, so the only reason it could be hidden would be gitignore.
+    // generated/（と *.log）を git 管理から除外する .gitignore。generated は
+    // 重い SKIP_DIRS のいずれでもないよう意図的に選んでいる。隠れる理由があるとすれば
+    // gitignore しかない。
     std::fs::write(root.join(".gitignore"), "/generated\n*.log\n").unwrap();
     std::fs::create_dir_all(root.join("generated/sub")).unwrap();
     std::fs::write(root.join("generated/out.txt"), "x").unwrap();
     std::fs::write(root.join("generated/sub/inner.txt"), "x").unwrap();
     std::fs::write(root.join("generated/debug.log"), "x").unwrap();
 
-    // Top-level walk must surface the gitignored directory itself.
+    // トップレベルの走査で、gitignore されたディレクトリ自体が現れなければならない。
     let mut top = Vec::new();
-    // No real git repo here — an empty status map (everything reads as
-    // Tracked) is fine since this test is only about the plain filesystem
-    // walk, not git-state classification (see `git_status_map` tests for that).
+    // ここには本物の git リポジトリが無い — 空のステータスマップ（全て Tracked と
+    // 読める）で構わない。このテストは純粋なファイルシステム走査についてであり、
+    // git 状態の分類についてではない（そちらは git_status_map のテストを参照）。
     let git_status = GitStatusMap::default();
     ViewerState::walk_dir(root, root, 0, &mut top, &git_status);
     assert!(
@@ -30,7 +30,7 @@ fn walk_includes_gitignored_directories_and_recurses() {
         top.iter().map(|e| &e.name).collect::<Vec<_>>()
     );
 
-    // Expanding it must reveal nested files, including gitignored ones.
+    // それを展開すると、gitignore されたものを含め、中のファイルが現れなければならない。
     let mut children = Vec::new();
     ViewerState::walk_dir(root, &root.join("generated"), 1, &mut children, &git_status);
     let names: Vec<&str> = children.iter().map(|e| e.name.as_str()).collect();
@@ -41,7 +41,7 @@ fn walk_includes_gitignored_directories_and_recurses() {
         "gitignored file should be listed: {names:?}"
     );
 
-    // And recursion continues one level deeper.
+    // さらに1階層深く再帰が続く。
     let mut deep = Vec::new();
     ViewerState::walk_dir(root, &root.join("generated/sub"), 2, &mut deep, &git_status);
     assert!(
@@ -51,8 +51,8 @@ fn walk_includes_gitignored_directories_and_recurses() {
     );
 }
 
-/// Heavy build/dependency directories are still skipped — that guard is a
-/// performance concern, not a git-management one.
+/// 重いビルド/依存関係ディレクトリは相変わらずスキップされる — このガードは
+/// パフォーマンス上の都合であり、git 管理とは無関係。
 #[test]
 fn walk_still_skips_heavy_dirs() {
     let root = tempfile::tempdir().unwrap();
@@ -108,11 +108,12 @@ fn tree_root_and_entries_switch_together() {
     assert_eq!(vs.root(), b.path());
 }
 
-/// A periodic / file-watcher tree refresh re-opens the previously viewed file
-/// to pick up on-disk edits, and `open_file` goes through `exit_diff_mode`,
-/// which clears every viewer mode flag. The SUMMARY pseudo-file view must
-/// survive that round trip — otherwise selecting SUMMARY in the Changed-files
-/// list silently flips back to the last opened file within seconds.
+/// 定期的な、あるいはファイルウォッチャーによるツリーリフレッシュは、ディスク上の
+/// 編集を反映するため以前開いていたファイルを再度開く。その open_file は
+/// exit_diff_mode を経由し、全ての viewer モードフラグをクリアしてしまう。
+/// SUMMARY 疑似ファイル表示はこの往復を生き延びなければならない — さもなければ、
+/// Changed files 一覧で SUMMARY を選んでも数秒で最後に開いたファイルに黙って
+/// 戻ってしまう。
 #[test]
 fn tree_refresh_preserves_summary_view() {
     let root = tempfile::tempdir().unwrap();
@@ -134,8 +135,8 @@ fn tree_refresh_preserves_summary_view() {
     assert_eq!(vs.summary_scroll, 7, "summary scroll must be preserved");
 }
 
-/// The sibling guarantee for the unified diff view, which the summary fix must
-/// not regress: a refresh keeps diff mode on.
+/// unified diff 表示についても同様の保証があり、summary の修正がこれを退行
+/// させてはならない: リフレッシュしても diff モードはオンのまま維持される。
 #[test]
 fn tree_refresh_preserves_diff_mode() {
     let root = tempfile::tempdir().unwrap();
@@ -155,11 +156,11 @@ fn tree_refresh_preserves_diff_mode() {
     assert_eq!(vs.diff_view.diff_view_scroll, 3);
 }
 
-/// The same guarantee for the rendered-markdown view. `open_file` resets
-/// `md_scroll` — correct when the *user* opens a file, wrong on the refresh
-/// path, which re-opens the current file every time the watcher fires or the
-/// 3s poll comes round. Without the save/restore, reading a long rendered
-/// README would snap back to the top every few seconds.
+/// レンダリング済み markdown 表示についても同じ保証がある。open_file は
+/// md_scroll をリセットする — ユーザー自身がファイルを開いたときは正しい挙動だが、
+/// リフレッシュ経路では誤り。この経路はウォッチャー発火や3秒ポーリングのたびに
+/// 現在のファイルを再度開く。保存/復元が無ければ、長いレンダリング済み README を
+/// 読んでいても数秒ごとに先頭へ巻き戻されてしまう。
 #[test]
 fn tree_refresh_preserves_rendered_markdown_scroll() {
     let root = tempfile::tempdir().unwrap();

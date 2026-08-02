@@ -1,22 +1,21 @@
-//! Display-width-aware span wrapping. Rendering works at the granularity of a
-//! [`Cell`] (one char plus its style) so styles survive line breaks, then
-//! coalesces adjacent same-style cells back into `Span`s.
+//! 表示幅を考慮した span の折り返し。描画は Cell（1文字とそのスタイル）の粒度で
+//! 行い、改行をまたいでもスタイルが保たれるようにしてから、隣接する同スタイルの
+//! セルを Span へまとめ直す。
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// A single display cell: one **grapheme cluster** carrying its style. The
-/// wrapping helpers work at this granularity so styles survive line breaks.
+/// 表示上の1セル: スタイルを持つ1つの書記素クラスタ（grapheme cluster）。
+/// 折り返しのヘルパーはこの粒度で動くので、改行をまたいでもスタイルが保たれる。
 ///
-/// A cluster, not a `char`, because the two disagree on width in both
-/// directions: `⚠` is one column but `⚠️` (the same character followed by
-/// U+FE0F) is two, so summing per `char` under-counts it and the line
-/// overflows; a ZWJ sequence like a family emoji is two columns total but
-/// seven `char`s, so summing per `char` over-counts it and the line wraps
-/// early. Clusters also can't be split across a line break, which a `char`
-/// granularity happily did.
+/// char ではなくクラスタにしているのは、両者の幅の数え方が両方向にずれるため:
+/// ⚠ は1桁だが ⚠️（同じ文字に U+FE0F が続いたもの）は2桁になるので、char ごとに
+/// 足すと過小に数えてしまい行がはみ出す。家族の絵文字のような ZWJ シーケンスは
+/// 合計2桁なのに char としては7個あるので、char ごとに足すと過大に数えてしまい
+/// 行が早く折り返される。クラスタなら改行で分割されることもないが、char 粒度では
+/// それが平気で起きていた。
 #[derive(Clone)]
 pub(crate) struct Cell {
     pub(crate) text: String,
@@ -56,8 +55,8 @@ pub(crate) fn spans_to_cells(spans: &[Span<'static>]) -> Vec<Cell> {
         .collect()
 }
 
-/// Merge a run of cells back into a `Line`, coalescing adjacent same-style cells
-/// into one `Span`.
+/// 連続したセルを Line へまとめ直す。隣接する同スタイルのセルは1つの Span に
+/// まとめる。
 pub(crate) fn cells_to_line(cells: &[Cell]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
@@ -84,10 +83,10 @@ pub(crate) fn cells_to_line(cells: &[Cell]) -> Line<'static> {
     }
 }
 
-/// Wrap `cells` to `width` display columns. When `hard` is set (code blocks),
-/// breaks fall on any cell boundary; otherwise breaks prefer word boundaries
-/// and only overlong single words are hard-split. Display width is measured with
-/// `unicode-width`, so full-width (CJK) text wraps correctly.
+/// セル列を width 桁の表示幅で折り返す。hard が立っている場合（コードブロック）
+/// はどのセル境界でも折り返せる。そうでない場合は単語境界での折り返しを優先し、
+/// 1単語が長すぎるときだけハード分割する。表示幅は unicode-width で測るので、
+/// 全角（CJK）テキストも正しく折り返される。
 pub(crate) fn wrap_cells(cells: &[Cell], width: usize, hard: bool) -> Vec<Line<'static>> {
     wrap_cells_raw(cells, width, hard)
         .iter()
@@ -95,13 +94,12 @@ pub(crate) fn wrap_cells(cells: &[Cell], width: usize, hard: bool) -> Vec<Line<'
         .collect()
 }
 
-/// [`wrap_cells`] without the final merge into `Line`s — one `Vec<Cell>` per
-/// wrapped line.
+/// wrap_cells から最後の Line へのマージを省いたもの — 折り返し後の1行ごとに
+/// Vec<Cell> を返す。
 ///
-/// Callers that need to keep working at cell granularity after wrapping use
-/// this: table columns, for instance, must pad and align each wrapped line to
-/// the column width before the columns are stitched together side by side,
-/// which is impossible once the cells have collapsed into `Span`s.
+/// 折り返し後もセル粒度のまま扱い続けたい呼び出し側が使う: 例えばテーブルの列は、
+/// 列を横に並べる前に、折り返し済みの各行を列幅に合わせてパディング・アライメント
+/// する必要があるが、それはセルが Span に潰れてしまってからでは不可能。
 pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Vec<Cell>> {
     let width = width.max(1);
     let mut lines: Vec<Vec<Cell>> = Vec::new();
@@ -135,9 +133,9 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
     let mut i = 0;
     while i < n {
         if cells[i].is_space() {
-            // A space: keep it only if it fits on the current (non-empty) line;
-            // otherwise drop it as the wrap point so the next line has no
-            // leading space.
+            // スペース: 現在の（空でない）行に収まるときだけ残す。収まらない
+            // 場合はここを折り返し位置として落とし、次の行に先頭スペースが
+            // 残らないようにする。
             if !cur.is_empty() {
                 if cur_w < width {
                     cur.push(cells[i].clone());
@@ -150,7 +148,7 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
             continue;
         }
 
-        // Gather the next word (run of non-space cells).
+        // 次の単語（非スペースのセルの連続）をまとめる。
         let start = i;
         let mut word_w = 0;
         while i < n && !cells[i].is_space() {
@@ -160,7 +158,7 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
         let word = &cells[start..i];
 
         if word_w > width {
-            // Word longer than a line: flush, then hard-split it.
+            // 1行より長い単語: 一旦フラッシュしてからハード分割する。
             if !cur.is_empty() {
                 push_line(&mut cur, &mut cur_w);
             }
@@ -191,8 +189,8 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
     lines
 }
 
-/// Prepend a gutter/marker prefix to wrapped lines: `first` on the first line,
-/// `cont` (a same-width pad) on continuation lines.
+/// 折り返し済みの各行の先頭にガター/マーカーを付ける: 最初の行には first を、
+/// 継続行には（同じ幅のパディングである）cont を付ける。
 pub(crate) fn with_prefix(
     lines: Vec<Line<'static>>,
     first: Span<'static>,

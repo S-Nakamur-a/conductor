@@ -1,4 +1,4 @@
-//! Right-aligned worktree branch / repository name label overlaid on a row.
+//! 行に重ねて表示する、右揃えの worktree ブランチ名・リポジトリ名ラベル。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,8 +9,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-/// Render the current worktree branch and repository name at the far right
-/// of the given row area (overlays on the same line).
+/// 現在の worktree のブランチ名とリポジトリ名を、指定した行領域の右端に描画する
+/// （同じ行に重ねて表示する）。
 pub fn render_worktree_label(
     frame: &mut Frame,
     row_area: Rect,

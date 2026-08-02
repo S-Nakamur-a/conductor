@@ -11,7 +11,7 @@
 //!
 //! 検出を 2 段階にしてあるのは意図的で、安価な環境変数のヒントで「問い合わせるか
 //! どうか」を決め、実際のエスケープシーケンスによる問い合わせ
-//! (`ratatui_image::picker::Picker::from_query_stdio` に委譲。応答しない端末では
+//! (ratatui_image::picker::Picker::from_query_stdio に委譲。応答しない端末では
 //! 最大 1 秒かかる) は、ヒントがグラフィックスプロトコルの存在を示唆したときだけ
 //! 走らせる。この問い合わせは raw mode に入ったあと、かつ crossterm の
 //! イベントループが stdin を読み始める前に実行しなければならない。そうしないと
@@ -24,7 +24,7 @@ use ratatui_image::picker::ProtocolType;
 /// このセッションで確定した rich モードのティア。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RichTier {
-    /// rich な効果は無し (truecolor でない端末、または `mode = "off"`)。
+    /// rich な効果は無し (truecolor でない端末、または mode = "off")。
     Off,
     /// truecolor のセル効果のみ。
     TierA,
@@ -47,7 +47,7 @@ impl RichTier {
 /// 環境変数から推測したケイパビリティ (端末との I/O は行わない)。
 #[derive(Debug, Clone, Default)]
 pub struct TermCaps {
-    /// 端末が 24bit カラーを表明している (`COLORTERM`)、または対応が既知の端末。
+    /// 端末が 24bit カラーを表明している (COLORTERM)、または対応が既知の端末。
     pub truecolor: bool,
     /// グラフィックスプロトコル (kitty / iTerm2) に対応していそうだと環境が
     /// 示唆しており、エスケープシーケンスでの問い合わせに見合うかどうか。
@@ -70,7 +70,7 @@ impl TermCaps {
         )
     }
 
-    /// 検出ロジックそのもの。テストしやすいよう `std::env` から切り離してある。
+    /// 検出ロジックそのもの。テストしやすいよう std::env から切り離してある。
     #[allow(clippy::too_many_arguments)]
     fn from_vars(
         colorterm: &str,
@@ -118,8 +118,8 @@ impl TermCaps {
 /// 設定のモード、環境から得たケイパビリティ、そして (あれば) グラフィックス
 /// プロトコルの問い合わせ結果から rich のティアを決める。
 ///
-/// `probed_protocol` が `Some` になるのは問い合わせが走って成功したときだけ。
-/// `Halfblocks` は「端末は応答したが実際のプロトコルには対応していない」を意味する。
+/// probed_protocol が Some になるのは問い合わせが走って成功したときだけ。
+/// Halfblocks は「端末は応答したが実際のプロトコルには対応していない」を意味する。
 pub fn resolve_rich_tier(
     mode: &str,
     caps: &TermCaps,
@@ -154,19 +154,19 @@ pub fn resolve_rich_tier(
 /// OSC 11 で端末に背景色を問い合わせ、相対輝度を返す
 /// (0.0 = 黒、1.0 = 白、線形スケール)。
 ///
-/// 仕組み: raw mode のまま `ESC ] 11 ; ? ST` を stdout へ送り、メインスレッドで
-/// `libc::poll` を使って 150ms の期限つきで fd 0 (stdin) をポーリングする。
+/// 仕組み: raw mode のまま ESC ] 11 ; ? ST を stdout へ送り、メインスレッドで
+/// libc::poll を使って 150ms の期限つきで fd 0 (stdin) をポーリングする。
 /// 読み取るのは fd が読み取り可能と報告されたときだけなので、この呼び出しが
 /// 期限より長くブロックすることはない。応答は返る前に完全に読み切るので、
-/// 後続のグラフィックスプロトコルの問い合わせ (`Picker::from_query_stdio`) へ
+/// 後続のグラフィックスプロトコルの問い合わせ (Picker::from_query_stdio) へ
 /// バイトが漏れることはない。
 ///
-/// tmux: `TERM` が `"tmux"` で始まるか `TERM_PROGRAM == "tmux"` のとき、
+/// tmux: TERM が "tmux" で始まるか TERM_PROGRAM == "tmux" のとき、
 /// パススルーは通常無効で応答が来ない。その場合は問い合わせを送らずに
-/// 即座に `None` を返す。
+/// 即座に None を返す。
 ///
 /// タイムアウト内に端末が応答しない場合や、応答をパースできない場合は
-/// `None` を返す。
+/// None を返す。
 pub fn query_background_luminance() -> Option<f64> {
     // tmux の中で動いているときは飛ばす (パススルーは通常無効)。
     let term = std::env::var("TERM").unwrap_or_default();
@@ -251,11 +251,11 @@ pub fn query_background_luminance() -> Option<f64> {
 
 /// 端末の背景輝度からテーマ名を選ぶ。
 ///
-/// 呼び出し側が自動でテーマを切り替えるべきときだけ `Some(name)` を返す:
-/// - `configured` が `None` (設定でテーマを固定していない)、かつ
-/// - `lum > 0.5` (明るい背景を検出)。
+/// 呼び出し側が自動でテーマを切り替えるべきときだけ Some(name) を返す:
+/// - configured が None (設定でテーマを固定していない)、かつ
+/// - lum > 0.5 (明るい背景を検出)。
 ///
-/// 既にテーマが設定されている場合や背景が暗い場合は `None` を返す
+/// 既にテーマが設定されている場合や背景が暗い場合は None を返す
 /// (今のテーマをそのまま使う)。
 pub fn auto_theme_for_background(lum: f64, configured: Option<&str>) -> Option<&'static str> {
     if configured.is_some() {
@@ -268,7 +268,7 @@ pub fn auto_theme_for_background(lum: f64, configured: Option<&str>) -> Option<&
     }
 }
 
-/// `ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST` をパースして相対輝度を返す。
+/// ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST をパースして相対輝度を返す。
 ///
 /// 各チャネルは 16 進 4 桁の値 (0000-FFFF)。輝度の計算には一般的な慣習に合わせて
 /// 上位バイト (先頭 2 桁) を使う。
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn parse_osc11_8bit_channels() {
-        // 一部の端末は 8bit (2 桁) のチャネル値 `rgb:RR/GG/BB` で応答する。
+        // 一部の端末は 8bit (2 桁) のチャネル値 rgb:RR/GG/BB で応答する。
         // パーサは先頭 2 桁を読むので、これは自然に扱える。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:ff/ff/ff\x1b\\");
         assert!(lum.is_some());

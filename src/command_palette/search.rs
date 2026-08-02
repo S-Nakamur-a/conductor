@@ -1,15 +1,16 @@
-//! Fuzzy filtering and scoring of palette commands against a query, grouped
-//! by scope relative to the focused panel.
+//! パレットコマンドをクエリに対してあいまいフィルタリング・スコアリングし、
+//! フォーカス中パネルから見たスコープでグループ化する。
 
 use super::commands::COMMANDS;
 use super::types::{CommandScope, PaletteCommand, ScoredCommand, scope_rank};
 use crate::keymap::{KeyContext, KeyMap};
 
-/// Classify a command relative to the focused panel. Global-bound actions are
-/// "global" even if a panel layer also binds them (e.g. `:` for the palette);
-/// otherwise an action bound in the current panel's own layer is "current", and
-/// anything else (bound only in another panel, runnable here via the palette) is
-/// "other". Palette-only commands count as global.
+/// コマンドをフォーカス中パネルとの関係で分類する。グローバルにバインドされた
+/// アクションは、パネルのレイヤー側でも重ねてバインドされていても (パレットを
+/// 開く : など) 常に global になる。そうでなければ、現在のパネル自身のレイヤーに
+/// バインドされているアクションは current、それ以外 (別パネルだけにバインド
+/// されていて、パレット経由でのみここから実行できるもの) は other になる。
+/// パレット専用コマンドはグローバル扱いとする。
 fn command_scope(cmd: &PaletteCommand, keymap: &KeyMap, current: KeyContext) -> CommandScope {
     match cmd.action {
         None => CommandScope::Global,
@@ -27,7 +28,7 @@ fn command_scope(cmd: &PaletteCommand, keymap: &KeyMap, current: KeyContext) -> 
     }
 }
 
-/// Fuzzy score for a command against a lowercased query; `None` if no match.
+/// 小文字化したクエリに対するコマンドのあいまいスコア。マッチしなければ None。
 fn score_command(cmd: &PaletteCommand, query_lower: &str) -> Option<i32> {
     let label_lower = cmd.label.to_lowercase();
     let keywords_lower = cmd.keywords.to_lowercase();
@@ -60,13 +61,13 @@ fn score_command(cmd: &PaletteCommand, query_lower: &str) -> Option<i32> {
     Some(score)
 }
 
-/// Filter and score commands against a query, grouped by scope relative to the
-/// focused panel (`current`). Returns all commands (sorted by scope) when the
-/// query is empty, or matching commands sorted by scope then relevance.
+/// コマンドをクエリに対してフィルタリング・スコアリングし、フォーカス中パネル
+/// (current) から見たスコープでグループ化する。クエリが空ならスコープ順に
+/// 並べた全コマンドを返し、そうでなければマッチしたコマンドをスコープ順・
+/// 関連度順に並べて返す。
 ///
-/// The ordering is shared by the renderer (for grouped display) and the key
-/// handler (for selection + execution), so `selected` indexes into this exact
-/// sequence.
+/// この並び順はレンダラ (グループ表示用) とキー操作ハンドラ (選択・実行用) の
+/// 両方で共有される。選択位置はこの並びそのものへの添字になる。
 pub fn filter_commands(query: &str, keymap: &KeyMap, current: KeyContext) -> Vec<ScoredCommand> {
     let query_lower = query.to_lowercase();
 

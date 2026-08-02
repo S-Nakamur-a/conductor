@@ -1,4 +1,4 @@
-//! Tokyo Night palette.
+//! Tokyo Night パレット。
 
 use super::Theme;
 use ratatui::style::Color;
@@ -64,7 +64,7 @@ impl Theme {
             reply_text: Color::Rgb(125, 207, 255),
 
             code_bg: Color::Rgb(22, 22, 32),
-            code_fg: Color::Rgb(247, 140, 180), // pink
+            code_fg: Color::Rgb(247, 140, 180), // ピンク
 
             panel_focused_bg: Color::Rgb(36, 38, 52),
         }

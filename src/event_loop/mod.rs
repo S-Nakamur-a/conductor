@@ -1,9 +1,9 @@
-//! Main event loop: the draw → poll → handle cycle, from process start until
-//! the user quits.
+//! メインイベントループ: プロセス開始からユーザが終了するまでの
+//! draw → poll → handle サイクル。
 //!
-//! ループ 1 周分の各フェーズは [`phases`]、反復をまたぐ状態とその初期化は
-//! [`state`] にある。定期タイマーと外部イベント源のポーリングは
-//! [`crate::event_loop_timers`]。ここに残っているのは周回そのものだけ。
+//! ループ 1 周分の各フェーズは [phases]、反復をまたぐ状態とその初期化は
+//! [state] にある。定期タイマーと外部イベント源のポーリングは
+//! [crate::event_loop_timers]。ここに残っているのは周回そのものだけ。
 
 mod phases;
 mod state;
@@ -18,34 +18,34 @@ use ratatui::backend::CrosstermBackend;
 use crate::app::App;
 use state::LoopState;
 
-/// Tick rate when terminal panels are focused (~120fps for responsive PTY).
+/// terminal パネルにフォーカスしているときの tick 間隔 (PTY の応答性のため ~120fps)。
 const TICK_RATE_TERMINAL: Duration = Duration::from_millis(8);
-/// Tick rate right after user input for responsive scrolling (~60fps).
+/// ユーザ入力の直後、スクロールを滑らかにするための tick 間隔 (~60fps)。
 const TICK_RATE_ACTIVE: Duration = Duration::from_millis(16);
-/// Tick rate when non-terminal panels are idle (low CPU usage).
+/// terminal 以外のパネルがアイドル状態のときの tick 間隔 (CPU 使用量を抑える)。
 const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
-/// How long to keep using the active tick rate after the last input event.
+/// 最後の入力イベントのあと、active の tick 間隔を使い続ける時間。
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
-/// Fixed interval for decoration animation updates (~10fps), independent of main tick rate.
+/// 装飾アニメーション更新の固定間隔 (~10fps)。メインの tick 間隔とは独立している。
 const DECORATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
-/// Interval for the "Claude is waiting" notification breathing pulse (~12fps).
-/// Drives redraws while a session waits, independent of decoration/PTY activity,
-/// so the pulse keeps breathing even when the user is focused elsewhere.
+/// 「Claude が待機中」通知の呼吸パルスの間隔 (~12fps)。セッションが待機している
+/// 間、装飾や PTY のアクティビティとは独立に再描画を駆動する。これにより
+/// ユーザが他の場所にフォーカスしていてもパルスが呼吸し続ける。
 const PULSE_TICK_INTERVAL: Duration = Duration::from_millis(80);
-/// Interval for refreshing unfocused terminal panels (~2fps).
-/// Balances visibility of background PTY output with CPU usage.
+/// フォーカスしていない terminal パネルを更新する間隔 (~2fps)。バックグラウンドの
+/// PTY 出力の可視性と CPU 使用量のバランスを取る。
 const UNFOCUSED_TERMINAL_REFRESH: Duration = Duration::from_millis(500);
-/// Redraw cadence for rich-mode gradient borders (~30fps). The rotating focus
-/// gradient and waiting glow (`ui::rich`) derive their phase from wall-clock
-/// time but only advance when the frame is redrawn; without a dedicated cadence
-/// the gradient stutters at the idle/decoration tick rate. Only armed in rich
-/// mode (and never overriding the faster terminal/active rates), so the cost is
-/// a steady 30fps repaint while rich effects are visible.
+/// rich モードのグラデーション枠を再描画する間隔 (~30fps)。回転するフォーカスの
+/// グラデーションと waiting の輝き (ui::rich) は壁時計時刻から位相を導出するが、
+/// フレームが再描画されたときにしか進まない。専用の間隔を用意しないと、
+/// アイドル/装飾用の tick 間隔でグラデーションがカクつく。rich モードでのみ
+/// 有効化し (terminal/active のより速い間隔を上書きすることは決してない)、
+/// rich の演出が見えている間だけ安定した 30fps の再描画というコストを払う。
 const RICH_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
 
-/// Paths the file watcher should monitor: every worktree's path, or — when
-/// there are no worktrees (e.g. a plain non-git directory) — the repo path
-/// itself, so the Explorer still auto-refreshes on file changes there.
+/// file watcher が監視すべきパス: 通常は各 worktree のパス。worktree が
+/// 1 つもない場合 (例: 素の非 git ディレクトリ) はリポジトリのパス自身にする。
+/// これにより Explorer はそこでのファイル変更でも自動更新され続ける。
 pub(crate) fn watch_paths_for(app: &App) -> Vec<std::path::PathBuf> {
     if app.worktrees.is_empty() {
         vec![app.repo.path.clone()]
@@ -54,7 +54,7 @@ pub(crate) fn watch_paths_for(app: &App) -> Vec<std::path::PathBuf> {
     }
 }
 
-/// Drive the draw → poll → handle cycle until the user quits.
+/// ユーザが終了するまで draw → poll → handle サイクルを回す。
 ///
 /// 1 周の並びは「入力からピクセルまで」の遅延で決まっている: イベントを待って
 /// 溜まった分をまとめて捌き、すぐ描き、遅くてよい仕事は最後に回す。
@@ -82,7 +82,7 @@ pub(crate) fn run_loop(
         phases::run_background_work(app, &mut loop_state, &signals);
 
         if app.should_quit {
-            // 生成中のウォークスルーはヘッドレスの `claude` 子プロセス。
+            // 生成中のウォークスルーはヘッドレスの claude 子プロセス。
             // これが無いと、メインループが止まったあと誰もポーリングしないまま
             // 孤児として動き続け (API 課金も続き) てしまう。
             app.shutdown_walkthrough_generation();

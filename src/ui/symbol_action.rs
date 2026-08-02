@@ -1,4 +1,4 @@
-//! Symbol action overlay — shows navigation options for a selected symbol.
+//! シンボルアクションオーバーレイ — 選択したシンボルに対するナビゲーション選択肢を表示する。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
 
-/// Render the symbol action overlay centered over `area`.
+/// area の中央にシンボルアクションオーバーレイを描画する。
 pub fn render_symbol_action_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let overlay = &app.code_nav.symbol_action;
     let theme = &app.theme;
@@ -17,19 +17,19 @@ pub fn render_symbol_action_overlay(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Calculate popup dimensions.
+    // ポップアップの寸法を計算する。
     let content_width = overlay
         .actions
         .iter()
         .map(|a| {
-            // [d] Go to definition  src/app.rs:123
+            // 例: [d] Go to definition  src/app.rs:123
             format!("[{}] {}  {}:{}", a.key, a.label, a.file_path, a.line).len()
         })
         .max()
         .unwrap_or(30)
-        + 4; // padding
+        + 4; // 余白
     let popup_width = (content_width as u16).clamp(30, area.width.saturating_sub(4));
-    let popup_height = (overlay.actions.len() as u16 + 3).min(area.height.saturating_sub(2)); // +3 = borders + hint line
+    let popup_height = (overlay.actions.len() as u16 + 3).min(area.height.saturating_sub(2)); // +3 = 枠線 + ヒント行
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -72,7 +72,7 @@ pub fn render_symbol_action_overlay(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    // Hint line.
+    // ヒント行。
     if inner.height as usize > lines.len() {
         lines.push(Line::from(vec![
             Span::styled("d/i/r", Style::default().fg(theme.accent)),

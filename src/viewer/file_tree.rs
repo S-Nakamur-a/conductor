@@ -1,43 +1,43 @@
-//! File tree types — `FileTreeEntry` and `ScoredFile`.
+//! ファイルツリーの型定義 — FileTreeEntry と ScoredFile。
 
 use crate::git_engine::status_map::TreeGitState;
 
-/// A file matched by filename fuzzy search, with its score.
+/// ファイル名のあいまい検索でマッチしたファイルと、そのスコア。
 #[derive(Debug, Clone)]
 pub struct ScoredFile {
-    /// Relative path of the file.
+    /// ファイルの相対パス。
     pub path: String,
-    /// Fuzzy match score (higher = better).
+    /// あいまい検索のスコア（高いほどマッチ度が高い）。
     pub score: i32,
 }
 
-/// A single entry in the flattened file tree.
+/// フラット化されたファイルツリー中の1エントリ。
 #[derive(Debug, Clone)]
 pub struct FileTreeEntry {
-    /// Path relative to the worktree root (e.g. `"src/main.rs"`).
+    /// worktree ルートからの相対パス（例: "src/main.rs"）。
     pub path: String,
-    /// Display name — the final component of the path.
+    /// 表示名 — パスの最後の要素。
     pub name: String,
-    /// Nesting depth (0 for top-level entries).
+    /// ネストの深さ（トップレベルのエントリは0）。
     pub depth: usize,
-    /// Whether this entry is a directory.
+    /// このエントリがディレクトリかどうか。
     pub is_dir: bool,
-    /// Whether a directory entry is currently expanded (ignored for files).
+    /// ディレクトリエントリが現在展開されているかどうか（ファイルでは無視される）。
     pub is_expanded: bool,
-    /// Whether this directory's children have been loaded into the tree.
-    /// Always `false` for files. Directories start as `false` and are set to
-    /// `true` after their children are read from the filesystem.
+    /// このディレクトリの子要素がツリーに読み込み済みかどうか。
+    /// ファイルでは常に false。ディレクトリは false から始まり、ファイルシステムから
+    /// 子要素を読み込んだ後に true になる。
     pub children_loaded: bool,
-    /// Cached icon string for this entry (computed once at creation time).
+    /// このエントリのアイコン文字列のキャッシュ（生成時に一度だけ計算する）。
     pub icon: &'static str,
-    /// Tracked/untracked/ignored, per the git status snapshot taken when
-    /// the tree was (re)built — drives the Explorer's dimmed rendering.
+    /// tracked/untracked/ignored の別。ツリーを（再）構築した時点の git status
+    /// スナップショットに基づく — Explorer の減光表示に使う。
     pub git_state: TreeGitState,
 }
 
-/// Return an emoji icon for a file based on its extension or name.
+/// ファイルの拡張子や名前から絵文字アイコンを返す。
 pub fn file_icon(name: &str) -> &'static str {
-    // Special filenames first.
+    // 特別扱いするファイル名を先に判定する。
     let lower = name.to_ascii_lowercase();
     let special = match lower.as_str() {
         "cargo.toml" | "cargo.lock" => Some("🦀"),
@@ -53,7 +53,7 @@ pub fn file_icon(name: &str) -> &'static str {
         return icon;
     }
 
-    // By extension.
+    // 拡張子で判定する。
     match name
         .rsplit('.')
         .next()

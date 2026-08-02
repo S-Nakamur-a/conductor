@@ -1,5 +1,5 @@
-//! Gamification: daily activity stats (`daily_stats`), consecutive-day
-//! streak calculation, and per-session stats (`session_stats`).
+//! ゲーミフィケーション: 日次アクティビティ統計（daily_stats）、連続活動日数
+//! （streak）の計算、セッションごとの統計（session_stats）。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -9,7 +9,7 @@ use super::ReviewStore;
 use super::model::{DailyStats, SessionStatsSnapshot, StreakInfo};
 
 impl ReviewStore {
-    /// Increment a counter in the daily_stats table for today.
+    /// 今日の daily_stats テーブルのカウンタを1つ増やす。
     pub fn increment_daily_stat(&self, field: &str) -> Result<()> {
         let valid_field = match field {
             "reviews_created" | "branches_created" | "commits_made" | "sessions_used" => field,
@@ -27,7 +27,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// Get today's stats.
+    /// 今日の統計を取得する。
     pub fn get_today_stats(&self) -> Result<DailyStats> {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let result = self.conn.query_row(
@@ -53,7 +53,7 @@ impl ReviewStore {
         }
     }
 
-    /// Calculate the current consecutive usage streak (in days).
+    /// 現在の連続利用日数（streak）を計算する。
     pub fn calculate_streak(&self) -> Result<StreakInfo> {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
@@ -94,7 +94,7 @@ impl ReviewStore {
         })
     }
 
-    /// Start a new stats-tracking session. Returns the session ID.
+    /// 新しい統計トラッキングセッションを開始する。セッション ID を返す。
     pub fn start_stats_session(&self) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         self.conn
@@ -102,7 +102,7 @@ impl ReviewStore {
         Ok(id)
     }
 
-    /// Increment a counter for the current stats session.
+    /// 現在の統計セッションのカウンタを1つ増やす。
     pub fn increment_session_stat(&self, session_id: &str, field: &str) -> Result<()> {
         let valid_field = match field {
             "reviews_created" | "branches_created" | "commits_made" => field,
@@ -115,7 +115,7 @@ impl ReviewStore {
         Ok(())
     }
 
-    /// End a stats session, recording the end time. Returns a snapshot.
+    /// 統計セッションを終了し、終了時刻を記録する。スナップショットを返す。
     pub fn end_stats_session(&self, session_id: &str) -> Result<SessionStatsSnapshot> {
         self.conn.execute(
             "UPDATE session_stats SET ended_at = datetime('now') WHERE id = ?1",
@@ -141,7 +141,7 @@ impl ReviewStore {
 mod tests {
     use super::super::test_support::test_store;
 
-    // ── Gamification: daily stats ─────────────────────────────────
+    // ゲーミフィケーション: 日次統計
 
     #[test]
     fn daily_stats_increment_and_streak() {
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(stats.commits_made, 0);
     }
 
-    // ── Gamification: streak calculation ────────────────────────
+    // ゲーミフィケーション: streak の計算
 
     #[test]
     fn streak_zero_when_no_activity() {
@@ -208,7 +208,7 @@ mod tests {
         let store = test_store();
         let today = chrono::Local::now().date_naive();
 
-        // Insert activity for today and the previous 4 days.
+        // 今日と過去4日分のアクティビティを挿入する。
         for i in 0..5 {
             let date = today - chrono::Duration::days(i);
             store
@@ -229,7 +229,7 @@ mod tests {
         let store = test_store();
         let today = chrono::Local::now().date_naive();
 
-        // Today and yesterday have activity.
+        // 今日と昨日にアクティビティがある。
         for i in 0..2 {
             let date = today - chrono::Duration::days(i);
             store
@@ -240,7 +240,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        // Skip day -2, add day -3 (should not count).
+        // -2日目は飛ばし、-3日目を追加する（カウントされないはず）。
         let old_date = today - chrono::Duration::days(3);
         store
             .conn
@@ -259,7 +259,7 @@ mod tests {
         let store = test_store();
         let today = chrono::Local::now().date_naive();
 
-        // Activity only yesterday and the day before — no today.
+        // アクティビティは昨日と一昨日のみ（今日はなし）。
         for i in 1..3 {
             let date = today - chrono::Duration::days(i);
             store
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(streak.consecutive_days, 2);
     }
 
-    // ── Gamification: session stats ─────────────────────────────
+    // ゲーミフィケーション: セッション統計
 
     #[test]
     fn session_stats_lifecycle() {
@@ -295,7 +295,7 @@ mod tests {
     fn session_stats_invalid_field_rejected() {
         let store = test_store();
         let sid = store.start_stats_session().unwrap();
-        // "sessions_used" is valid for daily but NOT for session stats.
+        // "sessions_used" は daily stats では有効だが、session stats では無効。
         assert!(store.increment_session_stat(&sid, "sessions_used").is_err());
         assert!(store.increment_session_stat(&sid, "bogus").is_err());
     }

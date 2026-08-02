@@ -1,9 +1,8 @@
-//! Viewer state struct definitions.
+//! Viewer state の構造体定義。
 //!
-//! All the sub-structs that together make up [`ViewerState`], plus the small
-//! enums (`ScreenRow`, `ExplorerBottomView`, `LineSelection`) they hold.
-//! Behavior (methods) lives in sibling modules; this file only defines
-//! layout.
+//! [ViewerState] を構成する全てのサブ構造体と、それらが保持する小さな enum
+//! （ScreenRow, ExplorerBottomView, LineSelection）。振る舞い（メソッド）は
+//! 隣接モジュールにあり、このファイルはレイアウトの定義のみを行う。
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,59 +15,60 @@ use crate::text_input::TextInput;
 use super::file_tree::{FileTreeEntry, ScoredFile};
 use super::file_view::UnifiedDiffEntry;
 
-// ── Sub-structs ──────────────────────────────────────────────────────
+// サブ構造体
 
-/// File tree management state.
+/// ファイルツリー管理の状態。
 #[derive(Default)]
 pub struct FileTreeState {
     /// このツリーを歩いた根。エントリの相対パスはすべてここからの相対で、
     /// 絶対パスに戻せるのはこの値だけ。
     ///
-    /// 読むのは [`ViewerState::root`]、書くのは [`ViewerState::load_file_tree`] /
-    /// [`ViewerState::replace_tree`] / [`ViewerState::set_root`] だけに限る。
+    /// 読むのは [ViewerState::root]、書くのは [ViewerState::load_file_tree] /
+    /// [ViewerState::replace_tree] / [ViewerState::set_root] だけに限る。
     /// 以前は根を持たず、ファイルを開くたびに呼び出し側が「今どの worktree か」
     /// を引き直して渡していたので、表示中のツリーと開く先が食い違っても誰も
     /// 気付けなかった (worktree 切り替えはツリーの走査を裏に回すため、古い
     /// エントリと新しい根が同時に存在する瞬間がある)。
     pub(in crate::viewer) root: PathBuf,
-    /// Flattened file tree (directories + files, pre-order).
+    /// フラット化したファイルツリー（ディレクトリ+ファイル、pre-order）。
     pub file_tree: Vec<FileTreeEntry>,
-    /// Index of the selected row in the *full* (unfiltered) tree.
+    /// 選択中の行のインデックス（フィルタ前の全ツリーにおける）。
     pub tree_selected: usize,
-    /// Vertical scroll offset for the tree pane.
+    /// ツリーペインの垂直スクロールオフセット。
     pub tree_scroll: usize,
-    /// Cached result of `visible_indices()`. Invalidated when tree structure changes.
+    /// visible_indices() のキャッシュ結果。ツリー構造が変わると無効化される。
     pub cached_visible_indices: Option<Rc<Vec<usize>>>,
-    /// Git status snapshot backing each entry's `git_state`. Refreshed once
-    /// per `load_file_tree()` call (not per frame, not per entry) and
-    /// reused by `ensure_children_loaded()` for lazily-loaded children in
-    /// between full rebuilds — see D5 in the plan doc.
+    /// 各エントリの git_state を支える git status のスナップショット。
+    /// load_file_tree() の呼び出しごとに1回だけ更新され（フレームごとでも
+    /// エントリごとでもない）、完全な再構築の合間に遅延読み込みされる子要素に対しては
+    /// ensure_children_loaded() が再利用する。
     pub git_status: GitStatusMap,
 }
 
-/// File content viewing state.
+/// ファイル内容表示の状態。
 #[derive(Default)]
 pub struct FileContentState {
-    /// Lines of the currently open file.
+    /// 現在開いているファイルの各行。
     pub file_content: Vec<String>,
-    /// Vertical scroll offset in the file-content pane.
+    /// ファイル内容ペインの垂直スクロールオフセット。
     pub file_scroll: usize,
-    /// Horizontal scroll offset (in characters) for the file-content pane.
+    /// ファイル内容ペインの水平スクロールオフセット（文字単位）。
     pub h_scroll: usize,
-    /// Relative path of the file currently displayed (if any).
+    /// 現在表示中のファイルの相対パス（あれば）。
     pub current_file: Option<String>,
-    /// なぜ `file_content` が空なのかの理由。読み込みに失敗したときだけ入る。
+    /// なぜ file_content が空なのかの理由。読み込みに失敗したときだけ入る。
     ///
-    /// 「未選択」「中身が空のファイル」「読めなかった」はどれも `file_content` が
+    /// 「未選択」「中身が空のファイル」「読めなかった」はどれも file_content が
     /// 空になるので、これが無いと Viewer は 3 つを見分けられず、失敗が黙って
-    /// 「ファイル未選択」に丸められる。`open_file` が成功したら必ず消す。
+    /// 「ファイル未選択」に丸められる。open_file が成功したら必ず消す。
     pub load_error: Option<String>,
-    /// Cached syntax-highlighted tokens per line (syntect output converted to ratatui styles).
+    /// 行ごとにキャッシュしたシンタックスハイライト済みトークン（syntect の出力を
+    /// ratatui のスタイルへ変換したもの）。
     pub highlighted_lines: Vec<Vec<(ratatui::style::Style, String)>>,
-    /// Hash of (current_file, file_content) used to skip redundant re-highlighting.
+    /// (current_file, file_content) のハッシュ。冗長な再ハイライトをスキップするために使う。
     pub highlighted_cache_key: Option<u64>,
-    /// Cached diff annotations for the currently viewed file (line_no -> (tag, segments)).
-    /// Invalidated when diff data changes or a different file is opened.
+    /// 現在表示中のファイルの diff 注釈のキャッシュ（line_no -> (tag, segments)）。
+    /// diff データが変わるか別のファイルを開くと無効化される。
     pub cached_diff_annotations: Option<
         std::collections::HashMap<
             usize,
@@ -78,129 +78,127 @@ pub struct FileContentState {
             ),
         >,
     >,
-    /// The file path for which `cached_diff_annotations` was built.
+    /// cached_diff_annotations を構築した対象のファイルパス。
     pub cached_diff_annotations_file: Option<String>,
-    /// Line number (1-indexed) highlighted from grep search result. Cleared on next file open.
+    /// grep 検索結果からハイライトされた行番号（1始まり）。次にファイルを開くとクリアされる。
     pub grep_highlight_line: Option<usize>,
-    /// Screen-row mapping built during render. Used by mouse event handlers
-    /// to translate screen positions to file lines / thread actions.
+    /// render 中に構築される画面行のマッピング。マウスイベントハンドラが
+    /// 画面上の位置をファイルの行/スレッドアクションへ変換するのに使う。
     pub screen_row_map: Vec<ScreenRow>,
-    /// Runnable tests in the current file, keyed by 1-indexed line number.
-    /// Populated by the language-specific scanner ([`crate::go_test`] for
-    /// `*_test.go`, [`crate::rust_test`] for `*.rs`); empty for other files.
-    /// Drives the ▶ run buttons.
+    /// 現在のファイル中の実行可能なテスト。1始まりの行番号をキーにする。
+    /// 言語ごとのスキャナ（*_test.go には [crate::go_test]、*.rs には
+    /// [crate::rust_test]）が埋める。それ以外のファイルでは空。▶ 実行ボタンを
+    /// 駆動する。
     pub test_runs: std::collections::HashMap<usize, crate::test_run::TestRun>,
-    /// Which identifier occurrences in the open file are code rather than
-    /// prose inside a comment or string. Built from the file's own text when
-    /// it is opened, so it always describes what is actually on screen —
-    /// independent of whatever root the symbol index happens to be built over.
-    /// Empty for languages we have no grammar for, which leaves them with no
-    /// navigation rather than wrong navigation.
+    /// 開いているファイル中の識別子の出現のうち、どれがコードであり、コメントや
+    /// 文字列中の地の文ではないかを示す。開いたときにそのファイル自身のテキストから
+    /// 構築するので、常に画面に実際にあるものを表す — symbol index がたまたま
+    /// どの根に対して構築されているかとは無関係。文法を持たない言語では空になり、
+    /// それらは誤ったナビゲーションではなくナビゲーションが無い状態になる。
     pub code_mask: crate::symbol_index::CodeMask,
 }
 
-/// What a screen row represents (for mouse click handling).
+/// 画面行が何を表すか（マウスクリック処理向け）。
 #[derive(Debug, Clone)]
 pub enum ScreenRow {
-    /// A source code line (1-indexed line number).
+    /// ソースコードの行（1始まりの行番号）。
     Code(usize),
-    /// A thread content row (not clickable for line selection).
+    /// スレッド本文の行（行選択のクリック対象ではない）。
     ThreadContent,
-    /// An action row with clickable buttons for a specific comment.
+    /// 特定のコメント向けのクリック可能なボタンを持つアクション行。
     ThreadActions { comment_id: String },
 }
 
-/// In-file search state.
+/// ファイル内検索の状態。
 #[derive(Default)]
 pub struct SearchState {
-    /// Current search query (empty = no active search).
+    /// 現在の検索クエリ（空 = 検索が行われていない）。
     pub search_query: TextInput,
-    /// Line indices that match the current search query.
+    /// 現在の検索クエリに一致する行インデックス。
     pub search_matches: Vec<usize>,
-    /// Index into search_matches for the current match.
+    /// 現在のマッチを指す search_matches 内のインデックス。
     pub search_match_idx: usize,
-    /// Whether the search input box is visible.
+    /// 検索入力ボックスが表示されているか。
     pub search_active: bool,
 }
 
-/// Unified diff view state.
+/// unified diff 表示の状態。
 #[derive(Default)]
 pub struct DiffViewState {
-    /// Whether the viewer is in unified diff mode.
+    /// viewer が unified diff モードかどうか。
     pub diff_mode: bool,
-    /// Unified diff view entries (populated when entering diff mode).
+    /// unified diff 表示のエントリ（diff モードに入ったときに埋まる）。
     pub diff_view_lines: Vec<UnifiedDiffEntry>,
-    /// Vertical scroll offset for the diff view.
+    /// diff 表示の垂直スクロールオフセット。
     pub diff_view_scroll: usize,
-    /// Cached max line number for diff view (avoids O(n) scan per frame).
+    /// diff 表示の最大行番号のキャッシュ（フレームごとの O(n) スキャンを避ける）。
     pub diff_view_max_line_no: usize,
-    /// Maps each rendered screen row (within the diff viewport) back to its
-    /// index in `diff_view_lines`, or `None` for injected inline-thread rows.
-    /// Written during render; used by mouse handling (e.g. expand-context)
-    /// since inserted thread rows break the simple scroll+offset arithmetic.
+    /// 描画された各画面行（diff ビューポート内）を diff_view_lines 内の
+    /// インデックスへ逆引きするマップ。挿入されたインラインスレッド行は
+    /// None になる。render 中に書き込まれ、マウス処理（expand-context など）が
+    /// 使う — 挿入されたスレッド行は単純な scroll+offset の算術を壊すため。
     pub screen_entry_map: Vec<Option<usize>>,
 }
 
-/// Which view the Explorer's bottom pane is showing.
+/// Explorer の下部ペインが表示しているビュー。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExplorerBottomView {
-    /// The changed-files diff list.
+    /// 変更ファイルの diff 一覧。
     #[default]
     DiffList,
-    /// The review comment list.
+    /// レビューコメント一覧。
     Comments,
-    /// The AI walkthrough (steps + selected step's body).
+    /// AI walkthrough（各ステップ + 選択中ステップの本文）。
     Walkthrough,
 }
 
-/// Explorer panel state (selections, scrolls).
+/// Explorer パネルの状態（選択、スクロール）。
 pub struct ExplorerState {
-    /// Index of the selected diff file in the diff list.
+    /// diff 一覧中の選択中ファイルのインデックス。
     pub diff_list_selected: usize,
-    /// Vertical scroll offset for the diff list.
+    /// diff 一覧の垂直スクロールオフセット。
     pub diff_list_scroll: usize,
-    /// Whether the explorer panel focus is on the diff list (bottom half).
+    /// explorer パネルのフォーカスが diff 一覧（下半分）にあるか。
     pub explorer_focus_on_diff_list: bool,
-    /// Last known inner height of the explorer file-tree pane (updated during render).
+    /// explorer ファイルツリーペインの直近の内側の高さ（render 中に更新される）。
     pub explorer_tree_height: usize,
-    /// Last known inner height of the explorer diff-list pane (updated during render).
+    /// explorer diff 一覧ペインの直近の内側の高さ（render 中に更新される）。
     pub explorer_diff_list_height: usize,
-    /// Rows the diff list spends on its base-error banner (0 or 1, updated
-    /// during render). The banner is not a `display_list` entry, so anything
-    /// converting a screen row back into a list index — mouse clicks — has to
-    /// subtract it or it selects the wrong file.
+    /// diff 一覧がベースエラーバナーに使う行数（0 か 1、render 中に更新される）。
+    /// このバナーは display_list のエントリではないので、画面行をリストの
+    /// インデックスへ逆変換する処理（マウスクリック）はこれを差し引かないと
+    /// 違うファイルを選んでしまう。
     pub explorer_diff_banner_rows: usize,
-    /// Which view the explorer's bottom pane is currently showing.
+    /// explorer の下部ペインが現在表示しているビュー。
     pub explorer_bottom_view: ExplorerBottomView,
-    /// Index of the selected comment in the explorer comment list.
+    /// explorer コメント一覧中の選択中コメントのインデックス。
     pub comment_list_selected: usize,
-    /// Vertical scroll offset for the explorer comment list.
+    /// explorer コメント一覧の垂直スクロールオフセット。
     pub comment_list_scroll: usize,
-    /// Set of 1-indexed line numbers whose inline comment threads are expanded.
+    /// インラインコメントスレッドが展開されている行番号（1始まり）の集合。
     pub expanded_inline_threads: HashSet<usize>,
-    /// Line number where inline reply input is active (None = not replying).
+    /// インラインリプライ入力が有効な行番号（None = リプライ中でない）。
     pub inline_reply_line: Option<usize>,
-    /// Comment ID that the inline reply targets.
+    /// インラインリプライの対象となるコメント ID。
     pub inline_reply_comment_id: Option<String>,
-    /// Text buffer for inline reply input.
+    /// インラインリプライ入力のテキストバッファ。
     pub inline_reply_buffer: TextInput,
-    /// Index of the selected step in the walkthrough view (the list cursor
-    /// that `j`/`k` move).
+    /// walkthrough 表示中の選択中ステップのインデックス（j/k で動かすリストの
+    /// カーソル）。
     pub walkthrough_selected: usize,
-    /// Index of the step the Viewer is currently reflecting — the last one
-    /// *jumped to* (`Enter`/`n`/`N`), which drives the Viewer's full-width
-    /// step banner and line-range underline. Kept distinct from
-    /// `walkthrough_selected` so merely moving the list cursor with `j`/`k`
-    /// doesn't shift the Viewer out from under the reviewer. `None` until a
-    /// step is jumped to.
+    /// Viewer が現在反映しているステップのインデックス — 最後に「ジャンプした」
+    /// ステップ（Enter/n/N）で、Viewer の全幅ステップバナーと行範囲の下線を
+    /// 駆動する。walkthrough_selected とは別に持つことで、j/k でリストの
+    /// カーソルを動かしただけでは Viewer がレビュアーの足元から動いてしまわない
+    /// ようにしている。いずれかのステップにジャンプするまでは None。
     pub walkthrough_viewing: Option<usize>,
-    /// Vertical scroll offset for the walkthrough step list.
+    /// walkthrough ステップ一覧の垂直スクロールオフセット。
     pub walkthrough_scroll: usize,
-    /// IDs of walkthrough steps that have been jumped to at least once.
+    /// 少なくとも一度ジャンプしたことのある walkthrough ステップの ID。
     pub viewed_steps: HashSet<String>,
-    /// Whether the walkthrough step detail overlay (`space`) is open.
+    /// walkthrough ステップの詳細オーバーレイ（space）が開いているか。
     pub walkthrough_detail_active: bool,
-    /// Relative paths of files marked "viewed" by the reviewer.
+    /// レビュアーが「viewed」を付けたファイルの相対パス。
     pub viewed: HashSet<String>,
 }
 
@@ -230,63 +228,61 @@ impl Default for ExplorerState {
     }
 }
 
-/// Line selection state for comments.
+/// コメント向けの行選択状態。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum LineSelection {
-    /// No line is selected.
+    /// 行が選択されていない。
     #[default]
     None,
-    /// A range is being dragged out — start line set, end not yet committed.
-    /// Retained (with its dimmer "pending range" rendering) for a future
-    /// click-drag range selection; commenting currently commits the range
-    /// immediately (single click / shift-click), so nothing constructs this
-    /// today.
+    /// 範囲をドラッグ中 — 開始行は決まっているが終了行はまだ確定していない。
+    /// 将来のクリック&ドラッグによる範囲選択のために（薄暗い「保留中の範囲」
+    /// 描画とともに）残してある。現状のコメント作成は範囲を即座に確定する
+    /// （シングルクリック/shift+クリック）ので、現時点ではこれを構築する箇所はない。
     #[allow(dead_code)]
     Pending { start: usize },
-    /// Range fully selected (start and end are 1-indexed, inclusive).
-    /// `start` may be > `end` — callers normalize via `selected_range()`.
+    /// 範囲が完全に選択されている（start と end は1始まりで両端を含む）。
+    /// start が end より大きいこともある — 呼び出し側は selected_range() で正規化する。
     Selected { start: usize, end: usize },
 }
 
-/// Fuzzy filename search state.
+/// ファイル名のあいまい検索の状態。
 #[derive(Default)]
 pub struct FilenameSearchState {
-    /// Whether the filename search overlay is active.
+    /// ファイル名検索オーバーレイが有効か。
     pub filename_search_active: bool,
-    /// Current filename search query.
+    /// 現在のファイル名検索クエリ。
     pub filename_search_query: TextInput,
-    /// Scored and sorted fuzzy search results.
+    /// スコア付けしてソートしたあいまい検索の結果。
     pub filename_search_results: Vec<ScoredFile>,
-    /// Selected index within the search results list.
+    /// 検索結果一覧内の選択中インデックス。
     pub filename_search_selected: usize,
-    /// Cached list of all file paths for filename search (populated on search start).
+    /// ファイル名検索向けの全ファイルパスのキャッシュ一覧（検索開始時に埋まる）。
     pub filename_search_all_files: Vec<String>,
 }
 
-/// Symbol hover info for the jump underline (D8: shown on any rest, not just
-/// Cmd/Ctrl+hover — see `has_jump_modifier` below).
+/// ジャンプ用の下線のための symbol ホバー情報（Cmd/Ctrl+hover のときだけでなく、
+/// カーソルが止まればいつでも表示される — 下の has_jump_modifier を参照）。
 #[derive(Debug, Clone)]
 pub struct HoverSymbol {
-    /// The symbol text (e.g. "AppState").
+    /// symbol のテキスト（例: "AppState"）。
     #[allow(dead_code)]
     pub text: String,
-    /// Line number (1-indexed) where the symbol is located.
+    /// symbol が存在する行番号（1始まり）。
     pub line: usize,
-    /// Start column (0-indexed, in content characters before h_scroll).
+    /// 開始列（0始まり、h_scroll 適用前のコンテンツ文字数単位）。
     pub start_col: usize,
-    /// End column (exclusive, 0-indexed).
+    /// 終了列（0始まり、含まない）。
     pub end_col: usize,
-    /// Whether Cmd/Ctrl was held as of the last mouse-move over this symbol.
-    /// Drives the underline's color (D8's 2-stage disclosure): `false` draws
-    /// `theme.hint` ("there's a definition here"), `true` draws
-    /// `theme.accent` ("press now to jump"). The click contract itself is
-    /// unchanged — this only controls which promise the underline makes.
+    /// この symbol 上での直近のマウス移動時に Cmd/Ctrl が押されていたか。
+    /// 下線の色を決める（2段階の開示）: false なら theme.hint（「ここに定義がある」）、
+    /// true なら theme.accent（「今押せばジャンプできる」）を描く。クリックの
+    /// 契約自体は変わらない — これは下線がどちらの約束をするかだけを制御する。
     pub has_jump_modifier: bool,
 }
 
-/// A symbol the mouse is resting on, awaiting the jump-underline's own
-/// debounce (D9, 150ms — independent of the popup's 350ms `HOVER_IDLE` in
-/// `code_nav.rs`) before it's promoted to `ClickTracker::hover_symbol`.
+/// マウスが乗っている symbol。ClickTracker::hover_symbol に昇格する前に、
+/// ジャンプ下線独自のデバウンス（150ms — code_nav.rs のポップアップの
+/// 350ms HOVER_IDLE とは独立）を待っている状態。
 #[derive(Debug, Clone)]
 pub struct PendingUnderline {
     pub symbol: String,
@@ -294,40 +290,40 @@ pub struct PendingUnderline {
     pub start_col: usize,
     pub end_col: usize,
     pub since: std::time::Instant,
-    /// Whether the (expensive, index-lookup) jumpability check has already
-    /// run for this rested position, so the per-frame tick doesn't repeat it
-    /// every frame while the mouse sits still.
+    /// この静止位置に対して、ジャンプ可能かどうかの（コストの高い、index
+    /// 参照を伴う）チェックが既に実行済みかどうか。マウスが静止している間、
+    /// フレームごとの tick が毎フレーム繰り返さないようにする。
     pub resolved: bool,
     pub has_jump_modifier: bool,
 }
 
-/// Double-click tracking state.
+/// ダブルクリック追跡の状態。
 pub struct ClickTracker {
-    /// Line number (1-indexed) currently under the mouse cursor in the viewer panel.
+    /// viewer パネルで現在マウスカーソル下にある行番号（1始まり）。
     pub hover_line: Option<usize>,
-    /// Line number (1-indexed) when the mouse cursor is specifically over the gutter (line-number area).
+    /// マウスカーソルが特に gutter（行番号領域）上にあるときの行番号（1始まり）。
     pub hover_gutter_line: Option<usize>,
-    /// Resolved jump-underline target, shown once the mouse has rested on a
-    /// jumpable symbol past the D9 debounce (`None` while waiting, or over a
-    /// non-jumpable word — A7).
+    /// 確定したジャンプ下線の対象。マウスがジャンプ可能な symbol の上で
+    /// デバウンス時間を超えて静止したときに表示される（待機中、またはジャンプ
+    /// できない単語の上にあるときは None）。
     pub hover_symbol: Option<HoverSymbol>,
-    /// The rested-on candidate mid-debounce, before `hover_symbol` is decided.
+    /// デバウンス中の、静止候補（hover_symbol が確定する前の状態）。
     pub underline_pending: Option<PendingUnderline>,
-    /// Timestamp (ms) of the last line-number click for double-click detection.
+    /// ダブルクリック判定用の、直近の行番号クリックのタイムスタンプ（ms）。
     pub last_line_click_time: std::time::Instant,
-    /// The 1-indexed line number that was last clicked on.
+    /// 最後にクリックされた行番号（1始まり）。
     pub last_line_click_line: usize,
-    /// While a gutter drag is in progress, the 1-indexed line where it started
-    /// (the anchor). The range extends to the dragged-over line; the comment
-    /// opens on mouse-up. `None` when not dragging.
+    /// gutter のドラッグが進行中の間、その開始行（1始まり、アンカー）。
+    /// 範囲はドラッグ先の行まで伸び、コメントは mouse-up で開く。ドラッグ中で
+    /// なければ None。
     pub gutter_drag_anchor: Option<usize>,
-    /// Timestamp of the last file-tree click for double-click detection.
+    /// ダブルクリック判定用の、直近のファイルツリークリックのタイムスタンプ。
     pub last_tree_click_time: std::time::Instant,
-    /// The tree index that was last clicked in the file tree.
+    /// ファイルツリーで最後にクリックされたツリーインデックス。
     pub last_tree_click_idx: usize,
-    /// Timestamp of the last comment-list click for double-click detection.
+    /// ダブルクリック判定用の、直近のコメント一覧クリックのタイムスタンプ。
     pub last_comment_click_time: std::time::Instant,
-    /// The index that was last clicked in the comment list.
+    /// コメント一覧で最後にクリックされたインデックス。
     pub last_comment_click_idx: usize,
 }
 
@@ -349,58 +345,57 @@ impl Default for ClickTracker {
     }
 }
 
-// ── Main struct ──────────────────────────────────────────────────────
+// メイン構造体
 
-/// Width (in columns) of the comment-marker column at the far left of the
-/// Viewer — where the 💬/│ thread markers live, LEFT of the line numbers.
-/// Kept separate from the "+" badge column (right of the numbers) so that
-/// toggling an existing thread and starting a new comment never share a
-/// click target: the whole gutter+badge side always starts a comment.
+/// Viewer の最も左にあるコメントマーカー列の幅（列数） — 💬/│ の
+/// スレッドマーカーが存在する場所で、行番号の左側にある。「+」バッジ列
+/// （行番号の右側）とは別に保つことで、既存スレッドの開閉と新規コメントの
+/// 開始がクリック対象を共有しないようにしている: gutter+バッジ側全体は
+/// 常に新規コメントを開始する。
 pub const COMMENT_MARKER_W: u16 = 2;
 
-/// All state owned by the Viewer mode.
+/// Viewer モードが保持する全ての状態。
 #[derive(Default)]
 pub struct ViewerState {
-    /// File tree management.
+    /// ファイルツリー管理。
     pub tree: FileTreeState,
-    /// File content viewing.
+    /// ファイル内容表示。
     pub content: FileContentState,
-    /// In-file search.
+    /// ファイル内検索。
     pub search: SearchState,
-    /// Unified diff view.
+    /// unified diff 表示。
     pub diff_view: DiffViewState,
-    /// Explorer panel state (selections, scrolls).
+    /// Explorer パネルの状態（選択、スクロール）。
     pub explorer: ExplorerState,
-    /// Line selection for comments.
+    /// コメント向けの行選択。
     pub selection: LineSelection,
-    /// Fuzzy filename search.
+    /// ファイル名のあいまい検索。
     pub filename_search: FilenameSearchState,
-    /// Media rendering state (images/videos displayed as ASCII art).
+    /// メディア描画の状態（画像/動画を ASCII アートとして表示）。
     pub media_state: MediaState,
-    /// Double-click tracking.
+    /// ダブルクリック追跡。
     pub click: ClickTracker,
-    /// Whether 'g' was pressed and waiting for a second key (gd, gi, gr).
+    /// 'g' が押されて2つ目のキー（gd, gi, gr）待ちかどうか。
     pub pending_g_key: bool,
-    /// Whether the viewer is showing the branch change-summary pseudo-file
-    /// (the "SUMMARY" entry) instead of file content / diff. Mutually exclusive
-    /// with `diff_view.diff_mode`; see `enter_summary_view` / `exit_summary_view`.
+    /// viewer がファイル内容/diff の代わりにブランチの change summary 疑似
+    /// ファイル（"SUMMARY" エントリ）を表示しているか。diff_view.diff_mode とは
+    /// 排他。enter_summary_view / exit_summary_view を参照。
     pub show_summary: bool,
-    /// Vertical scroll offset within the summary view.
+    /// summary 表示内での垂直スクロールオフセット。
     pub summary_scroll: usize,
-    /// Total wrapped line count of the summary view, written during render and
-    /// read by the key handler to clamp `summary_scroll`.
+    /// summary 表示の折り返し後の総行数。render 中に書き込まれ、キーハンドラが
+    /// summary_scroll をクランプするために読む。
     pub summary_total_lines: usize,
-    /// Whether markdown files are shown rendered (SUMMARY-style prose) instead
-    /// of as raw source. Sticky for the session: it survives opening another
-    /// markdown file, and is simply ignored while a non-markdown file is open.
-    /// Only takes effect in the plain-file view — see
-    /// `is_showing_rendered_markdown`, which is what every renderer and event
-    /// handler must gate on.
+    /// markdown ファイルを生のソースの代わりにレンダリング済み（SUMMARY 形式の
+    /// 本文）で表示しているか。セッション内で持続する: 別の markdown ファイルを
+    /// 開いても引き継がれ、markdown 以外のファイルを開いている間は単に無視される。
+    /// 素のファイル表示でのみ効果を持つ — is_showing_rendered_markdown を参照。
+    /// あらゆるレンダラとイベントハンドラはこれで判定しなければならない。
     pub md_rendered: bool,
-    /// Vertical scroll offset within the rendered-markdown view. Reset per file
-    /// (in `open_file`), unlike `md_rendered`.
+    /// レンダリング済み markdown 表示内での垂直スクロールオフセット。
+    /// md_rendered と違い、ファイルごとにリセットされる（open_file 内で）。
     pub md_scroll: usize,
-    /// Total wrapped line count of the rendered-markdown view, written during
-    /// render and read by the key handler to clamp `md_scroll`.
+    /// レンダリング済み markdown 表示の折り返し後の総行数。render 中に
+    /// 書き込まれ、キーハンドラが md_scroll をクランプするために読む。
     pub md_total_lines: usize,
 }

@@ -1,5 +1,5 @@
-//! Overlay: worktree creation/deletion input (name entry, base-branch picker,
-//! smart-description mode, and the various y/n confirmation prompts).
+//! オーバーレイ: worktree の作成・削除入力（名前入力、ベースブランチピッカー、
+//! スマート説明モード、各種 y/n 確認プロンプト）。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -18,7 +18,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
                 app.status_message = None;
             }
             KeyCode::Tab => {
-                // Switch to Smart Mode.
+                // スマートモードに切り替える。
                 let text = app.worktree_mgr.input_buffer.text().to_string();
                 app.worktree_mgr.input_buffer.clear();
                 app.worktree_mgr.smart_description_buffer.set_text(&text);
@@ -35,7 +35,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
                     app.worktree_mgr.input_buffer.clear();
                     app.set_status("Cancelled (empty name).".to_string(), StatusLevel::Warning);
                 } else {
-                    // Move to step 2: base branch picker.
+                    // ステップ2（ベースブランチピッカー）に進む。
                     app.worktree_mgr.pending_branch = name;
                     app.worktree_mgr.input_buffer.clear();
                     app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktreeBase;
@@ -85,10 +85,10 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
                             .cloned()
                             .unwrap_or_default()
                     } else if !app.worktree_mgr.base_branch_filter.is_empty() {
-                        // No match — use the filter text as a raw ref.
+                        // マッチなし — フィルタのテキストをそのまま ref として使う。
                         app.worktree_mgr.base_branch_filter.text().to_string()
                     } else {
-                        String::new() // Will default to origin/main
+                        String::new() // origin/main にデフォルトフォールバックする
                     };
                     let branch_name = app.worktree_mgr.pending_branch.clone();
                     app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
@@ -106,7 +106,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
                 }
                 _ => {
                     if app.worktree_mgr.base_branch_filter.handle_key(key) {
-                        // Text changed — reset selection for filtering keys.
+                        // テキストが変わった — フィルタキーによる選択をリセットする。
                         match key.code {
                             KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
                                 app.worktree_mgr.base_branch_selected = 0;
@@ -120,7 +120,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
         WorktreeInputMode::ConfirmingDelete => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-                // Branch deletion is handled by the completion handler (delete_branch_after = true).
+                // ブランチ削除は完了ハンドラ側で行う (delete_branch_after = true)。
                 app.delete_selected_worktree(true);
             }
             _ => {
@@ -168,7 +168,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
             }
         },
         WorktreeInputMode::SmartDescription => {
-            // Shift+Enter inserts a newline (multi-line editing).
+            // Shift+Enter で改行を挿入する（複数行編集）。
             if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.worktree_mgr.smart_description_buffer.insert_char('\n');
                 return;
@@ -180,7 +180,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
                     app.status_message = None;
                 }
                 KeyCode::Tab => {
-                    // Switch back to manual mode.
+                    // 手動モードに戻す。
                     let text = app.worktree_mgr.smart_description_buffer.text().to_string();
                     app.worktree_mgr.smart_description_buffer.clear();
                     app.worktree_mgr.input_buffer.set_text(&text);

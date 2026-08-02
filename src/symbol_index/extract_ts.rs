@@ -1,5 +1,5 @@
-//! TypeScript/JavaScript symbol extraction: functions, classes, interfaces,
-//! type aliases, enums, methods, and top-level variable declarators.
+//! TypeScript/JavaScript のシンボル抽出: 関数、クラス、インターフェース、
+//! 型エイリアス、enum、メソッド、トップレベルの変数宣言子。
 
 use super::extract_common::{extract_named_symbol, walk_tree};
 use super::model::{Symbol, SymbolKind};
@@ -63,7 +63,7 @@ fn visit_ts_node(
             }
         }
         "lexical_declaration" | "variable_declaration" => {
-            // const Foo = ... / let bar = ... — extract variable declarators.
+            // const Foo = ... / let bar = ... — 変数宣言子を抽出する。
         }
         "variable_declarator" => {
             if let Some(sym) =
@@ -73,7 +73,7 @@ fn visit_ts_node(
             }
         }
         "export_statement" => {
-            // Recurse handled by walk_tree.
+            // 再帰は walk_tree 側で行われる。
         }
         _ => {}
     }

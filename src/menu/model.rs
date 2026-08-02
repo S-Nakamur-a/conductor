@@ -1,39 +1,40 @@
-//! The static menu table — which commands appear under which top-level menu,
-//! in which order, with which separators.
+//! 静的なメニューテーブル — どのコマンドがどのトップレベルメニューの、どの順序、
+//! どの区切りで並ぶか。
 //!
-//! This table holds *taxonomy and presentation only*. Every actionable entry is
-//! a [`CommandId`], and running it goes through
-//! [`App::execute_palette_command`](crate::app::App::execute_palette_command) —
-//! the same funnel the command palette and the keyboard shortcuts use. There is
-//! no second copy of any command's behaviour here, and adding a menu entry can
-//! never change what a command does.
+//! このテーブルが持つのは分類と表示だけである。実行可能な各エントリは
+//! [CommandId] であり、実行時には必ず
+//! [App::execute_palette_command](crate::app::App::execute_palette_command) を
+//! 経由する。これはコマンドパレットやキーボードショートカットと同じ経路であり、
+//! コマンドの振る舞いがここに二重管理される箇所はない。メニュー項目を追加しても
+//! コマンドの動作が変わることは絶対にない。
 //!
-//! The short `label` on each item is menu-local on purpose. The palette labels
-//! are self-describing because the palette is a flat list ("Worktree: Create
-//! New"); inside a menu the top-level title already supplies that context, so
-//! repeating it would read as "Worktree ▸ Worktree: Create New". Only the
-//! display string is local — the `id` is what actually runs.
+//! 各項目の短い label があえてメニューローカルなのは理由がある。パレット側の
+//! ラベルはパレットがフラットな一覧("Worktree: Create New")であるため
+//! 自己説明的である必要があるが、メニュー内ではすでにトップレベルのタイトルが
+//! その文脈を与えているので、同じことを繰り返すと "Worktree ▸ Worktree: Create
+//! New" のように冗長になる。ローカルなのは表示文字列だけであり、実際に実行される
+//! のは id である。
 //!
-//! `tests::every_command_is_reachable` holds the completeness promise: every
-//! `CommandId` must appear in exactly one menu or be listed in
-//! [`INTENTIONALLY_UNLISTED`] with a reason.
+//! tests::every_command_is_reachable が完全性の保証を担う。すべての
+//! CommandId はいずれか1つのメニューに現れるか、理由付きで
+//! [INTENTIONALLY_UNLISTED] に列挙されていなければならない。
 
 use crate::command_palette::CommandId;
 
-/// One row of a dropdown: either an invocable command or a horizontal rule.
+/// ドロップダウンの1行 — 実行可能なコマンド、または水平の区切り線。
 pub enum MenuItem {
-    /// An invocable command. `label` is the text shown in the dropdown; `id` is
-    /// what gets executed.
+    /// 実行可能なコマンド。label はドロップダウンに表示するテキスト、id が
+    /// 実行される対象。
     Command {
         id: CommandId,
         label: &'static str,
     },
-    /// A non-selectable divider between groups of related commands.
+    /// 関連コマンド群の間に置く、選択不可の区切り。
     Separator,
 }
 
 impl MenuItem {
-    /// The command this row runs, or `None` for a [`MenuItem::Separator`].
+    /// この行が実行するコマンド。[MenuItem::Separator] の場合は None。
     pub fn command(&self) -> Option<CommandId> {
         match self {
             MenuItem::Command { id, .. } => Some(*id),
@@ -41,40 +42,39 @@ impl MenuItem {
         }
     }
 
-    /// Whether this row can hold the selection. Separators are skipped by
-    /// keyboard navigation and are not clickable.
+    /// この行が選択対象になり得るか。区切りはキーボードナビゲーションで
+    /// スキップされ、クリックもできない。
     pub fn is_selectable(&self) -> bool {
         matches!(self, MenuItem::Command { .. })
     }
 }
 
-/// One top-level menu and the dropdown it opens.
+/// 1つのトップレベルメニューと、それが開くドロップダウン。
 pub struct Menu {
-    /// The word shown on the menu bar itself.
+    /// メニューバー本体に表示される単語。
     pub title: &'static str,
     pub items: &'static [MenuItem],
 }
 
-/// Shorthand for a command row.
+/// コマンド行を作る簡易関数。
 const fn cmd(id: CommandId, label: &'static str) -> MenuItem {
     MenuItem::Command { id, label }
 }
 
-/// A divider row.
+/// 区切り行。
 const SEP: MenuItem = MenuItem::Separator;
 
-/// Commands deliberately absent from the menu bar, each with the reason. The
-/// completeness test reads this list, so removing an entry here without adding
-/// the command to a menu fails the build.
+/// 意図的にメニューバーから外されているコマンドと、それぞれの理由。完全性を
+/// 検証するテストがこのリストを参照するので、コマンドをメニューに追加せずに
+/// ここのエントリだけ削除するとビルドが失敗する。
 ///
-/// Note this covers only [`CommandId`]s. The keymap also has per-panel cursor
-/// motions (`NavigateUp`, `GoToTop`, `NextHunk`, …) which are `Action`s without
-/// a `CommandId` — they are modal cursor movement, not operations, and are
-/// meaningless as a menu row. They are absent from the palette for the same
-/// reason.
-// Read by `tests::every_command_is_reachable`, which is the point of it: this
-// list is the written record of what the menu deliberately omits, and the test
-// is what stops the record from silently going stale.
+/// ここでカバーするのは [CommandId] のみである点に注意。キーマップにはパネル
+/// ごとのカーソル移動(NavigateUp, GoToTop, NextHunk, …)も存在するが、
+/// これらは CommandId を持たない Action であり、操作ではなくモーダルな
+/// カーソル移動なのでメニュー行としては意味を持たない。同じ理由でパレットにも
+/// 現れない。
+// tests::every_command_is_reachable が読む。このリストはメニューが意図的に
+// 省いているものの記録であり、テストがその記録を黙って古びさせないようにする。
 #[allow(dead_code)]
 pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[(
     CommandId::TogglePartyMode,
@@ -82,7 +82,7 @@ pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[(
      defeat the point. Still reachable from the command palette.",
 )];
 
-/// The menu bar, left to right.
+/// メニューバーの並び (左から右)。
 pub const MENUS: &[Menu] = &[
     Menu {
         title: "Repo",
@@ -133,10 +133,10 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::ShowReviewTemplates, "Show Templates"),
             SEP,
             cmd(CommandId::ReviewPullRequest, "Review Pull Request…"),
-            // The walkthrough rows sit together under Review rather than with
-            // the other Explorer bottom-pane switches under View: reading a
-            // walkthrough is a review activity, and having "show" next to
-            // "generate" is what you want when there isn't one yet.
+            // walkthrough 関連の行は View 配下にある他の Explorer 下部ペイン
+            // 切り替えとではなく、Review 配下にまとめている。walkthrough を
+            // 読むこと自体がレビュー活動であり、まだ生成していない場合には
+            // "show" の隣に "generate" があるのが望ましい。
             cmd(CommandId::ShowWalkthrough, "Show Walkthrough"),
             cmd(CommandId::GenerateWalkthrough, "Generate Walkthrough"),
             cmd(

@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.99.0"
+version = "0.99.1"
 edition = "2024"
 
 [dependencies]
@@ -38,21 +38,21 @@ tree-sitter-rust = "0.24"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
 libc = "0.2"
-# The one-import facade (keymap-core + keymap-config + keymap-seq). The
-# `crossterm` feature pulls in `KeyInput::try_from(KeyEvent)`. 0.1.2 adds the
-# declarative layer this app relies on — the `actions!` macro and `ActionName`
-# trait — on top of 0.1.1's `merge` (defaults ⊕ user with `= false` tombstones)
-# and `keys_for_action` discovery helper.
+# 1つのインポートで済むファサード (keymap-core + keymap-config + keymap-seq)。
+# crossterm フィーチャーで KeyInput::try_from(KeyEvent) が使えるようになる。
+# 0.1.2 では、このアプリが依存する宣言的レイヤー — actions! マクロと ActionName
+# トレイト — が、0.1.1 の merge (デフォルトとユーザー設定を統合、= false で
+# 無効化するトゥームストーン方式) と keys_for_action の探索ヘルパーに追加された。
 keymap-suite = { version = "0.1.2", features = ["crossterm"] }
-# Pinned: ratatui-image 4.x+ requires ratatui 0.30 — bump together with ratatui.
+# 固定: ratatui-image の 4.x 以降は ratatui 0.30 を要求する — ratatui と一緒に上げること。
 ratatui-image = { version = "=3.0.0", default-features = false, features = ["crossterm"] }
-# `conductor mcp-serve` — the stdio MCP server the headless walkthrough session
-# talks to; see `src/mcp_serve/mod.rs`'s module doc for why it's embedded in
-# the binary rather than a separate package. `schemars` backs the
-# `#[derive(JsonSchema)]` on the tool argument structs; `tokio` is already in
-# the tree via reqwest → hyper, so only the features rmcp's stdio transport
-# needs are new. A current-thread runtime is enough — the server handles one
-# client over one pipe.
+# conductor mcp-serve — ヘッドレスのウォークスルーセッションが話しかける stdio の
+# MCP サーバ。別パッケージにせずバイナリへ埋め込んである理由は src/mcp_serve/mod.rs
+# のモジュール doc を参照。schemars はツール引数の構造体に付けた
+# #[derive(JsonSchema)] を支える。tokio は reqwest → hyper 経由で既に依存木に
+# 入っているので、新たに要るのは rmcp の stdio トランスポートが必要とするフィーチャー
+# だけ。current-thread ランタイムで十分 — サーバは 1 本のパイプで 1 クライアントだけを
+# 相手にする。
 rmcp = { version = "3.0.1", features = ["server", "macros", "transport-io"] }
 schemars = "1"
 tokio = { version = "1", features = ["rt", "io-std", "time"] }

@@ -1,9 +1,9 @@
 //! Gemini API クライアント。
 //!
-//! Google Gemini API 向けのブロッキング HTTP クライアント。`[api]` の継ぎ目
-//! (`ai_caller.rs` を参照) の背後にある 2 つのプロバイダのうちの 1 つ。素の HTTP
+//! Google Gemini API 向けのブロッキング HTTP クライアント。[api] の継ぎ目
+//! (ai_caller.rs を参照) の背後にある 2 つのプロバイダのうちの 1 つ。素の HTTP
 //! なのでリポジトリを読めない。コードを必要とするタスク (walkthrough の生成) は
-//! こちらではなく `command` プロバイダを使うこと。
+//! こちらではなく command プロバイダを使うこと。
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -33,8 +33,8 @@ struct SystemInstruction {
 /// Gemini 2.5 以降のモデル向けの thinking 設定。
 ///
 /// Gemini 2.5 系はデフォルトで thinking が有効で、thinking のトークンも
-/// `max_output_tokens` に算入される。単純な構造化出力のタスクでは
-/// `thinking_budget: 0` にして thinking を切る。
+/// max_output_tokens に算入される。単純な構造化出力のタスクでは
+/// thinking_budget: 0 にして thinking を切る。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThinkingConfig {
@@ -87,10 +87,10 @@ struct ApiErrorDetail {
 
 /// Gemini の generateContent API を呼ぶ (ブロッキング)。
 ///
-/// - `system_prompt`: システム指示の内容
-/// - `user_message`: ユーザーメッセージの内容
-/// - `model`: モデル ID (`None` ならデフォルトを使う)
-/// - `max_tokens`: 生成する最大トークン数
+/// - system_prompt: システム指示の内容
+/// - user_message: ユーザーメッセージの内容
+/// - model: モデル ID (None ならデフォルトを使う)
+/// - max_tokens: 生成する最大トークン数
 ///
 /// 最初の candidate の最初の part のテキストを返す。
 pub fn call_messages_api(
@@ -103,7 +103,7 @@ pub fn call_messages_api(
         std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY environment variable not set")?;
 
     let model = model.unwrap_or(DEFAULT_MODEL);
-    // API キーは URL ではなく `x-goog-api-key` ヘッダで送る (Google の推奨方法)。
+    // API キーは URL ではなく x-goog-api-key ヘッダで送る (Google の推奨方法)。
     // クエリ文字列はプロキシやアクセスログ、リクエストトレースに漏れるため。
     let url = format!("{API_BASE_URL}/{model}:generateContent");
 

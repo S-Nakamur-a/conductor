@@ -1,5 +1,5 @@
-//! Rendering of the worktree panel's zone 1: the worktree + inline-session
-//! list, with selection, waiting/active indicators, and status markers.
+//! worktree パネルのゾーン1、すなわち worktree + インラインセッション一覧の描画。
+//! 選択状態・待機/実行中インジケータ・ステータスマーカーを表示する。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,8 +21,8 @@ const CLEAN_MARK: &str = " \u{2713}";
 /// pending-create 行で説明文を切り詰める幅。
 const PENDING_DESC_WIDTH: usize = 30;
 
-/// Truncate a string to fit within `max_width` display columns.
-/// Appends "..." if truncation occurs.
+/// 文字列を max_width の表示幅に収まるよう切り詰める。
+/// 切り詰めが発生した場合は末尾に "..." を付ける。
 pub(super) fn truncate_to_width(s: &str, max_width: usize) -> String {
     let mut width = 0;
     let mut end = s.len();
@@ -75,7 +75,7 @@ impl RowCtx<'_> {
     }
 }
 
-/// Render the worktree + inline-session list (zone 1).
+/// worktree + インラインセッション一覧（ゾーン1）を描画する。
 pub(super) fn render_worktree_list(
     frame: &mut Frame,
     area: Rect,
@@ -211,7 +211,7 @@ fn worktree_item<'a>(ctx: &RowCtx<'_>, app: &App, i: usize) -> ListItem<'a> {
 
     let waiting = app.terminal.cc_waiting_worktrees.contains(&wt.path);
     let active = app.terminal.cc_active_worktrees.contains(&wt.path);
-    // `__grab` ブランチ = 本来のブランチを main に奪われて一時的なチェックアウトを
+    // __grab ブランチ = 本来のブランチを main に奪われて一時的なチェックアウトを
     // 抱えている状態。目立たせる必要がないので全体を muted に落とす。
     let grabbed = wt.branch.ends_with("__grab");
     let selected = i == ctx.selected;
@@ -390,7 +390,7 @@ fn dirty_count_spans<'a>(ctx: &RowCtx<'_>, wt: &WorktreeInfo, grabbed: bool) -> 
     .collect()
 }
 
-/// upstream との進み / 遅れ。同期済みなら `≡`、未知 (upstream 無し) なら何も出さない。
+/// upstream との進み / 遅れ。同期済みなら ≡、未知 (upstream 無し) なら何も出さない。
 fn ahead_behind_span<'a>(ctx: &RowCtx<'_>, wt: &WorktreeInfo) -> Option<Span<'a>> {
     let (ahead, behind) = (wt.ahead?, wt.behind?);
     if ahead == 0 && behind == 0 {

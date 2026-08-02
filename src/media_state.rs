@@ -1,11 +1,11 @@
 //! Viewer パネルのメディア描画の状態。
 //!
-//! `image` クレートで画像を読み込み、次の 2 つの経路のどちらかで Viewer パネル
+//! image クレートで画像を読み込み、次の 2 つの経路のどちらかで Viewer パネル
 //! 向けに描画する:
 //!
-//! - ハーフブロック (既定): `aa_media::Renderer` の ANSI 文字列を ratatui の
-//!   `Line` へ変換する。truecolor の端末ならどれでも動く。
-//! - ピクセル (rich モードの Tier B): `ratatui_image` のグラフィックスプロトコル
+//! - ハーフブロック (既定): aa_media::Renderer の ANSI 文字列を ratatui の
+//!   Line へ変換する。truecolor の端末ならどれでも動く。
+//! - ピクセル (rich モードの Tier B): ratatui_image のグラフィックスプロトコル
 //!   (kitty / iTerm2 / sixel) のペイロードを、(ファイル, パネルサイズ) の組ごとに
 //!   1 度だけバックグラウンドスレッドで作る。エンコード済みのエスケープ列は
 //!   ratatui の通常のセル差分に乗るので、変化していない画像が再送されることはない。
@@ -68,7 +68,7 @@ pub enum MediaContent {
         file_size: u64,
     },
     /// ピクセル品質のグラフィックスプロトコルのペイロード (rich モードの Tier B)。
-    /// `Arc` にしてあるのは [`Protocol`] が `Clone` でなく、描画経路が毎フレーム
+    /// Arc にしてあるのは [Protocol] が Clone でなく、描画経路が毎フレーム
     /// mutex から中身を clone して取り出すため。
     Pixel {
         protocol: Arc<Protocol>,
@@ -108,7 +108,7 @@ impl Default for MediaState {
 impl MediaState {
     /// メディアファイルの描画をバックグラウンドスレッドで開始する。
     ///
-    /// `picker` が `Some` (rich モードの Tier B) なら画像をグラフィックス
+    /// picker が Some (rich モードの Tier B) なら画像をグラフィックス
     /// プロトコルのペイロードとしてエンコードし、そうでなければハーフブロックの
     /// ANSI にフォールバックする。ファイル・サイズ・描画経路のいずれも変わって
     /// いなければ何もしない (キャッシュを再利用する)。
@@ -189,7 +189,7 @@ fn render_image_to_pixels(path: &Path, picker: &mut Picker, cols: u16, rows: u16
     }
 }
 
-/// aa-media の Tile レンダラを使って画像ファイルを ratatui の `Line` へ描画する。
+/// aa-media の Tile レンダラを使って画像ファイルを ratatui の Line へ描画する。
 fn render_image_to_lines(path: &Path, cols: u16, rows: u16) -> MediaContent {
     // ファイルサイズを読む。
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -235,7 +235,7 @@ fn render_image_to_lines(path: &Path, cols: u16, rows: u16) -> MediaContent {
     }
 }
 
-/// ANSI エスケープを含むバイト列を vt100 に通してパースし、ratatui の `Line` へ変換する。
+/// ANSI エスケープを含むバイト列を vt100 に通してパースし、ratatui の Line へ変換する。
 fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'static>> {
     let parser = vt100::Parser::new(rows, cols, 0);
     let mut parser = parser;
@@ -303,7 +303,7 @@ fn ansi_to_ratatui_lines(ansi_bytes: &[u8], cols: u16, rows: u16) -> Vec<Line<'s
     lines
 }
 
-/// vt100 のセルの色を ratatui の `Style` へ変換する。
+/// vt100 のセルの色を ratatui の Style へ変換する。
 fn vt100_cell_to_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default();
 

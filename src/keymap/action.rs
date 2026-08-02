@@ -1,39 +1,36 @@
-//! The customisable action vocabulary — the [`Action`] enum, its stable
-//! config names (via the `keymap-suite` [`actions!`](keymap_suite::actions)
-//! macro), human-readable labels for the cheatsheet, and the
-//! terminal-interception classification that [`KeyMap`](super::KeyMap)
-//! consults during resolution.
+//! カスタマイズ可能なアクションの語彙 — Action enum、（keymap-suite の
+//! actions!（keymap_suite::actions）マクロによる）その安定した設定名、
+//! チートシート向けの人間が読めるラベル、そして KeyMap（super::KeyMap）が
+//! 解決時に参照する terminal-interception（terminal での横取り）分類。
 
-// ---------------------------------------------------------------------------
-// Action — every customisable user action
-// ---------------------------------------------------------------------------
+// Action — カスタマイズ可能なユーザアクションすべて
 
-// The `actions!` macro (keymap-suite 0.1.2) generates the enum, the
-// `ActionName` impl (`from_name` / `name` — the config-name mapping the old
-// hand-written `from_str` / `as_str` provided), and `Action::ALL` in
-// declaration order (which the cheatsheet renders, so declaration order IS
-// display order). Default chords are deliberately NOT declared here: they live
-// in `default_keybinds.toml`, whose per-layer tables fit this app's
-// nine-layer, shared-navigation keymap better than the macro's per-action
-// `"chord" @ "layer"` lists would (see the file for the schema and rationale
-// comments users read when overriding).
+// actions! マクロ（keymap-suite 0.1.2）が enum、ActionName 実装
+// （from_name / name — 以前手書きだった from_str / as_str が提供していた
+// 設定名のマッピング）、そして宣言順の Action::ALL（チートシートはこの順で
+// 描画するので、宣言順がそのまま表示順になる）を生成する。デフォルトの
+// チョードは意図的にここでは宣言していない: それらは default_keybinds.toml
+// にあり、そのレイヤーごとのテーブルは、このアプリの9レイヤー・共有
+// ナビゲーションのキーマップに、マクロの「アクションごとの "chord" @
+// "layer" のリスト」よりもよく合う（スキーマと、ユーザが上書きする際に
+// 読む根拠のコメントはそのファイルを参照）。
 keymap_suite::actions! {
     pub enum Action {
-        // ── Global ────────────────────────────────────────────────────
+        // グローバル
         Quit => "quit",
         ShowHelp => "show_help",
         CommandPalette => "command_palette",
-        /// Give the menu bar keyboard focus. Arrow keys then browse the titles
-        /// and Down/Enter drops the list open — the GTK/Windows convention,
-        /// which is why the default chord is `f10`. No Alt+letter mnemonics:
-        /// alt+<letter> is already dense here (alt+h/l focus cycling, alt+t
-        /// theme picker, alt+w walkthrough), and a mnemonic set would have to
-        /// steal from it.
+        /// メニューバーにキーボードフォーカスを与える。矢印キーでタイトルを
+        /// ブラウズでき、Down/Enter でリストが開く — GTK/Windows の慣習で
+        /// あり、これがデフォルトのチョードが f10 である理由。Alt+文字の
+        /// ニーモニックは使わない: alt+<文字> はすでにここで密に使われて
+        /// いる（alt+h/l のフォーカス循環、alt+t のテーマピッカー、alt+w の
+        /// walkthrough）ので、ニーモニックのセットはそこから奪うことになる。
         FocusMenuBar => "focus_menu_bar",
         CycleFocusForward => "cycle_focus_forward",
         CycleFocusBackward => "cycle_focus_backward",
-        /// Switch the selected worktree to the next/previous one, from any panel
-        /// (the worktree strip follows the selection). Distinct from focus cycling.
+        /// どのパネルからでも、選択中の worktree を次/前のものに切り替える
+        /// （worktree ストリップは選択に追従する）。フォーカス循環とは別物。
         NextWorktree => "next_worktree",
         PrevWorktree => "prev_worktree",
         FocusWorktree => "focus_worktree",
@@ -47,7 +44,7 @@ keymap_suite::actions! {
         OpenRepo => "open_repo",
         SwitchRepo => "switch_repo",
 
-        // ── Shared navigation ────────────────────────────────────────
+        // 共通ナビゲーション
         NavigateUp => "navigate_up",
         NavigateDown => "navigate_down",
         GoToTop => "go_to_top",
@@ -56,7 +53,7 @@ keymap_suite::actions! {
         CollapseOrLeft => "collapse_or_left",
         Select => "select",
 
-        // ── Worktree panel ───────────────────────────────────────────
+        // ワークツリーパネル
         CreateWorktree => "create_worktree",
         DeleteWorktree => "delete_worktree",
         SwitchBranch => "switch_branch",
@@ -71,11 +68,11 @@ keymap_suite::actions! {
         SessionHistory => "session_history",
         OpenPullRequest => "open_pull_request",
 
-        // ── Explorer panel ───────────────────────────────────────────
+        // エクスプローラパネル
         ShowDiffList => "show_diff_list",
         ShowCommentList => "show_comment_list",
-        /// Open the full-screen comment-list modal (overview of all comments on the
-        /// branch, with jump-to-location).
+        /// フルスクリーンのコメント一覧モーダルを開く（ブランチ上の全コメントの
+        /// 概観で、該当箇所へジャンプできる）。
         OpenCommentList => "open_comment_list",
         SearchFilename => "search_filename",
         DeleteComment => "delete_comment",
@@ -85,7 +82,7 @@ keymap_suite::actions! {
         ViewCommentDetail => "view_comment_detail",
         ExitSubPanel => "exit_sub_panel",
 
-        // ── Viewer panel ─────────────────────────────────────────────
+        // ビューアパネル
         ScrollHalfPageDown => "scroll_half_page_down",
         ScrollHalfPageUp => "scroll_half_page_up",
         ScrollLeft => "scroll_left",
@@ -96,102 +93,105 @@ keymap_suite::actions! {
         PrevSearchMatch => "prev_search_match",
         AddComment => "add_comment",
         ExitToExplorer => "exit_to_explorer",
-        /// Open the file shown in the Viewer in an external editor ($VISUAL /
-        /// $EDITOR): suspend the TUI, run the editor, then restore and reload.
+        /// Viewer に表示中のファイルを外部エディタ（$VISUAL / $EDITOR）で開く:
+        /// TUI を一時停止し、エディタを実行してから、復帰して再読み込みする。
         OpenInEditor => "open_in_editor",
-        /// Switch a markdown file in the Viewer between raw source and rendered
-        /// prose. No-op on any other file (and in diff mode), since the two
-        /// views only differ for markdown.
+        /// Viewer 内の markdown ファイルを raw ソースとレンダリング済みの
+        /// プロースの間で切り替える。他のファイル（および diff モード）では
+        /// 何もしない。両方のビューが異なるのは markdown だけだから。
         ToggleMarkdownRender => "toggle_markdown_render",
 
-        // ── Terminal panel ────────────────────────────────────────────
+        // ターミナルパネル
         LeaveTerminal => "leave_terminal",
         ScrollbackUp => "scrollback_up",
         ScrollbackDown => "scrollback_down",
         ScrollbackTop => "scrollback_top",
         SnapToLive => "snap_to_live",
         OpenFileFromTerminal => "open_file_from_terminal",
-        /// Cycle to the next/previous session tab in the focused terminal panel
-        /// (Claude Code or Shell) — the keyboard equivalent of clicking a tab.
+        /// フォーカスされている terminal パネル（Claude Code か Shell）で、
+        /// 次/前のセッションタブへ切り替える — タブをクリックするのと
+        /// キーボード的に等価な操作。
         NextSession => "next_session",
         PrevSession => "prev_session",
 
-        // ── App ──────────────────────────────────────────────────────
+        // アプリ
         UpdateAndRestart => "update_and_restart",
 
-        // ── Search ──────────────────────────────────────────────────
+        // 検索
         SearchFullText => "search_full_text",
 
-        // ── Code navigation ─────────────────────────────────────────
+        // コードナビゲーション
         JumpBack => "jump_back",
         JumpForward => "jump_forward",
-        /// Show a hover popup with the type/signature, doc comment, and
-        /// reference count of the symbol under the viewer cursor.
+        /// viewer カーソル下のシンボルについて、型/シグネチャ、doc コメント、
+        /// 参照数を示す hover ポップアップを表示する。
         ShowHoverInfo => "show_hover_info",
         ToggleInlineThread => "toggle_inline_thread",
         InlineReply => "inline_reply",
 
-        // ── Diff navigation ─────────────────────────────────────────
+        // 差分ナビゲーション
         NextHunk => "next_hunk",
         PrevHunk => "prev_hunk",
         NextComment => "next_comment",
         PrevComment => "prev_comment",
-        /// Jump to the next/previous changed file in the diff list (GitHub-style
-        /// "next file" — the lightweight substitute for cross-file scrolling).
+        /// diff リスト内の次/前の変更ファイルへジャンプする（GitHub 風の
+        /// 「次のファイル」 — ファイルをまたいだスクロールの軽量な代替）。
         NextChangedFile => "next_changed_file",
         PrevChangedFile => "prev_changed_file",
 
-        // ── Diff context expansion ─────────────────────────────────
+        // 差分コンテキストの展開
         ExpandContext => "expand_context",
         ExpandAllContext => "expand_all_context",
 
-        // ── Panel layout ────────────────────────────────────────────
+        // パネルレイアウト
         TogglePanelExpand => "toggle_panel_expand",
         TogglePanelOverlay => "toggle_panel_overlay",
-        /// Grow the focused panel toward the left (tmux `resize-pane -L`).
+        /// フォーカス中のパネルを左へ広げる（tmux の resize-pane -L）。
         ResizePaneLeft => "resize_pane_left",
-        /// Grow the focused panel toward the right (tmux `resize-pane -R`).
+        /// フォーカス中のパネルを右へ広げる（tmux の resize-pane -R）。
         ResizePaneRight => "resize_pane_right",
-        /// Grow the focused panel upward (tmux `resize-pane -U`).
+        /// フォーカス中のパネルを上へ広げる（tmux の resize-pane -U）。
         ResizePaneUp => "resize_pane_up",
-        /// Grow the focused panel downward (tmux `resize-pane -D`).
+        /// フォーカス中のパネルを下へ広げる（tmux の resize-pane -D）。
         ResizePaneDown => "resize_pane_down",
 
-        // ── UI ──────────────────────────────────────────────────────
-        /// Open the theme picker overlay to switch the UI color theme at runtime.
+        // UI
+        /// 実行時に UI のカラーテーマを切り替えるため、テーマピッカーの
+        /// オーバーレイを開く。
         OpenThemePicker => "open_theme_picker",
 
-        // ── PR review ───────────────────────────────────────────────
-        /// Show the AI walkthrough as the Explorer's bottom-pane view.
+        // PR レビュー
+        /// AI walkthrough を Explorer の下段ペインビューとして表示する。
         ShowWalkthrough => "show_walkthrough",
-        /// Toggle the "viewed" mark on a file (diff list row, or the file
-        /// currently open in the Viewer's diff mode).
+        /// ファイル（diff リストの行、または現在 Viewer の diff モードで
+        /// 開いているファイル）の「viewed」マークを切り替える。
         ToggleViewed => "toggle_viewed",
-        /// Move the walkthrough step selection to the next/previous step and jump
-        /// to it immediately (only in the Explorer's Walkthrough view).
+        /// walkthrough のステップ選択を次/前のステップへ動かし、即座に
+        /// そこへジャンプする（Explorer の Walkthrough ビューでのみ）。
         WalkthroughNextStep => "walkthrough_next_step",
         WalkthroughPrevStep => "walkthrough_prev_step",
-        /// Open the PR-number/URL input overlay to fetch (or reuse) a worktree
-        /// for a pull request.
+        /// PR番号/URL 入力のオーバーレイを開き、プルリクエスト用の worktree を
+        /// 取得する（または既存のものを再利用する）。
         ReviewPullRequest => "review_pull_request",
-        /// Generate (or regenerate) the AI walkthrough for the selected
-        /// worktree's branch via a background headless Claude session.
-        /// Palette-only by default: `g` is the go-to-top idiom everywhere, and a
-        /// minutes-long generation is too expensive to fire from a slipped key.
+        /// 選択中の worktree のブランチについて、バックグラウンドのヘッドレス
+        /// Claude セッションで AI walkthrough を生成する（または再生成する）。
+        /// デフォルトではパレット限定: g はどこでも「先頭へ移動」の慣習であり、
+        /// 数分かかる生成処理を、うっかり押したキーから発火させるにはコストが
+        /// 高すぎる。
         GenerateWalkthrough => "generate_walkthrough",
-        /// Regenerate the walkthrough even when one already exists for the
-        /// current branch tip — the escape hatch past `GenerateWalkthrough`'s
-        /// same-commit skip (e.g. to pick up an improved generation prompt).
+        /// 現在のブランチ先端にすでに walkthrough が存在していても再生成する —
+        /// GenerateWalkthrough の「同じコミットならスキップする」を回避する
+        /// 抜け道（例えば、改善された生成プロンプトを反映させたい場合など）。
         ForceGenerateWalkthrough => "force_generate_walkthrough",
-        /// Publish this branch's unpublished review comments to the GitHub PR
-        /// they were opened from. Palette-only: it's an irreversible external
-        /// action and always goes through a y/n confirm overlay first.
+        /// このブランチの未公開のレビューコメントを、それらが開かれた元の
+        /// GitHub PR に公開する。パレット限定: 取り消せない外部アクションであり、
+        /// 常に先に y/n の確認オーバーレイを通す。
         PublishReview => "publish_review",
     }
 }
 
 impl Action {
-    /// Human-readable one-line description of the action, for the cheatsheet.
+    /// チートシート向けの、人間が読めるアクションの1行説明。
     pub fn label(self) -> &'static str {
         match self {
             Action::Quit => "Quit application",
@@ -295,30 +295,33 @@ impl Action {
         }
     }
 
-    /// Whether this action is intercepted while a terminal panel (PTY) is
-    /// focused. `false` (the default) means the chord is forwarded to the inner
-    /// program (shell / Claude Code), so Conductor never steals a key the
-    /// program needs — `ctrl+r` reverse-search, `ctrl+q`/XON, etc. Only the
-    /// focus/navigation/scrollback actions listed here are stolen back. This is
-    /// the single source of truth for terminal interception: both
-    /// [`KeyMap::resolve`](super::KeyMap::resolve) and
-    /// [`KeyMap::keys_for_action`](super::KeyMap::keys_for_action) honor it, so
-    /// resolution == behavior == the rendered help, with no hand-maintained
-    /// allowlist in the dispatcher.
+    /// terminal パネル（PTY）がフォーカスされている間、このアクションが
+    /// 横取りされるかどうか。false（デフォルト）は、そのチョードが内側の
+    /// プログラム（shell / Claude Code）へ転送されることを意味し、Conductor
+    /// はプログラムが必要とするキー（ctrl+r の reverse-search、ctrl+q/XON
+    /// など）を奪うことがない。ここに列挙されている
+    /// フォーカス/ナビゲーション/scrollback のアクションだけが奪い返される。
+    /// これが terminal 横取りの単一の真実の源であり、
+    /// KeyMap::resolve（super::KeyMap::resolve）と
+    /// KeyMap::keys_for_action（super::KeyMap::keys_for_action）の両方が
+    /// これに従うので、解決結果 == 実際の挙動 == 表示されるヘルプとなり、
+    /// ディスパッチャ側に手作業で保守する許可リストは存在しない。
     pub(crate) fn fires_in_terminal(self) -> bool {
         matches!(
             self,
-            // Terminal-only actions (meaningful only with a terminal focused).
+            // terminal 限定のアクション（terminal がフォーカスされている
+            // ときにのみ意味を持つ）。
             Action::LeaveTerminal
                 | Action::ScrollbackUp
                 | Action::ScrollbackDown
                 | Action::ScrollbackTop
                 | Action::SnapToLive
                 | Action::OpenFileFromTerminal
-                // Cycling session tabs is a terminal-panel action by definition.
+                // セッションタブの循環は、定義からして terminal パネルの
+                // アクションである。
                 | Action::NextSession
                 | Action::PrevSession
-                // Global focus/navigation that stays useful over a PTY.
+                // PTY 上でも有用であり続けるグローバルなフォーカス/ナビゲーション。
                 | Action::FocusWorktree
                 | Action::FocusExplorer
                 | Action::FocusExplorerDiffList
@@ -326,9 +329,10 @@ impl Action {
                 | Action::FocusTerminalClaude
                 | Action::FocusTerminalShell
                 | Action::CommandPalette
-                // The menu bar must be reachable from a terminal panel too —
-                // that's where most time is spent, and a menu you can only open
-                // after focusing something else is a menu you stop using.
+                // メニューバーは terminal パネルからも到達可能でなければ
+                // ならない — 時間の大半はそこで過ごされるのであり、他の
+                // 何かにフォーカスしてからでないと開けないメニューは、
+                // 使われなくなるメニューである。
                 | Action::FocusMenuBar
                 | Action::CycleFocusForward
                 | Action::CycleFocusBackward
@@ -336,9 +340,10 @@ impl Action {
                 | Action::PrevWorktree
                 | Action::TogglePanelExpand
                 | Action::TogglePanelOverlay
-                // Pane resizing is most useful with a terminal focused (resize
-                // the Claude/Shell split or the terminal column while typing in
-                // it), so these must fire over a PTY too.
+                // ペインのリサイズは terminal がフォーカスされているときに
+                // 最も有用（そこに入力しながら Claude/Shell の分割や
+                // terminal カラムをリサイズする）なので、これらも PTY 上で
+                // 発火しなければならない。
                 | Action::ResizePaneLeft
                 | Action::ResizePaneRight
                 | Action::ResizePaneUp

@@ -1,7 +1,7 @@
-//! Public data types produced by the symbol index: symbol definitions, their
-//! kind, and text-search references.
+//! シンボルインデックスが生成する公開データ型: シンボル定義、その種類、
+//! テキスト検索による参照。
 
-/// The kind of a symbol (function, struct, trait, etc.).
+/// シンボルの種類（関数、構造体、トレイトなど）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolKind {
     Function,
@@ -22,31 +22,31 @@ pub enum SymbolKind {
     Unknown,
 }
 
-/// A symbol definition found by tree-sitter parsing.
+/// tree-sitter による構文解析で見つかったシンボル定義。
 #[derive(Debug, Clone)]
 pub struct Symbol {
-    /// The symbol name (e.g. "MyStruct", "my_function").
+    /// シンボル名（例: "MyStruct", "my_function"）。
     pub name: String,
-    /// The kind of symbol.
+    /// シンボルの種類。
     pub kind: SymbolKind,
-    /// Relative file path from the repository root.
+    /// リポジトリルートからの相対ファイルパス。
     pub file_path: String,
-    /// 1-indexed line number.
+    /// 1始まりの行番号。
     pub line: usize,
-    /// 0-indexed column (if available).
+    /// 0始まりの列番号（取得できた場合）。
     #[allow(dead_code)]
     pub column: usize,
-    /// Scope (e.g. parent struct/module name), if available.
+    /// スコープ（親の構造体/モジュール名など）、取得できた場合。
     pub scope: Option<String>,
 }
 
-/// A reference (usage) of a symbol found by text search.
+/// テキスト検索で見つかったシンボルの参照（使用箇所）。
 #[derive(Debug, Clone)]
 pub struct Reference {
-    /// Relative file path from the repository root.
+    /// リポジトリルートからの相対ファイルパス。
     pub file_path: String,
-    /// 1-indexed line number.
+    /// 1始まりの行番号。
     pub line: usize,
-    /// The full text content of the line.
+    /// その行の全文。
     pub content: String,
 }

@@ -1,9 +1,9 @@
-//! Embedded editor panel — renders the `$EDITOR` PTY (vim/emacs) in the merged
-//! Explorer+Viewer region while the user edits a file inline.
+//! 組み込みエディタパネル — Explorer+Viewer を統合した領域に $EDITOR の PTY（vim/emacs）を
+//! 描画し、ユーザーがファイルをインラインで編集できるようにする。
 //!
-//! A single-session sibling of [`terminal_claude`](super::terminal_claude): no
-//! session tabs, no scrollback (full-screen editors own their own scrolling) —
-//! just a title row with exit hints and the live PTY output.
+//! [terminal_claude](super::terminal_claude) の単一セッション版の兄弟モジュール。
+//! セッションタブもスクロールバックもない（全画面エディタは自前でスクロールを管理する）。
+//! あるのは終了方法のヒントを示すタイトル行と、ライブの PTY 出力だけ。
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::app::{App, Focus};
 
-/// Render the embedded editor panel into `area`. No-op if no editor is open.
+/// area に組み込みエディタパネルを描画する。エディタが開いていなければ何もしない。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -42,8 +42,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     let is_expanded = app.expanded_panel == Some(Focus::Editor);
 
-    // Title row: filename + exit hints. `:q` always works (it ends the process,
-    // which closes the panel); Ctrl+Esc needs the kitty keyboard protocol.
+    // タイトル行: ファイル名 + 終了方法のヒント。:q は常に有効（プロセスを終了させ、
+    // それによってパネルが閉じる）。Ctrl+Esc は kitty keyboard protocol が必要。
     let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
     let title_style = if focused {
         Style::default().fg(fg).add_modifier(Modifier::BOLD)
@@ -79,9 +79,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = output_block.inner(output_area);
     frame.render_widget(output_block, output_area);
 
-    // Rebuild the PTY snapshot only when new output arrived (dirty) or the
-    // cache is empty. Editors run on the alternate screen, so there is no
-    // scrollback offset — always render the live view (offset 0).
+    // 新しい出力が届いた（dirty）か、キャッシュが空のときだけ PTY のスナップショットを
+    // 再構築する。エディタは代替スクリーンで動くのでスクロールバックのオフセットはなく、
+    // 常にライブビュー（オフセット0）を描画する。
     if let Some(editor) = app.editor.as_mut()
         && (editor.cache.lines.is_empty() || editor.dirty)
         && let Some(cache) =
@@ -94,7 +94,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if let Some(editor) = app.editor.as_ref() {
         crate::ui::common::render_pty_cached(frame, inner, &editor.cache, &app.theme);
 
-        // Place the hardware cursor for IME when focused and unobscured.
+        // フォーカスがあり隠れていないときは、IME 用にハードウェアカーソルを配置する。
         if focused
             && !app.is_any_overlay_active()
             && let Some((row, col)) = editor.cache.cursor_position

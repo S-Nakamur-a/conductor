@@ -1,12 +1,12 @@
-//! In-file text search and fuzzy filename search.
+//! ファイル内テキスト検索とファジーなファイル名検索。
 
 use super::file_view::UnifiedDiffEntry;
 use super::state::ViewerState;
 
-/// The new-file line number a diff entry represents, for entries that map to
-/// one: a concrete `Line` (`None` for a deletion, which has no new-file
-/// line), or an `ExpandableContext`'s first hidden line. `HunkSeparator`
-/// carries no line number.
+/// diff エントリが表す新ファイル側の行番号。対応する行番号を持つエントリの
+/// 場合のみ値を返す: 具体的な Line（削除行なら新ファイル側の行が無いので
+/// None）か、ExpandableContext の最初の隠れた行。HunkSeparator は行番号を
+/// 持たない。
 fn diff_entry_new_line_no(entry: &UnifiedDiffEntry) -> Option<usize> {
     match entry {
         UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
@@ -16,7 +16,7 @@ fn diff_entry_new_line_no(entry: &UnifiedDiffEntry) -> Option<usize> {
 }
 
 impl ViewerState {
-    /// Execute a search over the file content and populate search_matches.
+    /// ファイル内容に対して検索を実行し、search_matches を埋める。
     pub fn execute_search(&mut self) {
         self.search.search_matches.clear();
         self.search.search_match_idx = 0;
@@ -32,7 +32,7 @@ impl ViewerState {
             }
         }
 
-        // Jump to first match at or after current scroll.
+        // 現在のスクロール位置以降にある最初のマッチへジャンプする。
         if !self.search.search_matches.is_empty() {
             self.search.search_match_idx = self
                 .search
@@ -45,7 +45,7 @@ impl ViewerState {
         self.sync_diff_scroll_to_file_scroll();
     }
 
-    /// Jump to the next search match.
+    /// 次の検索マッチへジャンプする。
     pub fn next_search_match(&mut self) {
         if self.search.search_matches.is_empty() {
             return;
@@ -56,7 +56,7 @@ impl ViewerState {
         self.sync_diff_scroll_to_file_scroll();
     }
 
-    /// Jump to the previous search match.
+    /// 前の検索マッチへジャンプする。
     pub fn prev_search_match(&mut self) {
         if self.search.search_matches.is_empty() {
             return;
@@ -70,11 +70,11 @@ impl ViewerState {
         self.sync_diff_scroll_to_file_scroll();
     }
 
-    /// Resolve the file line (0-indexed, matching `content.file_scroll`) that
-    /// the diff view's current scroll position corresponds to, from the
-    /// nearest concrete new-file line number at or after `diff_view_scroll`
-    /// (falling back to the nearest one before it — e.g. when the cursor
-    /// sits on a deleted line, which has no new-file line number).
+    /// diff 表示の現在のスクロール位置に対応するファイル行（0始まり、
+    /// content.file_scroll に対応）を求める。diff_view_scroll 以降で最も近い
+    /// 具体的な新ファイル側の行番号を使う（見つからなければそれより前で最も
+    /// 近いものにフォールバックする — 例えばカーソルが削除行の上にあり、
+    /// 新ファイル側の行番号を持たない場合）。
     fn diff_scroll_file_line(&self) -> Option<usize> {
         let lines = &self.diff_view.diff_view_lines;
         let scroll = self.diff_view.diff_view_scroll.min(lines.len());
@@ -90,12 +90,12 @@ impl ViewerState {
             .map(|n| n.saturating_sub(1))
     }
 
-    /// Keep `content.file_scroll` in sync with the diff view's scroll
-    /// position. Symbol lookup and search operate on `content.file_scroll`
-    /// unconditionally (they predate diff mode), so anything reached while
-    /// browsing a diff needs this synced first, or it would act on whatever
-    /// line plain-view browsing last left `file_scroll` at. A no-op outside
-    /// diff mode.
+    /// content.file_scroll を diff 表示のスクロール位置と同期させておく。
+    /// symbol 検索やテキスト検索は無条件に content.file_scroll を使う
+    /// （diff モードより前から存在する機能なので）ので、diff を閲覧中に
+    /// それらへ到達するにはまずここで同期しておかないと、通常表示での閲覧が
+    /// 最後に file_scroll を残した行に対して動作してしまう。diff モード以外
+    /// では何もしない。
     pub fn sync_file_scroll_to_diff_scroll(&mut self) {
         if !self.diff_view.diff_mode {
             return;
@@ -105,15 +105,15 @@ impl ViewerState {
         }
     }
 
-    /// Keep the diff view's scroll position in sync with `content.file_scroll`
-    /// after it moves on its own (e.g. a search match) so the diff pane
-    /// visibly follows along instead of staying put while the underlying
-    /// cursor moves. A no-op outside diff mode.
+    /// content.file_scroll が自力で（検索マッチなどにより）動いたあと、diff
+    /// 表示側のスクロール位置もそれに同期させる。背後のカーソルが動いているのに
+    /// diff ペインだけがその場に留まってしまわないようにするため。diff モード
+    /// 以外では何もしない。
     fn sync_diff_scroll_to_file_scroll(&mut self) {
         if !self.diff_view.diff_mode {
             return;
         }
-        let target_line = self.content.file_scroll + 1; // new_line_no is 1-indexed
+        let target_line = self.content.file_scroll + 1; // new_line_no は1始まり
         if let Some(idx) = self
             .diff_view
             .diff_view_lines
@@ -124,9 +124,9 @@ impl ViewerState {
         }
     }
 
-    // -- Filename fuzzy search ------------------------------------------------
+    // ファイル名のファジー検索
 
-    /// Run fuzzy filename search over the cached file list and populate results.
+    /// キャッシュ済みのファイル一覧に対してファジーなファイル名検索を実行し、結果を埋める。
     pub fn execute_filename_search(&mut self) {
         self.filename_search.filename_search_results.clear();
 
@@ -136,7 +136,7 @@ impl ViewerState {
             let path_lower = path.to_lowercase();
             let name_lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
 
-            // If query is empty, include all files with score 0.
+            // クエリが空なら、全ファイルをスコア0で含める。
             if query.is_empty() {
                 self.filename_search
                     .filename_search_results
@@ -147,32 +147,32 @@ impl ViewerState {
                 continue;
             }
 
-            // Check fuzzy subsequence match first — skip non-matching files.
+            // まずファジーな部分列マッチを確認する — マッチしないファイルはスキップする。
             if !Self::is_fuzzy_match(&query, &path_lower) {
                 continue;
             }
 
-            let mut score: i32 = 10; // Base score for fuzzy match.
+            let mut score: i32 = 10; // ファジーマッチのベーススコア。
 
-            // Bonus: consecutive character matches.
+            // ボーナス: 連続する文字のマッチ。
             score += Self::consecutive_bonus(&query, &path_lower);
 
-            // Bonus: filename exact prefix.
+            // ボーナス: ファイル名の完全な前方一致。
             if name_lower.starts_with(&query) {
                 score += 100;
             }
 
-            // Bonus: path substring match.
+            // ボーナス: パスの部分一致。
             if path_lower.contains(&query) {
                 score += 50;
             }
 
-            // Bonus: filename substring match.
+            // ボーナス: ファイル名の部分一致。
             if name_lower.contains(&query) {
                 score += 30;
             }
 
-            // Bonus: word boundary match (char after '/', '_', '-', '.').
+            // ボーナス: 単語境界でのマッチ（'/'、'_'、'-'、'.' の直後の文字）。
             if Self::has_word_boundary_match(&query, &path_lower) {
                 score += 20;
             }
@@ -185,13 +185,13 @@ impl ViewerState {
                 });
         }
 
-        // Sort by score descending, then path ascending for stability.
+        // スコアの降順でソートし、安定させるためパスの昇順を副キーにする。
         self.filename_search
             .filename_search_results
             .sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
     }
 
-    /// Check if all characters of `query` appear in `haystack` in order.
+    /// query の全文字が haystack の中に順番通りに出現するかを確認する。
     fn is_fuzzy_match(query: &str, haystack: &str) -> bool {
         let mut haystack_chars = haystack.chars();
         for qc in query.chars() {
@@ -202,7 +202,7 @@ impl ViewerState {
         true
     }
 
-    /// Award bonus points for consecutive matching characters.
+    /// 連続してマッチする文字に対してボーナス点を与える。
     fn consecutive_bonus(query: &str, haystack: &str) -> i32 {
         let mut bonus = 0i32;
         let mut consecutive = 0;
@@ -228,8 +228,8 @@ impl ViewerState {
         bonus
     }
 
-    /// Check if query characters match at word boundaries in the haystack
-    /// (after '/', '_', '-', '.', or at position 0).
+    /// query の文字が haystack の単語境界（'/'、'_'、'-'、'.' の直後、または
+    /// 先頭位置）でマッチするかを確認する。
     fn has_word_boundary_match(query: &str, haystack: &str) -> bool {
         let boundary_chars: Vec<char> = haystack
             .char_indices()
@@ -271,8 +271,8 @@ mod tests {
     use super::*;
     use crate::diff_state::DiffLineTag;
 
-    /// Builds a `Line` entry with the given new-file line number (`None` for
-    /// a deletion, which has no new-file line).
+    /// 指定した新ファイル側の行番号を持つ Line エントリを作る（削除行なら
+    /// 新ファイル側の行が無いので None）。
     fn diff_line(new_line_no: Option<usize>) -> UnifiedDiffEntry {
         UnifiedDiffEntry::Line {
             tag: DiffLineTag::Equal,
@@ -288,21 +288,21 @@ mod tests {
         vs.diff_view.diff_mode = true;
         vs.diff_view.diff_view_lines = vec![
             UnifiedDiffEntry::HunkSeparator { func_header: None },
-            diff_line(Some(10)), // idx 1
-            diff_line(None),     // idx 2 — a deletion, no new-file line
-            diff_line(Some(11)), // idx 3
+            diff_line(Some(10)), // インデックス1
+            diff_line(None),     // インデックス2 — 削除行なので新ファイル側の行が無い
+            diff_line(Some(11)), // インデックス3
         ];
 
-        // Scrolled onto the deletion: no new-file line at this exact index,
-        // so the cursor resolves forward to the next concrete line (11).
+        // 削除行の上にスクロールした: このインデックスちょうどには新ファイル側の
+        // 行が無いので、カーソルは次の具体的な行（11）へ前方解決される。
         vs.diff_view.diff_view_scroll = 2;
         vs.sync_file_scroll_to_diff_scroll();
-        assert_eq!(vs.content.file_scroll, 10); // line 11, 0-indexed
+        assert_eq!(vs.content.file_scroll, 10); // 11行目、0始まり
 
-        // Scrolled directly onto a concrete line: resolves to that line.
+        // 具体的な行に直接スクロールした場合: その行に解決される。
         vs.diff_view.diff_view_scroll = 1;
         vs.sync_file_scroll_to_diff_scroll();
-        assert_eq!(vs.content.file_scroll, 9); // line 10, 0-indexed
+        assert_eq!(vs.content.file_scroll, 9); // 10行目、0始まり
     }
 
     #[test]
@@ -321,13 +321,13 @@ mod tests {
         let mut vs = ViewerState::default();
         vs.diff_view.diff_mode = true;
         vs.diff_view.diff_view_lines = vec![
-            diff_line(Some(1)), // idx 0
-            diff_line(Some(2)), // idx 1
-            diff_line(Some(3)), // idx 2
+            diff_line(Some(1)), // インデックス0
+            diff_line(Some(2)), // インデックス1
+            diff_line(Some(3)), // インデックス2
         ];
         vs.diff_view.diff_view_scroll = 0;
 
-        // A search match landed on file_scroll = 2 (line 3, 0-indexed).
+        // 検索マッチが file_scroll = 2（3行目、0始まり）に着地した。
         vs.content.file_scroll = 2;
         vs.sync_diff_scroll_to_file_scroll();
         assert_eq!(vs.diff_view.diff_view_scroll, 2);

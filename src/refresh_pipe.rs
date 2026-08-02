@@ -1,9 +1,9 @@
 //! MCP をきっかけに UI をリフレッシュするための名前付きパイプ (FIFO) のリスナ。
 //!
 //! MCP サーバはレビューデータを変更したあと (返信、解決など) に
-//! `.conductor/refresh.pipe` へ書き込む。バックグラウンドスレッドがパイプから
-//! 読み取り、`mpsc` チャネルでメインループへイベントを転送する。メインループは
-//! それを受けて `refresh_reviews()` を呼ぶ。
+//! .conductor/refresh.pipe へ書き込む。バックグラウンドスレッドがパイプから
+//! 読み取り、mpsc チャネルでメインループへイベントを転送する。メインループは
+//! それを受けて refresh_reviews() を呼ぶ。
 
 use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -26,7 +26,7 @@ pub struct RefreshPipe {
 }
 
 impl RefreshPipe {
-    /// 指定したリポジトリルート配下の `.conductor/refresh.pipe` に紐づけた
+    /// 指定したリポジトリルート配下の .conductor/refresh.pipe に紐づけた
     /// リスナを作る。
     pub fn new(repo_path: &Path) -> anyhow::Result<Self> {
         let conductor_dir = crate::git_engine::GitEngine::open(repo_path)
@@ -175,13 +175,13 @@ impl RefreshPipe {
 
 /// TUI のリフレッシュ用 FIFO を突いて、レビューデータを読み直させる。
 ///
-/// `mcp-serve` が書き込みのたびに呼ぶ。ベストエフォートなのは意図的で、よくある
+/// mcp-serve が書き込みのたびに呼ぶ。ベストエフォートなのは意図的で、よくある
 /// 「失敗」は conductor が動いていないこと。その場合 FIFO が存在しないか読み手が
-/// いないかで、後者は `O_NONBLOCK` により `ENXIO` になる。どちらも表に出す価値は
+/// いないかで、後者は O_NONBLOCK により ENXIO になる。どちらも表に出す価値は
 /// ない。書き込み自体は既に成功しているし、次に TUI を開いたときにはどのみち
 /// データベースを読み直すため。
 ///
-/// ハングしないのは `O_NONBLOCK` のおかげ。FIFO を書き込み用に開くのは読み手が
+/// ハングしないのは O_NONBLOCK のおかげ。FIFO を書き込み用に開くのは読み手が
 /// つながるまでブロックするので、これが無いとツール呼び出しが固まってしまう。
 pub fn signal_refresh(pipe_path: &Path) {
     let Some(path) = pipe_path.to_str() else {
@@ -206,11 +206,11 @@ pub fn signal_refresh(pipe_path: &Path) {
     // SAFETY: fd はこちらが排他的に所有する有効なディスクリプタで、drop 時に閉じられる。
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
 
-    // 書き込むのは本物の FIFO に対してだけにする。`refresh.pipe` が通常ファイルや
+    // 書き込むのは本物の FIFO に対してだけにする。refresh.pipe が通常ファイルや
     // その symlink として戻ってきた場合 (特殊ファイルを含まないバックアップの復元、
     // 特殊ファイルを運ばないツールで展開したアーカイブなど)、この書き込みは
     // オフセット 0 に着地して、その実体が何であれ先頭バイトを潰してしまう。
-    // SAFETY: `fd` は open 済みで `file` が所有している。`stat` は成功時のみ書かれる。
+    // SAFETY: fd は open 済みで file が所有している。stat は成功時のみ書かれる。
     let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
     let is_fifo = unsafe { libc::fstat(fd, &mut stat) } == 0
         && (stat.st_mode & libc::S_IFMT) == libc::S_IFIFO;
@@ -258,7 +258,7 @@ mod tests {
     use super::*;
 
     /// mcp-serve のツールハンドラと同じやり方で FIFO へ書く。自前の複製ではなく
-    /// 本物の `signal_refresh` を通す。ここで複製してしまうと、`signal_refresh`
+    /// 本物の signal_refresh を通す。ここで複製してしまうと、signal_refresh
     /// 自体が壊れてもこれらのテストは通ったままになる。それは本番で書き込み系の
     /// mcp-serve ツールがどれも呼んでいる、まさにその関数なのに。
     fn write_to_pipe(pipe_path: &Path) {
@@ -316,8 +316,8 @@ mod tests {
         assert!(listener.poll().is_none(), "expected no event");
     }
 
-    /// データベースの `.conductor/` にまだ `refresh.pipe` すら無いときの
-    /// 「conductor が動いていない」経路。`libc::open` は `ENOENT` で失敗するが、
+    /// データベースの .conductor/ にまだ refresh.pipe すら無いときの
+    /// 「conductor が動いていない」経路。libc::open は ENOENT で失敗するが、
     /// ここで panic してはいけない。
     #[test]
     fn signal_refresh_on_nonexistent_path_returns_immediately() {
@@ -326,9 +326,9 @@ mod tests {
         signal_refresh(&pipe_path); // panic しないこと
     }
 
-    /// `refresh.pipe` が (過去の実行で作られて) 存在するのに、今は誰も読んでいない
-    /// ことがある。`mcp-serve` は自分で `RefreshPipe` のリスナを立てないまま書き込む。
-    /// ハングしないのは `O_NONBLOCK` のおかげで、FIFO を書き込み用に開くのは本来
+    /// refresh.pipe が (過去の実行で作られて) 存在するのに、今は誰も読んでいない
+    /// ことがある。mcp-serve は自分で RefreshPipe のリスナを立てないまま書き込む。
+    /// ハングしないのは O_NONBLOCK のおかげで、FIFO を書き込み用に開くのは本来
     /// 読み手がつながるまでブロックし、ツール呼び出しが永遠に固まってしまう。
     /// ここで退行したときに CI がハングするのではなくテストが落ちるよう、
     /// バックグラウンドスレッドでタイムアウト付きで実行する。
@@ -351,7 +351,7 @@ mod tests {
             .expect("signal_refresh hung on a reader-less FIFO");
     }
 
-    /// 何かの理由で `refresh.pipe` が通常ファイルだった場合 (特殊ファイル抜きで
+    /// 何かの理由で refresh.pipe が通常ファイルだった場合 (特殊ファイル抜きで
     /// 展開されたアーカイブ、復元されたバックアップなど)、書き込みはオフセット 0 に
     /// 着地して、その実体が何であれ先頭バイトを潰す。FIFO かどうかの確認は書き込みの
     /// 前に来なければならない。

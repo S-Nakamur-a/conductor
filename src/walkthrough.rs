@@ -1,31 +1,31 @@
 //! AI が生成する PR ウォークスルーのデータモデルと生成処理。
 //!
 //! ウォークスルーとは、モデルが書いたブランチ差分の順序付きツアーのこと
-//! (レビューデータベースの `walkthroughs` と `walkthrough_steps`。永続化と問い合わせは
-//! [`crate::review_store::ReviewStore`] 経由)。このモジュールは、ストアと UI ペインが
+//! (レビューデータベースの walkthroughs と walkthrough_steps。永続化と問い合わせは
+//! [crate::review_store::ReviewStore] 経由)。このモジュールは、ストアと UI ペインが
 //! 共有する素のデータ型と、生成タスクそのものを持つ。
 //!
-//! ## 生成がどう走るか
+//! 生成がどう走るか
 //!
-//! 設定可能な唯一の AI の継ぎ目 [`crate::ai_caller`] を通す。スマート worktree の
+//! 設定可能な唯一の AI の継ぎ目 [crate::ai_caller] を通す。スマート worktree の
 //! 命名とまったく同じで、プロンプトとパースは Conductor が持ち、どのモデルが
-//! 答えるかは `[api] provider` / `[api] command` でユーザーが持つ。Conductor が
-//! 自前で `claude` プロセスを起動することは決してない。この規則はコードベース全体に
+//! 答えるかは [api] provider / [api] command でユーザーが持つ。Conductor が
+//! 自前で claude プロセスを起動することは決してない。この規則はコードベース全体に
 //! 及んでおり、このモジュールが最後の例外だった。
 //!
 //! このタスクは本質的にエージェント的で、モデルは何かを語る前にブランチの差分と、
 //! たいていはその周辺の呼び出し元・呼び出し先を読まねばならない。そのためコマンドは
 //! 作業ディレクトリをレビュー対象の worktree に設定して実行され
-//! ([`crate::ai_caller`] のプロトコルの説明を参照)、応答は 1 つの JSON オブジェクトとして
-//! 返り、[`parse_generated`] がそれをステップへ変える。
+//! ([crate::ai_caller] のプロトコルの説明を参照)、応答は 1 つの JSON オブジェクトとして
+//! 返り、[parse_generated] がそれをステップへ変える。
 //!
-//! ## なぜ MCP のツール呼び出しではなく JSON で返すのか
+//! なぜ MCP のツール呼び出しではなく JSON で返すのか
 //!
-//! MCP の `save_walkthrough` ツールは今も存在し、外部の `/conductor-walkthrough`
+//! MCP の save_walkthrough ツールは今も存在し、外部の /conductor-walkthrough
 //! コマンドは今もそれで保存する。この経路がそうしないのは、上の継ぎ目が素の
 //! stdin/stdout のテキストプロトコルだから。Conductor が制御する argv が無いので、
-//! `--mcp-config` を差し込む場所が無い。Conductor が JSON をパースして自分で行を書く。
-//! これは同時に、形式の壊れた応答が `generating` のまま行を残すのではなく、
+//! --mcp-config を差し込む場所が無い。Conductor が JSON をパースして自分で行を書く。
+//! これは同時に、形式の壊れた応答が generating のまま行を残すのではなく、
 //! ここではっきり失敗することも意味する。
 
 use std::path::Path;
@@ -40,7 +40,7 @@ pub enum WalkthroughStatus {
     Generating,
     /// ステップが保存され、表示できる状態。
     Ready,
-    /// 生成に失敗した。理由は `Walkthrough::error` が持つ。
+    /// 生成に失敗した。理由は Walkthrough::error が持つ。
     Failed,
 }
 
@@ -113,27 +113,27 @@ impl std::fmt::Display for WalkthroughStepKind {
     }
 }
 
-/// ブランチのウォークスルーのヘッダ行 (`walkthroughs` テーブル)。ブランチにつき 1 つで、
+/// ブランチのウォークスルーのヘッダ行 (walkthroughs テーブル)。ブランチにつき 1 つで、
 /// 再生成すると履歴を残さずこの行を削除して作り直す。
 #[derive(Debug, Clone)]
 pub struct Walkthrough {
     pub id: String,
-    // 行の識別・監査用のフィールド。`walkthroughs` テーブルとの対応と、調査時の
-    // `Debug` 出力のために残しているが、今のところ読む呼び出し側は無い。検索は
+    // 行の識別・監査用のフィールド。walkthroughs テーブルとの対応と、調査時の
+    // Debug 出力のために残しているが、今のところ読む呼び出し側は無い。検索は
     // 呼び出し側が既に持っているブランチ文字列をキーにするし、UI はタイムスタンプを
     // 表に出さない。
     #[allow(dead_code)]
     pub branch: String,
     pub title: Option<String>,
-    // ペインのタイトルが `title` を担い、intent のステップが `summary` と同じ内容を
+    // ペインのタイトルが title を担い、intent のステップが summary と同じ内容を
     // 語るので、コンパクトなウォークスルーのペインはこれを別に描かない。
-    // `save_walkthrough` との往復で情報を落とさないために保持している。
+    // save_walkthrough との往復で情報を落とさないために保持している。
     #[allow(dead_code)]
     pub summary: Option<String>,
     pub status: WalkthroughStatus,
     pub error: Option<String>,
     /// このウォークスルーを生成した対象のブランチ先端 (HEAD コミットの OID)。
-    /// コミット追跡より前に作られた行では `None`。再生成の要求時に現在の HEAD が
+    /// コミット追跡より前に作られた行では None。再生成の要求時に現在の HEAD が
     /// これと一致するなら飛ばす。差分が変わっていない = ウォークスルーも
     /// 変わらないため。
     pub head_commit: Option<String>,
@@ -143,18 +143,18 @@ pub struct Walkthrough {
     pub updated_at: String,
 }
 
-/// ウォークスルーの順序付きステップ 1 つ (`walkthrough_steps` テーブル)。
+/// ウォークスルーの順序付きステップ 1 つ (walkthrough_steps テーブル)。
 /// ファイルと、任意で行範囲に紐づく。
 #[derive(Debug, Clone)]
 pub struct WalkthroughStep {
     pub id: String,
-    /// 所有する `Walkthrough` への外部キー。`walkthrough_steps` テーブルとの対応の
-    /// ために保持している。ステップは常に (`get_walkthrough` 経由で) 自分の
+    /// 所有する Walkthrough への外部キー。walkthrough_steps テーブルとの対応の
+    /// ために保持している。ステップは常に (get_walkthrough 経由で) 自分の
     /// ウォークスルーに絞られた状態でアクセスされるので、これを再導出する箇所は無い。
     #[allow(dead_code)]
     pub walkthrough_id: String,
-    /// 表示順。テーブルとの対応のために保持している。UI は `get_walkthrough` が
-    /// 返す既に並んだ `Vec` からステップを読むので、このフィールドで並べ直しはしない。
+    /// 表示順。テーブルとの対応のために保持している。UI は get_walkthrough が
+    /// 返す既に並んだ Vec からステップを読むので、このフィールドで並べ直しはしない。
     #[allow(dead_code)]
     pub seq: i64,
     pub file_path: String,
@@ -165,14 +165,14 @@ pub struct WalkthroughStep {
     pub body: String,
 }
 
-/// 完成したウォークスルーを保存するときに渡すステップ。`id` も `walkthrough_id` も
-/// 持たない (ストアが割り当てる。`seq` も同様にスライスの順序が示すので、ここには
+/// 完成したウォークスルーを保存するときに渡すステップ。id も walkthrough_id も
+/// 持たない (ストアが割り当てる。seq も同様にスライスの順序が示すので、ここには
 /// 繰り返さない)。
 ///
 /// スライスの順序がウォークスルーの順序であるのは意図的。MCP のツールはステップごとの
-/// `seq` も受け取るが、それを信用すると、種別ごとに番号を振る呼び出し側
+/// seq も受け取るが、それを信用すると、種別ごとに番号を振る呼び出し側
 /// (intent 0,1 / core 0,1,2 / …) がツアーを入り乱れさせたまま成功を報告できてしまう。
-/// `ReviewStore::save_walkthrough` を参照。
+/// ReviewStore::save_walkthrough を参照。
 #[derive(Debug, Clone)]
 pub struct NewWalkthroughStep {
     pub file_path: String,
@@ -184,14 +184,14 @@ pub struct NewWalkthroughStep {
 }
 
 /// 生成 1 回あたりの実時間の予算。このタスクのタイムアウトとして AI の継ぎ目へ渡す
-/// ので、`[api] command_timeout_secs` (スマート worktree の命名で数秒を想定した値)
+/// ので、[api] command_timeout_secs (スマート worktree の命名で数秒を想定した値)
 /// に頭打ちにされない。ブランチの差分を読んで語るには数分かかる。これを超えたら
 /// セッションが詰まっていると見なす。
 pub const GENERATION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// システムプロンプト。ウォークスルーとは何か、そして応答の正確な形。
 ///
-/// `plugins/conductor/commands/conductor-walkthrough.md` と対応している
+/// plugins/conductor/commands/conductor-walkthrough.md と対応している
 /// (そちらはマーケットプレイスのプラグイン利用者向けに残してあり、MCP ツール経由で
 /// 保存する) が、インストール済みのプラグインキャッシュがどのスラッシュコマンドを
 /// 持っているかに関係なく生成が動くよう、ここに埋め込んである。
@@ -247,7 +247,7 @@ else.{language_hint}"
     )
 }
 
-/// 生成が求めたインラインの注記 1 件。`question` コメントとして保存される。
+/// 生成が求めたインラインの注記 1 件。question コメントとして保存される。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GeneratedComment {
     pub file_path: String,
@@ -279,7 +279,7 @@ struct GeneratedWalkthrough {
     comments: Vec<GeneratedComment>,
 }
 
-/// 検証済みの生成結果。[`crate::review_store::ReviewStore`] へ渡せる状態。
+/// 検証済みの生成結果。[crate::review_store::ReviewStore] へ渡せる状態。
 #[derive(Debug, Clone)]
 pub struct Generated {
     pub title: String,
@@ -292,9 +292,9 @@ pub struct Generated {
 ///
 /// 外側の包み (Markdown のコードフェンス、JSON の前の一文) には寛容にする。
 /// 指示に関わらずモデルがそれらを付けてくるから。一方で中身には厳しくする。
-/// 未知の `kind` や、ファイルに紐づけられないパスをそのまま保存すると、
+/// 未知の kind や、ファイルに紐づけられないパスをそのまま保存すると、
 /// レビュアーが開けないステップとしてしか現れないため。同じデータが MCP 経由で
-/// 届いたときに `mcp_serve::tools::save_walkthrough` が行う検査と対応させてあり、
+/// 届いたときに mcp_serve::tools::save_walkthrough が行う検査と対応させてあり、
 /// 両方の入口が同じものを拒否する。
 pub fn parse_generated(raw: &str) -> Result<Generated, String> {
     let json = extract_json_object(raw)
@@ -394,8 +394,8 @@ fn sane_range(start: Option<i64>, end: Option<i64>) -> (Option<i64>, Option<i64>
 /// コードフェンスで囲まれていたり地の文が前置されていたりする応答から、
 /// JSON オブジェクトを見つける。
 ///
-/// 最初の `{` を探してから波括弧の深さを追い、文字列リテラルの中に現れる波括弧は
-/// 飛ばす。`}` を含む `body` (本文はコードを引用するので大いにあり得る) があると、
+/// 最初の { を探してから波括弧の深さを追い、文字列リテラルの中に現れる波括弧は
+/// 飛ばす。} を含む body (本文はコードを引用するので大いにあり得る) があると、
 /// そうしなければ誤った位置でオブジェクトが切れ、ユーザーには対処のしようがない
 /// パースエラーになる。
 fn extract_json_object(raw: &str) -> Option<&str> {
@@ -434,7 +434,7 @@ fn extract_json_object(raw: &str) -> Option<&str> {
 /// 生成を 1 回最後まで走らせ、パース済みのウォークスルーを返す。
 ///
 /// ブロッキング。呼び出し側はこれをバックグラウンドスレッドで実行し、結果を
-/// チャネルで報告する (`App::cmd_generate_walkthrough` を参照)。`cancel` は
+/// チャネルで報告する (App::cmd_generate_walkthrough を参照)。cancel は
 /// 下層の caller も見ているので、キャンセルされた生成はタイムアウトを待たずに
 /// 子プロセスを kill する。
 pub fn generate(
@@ -462,7 +462,7 @@ pub fn generate(
 mod tests {
     use super::*;
 
-    // ── generation_prompt: ブランチ・ベース・言語 ──────────────────────
+    // generation_prompt: ブランチ・ベース・言語
 
     #[test]
     fn generation_prompt_includes_the_branch_name() {
@@ -513,9 +513,9 @@ mod tests {
         assert!(GENERATION_SYSTEM_PROMPT.contains("working directory"));
     }
 
-    /// Conductor はどこでも `claude` を自分で起動してはならず、このモジュールが
+    /// Conductor はどこでも claude を自分で起動してはならず、このモジュールが
     /// それをしていた最後の場所だった。プロンプトは CLI も MCP のツール呼び出しも
-    /// 名指ししない。応答は `[api]` が指す先から JSON で返ってくる。
+    /// 名指ししない。応答は [api] が指す先から JSON で返ってくる。
     #[test]
     fn generation_never_names_a_cli_to_run() {
         assert!(!GENERATION_SYSTEM_PROMPT.contains("claude -p"));
@@ -525,7 +525,7 @@ mod tests {
         assert!(!prompt.contains("save_walkthrough"));
     }
 
-    // ── parse_generated ────────────────────────────────────────────────
+    // parse_generated
 
     fn reply(steps: &str) -> String {
         format!(

@@ -29,10 +29,10 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Build every platform binary FIRST and stash each as a workflow artifact.
-  # Nothing is published yet — no tag, no GitHub Release. If any target fails,
-  # the `release` job below never runs, so a half-built version is never
-  # advertised to the in-app updater.
+  # 先に全プラットフォームのバイナリをビルドし、それぞれをワークフローの artifact として保管する。
+  # この時点では何も公開しない — タグも GitHub Release も無い。いずれかのターゲットが失敗すれば
+  # 下の release ジョブは走らないので、ビルド半ばのバージョンがアプリ内アップデータに
+  # 案内されることはない。
   build:
     needs: check-version
     if: needs.check-version.outputs.version_changed == 'true'
@@ -73,11 +73,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Publish atomically: only after ALL binaries built successfully. This single
-  # step creates the tag, the GitHub Release, attaches every asset, and marks it
-  # `latest`. Because `/releases/latest` only surfaces this version once it
-  # exists, the in-app updater always finds a matching pre-built binary and never
-  # falls back to the slow source build.
+  # 公開はアトミックに行う: 全バイナリのビルドが成功したときだけ。この 1 ステップで
+  # タグの作成、GitHub Release の作成、全アセットの添付、latest への設定までをまとめて行う。
+  # /releases/latest はこのバージョンが揃って初めて見えるようになるので、アプリ内
+  # アップデータは常にビルド済みバイナリを見つけられ、遅いソースビルドへフォールバック
+  # することがない。
   release:
     needs: [check-version, build]
     if: needs.check-version.outputs.version_changed == 'true'

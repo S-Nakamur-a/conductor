@@ -1,4 +1,4 @@
-//! 全文検索 (grep) エンジン。`.gitignore` を尊重してファイルを辿り、正規表現
+//! 全文検索 (grep) エンジン。.gitignore を尊重してファイルを辿り、正規表現
 //! またはリテラルのパターンを検索する。
 
 use std::fs;
@@ -40,7 +40,7 @@ const BATCH_SIZE: usize = 50;
 
 /// 指定したファイル一覧に対して全文検索を実行する (第 1 段階のインクリメンタル検索用)。
 ///
-/// `run_search()` とほぼ同じだが、ディレクトリツリー全体を辿るのではなく
+/// run_search() とほぼ同じだが、ディレクトリツリー全体を辿るのではなく
 /// 渡されたファイルパスだけを検索する。
 pub fn run_search_files(
     root: &Path,
@@ -122,10 +122,10 @@ pub fn run_search_files(
 
 /// バックグラウンドスレッドで全文検索を実行する。
 ///
-/// `root` は検索対象の worktree ディレクトリ。
-/// `pattern` は検索クエリ (リテラルまたは正規表現)。
-/// `regex_mode` はパターンを正規表現として解釈するかどうか。
-/// `case_sensitive` は大文字小文字を区別するかどうか。
+/// root は検索対象の worktree ディレクトリ。
+/// pattern は検索クエリ (リテラルまたは正規表現)。
+/// regex_mode はパターンを正規表現として解釈するかどうか。
+/// case_sensitive は大文字小文字を区別するかどうか。
 pub fn run_search(
     root: &Path,
     pattern: &str,

@@ -1,6 +1,6 @@
-//! Assembling the text sent back to the model: success/error replies, the
-//! shared `file:line` and short-id formatting, path/blankness validation, and
-//! rendering a comment thread.
+//! モデルに返すテキストの組み立て: 成功/エラーの応答、共通の file:line と
+//! short-id のフォーマット、パス/空文字のバリデーション、コメントスレッドの
+//! レンダリング。
 
 use std::path::{Component, Path};
 
@@ -13,22 +13,22 @@ pub(super) fn ok_text(text: impl Into<String>) -> Result<CallToolResult, ErrorDa
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
 
-/// A tool-level failure: reported as a *successful* call carrying `isError`,
-/// which is what the Node server did and what lets the model read the message
-/// and correct itself.
+/// ツールレベルの失敗。isError を持つ *成功* した呼び出しとして報告する。
+/// Node サーバがそうしていたやり方であり、モデルがメッセージを読んで自分で
+/// 訂正できるようにするための形でもある。
 ///
-/// This is not simply "bad input vs. broken server": a database failure on a
-/// *write* also comes back this way, on purpose — a `save_walkthrough` or
-/// `create_comment` that fails needs the model to see why and retry, the same
-/// as a validation error. A database failure on a *read* goes out as
-/// `ErrorData` instead (via `db_error` in `tools.rs`): there is nothing the
-/// model did wrong to correct, and nothing useful it can retry differently.
+/// これは単純な「入力が悪い vs サーバが壊れている」の区別ではない。*書き込み*
+/// でのデータベース失敗も意図的にこの形で返す — save_walkthrough や
+/// create_comment が失敗したときは、バリデーションエラーと同様にモデルが
+/// 理由を見て再試行する必要がある。一方 *読み込み* でのデータベース失敗は
+/// 代わりに ErrorData として送出される（tools.rs の db_error 経由）。
+/// モデル側に訂正すべき誤りは無く、違うやり方で再試行しても意味が無いため。
 pub(super) fn err_text(text: impl Into<String>) -> Result<CallToolResult, ErrorData> {
     Ok(CallToolResult::error(vec![ContentBlock::text(text)]))
 }
 
-/// Render `file:line` or `file:start-end`, the location form used throughout
-/// the replies.
+/// file:line または file:start-end を描画する。応答全体を通じて使われる
+/// 位置表記の形式。
 pub(super) fn line_range(file_path: &str, line_start: u32, line_end: Option<u32>) -> String {
     match line_end {
         Some(end) => format!("{file_path}:{line_start}-{end}"),
@@ -36,18 +36,18 @@ pub(super) fn line_range(file_path: &str, line_start: u32, line_end: Option<u32>
     }
 }
 
-/// First 8 characters of an id — how comments are referred to in replies, short
-/// enough to read aloud and long enough to feed back as a prefix.
+/// id の先頭8文字。応答の中でコメントを参照する際の形式で、読み上げられる
+/// ほど短く、プレフィックスとして再入力できるほど長い。
 pub(super) fn short_id(id: &str) -> &str {
     let end = id.char_indices().nth(8).map_or(id.len(), |(i, _)| i);
     &id[..end]
 }
 
-/// Reject a blank required string.
+/// 必須の文字列が空だったら拒否する。
 ///
-/// The schema can only say "string"; the Node server it replaces enforced a
-/// minimum length on every one of these, and an empty comment body or step
-/// title renders as an invisible row in the TUI rather than an obvious mistake.
+/// スキーマは「string」としか言えない。これが置き換えた Node サーバはこれら
+/// すべてに最小長を強制していたし、空のコメント本文やステップタイトルは、
+/// 分かりやすい誤りとしてではなく TUI 上の見えない行として現れてしまう。
 pub(super) fn ensure_not_blank(value: &str, what: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{what} must not be empty."));
@@ -55,21 +55,23 @@ pub(super) fn ensure_not_blank(value: &str, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Normalise a caller-supplied repo-relative path, or explain why it is unusable.
+/// 呼び出し側から渡されたリポジトリ相対パスを正規化する。使えない場合は
+/// その理由を説明する。
 ///
-/// The `./` prefix is stripped **before** validating, and that order is the whole
-/// point of this function existing: `.//etc/passwd` is neither absolute nor
-/// contains `..`, so validating the raw value passes it — and stripping then
-/// turns it into `/etc/passwd`, which `Path::join` would follow straight out of
-/// the worktree. Validating the stripped form is what closes that.
+/// ./ プレフィックスはバリデーションの *前に* 剥がす。この関数が存在する
+/// 理由そのものが、この順序にある。.//etc/passwd は絶対パスでも .. を含む
+/// わけでもないので、生の値のままバリデーションすると通ってしまう —
+/// その後で剥がすと /etc/passwd になり、Path::join はこれをそのまま
+/// worktree の外へたどってしまう。剥がした後の形をバリデーションすること
+/// でこれを塞いでいる。
 ///
-/// What comes back is [`crate::repo_path::normalize`]'s canonical spelling, not
-/// merely the stripped one: the value is stored and later matched against
-/// `FileDiff::path` by string equality, so `./src/a.rs` or `src//a.rs` has to
-/// land in the database already spelled the way git spells it.
+/// 返るのは単に剥がしただけの形ではなく、[crate::repo_path::normalize] の
+/// 正規形である。この値は保存された後、文字列の完全一致で FileDiff::path
+/// と照合されるので、./src/a.rs や src//a.rs は git の綴り方ですでに
+/// データベースに入っている必要がある。
 ///
-/// Errors quote the caller's own spelling rather than the stripped form, so the
-/// message matches what it actually sent.
+/// エラーメッセージは剥がした後の形ではなく呼び出し側が実際に渡した綴りを
+/// そのまま引用する。実際に送った内容とメッセージが一致するように。
 pub(super) fn normalize_repo_relative(file_path: &str, what: &str) -> Result<String, String> {
     ensure_not_blank(file_path, what)?;
     let stripped = file_path.strip_prefix("./").unwrap_or(file_path);
@@ -77,19 +79,19 @@ pub(super) fn normalize_repo_relative(file_path: &str, what: &str) -> Result<Str
         format!("{what} must be repo-relative and must not escape the repo root: {file_path}")
     })?;
     let normalized = crate::repo_path::normalize(stripped);
-    // Normalisation can only remove `.`/empty segments, so it cannot introduce
-    // an escape — but it can empty the path out entirely (`"./"`), which would
-    // otherwise be stored as a step anchored to nothing.
+    // 正規化が取り除けるのは ./ や空のセグメントだけなので、脱出を新たに
+    // 生み出すことは無い — ただしパスを完全に空にしてしまうことはあり得る
+    // （"./" など）。それを許すと、何にも紐付かないステップが保存されてしまう。
     ensure_not_blank(&normalized, what)?;
     Ok(normalized)
 }
 
-/// Reject a path that would escape the repository root.
+/// リポジトリルートから脱出してしまうパスを拒否する。
 ///
-/// Comments and walkthrough steps are keyed by repo-relative path and joined
-/// onto a worktree root to be read back (`viewer::content`); `Path::join`
-/// discards its left side when handed an absolute path, so an unchecked value
-/// here would read files outside the worktree entirely.
+/// コメントとウォークスルーのステップはリポジトリ相対パスをキーにしており、
+/// 読み戻す際に worktree のルートと結合される（viewer::content）。
+/// Path::join は絶対パスを渡されると左側を捨ててしまうので、ここで
+/// チェックしない値は worktree の外にあるファイルをまるごと読んでしまう。
 pub(super) fn ensure_repo_relative(file_path: &str, what: &str) -> Result<(), String> {
     if Path::new(file_path).is_absolute() {
         return Err(format!(
@@ -107,7 +109,7 @@ pub(super) fn ensure_repo_relative(file_path: &str, what: &str) -> Result<(), St
     Ok(())
 }
 
-/// Render a comment and its replies as the markdown-ish block the model reads.
+/// コメントとその返信群を、モデルが読む Markdown 風のブロックとして描画する。
 pub(super) fn render_thread(comment: &ReviewComment, replies: &[ReviewReply]) -> String {
     let mut text = format!(
         "## {} — {}\n",
@@ -158,9 +160,9 @@ mod tests {
         assert_eq!(short_id("abc"), "abc");
     }
 
-    /// Regression: stripping `./` after validating let `.//etc/passwd` through
-    /// as `/etc/passwd`, which `Path::join` follows out of the worktree. The
-    /// strip has to happen first.
+    /// リグレッション対策: バリデーション後に ./ を剥がすと、.//etc/passwd が
+    /// /etc/passwd として通ってしまい、Path::join が worktree の外へたどって
+    /// しまっていた。剥がすのは先にやらないといけない。
     #[test]
     fn normalize_repo_relative_rejects_paths_that_strip_into_absolute() {
         assert!(normalize_repo_relative(".//etc/passwd", "file_path").is_err());
@@ -170,8 +172,8 @@ mod tests {
         assert!(normalize_repo_relative("", "file_path").is_err());
     }
 
-    /// The ordinary cases must survive the above: a plain relative path is
-    /// untouched, and a single `./` prefix is stripped.
+    /// 上の対策を入れても通常のケースは生き残らないといけない: 素の相対
+    /// パスはそのまま、先頭の ./ 1つだけは剥がされる。
     #[test]
     fn normalize_repo_relative_keeps_ordinary_paths() {
         assert_eq!(
@@ -184,9 +186,10 @@ mod tests {
         );
     }
 
-    /// Every spelling that means `src/foo.rs` has to *become* `src/foo.rs`
-    /// before it is stored: the diff list matches these by string equality, so
-    /// a stored `./src/foo.rs` is a step that can never be jumped to.
+    /// src/foo.rs を意味するどんな綴りも、保存される前に src/foo.rs に
+    /// *ならなければ* いけない。差分リストはこれらを文字列の完全一致で
+    /// 照合するので、./src/foo.rs のまま保存されたステップは決してジャンプ
+    /// できない。
     #[test]
     fn normalize_repo_relative_canonicalises_every_spelling() {
         for spelling in [
@@ -205,16 +208,16 @@ mod tests {
         }
     }
 
-    /// A path that normalises away to nothing is rejected rather than stored as
-    /// an anchor to no file at all.
+    /// 正規化すると何も残らなくなるパスは、何にも紐付かないアンカーとして
+    /// 保存されるのではなく拒否される。
     #[test]
     fn normalize_repo_relative_rejects_a_path_that_normalises_to_empty() {
         assert!(normalize_repo_relative("./", "file_path").is_err());
         assert!(normalize_repo_relative(".", "file_path").is_err());
     }
 
-    /// The Node server only rejected absolute paths; `..` reaches the same
-    /// `join`-then-read sink, so it is rejected here too.
+    /// Node サーバは絶対パスだけを拒否していたが、.. も同じ join してから
+    /// 読み込むという経路に到達するので、ここでも拒否する。
     #[test]
     fn ensure_repo_relative_catches_absolute_and_parent_dir() {
         assert!(ensure_repo_relative("/etc/passwd", "file_path").is_err());
@@ -224,7 +227,7 @@ mod tests {
         assert!(ensure_repo_relative("./src/foo.rs", "file_path").is_ok());
     }
 
-    // ── render_thread ───────────────────────────────────────────────
+    // render_thread
 
     fn sample_comment(branch: Option<&str>) -> ReviewComment {
         ReviewComment {
@@ -254,7 +257,7 @@ mod tests {
         }
     }
 
-    /// Branch present, replies present: every optional section renders.
+    /// branch あり、replies あり: 全てのオプションのセクションが描画される。
     #[test]
     fn render_thread_with_branch_and_replies() {
         let text = render_thread(&sample_comment(Some("feature-x")), &[sample_reply()]);
@@ -267,9 +270,8 @@ mod tests {
         assert!(text.contains("\n**claude** (2026-07-30 00:01:00):\nSounds good.\n"));
     }
 
-    /// Branch absent, replies absent: both optional sections are gone, and the
-    /// worktree line runs straight into `Created:` with no `| Branch:` in
-    /// between.
+    /// branch なし、replies なし: 両方のオプションセクションが消え、worktree の
+    /// 行は | Branch: を挟まずそのまま Created: に続く。
     #[test]
     fn render_thread_without_branch_or_replies() {
         let text = render_thread(&sample_comment(None), &[]);
@@ -279,8 +281,8 @@ mod tests {
         assert!(!text.contains("Replies"));
     }
 
-    /// Branch present, replies absent: the `| Branch:` suffix renders without
-    /// pulling in a `### Replies` section.
+    /// branch あり、replies なし: | Branch: の接尾部は描画されるが
+    /// ### Replies セクションは付いてこない。
     #[test]
     fn render_thread_with_branch_but_no_replies() {
         let text = render_thread(&sample_comment(Some("feature-x")), &[]);
@@ -289,7 +291,7 @@ mod tests {
         assert!(!text.contains("Replies"));
     }
 
-    /// Branch absent, replies present: the reverse combination from above.
+    /// branch なし、replies あり: 上とは逆の組み合わせ。
     #[test]
     fn render_thread_without_branch_but_with_replies() {
         let text = render_thread(&sample_comment(None), &[sample_reply()]);

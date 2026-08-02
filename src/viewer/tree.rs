@@ -1,6 +1,6 @@
-//! File tree construction and navigation — walking the filesystem into a
-//! flattened `Vec<FileTreeEntry>`, lazy-loading directory children, expand /
-//! collapse, and revealing a path in the tree.
+//! ファイルツリーの構築とナビゲーション — ファイルシステムを歩いてフラットな
+//! Vec<FileTreeEntry> を作る、ディレクトリの子要素の遅延読み込み、展開/折りたたみ、
+//! ツリー中のパスの reveal。
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -43,26 +43,24 @@ impl ViewerState {
         self.invalidate_visible_cache();
     }
 
-    /// Build the file tree by walking the filesystem under `worktree_path`.
+    /// worktree_path 以下のファイルシステムを歩いてファイルツリーを構築する。
     ///
-    /// Directories named `.git` are skipped. The tree is sorted so that
-    /// directories come before files at each level, and entries are
-    /// alphabetically ordered within each group.
+    /// .git という名前のディレクトリはスキップする。ツリーは各階層でディレクトリが
+    /// ファイルより前に来るようソートされ、各グループ内はアルファベット順になる。
     ///
-    /// Preserves the currently open file, scroll position, and directory
-    /// expansion state so that file-watcher refreshes don't disrupt the
-    /// user's view. If the previously open file was deleted, the viewer
-    /// naturally resets to "no file selected".
+    /// 現在開いているファイル・スクロール位置・ディレクトリの展開状態を保持するので、
+    /// ファイルウォッチャーによる再構築がユーザーの見ている画面を崩さない。
+    /// 以前開いていたファイルが削除されていた場合は、自然に「ファイル未選択」に戻る。
     ///
-    /// Returns `true` when the set of visible entries changed, so callers can
-    /// skip a repaint when a periodic refresh found nothing new.
+    /// 可視エントリの集合が変化した場合は true を返す。呼び出し側は、定期リフレッシュで
+    /// 変化が無かった場合の再描画をスキップできる。
     ///
-    /// 根を受け取る唯一の入口。ここで [`ViewerState::root`] を確定させ、以降
+    /// 根を受け取る唯一の入口。ここで [ViewerState::root] を確定させ、以降
     /// ファイルを開く・子を読む・検索候補を集めるのはすべてこの根に対して行う。
     pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) -> bool {
         self.tree.root = worktree_path.to_path_buf();
 
-        // Save state before clearing.
+        // クリアする前に状態を退避しておく。
         let prev_file = self.content.current_file.clone();
         let prev_file_scroll = self.content.file_scroll;
         let prev_h_scroll = self.content.h_scroll;
@@ -73,8 +71,8 @@ impl ViewerState {
             .filter(|e| e.is_dir && e.is_expanded)
             .map(|e| e.path.clone())
             .collect();
-        // Remember the cursor's entry and the full path set so we can restore
-        // the cursor and detect whether the rebuilt tree actually changed.
+        // カーソルが指すエントリと全パス集合を覚えておく。カーソル位置を復元し、
+        // 再構築後のツリーが実際に変化したかを検出するために使う。
         let prev_selected_path = self
             .tree
             .file_tree
@@ -82,16 +80,16 @@ impl ViewerState {
             .map(|e| e.path.clone());
         let prev_paths: Vec<String> = self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
 
-        // Refresh the git status snapshot once per rebuild (not per entry —
-        // see D5). Falls back to an empty map rather than failing the whole
-        // tree rebuild over a dimming detail — but log it, because the empty
-        // map is not a neutral fallback: with no entries, everything reads as
-        // `Tracked` in the tree *and* as `Committed` (green) in Changed files,
-        // so the UI silently asserts the opposite of "you have unstaged work".
-        // A plain non-git directory takes this path legitimately (there is no
-        // repo to discover); a transient failure inside a real repo — an
-        // `index.lock` held by a concurrent git command, say — looks identical
-        // on screen, so the log is the only way to tell them apart.
+        // git status のスナップショットは再構築ごとに1回だけ取得する（エントリごとではない）。
+        // 取得に失敗しても、減光表示の細部のためにツリー再構築全体を失敗させるのではなく
+        // 空のマップにフォールバックする。ただしログには残す。空のマップは無害な
+        // フォールバックではない — エントリが無いと、ツリー上は全て Tracked、
+        // Changed files 上は全て Committed（緑）に見えてしまい、UI が
+        // 「未ステージの変更がある」の正反対を黙って主張してしまう。
+        // git 管理外のディレクトリを開いた場合はこの経路を正当に通る（発見すべき
+        // リポジトリが無いのだから）。一方、実在するリポジトリ内での一時的な失敗
+        // （並行して走る git コマンドが index.lock を握っている、など）は画面上
+        // 見分けがつかないので、ログだけが両者を区別する手段になる。
         self.tree.git_status = match GitStatusMap::load(worktree_path) {
             Ok(map) => map,
             Err(e) => {
@@ -103,7 +101,7 @@ impl ViewerState {
             }
         };
 
-        // Rebuild the tree from disk.
+        // ディスクからツリーを再構築する。
         self.tree.file_tree.clear();
         self.invalidate_visible_cache();
         Self::walk_dir(
@@ -114,8 +112,8 @@ impl ViewerState {
             &self.tree.git_status,
         );
 
-        // Restore directory expansion state. For lazily-loaded dirs, also
-        // load their children so the tree looks the same as before the refresh.
+        // ディレクトリの展開状態を復元する。遅延読み込みのディレクトリについては
+        // 子要素も読み込み、リフレッシュ前と同じ見た目のツリーにする。
         let mut idx = 0;
         while idx < self.tree.file_tree.len() {
             if self.tree.file_tree[idx].is_dir
@@ -129,15 +127,15 @@ impl ViewerState {
             idx += 1;
         }
 
-        // Re-open the previously viewed file if it still exists.
+        // 以前開いていたファイルがまだ存在するなら再度開く。
         if let Some(ref rel_path) = prev_file {
             let full = worktree_path.join(rel_path);
             if full.is_file() {
-                // Preserve the viewer's *mode* across tree refreshes so that
-                // file-watcher / periodic refreshes don't kick the user out of
-                // the unified diff view or the SUMMARY pseudo-file. `open_file`
-                // below goes through `exit_diff_mode`, which clears both, so
-                // every mode flag has to be captured here and put back after.
+                // ツリーのリフレッシュをまたいで viewer の「モード」を保持し、
+                // ファイルウォッチャーや定期リフレッシュが unified diff 表示や
+                // SUMMARY 疑似ファイルからユーザーを追い出さないようにする。
+                // 以下の open_file は exit_diff_mode を経由し両方をクリアしてしまうので、
+                // 全てのモードフラグをここで退避し、後で戻す必要がある。
                 let was_diff_mode = self.diff_view.diff_mode;
                 let prev_diff_lines = if was_diff_mode {
                     std::mem::take(&mut self.diff_view.diff_view_lines)
@@ -148,10 +146,10 @@ impl ViewerState {
                 let prev_diff_max_line_no = self.diff_view.diff_view_max_line_no;
                 let was_summary = self.show_summary;
                 let prev_summary_scroll = self.summary_scroll;
-                // `open_file` resets the rendered-markdown scroll (it indexes a
-                // specific document), which is right when the *user* opens a
-                // file and wrong here — a watcher or the 3s poll would yank a
-                // reader back to the top of the prose mid-read.
+                // open_file はレンダリング済み markdown のスクロールをリセットする
+                // （特定のドキュメントに紐づくインデックスだから）。これはユーザー自身が
+                // ファイルを開いた場合には正しい挙動だが、ここでは不適切 — ウォッチャーや
+                // 3秒ポーリングが、読んでいる途中の読者を文章の先頭に引き戻してしまう。
                 let prev_md_scroll = self.md_scroll;
 
                 self.open_file(rel_path, tab_width);
@@ -165,25 +163,25 @@ impl ViewerState {
                     self.diff_view.diff_view_scroll = prev_diff_scroll;
                     self.diff_view.diff_view_max_line_no = prev_diff_max_line_no;
                 }
-                // Mutually exclusive with diff mode (see `enter_summary_view`),
-                // so this can never fight the branch above.
+                // diff モードとは排他（enter_summary_view を参照）なので、
+                // 上のブロックと競合することはない。
                 if was_summary {
                     self.show_summary = true;
                     self.summary_scroll = prev_summary_scroll;
                 }
 
-                // Try to restore tree_selected to point at the file entry.
+                // tree_selected をファイルエントリに合わせて復元しようとする。
                 if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == *rel_path) {
                     self.tree.tree_selected = idx;
                 }
             }
-            // If the file was deleted, we naturally stay at "no file selected".
+            // ファイルが削除されていた場合は、自然に「ファイル未選択」のまま留まる。
         }
 
-        // Keep the tree cursor anchored across rebuilds. When a file is open the
-        // block above already pointed the cursor at it; otherwise restore the
-        // previously selected entry so watcher/periodic refreshes don't snap the
-        // cursor back to the top.
+        // 再構築をまたいでツリーのカーソルを固定する。ファイルが開いている場合は
+        // 上のブロックで既にカーソルをそこに合わせている。そうでなければ以前選択していた
+        // エントリを復元し、ウォッチャーや定期リフレッシュでカーソルが先頭に
+        // 巻き戻されないようにする。
         let anchored_to_open_file = prev_file.as_ref().is_some_and(|f| {
             self.tree
                 .file_tree
@@ -208,8 +206,7 @@ impl ViewerState {
             .ne(prev_paths.iter())
     }
 
-    /// Toggle expand / collapse of the directory at index `idx` in
-    /// `file_tree`.
+    /// file_tree のインデックス idx にあるディレクトリの展開/折りたたみを切り替える。
     pub fn toggle_dir(&mut self, idx: usize) {
         if let Some(entry) = self.tree.file_tree.get_mut(idx)
             && entry.is_dir
@@ -219,8 +216,8 @@ impl ViewerState {
         }
     }
 
-    /// Expand the directory at index `idx` (no-op if already expanded or if
-    /// the entry is a file).
+    /// インデックス idx のディレクトリを展開する（既に展開済み、もしくはファイル
+    /// エントリなら何もしない）。
     pub fn expand_dir(&mut self, idx: usize) {
         if let Some(entry) = self.tree.file_tree.get_mut(idx)
             && entry.is_dir
@@ -231,8 +228,8 @@ impl ViewerState {
         }
     }
 
-    /// Collapse the directory at index `idx` (no-op if already collapsed or if
-    /// the entry is a file).
+    /// インデックス idx のディレクトリを折りたたむ（既に折りたたみ済み、もしくは
+    /// ファイルエントリなら何もしない）。
     pub fn collapse_dir(&mut self, idx: usize) {
         if let Some(entry) = self.tree.file_tree.get_mut(idx)
             && entry.is_dir
@@ -243,16 +240,16 @@ impl ViewerState {
         }
     }
 
-    /// Invalidate the cached visible indices. Must be called whenever the
-    /// tree structure changes (expand/collapse, load children, reload tree).
+    /// キャッシュ済みの可視インデックスを無効化する。ツリー構造が変わるたび
+    /// （展開/折りたたみ、子の読み込み、ツリーの再読み込み）に必ず呼ぶこと。
     pub fn invalidate_visible_cache(&mut self) {
         self.tree.cached_visible_indices = None;
     }
 
-    /// Return indices into `file_tree` that are currently visible, taking
-    /// collapsed directories into account. Results are cached (as `Rc`) until
-    /// `invalidate_visible_cache()` is called, so repeated calls within
-    /// the same frame are essentially free.
+    /// 折りたたまれたディレクトリを考慮した上で、現在可視な file_tree の
+    /// インデックス一覧を返す。結果は Rc としてキャッシュされ、
+    /// invalidate_visible_cache() が呼ばれるまで保持されるので、同一フレーム内での
+    /// 繰り返し呼び出しは実質コストゼロになる。
     pub fn visible_indices(&mut self) -> Rc<Vec<usize>> {
         if let Some(ref cached) = self.tree.cached_visible_indices {
             return Rc::clone(cached);
@@ -282,13 +279,13 @@ impl ViewerState {
         rc
     }
 
-    // -- Tree reveal ----------------------------------------------------------
+    // ツリーの reveal
 
-    /// Reveal and select a file in the explorer tree by its relative path.
+    /// 相対パスを指定して、explorer ツリー内でファイルを reveal し選択する。
     ///
-    /// Walks the path segments, expanding (and lazy-loading) each parent
-    /// directory along the way, then sets `tree_selected` to the target
-    /// entry and adjusts scroll so it is visible.
+    /// パスのセグメントを順に辿りながら、途中の各親ディレクトリを展開
+    /// （必要なら遅延読み込みも）していき、最後に対象エントリへ tree_selected を
+    /// 合わせ、それが見えるようスクロールを調整する。
     pub fn reveal_file_in_tree(&mut self, relative_path: &str) {
         let segments: Vec<&str> = relative_path.split('/').collect();
         if segments.is_empty() {
@@ -305,20 +302,20 @@ impl ViewerState {
                 format!("{parent_path}/{segment}")
             };
 
-            // Find the entry with matching path.
+            // パスが一致するエントリを探す。
             let Some(idx) = self
                 .tree
                 .file_tree
                 .iter()
                 .position(|e| e.path == target_path)
             else {
-                return; // Entry not found — cannot reveal.
+                return; // エントリが見つからない — reveal できない。
             };
 
             if is_last {
-                // Select the target file/dir.
+                // 対象のファイル/ディレクトリを選択する。
                 self.tree.tree_selected = idx;
-                // Adjust scroll so the item is visible.
+                // その項目が見えるようスクロールを調整する。
                 let visible = self.visible_indices();
                 if let Some(vis_pos) = visible.iter().position(|&vi| vi == idx) {
                     let height = self.explorer.explorer_tree_height;
@@ -328,7 +325,7 @@ impl ViewerState {
                     }
                 }
             } else {
-                // Intermediate directory — ensure children are loaded and expand.
+                // 途中のディレクトリ — 子要素が読み込まれていることを確認し展開する。
                 self.ensure_children_loaded(idx);
                 if let Some(entry) = self.tree.file_tree.get_mut(idx)
                     && !entry.is_expanded
@@ -342,14 +339,13 @@ impl ViewerState {
         }
     }
 
-    // -- Internal helpers -----------------------------------------------------
+    // 内部ヘルパー
 
-    /// Maximum recursion depth for the file tree walker.
+    /// ファイルツリー走査の最大再帰深度。
     const MAX_DEPTH: usize = 8;
 
-    /// Directories that are skipped during the file tree walk because they
-    /// tend to contain a very large number of files and are rarely useful to
-    /// browse interactively.
+    /// ファイルツリー走査時にスキップするディレクトリ。ファイル数が非常に多くなりがちで、
+    /// 対話的に閲覧する価値がほとんどないもの。
     const SKIP_DIRS: &[&str] = &[
         ".git",
         "node_modules",
@@ -372,9 +368,8 @@ impl ViewerState {
         ".output",
     ];
 
-    /// Lazily load the immediate children of the directory at `idx` in
-    /// `file_tree`. No-op if the entry is not a directory or if children are
-    /// already loaded.
+    /// file_tree のインデックス idx にあるディレクトリの直接の子要素を遅延読み込みする。
+    /// エントリがディレクトリでない、または既に子要素が読み込み済みの場合は何もしない。
     pub fn ensure_children_loaded(&mut self, idx: usize) {
         let (rel_path, child_depth) = match self.tree.file_tree.get(idx) {
             Some(e) if e.is_dir && !e.children_loaded => (e.path.clone(), e.depth + 1),
@@ -401,7 +396,7 @@ impl ViewerState {
         let insert_pos = idx + 1;
         let count = children.len();
 
-        // Adjust tree_selected if it's at or after the insertion point.
+        // 挿入位置以降にある場合は tree_selected を調整する。
         if self.tree.tree_selected >= insert_pos {
             self.tree.tree_selected += count;
         }
@@ -410,8 +405,7 @@ impl ViewerState {
         self.invalidate_visible_cache();
     }
 
-    /// Populate the filename search cache by walking the entire filesystem
-    /// tree under the tree's root.
+    /// ツリーの根以下のファイルシステム全体を歩き、ファイル名検索キャッシュを構築する。
     pub fn populate_filename_search_cache(&mut self) {
         self.filename_search.filename_search_all_files.clear();
         Self::collect_all_file_paths(
@@ -422,10 +416,9 @@ impl ViewerState {
         );
     }
 
-    /// Recursively collect all file paths under `dir`, skipping the same
-    /// directories as `walk_dir` / `SKIP_DIRS`.  Only file paths (not
-    /// directories) are appended to `paths`, stored as relative paths from
-    /// `root`.
+    /// dir 以下の全てのファイルパスを再帰的に収集する。スキップするディレクトリは
+    /// walk_dir / SKIP_DIRS と同じ。ファイルパスのみ（ディレクトリは含まない）を
+    /// paths に追加し、root からの相対パスとして格納する。
     fn collect_all_file_paths(root: &Path, dir: &Path, depth: usize, paths: &mut Vec<String>) {
         if depth > Self::MAX_DEPTH {
             return;
@@ -453,16 +446,14 @@ impl ViewerState {
         }
     }
 
-    /// Read the immediate children of `dir` and append them to `entries`,
-    /// stamping each with its [`TreeGitState`] from `git_status`.
+    /// dir の直接の子要素を読み、entries に追加する。各エントリには git_status から
+    /// 求めた [TreeGitState] を刻む。
     ///
-    /// Does not recurse: child directories are pushed collapsed with
-    /// `children_loaded: false`, and `ensure_children_loaded` calls back here
-    /// to fill one in when the user expands it. Serving both the initial walk
-    /// and lazy expansion from one function is deliberate — they were separate
-    /// copies of identical logic until the `git_status` parameter had to be
-    /// threaded through both, at which point the next divergence was only a
-    /// matter of time.
+    /// 再帰はしない: 子ディレクトリは children_loaded: false の折りたたみ状態で
+    /// 積まれ、ユーザーが展開したときに ensure_children_loaded がここに戻ってきて
+    /// 埋める。初回の走査と遅延展開の両方をこの1つの関数でまかなうのは意図的な設計。
+    /// もともとは同一ロジックの別々のコピーだったが、git_status パラメータを
+    /// 両方に通す必要が出たとき、次の乖離が発生するのは時間の問題だった。
     pub fn walk_dir(
         root: &Path,
         dir: &Path,
@@ -478,7 +469,7 @@ impl ViewerState {
             return;
         };
 
-        // Collect and sort: directories first, then files, alphabetically.
+        // 収集してソートする: ディレクトリを先に、ファイルを後に、それぞれアルファベット順。
         let mut children: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
 
         children.sort_by(|a, b| {
@@ -497,7 +488,7 @@ impl ViewerState {
             let child_path = child.path();
             let is_dir = child_path.is_dir();
 
-            // Skip known heavy directories.
+            // 既知の重いディレクトリはスキップする。
             if is_dir && Self::SKIP_DIRS.contains(&name.as_str()) {
                 continue;
             }

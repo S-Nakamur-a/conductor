@@ -1,21 +1,21 @@
-//! Tests for the diff_state module: inline segment emphasis, case-only
-//! rename filtering, display-list navigation edge cases, and base-ref
-//! resolution (remote-tracking refs, tags, OIDs, and unresolvable bases not
-//! taking down the uncommitted diff with them).
+//! diff_state モジュールのテスト。インラインセグメントの強調、大文字小文字だけの
+//! リネームのフィルタリング、display list ナビゲーションのエッジケース、
+//! ベース ref の解決(リモート追跡 ref・タグ・OID、および解決不能なベースが
+//! 未コミット diff まで巻き込まないこと)を検証する。
 
 use similar::{ChangeTag, TextDiff};
 
-// ── Shared git-repo builders for the base-ref-resolution tests below ──────
+// 以下のベース ref 解決テストで共有する git リポジトリ構築ヘルパー
 
-/// A throwaway commit signature; identity doesn't matter for these tests.
+/// 使い捨てのコミット署名。これらのテストでは identity は問題にならない。
 fn test_signature() -> git2::Signature<'static> {
     git2::Signature::now("test", "test@test.com").unwrap()
 }
 
-/// Create a commit with the given flat file contents on top of `parent`
-/// (root commit if `None`). Files already in the parent's tree are carried
-/// over unchanged. Does not update any ref — callers point branches/tags at
-/// the returned oid explicitly, so a test controls exactly which refs exist.
+/// parent(None ならルートコミット)の上に、指定したフラットなファイル内容で
+/// コミットを作る。parent のツリーに既にあるファイルはそのまま引き継がれる。
+/// ref は一切更新しない。呼び出し側が明示的にブランチ/タグを返り値の oid に
+/// 向けるので、どの ref が存在するかはテストが完全に制御する。
 fn commit_files(
     repo: &git2::Repository,
     parent: Option<&git2::Commit>,
@@ -35,8 +35,8 @@ fn commit_files(
         .unwrap()
 }
 
-/// Create (or move) local branch `name` to `oid`, make it HEAD, and check it
-/// out so the workdir reflects the commit's tree.
+/// ローカルブランチ name を oid に作成(または移動)し、HEAD にした上で
+/// checkout して workdir がそのコミットのツリーを反映するようにする。
 fn checkout_branch(repo: &git2::Repository, name: &str, oid: git2::Oid) {
     let commit = repo.find_commit(oid).unwrap();
     repo.branch(name, &commit, true).unwrap();
@@ -45,8 +45,8 @@ fn checkout_branch(repo: &git2::Repository, name: &str, oid: git2::Oid) {
         .unwrap();
 }
 
-/// Create a remote-tracking ref `refs/remotes/<name>` pointing at `oid`,
-/// without any actual remote configured.
+/// 実際のリモートを設定せずに、oid を指すリモート追跡 ref refs/remotes/<name>
+/// を作る。
 fn set_remote_tracking_ref(repo: &git2::Repository, name: &str, oid: git2::Oid) {
     repo.reference(&format!("refs/remotes/{name}"), oid, true, "test")
         .unwrap();
@@ -68,12 +68,12 @@ fn test_inline_segments_populated_for_replace() {
     }
 }
 
-/// Test that case-only path differences with identical content are filtered out.
+/// パスが大文字小文字だけ異なり内容が同一な場合、フィルタで除外されることを検証する。
 ///
-/// Creates a git repo where the tree contains entries that differ only in
-/// case (e.g. `Photo.png` vs `photo.png`).  On case-insensitive
-/// filesystems these refer to the same file, and `compute_diff_range`
-/// should exclude them when the blob content is identical.
+/// ツリーに大文字小文字だけが異なるエントリ(例: Photo.png と photo.png)を
+/// 持つ git リポジトリを作る。大文字小文字を区別しないファイルシステムでは
+/// これらは同じファイルを指すので、blob の内容が同一なら compute_diff_range
+/// はこれらを除外すべきである。
 #[test]
 fn test_case_only_rename_filtered_out() {
     use super::model::DiffRange;
@@ -82,7 +82,7 @@ fn test_case_only_rename_filtered_out() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
-    // ── Initial commit on "main" with "Photo.png" ──
+    // "main" 上に "Photo.png" を持つ最初のコミット
     let blob_oid = repo.blob(b"image data").unwrap();
     let mut tb = repo.treebuilder(None).unwrap();
     tb.insert("Photo.png", blob_oid, 0o100644).unwrap();
@@ -95,7 +95,7 @@ fn test_case_only_rename_filtered_out() {
         .unwrap();
     let commit1 = repo.find_commit(commit1).unwrap();
 
-    // ── Second commit on "feature" with "photo.png" (case change only, same blob) ──
+    // "feature" 上に "photo.png" を持つ2番目のコミット(大文字小文字のみ変更、blob は同一)
     let mut tb2 = repo.treebuilder(None).unwrap();
     tb2.insert("photo.png", blob_oid, 0o100644).unwrap();
     let tree2_oid = tb2.write().unwrap();
@@ -112,11 +112,11 @@ fn test_case_only_rename_filtered_out() {
         )
         .unwrap();
 
-    // Point HEAD at feature.
+    // HEAD を feature に向ける。
     repo.set_head_detached(commit2).unwrap();
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
         .unwrap();
-    // Also create the local branch ref so compute_diff_range can find it.
+    // compute_diff_range が見つけられるよう、ローカルブランチ ref も作っておく。
     repo.branch("feature", &repo.find_commit(commit2).unwrap(), true)
         .unwrap();
     repo.set_head("refs/heads/feature").unwrap();
@@ -124,7 +124,7 @@ fn test_case_only_rename_filtered_out() {
     let files =
         DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false, 4).unwrap();
 
-    // The case-only rename with identical content should be filtered out.
+    // 内容が同一の大文字小文字だけのリネームは除外されるべき。
     assert!(
         files.is_empty(),
         "case-only rename with same content should be excluded, got: {:?}",
@@ -132,7 +132,7 @@ fn test_case_only_rename_filtered_out() {
     );
 }
 
-/// Test that a case rename WITH content changes is NOT filtered out.
+/// 内容変更を伴う大文字小文字リネームはフィルタで除外されないことを検証する。
 #[test]
 fn test_case_rename_with_content_change_kept() {
     use super::model::DiffRange;
@@ -141,7 +141,7 @@ fn test_case_rename_with_content_change_kept() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
-    // ── Initial commit on "main" with "Photo.png" ──
+    // "main" 上に "Photo.png" を持つ最初のコミット
     let blob1 = repo.blob(b"image data v1").unwrap();
     let mut tb = repo.treebuilder(None).unwrap();
     tb.insert("Photo.png", blob1, 0o100644).unwrap();
@@ -154,7 +154,7 @@ fn test_case_rename_with_content_change_kept() {
         .unwrap();
     let commit1 = repo.find_commit(commit1).unwrap();
 
-    // ── Second commit: case change + content change ──
+    // 2番目のコミット: 大文字小文字の変更 + 内容変更
     let blob2 = repo.blob(b"image data v2 -- updated").unwrap();
     let mut tb2 = repo.treebuilder(None).unwrap();
     tb2.insert("photo.png", blob2, 0o100644).unwrap();
@@ -182,17 +182,17 @@ fn test_case_rename_with_content_change_kept() {
     let files =
         DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false, 4).unwrap();
 
-    // The rename with actual content changes should still appear.
+    // 実際に内容変更を伴うリネームは表示されるべき。
     assert!(
         !files.is_empty(),
         "case rename with content change should NOT be filtered out"
     );
 }
 
-/// Regression: collapsing an already-collapsed directory (or expanding an
-/// already-expanded one) must be a no-op, not a panic. A `clippy --fix`
-/// collapsible_match auto-fix once turned the inner `if` into a match guard,
-/// which let these cases fall through to the `unreachable!()` arm.
+/// リグレッション: 既に折りたたまれているディレクトリを折りたたむ(または既に
+/// 展開されているものを展開する)操作は no-op であるべきで panic してはならない。
+/// clippy --fix の collapsible_match 自動修正がかつて内側の if を match ガードに
+/// 変えてしまい、これらのケースが unreachable!() アームまで落ちてしまっていた。
 #[test]
 fn collapse_already_collapsed_dir_does_not_panic() {
     use super::*;
@@ -203,7 +203,7 @@ fn collapse_already_collapsed_dir_does_not_panic() {
         depth: 0,
         collapsed: true,
     }];
-    ds.collapse_section(0); // must not panic
+    ds.collapse_section(0); // panic してはならない
 }
 
 #[test]
@@ -216,12 +216,12 @@ fn expand_already_expanded_dir_does_not_panic() {
         depth: 0,
         collapsed: false,
     }];
-    ds.expand_section(0); // must not panic
+    ds.expand_section(0); // panic してはならない
 }
 
-/// `display_index_for_path` is the reverse of `resolve_file` — used to
-/// re-sync the diff list's cursor when a file is opened by path (e.g.
-/// jumping to a walkthrough step) rather than by list index.
+/// display_index_for_path は resolve_file の逆であり、ファイルがリストの
+/// インデックスではなくパス(walkthrough のステップへのジャンプなど)で開かれた
+/// 際に diff リストのカーソルを再同期するために使う。
 #[test]
 fn display_index_for_path_finds_committed_and_uncommitted_files() {
     use super::*;
@@ -252,9 +252,9 @@ fn display_index_for_path_finds_committed_and_uncommitted_files() {
     assert_eq!(ds.display_index_for_path("src/missing.rs"), None);
 }
 
-// ── Tolerant path resolution (walkthrough steps / comment anchors) ──────
+// 寛容なパス解決(walkthrough のステップ / コメントのアンカー)
 
-/// A `DiffState` whose committed diff touches `paths`, display list built.
+/// コミット済み diff が paths に触れる DiffState を作り、display list を構築する。
 fn diff_state_with(paths: &[&str]) -> super::DiffState {
     use super::*;
     let mut ds = DiffState::new("main", DiffViewMode::Unified);
@@ -271,9 +271,9 @@ fn diff_state_with(paths: &[&str]) -> super::DiffState {
     ds
 }
 
-/// The bug this whole change exists for: a step saved as `./src/b.rs` (or with
-/// a `git diff` `b/` prefix, or a doubled slash) names a file that *is* in the
-/// diff, and must resolve to the diff's own spelling of it.
+/// この変更全体の存在理由となったバグ: ./src/b.rs(あるいは git diff の b/
+/// プレフィックス付き、または連続スラッシュ)として保存されたステップは、diff に
+/// 実際に含まれるファイルを指しており、diff 自身の表記に解決されなければならない。
 #[test]
 fn resolve_changed_path_accepts_alternate_spellings() {
     let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs", "top.txt"]);
@@ -285,15 +285,16 @@ fn resolve_changed_path_accepts_alternate_spellings() {
             "spelling: {spelling}"
         );
     }
-    // `git diff`'s a/ and b/ prefixes, left on the path by the generator.
+    // git diff の a/ と b/ プレフィックス。生成側がパスに残したもの。
     assert_eq!(ds.resolve_changed_path("b/src/a.rs").as_deref(), Some("src/a.rs"));
     assert_eq!(ds.resolve_changed_path("a/top.txt").as_deref(), Some("top.txt"));
-    // Written relative to a subdirectory rather than the repo root.
+    // リポジトリルートではなくサブディレクトリからの相対パスで書かれたもの。
     assert_eq!(ds.resolve_changed_path("deep/c.rs").as_deref(), Some("src/deep/c.rs"));
 }
 
-/// A file that genuinely isn't in the diff must stay unresolved — the tolerance
-/// above must not turn "not in this diff" into a jump to some other file.
+/// 本当に diff に含まれないファイルは未解決のままでなければならない。
+/// 上記の寛容さが「この diff にはない」を別のファイルへのジャンプに
+/// 変えてしまってはならない。
 #[test]
 fn resolve_changed_path_refuses_files_outside_the_diff() {
     let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs"]);
@@ -302,19 +303,19 @@ fn resolve_changed_path_refuses_files_outside_the_diff() {
     assert_eq!(ds.resolve_changed_path("./"), None);
 }
 
-/// An ambiguous suffix must not be guessed: two files ending the same way mean
-/// we don't know which one was meant, and picking either would silently land
-/// the reviewer on the wrong file.
+/// あいまいなサフィックスを推測してはならない。同じ末尾を持つ2つのファイルが
+/// あれば、どちらが意図されたか分からず、どちらかを選ぶとレビュアーを黙って
+/// 誤ったファイルに着地させてしまう。
 #[test]
 fn resolve_changed_path_refuses_an_ambiguous_suffix() {
     let ds = diff_state_with(&["src/app/mod.rs", "src/ui/mod.rs"]);
     assert_eq!(ds.resolve_changed_path("mod.rs"), None);
-    // Enough context to disambiguate resolves fine.
+    // 曖昧さを解消するのに十分なコンテキストがあれば問題なく解決する。
     assert_eq!(ds.resolve_changed_path("ui/mod.rs").as_deref(), Some("src/ui/mod.rs"));
 }
 
-/// A real top-level `b/` in the repo wins over reading `b/` as a diff prefix,
-/// because exact matching is tried first.
+/// リポジトリに実在するトップレベルの b/ は、b/ を diff プレフィックスとして
+/// 読む解釈より優先される。完全一致が先に試されるからである。
 #[test]
 fn resolve_changed_path_prefers_an_exact_match_over_prefix_stripping() {
     let ds = diff_state_with(&["b/src/a.rs", "src/a.rs"]);
@@ -322,8 +323,9 @@ fn resolve_changed_path_prefers_an_exact_match_over_prefix_stripping() {
     assert_eq!(ds.resolve_changed_path("src/a.rs").as_deref(), Some("src/a.rs"));
 }
 
-/// A file inside a directory the reviewer collapsed has no display row. Jumping
-/// to it must expand the way down rather than read as "not in this diff".
+/// レビュアーが折りたたんだディレクトリの中にあるファイルには表示行が存在しない。
+/// そこへジャンプする際は、途中まで展開すべきであり「この diff にはない」と
+/// 読み違えてはならない。
 #[test]
 fn reveal_path_expands_collapsed_ancestors() {
     let mut ds = diff_state_with(&["src/deep/nested/c.rs"]);
@@ -344,10 +346,11 @@ fn reveal_path_expands_collapsed_ancestors() {
     );
 }
 
-// ── Base ref resolution ────────────────────────────────────────────────
+// ベース ref の解決
 
-/// A worktree whose base was saved as `origin/main` (Conductor's normal case
-/// since 2026-07-29) must resolve even when no local `main` branch exists.
+/// ベースが origin/main として保存された worktree(2026-07-29 以降の
+/// Conductor の通常のケース)は、ローカルの main ブランチが存在しなくても
+/// 解決できなければならない。
 #[test]
 fn base_ref_resolves_remote_tracking_ref() {
     use super::model::DiffRange;
@@ -375,9 +378,9 @@ fn base_ref_resolves_remote_tracking_ref() {
     assert_eq!(paths, vec!["b.txt"]);
 }
 
-/// The same resolution must work from a linked worktree's `Repository`, not
-/// just the main worktree's — remote-tracking refs live in the shared
-/// commondir, not per-worktree.
+/// 同じ解決は、メイン worktree だけでなくリンクされた worktree の Repository
+/// からも動作しなければならない。リモート追跡 ref は worktree ごとではなく、
+/// 共有の commondir に存在するからである。
 #[test]
 fn base_ref_resolves_from_linked_worktree() {
     use super::model::DiffRange;
@@ -393,16 +396,16 @@ fn base_ref_resolves_from_linked_worktree() {
     let head_oid = commit_files(&repo, Some(&base_commit), &[("b.txt", b"b")]);
     checkout_branch(&repo, "feature", head_oid);
 
-    // Link a worktree at a fresh branch pointing at the same commit as
-    // "feature" (can't reuse "feature" itself — it's already checked out in
-    // the main worktree). Target a not-yet-created path outside the repo's
-    // own tempdir: `git worktree add` refuses non-empty directories.
+    // "feature" と同じコミットを指す新しいブランチで worktree をリンクする
+    // ("feature" 自体は既にメイン worktree で checkout 済みなので再利用できない)。
+    // まだ存在しない、リポジトリ自身の tempdir 外のパスを対象にする:
+    // git worktree add は空でないディレクトリを拒否する。
     let wt_parent = tempfile::tempdir().unwrap();
     let wt_path = wt_parent.path().join("linked-wt");
     let status = std::process::Command::new("git")
-        // Isolate from the user's global/system git config (e.g. a
-        // core.hooksPath post-checkout hook) so this can't fail for reasons
-        // unrelated to what's under test.
+        // ユーザのグローバル/システム git 設定(core.hooksPath の
+        // post-checkout フックなど)から隔離し、テスト対象と無関係な
+        // 理由で失敗しないようにする。
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .args([
@@ -426,8 +429,8 @@ fn base_ref_resolves_from_linked_worktree() {
     assert_eq!(paths, vec!["b.txt"]);
 }
 
-/// Lightweight tags, annotated tags, full OIDs, and short OIDs must all
-/// resolve to the same base commit.
+/// 軽量タグ、注釈付きタグ、完全な OID、短縮 OID のいずれも同じベースコミットに
+/// 解決しなければならない。
 #[test]
 fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
     use super::model::DiffRange;
@@ -463,8 +466,8 @@ fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
     }
 }
 
-/// A configured base like `develop` that exists only as a remote-tracking
-/// ref (no local branch) must resolve via the `origin/` fallback.
+/// develop のように、リモート追跡 ref としてのみ存在する(ローカルブランチが
+/// ない)設定済みベースは、origin/ フォールバック経由で解決しなければならない。
 #[test]
 fn base_ref_falls_back_to_origin_prefix() {
     use super::model::DiffRange;
@@ -493,8 +496,8 @@ fn base_ref_falls_back_to_origin_prefix() {
     assert_eq!(paths, vec!["b.txt"]);
 }
 
-/// A base that resolves neither directly nor via `origin/` must report an
-/// error that names the base the caller actually asked for.
+/// 直接にも origin/ 経由にも解決しないベースは、呼び出し側が実際に指定した
+/// ベース名を含むエラーを報告しなければならない。
 #[test]
 fn base_ref_unresolvable_reports_error() {
     use super::model::DiffRange;
@@ -513,13 +516,13 @@ fn base_ref_unresolvable_reports_error() {
     assert!(msg.contains("nonexistent"), "error message was: {msg}");
 }
 
-/// A base already qualified as `origin/<name>` must not retry as
-/// `origin/origin/<name>` on failure. Without the guard, a base like
-/// `origin/weird` would silently retry against `origin/origin/weird`, and if
-/// some unrelated ref happens to live at that doubled path, it would resolve
-/// there — diffing against a ref the caller never asked for. This test
-/// creates exactly that trap ref so a missing guard shows up as an
-/// unexpected `Ok`, not just as wording in the error message.
+/// 既に origin/<name> として修飾済みのベースは、失敗時に
+/// origin/origin/<name> として再試行してはならない。このガードがなければ
+/// origin/weird のようなベースは黙って origin/origin/weird に対して
+/// 再試行され、その二重化されたパスにたまたま無関係な ref があれば
+/// そちらに解決してしまう ─ 呼び出し側が意図していない ref との diff になる。
+/// このテストはまさにそのトラップとなる ref を作り、ガードの欠落が
+/// エラーメッセージの文言だけでなく予期しない Ok として現れるようにする。
 #[test]
 fn base_ref_error_does_not_double_the_origin_prefix() {
     use super::model::DiffRange;
@@ -530,9 +533,9 @@ fn base_ref_error_does_not_double_the_origin_prefix() {
 
     let oid = commit_files(&repo, None, &[("a.txt", b"a")]);
     checkout_branch(&repo, "main", oid);
-    // Exists only at the doubled path. If the `origin/` guard were missing,
-    // resolving "origin/weird" would retry as "origin/origin/weird" and
-    // land here instead of failing.
+    // 二重化されたパスにのみ存在する。もし origin/ ガードが欠けていれば、
+    // "origin/weird" の解決は "origin/origin/weird" として再試行され、
+    // 失敗する代わりにここに着地してしまう。
     set_remote_tracking_ref(&repo, "origin/origin/weird", oid);
 
     let err =
@@ -546,14 +549,14 @@ fn base_ref_error_does_not_double_the_origin_prefix() {
     );
 }
 
-/// `revparse_single` follows git's own revspec resolution order
-/// (`refs/tags/<name>` before `refs/heads/<name>`; see `gitrevisions(7)`),
-/// so a `dup` naming both a tag and a local branch resolves to the tag. The
-/// previous `find_branch(Local)` resolution picked the branch instead, so this
-/// is a deliberate behavior change: the point is that Conductor's base
-/// resolution never disagrees with what `git rev-parse dup` would print. Adding
-/// a branch-first special case would make the TUI and the shell pick different
-/// bases in the same repo, which is the more confusing of the two options.
+/// revparse_single は git 自身の revspec 解決順序(refs/tags/<name> が
+/// refs/heads/<name> より優先される。gitrevisions(7) 参照)に従うので、
+/// タグとローカルブランチの両方を指す dup はタグの方に解決される。以前の
+/// find_branch(Local) による解決はブランチの方を選んでいたので、これは
+/// 意図的な挙動変更である。要点は、Conductor のベース解決が git rev-parse dup
+/// の出力と決して食い違わないようにすることにある。ブランチ優先の特別扱いを
+/// 加えると、TUI とシェルが同じリポジトリで異なるベースを選ぶことになり、
+/// 2つの選択肢のうちより紛らわしい方になってしまう。
 #[test]
 fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
     use super::model::DiffRange;
@@ -565,21 +568,21 @@ fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
     let root_oid = commit_files(&repo, None, &[("base.txt", b"base")]);
     let root_commit = repo.find_commit(root_oid).unwrap();
 
-    // Local branch "dup" -> a commit that diverges from the tag's target.
+    // ローカルブランチ "dup" -> タグのターゲットから分岐したコミット。
     let branch_oid = commit_files(&repo, Some(&root_commit), &[("from_branch.txt", b"a")]);
     repo.branch("dup", &repo.find_commit(branch_oid).unwrap(), false)
         .unwrap();
 
-    // Tag "dup" -> a different commit, also diverging from the branch's.
+    // タグ "dup" -> ブランチのものとも分岐した別のコミット。
     let tag_oid = commit_files(&repo, Some(&root_commit), &[("from_tag.txt", b"b")]);
     let tag_commit = repo.find_commit(tag_oid).unwrap();
     let tag_obj = repo.find_object(tag_oid, None).unwrap();
     repo.tag_lightweight("dup", &tag_obj, false).unwrap();
 
-    // HEAD descends from the tag's commit only, so the two resolutions give
-    // different merge-bases (and thus different diffs): a branch resolution
-    // hits the shared root and picks up "from_tag.txt" too, while a tag
-    // resolution treats the tag's commit itself as the merge-base.
+    // HEAD はタグのコミットからのみ派生しているので、2つの解決は異なる
+    // merge-base(したがって異なる diff)を生む: ブランチとして解決すると
+    // 共有ルートに達し "from_tag.txt" も拾ってしまうが、タグとして解決すると
+    // タグのコミット自体を merge-base として扱う。
     let head_oid = commit_files(&repo, Some(&tag_commit), &[("head.txt", b"c")]);
     checkout_branch(&repo, "feature", head_oid);
 
@@ -594,8 +597,8 @@ fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
     );
 }
 
-/// Uncommitted diffs (HEAD vs workdir+index) don't depend on the base at
-/// all, so an unresolvable base must not prevent them from computing.
+/// 未コミット diff(HEAD vs workdir+index)はベースに一切依存しないので、
+/// 解決不能なベースがあってもその計算を妨げてはならない。
 #[test]
 fn uncommitted_range_ignores_unresolvable_base() {
     use super::model::DiffRange;
@@ -616,10 +619,10 @@ fn uncommitted_range_ignores_unresolvable_base() {
     assert_eq!(paths, vec!["c.txt"]);
 }
 
-// ── load_diff must not clear uncommitted when the base fails ──────────────
+// ベースの解決失敗時に load_diff が未コミットをクリアしてはならない
 
-/// `load_diff` with an unresolvable base must still surface uncommitted
-/// changes and the error, rather than clearing both diff sections.
+/// 解決不能なベースを与えた load_diff は、両方の diff セクションをクリアするのではなく、
+/// 未コミットの変更とエラーの両方をきちんと表に出さなければならない。
 #[test]
 fn load_diff_keeps_uncommitted_when_base_unresolvable() {
     use super::*;
@@ -651,9 +654,9 @@ fn load_diff_keeps_uncommitted_when_base_unresolvable() {
     );
 }
 
-/// When HEAD equals the merge-base with the configured base (0 commits
-/// ahead), the committed section is legitimately empty and there is no
-/// error — only uncommitted changes should show up.
+/// HEAD が設定されたベースとの merge-base に等しい場合(0コミット先行)、
+/// コミット済みセクションは正当に空であり、エラーも出ない
+/// 未コミットの変更だけが表示されるべきである。
 #[test]
 fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
     use super::*;
@@ -663,8 +666,8 @@ fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
 
     let oid = commit_files(&repo, None, &[("a.txt", b"a")]);
     checkout_branch(&repo, "main", oid);
-    // "release" points at the same commit as HEAD, so
-    // merge-base(release, HEAD) == HEAD == release.
+    // "release" は HEAD と同じコミットを指すので、
+    // merge-base(release, HEAD) == HEAD == release となる。
     let commit = repo.find_commit(oid).unwrap();
     repo.branch("release", &commit, false).unwrap();
 
@@ -684,22 +687,22 @@ fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
     assert_eq!(uncommitted_paths, vec!["c.txt"]);
 }
 
-/// Reproduces the original bug report end to end: a worktree whose base was
-/// saved as `origin/main` (no local `main` branch), sitting 1 commit behind
-/// `origin/main` with a pile of uncommitted changes. Before the fix, `main`
-/// failed to resolve via `find_branch(Local)`, and that failure wiped
-/// *both* diff sections — reporting "Changed files (0)" even though the
-/// modified/untracked files were all still there.
+/// 元のバグ報告をエンドツーエンドで再現する: ベースが origin/main として
+/// 保存され(ローカルの main ブランチはない)、大量の未コミット変更を抱えたまま
+/// origin/main から1コミット遅れている worktree。修正前は main が
+/// find_branch(Local) 経由での解決に失敗し、その失敗が両方の diff セクションを
+/// 消し去っていた ─ 変更済み/未追跡ファイルが実際には全て存在するにもかかわらず
+/// "Changed files (0)" と報告されていた。
 ///
-/// The subtlety this test exists to pin down: **committed being 0 here is
-/// correct, not a symptom of the bug.** 1-behind means
-/// `merge-base(origin/main, HEAD) == HEAD`, so the committed section is
-/// legitimately empty regardless of the fix. What the fix changes is that
-/// `ds.error` is now `None` (the base resolved) and `uncommitted_files`
-/// keeps every modified/untracked file — pre-fix, both would have been
-/// cleared alongside the committed section, collapsing everything to a
-/// silent (0). Don't read the committed-empty assertion below as "the bug
-/// is that committed shows 0"; it never should have shown anything else.
+/// このテストが確かめたい微妙な点: ここでコミット済みが0件であること自体は
+/// 正しく、バグの症状ではない。1コミット遅れとは merge-base(origin/main, HEAD)
+/// == HEAD を意味するので、修正の有無にかかわらずコミット済みセクションは
+/// 正当に空である。修正が変えるのは ds.error が(ベースが解決したので)
+/// None になり、uncommitted_files が全ての変更済み/未追跡ファイルを
+/// 保持し続ける点である ─ 修正前はコミット済みセクションと一緒にどちらも
+/// クリアされ、全てが黙って(0)に潰れていた。下のコミット済みが空である
+/// アサーションを「バグはコミット済みが0と表示されること」と読んではならない。
+/// それは元々0以外を示すべきではない。
 #[test]
 fn load_diff_reproduces_the_silent_zero_files_report() {
     use super::*;
@@ -707,7 +710,7 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
-    // C0 -> C1 (HEAD, "feature") -> C2 (origin/main only, no local branch).
+    // C0 -> C1 (HEAD, "feature") -> C2 (origin/main のみ、ローカルブランチなし)。
     let root_oid = commit_files(&repo, None, &[("base.txt", b"base")]);
     let root_commit = repo.find_commit(root_oid).unwrap();
 
@@ -727,8 +730,8 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
         "test setup invariant: no local 'main' branch should exist"
     );
 
-    // Modified tracked files + untracked new files, matching the report's
-    // shape (there it was 15 modified + 2 untracked; 2 + 2 is enough here).
+    // 変更済みの追跡ファイル + 新規の未追跡ファイル。報告の形に合わせている
+    // (元は15件変更+2件未追跡だったが、ここでは2+2で十分)。
     std::fs::write(dir.path().join("tracked1.txt"), b"modified1").unwrap();
     std::fs::write(dir.path().join("tracked2.txt"), b"modified2").unwrap();
     std::fs::write(dir.path().join("untracked1.txt"), b"new1").unwrap();
@@ -737,9 +740,9 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
     let mut ds = DiffState::new("origin/main", DiffViewMode::Unified);
     ds.load_diff(dir.path(), "origin/main", false, 4);
 
-    // The fix: base resolved, so no error.
+    // 修正の効果: ベースが解決したのでエラーなし。
     assert_eq!(ds.error, None);
-    // Legitimately empty (1-behind), not a bug.
+    // 正当に空(1コミット遅れ)であり、バグではない。
     assert!(ds.committed_files.is_empty());
 
     let uncommitted_paths: Vec<&str> = ds
@@ -759,12 +762,13 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
     }
 }
 
-// ── Edge cases the plan's NFR checklist calls out but didn't have coverage ──
+// 計画の NFR チェックリストで挙げられていたがカバレッジがなかったエッジケース
 
-/// `repo.merge_base()` fails when the base and HEAD share no history (two
-/// unrelated root commits — the same shape a shallow clone produces). The
-/// plan's "not doing" list promises that this can't take committed down
-/// with uncommitted, and that the reason is visible; this pins both.
+/// ベースと HEAD が共通の履歴を持たない(shallow clone が生む形と同じ、
+/// 無関係な2つのルートコミット)場合、repo.merge_base() は失敗する。
+/// 計画の「やらないこと」リストは、これがコミット済みを未コミットと一緒に
+/// 巻き込まないこと、そして理由が見える形になっていることを約束しており、
+/// このテストはその両方を確かめる。
 #[test]
 fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
     use super::*;
@@ -772,7 +776,7 @@ fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
-    // Two root commits with no common ancestor.
+    // 共通の祖先を持たない2つのルートコミット。
     let other_oid = commit_files(&repo, None, &[("other.txt", b"other")]);
     repo.branch("other", &repo.find_commit(other_oid).unwrap(), false)
         .unwrap();
@@ -787,10 +791,10 @@ fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
 
     assert!(ds.committed_files.is_empty());
     let err = ds.error.as_deref().expect("expected an error to be set");
-    // Must name both the failure mode and the base, so it reads distinctly
-    // from the unresolvable-ref error in
-    // `base_ref_unresolvable_reports_error` — otherwise the banner can't tell
-    // "no such ref" apart from "no common ancestor".
+    // 失敗モードとベースの両方を名指ししなければならない。そうしないと
+    // base_ref_unresolvable_reports_error の解決不能 ref エラーと区別が
+    // つかず、バナーが「そんな ref はない」と「共通の祖先がない」を
+    // 見分けられなくなる。
     assert!(err.contains("merge-base"), "error message was: {err}");
     assert!(err.contains("other"), "error message was: {err}");
 
@@ -802,15 +806,15 @@ fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
     assert_eq!(uncommitted_paths, vec!["c.txt"]);
 }
 
-/// A worktree with zero commits (`git init` only — HEAD is "unborn") must
-/// not panic, and must surface an error rather than silently reporting zero
-/// changes.
+/// コミットが0件の worktree(git init しただけで HEAD が "unborn")は
+/// panic してはならず、変更0件と黙って報告するのではなくエラーを表に
+/// 出さなければならない。
 ///
-/// This is an existing limitation, not something this change regresses:
-/// every workdir file here is technically untracked, but the uncommitted
-/// diff still needs a HEAD tree to compare against and there isn't one. What
-/// this change buys is that the reason now lands in `error` instead of an
-/// unexplained "Changed files (0)".
+/// これは既存の制限であり、この変更が退行させたものではない: ここでの
+/// workdir ファイルは技術的には全て未追跡だが、未コミット diff はそれでも
+/// 比較対象となる HEAD ツリーを必要とし、それが存在しない。この変更が
+/// もたらすのは、説明のつかない "Changed files (0)" の代わりに理由が
+/// error に載るようになることである。
 #[test]
 fn load_diff_on_unborn_head_reports_error_without_panicking() {
     use super::*;
@@ -829,12 +833,13 @@ fn load_diff_on_unborn_head_reports_error_without_panicking() {
     assert!(ds.display_list.is_empty());
 }
 
-/// `"HEAD"` as a base is a diff-engine no-op: `merge-base(HEAD, HEAD) ==
-/// HEAD`, so the committed diff is always empty and never errors. That's
-/// correct for the diff engine — `"HEAD"` just isn't a useful base to have.
-/// Keeping a worktree from ever *saving* `"HEAD"` as its base is a
-/// write-side responsibility (`GitEngine::resolve_base_ref` /
-/// `worktree_crud.rs`), not something this function should special-case.
+/// ベースとして "HEAD" を指定すると diff エンジン上は no-op になる:
+/// merge-base(HEAD, HEAD) == HEAD なので、コミット済み diff は常に空で
+/// エラーにもならない。これは diff エンジンとしては正しい挙動である —
+/// "HEAD" はそもそもベースとして役に立たないというだけの話だ。worktree が
+/// "HEAD" をベースとして保存してしまわないようにするのは書き込み側の責務
+/// (GitEngine::resolve_base_ref / worktree_crud.rs)であり、この関数が
+/// 特別扱いすべきことではない。
 #[test]
 fn base_ref_head_yields_an_empty_committed_diff() {
     use super::model::DiffRange;
@@ -851,10 +856,10 @@ fn base_ref_head_yields_an_empty_committed_diff() {
     assert!(files.is_empty());
 }
 
-/// A base that resolves to a non-commit object (here, a lightweight tag
-/// pointing straight at a blob) must report an error rather than silently
-/// returning an empty diff — the two look identical to a caller that only
-/// checks `Ok(vec![])`.
+/// コミット以外のオブジェクトに解決されるベース(ここでは blob を直接
+/// 指す軽量タグ)は、黙って空の diff を返すのではなくエラーを報告しな
+/// ければならない — Ok(vec![]) だけを見ている呼び出し側からは両者が
+/// 同じに見えてしまう。
 #[test]
 fn base_ref_pointing_at_a_blob_reports_error() {
     use super::model::DiffRange;
@@ -877,13 +882,13 @@ fn base_ref_pointing_at_a_blob_reports_error() {
     assert!(msg.contains("blob-tag"), "error message was: {msg}");
 }
 
-/// `config.general.main_branch = ""` isn't rejected at the TOML layer, so an
-/// empty-string base can reach diff computation. Confirmed against git2
-/// directly before writing this: `revparse_single("")` errors with
-/// `InvalidSpec` rather than resolving to anything, so this is already safe
-/// — this test just pins that so a future git2 upgrade can't silently change
-/// it into the same "HEAD" trap as
-/// `base_ref_head_yields_an_empty_committed_diff`.
+/// config.general.main_branch = "" は TOML 層では弾かれないため、空文字列の
+/// ベースが diff 計算まで届くことがある。これを書く前に git2 で直接確認
+/// 済み: revparse_single("") は何かに解決されるのではなく InvalidSpec で
+/// エラーになるので、これは既に安全である — このテストはそれを固定する
+/// ためのもので、将来の git2 アップグレードでこれが
+/// base_ref_head_yields_an_empty_committed_diff と同じ "HEAD" の罠に
+/// 黙って変わってしまわないようにする。
 #[test]
 fn base_ref_empty_string_reports_error() {
     use super::model::DiffRange;

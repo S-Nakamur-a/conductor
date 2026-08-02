@@ -1,4 +1,4 @@
-//! Database schema creation and version-based migrations for `ReviewStore::open`.
+//! ReviewStore::open のためのデータベーススキーマ作成とバージョンベースのマイグレーション。
 
 use std::path::Path;
 
@@ -8,8 +8,8 @@ use rusqlite::Connection;
 use super::ReviewStore;
 
 impl ReviewStore {
-    /// Open (or create) the review database at the given path and run
-    /// all migrations.
+    /// 指定パスのレビューデータベースを開く（なければ作成する）。
+    /// すべてのマイグレーションを実行する。
     pub fn open(db_path: &Path) -> Result<Self> {
         let conn = Connection::open(db_path)
             .with_context(|| format!("failed to open database at {}", db_path.display()))?;
@@ -17,25 +17,24 @@ impl ReviewStore {
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .context("failed to enable foreign keys")?;
 
-        // busy_timeout must be set before the WAL switch below: switching
-        // journal_mode briefly requires an exclusive lock, and without a
-        // busy_timeout already in place a TUI connection that's already open
-        // on this DB would make that switch fail immediately with
-        // SQLITE_BUSY instead of waiting.
+        // busy_timeout は、下の WAL 切り替えより前に設定しておく必要がある。
+        // journal_mode の切り替えは一瞬だが排他ロックを要求するため、
+        // busy_timeout が事前に設定されていないと、既にこの DB を開いている
+        // TUI 側の接続がある場合、待たずに即座に SQLITE_BUSY で失敗してしまう。
         conn.execute_batch("PRAGMA busy_timeout = 5000;")
             .context("failed to set busy_timeout")?;
 
-        // WAL lets the TUI and the mcp-serve process hold the database open
-        // concurrently. Its failure is only logged, not propagated: the
-        // review feature still works without WAL, but returning `Err` here
-        // makes `app/lifecycle.rs` drop `review_store` entirely, which is a
-        // worse outcome (and silent unless RUST_LOG is set) than staying on
-        // the default journal mode.
+        // WAL により TUI と mcp-serve プロセスが同時にこのデータベースを開いた
+        // ままにできる。失敗してもログに記録するだけで伝播はさせない。WAL が
+        // 無くてもレビュー機能自体は動くが、ここで Err を返すと
+        // app/lifecycle.rs が review_store を丸ごと破棄してしまい、それは
+        // デフォルトの journal mode のまま動くよりも悪い結果になる
+        // （しかも RUST_LOG を設定していなければサイレントに起きる）。
         if let Err(e) = conn.pragma_update(None, "journal_mode", "WAL") {
             log::warn!("failed to switch database to WAL journal mode: {e}");
         }
 
-        // Create tables that have never changed.
+        // 一度も変更されていないテーブルを作成する。
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS sessions (
@@ -83,11 +82,11 @@ impl ReviewStore {
         )
         .context("failed to run CREATE TABLE migrations")?;
 
-        // Version-based migration for the reviews table.
+        // reviews テーブルに対するバージョンベースのマイグレーション。
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
 
         if version < 1 {
-            // Check whether the reviews table already exists (old schema).
+            // reviews テーブルが既に存在するか（旧スキーマかどうか）を確認する。
             let table_exists: bool = conn.query_row(
                 "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='reviews'",
                 [],
@@ -95,7 +94,7 @@ impl ReviewStore {
             )?;
 
             if table_exists {
-                // Migrate from v0 (old schema with line_number) to v1.
+                // v0（line_number を持つ旧スキーマ）から v1 へマイグレーションする。
                 conn.execute_batch(
                     "
                     ALTER TABLE reviews RENAME COLUMN line_number TO line_start;
@@ -106,7 +105,7 @@ impl ReviewStore {
                 )
                 .context("failed to migrate reviews table to v1")?;
             } else {
-                // Fresh database — create the reviews table with the new schema.
+                // 新規データベース。新スキーマで reviews テーブルを作成する。
                 conn.execute_batch(
                     "
                     CREATE TABLE reviews (
@@ -131,7 +130,7 @@ impl ReviewStore {
                 .context("failed to create reviews table")?;
             }
 
-            // Create the review_replies table.
+            // review_replies テーブルを作成する。
             conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS review_replies (
@@ -193,18 +192,17 @@ impl ReviewStore {
         }
 
         if version < 4 {
-            // Move two facts that were previously duplicated by every writer
-            // (the Rust TUI and the sibling Node MCP server) into the schema
-            // itself, so neither side has to mirror the other:
-            //   * `commit_ref` defaults to 'HEAD' — writers may now omit it.
-            //   * `worktree = branch` is enforced by a CHECK, turning a silent
-            //     shared assumption into a guarded contract. Legacy rows created
-            //     before the `branch` column existed have branch IS NULL, which
-            //     the CHECK deliberately permits.
-            // SQLite can neither add a DEFAULT to an existing column nor add a
-            // table-level CHECK in place, so the table is rebuilt. FK
-            // enforcement is disabled for the swap (review_replies references
-            // reviews by name and ids are preserved, so integrity holds).
+            // これまで各書き込み側（Rust の TUI と、隣接する Node の MCP サーバ）が
+            // それぞれ重複して持っていた2つの事実をスキーマ自体に移し、どちらか
+            // 一方がもう一方をミラーする必要をなくす。
+            //   * commit_ref のデフォルトは 'HEAD' になる。書き込み側は省略可能になる。
+            //   * worktree = branch は CHECK で強制する。これにより、暗黙の共有前提
+            //     だったものが保証付きの契約になる。branch カラムが存在する前に
+            //     作られた旧レコードは branch IS NULL であり、CHECK は意図的にそれを許可する。
+            // SQLite は既存カラムへの DEFAULT 追加も、テーブルレベルの CHECK の
+            // その場での追加もできないため、テーブルを作り直す。入れ替え中は
+            // 外部キー制約を無効化する（review_replies は reviews を名前で参照し
+            // id は保持されるため整合性は保たれる）。
             conn.execute_batch("PRAGMA foreign_keys = OFF;")
                 .context("failed to disable foreign keys for v4 migration")?;
             conn.execute_batch(
@@ -252,11 +250,11 @@ impl ReviewStore {
         }
 
         if version < 5 {
-            // Branch-level change summary — the "what & why" of the whole diff,
-            // the PR-description counterpart to the line-anchored `reviews`. Kept
-            // in its own table rather than `worktree_metadata` because that table
-            // requires a non-null base_branch the MCP writer doesn't know; here a
-            // single INSERT OR REPLACE keyed on branch is enough.
+            // ブランチ単位の変更サマリ。差分全体の「何を・なぜ」であり、行に
+            // 紐づく reviews に対する PR 本文的な対応物。worktree_metadata では
+            // なく専用テーブルにしているのは、あちらは MCP 側の書き込み元が
+            // 知らない非 null の base_branch を要求するため。こちらは branch を
+            // キーにした INSERT OR REPLACE 1本で足りる。
             conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS change_summary (
@@ -275,11 +273,11 @@ impl ReviewStore {
         }
 
         if version < 6 {
-            // Review mode's PR walkthrough + GitHub-publish support.
-            // `walkthroughs.branch` is UNIQUE with no generation history —
-            // re-generating deletes and recreates the row (pamela's ruling:
-            // a versioned/generational scheme wasn't worth the complexity
-            // for a single-branch, single-current-walkthrough feature).
+            // レビューモードの PR walkthrough と GitHub への投稿対応。
+            // walkthroughs.branch は UNIQUE で世代履歴は持たない。再生成時は
+            // 既存行を削除して作り直す（1ブランチにつき現行の walkthrough が
+            // 1本あればよい機能なので、バージョン管理・世代管理の仕組みは
+            // その複雑さに見合わないと判断した）。
             conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS walkthroughs (
@@ -328,11 +326,11 @@ impl ReviewStore {
         }
 
         if version < 7 {
-            // Record the branch tip a walkthrough was generated against, so a
-            // regenerate request for an unchanged HEAD can be skipped (the
-            // diff hasn't moved, so neither has the walkthrough). Nullable:
-            // rows from before v7 have no recorded commit and are treated as
-            // "unknown" (never skipped).
+            // walkthrough を生成した時点のブランチの先端コミットを記録しておき、
+            // HEAD が変わっていない再生成リクエストをスキップできるようにする
+            // （diff が動いていなければ walkthrough も動いていないはず）。
+            // null 許容: v7 より前の行にはコミットが記録されておらず、
+            // 「不明」として扱われる（＝スキップされることはない）。
             conn.execute_batch(
                 "
                 ALTER TABLE walkthroughs ADD COLUMN head_commit TEXT;
@@ -354,9 +352,9 @@ mod tests {
 
     #[test]
     fn open_sets_wal_journal_mode() {
-        // WAL only takes effect on a file-backed database — `:memory:` (what
-        // `test_store()` uses) never switches to it, so this needs a real
-        // tempdir DB to exercise the PRAGMA.
+        // WAL はファイルバックのデータベースでのみ有効になる。test_store() が
+        // 使う :memory: では切り替わらないため、この PRAGMA を検証するには
+        // 実際の tempdir 上の DB が必要になる。
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("conductor.db");
         let store = ReviewStore::open(&db_path).unwrap();
@@ -377,8 +375,8 @@ mod tests {
     #[test]
     fn v4_commit_ref_defaults_to_head() {
         let store = test_store();
-        // Insert omitting commit_ref — the v4 schema default should fill it,
-        // which is what lets the Node MCP writer stop mirroring 'HEAD'.
+        // commit_ref を省略して挿入する。v4 スキーマのデフォルトが埋めるはずで、
+        // これにより Node 側の MCP 書き込み元は 'HEAD' をミラーする必要がなくなる。
         store
             .conn
             .execute(
@@ -395,8 +393,9 @@ mod tests {
     #[test]
     fn v4_check_rejects_worktree_branch_mismatch() {
         let store = test_store();
-        // worktree != branch (both non-null) must violate the CHECK so a
-        // drifting writer fails loudly instead of inserting an unreachable row.
+        // worktree != branch（両方 non-null）は CHECK に違反しなければならない。
+        // これにより、ずれた書き込み元は到達不能な行を挿入するのではなく
+        // 派手に失敗する。
         let result = store.conn.execute(
             "INSERT INTO reviews (id, worktree, file_path, line_start, kind, body, commit_ref, branch)
              VALUES ('r1', 'feat/x', 'src/main.rs', 1, 'suggest', 'note', 'HEAD', 'feat/y')",
@@ -411,8 +410,8 @@ mod tests {
     #[test]
     fn v4_check_allows_null_branch() {
         let store = test_store();
-        // Legacy rows created before the `branch` column existed have branch
-        // IS NULL; the CHECK must keep permitting them.
+        // branch カラムが存在する前に作られた旧レコードは branch IS NULL であり、
+        // CHECK はそれを許可し続けなければならない。
         store
             .conn
             .execute(
@@ -428,10 +427,10 @@ mod tests {
 
     #[test]
     fn migrates_existing_v5_db_to_v6() {
-        // Simulate a pre-v6 database on disk: open a fresh store (which
-        // migrates straight to the latest version), then hand-roll it back
-        // down to what a v5 database looked like, and reopen it the same
-        // way ReviewStore::open would encounter it in the wild.
+        // ディスク上にある v6 より前のデータベースをシミュレートする。まず新規
+        // ストアを開き（最新バージョンまで一気にマイグレーションされる）、それを
+        // 手作業で v5 データベースの姿まで巻き戻し、ReviewStore::open が実際に
+        // 遭遇するのと同じ形で開き直す。
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("conductor.db");
 
@@ -470,16 +469,16 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        // Reopening a v5 db runs every migration up to the latest (v6 tables,
-        // then v7's walkthroughs.head_commit).
+        // v5 の db を開き直すと、最新までの全マイグレーションが実行される
+        // （v6 のテーブル群、続けて v7 の walkthroughs.head_commit）。
         assert_eq!(version, 7);
 
-        // Pre-existing data survived the migration.
+        // 既存データはマイグレーションを生き延びている。
         let reviews = store.reviews_for_worktree("feat/x").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].body, "predates the v6 migration");
 
-        // The new tables/columns are usable, including v7's head_commit.
+        // 新しいテーブル・カラムも、v7 の head_commit を含めて利用できる。
         assert!(store.get_walkthrough("feat/x").unwrap().is_none());
         assert!(store.get_pr_review_meta("feat/x").unwrap().is_none());
         assert_eq!(store.unpublished_reviews("feat/x").unwrap().len(), 1);

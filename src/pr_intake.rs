@@ -1,24 +1,24 @@
 //! PR 取り込みの段取り。PR 番号や GitHub の PR URL を、レビューモードで使える
 //! ローカルの worktree に変える。
 //!
-//! PR のメタデータには `gh` を呼び出し (ユーザーの既存の `gh auth` セッションに
-//! 依存する)、fetch と worktree の作成には [`crate::git_engine::GitEngine`] を使う。
-//! `gh` や `git` のコマンドの正確な綴り (JSON のフィールド、refspec の形式、
-//! ブランチの命名) を 1 か所にまとめるため、`app/worktree.rs` から分けてある。
+//! PR のメタデータには gh を呼び出し (ユーザーの既存の gh auth セッションに
+//! 依存する)、fetch と worktree の作成には [crate::git_engine::GitEngine] を使う。
+//! gh や git のコマンドの正確な綴り (JSON のフィールド、refspec の形式、
+//! ブランチの命名) を 1 か所にまとめるため、app/worktree.rs から分けてある。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::git_engine::GitEngine;
 
-/// 取得した PR の head に対応するローカルブランチ名: `pr-<N>` (ハイフン。
-/// `pr/<N>` にしないのは、リポジトリが自分の作業で既に使っている `pr/` 名前空間の
+/// 取得した PR の head に対応するローカルブランチ名: pr-<N> (ハイフン。
+/// pr/<N> にしないのは、リポジトリが自分の作業で既に使っている pr/ 名前空間の
 /// ブランチと衝突するため)。
 pub fn local_branch_name(pr_number: u64) -> String {
     format!("pr-{pr_number}")
 }
 
-/// `gh pr view --json ...` が返す PR のメタデータ。
+/// gh pr view --json ... が返す PR のメタデータ。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PrMeta {
     /// 要求した PR 番号のこだま。完全性のためデシリアライズしているが、
@@ -40,7 +40,7 @@ pub struct GhOwner {
     pub login: String,
 }
 
-/// PR 取り込みが失敗した原因。`gh` や `git` の出力から分類する。各バリアントは
+/// PR 取り込みが失敗した原因。gh や git の出力から分類する。各バリアントは
 /// それぞれ具体的で行動につながるメッセージに対応しており、入力オーバーレイが
 /// 生のエラー文字列ではなく次に何をすべきかを伝えられるようにしている。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +76,8 @@ impl std::fmt::Display for PrIntakeError {
     }
 }
 
-/// `gh` や `git` の失敗テキストを、行動につながる [`PrIntakeError`] に分類する。
-/// 「見つからない」に該当したときに PR を名指しできるよう `pr_number` を持ち回る。
+/// gh や git の失敗テキストを、行動につながる [PrIntakeError] に分類する。
+/// 「見つからない」に該当したときに PR を名指しできるよう pr_number を持ち回る。
 fn classify_failure_text(pr_number: u64, text: &str) -> PrIntakeError {
     let lower = text.to_lowercase();
     if lower.contains("gh auth login") || lower.contains("not logged in") || lower.contains("authentication") {
@@ -102,7 +102,7 @@ fn classify_failure_text(pr_number: u64, text: &str) -> PrIntakeError {
 }
 
 /// PR 番号または GitHub の PR URL (例:
-/// `https://github.com/owner/repo/pull/123`。末尾にパスやクエリが付いていても
+/// https://github.com/owner/repo/pull/123。末尾にパスやクエリが付いていても
 /// よい) を、素の PR 番号へパースする。
 pub fn parse_pr_input(input: &str) -> Result<u64, PrIntakeError> {
     let trimmed = input.trim();
@@ -121,22 +121,22 @@ pub fn parse_pr_input(input: &str) -> Result<u64, PrIntakeError> {
     Err(PrIntakeError::InvalidInput(trimmed.to_string()))
 }
 
-/// (`gh` の JSON 出力が返す) ref 名を、そのまま git の引数として渡すのが危険か
-/// どうか。先頭の `-` があると、ref 名ではなくオプションとして解釈され得る。
+/// (gh の JSON 出力が返す) ref 名を、そのまま git の引数として渡すのが危険か
+/// どうか。先頭の - があると、ref 名ではなくオプションとして解釈され得る。
 fn is_suspicious_ref(ref_name: &str) -> bool {
     ref_name.starts_with('-')
 }
 
-/// `dir` が、はぐれた・壊れたディレクトリ (中断された取り込みの残骸、ユーザーが
+/// dir が、はぐれた・壊れたディレクトリ (中断された取り込みの残骸、ユーザーが
 /// 手で作った空のディレクトリなど) ではなく本物の git worktree に見えるかどうか。
-/// worktree では `.git` はディレクトリではなくファイル (gitdir へのポインタ) だが、
+/// worktree では .git はディレクトリではなくファイル (gitdir へのポインタ) だが、
 /// ここではどちらも受け入れる。この検査は「明らかに worktree ではない」を弾ければ
 /// 十分で、git の内部まで完全に検証する必要は無い。
 fn is_valid_worktree_dir(dir: &Path) -> bool {
     dir.join(".git").exists()
 }
 
-/// `gh pr view <N> --json ...` で PR のメタデータを取得する。
+/// gh pr view <N> --json ... で PR のメタデータを取得する。
 fn fetch_pr_meta(pr_number: u64) -> Result<PrMeta, PrIntakeError> {
     let output = Command::new("gh")
         .args([
@@ -169,7 +169,7 @@ fn fetch_pr_meta(pr_number: u64) -> Result<PrMeta, PrIntakeError> {
 }
 
 /// 新規の取得・作成が成功したときに永続化する PR のメタデータ。既存 worktree への
-/// 再入場では `None` になる。前回の取り込みで既に永続化済みで、今回は `gh` を
+/// 再入場では None になる。前回の取り込みで既に永続化済みで、今回は gh を
 /// 呼んでいないため。
 pub struct FetchedPr {
     pub branch: String,
@@ -183,11 +183,11 @@ pub struct FetchedPr {
 /// PR 取り込みの試行が完了した結果。
 pub enum PrIntakeOutcome {
     /// worktree が使える状態になった。新規に取得・作成したか、同じ PR 番号の
-    /// 過去の取り込みから再利用したかのどちらか。呼び出し側は `worktree_path` へ
-    /// 切り替え、(あれば) `meta` をレビューストアへ永続化し、レビューモードへ入る。
+    /// 過去の取り込みから再利用したかのどちらか。呼び出し側は worktree_path へ
+    /// 切り替え、(あれば) meta をレビューストアへ永続化し、レビューモードへ入る。
     ///
     /// DB への書き込みをここで行わず意図的に呼び出し側 (メインスレッド) に任せて
-    /// いるのは、[`crate::review_store::ReviewStore`] が `App` にあり、処理の途中で
+    /// いるのは、[crate::review_store::ReviewStore] が App にあり、処理の途中で
     /// スレッド間を共有する想定ではないため。
     Ready {
         pr_number: u64,
@@ -197,7 +197,7 @@ pub enum PrIntakeOutcome {
     Failed { error: PrIntakeError },
 }
 
-/// PR 取り込みの一連の流れを同期的に実行する。`input` を PR 番号へ解決し、
+/// PR 取り込みの一連の流れを同期的に実行する。input を PR 番号へ解決し、
 /// その worktree を取得する (または再利用する)。
 ///
 /// バックグラウンドスレッドでの実行を想定している (ネットワークと git の I/O)。
@@ -205,7 +205,7 @@ pub enum PrIntakeOutcome {
 /// スレッドで適用する。
 ///
 /// 再入場: この PR 番号の worktree が既にディスクにあれば、そのまま再利用する。
-/// `gh` や `git fetch` の往復もしないし、既存のチェックアウトを自動で
+/// gh や git fetch の往復もしないし、既存のチェックアウトを自動で
 /// fast-forward することもしない (「プルリクエストを開く」ときと同じく、
 /// 黙ってブランチを更新してユーザーを驚かせないという先例に合わせている)。
 pub fn intake_pr(
@@ -273,7 +273,7 @@ pub fn intake_pr(
 
     // ベストエフォート。ここが失敗しても、レビューモードの差分は既にある
     // ローカルのベース ref で動くので、取り込み全体を失敗させはしない。
-    // '-' で始まる base_ref が git に届く前に弾く。この値は `gh` の JSON 出力
+    // '-' で始まる base_ref が git に届く前に弾く。この値は gh の JSON 出力
     // 由来で、先頭のダッシュがあると ref 名ではなく git のオプションとして
     // 誤読され得る。
     if is_suspicious_ref(&pr_meta.base_ref) {
@@ -386,19 +386,19 @@ mod tests {
     }
 
     /// 再入場: intake_pr は gh も git も一切触らずに既存の worktree ディレクトリを
-    /// 再利用しなければならない (`gh` が入っていなくても動くように)。
+    /// 再利用しなければならない (gh が入っていなくても動くように)。
     #[test]
     fn intake_pr_reenters_existing_worktree_without_gh_or_network() {
         let parent = tempfile::tempdir().unwrap();
         // OS の一時ディレクトリ自体が symlink になっているプラットフォーム
-        // (macOS の `/tmp` -> `/private/tmp` など) でも等しく比較できるよう
+        // (macOS の /tmp -> /private/tmp など) でも等しく比較できるよう
         // 正規化しておく。
         let parent_path = parent.path().canonicalize().unwrap();
         let repo_path = parent_path.join("repo");
         git2::Repository::init(&repo_path).unwrap();
 
         // 過去の取り込みが PR 42 のために作った worktree を模す (本物の worktree の
-        // `.git` はディレクトリではなく gitdir を指すファイル)。
+        // .git はディレクトリではなく gitdir を指すファイル)。
         let base_dir = parent_path.join("repo-worktrees");
         std::fs::create_dir_all(base_dir.join("pr-42")).unwrap();
         std::fs::write(base_dir.join("pr-42").join(".git"), "gitdir: /tmp/fake").unwrap();
@@ -417,8 +417,8 @@ mod tests {
         }
     }
 
-    /// worktree のパスに残った古い・壊れたディレクトリ (`.git` が無い) は、黙って
-    /// `Ready` を返して空のレビュー画面を見せるのではなく、行動につながる
+    /// worktree のパスに残った古い・壊れたディレクトリ (.git が無い) は、黙って
+    /// Ready を返して空のレビュー画面を見せるのではなく、行動につながる
     /// メッセージで失敗しなければならない。
     #[test]
     fn intake_pr_reenters_broken_directory_fails_with_actionable_message() {
@@ -441,9 +441,9 @@ mod tests {
     }
 
     /// このリポジトリの実際の GitHub リモートと、マージ済みの PR
-    /// (`refs/pull/<N>/head` はマージ後も解決できる) に対する end-to-end の検査。
-    /// ネットワークと認証済みの `gh` が要るので既定では `#[ignore]` してある。
-    /// 実行するときは `cargo test -- --ignored intake_pr_against_real_pr`。
+    /// (refs/pull/<N>/head はマージ後も解決できる) に対する end-to-end の検査。
+    /// ネットワークと認証済みの gh が要るので既定では #[ignore] してある。
+    /// 実行するときは cargo test -- --ignored intake_pr_against_real_pr。
     /// このリポジトリ自身の worktree に触れないよう、一時ディレクトリへ clone する。
     #[test]
     #[ignore]

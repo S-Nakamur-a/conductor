@@ -1,4 +1,4 @@
-//! Worktree panel key handling.
+//! Worktree パネルのキー処理。
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -7,10 +7,11 @@ use crate::git_engine;
 use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 
-/// Handle keys when the Worktree panel is focused.
+/// Worktree パネルがフォーカスされている間のキーを処理する。
 pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
-    // Esc cancels any pending smart worktree creation; otherwise it closes the
-    // worktree switcher modal (this handler now backs that modal).
+    // Esc は保留中のスマート worktree 作成があればそれをキャンセルする。
+    // そうでなければ worktree 切り替えモーダルを閉じる (このハンドラは
+    // 今そのモーダルの裏方も兼ねている)。
     if key.code == KeyCode::Esc {
         if app.cancel_smart_worktrees() {
             return;
@@ -43,7 +44,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             }
         }
         Some(Action::Select) => {
-            // Selecting commits the choice and closes the switcher modal.
+            // 選択を確定して切り替えモーダルを閉じる。
             app.overlays.active = ActiveOverlay::None;
             match app
                 .worktrees.rows
@@ -81,11 +82,11 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                         StatusLevel::Warning,
                     );
                 } else {
-                    // Confirming deletes both the worktree AND its branch
-                    // (force). Spell out exactly what will be lost so a
-                    // reflexive `y` can't silently destroy work: uncommitted
-                    // changes vanish with the directory, and commits not
-                    // merged into main become unreachable with the branch.
+                    // 確定すると worktree とそのブランチの両方を削除する
+                    // (force)。反射的な y で作業を黙って失わせないよう、
+                    // 何が失われるかを明示する: 未コミットの変更はディレクトリ
+                    // ごと消え、main にマージされていないコミットはブランチ
+                    // ごと到達不能になる。
                     let branch = wt.branch.clone();
                     let dirty_count = wt.added + wt.modified + wt.deleted;
                     let is_clean = wt.is_clean;
@@ -111,8 +112,8 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
                                 "commits not merged into '{main_branch}' will be lost with the branch"
                             )),
                             Ok(true) => {}
-                            // Can't verify (e.g. branch renamed); don't block the
-                            // delete, but don't claim it's safe either.
+                            // 確認できない場合 (例: ブランチ名変更後) は削除を
+                            // ブロックしないが、安全だとも主張しない。
                             Err(e) => {
                                 log::warn!("merged-into-main check failed for '{branch}': {e}");
                             }
@@ -237,7 +238,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
             app.refresh_worktrees();
         }
         Some(Action::ResetMainToOrigin) => {
-            // Confirm first — this discards local commits.
+            // 先に確認する — これはローカルのコミットを破棄する。
             app.cmd_reset_main_to_origin();
         }
         Some(Action::OpenPullRequest) => {

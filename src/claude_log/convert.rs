@@ -1,6 +1,6 @@
-//! Normalisation of raw session-log records into display-ready blocks: tool
-//! summaries, ANSI/control-code sanitization, and the user-turn wrapper forms
-//! (`<command-name>`, `<local-command-stdout>`, `<task-notification>`).
+//! 生のセッションログレコードを表示用ブロックへ正規化する処理: ツールの要約、
+//! ANSI/制御コードのサニタイズ、user ターンのラッパー形式
+//! （<command-name>、<local-command-stdout>、<task-notification>）の処理。
 
 use std::collections::{HashMap, HashSet};
 
@@ -8,23 +8,23 @@ use super::model::DisplayBlock;
 use super::schema::{Block, Content, ToolResultContent};
 use super::tool_class::{ResultKind, result_kind};
 
-/// Strip characters that would desync terminal rendering from a raw tool-output
-/// line: ANSI escape sequences, tabs (expanded to spaces), and other C0/C1
-/// control codes. Tool output (command results, file dumps) is arbitrary text —
-/// a stray tab advances the terminal cursor to the next tab stop while ratatui
-/// counts it as one cell, and a color escape is zero-width to the terminal but
-/// byte-width to ratatui; either shifts the rest of the line and garbles the
-/// transcript panel. We render a clean, plain-text preview instead.
+/// 生のツール出力の行から、端末の描画をずらしてしまう文字を取り除く: ANSI
+/// エスケープシーケンス、タブ（スペースに展開する）、その他の C0/C1 制御
+/// コード。ツール出力（コマンド結果、ファイルダンプ）は任意のテキストであり、
+/// 素のタブは端末上ではタブストップまでカーソルを進めるが ratatui は1セルと
+/// 数える。色のエスケープも端末上では幅ゼロだが ratatui にとってはバイト幅
+/// を持つ。どちらも行の残りをずらしてトランスクリプトパネルを崩す。そこで
+/// 代わりに、整形済みのプレーンテキストプレビューを描画する。
 pub(super) fn sanitize_preview_line(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            // ANSI escape — drop the whole sequence so it isn't rendered as text.
+            // ANSI エスケープ — テキストとして描画されないようシーケンス全体を捨てる。
             '\u{1b}' => match chars.peek() {
                 Some('[') => {
                     chars.next();
-                    // CSI: consume until a final byte in 0x40–0x7E.
+                    // CSI: 0x40〜0x7E の終端バイトまで読み進める。
                     for cc in chars.by_ref() {
                         if ('\u{40}'..='\u{7e}').contains(&cc) {
                             break;
@@ -33,7 +33,7 @@ pub(super) fn sanitize_preview_line(s: &str) -> String {
                 }
                 Some(']') => {
                     chars.next();
-                    // OSC: consume until BEL or the ST terminator (ESC \).
+                    // OSC: BEL または ST 終端（ESC \）まで読み進める。
                     while let Some(cc) = chars.next() {
                         if cc == '\u{07}' {
                             break;
@@ -46,21 +46,21 @@ pub(super) fn sanitize_preview_line(s: &str) -> String {
                         }
                     }
                 }
-                // Lone ESC or other escape form: drop the following byte too.
+                // 単独の ESC やその他のエスケープ形式: 続く1バイトも捨てる。
                 _ => {
                     chars.next();
                 }
             },
             '\t' => out.push_str("    "),
-            c if c.is_control() => {} // drop CR and other control codes
+            c if c.is_control() => {} // CR など他の制御コードは捨てる
             c => out.push(c),
         }
     }
     out
 }
 
-/// Split a `ToolResultContent` into its individual output lines, sanitized for
-/// safe single-row rendering (see [`sanitize_preview_line`]).
+/// ToolResultContent を個々の出力行に分割し、1行ずつ安全に描画できるよう
+/// サニタイズする（sanitize_preview_line を参照）。
 pub(super) fn result_lines(content: &ToolResultContent) -> Vec<String> {
     match content {
         ToolResultContent::None => Vec::new(),
@@ -72,8 +72,8 @@ pub(super) fn result_lines(content: &ToolResultContent) -> Vec<String> {
     }
 }
 
-/// Return the text between `<{tag}>` and `</{tag}>`, if the opening tag exists.
-/// An unterminated tag captures to the end of the string.
+/// 開始タグが存在すれば、<{tag}> と </{tag}> の間のテキストを返す。
+/// 終了タグが無い場合は文字列の末尾までを取り込む。
 fn tag_inner<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -85,10 +85,10 @@ fn tag_inner<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     })
 }
 
-/// Extract the value of `attr="..."` from a tag's attribute text (the
-/// substring between the tag name and its closing `>`). A simple string
-/// search, not a general attribute parser — matches `tag_inner` above, which
-/// is deliberately not a full XML/HTML parser either.
+/// タグの属性テキスト（タグ名とその閉じ > の間の部分文字列）から
+/// attr="..." の値を取り出す。単純な文字列検索であり、汎用の属性パーサ
+/// ではない。上の tag_inner も意図的に完全な XML/HTML パーサにしていないのと
+/// 同じ方針。
 fn attr_value<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     let needle = format!("{name}=\"");
     let start = attrs.find(&needle)? + needle.len();
@@ -97,16 +97,14 @@ fn attr_value<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     Some(&rest[..end])
 }
 
-/// Parse a `<teammate-message teammate_id="...">…</teammate-message>`
-/// wrapper — Conductor's own multi-agent construct, not a Claude Code CLI
-/// form — at the start of `lead` into its `(id, body)`. The wrapper's
-/// `summary` attribute, if present, is always ignored (S4): only `body`,
-/// shown when expanded, carries the message. An unterminated closing tag
-/// captures through to the end of the string, matching `tag_inner`'s
-/// convention. Returns `None` if `lead` doesn't open with this tag, or the
-/// tag is malformed (no closing `>` on the opening tag, or no `teammate_id`
-/// attribute) — the caller then falls through to treating the text as
-/// ordinary prose.
+/// lead の先頭にある <teammate-message teammate_id="...">…</teammate-message>
+/// ラッパー（Claude Code CLI の形式ではなく、Conductor 独自のマルチエージェント
+/// 構造）をパースして (id, body) にする。ラッパーの summary 属性は存在しても
+/// 常に無視し、展開時に表示される body だけがメッセージ本体を持つ。終了タグが
+/// 無い場合は文字列の末尾まで取り込む点は tag_inner の規約と同じ。lead が
+/// このタグで始まっていない場合、またはタグが壊れている場合（開始タグに
+/// 閉じの > が無い、または teammate_id 属性が無い）は None を返し、
+/// 呼び出し元はテキストを通常の文章として扱う経路にフォールバックする。
 fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     const OPEN_PREFIX: &str = "<teammate-message";
     const CLOSE: &str = "</teammate-message>";
@@ -123,57 +121,58 @@ fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     Some((id.to_string(), body.trim().to_string()))
 }
 
-/// Normalise a user text block to what Claude Code's live UI actually shows
-/// (or, for the Conductor-specific `<teammate-message>` wrapper, to the
-/// display block S4 defines for it).
+/// user のテキストブロックを、Claude Code の実際の UI が表示する内容
+/// （Conductor 独自の <teammate-message> ラッパーについては、それ用に定義した
+/// 表示ブロック）へ正規化する。
 ///
-/// The session log records several wrapper forms inside plain user turns that
-/// the CLI renders specially (or not at all); left raw they make the reflow
-/// transcript look nothing like the screen the user just scrolled away from:
+/// セッションログは、素の user ターンの中に CLI が特別に描画する（または
+/// 全く描画しない）いくつかのラッパー形式を記録している。生のまま残すと、
+/// reflow トランスクリプトがユーザが直前まで見ていた画面とまるで違うものに
+/// なってしまう。
 ///
-/// * `<teammate-message teammate_id="...">…</teammate-message>` — a message
-///   from another agent teammate; folds into [`DisplayBlock::TeammateMessage`].
-/// * `<command-name>/foo</command-name>…<command-args>bar</command-args>` —
-///   a slash-command invocation; the CLI shows it as `> /foo bar`.
-/// * `<local-command-stdout>…</local-command-stdout>` — output of a local
-///   command, shown unwrapped (sanitized here: it can carry raw ANSI).
-/// * `<task-notification>…</task-notification>` — a background task finishing;
-///   collapses the whole message to the notification's `<summary>` line.
+/// * <teammate-message teammate_id="...">…</teammate-message> — 別のエージェント
+///   チームメイトからのメッセージ。DisplayBlock::TeammateMessage に畳み込む。
+/// * <command-name>/foo</command-name>…<command-args>bar</command-args> —
+///   スラッシュコマンドの呼び出し。CLI は "> /foo bar" として表示する。
+/// * <local-command-stdout>…</local-command-stdout> — ローカルコマンドの
+///   出力。ラップを外して表示する（ここでサニタイズする。生の ANSI を
+///   含むことがあるため）。
+/// * <task-notification>…</task-notification> — バックグラウンドタスクの
+///   完了。メッセージ全体を通知の <summary> 行に畳み込む。
 ///
-/// `<system-reminder>` is *not* in that list — see the comment at the tail of
-/// this function for why it is left in place.
+/// <system-reminder> はこのリストに *含まれない* — そのままにしている理由は
+/// この関数の末尾にあるコメントを参照。
 ///
-/// Returns `None` when nothing displayable remains.
+/// 表示できるものが何も残らなかった場合は None を返す。
 fn normalise_user_text(text: String) -> Option<DisplayBlock> {
-    // The wrapper forms are only recognised at the very start of the message
-    // (that is where they're written); a user merely *mentioning* one of
-    // these tags mid-prompt keeps their text untouched.
+    // ラッパー形式が認識されるのはメッセージの先頭だけ（実際にそこに書かれる
+    // ため）。ユーザがプロンプトの途中でこれらのタグに *言及* しているだけの
+    // 場合はテキストに手を加えない。
     let lead = text.trim_start();
     if lead.starts_with("<teammate-message")
         && let Some((id, body)) = parse_teammate_message(lead)
     {
         return Some(DisplayBlock::TeammateMessage { id, body });
     }
-    // Measured: `<task-notification>` is matched *anywhere* in the message, not
-    // just at its start, and collapsing it discards everything else the message
-    // held. Claude Code checks neither the tag's position nor who wrote the
-    // record — a screen dump pasted by hand collapses exactly like the CLI's own
-    // notification, taking the prose typed around it with it. Hence this runs
-    // before the leading-tag forms below, and takes only the *first* summary
-    // when a message carries several.
+    // 実測: <task-notification> はメッセージの先頭に限らず *どこにあっても*
+    // マッチし、畳み込むとメッセージが持っていた他の内容はすべて捨てられる。
+    // Claude Code はタグの位置もレコードの書き手も確認しない — 手動で貼り
+    // 付けた画面ダンプでも CLI 自身の通知と全く同じように畳み込まれ、周りに
+    // 打たれた文章も道連れになる。そのため、以下の先頭タグ系の処理より前に
+    // これを実行し、メッセージが複数の summary を持つ場合は *最初の* もの
+    // だけを採用する。
     //
-    // With no usable `<summary>` the message vanishes entirely rather than
-    // falling back to its raw text — also measured, for both a missing tag and
-    // an empty one.
+    // 使える <summary> が無い場合は、生のテキストにフォールバックせず
+    // メッセージ全体が消える — これもタグが無い場合と空の場合の両方で実測済み。
     if lead.contains("<task-notification>") {
         let summary = tag_inner(lead, "summary")
             .map(str::trim)
             .filter(|s| !s.is_empty())?;
         return Some(DisplayBlock::Notice(sanitize_preview_line(summary)));
     }
-    // The CLI always writes a terminated tag; an unterminated one at the start
-    // of a message is user prose, not a command record — leave it alone rather
-    // than swallowing the whole message as a "command name".
+    // CLI は常に終了タグ付きで書く。メッセージの先頭に終了タグの無いものが
+    // あれば、それはコマンドレコードではなくユーザの文章なので、
+    // 「コマンド名」としてメッセージ全体を飲み込まず、そのままにしておく。
     if lead.starts_with("<command-name>")
         && lead.contains("</command-name>")
         && let Some(name) = tag_inner(lead, "command-name")
@@ -189,8 +188,8 @@ fn normalise_user_text(text: String) -> Option<DisplayBlock> {
     if lead.starts_with("<local-command-stdout>")
         && let Some(stdout) = tag_inner(lead, "local-command-stdout")
     {
-        // Measured: a command's stdout is drawn as a `⎿` continuation of the
-        // `❯ /command` line above it, not as a user turn of its own.
+        // 実測: コマンドの stdout は、それ単体の user ターンとしてではなく、
+        // 上にある ❯ /command 行に続く ⎿ の継続として描画される。
         let lines: Vec<String> = stdout
             .trim()
             .lines()
@@ -199,41 +198,45 @@ fn normalise_user_text(text: String) -> Option<DisplayBlock> {
             .collect();
         return (!lines.is_empty()).then_some(DisplayBlock::Annotation { lines });
     }
-    // `<system-reminder>` spans are deliberately *not* removed: measured, Claude
-    // Code draws them verbatim, whether they sit inline in a turn's text or
-    // arrive as a block of their own. The reminders a reader never sees on
-    // screen are hidden by their record's `isMeta` flag instead (10 of the 11
-    // reminder-only records in the local corpus carry it), which `session.rs`
-    // skips before reaching here.
+    // <system-reminder> の範囲はあえて取り除かない: 実測したところ、
+    // ターンのテキストにインラインで入っている場合も、それ単体のブロックと
+    // して届く場合も、Claude Code はそのまま描画する。画面上で読み手が
+    // 決して目にしないリマインダーの方は、代わりにレコードの isMeta
+    // フラグで隠される（手元のコーパスにあるリマインダーのみのレコード
+    // 11件中10件がこのフラグを持つ）。session.rs がここに到達する前に
+    // それらをスキップしている。
     let trimmed = text.trim();
     (!trimmed.is_empty()).then(|| DisplayBlock::Text(trimmed.to_string()))
 }
 
-/// Convert a [`Content`] value into display blocks, normalising the two surface
-/// forms (bare string and typed block array) into the same flat representation.
+/// Content の値を表示用ブロックへ変換し、2つの表層形式（素の文字列と型付き
+/// ブロック配列）を同じフラットな表現へ正規化する。
 ///
-/// `is_user` applies the user-turn wrapper normalisation (slash commands,
-/// local-command stdout, task notifications — see [`normalise_user_text`]).
-/// Assistant text is left untouched: it may legitimately *quote* those tags.
+/// is_user が真なら user ターンのラッパー正規化（スラッシュコマンド、
+/// local-command の stdout、タスク通知。normalise_user_text 参照）を適用する。
+/// assistant のテキストは手を加えない。これらのタグを正当に *引用* して
+/// いる場合があるため。
 ///
-/// `tool_kinds` is the session-wide `tool_use` id → [`ResultKind`]
-/// pairing map (see `session.rs`): a `Counted`-category `tool_use` block
-/// writes its bucket in under its id; a `tool_result` block looks its id up
-/// to recover it (`None` for `Inline`/`Hidden` calls — their raw tool name is
-/// not retained here, only `log::debug!`-able at classification time if ever
-/// needed — or if pairing failed to find the matching `tool_use`, e.g.
-/// truncated logs). The map outlives a single call — it is threaded through
-/// every record in a session so a `tool_use` in one record can be found by a
-/// `tool_result` in a later one.
+/// tool_kinds は、セッション全体で共有する tool_use の id → ResultKind の
+/// ペアリングマップ（session.rs 参照）。Counted カテゴリの tool_use
+/// ブロックは自分の id でこの bucket を書き込み、tool_result ブロックは
+/// その id を引いて復元する（Inline/Hidden な呼び出しは生のツール名を
+/// ここでは保持していない ── 必要なら分類時点で log::debug! できる程度
+/// ため None になる。分類時に対応する tool_use が見つからなかった場合
+/// （ログが途中で切れている場合など）も None）。このマップは1回の呼び出し
+/// より長く生き、セッション内の全レコードを通して引き回される。これに
+/// より、あるレコードの tool_use を、後のレコードの tool_result から
+/// 見つけられる。
 ///
-/// `errored_ids` is the session-wide pre-scan of `tool_use_id`s whose
-/// `tool_result` reported an error (see `session.rs::scan_errored_tool_use_ids`),
-/// needed because a `tool_use` renders before its `tool_result` is reached.
+/// errored_ids は、tool_result がエラーを報告した tool_use_id をセッション
+/// 全体で事前スキャンした集合（session.rs::scan_errored_tool_use_ids 参照）。
+/// tool_use は対応する tool_result に到達するより前に描画されるため必要になる。
 ///
-/// `thinking_duration_secs` is this record's precomputed "Thought for Ns"
-/// value (see `session.rs::thinking_duration_secs`), applied to every
-/// `Thinking` block found here — a record carries one timestamp for all its
-/// content blocks, so multiple `Thinking` blocks in one record share it.
+/// thinking_duration_secs は、このレコードについてあらかじめ計算した
+/// 「Thought for Ns」の値（session.rs::thinking_duration_secs 参照）で、
+/// ここで見つかるすべての Thinking ブロックに適用する。1レコードは
+/// 全コンテンツブロックに対して1つのタイムスタンプしか持たないため、
+/// 1レコード内に複数の Thinking ブロックがあってもこの値を共有する。
 pub(super) fn content_to_display_blocks(
     content: Content,
     is_user: bool,
@@ -273,10 +276,10 @@ pub(super) fn content_to_display_blocks(
                     content,
                     is_error,
                 } => {
-                    // An unpaired result (truncated log, id missing) falls back
-                    // to `Hidden`: without its `tool_use` there is no way to
-                    // know which category it belongs to, and guessing `Inline`
-                    // would emit a stray error block.
+                    // 対応の取れない result（ログが途中で切れている、id が
+                    // 無い）は Hidden にフォールバックする。tool_use が無いと
+                    // どのカテゴリに属するか分からず、Inline と決め打ちすると
+                    // 余計なエラーブロックを出してしまう。
                     let kind = tool_kinds
                         .get(&tool_use_id)
                         .copied()

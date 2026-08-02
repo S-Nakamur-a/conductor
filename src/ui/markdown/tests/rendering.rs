@@ -1,10 +1,10 @@
-//! Tests for span wrapping, adversarial-input robustness, heading/code-block
-//! rendering, the Transcript flavor, and [`MarkdownCache`].
+//! span の折り返し、敵対的入力への堅牢性、見出し/コードブロックの描画、
+//! Transcript フレーバー、[MarkdownCache] のテスト。
 
 use super::*;
 use ratatui::style::Color;
 
-// ── Wrapping / width ──
+// 折り返し / 幅
 
 #[test]
 fn wraps_to_width_and_preserves_words() {
@@ -17,7 +17,7 @@ fn wraps_to_width_and_preserves_words() {
 
 #[test]
 fn full_width_cjk_wraps_by_display_width() {
-    // 6 full-width chars = 12 columns; at width 10 it must split.
+    // 全角文字6個 = 12桁。幅10では必ず分割される。
     let lines = render("ああああああ", 10);
     for line in &lines {
         assert!(display_width(&line_text(line)) <= 10);
@@ -40,7 +40,7 @@ fn blank_line_preserved_as_spacing() {
     assert_eq!(texts, vec!["a", "", "b"]);
 }
 
-// ── Robustness ──
+// 堅牢性
 
 #[test]
 fn never_panics_on_adversarial_input() {
@@ -94,8 +94,8 @@ fn unknown_language_falls_back_without_panic() {
 fn code_block_is_highlighted_and_carded() {
     let (theme, ss, st) = fixtures();
     let lines = render_markdown("```rust\nlet x = 1;\n```", 40, &theme, &ss, &st);
-    // Padding rows above and below the code, each filled to full width with
-    // the card background.
+    // コードの上下にパディング行があり、それぞれカードの背景色で
+    // 全幅まで埋められている。
     assert!(lines.len() >= 3);
     for edge in [&lines[0], &lines[lines.len() - 1]] {
         assert!(display_width(&line_text(edge)) == 40, "pad row fills width");
@@ -104,13 +104,13 @@ fn code_block_is_highlighted_and_carded() {
             "pad row carries the card background"
         );
     }
-    // The content row sits between the pads: card background under every
-    // span, and syntect splits it into multiple styled spans.
+    // 内容行はパディングの間に位置する: どの span の下にもカードの背景色があり、
+    // syntect が複数のスタイル付き span に分割する。
     let content = &lines[1];
     assert!(line_text(content).contains("let x = 1;"));
     assert!(content.spans.iter().all(|s| s.style.bg == Some(theme.code_bg)));
     assert!(content.spans.len() > 2);
-    // The whole card fills the width edge to edge.
+    // カード全体が端から端まで幅を埋める。
     assert_eq!(display_width(&line_text(content)), 40);
 }
 
@@ -128,7 +128,7 @@ fn inline_code_sits_on_card_background() {
 
 #[test]
 fn top_level_headings_get_an_underline_rule() {
-    // H1/H2 render their text plus a full-width rule; H3+ do not.
+    // H1/H2 はテキストに加えて全幅の区切り線を描画する。H3以降は描画しない。
     let h1 = render("# Title", 20);
     assert_eq!(h1.len(), 2, "heading + rule");
     assert!(line_text(&h1[1]).chars().all(|c| c == '\u{2500}'));
@@ -141,8 +141,8 @@ fn top_level_headings_get_an_underline_rule() {
 #[test]
 fn headings_get_a_colour_bar_and_level_colour() {
     let (theme, _, _) = fixtures();
-    // The first span of a heading is the solid colour bar; its colour and
-    // the heading text's colour track the level.
+    // 見出しの最初の span は塗りつぶしのカラーバーで、その色と見出しテキストの
+    // 色はレベルに応じて変わる。
     for (src, color) in [
         ("# H1", theme.accent),
         ("## H2", theme.info),
@@ -152,24 +152,24 @@ fn headings_get_a_colour_bar_and_level_colour() {
         let bar = &lines[0].spans[0];
         assert_eq!(bar.content.as_ref(), "\u{2503} ");
         assert_eq!(bar.style.fg, Some(color), "bar colour for {src:?}");
-        // The text after the bar carries the same level colour, bolded.
+        // バーの後ろのテキストは同じレベル色を太字で持つ。
         let text = &lines[0].spans[1];
         assert_eq!(text.style.fg, Some(color));
         assert!(text.style.add_modifier.contains(Modifier::BOLD));
     }
 }
 
-// ── Transcript flavor (Claude scroll-up view) ──
+// Transcript フレーバー（Claude のスクロールアップ表示）
 
 #[test]
 fn transcript_bullets_use_dash_in_body_colour() {
     let (theme, _, _) = fixtures();
-    // Bullet marker is "- " (not "• ") and in body colour (not accent).
+    // 箇条書きマーカーは「- 」（「• 」ではない）で、本文色（アクセントではない）。
     let lines = render_transcript("- item", 20);
     let marker = &lines[0].spans[0];
     assert_eq!(marker.content.as_ref(), "- ");
     assert_eq!(marker.style.fg, Some(theme.fg));
-    // The Rich flavor still uses the accent bullet, unchanged.
+    // Rich フレーバーは変わらずアクセント色の箇条書きマーカーを使う。
     let rich = render("- item", 20);
     assert_eq!(rich[0].spans[0].content.as_ref(), "\u{2022} ");
     assert_eq!(rich[0].spans[0].style.fg, Some(theme.accent));
@@ -187,8 +187,8 @@ fn transcript_ordered_marker_in_body_colour() {
 #[test]
 fn transcript_headings_are_bold_body_colour_no_bar_no_rule() {
     let (theme, _, _) = fixtures();
-    // Green H3 (and every other level) render as plain bold body-colour text:
-    // first span is the text itself, not a "┃ " bar, and there is no rule.
+    // H3（他の全レベルも同様）は、太字の本文色プレーンテキストとして描画される:
+    // 最初の span は「┃ 」バーではなくテキスト自体で、区切り線もない。
     for src in ["# H1", "## H2", "### H3"] {
         let lines = render_transcript(src, 30);
         let first = &lines[0].spans[0];
@@ -210,8 +210,9 @@ fn transcript_headings_are_bold_body_colour_no_bar_no_rule() {
 
 #[test]
 fn transcript_h1_is_bold_italic_underlined_h2_h3_stay_bold_only() {
-    // Native Claude Code renders H1 as bold+italic+underline; H2/H3 stay the
-    // plain bold established by `transcript_headings_are_bold_body_colour_no_bar_no_rule`.
+    // 実物の Claude Code は H1 を太字+斜体+下線で描画する。H2/H3 は
+    // transcript_headings_are_bold_body_colour_no_bar_no_rule で確認した通りの
+    // プレーンな太字のまま。
     let h1 = render_transcript("# Title", 30);
     let span = &h1[0].spans[0];
     assert!(span.style.add_modifier.contains(Modifier::BOLD), "H1 bold");
@@ -225,17 +226,17 @@ fn transcript_h1_is_bold_italic_underlined_h2_h3_stay_bold_only() {
         assert!(!span.style.add_modifier.contains(Modifier::UNDERLINED), "{src}: not underlined");
     }
 
-    // The Rich flavor's H1 is unaffected (bold only, no italic/underline).
+    // Rich フレーバーの H1 は影響を受けない（太字のみ、斜体/下線なし）。
     let rich_h1 = render("# Title", 30);
-    let rich_span = &rich_h1[0].spans[1]; // spans[0] is the colour bar
+    let rich_span = &rich_h1[0].spans[1]; // spans[0] はカラーバー
     assert!(!rich_span.style.add_modifier.contains(Modifier::ITALIC), "Rich H1 stays bold-only");
     assert!(!rich_span.style.add_modifier.contains(Modifier::UNDERLINED), "Rich H1 stays bold-only");
 }
 
 #[test]
 fn transcript_task_checkbox_renders_literally_unstyled() {
-    // Native Claude Code doesn't special-case GFM task-list syntax: the
-    // checkbox marker stays in the body text, as an ordinary bullet item.
+    // 実物の Claude Code は GFM のタスクリスト構文を特別扱いしない:
+    // チェックボックスのマーカーは本文テキストのまま、普通の箇条書き項目として残る。
     let (theme, _, _) = fixtures();
     let lines = render_transcript("- [ ] unchecked task\n- [x] checked task", 40);
     assert_eq!(lines[0].spans[0].content.as_ref(), "- ", "ordinary dash bullet, not dropped");
@@ -244,15 +245,16 @@ fn transcript_task_checkbox_renders_literally_unstyled() {
     assert_eq!(lines[1].spans[0].content.as_ref(), "- ");
     let checked_text: String = lines[1].spans[1..].iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(checked_text, "[x] checked task");
-    // No special colouring: bullet and body both stay body-colour, never
-    // theme.success (the "completed" green) or theme.muted (the "recede" grey).
+    // 特別な色付けはなし: 箇条書きマーカーも本文も本文色のままで、
+    // theme.success（「完了」を表す緑）や theme.muted（「後退」を表すグレー）には
+    // 決してならない。
     for line in &lines {
         for span in &line.spans {
             assert_eq!(span.style.fg, Some(theme.fg), "no special checkbox colour");
         }
     }
 
-    // The Rich flavor keeps converting checkboxes (unaffected).
+    // Rich フレーバーは引き続きチェックボックスを変換する（影響を受けない）。
     let rich = render("- [ ] todo\n- [x] done", 40);
     assert_eq!(rich[0].spans[0].content.as_ref(), "[ ] ");
     assert_eq!(rich[1].spans[0].content.as_ref(), "[x] ");
@@ -271,7 +273,8 @@ fn transcript_inline_code_uses_info_colour_with_no_padding() {
     assert_eq!(code.style.fg, Some(theme.info));
     assert_eq!(code.style.bg, None, "no card background in the transcript");
 
-    // The Rich flavor keeps its NBSP-padded, code_fg/code_bg card (unaffected).
+    // Rich フレーバーは NBSP パディング付きの code_fg/code_bg カードを維持する
+    // （影響を受けない）。
     let rich = render("use `git` now", 40);
     assert!(
         rich.iter().flat_map(|l| l.spans.iter()).any(|s| {
@@ -299,7 +302,8 @@ fn transcript_quote_uses_dim_glyph_and_default_colour_italic_body() {
         assert!(span.style.add_modifier.contains(Modifier::ITALIC), "body stays italic");
     }
 
-    // The Rich flavor keeps its muted "│ " bar and muted italic body (unaffected).
+    // Rich フレーバーは muted 色の「│ 」バーと muted 斜体の本文を維持する
+    // （影響を受けない）。
     let rich = render("> quoted text", 40);
     assert_eq!(rich[0].spans[0].content.as_ref(), "\u{2502} ");
     assert_eq!(rich[0].spans[0].style.fg, Some(theme.muted));
@@ -308,7 +312,7 @@ fn transcript_quote_uses_dim_glyph_and_default_colour_italic_body() {
 
 #[test]
 fn transcript_heading_has_blank_line_before_and_after() {
-    // "body / ## Head / more" → blank inserted both above and below the head.
+    // "body / ## Head / more" → 見出しの前後どちらにも空行が挿入される。
     let lines = render_transcript("body\n## Head\nmore", 30);
     let texts: Vec<String> = lines.iter().map(line_text).collect();
     let h = texts
@@ -322,7 +326,7 @@ fn transcript_heading_has_blank_line_before_and_after() {
 
 #[test]
 fn transcript_heading_does_not_stack_double_blank() {
-    // An authored blank after the heading is swallowed, not stacked.
+    // ソース側で見出しの後に書かれた空行は吸収され、積み重ならない。
     let lines = render_transcript("## Head\n\nbody", 30);
     let texts: Vec<String> = lines.iter().map(line_text).collect();
     let h = texts.iter().position(|t| t == "Head").unwrap();
@@ -332,7 +336,7 @@ fn transcript_heading_does_not_stack_double_blank() {
 
 #[test]
 fn transcript_lines_stay_within_width() {
-    // The dash bullet and bold headings never overflow the wrap width.
+    // ダッシュの箇条書きと太字見出しは折り返し幅を決してはみ出さない。
     for width in [4usize, 8, 20, 40] {
         for line in render_transcript("### 見出し\n- あいうえお item\n1. another one", width) {
             assert!(display_width(&line_text(&line)) <= width);
@@ -342,9 +346,9 @@ fn transcript_lines_stay_within_width() {
 
 #[test]
 fn transcript_table_renders_as_boxed_grid() {
-    // Matches native Claude Code's default table rendering byte-for-byte:
-    // box-drawing border, a rule between every row (not just under the
-    // header), columns padded to `max(cell width) + 2`, no colour, no bold.
+    // 実物の Claude Code のデフォルトのテーブル描画とバイト単位で一致する:
+    // 罫線文字の枠線、（ヘッダー下だけでなく）行と行の間すべての区切り線、
+    // max(セル幅) + 2 にパディングされた列、色なし、太字なし。
     let table = "| Column A | Column B | Column C |\n\
         | --- | --- | --- |\n\
         | a1 | b1 | c1 |\n\
@@ -364,7 +368,7 @@ fn transcript_table_renders_as_boxed_grid() {
         ],
         "boxed table lines"
     );
-    // No colour, no bold anywhere in the table.
+    // テーブルのどこにも色や太字はない。
     for line in &lines {
         for span in &line.spans {
             assert_eq!(span.style.fg, Some(Color::Reset), "table text carries no colour");
@@ -394,8 +398,8 @@ fn transcript_table_never_exceeds_width() {
 
 #[test]
 fn rich_table_stays_borderless_after_transcript_boxed_table_change() {
-    // Guard: the Rich flavor must keep its bold-header / rule-only layout —
-    // no box-drawing characters leak in from the Transcript path.
+    // ガード: Rich フレーバーは太字ヘッダー/区切り線のみのレイアウトを
+    // 維持しなければならない — Transcript 側から罫線文字が漏れてはいけない。
     let table = "| h1 | h2 |\n| --- | --- |\n| a | b |";
     let lines = render(table, 40);
     let joined: String = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -416,7 +420,8 @@ fn apply_background_fills_only_bare_spans() {
     apply_background(&mut lines, bg);
     for line in &lines {
         for span in &line.spans {
-            // Plain text gains the tint; the inline-code card keeps its own.
+            // プレーンテキストは色味を得るが、インラインコードのカードは
+            // 自身の色を維持する。
             assert!(span.style.bg == Some(bg) || span.style.bg == Some(theme.code_bg));
         }
     }
@@ -428,20 +433,20 @@ fn markdown_cache_matches_fresh_and_invalidates_on_change() {
     let cache = MarkdownCache::new();
     let texts = |ls: &[Line]| ls.iter().map(line_text).collect::<Vec<_>>();
 
-    // Cached output equals a fresh render.
+    // キャッシュされた出力は新規描画と一致する。
     let fresh = render_markdown("a `b` c", 30, &theme, &ss, &st);
     let first = cache.render("id1", "a `b` c", 30, &theme, &ss, &st);
     assert_eq!(texts(&fresh), texts(&first));
 
-    // A cache hit (same id/body/width) returns the same content.
+    // キャッシュヒット（同じ id/body/width）は同じ内容を返す。
     let second = cache.render("id1", "a `b` c", 30, &theme, &ss, &st);
     assert_eq!(texts(&first), texts(&second));
 
-    // Changing the body re-renders (different output under the same id).
+    // body を変えると再描画される（同じ id でも出力は変わる）。
     let changed = cache.render("id1", "totally different text", 30, &theme, &ss, &st);
     assert_ne!(texts(&first), texts(&changed));
 
-    // Changing the width re-wraps.
+    // width を変えると再度折り返される。
     let narrow = cache.render("id2", "the quick brown fox jumps", 8, &theme, &ss, &st);
     let wide = cache.render("id2", "the quick brown fox jumps", 40, &theme, &ss, &st);
     assert_ne!(narrow.len(), wide.len());

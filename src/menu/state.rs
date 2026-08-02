@@ -1,29 +1,30 @@
-//! Menu bar interaction state, plus the pure navigation helpers the keyboard
-//! and mouse handlers share.
+//! メニューバーのインタラクション状態と、キーボード/マウス両ハンドラが共有する
+//! 純粋なナビゲーションヘルパー。
 //!
-//! The navigation helpers are free functions over `&[MenuItem]` rather than
-//! methods on `App`, so the separator-skipping and wrap-around rules can be
-//! unit-tested without standing up a terminal or an `App`.
+//! ナビゲーションヘルパーが App のメソッドではなく &[MenuItem] に対する
+//! フリー関数になっているのは、区切りのスキップやラップアラウンドのルールを
+//! 端末や App を立ち上げずに単体テストできるようにするためである。
 
 use ratatui::layout::Rect;
 
 use super::model::MenuItem;
 
-/// Where menu-bar interaction currently sits.
+/// メニューバーのインタラクションが今どの状態にあるか。
 ///
-/// Three states rather than two because `F10` focuses the bar *without*
-/// committing to a menu — matching the GTK/Windows convention where the arrow
-/// keys then browse the titles and `Down`/`Enter` drops the list open. Merging
-/// `Bar` into `Open` would force `F10` to pop a dropdown the user never asked
-/// for.
+/// 2状態ではなく3状態あるのは、F10 がメニューを確定させずにバーへ
+/// フォーカスするだけの動作をするからである。これは GTK/Windows の慣習と同じで、
+/// その後は矢印キーでタイトルを閲覧し、Down/Enter でドロップダウンを開く。
+/// Bar を Open に統合してしまうと、F10 がユーザの求めていないドロップダウン
+/// を強制的に開くことになる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MenuFocus {
-    /// The menu bar is drawn but inert; keys go to the app as usual.
+    /// メニューバーは描画されるが不活性で、キーは通常どおりアプリに渡る。
     #[default]
     Closed,
-    /// The bar has keyboard focus and `index` is highlighted, no dropdown yet.
+    /// バーがキーボードフォーカスを持ち index がハイライトされているが、
+    /// ドロップダウンはまだ開いていない。
     Bar { index: usize },
-    /// `index`'s dropdown is open with `selected` highlighted.
+    /// index のドロップダウンが開いており selected がハイライトされている。
     Open {
         index: usize,
         selected: usize,
@@ -32,13 +33,13 @@ pub enum MenuFocus {
 }
 
 impl MenuFocus {
-    /// Whether the menu is consuming input. When true the event dispatcher
-    /// routes every key to the menu handler and nothing reaches the panels.
+    /// メニューが入力を消費している状態かどうか。true のときはイベント
+    /// ディスパッチャがすべてのキーをメニューハンドラに渡し、パネルには届かない。
     pub fn is_active(self) -> bool {
         !matches!(self, MenuFocus::Closed)
     }
 
-    /// The highlighted top-level menu, in either active state.
+    /// いずれかのアクティブ状態でハイライトされているトップレベルメニュー。
     pub fn active_index(self) -> Option<usize> {
         match self {
             MenuFocus::Closed => None,
@@ -47,7 +48,7 @@ impl MenuFocus {
         }
     }
 
-    /// The menu whose dropdown is open, if any.
+    /// ドロップダウンが開いているメニューがあればそれ。
     pub fn open_index(self) -> Option<usize> {
         match self {
             MenuFocus::Open { index, .. } => Some(index),
@@ -56,59 +57,59 @@ impl MenuFocus {
     }
 }
 
-/// A clickable top-level title on the menu bar row: `x0` inclusive, `x1`
-/// exclusive.
+/// メニューバー行上のクリック可能なトップレベルタイトル。x0 は含み、x1 は
+/// 含まない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BarHit {
     pub x0: u16,
     pub x1: u16,
-    /// Index into [`MENUS`](super::model::MENUS).
+    /// [MENUS](super::model::MENUS) へのインデックス。
     pub menu: usize,
 }
 
-/// A clickable row inside the open dropdown.
+/// 開いたドロップダウン内のクリック可能な行。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemHit {
-    /// Absolute screen row.
+    /// 画面上の絶対行。
     pub y: u16,
-    /// Index into the open menu's `items`.
+    /// 開いているメニューの items へのインデックス。
     pub item: usize,
-    /// False for a row whose command is currently unavailable — it is drawn
-    /// greyed out and clicking it does nothing.
+    /// この行のコマンドが現在実行不可の場合は false。グレーアウトして描画され、
+    /// クリックしても何も起きない。
     pub enabled: bool,
 }
 
-/// Menu bar state carried on `App`.
+/// App が保持するメニューバー状態。
 #[derive(Default)]
 pub struct MenuState {
     pub focus: MenuFocus,
-    /// Top-level title hit regions, recorded by the last bar render.
+    /// 直近のバー描画で記録されたトップレベルタイトルのヒット領域。
     pub bar_hits: Vec<BarHit>,
-    /// Dropdown row hit regions, recorded by the last dropdown render. Empty
-    /// while no dropdown is open.
+    /// 直近のドロップダウン描画で記録された行のヒット領域。ドロップダウンが
+    /// 開いていない間は空。
     pub item_hits: Vec<ItemHit>,
-    /// The open dropdown's rect (including its border), for outside-click
-    /// detection. Zero-sized while closed.
+    /// 開いているドロップダウンの矩形(枠を含む)。範囲外クリックの判定に使う。
+    /// 閉じている間はサイズ0。
     pub dropdown_area: Rect,
-    /// Top-level title under the mouse, for the hover highlight.
+    /// マウス下にあるトップレベルタイトル。ホバーハイライト用。
     pub hover: Option<usize>,
 }
 
 impl MenuState {
-    /// Drop every recorded dropdown region. Called whenever the dropdown
-    /// closes so a stale rect can't keep swallowing clicks.
+    /// 記録済みのドロップダウン領域をすべて破棄する。古い矩形がクリックを
+    /// 吸い込み続けないよう、ドロップダウンが閉じるたびに呼ぶ。
     pub fn clear_dropdown_regions(&mut self) {
         self.item_hits.clear();
         self.dropdown_area = Rect::default();
     }
 
-    /// Give the bar keyboard focus without opening anything.
+    /// 何も開かずにバーへキーボードフォーカスを与える。
     pub fn focus_bar(&mut self, index: usize) {
         self.focus = MenuFocus::Bar { index };
         self.clear_dropdown_regions();
     }
 
-    /// Open `index`'s dropdown with the first selectable row highlighted.
+    /// index のドロップダウンを、最初の選択可能行をハイライトした状態で開く。
     pub fn open(&mut self, index: usize, items: &[MenuItem]) {
         self.focus = MenuFocus::Open {
             index,
@@ -118,17 +119,17 @@ impl MenuState {
         self.clear_dropdown_regions();
     }
 
-    /// Leave the menu entirely and hand input back to the app.
+    /// メニューを完全に離れ、入力をアプリに返す。
     ///
-    /// Always call this *before* running a command: several commands open an
-    /// overlay of their own, and closing afterwards would tear that overlay's
-    /// state back down.
+    /// コマンドを実行する前に必ずこれを呼ぶこと。複数のコマンドは独自の
+    /// オーバーレイを開くため、実行後に閉じるとそのオーバーレイの状態まで
+    /// 一緒に壊してしまう。
     pub fn close(&mut self) {
         self.focus = MenuFocus::Closed;
         self.clear_dropdown_regions();
     }
 
-    /// Nudge `scroll` so `selected` stays inside a window of `visible` rows.
+    /// selected が visible 行のウィンドウ内に収まるよう scroll を調整する。
     pub fn scroll_selection_into_view(&mut self, visible: usize) {
         let MenuFocus::Open {
             selected, scroll, ..
@@ -146,7 +147,7 @@ impl MenuState {
         }
     }
 
-    /// Which top-level title (if any) sits under `col` on the bar row.
+    /// バー行上で col の位置にあるトップレベルタイトル(あれば)。
     pub fn bar_hit_at(&self, col: u16) -> Option<usize> {
         self.bar_hits
             .iter()
@@ -154,13 +155,13 @@ impl MenuState {
             .map(|h| h.menu)
     }
 
-    /// Which dropdown row (if any) sits at absolute screen row `row`, and
-    /// whether it is enabled.
+    /// 画面上の絶対行 row にあるドロップダウン行(あれば)と、それが
+    /// 実行可能かどうか。
     pub fn item_hit_at(&self, row: u16) -> Option<ItemHit> {
         self.item_hits.iter().find(|h| h.y == row).copied()
     }
 
-    /// Whether `(col, row)` lands inside the open dropdown's rect.
+    /// (col, row) が開いているドロップダウンの矩形内に収まるかどうか。
     pub fn in_dropdown(&self, col: u16, row: u16) -> bool {
         let a = self.dropdown_area;
         a.width > 0
@@ -172,18 +173,18 @@ impl MenuState {
     }
 }
 
-// ── Pure navigation helpers ────────────────────────────────────────────────
+// 純粋なナビゲーションヘルパー
 
-/// The first selectable row in `items`, or 0 if there is none.
+/// items 内で最初に選択可能な行。なければ 0。
 ///
-/// A menu whose rows are all separators is a table authoring mistake rather
-/// than a runtime condition, so this degrades to 0 instead of returning an
-/// `Option` the callers would all have to unwrap.
+/// すべての行が区切りであるメニューは実行時の条件ではなくテーブル記述側の
+/// ミスなので、呼び出し側全員がアンラップしなければならない Option を返す
+/// のではなく、ここで 0 に落としておく。
 pub fn first_selectable(items: &[MenuItem]) -> usize {
     items.iter().position(MenuItem::is_selectable).unwrap_or(0)
 }
 
-/// The last selectable row in `items`, or 0 if there is none.
+/// items 内で最後に選択可能な行。なければ 0。
 pub fn last_selectable(items: &[MenuItem]) -> usize {
     items
         .iter()
@@ -191,20 +192,20 @@ pub fn last_selectable(items: &[MenuItem]) -> usize {
         .unwrap_or(0)
 }
 
-/// Step the selection from `from` by one row in `dir` (`+1` down, `-1` up),
-/// skipping separators and wrapping around the ends.
+/// from から dir 方向(+1 で下、-1 で上)へ1行選択を進める。区切りは
+/// スキップし、両端ではラップアラウンドする。
 ///
-/// Disabled rows are deliberately still selectable: greying a row out signals
-/// "not available right now" and skipping it would hide the row's existence,
-/// which is the opposite of what the disabled state is for.
+/// 無効な行もあえて選択可能なままにしてある。グレーアウトは「今は使えない」を
+/// 意味するだけであり、スキップしてしまうと行の存在自体を隠すことになって
+/// しまう。それは無効状態の目的とは逆である。
 pub fn step_selection(items: &[MenuItem], from: usize, dir: i32) -> usize {
     let n = items.len();
     if n == 0 {
         return 0;
     }
     let mut idx = from.min(n - 1);
-    // At most `n` steps: enough to land on any row, and to give up (returning
-    // `from`) when the menu holds no selectable row at all.
+    // 最大でも n ステップ: どの行にも到達できる回数であり、選択可能な行が
+    // 1つもないメニューでは諦めて from を返す。
     for _ in 0..n {
         idx = if dir >= 0 {
             (idx + 1) % n
@@ -218,9 +219,9 @@ pub fn step_selection(items: &[MenuItem], from: usize, dir: i32) -> usize {
     from
 }
 
-/// The next row whose label starts with `ch` (case-insensitive), searching
-/// forward from `from` and wrapping — the type-ahead that lets `n` jump between
-/// the "New …" entries of a menu.
+/// ラベルが ch で始まる(大文字小文字を区別しない)次の行を、from から
+/// 前方かつラップして探す。メニュー内の "New …" 系エントリを n で
+/// 渡り歩けるようにするタイプアヘッド機能。
 pub fn find_by_initial(items: &[MenuItem], from: usize, ch: char) -> Option<usize> {
     let n = items.len();
     if n == 0 {
@@ -238,7 +239,7 @@ pub fn find_by_initial(items: &[MenuItem], from: usize, ch: char) -> Option<usiz
         })
 }
 
-/// Step the highlighted top-level menu by one, wrapping.
+/// ハイライトされているトップレベルメニューを1つ進める。ラップする。
 pub fn step_menu(menu_count: usize, from: usize, dir: i32) -> usize {
     if menu_count == 0 {
         return 0;

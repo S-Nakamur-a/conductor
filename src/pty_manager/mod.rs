@@ -1,18 +1,17 @@
-//! PTY session management.
+//! PTY セッション管理。
 //!
-//! Uses `portable-pty` to spawn and manage pseudo-terminal sessions so that
-//! users can run shell commands or Claude Code directly inside the TUI.
+//! portable-pty を使い、ユーザーが TUI 内でシェルコマンドや Claude Code を直接
+//! 実行できるよう疑似端末セッションを起動・管理する。
 //!
-//! Each session is backed by a real pseudo-terminal, with a background reader
-//! thread that captures output into a bounded line buffer.
+//! 各セッションは実際の疑似端末に支えられ、バックグラウンドの reader スレッドが
+//! 出力を有界の行バッファへ取り込む。
 //!
-//! This module holds the `PtySession`/`PtyManager` types and the small
-//! lifecycle methods (construction, activation, removal). The rest of the
-//! behavior is split by responsibility into submodules:
-//! [`spawn`] (launching Claude/Shell/Editor processes), [`io`] (writing input
-//! and forwarding scroll events), [`screen`] (vt100 access, resize/reflow,
-//! input-waiting detection), [`reader`] (the background reader thread), and
-//! [`locale`] (UTF-8 locale/chunking helpers).
+//! このモジュールは PtySession/PtyManager 型と、小さなライフサイクルメソッド
+//! (構築・アクティブ化・削除) を持つ。それ以外の振る舞いは責務ごとに以下の
+//! サブモジュールへ分割している: [spawn] (Claude/Shell/Editor プロセスの起動)、
+//! [io] (入力の書き込みとスクロールイベントの転送)、[screen] (vt100 アクセス、
+//! リサイズ/リフロー、入力待ち検出)、[reader] (バックグラウンド reader スレッド)、
+//! [locale] (UTF-8 ロケール/チャンク分割ヘルパー)。
 
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
@@ -32,145 +31,139 @@ mod spawn;
 #[cfg(test)]
 mod tests;
 
-/// Maximum number of raw PTY output bytes retained per session for
-/// reflow-on-resize. When the terminal width changes, vt100 cannot reflow
-/// existing content, so the parser is rebuilt by replaying this byte history
-/// at the new width.
+/// リフロー時の巻き戻し再生のためセッションごとに保持する、PTY の生出力
+/// バイト数の上限。端末幅が変わると vt100 は既存の内容をリフローできない
+/// ため、このバイト履歴を新しい幅で再生してパーサを作り直す。
 ///
-/// This replay runs synchronously on the main thread inside `resize_session`,
-/// so its cost is paid as a UI stall on *every* width change — panel maximize,
-/// focus shifts that resize the shared right column, Tab, tmux-style resize.
-/// The cap is therefore kept modest: 512 KiB still covers well over the
-/// default active scrollback (10 000 lines at typical shell line lengths) while
-/// keeping a worst-case replay to a single-frame stall instead of tens of ms.
-/// Bytes beyond the cap are trimmed at line boundaries — the only content lost
-/// to reflow is history already far out of view.
+/// この再生は resize_session 内でメインスレッド上で同期的に実行されるため、
+/// そのコストは幅が変わるたびに(パネル最大化、共有右カラムをリサイズする
+/// フォーカス切り替え、Tab、tmux式リサイズなど)UIのストールとして
+/// 発生する。そのため上限は控えめに設定している: 512 KiBあれば、典型的な
+/// シェルの行長でのデフォルトのアクティブスクロールバック(10000行)を
+/// 十分にカバーしつつ、最悪でも再生コストを数十msではなく1フレーム分の
+/// ストールに抑えられる。上限を超えたバイトは行境界で切り捨てる —
+/// リフローで失われるのは、すでに画面外に出ている古い履歴だけである。
 const MAX_RAW_HISTORY_BYTES: usize = 512 * 1024;
 
-// ---------------------------------------------------------------------------
 // SessionKind
-// ---------------------------------------------------------------------------
 
-/// The kind of process running inside a PTY session.
+/// PTY セッション内で動いているプロセスの種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionKind {
-    /// A `claude` CLI session (Claude Code).
+    /// claude CLI セッション (Claude Code)。
     ClaudeCode,
-    /// An interactive shell session (e.g. bash, zsh, fish).
+    /// 対話型シェルセッション (bash、zsh、fish など)。
     Shell,
-    /// A one-shot external editor (`$VISUAL` / `$EDITOR`) launched on a single
-    /// file. Unlike the persistent Claude/Shell panels this is transient: it
-    /// lives only while the user edits, and is torn down when the editor process
-    /// exits. Excluded from the Claude-output scanner (waiting/active detection).
+    /// 単一ファイルに対して起動する使い捨ての外部エディタ ($VISUAL / $EDITOR)。
+    /// 永続的な Claude/Shell パネルと異なり一時的な存在で、ユーザーが編集している
+    /// 間だけ生存し、エディタプロセスの終了とともに破棄される。Claude 出力の
+    /// スキャナ (waiting/active 検出) の対象外。
     Editor,
 }
 
-// ---------------------------------------------------------------------------
 // PtySession
-// ---------------------------------------------------------------------------
 
-/// A single PTY session with its associated reader/writer handles.
+/// 対応する reader/writer ハンドルを持つ単一の PTY セッション。
 pub struct PtySession {
-    /// Unique identifier (UUID v4).
+    /// 一意な識別子 (UUID v4)。
     pub id: String,
-    /// Human-readable label for this session (e.g. "Auth logic implementation").
+    /// このセッションの人間可読なラベル (例: "Auth logic implementation")。
     pub label: String,
-    /// What kind of process is running.
+    /// 動いているプロセスの種類。
     pub kind: SessionKind,
-    /// The worktree name this session is associated with.
+    /// このセッションが紐づく worktree 名。
     pub worktree: String,
-    /// The working directory this session was spawned in.
+    /// このセッションを起動した作業ディレクトリ。
     pub working_dir: PathBuf,
-    /// The Claude Code session id (`<id>.jsonl` under the project dir) backing
-    /// this panel, when known. Set for `ClaudeCode` sessions: a fresh spawn
-    /// forces a generated id via `--session-id`, and a resumed spawn records the
-    /// id it resumed. `None` for Shell/Editor sessions, and for any Claude
-    /// session whose id could not be determined. Lets the reflow transcript view
-    /// open *this* panel's log instead of merely the worktree's latest session —
-    /// essential when one worktree hosts multiple Claude panels (CC:1, CC:2, …).
+    /// このパネルを支える Claude Code セッション id (プロジェクトディレクトリ配下の
+    /// <id>.jsonl)。判明している場合のみ設定する。ClaudeCode セッションでは、
+    /// 新規起動時は --session-id で生成した id を強制し、resume 起動時は
+    /// resume した id を記録する。Shell/Editor セッション、および id を特定
+    /// できなかった Claude セッションでは None。これにより reflow トランスクリプト
+    /// ビューが worktree の最新セッションではなく *このパネル自身* のログを開ける —
+    /// 1つの worktree に複数の Claude パネル (CC:1, CC:2, …) がある場合に必須。
     pub claude_session_id: Option<String>,
     /// 子プロセスを起動した時刻。
     ///
-    /// `/clear` によるセッションログのローテーション追跡で、起動より前に
+    /// /clear によるセッションログのローテーション追跡で、起動より前に
     /// 始まっていたログを後続と誤認しないための下限として使う (古いセッションを
-    /// `--resume` した直後は pin したログの mtime が何日も前になりうる)。
+    /// --resume した直後は pin したログの mtime が何日も前になりうる)。
     pub spawned_at: std::time::SystemTime,
-    /// Whether this session is the currently displayed (active) session.
+    /// このセッションが現在表示中の(アクティブな)セッションかどうか。
     pub is_active: bool,
 
-    // -- PTY handles -------------------------------------------------------
-    /// The master end of the PTY; used for resize operations.
+    // PTY のハンドル
+    /// PTY のマスター側。リサイズ操作に使う。
     master: Box<dyn portable_pty::MasterPty + Send>,
-    /// Writer handle for sending input to the PTY.
-    /// Shared with the reader thread so it can respond to terminal queries
-    /// (e.g. cursor position reports) with minimal latency.
+    /// PTY へ入力を送るための writer ハンドル。
+    /// reader スレッドと共有し、端末クエリ (カーソル位置レポートなど) へ
+    /// 最小レイテンシで応答できるようにしている。
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    /// The child process spawned inside the PTY.
+    /// PTY 内で起動した子プロセス。
     child: Box<dyn portable_pty::Child + Send + Sync>,
 
-    // -- Output buffer (shared with the reader thread) ---------------------
-    /// Lines of captured output, shared with the background reader thread.
+    // 出力バッファ (リーダースレッドと共有)
+    /// キャプチャした出力の行データ。バックグラウンドの reader スレッドと共有する。
     output_buffer: Arc<Mutex<Vec<String>>>,
-    /// Current maximum number of lines to retain.
+    /// 現在保持している最大行数。
     max_buffer_lines: usize,
 
-    // -- vt100 terminal emulator -------------------------------------------
-    /// A vt100 parser that processes raw PTY bytes for proper terminal rendering.
+    // vt100 のターミナルエミュレータ
+    /// 正しい端末描画のため PTY の生バイトを処理する vt100 パーサ。
     screen: Arc<Mutex<vt100::Parser>>,
-    /// Append-only (bounded) history of raw PTY output bytes, shared with the
-    /// reader thread. Used to rebuild the vt100 parser at a new width on
-    /// resize, since vt100 itself does not reflow existing content. Always
-    /// accessed while holding the `screen` lock so appends stay atomic with
-    /// `parser.process` and consistent with `resize_session`'s rebuild.
+    /// 追記のみ(有界)の PTY 生出力バイト履歴。reader スレッドと共有する。
+    /// vt100 自体は既存内容をリフローしないため、リサイズ時にこの履歴を
+    /// 新しい幅で再生して vt100 パーサを作り直すのに使う。追記は常に
+    /// screen のロックを保持したまま行い、parser.process とアトミックに
+    /// 保ち、resize_session の再構築とも整合させている。
     ///
-    /// `None` for sessions that cannot benefit from replay-based reflow.
-    /// Replay only re-wraps content that relied on terminal autowrap (soft
-    /// wrapping) — e.g. ordinary shell output. In-place-repaint apps like
-    /// Claude Code lay out every line with absolute cursor-column escapes and
-    /// hard line breaks baked at the current width, so replaying their bytes at
-    /// a new width reproduces the identical old-width layout — no reflow, just
-    /// wasted memory and CPU. Those sessions skip recording entirely.
+    /// 再生ベースのリフローが恩恵をもたらさないセッションでは None。
+    /// 再生が再ラップするのは、端末の自動折り返し(ソフトラップ)に頼っていた
+    /// 内容 — 通常のシェル出力など — だけである。Claude Code のような
+    /// その場描画型のアプリは、絶対カーソル列エスケープと現在の幅で
+    /// 焼き込まれたハード改行で全行をレイアウトするため、新しい幅で
+    /// バイトを再生しても旧幅と同一のレイアウトが再現されるだけで、
+    /// リフローにはならず、メモリと CPU の無駄になる。そうしたセッションは
+    /// 記録自体を丸ごとスキップする。
     raw_history: Option<Arc<Mutex<VecDeque<u8>>>>,
 
-    // -- Input waiting detection ------------------------------------------
-    /// Timestamp of the last PTY output received. Shared with the reader thread.
+    // 入力待ちの検出
+    /// 直近に PTY 出力を受け取った時刻。reader スレッドと共有する。
     pub last_output_time: Arc<Mutex<Instant>>,
 
-    // -- Alternate screen detection ----------------------------------------
-    /// Set to `true` by the reader thread when a transition *into* alternate
-    /// screen mode is detected.  The main loop can check this flag and send
-    /// a no-op resize (SIGWINCH) to nudge the child into re-rendering.
+    // 代替スクリーンの検出
+    /// オルタネートスクリーンモードへの遷移を検出すると reader スレッドが
+    /// true にする。メインループはこのフラグを見て、子プロセスに再描画を
+    /// 促す no-op リサイズ(SIGWINCH)を送れる。
     pub alt_screen_entered: Arc<AtomicBool>,
 
-    /// Deadline until which periodic SIGWINCH nudges should be sent.
-    /// Set when `alt_screen_entered` is first observed by the main loop.
+    /// 定期的な SIGWINCH ナッジを送り続ける締め切り時刻。
+    /// メインループが alt_screen_entered を最初に観測したときに設定する。
     alt_screen_nudge_until: Option<Instant>,
-    /// Timestamp of the last SIGWINCH nudge sent, used for throttling.
+    /// 直近に送った SIGWINCH ナッジの時刻。スロットリングに使う。
     last_nudge_time: Option<Instant>,
 }
 
-// ---------------------------------------------------------------------------
 // PtyManager
-// ---------------------------------------------------------------------------
 
-/// Manages one or more PTY sessions.
+/// 1つ以上の PTY セッションを管理する。
 pub struct PtyManager {
     pty_system: NativePtySystem,
     sessions: Vec<PtySession>,
-    /// Parallel vector of buffer-limit handles shared with reader threads.
-    /// Each entry corresponds to the session at the same index in `sessions`.
+    /// reader スレッドと共有するバッファ上限ハンドルの並行ベクタ。
+    /// 各要素は sessions の同じインデックスのセッションに対応する。
     buffer_limits: Vec<Arc<Mutex<usize>>>,
-    /// Scrollback lines for the active (foreground) session.
+    /// アクティブ(フォアグラウンド)セッションのスクロールバック行数。
     active_scrollback: usize,
-    /// Scrollback lines for inactive (background) sessions.
+    /// 非アクティブ(バックグラウンド)セッションのスクロールバック行数。
     inactive_scrollback: usize,
-    /// Flag set by reader threads when new PTY output arrives.
-    /// The main loop checks this to skip poll timeouts and render immediately.
+    /// 新しい PTY 出力が届くと reader スレッドがセットするフラグ。
+    /// メインループはこれを見て poll のタイムアウトを飛ばし即座に描画する。
     output_notify: Arc<AtomicBool>,
 }
 
 impl PtyManager {
-    /// Create a new `PtyManager` with no sessions, using the given scrollback limits.
+    /// 指定したスクロールバック上限で、セッションを持たない新しい PtyManager を作る。
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
             pty_system: NativePtySystem::default(),
@@ -182,18 +175,17 @@ impl PtyManager {
         }
     }
 
-    /// Check and clear the PTY output notification flag.
+    /// PTY 出力通知フラグを確認してクリアする。
     ///
-    /// Returns `true` if any reader thread has produced new output since the
-    /// last call.  Used by the main loop to skip poll timeouts and render
-    /// PTY changes immediately.
+    /// 前回の呼び出し以降にいずれかの reader スレッドが新しい出力を生成して
+    /// いれば true を返す。メインループが poll のタイムアウトを飛ばして
+    /// PTY の変化を即座に描画するために使う。
     pub fn take_output_notify(&self) -> bool {
         self.output_notify.swap(false, Ordering::Relaxed)
     }
 
-    /// Activate a session without deactivating any other session.
-    /// Used in the unified layout where Claude and Shell sessions can be
-    /// simultaneously active.
+    /// 他のセッションを非アクティブにせずに、あるセッションをアクティブ化する。
+    /// Claude と Shell のセッションが同時にアクティブになりうる統合レイアウトで使う。
     pub fn activate_session(&mut self, idx: usize) {
         if let Some(session) = self.sessions.get_mut(idx) {
             session.is_active = true;
@@ -205,31 +197,30 @@ impl PtyManager {
         }
     }
 
-    /// Return the number of sessions.
+    /// セッション数を返す。
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
 
-    /// The Claude session id, working directory and spawn time for the session
-    /// at `idx`, when it is a Claude panel with a known id. Used by the reflow
-    /// transcript view to open the log for a *specific* panel rather than the
-    /// worktree's most recently written session. Returns `None` for
-    /// out-of-range indices, non-Claude sessions, or Claude sessions whose id
-    /// is unknown.
+    /// idx のセッションが id 判明済みの Claude パネルである場合、その
+    /// Claude セッション id・作業ディレクトリ・起動時刻を返す。reflow
+    /// トランスクリプトビューが、worktree の最新セッションではなく
+    /// *特定の* パネルのログを開くために使う。範囲外のインデックス、
+    /// Claude 以外のセッション、id 不明の Claude セッションでは None。
     pub fn claude_session_ref(&self, idx: usize) -> Option<(PathBuf, String, SystemTime)> {
         let session = self.sessions.get(idx)?;
         let id = session.claude_session_id.as_ref()?;
         Some((session.working_dir.clone(), id.clone(), session.spawned_at))
     }
 
-    /// `panel_id` のパネルが書き込んでいる Claude セッションの id を差し替える。
+    /// panel_id のパネルが書き込んでいる Claude セッションの id を差し替える。
     ///
-    /// 呼ぶのは `SessionStart` フック経由の通知 ([`crate::cc_hook`]) だけ。
+    /// 呼ぶのは SessionStart フック経由の通知 ([crate::cc_hook]) だけ。
     /// フックはそのパネル自身の Claude プロセスの中で走るので、これは推測では
-    /// なく事実。`/clear` や `/resume` でログがローテーションしても、以降の
+    /// なく事実。/clear や /resume でログがローテーションしても、以降の
     /// トランスクリプト解決が正しいファイルを指す。
     ///
-    /// 該当パネルが無い (すでに閉じた等) 場合や、値が変わらない場合は `false`。
+    /// 該当パネルが無い (すでに閉じた等) 場合や、値が変わらない場合は false。
     pub fn set_claude_session_id(&mut self, panel_id: &str, session_id: String) -> bool {
         let Some(session) = self
             .sessions
@@ -245,9 +236,9 @@ impl PtyManager {
         true
     }
 
-    /// `idx` 以外の Claude パネルが pin している session id の集合。
+    /// idx 以外の Claude パネルが pin している session id の集合。
     ///
-    /// `/clear` のローテーション追跡で、他パネルが自分のログとして持っている
+    /// /clear のローテーション追跡で、他パネルが自分のログとして持っている
     /// セッションを後続候補から外すために使う。
     pub fn other_claude_session_ids(&self, idx: usize) -> HashSet<String> {
         self.sessions
@@ -258,12 +249,12 @@ impl PtyManager {
             .collect()
     }
 
-    /// Read-only access to the sessions slice.
+    /// sessions スライスへの読み取り専用アクセス。
     pub fn sessions(&self) -> &[PtySession] {
         &self.sessions
     }
 
-    /// Kill the child process for the session at the given index.
+    /// 指定インデックスのセッションの子プロセスを kill する。
     pub fn kill_session(&mut self, idx: usize) -> Result<()> {
         let session = self
             .sessions
@@ -276,10 +267,10 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Remove the session at `idx`, cleaning up resources.
+    /// idx のセッションを削除し、リソースを片付ける。
     ///
-    /// Dropping the session closes the PTY master, which causes the
-    /// background reader thread to see EOF and exit.
+    /// セッションを drop すると PTY マスターが閉じられ、バックグラウンドの
+    /// reader スレッドは EOF を検知して終了する。
     pub fn remove_session(&mut self, idx: usize) {
         if idx < self.sessions.len() {
             self.sessions.remove(idx);
@@ -287,16 +278,15 @@ impl PtyManager {
         }
     }
 
-    /// Check whether the child process for the session at `idx` is still
-    /// running.
+    /// idx のセッションの子プロセスがまだ動作しているかを確認する。
     pub fn is_session_alive(&mut self, idx: usize) -> bool {
         self.sessions
             .get_mut(idx)
             .map(|s| {
                 match s.child.try_wait() {
-                    Ok(Some(_exit_status)) => false, // exited
-                    Ok(None) => true,                // still running
-                    Err(_) => false,                 // treat errors as dead
+                    Ok(Some(_exit_status)) => false, // 終了済み
+                    Ok(None) => true,                // まだ動作中
+                    Err(_) => false,                 // エラーは死んでいる扱い
                 }
             })
             .unwrap_or(false)

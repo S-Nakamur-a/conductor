@@ -1,10 +1,10 @@
-//! Review template deletion and PTY session history (list/search/save) for
-//! [`App`].
+//! [App] におけるレビューテンプレートの削除と、PTY セッション履歴の
+//! 一覧/検索/保存。
 
 use super::*;
 
 impl App {
-    // ── Template helpers ─────────────────────────────────────────
+    // テンプレートのヘルパー
 
     pub fn delete_review_template(&mut self, id: &str) {
         if let Some(store) = &self.review_store {
@@ -20,7 +20,7 @@ impl App {
         }
     }
 
-    // ── Session history helpers ─────────────────────────────────
+    // セッション履歴のヘルパー
 
     pub fn load_session_history(&mut self) {
         if let Some(store) = &self.review_store {
@@ -58,7 +58,7 @@ impl App {
     }
 
     pub fn save_current_session_history(&mut self) {
-        // Try the active Claude session first, then Shell.
+        // まずアクティブな Claude セッションを試し、なければ Shell を試す。
         let active_idx = self
             .terminal
             .active_claude_session

@@ -1,13 +1,13 @@
-//! Explorer walkthrough-view methods for [`App`]: step selection, jumping to
-//! a step's location in the diff pane, and the "viewed" file toggle. These
-//! back the Explorer's `Walkthrough` bottom-pane view (see
-//! `viewer::ExplorerBottomView`) and the diff list's per-file viewed mark.
+//! [App] の Explorer walkthrough ビュー用メソッド: ステップ選択、diff ペイン内の
+//! ステップ位置へのジャンプ、「viewed」ファイルのトグル。これらは Explorer の
+//! Walkthrough ボトムペインビュー(viewer::ExplorerBottomView を参照)と、
+//! diff リストのファイルごとの viewed マークを支えている。
 
 use super::*;
 
 impl App {
-    /// Move the walkthrough step cursor by `delta` rows (`j`/`k`), clamped to
-    /// the step list's bounds. Selection only — no jump, unlike `n`/`N`.
+    /// walkthrough ステップのカーソルを delta 行分動かす(j/k)。ステップ一覧の
+    /// 範囲でクランプする。選択のみでジャンプはしない(n/N とは異なる)。
     pub fn walkthrough_move(&mut self, delta: isize) {
         let Some(len) = self
             .walkthrough.current
@@ -24,9 +24,9 @@ impl App {
             (cur + delta).clamp(0, len as isize - 1) as usize;
     }
 
-    /// Jump to the currently selected walkthrough step (`Enter`): open its
-    /// file in the diff pane and move focus to the Viewer, mirroring the diff
-    /// list's own Enter handling so the two views feel consistent.
+    /// 現在選択中の walkthrough ステップへジャンプする(Enter): そのファイルを
+    /// diff ペインで開き、フォーカスを Viewer へ移す。diff リスト自体の Enter
+    /// ハンドリングと同じ挙動にして、両ビューの一貫性を保つ。
     pub fn walkthrough_jump_selected(&mut self) {
         let idx = self.viewer_state.explorer.walkthrough_selected;
         if !self.jump_to_walkthrough_step(idx) {
@@ -35,11 +35,10 @@ impl App {
         self.set_focus(Focus::Viewer);
     }
 
-    /// Move the walkthrough selection by `delta` and jump immediately
-    /// (`n`/`N` while the Walkthrough view is focused). Stays on the
-    /// Walkthrough view, unlike `walkthrough_jump_selected`, so repeated
-    /// presses keep paging through steps without the diff pane taking
-    /// keyboard focus away from the step list.
+    /// walkthrough の選択を delta 分動かし、即座にジャンプする(Walkthrough
+    /// ビューがフォーカスされているときの n/N)。walkthrough_jump_selected
+    /// とは異なり Walkthrough ビューに留まるため、繰り返し押すことで diff
+    /// ペインにキーボードフォーカスを奪われずにステップをページ送りできる。
     pub fn walkthrough_step(&mut self, delta: isize) {
         let Some(len) = self
             .walkthrough.current
@@ -53,25 +52,23 @@ impl App {
         }
         let cur = self.viewer_state.explorer.walkthrough_selected as isize;
         let next = (cur + delta).clamp(0, len as isize - 1) as usize;
-        // The cursor moves whether or not the jump lands. A step whose file
-        // can't be resolved would otherwise pin `n`/`N` in place — every press
-        // retries the same unresolvable step and the reviewer can never reach
-        // the rest of the tour.
+        // ジャンプが成功してもしなくてもカーソルは動かす。そうしないと、ファイルを
+        // 解決できないステップで n/N が固定されてしまう — 押すたびに同じ解決
+        // できないステップを再試行し、レビュアーはツアーの残りに辿り着けなくなる。
         self.viewer_state.explorer.walkthrough_selected = next;
         self.jump_to_walkthrough_step(next);
     }
 
-    /// Shared implementation for jumping to walkthrough step `idx`: resolves
-    /// its file against the diff, opens it in the diff pane, scrolls to its
-    /// starting line, and marks it viewed. Returns `false` (a no-op otherwise)
-    /// if there's no walkthrough, the index is out of range, or the step's
-    /// file genuinely isn't part of the current diff.
+    /// walkthrough ステップ idx へジャンプする共通実装: そのファイルを diff に
+    /// 対して解決し、diff ペインで開き、開始行までスクロールし、viewed として
+    /// マークする。walkthrough が存在しない、インデックスが範囲外、あるいは
+    /// ステップのファイルが本当に現在の diff に含まれない場合は false を返す
+    /// (それ以外は何もしない)。
     ///
-    /// The step's path is matched *tolerantly* (see
-    /// [`crate::diff_state::DiffState::resolve_changed_path`]) because it was
-    /// written by a language model and the diff list matches by string
-    /// equality: a step spelled `./src/a.rs` names a file that is right there
-    /// in the list, and used to report itself as missing.
+    /// ステップのパスは*緩やかに*マッチさせる([crate::diff_state::DiffState::resolve_changed_path]
+    /// を参照)。これは言語モデルが書いたものであり、diff リストは文字列の完全一致で
+    /// 照合するためで、./src/a.rs と書かれたステップはリストに実在するファイルを
+    /// 指しているにも関わらず、以前は見つからないと報告されていた。
     fn jump_to_walkthrough_step(&mut self, idx: usize) -> bool {
         let Some(steps) = self.walkthrough.current.as_ref().map(|wt| &wt.steps) else {
             return false;
@@ -87,13 +84,13 @@ impl App {
         };
         let wt_path = wt.path.clone();
 
-        // The step's spelling of the path and the diff's may differ (an older
-        // row saved before paths were normalised, a `git diff` `a/`/`b/`
-        // prefix); `resolve_changed_path` returns the diff's own spelling.
+        // ステップ側のパス表記と diff 側のそれは異なることがある(パス正規化前に
+        // 保存された古い行、git diff の a//b/ プレフィックスなど)。
+        // resolve_changed_path は diff 側自身の表記を返す。
         let Some(file_path) = self.diff_state.resolve_changed_path(&step_path) else {
-            // Ordered so the status bar's truncation eats the least useful part
-            // last: what was searched for first, the (potentially very long)
-            // base directory at the end. The full text always reaches the log.
+            // ステータスバーの省略で一番役に立たない部分が最後に削られるよう
+            // 順序を決めている: 検索対象を先に、(場合によっては非常に長い)
+            // ベースディレクトリを最後に置く。ログには常に全文が届く。
             let normalized = crate::repo_path::normalize(&step_path);
             let searched = if normalized == step_path {
                 String::new()
@@ -111,10 +108,10 @@ impl App {
             self.set_status(msg, StatusLevel::Warning);
             return false;
         };
-        // Adopt that spelling for the rest of the session: the Viewer's step
-        // banner and its line-range underline both test
-        // `current_file == step.file_path`, so leaving the step on its own
-        // spelling would jump correctly and then render neither.
+        // 以降のセッションではその表記を採用する: Viewer のステップバナーと
+        // 行範囲の下線表示はどちらも current_file == step.file_path を
+        // 判定するので、ステップ側の表記のままにしておくと、ジャンプ自体は
+        // 正しくても表示は何も出ないことになる。
         if file_path != step_path
             && let Some(steps) = self.walkthrough.current.as_mut().map(|wt| &mut wt.steps)
             && let Some(step) = steps.get_mut(idx)
@@ -123,8 +120,8 @@ impl App {
             step.file_path = file_path.clone();
         }
 
-        // A file inside a collapsed directory has no display row until the
-        // directory is expanded, so reveal before looking the row up.
+        // 折りたたまれたディレクトリの中にあるファイルは、展開されるまで表示行が
+        // 存在しないため、行を探す前に reveal する。
         let Some((file_diff, _)) = self
             .diff_state
             .reveal_path(&file_path)
@@ -164,16 +161,16 @@ impl App {
         }
 
         self.viewer_state.explorer.walkthrough_selected = idx;
-        // The Viewer now reflects this step: its banner and line-range
-        // underline follow `walkthrough_viewing`, not the list cursor, so a
-        // later `j`/`k` that only moves the cursor won't disturb the Viewer.
+        // Viewer は今このステップを反映している: バナーと行範囲の下線表示は
+        // リストのカーソルではなく walkthrough_viewing に追従するため、この後
+        // カーソルだけを動かす j/k では Viewer は乱れない。
         self.viewer_state.explorer.walkthrough_viewing = Some(idx);
         self.viewer_state.explorer.viewed_steps.insert(step_id);
         true
     }
 
-    /// Toggle the "viewed" mark for a file path — used by the diff list's `v`
-    /// key and the Viewer's diff-mode `v` key (Section C).
+    /// ファイルパスの「viewed」マークをトグルする — diff リストの v キーと
+    /// Viewer の diff モードの v キー(セクションC)から使われる。
     pub fn toggle_path_viewed(&mut self, path: &str) {
         let viewed = &mut self.viewer_state.explorer.viewed;
         if !viewed.remove(path) {
@@ -184,12 +181,12 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    /// A manually-saved walkthrough (mirroring what the headless generator
-    /// writes) round-trips through the store with the shape the walkthrough
-    /// UI and jump logic depend on: `WalkthroughStep::kind` parses back to
-    /// the same variant, line ranges survive as `Some`, and the file path
-    /// resolves through `DiffState::display_index_for_path` — the lookup
-    /// `jump_to_walkthrough_step` uses to find the step's file in the diff.
+    /// 手動で保存した walkthrough(headless generator が書き込む内容を模したもの)が、
+    /// walkthrough の UI とジャンプロジックが依存する形のまま store を往復すること
+    /// を確認する: WalkthroughStep::kind は同じバリアントにパースし直され、行範囲は
+    /// Some のまま残り、ファイルパスは DiffState::display_index_for_path
+    /// (jump_to_walkthrough_step が diff 中のステップファイルを探すのに使う参照)
+    /// を通じて解決される。
     #[test]
     fn saved_walkthrough_round_trips_for_ui_consumption() {
         use crate::diff_state::{DiffListEntry, DiffSection, DiffState, DiffViewMode, FileDiff};
@@ -234,8 +231,9 @@ mod tests {
         assert_eq!(core.line_end, Some(12));
         assert!(!core.id.is_empty());
 
-        // The jump path's file lookup: the step's file must resolve through
-        // the diff list exactly like `jump_to_walkthrough_step` requires.
+        // ジャンプ経路でのファイル検索: ステップのファイルは
+        // jump_to_walkthrough_step が要求するのと全く同じ形で diff リストを
+        // 通じて解決できなければならない。
         let mut ds = DiffState::new("main", DiffViewMode::Unified);
         ds.committed_files = vec![FileDiff {
             path: core.file_path.clone(),

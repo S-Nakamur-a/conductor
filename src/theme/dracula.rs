@@ -1,4 +1,4 @@
-//! Dracula palette.
+//! Dracula パレット。
 
 use super::Theme;
 use ratatui::style::Color;
@@ -64,7 +64,7 @@ impl Theme {
             reply_text: Color::Rgb(189, 147, 249),
 
             code_bg: Color::Rgb(33, 34, 44),
-            code_fg: Color::Rgb(255, 159, 212), // soft pink
+            code_fg: Color::Rgb(255, 159, 212), // ソフトピンク
 
             panel_focused_bg: Color::Rgb(50, 52, 66),
         }

@@ -1,5 +1,5 @@
-//! Unified diff mode of the viewer panel — the GitHub-style diff view used
-//! when browsing an unstaged/staged/committed change instead of a plain file.
+//! ビューアパネルの unified diff モード — プレーンファイルではなく未ステージ/
+//! ステージ済み/コミット済みの変更を閲覧するときに使う GitHub 風の diff ビュー。
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -17,8 +17,8 @@ use super::diff_line::{render_diff_content_line, DiffLineRenderCtx};
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
 
-/// Build the display line for a hunk separator (a collapsed gap between hunks),
-/// optionally annotated with the enclosing function header.
+/// hunk 区切り（hunk 間の折りたたまれたギャップ）の表示行を組み立てる。
+/// 囲んでいる関数のヘッダーがあれば、それも注記として付ける。
 fn render_hunk_separator(
     func_header: &Option<String>,
     width: usize,
@@ -28,7 +28,7 @@ fn render_hunk_separator(
         Some(header) => {
             let prefix = " ··· ";
             let suffix = " ───";
-            // Fill the rest with ─
+            // 残りを ─ で埋める。
             let header_display = format!("{prefix}{header}{suffix}");
             let fill_len = width.saturating_sub(header_display.chars().count());
             let fill: String = "─".repeat(fill_len);
@@ -50,8 +50,8 @@ fn render_hunk_separator(
     }
 }
 
-/// Build the display line for an expandable context block, showing how many
-/// lines are hidden and an optional function header.
+/// 展開可能なコンテキストブロックの表示行を組み立てる。隠れている行数と、
+/// あれば関数ヘッダーを表示する。
 fn render_expandable_context(
     hidden_count: usize,
     func_header: &Option<String>,
@@ -89,13 +89,13 @@ fn render_expandable_context(
     }
 }
 
-/// When the Explorer is in walkthrough-reading mode and the Viewer is showing
-/// the file the *selected* walkthrough step is anchored to, build a full-width
-/// banner (step title + Markdown-rendered body) to sit above the diff. This is
-/// the fix for the walkthrough's explanation being confined to the narrow
-/// Explorer pane: here the prose reads at full Viewer width, right above the
-/// code it describes. Returns `None` (no banner) unless we're actively touring
-/// this step's file.
+/// Explorer がウォークスルー閲覧モードで、かつ Viewer が選択中のウォークスルー
+/// ステップの紐づくファイルを表示している場合に、diff の上に載せる全幅バナー
+/// （ステップタイトル＋ Markdown 描画された本文）を組み立てる。これは、
+/// ウォークスルーの解説が Explorer の狭いペインに閉じ込められてしまう問題への
+/// 対処になっている: ここでは説明文が Viewer の全幅で読め、それが指すコードの
+/// すぐ上に置かれる。今このステップのファイルをツアー中でなければ None
+/// （バナーなし）を返す。
 pub(super) fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String, Vec<Line<'static>>)> {
     if app.viewer_state.explorer.explorer_bottom_view
         != crate::viewer::ExplorerBottomView::Walkthrough
@@ -103,10 +103,10 @@ pub(super) fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String,
         return None;
     }
     let steps = &app.walkthrough.current.as_ref()?.steps;
-    // The banner follows the *jumped-to* step, not the list cursor, so
-    // browsing the step list with j/k leaves the Viewer untouched.
+    // バナーはリストのカーソルではなく「ジャンプ先」のステップに追従するので、
+    // j/k でステップ一覧を眺めているだけでは Viewer は変化しない。
     let step = steps.get(app.viewer_state.explorer.walkthrough_viewing?)?;
-    // Only when the diff on screen is actually this step's file.
+    // 画面上の diff が実際にこのステップのファイルであるときだけ表示する。
     if app.viewer_state.content.current_file.as_deref() != Some(step.file_path.as_str()) {
         return None;
     }
@@ -126,9 +126,9 @@ pub(super) fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String,
     Some((title, lines))
 }
 
-/// Render the walkthrough step banner into `area`: a titled box holding the
-/// step's Markdown body, clipped to the available height with a hint pointing
-/// at the `space` full-text overlay when the body overflows.
+/// ウォークスルーステップのバナーを area に描画する: ステップの Markdown 本文を
+/// 収めた枠付きボックスで、利用可能な高さでクリップされ、本文があふれた場合は
+/// 全文表示のオーバーレイを指し示すヒントを添える。
 pub(super) fn render_walkthrough_banner(
     frame: &mut Frame,
     area: Rect,
@@ -160,23 +160,23 @@ pub(super) fn render_walkthrough_banner(
     frame.render_widget(Paragraph::new(visible).block(block), area);
 }
 
-/// Render the unified diff view (GitHub-style).
+/// unified diff ビュー（GitHub 風）を描画する。
 pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    // Party-mode rainbow phase (None when off); computed before borrowing.
+    // パーティーモードのレインボーの位相（OFF のときは None）。借用の前に計算する。
     let party = app.party_mode.then_some(app.ui_tick as f64 * 4.0);
 
-    // Build the visible rows plus the screen-row → comment / entry maps. Inline
-    // comment threads are injected after the last line of each commented range
-    // (so review comments are visible right in the diff, expanded by default).
+    // 表示行と、画面行→コメント/エントリのマップを組み立てる。インライン
+    // コメントスレッドは、コメントされた各範囲の最終行の後に挿入される
+    // （レビューコメントが diff の中にそのまま見え、デフォルトで展開された状態になる）。
     let (lines, screen_row_map, screen_entry_map) = {
         let theme = &app.theme;
         let vs = &app.viewer_state;
         let tab_width = app.config.viewer.tab_width;
         let gutter_width = digit_count(vs.diff_view.diff_view_max_line_no);
 
-        // Line numbers that have review comments (for the current file).
+        // レビューコメントが付いている行番号（現在のファイルについて）。
         let comment_lines: std::collections::HashSet<usize> =
             app.review_state.file_comments.keys().copied().collect();
         let comment_end_lines: std::collections::HashSet<usize> = app
@@ -190,12 +190,12 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         let inline_reply_line = vs.explorer.inline_reply_line;
         let compose_anchor_end = new_comment_anchor_end(app);
 
-        // The selected walkthrough step's line range, if it's anchored to
-        // the file currently open in this pane.
+        // 選択中のウォークスルーステップの行範囲（このペインで開いているファイルに
+        // 紐づいている場合のみ）。
         let walkthrough_highlight = (|| {
             let steps = &app.walkthrough.current.as_ref()?.steps;
-            // Underline the jumped-to step's range, not the list cursor's, so
-            // it stays put while j/k only moves the Explorer selection.
+            // リストのカーソルではなく「ジャンプ先」のステップの範囲に下線を引く。
+            // これにより j/k で動くのは Explorer の選択だけになる。
             let step = steps.get(vs.explorer.walkthrough_viewing?)?;
             if vs.content.current_file.as_deref() != Some(step.file_path.as_str()) {
                 return None;
@@ -261,7 +261,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             entry_map.push(Some(offset));
             remaining -= 1;
 
-            // Inject the inline comment thread after the comment's last line.
+            // コメントの最終行の後にインラインコメントスレッドを挿入する。
             if remaining > 0
                 && let Some(n) = new_no
                 && comment_end_lines.contains(&n)
@@ -295,7 +295,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
                 }
             }
 
-            // Inject the new-comment compose box under its anchored line.
+            // 新規コメント作成ボックスを、それが紐づく行の下に挿入する。
             if remaining > 0 && new_no.is_some() && compose_anchor_end == new_no {
                 let compose = build_inline_compose_lines(
                     app.review_state.input_kind,
@@ -325,12 +325,12 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 
-    // Show selection hint overlay.
+    // 選択ヒントのオーバーレイを表示する。
     let theme = &app.theme;
     let vs = &app.viewer_state;
 
-    // Render scrollbar when the diff has more rows than fit in the panel —
-    // same trigger and look as the Explorer file tree.
+    // diff の行数がパネルに収まりきらない場合にスクロールバーを描画する —
+    // トリガーも見た目も Explorer のファイルツリーと同じ。
     if vs.diff_view.diff_view_lines.len() > inner_height {
         let scrollbar_area = area.inner(Margin {
             horizontal: 0,
@@ -363,7 +363,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         frame.render_widget(hint_widget, hint_area);
     }
 
-    // Show search input overlay (skip cursor positioning when a global overlay covers us).
+    // 検索入力のオーバーレイを表示する（全体オーバーレイに覆われている間はカーソル配置をしない）。
     if vs.search.search_active {
         render_search_box(
             frame,
@@ -380,7 +380,7 @@ mod tests {
     use super::*;
     use crate::theme::Theme;
 
-    /// Concatenate all span contents of a line into a single string.
+    /// 行の全 span の内容を1つの文字列に連結する。
     fn line_text(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
@@ -392,7 +392,7 @@ mod tests {
         let text = line_text(&line);
         assert!(text.starts_with(" ··· "));
         assert!(text.contains("fn foo()"));
-        // 3 spans: prefix, header, suffix+fill.
+        // 3 つの span: prefix、header、suffix+fill。
         assert_eq!(line.spans.len(), 3);
     }
 
@@ -402,7 +402,7 @@ mod tests {
         let line = render_hunk_separator(&None, 20, &theme);
         let text = line_text(&line);
         assert!(text.starts_with(" ··· "));
-        // Padded with the fill character up to the requested width.
+        // 要求された幅まで塗りつぶし文字で埋められている。
         assert_eq!(text.chars().count(), 20);
         assert_eq!(line.spans.len(), 1);
     }

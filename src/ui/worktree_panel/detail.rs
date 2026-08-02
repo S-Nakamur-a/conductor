@@ -1,5 +1,5 @@
-//! Rendering of the worktree panel's zone 2: the selected worktree's
-//! detail section (branch, path, status, remote sync, lineage, PR info).
+//! worktree パネルのゾーン2、すなわち選択中 worktree の詳細セクション
+//! （ブランチ、パス、ステータス、リモート同期、系譜、PR 情報）の描画。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::app::App;
 use crate::theme::Theme;
 
-/// Render the detail section: selected worktree info.
+/// 詳細セクション（選択中 worktree の情報）を描画する。
 pub(super) fn render_detail(
     frame: &mut Frame,
     area: Rect,
@@ -36,7 +36,7 @@ pub(super) fn render_detail(
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Branch name.
+    // ブランチ名。
     lines.push(Line::from(vec![
         Span::styled(" Branch: ", Style::default().fg(theme.muted)),
         Span::styled(
@@ -47,7 +47,7 @@ pub(super) fn render_detail(
         ),
     ]));
 
-    // Path (show last component for brevity).
+    // パス（簡潔にするため末尾のコンポーネントだけ表示する）。
     let path_display = wt
         .path
         .file_name()
@@ -58,7 +58,7 @@ pub(super) fn render_detail(
         Span::styled(path_display, Style::default().fg(theme.fg)),
     ]));
 
-    // Status.
+    // ステータス。
     let status_spans = if wt.is_clean {
         vec![
             Span::styled(" Status: ", Style::default().fg(theme.muted)),
@@ -99,7 +99,7 @@ pub(super) fn render_detail(
     };
     lines.push(Line::from(status_spans));
 
-    // Remote sync.
+    // リモートとの同期状況。
     let remote_spans = match (wt.ahead, wt.behind) {
         (Some(0), Some(0)) => vec![
             Span::styled(" Remote: ", Style::default().fg(theme.muted)),
@@ -125,7 +125,7 @@ pub(super) fn render_detail(
     };
     lines.push(Line::from(remote_spans));
 
-    // ── Branch lineage & PR info ──────────────────────────────────
+    // ブランチの系譜と PR 情報。
     let details = &app.branch_details;
     let is_main = wt.is_main;
 
@@ -136,7 +136,7 @@ pub(super) fn render_detail(
     if has_lineage {
         lines.push(Line::from(""));
 
-        // Parent branch.
+        // 親ブランチ。
         if let Some(ref base) = details.initial_branch {
             lines.push(Line::from(vec![
                 Span::styled(" Parent: ", Style::default().fg(theme.muted)),
@@ -144,9 +144,9 @@ pub(super) fn render_detail(
             ]));
         }
 
-        // Derived (forked) branches — one per line for readability.
+        // 派生（フォーク）ブランチ — 読みやすさのため1行に1つ。
         if !details.derived_branches.is_empty() {
-            // First fork on the label line.
+            // 最初のフォークはラベル行に載せる。
             lines.push(Line::from(vec![
                 Span::styled(" Forks:  ", Style::default().fg(theme.muted)),
                 Span::styled(
@@ -154,7 +154,7 @@ pub(super) fn render_detail(
                     Style::default().fg(theme.info),
                 ),
             ]));
-            // Additional forks indented on subsequent lines.
+            // それ以降のフォークは続く行にインデントして並べる。
             for fork in &details.derived_branches[1..] {
                 lines.push(Line::from(vec![
                     Span::styled("         ", Style::default().fg(theme.muted)),
@@ -163,7 +163,7 @@ pub(super) fn render_detail(
             }
         }
 
-        // PR URL.
+        // PR の URL。
         if app.gh_available && !is_main {
             if details.pr_loading {
                 lines.push(Line::from(vec![

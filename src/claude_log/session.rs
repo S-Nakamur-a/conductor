@@ -1,4 +1,4 @@
-//! Public file-reading API: parse a session log into display entries.
+//! ファイル読み込みの公開 API: セッションログをパースして表示用エントリにする。
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -8,11 +8,11 @@ use super::model::{DisplayBlock, LogEntry, Role};
 use super::schema::{Block, Content, LogRecord};
 use super::tool_class::ResultKind;
 
-/// Parse a Claude Code `.jsonl` session file and return display entries.
+/// Claude Code の .jsonl セッションファイルをパースし、表示用エントリを返す。
 ///
-/// Malformed lines and unknown record types are silently skipped.
-/// Sidechain records (`isSidechain == true`) are excluded.
-/// This function never panics regardless of file contents.
+/// 壊れた行と未知のレコード種別は黙ってスキップする。
+/// サイドチェインのレコード（isSidechain == true）は除外する。
+/// ファイルの内容によらずこの関数は panic しない。
 pub fn load_session(path: &Path) -> Vec<LogEntry> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -39,30 +39,30 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
         })
         .collect();
 
-    // Pre-scan pass: a `tool_use`'s marker must render error-colored when its
-    // paired `tool_result` reported an error, but that result record always
-    // comes *after* the call in the log (they land in consecutive
-    // assistant/user records) — this first pass collects every errored
-    // `tool_use_id` so the entry-building pass below can look each one up
-    // before it gets there, instead of needing a lookahead.
+    // 事前スキャン: tool_use のマーカーは、対応する tool_result がエラーを
+    // 報告していたときエラー色で描画する必要があるが、その result レコードは
+    // ログ上では必ず呼び出しの *後* に来る（連続する assistant/user レコードに
+    // 分かれて入る）。そこでこの最初のパスでエラーだった tool_use_id を
+    // すべて集めておき、下のエントリ構築パスが先読みせずに都度参照できる
+    // ようにしている。
     let errored_ids = scan_errored_tool_use_ids(&records);
 
     let mut entries = Vec::new();
-    // tool_use id → its Counted bucket (Inline/Hidden calls are not
-    // inserted — their raw tool name is not retained past classification).
+    // tool_use の id → その Counted bucket（Inline/Hidden な呼び出しは
+    // 分類が終わると生のツール名を保持しないため、ここには挿入しない）。
     let mut tool_kinds: HashMap<String, ResultKind> = HashMap::new();
-    // The previous *displayed* record's timestamp — used to compute a
-    // collapsed `Thinking` block's "Thought for Ns" duration. Judgment call:
-    // "previous" means the previous entry that actually made it into
-    // `entries`, so a skipped record (isMeta/isSidechain/empty-blocks/a
-    // dequeue with no text) never becomes the diff's baseline — an assistant
-    // turn immediately after a skipped one still measures its thinking time
-    // against the last turn the user actually saw, not a hidden one.
+    // 直前に *表示された* レコードのタイムスタンプ。折りたたまれた Thinking
+    // ブロックの「Thought for Ns」の秒数計算に使う。「直前」の定義は、
+    // 実際に entries に入ったエントリを指す判断にしている。つまり
+    // スキップされたレコード（isMeta/isSidechain/blocks が空/テキストの
+    // 無いデキュー）は差分計算の基準にならない。スキップされた直後の
+    // assistant ターンでも、隠れたターンではなくユーザが実際に見た最後の
+    // ターンを基準に思考時間を測る。
     let mut prev_displayed_ts: Option<String> = None;
     for record in records {
-        // Context the CLI injected on the user's behalf. Two kinds draw a `⎿`
-        // one-liner; every other kind (hook output, skill listings, …) is
-        // invisible in Claude Code and stays invisible here.
+        // CLI がユーザの代わりに注入したコンテキスト。2種類だけ ⎿ の1行を
+        // 描画し、それ以外（hook 出力、skill 一覧など）は Claude Code 上で
+        // 不可視であり、ここでも不可視のままにする。
         if record.kind == "attachment" {
             if let Some(text) = record.attachment.as_ref().and_then(attachment_line) {
                 entries.push(LogEntry {
@@ -70,15 +70,15 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
                     model: None,
                     blocks: vec![DisplayBlock::Annotation { lines: vec![text] }],
                 });
-                // Deliberately does NOT advance `prev_displayed_ts`: an
-                // attachment carries the timestamp of the compact that emitted
-                // it, which would otherwise be charged to the next assistant
-                // turn as thinking time.
+                // あえて prev_displayed_ts を進めない。attachment が持つ
+                // タイムスタンプは、それを発行した compact のものであり、
+                // 進めてしまうと次の assistant ターンの思考時間として
+                // 誤って計上されてしまう。
             }
             continue;
         }
 
-        // `✻ Conversation compacted` — the only `system` record that draws.
+        // ✻ Conversation compacted — 描画される唯一の system レコード。
         if record.kind == "system" {
             if record.subtype.as_deref() == Some("compact_boundary") {
                 entries.push(LogEntry {
@@ -90,34 +90,34 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
             continue;
         }
 
-        // Only `user` and `assistant` turns carry conversation. Every other
-        // record type in the schema is a session-metadata journal that Claude
-        // Code never draws — `queue-operation` (enqueue/remove bookkeeping for
-        // the input queue), `mode`, `permission-mode`, `last-prompt`,
-        // `ai-title`, `custom-title`, `agent-name`, `pr-link`,
-        // `file-history-snapshot`, `file-history-delta`. Measured for
-        // `queue-operation` specifically, because it is the one that *looks*
-        // displayable: it carries the queued prompt as a bare top-level
-        // `content` string. Claude Code still draws nothing for it — a prompt
-        // typed while it is working is re-emitted as an ordinary `user` record
-        // (`promptSource: "queued"`) once accepted, so honouring the journal
-        // too would print that turn twice.
+        // 会話を運ぶのは user と assistant のターンだけ。スキーマ上の他の
+        // レコード種別はすべて Claude Code が一切描画しないセッション
+        // メタデータのジャーナルである — queue-operation（入力キューの
+        // enqueue/remove の記録）、mode、permission-mode、last-prompt、
+        // ai-title、custom-title、agent-name、pr-link、
+        // file-history-snapshot、file-history-delta。特に
+        // queue-operation を実測したのは、これが一見表示できそうに *見える*
+        // ためである。トップレベルの content に素の文字列としてキューされた
+        // プロンプトを持っているが、それでも Claude Code は何も描画しない —
+        // 処理中に入力されたプロンプトは、受理されると通常の user レコード
+        // （promptSource: "queued"）として改めて発行されるので、ジャーナルの
+        // 方も律儀に処理するとそのターンが二重に表示されてしまう。
         if record.kind != "user" && record.kind != "assistant" {
             continue;
         }
         if record.is_sidechain {
             continue;
         }
-        // Hidden context injections (skill dumps, caveat banners, standalone
-        // reminders) that Claude Code's own UI never displays.
+        // 隠しコンテキストの注入（skill ダンプ、caveat バナー、単独の
+        // reminder）で、Claude Code 自身の UI では一切表示されないもの。
         if record.is_meta {
             continue;
         }
-        // The `/compact` summary is threaded into the next context window as a
-        // pseudo-user turn. Claude Code draws none of it — only the
-        // `⎿ Compacted (ctrl+o to see full summary)` line stands in for it —
-        // so replaying the body here would open the transcript onto a wall of
-        // text the user never saw.
+        // /compact のサマリは、次のコンテキストウィンドウに疑似 user ターン
+        // として引き継がれる。Claude Code はこれを一切描画せず、代わりに
+        // ⎿ Compacted (ctrl+o to see full summary) という行だけが立つ。
+        // したがってここで本文を再生すると、ユーザが見たことのない文字列の
+        // 壁がトランスクリプトに開いてしまう。
         if record.is_compact_summary {
             continue;
         }
@@ -157,18 +157,17 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
     entries
 }
 
-/// The single `⎿` line an attachment draws, or `None` for the ~27 kinds that
-/// draw nothing.
+/// attachment が描画する ⎿ 1行、または何も描画しない残り約27種別なら None。
 ///
-/// Measured against a resumed transcript:
+/// 再開後のトランスクリプトで実測した形式:
 /// ```text
 ///   ⎿  Read alpha.rs (42 lines)
 ///   ⎿  Referenced file beta.yml
 /// ```
-/// `displayPath` is used verbatim — Claude Code has already relativised it
-/// against the session's `cwd`, including the long `../../..` prefixes a file
-/// outside the worktree gets. A `file` attachment with no line count drops the
-/// parenthesised clause rather than printing a zero.
+/// displayPath はそのまま使う。Claude Code 側で既にセッションの cwd に対する
+/// 相対パスになっており、worktree の外のファイルに付く長い ../../.. の
+/// プレフィックスも含めて済んでいるため。行数の無い file attachment は
+/// 0 と表示せず、括弧の部分ごと省略する。
 fn attachment_line(attachment: &super::schema::Attachment) -> Option<String> {
     let path = attachment
         .display_path
@@ -194,11 +193,11 @@ fn attachment_line(attachment: &super::schema::Attachment) -> Option<String> {
     }
 }
 
-/// Whole-second diff between `prev` and `this` RFC3339 timestamps, for a
-/// collapsed `Thinking` block's "Thought for Ns" line. Falls back to `1`
-/// (never `0`, per the spec) when either timestamp is missing or fails to
-/// parse, or when the computed difference is zero or negative (e.g. clock
-/// skew, or two records landing in the same second).
+/// 折りたたまれた Thinking ブロックの「Thought for Ns」行のための、prev と
+/// this の RFC3339 タイムスタンプの秒単位の差分。どちらかのタイムスタンプが
+/// 無い/パースに失敗した場合、または計算結果がゼロ以下の場合（クロックの
+/// ずれや、2レコードが同じ秒に収まった場合など）は 1 にフォールバックする
+/// （仕様上 0 にはしない）。
 fn thinking_duration_secs(prev: Option<&str>, this: Option<&str>) -> u64 {
     let (Some(prev), Some(this)) = (prev, this) else {
         return 1;
@@ -213,11 +212,10 @@ fn thinking_duration_secs(prev: Option<&str>, this: Option<&str>) -> u64 {
     if diff <= 0 { 1 } else { diff as u64 }
 }
 
-/// Collect every `tool_use_id` whose paired `tool_result` block reported an
-/// error, across the whole (unfiltered) record list. Used to resolve a
-/// `tool_use`'s marker color before the entry-building pass reaches its
-/// (later) `tool_result` record — see the pre-scan comment in
-/// [`load_session`].
+/// フィルタしていないレコード全体を対象に、対応する tool_result ブロックが
+/// エラーを報告した tool_use_id をすべて集める。エントリ構築パスが
+/// （後にある）tool_result レコードに到達する前に tool_use のマーカー色を
+/// 解決するために使う。load_session の事前スキャンのコメントを参照。
 fn scan_errored_tool_use_ids(records: &[LogRecord]) -> HashSet<String> {
     let mut ids = HashSet::new();
     for record in records {

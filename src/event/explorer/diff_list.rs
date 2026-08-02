@@ -1,5 +1,5 @@
-//! Explorer diff-list sub-panel: navigating and acting on the unified diff
-//! list (files, directories, and section headers).
+//! Explorer diff-list サブパネル: 統合 diff リスト（ファイル、ディレクトリ、
+//! セクションヘッダ）のナビゲーションと操作。
 
 use crossterm::event::KeyEvent;
 
@@ -36,7 +36,7 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::Select) => {
             let selected = app.viewer_state.explorer.diff_list_selected;
-            // The SUMMARY pseudo-file opens the branch change summary full-panel.
+            // SUMMARY 疑似ファイルはブランチの変更サマリをフルパネルで開く。
             if matches!(
                 app.diff_state.display_list.get(selected),
                 Some(crate::diff_state::DiffListEntry::Summary {})
@@ -44,14 +44,14 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
                 app.viewer_state.enter_summary_view();
                 app.set_focus(Focus::Viewer);
             }
-            // Toggle section headers and directories on Enter.
+            // Enter でセクションヘッダとディレクトリの開閉を切り替える。
             else if app.diff_state.toggle_section(selected) {
                 let new_count = app.diff_state.display_list.len();
                 if new_count > 0 && app.viewer_state.explorer.diff_list_selected >= new_count {
                     app.viewer_state.explorer.diff_list_selected = new_count - 1;
                 }
             } else if app.diff_state.resolve_file(selected).is_some() {
-                // `diff_list_selected` already points at this row.
+                // diff_list_selected は既にこの行を指している。
                 app.open_diff_file_at_selected();
                 app.set_focus(Focus::Viewer);
             }

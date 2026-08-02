@@ -1,25 +1,23 @@
-//! `KeybindWarning` — survivable problems found while building the keymap.
+//! KeybindWarning — キーマップ構築中に見つかった、致命的ではない問題。
 
-// ---------------------------------------------------------------------------
-// KeybindWarning — survivable problems found while building the keymap
-// ---------------------------------------------------------------------------
+// KeybindWarning — キーマップ構築中に見つかった、致命的ではない問題
 
-/// A non-fatal problem found while loading user keybindings. Conductor's own
-/// type so the public surface does not depend on `keymap_suite::Warning`
-/// (which is `#[non_exhaustive]` and carries sequence concepts Conductor does
-/// not use).
+/// ユーザのキーバインディング読み込み中に見つかった、致命的でない問題。
+/// Conductor 独自の型なので、公開表面は keymap_suite::Warning
+/// （#[non_exhaustive] であり、Conductor が使わないシーケンスの概念を
+/// 抱えている）に依存しない。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeybindWarning {
-    /// An action name in the config was not recognized; the binding was skipped.
+    /// 設定内のアクション名が認識されなかった。バインディングはスキップされた。
     UnknownAction { key: String, action: String },
-    /// Two keys resolved to the same chord within one layer; the last one won.
+    /// 2つのキーが1つのレイヤー内で同じチョードに解決された。後に指定した方が勝つ。
     Conflict { chord: String },
-    /// A `[keybinds.layers.<name>]` table used a layer name with no matching
-    /// context; its bindings were ignored.
+    /// [keybinds.layers.<name>] テーブルが、どのコンテキストにも一致しない
+    /// レイヤー名を使っていた。そのバインディングは無視された。
     UnknownLayer { layer: String },
-    /// The `[keybinds]` config could not be parsed at all (malformed, or the
-    /// pre-0.x `[keybinds.<context>]` action→key format). User overrides were
-    /// ignored and the built-in defaults are used.
+    /// [keybinds] 設定が全くパースできなかった（不正な形式、または 0.x 以前の
+    /// [keybinds.<context>] action→key 形式）。ユーザのオーバーライドは
+    /// 無視され、組み込みのデフォルトが使われる。
     InvalidConfig { detail: String },
 }
 

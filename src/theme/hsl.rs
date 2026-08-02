@@ -1,9 +1,9 @@
-//! Private RGB↔HSL conversion, used by [`super::color_ops`]'s `Theme::complement`
-//! to rotate hue while preserving saturation and lightness.
+//! 非公開の RGB↔HSL 変換。[super::color_ops] の Theme::complement が、彩度と明度を
+//! 保ったまま色相を回転させるために使う。
 
-/// Convert an 8-bit RGB triple to HSL with all components in `[0, 1]`.
+/// 8bit の RGB 三つ組を、各成分 [0, 1] の HSL に変換する。
 ///
-/// Achromatic inputs (r == g == b) report hue and saturation of 0.
+/// 無彩色の入力(r == g == b)では色相と彩度は 0 として扱う。
 pub(super) fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     let r = r as f64 / 255.0;
     let g = g as f64 / 255.0;
@@ -13,7 +13,7 @@ pub(super) fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     let l = (max + min) / 2.0;
     let d = max - min;
     if d.abs() < f64::EPSILON {
-        return (0.0, 0.0, l); // achromatic: hue is undefined, report 0
+        return (0.0, 0.0, l); // 無彩色: 色相は定義されないため 0 を返す
     }
     let s = if l > 0.5 {
         d / (2.0 - max - min)
@@ -30,9 +30,9 @@ pub(super) fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     (h, s, l)
 }
 
-/// Convert HSL components in `[0, 1]` back to an 8-bit RGB triple.
+/// [0, 1] の HSL 成分を 8bit の RGB 三つ組に戻す。
 ///
-/// Inverse of [`rgb_to_hsl`]; `s == 0` short-circuits to a neutral gray.
+/// [rgb_to_hsl] の逆変換。s == 0 の場合は中間グレーへ即座に短絡する。
 pub(super) fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     if s.abs() < f64::EPSILON {
         let v = (l * 255.0).round() as u8;

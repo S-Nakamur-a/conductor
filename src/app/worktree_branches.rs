@@ -1,11 +1,10 @@
-//! Branch/commit auxiliary operations for [`App`]: switch/base/grab branch
-//! listing and filtering, worktree pull, stale-worktree pruning, and
-//! cherry-pick.
+//! [App] のブランチ/コミット周辺操作: switch/base/grab の各ブランチ一覧と
+//! フィルタリング、worktree の pull、古い worktree の prune、cherry-pick。
 
 use super::*;
 
 impl App {
-    /// Prune all stale worktrees.
+    /// 古い worktree を全て prune する。
     pub fn execute_prune(&mut self) {
         match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
@@ -31,13 +30,13 @@ impl App {
         }
     }
 
-    /// Load remote branches for the switch overlay.
+    /// switch オーバーレイ用にリモートブランチを読み込む。
     ///
-    /// Immediately populates the list from cached refs, then kicks off a
-    /// background fetch. When the fetch completes, `poll_bg_branches()`
-    /// picks up the refreshed list so the overlay updates without blocking.
+    /// まずキャッシュ済みの ref から即座にリストを埋め、その後バックグラウンドで
+    /// fetch を開始する。fetch が完了すると poll_bg_branches() が更新された
+    /// リストを拾い上げ、ブロッキングなしでオーバーレイが更新される。
     pub fn load_switch_branches(&mut self) {
-        // Show cached refs instantly.
+        // キャッシュ済みの ref を即座に表示する。
         match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.list_remote_branches() {
                 Ok(branches) => {
@@ -56,7 +55,7 @@ impl App {
             }
         }
 
-        // Fetch in background and send updated branch list back.
+        // バックグラウンドで fetch し、更新されたブランチ一覧を送り返す。
         let repo_path = self.repo.path.clone();
         self.bg.branch.start(move |tx| {
             let engine = match git_engine::GitEngine::open(&repo_path) {
@@ -80,17 +79,17 @@ impl App {
         });
     }
 
-    /// Check whether the background fetch has finished and update the
-    /// switch-branch list if new data is available. Non-blocking.
+    /// バックグラウンドの fetch が完了したかを確認し、新しいデータがあれば
+    /// switch-branch のリストを更新する。ノンブロッキング。
     pub fn poll_bg_branches(&mut self) {
         if let Some(branches) = self.bg.branch.poll() {
-            // Preserve the user's current filter/selection as best we can.
+            // 可能な限り、ユーザの現在のフィルタ/選択を保つ。
             let prev_selected_name = self
                 .filtered_switch_branches()
                 .get(self.overlays.switch_branch.selected)
                 .map(|(_, name)| (*name).clone());
             self.overlays.switch_branch.branches = branches;
-            // Try to restore selection by name.
+            // 名前で選択の復元を試みる。
             if let Some(name) = prev_selected_name
                 && let Some(pos) = self
                     .filtered_switch_branches()
@@ -103,9 +102,9 @@ impl App {
         }
     }
 
-    // ── Pull worktree (fetch + fast-forward) ──────────────────────────
+    // worktree の pull (fetch + fast-forward)
 
-    /// Start a background pull (fetch + fast-forward) for the selected worktree.
+    /// 選択中の worktree に対してバックグラウンドの pull(fetch + fast-forward)を開始する。
     pub fn start_pull_worktree(&mut self) {
         if self.bg.pull.is_running() {
             self.set_status(
@@ -136,7 +135,7 @@ impl App {
         });
     }
 
-    /// Poll the background pull channel. Non-blocking.
+    /// バックグラウンドの pull チャンネルをポーリングする。ノンブロッキング。
     pub fn poll_bg_pull(&mut self) {
         if let Some(result) = self.bg.pull.poll() {
             match result {
@@ -158,7 +157,7 @@ impl App {
         }
     }
 
-    /// Return the filtered list of switch branches based on the current filter.
+    /// 現在のフィルタに基づいて絞り込んだ switch ブランチの一覧を返す。
     pub fn filtered_switch_branches(&self) -> Vec<(usize, &String)> {
         if self.overlays.switch_branch.filter.is_empty() {
             self.overlays
@@ -194,14 +193,14 @@ impl App {
         }
     }
 
-    /// Load branches available as base for worktree creation.
-    /// Lists remote branches and pre-selects `origin/<main_branch>`.
+    /// worktree 作成のベースとして使えるブランチを読み込む。
+    /// リモートブランチを一覧し、origin/<main_branch> をあらかじめ選択しておく。
     pub fn load_base_branches(&mut self) {
         match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
-                // Prefer remote-tracking branches; fall back to local branches
-                // when the repo has no remote (e.g. a local-only project),
-                // otherwise the picker would be empty and nothing is selectable.
+                // リモート追跡ブランチを優先する。リポジトリにリモートがない場合
+                // (ローカル専用プロジェクトなど)はローカルブランチにフォール
+                // バックする。そうしないとピッカーが空になり何も選べなくなる。
                 let branches = match engine.list_remote_branches() {
                     Ok(remote) if !remote.is_empty() => Ok(remote),
                     Ok(_) => engine.list_local_branches(),
@@ -212,8 +211,8 @@ impl App {
                         self.worktree_mgr.base_branch_list = branches;
                         self.worktree_mgr.base_branch_selected = 0;
                         self.worktree_mgr.base_branch_filter.clear();
-                        // Pre-select origin/<main_branch>, or the local
-                        // <main_branch> when there is no remote.
+                        // origin/<main_branch>、リモートがなければローカルの
+                        // <main_branch> をあらかじめ選択しておく。
                         let main_branch = self.config.general.main_branch.clone();
                         let remote_base = format!("origin/{main_branch}");
                         if let Some(pos) = self
@@ -237,7 +236,7 @@ impl App {
         }
     }
 
-    /// Return the filtered list of base branches based on the current filter.
+    /// 現在のフィルタに基づいて絞り込んだベースブランチの一覧を返す。
     pub fn filtered_base_branches(&self) -> Vec<(usize, &String)> {
         if self.worktree_mgr.base_branch_filter.is_empty() {
             self.worktree_mgr
@@ -256,7 +255,7 @@ impl App {
         }
     }
 
-    /// Load grab branch candidates (non-main worktree branches).
+    /// grab のブランチ候補(main 以外の worktree のブランチ)を読み込む。
     pub fn load_grab_branches(&mut self) {
         self.overlays.grab.branches = self
             .worktrees
@@ -267,7 +266,7 @@ impl App {
         self.overlays.grab.selected = 0;
     }
 
-    // ── Cherry-pick helpers ────────────────────────────────────────────
+    // Cherry-pick 用ヘルパー
 
     pub fn load_cherry_pick_commits(&mut self) {
         let branch = self.overlays.cherry_pick.source_branch.clone();

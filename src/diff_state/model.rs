@@ -1,15 +1,13 @@
-//! Data types for the Diff mode: view mode, the flattened explorer display
-//! list, line/hunk/file diff structures, and the top-level `DiffState`.
+//! Diff モードのデータ型: ビューモード、フラット化した explorer 表示リスト、
+//! 行/ハンク/ファイル単位の diff 構造体、そしてトップレベルの DiffState。
 
 use std::collections::HashSet;
 
 use crate::config::DiffView;
 
-// ---------------------------------------------------------------------------
-// View mode
-// ---------------------------------------------------------------------------
+// ビューモード
 
-/// How the diff content is presented.
+/// diff の内容をどう表示するか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffViewMode {
     Unified,
@@ -25,64 +23,57 @@ impl From<DiffView> for DiffViewMode {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Section / display list
-// ---------------------------------------------------------------------------
+// セクション / 表示リスト
 
-/// Which section a diff file belongs to.
+/// diff ファイルがどちらのセクションに属するか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffSection {
     Committed,
     Uncommitted,
 }
 
-/// An entry in the flattened display list shown in the explorer panel.
+/// explorer パネルに表示するフラット化リストの1エントリ。
 #[derive(Debug, Clone)]
 pub enum DiffListEntry {
-    /// A directory node in the merged change tree (collapsible).
+    /// マージされた変更ツリー内のディレクトリノード(折りたたみ可能)。
     Directory {
-        /// The directory path (e.g. "src/ui").
+        /// ディレクトリパス(例: "src/ui")。
         path: String,
-        /// Display name (last component).
+        /// 表示名(最後の要素)。
         name: String,
-        /// Nesting depth (0 = top-level).
+        /// ネスト深度(0 がトップレベル)。
         depth: usize,
-        /// Whether this directory is collapsed.
+        /// このディレクトリが折りたたまれているか。
         collapsed: bool,
     },
-    /// A changed file. `section` records its origin (committed vs uncommitted)
-    /// both for the row's C/U marker and to resolve back into the right list.
+    /// 変更のあったファイル。section は行の C/U マーク表示と、元のリストへの
+    /// 逆引きの両方に使う出自(コミット済みか未コミットか)を記録する。
     File {
         section: DiffSection,
         file_index: usize,
-        /// Nesting depth (0 = top-level file).
+        /// ネスト深度(0 がトップレベルのファイル)。
         depth: usize,
     },
-    /// The branch change-summary pseudo-file, pinned at the very top of the
-    /// list. Selecting it opens the full summary in the Viewer. Struct-variant
-    /// form so future metadata (e.g. freshness) can be added without breaking
-    /// existing match arms.
+    /// リストの最上部に固定表示される、ブランチの変更サマリー用の疑似ファイル。
+    /// 選択すると Viewer にサマリー全文が開く。将来メタデータ(鮮度など)を
+    /// 追加しても既存の match アームを壊さないよう struct variant にしている。
     Summary {},
 }
 
-// ---------------------------------------------------------------------------
-// Internal diff range (replaces the old public DiffScope)
-// ---------------------------------------------------------------------------
+// 内部の diff 範囲(旧・公開型 DiffScope の置き換え)
 
-/// Which range to compute.
+/// どの範囲を計算するか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DiffRange {
-    /// merge-base(base, HEAD)..HEAD — committed changes only.
+    /// merge-base(base, HEAD)..HEAD — コミット済みの変更のみ。
     Committed,
-    /// HEAD..workdir+index — uncommitted changes only.
+    /// HEAD..workdir+index — 未コミットの変更のみ。
     Uncommitted,
 }
 
-// ---------------------------------------------------------------------------
-// Line-level types
-// ---------------------------------------------------------------------------
+// 行レベルの型
 
-/// Tag indicating whether a diff line is context, an addition, or a deletion.
+/// diff の行がコンテキストか追加か削除かを示すタグ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffLineTag {
     Equal,
@@ -90,85 +81,79 @@ pub enum DiffLineTag {
     Delete,
 }
 
-/// A segment within a diff line, distinguishing changed vs unchanged portions.
+/// diff 行内のセグメント。変更箇所と非変更箇所を区別する。
 #[derive(Debug, Clone)]
 pub struct InlineSegment {
-    /// The text content of this segment.
+    /// このセグメントのテキスト内容。
     pub text: String,
-    /// Whether this segment is emphasized (i.e., the actual intra-line change).
+    /// このセグメントを強調表示するか(実際に行内変更があった箇所かどうか)。
     pub emphasized: bool,
 }
 
-/// A single line inside a hunk.
+/// ハンク内の1行。
 #[derive(Debug, Clone)]
 pub struct DiffLine {
     pub tag: DiffLineTag,
-    /// Line number in the old (base) file, if applicable.
+    /// 旧(ベース)ファイル側の行番号。存在する場合。
     pub old_line_no: Option<usize>,
-    /// Line number in the new (HEAD) file, if applicable.
+    /// 新(HEAD)ファイル側の行番号。存在する場合。
     pub new_line_no: Option<usize>,
-    /// Intra-line change segments. Empty vec = fallback to whole-line rendering.
+    /// 行内変更セグメント。空 Vec の場合は行全体をそのまま描画する。
     pub inline_segments: Vec<InlineSegment>,
-    /// The text content of this line (tab-expanded).
+    /// この行のテキスト内容(タブ展開済み)。
     pub content: String,
 }
 
-// ---------------------------------------------------------------------------
-// Hunk
-// ---------------------------------------------------------------------------
+// ハンク
 
-/// A contiguous group of diff lines (context + changes).
+/// diff 行の連続したまとまり(コンテキスト + 変更)。
 #[derive(Debug, Clone)]
 pub struct DiffHunk {
-    /// The lines that make up this hunk.
+    /// このハンクを構成する行。
     pub lines: Vec<DiffLine>,
-    /// Function context header (e.g. "fn some_function()"), if detected.
+    /// 検出できた場合の関数コンテキストヘッダー(例: "fn some_function()")。
     pub func_header: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Per-file diff
-// ---------------------------------------------------------------------------
+// ファイル単位の diff
 
-/// Diff information for a single file.
+/// 単一ファイルの diff 情報。
 #[derive(Debug, Clone)]
 pub struct FileDiff {
-    /// File path (relative to the worktree root).
+    /// ファイルパス(worktree ルートからの相対パス)。
     pub path: String,
-    /// Number of added lines across all hunks.
+    /// 全ハンクを通じた追加行数。
     pub added_lines: usize,
-    /// Number of deleted lines across all hunks.
+    /// 全ハンクを通じた削除行数。
     pub deleted_lines: usize,
-    /// Parsed hunks with context.
+    /// コンテキスト付きでパースしたハンク。
     pub hunks: Vec<DiffHunk>,
 }
 
-// ---------------------------------------------------------------------------
-// Top-level diff state
-// ---------------------------------------------------------------------------
+// トップレベルの diff state
 
-/// All state for the Diff mode UI.
+/// Diff モード UI の全状態。
 #[derive(Debug, Clone)]
 pub struct DiffState {
-    /// Committed changes (merge-base..HEAD).
+    /// コミット済みの変更(merge-base..HEAD)。
     pub committed_files: Vec<FileDiff>,
-    /// Uncommitted changes (HEAD vs workdir+index).
+    /// 未コミットの変更(HEAD vs workdir+index)。
     pub uncommitted_files: Vec<FileDiff>,
-    /// Flattened display list for the explorer panel.
+    /// explorer パネル用にフラット化した表示リスト。
     pub display_list: Vec<DiffListEntry>,
-    /// Set of collapsed directory paths (keyed by plain repo-relative path).
+    /// 折りたたまれているディレクトリパスの集合(素のリポジトリ相対パスをキーにする)。
     pub collapsed_dirs: HashSet<String>,
-    /// Vertical scroll offset inside the diff content pane.
+    /// diff 内容ペイン内の垂直スクロールオフセット。
     pub scroll: usize,
-    /// Current presentation mode.
+    /// 現在の表示モード。
     pub view_mode: DiffViewMode,
-    /// The base branch we are diffing against (e.g. `"main"`).
+    /// diff の比較対象となるベースブランチ(例: "main")。
     pub base_branch: String,
-    /// Human-readable error message if the diff could not be loaded.
+    /// diff の読み込みに失敗した場合の人間可読なエラーメッセージ。
     pub error: Option<String>,
-    /// Whether the current branch has a change summary. When `true`, a
-    /// `DiffListEntry::Summary` pseudo-file is pinned at the top of the display
-    /// list. Synced by the App from `ReviewState::change_summary` (the diff
-    /// model can't reach review state directly, so it caches just this flag).
+    /// 現在のブランチに変更サマリーがあるか。true の場合、表示リストの先頭に
+    /// DiffListEntry::Summary の疑似ファイルが固定表示される。App が
+    /// ReviewState::change_summary から同期する(diff モデルは review state に
+    /// 直接アクセスできないため、このフラグだけをキャッシュしている)。
     pub has_summary: bool,
 }

@@ -1,6 +1,5 @@
-//! Repository selection and the cached worktree list: switching between known
-//! repos, opening an arbitrary path, and refreshing worktree/branch state from
-//! git.
+//! リポジトリの選択とキャッシュされたworktree一覧: 既知のリポジトリ間の
+//! 切り替え、任意パスのオープン、gitからのworktree/ブランチ状態のリフレッシュ。
 
 use crate::git_engine;
 use crate::review_store::{self, ReviewStore};
@@ -9,17 +8,17 @@ use crate::viewer::ViewerState;
 use super::{App, StatusLevel};
 
 impl App {
-    /// Switch to a different repository by index in `repo_list`.
+    /// repo_list 内のインデックスで別のリポジトリへ切り替える。
     pub fn switch_repo(&mut self, index: usize) {
         if index >= self.repo.known.len() {
             return;
         }
-        // Persist the outgoing repo's view before swapping the store.
+        // ストアを差し替える前に、離脱するリポジトリのビューを永続化する。
         self.persist_view_state();
         self.repo.known_index = index;
         self.repo.path = self.repo.known[index].clone();
 
-        // Re-open the review store for the new repo path.
+        // 新しいリポジトリパス用にレビューストアを開き直す。
         let db = review_store::db_path(&self.repo.path);
         self.review_store = match ReviewStore::open(&db) {
             Ok(store) => Some(store),
@@ -29,7 +28,7 @@ impl App {
             }
         };
 
-        // Update main repo name for the new repository.
+        // 新しいリポジトリ用にmainリポジトリ名を更新する。
         self.repo.main_name = git_engine::GitEngine::open(&self.repo.path)
             .and_then(|engine| engine.main_worktree_path())
             .ok()
@@ -41,7 +40,7 @@ impl App {
                     .unwrap_or_else(|| self.repo.path.display().to_string())
             });
 
-        // Refresh worktrees and reviews eagerly; viewer/diff will lazy-load.
+        // worktreeとレビューを即座にリフレッシュする。viewer/diffは遅延読み込みする。
         self.worktrees.select(0);
         self.refresh_worktrees();
         self.viewer_state = ViewerState::default();
@@ -53,15 +52,16 @@ impl App {
             &self.config.general.main_branch,
             self.diff_state.view_mode,
         );
-        // Restore the new repo's last selected worktree + open file/scroll.
+        // 新しいリポジトリの最後に選択していたworktree + 開いていたファイル/
+        // スクロールを復元する。
         self.restore_selected_worktree_and_view();
-        // Re-aim the symbol index, now that the worktree selection has settled
-        // on the incoming repository. Without this the index keeps answering
-        // from the repository we just left: a path like `src/app/mod.rs` exists
-        // in both, so a jump lands in the new repo's file at the old repo's
-        // line number, and the hover popup reads its text out of the old tree
-        // entirely. Worktree switching funnels through `on_worktree_changed`,
-        // but a repository switch never passes through it.
+        // worktreeの選択が新しいリポジトリに落ち着いたので、シンボル索引を
+        // 再照準する。これをしないと、索引はいま離れたリポジトリからの回答を
+        // 返し続ける: src/app/mod.rs のようなパスは両方に存在するので、ジャンプは
+        // 新しいリポジトリのファイルなのに古いリポジトリの行番号に着地してしまい、
+        // ホバーポップアップはそのテキストを完全に古いツリーから読んでしまう。
+        // worktree切り替えは on_worktree_changed を経由するが、リポジトリの
+        // 切り替えは決してそこを通らない。
         self.start_symbol_index_build();
         self.refresh_reviews();
         self.terminal.active_claude_session = None;
@@ -73,9 +73,9 @@ impl App {
         );
     }
 
-    /// Open a repository from an arbitrary filesystem path.
+    /// 任意のファイルシステムパスからリポジトリを開く。
     pub fn open_repo_from_path(&mut self, path: &str) {
-        // Expand ~ to home directory.
+        // ~ をホームディレクトリに展開する。
         let expanded = if let Some(stripped) = path.strip_prefix('~') {
             if let Some(home) = dirs::home_dir() {
                 home.join(stripped.strip_prefix('/').unwrap_or(stripped))
@@ -86,7 +86,7 @@ impl App {
             std::path::PathBuf::from(path)
         };
 
-        // Canonicalize if possible, otherwise use as-is.
+        // 可能なら正規化し、できなければそのまま使う。
         let canonical = expanded.canonicalize().unwrap_or(expanded);
 
         if !canonical.is_dir() {
@@ -97,13 +97,13 @@ impl App {
             return;
         }
 
-        // Try to discover a git repository at this path.
+        // このパスにgitリポジトリがあるか調べる。
         match git_engine::GitEngine::open(&canonical) {
             Ok(_engine) => {
-                // Valid git repo — switch to it.
+                // 有効なgitリポジトリ — それに切り替える。
                 self.repo.path = canonical.clone();
 
-                // Re-open the review store for the new repo path.
+                // 新しいリポジトリパス用にレビューストアを開き直す。
                 let db = review_store::db_path(&self.repo.path);
                 self.review_store = match ReviewStore::open(&db) {
                     Ok(store) => Some(store),
@@ -118,9 +118,9 @@ impl App {
                 self.viewer_state = ViewerState::default();
                 // 同上。ツリーは遅延させるが根は今決まっている。
                 self.viewer_state.set_root(self.selected_worktree_path());
-                // This repo gets no view restore, so drop any restore still
-                // armed for the *previous* repo — otherwise it could fire here
-                // and open a same-named path in the newly opened tree.
+                // このリポジトリにはビュー復元が無いので、*前の*リポジトリ用にまだ
+                // 有効な復元があれば破棄する — そうしないと、ここで発火して新しく
+                // 開いたツリー内の同名パスを開いてしまう可能性がある。
                 self.view_restore.pending = None;
                 self.diff_state = crate::diff_state::DiffState::new(
                     &self.config.general.main_branch,
@@ -130,11 +130,11 @@ impl App {
                 self.terminal.active_claude_session = None;
                 self.terminal.active_shell_session = None;
 
-                // Add to repo_list if not already present.
+                // まだ無ければrepo_listに追加する。
                 if !self.repo.known.contains(&canonical) {
                     self.repo.known.push(canonical.clone());
                 }
-                // Update repo_list_index to point to this repo.
+                // repo_list_indexがこのリポジトリを指すように更新する。
                 self.repo.known_index = self
                     .repo.known
                     .iter()
@@ -159,22 +159,22 @@ impl App {
         }
     }
 
-    /// Refresh the cached worktree list from the repository.
+    /// リポジトリからキャッシュされたworktreeリストをリフレッシュする。
     ///
-    /// Returns `true` if the worktree list actually changed (different count,
-    /// branch names, or status counts), so callers can skip redraws when
-    /// nothing is different.
+    /// worktreeリストが実際に変わった場合（件数、ブランチ名、ステータス件数の
+    /// いずれかが異なる場合）に true を返す。呼び出し側は何も変わっていない
+    /// ときに再描画をスキップできる。
     pub fn refresh_worktrees(&mut self) -> bool {
         let mut changed = false;
-        // Remember which branch is selected *before* we replace the list, so we
-        // can pin the selection to it by identity afterwards (the list order can
-        // shift when worktrees are added/removed).
+        // リストを差し替える*前に*どのブランチが選択されているかを覚えておき、
+        // 後でその同一性に選択をピン留めできるようにする（worktreeが追加/削除
+        // されるとリストの順序がずれることがある）。
         let prev_selected_branch = self.selected_worktree_branch();
         match git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => {
                 match engine.list_worktrees() {
                     Ok(worktrees) => {
-                        // Detect whether the worktree list changed before replacing it.
+                        // 差し替える前にworktreeリストが変わったかどうかを検出する。
                         if worktrees.len() != self.worktrees.len() {
                             changed = true;
                         } else {
@@ -191,12 +191,11 @@ impl App {
                             }
                         }
                         self.worktrees.replace(worktrees);
-                        // Preserve the selection by *branch identity*, not list
-                        // position: indices shift when worktrees are added or
-                        // removed. Re-finding the branch keeps the selection
-                        // pinned to the same worktree instead of silently sliding
-                        // onto a neighbour. Only when the branch is gone (its
-                        // worktree was removed) do we fall back to clamping.
+                        // リスト位置ではなく*ブランチの同一性*で選択を保つ: worktreeが追加・
+                        // 削除されるとインデックスはずれる。ブランチを再検索することで、
+                        // 選択が黙って隣のworktreeへスライドするのではなく、同じworktreeへ
+                        // ピン留めされ続ける。ブランチが無くなった場合（そのworktreeが削除
+                        // された場合）のみクランプへフォールバックする。
                         if let Some(idx) = reselect_worktree_index(
                             &self.worktrees,
                             &prev_selected_branch,
@@ -204,9 +203,9 @@ impl App {
                         ) {
                             self.worktrees.select(idx);
                         }
-                        // Detect commits by HEAD oid changes. The oid was
-                        // captured while `list_worktrees` had each repo open,
-                        // so no second `Repository::open` per worktree here.
+                        // HEAD oidの変化からコミットを検出する。oidは list_worktrees が
+                        // 各リポジトリを開いていた時点で取得済みなので、ここでworktreeごとに
+                        // Repository::open を再度呼ぶ必要はない。
                         let head_updates: Vec<(String, String)> = self
                             .worktrees
                             .iter()
@@ -228,7 +227,7 @@ impl App {
                         log::warn!("failed to list worktrees: {e}");
                     }
                 }
-                // Refresh local branches for the detail zone.
+                // 詳細ゾーン用にローカルブランチをリフレッシュする。
                 if let Ok(branches) = engine.list_local_branches() {
                     if branches != self.worktree_mgr.local_branches {
                         changed = true;
@@ -241,17 +240,17 @@ impl App {
             }
         }
         self.rebuild_worktree_list_rows();
-        // If the selected worktree's branch changed out from under us (its
-        // worktree was removed, so the selection fell back to another branch —
-        // often the main worktree), reload the review state. Otherwise the
-        // previous branch's change summary and comments linger and get shown
-        // against the wrong branch (e.g. a merged PR's summary on `main`).
+        // 選択中worktreeのブランチが足元で変わっていたら（そのworktreeが
+        // 削除され、選択が別のブランチ — 多くはmain worktree — へフォールバック
+        // した場合）、レビュー状態を再読み込みする。そうしないと、前のブランチの
+        // 変更サマリとコメントが残ったまま、間違ったブランチに対して表示され
+        // 続けてしまう（例: マージ済みPRのサマリが main に表示されるなど）。
         //
-        // An *empty* branch is excluded: `list_worktrees` logs and skips a
-        // worktree it fails to inspect (see `git_engine::worktree_ops`), so a
-        // transient git error can empty the list for one poll. That is a failed
-        // read, not a selection change, and reloading reviews against `""`
-        // would blank out the panel every few seconds until it recovered.
+        // *空*のブランチは除外する: list_worktrees は検査に失敗したworktreeを
+        // ログに残してスキップするので（git_engine::worktree_ops 参照）、
+        // 一時的なgitエラーで1回のポーリングだけリストが空になることがある。
+        // それは読み取り失敗であって選択の変更ではなく、"" に対してレビューを
+        // 再読み込みすると、復旧するまで数秒おきにパネルが空白になってしまう。
         let new_branch = self.selected_worktree_branch();
         if !new_branch.is_empty() && new_branch != prev_selected_branch {
             self.refresh_reviews();
@@ -259,8 +258,8 @@ impl App {
         changed
     }
 
-    /// Advance the decoration animation by one tick. Returns `true` when
-    /// an animation was actually updated (i.e. mode is not `None`).
+    /// デコレーションアニメーションを1ティック進める。アニメーションが
+    /// 実際に更新された場合（つまりmodeが None でない場合）に true を返す。
     pub fn tick_decoration(&mut self, width: u16, height: u16) -> bool {
         use crate::ui::decoration::{DecorationActivity, DecorationMode};
         let mode = DecorationMode::from_str(&self.config.general.decoration);
@@ -284,7 +283,7 @@ impl App {
         true
     }
 
-    /// Record a stat event for both the current session and daily totals.
+    /// 現在のセッションと日次合計の両方に統計イベントを記録する。
     pub(super) fn record_stat(&self, field: &str) {
         if let Some(store) = &self.review_store {
             let _ = store.increment_daily_stat(field);
@@ -294,7 +293,7 @@ impl App {
         }
     }
 
-    /// Return `(worktree_name, working_dir)` for the currently selected worktree.
+    /// 現在選択中のworktreeの (worktree_name, working_dir) を返す。
     pub(super) fn selected_worktree_info(&self) -> (String, std::path::PathBuf) {
         self.worktrees
             .get(self.worktrees.selected_index())
@@ -303,17 +302,17 @@ impl App {
     }
 }
 
-/// Pick the worktree index to keep selected after the worktree list is
-/// refreshed.
+/// worktreeリストがリフレッシュされた後も選択を保つべきworktreeの
+/// インデックスを選ぶ。
 ///
-/// The list order is not stable across refreshes — adding or removing a
-/// worktree shifts every index after it. Selecting purely by the old index
-/// would silently re-point the selection at a *different* branch, which then
-/// shows that branch's review data (including the change summary) against the
-/// wrong worktree. So we re-pin by branch identity first; only when the
-/// previously selected branch is gone do we clamp the old index into range.
+/// リストの順序はリフレッシュのたびに安定しない — worktreeの追加・削除は
+/// それ以降のすべてのインデックスをずらす。単純に古いインデックスで選ぶと、
+/// 選択が黙って*別の*ブランチを指してしまい、そのブランチのレビューデータ
+/// （変更サマリを含む）が誤ったworktreeに対して表示されてしまう。そこで
+/// まずブランチの同一性で再ピン留めし、以前選択していたブランチが無くなった
+/// 場合にのみ古いインデックスを範囲内にクランプする。
 ///
-/// Returns `None` when there are no worktrees (nothing to select).
+/// worktreeが1つも無い場合は None を返す（選ぶものが無い）。
 fn reselect_worktree_index(
     worktrees: &[git_engine::WorktreeInfo],
     prev_branch: &str,
@@ -352,17 +351,19 @@ mod tests {
 
     #[test]
     fn reselect_pins_to_branch_when_order_shifts() {
-        // Selection points at "feat-b" (index 2). A new worktree inserted
-        // earlier shifts indices; the selection must follow "feat-b", not stay
-        // at index 2 (which now holds a different branch).
+        // 選択は "feat-b"（インデックス2）を指している。より前に新しいworktreeが
+        // 挿入されるとインデックスがずれる。選択は "feat-b" に追従しなければ
+        // ならず、インデックス2（今は別のブランチを保持している）に留まっては
+        // いけない。
         let after = [wt("main"), wt("feat-a"), wt("feat-aa"), wt("feat-b")];
         assert_eq!(reselect_worktree_index(&after, "feat-b", 2), Some(3));
     }
 
     #[test]
     fn reselect_falls_back_when_branch_removed() {
-        // "feat-a" (index 1) was removed; only "main" remains. The stale index 1
-        // is out of range and must clamp to the last valid index (main).
+        // "feat-a"（インデックス1）が削除され、"main" だけが残っている。古い
+        // インデックス1は範囲外なので、最後の有効なインデックス（main）に
+        // クランプしなければならない。
         let after = [wt("main")];
         assert_eq!(reselect_worktree_index(&after, "feat-a", 1), Some(0));
     }
@@ -380,8 +381,8 @@ mod tests {
 
     #[test]
     fn reselect_clamps_when_prev_branch_empty() {
-        // No previously selected branch (e.g. first load): just keep the index
-        // in range.
+        // 以前選択していたブランチが無い場合（例: 初回読み込み時）: インデックスを
+        // 範囲内に保つだけ。
         let after = [wt("main"), wt("feat-a")];
         assert_eq!(reselect_worktree_index(&after, "", 5), Some(1));
     }

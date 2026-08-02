@@ -1,11 +1,11 @@
-//! Construction and read-only state accessors for `TextInput`.
+//! TextInput の生成と読み取り専用の状態アクセサ。
 
 use unicode_width::UnicodeWidthStr;
 
 use super::TextInput;
 
 impl TextInput {
-    /// Create a new single-line text input.
+    /// 新しい単一行のテキスト入力を作る。
     pub fn new() -> Self {
         Self {
             buffer: String::new(),
@@ -14,7 +14,7 @@ impl TextInput {
         }
     }
 
-    /// Create a new multi-line text input.
+    /// 新しい複数行のテキスト入力を作る。
     pub fn new_multiline() -> Self {
         Self {
             buffer: String::new(),
@@ -23,35 +23,35 @@ impl TextInput {
         }
     }
 
-    /// Clear the buffer and reset cursor to 0.
+    /// バッファをクリアし、カーソルを0に戻す。
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
     }
 
-    /// Replace the entire buffer content and move cursor to end.
+    /// バッファの内容を丸ごと置き換え、カーソルを末尾へ移動する。
     pub fn set_text(&mut self, text: &str) {
         self.buffer = text.to_string();
         self.cursor = self.buffer.len();
     }
 
-    /// Return a reference to the buffer content.
+    /// バッファ内容への参照を返す。
     pub fn text(&self) -> &str {
         &self.buffer
     }
 
-    /// Return the text before the cursor.
+    /// カーソルより前のテキストを返す。
     pub fn text_before_cursor(&self) -> &str {
         &self.buffer[..self.cursor]
     }
 
-    /// Return the text after the cursor.
+    /// カーソルより後のテキストを返す。
     pub fn text_after_cursor(&self) -> &str {
         &self.buffer[self.cursor..]
     }
 
-    /// Calculate the (row, col) of the cursor for multi-line display.
-    /// Row and col are 0-indexed. Col is in display width (unicode).
+    /// 複数行表示用に、カーソルの (row, col) を計算する。
+    /// row と col は0始まり。col は表示幅（unicode 幅）で数える。
     pub fn cursor_row_col(&self) -> (usize, usize) {
         let before = self.text_before_cursor();
         let row = before.matches('\n').count();
@@ -60,7 +60,7 @@ impl TextInput {
         (row, col)
     }
 
-    /// Return the display width of text before the cursor on the current line.
+    /// 現在行でカーソルより前にあるテキストの表示幅を返す。
     pub fn display_width_before_cursor(&self) -> usize {
         let before = self.text_before_cursor();
         let last_line = before.rsplit('\n').next().unwrap_or(before);

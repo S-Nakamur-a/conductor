@@ -1,4 +1,4 @@
-//! Session history viewer overlay.
+//! セッション履歴ビューアのオーバーレイ。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input};
 use crate::app::App;
@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the session history viewer overlay.
+/// セッション履歴ビューアのオーバーレイを描画する。
 pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     frame.render_widget(ratatui::widgets::Clear, area);
@@ -23,7 +23,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let panes = Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(content_area);
 
-    // Left pane: history record list.
+    // 左ペイン: 履歴レコードの一覧。
     let list_block = Block::default()
         .title(" Session History (j/k: navigate, /: search, s: save current, Esc: close) ")
         .borders(Borders::ALL)
@@ -84,7 +84,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_stateful_widget(list, panes[0], &mut state);
     }
 
-    // Right pane: output text.
+    // 右ペイン: 出力テキスト。
     let detail_block = Block::default()
         .title(" Output ")
         .borders(Borders::ALL)
@@ -107,7 +107,7 @@ pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
         .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, panes[1]);
 
-    // Search bar.
+    // 検索バー。
     if let Some(search_rect) = search_area {
         let search_block = Block::default()
             .title(" Search History ")

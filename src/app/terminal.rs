@@ -1,25 +1,26 @@
-//! Terminal / PTY session lifecycle for [`App`].
+//! [App] のターミナル/PTY セッションのライフサイクル。
 //!
-//! Spawning, switching, closing, and reaping Claude Code and Shell PTY
-//! sessions. Resume-session handling lives in [`super::terminal_resume`],
-//! PTY size syncing in [`super::terminal_resize`], and Claude Code
-//! waiting/active state detection in [`super::terminal_cc_state`].
+//! Claude Code と Shell の PTY セッションの起動・切り替え・終了・回収を担う。
+//! セッション再開の処理は [super::terminal_resume]、PTY サイズの同期は
+//! [super::terminal_resize]、Claude Code の waiting/active 状態検出は
+//! [super::terminal_cc_state] にある。
 
 use super::*;
 
 const SESSION_ICONS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 impl App {
-    /// Switch the Claude panel to display the session at `idx`.
+    /// Claude パネルの表示を idx のセッションへ切り替える。
     ///
-    /// Closes any active reflow transcript first: the reflow view is bound to
-    /// whichever session was showing when it was opened, so switching sessions
-    /// makes that transcript stale and it must be torn down here. This mirrors
-    /// the scroll/cache reset inside [`TerminalState::switch_claude_session`]
-    /// (same "the panel now shows a different session" invariant), but reflow
-    /// state lives on `App`, so the close has to happen one level up. Routing
-    /// every Claude session switch through this wrapper keeps the panel from
-    /// rendering the previous session's transcript after a tab/strip switch.
+    /// 先にアクティブな reflow トランスクリプトを閉じる。reflow ビューは開かれた
+    /// 時点で表示していたセッションに紐付いているため、セッションを切り替えると
+    /// そのトランスクリプトは古くなり、ここで畳む必要がある。これは
+    /// [TerminalState::switch_claude_session] 内でのスクロール/キャッシュリセット
+    /// (「パネルが今表示しているのは別セッション」という同じ不変条件)と対応するが、
+    /// reflow の状態は App 側にあるため、この close は一段上のレイヤで行う必要が
+    /// ある。全ての Claude セッション切り替えをこのラッパー経由にすることで、
+    /// タブ/ストリップの切り替え後にパネルが前のセッションのトランスクリプトを
+    /// 描画し続けることを防いでいる。
     pub fn switch_claude_session(&mut self, idx: usize) {
         if self.reflow.active {
             self.close_reflow();
@@ -27,9 +28,9 @@ impl App {
         self.terminal.switch_claude_session(idx);
     }
 
-    /// Cycle to the next (`forward`) or previous session tab in the focused
-    /// terminal panel — the keyboard equivalent of clicking a tab. No-op unless a
-    /// terminal panel is focused and it has more than one session. Wraps around.
+    /// フォーカス中のターミナルパネルで次(forward)または前のセッションタブへ
+    /// 巡回する — タブをクリックする操作のキーボード版。ターミナルパネルが
+    /// フォーカスされていて、かつセッションが2つ以上ない限り何もしない。周回する。
     pub fn cycle_terminal_session(&mut self, forward: bool) {
         let (sessions, active): (Vec<usize>, Option<usize>) = match self.focus {
             Focus::TerminalClaude => (
@@ -67,12 +68,12 @@ impl App {
         }
     }
 
-    /// Spawn a new Claude Code PTY session for the currently selected worktree.
+    /// 現在選択中の worktree に新しい Claude Code の PTY セッションを起動する。
     pub fn spawn_claude_code(&mut self) -> anyhow::Result<usize> {
         self.spawn_claude_code_with_name(None)
     }
 
-    /// Spawn a new Claude Code PTY session with an optional `--name` flag.
+    /// 任意で --name フラグを指定して新しい Claude Code の PTY セッションを起動する。
     pub fn spawn_claude_code_with_name(
         &mut self,
         session_name: Option<&str>,
@@ -112,7 +113,7 @@ impl App {
         Ok(idx)
     }
 
-    /// Spawn a new interactive shell PTY session for the currently selected worktree.
+    /// 現在選択中の worktree に新しい対話シェルの PTY セッションを起動する。
     pub fn spawn_shell(&mut self) -> anyhow::Result<usize> {
         let (worktree_name, working_dir) = self.selected_worktree_info();
         let sh_count = self
@@ -141,16 +142,17 @@ impl App {
         Ok(idx)
     }
 
-    /// Close (kill + remove) a terminal session by its global index.
+    /// グローバルインデックスでターミナルセッションを閉じる(kill + remove)。
     ///
-    /// Adjusts `active_claude_session` and `active_shell_session` indices
-    /// and falls back to the next available session for the current worktree.
+    /// active_claude_session と active_shell_session のインデックスを調整し、
+    /// 現在の worktree で次に使えるセッションへフォールバックする。
     pub fn close_terminal_session(&mut self, global_idx: usize) {
-        // Kill and remove the session.
+        // セッションを kill して取り除く。
         let _ = self.terminal.pty_manager.kill_session(global_idx);
         self.terminal.pty_manager.remove_session(global_idx);
 
-        // Adjust deferred prompts: remove the closed session, shift higher indices.
+        // 保留プロンプトを調整する: 閉じたセッション分を除去し、それより大きい
+        // インデックスをずらす。
         self.terminal.deferred_prompts.remove(&global_idx);
         let shifted: Vec<(usize, String)> = self
             .terminal
@@ -160,7 +162,7 @@ impl App {
             .collect();
         self.terminal.deferred_prompts.extend(shifted);
 
-        // Adjust active session indices.
+        // アクティブセッションのインデックスを調整する。
         for a in [
             &mut self.terminal.active_claude_session,
             &mut self.terminal.active_shell_session,
@@ -169,27 +171,27 @@ impl App {
         .flatten()
         {
             if *a == global_idx {
-                *a = usize::MAX; // mark for clear
+                *a = usize::MAX; // クリア対象として印を付ける
             } else if *a > global_idx {
                 *a -= 1;
             }
         }
 
-        // Keep the embedded editor's session index valid when a lower-indexed
-        // session is removed out from under it. The editor itself is never
-        // closed through this path (it's torn down by `exit_editor`), so it can
-        // only be shifted, never invalidated.
+        // 自分より小さいインデックスのセッションが下で取り除かれたとき、埋め込み
+        // エディタのセッションインデックスを有効なまま保つ。エディタ自体はこの経路
+        // で閉じられることはなく(exit_editor で畳まれる)、ずれることはあっても
+        // 無効化されることはない。
         if let Some(editor) = self.editor.as_mut()
             && editor.session_idx > global_idx
         {
             editor.session_idx -= 1;
         }
 
-        // Clear invalidated indices and fall back to next available session.
-        // The closed session was the displayed one, so the fallback target's
-        // content differs — switch through the helper to reset scroll and the
-        // render cache (otherwise the panel would show the closed session's
-        // stale output). When no session remains, clear the cache directly.
+        // 無効化されたインデックスをクリアし、次に使えるセッションへフォールバック
+        // する。閉じたセッションは表示中のものだったため、フォールバック先の内容は
+        // 異なる — ヘルパー経由で切り替えてスクロールと描画キャッシュをリセットする
+        // (そうしないとパネルが閉じたセッションの古い出力を表示し続けてしまう)。
+        // 残っているセッションがない場合はキャッシュを直接クリアする。
         if self.terminal.active_claude_session == Some(usize::MAX) {
             match self
                 .current_worktree_claude_sessions()
@@ -221,19 +223,19 @@ impl App {
         self.rebuild_worktree_list_rows();
     }
 
-    /// Remove PTY sessions whose child processes have exited.
+    /// 子プロセスが終了した PTY セッションを取り除く。
     ///
-    /// Iterates in reverse to preserve indices of earlier sessions while
-    /// removing later ones. Adjusts `active_claude_session` and
-    /// `active_shell_session` indices after removal.
+    /// 後ろから前へ走査することで、取り除いていく間、まだ確認していない前方の
+    /// セッションのインデックスがずれないようにする。取り除いた後、
+    /// active_claude_session と active_shell_session のインデックスを調整する。
     pub fn cleanup_dead_sessions(&mut self) -> bool {
         let count = self.terminal.pty_manager.session_count();
         let mut removed_any = false;
 
-        // Walk backwards so removals don't shift indices we haven't checked yet.
+        // 取り除いた結果、まだ確認していないインデックスがずれないよう後ろから走査する。
         for idx in (0..count).rev() {
-            // The editor's own session is owned by `poll_editor_exit` (which
-            // restores the layout and reloads the file); never reap it here.
+            // エディタ自身のセッションは poll_editor_exit(レイアウトを復元し
+            // ファイルを再読み込みする)が所有しているので、ここでは決して回収しない。
             if self.editor.as_ref().is_some_and(|e| e.session_idx == idx) {
                 continue;
             }
@@ -242,15 +244,15 @@ impl App {
                 self.terminal.pty_manager.remove_session(idx);
                 removed_any = true;
 
-                // Shift the editor's session index when a lower-indexed session
-                // is reaped beneath it.
+                // 自分より小さいインデックスのセッションが下で回収されたとき、
+                // エディタのセッションインデックスをずらす。
                 if let Some(editor) = self.editor.as_mut()
                     && editor.session_idx > idx
                 {
                     editor.session_idx -= 1;
                 }
 
-                // Adjust deferred prompts.
+                // 保留プロンプトを調整する。
                 self.terminal.deferred_prompts.remove(&idx);
                 let shifted: Vec<(usize, String)> = self
                     .terminal
@@ -260,7 +262,7 @@ impl App {
                     .collect();
                 self.terminal.deferred_prompts.extend(shifted);
 
-                // Adjust active session indices.
+                // アクティブセッションのインデックスを調整する。
                 for a in [
                     &mut self.terminal.active_claude_session,
                     &mut self.terminal.active_shell_session,
@@ -269,7 +271,7 @@ impl App {
                 .flatten()
                 {
                     if *a == idx {
-                        *a = usize::MAX; // mark for clear
+                        *a = usize::MAX; // クリア対象として印を付ける
                     } else if *a > idx {
                         *a -= 1;
                     }
@@ -278,7 +280,7 @@ impl App {
         }
 
         if removed_any {
-            // Clear any indices that were pointing at removed sessions.
+            // 取り除かれたセッションを指していたインデックスをクリアする。
             if self.terminal.active_claude_session == Some(usize::MAX) {
                 self.terminal.active_claude_session = None;
             }
@@ -290,8 +292,8 @@ impl App {
         removed_any
     }
 
-    /// Return `(index_in_pty_manager, &PtySession)` pairs for Claude Code sessions
-    /// belonging to the currently selected worktree.
+    /// 現在選択中の worktree に属する Claude Code セッションについて、
+    /// (index_in_pty_manager, &PtySession) のペアを返す。
     pub fn current_worktree_claude_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
         self.terminal
@@ -305,8 +307,8 @@ impl App {
             .collect()
     }
 
-    /// Return `(index_in_pty_manager, &PtySession)` pairs for Shell sessions
-    /// belonging to the currently selected worktree.
+    /// 現在選択中の worktree に属する Shell セッションについて、
+    /// (index_in_pty_manager, &PtySession) のペアを返す。
     pub fn current_worktree_shell_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
         self.terminal

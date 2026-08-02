@@ -1,42 +1,42 @@
 //! 差し替え可能な AI 呼び出しの抽象。
 //!
 //! どの LLM プロバイダも小さな 1 つの継ぎ目を満たす:
-//! `(system_prompt, user_message) -> String`。プロンプトの組み立ても応答のパースも
+//! (system_prompt, user_message) -> String。プロンプトの組み立ても応答のパースも
 //! Conductor が持ち、プロバイダは生のテキストを返すだけ。だからユーザー向けの
 //! 拡張点が極めて単純に保たれる。出力形式がプロバイダの境界を越えることは無い。
 //!
-//! 組み込みのプロバイダは 1 つ ([`GeminiCaller`]) で、バイナリに同梱されている。
-//! ユーザーが拡張する経路は [`CommandCaller`] で、設定でコマンドを指定すると
+//! 組み込みのプロバイダは 1 つ ([GeminiCaller]) で、バイナリに同梱されている。
+//! ユーザーが拡張する経路は [CommandCaller] で、設定でコマンドを指定すると
 //! Conductor が最小限で安定したプロトコルでそれと話す。Conductor が自前で CLI を
 //! ハードコードすることは決してない。他のプロバイダはすべて設定が指すものになる。
 //!
-//! ## 外部 LLM コマンドのプロトコル (v2)
+//! 外部 LLM コマンドのプロトコル (v2)
 //!
-//! `[api] command` が指すのは AI ツールそのもの。プロンプトを受け取って補完を
+//! [api] command が指すのは AI ツールそのもの。プロンプトを受け取って補完を
 //! 出力する任意の CLI であればよい。ここはタスクごとの振る舞いを書く場所ではない。
 //! どの出力形式が要るか、モデルがツールを使ってよいか、どのディレクトリを見るべきかは、
 //! すべて補完を求めている機能の側が決める。そのため両者をつなぐラッパースクリプトは要らない。
 //!
 //! - 起動: Conductor は設定された argv を直接実行する (シェルを介さない)。
-//! - プレースホルダ: どの引数にも `{prompt}` (組み立て済みのプロンプト) や
-//!   `{workdir}` (タスクのディレクトリ) を書ける。プロンプトを位置引数で受け取る
-//!   ツールはその引数の位置に `{prompt}` を置く。stdin から読むツールは
+//! - プレースホルダ: どの引数にも {prompt} (組み立て済みのプロンプト) や
+//!   {workdir} (タスクのディレクトリ) を書ける。プロンプトを位置引数で受け取る
+//!   ツールはその引数の位置に {prompt} を置く。stdin から読むツールは
 //!   プレースホルダを一切使わなくてよい。
-//! - 入力: `{prompt}` があればプロンプトはその引数に入り、stdin は即座に閉じられる。
+//! - 入力: {prompt} があればプロンプトはその引数に入り、stdin は即座に閉じられる。
 //!   無ければプロンプト (システムプロンプト + 改行 2 つ + ユーザーメッセージ) を
 //!   UTF-8 で stdin へ書いてから閉じる。
 //! - 作業ディレクトリ: 子プロセスはタスクのディレクトリで動くので、パスを相対で
-//!   解決するツール (`-w .`) は `{workdir}` が無くても正しい場所に着地する。
+//!   解決するツール (-w .) は {workdir} が無くても正しい場所に着地する。
 //! - 出力: コマンドはモデルの補完を stdout へ書き、Conductor が自分の側でパースする。
 //!   コマンドは整形も JSON の抽出も行わない。機能ごとのパーサがコードフェンスや
 //!   地の文を許容する。
-//! - 終了コード: `0` が成功。非ゼロは失敗で、stderr がエラーに載る。
+//! - 終了コード: 0 が成功。非ゼロは失敗で、stderr がエラーに載る。
 //! - stderr: 診断のみ。パースはしない。
 //! - タイムアウトとキャンセル: Conductor がタスクごとの実時間タイムアウトを課し
-//!   ([`TaskEnv`] を参照)、ユーザーがキャンセルしたら子プロセスを kill する。
+//!   ([TaskEnv] を参照)、ユーザーがキャンセルしたら子プロセスを kill する。
 //!   コマンドは単に kill されるだけで、通知は受けない。
 //!
-//! ### コマンドではなく機能の側に属するもの
+//! コマンドではなく機能の側に属するもの
 //!
 //! 各タスクは自分のシステムプロンプトを書き、制約はそこに置く。スマート worktree の
 //! 命名はモデルに「ツールを使わず JSON オブジェクト 1 つで答えよ」と伝え、
@@ -58,7 +58,7 @@ use crate::config::ApiConfig;
 /// これは Gemini へのリクエストのつまみであって継ぎ目の一部ではないので、ここに置く。
 const GEMINI_MAX_TOKENS: u32 = 1024;
 
-/// [`CommandCaller`] が子プロセスの終了・キャンセル・タイムアウトを確認するために
+/// [CommandCaller] が子プロセスの終了・キャンセル・タイムアウトを確認するために
 /// 起きる間隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -66,7 +66,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 ///
 /// システムプロンプトを持つのも結果をパースするのも呼び出し側で、実装は
 /// モデルのテキスト (かエラー) を返すだけでよい。下層の呼び出しを中断できる場合
-/// (サブプロセスなど) は `cancel` を尊重すること。
+/// (サブプロセスなど) は cancel を尊重すること。
 pub trait AiCaller {
     fn complete(
         &self,
@@ -103,7 +103,7 @@ impl AiCaller for GeminiCaller {
 }
 
 // 組み込みの Claude プロバイダをあえて置いていない。Conductor は補完のために
-// `claude` プロセスを起動しない。使いたいなら構わないが、それは設定の話であって
+// claude プロセスを起動しない。使いたいなら構わないが、それは設定の話であって
 // ラッパースクリプトも要らない:
 //
 //     [api]
@@ -121,19 +121,19 @@ const WORKDIR_PLACEHOLDER: &str = "{workdir}";
 
 /// ユーザーが拡張する経路。モジュールのドキュメントにあるプロトコルを話す外部コマンド。
 pub struct CommandCaller {
-    /// argv。`cmd[0]` が実行ファイルで、残りは固定の引数。いずれにも
-    /// `{prompt}` や `{workdir}` を含められる。
+    /// argv。cmd[0] が実行ファイルで、残りは固定の引数。いずれにも
+    /// {prompt} や {workdir} を含められる。
     pub cmd: Vec<String>,
-    /// 実時間のタイムアウト (秒)。`0` でタイムアウト無効。
+    /// 実時間のタイムアウト (秒)。0 でタイムアウト無効。
     pub timeout_secs: u64,
     /// コマンドを実行するディレクトリ。タスクが対象とするリポジトリまたは worktree で、
-    /// `{workdir}` が展開される先でもある。`None` なら Conductor の cwd を引き継ぐ。
+    /// {workdir} が展開される先でもある。None なら Conductor の cwd を引き継ぐ。
     pub working_dir: Option<PathBuf>,
 }
 
 /// 設定された argv 内のプレースホルダを展開する。
 ///
-/// 展開後の argv と、`{prompt}` が見つかったかどうかを返す。呼び出し側は argv と
+/// 展開後の argv と、{prompt} が見つかったかどうかを返す。呼び出し側は argv と
 /// stdin のどちらで渡すか決めるのにこれが要る。「どこにもプレースホルダが無い」は、
 /// プロンプトを何も受け取らないコマンドではなく stdin を意味しなければならない。
 fn expand_argv(cmd: &[String], prompt: &str, workdir: Option<&Path>) -> (Vec<String>, bool) {
@@ -260,7 +260,7 @@ fn join_pipe_reader(handle: Option<JoinHandle<String>>) -> String {
     handle.and_then(|h| h.join().ok()).unwrap_or_default()
 }
 
-/// `s` の末尾 `n` 文字 (文字境界を壊さず、中間のアロケーションも無い)。
+/// s の末尾 n 文字 (文字境界を壊さず、中間のアロケーションも無い)。
 fn tail_chars(s: &str, n: usize) -> &str {
     if n == 0 {
         return "";
@@ -276,11 +276,11 @@ fn tail_chars(s: &str, n: usize) -> &str {
 ///
 /// どちらもプロバイダ単位ではなくタスク単位。スマート worktree の命名は数秒の
 /// 純粋なテキスト生成だが、walkthrough はエージェントが差分を読む数分の作業。
-/// 1 つの `[api] command_timeout_secs` で両方をまかなうことはできないし、
+/// 1 つの [api] command_timeout_secs で両方をまかなうことはできないし、
 /// 作業ディレクトリが要るのは後者だけ。
 #[derive(Debug, Clone, Default)]
 pub struct TaskEnv {
-    /// 設定されていれば `[api] command_timeout_secs` を上書きする。`0` で無効。
+    /// 設定されていれば [api] command_timeout_secs を上書きする。0 で無効。
     pub timeout_secs: Option<u64>,
     /// 外部コマンドを実行するディレクトリ。タスクが対象とする worktree。
     pub working_dir: Option<PathBuf>,
@@ -288,18 +288,18 @@ pub struct TaskEnv {
 
 /// タスク向けに、設定された AI 呼び出しを組み立てる。
 ///
-/// プロバイダ (`[api] provider`)。各プロバイダは独立していて、失敗しても黙って
+/// プロバイダ ([api] provider)。各プロバイダは独立していて、失敗しても黙って
 /// 別のプロバイダへフォールバックせず、ユーザーに提示される。
-/// - `"gemini"` (既定): Gemini の HTTP API。
-/// - `"command"`: ユーザーの外部コマンド (`[api] command`)。
+/// - "gemini" (既定): Gemini の HTTP API。
+/// - "command": ユーザーの外部コマンド ([api] command)。
 ///
-/// 組み込みの `claude` プロバイダはあえて存在しない。Conductor の中から `claude`
+/// 組み込みの claude プロバイダはあえて存在しない。Conductor の中から claude
 /// CLI を起動することは、このコードベースのどこでも許していない。Claude を
-/// 動かすためにあるのがまさに `provider = "command"` で、ユーザーが直接 CLI を
+/// 動かすためにあるのがまさに provider = "command" で、ユーザーが直接 CLI を
 /// 指定すれば、Conductor はその背後のモデルが何かを知る必要が無い。
 ///
-/// なお `"gemini"` は素の HTTP 補完なのでリポジトリを読めない。コードを必要と
-/// するタスク (walkthrough の生成) は、エージェント型の CLI を指した `"command"`
+/// なお "gemini" は素の HTTP 補完なのでリポジトリを読めない。コードを必要と
+/// するタスク (walkthrough の生成) は、エージェント型の CLI を指した "command"
 /// の下でのみ動く。
 pub fn build_caller(api: &ApiConfig, env: &TaskEnv) -> Result<Box<dyn AiCaller>, String> {
     match api.provider.trim().to_lowercase().as_str() {
@@ -337,7 +337,7 @@ mod tests {
         }
     }
 
-    // ── build_caller のプロバイダ選択と検証 ──────────────────────────
+    // build_caller のプロバイダ選択と検証
 
     #[test]
     fn build_caller_accepts_known_providers() {
@@ -351,9 +351,9 @@ mod tests {
         assert!(build_caller(&api("  gemini  "), &TaskEnv::default()).is_ok());
     }
 
-    /// Conductor が `claude` CLI を自分で起動することは決してあってはならないので、
+    /// Conductor が claude CLI を自分で起動することは決してあってはならないので、
     /// かつてまさにそれをしていたプロバイダ名は、いまはただの未知の値になっている。
-    /// そしてエラーは `command` を指し示さねばならない。Claude を使う構成はそちらで
+    /// そしてエラーは command を指し示さねばならない。Claude を使う構成はそちらで
     /// 組むから。
     #[test]
     fn build_caller_rejects_the_removed_claude_provider() {
@@ -390,7 +390,7 @@ mod tests {
         assert!(build_caller(&cfg, &TaskEnv::default()).is_ok());
     }
 
-    // ── tail_chars ───────────────────────────────────────────────────
+    // tail_chars
 
     #[test]
     fn tail_chars_takes_last_n() {
@@ -401,7 +401,7 @@ mod tests {
         assert_eq!(tail_chars("あいうえお", 2), "えお");
     }
 
-    // ── CommandCaller (実際のサブプロセス。Unix のみ) ───────────────
+    // CommandCaller (実際のサブプロセス。Unix のみ)
 
     #[cfg(unix)]
     mod command {
@@ -444,7 +444,7 @@ mod tests {
 
         /// タイムアウトを指定したタスクはその値を使い、設定の値は指定が無いときだけ
         /// 埋める。walkthrough の生成はこれに依存している。数秒の命名を想定した
-        /// `command_timeout_secs` の下で、数分にわたって走るため。
+        /// command_timeout_secs の下で、数分にわたって走るため。
         ///
         /// 組み立てた caller を覗くのではなく振る舞いで検証する。設定側は
         /// タイムアウトを完全に無効にしてあるので、コマンドが kill されるのは
@@ -474,13 +474,13 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(10));
         }
 
-        /// プロンプトを位置引数で受け取るツール (`claude -p` と、たいていの
+        /// プロンプトを位置引数で受け取るツール (claude -p と、たいていの
         /// エージェント型 CLI) は設定で直接指定する。ラッパースクリプト無しで
-        /// それを可能にしているのが `{prompt}`。
+        /// それを可能にしているのが {prompt}。
         #[test]
         fn prompt_placeholder_delivers_via_argv() {
             let caller = CommandCaller {
-                // `printf %s` は引数をそのまま出すので、stdout は argv に着地した
+                // printf %s は引数をそのまま出すので、stdout は argv に着地した
                 // ものそのものになる。
                 cmd: vec![
                     "printf".to_string(),
@@ -497,7 +497,7 @@ mod tests {
         }
 
         /// さらに、プロンプトが stdin にも届いてはいけない。届くとモデルが 2 回
-        /// 見ることになる。`cat` なら stdin の内容をそのまま後ろに足してしまう。
+        /// 見ることになる。cat なら stdin の内容をそのまま後ろに足してしまう。
         #[test]
         fn prompt_placeholder_leaves_stdin_empty() {
             let caller = CommandCaller {
@@ -518,7 +518,7 @@ mod tests {
         }
 
         /// どこにもプレースホルダが無ければ stdin での受け渡しが保たれる。
-        /// stdin 型のツール (`ollama run …`) がこれに依存している。
+        /// stdin 型のツール (ollama run …) がこれに依存している。
         #[test]
         fn without_a_placeholder_the_prompt_still_goes_to_stdin() {
             let caller = sh("cat", 5);
@@ -528,7 +528,7 @@ mod tests {
             assert_eq!(out, "SYS\n\nUSER");
         }
 
-        /// `{workdir}` はタスクのディレクトリに展開される。cwd ではなく明示的な
+        /// {workdir} はタスクのディレクトリに展開される。cwd ではなく明示的な
         /// フラグとして受け取りたいツールでも、ユーザーが設定に特定の worktree を
         /// ハードコードせずに済む。
         #[test]

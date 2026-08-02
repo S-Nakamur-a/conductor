@@ -1,46 +1,47 @@
-//! Row and internal-node types for the search result tree.
+//! 検索結果ツリーの行型と内部ノード型。
 
 use std::collections::BTreeMap;
 
-/// A single visible row in the search result tree.
+/// 検索結果ツリーで表示される1行。
 #[derive(Debug, Clone)]
 pub enum SearchTreeRow {
-    /// A directory node (e.g. `src/ui/`).
+    /// ディレクトリノード(例: src/ui/)。
     Dir {
-        /// Display path (e.g. `"src"`, `"ui"`).
+        /// 表示パス(例: "src", "ui")。
         name: String,
-        /// Depth in the tree (0 = top-level).
+        /// ツリー内の深さ(0 = トップレベル)。
         depth: usize,
-        /// Whether this directory is expanded.
+        /// このディレクトリが展開されているか。
         expanded: bool,
-        /// Total match count under this directory (recursive).
+        /// このディレクトリ配下の合計マッチ数(再帰的)。
         match_count: usize,
     },
-    /// A file node (e.g. `app.rs (3 matches)`).
+    /// ファイルノード(例: app.rs (3 matches))。
     File {
-        /// Display name (leaf component).
+        /// 表示名(リーフ部分)。
         name: String,
-        /// Full relative path (for opening the file).
+        /// ファイルを開くための完全な相対パス。
         path: String,
-        /// Depth in the tree.
+        /// ツリー内の深さ。
         depth: usize,
-        /// Whether this file is expanded (showing match lines).
+        /// このファイルが展開されている(マッチ行を表示中)か。
         expanded: bool,
-        /// Number of matches in this file.
+        /// このファイル内のマッチ数。
         match_count: usize,
     },
-    /// A match line within a file.
+    /// ファイル内の1マッチ行。
     Match {
-        /// Depth in the tree.
+        /// ツリー内の深さ。
         depth: usize,
-        /// Index into the original `GrepMatch` list.
+        /// 元の GrepMatch リストへのインデックス。
         match_index: usize,
     },
 }
 
-/// A directory's files, keyed by filename, each mapping to its match indices
-/// in [`SearchResultTree::matches`](super::tree::SearchResultTree). Shared
-/// with [`tree`](super::tree) which builds and reads it directly.
+/// あるディレクトリのファイル群。ファイル名をキーに、
+/// [SearchResultTree::matches](super::tree::SearchResultTree) 内の
+/// マッチインデックス一覧へマッピングする。構築と直接の読み取りを行う
+/// [tree](super::tree) と共有する。
 pub(crate) struct DirNode {
-    pub(crate) files: BTreeMap<String, Vec<usize>>, // filename → match indices
+    pub(crate) files: BTreeMap<String, Vec<usize>>, // ファイル名 → マッチインデックス
 }

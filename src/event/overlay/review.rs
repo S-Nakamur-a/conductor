@@ -1,6 +1,6 @@
-//! Overlays for the review-comment workflow: the comment detail popup,
-//! the comment compose/edit/reply input, the review search filter, and the
-//! comment template picker.
+//! レビューコメントワークフローのオーバーレイ: コメント詳細ポップアップ、
+//! コメントの作成/編集/返信入力、レビュー検索フィルタ、コメントテンプレート
+//! ピッカー。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -15,10 +15,10 @@ use crate::event::explorer::submit_new_comment;
 
 use super::overlay_list_nav;
 
-// ── Overlay: comment detail ─────────────────────────────────────────────
+// オーバーレイ: コメント詳細
 
 pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
-    // Handle scroll navigation via keymap.
+    // keymap 経由でスクロールナビゲーションを処理する。
     if let Some(action) = app.keymap.resolve(&key, KeyContext::Overlay) {
         match action {
             Action::NavigateDown => {
@@ -44,7 +44,7 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
             app.review_state.comment_detail_active = false;
         }
         KeyCode::Char('e') => {
-            // Edit from the detail view.
+            // 詳細ビューから編集する。
             let idx = app.review_state.comment_detail_idx;
             if let Some(comment) = app.review_state.comments.get(idx) {
                 app.review_state.input_buffer.set_text(&comment.body);
@@ -54,7 +54,7 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
             }
         }
         KeyCode::Char('R') => {
-            // Reply from the detail view.
+            // 詳細ビューから返信する。
             let idx = app.review_state.comment_detail_idx;
             app.review_state.input_buffer.clear();
             app.review_state.input_mode = ReviewInputMode::ReplyingToComment;
@@ -62,7 +62,7 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
             app.review_state.comment_detail_active = false;
         }
         KeyCode::Delete => {
-            // Delete from the detail view (with confirmation).
+            // 詳細ビューから削除する（確認あり）。
             let idx = app.review_state.comment_detail_idx;
             app.review_state.comment_detail_active = false;
             if let Some(id) = app.review_state.comments.get(idx).map(|c| c.id.clone()) {
@@ -70,7 +70,7 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
             }
         }
         KeyCode::Char('r') => {
-            // Toggle resolve from the detail view.
+            // 詳細ビューから resolve を切り替える。
             let idx = app.review_state.comment_detail_idx;
             app.review_state.selected = idx;
             app.toggle_selected_review_status();
@@ -79,10 +79,10 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
     }
 }
 
-// ── Overlay: review input ───────────────────────────────────────────────
+// オーバーレイ: レビュー入力
 
 pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
-    // Delete confirmation is a y/n prompt, not a text field — handle it first.
+    // 削除確認はテキストフィールドではなく y/n プロンプトなので、先に処理する。
     if app.review_state.input_mode == ReviewInputMode::ConfirmingDelete {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -96,7 +96,7 @@ pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Shift+Enter inserts a newline (multi-line editing).
+    // Shift+Enter で改行を挿入する（複数行編集）。
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
         app.review_state.input_buffer.insert_char('\n');
         return;
@@ -114,9 +114,9 @@ pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             let buffer = app.review_state.input_buffer.text().to_string();
             match app.review_state.input_mode {
                 ReviewInputMode::AddingComment => {
-                    // Inline compose: anchor known, buffer is body-only. Falls
-                    // back to the legacy `file:line body` parse when no anchor
-                    // (template picker / command palette entry points).
+                    // インライン作成: anchor が既知で、buffer は本文のみ。anchor が
+                    // ない場合（テンプレートピッカーやコマンドパレット経由の場合）は
+                    // 従来の file:line body パースにフォールバックする。
                     if let Some((file, start, end)) = app.review_state.input_anchor.take() {
                         let body = buffer.trim();
                         if body.is_empty() {
@@ -152,7 +152,7 @@ pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
                         app.add_reply_to_selected_comment(&buffer);
                     }
                 }
-                // ConfirmingDelete is intercepted above; Normal never reaches here.
+                // ConfirmingDelete は上で処理済み。Normal はここに到達しない。
                 ReviewInputMode::Normal | ReviewInputMode::ConfirmingDelete => unreachable!(),
             }
             app.review_state.input_buffer.clear();
@@ -177,7 +177,7 @@ pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: review search ──────────────────────────────────────────────
+// オーバーレイ: レビュー検索
 
 pub(in crate::event) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
     match key.code {
@@ -211,7 +211,7 @@ pub(in crate::event) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: review template picker ─────────────────────────────────────
+// オーバーレイ: レビューテンプレートピッカー
 
 pub(in crate::event) fn handle_review_template_key(app: &mut App, key: KeyEvent) {
     let count = app.review_state.templates.len();

@@ -1,6 +1,6 @@
 //! 名前付き周期タイマーの簡単なレジストリ。
 //!
-//! main.rs に散らばっていた `last_X` と `INTERVAL` の変数を、周期タスクを
+//! main.rs に散らばっていた last_X と INTERVAL の変数を、周期タスクを
 //! まとめて管理する 1 つのデータ構造に置き換えたもの。
 
 use std::time::{Duration, Instant};
@@ -21,8 +21,8 @@ impl TimerRegistry {
         Self { timers: Vec::new() }
     }
 
-    /// `interval` ごとに発火するタイマーを登録する。
-    /// 最初の発火は今から `interval` 後 (`fire_immediately` を指定した場合を除く)。
+    /// interval ごとに発火するタイマーを登録する。
+    /// 最初の発火は今から interval 後 (fire_immediately を指定した場合を除く)。
     pub fn register(&mut self, name: &'static str, interval: Duration) {
         self.timers.push(Timer {
             name,

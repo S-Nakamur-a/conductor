@@ -1,5 +1,5 @@
-//! Tests for the command palette's data integrity and fuzzy search/scope
-//! grouping behavior.
+//! コマンドパレットのデータ整合性と、あいまい検索・スコープごとのグループ化の
+//! 挙動に対するテスト。
 
 use super::types::scope_rank;
 use super::*;
@@ -12,8 +12,8 @@ fn keymap() -> KeyMap {
 #[test]
 fn every_command_action_is_valid() {
     use keymap_suite::ActionName;
-    // A Some(action) must round-trip through the action vocabulary, so a
-    // palette entry can never point at a stale/renamed action.
+    // Some(action) はアクション語彙を往復できなければならない。こうしておくことで
+    // パレットの項目が古い名前や改名済みのアクションを指したままになることがない。
     for cmd in COMMANDS {
         if let Some(action) = cmd.action {
             assert_eq!(
@@ -28,8 +28,8 @@ fn every_command_action_is_valid() {
 
 #[test]
 fn comprehensive_worktree_commands_present() {
-    // Guards against silent omissions of high-value worktree commands —
-    // `pull_worktree` was previously missing entirely.
+    // 重要な worktree コマンドがサイレントに抜け落ちるのを防ぐ回帰テスト。
+    // 以前 pull_worktree がまるごと欠けていたことがある。
     let must_have = [
         Action::CreateWorktree,
         Action::DeleteWorktree,
@@ -52,9 +52,8 @@ fn comprehensive_worktree_commands_present() {
 
 #[test]
 fn comprehensive_review_commands_present() {
-    // Guards the PR-intake and AI-walkthrough entry points — each needs a
-    // palette command so a user without a keybinding memorized can still
-    // reach them.
+    // PR 取り込みと AI walkthrough の入口を守る回帰テスト。キーバインドを覚えて
+    // いないユーザでもたどり着けるよう、それぞれにパレットコマンドが要る。
     let must_have = [
         Action::ReviewPullRequest,
         Action::GenerateWalkthrough,
@@ -72,8 +71,8 @@ fn comprehensive_review_commands_present() {
 #[test]
 fn scope_splits_global_from_current_layer() {
     let km = keymap();
-    // Focused on the worktree panel: create-worktree is a worktree-layer
-    // action → Current; quit is global → Global.
+    // worktree パネルにフォーカスした状態: create-worktree は worktree レイヤーの
+    // アクションなので Current、quit はグローバルなので Global になる。
     let scoped = filter_commands("", &km, KeyContext::Worktree);
     let scope_of = |action: Action| {
         scoped
@@ -83,7 +82,7 @@ fn scope_splits_global_from_current_layer() {
     };
     assert_eq!(scope_of(Action::CreateWorktree), Some(CommandScope::Current));
     assert_eq!(scope_of(Action::Quit), Some(CommandScope::Global));
-    // A viewer-only action is neither global nor in the worktree layer.
+    // viewer 専用のアクションはグローバルでも worktree レイヤーでもない。
     assert_eq!(scope_of(Action::SearchInFile), Some(CommandScope::Other));
 }
 

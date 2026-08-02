@@ -1,7 +1,7 @@
 //! 端末 / PTY の状態管理。
 //!
-//! これまで `App` に散らばっていた PTY 関連のフィールドを、1 つの
-//! `TerminalState` 構造体にまとめたもの。
+//! これまで App に散らばっていた PTY 関連のフィールドを、1 つの
+//! TerminalState 構造体にまとめたもの。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub struct TerminalState {
     /// Shell 用 PTY の、最後に判明した内容領域のサイズ (行数, 桁数)。
     pub size_shell: (u16, u16),
     /// 埋め込みエディタ用 PTY に最後に適用した内容領域のサイズ (行数, 桁数)。
-    /// `sync_pty_sizes` が実際に変化したときだけリサイズできるよう別に持つ。
+    /// sync_pty_sizes が実際に変化したときだけリサイズできるよう別に持つ。
     pub size_editor: (u16, u16),
     /// Claude Code 端末のスクロールバックのオフセット (0 = 最新表示)。
     pub scroll_claude: usize,
@@ -38,13 +38,13 @@ pub struct TerminalState {
     /// Claude Code セッションがユーザーの入力を待っている worktree パス。
     pub cc_waiting_worktrees: HashSet<PathBuf>,
     /// 確認済みの待機状態。worktree パスから、ユーザーが通知を消した時点での
-    /// PTY セッションの `last_output_time` へのマップ。
+    /// PTY セッションの last_output_time へのマップ。
     pub cc_waiting_ack_time: HashMap<PathBuf, Instant>,
     /// Claude 端末の空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
     pub claude_blank_last_click: Instant,
     /// Shell 端末の空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
     pub shell_blank_last_click: Instant,
-    /// 端末全体のクリアと再描画が必要なときに `true` にする。
+    /// 端末全体のクリアと再描画が必要なときに true にする。
     pub needs_clear: bool,
     /// 保留中のプロンプト: セッション添字 → プロンプト文字列。
     /// Claude Code セッションが入力待ちになった時点で書き込まれる。
@@ -66,16 +66,16 @@ pub struct TerminalState {
     /// Shell のタブ列のクリック可能領域。描画のたびに記録する。
     pub shell_tab_hits: Vec<crate::ui::tab_bar::TabHit>,
     /// Claude のタブ列のどの領域にポインタが乗っているか。描画を変えるのは
-    /// `Close` だけだが、アクションごと保存しておくことで「ホバーが何を意味するか」を
+    /// Close だけだが、アクションごと保存しておくことで「ホバーが何を意味するか」を
     /// イベント側ではなく描画側が決められるようにしている。
     pub claude_tab_hover: Option<crate::ui::tab_bar::TabAction>,
     /// Shell のタブ列のどの領域にポインタが乗っているか。
-    /// [`Self::claude_tab_hover`] を参照。
+    /// [Self::claude_tab_hover] を参照。
     pub shell_tab_hover: Option<crate::ui::tab_bar::TabAction>,
 }
 
 impl TerminalState {
-    /// 指定したスクロールバック上限で `TerminalState` を作る。
+    /// 指定したスクロールバック上限で TerminalState を作る。
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
@@ -108,14 +108,14 @@ impl TerminalState {
         }
     }
 
-    /// Claude パネルの表示を添字 `idx` のセッションへ切り替える。
+    /// Claude パネルの表示を添字 idx のセッションへ切り替える。
     ///
     /// PTY セッションをアクティブにし、アクティブな Claude セッションとして記録し、
     /// パネルのスクロール位置と描画キャッシュをリセットする。キャッシュのクリアは
     /// 必須で、これは全セッションで共有される 1 つのバッファだから。クリアしないと、
     /// 別のきっかけ (スクロール、新しい出力) でたまたま作り直されるまで、パネルは
     /// 前のセッションの内容を描き続けてしまう。作り直しの条件は
-    /// `ui::terminal_claude` を参照。
+    /// ui::terminal_claude を参照。
     pub fn switch_claude_session(&mut self, idx: usize) {
         self.pty_manager.activate_session(idx);
         self.active_claude_session = Some(idx);
@@ -124,9 +124,9 @@ impl TerminalState {
         self.claude_tab_reveal = true;
     }
 
-    /// Shell パネルの表示を添字 `idx` のセッションへ切り替える。
+    /// Shell パネルの表示を添字 idx のセッションへ切り替える。
     ///
-    /// [`Self::switch_claude_session`] の Shell 版。キャッシュを無効化する理由も同じ。
+    /// [Self::switch_claude_session] の Shell 版。キャッシュを無効化する理由も同じ。
     pub fn switch_shell_session(&mut self, idx: usize) {
         self.pty_manager.activate_session(idx);
         self.active_shell_session = Some(idx);
@@ -141,7 +141,7 @@ mod tests {
     use super::*;
     use ratatui::text::Line;
 
-    /// `switch_*` がキャッシュをクリアすることを示すために、描画キャッシュへ種を仕込む。
+    /// switch_* がキャッシュをクリアすることを示すために、描画キャッシュへ種を仕込む。
     /// パネルが同期しなくなるバグを起こした古い状態、すなわち前に表示していた
     /// セッションから残った空でないキャッシュを再現する。
     fn stale_cache() -> PtyRenderCache {

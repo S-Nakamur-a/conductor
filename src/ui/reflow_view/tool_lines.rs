@@ -1,10 +1,7 @@
-//! `tool_use`/`tool_result` line rendering — the `⏺`/`⎿` layouts driven by
-//! `crate::claude_log`'s tool classification (§2.1 of
-//! `docs/plans/2026-07-31-native-render-parity.md`).
+//! tool_use/tool_result 行の描画。⏺/⎿ のレイアウトは crate::claude_log のツール分類によって決まる。
 //!
-//! Split out of [`build`](super::build) because the classification-driven
-//! layout rules are a distinct concern from walking entries and rendering
-//! Markdown text/thinking blocks.
+//! 分類主導のレイアウトルールは、エントリを走査して Markdown のテキスト/thinking ブロックを
+//! 描画するのとは別の関心事なので、[build](super::build) から切り出してある。
 
 use std::collections::HashMap;
 
@@ -20,10 +17,10 @@ use crate::claude_log::{
 use super::glyphs::{ASSISTANT_MARKER, MARKER_COLS, TOOL_RESULT_GLYPH};
 use super::helpers::{fit_styled_line, pad_glyph_to, truncate_to_width};
 
-/// The fixed styles this module's render functions draw with, grouped into
-/// one struct so each function takes one param instead of one per style
-/// (clippy's `too_many_arguments` bar is 7; `render_tool_result_collapsed`
-/// alone needs 5 non-style params, leaving no room for 2+ separate ones).
+/// このモジュールの描画関数が使う固定スタイル群を1つの構造体にまとめてある。スタイルごとに
+/// 引数を分けるのではなく、これ1つを渡す形にするため（clippy の too_many_arguments の上限は7で、
+/// render_tool_result_collapsed だけで非スタイル引数を5個使うので、スタイル用に2個以上を
+/// 別々に取る余地がない）。
 pub(crate) struct ToolStyles {
     pub marker: Style,
     pub marker_err: Style,
@@ -33,19 +30,17 @@ pub(crate) struct ToolStyles {
     pub result_err: Style,
 }
 
-/// Pre-count, per entry, how many `tool_result` blocks resolve to each
-/// [`CountedBucket`] — used by [`render_tool_result_collapsed`] to render one
-/// aggregated "{verb} N {noun}" line at a bucket's first occurrence instead
-/// of one line per result.
+/// エントリごとに、tool_result ブロックがどの [CountedBucket] へ何個振り分けられるかを
+/// 事前に数える。[render_tool_result_collapsed] がこれを使い、1件ずつではなくバケットの
+/// 初出時に集約した「{verb} N {noun}」の1行だけを描画する。
 ///
-/// `Counted` ignores `is_error` entirely (measured: a failed `Read` still
-/// folds into the plain "Read 1 file" summary, with no error indication), so
-/// every result with a bucket counts here regardless of its error flag.
+/// Counted は is_error を完全に無視する（実測: 失敗した Read でもエラー表示なしの
+/// 「Read 1 file」というプレーンなサマリに畳み込まれる）ため、バケットを持つ結果は
+/// エラーフラグに関わらずすべてここでカウントする。
 ///
-/// Scope is the whole entry, not just a contiguous run of matching results:
-/// Claude batches every result from one assistant turn into a single
-/// following user entry, so an entry-wide count matches the shape actually
-/// observed, and needs no separate "did the run break" tracking.
+/// 集計範囲は連続した一致結果ではなくエントリ全体である。Claude は1つの assistant ターンの
+/// 全結果を後続の1つの user エントリにまとめてバッチ送信するので、エントリ単位のカウントが
+/// 実際に観測される形と一致し、「途中で打ち切られたか」を別途追跡する必要もない。
 pub(crate) fn count_buckets(entry: &LogEntry) -> HashMap<CountedBucket, usize> {
     let mut native: HashMap<CountedBucket, usize> = HashMap::new();
     let mut shell: HashMap<CountedBucket, usize> = HashMap::new();
@@ -59,12 +54,11 @@ pub(crate) fn count_buckets(entry: &LogEntry) -> HashMap<CountedBucket, usize> {
             *target.entry(*bucket).or_insert(0) += 1;
         }
     }
-    // A shell invocation only counts as a *fallback*. Measured, at one call
-    // site each: `cat`×1 → "Read 1 file"; `cat`×2 → "Read 2 files"; but
-    // `cat`×3 + `Read`×1 → "Read 1 file", i.e. once the bucket's own tool
-    // contributes at all, the shell approximations are dropped entirely.
-    // (`List` has no native tool, so it always falls through to the shell
-    // count; `Search` never has a shell source.)
+    // シェル経由の呼び出しはあくまでフォールバックとしてのみ数える。実測（各1箇所での
+    // 呼び出しで確認）: cat×1 → "Read 1 file"、cat×2 → "Read 2 files"、しかし
+    // cat×3 + Read×1 → "Read 1 file"。つまりバケット本来のツールが少しでも寄与すると、
+    // シェル側の近似値は完全に捨てられる。（List にはネイティブツールが無いので常に
+    // シェルカウントへフォールバックする。Search はシェル由来を持たない。）
     let mut counts = HashMap::new();
     for bucket in BUCKET_ORDER {
         let n = match native.get(&bucket).copied().unwrap_or(0) {
@@ -78,21 +72,19 @@ pub(crate) fn count_buckets(entry: &LogEntry) -> HashMap<CountedBucket, usize> {
     counts
 }
 
-/// Render one `tool_use` block, or `None` when it draws nothing (a
-/// `Counted`/`Hidden` category in collapsed mode — those draw at the
-/// `tool_result`'s position instead, or not at all).
+/// tool_use ブロックを1つ描画する。何も描かない場合は None を返す（折りたたみモードでの
+/// Counted/Hidden カテゴリ — これらは tool_result 側の位置で描くか、まったく描かない）。
 ///
-/// In expanded mode every call draws, using the tool's own raw `name` (not a
-/// collapsed-mode alias like `Edit` → `Update`) and a best-effort argument
-/// found via [`unknown_tool_arg`]'s generic key search — expanded mode has no
-/// per-tool "the" argument key the way the collapsed `Inline` categories do.
+/// 展開モードでは常に描画し、折りたたみモードでのエイリアス（Edit → Update など）ではなく
+/// ツール自身の生の名前を使う。引数は [unknown_tool_arg] の汎用キー検索によるベストエフォート
+/// （展開モードには折りたたみモードの Inline カテゴリのような、ツールごとの「これが引数」
+/// という決まった鍵が無いため）。
 ///
-/// `errored` selects the marker color (measured for `Inline` in collapsed
-/// mode: a failed `Bash(false)` draws its `⏺` in `palette::ERROR`, not
-/// green — see `tool_class::ToolCategory::Inline`). Applied uniformly across
-/// categories and to expanded mode too, since there's no measured
-/// counter-example and the signal ("did this call fail") is the same either
-/// way — a self-decided generalisation, not itself measured.
+/// errored はマーカー色を選ぶ（折りたたみモードの Inline について実測済み: 失敗した
+/// Bash(false) はその ⏺ を緑ではなく palette::ERROR で描く — tool_class::ToolCategory::Inline
+/// を参照）。これは全カテゴリと展開モードにも一律で適用している。反証となる実測例が無く、
+/// 「この呼び出しが失敗したか」というシグナル自体はどちらのモードでも同じだからであり、
+/// これ自体は実測ではなく自分で決めた一般化である。
 pub(crate) fn render_tool_use(
     name: &str,
     input: &serde_json::Value,
@@ -113,9 +105,8 @@ pub(crate) fn render_tool_use(
     Some(tool_use_line(&display_name, arg.as_deref(), width, marker_style, styles))
 }
 
-/// `⏺ {display_name}({arg})` — bullet (color given by `marker_style`), bold
-/// name, then the argument in its own style (parens omitted entirely when
-/// there is no argument).
+/// ⏺ {display_name}({arg}) — 先頭の丸（色は marker_style で指定）、太字の名前、
+/// 続けて自分のスタイルで引数（引数が無ければ括弧ごと省く）。
 fn tool_use_line(
     display_name: &str,
     arg: Option<&str>,
@@ -127,11 +118,10 @@ fn tool_use_line(
     let remaining = width.saturating_sub(MARKER_COLS);
     let name_cols = UnicodeWidthStr::width(display_name);
 
-    // Budget the parenthesised argument only if the name leaves room for it,
-    // and drop the parens entirely when nothing of the argument survives.
-    // Pushing the name unbudgeted used to overflow on a long MCP tool name at
-    // a narrow panel — `⏺ mcp__ccgrep__search()` is 23 columns at width 20 —
-    // and a saturated budget rendered a bare `Name()`.
+    // 括弧付き引数の予算は、名前を描いた後に余地が残る場合だけ確保する。引数が
+    // 何も残らないなら括弧ごと省く。以前は名前を予算チェックなしに出力していたため、
+    // 狭いパネルで長い MCP ツール名だとはみ出していた — ⏺ mcp__ccgrep__search() は
+    // 幅20だと23カラムある — その状態で予算が飽和すると素の Name() だけが描かれていた。
     let arg_display = arg
         .filter(|s| !s.is_empty())
         .and_then(|a| {
@@ -153,22 +143,20 @@ fn tool_use_line(
     }
 }
 
-/// Render one `tool_result` block in collapsed mode, or an empty `Vec` when
-/// it draws nothing (a non-error `Inline`/`Hidden` result, or a repeat
-/// occurrence of a `Counted` bucket already aggregated earlier in this
-/// entry).
+/// 折りたたみモードで tool_result ブロックを1つ描画する。何も描かない場合は空の Vec を
+/// 返す（エラーでない Inline/Hidden の結果、またはこのエントリ内で既に集約済みの
+/// Counted バケットの再出現）。
 ///
-/// [`ResultKind::Counted`] **ignores `is_error` completely** — measured, not
-/// guessed: a failed `Read` still folds into the plain "Read 1 file (ctrl+o
-/// to expand)" summary with no error styling at all. Every `Counted` result
-/// in the entry shares **one** line (several buckets render as one
-/// comma-joined clause list), so `summary_emitted` is a single per-entry
-/// latch: the first such result draws [`bucket_summary_line`], the rest draw
-/// nothing.
+/// [ResultKind::Counted] は is_error を完全に無視する — これは推測ではなく実測で、
+/// 失敗した Read でもエラー表示なしのプレーンな「Read 1 file (ctrl+o to expand)」
+/// サマリに畳み込まれる。エントリ内のすべての Counted 結果は1行を共有する（複数の
+/// バケットはカンマ区切りの節リストとして1行にまとめて描かれる）ので、summary_emitted
+/// はエントリごとに1つだけのラッチになっている。最初の結果が [bucket_summary_line] を
+/// 描き、以降は何も描かない。
 ///
-/// [`ResultKind::Inline`] draws only on error, using the measured multi-line
-/// `⎿ Error: …` layout. [`ResultKind::Hidden`] draws nothing at all, error or
-/// not — also measured (a `TodoWrite` with `is_error` produced no output).
+/// [ResultKind::Inline] はエラー時のみ描画し、実測済みの複数行 ⎿ Error: … レイアウトを
+/// 使う。[ResultKind::Hidden] はエラーの有無に関わらずまったく何も描かない — これも
+/// 実測（is_error を持つ TodoWrite は出力が無かった）。
 pub(crate) fn render_tool_result_collapsed(
     kind: ResultKind,
     lines: &[String],
@@ -179,8 +167,8 @@ pub(crate) fn render_tool_result_collapsed(
     styles: &ToolStyles,
 ) -> Vec<Line<'static>> {
     match kind {
-        // Measured: a `TodoWrite` whose result carried `is_error` produced not
-        // one line of output. Hidden stays hidden even when it fails.
+        // 実測: is_error を持つ結果を返した TodoWrite でも出力は1行も無かった。
+        // Hidden は失敗しても Hidden のままである。
         ResultKind::Hidden => Vec::new(),
         ResultKind::Inline => {
             if is_error {
@@ -190,8 +178,8 @@ pub(crate) fn render_tool_result_collapsed(
             }
         }
         ResultKind::Counted { .. } => {
-            // Every `Counted` result in the entry folds into one shared line,
-            // drawn at the first of them.
+            // エントリ内のすべての Counted 結果は1つの共有行に畳み込まれ、その最初の
+            // ものが描画を担う。
             if std::mem::replace(summary_emitted, true) {
                 Vec::new()
             } else {
@@ -201,8 +189,8 @@ pub(crate) fn render_tool_result_collapsed(
     }
 }
 
-/// Lowercase only the first character of `s`, leaving the rest untouched
-/// (`"Searched for"` → `"searched for"`).
+/// s の先頭1文字だけを小文字化し、残りはそのままにする
+/// （"Searched for" → "searched for"）。
 fn lower_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -213,12 +201,11 @@ fn lower_first(s: &str) -> String {
 
 const EXPAND_HINT: &str = " (ctrl+o to expand)";
 
-/// The single aggregated line for every `Counted` bucket in one entry, e.g.
-/// `Searched for 1 pattern, read 1 file, listed 2 directories (ctrl+o to expand)`.
+/// 1エントリ内のすべての Counted バケットを集約した1行。例えば
+/// "Searched for 1 pattern, read 1 file, listed 2 directories (ctrl+o to expand)"。
 ///
-/// Clause order is [`BUCKET_ORDER`]; the first clause's verb keeps its capital
-/// and later ones are lowercased; each count is bold and the rest is
-/// `styles.result`. All measured.
+/// 節の順序は [BUCKET_ORDER]。最初の節の動詞だけ大文字を保ち、以降は小文字化する。
+/// 件数部分は太字で、それ以外は styles.result。すべて実測に基づく。
 fn bucket_summary_line(
     counts: &HashMap<CountedBucket, usize>,
     width: usize,
@@ -247,16 +234,16 @@ fn bucket_summary_line(
     fit_styled_line(MARKER_COLS, &parts, width)
 }
 
-/// `Inline`-category error block, measured column-for-column from a failed
-/// `Bash(false)` capture:
+/// Inline カテゴリのエラーブロック。失敗した Bash(false) のキャプチャからカラム単位で
+/// 実測したもの:
 /// ```text
 /// ⏺ Bash(false)
 ///  ⎿ Error: bash: command failed with exit code 1
 ///     second line of the error
 /// ```
-/// (the `⏺` line itself is drawn by [`render_tool_use`], not here). First
-/// line: col0 one gray space, `⎿` at col2, body (with a prepended `"Error: "`)
-/// from col5. Continuation lines: body from col5 too, no `"Error: "` prefix.
+/// （⏺ の行自体はここではなく [render_tool_use] が描く）。1行目: col0 に灰色のスペース1個、
+/// col2 に ⎿、本文（先頭に "Error: " を付加）は col5 から。続きの行: 本文は同じく col5 から、
+/// "Error: " プレフィックスは無し。
 fn inline_error_lines(lines: &[String], width: usize, styles: &ToolStyles) -> Vec<Line<'static>> {
     let first_budget = width.saturating_sub(5);
     let cont_budget = width.saturating_sub(5);
@@ -265,9 +252,9 @@ fn inline_error_lines(lines: &[String], width: usize, styles: &ToolStyles) -> Ve
     let first_raw = lines.first().map(String::as_str).unwrap_or("(no content)");
     let first_body = truncate_to_width(&format!("Error: {first_raw}"), first_budget);
     let mut out = vec![Line::from(vec![
-        Span::styled(" ".to_string(), styles.result), // col0: one gray space
+        Span::styled(" ".to_string(), styles.result), // col0: 灰色のスペース1個
         Span::styled(format!(" {TOOL_RESULT_GLYPH}  "), styles.result_err), // cols1-4
-        Span::styled(first_body, styles.result_err),  // col5+
+        Span::styled(first_body, styles.result_err),  // col5以降
     ])];
 
     for raw in lines.iter().skip(1) {
@@ -280,21 +267,19 @@ fn inline_error_lines(lines: &[String], width: usize, styles: &ToolStyles) -> Ve
     out
 }
 
-/// Render a [`DisplayBlock::Annotation`] — the `⎿` lines the CLI attaches to
-/// the block above (a slash command's stdout, a file it carried across a
-/// compact).
+/// [DisplayBlock::Annotation] を描画する — CLI が上のブロックに付ける ⎿ 行（スラッシュ
+/// コマンドの標準出力、compact をまたいで持ち越されたファイルなど）。
 ///
-/// Same gutter as a tool result (`  ⎿  ` = 5 columns, continuations aligned
-/// under the body), but the text **wraps** instead of being truncated.
-/// Measured: a file outside the worktree gets a `../../../…` path long enough
-/// to overflow any panel, and Claude Code runs it onto a second line rather
-/// than eliding it —
+/// tool_result と同じガター（  ⎿   = 5カラム、継続行は本文の下に揃える）だが、テキストは
+/// 切り詰められるのではなく折り返される。実測: worktree の外にあるファイルは
+/// どのパネルもはみ出すほど長い ../../../… パスになり、Claude Code はそれを省略せず
+/// 2行目へ続ける —
 /// ```text
 ///   ⎿  Read ../../../../private/tmp/claude-501/-Users-…-plan/82e28e51-5e62-421c-aa82-d6
 ///      b09226bf7b/scratchpad/try-release.sh (82 lines)
 /// ```
-/// — note the break falls mid-path, i.e. a hard column split, which is what
-/// `wrap_plain_text` does to a word wider than the budget.
+/// — 折り返しがパスの途中で入っている点に注目。これは予算より広い単語に対して
+/// wrap_plain_text が行う、機械的なカラム分割そのものである。
 pub(crate) fn render_annotation(
     lines: &[String],
     width: usize,
@@ -322,9 +307,9 @@ pub(crate) fn render_annotation(
     out
 }
 
-/// Render a `tool_result` block in expanded mode: every output line, laid
-/// out like Claude Code's collapsed `⎿` block but with no preview cap —
-/// showing everything is the point of expanding.
+/// 展開モードで tool_result ブロックを描画する: 出力の全行を、Claude Code の折りたたみ
+/// ⎿ ブロックと同じレイアウトで、ただしプレビュー上限なしに並べる — すべて表示することこそ
+/// 展開の目的である。
 pub(crate) fn render_tool_result_expanded(
     lines: &[String],
     is_error: bool,
@@ -332,8 +317,8 @@ pub(crate) fn render_tool_result_expanded(
     styles: &ToolStyles,
 ) -> Vec<Line<'static>> {
     let body_style = styles.result;
-    // "  ⎿  " — 2-space indent + 1-col glyph + 2 spaces = 5 columns; continuation
-    // lines indent by the same amount so output text stays left-aligned.
+    // "  ⎿  " — 2スペースのインデント + 1カラムのグリフ + 2スペース = 5カラム。
+    // 継続行も同じ幅だけインデントし、出力テキストの左端を揃える。
     let first_prefix = format!("  {TOOL_RESULT_GLYPH}  ");
     let prefix_cols = UnicodeWidthStr::width(first_prefix.as_str());
     let cont_indent = " ".repeat(prefix_cols);

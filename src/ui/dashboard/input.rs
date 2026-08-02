@@ -1,13 +1,12 @@
-//! Shared text-input rendering helpers used by the dashboard overlays:
-//! cursor placement, block-cursor formatting, and multi-line word wrap with
-//! cursor tracking.
+//! ダッシュボードのオーバーレイが共有するテキスト入力の描画ヘルパー:
+//! カーソル位置の設定、ブロックカーソルの整形、カーソル追跡付きの複数行折り返し。
 
 use crate::text_input::TextInput;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 
-/// Set the terminal cursor position for IME at the cursor position within a
-/// single-line `TextInput`.
+/// 1行の TextInput 内のカーソル位置に合わせて、IME 用のターミナルカーソル位置を
+/// 設定する。
 pub(super) fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextInput) {
     let text_width = buffer.display_width_before_cursor() as u16;
     let cursor_x = area.x + text_width;
@@ -17,7 +16,7 @@ pub(super) fn set_cursor_for_input(frame: &mut Frame, area: Rect, buffer: &TextI
     }
 }
 
-/// Format a single-line `TextInput` with a block cursor at the cursor position.
+/// カーソル位置にブロックカーソルを添えて、1行の TextInput を整形する。
 pub(super) fn format_input_with_cursor(buffer: &TextInput) -> String {
     format!(
         "{}\u{2588}{}",
@@ -26,13 +25,12 @@ pub(super) fn format_input_with_cursor(buffer: &TextInput) -> String {
     )
 }
 
-/// Wrap `text` into visual rows that are at most `width` display-columns wide,
-/// hard-breaking long lines (and honouring explicit `\n`). Returns the wrapped
-/// rows plus the (row, col) of `cursor_char` within them — so the caller can
-/// place the cursor and scroll to keep it visible. This mirrors exactly what is
-/// rendered (we draw these rows without ratatui's own `Wrap`), so the cursor
-/// never drifts from the text the way it did when `Paragraph` re-wrapped behind
-/// our back.
+/// テキストを最大 width 表示桁の見た目上の行に折り返す。長い行はハード分割し
+/// （明示的な \n も尊重する）。折り返し後の各行と、その中での cursor_char の
+/// (row, col) を返す — 呼び出し元がカーソルを配置し、見える位置までスクロール
+/// できるようにするため。これは実際に描画されるものと完全に一致する（ratatui
+/// 自身の Wrap は使わず、この行をそのまま描く）ので、Paragraph が裏で勝手に
+/// 再折り返しをしていた頃のようにカーソルがテキストからずれることはない。
 pub(super) fn wrap_with_cursor(
     text: &str,
     width: usize,
@@ -72,13 +70,13 @@ mod tests {
         let (rows, r, c) = wrap_with_cursor("ab\ncd\u{2588}", 80, '\u{2588}');
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], "ab");
-        // Cursor glyph sits at row 1, after "cd".
+        // カーソルの記号は行1の "cd" の後ろに位置する。
         assert_eq!((r, c), (1, 2));
     }
 
     #[test]
     fn long_line_hard_wraps_at_width_and_tracks_cursor() {
-        // 10 chars, width 4 → rows of 4,4,2. Cursor glyph at the very end.
+        // 10文字、幅4 → 4,4,2 の行になる。カーソルの記号は末尾にある。
         let (rows, r, c) = wrap_with_cursor("0123456789\u{2588}", 4, '\u{2588}');
         assert_eq!(rows, vec!["0123", "4567", "89\u{2588}"]);
         assert_eq!((r, c), (2, 2));
@@ -86,7 +84,7 @@ mod tests {
 
     #[test]
     fn wide_chars_do_not_split_across_the_boundary() {
-        // Each CJK char is 2 cols wide; width 3 fits one per row.
+        // CJK の各文字は幅2桁。幅3では1行につき1文字しか収まらない。
         let (rows, _r, _c) = wrap_with_cursor("あい", 3, '\u{2588}');
         assert_eq!(rows, vec!["あ", "い"]);
     }

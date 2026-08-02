@@ -9,18 +9,18 @@ const AUTO_DISMISS: Duration = Duration::from_secs(2);
 ///
 /// 「立てたフラグ」と「立てた時刻」は必ず一緒に読む必要がある — フラグだけ見て
 /// 表示すると、自動消灯の時刻を過ぎても出しっぱなしになる。両方を包んで
-/// [`Self::is_visible`] からしか見えないようにしてある。
+/// [Self::is_visible] からしか見えないようにしてある。
 #[derive(Default)]
 pub struct PanelNumberOverlay {
     /// トグルで立てられたか。時間切れの判定は含まないので、表示可否は
-    /// このフィールドではなく [`Self::is_visible`] で判断する。
+    /// このフィールドではなく [Self::is_visible] で判断する。
     requested: bool,
     /// 立てた時刻 (自動消灯のタイマー)。
     since: Option<Instant>,
 }
 
 impl PanelNumberOverlay {
-    /// いま描画すべきか。立ててから [`AUTO_DISMISS`] 経過すると `false` に戻る。
+    /// いま描画すべきか。立ててから [AUTO_DISMISS] 経過すると false に戻る。
     pub fn is_visible(&self) -> bool {
         self.requested && self.since.is_some_and(|t| t.elapsed() < AUTO_DISMISS)
     }
@@ -43,7 +43,7 @@ impl PanelNumberOverlay {
 
     /// 時間切れになった表示済みオーバーレイを片付ける。
     ///
-    /// 片付けた (= 状態が変わった) なら `true`。イベントループが再描画の
+    /// 片付けた (= 状態が変わった) なら true。イベントループが再描画の
     /// 要否を決めるのに使う。
     pub fn expire_if_due(&mut self) -> bool {
         if self.requested && !self.is_visible() {

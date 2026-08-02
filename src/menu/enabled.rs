@@ -1,98 +1,99 @@
-//! Whether a command can run right now — what drives the greyed-out rows.
+//! コマンドが今実行可能かどうか — グレーアウト行の判定に使う。
 //!
-//! **The default is enabled.** A case is written here only where the command
-//! already refuses itself somewhere concrete, and each one names that place.
-//! The asymmetry is deliberate: a wrong `false` silently removes a working
-//! operation from the one UI that lists everything, while a wrong `true` costs
-//! nothing beyond today's behaviour — the command runs and reports its own
-//! outcome in the status bar, exactly as it does from the palette.
+//! デフォルトは実行可能とする。ここにケースを書くのは、コマンド自身がすでに
+//! 具体的な箇所で実行を拒否している場合だけで、各ケースにはその箇所を明記する。
+//! この非対称性は意図的である。誤って false にすると、全操作を一覧するはずの
+//! この UI から動くはずの操作が黙って消える。一方 true を誤っても今日の挙動
+//! 以上の代償はない — コマンドはそのまま実行され、パレットから実行したときと
+//! 同じようにステータスバーで結果を報告する。
 //!
-//! So the rule for adding a case is: point at the existing check being
-//! mirrored. Do not invent a precondition from what a command's name suggests.
+//! したがってケースを追加する際のルールは、対応する既存のチェック箇所を指し示す
+//! ことである。コマンド名から前提条件を推測して作ってはいけない。
 //!
-//! Where a command's real precondition needs I/O — a SQLite read, a `git`
-//! call — only the cheap part is mirrored. This runs for every visible row of
-//! an open dropdown on every frame, and the app redraws at 60fps, so a
-//! predicate that queried the review DB would put a database round trip in the
-//! render loop. Erring toward "enabled" is the safe side of that trade: the
-//! command still explains itself when it can't proceed.
+//! コマンドの本当の前提条件が I/O(SQLite の読み取りや git の呼び出し)を
+//! 要する場合は、そのうち安価な部分だけをここで再現する。この関数は開いている
+//! ドロップダウンの表示中の行すべてに対して毎フレーム呼ばれ、アプリは 60fps で
+//! 再描画するため、レビュー DB に問い合わせるような判定はレンダーループの中に
+//! DB ラウンドトリップを持ち込むことになる。「実行可能」寄りに倒しておけば安全
+//! であり、実行できない場合はコマンド自身がその理由を説明する。
 
 use crate::app::App;
 use crate::command_palette::CommandId;
 
-/// Whether `id` can run against the current app state.
+/// id が現在のアプリ状態に対して実行可能かどうか。
 ///
-/// Must stay allocation-light and side-effect free — see the module note on
-/// where this is called from.
+/// アロケーションを抑え副作用を持たないこと — 呼び出される頻度については
+/// モジュール冒頭の説明を参照。
 pub fn command_enabled(id: CommandId, app: &App) -> bool {
     let selected_worktree = app.worktrees.selected();
 
     match id {
-        // ── App ──────────────────────────────────────────────────────────
-        // `Action::UpdateAndRestart` is a no-op unless a release was found
-        // (`event/global.rs`, `if app.update.info.is_some()`).
+        // App
+        // Action::UpdateAndRestart はリリースが見つかっている場合以外は
+        // 何もしない(event/global.rs、if app.update.info.is_some())。
         CommandId::UpdateAndRestart => app.update.info.is_some(),
 
-        // ── Repository ───────────────────────────────────────────────────
-        // The repo selector only opens with somewhere to switch to
-        // (`event/global.rs`, `if app.repo.known.len() > 1`).
+        // Repository
+        // リポジトリ選択は切替先が複数あるときのみ開く
+        // (event/global.rs、if app.repo.known.len() > 1)。
         CommandId::SwitchRepo => app.repo.known.len() > 1,
 
-        // ── Worktree ─────────────────────────────────────────────────────
-        // The strip's delete button refuses the main worktree and one already
-        // being torn down (`event/mouse/bars.rs`).
+        // Worktree
+        // ストリップの削除ボタンは main worktree と削除処理中の worktree を
+        // 拒否する(event/mouse/bars.rs)。
         CommandId::DeleteWorktree => selected_worktree
             .is_some_and(|w| !w.is_main && !app.is_worktree_pending_delete(&w.path)),
 
-        // "Cannot merge main into itself." (`app/worktree_commands.rs`).
+        // "Cannot merge main into itself."(app/worktree_commands.rs)。
         CommandId::MergeToMain => selected_worktree.is_some_and(|w| !w.is_main),
 
         // "Already grabbing a branch. Ungrab first (G)."
-        // (`app/worktree_commands.rs`). The follow-up "no non-main worktrees to
-        // grab" check is not mirrored: it needs `load_grab_branches()`, which
-        // mutates overlay state.
+        // (app/worktree_commands.rs)。後続の「grab 可能な非 main worktree が
+        // ない」というチェックはここでは再現しない。オーバーレイ状態を変更する
+        // load_grab_branches() が必要になるため。
         CommandId::GrabBranch => app.worktree_mgr.grabbed_branch.is_none(),
 
-        // "Not grabbing — nothing to ungrab." (`app/commands.rs`).
+        // "Not grabbing — nothing to ungrab."(app/commands.rs)。
         CommandId::UngrabBranch => app.worktree_mgr.grabbed_branch.is_some(),
 
-        // "No worktree selected." (`app/worktree_pr.rs`). Whether the branch
-        // actually has a PR takes a `git` call, so it is left to the command.
+        // "No worktree selected."(app/worktree_pr.rs)。ブランチに実際に
+        // PR があるかどうかは git 呼び出しが必要なので、そこはコマンド側に
+        // 任せる。
         CommandId::OpenPullRequest => selected_worktree.is_some(),
 
-        // ── Viewer ───────────────────────────────────────────────────────
+        // Viewer
         // "Raw/Rendered applies to a markdown file in the Viewer"
-        // (`app/view_state.rs`) — the same helper the command consults.
+        // (app/view_state.rs) — コマンドが参照するのと同じヘルパー。
         CommandId::ToggleMarkdownRender => app.viewer_state.markdown_toggle_available(),
 
-        // ── Review ───────────────────────────────────────────────────────
-        // A comment is anchored to the file open in the Viewer
-        // (`app/review_commands.rs`, `if let Some(file_path) = …current_file`).
+        // Review
+        // コメントは Viewer で開いているファイルに紐づく
+        // (app/review_commands.rs の if let Some(file_path) = …current_file)。
         CommandId::AddReviewComment => app.viewer_state.content.current_file.is_some(),
 
-        // Both guard on the comment list being the focused sub-panel and
-        // non-empty (`app/review_commands.rs`).
+        // どちらもコメントリストがフォーカスされたサブパネルであり、かつ
+        // 空でないことを前提とする(app/review_commands.rs)。
         CommandId::DeleteComment | CommandId::ToggleCommentResolve => comment_list_focused(app),
 
-        // Both resolve a selected comment first and bail with "No comment
-        // selected." (`app/review_commands.rs`).
+        // どちらもまず選択中のコメントを解決し、なければ "No comment
+        // selected." で打ち切る(app/review_commands.rs)。
         CommandId::EditComment | CommandId::ReplyToComment => app
             .review_state
             .selected_comment_idx(app.viewer_state.explorer.comment_list_selected)
             .is_some(),
 
-        // Needs the review DB and a worktree (`app/review_publish.rs`). Whether
-        // the branch has an associated PR is a `get_pr_review_meta` query, so
-        // that part is left to the command.
+        // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに
+        // 紐づく PR があるかは get_pr_review_meta クエリが必要なので、
+        // そこはコマンド側に任せる。
         CommandId::PublishReview => app.review_store.is_some() && selected_worktree.is_some(),
 
         _ => true,
     }
 }
 
-/// Whether the Explorer's bottom pane is showing the comment list, has focus,
-/// and has rows — the precondition `cmd_delete_comment` and
-/// `cmd_toggle_comment_resolve` both spell out.
+/// Explorer 下部ペインがコメントリストを表示し、フォーカスがあり、行を持つか
+/// どうか — cmd_delete_comment と cmd_toggle_comment_resolve の双方が
+/// 明示する前提条件。
 fn comment_list_focused(app: &App) -> bool {
     app.viewer_state.explorer.explorer_bottom_view == crate::viewer::ExplorerBottomView::Comments
         && app.viewer_state.explorer.explorer_focus_on_diff_list

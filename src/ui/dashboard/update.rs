@@ -1,5 +1,5 @@
-//! Self-update overlays (confirm, in-progress/error) and the review-comment
-//! publish confirmation dialog.
+//! セルフアップデートのオーバーレイ群（確認、進行中/エラー）と、
+//! レビューコメント公開の確認ダイアログ。
 
 use crate::app::{App, UpdateState};
 use ratatui::Frame;
@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-/// Render the update confirmation overlay.
+/// アップデート確認オーバーレイを描画する。
 pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 55_u16.min(area.width.saturating_sub(4));
@@ -58,9 +58,9 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Render the confirm dialog for publishing review comments to GitHub —
-/// shown before the irreversible external POST, listing how many comments
-/// will be posted and how many were skipped for not being on a diff line.
+/// レビューコメントを GitHub に公開する確認ダイアログを描画する — 取り消せない
+/// 外部への POST の前に表示し、投稿されるコメント数と、diff の行上にないため
+/// スキップされたコメント数を示す。
 pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let Some(confirm) = app.publish.confirm.as_ref() else {
@@ -119,7 +119,7 @@ pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) 
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Render the update progress/error overlay.
+/// アップデートの進行状況/エラーオーバーレイを描画する。
 pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 60_u16.min(area.width.saturating_sub(4));

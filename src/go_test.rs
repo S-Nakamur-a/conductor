@@ -1,15 +1,15 @@
-//! 開いている `*_test.go` ファイルの中から、実行可能な Go のテストを検出する。
+//! 開いている *_test.go ファイルの中から、実行可能な Go のテストを検出する。
 //!
 //! ファイルの内容を 1 行ずつ走査し (正規表現。Go のパーサは持たない)、1 始まりの
-//! 行番号から、そのスコープを実行する `go test` コマンドを表す [`TestRun`] への
+//! 行番号から、そのスコープを実行する go test コマンドを表す [TestRun] への
 //! マップを作る。作るボタンは 3 種類:
 //!
-//! - File: 1 行目。ファイル内のトップレベルの `Test*` 関数をすべて実行する。
-//! - Func: `func Test*(...)` の各行。そのテスト 1 つを実行する。
-//! - Subtest: テスト関数内の `x.Run("name", ...)` の各行。外側のテストの、
+//! - File: 1 行目。ファイル内のトップレベルの Test* 関数をすべて実行する。
+//! - Func: func Test*(...) の各行。そのテスト 1 つを実行する。
+//! - Subtest: テスト関数内の x.Run("name", ...) の各行。外側のテストの、
 //!   そのサブテストを実行する。
 //!
-//! コマンドはファイルのパッケージディレクトリ (`./dir`、リポジトリルートなら `.`)
+//! コマンドはファイルのパッケージディレクトリ (./dir、リポジトリルートなら .)
 //! を対象にし、Shell の PTY の作業ディレクトリが worktree ルートであることを前提にする。
 
 use std::collections::HashMap;
@@ -19,21 +19,21 @@ use regex::Regex;
 
 use crate::test_run::{TestRun, TestRunKind, shell_single_quote};
 
-/// トップレベルのテスト関数: 0 桁目から始まる `func TestXxx(`。レシーバ付きの
-/// メソッド (`func (s *Suite) TestX(`) はあえて対象外にしている。`go test -run`
+/// トップレベルのテスト関数: 0 桁目から始まる func TestXxx(。レシーバ付きの
+/// メソッド (func (s *Suite) TestX() はあえて対象外にしている。go test -run
 /// では直接指定できないため。
 static FUNC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^func\s+(Test\w*)\s*\(").unwrap());
 
-/// 名前が文字列リテラルのサブテスト呼び出し: `x.Run("name"`。テーブル駆動の
-/// `t.Run(tt.name, …)` のようなリテラルでないものは飛ばす。関数単位のボタンが
+/// 名前が文字列リテラルのサブテスト呼び出し: x.Run("name"。テーブル駆動の
+/// t.Run(tt.name, …) のようなリテラルでないものは飛ばす。関数単位のボタンが
 /// それをカバーする。
 static SUBTEST_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\.Run\(\s*"([^"]*)""#).unwrap());
 
 /// 開いているファイルの内容から実行可能な Go のテストを走査する。
 ///
-/// `relative_path` が `*_test.go` でないか、ファイルにトップレベルの `Test*`
+/// relative_path が *_test.go でないか、ファイルにトップレベルの Test*
 /// 関数が無い場合は空のマップを返す。
 pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMap<usize, TestRun> {
     let mut runs = HashMap::new();
@@ -43,7 +43,7 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
     let target = package_target(relative_path);
 
     // 第 1 走査: トップレベルのテスト関数 (行と名前) を見つける。特別な入口である
-    // `TestMain` は飛ばす (`-run` の対象にならない)。
+    // TestMain は飛ばす (-run の対象にならない)。
     let funcs: Vec<(usize, String)> = file_content
         .iter()
         .enumerate()
@@ -84,8 +84,8 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         );
     }
 
-    // サブテストのボタン: 各 `Run("name")` を、それを囲む一番近いトップレベルの
-    // テストに結びつける。0 桁目から始まる `func …` の行がテスト関数でなければ、
+    // サブテストのボタン: 各 Run("name") を、それを囲む一番近いトップレベルの
+    // テストに結びつける。0 桁目から始まる func … の行がテスト関数でなければ、
     // そこで現在のテストのスコープが終わる。
     let mut current: Option<&str> = None;
     for (i, line) in file_content.iter().enumerate() {
@@ -106,12 +106,12 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
             continue;
         };
         let sub = sub.as_str();
-        // 名前にシングルクォートが入っていると、シングルクォートで囲んだ `-run`
+        // 名前にシングルクォートが入っていると、シングルクォートで囲んだ -run
         // 引数が壊れる。壊れたコマンドを出すくらいなら飛ばす。
         if sub.contains('\'') {
             continue;
         }
-        // Go は `-run` の照合にあたり、サブテスト名の空白をアンダースコアに対応づける。
+        // Go は -run の照合にあたり、サブテスト名の空白をアンダースコアに対応づける。
         let sub_pattern = sub.replace(' ', "_");
         runs.insert(
             line_1,
@@ -127,16 +127,16 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
 }
 
 fn go_test_cmd(run_pattern: &str, target: &str) -> String {
-    // `target` は信用できないリポジトリ (レビュー中の PR など) 由来のファイルパスから
+    // target は信用できないリポジトリ (レビュー中の PR など) 由来のファイルパスから
     // 作られるので、シェルのメタ文字や空白を含み得る。シングルクォートで囲む。
-    // `run_pattern` はリテラルのシングルクォートで囲んで安全: 関数名は `\w` のみで、
-    // `'` を含むサブテスト名はここへ来る前に弾かれているため、埋め込みの
+    // run_pattern はリテラルのシングルクォートで囲んで安全: 関数名は \w のみで、
+    // ' を含むサブテスト名はここへ来る前に弾かれているため、埋め込みの
     // シングルクォートは現れない。
     format!("go test -run '{run_pattern}' {}", shell_single_quote(target))
 }
 
-/// ファイルに対応する `go test` のパッケージ引数。入れ子のファイルなら `./dir`、
-/// リポジトリルートなら `.`。
+/// ファイルに対応する go test のパッケージ引数。入れ子のファイルなら ./dir、
+/// リポジトリルートなら .。
 fn package_target(relative_path: &str) -> String {
     match relative_path.rsplit_once('/') {
         Some((dir, _)) if !dir.is_empty() => format!("./{dir}"),
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn hostile_directory_name_is_shell_quoted() {
         // シェルのメタ文字を含むディレクトリ名 (信用できないリポジトリならあり得る)
-        // はクォートで無力化されなければならない。`;` はクォートの内側に留まる。
+        // はクォートで無力化されなければならない。; はクォートの内側に留まる。
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         let runs = scan_go_test_runs(&src, "a; rm -rf x/x_test.go");
         assert_eq!(runs[&2].command, "go test -run '^TestX$' './a; rm -rf x'");
@@ -239,7 +239,7 @@ mod tests {
     fn single_quote_in_directory_is_escaped() {
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         let runs = scan_go_test_runs(&src, "o'clock/x_test.go");
-        // `'\''` はクォートを閉じ、エスケープしたクォートを足し、また開く。
+        // '\'' はクォートを閉じ、エスケープしたクォートを足し、また開く。
         assert_eq!(runs[&2].command, "go test -run '^TestX$' './o'\\''clock'");
     }
 

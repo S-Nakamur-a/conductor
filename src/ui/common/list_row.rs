@@ -1,46 +1,45 @@
-//! Shared hover/selection state and styling for the Explorer's two row-based
-//! lists (file tree, Changed files). Centralized here so the
-//! selection/focus/hover priority rules live in one place instead of being
-//! re-derived (and potentially drifting) in every panel that renders rows —
-//! see ADR D3 in `docs/plans/2026-07-30-ui-affordance-feedback.md`.
+//! Explorer の2つの行ベースリスト（file tree, Changed files）で共有する
+//! hover/selection の状態とスタイリング。selection/focus/hover の優先順位ルールを
+//! 各パネルで再導出させて食い違わせるのではなく、一箇所に集約するためにここに置く —
+//! docs/plans/2026-07-30-ui-affordance-feedback.md の ADR D3 を参照。
 
 use ratatui::style::{Modifier, Style};
 use std::time::{Duration, Instant};
 
-/// How long a row keeps fading out after the pointer leaves it, in
-/// milliseconds. Only the *leaving* row animates (D2): entering a row lights
-/// it up instantly so pointer tracking never feels laggy, while the row left
-/// behind eases out so a fast sweep across rows still reads as smooth motion.
+/// ポインタが離れてから行がフェードアウトし続ける時間（ミリ秒）。
+/// アニメーションするのは離れる側の行だけ（D2）: 行に入るときは即座に
+/// ライトアップすることでポインタ追従が遅く感じないようにし、逆に離れた側の
+/// 行はイーズアウトすることで行を素早く横切っても滑らかな動きに見えるようにする。
 const HOVER_FADE_MS: u64 = 120;
 
-/// Hover state for a single row-based list: which row is currently under the
-/// pointer, plus the row that was hovered most recently (with the instant it
-/// was left) so its highlight can fade out instead of vanishing abruptly.
+/// 1つの行ベースリストにおける hover 状態: 現在ポインタの下にある行と、
+/// 直近にホバーされていた行（離れた瞬間の時刻付き）を保持し、そのハイライトが
+/// 唐突に消えるのではなくフェードアウトできるようにする。
 #[derive(Debug, Default)]
 pub struct HoverRow {
     row: Option<usize>,
     left: Option<(usize, Instant)>,
 }
 
-/// The hover state of a single row, as returned by [`HoverRow::phase`].
+/// [HoverRow::phase] が返す、1行分の hover 状態。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HoverPhase {
-    /// The pointer is currently over this row.
+    /// ポインタが現在この行の上にある。
     On,
-    /// The pointer just left this row; `f64` is the remaining strength of the
-    /// highlight in `[0.0, 1.0]` (`1.0` right after leaving, `0.0` once the
-    /// fade completes).
+    /// ポインタがこの行から離れた直後。f64 はハイライトの残り強度で [0.0, 1.0]
+    /// （離れた直後は1.0、フェードが完了すると0.0）。
     FadingOut(f64),
 }
 
 impl HoverRow {
-    /// Update the currently hovered row. Passing `None` means the pointer is
-    /// over no row in this list (e.g. it moved to a different panel).
+    /// 現在ホバーされている行を更新する。None を渡すのは、ポインタが
+    /// このリストのどの行の上にもないという意味（例えば別のパネルへ
+    /// 移動した場合）。
     ///
-    /// The previous row is only recorded into `left` (starting its fade) when
-    /// the hover actually moves to a *different* row. Re-setting the same row
-    /// on every mouse-move event (the common case while the pointer sits
-    /// still) must not restart the fade animation each time.
+    /// 直前の行が left に記録される（フェードが始まる）のは、ホバーが
+    /// 実際に *別の* 行へ移動したときだけである。マウス移動イベントのたびに
+    /// 同じ行をセットし直しても（ポインタが静止している間によく起きる）
+    /// フェードアニメーションをその都度リスタートしてはならない。
     pub fn set(&mut self, row: Option<usize>) {
         if self.row == row {
             return;
@@ -51,8 +50,7 @@ impl HoverRow {
         self.row = row;
     }
 
-    /// The hover phase of `row`, or `None` if it is neither hovered nor
-    /// fading out.
+    /// row の hover phase。ホバー中でもフェードアウト中でもなければ None。
     pub fn phase(&self, row: usize) -> Option<HoverPhase> {
         if self.row == Some(row) {
             return Some(HoverPhase::On);
@@ -68,18 +66,17 @@ impl HoverRow {
         None
     }
 
-    /// Whether any row in this list is currently fading out. Used by the main
-    /// loop to decide whether a redraw pump is still needed (see
-    /// `App::has_active_transition` and `src/anim.rs`).
+    /// このリストで現在フェードアウト中の行があるかどうか。メインループが
+    /// 再描画ポンプがまだ必要かどうかを判断するのに使う
+    /// （App::has_active_transition と src/anim.rs を参照）。
     pub fn is_animating(&self) -> bool {
         self.left.is_some_and(|(row, left_at)| {
             self.row != Some(row) && left_at.elapsed() < Duration::from_millis(HOVER_FADE_MS)
         })
     }
 
-    /// Test-only constructor that lets a test seed `left` with an already-
-    /// elapsed instant, so fade-completion behavior can be asserted without
-    /// sleeping the test thread.
+    /// テスト専用のコンストラクタ。既に経過済みの時刻で left を仕込めるので、
+    /// テストスレッドをスリープさせずにフェード完了時の挙動を検証できる。
     #[cfg(test)]
     fn with_left_at(row: usize, left_at: Instant) -> Self {
         Self {
@@ -89,20 +86,17 @@ impl HoverRow {
     }
 }
 
-/// Build the [`Style`] for a single list row from selection, panel focus, and
-/// hover state.
+/// selection、パネルのフォーカス、hover 状態から、1つのリスト行の [Style] を組み立てる。
 ///
-/// Priority is selection over hover: a selected row keeps its selection
-/// colors regardless of hover, since selection is the more consequential
-/// state and diluting it with a hover tint would make it harder to keep track
-/// of which row is selected while sweeping the pointer across the list.
+/// 優先順位は selection が hover に勝る: 選択中の行は hover の有無にかかわらず
+/// 選択色を保つ。selection の方がより重要な状態であり、hover の色味で薄めてしまうと
+/// ポインタでリストをなぞる間にどの行が選択されているか追いにくくなるため。
 ///
-/// Per ADR D1 (revised), hover for these row-based lists is expressed purely
-/// through the foreground color (no background), matching the existing
-/// precedent in the Viewer's line hover (`src/ui/viewer_panel/code_line.rs`).
-/// Backing this with a background color instead was tried and rejected: on 7
-/// of 11 themes it was indistinguishable from `selected_bg_inactive`, which is
-/// exactly the state a hovered-but-unfocused row is in.
+/// ADR D1（改訂版）に従い、この行ベースリストの hover は前景色のみで表現する
+/// （背景色は使わない）。これは Viewer の行 hover（src/ui/viewer_panel/code_line.rs）
+/// の既存の前例に合わせたもの。背景色で表現する方式も試したが却下した:
+/// 11テーマ中7テーマで selected_bg_inactive と区別が付かなかった。これはまさに
+/// hover 中だがフォーカスされていない行が置かれる状態そのものである。
 pub fn row_style(
     theme: &crate::theme::Theme,
     base_fg: ratatui::style::Color,
@@ -131,20 +125,18 @@ pub fn row_style(
         None => base_fg,
     };
     let style = Style::default().fg(fg);
-    // Second, non-colour channel for the hover (D1 revised): colour alone has
-    // to work across 11 palettes and every base colour a row can take, and it
-    // lands weakest on `theme.fg` — the colour of the most common row by far.
-    // An underline is palette-independent and survives colour-vision
-    // deficiency, and it is already this codebase's hover vocabulary: the
-    // Viewer underlines a jumpable symbol under the pointer
-    // (`src/ui/viewer_panel/code_line.rs`). It also can't be confused with
-    // selection, which is expressed as a background plus BOLD.
+    // hover のための2つ目の、色以外のチャンネル（D1改訂版）: 色だけでは
+    // 11パレット全てと行が取り得るすべての基本色をカバーしなければならず、
+    // 圧倒的に最も多い行の色である theme.fg では最も効果が弱くなる。
+    // 下線はパレットに依存せず色覚特性の影響も受けず、このコードベースでは
+    // 既に hover の語彙として使われている: Viewer はポインタの下にある
+    // ジャンプ可能なシンボルに下線を引く（src/ui/viewer_panel/code_line.rs）。
+    // また背景色 + BOLD で表現される selection と混同することもない。
     //
-    // Deliberately not carried through `FadingOut`: the underline says "the
-    // pointer is *here*", which stops being true the moment it leaves, and a
-    // modifier can't be interpolated so it would have to pop off at some
-    // arbitrary point in the fade anyway. The colour fade alone smooths the
-    // exit.
+    // FadingOut には意図的に持ち越さない: 下線は「ポインタが *ここにある*」
+    // ことを示すものであり、離れた瞬間に真ではなくなる。またモディファイアは
+    // 補間できないので、どのみちフェードの途中のどこかで唐突に消えるしかない。
+    // 色のフェードだけで退出をなめらかにする。
     if matches!(hover, Some(HoverPhase::On)) {
         style.add_modifier(Modifier::UNDERLINED)
     } else {
@@ -152,75 +144,72 @@ pub fn row_style(
     }
 }
 
-/// The same row style, minus the hover underline: for the parts of a row that
-/// are not its name — leading indent, expand arrow, icon, origin marker, line
-/// counts.
+/// hover の下線を除いた同じ行スタイル: 行の名前部分以外
+/// （先頭のインデント、展開矢印、アイコン、origin マーカー、行数）に使う。
 ///
-/// The underline is a "this is the thing you're pointing at" mark, and the
-/// thing is the file, not the tree scaffolding in front of it. Running it under
-/// the indent made a nested row's rule start far to the left of anything
-/// clickable, which read as a text-input underline spanning the row rather than
-/// as a pointer affordance. Colour still applies to the whole row, so the row
-/// as a whole is still visibly hovered.
+/// 下線は「あなたが指しているのはこれだ」という印であり、その対象はファイルで
+/// あって手前のツリー装飾ではない。インデントの下にも下線を引くと、
+/// ネストされた行の下線がクリック可能な要素よりずっと左から始まってしまい、
+/// ポインタのアフォーダンスではなく行全体に渡るテキスト入力の下線のように
+/// 見えていた。色は行全体に引き続き適用されるので、行全体としては見た目に
+/// hover していることが分かる。
 pub fn decoration_style(style: Style) -> Style {
     style.remove_modifier(Modifier::UNDERLINED)
 }
 
-/// How far a hovered row's colour has to sit from its resting colour, in the
-/// units of [`Theme::perceptual_distance`] (`0` identical, ~`765` black vs
-/// white).
+/// hover 中の行の色が、静止時の色からどれだけ離れている必要があるか。
+/// 単位は [Theme::perceptual_distance]（0が同一、黒対白が約765）。
 ///
-/// This floor exists because the obvious transform doesn't hold one. Pushing
-/// the row's colour toward white (dark themes) or black (light ones) has no
-/// headroom left when the colour already sits near that extreme — which
-/// `theme.fg`, the colour of the overwhelming majority of rows, does by
-/// design. Measured against the previous `lighten(base, 0.45)`, a `theme.fg`
-/// row moved by ~53 while a `theme.hint` (untracked) row moved by ~237: hover
-/// was four times weaker exactly where it fires most often, which is what made
-/// it read as unreliable rather than subtle.
+/// この下限が存在するのは、素朴な変換ではこれを満たせないため。行の色を
+/// 白（ダークテーマ）や黒（ライトテーマ）へ寄せる方式では、色が既にその
+/// 極値付近にあると余地が残っていない — そしてまさに theme.fg、圧倒的多数の
+/// 行が持つ色は設計上その状態にある。以前の lighten(base, 0.45) と比較すると、
+/// theme.fg の行は約53しか動かなかったのに対し theme.hint（untracked）の行は
+/// 約237動いた: hover は最も頻繁に発火する箇所でちょうど4倍弱くなっており、
+/// これが「控えめ」ではなく「あてにならない」と受け取られる原因になっていた。
 const HOVER_MIN_DISTANCE: f64 = 120.0;
 
-/// Lightnesses a hovered colour may be pulled toward, in preference order, per
-/// theme polarity. Two of them because one is not always reachable: a row
-/// colour that already sits at the bright target (catppuccin's `info`, a
-/// near-fully-saturated cyan at L 0.73) has nowhere to go toward it, exactly as
-/// `theme.fg` has nowhere to go toward white. The second target is on the
-/// other side, so some direction always has room.
+/// hover 中の色を寄せる先となり得る明度値。テーマの極性ごとに優先順で並べる。
+/// 2つあるのは、片方が常に到達可能とは限らないため: 既に明るい方のターゲット
+/// （catppuccin の info、L 0.73 のほぼ完全に彩度を持つシアン）に位置している
+/// 行の色は、theme.fg が白へ向かって余地がないのとまったく同じように、
+/// そちらへ向かう余地がない。2つ目のターゲットは反対側にあるので、
+/// どちらか一方には常に余地がある。
 ///
-/// Both entries in a pair stay on the far side of the theme's background —
-/// bright on a dark theme, deep on a light one — so whichever the search picks
-/// is still comfortably legible.
+/// ペアの両方の値とも、テーマの背景色から見て遠い側に置く —
+/// ダークテーマでは明るい側、ライトテーマでは深い側 — ので、
+/// 探索がどちらを選んでも十分に判読できる。
 const HOVER_TARGET_L_DARK: [f64; 2] = [0.85, 0.52];
 const HOVER_TARGET_L_LIGHT: [f64; 2] = [0.34, 0.14];
 
-/// Number of steps the search below walks; the granularity of the emphasis,
-/// nothing more.
+/// 下の探索が辿るステップ数。強調の粒度を決めるだけのもの。
 const HOVER_STEPS: u32 = 20;
 
-/// The colour a hovered row's text moves to: the row's own colour intensified
-/// toward the vivid end of its own hue, by the smallest amount that clears
-/// [`HOVER_MIN_DISTANCE`].
+/// hover 中の行のテキストが移動する先の色: 行自身の色を、その色相の鮮やかな
+/// 側へ、[HOVER_MIN_DISTANCE] をクリアする最小量だけ強めたもの。
 ///
-/// Two properties are doing the work here.
+/// ここでは2つの性質が働いている。
 ///
-/// *Derived from `base_fg`*, never a fixed token. An earlier revision used
-/// `theme.accent`, which destroyed the information the row's colour was
-/// carrying: in the Changed files list the foreground encodes git stage state
-/// (D6), and `accent == warning` (the staged colour) in both solarized-dark
-/// and gruvbox — so hovering an *unstaged* row repainted it the exact colour
-/// of a *staged* one. The hover told the user something false about their
-/// working tree. `accent == info` on github-light had the same shape, turning
-/// a hovered file into a directory. Transforming the row's own colour while
-/// holding its hue cannot collide with another token by construction.
+/// 固定のトークンではなく *base_fg から導出する* こと。以前の版では
+/// theme.accent を使っていたが、これは行の色が運んでいた情報を破壊していた:
+/// Changed files リストでは前景色が git のステージ状態（D6）を符号化しており、
+/// solarized-dark と gruvbox の両方で accent == warning（ステージ済みの色）
+/// である — そのため *未ステージ* の行を hover すると *ステージ済み* の行と
+/// まったく同じ色に塗り替わってしまっていた。hover がユーザに working tree
+/// について誤った情報を伝えていたことになる。github-light では
+/// accent == info で同様の問題があり、hover したファイルがディレクトリに
+/// 見えてしまっていた。行自身の色をその色相を保ったまま変換すれば、
+/// 構造上、他のトークンと衝突しない。
 ///
-/// *Smallest sufficient push*, rather than a fixed amount. A fixed amount
-/// makes the size of the change depend on where the row's colour happens to
-/// start; searching for the floor instead gives every row a hover of roughly
-/// the same strength, so the feedback reads as one consistent behaviour.
+/// 固定量ではなく *必要十分な最小の押し出し量* にすること。固定量だと
+/// 変化の大きさが行の色の出発点に依存してしまう。代わりに下限を探索することで、
+/// どの行の hover もほぼ同じ強さになり、フィードバックが一貫した挙動として
+/// 読み取れるようになる。
 ///
-/// If no candidate clears the floor — no built-in theme is in that position,
-/// but a custom palette could be — the most distant one found is used, so the
-/// hover degrades to "as visible as this colour allows" rather than vanishing.
+/// どの候補も下限をクリアできない場合 — 組み込みテーマにはそういうものは
+/// ないが、カスタムパレットではあり得る — 見つかった中で最も距離が離れている
+/// ものを使う。これにより hover は消えてしまうのではなく「この色が許す限り
+/// 見える」状態に段階的に劣化する。
 fn hover_emphasis(
     theme: &crate::theme::Theme,
     base_fg: ratatui::style::Color,
@@ -264,11 +253,11 @@ mod tests {
         let theme = test_theme();
         let base_fg = theme.fg;
 
-        // Representative cases spanning the selected x panel_focused x hover
-        // matrix. Comparing every pair (rather than asserting each against a
-        // hand-picked expected `Style`) is what makes this test meaningful:
-        // asserting fixed expected values would just restate the
-        // implementation and pass trivially.
+        // selected x panel_focused x hover の行列を代表するケース。
+        // （個別に手で決めた期待 Style と比較するのではなく）すべてのペアを
+        // 比較することがこのテストを意味あるものにしている:
+        // 固定の期待値と比較するだけでは実装をそのまま繰り返すだけで、
+        // 自明に通ってしまう。
         let cases = [
             ("normal", row_style(&theme, base_fg, false, true, None)),
             (
@@ -344,7 +333,7 @@ mod tests {
         hover.set(Some(4));
         let first_left = hover.left;
 
-        // Re-setting the already-current row must be a no-op for `left`.
+        // 既に現在の行を再セットしても left にとっては no-op でなければならない。
         hover.set(Some(4));
         assert_eq!(hover.left, first_left);
     }
@@ -364,10 +353,10 @@ mod tests {
         assert!(!done.is_animating());
     }
 
-    /// The fade must run *from* the hovered colour back *to* the base, not the
-    /// other way round. Swapping `lerp`'s two colour arguments still compiles
-    /// and still animates — it just plays the row lighting up after the
-    /// pointer has left. Only checking the direction catches that.
+    /// フェードは hover 中の色 *から* base の色 *へ* 戻る向きでなければならず、
+    /// 逆であってはならない。lerp の2つの色引数を入れ替えてもコンパイルは通り
+    /// アニメーションもする — ただし、ポインタが離れた後に行が明るくなるという
+    /// 逆の動きが再生されてしまう。方向を検証してこそこれを検知できる。
     #[test]
     fn fading_out_starts_lit_and_ends_at_base() {
         let theme = test_theme();
@@ -389,17 +378,17 @@ mod tests {
         assert_ne!(mid, Some(base));
     }
 
-    /// Regression guard for the defect that made hover *lie*: `theme.accent`
-    /// as the hover colour equals `theme.warning` (the staged colour) on
-    /// solarized-dark and gruvbox, so hovering an unstaged file made it look
-    /// staged. Emphasis is now derived from the row's own colour, so this holds
-    /// for every theme and every base colour that carries meaning.
+    /// hover が *嘘をつく* 不具合の回帰防止: solarized-dark と gruvbox では
+    /// hover 色として使っていた theme.accent が theme.warning
+    /// （ステージ済みの色）と等しく、未ステージのファイルを hover すると
+    /// ステージ済みに見えていた。強調は今では行自身の色から導出されるので、
+    /// これはすべてのテーマ、意味を持つすべての基本色について成り立つ。
     #[test]
     fn hover_never_repaints_a_row_as_another_meaningful_token() {
         for &name in crate::theme::Theme::all_names() {
             let theme = crate::theme::Theme::from_name(name);
-            // The tokens whose meaning a hovered row must not impersonate:
-            // the four D6 stage colours plus the tree's directory colour.
+            // hover 中の行が成りすましてはならない意味を持つトークン群:
+            // D6 の4つのステージ色に加え、ツリーのディレクトリ色。
             let meaningful = [
                 ("error/unstaged", theme.error),
                 ("warning/staged", theme.warning),
@@ -428,11 +417,11 @@ mod tests {
         }
     }
 
-    /// The point of the emphasis rework: the hover must be *equally* visible
-    /// no matter which colour the row starts from. The old transform cleared
-    /// this floor on dim rows and missed it by 2-3x on ordinary `theme.fg`
-    /// ones, so the same gesture produced obviously different feedback
-    /// depending on the file's git state.
+    /// 強調ロジックを作り直した狙い: 行がどの色から始まっていても hover は
+    /// *等しく* 見えなければならない。以前の変換は暗い行ではこの下限を
+    /// クリアしていたが、普通の theme.fg の行では2〜3倍不足していた。
+    /// そのため同じ操作でも、ファイルの git 状態によって明らかに異なる
+    /// フィードバックが生じていた。
     #[test]
     fn hover_clears_the_visibility_floor_on_every_theme_and_base_colour() {
         for &name in crate::theme::Theme::all_names() {
@@ -460,10 +449,9 @@ mod tests {
         }
     }
 
-    /// Hover carries a second, non-colour channel so it survives palettes and
-    /// colour-vision deficiency. Selection must not borrow it: the two states
-    /// have to stay tellable apart when a hovered row sits next to the
-    /// selected one.
+    /// hover はパレットや色覚特性の影響を受けないよう、色以外の2つ目の
+    /// チャンネルを持つ。selection はそれを借用してはならない:
+    /// hover 中の行が選択中の行の隣にあるとき、両者は区別できなければならない。
     #[test]
     fn only_the_hovered_row_is_underlined() {
         let theme = test_theme();
@@ -500,10 +488,10 @@ mod tests {
         );
     }
 
-    /// The underline marks the name, not the row: the indent/arrow/icon prefix
-    /// keeps the hover *colour* (so the whole row still lights up) but drops
-    /// the rule, which is what kept it from starting at the left edge of a
-    /// deeply nested row.
+    /// 下線は行ではなく名前を示すマークである: インデント/矢印/アイコンの
+    /// プレフィックス部分は hover の *色* は保持する（行全体としては引き続き
+    /// 明るくなる）が下線は落とす。これにより、深くネストされた行の左端から
+    /// 下線が始まってしまうことを防いでいる。
     #[test]
     fn decoration_keeps_the_hover_colour_but_not_the_underline() {
         let theme = test_theme();
@@ -515,8 +503,9 @@ mod tests {
         assert!(!decoration.add_modifier.contains(Modifier::UNDERLINED));
     }
 
-    /// A selected row's BOLD is not the hover affordance and must survive the
-    /// split, or the prefix would render lighter than the name it belongs to.
+    /// 選択中の行の BOLD は hover のアフォーダンスではないので、分割後も
+    /// 保持されなければならない。さもないとプレフィックス部分がそれが属する
+    /// 名前より薄く描画されてしまう。
     #[test]
     fn decoration_preserves_selection_styling() {
         let theme = test_theme();
@@ -530,10 +519,10 @@ mod tests {
 
     #[test]
     fn lerp_dummy_color_is_used_directly_when_hover_is_none_or_non_rgb() {
-        // Sanity check that row_style doesn't accidentally invoke lerp when
-        // there's no hover, by using a non-RGB base_fg (lerp would leave it
-        // untouched per `Theme::lerp`'s contract either way, but this keeps
-        // the branch's shape explicit for future readers).
+        // hover がないとき row_style が誤って lerp を呼び出さないことの
+        // 健全性チェック。非RGBの base_fg を使うことで検証する（lerp は
+        // Theme::lerp の契約上いずれにせよそれをそのまま返すが、こうしておく
+        // ことで後から読む人にとって分岐の形が明示的になる）。
         let theme = test_theme();
         let style = row_style(&theme, Color::Reset, false, true, None);
         assert_eq!(style.fg, Some(Color::Reset));

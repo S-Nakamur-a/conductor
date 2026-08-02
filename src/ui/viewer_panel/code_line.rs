@@ -1,6 +1,6 @@
-//! Per-line row building for the plain (non-diff) file view: builds the code
-//! line's spans plus any inline comment-thread / new-comment compose rows
-//! anchored below it.
+//! プレーン（diff でない）ファイルビュー用の行ごとの行構築。コード行の span に加え、
+//! その下に配置されるインラインコメントスレッドや新規コメント作成ボックスの行も
+//! 組み立てる。
 
 use crate::app::App;
 use crate::diff_state::{DiffLineTag, InlineSegment};
@@ -13,7 +13,7 @@ use super::comment_thread::{build_inline_compose_lines, build_inline_thread_line
 use super::span_utils::{apply_hint_labels, apply_underline_range, h_scroll_spans};
 use super::syntax::{merge_syntax_with_inline, render_inline_diff_spans, syntax_spans_for_line};
 
-/// Shared per-frame context for rendering the plain file view's code lines.
+/// プレーンファイルビューのコード行を描画するためのフレーム共有コンテキスト。
 pub(super) struct FileLineRenderCtx<'a> {
     pub(super) vs: &'a crate::viewer::ViewerState,
     pub(super) theme: &'a Theme,
@@ -24,12 +24,12 @@ pub(super) struct FileLineRenderCtx<'a> {
         &'a std::collections::HashMap<usize, (DiffLineTag, Vec<InlineSegment>)>,
     pub(super) comment_lines: &'a std::collections::HashSet<usize>,
     pub(super) comment_end_lines: &'a std::collections::HashSet<usize>,
-    /// Party-mode rainbow phase (`None` when party mode is off).
+    /// パーティーモードのレインボーの位相（パーティーモードが OFF のときは None）。
     pub(super) party: Option<f64>,
 }
 
-/// Build the row(s) for one source line: the code line itself, plus any
-/// inline comment-thread or new-comment compose rows anchored below it.
+/// ソース1行ぶんの行を組み立てる: コード行そのものに加え、その下に配置される
+/// インラインコメントスレッドや新規コメント作成ボックスの行も含む。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_code_line_rows(
     app: &App,
@@ -65,7 +65,7 @@ pub(super) fn render_code_line_rows(
             line_1 >= lo && line_1 <= hi
         };
 
-    // Diff gutter marker.
+    // diff ガターのマーカー。
     let annotation = ctx.diff_annotations.get(&line_1);
     let diff_tag = annotation.map(|(tag, _)| *tag);
     let (gutter_prefix, gutter_bg) = match diff_tag {
@@ -74,7 +74,7 @@ pub(super) fn render_code_line_rows(
         _ => (" ", None),
     };
 
-    // Gutter (line number).
+    // ガター（行番号）。
     let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
     let is_grep_highlight = vs.content.grep_highlight_line == Some(line_1);
     let gutter_style = if is_selected {
@@ -106,10 +106,10 @@ pub(super) fn render_code_line_rows(
     };
     let gutter_span = Span::styled(num, gutter_style);
 
-    // Comment-marker column (far left, BEFORE the line numbers): 💬 on
-    // the last line of a comment range, │ on earlier lines in the range.
-    // Clicking it toggles the thread — kept out of the gutter/badge side
-    // so starting a new comment works identically on every line.
+    // コメントマーカー列（行番号より前、一番左）: コメント範囲の最終行には 💬、
+    // それより前の行には │ を表示する。クリックするとスレッドの開閉を切り替える —
+    // ガター/バッジ側とは独立させてあるので、新規コメントの開始はどの行でも
+    // 同じように動く。
     let marker = if ctx.comment_end_lines.contains(&line_1) {
         Span::styled("💬", Style::default().fg(theme.accent))
     } else if ctx.comment_lines.contains(&line_1) {
@@ -118,13 +118,12 @@ pub(super) fn render_code_line_rows(
         Span::raw("  ")
     };
 
-    // Badge column (right of the line numbers): ▶ on runnable test lines,
-    // otherwise a GitHub-style "+" button on gutter hover (click it to
-    // start a comment) — shown regardless of existing comments.
+    // バッジ列（行番号の右）: 実行可能なテスト行には ▶、それ以外はガターホバー時に
+    // GitHub 風の「+」ボタン（クリックでコメント開始）を表示する — 既存コメントの
+    // 有無に関わらず表示する。
     let badge = if vs.content.test_runs.contains_key(&line_1) {
-        // Runnable test line: a ▶ button that sends the test command
-        // (`go test …` / `cargo test …`) to the Shell PTY (handled in
-        // event/mouse.rs).
+        // 実行可能なテスト行: ▶ ボタンをクリックするとテストコマンド（go test …や
+        // cargo test …）を Shell の PTY に送る（event/mouse.rs で処理）。
         Span::styled(
             "\u{25b6} ",
             Style::default()
@@ -143,7 +142,7 @@ pub(super) fn render_code_line_rows(
         Span::raw("  ")
     };
 
-    // Content styling.
+    // コンテンツのスタイリング。
     let is_match = vs.search.search_matches.contains(&line_no);
     let is_current_match =
         vs.search.search_matches.get(vs.search.search_match_idx) == Some(&line_no);
@@ -178,7 +177,7 @@ pub(super) fn render_code_line_rows(
         )]
     } else if let Some((ann_tag, ann_segments)) = annotation {
         if !ann_segments.is_empty() {
-            // Word-level diff: render each segment with appropriate background.
+            // 単語単位の diff: 各セグメントを適切な背景色で描画する。
             let (diff_bg, emphasis_bg) = match ann_tag {
                 DiffLineTag::Insert => (app.theme.diff_add_bg, app.theme.diff_add_bg_emphasis),
                 DiffLineTag::Delete => (app.theme.diff_del_bg, app.theme.diff_del_bg_emphasis),
@@ -207,7 +206,7 @@ pub(super) fn render_code_line_rows(
                 render_inline_diff_spans(ann_segments, diff_bg, emphasis_bg, theme.fg, tab_width)
             }
         } else {
-            // Line-level diff only: use syntax highlighting with diff bg.
+            // 行単位の diff のみ: diff の背景色でシンタックスハイライトを使う。
             let diff_bg = match ann_tag {
                 DiffLineTag::Insert => Some(app.theme.diff_add_bg),
                 DiffLineTag::Delete => Some(app.theme.diff_del_bg),
@@ -219,22 +218,22 @@ pub(super) fn render_code_line_rows(
         syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg, party)
     };
 
-    // Apply horizontal scroll to content spans, clipping to panel width
-    // (borders + marker column + gutter + badge).
+    // コンテンツの span に水平スクロールを適用し、パネル幅（枠線＋マーカー列＋
+    // ガター＋バッジ）でクリップする。
     let content_max_w = (ctx.area_width as usize)
         .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
-    // Apply the jump-underline (D8: shown on any rest over a jumpable symbol,
-    // colored by whether Cmd/Ctrl is held — `hover_symbol` only exists once
-    // `tick_underline_hover` has confirmed the symbol is jumpable, so A7's
-    // "no underline for non-jumpable words" is already handled by its being
-    // `None`).
+    // ジャンプ用の下線を適用する（ジャンプ可能なシンボル上でのホバーであれば
+    // 表示され、Cmd/Ctrl が押されているかどうかで色が変わる — hover_symbol は
+    // tick_underline_hover がジャンプ可能だと確認した後にしか存在しないので、
+    // ジャンプ不可な単語に下線を引かないという扱いは hover_symbol が None である
+    // ことによってすでに満たされている）。
     let content_spans = if let Some(ref hs) = vs.click.hover_symbol {
         if hs.line == line_1 {
-            // `hover_symbol` only ever exists for an already-confirmed-jumpable
-            // symbol (see `tick_underline_hover`), so this is always `Some` —
-            // `unwrap_or` just avoids a panic if that invariant ever changes.
+            // hover_symbol はジャンプ可能だとすでに確認済みのシンボルに対してしか
+            // 存在しない（tick_underline_hover を参照）ので、ここは常に Some になる —
+            // unwrap_or はこの不変条件が将来崩れた場合の panic 回避のためだけにある。
             let color = match crate::app::underline_color_kind(true, hs.has_jump_modifier)
                 .unwrap_or(crate::app::UnderlineColorKind::Hint)
             {
@@ -255,10 +254,10 @@ pub(super) fn render_code_line_rows(
         content_spans
     };
 
-    // A8: independently of the underline above, keep the hover-info popup's
-    // own target symbol highlighted for as long as the popup is shown — the
-    // mouse may have moved off it (underline has no leave-grace, D9) or be
-    // sitting in the popup's own leave-grace window pointed elsewhere.
+    // 上の下線とは独立して、ホバー情報ポップアップ自身の対象シンボルは、ポップアップが
+    // 表示されている間はハイライトし続ける — マウスはすでにそこから離れている
+    // かもしれないし（下線側には離脱猶予がない）、ポップアップ自身の離脱猶予の
+    // ウィンドウ内で別の場所を指しているかもしれない。
     let content_spans = match crate::app::popup_highlight_range(
         app.code_nav.hover_info.is_shown(),
         app.code_nav.hover_info.target_line,
@@ -272,7 +271,7 @@ pub(super) fn render_code_line_rows(
         None => content_spans,
     };
 
-    // Apply symbol hint labels (Vimium-style).
+    // シンボルのヒントラベルを適用する（Vimium 風）。
     let content_spans = if app.code_nav.symbol_hint.active {
         let hints_on_line: Vec<_> = app
             .code_nav.symbol_hint
@@ -301,7 +300,7 @@ pub(super) fn render_code_line_rows(
     let mut rows: Vec<(Line<'static>, ScreenRow)> =
         vec![(Line::from(spans), ScreenRow::Code(line_1))];
 
-    // Inline thread rows below the LAST line of a comment range.
+    // コメント範囲の最終行の下にインラインスレッドの行を追加する。
     if expanded_threads.contains(&line_1) {
         let reply_cid = if inline_reply_line == Some(line_1) {
             app.viewer_state.explorer.inline_reply_comment_id.as_deref()
@@ -323,7 +322,7 @@ pub(super) fn render_code_line_rows(
         rows.extend(thread_lines);
     }
 
-    // The new-comment compose box under its anchored line.
+    // 新規コメント作成ボックスを、それが紐づく行の下に追加する。
     if compose_anchor_end == Some(line_1) {
         let compose = build_inline_compose_lines(
             app.review_state.input_kind,

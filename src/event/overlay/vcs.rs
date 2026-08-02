@@ -1,6 +1,6 @@
-//! Overlays for VCS-driving actions: cherry-pick, switch branch (create a
-//! worktree from a remote branch), grab (claim an existing local branch),
-//! and prune (delete stale worktrees).
+//! VCS 操作系のオーバーレイ: cherry-pick、switch branch（リモートブランチから
+//! worktree を作成）、grab（既存のローカルブランチを取得）、prune（古い worktree
+//! を削除）。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -11,7 +11,7 @@ use crate::event::clipboard_paste;
 
 use super::{filterable_overlay_list_nav, overlay_list_nav};
 
-// ── Overlay: cherry-pick ────────────────────────────────────────────────
+// オーバーレイ: cherry-pick
 
 pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
     let count = app.overlays.cherry_pick.commits.len();
@@ -34,7 +34,7 @@ pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
             app.overlays.active = ActiveOverlay::None;
         }
         KeyCode::Tab => {
-            // Cycle through source branches.
+            // ソースブランチを順番に切り替える。
             let current_branch = app
                 .worktrees
                 .get(app.worktrees.selected_index())
@@ -60,7 +60,7 @@ pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: switch branch ──────────────────────────────────────────────
+// オーバーレイ: switch branch
 
 pub(in crate::event) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_switch_branches();
@@ -118,7 +118,7 @@ pub(in crate::event) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: grab ───────────────────────────────────────────────────────
+// オーバーレイ: grab
 
 pub(in crate::event) fn handle_grab_key(app: &mut App, key: KeyEvent) {
     let filtered = app.filtered_grab_branches();
@@ -165,7 +165,7 @@ pub(in crate::event) fn handle_grab_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: prune ──────────────────────────────────────────────────────
+// オーバーレイ: prune
 
 pub(in crate::event) fn handle_prune_key(app: &mut App, key: KeyEvent) {
     match key.code {

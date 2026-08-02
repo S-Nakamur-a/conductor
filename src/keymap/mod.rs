@@ -1,40 +1,41 @@
-//! Configurable keybindings — maps key chords to semantic actions.
+//! カスタマイズ可能なキーバインディング — キーチョードをセマンティックな
+//! アクションにマッピングする。
 //!
-//! Provides a `KeyMap` that resolves `KeyEvent` → `Action` for a given
-//! `KeyContext`, with user overrides from `config.toml`.
+//! 与えられた KeyContext について KeyEvent → Action を解決する KeyMap を
+//! 提供する。ユーザによるオーバーライドは config.toml から読む。
 //!
-//! The engine is [`keymap-suite`](keymap_suite), the one-import facade over
-//! `keymap-core`/`keymap-config`/`keymap-seq`. We follow its design directly:
+//! エンジンは keymap-suite（keymap_suite） — keymap-core/keymap-config/
+//! keymap-seq をまとめたワンインポートの facade である。その設計にそのまま従う:
 //!
-//! * **The action vocabulary is declared once.** The [`Action`] enum, its
-//!   stable config names, and `Action::ALL` come from one
-//!   [`actions!`](keymap_suite::actions) block; the generated
-//!   [`ActionName`](keymap_suite::ActionName) impl (`from_name` / `name`)
-//!   replaces the hand-written `from_str` / `as_str` name tables and slots
-//!   straight into the suite's loaders.
-//! * **Loaded once, owned whole.** [`KeyMap`] holds one [`Loaded<Action>`] — the
-//!   facade's TOML-build result — whose `layers` map is keyed by name. Each
-//!   `KeyContext` names one layer; `Global` is the bare `[keys]` table
-//!   ([`keymap_suite::GLOBAL_LAYER`]).
-//! * **The caller assembles the active chain.** Per key event we hand
-//!   `resolve_layered([context_layer, global], …)` to the library — the context
-//!   layer wins, misses fall through to global, and a total miss returns `None`
-//!   ("pass through to the PTY"). The library never tracks our focus/mode; that
-//!   stack is ours, exactly as the suite intends.
-//! * **Defaults ⊕ user via [`merge`](keymap_suite::merge).** Defaults are
-//!   authored in `default_keybinds.toml` (embedded at compile time); user
-//!   bindings from `[keybinds]` are an *overlay* merged on top. A user chord
-//!   overrides the default for that exact chord; `"<chord>" = false` is a
-//!   tombstone that removes a default. We surface only genuine problems as
-//!   [`KeybindWarning`]s — override/unbind notes are informational, not warnings.
-//! * **Help is the reverse of resolution.** [`KeyMap::keys_for_action`] uses the
-//!   facade's [`keys_for_action`](keymap_suite::keys_for_action) so the rendered
-//!   shortcuts can never drift from what actually resolves.
+//! * アクションの語彙は一度だけ宣言する。 Action enum、その安定した設定名、
+//!   Action::ALL は、1つの actions!（keymap_suite::actions）ブロックから
+//!   生成される。生成される ActionName（keymap_suite::ActionName）実装
+//!   （from_name / name）が、手書きの from_str / as_str の名前テーブルを
+//!   置き換え、そのまま suite のローダに差し込まれる。
+//! * 一度ロードしたら、丸ごと所有する。 KeyMap は1つの Loaded<Action>
+//!   （facade の TOML ビルド結果）を保持し、その layers マップは名前を
+//!   キーにしている。各 KeyContext は1つのレイヤーを指し、Global は素の
+//!   [keys] テーブル（keymap_suite::GLOBAL_LAYER）である。
+//! * アクティブなチェーンは呼び出し側が組み立てる。 キーイベントごとに
+//!   resolve_layered([context_layer, global], …) をライブラリに渡す —
+//!   コンテキストのレイヤーが優先し、外れればグローバルへ落ち、完全な
+//!   不一致なら None（「PTY へそのまま通す」）を返す。ライブラリはこちらの
+//!   フォーカス/モードを一切追跡しない。そのスタックはこちら側の責任で
+//!   あり、それこそが suite が意図するところである。
+//! * デフォルト ⊕ ユーザは merge（keymap_suite::merge）で。 デフォルトは
+//!   default_keybinds.toml に書かれており（コンパイル時に埋め込まれる）、
+//!   [keybinds] からのユーザバインディングはその上に重ねるオーバーレイで
+//!   ある。ユーザのチョードは、そのチョードに対するデフォルトを上書きする。
+//!   "<chord>" = false はデフォルトを取り除くトゥームストーンである。
+//!   本当に問題のあるものだけを KeybindWarning として表面化させる —
+//!   override/unbind の注記は情報であって警告ではない。
+//! * ヘルプは解決の逆写像である。 KeyMap::keys_for_action は facade の
+//!   keys_for_action（keymap_suite::keys_for_action）を使うので、表示される
+//!   ショートカットが実際の解決結果からずれることはない。
 //!
-//! The module is split by responsibility: [`action`] owns the [`Action`]
-//! vocabulary, [`context`] the [`KeyContext`] layer selector, [`warning`] the
-//! [`KeybindWarning`] type, and [`map`] the [`KeyMap`] resolver itself that
-//! ties the other three together.
+//! モジュールは責務ごとに分かれている: action が Action の語彙を、context
+//! が KeyContext のレイヤー選択を、warning が KeybindWarning 型を、map が
+//! それら3つを束ねる KeyMap リゾルバ自体を持つ。
 
 mod action;
 mod context;
@@ -44,10 +45,10 @@ mod warning;
 pub use action::Action;
 pub use context::KeyContext;
 pub use map::KeyMap;
-// Re-exported for the `crate::keymap::KeybindWarning` path; nothing in-crate
-// currently names it directly (callers destructure `KeyMap::with_warnings`'s
-// tuple without annotating the `Vec` element type), so rustc can't see it as
-// used through this alias.
+// crate::keymap::KeybindWarning のパスのため再エクスポートしている。クレート内
+// では現状これを直接名指しするものがない（呼び出し側は KeyMap::with_warnings
+// のタプルを Vec の要素型を明記せずに分解している）ので、rustc はこのエイリアス
+// 経由で使われていることを検出できない。
 #[allow(unused_imports)]
 pub use warning::KeybindWarning;
 

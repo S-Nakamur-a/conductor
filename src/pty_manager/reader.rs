@@ -1,7 +1,6 @@
-//! Background PTY reader thread: feeds raw bytes to the vt100 parser,
-//! maintains the line buffer used for Claude Code output analysis, answers
-//! Cursor Position Report queries, and records the raw-byte history used for
-//! reflow-on-resize.
+//! バックグラウンド PTY reader スレッド: 生バイトを vt100 パーサへ供給し、
+//! Claude Code 出力解析に使う行バッファを維持し、Cursor Position Report クエリに
+//! 応答し、リフロー時の再生に使う生バイト履歴を記録する。
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -12,15 +11,15 @@ use std::time::Instant;
 use super::{PtyManager, MAX_RAW_HISTORY_BYTES};
 
 impl PtyManager {
-    /// Background reader thread function.
+    /// バックグラウンド reader スレッドの本体。
     ///
-    /// Continuously reads from the PTY reader, feeds raw bytes to the vt100
-    /// parser for proper terminal rendering, and also splits into lines for
-    /// the line buffer used by Claude Code output analysis.
+    /// PTY の reader から継続的に読み取り、正しい端末描画のため生バイトを
+    /// vt100 パーサへ供給しつつ、Claude Code 出力解析に使う行バッファのために
+    /// 行単位にも分割する。
     ///
-    /// The writer handle is used to respond to terminal queries such as
-    /// cursor position reports (`CSI 6 n`), which many programs (fzf, shells)
-    /// send to determine where to draw their UI.
+    /// writer ハンドルは、カーソル位置レポート(CSI 6 n)のような端末クエリへ
+    /// 応答するのに使う。多くのプログラム(fzf、シェルなど)が UI の描画位置を
+    /// 決めるためにこれを送ってくる。
     #[allow(clippy::too_many_arguments)]
     pub(super) fn reader_thread(
         mut reader: Box<dyn Read + Send>,
@@ -34,16 +33,16 @@ impl PtyManager {
         output_notify: Arc<AtomicBool>,
     ) {
         let mut read_buf = [0u8; 4096];
-        // Partial line accumulator (for data that doesn't end with '\n').
+        // 部分行の蓄積用('\n' で終わらないデータのため)。
         let mut partial = String::new();
-        // Track previous alternate-screen state to detect transitions.
+        // 直前のオルタネート画面状態を保持し、遷移を検出する。
         let mut prev_alt_screen = false;
 
         loop {
             match reader.read(&mut read_buf) {
                 Ok(0) => {
-                    // EOF — the PTY master has been closed.
-                    // Flush any remaining partial line.
+                    // EOF — PTY マスターが閉じられた。
+                    // 残っている部分行をフラッシュする。
                     if !partial.is_empty() {
                         let line = std::mem::take(&mut partial);
                         Self::push_line(&buffer, &buffer_limit, line);
@@ -53,30 +52,29 @@ impl PtyManager {
                 Ok(n) => {
                     let bytes = &read_buf[..n];
 
-                    // Update the last output timestamp and notify the main loop.
+                    // 最終出力時刻を更新し、メインループへ通知する。
                     {
                         let mut t = last_output_time.lock().unwrap_or_else(|e| e.into_inner());
                         *t = Instant::now();
                     }
                     output_notify.store(true, Ordering::Relaxed);
 
-                    // Count terminal queries that need responses BEFORE
-                    // feeding to the parser (the parser consumes the bytes).
+                    // パーサへ供給する前に、応答が必要な端末クエリの数を
+                    // 数えておく(パーサはバイトを消費してしまう)。
                     let cpr_count = count_csi_dsr(bytes);
 
-                    // Feed raw bytes to vt100 for proper rendering.
+                    // 正しい描画のため生バイトを vt100 へ供給する。
                     {
                         let mut parser = screen.lock().unwrap_or_else(|e| e.into_inner());
                         parser.process(bytes);
 
-                        // Record the same bytes for reflow-on-resize, but only
-                        // for sessions that opted into a raw history (shells).
-                        // Done under the `screen` lock so the recorded stream
-                        // stays exactly in sync with what the parser has
-                        // processed, and so a concurrent `resize_session`
-                        // rebuild sees a consistent history. The inner scope
-                        // releases the history guard before the CPR / alt-screen
-                        // work below.
+                        // リフロー時の再生用に同じバイトを記録するが、生履歴を
+                        // 有効にしたセッション(シェル)に限る。screen ロック
+                        // 下で行うことで、記録されたストリームがパーサの処理
+                        // 内容と正確に同期し続け、並行して走る
+                        // resize_session の再構築からも一貫した履歴として
+                        // 見える。内側のスコープは、以降の CPR / オルタネート
+                        // 画面処理の前に履歴のガードを解放する。
                         if let Some(raw_history) = &raw_history {
                             let mut history =
                                 raw_history.lock().unwrap_or_else(|e| e.into_inner());
@@ -84,14 +82,14 @@ impl PtyManager {
                             Self::trim_raw_history(&mut history, MAX_RAW_HISTORY_BYTES);
                         }
 
-                        // Respond to Cursor Position Report requests (CSI 6 n).
-                        // Programs like fzf, zsh, and bash send this to
-                        // determine the current cursor position for inline
-                        // rendering.  Without a response, they block until a
-                        // timeout or until the user types something.
+                        // Cursor Position Report リクエスト(CSI 6 n)に応答する。
+                        // fzf、zsh、bash などのプログラムは、インライン描画のため
+                        // 現在のカーソル位置を知ろうとしてこれを送ってくる。
+                        // 応答しないと、タイムアウトするかユーザーが何か入力
+                        // するまでブロックされる。
                         if cpr_count > 0 {
                             let cursor = parser.screen().cursor_position();
-                            // Terminal coordinates are 1-based.
+                            // 端末座標は 1-based。
                             let response = format!("\x1b[{};{}R", cursor.0 + 1, cursor.1 + 1,);
                             log::debug!(
                                 "CPR: responding to {} query(ies) with cursor ({}, {})",
@@ -107,7 +105,7 @@ impl PtyManager {
                             }
                         }
 
-                        // Detect transition into alternate screen mode.
+                        // オルタネート画面モードへの遷移を検出する。
                         let is_alt = parser.screen().alternate_screen();
                         if is_alt && !prev_alt_screen {
                             log::debug!(
@@ -118,14 +116,14 @@ impl PtyManager {
                         prev_alt_screen = is_alt;
                     }
 
-                    // Also maintain line buffer for CC analysis.
+                    // CC 解析用の行バッファも維持する。
                     let chunk = String::from_utf8_lossy(bytes);
                     partial.push_str(&chunk);
 
-                    // Split on newlines and push complete lines.
+                    // 改行で分割し、完成した行を push する。
                     while let Some(pos) = partial.find('\n') {
                         let line: String = partial.drain(..=pos).collect();
-                        // Trim the trailing '\n' (and optional '\r').
+                        // 末尾の '\n' (と任意の '\r') を取り除く。
                         let line = line
                             .trim_end_matches('\n')
                             .trim_end_matches('\r')
@@ -134,23 +132,23 @@ impl PtyManager {
                     }
                 }
                 Err(_) => {
-                    // Read error — the PTY is likely closed; exit the thread.
+                    // 読み取りエラー — PTY はおそらく閉じられている。スレッドを終了する。
                     break;
                 }
             }
         }
     }
 
-    /// Trim the raw byte history down to at most `cap` bytes, dropping from the
-    /// front. After reaching the cap, try to drop up to the next newline so the
-    /// retained history starts at a clean line boundary — this avoids replaying
-    /// a half-line that would render incorrectly after a reflow rebuild.
+    /// 生バイト履歴を先頭から削って高々 cap バイトまで切り詰める。上限に
+    /// 達した後は、可能なら次の改行まで追加で削り、残った履歴が行の境界から
+    /// きれいに始まるようにする — こうすることで、リフロー再構築後に不完全な
+    /// 行が誤って描画されるのを防ぐ。
     ///
-    /// The newline search is bounded: an escape-sequence-heavy TUI stream can
-    /// have very few newlines, and an unbounded search would either cost an
-    /// O(n) scan on every append or (if it kept popping) drain the whole buffer
-    /// to empty. If no newline is found nearby, the bytes are kept as-is — a
-    /// slightly imperfect first line is far better than a blank screen.
+    /// 改行の探索範囲には上限を設けている: エスケープシーケンスだらけの
+    /// TUI ストリームは改行がごく少ないことがあり、無制限の探索は追記の
+    /// たびに O(n) スキャンのコストがかかるか、(削り続けた場合)バッファ
+    /// 全体を空にしてしまう。近くに改行が見つからない場合はバイトをそのまま
+    /// 残す — 多少不完全な先頭行の方が、真っ白な画面よりはるかにましである。
     pub(super) fn trim_raw_history(history: &mut VecDeque<u8>, cap: usize) {
         if history.len() <= cap {
             return;
@@ -159,7 +157,7 @@ impl PtyManager {
         for _ in 0..excess {
             history.pop_front();
         }
-        // Align to just after the next newline, if one is within the window.
+        // 探索範囲内に次の改行があれば、そのすぐ後ろに揃える。
         const ALIGN_SCAN_LIMIT: usize = 8 * 1024;
         if let Some(pos) = history
             .iter()
@@ -172,7 +170,7 @@ impl PtyManager {
         }
     }
 
-    /// Push a single line into the shared buffer, enforcing the current limit.
+    /// 現在の上限を守りながら、共有バッファへ1行を push する。
     fn push_line(buffer: &Arc<Mutex<Vec<String>>>, buffer_limit: &Arc<Mutex<usize>>, line: String) {
         let limit = {
             let l = buffer_limit.lock().unwrap_or_else(|e| e.into_inner());
@@ -182,7 +180,7 @@ impl PtyManager {
         let mut buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
         buf.push(line);
 
-        // Trim from the front if we exceed the limit.
+        // 上限を超えていたら先頭から削る。
         if buf.len() > limit {
             let excess = buf.len() - limit;
             buf.drain(..excess);
@@ -190,9 +188,9 @@ impl PtyManager {
     }
 }
 
-/// Count the number of Cursor Position Report requests (`CSI 6 n` = `\x1b[6n`)
-/// in a byte slice.  Programs send this to ask the terminal "where is the
-/// cursor?" and expect a `CSI row ; col R` response.
+/// バイトスライス中の Cursor Position Report リクエスト(CSI 6 n = \x1b[6n)
+/// の数を数える。プログラムは端末に「カーソルはどこにあるか」を尋ねるために
+/// これを送り、CSI row ; col R という応答を期待する。
 fn count_csi_dsr(bytes: &[u8]) -> usize {
     if bytes.len() < 4 {
         return 0;

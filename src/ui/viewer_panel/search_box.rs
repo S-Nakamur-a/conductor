@@ -1,4 +1,4 @@
-//! In-panel search input overlay for the viewer.
+//! ビューア内の検索入力オーバーレイ。
 
 use crate::theme::Theme;
 use ratatui::Frame;
@@ -31,7 +31,7 @@ pub(super) fn render_search_box(
     ));
     frame.render_widget(paragraph, search_area);
     if !suppress_cursor {
-        // +1 for the leading '/' character
+        // 先頭の '/' 文字の分だけ +1
         let cursor_x = search_area.x + 1 + query.display_width_before_cursor() as u16;
         if cursor_x < search_area.x + search_area.width {
             frame.set_cursor_position(Position::new(cursor_x, search_area.y));

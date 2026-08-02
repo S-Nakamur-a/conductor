@@ -1,17 +1,17 @@
-//! Unit and smoke tests for the `git_engine` module.
+//! git_engine モジュールのユニットテストとスモークテスト。
 
 use super::*;
 use std::env;
 use std::path::Path;
 
-/// Smoke test: open the repository that contains this very source file.
+/// スモークテスト: このソースファイル自身を含むリポジトリを開く。
 #[test]
 fn open_this_repo() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let _engine = GitEngine::open(Path::new(&manifest)).expect("should open repo");
 }
 
-/// Smoke test: list worktrees (should include at least the main one).
+/// スモークテスト: worktree を一覧する(少なくとも main が含まれるはず)。
 #[test]
 fn list_worktrees_includes_main() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -24,12 +24,12 @@ fn list_worktrees_includes_main() {
     );
 }
 
-/// `git init` した直後 (コミットが 1 つも無く HEAD が未生成) のリポジトリでも
+/// git init した直後 (コミットが 1 つも無く HEAD が未生成) のリポジトリでも
 /// メインの worktree を 1 件返すこと。
 ///
 /// ここが空を返すと、worktree を引いてからでないとファイルを開けない画面側は
 /// まるごと動かなくなる。HEAD を解決できないだけで一覧ごと落とさない、という
-/// のが `worktree_info_at` の設計 (head_oid は Option) なので、それを固定する。
+/// のが worktree_info_at の設計 (head_oid は Option) なので、それを固定する。
 #[test]
 fn list_worktrees_handles_repo_without_commits() {
     let tmp = tempfile::tempdir().expect("create temp dir");
@@ -53,18 +53,18 @@ fn list_worktrees_handles_repo_without_commits() {
     );
 }
 
-/// Verify that `main_worktree_path()` returns the correct path even when
-/// opened from a linked worktree.
+/// main_worktree_path() が linked worktree から開いた場合でも正しいパスを
+/// 返すことを確認する。
 #[test]
 fn main_worktree_path_from_linked_worktree() {
     use std::fs;
 
-    // Create a temporary bare-bones git repo and a linked worktree.
+    // 一時的な最小限の git リポジトリと linked worktree を作成する。
     let tmp = tempfile::tempdir().expect("create temp dir");
     let main_repo_path = tmp.path().join("main-repo");
     fs::create_dir_all(&main_repo_path).unwrap();
 
-    // Init the main repo and create an initial commit.
+    // main リポジトリを初期化し、最初のコミットを作成する。
     let repo = Repository::init(&main_repo_path).expect("init repo");
     {
         let mut index = repo.index().unwrap();
@@ -75,7 +75,7 @@ fn main_worktree_path_from_linked_worktree() {
             .unwrap();
     }
 
-    // Create a linked worktree.
+    // linked worktree を作成する。
     let wt_path = tmp.path().join("linked-wt");
     let head = repo.head().unwrap().peel_to_commit().unwrap();
     repo.branch("test-branch", &head, false).unwrap();
@@ -87,11 +87,12 @@ fn main_worktree_path_from_linked_worktree() {
     )
     .expect("create linked worktree");
 
-    // Open from the linked worktree and verify main_worktree_path().
+    // linked worktree から開いて main_worktree_path() を確認する。
     let engine = GitEngine::open(&wt_path).expect("open from linked worktree");
     let main_path = engine.main_worktree_path().expect("main_worktree_path()");
 
-    // Canonicalize both paths for comparison (temp dirs may use symlinks).
+    // 比較のため両方のパスを正規化する(一時ディレクトリはシンボリック
+    // リンクを使うことがある)。
     let expected = main_repo_path.canonicalize().unwrap();
     let actual = main_path.canonicalize().unwrap();
     assert_eq!(
@@ -100,13 +101,13 @@ fn main_worktree_path_from_linked_worktree() {
     );
 }
 
-/// Verify that `main_worktree_path()` works from the main repo too.
+/// main_worktree_path() が main リポジトリからでも動作することを確認する。
 #[test]
 fn main_worktree_path_from_main_repo() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let engine = GitEngine::open(Path::new(&manifest)).expect("should open repo");
     let main_path = engine.main_worktree_path().expect("main_worktree_path()");
-    // The main worktree path should exist and contain a .git directory.
+    // main worktree のパスは存在し、.git ディレクトリを含むはず。
     assert!(main_path.exists(), "main worktree path should exist");
     assert!(
         main_path.join(".git").exists(),
@@ -146,7 +147,7 @@ fn remote_url_to_https_base_ssh_prefix() {
     );
 }
 
-/// Helper: create a temporary git repo and return its engine.
+/// ヘルパー: 一時的な git リポジトリを作成し、その engine を返す。
 fn temp_repo_engine() -> (tempfile::TempDir, GitEngine) {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let repo = Repository::init(tmp.path()).expect("init repo");
@@ -162,7 +163,7 @@ fn temp_repo_engine() -> (tempfile::TempDir, GitEngine) {
     (tmp, engine)
 }
 
-/// Test that grab state round-trips correctly without a session ID.
+/// grab の状態がセッション ID なしで正しく往復することを確認するテスト。
 #[test]
 fn grab_state_roundtrip_without_session() {
     let (_tmp, engine) = temp_repo_engine();
@@ -187,7 +188,7 @@ fn grab_state_roundtrip_without_session() {
     engine.remove_grab_state().unwrap();
 }
 
-/// Test that grab state round-trips correctly with a session ID.
+/// grab の状態がセッション ID ありで正しく往復することを確認するテスト。
 #[test]
 fn grab_state_roundtrip_with_session() {
     let (_tmp, engine) = temp_repo_engine();
@@ -213,12 +214,13 @@ fn grab_state_roundtrip_with_session() {
     engine.remove_grab_state().unwrap();
 }
 
-/// Test backward compatibility: loading a 3-line wt-grab file (no session ID).
+/// 後方互換性のテスト: 3行の wt-grab ファイル(セッション ID なし)を
+/// 読み込む。
 #[test]
 fn grab_state_load_legacy_format() {
     let (_tmp, engine) = temp_repo_engine();
 
-    // Write a legacy 3-line file directly.
+    // レガシーな3行のファイルを直接書き込む。
     let grab_file = engine.git_common_dir().unwrap().join("wt-grab");
     std::fs::write(&grab_file, "my-branch\n/tmp/wt\nmy-branch__grab\n").unwrap();
 
@@ -234,17 +236,17 @@ fn grab_state_load_legacy_format() {
     engine.remove_grab_state().unwrap();
 }
 
-/// Create a bare "origin" repo with a `main` branch, plus a local repo
-/// that has it configured as `origin` and has fetched `main`. Returns
-/// `(origin_tmp, local_tmp, origin_repo, local_engine)` — `origin_repo`
-/// lets a test add more commits/branches to push into the "remote".
+/// main ブランチを持つ bare な "origin" リポジトリと、それを origin として
+/// 設定し main を fetch 済みのローカルリポジトリを作成する。返り値は
+/// (origin_tmp, local_tmp, origin_repo, local_engine) — origin_repo を
+/// 使うと、テストから "remote" へ push するコミットやブランチを追加できる。
 fn temp_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir, Repository, GitEngine) {
     let origin_tmp = tempfile::tempdir().expect("create origin temp dir");
     let origin_repo = Repository::init_bare(origin_tmp.path()).expect("init bare origin");
     let sig = git2::Signature::now("Test", "test@test.com").unwrap();
     {
-        // A bare repo has no index/workdir, so build the (empty) tree
-        // directly rather than going through Repository::index().
+        // bare リポジトリには index/workdir が無いので、Repository::index()
+        // を経由せず直接(空の) tree を構築する。
         let tree_oid = origin_repo.treebuilder(None).unwrap().write().unwrap();
         let tree = origin_repo.find_tree(tree_oid).unwrap();
         origin_repo
@@ -254,9 +256,9 @@ fn temp_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir, Repository,
 
     let local_tmp = tempfile::tempdir().expect("create local temp dir");
     let local_repo = Repository::init(local_tmp.path()).expect("init local repo");
-    // A fresh repo's HEAD points at (an unborn) refs/heads/main, which
-    // git fetch treats as "checked out" and refuses to fetch into.
-    // Point HEAD elsewhere first so fetching `main` directly is allowed.
+    // 新規リポジトリの HEAD は(unborn の)refs/heads/main を指しており、
+    // git fetch はこれを "checked out" とみなして fetch を拒否する。
+    // main を直接 fetch できるよう、先に HEAD を別の場所へ移しておく。
     local_repo.set_head("refs/heads/scratch").unwrap();
     local_repo
         .remote("origin", &origin_tmp.path().display().to_string())
@@ -267,8 +269,9 @@ fn temp_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir, Repository,
     (origin_tmp, local_tmp, origin_repo, engine)
 }
 
-/// Add a commit to `refs/heads/<branch_name>` in `repo`, parented on
-/// `main`'s current tip. Used to simulate a PR head landing on "origin".
+/// repo の refs/heads/<branch_name> へ、main の現在の tip を親として
+/// コミットを追加する。PR の head が "origin" に着地した状態を再現する
+/// のに使う。
 fn commit_on_branch(repo: &Repository, branch_name: &str, message: &str) {
     let sig = git2::Signature::now("Test", "test@test.com").unwrap();
     let parent = repo
@@ -365,8 +368,8 @@ fn create_worktree_for_existing_branch_rejects_existing_dir() {
 
 #[test]
 fn ensure_base_ref_available_creates_missing_local_branch() {
-    // A local repo with `origin` configured but that hasn't fetched
-    // `main` yet, to exercise the "no local branch" path.
+    // origin は設定済みだが main をまだ fetch していないローカル
+    // リポジトリ。"ローカルブランチが無い" 経路を確認するために使う。
     let origin_tmp = tempfile::tempdir().unwrap();
     let origin_repo = Repository::init_bare(origin_tmp.path()).unwrap();
     {
@@ -380,7 +383,7 @@ fn ensure_base_ref_available_creates_missing_local_branch() {
 
     let local_tmp = tempfile::tempdir().unwrap();
     let local_repo = Repository::init(local_tmp.path()).unwrap();
-    // See temp_repo_with_origin() for why HEAD must move off main first.
+    // HEAD を先に main から移す理由は temp_repo_with_origin() を参照。
     local_repo.set_head("refs/heads/scratch").unwrap();
     local_repo
         .remote("origin", &origin_tmp.path().display().to_string())
@@ -414,7 +417,8 @@ fn ensure_base_ref_available_fast_forwards_existing_local_branch() {
         .unwrap()
         .id();
 
-    // Origin's main moves forward after the local clone already has it.
+    // ローカルのクローンがすでに main を持った後で、origin の main が
+    // さらに先へ進む。
     commit_on_branch(&origin_repo, "main", "a later commit on main");
     let _ = origin_tmp;
 
@@ -436,7 +440,8 @@ fn ensure_base_ref_available_fast_forwards_existing_local_branch() {
 fn ensure_base_ref_available_leaves_diverged_branch_untouched() {
     let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
 
-    // Diverge local main from origin's main with a local-only commit.
+    // ローカルのみのコミットで、ローカルの main を origin の main から
+    // 分岐させる。
     let sig = git2::Signature::now("Test", "test@test.com").unwrap();
     let parent = engine
         .repo
@@ -457,7 +462,7 @@ fn ensure_base_ref_available_leaves_diverged_branch_untouched() {
         )
         .unwrap();
 
-    // Origin also moves forward independently — a true divergence.
+    // origin も独立してさらに進む — 真の分岐になる。
     commit_on_branch(&origin_repo, "main", "origin-only commit");
 
     engine.ensure_base_ref_available("main").unwrap();

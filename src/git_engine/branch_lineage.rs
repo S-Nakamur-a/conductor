@@ -1,21 +1,25 @@
-//! Parent/derived branch detection (via reflog and merge-base heuristics)
-//! and building a GitHub/GitLab pull-request URL for a branch.
+//! reflog と merge-base ヒューリスティックによる親ブランチ・派生ブランチの
+//! 検出と、ブランチに対する GitHub/GitLab のプルリクエスト URL の構築。
 
 use super::GitEngine;
 
 impl GitEngine {
-    // ── PR URL ───────────────────────────────────────────────────
+    // PR URL
 
-    /// Build a GitHub/GitLab pull-request URL for the given branch.
+    /// 指定したブランチの GitHub/GitLab プルリクエスト URL を構築する。
     ///
-    /// Reads the `origin` remote URL, converts it to an HTTPS base, and
-    /// appends the platform-specific path for creating a new pull request.
-    /// Returns `None` if the remote URL cannot be parsed.
-    /// Detect the parent branch using reflog, falling back to merge-base heuristic.
+    /// origin リモートの URL を読み、HTTPS のベース URL に変換し、新規
+    /// プルリクエスト作成用のプラットフォーム別パスを付加する。リモート URL
+    /// をパースできない場合は None を返す。
+    /// reflog を使って親ブランチを検出し、失敗したら merge-base ヒューリス
+    /// ティックにフォールバックする。
     ///
-    /// 1. Read the reflog for `branch` and find the creation commit (`id_new` of the oldest entry).
-    /// 2. For each candidate, check if the creation commit is an ancestor and pick the closest one.
-    /// 3. If reflog is unavailable, fall back to merge-base distance from `main_branch`.
+    /// 1. branch の reflog を読み、作成時のコミット(最も古いエントリの
+    ///    id_new)を見つける。
+    /// 2. 各候補について、その作成コミットが祖先になっているか確認し、
+    ///    最も近い候補を選ぶ。
+    /// 3. reflog が使えない場合は main_branch からの merge-base 距離に
+    ///    フォールバックする。
     pub fn detect_parent_branch(
         &self,
         branch: &str,
@@ -33,18 +37,18 @@ impl GitEngine {
             .get()
             .target()?;
 
-        // Try reflog-based detection first.
+        // まず reflog ベースの検出を試す。
         if let Some(parent) =
             self.detect_parent_via_reflog(branch, branch_oid, main_branch, candidates)
         {
             return Some(parent);
         }
 
-        // Fallback: find the candidate whose merge-base is closest to branch HEAD.
+        // フォールバック: branch HEAD への merge-base が最も近い候補を探す。
         self.detect_parent_via_merge_base(branch, branch_oid, main_branch, candidates)
     }
 
-    /// Reflog-based parent detection: find which candidate contains the branch creation point.
+    /// reflog ベースの親検出: どの候補がブランチ作成点を含むかを探す。
     fn detect_parent_via_reflog(
         &self,
         branch: &str,
@@ -58,11 +62,11 @@ impl GitEngine {
             return None;
         }
 
-        // The oldest entry (last index) records when the branch was created.
+        // 最も古いエントリ(最後のインデックス)がブランチ作成時を記録している。
         let oldest = reflog.get(reflog.len() - 1)?;
         let creation_oid = oldest.id_new();
 
-        // Build candidate list: provided candidates + main branch.
+        // 候補リストを構築する: 渡された候補 + main ブランチ。
         let all_candidates: Vec<&str> = candidates
             .iter()
             .map(|s| s.as_str())
@@ -75,7 +79,7 @@ impl GitEngine {
         for &candidate_name in &all_candidates {
             let candidate_oid = self.resolve_branch_oid(candidate_name)?;
 
-            // Check if the creation commit is an ancestor of the candidate.
+            // 作成コミットが候補の祖先になっているか確認する。
             let is_ancestor = self
                 .repo
                 .graph_descendant_of(candidate_oid, creation_oid)
@@ -86,7 +90,7 @@ impl GitEngine {
                 continue;
             }
 
-            // Compute distance from creation_oid to candidate HEAD.
+            // creation_oid から候補の HEAD までの距離を計算する。
             let (ahead, _) = self
                 .repo
                 .graph_ahead_behind(candidate_oid, creation_oid)
@@ -97,12 +101,12 @@ impl GitEngine {
             }
         }
 
-        // Also check: is the creation commit actually on the branch itself only?
-        // If creation_oid == branch_oid and best is main with distance 0, that's fine.
+        // 補足: 作成コミットが実はブランチ自身にしか存在しないケースもある。
+        // creation_oid == branch_oid で best が距離0の main であれば問題ない。
         best.map(|(name, _)| name)
     }
 
-    /// Merge-base fallback: find closest candidate by merge-base distance.
+    /// merge-base によるフォールバック: merge-base 距離で最も近い候補を探す。
     fn detect_parent_via_merge_base(
         &self,
         branch: &str,
@@ -130,7 +134,7 @@ impl GitEngine {
                 Err(_) => continue,
             };
 
-            // Distance from merge-base to branch HEAD (how many commits since branching).
+            // merge-base から branch HEAD までの距離(分岐後のコミット数)。
             let (ahead, _) = self
                 .repo
                 .graph_ahead_behind(branch_oid, merge_base)
@@ -144,23 +148,24 @@ impl GitEngine {
         best.map(|(name, _)| name)
     }
 
-    /// Resolve a branch name to its OID, trying local first then origin remote.
+    /// ブランチ名を OID に解決する。まずローカルブランチを試し、次に
+    /// origin リモートを試す。
     fn resolve_branch_oid(&self, name: &str) -> Option<git2::Oid> {
-        // Try local branch first.
+        // まずローカルブランチを試す。
         if let Ok(branch) = self.repo.find_branch(name, git2::BranchType::Local)
             && let Some(oid) = branch.get().target()
         {
             return Some(oid);
         }
-        // Try origin/<name>.
+        // origin/<name> を試す。
         let remote_ref = format!("refs/remotes/origin/{name}");
         self.repo.refname_to_id(&remote_ref).ok()
     }
 
-    /// Find branches (from `candidates`) that were forked from the given branch.
+    /// 指定したブランチから分岐した(candidates の中の)ブランチを探す。
     ///
-    /// For each candidate, calls `detect_parent_branch` and checks if the result
-    /// is the current branch.
+    /// 各候補について detect_parent_branch を呼び、結果が現在のブランチ
+    /// かどうかを確認する。
     pub fn find_derived_branches(
         &self,
         branch: &str,
@@ -173,8 +178,8 @@ impl GitEngine {
             if candidate == branch {
                 continue;
             }
-            // Build candidates for the inner detect_parent_branch call:
-            // include the current branch + other candidates (excluding the candidate itself).
+            // 内側の detect_parent_branch 呼び出し用の候補を構築する:
+            // 現在のブランチ + 他の候補(候補自身は除く)を含める。
             let inner_candidates: Vec<String> = candidates
                 .iter()
                 .filter(|c| c.as_str() != candidate)
@@ -197,37 +202,37 @@ impl GitEngine {
         let raw_url = remote.url()?;
         let base = Self::remote_url_to_https_base(raw_url)?;
 
-        // GitHub: /compare/<branch>  (shows existing PR or create form)
+        // GitHub: /compare/<branch>  (既存の PR があればそれを、なければ作成フォームを表示)
         // GitLab: /-/merge_requests/new?merge_request[source_branch]=<branch>
         if base.contains("gitlab") {
             Some(format!(
                 "{base}/-/merge_requests/new?merge_request[source_branch]={branch}",
             ))
         } else {
-            // Default to GitHub-style.
+            // デフォルトは GitHub 形式。
             Some(format!("{base}/pull/{branch}"))
         }
     }
 
-    /// Convert a git remote URL to an HTTPS base URL (no trailing slash).
+    /// git のリモート URL を HTTPS のベース URL(末尾スラッシュなし)に変換する。
     ///
-    /// Handles SSH (`git@host:owner/repo.git`) and HTTPS
-    /// (`https://host/owner/repo.git`) formats.
+    /// SSH 形式(git@host:owner/repo.git)と HTTPS 形式
+    /// (https://host/owner/repo.git)を扱う。
     ///
-    /// `pub(crate)` (rather than private) because the unit tests in
-    /// `tests.rs` exercise it directly; that submodule sits outside this
-    /// one's privacy boundary.
+    /// 非公開ではなく pub(crate) にしているのは、tests.rs のユニット
+    /// テストがこの関数を直接呼ぶため。そのサブモジュールはこのモジュールの
+    /// プライバシー境界の外にある。
     pub(crate) fn remote_url_to_https_base(url: &str) -> Option<String> {
         let url = url.trim();
         if url.starts_with("git@") || url.starts_with("ssh://") {
             // git@github.com:owner/repo.git  →  https://github.com/owner/repo
-            // ssh://git@github.com/owner/repo.git
+            // ssh://git@github.com/owner/repo.git も同様。
             let without_prefix = url
                 .strip_prefix("ssh://")
                 .unwrap_or(url)
                 .strip_prefix("git@")
                 .unwrap_or(url);
-            // "github.com:owner/repo.git" or "github.com/owner/repo.git"
+            // "github.com:owner/repo.git" または "github.com/owner/repo.git"
             let normalised = without_prefix.replace(':', "/");
             let trimmed = normalised.trim_end_matches(".git");
             Some(format!("https://{trimmed}"))

@@ -1,5 +1,5 @@
-//! Overlays for Claude Code session history: the saved-history browser and
-//! the resume-session picker.
+//! Claude Code セッション履歴のオーバーレイ: 保存済み履歴ブラウザと
+//! セッション再開ピッカー。
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -10,7 +10,7 @@ use crate::event::clipboard_paste;
 
 use super::filterable_overlay_list_nav;
 
-// ── Overlay: session history ────────────────────────────────────────────
+// オーバーレイ: セッション履歴
 
 pub(in crate::event) fn handle_history_key(app: &mut App, key: KeyEvent) {
     if app.overlays.history.search_active {
@@ -59,7 +59,7 @@ pub(in crate::event) fn handle_history_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Overlay: resume Claude session ──────────────────────────────────────
+// オーバーレイ: Claude セッション再開
 
 pub(in crate::event) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
     let filtered_count = app.filtered_resume_sessions().len();
@@ -112,7 +112,7 @@ pub(in crate::event) fn handle_resume_session_key(app: &mut App, key: KeyEvent) 
             app.overlays.resume_session.filter.clear();
         }
         KeyCode::Tab => {
-            // Toggle between current-repo-only and all-projects mode.
+            // 現在のリポジトリのみ表示するモードと全プロジェクト表示モードを切り替える。
             app.overlays.resume_session.all_projects = !app.overlays.resume_session.all_projects;
             app.load_resume_sessions();
         }

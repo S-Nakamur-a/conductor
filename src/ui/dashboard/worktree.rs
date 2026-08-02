@@ -1,5 +1,5 @@
-//! Worktree-creation overlays: name input, base-branch picker, deletion
-//! confirmation, and the Smart Worktree multi-line description input.
+//! worktree 作成のオーバーレイ群: 名前入力、ベースブランチのピッカー、削除確認、
+//! Smart Worktree の複数行の説明入力。
 
 use super::input::{format_input_with_cursor, set_cursor_for_input, wrap_with_cursor};
 use crate::app::App;
@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Render the worktree name input overlay.
+/// worktree 名の入力オーバーレイを描画する。
 pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_height = 3_u16;
@@ -34,7 +34,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     set_cursor_for_input(frame, inner, &app.worktree_mgr.input_buffer);
 }
 
-/// Render the base branch input overlay (step 2 of worktree creation).
+/// ベースブランチの入力オーバーレイ（worktree 作成のステップ2）を描画する。
 pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
@@ -45,10 +45,10 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
-    // Split into filter bar + list.
+    // フィルタバーと一覧に分割する。
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).split(popup_area);
 
-    // Filter bar.
+    // フィルタバー。
     let title = format!(
         " Base Branch for '{}' (type to filter, Enter: select, Esc: cancel) ",
         app.worktree_mgr.pending_branch,
@@ -66,7 +66,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
     frame.render_widget(filter_para, filter_inner);
     set_cursor_for_input(frame, filter_inner, &app.worktree_mgr.base_branch_filter);
 
-    // Branch list.
+    // ブランチ一覧。
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));
@@ -115,7 +115,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// Render the branch deletion confirmation overlay.
+/// ブランチ削除確認オーバーレイを描画する。
 pub fn render_delete_branch_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_height = 3_u16;
@@ -143,16 +143,16 @@ pub fn render_delete_branch_confirm_overlay(frame: &mut Frame, area: Rect, app: 
     }
 }
 
-// ── Smart Worktree overlays ──────────────────────────────────────────
+// Smart Worktree のオーバーレイ
 
-/// Render the Smart Worktree description input overlay (multi-line).
+/// Smart Worktree の説明入力オーバーレイ（複数行）を描画する。
 pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 80_u16.min(area.width.saturating_sub(4));
-    let text_width = popup_width.saturating_sub(2).max(1); // inside L/R borders
+    let text_width = popup_width.saturating_sub(2).max(1); // 左右の枠線の内側
 
-    // Embed a block-cursor glyph so its wrapped position is computed exactly
-    // like the surrounding text.
+    // ブロックカーソルの記号を埋め込み、その折り返し後の位置が周囲のテキストと
+    // 完全に同じ計算で求まるようにする。
     let display = format!(
         "{}\u{2588}{}",
         app.worktree_mgr
@@ -165,11 +165,11 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     let (rows, cur_row, cur_col) =
         wrap_with_cursor(&display, text_width as usize, '\u{2588}');
 
-    // Grow the popup with the content: borders (2) + text rows + hint (1),
-    // clamped to what fits on screen. A scroll offset keeps the cursor visible
-    // once the text outgrows the available height.
+    // ポップアップは内容に合わせて拡張する: 枠線(2) + テキスト行 + ヒント(1)、
+    // ただし画面に収まる範囲にクランプする。テキストが表示可能な高さを超えたら、
+    // スクロールオフセットでカーソルを見える位置に保つ。
     let max_height = area.height.saturating_sub(4).max(4);
-    let desired_height = (rows.len() as u16).saturating_add(3); // 2 borders + 1 hint
+    let desired_height = (rows.len() as u16).saturating_add(3); // 枠線2 + ヒント1
     let popup_height = desired_height.clamp(6, max_height);
     let text_area_height = popup_height.saturating_sub(3).max(1);
 
@@ -189,10 +189,10 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    // Split: text area + help hint
+    // 分割: テキストエリア + ヘルプヒント
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
-    // Render only the visible (scrolled) slice of pre-wrapped rows.
+    // 事前に折り返し済みの行のうち、見えている（スクロール後の）部分だけを描画する。
     let visible: Vec<Line> = rows
         .iter()
         .skip(scroll as usize)
@@ -202,7 +202,7 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
     let paragraph = Paragraph::new(visible).style(Style::default().fg(theme.fg));
     frame.render_widget(paragraph, chunks[0]);
 
-    // Place the hardware cursor at the glyph's visual position (within view).
+    // ハードウェアカーソルを、記号の見た目上の位置（表示範囲内）に配置する。
     let cursor_screen_row = cur_row as u16;
     if cursor_screen_row >= scroll {
         let cursor_x = chunks[0].x + cur_col as u16;
@@ -212,7 +212,7 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
         }
     }
 
-    // Help hint.
+    // ヘルプヒント。
     let hint = Line::from(vec![
         Span::styled(
             "Shift+Enter",

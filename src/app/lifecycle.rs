@@ -1,5 +1,5 @@
-//! `App` construction: loads config, opens the review store, seeds syntax
-//! highlighting, and restores the previously selected worktree/view/grab state.
+//! App の構築: config を読み込み、review store を開き、シンタックス
+//! ハイライトの種を仕込み、以前選択していた worktree/view/grab の状態を復元する。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -24,16 +24,17 @@ use super::types::{BackgroundOps, DirtyPanels};
 use super::{App, GrabbedBranch, StatusLevel};
 
 impl App {
-    /// Create a new `App` rooted at the given repository path.
+    /// 与えられたリポジトリパスを根とする新しい App を作成する。
     pub fn new(repo_path: PathBuf) -> Self {
         let config = config::Config::load().unwrap_or_default();
-        // Snapshot the configured terminal split before `config` is moved into
-        // the struct; this seeds the runtime-adjustable `terminal_split_pct`.
+        // config が構造体へ move される前に、設定された terminal split を
+        // スナップショットしておく。これが実行時に調整可能な
+        // terminal_split_pct の初期値になる。
         let config_terminal_split_pct = config.layout.terminal_split_pct;
         let view_mode = DiffViewMode::from(config.diff.default_view);
         let diff_state = DiffState::new(&config.general.main_branch, view_mode);
 
-        // Open the review store database.
+        // review store のデータベースを開く。
         let db = review_store::db_path(&repo_path);
         let review_store = match ReviewStore::open(&db) {
             Ok(store) => Some(store),
@@ -43,12 +44,12 @@ impl App {
             }
         };
 
-        // Initialize syntect syntax set and theme.
+        // syntect のシンタックスセットとテーマを初期化する。
         let syntax_set = two_face::syntax::extra_newlines();
         let ts = ThemeSet::load_defaults();
         let syntect_theme = config::syntect_theme_for(&config.viewer, &ts);
 
-        // Build the list of known repositories: current repo first, then extras from config.
+        // 既知リポジトリの一覧を作る: まず現在のリポジトリ、続けて config の追加分。
         let mut repo_list = vec![repo_path.clone()];
         for extra in &config.general.repos {
             if extra != &repo_path && !repo_list.contains(extra) {
@@ -56,7 +57,7 @@ impl App {
             }
         }
 
-        // Initialize gamification stats session.
+        // ゲーミフィケーション統計のセッションを初期化する。
         let stats_session_id = review_store
             .as_ref()
             .and_then(|store| store.start_stats_session().ok());
@@ -73,7 +74,7 @@ impl App {
         let theme = super::build_theme(&theme_name, high_contrast);
         let auto_resume = config.general.auto_resume;
 
-        // Derive the main repo display name from the main worktree path.
+        // メインリポジトリの表示名を、メイン worktree のパスから導出する。
         let main_repo_name = git_engine::GitEngine::open(&repo_path)
             .and_then(|engine| engine.main_worktree_path())
             .ok()
@@ -92,7 +93,7 @@ impl App {
             dirty: DirtyPanels::all(),
             focus: Focus::Explorer,
             focus_prev: Focus::Explorer,
-            // Backdate so no border transition plays on the first frame.
+            // 最初のフレームで枠線の遷移演出が再生されないよう時刻を過去にずらす。
             focus_changed_at: std::time::Instant::now()
                 - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
             overlays: OverlayManager::default(),
@@ -165,9 +166,9 @@ impl App {
             reflow: super::reflow::ReflowView::default(),
         };
 
-        // Surface keybind config problems: a TUI hides stdout, so a silent
-        // log::warn! would never reach the user whose customizations were
-        // dropped. Log each, flash one consolidated line on startup.
+        // キーバインド設定の問題を表に出す: TUI は stdout を隠してしまうので、
+        // 黙って log::warn! するだけではカスタマイズが無視されたユーザに
+        // 決して届かない。個々をログに残しつつ、起動時にまとめて1行表示する。
         if !keybind_warnings.is_empty() {
             for w in &keybind_warnings {
                 log::warn!("keybind config: {w}");
@@ -183,20 +184,22 @@ impl App {
         }
 
         app.refresh_worktrees();
-        // Restore the previously selected worktree + its open file/scroll so a
-        // restart (e.g. after an update) lands the user where they left off.
+        // 以前選択していた worktree とその開いていたファイル/スクロール位置を
+        // 復元する。これにより(アップデート後などの)再起動でユーザが
+        // 元いた場所に戻れる。
         app.restore_selected_worktree_and_view();
         app.refresh_reviews();
-        // Seed the Explorer's file tree and the "Changed files" diff for the
-        // restored worktree right away. Without this the diff list stays empty
-        // on the first frame and only fills in once the 3s `worktree_poll`
-        // staleness check (or a worktree-bar click) fires — the panel appeared
-        // to "not show up" until the user clicked the bar. Mirrors the
-        // refresh_viewer + refresh_diff pairing in `check_diff_viewer_staleness`.
+        // 復元した worktree について Explorer のファイルツリーと
+        // 「変更されたファイル」diff をすぐに仕込んでおく。これをしないと、
+        // 3秒ごとの worktree_poll の陳腐化チェック(または worktree バーの
+        // クリック)が発火するまで最初のフレームで diff 一覧が空のままになり、
+        // ユーザにはバーをクリックするまでパネルが「表示されない」ように
+        // 見えてしまう。check_diff_viewer_staleness の
+        // refresh_viewer + refresh_diff の組み合わせと同じ構図。
         app.refresh_viewer();
         app.refresh_diff();
 
-        // Restore grab state from $git_common_dir/wt-grab if it exists.
+        // $git_common_dir/wt-grab が存在すれば grab 状態を復元する。
         if let Ok(engine) = git_engine::GitEngine::open(&app.repo.path) {
             match engine.load_grab_state() {
                 Ok(Some((branch, source_worktree, _stash_branch, claude_session_id))) => {

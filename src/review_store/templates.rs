@@ -1,4 +1,4 @@
-//! CRUD for reusable comment templates (the `comment_templates` table).
+//! 再利用可能なコメントテンプレート（comment_templates テーブル）の CRUD。
 
 use anyhow::Result;
 use rusqlite::params;
@@ -7,7 +7,7 @@ use super::ReviewStore;
 use super::model::{CommentKind, CommentTemplate};
 
 impl ReviewStore {
-    /// Return all comment templates, ordered by creation time.
+    /// 全コメントテンプレートを作成日時順で返す。
     pub fn list_templates(&self) -> Result<Vec<CommentTemplate>> {
         let mut stmt = self
             .conn
@@ -41,7 +41,7 @@ impl ReviewStore {
         Ok(out)
     }
 
-    /// Delete a comment template by id.
+    /// id を指定してコメントテンプレートを削除する。
     pub fn delete_template(&self, id: &str) -> Result<()> {
         let changed = self
             .conn

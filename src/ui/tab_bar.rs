@@ -1,18 +1,17 @@
-//! Shared scrolling tab bar for the Claude / Shell terminal panels.
+//! Claude / Shell ターミナルパネルで共有する、スクロール可能なタブバー。
 //!
-//! The bare `ratatui::widgets::Tabs` widget renders every tab left-to-right and
-//! silently clips whatever runs past the right edge — so with enough sessions
-//! the all-important `[+]` "new session" button disappears. This module renders
-//! a tab bar where:
+//! 素の ratatui::widgets::Tabs ウィジェットはすべてのタブを左から右へ描画し、
+//! 右端をはみ出した分は黙って切り捨ててしまう — そのためセッション数が増えると
+//! 最重要な [+]（新規セッション）ボタンが消えてしまう。このモジュールが描画する
+//! タブバーでは:
 //!
-//! * the `[+]` (new) and expand toggle are **pinned** to the right edge and are
-//!   therefore always visible and always clickable, and
-//! * the session tabs scroll horizontally in the space that remains, with
-//!   `‹N` / `N›` overflow hints (mirroring `worktree_bar`'s strip), the active
-//!   tab auto-revealed.
+//! * [+]（新規）と展開トグルは右端に固定され、常に表示され常にクリックできる。
+//! * セッションタブは残りのスペースで横スクロールし、‹N / N› のオーバーフロー
+//!   ヒント（worktree_bar のストリップと同じ考え方）を表示し、アクティブな
+//!   タブは自動的に見える位置まで移動する。
 //!
-//! Rendering records clickable regions (absolute screen columns) so mouse
-//! handling consults the exact same geometry instead of re-deriving widths.
+//! 描画時にクリック可能な領域（絶対スクリーン列）を記録するので、マウス処理は
+//! 幅を再計算するのではなく、まったく同じジオメトリを参照する。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -28,15 +27,15 @@ fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
 }
 
-/// Truncate `s` to at most `max_w` display columns, appending `…` when cut.
-/// Width-aware so it never splits a wide (CJK) glyph across the boundary.
+/// s を最大 max_w 表示カラムまで切り詰め、切られた場合は … を付加する。
+/// 幅を意識しているので、幅広（CJK）グリフを境界で分断することはない。
 fn truncate_to_width(s: &str, max_w: u16) -> String {
     use unicode_width::UnicodeWidthChar;
     let max_w = max_w as usize;
     if UnicodeWidthStr::width(s) <= max_w {
         return s.to_string();
     }
-    let budget = max_w.saturating_sub(1); // reserve a column for the ellipsis
+    let budget = max_w.saturating_sub(1); // 省略記号用に1カラムを確保する
     let mut out = String::new();
     let mut acc = 0usize;
     for ch in s.chars() {
@@ -51,25 +50,25 @@ fn truncate_to_width(s: &str, max_w: u16) -> String {
     out
 }
 
-/// What a clickable region of the tab bar does.
+/// タブバーのクリック可能な領域が何をするか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabAction {
-    /// Switch to the session with this global PTY index.
+    /// このグローバル PTY インデックスのセッションへ切り替える。
     Select(usize),
-    /// Close the session with this global PTY index.
+    /// このグローバル PTY インデックスのセッションを閉じる。
     Close(usize),
-    /// Spawn a new session.
+    /// 新しいセッションを起動する。
     Add,
-    /// Toggle panel expansion.
+    /// パネルの展開状態を切り替える。
     Expand,
-    /// Scroll the tab strip left (reveal tabs hidden off the left edge).
+    /// タブストリップを左へスクロールする（左端に隠れたタブを表示する）。
     ScrollLeft,
-    /// Scroll the tab strip right (reveal tabs hidden off the right edge).
+    /// タブストリップを右へスクロールする（右端に隠れたタブを表示する）。
     ScrollRight,
 }
 
-/// A clickable region of the tab bar, in absolute screen columns
-/// (`x0` inclusive, `x1` exclusive) on the bar's single row.
+/// タブバーのクリック可能な領域。バーの1行における絶対スクリーン列
+/// （x0 は含む、x1 は含まない）で表す。
 #[derive(Clone, Copy, Debug)]
 pub struct TabHit {
     pub x0: u16,
@@ -77,39 +76,39 @@ pub struct TabHit {
     pub action: TabAction,
 }
 
-/// Determine which `TabAction` the given absolute screen column falls on,
-/// from the hit regions recorded by the bar's last `render` call. Row-agnostic
-/// — callers confirm the mouse is actually on the tab bar's row themselves
-/// before calling this (both click handling and, since S7, hover tracking).
+/// 与えられた絶対スクリーン列がどの TabAction に該当するかを、バーの直近の
+/// render 呼び出しで記録されたヒット領域から判定する。行には関知しない
+/// — マウスが実際にタブバーの行にあるかどうかは呼び出し側が自分で確認してから
+/// 呼ぶこと（クリック処理と、hover 追跡機能が入ってからはそちらも同様）。
 pub fn hit_at(hits: &[TabHit], col: u16) -> Option<TabAction> {
     hits.iter()
         .find(|h| col >= h.x0 && col < h.x1)
         .map(|h| h.action)
 }
 
-/// One session tab to render.
+/// 描画する1つのセッションタブ。
 pub struct TabItem {
-    /// Global PTY session index (what `Select`/`Close` carry).
+    /// グローバル PTY セッションインデックス（Select/Close が運ぶ値）。
     pub global_idx: usize,
-    /// Pre-formatted label, e.g. `"[CC:🎹]"`.
+    /// 整形済みのラベル。例: "[CC:🎹]"。
     pub label: String,
-    /// Whether this is the active session.
+    /// これがアクティブなセッションかどうか。
     pub is_active: bool,
-    /// Base style for the label of an *inactive* tab (waiting pulse, etc.).
-    /// Ignored for the active tab, which uses the strong selection fill.
+    /// *非アクティブな* タブのラベルの基本スタイル（待機中のパルスなど）。
+    /// アクティブなタブでは無視され、代わりに強い選択色の塗りつぶしが使われる。
     pub label_style: Style,
 }
 
-/// Render the tab bar and return its clickable regions plus the resolved scroll
-/// position (the index of the first visible tab, to be stored back into state).
+/// タブバーを描画し、そのクリック可能な領域と、解決後のスクロール位置
+/// （最初に表示されているタブのインデックス。state へ書き戻す用）を返す。
 ///
-/// `scroll` is the desired first-visible tab index; `reveal` pans the window the
-/// minimum needed to keep the active tab visible (set it the frame after the
-/// active session changes). `hover` is the action currently under the mouse
-/// (tracked by the caller from `Moved` events against the previous frame's
-/// hits); only `Close` hover is drawn (a `theme.gutter_hover_bg` background on
-/// the `[x]`) — no "pressed" style, since a mouse-down/up is only 1-2 frames
-/// and not worth the engineering cost (D4 revised).
+/// scroll は最初に表示させたいタブのインデックス。reveal はアクティブな
+/// タブを表示し続けるのに必要な最小限だけウィンドウをパンする
+/// （アクティブセッションが変わった次のフレームでセットする）。hover は
+/// 現在マウスの下にあるアクション（呼び出し側が前フレームのヒット領域に対する
+/// Moved イベントから追跡する）。hover が描画に反映されるのは Close だけで
+/// （[x] に theme.gutter_hover_bg の背景を付ける）、「押下」スタイルは実装しない
+/// — mouse-down/up はせいぜい1〜2フレームしか続かず、実装コストに見合わないため。
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
@@ -128,21 +127,21 @@ pub fn render(
 
     let max_x = area.x + area.width;
 
-    // ── Pinned right cluster: [+] and the expand toggle, always visible. ──
+    // 右端固定クラスタ: [+] と展開トグル、常に表示される。
     let add = "[+]";
     let (expand_label, expand_color) = if is_expanded {
         ("[>=<]", theme.border_focused)
     } else {
         ("[<=>]", theme.border_unfocused)
     };
-    // " [+] [<=>]" — leading space separates the cluster from the tabs.
+    // " [+] [<=>]" — 先頭のスペースでクラスタとタブを分離する。
     let right_w = 1 + w(add) + 1 + w(expand_label);
     let tabs_region_w = area.width.saturating_sub(right_w);
 
     let mut spans: Vec<Span> = Vec::new();
     let mut x = area.x;
 
-    // Active tab index (for reveal) and per-tab slot widths.
+    // アクティブなタブのインデックス（reveal 用）と、タブごとのスロット幅。
     let selected = items.iter().position(|t| t.is_active).unwrap_or(0);
     let close = " [x]";
     let close_w = w(close);
@@ -151,10 +150,11 @@ pub fn render(
     let total = items.len();
     let hint_reserve_per_side = 4u16; // "‹NN " / " NN›"
 
-    // Cap each label so even one very long session name can't overrun the
-    // scroll region and shove the pinned [+]/expand cluster off-screen — that
-    // was the "long name hides the new/close buttons" bug. A sane upper bound
-    // also keeps several tabs visible at once; truncated labels end with "…".
+    // 1つでも非常に長いセッション名がスクロール領域をはみ出して固定された
+    // [+]/expand クラスタを画面外へ押し出さないよう、各ラベルに上限を設ける
+    // — これが「長い名前が new/close ボタンを隠す」バグの原因だった。妥当な
+    // 上限を設けることで複数のタブを同時に表示できるようにもなる。切り詰められた
+    // ラベルは末尾に "…" が付く。
     let max_label_w = tabs_region_w
         .saturating_sub(close_w + sep_w + hint_reserve_per_side * 2)
         .clamp(4, 28);
@@ -164,7 +164,7 @@ pub fn render(
         .collect();
     let slots: Vec<u16> = labels.iter().map(|l| w(l) + close_w).collect();
 
-    // Does everything fit without hints? If so, skip the hint reserve.
+    // ヒントなしですべて収まるか? 収まるならヒント用の予約分を省く。
     let all_fit = visible_window(&slots, sep_w, tabs_region_w, 0, 0, false).1 == total;
     let avail = if all_fit {
         tabs_region_w
@@ -177,7 +177,7 @@ pub fn render(
         visible_window(&slots, sep_w, avail, scroll, selected, reveal)
     };
 
-    // Left overflow hint (clickable: scroll left).
+    // 左側のオーバーフローヒント（クリックすると左へスクロール）。
     if start > 0 {
         let hint = format!("\u{2039}{} ", start);
         let hw = w(&hint);
@@ -197,9 +197,10 @@ pub fn render(
             x += sep_w;
         }
         let label_w = w(label);
-        // Both tabs' [x] are `theme.error` (D4 revised): a single click now
-        // closes even an inactive tab (S8), so a gray "inactive" button that
-        // silently kills a running session must read as dangerous, not muted.
+        // どちらのタブの [x] も theme.error にする: 1クリックで非アクティブな
+        // タブも閉じられるようになったため、実行中のセッションを黙って
+        // 終了させるボタンは、目立たないグレーではなく危険な色として
+        // 見える必要がある。
         let close_style = Style::default().fg(theme.error);
         let close_style = if hover == Some(TabAction::Close(item.global_idx)) {
             close_style.bg(theme.gutter_hover_bg)
@@ -207,10 +208,11 @@ pub fn render(
             close_style
         };
         if item.is_active {
-            // Strong filled tab so the active session reads at a glance. The
-            // [x] is left OUTSIDE the fill (on the default background) so its
-            // danger-red stays readable — filling it would put red on the accent
-            // bg with poor contrast. Matches the worktree bar's chip + [x].
+            // アクティブなセッションが一目でわかるよう、強く塗りつぶしたタブに
+            // する。[x] は塗りつぶしの外側（デフォルト背景の上）に置くことで
+            // 危険を示す赤が読みやすいままになる — 塗りつぶしの中に置くと
+            // アクセント背景の上に赤が乗ってコントラストが悪くなる。worktree
+            // バーのチップ + [x] と同じ考え方。
             let fill = Style::default()
                 .fg(theme.selected_fg)
                 .bg(theme.selected_bg)
@@ -219,13 +221,13 @@ pub fn render(
         } else {
             spans.push(Span::styled(label.clone(), item.label_style));
         }
-        // The leading space of " [x]" belongs to the `Select` hit region (it's
-        // the separator before the button), so it's rendered plain; only the
-        // "[x]" glyphs themselves — the `Close` hit region — get the hover bg.
+        // " [x]" の先頭のスペースは Select のヒット領域に属する（ボタンの前の
+        // セパレータであるため）ので、プレーンに描画する。hover 背景が付くのは
+        // "[x]" の文字そのもの（Close のヒット領域）だけ。
         spans.push(Span::raw(" "));
         spans.push(Span::styled("[x]", close_style));
-        // Select covers the label (+ leading space of the close suffix);
-        // Close covers the "[x]" glyphs only.
+        // Select はラベル（+ close サフィックスの先頭スペース）をカバーし、
+        // Close は "[x]" の文字だけをカバーする。
         hits.push(TabHit {
             x0: x,
             x1: x + label_w + 1,
@@ -239,7 +241,7 @@ pub fn render(
         x += label_w + close_w;
     }
 
-    // Right overflow hint (clickable: scroll right), before the pinned cluster.
+    // 右側のオーバーフローヒント（クリックすると右へスクロール）。固定クラスタの手前。
     if end < total {
         let hint = format!(" {}\u{203a}", total - end);
         let hw = w(&hint);
@@ -252,7 +254,7 @@ pub fn render(
         x += hw;
     }
 
-    // Pad so the pinned cluster sits flush against the right edge.
+    // 固定クラスタが右端にぴったり収まるようパディングする。
     let cluster_x = max_x.saturating_sub(right_w);
     if x < cluster_x {
         let pad = (cluster_x - x) as usize;
@@ -260,7 +262,7 @@ pub fn render(
         x = cluster_x;
     }
 
-    // Pinned [+] (new session).
+    // 固定された [+]（新規セッション）。
     spans.push(Span::raw(sep));
     x += sep_w;
     spans.push(Span::styled(
@@ -276,7 +278,7 @@ pub fn render(
     });
     x += w(add);
 
-    // Pinned expand toggle.
+    // 固定された展開トグル。
     spans.push(Span::raw(sep));
     x += sep_w;
     spans.push(Span::styled(
@@ -334,9 +336,9 @@ mod tests {
         captured
     }
 
-    /// Render into a `TestBackend` and return the terminal so cell styles can
-    /// be inspected directly (for hover-background / color assertions that
-    /// `render_hits`'s hit-region output can't answer).
+    /// TestBackend に描画し、terminal を返すことでセルスタイルを直接検査できる
+    /// ようにする（render_hits のヒット領域出力では答えられない hover 背景/色の
+    /// アサーション用）。
     fn render_buffer(
         width: u16,
         items: &[TabItem],
@@ -355,8 +357,8 @@ mod tests {
 
     #[test]
     fn add_and_expand_are_always_hittable_even_when_tabs_overflow() {
-        // Far more tabs than fit in a narrow bar — the [+] button used to be the
-        // first thing clipped. It must remain present and clickable.
+        // 狭いバーに収まる数よりはるかに多いタブ — かつては [+] ボタンが
+        // 真っ先に切り取られていた。常に存在し、クリックできなければならない。
         let hits = render_hits(30, &items(20), 0);
         assert!(
             hits.iter().any(|h| h.action == TabAction::Add),
@@ -385,7 +387,7 @@ mod tests {
 
     #[test]
     fn one_very_long_label_still_keeps_add_and_expand_pinned() {
-        // A single session with a huge name used to overrun and hide [+]/[x].
+        // 巨大な名前を持つ単一のセッションが、かつてははみ出して [+]/[x] を隠していた。
         let items = vec![TabItem {
             global_idx: 0,
             label: "[CC:a-really-extremely-long-session-name-that-overflows]".to_string(),
@@ -396,9 +398,9 @@ mod tests {
         let hits = render_hits(width, &items, 0);
         assert!(hits.iter().any(|h| h.action == TabAction::Add));
         assert!(hits.iter().any(|h| h.action == TabAction::Expand));
-        // Nothing may extend past the bar's right edge.
+        // バーの右端を超えて何かがはみ出してはならない。
         assert!(hits.iter().all(|h| h.x1 <= width));
-        // The single tab is still selectable.
+        // 単一のタブは選択可能なままである。
         assert!(hits.iter().any(|h| h.action == TabAction::Select(0)));
     }
 
@@ -413,9 +415,9 @@ mod tests {
         }
     }
 
-    /// Two tabs: 0 active, 1 inactive — enough to distinguish the active vs.
-    /// inactive close-button styling and to have a second `Close` hit to prove
-    /// hover styling doesn't leak onto it.
+    /// 2つのタブ: 0がアクティブ、1が非アクティブ — アクティブと非アクティブの
+    /// close ボタンのスタイルを区別でき、hover スタイルが漏れ出ないことを
+    /// 証明するための2つ目の Close ヒットも用意できる。
     fn two_tabs() -> Vec<TabItem> {
         vec![
             TabItem {
@@ -435,10 +437,11 @@ mod tests {
 
     #[test]
     fn tab_close_hover_style_inactive_close_is_error_not_muted() {
-        // D4 revised: S8 makes a single click close even an inactive tab, so
-        // its `[x]` must read as dangerous (`theme.error`) rather than the old
-        // muted gray, which made a destructive one-click button nearly
-        // invisible (worst case: solarized-dark, where muted ≈ the background).
+        // 1クリックで非アクティブなタブも閉じられるようになったので、その
+        // [x] は以前の目立たないグレーではなく危険を示す色（theme.error）で
+        // 表示されなければならない。目立たないグレーだと、破壊的な1クリック
+        // ボタンがほぼ見えなくなってしまっていた（最悪のケースは
+        // solarized-dark で、muted ≈ 背景色だった）。
         let theme = Theme::default();
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
@@ -452,8 +455,8 @@ mod tests {
 
     #[test]
     fn tab_close_hover_style_active_close_is_also_error() {
-        // Unchanged from before D4, but pinned down here so a future edit
-        // can't silently regress the active tab's close button too.
+        // 以前の実装から変わっていないが、今後の編集でアクティブなタブの
+        // close ボタンだけが黙って劣化しないよう、ここで固定して検証する。
         let theme = Theme::default();
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
@@ -481,10 +484,10 @@ mod tests {
 
         let hovered_buf = render_buffer(80, &items, Some(TabAction::Close(1)));
         assert_eq!(hovered_buf[(hovered.x0, 0)].bg, theme.gutter_hover_bg);
-        // The other tab's close button is unaffected by tab 1's hover.
+        // 他方のタブの close ボタンは、タブ1の hover の影響を受けない。
         assert_ne!(hovered_buf[(other.x0, 0)].bg, theme.gutter_hover_bg);
 
-        // With no hover at all, neither close button gets the background.
+        // hover がまったくない場合、どちらの close ボタンにも背景は付かない。
         let no_hover_buf = render_buffer(80, &items, None);
         assert_ne!(no_hover_buf[(hovered.x0, 0)].bg, theme.gutter_hover_bg);
     }
@@ -510,10 +513,10 @@ mod tests {
 
     #[test]
     fn tab_close_hover_style_leading_separator_space_stays_unstyled() {
-        // The space between the label and "[x]" belongs to the `Select` hit
-        // region, not `Close` — it must not pick up the hover background even
-        // while the close button next to it is hovered, or the highlight would
-        // visually bleed into the label's clickable area.
+        // ラベルと "[x]" の間のスペースは Close ではなく Select のヒット
+        // 領域に属する — 隣の close ボタンが hover されている間も hover 背景を
+        // 拾ってはならない。拾ってしまうとハイライトがラベルのクリック可能な
+        // 領域に見た目上にじみ出てしまう。
         let theme = Theme::default();
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);

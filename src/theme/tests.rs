@@ -2,15 +2,15 @@ use super::*;
 
 #[test]
 fn complement_rotates_hue_180_and_round_trips() {
-    // Pure red (h=0) → cyan (h=0.5) at the same saturation/lightness.
+    // 純粋な赤(h=0) → 同じ彩度/明度のシアン(h=0.5)。
     assert_eq!(Theme::complement(Color::Rgb(255, 0, 0)), Color::Rgb(0, 255, 255));
-    // Applying complement twice returns (approximately) the original hue.
+    // complement を2回適用すると(近似的に)元の色相に戻る。
     let original = Color::Rgb(203, 166, 247); // Catppuccin Mauve accent
     let twice = Theme::complement(Theme::complement(original));
     let (Color::Rgb(r, g, b), Color::Rgb(r2, g2, b2)) = (original, twice) else {
         unreachable!()
     };
-    // Allow ±2 per channel for HSL round-trip rounding.
+    // HSL の往復変換による丸め誤差として、各チャンネル ±2 まで許容する。
     assert!((r as i16 - r2 as i16).abs() <= 2);
     assert!((g as i16 - g2 as i16).abs() <= 2);
     assert!((b as i16 - b2 as i16).abs() <= 2);
@@ -26,7 +26,7 @@ fn lighten_endpoints_and_midpoint() {
     let c = Color::Rgb(100, 100, 100);
     assert_eq!(Theme::lighten(c, 0.0), c);
     assert_eq!(Theme::lighten(c, 1.0), Color::Rgb(255, 255, 255));
-    // Halfway between 100 and 255 is ~178.
+    // 100 と 255 の中間は約178。
     assert_eq!(Theme::lighten(c, 0.5), Color::Rgb(178, 178, 178));
 }
 
@@ -35,7 +35,7 @@ fn lighten_leaves_non_rgb_unchanged() {
     assert_eq!(Theme::lighten(Color::Reset, 0.5), Color::Reset);
 }
 
-/// Helper: perceptual luminance (Rec. 601) of an RGB color, 0–255.
+/// ヘルパー: RGB カラーの知覚輝度(Rec. 601)、0〜255。
 fn luma(c: Color) -> f64 {
     match c {
         Color::Rgb(r, g, b) => 0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64,
@@ -45,8 +45,8 @@ fn luma(c: Color) -> f64 {
 
 #[test]
 fn high_contrast_brightens_dim_greys_on_dark_themes() {
-    // On a dark theme, the dim greys (borders, hints, muted) must get lighter
-    // — that is the whole point of the high-contrast transform.
+    // ダークテーマでは、くすんだグレー(border、hint、muted)は明るくならな
+    // ければならない — それがハイコントラスト変換の目的そのものである。
     for &name in Theme::all_names() {
         let base = Theme::from_name(name);
         if base.light {
@@ -70,8 +70,8 @@ fn high_contrast_brightens_dim_greys_on_dark_themes() {
 
 #[test]
 fn high_contrast_darkens_dim_greys_on_light_themes() {
-    // On a light theme, contrast against a near-white background means the
-    // dim greys must get darker, not lighter.
+    // ライトテーマでは、白に近い背景に対するコントラストという意味で、
+    // くすんだグレーは明るくではなく暗くならなければならない。
     for &name in Theme::all_names() {
         let base = Theme::from_name(name);
         if !base.light {
@@ -162,14 +162,15 @@ fn all_names_dark_before_light() {
 
 #[test]
 fn unknown_name_falls_back_to_default() {
-    // Unknown names return the default (catppuccin-mocha), which is dark.
+    // 未知の名前はデフォルト(catppuccin-mocha、ダーク)を返す。
     let theme = Theme::from_name("does-not-exist");
     assert!(!theme.light);
 }
 
-/// Every name in `all_names()` must round-trip through `from_name` and
-/// return the same canonical `name` field. A mismatch means a theme was
-/// registered in one list but omitted or renamed in the other.
+/// all_names() 内の全ての名前は from_name を経て往復し、同じ正規の
+/// name フィールドを返さなければならない。不一致は、あるテーマが
+/// 片方のリストには登録されているのにもう片方では欠落しているか
+/// 名前が違っていることを意味する。
 #[test]
 fn all_names_round_trip_through_from_name() {
     for &n in Theme::all_names() {

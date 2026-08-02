@@ -4,7 +4,7 @@ use crate::app::types::CcusageInfo;
 use crate::review_store::DailyStats;
 
 /// 稼働状況の集計値。表示専用で、どれも失われても機能は壊れない
-/// (統計 DB が開けなければ全部 `None` のまま動く)。
+/// (統計 DB が開けなければ全部 None のまま動く)。
 #[derive(Default)]
 pub struct SessionStats {
     /// 現在の統計セッション ID。

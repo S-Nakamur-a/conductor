@@ -1,12 +1,12 @@
-//! Click handling for the strips above the main three-column area: the
-//! notification bar, the worktree monitor strip, and the title bar.
+//! メイン3カラム領域より上にある帯のクリック処理を担う。
+//! 通知バー、worktree監視バー、タイトルバーが対象。
 
 use crate::app::{App, Focus};
 
 use super::register_double_click;
 
-/// Open the new-worktree creation dialog. Shared by the worktree bar's `[+]`
-/// button and its blank-area double-click so the two entry points can't drift.
+/// 新規worktree作成ダイアログを開く。worktreeバーの [+] ボタンと空白領域の
+/// ダブルクリックの両方から呼ばれる共通処理で、2つの入口の挙動がずれないようにしている。
 fn start_worktree_creation(app: &mut App) {
     use crate::app::{StatusLevel, WorktreeInputMode};
     app.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
@@ -17,9 +17,9 @@ fn start_worktree_creation(app: &mut App) {
     );
 }
 
-/// Handle a left click on the notification bar. Badge clicks jump to the
-/// matching worktree. Returns `true` if the click was on the notification bar
-/// (and thus consumed), regardless of whether a badge was hit.
+/// 通知バーへの左クリックを処理する。バッジをクリックすると対応するworktreeへ
+/// ジャンプする。バッジに当たったかどうかに関わらず、クリックが通知バー上であれば
+/// true を返す（消費した扱いにする）。
 pub(super) fn handle_notification_bar_click(
     app: &mut App,
     col: u16,
@@ -42,9 +42,9 @@ pub(super) fn handle_notification_bar_click(
     true
 }
 
-/// How many chips a single wheel tick scrolls the worktree strip: a screenful
-/// minus one chip of overlap (at least 1). The visible count is read back from
-/// the `Select` regions recorded by the last render.
+/// ホイール1ノッチでworktreeバーを何チップ分スクロールするか。画面1枚分から
+/// 重なり用に1チップ引いた値（最低1）。表示チップ数は直前の描画で記録された
+/// Select 領域から読み取る。
 pub(super) fn wtbar_page_step(app: &App) -> usize {
     use crate::ui::worktree_bar::WtbarAction;
     let visible = app
@@ -55,9 +55,9 @@ pub(super) fn wtbar_page_step(app: &App) -> usize {
     visible.saturating_sub(1).max(1)
 }
 
-/// Handle a left click on the worktree bar: select (jump to the worktree and
-/// its Claude session), delete (with confirmation), or add. Returns `true` if
-/// the click landed on the bar row (and was thus consumed).
+/// worktreeバーへの左クリックを処理する: 選択（worktreeとそのClaudeセッションへ
+/// ジャンプ）、削除（確認あり）、追加のいずれか。クリックがバーの行上であれば
+/// true を返す（消費した扱いにする）。
 pub(super) fn handle_wtbar_click(
     app: &mut App,
     col: u16,
@@ -112,9 +112,9 @@ pub(super) fn handle_wtbar_click(
                 }
             }
         }
-        // Blank area of the bar: a double-click acts as the `[+]` button. A
-        // single click has nothing to do (the bar holds no focus), so it is
-        // just consumed.
+        // バーの空白領域: ダブルクリックは [+] ボタンと同じ扱い。
+        // シングルクリックはやることがない（バー自体はフォーカスを持たない）ので、
+        // ただ消費するだけ。
         None => {
             if register_double_click(
                 &mut app.worktree_mgr.wtbar_blank_last_click,
@@ -123,15 +123,15 @@ pub(super) fn handle_wtbar_click(
                 start_worktree_creation(app);
             }
         }
-        // Stale/out-of-range `Select` hit from a prior render: ignore.
+        // 直前の描画による古い/範囲外の Select ヒット: 無視する。
         Some(WtbarAction::Select(_)) => {}
     }
     true
 }
 
-/// Handle a left click on the title bar (above the main area). Clicking the
-/// update badge starts the update flow. Returns `true` if the click was on the
-/// title bar (and thus consumed).
+/// タイトルバー（メイン領域より上）への左クリックを処理する。アップデートバッジを
+/// クリックするとアップデートフローが始まる。クリックがタイトルバー上であれば
+/// true を返す（消費した扱いにする）。
 pub(super) fn handle_title_bar_click(
     app: &mut App,
     col: u16,

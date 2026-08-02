@@ -1,6 +1,5 @@
-//! Public render entry point — draws the transcript into the Claude PTY
-//! panel's inner rect, rebuilding the line cache from [`build`](super::build)
-//! only when the panel width changes.
+//! 公開の render エントリポイント。Claude PTY パネルの内側の矩形にトランスクリプトを描画し、
+//! パネル幅が変わったときだけ build で行キャッシュを再構築する。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -15,53 +14,49 @@ use super::build::{BuildCtx, LineMeta, build_lines};
 use super::helpers::truncate_to_width;
 use super::palette;
 
-/// Render the reflow transcript view into `area` (the Claude panel's inner rect).
+/// リフロー版トランスクリプトビューを area（Claude パネルの内側の矩形）に描画する。
 ///
-/// `app` is taken as `&mut` so the render can write updated scroll / cache state
-/// back to `app.reflow` after building or scrolling the line list.
+/// app を &mut で受け取るのは、行リストの構築・スクロール後に更新されたスクロール/キャッシュ
+/// 状態を app.reflow に書き戻すため。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Any path that returns before the badge is drawn must retract its hit
-    // region, or a click would keep landing on a chip that is no longer there.
+    // バッジを描画する前に return する経路は必ずヒット領域を取り消す。さもないと、
+    // すでに存在しないチップにクリックが当たり続けてしまう。
     app.reflow.jump_hit = None;
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    // Clear so a partially-filled transcript never lets the previous frame's
-    // text show through (the scrollback-bleed fix, as in the live PTY render).
+    // 前フレームのテキストが透けて見えないよう、部分的にしか埋まっていない
+    // トランスクリプトでも必ずクリアする（ライブ PTY の描画と同じ、scrollback のにじみ対策）。
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    // An overlay that covered this panel painted over the cells we
-    // deliberately leave unwritten; once it closes, only a hard repaint can
-    // clear them (ratatui's diff compares its own buffers, which agree).
+    // このパネルを覆っていたオーバーレイは、意図的に未書き込みのままにしているセルの上を
+    // 塗りつぶしてしまう。オーバーレイが閉じた後は、強制的な再描画でしかそれをクリアできない
+    // （ratatui の diff は自身が持つバッファ同士を比較するので、双方とも汚れた状態で一致してしまう）。
     let overlay_active = app.is_any_overlay_active();
     if app.reflow.last_overlay_active && !overlay_active {
         app.terminal.needs_clear = true;
     }
     app.reflow.last_overlay_active = overlay_active;
 
-    // The full panel width is used. This view used to build one column
-    // narrower as a safety gutter, on the theory that a glyph the terminal
-    // draws wider than `unicode-width` counts would push a line's last
-    // character past the panel edge. That cost a permanent one-column
-    // disagreement with Claude Code's own wrap positions on *every* line, to
-    // insure against a rare one. The gutter glyphs — the actual source of the
-    // original bleed — are now positioned absolutely instead (see
-    // `super::build::width_risk_hole`), and for stray wide content in the body
-    // the damage is bounded: rows are re-anchored individually, so an overflow
-    // cannot propagate past its own row, line wrap is disabled
-    // (`main.rs`'s `DisableLineWrap`) and this is the rightmost column
-    // (`ui::layout::cache`), so at worst one cell of this panel's own right
-    // border is overdrawn.
+    // パネル幅をフルに使う。以前はこのビューも、端末が unicode-width の計測より広く描画する
+    // グリフが行末の文字をパネル端の外に押し出すという想定のもと、安全ガターとして1カラム
+    // 狭く構築していた。しかしそれは稀な事故への保険のために、毎行で Claude Code 本来の
+    // 折り返し位置と恒久的に1カラムずれるという代償を払っていた。にじみの本当の原因だった
+    // ガターのグリフは今では絶対位置指定で配置するようになり
+    // （super::build::width_risk_hole を参照）、本文中の紛れ込んだ幅広文字による被害は
+    // 各行が個別に再アンカーされるため自分の行を越えて伝播しない。加えて行折り返しは
+    // 無効化されており（main.rs の DisableLineWrap）、ここは最も右のカラムなので
+    // （ui::layout::cache）、最悪でもこのパネル自身の右境界の1セルが上書きされるだけである。
     let render_area = area;
     let inner_width = render_area.width as usize;
     let inner_height = render_area.height as usize;
 
-    // ── Loading placeholder ───────────────────────────────────────────────────
-    // The session log is parsed on a background thread (see `open_reflow`);
-    // until the entries arrive, show a centered placeholder instead of an
-    // empty transcript. The entry sweep keeps animating over it, so the
-    // border transition doubles as the loading indicator.
+    // ローディング中のプレースホルダ
+    // セッションログはバックグラウンドスレッドでパースされる（open_reflow を参照）。
+    // エントリが届くまでは、空のトランスクリプトではなく中央にプレースホルダを表示する。
+    // その間もエントリのスイープ演出はアニメーションを続けるので、境界線の遷移が
+    // そのままローディングインジケータを兼ねる。
     if app.reflow.loading {
         let msg = "Loading transcript\u{2026}";
         let y = area.y + area.height / 2;
@@ -75,14 +70,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    // ── (Re)build cached lines when the panel width or expand state changed ──
-    // `anchored` carries the rebuild's answer to "where did the top line go?"
-    // down to the single scroll decision below; it stays `None` on the frames
-    // where nothing was rebuilt.
+    // パネル幅や展開状態が変わったときにキャッシュ済みの行を再構築する。
+    // anchored は「先頭行はどこへ行ったか」という再構築の答えを、下にある唯一の
+    // スクロール決定処理まで運ぶ。何も再構築しなかったフレームでは None のままになる。
     let mut anchored: Option<usize> = None;
     if app.reflow.last_width != render_area.width || app.reflow.needs_rebuild {
-        // Block-scoped so the shared borrows on `app` drop before the
-        // `cached_lines` / `total_lines` / `last_width` assignments below.
+        // app への共有借用が、下の cached_lines / total_lines / last_width への代入より
+        // 前に解放されるようブロックスコープにしている。
         let built = {
             let ctx = BuildCtx {
                 entries: &app.reflow.entries,
@@ -94,11 +88,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             };
             build_lines(&ctx, inner_width)
         };
-        // Remember *what* was at the top of the viewport before the rebuild.
-        // `scroll` is a raw line index, and a width change (or the expand
-        // toggle, which changes line counts wholesale) makes that index mean
-        // something else entirely — the view would jump. Re-finding the same
-        // logical position keeps the reader where they were.
+        // 再構築前にビューポート先頭に何があったかを記憶しておく。scroll は生の行
+        // インデックスであり、幅の変更（あるいは行数を丸ごと変える展開トグル）が起きると
+        // そのインデックスの意味がまったく別物になってしまい、ビューが飛んでしまう。
+        // 同じ論理位置を再度探し出すことで、読み手を元の位置に留める。
         let anchor = app.reflow.line_meta.get(app.reflow.scroll).copied();
         let total = built.lines.len();
 
@@ -107,8 +100,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.reflow.total_lines = total;
         app.reflow.last_width = render_area.width;
         app.reflow.needs_rebuild = false;
-        // Line positions all moved; repaint physically so no unwritten cell
-        // keeps a glyph from the previous layout.
+        // 行の位置がすべて動いたので、物理的に再描画する。そうしないと、未書き込みの
+        // セルに前のレイアウトのグリフが残ってしまう。
         app.terminal.needs_clear = true;
 
         anchored = anchor.map(|a| anchor_index(&app.reflow.line_meta, a));
@@ -116,14 +109,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     app.reflow.last_inner_height = area.height;
 
-    // ── Place the viewport ────────────────────────────────────────────────────
-    // One decision for every way the geometry can move under the reader —
-    // width (rebuild above), height, and the expand toggle. A follower is
-    // re-pinned to the newest line; anyone parked in the history is put back on
-    // the line the anchor resolved to, never dragged to the tail. The result is
-    // clamped, so the upper bound is total - inner_height rather than total - 1:
-    // at the logical bottom the last content line sits on the last visual row,
-    // and a log shorter than the panel collapses to 0 with no blank rows.
+    // ビューポートの位置決め
+    // 読み手の足元でジオメトリが動きうるすべてのケース（幅の変更は上で再構築済み、
+    // 高さの変更、展開トグル）を1つの決定にまとめている。追従中なら常に最新行に
+    // 再固定し、履歴を読んでいる人は末尾へ引きずられることなく anchor が解決した行に
+    // 戻される。結果はクランプされるので、上限は total - 1 ではなく
+    // total - inner_height になる。これにより論理的な末尾では最後のコンテンツ行が
+    // 最後の表示行に収まり、パネルより短いログは空白行なしで 0 に収束する。
     app.reflow.scroll = crate::event::reflow::scroll_after_reflow(
         app.reflow.follow,
         anchored,
@@ -134,10 +126,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let scroll = app.reflow.scroll;
 
-    // ── Transition completion ─────────────────────────────────────────────────
-    // Drive the entry transition timer: once the entry sweep elapses, clear it
-    // so the border rests on the steady read-mode color. The border color
-    // transition itself is painted in `terminal_claude::render`, not here.
+    // 遷移演出の完了処理
+    // 表示切り替え時のタイマーを進める。エントリのスイープ演出が終わったらクリアし、
+    // 境界線を安定した読み取りモードの色に落ち着かせる。境界線自体の色遷移の描画は
+    // ここではなく terminal_claude::render で行う。
     let entry_done = app.reflow.sweep.as_ref().is_some_and(|s| {
         crate::event::reflow::sweep_progress(&s.start, crate::event::reflow::TRANSITION_DURATION_MS)
             >= 1.0
@@ -146,12 +138,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.reflow.sweep = None;
     }
 
-    // Blit the visible window straight from the cache by reference — no
-    // per-frame clone of the line vector. No wrapping: `markdown_cache.render`
-    // already produces lines ≤ `body_width` columns, and each line then
-    // receives a `MARKER_COLS`-wide prefix, keeping total width ≤
-    // `render_area.width`.  1 logical line == 1 visual row means scroll
-    // arithmetic is exact with no invisible over-height rows.
+    // 表示中のウィンドウをキャッシュから参照で直接転送する。毎フレーム行ベクタを
+    // クローンしない。折り返しは行わない。markdown_cache.render がすでに body_width
+    // カラム以下の行を生成しており、各行にはさらに MARKER_COLS 幅のプレフィックスが
+    // 付くので、合計幅は render_area.width 以下に収まる。論理行1つ = 表示行1つなので、
+    // 見えない過大行なしにスクロール計算が正確になる。
     let buf = frame.buffer_mut();
     let rows = app
         .reflow
@@ -163,12 +154,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     for (i, (line, meta)) in rows.enumerate() {
         let y = render_area.y + i as u16;
         buf.set_line(render_area.x, y, line, render_area.width);
-        // Leave one cell unwritten after a width-ambiguous gutter glyph. The
-        // diff then skips it, so the next cell is not contiguous with the
-        // glyph's and the crossterm backend emits an absolute `MoveTo` before
-        // the body — pinning it to the right column however wide the terminal
-        // actually drew the glyph. `skip` is cleared by `Buffer::reset` every
-        // frame, so this has to be re-applied on each one.
+        // 幅の曖昧なガターグリフの直後のセルを1つ、未書き込みのまま残す。diff は
+        // それをスキップするので次のセルはグリフのセルと連続しなくなり、crossterm
+        // バックエンドは本文の前に絶対位置指定の MoveTo を発行する。これにより、
+        // 端末が実際にグリフをどれだけ幅広く描画しようと正しいカラムに固定される。
+        // skip は毎フレーム Buffer::reset でクリアされるので、フレームごとに
+        // 再適用する必要がある。
         if let Some(col) = meta.skip_col
             && col < render_area.width
             && let Some(cell) = buf.cell_mut((render_area.x + col, y))
@@ -180,31 +171,28 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.reflow.jump_hit = render_jump_badge(frame, render_area, app.reflow.follow);
 }
 
-/// Text of the detached badge at each width tier, longest first. Deliberately
-/// ASCII: the badge is positioned against the panel's right edge, so a glyph
-/// the terminal draws wider than `unicode-width` counts (the `⏺`/`⎿` problem
-/// the gutter solves with an unwritten cell) would push its tail onto the
-/// border. There is no arrow here for that reason.
+/// 追従解除バッジの各幅段階でのテキスト。長い順に並んでいる。意図的に ASCII のみにしている。
+/// バッジはパネルの右端に配置されるため、端末が unicode-width の計測より幅広く描画する
+/// グリフ（ガターが未書き込みセルで解決している ⏺/⎿ の問題）があると末尾が境界線に
+/// はみ出してしまう。そのためここには矢印を使っていない。
 pub(super) const JUMP_BADGE_LABELS: [&str; 3] = [" Jump to latest (G) ", " Latest (G) ", " (G) "];
 
-/// Draw the "you are not at the newest turn" badge, returning its screen rect
-/// so a click can be routed back to it.
+/// 「最新ターンにいない」ことを示すバッジを描画し、クリックを戻せるよう画面上の矩形を返す。
 ///
-/// Only visible while detached — that *is* the feedback. Following, the badge
-/// is absent and the function reports no hit region, so a stale rect can never
-/// keep swallowing clicks after the reader returns to the tail.
+/// 追従が外れているときだけ表示される。それ自体がフィードバックになっている。追従中は
+/// バッジが存在せず、この関数はヒット領域を返さないので、読み手が末尾に戻った後に
+/// 古い矩形がクリックを飲み込み続けることはない。
 ///
-/// It is deliberately the quietest thing on screen that is still a target:
-/// one right-aligned chip on the last row, in the transcript's own dim grey on
-/// the user-turn block's background. Anything louder would compete with the
-/// transcript for attention on every scroll-up, which is the common case.
+/// 意図的に、まだ的として機能する範囲で画面上もっとも控えめなものにしてある。最終行に
+/// 右寄せで置いた1個のチップで、トランスクリプト自身の淡いグレーを user ターンブロックの
+/// 背景の上に重ねている。これより目立つものにすると、よくあるケースであるスクロールアップの
+/// たびにトランスクリプトと注意を奪い合ってしまう。
 pub(super) fn render_jump_badge(frame: &mut Frame, area: Rect, following: bool) -> Option<Rect> {
     if following || area.height == 0 {
         return None;
     }
-    // Widest label that fits, leaving one column of slack against the panel
-    // edge; if even the shortest needs more room than the panel has, the badge
-    // is dropped rather than truncated into something unreadable.
+    // 収まる中で最も長いラベルを選び、パネル端に対して1カラムの余裕を残す。最短のラベルでも
+    // パネルに収まらない場合は、読めない形に切り詰めるのではなくバッジ自体を出さない。
     let label = JUMP_BADGE_LABELS
         .iter()
         .find(|l| UnicodeWidthStr::width(**l) < area.width as usize)?;
@@ -228,10 +216,9 @@ pub(super) fn render_jump_badge(frame: &mut Frame, area: Rect, following: bool) 
     Some(rect)
 }
 
-/// Index of the line matching `anchor` after a rebuild — the first line whose
-/// `(entry, block, offset)` is at or past the anchor's, so a block that got
-/// shorter (or vanished) lands on whatever now occupies that position rather
-/// than scrolling somewhere unrelated.
+/// 再構築後に anchor と一致する行のインデックス。(entry, block, offset) が anchor の
+/// それ以上である最初の行を返すので、短くなった（あるいは消えた）ブロックでも、
+/// 無関係な位置へスクロールするのではなく、今その位置を占めている何かに着地する。
 pub(super) fn anchor_index(meta: &[LineMeta], anchor: LineMeta) -> usize {
     let key = (anchor.entry, anchor.block, anchor.offset);
     meta.iter()

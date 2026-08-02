@@ -1,5 +1,5 @@
-//! Unit tests for claude_log: wrapper-tag normalisation, content-to-block
-//! conversion, and `load_session` integration.
+//! claude_log の単体テスト: ラッパータグの正規化、content からブロックへの
+//! 変換、load_session の結合テスト。
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,18 +13,19 @@ fn parse_msg_content(json: &str) -> Vec<DisplayBlock> {
     let r: LogRecord = serde_json::from_str(json).expect("valid test json");
     let msg = r.message.unwrap();
     let is_user = msg.role.as_deref() == Some("user");
-    // The duration value doesn't matter to any test using this helper except
-    // `thinking_text_is_captured`, which checks the text field, not the
-    // duration — 1 is an arbitrary placeholder.
+    // このヘルパを使うテストのうち duration の値が問題になるものは無い。
+    // 例外は thinking_text_is_captured だが、それも duration ではなく
+    // text フィールドを見ている — 1 は適当なプレースホルダ。
     content_to_display_blocks(msg.content, is_user, &mut HashMap::new(), &HashSet::new(), 1)
 }
 
-// ── Hidden-context normalisation (isMeta / wrappers) ─────────────────────
+// 隠しコンテキストの正規化 (isMeta / ラッパー)
 
 #[test]
 fn meta_records_are_skipped() {
-    // A skill invocation dumps the whole SKILL.md as an isMeta user turn;
-    // Claude Code never displays it, so the transcript must not either.
+    // skill 呼び出しは SKILL.md 全体を isMeta な user ターンとしてダンプする。
+    // Claude Code はこれを一切表示しないので、トランスクリプトも表示しては
+    // いけない。
     let f = write_jsonl(&[
         r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"Base directory for this skill: ... 20k chars of SKILL.md"}}"#,
         r#"{"type":"user","message":{"role":"user","content":"real prompt"}}"#,
@@ -64,8 +65,8 @@ fn local_command_stdout_is_unwrapped_and_sanitized() {
 
 #[test]
 fn task_notification_collapses_to_its_summary() {
-    // Measured: the whole wrapper is replaced by an `⏺` line carrying only the
-    // `<summary>` text — the task id, output path and status never appear.
+    // 実測: ラッパー全体が、<summary> のテキストだけを持つ ⏺ 行に置き換わる。
+    // タスク id、出力パス、ステータスは一切表示されない。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>bh15vvqha</task-id>\n<output-file>/private/tmp/x.output</output-file>\n<status>completed</status>\n<summary>Background command \"Run brew audit\" completed (exit code 0)</summary>\n</task-notification>"}}"#,
     );
@@ -79,8 +80,8 @@ fn task_notification_collapses_to_its_summary() {
 
 #[test]
 fn task_notification_without_a_summary_draws_nothing() {
-    // Measured, including the prose around it: with no usable summary the whole
-    // message disappears rather than falling through to dumping the raw XML.
+    // 周りの文章も含めて実測済み: 使える summary が無い場合、生の XML を
+    // ダンプする方にフォールバックせず、メッセージ全体が消える。
     for content in [
         "<task-notification>\\n<task-id>abc</task-id>\\n</task-notification>",
         "look:\\n<task-notification>\\n<summary></summary>\\n</task-notification>\\nthoughts?",
@@ -94,10 +95,10 @@ fn task_notification_without_a_summary_draws_nothing() {
 
 #[test]
 fn a_task_notification_collapses_wherever_it_sits() {
-    // Measured: the tag is matched anywhere in the message, and collapsing it
-    // discards the prose typed around it. This is what makes a screen dump
-    // pasted by hand render exactly like the CLI's own notification — Claude
-    // Code checks neither the tag's position nor who wrote the record.
+    // 実測: タグはメッセージのどこにあってもマッチし、畳み込むと周りに
+    // 打たれた文章は捨てられる。これにより、手動で貼り付けた画面ダンプが
+    // CLI 自身の通知と全く同じように描画される — Claude Code はタグの位置も
+    // レコードの書き手も確認しない。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"here is what I saw:\n\n<task-notification>\n<task-id>zz1</task-id>\n<summary>Background command \"Install\" completed (exit code 0)</summary>\n</task-notification>\n\nwhat do you think?"}}"#,
     );
@@ -112,7 +113,7 @@ fn a_task_notification_collapses_wherever_it_sits() {
 
 #[test]
 fn only_the_first_summary_survives_a_doubled_notification() {
-    // Measured: two notifications in one message draw a single `⏺` line.
+    // 実測: 1メッセージ内に2つの通知があっても、⏺ 行は1つだけ描画される。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<summary>FIRST done</summary>\n</task-notification>\n<task-notification>\n<summary>SECOND done</summary>\n</task-notification>"}}"#,
     );
@@ -144,8 +145,8 @@ fn teammate_message_wrapper_becomes_a_teammate_message_block() {
 
 #[test]
 fn teammate_message_summary_attribute_is_ignored() {
-    // `summary` is always ignored (S4) — only `teammate_id` and the body text
-    // are read, in either attribute order.
+    // summary は常に無視される — 属性の順序によらず、読むのは teammate_id
+    // と本文のテキストだけ。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<teammate-message summary=\"short\" teammate_id=\"bob\">the real body</teammate-message>"}}"#,
     );
@@ -174,8 +175,8 @@ fn unterminated_teammate_message_body_captures_to_end() {
 
 #[test]
 fn teammate_message_without_teammate_id_falls_back_to_prose() {
-    // Malformed wrapper (missing the one attribute this parser reads) — left
-    // as ordinary text rather than silently dropped.
+    // 壊れたラッパー（このパーサが読む唯一の属性が無い）— 黙って捨てるのでは
+    // なく、通常のテキストとして残す。
     let raw = "<teammate-message>no id attribute</teammate-message>";
     let blocks = parse_msg_content(&format!(
         r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
@@ -185,8 +186,8 @@ fn teammate_message_without_teammate_id_falls_back_to_prose() {
 
 #[test]
 fn mid_prompt_mention_of_teammate_message_tag_is_not_rewritten() {
-    // The wrapper is only recognised at the start of the message; a user
-    // *talking about* the tag keeps their full prompt untouched.
+    // ラッパーが認識されるのはメッセージの先頭だけ。ユーザがタグに
+    // ついて *言及している* だけなら、プロンプト全文に手を加えない。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"why did <teammate-message teammate_id=\"x\">hi</teammate-message> show up?"}}"#,
     );
@@ -198,9 +199,9 @@ fn mid_prompt_mention_of_teammate_message_tag_is_not_rewritten() {
 
 #[test]
 fn system_reminder_spans_are_kept_in_user_text() {
-    // Measured: Claude Code draws a reminder verbatim where it sits, inline in
-    // the turn's own text. Reminders a reader never sees are hidden one level
-    // up, by their record's `isMeta` flag.
+    // 実測: Claude Code はリマインダーを、ターン自身のテキストにインラインで
+    // 入っている位置のまま、そのまま描画する。読み手が決して目にしない
+    // リマインダーは、1つ上の階層でレコードの isMeta フラグによって隠される。
     let raw = "fix the bug <system-reminder>hidden note</system-reminder>please";
     let blocks = parse_msg_content(&format!(
         r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
@@ -210,8 +211,8 @@ fn system_reminder_spans_are_kept_in_user_text() {
 
 #[test]
 fn reminder_only_user_block_is_drawn_as_its_own_turn() {
-    // Measured: arriving as a block of its own does not hide it either — it
-    // becomes a `❯` turn carrying the tag verbatim.
+    // 実測: それ単体のブロックとして届いても隠されない — タグをそのまま
+    // 保持した ❯ ターンになる。
     let raw = "<system-reminder>only hidden</system-reminder>";
     let blocks = parse_msg_content(&format!(
         r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
@@ -221,8 +222,8 @@ fn reminder_only_user_block_is_drawn_as_its_own_turn() {
 
 #[test]
 fn unterminated_command_tag_at_start_is_left_as_prose() {
-    // A real command record always carries the closing tag; a prompt that
-    // merely *starts* with the literal tag must survive intact.
+    // 実際のコマンドレコードは必ず終了タグを伴う。単にそのタグの文字列で
+    // *始まる* だけのプロンプトは、手を加えずそのまま残る必要がある。
     let raw = "<command-name> is a wrapper the CLI writes";
     let blocks = parse_msg_content(&format!(
         r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
@@ -232,10 +233,10 @@ fn unterminated_command_tag_at_start_is_left_as_prose() {
 
 #[test]
 fn mid_prompt_mention_of_command_tag_is_not_rewritten() {
-    // The wrapper is only recognised at the start of the message; a user
-    // *talking about* the tag keeps their full prompt. (`<task-notification>`
-    // is the one form that does not work this way — see
-    // `a_task_notification_collapses_wherever_it_sits`.)
+    // ラッパーが認識されるのはメッセージの先頭だけ。ユーザがタグについて
+    // *言及している* だけならプロンプト全文を保持する。（<task-notification>
+    // だけはこの方式に従わない — a_task_notification_collapses_wherever_it_sits
+    // を参照。）
     let raw = "why does <command-name>/x</command-name> appear in my log?";
     let blocks = parse_msg_content(&format!(
         r#"{{"type":"user","message":{{"role":"user","content":"{raw}"}}}}"#,
@@ -245,8 +246,8 @@ fn mid_prompt_mention_of_command_tag_is_not_rewritten() {
 
 #[test]
 fn assistant_text_quoting_wrapper_tags_is_untouched() {
-    // The assistant may legitimately discuss these tags; only user turns
-    // get the wrapper normalisation.
+    // assistant はこれらのタグについて正当に議論することがある。ラッパーの
+    // 正規化を受けるのは user ターンだけ。
     let raw = "use <system-reminder> and <command-name>/x</command-name> in docs";
     let blocks = parse_msg_content(&format!(
         r#"{{"type":"assistant","message":{{"role":"assistant","content":"{raw}"}}}}"#,
@@ -284,9 +285,9 @@ fn array_content_multiple_block_types() {
     assert!(matches!(blocks[0], DisplayBlock::Text(_)));
     assert!(matches!(blocks[1], DisplayBlock::Thinking { .. }));
     assert!(matches!(blocks[2], DisplayBlock::ToolUse { .. }));
-    // "ls -la" classifies as the List bucket (§2.1); the pairing map (built
-    // from the tool_use two blocks earlier in the same call) resolves the
-    // result's bucket.
+    // "ls -la" は List bucket に分類される（§2.1）。ペアリングマップ（同じ
+    // 呼び出しの2ブロック前にある tool_use から構築される）が結果側の
+    // bucket を解決する。
     assert!(matches!(
         &blocks[3],
         DisplayBlock::ToolResult { kind: ResultKind::Counted { bucket: CountedBucket::List, from_bash: true }, lines, .. }
@@ -303,10 +304,9 @@ fn sidechain_flag_is_parsed() {
     assert!(r.is_sidechain);
 }
 
-// Tool-name/argument classification (command key search, Bash dispatch,
-// Counted/Inline/Hidden categorisation) moved to `tool_class.rs` along with
-// its own tests, since `ToolUse` now carries raw `input` instead of a
-// pre-summarised string.
+// ツール名・引数の分類（コマンドキーの探索、Bash のディスパッチ、
+// Counted/Inline/Hidden への分類）は tool_class.rs に、テストごと移した。
+// ToolUse が要約済み文字列ではなく生の input を持つようになったため。
 
 #[test]
 fn tool_result_string_counts_lines() {
@@ -316,8 +316,8 @@ fn tool_result_string_counts_lines() {
 
 #[test]
 fn preview_lines_are_sanitized_for_rendering() {
-    // Tabs → spaces, ANSI color escapes stripped, control codes dropped, so a
-    // rendered preview line contains no width-desyncing characters.
+    // タブは空白に、ANSI カラーエスケープは除去、制御コードは削除する。これにより
+    // 描画されるプレビュー行に幅がずれる文字が残らない。
     let content = ToolResultContent::Text(
         "a\tb\n\u{1b}[31mred\u{1b}[0m\n\u{1b}]8;;http://x\u{07}link\u{1b}]8;;\u{07}\ncr\rlf"
             .to_string(),
@@ -350,8 +350,8 @@ fn tool_result_block_array_counts_lines() {
 
 #[test]
 fn tool_result_keeps_all_lines_no_cap() {
-    // ADR-5: `lines` retains every output line (the old preview cap /
-    // total_lines split is gone) — expansion needs the full output.
+    // lines は出力行を全て保持する（以前あったプレビュー上限と total_lines の
+    // 分離は廃止済み）。展開表示には出力全体が必要になる。
     let body: String = (0..10)
         .map(|i| format!("line{i}"))
         .collect::<Vec<_>>()
@@ -373,9 +373,9 @@ fn tool_result_keeps_all_lines_no_cap() {
 
 #[test]
 fn tool_result_id_resolves_across_records_in_one_session() {
-    // The pairing map is threaded through `load_session`'s whole scan, not
-    // just one message: a `tool_use` in an assistant record must be found by
-    // a `tool_result` in the very next (user) record.
+    // ペアリングマップは load_session のスキャン全体を通して引き継がれる。
+    // 1メッセージ内だけではなく、assistant レコードの tool_use が直後の
+    // (user) レコードの tool_result から見つけられる必要がある。
     let f = write_jsonl(&[
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Read","input":{"file_path":"/a.txt"}}]}}"#,
         r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"file contents"}]}}"#,
@@ -390,9 +390,9 @@ fn tool_result_id_resolves_across_records_in_one_session() {
 
 #[test]
 fn tool_result_with_unknown_tool_use_id_is_hidden() {
-    // A tool_result whose tool_use_id was never seen (truncated log, or a
-    // malformed/dropped tool_use record) resolves to `Hidden` — it draws
-    // nothing rather than guessing a category and emitting a stray block.
+    // tool_use_id が一度も見えていない tool_result（ログが途中で切れている、
+    // または tool_use レコードが壊れている/欠落している場合）は Hidden に
+    // 解決される。カテゴリを推測して迷子のブロックを出すよりは、何も描画しない。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":[
             {"type":"tool_result","tool_use_id":"nonexistent","content":"x"}
@@ -419,9 +419,9 @@ fn tool_result_error_flag_is_captured() {
 
 #[test]
 fn tool_use_errored_flag_resolves_from_later_paired_result() {
-    // The `tool_use`'s `errored` flag must be known by the time its own
-    // record is built, even though the erroring `tool_result` is a later
-    // record in the log — this is the pre-scan pass in `session.rs`.
+    // tool_use 自身のレコードを構築する時点で errored フラグが分かっている
+    // 必要がある。エラーになった tool_result はログ上ではそれより後の
+    // レコードなので、これを実現しているのが session.rs の事前スキャンである。
     let f = write_jsonl(&[
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"false"}}]}}"#,
         r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":"boom"}]}}"#,
@@ -449,8 +449,8 @@ fn tool_use_errored_flag_false_when_result_did_not_error() {
 
 #[test]
 fn tool_use_errored_flag_false_when_no_matching_result() {
-    // A truncated log (or a malformed/dropped tool_result) must not panic or
-    // guess — the call simply resolves to not-errored.
+    // ログが途中で切れている場合（または tool_result が壊れている/欠落している
+    // 場合）に panic したり推測したりしてはいけない。単に未エラーとして解決される。
     let blocks = parse_msg_content(
         r#"{"type":"assistant","message":{"role":"assistant","content":[
             {"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"false"}}
@@ -512,7 +512,7 @@ fn unknown_block_type_is_skipped() {
     assert!(matches!(blocks[0], DisplayBlock::Text(_)));
 }
 
-// ── load_session integration tests (write a temp .jsonl, call load_session) ──
+// load_session の結合テスト（一時 .jsonl を書いて load_session を呼ぶ）
 
 fn write_jsonl(lines: &[&str]) -> tempfile::NamedTempFile {
     use std::io::Write;
@@ -548,7 +548,7 @@ fn load_session_skips_sidechain_records() {
 
 #[test]
 fn load_session_skips_role_mismatch() {
-    // A record with type=user but role=system should be silently dropped.
+    // type=user だが role=system のレコードは黙って除外されるべき。
     let f = write_jsonl(&[
         r#"{"type":"user","message":{"role":"system","content":"not a user turn"}}"#,
         r#"{"type":"user","message":{"role":"user","content":"real user"}}"#,
@@ -560,7 +560,7 @@ fn load_session_skips_role_mismatch() {
 
 #[test]
 fn load_session_skips_empty_blocks() {
-    // A message whose content produces zero display blocks is not emitted.
+    // content が表示ブロックを1つも生成しないメッセージは出力されない。
     let f = write_jsonl(&[
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""}]}}"#,
         r#"{"type":"user","message":{"role":"user","content":"valid"}}"#,
@@ -581,7 +581,7 @@ fn load_session_mixed_records_correct_count() {
         r#"not-json-at-all"#,
     ]);
     let entries = load_session(f.path());
-    // system noise, sidechain, and malformed line are excluded → 3 remain.
+    // system のノイズ、サイドチェーン、壊れた行が除外され → 3件残る。
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].role, Role::User);
     assert_eq!(entries[1].role, Role::Assistant);
@@ -590,10 +590,10 @@ fn load_session_mixed_records_correct_count() {
 
 #[test]
 fn load_session_draws_nothing_for_queue_operations() {
-    // Measured: Claude Code ignores the input queue's journal entirely. A
-    // prompt typed while it is busy is re-emitted as an ordinary `user` record
-    // once accepted, so drawing the `enqueue` too would print the turn twice —
-    // and an enqueue that never got re-emitted is not drawn at all.
+    // 実測: Claude Code は入力キューのジャーナルを完全に無視する。ビジー中に
+    // 入力されたプロンプトは受理されると通常の user レコードとして再度出力
+    // されるので、enqueue も描画すると同じターンが二重に出てしまう。また、
+    // 再出力されなかった enqueue はそもそも一切描画されない。
     let f = write_jsonl(&[
         r#"{"type":"user","message":{"role":"user","content":"first"}}"#,
         r#"{"type":"queue-operation","operation":"enqueue","content":"typed while busy"}"#,
@@ -611,7 +611,7 @@ fn load_session_draws_nothing_for_queue_operations() {
 
 #[test]
 fn load_session_skips_the_session_metadata_journals() {
-    // The other non-conversation record types, none of which Claude Code draws.
+    // 会話ではないその他のレコード種別。いずれも Claude Code は描画しない。
     let f = write_jsonl(&[
         r#"{"type":"user","message":{"role":"user","content":"first"}}"#,
         r#"{"type":"mode","mode":"default"}"#,
@@ -665,11 +665,11 @@ fn load_session_thinking_duration_falls_back_to_one_when_timestamp_missing() {
 
 #[test]
 fn load_session_thinking_duration_ignores_skipped_meta_record_as_previous() {
-    // A skipped isMeta record sits between the two displayed turns, carrying a
-    // timestamp that would make the naive "immediately preceding record" diff
-    // go negative. The duration must be computed against the previous
-    // *displayed* record (the first user turn), not this hidden one — 5s, not
-    // the 1s fallback that a negative/skewed diff would otherwise produce.
+    // 表示される2ターンの間に、スキップされる isMeta レコードが1つ挟まっている。
+    // このレコードのタイムスタンプをそのまま「直前レコード」として差分を取ると
+    // 負になってしまう。duration は隠れたこのレコードではなく、直前の
+    // *表示される* レコード（最初の user ターン）を基準に計算されなければ
+    // ならない — 負・歪んだ差分が生む1秒のフォールバックではなく、5秒になる。
     let f = write_jsonl(&[
         r#"{"type":"user","timestamp":"2026-07-31T00:00:00Z","message":{"role":"user","content":"hi"}}"#,
         r#"{"type":"user","isMeta":true,"timestamp":"2026-07-31T00:05:00Z","message":{"role":"user","content":"skill dump"}}"#,
@@ -683,10 +683,11 @@ fn load_session_thinking_duration_ignores_skipped_meta_record_as_previous() {
     }
 }
 
-// ── Compact boundary and CLI-injected attachments (measured) ─────────────
+// コンパクト境界と CLI が挿入する添付ファイル (実測)
 
-/// The record sequence a `/compact` writes, in log order. Measured end to end
-/// against a resumed transcript: Claude Code draws
+/// /compact が書き込むレコード列を、ログ上の順序どおりに並べたもの。再開後の
+/// トランスクリプトに対して端から端まで実測した結果、Claude Code は次のように
+/// 描画する。
 /// ```text
 /// ✻ Conversation compacted (ctrl+o for history)
 ///
@@ -695,7 +696,7 @@ fn load_session_thinking_duration_ignores_skipped_meta_record_as_previous() {
 ///   ⎿  Read alpha.rs (42 lines)
 ///   ⎿  Referenced file beta.yml
 /// ```
-/// — the summary body itself appears nowhere.
+/// — 要約本文そのものはどこにも現れない。
 const COMPACT_SEQUENCE: &[&str] = &[
     r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}"#,
     r#"{"type":"user","isVisibleInTranscriptOnly":true,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued. SUMMARYBODY"}}"#,
@@ -777,8 +778,8 @@ fn attachment_falls_back_to_filename_when_display_path_is_absent() {
 
 #[test]
 fn undisplayed_attachment_kinds_draw_nothing() {
-    // The corpus holds 27 other kinds — `hook_success` alone ~47k times.
-    // None was observed to draw, so the renderer works from an allowlist.
+    // 実データには他に27種類あり、hook_success だけでも約4.7万件ある。
+    // どれも描画される様子が観測されなかったので、レンダラは許可リスト方式で動く。
     let f = write_jsonl(&[
         r#"{"type":"attachment","attachment":{"type":"hook_success","hookName":"PreToolUse:Read","stdout":"{}"}}"#,
         r#"{"type":"attachment","attachment":{"type":"skill_listing","content":"- daisy: ..."}}"#,

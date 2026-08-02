@@ -1,24 +1,23 @@
-//! Smart Worktree generation for [`App`].
+//! [App] の Smart Worktree 生成。
 //!
-//! "Smart Worktree" takes a free-form task description, asks the configured
-//! LLM provider for a branch name / Claude Code prompt / session name, then
-//! creates the worktree and auto-spawns Claude Code with the generated
-//! prompt. Generation and creation both run on a single background thread;
-//! progress is reported back via [`WorktreeOpResult`].
+//! 「Smart Worktree」は自由記述のタスク説明を受け取り、設定済みの LLM プロバイダに
+//! ブランチ名/Claude Code プロンプト/セッション名を問い合わせ、worktree を作成して
+//! 生成されたプロンプトで Claude Code を自動起動する。生成と作成はどちらも単一の
+//! バックグラウンドスレッド上で実行し、進捗は [WorktreeOpResult] 経由で報告される。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::*;
 
-/// Everything this task needs the model to do differently from other tasks
-/// lives here, not in the configured command.
+/// このタスクがモデルに他のタスクと異なる振る舞いを求める部分は、設定済み
+/// コマンド側ではなく全てここに置く。
 ///
-/// The "no tools, no commands" line matters when `[api] command` is an *agentic*
-/// CLI (`claude -p` and the like): left to itself such a tool reaches for Bash
-/// and answers conversationally, which fails the parse. A pure completion API
-/// ignores the line harmlessly, so it is safe to state unconditionally rather
-/// than having the user encode it in a wrapper.
+/// 「ツールもコマンドも使うな」という一文は、[api] command が(claude -p の
+/// ような)*エージェント的* CLI のときに効いてくる: 放っておくとそうしたツールは
+/// Bash に手を伸ばし会話的に答えてしまい、パースに失敗する。純粋な補完 API では
+/// この一文は無害に無視されるので、ユーザにラッパーで書かせるのではなく
+/// 無条件に書いておいて問題ない。
 const SMART_WORKTREE_SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name, a Claude Code prompt, and a session name from a task description.
 
 IMPORTANT: Do not use any tools. Do not run any commands. Do not explain. Answer immediately from the description alone.
@@ -29,9 +28,9 @@ Output ONLY a JSON object with three fields:
 - "session_name": a short, descriptive session name (max 50 chars) for display in session lists. Write in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
-/// Parse LLM raw output into `SmartGenResult`, extracting JSON even if surrounded by text.
+/// LLM の生出力を SmartGenResult にパースする。テキストに囲まれていても JSON を抽出する。
 fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
-    // Strip markdown fences first.
+    // まず markdown のフェンスを取り除く。
     let stripped = raw
         .trim()
         .strip_prefix("```json")
@@ -39,12 +38,12 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
         .unwrap_or(raw.trim());
     let stripped = stripped.strip_suffix("```").unwrap_or(stripped).trim();
 
-    // Try direct parse first.
+    // まず直接パースを試す。
     if let Ok(result) = serde_json::from_str::<SmartGenResult>(stripped) {
         return Ok(result);
     }
 
-    // Fallback: find the first '{' and last '}' to extract a JSON object.
+    // フォールバック: 最初の '{' と最後の '}' を探して JSON オブジェクトを抽出する。
     if let Some(start) = stripped.find('{')
         && let Some(end) = stripped.rfind('}')
         && start < end
@@ -60,24 +59,24 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
     ))
 }
 
-/// How many times to ask again when the reply contains no usable JSON.
+/// 返信に使えそうな JSON が含まれないとき、何回まで問い合わせ直すか。
 ///
-/// An agentic CLI occasionally answers conversationally however firmly the
-/// prompt is worded, and one off-format turn should not sink the whole
-/// smart-worktree flow. Cheap to retry here — this task is seconds of pure text
-/// generation, which is exactly why walkthrough generation does *not* retry.
+/// エージェント的な CLI は、プロンプトをどれだけ強く書いても、たまに会話的に
+/// 答えてしまうことがあり、1回のフォーマット崩れで smart-worktree フロー全体を
+/// 潰すべきではない。このタスクは数秒の純粋なテキスト生成なので、ここでのリトライは
+/// 安く済む — これはまさに、walkthrough 生成がリトライを*しない*理由でもある。
 const SMART_WORKTREE_ATTEMPTS: usize = 3;
 
-/// Run the LLM generation for smart worktree (branch name + prompt).
+/// smart worktree 用の LLM 生成(ブランチ名 + プロンプト)を実行する。
 ///
-/// The provider is selected from `[api]` config and built via [`crate::ai_caller`];
-/// this function owns the prompt, the retry policy, and the parsing — the
-/// configured command is just the model. Checks `cancel_token` before and after
-/// each (blocking) call.
+/// プロバイダは [api] 設定から選ばれ、[crate::ai_caller] 経由で構築される。
+/// この関数がプロンプト・リトライ方針・パースを所有し、設定済みコマンドは単に
+/// モデルであるにすぎない。各(ブロッキングの)呼び出しの前後で cancel_token を
+/// チェックする。
 ///
-/// The task keeps `[api] command_timeout_secs` as-is: naming a branch is a few
-/// seconds of text generation, unlike walkthrough generation, which asks for its own
-/// far larger budget.
+/// このタスクは [api] command_timeout_secs をそのまま使う: ブランチ名を
+/// 付けるのは数秒のテキスト生成であり、独自の遥かに大きな予算を要求する
+/// walkthrough 生成とは違う。
 fn run_smart_generation(
     desc: &str,
     cancel_token: &Arc<AtomicBool>,
@@ -111,15 +110,15 @@ fn run_smart_generation(
 }
 
 impl App {
-    /// Run LLM generation + worktree creation asynchronously in a single background thread.
+    /// 単一のバックグラウンドスレッドで LLM 生成 + worktree 作成を非同期に実行する。
     pub fn start_smart_worktree_async(&mut self, description: &str) {
         let desc = description.to_string();
         let main_branch = self.config.general.main_branch.clone();
         let repo_path = self.repo.path.clone();
-        // Resolve to a ref that actually exists: origin/<main> if there is a
-        // remote, otherwise the local <main> branch (or HEAD). Without this,
-        // worktree creation fails with "invalid reference: origin/main" in a
-        // local-only repo and the smart worktree never materializes.
+        // 実際に存在する参照へ解決する: リモートがあれば origin/<main>、なければ
+        // ローカルの <main> ブランチ(または HEAD)。これがないと、ローカルのみの
+        // リポジトリで worktree 作成が "invalid reference: origin/main" で
+        // 失敗し、smart worktree が一向にできあがらない。
         let base_ref = match git_engine::GitEngine::open(&repo_path) {
             Ok(engine) => engine.resolve_base_ref(&main_branch),
             Err(_) => format!("origin/{main_branch}"),
@@ -128,7 +127,7 @@ impl App {
 
         let cancel_token = Arc::new(AtomicBool::new(false));
 
-        // Add pending entry with empty branch (will be updated when LLM resolves).
+        // 空のブランチ名で保留エントリを追加する(LLM が解決したら更新される)。
         let pending = PendingWorktree {
             branch: String::new(),
             op: PendingWorktreeOp::SmartCreating,
@@ -156,7 +155,7 @@ impl App {
             let tx_panic = tx.clone();
             let desc_panic = desc.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Phase 1: LLM generation.
+                // フェーズ1: LLM生成。
                 let gen_result =
                     match run_smart_generation(&desc, &cancel, &api, &repo_path) {
                         Ok(r) => r,
@@ -181,7 +180,7 @@ impl App {
                 let prompt = gen_result.prompt.clone();
                 let session_name = gen_result.session_name.clone();
 
-                // Check cancellation before proceeding to Phase 2.
+                // フェーズ2へ進む前にキャンセルされていないか確認する。
                 if cancel.load(Ordering::Relaxed) {
                     let _ = tx.send(WorktreeOpResult::SmartFailed {
                         description: desc,
@@ -190,7 +189,7 @@ impl App {
                     return;
                 }
 
-                // Report branch resolved (for UI update).
+                // ブランチが解決したことを報告する(UI更新用)。
                 let _ = tx.send(WorktreeOpResult::SmartBranchResolved {
                     description: desc.clone(),
                     branch: branch.clone(),
@@ -198,7 +197,7 @@ impl App {
                     session_name: session_name.clone(),
                 });
 
-                // Phase 2: Create worktree.
+                // フェーズ2: worktree を作成する。
                 let pending = PendingWorktree {
                     branch: branch.clone(),
                     op: PendingWorktreeOp::SmartCreating,
@@ -234,10 +233,10 @@ impl App {
         });
     }
 
-    /// Cancel all pending smart worktree creations.
+    /// 保留中の smart worktree 作成を全てキャンセルする。
     ///
-    /// Sets the cancel token so the background thread stops, and removes
-    /// the pending entries from the list.
+    /// キャンセルトークンをセットしてバックグラウンドスレッドを停止させ、
+    /// 保留エントリをリストから取り除く。
     pub fn cancel_smart_worktrees(&mut self) -> bool {
         let smart_pending: Vec<_> = self
             .worktree_mgr
@@ -271,10 +270,10 @@ impl App {
 mod tests {
     use super::*;
 
-    /// This task's constraints belong to the task, not to whatever `[api]
-    /// command` happens to be: an agentic CLI reaches for tools and chats
-    /// unless told not to, and that instruction used to live in a wrapper
-    /// script the user had to maintain.
+    /// このタスクの制約はタスク自身に属するものであり、たまたまその時の
+    /// [api] command が何かには依存しない: エージェント的な CLI は指示しない
+    /// 限りツールに手を伸ばし会話してしまい、以前はその指示をユーザが保守する
+    /// ラッパースクリプト側に書く必要があった。
     #[test]
     fn system_prompt_forbids_tools_and_demands_json() {
         assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Do not use any tools"));

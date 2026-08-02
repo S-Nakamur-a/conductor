@@ -1,5 +1,5 @@
-//! Tests for [`super::user_text`] — the user-turn full-width background
-//! block: word-wrapping, column padding, and marker/continuation layout.
+//! [super::user_text] のテスト — user ターンのフル幅背景ブロック: 単語折り返し、
+//! カラムパディング、マーカー/継続行のレイアウト。
 
 use ratatui::style::{Color, Style};
 use unicode_width::UnicodeWidthStr;
@@ -8,7 +8,7 @@ use super::glyphs::MARKER_COLS;
 use super::palette;
 use super::user_text::{pad_to_width, render_user_text, wrap_plain_text};
 
-// ── wrap_plain_text ─────────────────────────────────────────────────────
+// wrap_plain_text
 
 #[test]
 fn wrap_fits_on_one_line_unchanged() {
@@ -25,9 +25,8 @@ fn wrap_breaks_at_word_boundaries() {
 
 #[test]
 fn wrap_preserves_source_newlines_as_independent_lines() {
-    // Two short source lines, each well under the width budget — they must
-    // stay on separate output lines, not get joined into one reflowed
-    // paragraph the way Markdown prose would.
+    // 幅の予算を十分に下回る短い元の行が2つ — Markdown の文章のように1つの
+    // リフローされた段落へ結合されるのではなく、別々の出力行のまま残る必要がある。
     assert_eq!(
         wrap_plain_text("first line\nsecond line", 40),
         vec!["first line", "second line"]
@@ -44,10 +43,10 @@ fn wrap_preserves_blank_source_lines() {
 
 #[test]
 fn wrap_overlong_single_word_is_hard_split() {
-    // Measured against Claude Code: `W`x150 at a 57-column budget comes back
-    // as 57 / 57 / 36, so an unbreakable run is cut at the column boundary
-    // rather than allowed to overflow (which is what
-    // `ui::walkthrough_pane::wrap_text` does — parity wins here).
+    // Claude Code に対して実測: Wx150 を57カラムの予算で折り返すと 57 / 57 / 36 に
+    // なるので、分割不能な連続文字はあふれさせるのではなくカラム境界で切られる
+    // （あふれさせるのは ui::walkthrough_pane::wrap_text の挙動だが、ここでは
+    // 一致を優先する）。
     assert_eq!(
         wrap_plain_text("supercalifragilistic", 5),
         vec!["super", "calif", "ragil", "istic"]
@@ -63,7 +62,7 @@ fn wrap_hard_split_matches_the_measured_native_shape() {
 
 #[test]
 fn wrap_hard_split_never_breaks_a_full_width_glyph() {
-    // Budget 5 with 2-column glyphs: 2 per line, never a half-glyph line.
+    // 予算5に2カラムのグリフ: 1行につき2文字、半分だけのグリフになる行は無い。
     let chunks = wrap_plain_text(&"あ".repeat(5), 5);
     for c in &chunks {
         assert!(unicode_width::UnicodeWidthStr::width(c.as_str()) <= 5, "{c:?}");
@@ -71,7 +70,7 @@ fn wrap_hard_split_never_breaks_a_full_width_glyph() {
     assert_eq!(chunks.concat(), "あ".repeat(5));
 }
 
-// ── pad_to_width ─────────────────────────────────────────────────────────
+// pad_to_width
 
 #[test]
 fn pad_short_string_fills_with_trailing_spaces() {
@@ -90,7 +89,7 @@ fn pad_string_wider_than_target_unchanged() {
     assert_eq!(pad_to_width("hello world", 5), "hello world");
 }
 
-// ── render_user_text ────────────────────────────────────────────────────
+// render_user_text
 
 fn marker_style() -> Style {
     Style::default().fg(palette::USER_MARKER_FG).bg(palette::USER_BG)
@@ -146,25 +145,25 @@ fn source_newlines_survive_as_separate_lines_each_with_their_own_gutter_slot() {
 
 #[test]
 fn body_wraps_at_width_minus_marker_cols() {
-    // width=10 leaves body_width = 10 - MARKER_COLS(2) = 8 columns for text.
+    // width=10 なら body_width = 10 - MARKER_COLS(2) = テキスト用に8カラム残る。
     let lines = render_user_text("abcdefgh ijkl", 10, "\u{276f}", marker_style(), body_style());
     assert!(lines.len() >= 2, "8-col budget must force a wrap: {lines:?}");
-    // Guard the constant this test relies on so it fails loudly if MARKER_COLS
-    // ever changes instead of silently asserting the wrong budget.
+    // このテストが依存する定数をガードしておく。MARKER_COLS が変わったとき、
+    // 誤った予算のまま黙って通ってしまうのではなく、はっきり失敗させるため。
     assert_eq!(MARKER_COLS, 2);
 }
 
-// ── Grapheme-cluster width accounting ────────────────────────────────────
+// グラフェムクラスタの幅計算
 //
-// These were found by the corpus sweep, not by inspection: a per-`char` sum
-// disagrees with the per-string width in both directions, and either way the
-// wrapped line no longer matches the budget it was wrapped to.
+// これらはコードを眺めて見つけたものではなく、コーパススイープで見つかったもの:
+// 1文字ずつの合計は文字列全体の幅とどちらの方向にもずれることがあり、どちらにせよ
+// 折り返した行は本来の予算と一致しなくなる。
 
 #[test]
 fn emoji_presentation_sequence_counts_as_two_columns() {
-    // `⚠` is 1 column; `⚠` + U+FE0F is 2. Summing per `char` sees only the
-    // base (the selector is zero-width), so the line came out one column
-    // over-wide — the exact bleed the panel-width invariant catches.
+    // ⚠ 単体は1カラム、⚠ + U+FE0F は2カラム。1文字ずつ合計すると基底文字しか
+    // 見えない（セレクタは幅0のため）ので、行が1カラムぶん広くなってしまう —
+    // まさにパネル幅の不変条件が捕まえるはみ出しである。
     let warn = "\u{26a0}\u{fe0f}";
     assert_eq!(unicode_width::UnicodeWidthStr::width(warn), 2);
 
@@ -180,8 +179,8 @@ fn emoji_presentation_sequence_counts_as_two_columns() {
 
 #[test]
 fn zwj_sequence_is_never_split() {
-    // A family emoji is 2 columns but seven `char`s; splitting between them
-    // would both mis-measure and leave half a sequence on screen.
+    // family 絵文字は2カラムだが7文字ある。その間で分割すると計測を誤るうえに、
+    // 画面上にシーケンスの半分だけが残ってしまう。
     let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}";
     let wrapped = wrap_plain_text(&family.repeat(3), 4);
     assert_eq!(wrapped.concat(), family.repeat(3));

@@ -1,49 +1,49 @@
-//! Line-oriented block parsing: splits raw Markdown text into [`MdBlock`]s
-//! (headings, list items, block quotes, fenced code, GFM tables, rules, blank
-//! lines, and plain paragraphs) ahead of rendering.
+//! 行単位のブロック解析: 描画に先立ち、生の Markdown テキストを MdBlock
+//! （見出し、リスト項目、引用ブロック、フェンス付きコード、GFM テーブル、水平線、
+//! 空行、通常の段落）に分割する。
 
-/// A block of the parsed summary. The parser is line-oriented, so most blocks
-/// map to a single source line; only `CodeBlock` spans multiple lines.
+/// 解析済み summary のブロック1つ分。パーサは行単位なので、ほとんどのブロックは
+/// ソースの1行に対応する。CodeBlock だけが複数行にまたがる。
 #[derive(Debug, PartialEq)]
 pub(crate) enum MdBlock {
-    /// `# heading` .. `###### heading` (level 1–6).
+    /// # heading 〜 ###### heading（レベル1〜6）。
     Heading { level: u8, text: String },
-    /// A normal text line. Author line breaks are preserved (one block each).
+    /// 通常のテキスト行。著者が入れた改行はそのまま保持する（1行につき1ブロック）。
     Paragraph(String),
-    /// `- item` / `* item` / `+ item` or `1. item` / `1) item`.
+    /// - item / * item / + item、または 1. item / 1) item。
     ListItem {
-        /// `Some("1")` for an ordered item (keeps the author's number), `None`
-        /// for a bullet.
+        /// 順序付き項目なら Some("1")（著者が書いた番号をそのまま保持）、
+        /// 箇条書きなら None。
         ordered: Option<String>,
-        /// GFM task marker: `None` = plain item, `Some(false)` = `[ ]` (open),
-        /// `Some(true)` = `[x]` (done).
+        /// GFM のタスクマーカー: None は通常項目、Some(false) は [ ]（未完了）、
+        /// Some(true) は [x]（完了）。
         checked: Option<bool>,
         text: String,
-        /// Leading-whitespace columns before the marker (nesting indent).
+        /// マーカーの前にある先頭空白の桁数（ネストの字下げ）。
         indent: usize,
     },
-    /// `> quoted text`.
+    /// > quoted text。
     Quote(String),
-    /// A fenced code block. `lang` is the info-string's first token (if any).
+    /// フェンス付きコードブロック。lang は info 文字列の最初のトークン（あれば）。
     CodeBlock {
         lang: Option<String>,
         lines: Vec<String>,
     },
-    /// A GFM pipe table: a header row, an alignment row, and zero or more body
-    /// rows. `aligns` carries one entry per header column.
+    /// GFM のパイプテーブル: ヘッダー行、アライメント行、0行以上の本体行からなる。
+    /// aligns はヘッダー列ごとに1要素持つ。
     Table {
         headers: Vec<String>,
         aligns: Vec<Align>,
         rows: Vec<Vec<String>>,
     },
-    /// `---` / `***` / `___` (3+ of the same marker).
+    /// / *** / ___（同じマーカーが3つ以上）。
     Rule,
-    /// A blank source line (preserved as paragraph spacing).
+    /// 空のソース行（段落間の余白として保持する）。
     Blank,
 }
 
-/// Per-column text alignment for a [`MdBlock::Table`], from the delimiter row's
-/// colons (`:--` left, `--:` right, `:-:` center).
+/// MdBlock::Table の列ごとのテキスト配置。デリミタ行のコロンから決まる
+/// （:-- は左寄せ、--: は右寄せ、:-: は中央寄せ）。
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum Align {
     Left,
@@ -51,8 +51,8 @@ pub(crate) enum Align {
     Right,
 }
 
-/// Split `text` into blocks. Lines are split on `\n`; a trailing `\r` (CRLF
-/// input) is stripped so fence detection and code bodies stay clean.
+/// text をブロックに分割する。行は \n で区切り、末尾の \r（CRLF 入力）は取り除いて、
+/// フェンス検出やコード本体がきれいな状態を保つようにする。
 pub(crate) fn parse_blocks(text: &str) -> Vec<MdBlock> {
     let lines: Vec<&str> = text.split('\n').map(strip_cr).collect();
     let mut blocks = Vec::new();
@@ -61,7 +61,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<MdBlock> {
         let line = lines[i];
         let trimmed = line.trim_start();
 
-        // Fenced code block — consumes lines until a matching close fence (or EOF).
+        // フェンス付きコードブロック — 対応する閉じフェンス（または EOF）まで行を消費する。
         if let Some((fence_char, fence_len, info)) = fence_open(trimmed) {
             let lang = info
                 .split_whitespace()
@@ -82,9 +82,9 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<MdBlock> {
             continue;
         }
 
-        // GFM table — a `|`-bearing line immediately followed by a valid
-        // delimiter row. The lookahead helper consumes the whole table (and
-        // returns `None`, eating nothing, when it isn't really a table).
+        // GFM テーブル — | を含む行の直後に有効なデリミタ行が続くもの。先読みの
+        // ヘルパーがテーブル全体を消費する（本物のテーブルでなければ何も消費せず
+        // None を返す）。
         if let Some((table, consumed)) = parse_table_at(&lines, i) {
             blocks.push(table);
             i += consumed;
@@ -118,8 +118,8 @@ fn strip_cr(s: &str) -> &str {
     s.strip_suffix('\r').unwrap_or(s)
 }
 
-/// If `s` opens a code fence, return `(fence_char, fence_len, info_string)`.
-/// A fence is 3+ backticks or 3+ tildes at the start of the (trimmed) line.
+/// s がコードフェンスを開いていれば (fence_char, fence_len, info_string) を返す。
+/// フェンスは（トリム済みの）行頭にあるバッククォート3つ以上、またはチルダ3つ以上。
 fn fence_open(s: &str) -> Option<(char, usize, &str)> {
     let first = s.chars().next()?;
     if first != '`' && first != '~' {
@@ -129,17 +129,17 @@ fn fence_open(s: &str) -> Option<(char, usize, &str)> {
     if len < 3 {
         return None;
     }
-    // `len` equals the byte offset because both fence chars are ASCII.
+    // フェンス文字はどちらも ASCII なので、len はバイトオフセットと一致する。
     Some((first, len, s[len..].trim()))
 }
 
-/// A close fence is 3+ (>= open length) of the same char, then only whitespace.
+/// 閉じフェンスは、同じ文字が開始側の長さ以上（3つ以上）続き、その後は空白のみ。
 fn is_fence_close(s: &str, fence_char: char, fence_len: usize) -> bool {
     let len = s.chars().take_while(|&c| c == fence_char).count();
     len >= fence_len && s.chars().skip(len).all(char::is_whitespace)
 }
 
-/// `---`, `***`, `___` (>= 3 of one marker, spaces allowed between).
+/// 、***、___（同じマーカーが3つ以上、間に空白を挟んでもよい）。
 fn is_hr(s: &str) -> bool {
     let marks: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
     if marks.len() < 3 {
@@ -149,23 +149,23 @@ fn is_hr(s: &str) -> bool {
     matches!(first, '-' | '*' | '_') && marks.iter().all(|&c| c == first)
 }
 
-/// `# ` .. `###### ` → `(level, heading_text)`. A space after the hashes is
-/// required (so `#nofilter`, `C#`, issue refs like `#242` stay paragraphs).
+/// # 〜 ###### → (level, heading_text)。ハッシュの後にスペースが必要
+/// （#nofilter、C#、#242 のような issue 参照が段落のまま扱われるように）。
 fn parse_heading(s: &str) -> Option<(u8, String)> {
     let hashes = s.chars().take_while(|&c| c == '#').count();
     if hashes == 0 || hashes > 6 {
         return None;
     }
     let rest = &s[hashes..];
-    // Require a separating space, except for an otherwise-empty heading ("# ").
+    // 区切りのスペースを必須にする。ただし見出し自体が空の場合（"# "）は例外。
     if !rest.is_empty() && !rest.starts_with(' ') {
         return None;
     }
     Some((hashes as u8, rest.trim_start().to_string()))
 }
 
-/// `- `/`* `/`+ ` (bullet) or `N. `/`N) ` (ordered) → a `ListItem`. A leading
-/// GFM task marker (`[ ] `/`[x] `) on the item text is split off into `checked`.
+/// - / * / +（箇条書き）、または N. / N)（順序付き）→ ListItem。項目テキスト先頭の
+/// GFM タスクマーカー（[ ] / [x] ）は checked に切り出す。
 fn parse_list_item(line: &str) -> Option<MdBlock> {
     let indent = line.len() - line.trim_start().len();
     let s = line.trim_start();
@@ -200,10 +200,10 @@ fn parse_list_item(line: &str) -> Option<MdBlock> {
     None
 }
 
-/// Split a leading GFM task marker off list-item text. `"[ ] foo"` →
-/// `(Some(false), "foo")`; `"[x] foo"`/`"[X] foo"` → `(Some(true), "foo")`; an
-/// empty task `"[ ]"` → `(Some(_), "")`. A marker must be followed by a space or
-/// end-of-string, so `"[ ]x"` and `"[y]"` stay literal `(None, original)`.
+/// リスト項目テキストの先頭にある GFM タスクマーカーを切り出す。"[ ] foo" →
+/// (Some(false), "foo")、"[x] foo"/"[X] foo" → (Some(true), "foo")、
+/// 空のタスク "[ ]" → (Some(_), "")。マーカーの後にはスペースか文字列終端が
+/// 必要なので、"[ ]x" や "[y]" はそのままの文字列として扱う（None, original）。
 fn split_task_marker(text: &str) -> (Option<bool>, &str) {
     for (pat, val) in [("[ ]", false), ("[x]", true), ("[X]", true)] {
         if let Some(rest) = text.strip_prefix(pat) {
@@ -218,13 +218,13 @@ fn split_task_marker(text: &str) -> (Option<bool>, &str) {
     (None, text)
 }
 
-/// If a GFM pipe table starts at `lines[i]` — a `|`-bearing line immediately
-/// followed by a valid delimiter row — parse it and return the block plus the
-/// number of source lines consumed. Returns `None` (consuming nothing) when it
-/// isn't a real table, so a paragraph like `a | b` is never misread.
+/// lines[i] から GFM のパイプテーブルが始まっている場合（| を含む行の直後に
+/// 有効なデリミタ行が続く場合）、それを解析してブロックと消費したソース行数を
+/// 返す。本物のテーブルでなければ何も消費せずに None を返すので、
+/// a | b のような段落を誤ってテーブルと解釈することはない。
 ///
-/// The delimiter row is the gate: if it isn't all valid `:?-+:?` cells the whole
-/// candidate is rejected before any line is consumed.
+/// デリミタ行がゲートになっている: すべてのセルが有効な :?-+:? でなければ、
+/// 1行も消費せずに候補全体を却下する。
 fn parse_table_at(lines: &[&str], i: usize) -> Option<(MdBlock, usize)> {
     let header_line = lines.get(i)?;
     if !header_line.contains('|') {
@@ -237,7 +237,7 @@ fn parse_table_at(lines: &[&str], i: usize) -> Option<(MdBlock, usize)> {
         return None;
     }
 
-    // Body rows: subsequent non-blank `|`-bearing lines.
+    // 本体行: 以降にある、空行でなく | を含む行。
     let mut rows = Vec::new();
     let mut j = i + 2;
     while let Some(l) = lines.get(j) {
@@ -258,9 +258,9 @@ fn parse_table_at(lines: &[&str], i: usize) -> Option<(MdBlock, usize)> {
     ))
 }
 
-/// Split one table row into trimmed cells, dropping the empty cells created by
-/// the surrounding `|`. `"| a | b |"` and `"a | b"` both yield `["a", "b"]`.
-/// (Escaped `\|` and pipes inside `code` are out of scope.)
+/// テーブルの行1本を、前後の | が作る空セルを取り除きつつトリム済みセルへ
+/// 分割する。"| a | b |" と "a | b" はどちらも ["a", "b"] になる。
+/// （エスケープされた \| やコード内のパイプは対象外。）
 pub(crate) fn split_table_row(line: &str) -> Vec<String> {
     let t = line.trim();
     let t = t.strip_prefix('|').unwrap_or(t);
@@ -268,8 +268,9 @@ pub(crate) fn split_table_row(line: &str) -> Vec<String> {
     t.split('|').map(|c| c.trim().to_string()).collect()
 }
 
-/// Parse a delimiter row's cells into alignments, or `None` if any cell isn't a
-/// valid `:?-+:?` separator (≥1 dash). Doubles as the "is this a table?" gate.
+/// デリミタ行のセルをアライメントへ解析する。いずれかのセルが有効な
+/// :?-+:? 区切り（ハイフン1つ以上）でなければ None。「これはテーブルか」を
+/// 判定するゲートも兼ねる。
 fn parse_alignments(cells: &[String]) -> Option<Vec<Align>> {
     if cells.is_empty() {
         return None;

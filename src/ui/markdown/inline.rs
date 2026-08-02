@@ -1,5 +1,5 @@
-//! Inline span parsing: `code`, `**bold**`, `*italic*`, `~~strikethrough~~`,
-//! and `[text](url)` links out of a block's text.
+//! インラインのスパン解析: ブロックのテキストから code、**bold**、*italic*、
+//! ~~strikethrough~~、[text](url) 形式のリンクを取り出す。
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
@@ -8,14 +8,14 @@ use crate::theme::Theme;
 
 use super::MarkdownFlavor;
 
-/// Parse inline `code`, `**bold**`, `*italic*`, `~~strikethrough~~`, and
-/// `[text](url)` links out of `text`, styling the rest with `base`.
-/// Unmatched/space-flanked delimiters stay literal.
+/// text からインラインの code、**bold**、*italic*、~~strikethrough~~、
+/// [text](url) 形式のリンクを解析し、残りは base のスタイルで表示する。
+/// 対応する閉じ記号がない、または前後に空白が接するデリミタはそのまま文字として残す。
 ///
-/// `flavor` only affects inline code: the Rich UI pads it into a coloured
-/// card (`[ code ]`); the Claude transcript renders it as plain
-/// `theme.info`-coloured text with no padding or background, matching native
-/// Claude Code.
+/// flavor が影響するのはインラインコードだけ: Rich UI では色付きのカード
+/// （[ code ] のように）にパディングして表示する。Claude のトランスクリプトでは
+/// theme.info 色のプレーンテキストとして、パディングも背景もなしで表示し、実物の
+/// Claude Code に合わせている。
 pub(crate) fn inline_spans(
     text: &str,
     base: Style,
@@ -23,12 +23,12 @@ pub(crate) fn inline_spans(
     flavor: MarkdownFlavor,
 ) -> Vec<Span<'static>> {
     let code_style = match flavor {
-        // A pink foreground on a shaded card, one space of padding inside the
-        // card on each side (`[ code ]`, GitHub-style) so it reads as a
-        // distinct chip and not just tinted text. The padding spaces carry
-        // the card colour too.
+        // 影付きのカードの上にピンクの前景色を乗せ、カードの内側に左右1スペース分の
+        // パディングを入れる（[ code ] のような GitHub 風）。単に色が付いたテキストでは
+        // なく、独立したチップとして読めるようにするため。パディングのスペースにも
+        // カードの色を乗せる。
         MarkdownFlavor::Rich => Style::default().fg(theme.code_fg).bg(theme.code_bg),
-        // Native Claude Code: `theme.info`-coloured text, no card, no padding.
+        // 実物の Claude Code: theme.info 色のテキストで、カードもパディングもなし。
         MarkdownFlavor::Transcript => Style::default().fg(theme.info),
     };
     let chars: Vec<char> = text.chars().collect();
@@ -41,18 +41,18 @@ pub(crate) fn inline_spans(
         let c = chars[i];
 
         if c == '`' {
-            // Inline code: match the next backtick; content may be anything.
+            // インラインコード: 次のバッククォートと対応させる。中身は何でもよい。
             if let Some(j) = (i + 1..n).find(|&k| chars[k] == '`')
                 && j > i + 1
             {
                 flush(&mut buf, &mut spans, base);
                 let content = collect(&chars, i + 1, j);
                 let styled = match flavor {
-                    // Pad with NBSP (not a regular space) so the wrapper
-                    // never breaks the chip at its padding — it only wraps
-                    // on 0x20.
+                    // 通常のスペースではなく NBSP でパディングする。ラッパーが
+                    // パディング部分でチップを分断してしまわないようにするため
+                    // （折り返しは 0x20 でしか起きない）。
                     MarkdownFlavor::Rich => format!("\u{a0}{content}\u{a0}"),
-                    // Native Claude Code has no padding around inline code.
+                    // 実物の Claude Code はインラインコードの周りにパディングを入れない。
                     MarkdownFlavor::Transcript => content,
                 };
                 spans.push(Span::styled(styled, code_style));
@@ -61,7 +61,7 @@ pub(crate) fn inline_spans(
             }
         } else if c == '*' {
             if i + 1 < n && chars[i + 1] == '*' {
-                // Bold: opener `**` must be followed by non-space.
+                // 太字: 開き記号 ** の直後は非空白でなければならない。
                 if i + 2 < n
                     && !chars[i + 2].is_whitespace()
                     && let Some(j) = find_close_bold(&chars, i + 2)
@@ -79,7 +79,7 @@ pub(crate) fn inline_spans(
                 && chars[i + 1] != '*'
                 && let Some(j) = find_close_italic(&chars, i + 1)
             {
-                // Italic: opener `*` followed by non-space.
+                // 斜体: 開き記号 * の直後は非空白。
                 flush(&mut buf, &mut spans, base);
                 spans.push(Span::styled(
                     collect(&chars, i + 1, j),
@@ -94,12 +94,12 @@ pub(crate) fn inline_spans(
             flush(&mut buf, &mut spans, base);
             let link_style = base.fg(theme.info).add_modifier(Modifier::UNDERLINED);
             if link.text.is_empty() || link_text_matches_url(&link.text, &link.url) {
-                // Empty or self-titled link: show the URL once, styled.
+                // 空、またはテキストが URL 自身と同じリンク: URL を1回だけ装飾して表示する。
                 spans.push(Span::styled(link.url, link_style));
             } else {
-                // Link text (which may itself contain inline markup) plus the
-                // URL in a recessive, footnote-like parenthetical so the
-                // destination stays visible/copyable in a non-clickable TUI.
+                // リンクテキスト（それ自体がインライン記法を含みうる）に続けて、URL を
+                // 控えめな脚注風の括弧書きで表示する。クリックできない TUI でも行き先を
+                // 見える・コピーできる状態に保つため。
                 spans.extend(inline_spans(&link.text, link_style, theme, flavor));
                 spans.push(Span::styled(
                     format!(" ({})", link.url),
@@ -114,10 +114,10 @@ pub(crate) fn inline_spans(
             && !chars[i + 2].is_whitespace()
             && let Some(j) = find_close_strike(&chars, i + 2)
         {
-            // Strikethrough `~~text~~`: crossed out AND muted, so the
-            // "removed/deprecated" meaning survives terminals that ignore the
-            // SGR 9 (crossed-out) escape. (A single `~` stays literal; a `~~~`
-            // run at line start is a code fence, handled before inline.)
+            // 打ち消し線 ~~text~~: CROSSED_OUT と muted 色の両方を適用する。ターミナルが
+            // SGR 9（打ち消し線）エスケープを無視しても「削除済み/非推奨」という意味が
+            // 伝わるようにするため。（単独の ~ はそのまま文字として残る。行頭の ~~~ は
+            // コードフェンスとしてインライン処理より前に扱われる。）
             flush(&mut buf, &mut spans, base);
             spans.push(Span::styled(
                 collect(&chars, i + 2, j),
@@ -148,8 +148,7 @@ fn collect(chars: &[char], start: usize, end: usize) -> String {
     chars[start..end].iter().collect()
 }
 
-/// Find the closing `**` at or after `from` (right-flanking: preceded by a
-/// non-space, with non-empty content).
+/// from 以降で閉じ記号 ** を探す（右接: 直前が非空白で、中身が空でないこと）。
 fn find_close_bold(chars: &[char], from: usize) -> Option<usize> {
     let n = chars.len();
     let mut k = from;
@@ -162,14 +161,13 @@ fn find_close_bold(chars: &[char], from: usize) -> Option<usize> {
     None
 }
 
-/// Find the closing `*` at or after `from` (right-flanking: preceded by a
-/// non-space).
+/// from 以降で閉じ記号 * を探す（右接: 直前が非空白であること）。
 fn find_close_italic(chars: &[char], from: usize) -> Option<usize> {
     (from..chars.len()).find(|&k| chars[k] == '*' && !chars[k - 1].is_whitespace())
 }
 
-/// Find the closing `~~` at or after `from` (right-flanking: preceded by a
-/// non-space, with non-empty content). Mirrors [`find_close_bold`].
+/// from 以降で閉じ記号 ~~ を探す（右接: 直前が非空白で、中身が空でないこと）。
+/// find_close_bold と対になる。
 fn find_close_strike(chars: &[char], from: usize) -> Option<usize> {
     let n = chars.len();
     let mut k = from;
@@ -182,22 +180,22 @@ fn find_close_strike(chars: &[char], from: usize) -> Option<usize> {
     None
 }
 
-/// A parsed `[text](url)` inline link.
+/// [text](url) 形式のインラインリンクを解析した結果。
 struct Link {
-    /// The raw link text (may itself contain inline markup).
+    /// リンクテキストの生データ（それ自体がインライン記法を含みうる）。
     text: String,
     url: String,
-    /// Index just past the closing `)`.
+    /// 閉じ記号 ) の直後のインデックス。
     next_i: usize,
 }
 
-/// Parse a `[text](url)` link whose `[` is at `chars[i]`. Returns `None` when
-/// the link is not well-formed (no `]`, no immediately-following `(`, or no
-/// closing `)`), so the caller leaves the `[` literal.
+/// chars[i] に [ がある [text](url) 形式のリンクを解析する。リンクの形式が不正な場合
+/// （] がない、直後に ( が続かない、閉じ記号 ) がない）は None を返し、呼び出し元は
+/// [ をそのまま文字として残す。
 ///
-/// Deliberate simplification: the first `)` closes the URL, so URLs containing
-/// a literal `)` (e.g. some Wikipedia links) aren't supported — the remainder
-/// falls back to literal text rather than panicking.
+/// 意図的な簡略化: 最初に現れた ) を URL の閉じとみなすため、) を文字として含む URL
+/// （一部の Wikipedia のリンクなど）はサポートしない。残りはパニックせず単なる文字列に
+/// フォールバックする。
 fn parse_link_at(chars: &[char], i: usize) -> Option<Link> {
     let text_end = find_char_from(chars, i + 1, ']')?;
     let url_open = text_end + 1;
@@ -212,14 +210,14 @@ fn parse_link_at(chars: &[char], i: usize) -> Option<Link> {
     })
 }
 
-/// Index of the first `target` char at or after `from`, if any.
+/// from 以降で最初に現れる target 文字のインデックス（あれば）。
 fn find_char_from(chars: &[char], from: usize, target: char) -> Option<usize> {
     (from..chars.len()).find(|&k| chars[k] == target)
 }
 
-/// Whether the link text is effectively its own URL, so the URL needn't be
-/// repeated in parentheses. Compared case-insensitively, ignoring a trailing
-/// slash (so `[https://x/](https://x)` collapses).
+/// リンクテキストが実質的に URL 自身と同じかどうか。同じなら括弧書きで URL を
+/// 繰り返す必要がない。大文字小文字を無視し、末尾のスラッシュも無視して比較する
+/// （[https://x/](https://x) が縮退するように）。
 fn link_text_matches_url(text: &str, url: &str) -> bool {
     let norm = |s: &str| s.trim_end_matches('/').to_ascii_lowercase();
     norm(text) == norm(url)

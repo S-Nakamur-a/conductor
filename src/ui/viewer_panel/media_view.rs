@@ -1,5 +1,6 @@
-//! Media file (image/video) rendering mode of the viewer panel — ASCII art or
-//! terminal-graphics-protocol pixel display, depending on `term_caps`.
+//! ビューアパネルのメディアファイル（画像/動画）表示モード。
+//! term_caps に応じて ASCII アートまたはターミナルグラフィックスプロトコルによる
+//! ピクセル表示を行う。
 
 use crate::app::App;
 use crate::media_state::MediaContent;
@@ -9,14 +10,13 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-/// Render media file (image/video) as ASCII art in the viewer panel.
+/// ビューアパネル内にメディアファイル（画像/動画）を ASCII アートとして描画する。
 pub(super) fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
     let theme = &app.theme;
     let vs = &app.viewer_state;
 
-    // Recover from a poisoned lock instead of panicking: the decode thread
-    // holds this mutex while rendering, so a panic there (malformed media)
-    // must not take down the whole TUI on the next frame.
+    // ロックが poison していてもパニックせず復旧する。デコードスレッドは描画中このミューテックス
+    // を保持しており、そこでのパニック（壊れたメディア）が次フレームで TUI 全体を巻き込んではならない。
     let content = vs
         .media_state
         .content
@@ -41,12 +41,12 @@ pub(super) fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block:
             let inner = block.inner(area);
             frame.render_widget(block, area);
 
-            // Reserve last line for info bar.
+            // 最終行は情報バー用に確保する。
             let media_height = inner.height.saturating_sub(1) as usize;
             let media_area = Rect::new(inner.x, inner.y, inner.width, media_height as u16);
             let info_area = Rect::new(inner.x, inner.y + media_height as u16, inner.width, 1);
 
-            // Render the media lines.
+            // メディアの行を描画する。
             let visible_lines: Vec<Line> = lines.into_iter().take(media_height).collect();
             let paragraph = Paragraph::new(visible_lines);
             frame.render_widget(paragraph, media_area);
@@ -63,14 +63,14 @@ pub(super) fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block:
             let inner = block.inner(area);
             frame.render_widget(block, area);
 
-            // Reserve last line for info bar.
+            // 最終行は情報バー用に確保する。
             let media_height = inner.height.saturating_sub(1);
             let media_area = Rect::new(inner.x, inner.y, inner.width, media_height);
             let info_area = Rect::new(inner.x, inner.y + media_height, inner.width, 1);
 
-            // Pixel-quality image via the terminal graphics protocol. The
-            // escape payload is embedded in the buffer cells, so ratatui's
-            // diffing only re-transmits it when the cells actually change.
+            // ターミナルグラフィックスプロトコルによるピクセル品質の画像。エスケープ
+            // ペイロードはバッファのセルに埋め込まれるため、ratatui の diffing により
+            // セルが実際に変化したときだけ再送信される。
             frame.render_widget(ratatui_image::Image::new(protocol.as_ref()), media_area);
 
             render_media_info_bar(frame, info_area, dimensions, file_size, theme);
@@ -84,7 +84,7 @@ pub(super) fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block:
     }
 }
 
-/// Render the media info bar (dimensions + file size) under the image.
+/// 画像の下にメディア情報バー（サイズ + ファイルサイズ）を描画する。
 fn render_media_info_bar(
     frame: &mut Frame,
     info_area: Rect,

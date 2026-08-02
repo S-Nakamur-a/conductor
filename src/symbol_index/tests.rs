@@ -1,4 +1,4 @@
-//! Tests for symbol index construction and querying.
+//! シンボルインデックスの構築とクエリのテスト。
 
 use std::path::PathBuf;
 
@@ -77,22 +77,22 @@ macro_rules! my_macro {
     assert!(names.contains(&"submodule"));
     assert!(names.contains(&"my_macro"));
 
-    // Check enum variants.
+    // enum のバリアントを確認する。
     assert!(names.contains(&"Red"));
     assert!(names.contains(&"Blue"));
 
-    // Check field.
+    // フィールドを確認する。
     assert!(names.contains(&"field_a"));
 
-    // Check impl — should have scope "MyStruct".
+    // impl を確認する — scope は "MyStruct" のはず。
     let impl_sym = symbols.iter().find(|s| s.kind == SymbolKind::Impl).unwrap();
     assert_eq!(impl_sym.scope.as_deref(), Some("MyStruct"));
 
-    // Check function inside impl.
+    // impl 内の関数を確認する。
     let draw_fns: Vec<_> = symbols.iter().filter(|s| s.name == "draw").collect();
     assert!(!draw_fns.is_empty());
 
-    // Verify line numbers are 1-indexed and reasonable.
+    // 行番号が 1 始まりで妥当な値であることを確認する。
     let hello = symbols.iter().find(|s| s.name == "hello_world").unwrap();
     assert!(hello.line >= 1);
     assert_eq!(hello.kind, SymbolKind::Function);
@@ -128,9 +128,9 @@ fn test_find_definitions_filters_fields() {
     assert_eq!(defs[0].kind, SymbolKind::Struct);
 }
 
-// ── S3: find_references excludes non-code extensions and non-code hits ──
+// find_references はコード以外の拡張子・コード以外の一致を除外する
 
-/// Write `name` under `dir` with `contents`, creating parent directories.
+/// dir の下に name というファイルを contents で書く。親ディレクトリも作成する。
 fn write_fixture(dir: &std::path::Path, name: &str, contents: &str) {
     let path = dir.join(name);
     if let Some(parent) = path.parent() {
@@ -176,29 +176,31 @@ fn find_references_skips_comment_and_string_hits() {
     let idx = SymbolIndex::new(dir.clone());
     let refs = idx.find_references("widget", &dir);
 
-    // Only line 4's call is a real, code-position reference — the comment on
-    // line 1 and the string literal on line 3 must not come back.
+    // 実際にコード位置の参照なのは4行目の呼び出しだけである — 1行目の
+    // コメントと3行目の文字列リテラルは返ってきてはならない。
     assert_eq!(refs.len(), 1, "expected exactly one code-position hit: {refs:?}");
     assert_eq!(refs[0].line, 4);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Frame-budget gate for the hover path.
+/// ホバー経路のフレーム予算ゲート。
 ///
-/// Deliberately uses `new` — the worst case in this repository, mentioned in
-/// close to 200 files. An earlier version of this test measured
-/// `find_references` itself, which occurs in six files and so never exercised
-/// the cost that scales with hit count: it passed while hovering a common name
-/// took ~157ms and dropped ten frames. The cap is what bounds the work, so the
-/// capped call is what has to be measured, and with the name that hurts most.
+/// あえて new を使う — このリポジトリでは最悪ケースで、約200ファイルに
+/// 言及がある。このテストの以前のバージョンは find_references 自体を
+/// 計測していたが、これは6ファイルにしか出現しないため、ヒット数に応じて
+/// スケールするコストをまったく検証できていなかった。それは、ありふれた
+/// 名前をホバーすると約157msかかりフレームを10枚落としていたにもかかわらず
+/// パスしていたということである。上限が作業量を制限する仕組みなので、
+/// 計測すべきは上限付きの呼び出しであり、しかも最も負荷の高い名前で行う
+/// 必要がある。
 #[test]
 fn hover_reference_count_stays_within_a_frame() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let idx = SymbolIndex::new(root.clone());
 
-    // Untimed run first, so the measurement isn't dominated by cold-page-cache
-    // disk reads that have nothing to do with this code.
+    // まず計測なしで1回実行しておく。こうしないと、このコードとは無関係な
+    // コールドなページキャッシュのディスク読み取りに計測結果が支配されてしまう。
     idx.count_references_upto("new", &root, 50);
 
     let start = std::time::Instant::now();
@@ -214,10 +216,10 @@ fn hover_reference_count_stays_within_a_frame() {
     );
 }
 
-/// The uncapped search is user-initiated (`gr`, the references overlay), so it
-/// may take longer than a frame — but it must still not degenerate into
-/// parsing the whole tree. A distinctive name touches few files and should
-/// stay close to the pre-mask baseline of 8-10ms.
+/// 上限なしの検索はユーザ起動（gr、参照オーバーレイ）なので、1フレームより
+/// 長くかかってもよい — ただしツリー全体をパースする挙動へ退化しては
+/// ならない。特徴的な名前ならファイル数は少なく、マスク導入前のベースラインで
+/// ある 8〜10ms に近い値に収まるはず。
 #[test]
 fn find_references_defers_parsing_to_files_that_match() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -255,9 +257,9 @@ fn test_find_implementations() {
     assert_eq!(impls.len(), 1);
 }
 
-// ── Re-rooting across worktrees ───────────────────────────────────────
+// worktree をまたいだ re-root
 
-/// Write `files` (relative path -> contents) under a fresh temp directory.
+/// 新規の一時ディレクトリの下にファイル（相対パス → 内容）を書く。
 fn scratch_tree(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "symidx_{tag}_{}_{:?}",
@@ -272,9 +274,9 @@ fn scratch_tree(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
-/// After re-rooting, the index must answer for the new tree only. Answering
-/// for the old one is the failure that shows up as a jump to a plausible file
-/// at a line number from another branch.
+/// re-root した後、インデックスは新しいツリーについてのみ答えなければ
+/// ならない。古いツリーについて答え続けることが、別のブランチの行番号で
+/// もっともらしいファイルへジャンプしてしまうという失敗として現れる。
 #[test]
 fn rerooting_replaces_what_the_index_answers_for() {
     let a = scratch_tree("root_a", &[("a.rs", "pub fn only_in_a() {}\n")]);
@@ -286,8 +288,8 @@ fn rerooting_replaces_what_the_index_answers_for() {
     assert!(idx.find_definitions("only_in_b").is_empty());
 
     idx.set_root(b.clone());
-    // Before the rebuild lands the index must admit it knows nothing rather
-    // than keep answering from the tree we just left.
+    // 再構築が反映されるまで、インデックスはたった今離れたツリーを使って
+    // 答え続けるのではなく、何も知らないと認めなければならない。
     assert!(
         !idx.is_available(),
         "re-rooting must invalidate until the rebuild lands"
@@ -305,9 +307,9 @@ fn rerooting_replaces_what_the_index_answers_for() {
     let _ = std::fs::remove_dir_all(&b);
 }
 
-/// Re-rooting to the same path must not blow the index away — the
-/// filesystem-change path rebuilds in place and would otherwise flap to
-/// "not ready" on every save.
+/// 同じパスへの re-root はインデックスを吹き飛ばしてはならない —
+/// ファイルシステム変更経路はその場で再構築するので、そうしないと保存の
+/// たびに「未準備」状態にばたついてしまう。
 #[test]
 fn rerooting_to_the_same_path_is_a_no_op() {
     let a = scratch_tree("root_same", &[("a.rs", "pub fn keep() {}\n")]);
@@ -321,17 +323,17 @@ fn rerooting_to_the_same_path_is_a_no_op() {
     let _ = std::fs::remove_dir_all(&a);
 }
 
-/// A build that started before a re-root must not publish its result.
+/// re-root より前に始まったビルドは、その結果を公開してはならない。
 ///
-/// `BackgroundOp` cannot cancel the worker it spawned — it drops the join
-/// handle, and the worker writes into the shared index whether or not anyone
-/// is still listening — so the only defence is refusing the stale result when
-/// it arrives.
+/// BackgroundOp は自身が spawn したワーカーをキャンセルできない — join
+/// handle を drop するだけで、ワーカーは誰かが聞いているかどうかに関わらず
+/// 共有インデックスに書き込む — なので唯一の防御策は、古い結果が届いた時点で
+/// それを拒否することである。
 ///
-/// Played out as three ordered calls against the publish guard rather than by
-/// racing a slow build against a re-root: the interleaving under test is
-/// exactly "stamp, then move the root, then finish", and a threaded version
-/// would only reach it when the scheduler happened to agree.
+/// 遅いビルドと re-root を実際に競合させるのではなく、publish のガードに
+/// 対する3つの順序付き呼び出しとして再現している: テスト対象の絡み合いは
+/// まさに「刻む → root を動かす → 完了する」であり、スレッドを使った版では
+/// スケジューラがたまたま協力してくれた時にしかこの状況に到達しない。
 #[test]
 fn a_build_that_started_before_a_reroot_is_discarded() {
     let old = scratch_tree("stale_old", &[("old.rs", "pub fn from_old_tree() {}\n")]);
@@ -339,11 +341,11 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
 
     let idx = SymbolIndex::new(old.clone());
 
-    // A build starts over `old` and stamps itself.
+    // old に対してビルドが始まり、自身に generation を刻む。
     let stamped = idx.generation();
-    // The user switches worktrees while it is still walking.
+    // まだ走査している最中に、ユーザが worktree を切り替える。
     idx.set_root(new.clone());
-    // It finishes and offers what it found.
+    // ビルドが完了し、見つけたものを差し出す。
     let stale = vec![Symbol {
         name: "from_old_tree".to_string(),
         kind: SymbolKind::Function,
@@ -367,7 +369,7 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
         "a discarded build must not mark the index ready"
     );
 
-    // A build that starts *after* the re-root publishes normally.
+    // re-root の *後* に始まったビルドは通常どおり公開される。
     idx.build().unwrap();
     assert!(!idx.find_definitions("from_new_tree").is_empty());
 
@@ -375,10 +377,10 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
     let _ = std::fs::remove_dir_all(&new);
 }
 
-/// A language we have no grammar for must not come back empty from a reference
-/// search. Dropping every hit would answer "there are no references" when the
-/// truth is "we could not tell" — the same silent-wrong-answer this work
-/// exists to remove, just pointed at a different surface.
+/// 文法を持たない言語であっても、参照検索の結果が空で返ってきてはならない。
+/// すべてのヒットを捨てると、本当は「判定できなかった」だけなのに「参照は
+/// 存在しない」と答えてしまう — これはこの作業がなくそうとしている
+/// 「黙って間違った答えを返す」問題そのものを、別の場所に向けているだけである。
 #[test]
 fn find_references_keeps_hits_in_unparseable_languages() {
     let dir = scratch_tree(

@@ -1,4 +1,4 @@
-//! Tests for `TextInput` construction, editing, and cursor movement.
+//! TextInput の生成・編集・カーソル移動のテスト。
 
 use super::*;
 
@@ -36,7 +36,7 @@ fn test_delete_backward() {
     ti.delete_backward();
     assert_eq!(ti.text(), "ab");
     ti.move_home();
-    ti.delete_backward(); // no-op at start
+    ti.delete_backward(); // 先頭では何もしない
     assert_eq!(ti.text(), "ab");
 }
 
@@ -48,7 +48,7 @@ fn test_delete_forward() {
     ti.delete_forward();
     assert_eq!(ti.text(), "bc");
     ti.move_end();
-    ti.delete_forward(); // no-op at end
+    ti.delete_forward(); // 末尾では何もしない
     assert_eq!(ti.text(), "bc");
 }
 
@@ -63,11 +63,11 @@ fn test_move_left_right() {
     assert_eq!(ti.cursor, 1);
     ti.move_right();
     assert_eq!(ti.cursor, 2);
-    // Move left past start
+    // 先頭を超えて左移動
     ti.move_home();
     ti.move_left();
     assert_eq!(ti.cursor, 0);
-    // Move right past end
+    // 末尾を超えて右移動
     ti.move_end();
     ti.move_right();
     assert_eq!(ti.cursor, 3);
@@ -90,7 +90,7 @@ fn test_multibyte_chars() {
     ti.insert_char('い');
     ti.insert_char('う');
     assert_eq!(ti.text(), "あいう");
-    assert_eq!(ti.cursor, 9); // 3 bytes per char
+    assert_eq!(ti.cursor, 9); // 1文字あたり3バイト
     ti.move_left();
     assert_eq!(ti.cursor, 6);
     ti.delete_backward();
@@ -105,30 +105,30 @@ fn test_word_movement() {
     ti.set_text("hello world foo");
     ti.move_home();
     ti.move_word_right();
-    assert_eq!(ti.cursor, 6); // after "hello "
+    assert_eq!(ti.cursor, 6); // "hello " の後
     ti.move_word_right();
-    assert_eq!(ti.cursor, 12); // after "world "
+    assert_eq!(ti.cursor, 12); // "world " の後
     ti.move_word_left();
-    assert_eq!(ti.cursor, 6); // back to "world"
+    assert_eq!(ti.cursor, 6); // "world" まで戻る
     ti.move_word_left();
-    assert_eq!(ti.cursor, 0); // back to start
+    assert_eq!(ti.cursor, 0); // 先頭まで戻る
 }
 
 #[test]
 fn test_delete_to_line_start_single_line() {
     let mut ti = TextInput::new();
     ti.set_text("hello world");
-    // Cursor at end: deletes everything
+    // カーソルが末尾にあるので全て削除される
     ti.delete_to_line_start();
     assert_eq!(ti.text(), "");
 
     ti.set_text("hello world");
-    ti.move_left(); // before 'd'
-    ti.move_left(); // before 'l'
-    ti.move_left(); // before 'r'
-    ti.move_left(); // before 'o'
-    ti.move_left(); // before 'w'
-    ti.move_left(); // before ' '
+    ti.move_left(); // 'd' の前
+    ti.move_left(); // 'l' の前
+    ti.move_left(); // 'r' の前
+    ti.move_left(); // 'o' の前
+    ti.move_left(); // 'w' の前
+    ti.move_left(); // ' ' の前
     ti.delete_to_line_start();
     assert_eq!(ti.text(), " world");
     assert_eq!(ti.cursor, 0);
@@ -138,11 +138,11 @@ fn test_delete_to_line_start_single_line() {
 fn test_delete_to_line_start_multiline() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("line1\nline2\nline3");
-    // Cursor at end of "line3"
+    // カーソルは "line3" の末尾にある
     ti.delete_to_line_start();
     assert_eq!(ti.text(), "line1\nline2\n");
 
-    // Cursor now at the empty third line; no-op since at line start
+    // カーソルは今、空の3行目にある。行頭にいるので何もしない
     ti.delete_to_line_start();
     assert_eq!(ti.text(), "line1\nline2\n");
 }
@@ -181,7 +181,7 @@ fn test_multiline_cursor_row_col() {
 fn test_multiline_home_end() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("line1\nline2\nline3");
-    // Cursor at end of "line3"
+    // カーソルは "line3" の末尾にある
     ti.move_home();
     assert_eq!(ti.text_before_cursor(), "line1\nline2\n");
     ti.move_end();
@@ -192,7 +192,7 @@ fn test_multiline_home_end() {
 fn test_insert_str_single_line() {
     let mut ti = TextInput::new();
     ti.insert_str("hello\nworld");
-    assert_eq!(ti.text(), "helloworld"); // newlines stripped
+    assert_eq!(ti.text(), "helloworld"); // 改行が取り除かれる
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn test_set_text_moves_cursor_to_end() {
 fn test_display_width_japanese() {
     let mut ti = TextInput::new();
     ti.set_text("あいう");
-    // Each Japanese char has display width 2, so total = 6
+    // 日本語1文字の表示幅は2なので合計は6
     assert_eq!(ti.display_width_before_cursor(), 6);
     ti.move_left();
     assert_eq!(ti.display_width_before_cursor(), 4);
@@ -224,9 +224,9 @@ fn test_display_width_japanese() {
 #[test]
 fn test_deref() {
     let ti = TextInput::new();
-    assert!(ti.is_empty()); // str::is_empty via Deref
+    assert!(ti.is_empty()); // Deref 経由の str::is_empty
     let mut ti = TextInput::new();
     ti.set_text("Hello World");
-    assert!(ti.contains("World")); // str::contains via Deref
+    assert!(ti.contains("World")); // Deref 経由の str::contains
     assert_eq!(ti.to_lowercase(), "hello world");
 }

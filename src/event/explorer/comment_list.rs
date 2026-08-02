@@ -1,6 +1,5 @@
-//! Explorer comment-list sub-panel: navigating and acting on review
-//! comments/replies, plus jumping the Viewer to a selected comment's
-//! location.
+//! Explorer コメント一覧サブパネル: レビューコメント・返信のナビゲーションと操作、
+//! および選択したコメントの位置への Viewer ジャンプ。
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -13,16 +12,16 @@ pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: Key
     let row_count = app.review_state.comment_list_rows.len();
     let action = app.keymap.resolve(&key, KeyContext::ExplorerCommentList);
 
-    // When this backs the full-screen comment-list modal, Esc closes it and
-    // selecting a comment jumps to it and then closes the modal.
+    // これが全画面コメント一覧モーダルの裏で動いているときは、Esc でモーダルを
+    // 閉じ、コメントを選択したらそこへジャンプしてからモーダルを閉じる。
     let in_modal = app.overlays.active == ActiveOverlay::CommentList;
     if in_modal && key.code == KeyCode::Esc {
         app.overlays.active = ActiveOverlay::None;
         return;
     }
-    // Close the modal only when Select actually jumps to a location — a Select
-    // on a comment that has replies just expands its thread in place, so we
-    // must keep the modal open in that case.
+    // Select が実際に位置へジャンプしたときだけモーダルを閉じる — 返信を持つ
+    // コメントへの Select はその場でスレッドを開くだけなので、その場合は
+    // モーダルを開いたままにしておく必要がある。
     let close_after = in_modal
         && matches!(action, Some(Action::Select))
         && {
@@ -157,7 +156,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: Key
         app.overlays.active = ActiveOverlay::None;
     }
 
-    // Adjust scroll for comment list.
+    // コメント一覧のスクロールを調整する。
     let selected = app.viewer_state.explorer.comment_list_selected;
     let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
     if selected < app.viewer_state.explorer.comment_list_scroll {
@@ -167,9 +166,9 @@ pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: Key
     }
 }
 
-/// Navigate to the file and line of the comment at the given index.
-/// When `focus_viewer` is true, the focus moves to the Viewer panel;
-/// otherwise the current panel focus is preserved (e.g. comment list).
+/// 指定インデックスのコメントのファイルと行へ移動する。
+/// focus_viewer が true ならフォーカスを Viewer パネルへ移す。
+/// そうでなければ現在のパネルフォーカスを維持する (コメント一覧など)。
 pub(in crate::event) fn navigate_to_comment_with_focus(
     app: &mut App,
     comment_idx: usize,
@@ -184,9 +183,8 @@ pub(in crate::event) fn navigate_to_comment_with_focus(
     app.viewer_state.open_file(&file_path, tab_width);
     app.rehighlight_viewer();
     app.viewer_state.content.file_scroll = line.saturating_sub(1);
-    // A comment lives on a source line, so show source: rendered
-    // markdown would drop the reader at the top of the prose with the
-    // selection below invisible.
+    // コメントはソース行に紐づくので source を表示する: markdown レンダリング
+    // だと本文の先頭に飛ばされ、選択箇所が見えなくなってしまう。
     app.viewer_state.show_raw_for_line_target();
     app.viewer_state.selection = crate::viewer::LineSelection::Selected {
         start: line,

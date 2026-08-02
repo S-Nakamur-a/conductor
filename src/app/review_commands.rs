@@ -1,6 +1,6 @@
-//! Review-comment command handlers: composing, viewing, editing, replying to,
-//! and deleting/resolving inline review comments — the command-palette entry
-//! points that operate on `review_state`.
+//! レビューコメントのコマンドハンドラ群: インラインのレビューコメントの
+//! 作成、閲覧、編集、返信、削除/解決 — review_state を操作するコマンド
+//! パレットの入口。
 
 use super::focus::Focus;
 use super::{App, StatusLevel};
@@ -8,9 +8,9 @@ use super::{App, StatusLevel};
 impl App {
     pub fn cmd_add_review_comment(&mut self) {
         if let Some(file_path) = self.viewer_state.content.current_file.clone() {
-            // Anchor the comment to the selected range (or the top visible line),
-            // then open a body-only inline compose box at that line — no
-            // `file:line` prefix to type, GitHub-style.
+            // コメントを選択範囲(なければ先頭の可視行)にアンカーし、その行に
+            // 本文だけを入力するインラインの作成ボックスを開く — GitHub 風に
+            // file:line のプレフィックスは入力させない。
             let (start, end) = if let Some((start, end)) = self.viewer_state.selected_range() {
                 (start as u32, if start == end { None } else { Some(end as u32) })
             } else {
@@ -29,7 +29,8 @@ impl App {
     }
 
     pub(super) fn cmd_view_comment_detail(&mut self) {
-        // Try viewer context first (current line), then comment list context.
+        // まず viewer のコンテキスト(現在行)を試し、次にコメント一覧の
+        // コンテキストを試す。
         if self.viewer_state.content.current_file.is_some() {
             let cursor_line = if let Some((start, _)) = self.viewer_state.selected_range() {
                 start
