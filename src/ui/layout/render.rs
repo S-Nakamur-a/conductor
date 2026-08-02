@@ -120,13 +120,12 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         &app.repo.path,
         &app.theme,
     );
+}
 
-    // パーティモード（隠しコマンド）
-    // 完成したフレームに、レインボーボーダー・きらめくタイトルバー・紙吹雪を
-    // （オーバーレイも含めた）全体の上に後処理として重ねる。
-    if app.party_mode {
-        super::super::party::apply_party_effects(frame, app);
-    }
+/// s が罫線素片（U+2500..=U+257F）、つまりパネルのボーダー文字で始まるかどうか。
+/// テキスト内容に触れずボーダーだけを対象にするために使う。
+fn is_border_glyph(s: &str) -> bool {
+    matches!(s.chars().next(), Some(c) if ('\u{2500}'..='\u{257F}').contains(&c))
 }
 
 /// 現在 hover 中またはドラッグ中のディバイダをテーマのアクセントカラーで塗る。
@@ -134,8 +133,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 /// col-resize/row-resize カーソルの代わりの表現になる。ドラッグ中はホバーより
 /// 優先され、ドラッグ中にカーソルが1セルずれても境界を光らせたままにする。
 /// ボーダーのグリフだけ再着色するので、パネルの内容には触れない。
-/// リッチ/パーティの後処理より前に実行される。それらはフォーカス中ボーダー色に
-/// 一致するセルだけを再着色するので、このアクセント線には影響しない。
 fn highlight_active_divider(frame: &mut Frame, app: &App) {
     use crate::app::Divider;
 
@@ -169,7 +166,7 @@ fn highlight_active_divider(frame: &mut Frame, app: &App) {
         }
         for y in area.y..area.y.saturating_add(area.height) {
             if let Some(cell) = buf.cell_mut((fixed, y))
-                && super::super::party::is_border_glyph(cell.symbol())
+                && is_border_glyph(cell.symbol())
             {
                 cell.set_fg(color);
             }
@@ -180,10 +177,29 @@ fn highlight_active_divider(frame: &mut Frame, app: &App) {
         }
         for x in area.x..area.x.saturating_add(area.width) {
             if let Some(cell) = buf.cell_mut((x, fixed))
-                && super::super::party::is_border_glyph(cell.symbol())
+                && is_border_glyph(cell.symbol())
             {
                 cell.set_fg(color);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn border_glyph_detection() {
+        // 罫線素片（細線 + 太線）はボーダーである。
+        assert!(is_border_glyph("│"));
+        assert!(is_border_glyph("─"));
+        assert!(is_border_glyph("┏"));
+        assert!(is_border_glyph("┃"));
+        // 普通のテキストや空白はボーダーではない。
+        assert!(!is_border_glyph("a"));
+        assert!(!is_border_glyph(" "));
+        assert!(!is_border_glyph(""));
+        assert!(!is_border_glyph("✦"));
     }
 }

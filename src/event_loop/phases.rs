@@ -91,8 +91,6 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
         // フォーカスのボーダーが遷移中はフレームを流し続ける。
         _ if app.has_active_transition() => TICK_RATE_ACTIVE,
         _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
-        // パーティモードはアイドルでも動き続ける。
-        _ if app.party_mode => PULSE_TICK_INTERVAL,
         _ if signals.decoration_active => DECORATION_TICK_INTERVAL,
         _ => TICK_RATE_IDLE,
     }

@@ -24,8 +24,6 @@ pub(super) struct FileLineRenderCtx<'a> {
         &'a std::collections::HashMap<usize, (DiffLineTag, Vec<InlineSegment>)>,
     pub(super) comment_lines: &'a std::collections::HashSet<usize>,
     pub(super) comment_end_lines: &'a std::collections::HashSet<usize>,
-    /// パーティーモードのレインボーの位相（パーティーモードが OFF のときは None）。
-    pub(super) party: Option<f64>,
 }
 
 /// ソース1行ぶんの行を組み立てる: コード行そのものに加え、その下に配置される
@@ -43,7 +41,6 @@ pub(super) fn render_code_line_rows(
     let vs = ctx.vs;
     let theme = ctx.theme;
     let tab_width = ctx.tab_width;
-    let party = ctx.party;
     let gutter_width = ctx.gutter_width;
 
     let line_1 = line_no + 1;
@@ -171,12 +168,9 @@ pub(super) fn render_code_line_rows(
                             diff_bg,
                             emphasis_bg,
                             tab_width,
-                            party,
                         )
                     })
-                    .unwrap_or_else(|| {
-                        syntax_spans_for_line(vs, line_no, Some(diff_bg), theme.fg, party)
-                    })
+                    .unwrap_or_else(|| syntax_spans_for_line(vs, line_no, Some(diff_bg), theme.fg))
             } else {
                 render_inline_diff_spans(ann_segments, diff_bg, emphasis_bg, theme.fg, tab_width)
             }
@@ -187,10 +181,10 @@ pub(super) fn render_code_line_rows(
                 DiffLineTag::Delete => Some(app.theme.diff_del_bg),
                 _ => None,
             };
-            syntax_spans_for_line(vs, line_no, diff_bg, theme.fg, party)
+            syntax_spans_for_line(vs, line_no, diff_bg, theme.fg)
         }
     } else {
-        syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg, party)
+        syntax_spans_for_line(vs, line_no, gutter_bg, theme.fg)
     };
 
     // コンテンツの span に水平スクロールを適用し、パネル幅（枠線＋マーカー列＋
