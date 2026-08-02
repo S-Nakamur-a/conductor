@@ -184,9 +184,6 @@ pub struct SymbolHint {
     pub line: usize,
     /// 内容中の開始桁 (0 始まり)。
     pub start_col: usize,
-    /// 内容中の終了桁 (0 始まり、この桁は含まない)。
-    #[allow(dead_code)]
-    pub end_col: usize,
 }
 
 /// Vimium 風のシンボルヒントのオーバーレイ。Viewer で g を押すと出る。

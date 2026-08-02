@@ -234,12 +234,6 @@ pub enum LineSelection {
     /// 行が選択されていない。
     #[default]
     None,
-    /// 範囲をドラッグ中 — 開始行は決まっているが終了行はまだ確定していない。
-    /// 将来のクリック&ドラッグによる範囲選択のために（薄暗い「保留中の範囲」
-    /// 描画とともに）残してある。現状のコメント作成は範囲を即座に確定する
-    /// （シングルクリック/shift+クリック）ので、現時点ではこれを構築する箇所はない。
-    #[allow(dead_code)]
-    Pending { start: usize },
     /// 範囲が完全に選択されている（start と end は1始まりで両端を含む）。
     /// start が end より大きいこともある — 呼び出し側は selected_range() で正規化する。
     Selected { start: usize, end: usize },
@@ -264,9 +258,6 @@ pub struct FilenameSearchState {
 /// カーソルが止まればいつでも表示される — 下の has_jump_modifier を参照）。
 #[derive(Debug, Clone)]
 pub struct HoverSymbol {
-    /// symbol のテキスト（例: "AppState"）。
-    #[allow(dead_code)]
-    pub text: String,
     /// symbol が存在する行番号（1始まり）。
     pub line: usize,
     /// 開始列（0始まり、h_scroll 適用前のコンテンツ文字数単位）。

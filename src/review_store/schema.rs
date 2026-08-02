@@ -385,9 +385,15 @@ mod tests {
                 [],
             )
             .unwrap();
-        let reviews = store.reviews_for_worktree("feat/x").unwrap();
-        assert_eq!(reviews.len(), 1);
-        assert_eq!(reviews[0].commit_ref, "HEAD");
+        // commit_ref は ReviewComment には載らない（読む側がいない）ので、
+        // デフォルトが入ったことは列を直接引いて確かめる。
+        let commit_ref: String = store
+            .conn
+            .query_row("SELECT commit_ref FROM reviews WHERE id = 'r1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(commit_ref, "HEAD");
     }
 
     #[test]

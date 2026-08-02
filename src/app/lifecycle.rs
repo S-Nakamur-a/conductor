@@ -142,7 +142,6 @@ impl App {
             list_hover: Default::default(),
             ui_tick: 0,
             decoration_tick: 0,
-            notification_bar_badges: Vec::new(),
             stats: SessionStats {
                 session_id: stats_session_id,
                 today: today_stats,

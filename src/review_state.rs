@@ -356,11 +356,9 @@ mod tests {
             kind: CommentKind::Suggest,
             body: "body".to_string(),
             status,
-            commit_ref: "abc".to_string(),
             author: Author::User,
             branch: None,
             created_at: String::new(),
-            updated_at: String::new(),
         }
     }
 

@@ -22,19 +22,19 @@ impl ReviewStore {
     /// 指定したレビューコメントの全返信を作成日時順で返す。
     pub fn get_replies(&self, review_id: &str) -> Result<Vec<ReviewReply>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, review_id, body, author, created_at
+            "SELECT id, body, author, created_at
              FROM review_replies
              WHERE review_id = ?1
              ORDER BY created_at",
         )?;
         let rows = stmt.query_map(params![review_id], |row| {
-            let author_str: String = row.get(3)?;
+            let author_str: String = row.get(2)?;
             let author = match author_str.as_str() {
                 "user" => Author::User,
                 "claude" => Author::Claude,
                 other => {
                     return Err(rusqlite::Error::FromSqlConversionFailure(
-                        3,
+                        2,
                         rusqlite::types::Type::Text,
                         format!("unknown Author: {other}").into(),
                     ));
@@ -42,10 +42,9 @@ impl ReviewStore {
             };
             Ok(ReviewReply {
                 id: row.get(0)?,
-                review_id: row.get(1)?,
-                body: row.get(2)?,
+                body: row.get(1)?,
                 author,
-                created_at: row.get(4)?,
+                created_at: row.get(3)?,
             })
         })?;
         let mut out = Vec::new();
@@ -147,7 +146,6 @@ mod tests {
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].body, "I'll fix it");
         assert_eq!(replies[0].author, Author::User);
-        assert_eq!(replies[0].review_id, review.id);
 
         // もう1件、Claude からの返信を追加する。
         store

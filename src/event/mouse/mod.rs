@@ -25,9 +25,7 @@ mod worktree_panel;
 #[cfg(test)]
 mod tests;
 
-use bars::{
-    handle_notification_bar_click, handle_title_bar_click, handle_wtbar_click, wtbar_page_step,
-};
+use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
 use explorer_panel::{diff_list_row_at, explorer_tree_row_at, handle_explorer_column_click};
 use scroll::handle_mouse_scroll;
 use terminal_panel::handle_terminal_column_click;
@@ -195,8 +193,7 @@ fn has_blocking_overlay(app: &App) -> bool {
     use crate::app::WorktreeInputMode;
     use crate::review_state::ReviewInputMode;
 
-    app.worktree_mgr.skip_reason.is_some()
-        || app.update.is_active()
+    app.update.is_active()
         || app.review_state.comment_detail_active
         || app.review_state.input_mode != ReviewInputMode::Normal
         || app.worktree_mgr.input_mode != WorktreeInputMode::Normal
@@ -372,7 +369,6 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
 
     // レイアウトをキャッシュから読み込む（描画時に計算済み）。
     let lc = &app.layout.cache;
-    let notif_area = lc.notif_area;
     let wtbar_area = lc.wtbar_area;
     let main_area = lc.main_area;
 
@@ -444,13 +440,10 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             if menu::handle_menu_click(app, col, row) {
                 return;
             }
-            // 通知/worktree/タイトルバーへのクリックを最初に消費する。
+            // worktree/タイトルバーへのクリックを最初に消費する。
             // worktreeバーはタイトルバーより先にチェックする必要がある。後者は
             // main_areaより上の全ての行を「タイトル」として扱ってしまい、そうしないと
             // worktreeストリップの行を飲み込んでしまう。
-            if handle_notification_bar_click(app, col, row, notif_area) {
-                return;
-            }
             if handle_wtbar_click(app, col, row, wtbar_area) {
                 return;
             }

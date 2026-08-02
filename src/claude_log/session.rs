@@ -67,7 +67,6 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
             if let Some(text) = record.attachment.as_ref().and_then(attachment_line) {
                 entries.push(LogEntry {
                     role: Role::User,
-                    model: None,
                     blocks: vec![DisplayBlock::Annotation { lines: vec![text] }],
                 });
                 // あえて prev_displayed_ts を進めない。attachment が持つ
@@ -83,7 +82,6 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
             if record.subtype.as_deref() == Some("compact_boundary") {
                 entries.push(LogEntry {
                     role: Role::Assistant,
-                    model: None,
                     blocks: vec![DisplayBlock::CompactBoundary],
                 });
             }
@@ -149,7 +147,6 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
 
         entries.push(LogEntry {
             role,
-            model: msg.model,
             blocks,
         });
         prev_displayed_ts = this_ts;

@@ -25,7 +25,6 @@ pub(in crate::event) fn open_filename_search(app: &mut App) {
 
 /// フォーカス切り替えキーがどこでも機能するよう、アクティブなオーバーレイを全て閉じる。
 pub(super) fn dismiss_overlays(app: &mut App) {
-    app.worktree_mgr.skip_reason = None;
     app.review_state.comment_detail_active = false;
     app.review_state.input_mode = ReviewInputMode::Normal;
     app.worktree_mgr.input_mode = WorktreeInputMode::Normal;

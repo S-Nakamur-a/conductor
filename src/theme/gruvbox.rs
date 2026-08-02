@@ -40,8 +40,6 @@ impl Theme {
             gutter_selected_fg: Color::Rgb(40, 40, 40),
             gutter_hover_fg: Color::Rgb(102, 92, 84),
             gutter_hover_bg: Color::Rgb(55, 52, 50),
-            gutter_pending_bg: Color::Rgb(75, 95, 88),
-            line_pending_bg: Color::Rgb(50, 48, 46),
 
             hint: Color::Rgb(102, 92, 84),
             search_match_fg: Color::Rgb(250, 189, 47),
@@ -66,7 +64,6 @@ impl Theme {
             code_bg: Color::Rgb(29, 32, 33), // bg0_h
             code_fg: Color::Rgb(211, 134, 155), // 紫がかったピンク
 
-            panel_focused_bg: Color::Rgb(58, 55, 52),
         }
     }
 }

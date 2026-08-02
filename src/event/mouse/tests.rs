@@ -97,11 +97,9 @@ fn thread_anchor_redirects_mid_range_lines_to_nearest_end_line() {
         kind: CommentKind::Suggest,
         body: "body".to_string(),
         status: CommentStatus::Pending,
-        commit_ref: "abc".to_string(),
         author: Author::User,
         branch: None,
         created_at: String::new(),
-        updated_at: String::new(),
     };
     // 入れ子になった範囲 L10-L20 と L11-L19: 範囲の途中の│クリックは、両方の
     // 表示でスレッドが描画される、最も近い終了行（💬）に着地する。

@@ -128,25 +128,6 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
                 app.set_status("Deletion cancelled.".to_string(), StatusLevel::Warning);
             }
         },
-        WorktreeInputMode::ConfirmingDeleteBranch => match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let branch = app.worktree_mgr.pending_delete_branch.clone();
-                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-                app.worktree_mgr.pending_delete_branch.clear();
-                app.delete_branch(&branch, false);
-            }
-            KeyCode::Char('f') | KeyCode::Char('F') => {
-                let branch = app.worktree_mgr.pending_delete_branch.clone();
-                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-                app.worktree_mgr.pending_delete_branch.clear();
-                app.delete_branch(&branch, true);
-            }
-            _ => {
-                app.worktree_mgr.input_mode = WorktreeInputMode::Normal;
-                app.worktree_mgr.pending_delete_branch.clear();
-                app.set_status("Branch kept.".to_string(), StatusLevel::Warning);
-            }
-        },
         WorktreeInputMode::ConfirmingUngrab => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 app.worktree_mgr.input_mode = WorktreeInputMode::Normal;

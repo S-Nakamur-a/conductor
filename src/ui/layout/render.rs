@@ -100,7 +100,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         && app.review_state.input_mode == crate::review_state::ReviewInputMode::Normal
         && !app.update.is_active()
         && !app.review_state.comment_detail_active
-        && app.worktree_mgr.skip_reason.is_none()
     {
         super::super::panel_overlay::render_panel_overlay(frame, app);
     }

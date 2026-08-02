@@ -3,11 +3,10 @@
 //! PTY 出力の描画、セッションタブバー、ステータスバーなど再利用可能なウィジェットを提供する。
 //! 責務ごとに分割している: [pty]（vt100 → ratatui の描画とそのキャッシュ）、
 //! [color]（バッジ/コントラストの色計算）、そしてトップレベルのバー・ウィジェットごとに
-//! 1ファイル（[title_bar], [notification_bar], [status_bar], [worktree_label]）。
+//! 1ファイル（[title_bar], [status_bar], [worktree_label]）。
 
 mod color;
 pub mod list_row;
-mod notification_bar;
 mod panel_chrome;
 mod pty;
 mod status_bar;
@@ -21,10 +20,6 @@ pub use pty::{PtyRenderCache, build_pty_lines, render_pty_cached};
 pub use status_bar::render_status_bar;
 pub(crate) use status_bar::representative_chord;
 pub use title_bar::render_title_bar;
-// まだ配線されていない — notification_bar のドキュメントコメントを参照。この re-export は
-// モジュール分割前のインターフェースとの互換性のために残している。
-#[allow(unused_imports)]
-pub use notification_bar::render_notification_bar;
 pub use panel_chrome::PanelChrome;
 pub use worktree_label::render_worktree_label;
 

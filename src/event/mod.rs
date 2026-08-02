@@ -57,8 +57,6 @@ pub(in crate::event) use self::scroll::{
 /// ディスパッチ用に統一したオーバーレイ/モーダルの状態。複数の
 /// bool/enum チェックを単一の判別子に集約する。
 enum EffectiveOverlay {
-    /// スキップ理由モーダル (worktree 作成失敗の詳細)。
-    SkipReason,
     /// アップデートの確認/進行状況/失敗ダイアログ。
     UpdateState,
     /// GitHub への publish 確認ダイアログ。
@@ -87,9 +85,6 @@ enum EffectiveOverlay {
 
 /// 入力を消費すべき、唯一の有効なオーバーレイ/モーダルを判定する。
 fn effective_overlay(app: &App) -> EffectiveOverlay {
-    if app.worktree_mgr.skip_reason.is_some() {
-        return EffectiveOverlay::SkipReason;
-    }
     if app.update.is_active() {
         return EffectiveOverlay::UpdateState;
     }
@@ -216,12 +211,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // 1. オーバーレイ / モーダルのディスパッチ — アクティブな間はすべてのキーを消費する
 
     match effective_overlay(app) {
-        EffectiveOverlay::SkipReason => {
-            if key.code == KeyCode::Esc {
-                app.worktree_mgr.skip_reason = None;
-            }
-            return;
-        }
         EffectiveOverlay::UpdateState => {
             handle_update_key(app, key);
             return;

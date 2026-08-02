@@ -56,7 +56,7 @@ impl ReviewStore {
         self.conn
             .query_row(
                 "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
-                        commit_ref, author, branch, created_at, updated_at
+                        author, branch, created_at
                  FROM reviews WHERE id = ?1",
                 params![id],
                 row_to_review,
@@ -103,25 +103,12 @@ impl ReviewStore {
     pub fn reviews_for_worktree(&self, worktree: &str) -> Result<Vec<ReviewComment>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
-                    commit_ref, author, branch, created_at, updated_at
+                    author, branch, created_at
              FROM reviews
              WHERE worktree = ?1
              ORDER BY file_path, line_start",
         )?;
         collect_reviews(&mut stmt, params![worktree])
-    }
-
-    /// worktree 内の特定ファイルについてのレビューを返す。
-    #[allow(dead_code)]
-    pub fn reviews_for_file(&self, worktree: &str, file_path: &str) -> Result<Vec<ReviewComment>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
-                    commit_ref, author, branch, created_at, updated_at
-             FROM reviews
-             WHERE worktree = ?1 AND file_path = ?2
-             ORDER BY line_start",
-        )?;
-        collect_reviews(&mut stmt, params![worktree, file_path])
     }
 
     /// 指定したレビューコメント群を GitHub に投稿済みとしてマークし、全件に
@@ -156,7 +143,7 @@ impl ReviewStore {
     pub fn unpublished_reviews(&self, branch: &str) -> Result<Vec<ReviewComment>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
-                    commit_ref, author, branch, created_at, updated_at
+                    author, branch, created_at
              FROM reviews
              WHERE branch = ?1 AND published_at IS NULL
              ORDER BY file_path, line_start",
@@ -226,7 +213,7 @@ impl ReviewStore {
     ) -> Result<Vec<ReviewComment>> {
         let mut sql = String::from(
             "SELECT id, worktree, file_path, line_start, line_end, kind, body, status,
-                    commit_ref, author, branch, created_at, updated_at
+                    author, branch, created_at
              FROM reviews WHERE status = 'pending'",
         );
         let mut bind: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -252,14 +239,13 @@ impl ReviewStore {
 
 /// rusqlite::Row を ReviewComment に変換する。
 ///
-/// 想定しているカラム順（13カラム）:
+/// 想定しているカラム順（11カラム）:
 ///   0:id, 1:worktree, 2:file_path, 3:line_start, 4:line_end,
-///   5:kind, 6:body, 7:status, 8:commit_ref, 9:author, 10:branch,
-///   11:created_at, 12:updated_at
+///   5:kind, 6:body, 7:status, 8:author, 9:branch, 10:created_at
 fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
     let kind_str: String = row.get(5)?;
     let status_str: String = row.get(7)?;
-    let author_str: String = row.get(9)?;
+    let author_str: String = row.get(8)?;
 
     let kind = match kind_str.as_str() {
         "suggest" => CommentKind::Suggest,
@@ -290,7 +276,7 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
         "claude" => Author::Claude,
         other => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
-                9,
+                8,
                 rusqlite::types::Type::Text,
                 format!("unknown Author: {other}").into(),
             ));
@@ -306,11 +292,9 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
         kind,
         body: row.get(6)?,
         status,
-        commit_ref: row.get(8)?,
         author,
-        branch: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        branch: row.get(9)?,
+        created_at: row.get(10)?,
     })
 }
 
@@ -357,7 +341,6 @@ mod tests {
         assert_eq!(review.kind, CommentKind::Suggest);
         assert_eq!(review.body, "use guard clause");
         assert_eq!(review.status, CommentStatus::Pending);
-        assert_eq!(review.commit_ref, "abc123");
         assert_eq!(review.author, Author::User);
         assert_eq!(review.branch, None);
 
@@ -365,15 +348,6 @@ mod tests {
         let reviews = store.reviews_for_worktree("wt1").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].id, review.id);
-
-        // ファイルで取得する
-        let reviews = store.reviews_for_file("wt1", "src/main.rs").unwrap();
-        assert_eq!(reviews.len(), 1);
-        assert_eq!(reviews[0].id, review.id);
-
-        // 別のファイルにはレビューがない
-        let reviews = store.reviews_for_file("wt1", "src/lib.rs").unwrap();
-        assert!(reviews.is_empty());
     }
 
     #[test]

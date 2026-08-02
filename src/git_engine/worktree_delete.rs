@@ -58,37 +58,6 @@ impl GitEngine {
         Ok(self.repo.graph_descendant_of(into_oid, branch_oid)?)
     }
 
-    /// dirty な状態でも worktree を強制的に削除する。
-    #[allow(dead_code)]
-    pub fn remove_worktree_force(&self, worktree_path: &Path) -> Result<()> {
-        let name = self
-            .find_worktree_name_by_path(worktree_path)
-            .with_context(|| format!("no worktree found for path {}", worktree_path.display()))?;
-        let wt = self
-            .repo
-            .find_worktree(&name)
-            .with_context(|| format!("worktree '{name}' not found"))?;
-
-        let wt_path = wt.path().to_path_buf();
-
-        // 強制削除のため全フラグを立てて prune する。
-        wt.prune(Some(
-            git2::WorktreePruneOptions::new()
-                .working_tree(true)
-                .valid(true)
-                .locked(true),
-        ))
-        .with_context(|| format!("failed to force-prune worktree '{name}'"))?;
-
-        // ディレクトリを削除する。
-        if wt_path.exists() {
-            std::fs::remove_dir_all(&wt_path)
-                .with_context(|| format!("failed to remove directory {}", wt_path.display()))?;
-        }
-
-        Ok(())
-    }
-
     // 古い worktree の整理 (wt prune)
 
     /// ディレクトリがすでに存在しない(stale な) worktree エントリを探す。

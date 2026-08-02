@@ -139,29 +139,6 @@ impl GitEngine {
 
     // 内部ヘルパー
 
-    /// ref 文字列(ブランチ名、リモート ref、タグ)を Commit に解決する。
-    #[allow(dead_code)]
-    fn resolve_ref_to_commit(&self, refspec: &str) -> Result<git2::Commit<'_>> {
-        // まず直接参照として試す(例: "refs/remotes/origin/main")。
-        if let Ok(reference) = self.repo.find_reference(&format!("refs/remotes/{refspec}")) {
-            return reference
-                .peel_to_commit()
-                .with_context(|| format!("ref '{refspec}' does not point to a commit"));
-        }
-        if let Ok(reference) = self.repo.find_reference(&format!("refs/heads/{refspec}")) {
-            return reference
-                .peel_to_commit()
-                .with_context(|| format!("ref '{refspec}' does not point to a commit"));
-        }
-        // フォールバックとして revparse を試す。
-        let obj = self
-            .repo
-            .revparse_single(refspec)
-            .with_context(|| format!("cannot resolve '{refspec}'"))?;
-        obj.peel_to_commit()
-            .with_context(|| format!("'{refspec}' does not point to a commit"))
-    }
-
     /// chrono::Duration を人間に読みやすい "X ago" 形式の文字列にする。
     fn format_duration_ago(duration: chrono::Duration) -> String {
         let seconds = duration.num_seconds();

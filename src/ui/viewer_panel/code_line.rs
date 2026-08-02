@@ -50,20 +50,6 @@ pub(super) fn render_code_line_rows(
     let is_selected = vs.is_line_selected(line_1);
     let is_hovered = vs.click.hover_line == Some(line_1);
     let is_gutter_hovered = vs.click.hover_gutter_line == Some(line_1);
-    let is_in_pending_range =
-        !is_selected && vs.is_selection_pending() && vs.click.hover_line.is_some() && {
-            let start = match vs.selection {
-                crate::viewer::LineSelection::Pending { start } => start,
-                _ => 0,
-            };
-            let hover = vs.click.hover_line.unwrap();
-            let (lo, hi) = if start <= hover {
-                (start, hover)
-            } else {
-                (hover, start)
-            };
-            line_1 >= lo && line_1 <= hi
-        };
 
     // diff ガターのマーカー。
     let annotation = ctx.diff_annotations.get(&line_1);
@@ -82,10 +68,6 @@ pub(super) fn render_code_line_rows(
             .fg(theme.gutter_selected_fg)
             .bg(theme.gutter_selected_bg)
             .add_modifier(Modifier::BOLD)
-    } else if is_in_pending_range {
-        Style::default()
-            .fg(theme.gutter_selected_fg)
-            .bg(theme.gutter_pending_bg)
     } else if is_grep_highlight {
         Style::default()
             .fg(theme.search_current_fg)
@@ -166,13 +148,6 @@ pub(super) fn render_code_line_rows(
             content.to_string(),
             Style::default()
                 .bg(theme.line_selected_bg)
-                .fg(theme.line_selected_fg),
-        )]
-    } else if is_in_pending_range {
-        vec![Span::styled(
-            content.to_string(),
-            Style::default()
-                .bg(theme.line_pending_bg)
                 .fg(theme.line_selected_fg),
         )]
     } else if let Some((ann_tag, ann_segments)) = annotation {

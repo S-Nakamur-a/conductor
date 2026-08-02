@@ -100,7 +100,6 @@ fn teammate_message(id: &str, body: &str) -> DisplayBlock {
 fn entry(role: Role, blocks: Vec<DisplayBlock>) -> LogEntry {
     LogEntry {
         role,
-        model: None,
         blocks,
     }
 }
@@ -700,7 +699,6 @@ fn expanded_mode_shows_every_result_line_with_no_cap() {
 fn results_entry(kinds: &[(ResultKind, bool)]) -> LogEntry {
     LogEntry {
         role: Role::User,
-        model: None,
         blocks: kinds
             .iter()
             .map(|(k, e)| tool_result(*k, &["out"], *e))

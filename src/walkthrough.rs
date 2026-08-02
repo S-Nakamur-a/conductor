@@ -118,18 +118,7 @@ impl std::fmt::Display for WalkthroughStepKind {
 #[derive(Debug, Clone)]
 pub struct Walkthrough {
     pub id: String,
-    // 行の識別・監査用のフィールド。walkthroughs テーブルとの対応と、調査時の
-    // Debug 出力のために残しているが、今のところ読む呼び出し側は無い。検索は
-    // 呼び出し側が既に持っているブランチ文字列をキーにするし、UI はタイムスタンプを
-    // 表に出さない。
-    #[allow(dead_code)]
-    pub branch: String,
     pub title: Option<String>,
-    // ペインのタイトルが title を担い、intent のステップが summary と同じ内容を
-    // 語るので、コンパクトなウォークスルーのペインはこれを別に描かない。
-    // save_walkthrough との往復で情報を落とさないために保持している。
-    #[allow(dead_code)]
-    pub summary: Option<String>,
     pub status: WalkthroughStatus,
     pub error: Option<String>,
     /// このウォークスルーを生成した対象のブランチ先端 (HEAD コミットの OID)。
@@ -137,10 +126,6 @@ pub struct Walkthrough {
     /// これと一致するなら飛ばす。差分が変わっていない = ウォークスルーも
     /// 変わらないため。
     pub head_commit: Option<String>,
-    #[allow(dead_code)]
-    pub created_at: String,
-    #[allow(dead_code)]
-    pub updated_at: String,
 }
 
 /// ウォークスルーの順序付きステップ 1 つ (walkthrough_steps テーブル)。
@@ -148,15 +133,6 @@ pub struct Walkthrough {
 #[derive(Debug, Clone)]
 pub struct WalkthroughStep {
     pub id: String,
-    /// 所有する Walkthrough への外部キー。walkthrough_steps テーブルとの対応の
-    /// ために保持している。ステップは常に (get_walkthrough 経由で) 自分の
-    /// ウォークスルーに絞られた状態でアクセスされるので、これを再導出する箇所は無い。
-    #[allow(dead_code)]
-    pub walkthrough_id: String,
-    /// 表示順。テーブルとの対応のために保持している。UI は get_walkthrough が
-    /// 返す既に並んだ Vec からステップを読むので、このフィールドで並べ直しはしない。
-    #[allow(dead_code)]
-    pub seq: i64,
     pub file_path: String,
     pub line_start: Option<i64>,
     pub line_end: Option<i64>,

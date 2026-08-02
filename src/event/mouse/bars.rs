@@ -17,31 +17,6 @@ fn start_worktree_creation(app: &mut App) {
     );
 }
 
-/// 通知バーへの左クリックを処理する。バッジをクリックすると対応するworktreeへ
-/// ジャンプする。バッジに当たったかどうかに関わらず、クリックが通知バー上であれば
-/// true を返す（消費した扱いにする）。
-pub(super) fn handle_notification_bar_click(
-    app: &mut App,
-    col: u16,
-    row: u16,
-    notif_area: ratatui::layout::Rect,
-) -> bool {
-    if notif_area.height == 0 || row != notif_area.y {
-        return false;
-    }
-    for (start_col, end_col, branch) in &app.notification_bar_badges {
-        if col >= *start_col && col < *end_col {
-            if let Some(wt_idx) = app.worktrees.iter().position(|w| w.branch == *branch) {
-                app.worktrees.select(wt_idx);
-                app.on_worktree_changed();
-                app.set_focus(Focus::TerminalClaude);
-            }
-            return true;
-        }
-    }
-    true
-}
-
 /// ホイール1ノッチでworktreeバーを何チップ分スクロールするか。画面1枚分から
 /// 重なり用に1チップ引いた値（最低1）。表示チップ数は直前の描画で記録された
 /// Select 領域から読み取る。

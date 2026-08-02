@@ -153,10 +153,6 @@ pub struct App {
     /// デコレーションアニメーション用の独立したティックカウンタ（一定間隔で増加）。
     pub decoration_tick: u64,
 
-    /// 通知バーのバッジ位置: (start_col, end_col, branch_name)。
-    /// クリックでジャンプするために描画時に設定される。
-    pub notification_bar_badges: Vec<(u16, u16, String)>,
-
     /// セッション統計 (ゲーミフィケーション) と ccusage のキャッシュ。
     pub stats: SessionStats,
     /// worktreeのブランチごとのHEAD oid（コミット検知用）。
@@ -252,7 +248,6 @@ impl App {
             || self.review_state.template_picker_active
             || self.review_state.comment_detail_active
             || self.update.is_active()
-            || self.worktree_mgr.skip_reason.is_some()
     }
 
     /// アプリケーションの終了をリクエストする。

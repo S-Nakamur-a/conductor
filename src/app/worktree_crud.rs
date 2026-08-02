@@ -389,15 +389,6 @@ impl App {
                     .retain(|p| !(p.op == PendingWorktreeOp::Deleting && p.branch == *branch));
                 self.set_status(format!("Error: {error}"), StatusLevel::Error);
             }
-            WorktreeOpResult::Skipped {
-                ref branch,
-                ref reason,
-            } => {
-                self.worktree_mgr
-                    .pending_worktrees
-                    .retain(|p| p.branch != *branch);
-                self.worktree_mgr.skip_reason = Some(reason.clone());
-            }
             WorktreeOpResult::SmartBranchResolved {
                 ref description,
                 ref branch,

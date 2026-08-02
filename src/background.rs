@@ -29,12 +29,6 @@ impl<T: Send + 'static> BackgroundOp<T> {
         self.rx = Some(rx);
         std::thread::spawn(move || f(tx));
     }
-
-    /// 外部で作った受信側を使って開始する (送信側をライブラリの関数へ渡す場合)。
-    #[allow(dead_code)]
-    pub fn start_with_rx(&mut self, rx: mpsc::Receiver<T>) {
-        self.rx = Some(rx);
-    }
 }
 
 impl<T> BackgroundOp<T> {

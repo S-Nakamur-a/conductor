@@ -13,11 +13,6 @@ pub enum Role {
 #[derive(Debug, Clone)]
 pub struct LogEntry {
     pub role: Role,
-    /// アシスタントメッセージに付いていた場合のモデル名。
-    /// 将来の用途（エントリごとのモデル表示など）のために保持しているだけで、
-    /// 現状の CLI 風グリフレイアウトでは描画しない。
-    #[allow(dead_code)]
-    pub model: Option<String>,
     pub blocks: Vec<DisplayBlock>,
 }
 
