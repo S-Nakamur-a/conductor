@@ -78,7 +78,7 @@ impl Config {
 /// 再起動必須フィールドは AppearanceSnapshot に含まれないもの全部を指す:
 /// general.{repo, repos, worktree_dir, shell, main_branch, auto_resume,
 /// auto_resume_main}, terminal.{active_scrollback, inactive_scrollback},
-/// rich.mode, api.*, updates.*, ccusage.*, review.*, keybinds。
+/// api.*, updates.*, ccusage.*, review.*, keybinds。
 pub fn has_restart_changes(old: &Config, new: &Config) -> bool {
     old.general.shell != new.general.shell
         || old.general.repo != new.general.repo
@@ -89,7 +89,6 @@ pub fn has_restart_changes(old: &Config, new: &Config) -> bool {
         || old.general.auto_resume_main != new.general.auto_resume_main
         || old.terminal.inactive_scrollback != new.terminal.inactive_scrollback
         || old.terminal.active_scrollback != new.terminal.active_scrollback
-        || old.rich.mode != new.rich.mode
         || old.api.model != new.api.model
         || old.api.provider != new.api.provider
         || old.api.command != new.api.command

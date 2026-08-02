@@ -161,7 +161,6 @@ impl App {
             new_worktree_paths: HashSet::new(),
             panel_number_overlay: Default::default(),
             party_mode: false,
-            rich: Default::default(),
             reflow: super::reflow::ReflowView::default(),
         };
 

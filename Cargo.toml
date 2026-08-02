@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.99.2"
+version = "0.100.0"
 edition = "2024"
 
 [dependencies]
@@ -44,8 +44,6 @@ libc = "0.2"
 # トレイト — が、0.1.1 の merge (デフォルトとユーザー設定を統合、= false で
 # 無効化するトゥームストーン方式) と keys_for_action の探索ヘルパーに追加された。
 keymap-suite = { version = "0.1.2", features = ["crossterm"] }
-# 固定: ratatui-image の 4.x 以降は ratatui 0.30 を要求する — ratatui と一緒に上げること。
-ratatui-image = { version = "=3.0.0", default-features = false, features = ["crossterm"] }
 # conductor mcp-serve — ヘッドレスのウォークスルーセッションが話しかける stdio の
 # MCP サーバ。別パッケージにせずバイナリへ埋め込んである理由は src/mcp_serve/mod.rs
 # のモジュール doc を参照。schemars はツール引数の構造体に付けた

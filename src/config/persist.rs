@@ -103,12 +103,6 @@ pub fn generate_default_config() -> String {
 # check_on_startup = true               # check for new versions on startup
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
 
-[rich]
-# mode = "auto"                         # rich mode (gradient borders, pixel-quality images)
-#                                       #   auto  - detect terminal capabilities (default)
-#                                       #   off   - plain rendering everywhere
-#                                       #   force - enable even when detection fails
-
 [api]
 # Which AI answers Conductor's own prompts (smart worktree naming, walkthrough
 # generation). Conductor never runs a CLI of its own — you name the tool here.

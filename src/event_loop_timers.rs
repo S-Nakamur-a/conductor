@@ -11,14 +11,13 @@ use crate::app::App;
 use crate::event_loop::watch_paths_for;
 
 /// この周回で発火時刻に達した周期タイマーをすべて実行する。git と worktree の
-/// ポーリング、装飾・鼓動・rich グローの再描画周期、PTY の後始末、Claude Code の
+/// ポーリング、装飾・鼓動の再描画周期、PTY の後始末、Claude Code の
 /// 待機状態、統計の更新、ccusage、アップデート確認。
 pub(crate) fn run_due_timers(
     app: &mut App,
     timers: &mut crate::timer::TimerRegistry,
     file_watcher: &mut Option<crate::file_watcher::FileWatcher>,
     current_watch_paths: &mut Vec<std::path::PathBuf>,
-    rich_active: bool,
     input_active: bool,
     ccusage_poll_secs: u64,
 ) {
@@ -44,13 +43,6 @@ pub(crate) fn run_due_timers(
             }
             // パーティモードのアニメーション (虹色の枠、シンタックス、紙吹雪) を動かす。
             "pulse" if app.party_mode => {
-                app.dirty.mark_all();
-            }
-            // rich モードのグラデーション枠を約 30fps で安定して動かす。この効果は
-            // フレーム全体への後処理なので、進めるには全面の再描画が必要。PTY の
-            // ラスタはキャッシュされたまま (dirty_claude / dirty_shell で制御)
-            // なので、これはウィジェットの安い再描画で済む。
-            "rich_glow" if rich_active => {
                 app.dirty.mark_all();
             }
             "unfocused_terminal" => {

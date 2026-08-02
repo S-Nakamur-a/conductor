@@ -19,9 +19,9 @@ use crate::app::App;
 
 /// HSL（h: 0-360, s: 0-1, l: 0-1）を RGB の [Color] に変換する。
 ///
-/// ローカルにコピーしたもの（common.rs 側の同等品は private）。rich.rs の
-/// リッチモード効果と共有している。h は 0-360 に正規化済みのものを渡すこと。
-pub(crate) fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
+/// ローカルにコピーしたもの（common.rs 側の同等品は private）。
+/// h は 0-360 に正規化済みのものを渡すこと。
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h2 = h / 60.0;
     let x = c * (1.0 - (h2 % 2.0 - 1.0).abs());
@@ -50,8 +50,8 @@ pub fn rainbow(phase: f64) -> Color {
 }
 
 /// s が罫線素片（U+2500..=U+257F）、つまりパネルのボーダー文字で始まるかどうか。
-/// テキスト内容に触れずボーダーだけを対象にするために使う。rich.rs の
-/// リッチモード効果と共有している。
+/// テキスト内容に触れずボーダーだけを対象にするために使う。レイアウトの
+/// ディバイダ強調（layout/render.rs）と共有している。
 pub(crate) fn is_border_glyph(s: &str) -> bool {
     matches!(s.chars().next(), Some(c) if ('\u{2500}'..='\u{257F}').contains(&c))
 }

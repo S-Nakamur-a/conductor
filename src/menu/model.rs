@@ -161,7 +161,6 @@ pub const MENUS: &[Menu] = &[
             SEP,
             cmd(CommandId::SwitchTheme, "Switch Theme…"),
             cmd(CommandId::ToggleHighContrast, "Toggle High Contrast"),
-            cmd(CommandId::ToggleRichMode, "Toggle Rich Mode"),
         ],
     },
     Menu {

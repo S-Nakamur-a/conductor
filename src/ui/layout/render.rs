@@ -71,15 +71,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             let full_path = app.viewer_state.root().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
-            // Tier B: グラフィックスプロトコル経由のピクセル品質レンダリング。
-            let picker = if app.rich.has_graphics() {
-                app.rich.picker
-            } else {
-                None
-            };
             app.viewer_state
                 .media_state
-                .render_if_needed(&full_path, rel_path, cols, rows, picker);
+                .render_if_needed(&full_path, rel_path, cols, rows);
         }
         super::super::viewer_panel::render(frame, columns[2], app);
     }
@@ -126,15 +120,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         &app.repo.path,
         &app.theme,
     );
-
-    // リッチモード（Tier A）
-    // 完成したフレームに、グラデーションの呼吸するボーダーと Claude 待機時の
-    // グロー効果を後処理として加える。パーティモード有効時はスキップする。
-    // パーティモードはフォーカス中のボーダーを border_focused との色の一致で
-    // 見つけるため、グラデーションを加えるとそれが壊れてしまう。
-    if app.rich.is_rich() && !app.party_mode {
-        super::super::rich::apply_rich_effects(frame, app);
-    }
 
     // パーティモード（隠しコマンド）
     // 完成したフレームに、レインボーボーダー・きらめくタイトルバー・紙吹雪を

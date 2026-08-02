@@ -111,7 +111,7 @@ let _ = p.screen().cell(0, 0); // ← attempt to subtract with overflow
   - `ui/markdown.rs` — 幅指定でのワードラップ付き markdown レンダラ（テーブル・多バイト対応）
   - `file_watcher` / 既存のポーリング基盤 — JSONL の追記検知
 - 副次効果: 再折返しだけでなく、過去会話のシンタックスハイライト・role 別の色分け・
-  検索など「rich mode」方向の拡張余地がそのまま開く
+  検索など、表示を豊かにする方向の拡張余地がそのまま開く
 - コスト: 中〜大。新 UI ステート（transcript view のスクロール位置と PTY スクロール
   バックの統合）、JSONL のストリーミングパース、PTY 側スクロールとの切替 UX
 - リスク / 未解決:

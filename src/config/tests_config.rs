@@ -50,6 +50,19 @@ fn removed_review_prompt_keys_are_ignored() {
     assert!(cfg.walkthrough_language.is_none());
 }
 
+/// 削除済みの [rich] セクションが残った設定ファイルも読み込みに失敗しては
+/// いけない。生成される config.toml すべてに書き込まれていたので、rich mode を
+/// 廃止しても既存インストールの起動を壊してはならない。
+#[test]
+fn removed_rich_section_is_ignored() {
+    let cfg: Config = toml::from_str(
+        "[general]\nmain_branch = \"develop\"\n\n[rich]\nmode = \"force\"\n",
+    )
+    .expect("stale [rich] section should be ignored, not rejected");
+    // 同じファイル内の他のセクションは通常どおり読めていること。
+    assert_eq!(cfg.general.main_branch, "develop");
+}
+
 #[test]
 fn tilde_expansion() {
     let p = PathBuf::from("~/dev/project");
