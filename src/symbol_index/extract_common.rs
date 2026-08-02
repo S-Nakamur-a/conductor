@@ -45,13 +45,11 @@ pub(super) fn extract_named_symbol(
         return None;
     }
     let line = name_node.start_position().row + 1;
-    let column = name_node.start_position().column;
     Some(Symbol {
         name,
         kind,
         file_path: file_path.to_string(),
         line,
-        column,
         scope: None,
     })
 }

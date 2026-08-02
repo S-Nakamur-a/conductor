@@ -40,8 +40,6 @@ impl Theme {
             gutter_selected_fg: Color::Rgb(22, 22, 29),
             gutter_hover_fg: Color::Rgb(84, 84, 109),
             gutter_hover_bg: Color::Rgb(38, 38, 52),
-            gutter_pending_bg: Color::Rgb(65, 100, 120),
-            line_pending_bg: Color::Rgb(40, 40, 55),
 
             hint: Color::Rgb(84, 84, 109),
             search_match_fg: Color::Rgb(226, 194, 95),
@@ -66,7 +64,6 @@ impl Theme {
             code_bg: Color::Rgb(18, 18, 24), // sumiInk0
             code_fg: Color::Rgb(210, 126, 153), // 桜色のピンク
 
-            panel_focused_bg: Color::Rgb(34, 34, 46),
         }
     }
 }

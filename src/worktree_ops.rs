@@ -33,10 +33,6 @@ pub struct WorktreeManager {
     pub base_branch_selected: usize,
     /// ベースブランチ一覧を絞り込むフィルタ文字列。
     pub base_branch_filter: TextInput,
-    /// worktree 削除後に削除待ちとなっているブランチ名。
-    pub pending_delete_branch: String,
-    /// worktree のスキップモーダルに出す理由 (Esc まで表示)。
-    pub skip_reason: Option<String>,
     /// 現在 grab 中のブランチ情報 (ブランチ名と取得元 worktree のパス)。
     pub grabbed_branch: Option<GrabbedBranch>,
     /// ローカルブランチ一覧のキャッシュ (worktree と一緒に更新する)。
@@ -66,8 +62,6 @@ impl Default for WorktreeManager {
             base_branch_list: Vec::new(),
             base_branch_selected: 0,
             base_branch_filter: TextInput::new(),
-            pending_delete_branch: String::new(),
-            skip_reason: None,
             grabbed_branch: None,
             local_branches: Vec::new(),
             pending_worktrees: Vec::new(),

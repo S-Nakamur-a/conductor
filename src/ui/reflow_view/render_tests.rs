@@ -116,7 +116,6 @@ fn build(entries: &[LogEntry], expanded: bool) -> Vec<Option<u16>> {
 fn entry(role: Role, blocks: Vec<DisplayBlock>) -> LogEntry {
     LogEntry {
         role,
-        model: None,
         blocks,
     }
 }

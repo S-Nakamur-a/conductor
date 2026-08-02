@@ -18,8 +18,6 @@ pub enum SymbolKind {
     Macro,
     Static,
     Interface,
-    #[allow(dead_code)]
-    Unknown,
 }
 
 /// tree-sitter による構文解析で見つかったシンボル定義。
@@ -33,9 +31,6 @@ pub struct Symbol {
     pub file_path: String,
     /// 1始まりの行番号。
     pub line: usize,
-    /// 0始まりの列番号（取得できた場合）。
-    #[allow(dead_code)]
-    pub column: usize,
     /// スコープ（親の構造体/モジュール名など）、取得できた場合。
     pub scope: Option<String>,
 }

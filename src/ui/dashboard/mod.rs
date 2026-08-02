@@ -32,6 +32,6 @@ pub use update::{
     render_publish_confirm_overlay, render_update_confirm_overlay, render_update_progress_overlay,
 };
 pub use worktree::{
-    render_delete_branch_confirm_overlay, render_smart_description_overlay,
-    render_worktree_base_input_overlay, render_worktree_input_overlay,
+    render_smart_description_overlay, render_worktree_base_input_overlay,
+    render_worktree_input_overlay,
 };

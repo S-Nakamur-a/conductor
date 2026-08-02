@@ -47,8 +47,6 @@ impl Theme {
             gutter_selected_fg: Color::Rgb(30, 30, 46),    // Base
             gutter_hover_fg: Color::Rgb(127, 132, 156),    // Overlay1
             gutter_hover_bg: Color::Rgb(40, 41, 56),
-            gutter_pending_bg: Color::Rgb(54, 64, 98),
-            line_pending_bg: Color::Rgb(40, 41, 58),
 
             hint: Color::Rgb(108, 112, 134),            // Overlay0
             search_match_fg: Color::Rgb(249, 226, 175), // Yellow
@@ -73,7 +71,6 @@ impl Theme {
             code_bg: Color::Rgb(17, 17, 27), // Crust
             code_fg: Color::Rgb(245, 194, 231), // Pink
 
-            panel_focused_bg: Color::Rgb(40, 41, 58), // Base と Surface0 の中間
         }
     }
 
@@ -120,8 +117,6 @@ impl Theme {
             gutter_selected_fg: Color::Rgb(239, 241, 245), // Base
             gutter_hover_fg: Color::Rgb(140, 143, 161),   // Overlay1
             gutter_hover_bg: Color::Rgb(224, 227, 236),   // Base と Surface0 の中間
-            gutter_pending_bg: Color::Rgb(189, 211, 252), // 明るい青
-            line_pending_bg: Color::Rgb(236, 240, 252),   // ごく明るい青
 
             hint: Color::Rgb(156, 160, 176),            // Overlay0
             search_match_fg: Color::Rgb(223, 142, 29),  // Yellow
@@ -146,7 +141,6 @@ impl Theme {
             code_bg: Color::Rgb(230, 233, 239),  // Mantle
             code_fg: Color::Rgb(234, 118, 203),  // Pink
 
-            panel_focused_bg: Color::Rgb(220, 223, 232), // Base と Surface0 の中間
         }
     }
 }

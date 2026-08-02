@@ -194,7 +194,6 @@ fn every_vertical_row_is_accounted_for() {
         cache.update(rect(120, h), None, false, &layout(24, 38, 80), 80);
         let total = cache.title_area.height
             + cache.menubar_area.height
-            + cache.notif_area.height
             + cache.wtbar_area.height
             + cache.main_area.height
             + cache.status_area.height;

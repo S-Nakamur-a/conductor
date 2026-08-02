@@ -51,13 +51,11 @@ fn visit_rust_node(
             if let Some(type_node) = node.child_by_field_name("type") {
                 let type_name = node_text(type_node, source).to_string();
                 let line = node.start_position().row + 1;
-                let column = node.start_position().column;
                 symbols.push(Symbol {
                     name: format!("impl {type_name}"),
                     kind: SymbolKind::Impl,
                     file_path: file_path.to_string(),
                     line,
-                    column,
                     scope: Some(type_name),
                 });
             }

@@ -21,10 +21,6 @@ pub fn local_branch_name(pr_number: u64) -> String {
 /// gh pr view --json ... が返す PR のメタデータ。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PrMeta {
-    /// 要求した PR 番号のこだま。完全性のためデシリアライズしているが、
-    /// 呼び出し側は自分が指定した番号のほうを持ち回る。
-    #[allow(dead_code)]
-    pub number: u64,
     pub title: String,
     #[serde(rename = "headRefName")]
     pub head_ref: String,

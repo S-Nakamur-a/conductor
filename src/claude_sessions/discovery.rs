@@ -70,7 +70,6 @@ pub fn load_resumable_sessions(filter_project: Option<&Path>) -> Result<Vec<Resu
             display: entry.display,
             project_name,
             time_ago,
-            project_path: entry.project.clone(),
         });
     }
 
@@ -188,7 +187,6 @@ pub fn find_latest_sessions_for_paths(
                     display: entry.display,
                     project_name,
                     time_ago,
-                    project_path: entry.project,
                 },
             );
         }

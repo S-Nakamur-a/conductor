@@ -169,7 +169,7 @@ impl ReviewStore {
         branch: &str,
     ) -> Result<Option<(Walkthrough, Vec<WalkthroughStep>)>> {
         let walkthrough = match self.conn.query_row(
-            "SELECT id, branch, title, summary, status, error, created_at, updated_at, head_commit
+            "SELECT id, title, status, error, head_commit
              FROM walkthroughs WHERE branch = ?1",
             params![branch],
             row_to_walkthrough,
@@ -185,7 +185,7 @@ impl ReviewStore {
         // ステップの id はランダムな UUID なので、それでタイブレークすると
         // 保存された順序ではなくランダムな順序になってしまう）。
         let mut stmt = self.conn.prepare(
-            "SELECT id, walkthrough_id, seq, file_path, line_start, line_end, kind, title, body
+            "SELECT id, file_path, line_start, line_end, kind, title, body
              FROM walkthrough_steps
              WHERE walkthrough_id = ?1
              ORDER BY seq",
@@ -203,7 +203,7 @@ impl ReviewStore {
     fn walkthrough_row_by_id(&self, id: &str) -> Result<Walkthrough> {
         self.conn
             .query_row(
-                "SELECT id, branch, title, summary, status, error, created_at, updated_at, head_commit
+                "SELECT id, title, status, error, head_commit
                  FROM walkthroughs WHERE id = ?1",
                 params![id],
                 row_to_walkthrough,
@@ -213,10 +213,10 @@ impl ReviewStore {
 }
 
 fn row_to_walkthrough(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthrough> {
-    let status_str: String = row.get(4)?;
+    let status_str: String = row.get(2)?;
     let status = WalkthroughStatus::from_str(&status_str).ok_or_else(|| {
         rusqlite::Error::FromSqlConversionFailure(
-            4,
+            2,
             rusqlite::types::Type::Text,
             format!("unknown WalkthroughStatus: {status_str}").into(),
         )
@@ -224,22 +224,18 @@ fn row_to_walkthrough(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthrough> 
 
     Ok(Walkthrough {
         id: row.get(0)?,
-        branch: row.get(1)?,
-        title: row.get(2)?,
-        summary: row.get(3)?,
+        title: row.get(1)?,
         status,
-        error: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
-        head_commit: row.get(8)?,
+        error: row.get(3)?,
+        head_commit: row.get(4)?,
     })
 }
 
 fn row_to_walkthrough_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<WalkthroughStep> {
-    let kind_str: String = row.get(6)?;
+    let kind_str: String = row.get(4)?;
     let kind = WalkthroughStepKind::from_str(&kind_str).ok_or_else(|| {
         rusqlite::Error::FromSqlConversionFailure(
-            6,
+            4,
             rusqlite::types::Type::Text,
             format!("unknown WalkthroughStepKind: {kind_str}").into(),
         )
@@ -251,19 +247,17 @@ fn row_to_walkthrough_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<Walkthro
     // ステップへジャンプできなくなってしまう。マイグレーションではなくここで
     // 行うことで、同じ修正が同じデータベースに対して古い conductor が
     // 書いた行もカバーする。
-    let file_path: String = row.get(3)?;
+    let file_path: String = row.get(1)?;
     let file_path = crate::repo_path::normalize(&file_path);
 
     Ok(WalkthroughStep {
         id: row.get(0)?,
-        walkthrough_id: row.get(1)?,
-        seq: row.get(2)?,
         file_path,
-        line_start: row.get(4)?,
-        line_end: row.get(5)?,
+        line_start: row.get(2)?,
+        line_end: row.get(3)?,
         kind,
-        title: row.get(7)?,
-        body: row.get(8)?,
+        title: row.get(5)?,
+        body: row.get(6)?,
     })
 }
 
@@ -280,7 +274,6 @@ mod tests {
         assert!(store.get_walkthrough("feat/x").unwrap().is_none());
 
         let started = store.begin_walkthrough("feat/x", Some("abc1234")).unwrap();
-        assert_eq!(started.branch, "feat/x");
         assert_eq!(started.status, WalkthroughStatus::Generating);
         // ブランチ先端を記録しておき、同一コミットでの再生成をスキップできるようにする。
         assert_eq!(started.head_commit.as_deref(), Some("abc1234"));
@@ -321,12 +314,20 @@ mod tests {
         let (walkthrough, steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
         assert_eq!(walkthrough.status, WalkthroughStatus::Ready);
         assert_eq!(walkthrough.title.as_deref(), Some("Fix startup crash"));
-        assert_eq!(walkthrough.summary.as_deref(), Some("A short summary."));
+        // summary は Walkthrough には載らない（読む側がいない）ので、保存された
+        // ことは列を直接引いて確かめる。
+        let summary: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT summary FROM walkthroughs WHERE branch = 'feat/x'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(summary.as_deref(), Some("A short summary."));
         assert_eq!(steps.len(), 2);
-        assert_eq!(steps[0].seq, 0);
         assert_eq!(steps[0].file_path, "src/main.rs");
         assert_eq!(steps[0].kind, WalkthroughStepKind::Intent);
-        assert_eq!(steps[1].seq, 1);
         assert_eq!(steps[1].kind, WalkthroughStepKind::Core);
 
         // 再生成は行全体を置き換える（履歴は保持しない）。先端を渡さなければ
@@ -563,8 +564,22 @@ mod tests {
             .unwrap();
 
         let (_, loaded) = store.get_walkthrough("feat/x").unwrap().unwrap();
+        // seq が密でスライス順に振られていることは、ORDER BY seq で読み戻した
+        // 並びがそのまま元の順序になることで確かめる。
+        let seqs: Vec<i64> = store
+            .conn
+            .prepare(
+                "SELECT seq FROM walkthrough_steps
+                 WHERE walkthrough_id = (SELECT id FROM walkthroughs WHERE branch = 'feat/x')
+                 ORDER BY seq",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
         assert_eq!(
-            loaded.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            seqs,
             vec![0, 1, 2],
             "seq must be dense and follow the slice order"
         );

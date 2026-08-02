@@ -17,7 +17,7 @@
 //!
 //! tests::every_command_is_reachable が完全性の保証を担う。すべての
 //! CommandId はいずれか1つのメニューに現れるか、理由付きで
-//! [INTENTIONALLY_UNLISTED] に列挙されていなければならない。
+//! INTENTIONALLY_UNLISTED に列挙されていなければならない。
 
 use crate::command_palette::CommandId;
 
@@ -75,7 +75,8 @@ const SEP: MenuItem = MenuItem::Separator;
 /// 現れない。
 // tests::every_command_is_reachable が読む。このリストはメニューが意図的に
 // 省いているものの記録であり、テストがその記録を黙って古びさせないようにする。
-#[allow(dead_code)]
+// 読み手はそのテストだけなので cfg(test) に閉じてある。
+#[cfg(test)]
 pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[(
     CommandId::TogglePartyMode,
     "Labelled '(secret)' in the palette — listing it on the menu bar would \

@@ -101,9 +101,6 @@ pub struct AttachmentFile {
 pub struct Message {
     #[serde(default)]
     pub role: Option<String>,
-    /// assistant メッセージに存在するモデル名。
-    #[serde(default)]
-    pub model: Option<String>,
     pub content: Content,
 }
 

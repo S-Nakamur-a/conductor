@@ -26,8 +26,9 @@ pub struct KeyMap {
 
 impl KeyMap {
     /// デフォルトとユーザの [keybinds] 設定テーブルから KeyMap を構築し、
-    /// 警告は捨てる。警告を調べたい場合は with_warnings を使う。
-    #[allow(dead_code)] // 簡易コンストラクタ。アプリ側は with_warnings を使う。
+    /// 警告は捨てる。アプリ本体は警告を表示するため with_warnings を使うので、
+    /// この簡易コンストラクタはテスト専用。
+    #[cfg(test)]
     pub fn new(user: &toml::Table) -> Self {
         Self::with_warnings(user).0
     }

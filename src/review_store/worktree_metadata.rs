@@ -77,7 +77,6 @@ impl ReviewStore {
 
     /// ブランチの PR メタデータを挿入または置き換える。
     #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
     pub fn save_pr_review_meta(
         &self,
         branch: &str,
@@ -107,7 +106,7 @@ impl ReviewStore {
     /// ブランチの PR メタデータを取得する（保存されていれば）。
     pub fn get_pr_review_meta(&self, branch: &str) -> Result<Option<PrReviewMeta>> {
         match self.conn.query_row(
-            "SELECT branch, pr_number, pr_url, pr_title, base_ref, head_ref, author, created_at
+            "SELECT pr_number, pr_url, base_ref
              FROM pr_review_meta WHERE branch = ?1",
             params![branch],
             row_to_pr_review_meta,
@@ -121,14 +120,9 @@ impl ReviewStore {
 
 fn row_to_pr_review_meta(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrReviewMeta> {
     Ok(PrReviewMeta {
-        branch: row.get(0)?,
-        pr_number: row.get(1)?,
-        pr_url: row.get(2)?,
-        pr_title: row.get(3)?,
-        base_ref: row.get(4)?,
-        head_ref: row.get(5)?,
-        author: row.get(6)?,
-        created_at: row.get(7)?,
+        pr_number: row.get(0)?,
+        pr_url: row.get(1)?,
+        base_ref: row.get(2)?,
     })
 }
 
@@ -186,7 +180,6 @@ mod tests {
         let meta = store.get_pr_review_meta("feat/x").unwrap().unwrap();
         assert_eq!(meta.pr_number, Some(42));
         assert_eq!(meta.pr_url.as_deref(), Some("https://github.com/o/r/pull/42"));
-        assert_eq!(meta.author.as_deref(), Some("octocat"));
 
         // upsert なので重複せず上書きされる。
         store
@@ -200,7 +193,9 @@ mod tests {
                 Some("octocat"),
             )
             .unwrap();
+        // upsert なので行は増えず、更新後も1件のまま引ける。
         let meta = store.get_pr_review_meta("feat/x").unwrap().unwrap();
-        assert_eq!(meta.pr_title.as_deref(), Some("Add feature (renamed)"));
+        assert_eq!(meta.pr_number, Some(42));
+        assert_eq!(meta.base_ref.as_deref(), Some("main"));
     }
 }

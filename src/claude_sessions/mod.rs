@@ -43,9 +43,6 @@ pub struct ResumableSession {
     pub project_name: String,
     /// 人が読める形の経過時間文字列(例: "3h ago")。
     pub time_ago: String,
-    /// 履歴エントリに入っていたプロジェクトパスそのもの。
-    #[allow(dead_code)]
-    pub project_path: String,
 }
 
 /// Claude 履歴ファイルへのパスを返す。

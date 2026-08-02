@@ -239,18 +239,15 @@ mod tests {
             kind: CommentKind::Suggest,
             body: "Consider extracting this.".into(),
             status: CommentStatus::Pending,
-            commit_ref: "HEAD".into(),
             author: Author::User,
             branch: branch.map(str::to_owned),
             created_at: "2026-07-30 00:00:00".into(),
-            updated_at: "2026-07-30 00:00:00".into(),
         }
     }
 
     fn sample_reply() -> ReviewReply {
         ReviewReply {
             id: "reply-1".into(),
-            review_id: "abcdef01-2345-6789-abcd-ef0123456789".into(),
             body: "Sounds good.".into(),
             author: Author::Claude,
             created_at: "2026-07-30 00:01:00".into(),

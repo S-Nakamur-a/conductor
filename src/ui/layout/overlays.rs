@@ -24,9 +24,6 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
         crate::app::WorktreeInputMode::ConfirmingDelete => {
             render_confirming_delete_overlay(frame, area, app);
         }
-        crate::app::WorktreeInputMode::ConfirmingDeleteBranch => {
-            super::super::dashboard::render_delete_branch_confirm_overlay(frame, area, app);
-        }
         crate::app::WorktreeInputMode::ConfirmingUngrab => {
             render_confirm_overlay(frame, area, app, " Confirm Ungrab ", app.theme.warning);
         }
@@ -154,11 +151,6 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.code_nav.hover_info.info.is_some() {
         crate::ui::hover_info::render_hover_info_overlay(frame, area, app);
     }
-
-    // skip reason モーダル
-    if let Some(ref reason) = app.worktree_mgr.skip_reason {
-        render_skip_reason_overlay(frame, area, reason, &app.theme);
-    }
 }
 
 /// worktree 削除用の小さな確認オーバーレイを描画する。
@@ -198,42 +190,4 @@ fn render_confirm_overlay(
         ));
         frame.render_widget(paragraph, inner);
     }
-}
-
-/// skip-reason の情報ポップアップを描画する。
-fn render_skip_reason_overlay(
-    frame: &mut Frame,
-    area: Rect,
-    reason: &str,
-    theme: &crate::theme::Theme,
-) {
-    let popup_height = 5_u16;
-    let popup_width = area.width.saturating_sub(8).min(60);
-    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    frame.render_widget(ratatui::widgets::Clear, popup_area);
-
-    let block = ratatui::widgets::Block::default()
-        .title(" Skipped ")
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_style(ratatui::style::Style::default().fg(theme.warning));
-
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
-
-    let text = vec![
-        ratatui::text::Line::from(ratatui::text::Span::styled(
-            reason,
-            ratatui::style::Style::default().fg(theme.warning),
-        )),
-        ratatui::text::Line::from(ratatui::text::Span::styled(
-            "(Esc) 閉じる",
-            ratatui::style::Style::default().fg(theme.muted),
-        )),
-    ];
-    let paragraph =
-        ratatui::widgets::Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: true });
-    frame.render_widget(paragraph, inner);
 }

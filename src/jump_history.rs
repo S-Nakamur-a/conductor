@@ -60,18 +60,6 @@ impl JumpHistory {
         Some(next)
     }
 
-    /// 戻れる履歴があるか。
-    #[allow(dead_code)]
-    pub fn can_go_back(&self) -> bool {
-        !self.back.is_empty()
-    }
-
-    /// 進める履歴があるか。
-    #[allow(dead_code)]
-    pub fn can_go_forward(&self) -> bool {
-        !self.forward.is_empty()
-    }
-
     /// UI 描画用のパンくずリストを組み立てる。
     ///
     /// (entries, current_index) を返す。entries は「戻る」スタック +
@@ -179,16 +167,20 @@ mod tests {
 
     #[test]
     fn test_push_clears_forward() {
+        // go_back した直後は forward に積まれていて、進める。
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
         h.push(loc("b.rs", 20));
-
         h.go_back(loc("c.rs", 30));
-        assert!(h.can_go_forward());
+        assert!(h.go_forward(loc("b.rs", 20)).is_some());
 
-        // 新しく push したら forward はクリアされるはず。
+        // 新しく push したら forward はクリアされ、進めなくなるはず。
+        let mut h = JumpHistory::new();
+        h.push(loc("a.rs", 10));
+        h.push(loc("b.rs", 20));
+        h.go_back(loc("c.rs", 30));
         h.push(loc("d.rs", 40));
-        assert!(!h.can_go_forward());
+        assert!(h.go_forward(loc("d.rs", 40)).is_none());
     }
 
     #[test]

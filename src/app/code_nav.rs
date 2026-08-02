@@ -408,7 +408,6 @@ impl App {
             p.resolved = true;
         }
         self.viewer_state.click.hover_symbol = jumpable.then_some(crate::viewer::HoverSymbol {
-            text: symbol,
             line,
             start_col,
             end_col,
@@ -702,7 +701,7 @@ impl App {
         candidates
             .into_iter()
             .enumerate()
-            .map(|(i, (name, line, start, end))| {
+            .map(|(i, (name, line, start, _end))| {
                 let first = (b'a' + (i / 26) as u8) as char;
                 let second = (b'a' + (i % 26) as u8) as char;
                 crate::overlay::SymbolHint {
@@ -710,7 +709,6 @@ impl App {
                     symbol_name: name,
                     line,
                     start_col: start,
-                    end_col: end,
                 }
             })
             .collect()

@@ -45,8 +45,6 @@ impl Theme {
             gutter_selected_fg: Color::Rgb(255, 255, 255), // white
             gutter_hover_fg: Color::Rgb(110, 119, 129),   // fg.muted
             gutter_hover_bg: Color::Rgb(246, 248, 250),   // canvas.subtle
-            gutter_pending_bg: Color::Rgb(182, 212, 251), // accent.subtle をやや暗くしたもの
-            line_pending_bg: Color::Rgb(240, 245, 255),   // ごく薄い青
 
             hint: Color::Rgb(110, 119, 129),            // fg.muted
             search_match_fg: Color::Rgb(154, 103, 0),   // attention.fg
@@ -71,7 +69,6 @@ impl Theme {
             code_bg: Color::Rgb(246, 248, 250),  // canvas.subtle — GitHub のインラインコード背景
             code_fg: Color::Rgb(149, 56, 0),     // インラインコード用の褐色がかった赤
 
-            panel_focused_bg: Color::Rgb(240, 243, 246), // white と canvas.subtle の中間
         }
     }
 }

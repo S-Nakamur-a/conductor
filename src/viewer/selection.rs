@@ -13,7 +13,6 @@ impl ViewerState {
     pub fn selected_range(&self) -> Option<(usize, usize)> {
         match self.selection {
             LineSelection::None => None,
-            LineSelection::Pending { start } => Some((start, start)),
             LineSelection::Selected { start, end } => Some(if start <= end {
                 (start, end)
             } else {
@@ -29,11 +28,6 @@ impl ViewerState {
         } else {
             false
         }
-    }
-
-    /// 選択が pending 状態（1回目のクリックが済み、2回目待ち）かどうか。
-    pub fn is_selection_pending(&self) -> bool {
-        matches!(self.selection, LineSelection::Pending { .. })
     }
 
     /// ガターの「+」ボタンのクリックを処理する（GitHub 風のコメント操作）。

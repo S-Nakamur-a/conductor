@@ -70,7 +70,6 @@ impl std::fmt::Display for CommentStatus {
 
 /// ファイルと行範囲に紐づく単一のレビューコメント。
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ReviewComment {
     pub id: String,
     pub worktree: String,
@@ -80,11 +79,9 @@ pub struct ReviewComment {
     pub kind: CommentKind,
     pub body: String,
     pub status: CommentStatus,
-    pub commit_ref: String,
     pub author: Author,
     pub branch: Option<String>,
     pub created_at: String,
-    pub updated_at: String,
 }
 
 /// 再利用可能なコメントテンプレート（保存済みのフィードバックパターン）。
@@ -98,10 +95,8 @@ pub struct CommentTemplate {
 
 /// レビューコメントへの返信。
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ReviewReply {
     pub id: String,
-    pub review_id: String,
     pub body: String,
     pub author: Author,
     pub created_at: String,
@@ -131,27 +126,18 @@ pub struct StreakInfo {
 
 /// レビューモード用ブランチの PR メタデータ（pr_review_meta テーブル）。
 /// レビューヘッダーの表示と、後でコメントを正しい PR に投稿する際に
-/// 必要になる情報を持つ。worktree_metadata と異なり、branch 以外の全フィールドが
-/// optional になっている。レビューは PR のないブランチ名だけからも始められるため。
+/// 必要になる情報を持つ。全フィールドが optional なのは、レビューが PR の
+/// ないブランチ名だけからも始められるため。
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PrReviewMeta {
-    pub branch: String,
     pub pr_number: Option<i64>,
     pub pr_url: Option<String>,
-    pub pr_title: Option<String>,
     pub base_ref: Option<String>,
-    pub head_ref: Option<String>,
-    pub author: Option<String>,
-    pub created_at: String,
 }
 
 /// 保存されたセッション履歴レコード。
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SessionHistory {
-    pub id: String,
-    pub session_id: String,
     pub worktree: String,
     pub label: String,
     pub kind: String,

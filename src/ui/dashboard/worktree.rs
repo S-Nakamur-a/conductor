@@ -115,34 +115,6 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// ブランチ削除確認オーバーレイを描画する。
-pub fn render_delete_branch_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-    let popup_height = 3_u16;
-    let popup_width = area.width.saturating_sub(8).min(65);
-    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height + 2);
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    frame.render_widget(ratatui::widgets::Clear, popup_area);
-
-    let block = Block::default()
-        .title(" Delete Branch? ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.error));
-
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
-
-    if let Some(ref msg) = app.status_message {
-        let paragraph = Paragraph::new(Span::styled(
-            msg.text.as_str(),
-            Style::default().fg(theme.accent),
-        ));
-        frame.render_widget(paragraph, inner);
-    }
-}
-
 // Smart Worktree のオーバーレイ
 
 /// Smart Worktree の説明入力オーバーレイ（複数行）を描画する。

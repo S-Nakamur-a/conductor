@@ -50,24 +50,6 @@ pub(super) fn render_diff_content_line(
     let is_gutter_hovered = new_line_no
         .map(|n| vs.click.hover_gutter_line == Some(n))
         .unwrap_or(false);
-    let is_in_pending_range = !is_selected
-        && new_line_no.is_some()
-        && vs.is_selection_pending()
-        && vs.click.hover_line.is_some()
-        && {
-            let n = new_line_no.unwrap();
-            let start = match vs.selection {
-                crate::viewer::LineSelection::Pending { start } => start,
-                _ => 0,
-            };
-            let hover = vs.click.hover_line.unwrap();
-            let (lo, hi) = if start <= hover {
-                (start, hover)
-            } else {
-                (hover, start)
-            };
-            n >= lo && n <= hi
-        };
     let is_in_walkthrough_highlight = new_line_no.is_some_and(|n| {
         ctx.walkthrough_highlight
             .is_some_and(|(lo, hi)| n >= lo && n <= hi)
@@ -100,10 +82,6 @@ pub(super) fn render_diff_content_line(
             .fg(theme.gutter_selected_fg)
             .bg(theme.gutter_selected_bg)
             .add_modifier(Modifier::BOLD)
-    } else if is_in_pending_range {
-        Style::default()
-            .fg(theme.gutter_selected_fg)
-            .bg(theme.gutter_pending_bg)
     } else if is_gutter_hovered {
         Style::default()
             .fg(theme.gutter_hover_fg)
@@ -150,13 +128,6 @@ pub(super) fn render_diff_content_line(
             content.to_string(),
             Style::default()
                 .bg(theme.line_selected_bg)
-                .fg(theme.line_selected_fg),
-        )]
-    } else if is_in_pending_range {
-        vec![Span::styled(
-            content.to_string(),
-            Style::default()
-                .bg(theme.line_pending_bg)
                 .fg(theme.line_selected_fg),
         )]
     } else if !inline_segments.is_empty() {

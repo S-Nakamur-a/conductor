@@ -33,7 +33,11 @@ mod tests;
 pub struct Theme {
     // メタ情報
     /// このテーマの正式名(from_name のキーおよび all_names の返り値と一致する)。
-    /// 主に from_name と all_names の登録漏れをテストで検出するために使う。
+    ///
+    /// 読むのは tests の from_name/all_names 整合テストだけなので dead_code に
+    /// 見えるが、意図的に残している。from_name("nord") が別のテーマを返すような
+    /// 登録ミスは、この名前と突き合わせる以外に検出する手段がない。全テーマの
+    /// コンストラクタ(非テストコード)が代入するため cfg(test) には寄せられない。
     #[allow(dead_code)]
     pub name: &'static str,
     /// 明るい背景のテーマなら true、暗い背景なら false。
@@ -105,10 +109,6 @@ pub struct Theme {
     pub gutter_hover_fg: Color,
     /// ホバー時のガター行番号の背景色(クリック可能であることを示す控えめなハイライト)。
     pub gutter_hover_bg: Color,
-    /// 保留中範囲の行のガター背景色(選択中より暗い)。
-    pub gutter_pending_bg: Color,
-    /// ビューアの保留中範囲行の背景色(選択中より暗い)。
-    pub line_pending_bg: Color,
 
     // テキスト
     /// ヒント/補助テキストの色。
@@ -160,13 +160,6 @@ pub struct Theme {
     /// インライン code チップの前景色。見出し/アクセント色とは異なるソフトピンクにして、
     /// コード参照だと一目で分かるようにしている。
     pub code_fg: Color,
-
-    // パネルの下地
-    /// フォーカス中のリストパネル(worktree / explorer)の控えめな背景色。
-    /// テーマ互換性のためフィールドとしては残しているが、layout.rs 側の面塗りは
-    /// 透過化の整理で撤去済みで、代わりに端末の背景が透けて見える。
-    #[allow(dead_code)]
-    pub panel_focused_bg: Color,
 }
 
 impl Default for Theme {

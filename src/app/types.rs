@@ -79,9 +79,6 @@ pub enum WorktreeInputMode {
     CreatingWorktreeBase,
     /// worktree 削除の確認中(y/n)。
     ConfirmingDelete,
-    /// worktree 削除後、ブランチ削除の確認中(y/n/f)。
-    #[allow(dead_code)]
-    ConfirmingDeleteBranch,
     /// ungrab の確認中(y/n)。
     ConfirmingUngrab,
     /// main を origin にハードリセットする確認中(y/n) — ローカルコミットが失われる。
@@ -121,7 +118,6 @@ pub struct PendingWorktree {
 
 /// バックグラウンド worktree 操作の結果。
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum WorktreeOpResult {
     Created {
         path: PathBuf,
@@ -137,10 +133,6 @@ pub enum WorktreeOpResult {
     DeleteFailed {
         error: String,
         branch: String,
-    },
-    Skipped {
-        branch: String,
-        reason: String,
     },
     /// Smart worktree: LLM がブランチ名を解決した(UI更新用)。
     SmartBranchResolved {
@@ -194,7 +186,6 @@ pub struct DirtyPanels(u8);
 impl DirtyPanels {
     pub const WORKTREE: u8 = 0b0000_0001;
     pub const EXPLORER: u8 = 0b0000_0010;
-    #[allow(dead_code)]
     pub const VIEWER: u8 = 0b0000_0100;
     pub const TERMINAL: u8 = 0b0000_1000;
     pub const ALL: u8 = 0b0000_1111;
@@ -210,10 +201,6 @@ impl DirtyPanels {
     }
     pub fn mark_all(&mut self) {
         self.0 = Self::ALL;
-    }
-    #[allow(dead_code)]
-    pub fn is_dirty(&self, bits: u8) -> bool {
-        self.0 & bits != 0
     }
     pub fn any(&self) -> bool {
         self.0 != 0

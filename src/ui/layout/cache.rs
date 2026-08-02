@@ -31,9 +31,7 @@ pub struct LayoutCache {
     /// 使われなくなるし、覚えていないコマンドを呼びたくなるのはまさに
     /// パネルを最大化している時だからである。
     pub menubar_area: Rect,
-    /// 通知バー領域。
-    pub notif_area: Rect,
-    /// worktree 監視ストリップ領域（全幅、notif と main の間）。
+    /// worktree 監視ストリップ領域（全幅、メニューバーと main の間）。
     pub wtbar_area: Rect,
     /// メインコンテンツ領域（タイトルバーとステータスバーの間）。
     pub main_area: Rect,
@@ -78,9 +76,6 @@ impl LayoutCache {
         self.terminal_split_pct = terminal_split_pct;
         self.explorer_split_pct = layout.explorer_split_pct;
 
-        // 通知バーは廃止済み――Claude の待機状態は worktree ストリップ側で表示する
-        // （待機中の worktree がそこでハイライトされる）。
-        let notif_height: u16 = 0;
         // worktree 監視ストリップは、パネル最大化中は非表示にして
         // 最大化パネルに全高を与える。
         let wtbar_height: u16 = if expanded_panel.is_some() { 0 } else { 1 };
@@ -88,7 +83,6 @@ impl LayoutCache {
         let outer = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(MENUBAR_HEIGHT),
-            Constraint::Length(notif_height),
             Constraint::Length(wtbar_height),
             Constraint::Min(0),
             Constraint::Length(1),
@@ -97,10 +91,9 @@ impl LayoutCache {
 
         self.title_area = outer[0];
         self.menubar_area = outer[1];
-        self.notif_area = outer[2];
-        self.wtbar_area = outer[3];
-        self.main_area = outer[4];
-        self.status_area = outer[5];
+        self.wtbar_area = outer[2];
+        self.main_area = outer[3];
+        self.status_area = outer[4];
 
         let (left_w, explorer_w, viewer_w) = accordion_widths(
             expanded_panel,

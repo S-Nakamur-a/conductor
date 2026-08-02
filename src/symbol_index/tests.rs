@@ -109,7 +109,6 @@ fn test_find_definitions_filters_fields() {
                 kind: SymbolKind::Struct,
                 file_path: "lib.rs".to_string(),
                 line: 1,
-                column: 0,
                 scope: None,
             },
             Symbol {
@@ -117,7 +116,6 @@ fn test_find_definitions_filters_fields() {
                 kind: SymbolKind::Field,
                 file_path: "lib.rs".to_string(),
                 line: 5,
-                column: 0,
                 scope: None,
             },
         ];
@@ -248,7 +246,6 @@ fn test_find_implementations() {
             kind: SymbolKind::Impl,
             file_path: "lib.rs".to_string(),
             line: 10,
-            column: 0,
             scope: Some("MyStruct".to_string()),
         }];
         data.available = true;
@@ -351,7 +348,6 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
         kind: SymbolKind::Function,
         file_path: "old.rs".to_string(),
         line: 1,
-        column: 0,
         scope: None,
     }];
     let published = idx.publish(stale, stamped);
