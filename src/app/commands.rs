@@ -70,7 +70,6 @@ impl App {
             CommandId::CheckForUpdate => self.cmd_check_for_update(),
             CommandId::ToggleHighContrast => self.cmd_toggle_high_contrast(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
-            CommandId::TogglePartyMode => self.cmd_toggle_party_mode(),
             CommandId::Quit => self.should_quit = true,
             CommandId::SwitchTheme => self.cmd_open_theme_picker(),
         }
@@ -98,19 +97,6 @@ impl App {
     }
 
     // コマンドパレットのハンドラメソッド
-
-    /// 隠しパーティーテーマモード(虹色の枠線、派手なシンタックス、紙吹雪)を
-    /// 切り替える。新しい状態はフラッシュメッセージで確認でき、UI 全体を
-    /// 再描画するので効果は即座に現れる/消える。
-    fn cmd_toggle_party_mode(&mut self) {
-        self.party_mode = !self.party_mode;
-        if self.party_mode {
-            self.set_status("🎉 Party mode ON! 🎉".to_string(), StatusLevel::Success);
-        } else {
-            self.set_status_info("Party mode off.".to_string());
-        }
-        self.dirty.mark_all();
-    }
 
     /// ハイコントラストのテーマ変換をその場で切り替え、選択を永続化し、
     /// テーマ依存のキャッシュを再構築して変更を即座に反映させる。

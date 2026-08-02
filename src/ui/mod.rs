@@ -8,7 +8,6 @@ pub mod editor_panel;
 pub mod explorer_panel;
 pub mod markdown;
 pub mod menu_bar;
-pub mod party;
 pub mod reflow_view;
 pub mod tab_bar;
 pub mod terminal_claude;

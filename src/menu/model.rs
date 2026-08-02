@@ -76,12 +76,10 @@ const SEP: MenuItem = MenuItem::Separator;
 // tests::every_command_is_reachable が読む。このリストはメニューが意図的に
 // 省いているものの記録であり、テストがその記録を黙って古びさせないようにする。
 // 読み手はそのテストだけなので cfg(test) に閉じてある。
+//
+// 現在は空である。つまり、すべての CommandId がメニューから到達できる。
 #[cfg(test)]
-pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[(
-    CommandId::TogglePartyMode,
-    "Labelled '(secret)' in the palette — listing it on the menu bar would \
-     defeat the point. Still reachable from the command palette.",
-)];
+pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[];
 
 /// メニューバーの並び (左から右)。
 pub const MENUS: &[Menu] = &[

@@ -23,8 +23,6 @@ pub(super) struct DiffLineRenderCtx<'a> {
     /// このファイルを指している場合のみ値を持つ。レビューモード外・walkthrough なし・
     /// 他ファイルを指している場合は None。
     pub(super) walkthrough_highlight: Option<(usize, usize)>,
-    /// パーティーモードのレインボーフェーズ（パーティーモード OFF なら None）。
-    pub(super) party: Option<f64>,
 }
 
 /// diff の1行分（コンテキスト/追加/削除）の表示行を組み立てる。
@@ -41,7 +39,6 @@ pub(super) fn render_diff_content_line(
     let theme = ctx.theme;
     let gutter_width = ctx.gutter_width;
     let tab_width = ctx.tab_width;
-    let party = ctx.party;
 
     let is_selected = new_line_no.map(|n| vs.is_line_selected(n)).unwrap_or(false);
     let is_hovered = new_line_no
@@ -147,7 +144,6 @@ pub(super) fn render_diff_content_line(
                                 diff_bg.unwrap_or(Color::Reset),
                                 emphasis_bg.unwrap_or(Color::Reset),
                                 tab_width,
-                                party,
                             )
                         })
                         .unwrap_or_else(|| {
@@ -178,7 +174,7 @@ pub(super) fn render_diff_content_line(
             ),
             DiffLineTag::Equal => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg, party)
+                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -192,7 +188,7 @@ pub(super) fn render_diff_content_line(
         match tag {
             DiffLineTag::Insert => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, diff_bg, theme.fg, party)
+                    syntax_spans_for_line(vs, line_no - 1, diff_bg, theme.fg)
                 } else {
                     vec![Span::styled(
                         content.to_string(),
@@ -212,7 +208,7 @@ pub(super) fn render_diff_content_line(
             }
             DiffLineTag::Equal => {
                 if let Some(line_no) = new_line_no {
-                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg, party)
+                    syntax_spans_for_line(vs, line_no - 1, None, theme.fg)
                 } else {
                     vec![Span::styled(
                         content.to_string(),

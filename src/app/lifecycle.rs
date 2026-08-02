@@ -160,7 +160,6 @@ impl App {
             bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
             panel_number_overlay: Default::default(),
-            party_mode: false,
             reflow: super::reflow::ReflowView::default(),
         };
 

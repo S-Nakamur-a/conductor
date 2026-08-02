@@ -87,7 +87,6 @@ pub enum CommandId {
     // App
     UpdateAndRestart,
     CheckForUpdate,
-    TogglePartyMode,
     Quit,
 
     // UI

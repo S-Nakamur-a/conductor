@@ -95,7 +95,6 @@ pub(super) fn merge_syntax_with_inline(
     diff_bg: Color,
     emphasis_bg: Color,
     tab_width: usize,
-    party: Option<f64>,
 ) -> Option<Vec<Span<'static>>> {
     // インラインセグメントから展開後のテキストと、バイトごとの強調フラグを
     // 構築する。タブはセグメントをまたいだ共有の列カウンタで展開するので、
@@ -159,14 +158,6 @@ pub(super) fn merge_syntax_with_inline(
         result.push(Span::styled(expanded_text[start..i].to_string(), fg.bg(bg)));
     }
 
-    // パーティーモード: マージ済みトークンの diff 背景色は保ったまま、流れる
-    // レインボーで前景色を塗り替える。
-    if let Some(phase) = party {
-        for (idx, span) in result.iter_mut().enumerate() {
-            span.style.fg = Some(crate::ui::party::rainbow(phase + idx as f64 * 23.0));
-        }
-    }
-
     Some(result)
 }
 
@@ -211,26 +202,17 @@ pub(super) fn syntax_spans_for_line(
     line_no: usize,
     diff_bg: Option<Color>,
     fg: Color,
-    party: Option<f64>,
 ) -> Vec<Span<'static>> {
     if let Some(tokens) = vs.content.highlighted_lines.get(line_no) {
         tokens
             .iter()
-            .enumerate()
-            .map(|(idx, (style, text))| {
-                let mut s = if let Some(bg) = diff_bg {
+            .map(|(style, text)| {
+                let s = if let Some(bg) = diff_bg {
                     // トークンの前景色は保ち、背景色を diff の色で上書きする。
                     style.bg(bg)
                 } else {
                     *style
                 };
-                // パーティーモード: 各トークン（境界は保持）を流れるレインボーで
-                // 塗り替えて、行全体を派手にする。
-                if let Some(phase) = party {
-                    s.fg = Some(crate::ui::party::rainbow(
-                        phase + line_no as f64 * 7.0 + idx as f64 * 23.0,
-                    ));
-                }
                 Span::styled(text.clone(), s)
             })
             .collect()
@@ -242,11 +224,7 @@ pub(super) fn syntax_spans_for_line(
             .get(line_no)
             .cloned()
             .unwrap_or_default();
-        let color = match party {
-            Some(phase) => crate::ui::party::rainbow(phase + line_no as f64 * 7.0),
-            None => fg,
-        };
-        vec![Span::styled(text, Style::default().fg(color))]
+        vec![Span::styled(text, Style::default().fg(fg))]
     }
 }
 
@@ -278,7 +256,6 @@ mod tests {
             Color::Rgb(0, 40, 0),
             Color::Rgb(0, 80, 0),
             4,
-            None,
         );
         // このタブ修正の前は None が返っていた（タブの部分でテキストが不一致になっていた）。
         let spans = merged.expect("tabbed line should merge, not fall back to plain");
@@ -298,7 +275,6 @@ mod tests {
             Color::Rgb(0, 40, 0),
             Color::Rgb(0, 80, 0),
             4,
-            None,
         );
         assert!(merged.is_none());
     }

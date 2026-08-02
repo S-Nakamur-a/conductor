@@ -43,9 +43,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 共有借用を取る前に diff 注釈キャッシュを埋める。
     ensure_diff_annotations_cached(app);
 
-    // パーティーモードのレインボーの位相。UI tick で進む（OFF のときは None）。
-    let party = app.party_mode.then_some(app.ui_tick as f64 * 4.0);
-
     let theme = &app.theme;
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
@@ -225,7 +222,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         diff_annotations,
         comment_lines: &comment_lines,
         comment_end_lines: &comment_end_lines,
-        party,
     };
 
     for (line_no, content) in vs

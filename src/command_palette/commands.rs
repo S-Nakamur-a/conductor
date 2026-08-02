@@ -387,13 +387,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         keywords: "update upgrade restart download version",
     },
     PaletteCommand {
-        id: CommandId::TogglePartyMode,
-        label: "🎉 Party Mode (secret)",
-        category: CommandCategory::App,
-        action: None,
-        keywords: "party rainbow fun secret celebration mode hidden festive disco",
-    },
-    PaletteCommand {
         id: CommandId::Quit,
         label: "Quit Conductor",
         category: CommandCategory::App,

@@ -164,9 +164,6 @@ pub(super) fn render_walkthrough_banner(
 pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    // パーティーモードのレインボーの位相（OFF のときは None）。借用の前に計算する。
-    let party = app.party_mode.then_some(app.ui_tick as f64 * 4.0);
-
     // 表示行と、画面行→コメント/エントリのマップを組み立てる。インライン
     // コメントスレッドは、コメントされた各範囲の最終行の後に挿入される
     // （レビューコメントが diff の中にそのまま見え、デフォルトで展開された状態になる）。
@@ -214,7 +211,6 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             comment_lines: &comment_lines,
             comment_end_lines: &comment_end_lines,
             walkthrough_highlight,
-            party,
         };
 
         let mut lines: Vec<Line> = Vec::with_capacity(inner_height);

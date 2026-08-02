@@ -41,10 +41,6 @@ pub(crate) fn run_due_timers(
             "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
                 app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
             }
-            // パーティモードのアニメーション (虹色の枠、シンタックス、紙吹雪) を動かす。
-            "pulse" if app.party_mode => {
-                app.dirty.mark_all();
-            }
             "unfocused_terminal" => {
                 match app.focus {
                     crate::app::Focus::TerminalClaude => {
