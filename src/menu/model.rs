@@ -132,16 +132,12 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::ShowReviewTemplates, "Show Templates"),
             SEP,
             cmd(CommandId::ReviewPullRequest, "Review Pull Request…"),
-            // walkthrough 関連の行は View 配下にある他の Explorer 下部ペイン
-            // 切り替えとではなく、Review 配下にまとめている。walkthrough を
-            // 読むこと自体がレビュー活動であり、まだ生成していない場合には
-            // "show" の隣に "generate" があるのが望ましい。
-            cmd(CommandId::ShowWalkthrough, "Show Walkthrough"),
-            cmd(CommandId::GenerateWalkthrough, "Generate Walkthrough"),
-            cmd(
-                CommandId::ForceGenerateWalkthrough,
-                "Regenerate Walkthrough (force)",
-            ),
+            // revidere の行は View 配下の他の表示切り替えとではなく Review 配下に
+            // まとめている。レビューを読むこと自体がレビュー活動であり、まだ
+            // 解析していない場合に "show" の隣に "analyse" があるのが望ましい。
+            cmd(CommandId::ShowRevidere, "Show Review"),
+            cmd(CommandId::AnalyzeRevidere, "Analyse with revidere"),
+            cmd(CommandId::ForceAnalyzeRevidere, "Re-analyse (ignore cache)"),
             SEP,
             cmd(CommandId::PublishReview, "Publish Comments to GitHub…"),
             SEP,

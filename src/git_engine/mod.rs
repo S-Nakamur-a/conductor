@@ -79,6 +79,13 @@ pub struct WorktreeInfo {
     /// Repository::open をしなくて済むよう、repo をすでに開いている
     /// タイミングで取得する。
     pub head_oid: Option<String>,
+    /// HEAD コミットの committer 時刻 (Unix 秒)。unborn ブランチでは None。
+    ///
+    /// revidere の成果物がいまの HEAD より古いかの判定に使う。oid を突き
+    /// 合わせないのは、解析時の oid をどこにも書き残していないため。時刻
+    /// なら成果物のファイル自身が持っていて、conductor を再起動しても、
+    /// 端末から直接 revidere を走らせても同じように判定できる。
+    pub head_time: Option<i64>,
 }
 
 /// 1つのコミットの要約情報。

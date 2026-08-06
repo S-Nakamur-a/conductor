@@ -172,7 +172,7 @@ impl DiffState {
 
     /// リポジトリ相対パスから表示リストのインデックスを探す
     /// ([Self::resolve_file] の逆引き)。リストのインデックスではなくパスで
-    /// ファイルを開いた際(例: walkthrough のステップのファイルへジャンプする場合)に、
+    /// ファイルを開いた際(例: 節が指す位置へジャンプする場合)に、
     /// diff リストのカーソルを同期させておくために使う。
     pub fn display_index_for_path(&self, path: &str) -> Option<usize> {
         (0..self.display_list.len())
@@ -188,7 +188,7 @@ impl DiffState {
         paths
     }
 
-    /// 外部から渡されたパス(walkthrough ステップの file_path、コメントの
+    /// 外部から渡されたパス(revidere の節が指すパス、コメントの
     /// アンカーなど)を diff と突き合わせ、diff 側の正式な表記を返す。
     ///
     /// まず完全一致を試みる。これにより実在するファイルが常に以下のどの推測よりも

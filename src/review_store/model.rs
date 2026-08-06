@@ -129,10 +129,13 @@ pub struct StreakInfo {
 /// 必要になる情報を持つ。全フィールドが optional なのは、レビューが PR の
 /// ないブランチ名だけからも始められるため。
 #[derive(Debug, Clone)]
+///
+/// base_ref は列としては残っているが、ここには載せていない。読み手は
+/// walkthrough の生成だけで、revidere は自分で base を決めるため。行の記録
+/// としては書き続ける (PR の素性を後から辿れる)。
 pub struct PrReviewMeta {
     pub pr_number: Option<i64>,
     pub pr_url: Option<String>,
-    pub base_ref: Option<String>,
 }
 
 /// 保存されたセッション履歴レコード。

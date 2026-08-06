@@ -13,7 +13,6 @@ pub mod tab_bar;
 pub mod terminal_claude;
 pub mod terminal_shell;
 pub mod viewer_panel;
-pub mod walkthrough_pane;
 pub mod worktree_bar;
 pub mod worktree_panel;
 
@@ -27,5 +26,6 @@ pub mod hover_info;
 pub mod panel_overlay;
 pub mod references;
 pub mod review;
+pub mod revidere_view;
 pub mod symbol_action;
 pub mod theme_picker;

@@ -463,6 +463,7 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
+ "revidere",
  "rmcp",
  "rusqlite",
  "schemars",
@@ -2470,6 +2471,14 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "revidere"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

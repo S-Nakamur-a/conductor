@@ -70,7 +70,7 @@ impl App {
                 self.set_focus(Focus::Explorer);
                 self.set_status(
                     format!(
-                        "PR #{pr_number} ready for review — walkthrough: palette › Generate Walkthrough"
+                        "PR #{pr_number} ready for review."
                     ),
                     StatusLevel::Success,
                 );

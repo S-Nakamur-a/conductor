@@ -37,6 +37,15 @@ tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
+# レビュー成果物 (<worktree>/.revidere/review.json) の型と読む順。ホストが
+# 埋め込むのはこのクレートだけで、解析 (AI 呼び出し) は revidere の CLI 側にある。
+#
+# revidere がまだ公開されていないので path 参照。相対ではなく絶対にしてあるのは、
+# worktree が <repo-parent>/conductor-worktrees/<ブランチ名>/ に作られ、ブランチ名に
+# 含まれる / の数だけ深さが変わるため。本体と worktree の両方から同じ 1 行で届く
+# 書き方が他に無い。公開されたら次の 1 行に差し替える:
+#   revidere = { git = "https://github.com/S-Nakamur-a/revidere", package = "revidere" }
+revidere = { path = "/Users/shunnaka/ghq/github.com/S-Nakamur-a/revidere/crates/revidere" }
 libc = "0.2"
 # 1つのインポートで済むファサード (keymap-core + keymap-config + keymap-seq)。
 # crossterm フィーチャーで KeyInput::try_from(KeyEvent) が使えるようになる。

@@ -4,39 +4,19 @@
 //! コメントまたは変更箇所へ着地)、変更ファイル間のジャンプ、未解決スレッドの自動展開、
 //! 新規コメントの追加を担う。削除は [super::review_delete]、編集/ステータス/返信は
 //! [super::review_edit]、テンプレート/履歴のヘルパーは [super::review_history]、
-//! AI walkthrough 生成は [super::review_walkthrough] にある。
+//! revidere の成果物の読み込みと解析の起動は [super::revidere] にある。
 
 use super::*;
 use crate::review_store::{Author, CommentKind};
 
 impl App {
-    /// 現在選択中の worktree について、DB からレビューコメントを再読み込みする。
+    /// 現在選択中の worktree について、DB からレビューコメントを再読み込みし、
+    /// revidere の成果物も読み直す。
     pub fn refresh_reviews(&mut self) {
+        self.reload_revidere();
         if let Some(store) = &self.review_store {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
-            // walkthrough があれば同じブランチスコープで一緒に読み込む。
-            self.walkthrough.current = store
-                .get_walkthrough(&wt)
-                .ok()
-                .flatten()
-                .map(crate::app::LoadedWalkthrough::from);
-            // 両方が手元にあるうちに、各ステップを diff 側のファイル表記に再アンカーする。
-            // Viewer のステップバナーと行範囲の下線表示は current_file を
-            // step.file_path と直接比較するため、保存済みパスが diff ファイルに
-            // *解決される* だけの場合(git diff の b/ プレフィックス、サブディレクトリ
-            // 相対で書かれたパスなど)、ジャンプ自体は正しくても表示は何も出ない。
-            // 既に一致しているステップと、そもそもファイルが diff に含まれないステップは
-            // そのままにする。
-            if let Some(steps) = self.walkthrough.current.as_mut().map(|wt| &mut wt.steps) {
-                for step in steps.iter_mut() {
-                    if let Some(resolved) = self.diff_state.resolve_changed_path(&step.file_path)
-                        && resolved != step.file_path
-                    {
-                        step.file_path = resolved;
-                    }
-                }
-            }
             // 現在表示中のファイルについて、ファイル単位のキャッシュを再構築する。
             if let Some(file_path) = self.viewer_state.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);
@@ -209,6 +189,15 @@ impl App {
                 .explorer
                 .expanded_inline_threads
                 .insert(line);
+        }
+    }
+
+    /// ファイルパスの「viewed」マークをトグルする — diff リストの v キーと
+    /// Viewer の diff モードの v キーから使われる。
+    pub fn toggle_path_viewed(&mut self, path: &str) {
+        let viewed = &mut self.viewer_state.explorer.viewed;
+        if !viewed.remove(path) {
+            viewed.insert(path.to_string());
         }
     }
 }

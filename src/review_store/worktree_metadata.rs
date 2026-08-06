@@ -32,10 +32,9 @@ impl ReviewStore {
     /// diff の上にバナーとして表示され、PR 本文としても再利用できる。書き込みのたびに
     /// updated_at を更新し、既存行に対する COALESCE により置き換え時も created_at を保持する。
     ///
-    /// このメソッドを経由して書き込む経路は2つある。単独の概要を書く set_change_summary
-    /// MCP ツールと、walkthrough のサマリをここに書き込む save_walkthrough で、後者では
-    /// walkthrough 生成の副作用として SUMMARY 疑似ファイルが埋まる。mcp-serve は同じ
-    /// バイナリなので、この upsert の実装を二重に持って同期を取る必要はない。
+    /// 書き込む経路は set_change_summary MCP ツールで、そこで書いたものが
+    /// SUMMARY 疑似ファイルとして出る。mcp-serve は同じバイナリなので、
+    /// この upsert の実装を二重に持って同期を取る必要はない。
     pub fn save_change_summary(&self, branch: &str, body: &str, author: Author) -> Result<()> {
         self.conn.execute(
             "INSERT INTO change_summary (branch, body, author, created_at, updated_at)
@@ -106,7 +105,7 @@ impl ReviewStore {
     /// ブランチの PR メタデータを取得する（保存されていれば）。
     pub fn get_pr_review_meta(&self, branch: &str) -> Result<Option<PrReviewMeta>> {
         match self.conn.query_row(
-            "SELECT pr_number, pr_url, base_ref
+            "SELECT pr_number, pr_url
              FROM pr_review_meta WHERE branch = ?1",
             params![branch],
             row_to_pr_review_meta,
@@ -122,7 +121,6 @@ fn row_to_pr_review_meta(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrReviewMe
     Ok(PrReviewMeta {
         pr_number: row.get(0)?,
         pr_url: row.get(1)?,
-        base_ref: row.get(2)?,
     })
 }
 
@@ -196,6 +194,5 @@ mod tests {
         // upsert なので行は増えず、更新後も1件のまま引ける。
         let meta = store.get_pr_review_meta("feat/x").unwrap().unwrap();
         assert_eq!(meta.pr_number, Some(42));
-        assert_eq!(meta.base_ref.as_deref(), Some("main"));
     }
 }

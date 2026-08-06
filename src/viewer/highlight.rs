@@ -31,7 +31,7 @@ const EXTENSION_ALIASES: &[(&str, &str)] = &[
 /// Dockerfile・Makefile・Gemfile・.gitignore・.env のような拡張子を持たない
 /// ファイルが軒並み plain text になり、さらに CMakeLists.txt は .txt に
 /// 引っかかって積極的に間違った plain text になる。
-fn find_syntax<'a>(
+pub(crate) fn find_syntax<'a>(
     syntax_set: &'a SyntaxSet,
     path: Option<&str>,
     first_line: Option<&str>,

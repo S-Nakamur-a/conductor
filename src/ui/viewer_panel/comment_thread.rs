@@ -134,8 +134,14 @@ pub(super) fn build_inline_thread_lines<'a>(
         // コメント本文。執筆者の面に GitHub 風の Markdown として描画する
         // （見出し、リスト、コードカード、インラインの code、リンクなど）。
         // 毎フレーム再パース/再ハイライトしないよう comment id ごとにキャッシュする。
-        let mut body_md =
-            md_cache.render(&comment.id, &comment.body, wrap_width, theme, syntax_set, syntect_theme);
+        let mut body_md = md_cache.render(
+            &comment.id,
+            &comment.body,
+            wrap_width,
+            theme,
+            syntax_set,
+            syntect_theme,
+        );
         crate::ui::markdown::apply_background(&mut body_md, cbg);
         for line in body_md {
             out.push(make_line(line.spans, cbg));
@@ -374,7 +380,10 @@ pub(super) fn build_inline_compose_lines<'a>(
         Span::styled(format!("{icon} "), content_style),
         Span::styled(
             label.to_string(),
-            Style::default().fg(theme.info).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.info)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  (Tab: toggle kind)".to_string(), muted),
     ]));

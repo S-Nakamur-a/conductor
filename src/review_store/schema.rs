@@ -340,6 +340,22 @@ impl ReviewStore {
             .context("failed to migrate to v7 (walkthroughs.head_commit)")?;
         }
 
+        if version < 8 {
+            // walkthrough の廃止。ツアーの表示は revidere の成果物
+            // (<worktree>/.revidere/review.json) が引き継いだので、この 2 つの
+            // テーブルを読む者はもういない。v6/v7 を書き換えて「最初から
+            // 作らない」ことにはしない。既存の DB は v6 を通過済みなので、
+            // 過去のマイグレーションを書き換えると新旧で辿る道が食い違う。
+            conn.execute_batch(
+                "
+                DROP TABLE IF EXISTS walkthrough_steps;
+                DROP TABLE IF EXISTS walkthroughs;
+                PRAGMA user_version = 8;
+                ",
+            )
+            .context("failed to migrate to v8 (drop walkthroughs)")?;
+        }
+
         Ok(Self { conn })
     }
 }
@@ -432,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_existing_v5_db_to_v6() {
+    fn migrates_an_existing_v5_db_all_the_way_forward() {
         // ディスク上にある v6 より前のデータベースをシミュレートする。まず新規
         // ストアを開き（最新バージョンまで一気にマイグレーションされる）、それを
         // 手作業で v5 データベースの姿まで巻き戻し、ReviewStore::open が実際に
@@ -460,8 +476,6 @@ mod tests {
                 .conn
                 .execute_batch(
                     "
-                    DROP TABLE walkthroughs;
-                    DROP TABLE walkthrough_steps;
                     DROP TABLE pr_review_meta;
                     ALTER TABLE reviews DROP COLUMN published_at;
                     PRAGMA user_version = 5;
@@ -476,19 +490,29 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         // v5 の db を開き直すと、最新までの全マイグレーションが実行される
-        // （v6 のテーブル群、続けて v7 の walkthroughs.head_commit）。
-        assert_eq!(version, 7);
+        // （v6 のテーブル群、v7 の列追加、そして v8 の walkthrough 削除）。
+        assert_eq!(version, 8);
 
         // 既存データはマイグレーションを生き延びている。
         let reviews = store.reviews_for_worktree("feat/x").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].body, "predates the v6 migration");
 
-        // 新しいテーブル・カラムも、v7 の head_commit を含めて利用できる。
-        assert!(store.get_walkthrough("feat/x").unwrap().is_none());
+        // v6 で足したもののうち、生き残っている側は使える。
         assert!(store.get_pr_review_meta("feat/x").unwrap().is_none());
         assert_eq!(store.unpublished_reviews("feat/x").unwrap().len(), 1);
-        let begun = store.begin_walkthrough("feat/x", Some("deadbeef")).unwrap();
-        assert_eq!(begun.head_commit.as_deref(), Some("deadbeef"));
+
+        // v8 で落とした側は、テーブルごと無くなっている。
+        for table in ["walkthroughs", "walkthrough_steps"] {
+            let found: i64 = store
+                .conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(found, 0, "{table} should be gone");
+        }
     }
 }

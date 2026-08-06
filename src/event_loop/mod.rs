@@ -75,10 +75,9 @@ pub(crate) fn run_loop(
         phases::run_background_work(app, &mut loop_state);
 
         if app.should_quit {
-            // 生成中のウォークスルーはヘッドレスの claude 子プロセス。
-            // これが無いと、メインループが止まったあと誰もポーリングしないまま
-            // 孤児として動き続け (API 課金も続き) てしまう。
-            app.shutdown_walkthrough_generation();
+            // 実行中の解析は revidere の子プロセス。ここで止めないと、メイン
+            // ループが終わったあと誰も結果を読まないまま走り続ける。
+            app.shutdown_revidere();
             return Ok(());
         }
     }

@@ -10,7 +10,7 @@
 mod clipboard;
 mod dialogs;
 mod explorer;
-mod explorer_walkthrough;
+mod revidere;
 mod global;
 mod menu;
 mod mouse;
@@ -48,9 +48,7 @@ use self::worktree::handle_worktree_key;
 // 変更なしに解決され続ける。
 pub(in crate::event) use self::clipboard::clipboard_paste;
 pub(in crate::event) use self::overlay_helpers::open_filename_search;
-pub(in crate::event) use self::scroll::{
-    adjust_diff_list_scroll, adjust_tree_scroll, adjust_walkthrough_scroll,
-};
+pub(in crate::event) use self::scroll::{adjust_diff_list_scroll, adjust_tree_scroll};
 
 // 有効なオーバーレイ
 
@@ -63,8 +61,6 @@ enum EffectiveOverlay {
     PublishConfirm,
     /// コメント詳細ポップアップ。
     CommentDetail,
-    /// walkthrough ステップ詳細ポップアップ (Explorer walkthrough ビューの領域)。
-    WalkthroughDetail,
     /// レビューのテキスト入力 (追加/編集/返信)。
     ReviewInput,
     /// worktree のテキスト入力 (作成/確認/スマート)。
@@ -93,9 +89,6 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
     }
     if app.review_state.comment_detail_active {
         return EffectiveOverlay::CommentDetail;
-    }
-    if app.viewer_state.explorer.walkthrough_detail_active {
-        return EffectiveOverlay::WalkthroughDetail;
     }
     if app.review_state.input_mode != ReviewInputMode::Normal {
         return EffectiveOverlay::ReviewInput;
@@ -223,15 +216,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             handle_comment_detail_key(app, key);
             return;
         }
-        EffectiveOverlay::WalkthroughDetail => {
-            if matches!(
-                key.code,
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(' ')
-            ) {
-                app.viewer_state.explorer.walkthrough_detail_active = false;
-            }
-            return;
-        }
         EffectiveOverlay::ReviewInput => {
             handle_review_input_key(app, key);
             return;
@@ -331,6 +315,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Worktree => KeyContext::Worktree,
         Focus::Explorer => KeyContext::Explorer,
         Focus::Viewer => KeyContext::Viewer,
+        Focus::Revidere => KeyContext::Revidere,
         Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
     };
 
@@ -346,6 +331,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::Worktree => handle_worktree_key(app, key),
         Focus::Explorer => handle_explorer_key(app, key),
         Focus::Viewer => handle_viewer_key(app, key),
+        Focus::Revidere => revidere::handle_revidere_key(app, key),
         Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
     }
 }

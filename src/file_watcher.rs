@@ -38,16 +38,21 @@ impl FileWatcher {
                     {
                         return;
                     }
-                    // .git/ と .conductor ディレクトリ内の変更は無視する。git の操作
+                    // .git/ .conductor/ .revidere/ 内の変更は無視する。git の操作
                     // (git status など) はインデックスファイルに触るので、そのままだと
-                    // 高コストなリフレッシュが走ってしまう。最初の 1 件だけでなく
-                    // イベント内の全パスを見るのは、リネームイベントが (from, to) を
-                    // 持つため — .git から作業ツリーへの移動は、paths[0] が .git
-                    // 側であっても実際の変更だから。
+                    // 高コストなリフレッシュが走ってしまう。.revidere は解析中に
+                    // 貯めた応答を書き続けるので同じ理由で外す (成果物ができたことは
+                    // 解析の終了で分かるので、監視から知る必要が無い)。最初の 1 件
+                    // だけでなくイベント内の全パスを見るのは、リネームイベントが
+                    // (from, to) を持つため — .git から作業ツリーへの移動は、
+                    // paths[0] が .git 側であっても実際の変更だから。
                     let any_real_path = event.paths.iter().any(|path| {
-                        !path
-                            .components()
-                            .any(|c| c.as_os_str() == ".git" || c.as_os_str() == ".conductor")
+                        !path.components().any(|c| {
+                            matches!(
+                                c.as_os_str().to_str(),
+                                Some(".git" | ".conductor" | ".revidere")
+                            )
+                        })
                     });
                     if any_real_path {
                         let _ = sender.send(FsEvent::Changed);

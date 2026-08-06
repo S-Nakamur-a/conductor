@@ -23,18 +23,16 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
             theme.border_unfocused
         };
         let title_style = if focused {
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.muted)
         };
-        let block = crate::ui::common::PanelChrome::new(
-            theme,
-            " \u{25A3} SUMMARY ",
-            focused,
-            border_color,
-        )
-        .with_title_style(title_style)
-        .into_block();
+        let block =
+            crate::ui::common::PanelChrome::new(theme, " \u{25A3} SUMMARY ", focused, border_color)
+                .with_title_style(title_style)
+                .into_block();
 
         let summary = app
             .review_state
@@ -48,9 +46,8 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
             for (text, _) in [
                 ("(no change summary on this branch)", ()),
                 ("", ()),
-                ("Generating a walkthrough writes one — palette:", ()),
-                ("\"Review: Generate Walkthrough\". Claude can also set it", ()),
-                ("directly with the conductor `set_change_summary` MCP tool.", ()),
+                ("Claude can set it with the conductor", ()),
+                ("`set_change_summary` MCP tool.", ()),
             ] {
                 lines.push(Line::from(Span::styled(
                     text,

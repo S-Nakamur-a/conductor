@@ -499,7 +499,10 @@ mod menu_clicks {
     #[test]
     fn clicks_elsewhere_pass_through_when_no_menu_is_open() {
         let s = state(false);
-        assert_eq!(classify_menu_click(&s, Some(BAR_ROW), 60, 30), MenuClick::Pass);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 60, 30),
+            MenuClick::Pass
+        );
     }
 
     #[test]
@@ -508,7 +511,10 @@ mod menu_clicks {
         // 最後の描画時の矩形がクリックを飲み込み続けることはない。
         let mut s = state(true);
         s.close();
-        assert_eq!(classify_menu_click(&s, Some(BAR_ROW), 10, 3), MenuClick::Pass);
+        assert_eq!(
+            classify_menu_click(&s, Some(BAR_ROW), 10, 3),
+            MenuClick::Pass
+        );
     }
 
     #[test]

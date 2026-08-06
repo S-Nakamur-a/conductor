@@ -128,13 +128,13 @@ pub enum DiffView {
 }
 
 /// [review] セクション。
+///
+/// いまは設定項目を持たない。レビューの生成に関わる設定 (どの AI がどの言語で
+/// 書くか) は revidere 側の config.toml へ移った。セクション自体は残してある —
+/// 既存の config.toml に [review] が書かれており、消すと未知セクションになる。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ReviewConfig {
-    /// walkthrough を書く自然言語(例: "日本語", "English")。None なら
-    /// 選択をモデルに任せる。
-    pub walkthrough_language: Option<String>,
-}
+pub struct ReviewConfig {}
 
 /// [ccusage] セクション。
 #[derive(Debug, Clone, Serialize, Deserialize)]

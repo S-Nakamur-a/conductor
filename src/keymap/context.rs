@@ -9,8 +9,6 @@ pub enum KeyContext {
     Explorer,
     ExplorerDiffList,
     ExplorerCommentList,
-    /// AI walkthrough のステップ一覧を表示する Explorer 下段ペイン。
-    ExplorerWalkthrough,
     Viewer,
     ViewerDiffMode,
     Terminal,
@@ -21,16 +19,17 @@ pub enum KeyContext {
     Editor,
     /// オーバーレイのポップアップ（リスト/ツリーのナビゲーション）で共有される
     /// コンテキスト。他のコンテキストと同じく Global にフォールバックする。
+    /// revidere の 2 列レビュービュー (節一覧 + diff)。画面全体を占有する。
+    Revidere,
     Overlay,
 }
 
 /// グローバル以外のコンテキスト。それぞれ名前付きの [layers.<name>] テーブルで裏打ちされる。
-pub(crate) const PANEL_CONTEXTS: [KeyContext; 10] = [
+pub(crate) const PANEL_CONTEXTS: [KeyContext; 9] = [
     KeyContext::Worktree,
     KeyContext::Explorer,
     KeyContext::ExplorerDiffList,
     KeyContext::ExplorerCommentList,
-    KeyContext::ExplorerWalkthrough,
     KeyContext::Viewer,
     KeyContext::ViewerDiffMode,
     KeyContext::Terminal,
@@ -48,11 +47,11 @@ impl KeyContext {
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerDiffList => "explorer_diff_list",
             KeyContext::ExplorerCommentList => "explorer_comment_list",
-            KeyContext::ExplorerWalkthrough => "explorer_walkthrough",
             KeyContext::Viewer => "viewer",
             KeyContext::ViewerDiffMode => "viewer_diff_mode",
             KeyContext::Terminal => "terminal",
             KeyContext::Editor => "editor",
+            KeyContext::Revidere => "revidere",
             KeyContext::Overlay => "overlay",
         }
     }

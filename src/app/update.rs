@@ -114,7 +114,7 @@ impl App {
         self.poll_worktree_switch_ops();
         self.poll_worktree_ops();
         self.poll_pr_intake();
-        self.poll_walkthrough_generation();
+        self.poll_revidere();
         self.poll_publish_review();
 
         // ccusage

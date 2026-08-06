@@ -52,14 +52,9 @@ fn comprehensive_worktree_commands_present() {
 
 #[test]
 fn comprehensive_review_commands_present() {
-    // PR 取り込みと AI walkthrough の入口を守る回帰テスト。キーバインドを覚えて
+    // PR 取り込みとレビューの入口を守る回帰テスト。キーバインドを覚えて
     // いないユーザでもたどり着けるよう、それぞれにパレットコマンドが要る。
-    let must_have = [
-        Action::ReviewPullRequest,
-        Action::GenerateWalkthrough,
-        Action::ForceGenerateWalkthrough,
-        Action::PublishReview,
-    ];
+    let must_have = [Action::ReviewPullRequest, Action::PublishReview];
     for action in must_have {
         assert!(
             COMMANDS.iter().any(|c| c.action == Some(action)),

@@ -63,10 +63,8 @@ pub fn generate_default_config() -> String {
 
 [review]
 # レビューコメントの受け渡しはMCPプラグイン (conductor plugin) 経由です。
-# walkthrough_language = "日本語"        # language the walkthrough is written in
-#                                       # (unset = model's choice)
-#                                       # which MODEL writes it is [api] below — walkthrough
-#                                       # generation goes through the same configurable seam
+# 差分の解析 (どの AI が、どの言語で書くか) は revidere 側の設定です:
+#   <repo>/.revidere/config.toml → ~/.config/revidere/config.toml
 
 [keybinds]
 # Key-bind overrides, in key→action form. Each entry maps a key chord to an
@@ -104,13 +102,13 @@ pub fn generate_default_config() -> String {
 # check_interval_secs = 3600            # minimum interval between checks (default: 1h)
 
 [api]
-# Which AI answers Conductor's own prompts (smart worktree naming, walkthrough
-# generation). Conductor never runs a CLI of its own — you name the tool here.
+# Which AI answers Conductor's own prompts (smart worktree naming).
+# Conductor never runs a CLI of its own — you name the tool here.
 #
 # provider = "gemini"                   # "gemini" (Gemini API) or "command" (any CLI) — no fallback between them
 # model = "gemini-2.5-flash"            # model for the "gemini" provider
-# command_timeout_secs = 60             # wall-clock timeout (0 = none). Long tasks such as
-#                                       #   walkthrough generation set their own instead.
+# command_timeout_secs = 60             # wall-clock timeout (0 = none). A task that knows
+#                                       #   it runs long sets its own instead.
 #
 # `command` is the AI tool itself, as argv. Two placeholders are substituted:
 #   {prompt}   the assembled prompt. Put it where the tool expects its prompt;

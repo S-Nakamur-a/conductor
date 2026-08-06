@@ -18,13 +18,12 @@ mod review_delete;
 mod review_edit;
 mod review_history;
 mod review_publish;
-mod review_walkthrough;
-pub use review_walkthrough::WalkthroughGenerations;
+mod revidere;
+pub use revidere::RevidereRuns;
 mod state;
 pub use state::{
-    CodeNav, Highlighting, ListHover, LoadedWalkthrough, PanelLayout, PanelNumberOverlay,
-    PublishState, RepoState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore,
-    WalkthroughState, WorktreeList, WtbarState,
+    CodeNav, Highlighting, ListHover, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
+    RevidereState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WorktreeList, WtbarState,
 };
 mod terminal;
 mod terminal_cc_state;
@@ -33,7 +32,6 @@ mod terminal_resume;
 mod types;
 mod update;
 mod view_state;
-mod walkthrough_view;
 mod worktree;
 mod worktree_branches;
 mod worktree_commands;
@@ -97,8 +95,8 @@ pub struct App {
     /// [App::exit_editor] で解体される（このフィールドと Focus::Editor を
     /// 対にする唯一の2つのメソッドであり、不変条件をこの中に閉じ込めている）。
     pub editor: Option<EditorPanel>,
-    /// AI ウォークスルー: 生成中のものと、いま読み込まれているもの。
-    pub walkthrough: WalkthroughState,
+    /// revidere の成果物と、実行中の解析。
+    pub revidere: RevidereState,
     /// レビューコメントの GitHub 公開フロー (確認待ち + 実行中の処理)。
     pub publish: PublishState,
     /// 発見済みの worktree 一覧と、そこへの選択 (行の平坦化リストを含む)。

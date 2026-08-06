@@ -254,8 +254,11 @@ pub(super) fn handle_mouse_scroll(
                 // ホイールアップでビューは末尾から切り離され、ホイールダウンで最新行が
                 // 画面に戻ると再び追従する。これがないと、ホイールアップの後にリサイズ
                 // すると一番下に再固定されてスクロールが取り消されてしまう。
-                app.reflow.follow =
-                    crate::event::reflow::at_bottom(app.reflow.scroll, app.reflow.total_lines, inner);
+                app.reflow.follow = crate::event::reflow::at_bottom(
+                    app.reflow.scroll,
+                    app.reflow.total_lines,
+                    inner,
+                );
             } else if up {
                 // 制限のあるvt100スクロールバックバッファではなく、ライブ末尾
                 // （scroll_claude == 0）からの最初の上スクロールでreflowトランス
@@ -270,14 +273,13 @@ pub(super) fn handle_mouse_scroll(
                 // open_reflow はパネルにピン留めされたセッションがない、またはログが
                 // 見つからない場合は何もしない（ステータス表示のみ）ので、ホイールを
                 // 永遠に飲み込むのではなくvt100バッファへフォールバックする。
-                let opened = if app.terminal.scroll_claude == 0
-                    && !app.is_selected_worktree_grabbed()
-                {
-                    app.open_reflow();
-                    app.reflow.active
-                } else {
-                    false
-                };
+                let opened =
+                    if app.terminal.scroll_claude == 0 && !app.is_selected_worktree_grabbed() {
+                        app.open_reflow();
+                        app.reflow.active
+                    } else {
+                        false
+                    };
                 if !opened {
                     app.terminal.scroll_claude =
                         app.terminal.scroll_claude.saturating_add(abs_delta);

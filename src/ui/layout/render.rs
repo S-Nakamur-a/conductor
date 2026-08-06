@@ -40,6 +40,14 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // CC 待機通知バーの後継）
     super::super::worktree_bar::render(frame, wtbar_area, app);
 
+    // revidere の 2 列ビューは main_area 全体を取る。3 列アコーディオンとは
+    // 並ばないので、ターミナル列も含めてここで打ち切る。
+    if app.focus == crate::app::Focus::Revidere {
+        super::super::revidere_view::render(frame, main_area, app);
+        super::super::common::render_status_bar(frame, status_area, app);
+        return;
+    }
+
     // アコーディオンのカラム幅（キャッシュから取得）
     let columns = app.layout.cache.columns;
 

@@ -26,9 +26,9 @@ release channels and drifted apart.
 - **Run by hand:** `conductor mcp-serve --db <path>` (speaks JSON-RPC on stdout)
 - **Who starts it:** `plugins/conductor/.mcp.json`, for the interactive Claude Code
   sessions inside the TUI (it resolves the DB from `$CONDUCTOR_DB_PATH`, injected by
-  `pty_manager/spawn.rs`). Conductor's own walkthrough generation does *not* go
-  through MCP — it parses the model's JSON reply and writes the rows itself
-- **Tool contract:** the 8 `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
+  `pty_manager/spawn.rs`). The AI review does *not* go through MCP — its
+  artifact is a JSON file written by `revidere` (see `revidere.rs` below)
+- **Tool contract:** the 7 `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
   comments become the JSON Schema descriptions the model reads, so changing one
   changes the tool's public contract — treat them as API, not commentary.
 
@@ -90,6 +90,9 @@ Status bar
   Terminal, with focus-driven widths. Any panel can be maximized (`Ctrl+Alt+Z`),
   and resized tmux-style with `Ctrl+Alt+Arrow` (ratios persist to config.toml).
 - Explorer column is split 50/50 (file tree top, diff/comment list bottom).
+- The revidere review view (`Focus::Revidere`, `w`) is *not* part of the
+  accordion: it takes `main_area` whole as two columns (reading order | diff)
+  and hides the terminal column. `ui/layout/render.rs` short-circuits there.
 - Terminal column is split 80/20 vertically (Claude Code top, Shell bottom).
 - When the embedded editor is active (`Focus::Editor`), it merges the
   Explorer+Viewer columns into one PTY panel.
@@ -99,7 +102,7 @@ Status bar
 
 | Module | Role |
 |--------|------|
-| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `walkthrough_view.rs`) |
+| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `revidere.rs`) |
 | `event/` | Keyboard/mouse event dispatch based on Focus and overlay state (per-context submodules) |
 | `menu/` | Menu bar model (`model.rs` — which command sits under which menu), interaction state (`state.rs`), and availability predicates for the greyed-out rows (`enabled.rs`) |
 | `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
@@ -114,8 +117,9 @@ Status bar
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
 | `term_caps.rs` | Terminal capability probing — OSC 11 background-colour query driving light/dark theme auto-selection |
 | `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
-| `walkthrough.rs` | AI walkthrough data model, generation prompt, and reply parser — generation runs through the `[api]` seam (`ai_caller.rs`) on a background thread, never by spawning a CLI |
-| `app/walkthrough_view.rs` | Explorer walkthrough-view methods for `App` — step selection, jumping to a step's diff location, and the "viewed" file/step toggle |
+| `revidere.rs` | Loads the review artifact (`<worktree>/.revidere/review.json`) via the `revidere` library and builds its `ReadingOrder` — read-only, no AI |
+| `app/revidere.rs` | Runs `revidere analyze` as a background child process (one per branch, cancellable) and jumps from a section into the Viewer |
+| `ui/revidere_view.rs` | The full-screen two-column review view (reading order \| diff) |
 | `app/review_publish.rs` | Publishes review comments to GitHub via `gh`, tracking which comments are already posted |
 
 ### UI Modules (`src/ui/`)
@@ -126,6 +130,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
+- **Review artifact:** `<worktree>/.revidere/review.json`, written by `revidere` (gitignored)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions

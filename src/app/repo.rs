@@ -34,7 +34,8 @@ impl App {
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| {
-                self.repo.path
+                self.repo
+                    .path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| self.repo.path.display().to_string())
@@ -136,7 +137,8 @@ impl App {
                 }
                 // repo_list_indexがこのリポジトリを指すように更新する。
                 self.repo.known_index = self
-                    .repo.known
+                    .repo
+                    .known
                     .iter()
                     .position(|p| p == &canonical)
                     .unwrap_or(0);
@@ -346,6 +348,7 @@ mod tests {
             ahead: None,
             behind: None,
             head_oid: None,
+            head_time: None,
         }
     }
 

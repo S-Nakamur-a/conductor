@@ -1,5 +1,5 @@
 //! Explorer のトップレベルキー処理: ファイルツリーのナビゲーションと、
-//! diff 一覧・コメント一覧・walkthrough の各サブパネルへの委譲。
+//! diff 一覧・コメント一覧の各サブパネルへの委譲。
 
 use crossterm::event::KeyEvent;
 
@@ -16,8 +16,7 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
         app.refresh_viewer();
     }
 
-    // サブパネルへ委譲する前に show-diff / show-comments / show-walkthrough を
-    // チェックする。
+    // サブパネルへ委譲する前に show-diff / show-comments をチェックする。
     let action = app.keymap.resolve(&key, KeyContext::Explorer);
     match action {
         Some(Action::ShowDiffList) => {
@@ -30,20 +29,12 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
             return;
         }
-        Some(Action::ShowWalkthrough) => {
-            app.viewer_state.explorer.explorer_bottom_view = ExplorerBottomView::Walkthrough;
-            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
-            return;
-        }
         _ => {}
     }
 
     if app.viewer_state.explorer.explorer_focus_on_diff_list {
         match app.viewer_state.explorer.explorer_bottom_view {
             ExplorerBottomView::Comments => handle_explorer_comment_list_key(app, key),
-            ExplorerBottomView::Walkthrough => {
-                crate::event::explorer_walkthrough::handle_explorer_walkthrough_key(app, key)
-            }
             ExplorerBottomView::DiffList => handle_explorer_diff_list_key(app, key),
         }
         return;

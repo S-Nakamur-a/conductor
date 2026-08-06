@@ -2,7 +2,7 @@
 
 use crate::app::{App, Focus};
 
-use super::{register_double_click, register_double_click_on, ClickGeometry};
+use super::{ClickGeometry, register_double_click, register_double_click_on};
 
 /// Worktreeカラム（worktreeリスト / インラインセッション）内の左クリックを処理する。
 pub(super) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &ClickGeometry) {

@@ -166,7 +166,7 @@ fn expand_tabs(line: &str, tab_width: usize) -> String {
 /// 1行の連続する断片間で共有の col を引き継ぐことで、タブ位置が常に列として
 /// 正しく保たれる。これにより、同じ行に対する2種類のトークン化
 /// （word-diff のセグメントとシンタックストークン）が同一のテキストに展開される。
-fn expand_tabs_at(piece: &str, tab_width: usize, col: &mut usize) -> String {
+pub(crate) fn expand_tabs_at(piece: &str, tab_width: usize, col: &mut usize) -> String {
     let mut result = String::with_capacity(piece.len());
     for ch in piece.chars() {
         if ch == '\t' {

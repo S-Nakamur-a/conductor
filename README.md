@@ -42,7 +42,7 @@ In a Claude Code session, run:
 ```
 
 This sets up:
-- **MCP server** — review comment DB integration and AI walkthrough persistence
+- **MCP server** — review comment DB integration and change summaries
 - **Hooks** — waiting-state detection for Claude Code sessions
 - **Skills** — `/address-conductor-comment` (resolve review comments), `/explain-comment` (annotate hard-to-understand code with inline comments)
 
@@ -114,21 +114,25 @@ terminal keybindings keep working while you review:
 1. **Pull Request → local worktree** — palette: *Review: Review Pull Request…*,
    enter a PR number or URL. Conductor fetches it (via `gh`) into a worktree and
    focuses the Explorer's changed-files list.
-2. **Changed files, comments, and walkthrough** — the Explorer's bottom pane
-   cycles between three views: the changed-files diff list, the review comment
-   list, and (once generated) the AI walkthrough — palette: *Review: Show
-   Walkthrough* to switch to it directly.
+2. **Changed files and comments** — the Explorer's bottom pane cycles between
+   the changed-files diff list and the review comment list.
 3. **Jump into the code** — the diff pane supports the Viewer's `gd`/`gi`/`gr`
    symbol-jump hints (go to definition / implementation / references). **Symbol
    jumps only work for Rust, Go, and TypeScript** — other languages show no
    hints.
-4. **AI walkthrough** — palette: *Review: Generate Walkthrough* asks Claude
-   Code to produce an ordered tour of the change (intent → core change →
-   ripple effects → tests). In the walkthrough view, `j`/`k` move the
-   selection, `n`/`N` jump to the next/previous step's location in the diff,
-   `Enter` jumps to the selected step, and `space` opens the full step text in
-   an overlay. A viewed step, or a changed file you've marked with `v`, is
-   greyed out with a ✓ once you've looked at it.
+4. **AI review** — `W` (palette: *Review: Analyse with revidere*) runs
+   [revidere](https://github.com/S-Nakamur-a/revidere) over the worktree's
+   diff. It sorts every changed line into sections by importance
+   (core / ripple / follow / minor) and checks that **no changed line is left
+   unexplained**. `w` then opens the result as a full-screen two-column view:
+   the reading order on the left, the diff in that order on the right. `j`/`k`
+   scroll, `n`/`N` move between sections, `Enter` opens the section's location
+   in the Viewer (where you can leave a comment), `q` closes it.
+
+   revidere is a separate binary and must be on your `PATH`; it decides which
+   AI to call from its own `~/.config/revidere/config.toml`, so Conductor
+   never picks the model. Replies are cached on the diff itself, so re-running
+   on an unchanged diff returns instantly — `alt+w` skips the cache.
 5. **Publish comments** — palette: *Review: Publish Comments to GitHub* posts
    your inline review comments (and replies) back to the PR via `gh`.
 

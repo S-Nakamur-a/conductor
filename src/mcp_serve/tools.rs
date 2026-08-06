@@ -25,15 +25,14 @@ use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 
 use super::args::{
     CommentIdOnly, CreateComment, GetChangeSummary, GetPendingComments, ReplyToComment,
-    SaveWalkthrough, SetChangeSummary,
+    SetChangeSummary,
 };
 use super::reply::{
-    ensure_not_blank, ensure_repo_relative, err_text, line_range, normalize_repo_relative, ok_text,
+    ensure_not_blank, err_text, line_range, normalize_repo_relative, ok_text,
     render_thread, short_id,
 };
 use super::resolve;
 use crate::review_store::{Author, CommentKind, CommentStatus, ReviewStore};
-use crate::walkthrough::NewWalkthroughStep;
 
 /// 1ブランチ上の未解決な自己レビューコメントがこの件数を超えると、成功
 /// メッセージに軽い注意書きが添えられ、作者が密度の高まりに気づけるように
@@ -357,7 +356,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Get the branch-level change summary (the 'what & why' overview written by set_change_summary or save_walkthrough) for the current branch, or a specified branch. Useful for reusing the summary as a PR description body."
+        description = "Get the branch-level change summary (the 'what & why' overview written by set_change_summary) for the current branch, or a specified branch. Useful for reusing the summary as a PR description body."
     )]
     async fn get_change_summary(
         &self,
@@ -377,111 +376,6 @@ impl McpServer {
         }
     }
 
-    #[tool(
-        description = "Save a completed PR walkthrough for a branch: an ordered set of steps (intent -> core -> ripple -> test) that narrate the change, each anchored to a file/line range. Called once, at the end, from the /conductor-walkthrough command after the exploration is done — replaces any prior walkthrough for the branch and marks it ready for the Conductor Viewer to render."
-    )]
-    async fn save_walkthrough(
-        &self,
-        Parameters(args): Parameters<SaveWalkthrough>,
-    ) -> Result<CallToolResult, ErrorData> {
-        if args.steps.is_empty() {
-            return err_text("steps must not be empty.");
-        }
-        for (value, what) in [
-            (&args.branch, "branch"),
-            (&args.title, "title"),
-            (&args.summary, "summary"),
-        ] {
-            if let Err(msg) = ensure_not_blank(value, what) {
-                return err_text(msg);
-            }
-        }
-        // 1つでも書き込む前に全てのステップを検証する。そうしないと、リスト
-        // の後方にある不正なステップのせいで、半端に保存されたウォークスルー
-        // が残ってしまう。file_path もここで正規化しており、保存されるのは
-        // その正規化後の形である: Explorer がステップにジャンプするとき、
-        // ステップは文字列の等価比較で FileDiff::path と照合される。そのため
-        // ./src/a.rs として保存されたステップは検証・保存・描画までは通って
-        // しまい、そのファイルがリストに存在するにもかかわらず「この diff
-        // には無い」と報告することになる。create_comment は昔から正規化して
-        // おり、これはそれと同じ呼び出しを、同じヘルパーで行っているだけ
-        // である。
-        let mut normalized_paths: Vec<String> = Vec::with_capacity(args.steps.len());
-        for step in &args.steps {
-            if let Err(msg) = ensure_repo_relative(&step.file_path, "step file_path") {
-                return err_text(msg);
-            }
-            match normalize_repo_relative(&step.file_path, "step file_path") {
-                Ok(p) => normalized_paths.push(p),
-                Err(msg) => return err_text(msg),
-            }
-            for (value, what) in [
-                (&step.file_path, "step file_path"),
-                (&step.title, "step title"),
-                (&step.body, "step body"),
-            ] {
-                if let Err(msg) = ensure_not_blank(value, what) {
-                    return err_text(msg);
-                }
-            }
-            if let Some(end) = step.line_end
-                && end < 1
-            {
-                return err_text(format!(
-                    "Invalid line_end on step {} ({}): must be 1-based (got {end}).",
-                    step.seq, step.file_path
-                ));
-            }
-            // create_comment と同じ、1始まりという取り決め。ここではフィールド
-            // が任意なので、値が存在していてかつ 0 である場合だけが不正。
-            if let Some(start) = step.line_start
-                && start < 1
-            {
-                return err_text(format!(
-                    "Invalid line_start on step {} ({}): must be 1-based (got {start}).",
-                    step.seq, step.file_path
-                ));
-            }
-            if let (Some(start), Some(end)) = (step.line_start, step.line_end)
-                && end < start
-            {
-                return err_text(format!(
-                    "Invalid range on step {} ({}): line_end ({end}) is before line_start ({start}).",
-                    step.seq, step.file_path
-                ));
-            }
-        }
-
-        let steps: Vec<NewWalkthroughStep> = args
-            .steps
-            .iter()
-            .zip(normalized_paths)
-            .map(|(s, file_path)| NewWalkthroughStep {
-                file_path,
-                line_start: s.line_start,
-                line_end: s.line_end,
-                kind: s.kind.into(),
-                title: s.title.clone(),
-                body: s.body.clone(),
-            })
-            .collect();
-
-        let saved = self
-            .store()
-            .save_walkthrough(&args.branch, &args.title, &args.summary, &steps);
-        let walkthrough_id = match saved {
-            Ok(id) => id,
-            Err(e) => return err_text(format!("Failed to save walkthrough: {e}")),
-        };
-        self.signal_refresh();
-
-        ok_text(format!(
-            "Walkthrough saved for branch \"{}\" (id: {}, {} step(s)), status=ready.",
-            args.branch,
-            short_id(&walkthrough_id),
-            args.steps.len()
-        ))
-    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -491,7 +385,7 @@ impl ServerHandler for McpServer {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new("conductor", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
-            "Conductor's review database: inline comments, change summaries, and PR walkthroughs \
+            "Conductor's review database: inline comments and change summaries \
              for the branch checked out in this working directory."
                 .into(),
         );
@@ -502,12 +396,11 @@ impl ServerHandler for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_serve::args::{StepKindArg, WalkthroughStep};
-
+    
     // tools/list
 
     #[test]
-    fn tool_router_lists_exactly_the_eight_tools() {
+    fn tool_router_lists_exactly_the_seven_tools() {
         let tools = McpServer::tool_router().list_all();
         let names: std::collections::BTreeSet<&str> =
             tools.iter().map(|t| t.name.as_ref()).collect();
@@ -521,7 +414,6 @@ mod tests {
                 "create_comment",
                 "set_change_summary",
                 "get_change_summary",
-                "save_walkthrough",
             ]
             .into_iter()
             .collect()
@@ -556,178 +448,6 @@ mod tests {
 
     fn text_of(result: &CallToolResult) -> &str {
         &result.content[0].as_text().unwrap().text
-    }
-
-    #[test]
-    fn save_walkthrough_rejects_empty_steps() {
-        let (server, _dir) = test_server();
-        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
-            branch: "feat/x".into(),
-            title: "Title".into(),
-            summary: "Summary".into(),
-            steps: vec![],
-        })))
-        .unwrap();
-
-        assert_eq!(result.is_error, Some(true));
-        assert!(text_of(&result).contains("steps must not be empty"));
-    }
-
-    #[test]
-    fn save_walkthrough_rejects_paths_that_escape_the_repo() {
-        let (server, _dir) = test_server();
-        for bad_path in ["/etc/passwd", "../secret"] {
-            let step = WalkthroughStep {
-                seq: 0,
-                file_path: bad_path.into(),
-                line_start: None,
-                line_end: None,
-                kind: StepKindArg::Core,
-                title: "Step".into(),
-                body: "Body".into(),
-            };
-            let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
-                branch: "feat/x".into(),
-                title: "Title".into(),
-                summary: "Summary".into(),
-                steps: vec![step],
-            })))
-            .unwrap();
-
-            assert_eq!(result.is_error, Some(true), "path: {bad_path}");
-            let text = text_of(&result);
-            assert!(
-                text.contains("must be repo-relative") || text.contains("must not escape"),
-                "path: {bad_path}, got: {text}"
-            );
-        }
-    }
-
-    #[test]
-    fn save_walkthrough_rejects_reversed_range() {
-        let (server, _dir) = test_server();
-        let step = WalkthroughStep {
-            seq: 0,
-            file_path: "src/foo.rs".into(),
-            line_start: Some(10),
-            line_end: Some(5),
-            kind: StepKindArg::Core,
-            title: "Step".into(),
-            body: "Body".into(),
-        };
-        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
-            branch: "feat/x".into(),
-            title: "Title".into(),
-            summary: "Summary".into(),
-            steps: vec![step],
-        })))
-        .unwrap();
-
-        assert_eq!(result.is_error, Some(true));
-        assert!(text_of(&result).contains("line_end (5) is before line_start (10)"));
-    }
-
-    #[test]
-    fn save_walkthrough_success_reports_id_and_persists_all_steps() {
-        let (server, _dir) = test_server();
-        let steps = vec![
-            WalkthroughStep {
-                seq: 0,
-                file_path: "src/foo.rs".into(),
-                line_start: Some(1),
-                line_end: Some(3),
-                kind: StepKindArg::Intent,
-                title: "Why".into(),
-                body: "Because.".into(),
-            },
-            WalkthroughStep {
-                seq: 1,
-                file_path: "src/bar.rs".into(),
-                line_start: None,
-                line_end: None,
-                kind: StepKindArg::Core,
-                title: "What".into(),
-                body: "The change.".into(),
-            },
-        ];
-        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
-            branch: "feat/x".into(),
-            title: "Title".into(),
-            summary: "Summary".into(),
-            steps,
-        })))
-        .unwrap();
-
-        assert_eq!(result.is_error, Some(false));
-        let text = text_of(&result).to_string();
-
-        let store = server.store();
-        let (walkthrough, saved_steps) = store.get_walkthrough("feat/x").unwrap().unwrap();
-        assert_eq!(saved_steps.len(), 2);
-        assert!(text.contains(&format!("(id: {}, 2 step(s))", short_id(&walkthrough.id))));
-    }
-
-    /// このテストが検出する退行: 以前は、file_path が git 自身の綴りとは
-    /// 異なる書き方をされたステップがそのまま保存されてしまい、それを
-    /// 文字列の等価比較で FileDiff::path と照合する Explorer が、そのファイル
-    /// は diff に無いと報告していた。データベースに入るのは正規の綴りで
-    /// なければならない。
-    #[test]
-    fn save_walkthrough_stores_canonical_paths() {
-        let (server, _dir) = test_server();
-        let steps = ["./src/foo.rs", "src//bar.rs", "  src/baz.rs  "]
-            .iter()
-            .enumerate()
-            .map(|(i, path)| WalkthroughStep {
-                seq: i as i64,
-                file_path: (*path).into(),
-                line_start: None,
-                line_end: None,
-                kind: StepKindArg::Core,
-                title: "Step".into(),
-                body: "Body".into(),
-            })
-            .collect();
-        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
-            branch: "feat/x".into(),
-            title: "Title".into(),
-            summary: "Summary".into(),
-            steps,
-        })))
-        .unwrap();
-        assert_eq!(result.is_error, Some(false), "{}", text_of(&result));
-
-        let store = server.store();
-        let (_, saved) = store.get_walkthrough("feat/x").unwrap().unwrap();
-        assert_eq!(
-            saved.iter().map(|s| s.file_path.as_str()).collect::<Vec<_>>(),
-            vec!["src/foo.rs", "src/bar.rs", "src/baz.rs"]
-        );
-    }
-
-    /// 正規化すると何も残らなくなるステップのパスは、どのファイルにも
-    /// 紐づかないので、保存せず拒否する。
-    #[test]
-    fn save_walkthrough_rejects_a_path_that_normalises_to_empty() {
-        let (server, _dir) = test_server();
-        let result = block_on(server.save_walkthrough(Parameters(SaveWalkthrough {
-            branch: "feat/x".into(),
-            title: "Title".into(),
-            summary: "Summary".into(),
-            steps: vec![WalkthroughStep {
-                seq: 0,
-                file_path: "./".into(),
-                line_start: None,
-                line_end: None,
-                kind: StepKindArg::Core,
-                title: "Step".into(),
-                body: "Body".into(),
-            }],
-        })))
-        .unwrap();
-
-        assert_eq!(result.is_error, Some(true));
-        assert!(text_of(&result).contains("must not be empty"));
     }
 
     #[test]

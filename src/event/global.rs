@@ -184,12 +184,16 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             app.cmd_open_theme_picker();
             true
         }
-        Action::GenerateWalkthrough => {
-            app.cmd_generate_walkthrough(false);
+        Action::AnalyzeRevidere => {
+            app.cmd_analyze_revidere(false);
             true
         }
-        Action::ForceGenerateWalkthrough => {
-            app.cmd_generate_walkthrough(true);
+        Action::ForceAnalyzeRevidere => {
+            app.cmd_analyze_revidere(true);
+            true
+        }
+        Action::ShowRevidere => {
+            app.cmd_show_revidere();
             true
         }
         Action::PublishReview => {

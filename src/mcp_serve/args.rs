@@ -9,7 +9,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::review_store::CommentKind;
-use crate::walkthrough::WalkthroughStepKind;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetPendingComments {
@@ -88,66 +87,4 @@ pub struct GetChangeSummary {
     /// summary を読み出すブランチ。省略時は現在の git ブランチを使う。
     #[serde(default)]
     pub branch: Option<String>,
-}
-
-/// モデルから渡された時点のステップ。まだウォークスルーに紐付けられる前の形。
-///
-/// seq はワイヤスキーマの一部だが（古いプロンプトが引き続き通用するように
-/// 残してある）実際には読まれない。保存される順序を決めるのは
-/// SaveWalkthrough::steps 自身のスライス順である — 理由は
-/// [crate::walkthrough::NewWalkthroughStep] の doc を参照。
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WalkthroughStep {
-    /// ウォークスルー内でのステップ順序（0始まり）
-    pub seq: i64,
-    /// ステップが指すファイルの、リポジトリルートからの相対パス（例: src/foo.rs）
-    pub file_path: String,
-    /// ファイルに紐付くステップの場合、ステップが指す行番号（1始まり）
-    #[serde(default)]
-    pub line_start: Option<i64>,
-    /// 複数行にわたる範囲の終了行（1始まり）。単一行なら省略する
-    #[serde(default)]
-    pub line_end: Option<i64>,
-    /// 'intent'（なぜこの変更をしたか）、'core'（実装の中心部分）、
-    /// 'ripple'（他箇所への波及的な変更）、'test'（テストが何をカバーしているか）のいずれか
-    pub kind: StepKindArg,
-    /// ステップの短い見出し
-    pub title: String,
-    /// ステップの説明。kind ごとの内容の取り決めに従う
-    pub body: String,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum StepKindArg {
-    Intent,
-    Core,
-    Ripple,
-    Test,
-}
-
-impl From<StepKindArg> for WalkthroughStepKind {
-    fn from(k: StepKindArg) -> Self {
-        match k {
-            StepKindArg::Intent => WalkthroughStepKind::Intent,
-            StepKindArg::Core => WalkthroughStepKind::Core,
-            StepKindArg::Ripple => WalkthroughStepKind::Ripple,
-            StepKindArg::Test => WalkthroughStepKind::Test,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SaveWalkthrough {
-    /// ウォークスルーが属するブランチ
-    pub branch: String,
-    /// ウォークスルーの1行タイトル
-    pub title: String,
-    /// 変更の概要。ブランチの change summary としても保存され、Conductor の
-    /// SUMMARY 疑似ファイルとしてパネル全体に表示されるので、PR の説明文の
-    /// ように書くこと（この変更が何のためか、なぜこれらのファイルを触るのか、
-    /// 対象外にしたことは何か）。Markdown としてレンダリングされる。
-    pub summary: String,
-    /// 順序付きのウォークスルーのステップ（各ステップのフィールドは save_walkthrough を参照）
-    pub steps: Vec<WalkthroughStep>,
 }

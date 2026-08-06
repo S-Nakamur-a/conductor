@@ -72,26 +72,6 @@ fn worktree_switch_and_zoom_aliases_resolve() {
 }
 
 #[test]
-fn explorer_walkthrough_layer_resolves() {
-    let km = default_keymap();
-    let cases = [
-        (KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()), Action::NavigateDown),
-        (KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()), Action::NavigateUp),
-        (KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()), Action::Select),
-        (KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty()), Action::WalkthroughNextStep),
-        (KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT), Action::WalkthroughPrevStep),
-        (KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()), Action::ExitSubPanel),
-    ];
-    for (key, action) in cases {
-        assert_eq!(
-            km.resolve(&key, KeyContext::ExplorerWalkthrough),
-            Some(action),
-            "{key:?}"
-        );
-    }
-}
-
-#[test]
 fn terminal_intercepts_only_firing_actions() {
     let km = default_keymap();
 
@@ -266,32 +246,6 @@ fn context_shadows_are_per_context() {
 }
 
 #[test]
-fn explorer_walkthrough_show_and_generate_keys_resolve() {
-    // w が walkthrough を表示し、Shift+W が（再）生成する — 表示/より重い処理
-    // という組み合わせ。どちらも Explorer コンテキストで解決する（generate は
-    // チョード自体はこのレイヤーにあるが、グローバルなアクションディスパッチに
-    // 乗る）。
-    let km = default_keymap();
-    let key_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty());
-    assert_eq!(
-        km.resolve(&key_w, KeyContext::Explorer),
-        Some(Action::ShowWalkthrough)
-    );
-    // Shift+W は解決済みグリフ 'W' + 冗長な SHIFT として届く。
-    let key_shift_w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
-    assert_eq!(
-        km.resolve(&key_shift_w, KeyContext::Explorer),
-        Some(Action::GenerateWalkthrough)
-    );
-    // Alt+w は同一コミットでのスキップを飛び越える強制再生成の抜け道。
-    let key_alt_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
-    assert_eq!(
-        km.resolve(&key_alt_w, KeyContext::Explorer),
-        Some(Action::ForceGenerateWalkthrough)
-    );
-}
-
-#[test]
 fn worktree_git_action_keys_resolve() {
     // ワークツリーパネルの git アクションを、より覚えやすいチョードに付け替えた
     // 0.67 の意図的な変更。新しいバインディングを静かな退行から守るために固定する。
@@ -436,5 +390,41 @@ fn f10_opens_the_menu_bar_from_every_context() {
         km.keys_in_layer(KeyContext::Global, Action::FocusMenuBar),
         vec!["f10".to_string()],
         "the cheatsheet reads this; an empty result means the binding is invisible"
+    );
+}
+
+#[test]
+fn revidere_layer_resolves() {
+    let km = default_keymap();
+    let cases = [
+        (KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()), Action::NavigateDown),
+        (KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty()), Action::RevidereNextSection),
+        (KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT), Action::RevidererPrevSection),
+        (KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()), Action::Select),
+        (KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()), Action::ExitSubPanel),
+        // 画面の切り替えは行き先ごとに別のキー。1 つのキーで交互に切り替えると、
+        // 押した結果がいまどちらを出しているかに依存する。
+        (KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()), Action::RevidereShowOverview),
+        (KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty()), Action::RevidereShowSections),
+    ];
+    for (key, action) in cases {
+        assert_eq!(km.resolve(&key, KeyContext::Revidere), Some(action), "{key:?}");
+    }
+}
+
+#[test]
+fn explorer_show_and_analyze_keys_resolve() {
+    let km = default_keymap();
+    assert_eq!(
+        km.resolve(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty()), KeyContext::Explorer),
+        Some(Action::ShowRevidere)
+    );
+    assert_eq!(
+        km.resolve(&KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT), KeyContext::Explorer),
+        Some(Action::AnalyzeRevidere)
+    );
+    assert_eq!(
+        km.resolve(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT), KeyContext::Explorer),
+        Some(Action::ForceAnalyzeRevidere)
     );
 }

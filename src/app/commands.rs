@@ -49,15 +49,15 @@ impl App {
             }
             CommandId::SessionHistory => self.cmd_session_history(),
             CommandId::ReviewPullRequest => self.cmd_review_pull_request(),
-            CommandId::GenerateWalkthrough => self.cmd_generate_walkthrough(false),
-            CommandId::ForceGenerateWalkthrough => self.cmd_generate_walkthrough(true),
+            CommandId::AnalyzeRevidere => self.cmd_analyze_revidere(false),
+            CommandId::ForceAnalyzeRevidere => self.cmd_analyze_revidere(true),
             CommandId::PublishReview => self.cmd_publish_review(),
             CommandId::OpenRepo => self.cmd_open_repo(),
             CommandId::SwitchRepo => self.cmd_switch_repo(),
             CommandId::UngrabBranch => self.cmd_ungrab_branch(),
             CommandId::ShowDiffList => self.cmd_show_diff_list(),
             CommandId::ShowCommentList => self.cmd_show_comment_list(),
-            CommandId::ShowWalkthrough => self.cmd_show_walkthrough(),
+            CommandId::ShowRevidere => self.cmd_show_revidere(),
             CommandId::AddReviewComment => self.cmd_add_review_comment(),
             CommandId::ViewCommentDetail => self.cmd_view_comment_detail(),
             CommandId::DeleteComment => self.cmd_delete_comment(),
@@ -228,16 +228,4 @@ impl App {
         self.set_focus(Focus::Explorer);
     }
 
-    /// パレット/キーバインドの入口: Explorer の下段ペインを AI walkthrough
-    /// ビューに切り替え、Explorer にフォーカスする。
-    /// cmd_show_diff_list/cmd_show_comment_list と同じ構図。
-    /// cmd_generate_walkthrough は代わりに表示専用のバリアントを使う
-    /// (そちらのドキュメントコメント参照)ので、生成の開始が実行中の
-    /// terminal 入力からフォーカスを奪うことは決してない。
-    fn cmd_show_walkthrough(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::Walkthrough;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
-        self.set_focus(Focus::Explorer);
-    }
 }

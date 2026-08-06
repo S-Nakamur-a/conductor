@@ -111,7 +111,11 @@ pub(super) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
 
     // カーソル下のタイトルをハイライトする。行から外れると None になるが、
     // これは同時に「マウスがバーから離れた」ことのクリアも兼ねている。
-    app.menu.hover = if on_bar { app.menu.bar_hit_at(col) } else { None };
+    app.menu.hover = if on_bar {
+        app.menu.bar_hit_at(col)
+    } else {
+        None
+    };
 
     match app.menu.focus {
         MenuFocus::Closed => false,

@@ -39,10 +39,9 @@
 //! コマンドではなく機能の側に属するもの
 //!
 //! 各タスクは自分のシステムプロンプトを書き、制約はそこに置く。スマート worktree の
-//! 命名はモデルに「ツールを使わず JSON オブジェクト 1 つで答えよ」と伝え、
-//! walkthrough の生成は逆に「差分を読みに行け」と伝える。形式から外れた応答を
-//! 再試行するかどうかも同様に機能側の判断。再試行のコスト (ブランチ名なら数秒、
-//! walkthrough なら数分) を知っているのはその機能だけだから。
+//! 命名はモデルに「ツールを使わず JSON オブジェクト 1 つで答えよ」と伝える。
+//! 形式から外れた応答を再試行するかどうかも同様に機能側の判断。再試行のコストを
+//! 知っているのはその機能だけだから。
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -275,9 +274,9 @@ fn tail_chars(s: &str, n: usize) -> &str {
 /// どのディレクトリについての話か。
 ///
 /// どちらもプロバイダ単位ではなくタスク単位。スマート worktree の命名は数秒の
-/// 純粋なテキスト生成だが、walkthrough はエージェントが差分を読む数分の作業。
-/// 1 つの [api] command_timeout_secs で両方をまかなうことはできないし、
-/// 作業ディレクトリが要るのは後者だけ。
+/// 純粋なテキスト生成なので [api] command_timeout_secs をそのまま使うが、
+/// 数分かかるタスクが同じ設定値に頭打ちにされては困る。予算を知っているのは
+/// タスクの側なので、上書きの口をここに開けてある。
 #[derive(Debug, Clone, Default)]
 pub struct TaskEnv {
     /// 設定されていれば [api] command_timeout_secs を上書きする。0 で無効。
@@ -298,9 +297,9 @@ pub struct TaskEnv {
 /// 動かすためにあるのがまさに provider = "command" で、ユーザーが直接 CLI を
 /// 指定すれば、Conductor はその背後のモデルが何かを知る必要が無い。
 ///
-/// なお "gemini" は素の HTTP 補完なのでリポジトリを読めない。コードを必要と
-/// するタスク (walkthrough の生成) は、エージェント型の CLI を指した "command"
-/// の下でのみ動く。
+/// なお "gemini" は素の HTTP 補完なのでリポジトリを読めない。リポジトリを
+/// 読ませる必要のあるタスクは、エージェント型の CLI を指した "command" の
+/// 下でのみ動く。
 pub fn build_caller(api: &ApiConfig, env: &TaskEnv) -> Result<Box<dyn AiCaller>, String> {
     match api.provider.trim().to_lowercase().as_str() {
         "gemini" => Ok(Box::new(GeminiCaller {
@@ -443,8 +442,8 @@ mod tests {
         }
 
         /// タイムアウトを指定したタスクはその値を使い、設定の値は指定が無いときだけ
-        /// 埋める。walkthrough の生成はこれに依存している。数秒の命名を想定した
-        /// command_timeout_secs の下で、数分にわたって走るため。
+        /// 埋める。数秒の命名を想定した command_timeout_secs の下で、それより
+        /// 長く走るタスクが頭打ちにされないための口。
         ///
         /// 組み立てた caller を覗くのではなく振る舞いで検証する。設定側は
         /// タイムアウトを完全に無効にしてあるので、コマンドが kill されるのは
