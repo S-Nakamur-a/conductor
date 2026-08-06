@@ -14,6 +14,9 @@ use super::model::{
     DiffHunk, DiffLine, DiffLineTag, DiffRange, DiffState, FileDiff, InlineSegment,
 };
 
+/// ハンクの前後に付けるコンテキスト行数。git の既定と同じ 3 行。
+const CONTEXT_LINES: u32 = 3;
+
 /// base(ブランチ名、リモート追跡 ref、タグ、または生の OID)を diff の
 /// 基準となるコミットに解決する。
 ///
@@ -220,7 +223,9 @@ impl DiffState {
                     .tree()
                     .with_context(|| "cannot get merge-base tree")?;
                 let head_tree = head_commit.tree()?;
-                repo.diff_tree_to_tree(Some(&merge_base_tree), Some(&head_tree), None)?
+                let mut opts = git2::DiffOptions::new();
+                opts.context_lines(CONTEXT_LINES);
+                repo.diff_tree_to_tree(Some(&merge_base_tree), Some(&head_tree), Some(&mut opts))?
             }
             DiffRange::Uncommitted => {
                 // HEAD..workdir+index
@@ -228,12 +233,13 @@ impl DiffState {
                 let mut opts = git2::DiffOptions::new();
                 opts.include_untracked(true);
                 opts.recurse_untracked_dirs(true);
+                // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、
+                // パッチが作られないので追加行数が 0 になってしまう。
+                opts.show_untracked_content(true);
+                opts.context_lines(CONTEXT_LINES);
                 repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut opts))?
             }
         };
-
-        // workdir から読む必要があるか(未ステージ/未追跡ファイル向け)を判定する。
-        let use_workdir = range == DiffRange::Uncommitted;
 
         let mut file_diffs = Vec::new();
 
@@ -260,128 +266,88 @@ impl DiffState {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| "(unknown)".to_string());
 
-            // blob から旧内容を取得する。
-            let old_content = Self::blob_content(&repo, &delta.old_file());
-
-            // 新内容を取得する: workdir との diff では、blob id がゼロ
-            // (未ステージ/未追跡)の場合はディスクから読む。
-            let new_content = if use_workdir && delta.new_file().id().is_zero() {
-                let full_path = worktree_path.join(&path);
-                match std::fs::read(&full_path) {
-                    Ok(bytes) => String::from_utf8(bytes)
-                        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).to_string()),
-                    Err(_) => String::new(),
+            // 差分そのものを libgit2 に作らせる。ここが自前でファイルを読んで
+            // 数え直していた箇所で、読めなかった内容が空文字列に化けて「全行削除」
+            // として表示される事故の発生源だった。libgit2 に任せると内容の取得も
+            // 行数も git 本体と同じ経路になり、.gitattributes のフィルタや改行
+            // 正規化、バイナリ判定もそのまま効く。
+            let patch = match git2::Patch::from_diff(&diff, delta_idx) {
+                Ok(p) => p,
+                Err(e) => {
+                    // 1ファイルの失敗で一覧全体を落とさない。数字を捏造するより
+                    // 出さない方が害が小さく、次の再計算でやり直せる。
+                    log::warn!("diff: cannot build a patch for {path}: {e}");
+                    continue;
                 }
-            } else {
-                Self::blob_content(&repo, &delta.new_file())
             };
 
-            // リネーム検出が削除+追加を1つのデルタに統合した場合の、単一デルタでの
-            // 大文字小文字違いリネームもスキップする。
-            if Self::is_case_only_rename(&delta) && old_content == new_content {
+            // 内容に変化が無いデルタ。大文字小文字を区別しないファイルシステムの
+            // stat 不一致で出る偽のデルタがここに来る。
+            let Some(patch) = patch else {
+                continue;
+            };
+
+            // バイナリ判定はパッチを作らせた後でないと確定しない(libgit2 が中身を
+            // 見て初めてフラグを立てるため)。
+            let is_binary = delta.new_file().is_binary() || delta.old_file().is_binary();
+
+            let (_context, added_lines, deleted_lines) = patch.line_stats()?;
+
+            if added_lines == 0 && deleted_lines == 0 {
+                // バイナリは行数を出せないだけで変更自体はある。落とすと「変更した
+                // のに一覧に出ない」ことになるので、行数なしの項目として残す。
+                // numstat がバイナリを "-" と表示するのと同じ扱い。
+                if is_binary {
+                    file_diffs.push(FileDiff {
+                        path,
+                        added_lines: 0,
+                        deleted_lines: 0,
+                        hunks: Vec::new(),
+                    });
+                }
                 continue;
             }
 
-            // 実質的な内容変更のないファイルはスキップする。
-            // 大文字小文字を区別しないファイルシステムの stat 不一致による、
-            // 偽のデルタを弾くためのもの。
-            if old_content == new_content {
-                continue;
-            }
-
-            // similar を使って行単位の diff をコンテキスト付きで計算する。
-            let text_diff = TextDiff::from_lines(&old_content, &new_content);
-
-            // 関数コンテキストの抽出を準備する。
+            // 関数コンテキストの抽出を準備する。旧内容は ODB の blob からしか
+            // 読まないので、workdir の状態に左右されない。
             let ext = Path::new(&path)
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             let func_pattern = Self::func_pattern_for_ext(ext);
+            let old_content = Self::blob_content(&repo, &delta.old_file());
             let old_lines: Vec<&str> = old_content.lines().collect();
 
-            let context_radius = 3;
             let mut hunks = Vec::new();
-            let mut total_added = 0usize;
-            let mut total_deleted = 0usize;
-
-            for group in text_diff.grouped_ops(context_radius) {
+            for hunk_idx in 0..patch.num_hunks() {
+                let num_lines = patch.num_lines_in_hunk(hunk_idx)?;
                 let mut hunk_lines = Vec::new();
 
-                for op in &group {
-                    if word_diff {
-                        for inline_change in text_diff.iter_inline_changes(op) {
-                            let tag = match inline_change.tag() {
-                                ChangeTag::Equal => DiffLineTag::Equal,
-                                ChangeTag::Insert => {
-                                    total_added += 1;
-                                    DiffLineTag::Insert
-                                }
-                                ChangeTag::Delete => {
-                                    total_deleted += 1;
-                                    DiffLineTag::Delete
-                                }
-                            };
+                for line_idx in 0..num_lines {
+                    let line = patch.line_in_hunk(hunk_idx, line_idx)?;
+                    let tag = match line.origin() {
+                        '+' => DiffLineTag::Insert,
+                        '-' => DiffLineTag::Delete,
+                        // ' ' はコンテキスト。'=' '>' '<' は「末尾に改行が無い」
+                        // ことを示す注記行で、本文ではないので描画しない。
+                        ' ' => DiffLineTag::Equal,
+                        _ => continue,
+                    };
 
-                            let old_line_no = inline_change.old_index().map(|i| i + 1);
-                            let new_line_no = inline_change.new_index().map(|i| i + 1);
+                    let raw = String::from_utf8_lossy(line.content());
+                    let raw = raw.trim_end_matches('\n').trim_end_matches('\r');
 
-                            let segments: Vec<InlineSegment> = inline_change
-                                .iter_strings_lossy()
-                                .map(|(emphasized, value)| InlineSegment {
-                                    text: value.into_owned(),
-                                    emphasized,
-                                })
-                                .collect();
+                    hunk_lines.push(DiffLine {
+                        tag,
+                        old_line_no: line.old_lineno().map(|n| n as usize),
+                        new_line_no: line.new_lineno().map(|n| n as usize),
+                        inline_segments: Vec::new(),
+                        content: Self::expand_tabs(raw, tab_width),
+                    });
+                }
 
-                            // セグメントのテキストを連結して content を組み立てる。
-                            let content: String = segments
-                                .iter()
-                                .map(|s| s.text.trim_end_matches('\n').trim_end_matches('\r'))
-                                .collect::<Vec<_>>()
-                                .join("");
-                            let content = Self::expand_tabs(&content, tab_width);
-
-                            let has_emphasis = segments.iter().any(|s| s.emphasized);
-                            let inline_segments = if has_emphasis { segments } else { Vec::new() };
-
-                            hunk_lines.push(DiffLine {
-                                tag,
-                                old_line_no,
-                                new_line_no,
-                                inline_segments,
-                                content,
-                            });
-                        }
-                    } else {
-                        for change in text_diff.iter_changes(op) {
-                            let tag = match change.tag() {
-                                ChangeTag::Equal => DiffLineTag::Equal,
-                                ChangeTag::Insert => {
-                                    total_added += 1;
-                                    DiffLineTag::Insert
-                                }
-                                ChangeTag::Delete => {
-                                    total_deleted += 1;
-                                    DiffLineTag::Delete
-                                }
-                            };
-
-                            let old_line_no = change.old_index().map(|i| i + 1);
-                            let new_line_no = change.new_index().map(|i| i + 1);
-
-                            let raw = change.value().trim_end_matches('\n').trim_end_matches('\r');
-                            let content = Self::expand_tabs(raw, tab_width);
-
-                            hunk_lines.push(DiffLine {
-                                tag,
-                                old_line_no,
-                                new_line_no,
-                                inline_segments: Vec::new(),
-                                content,
-                            });
-                        }
-                    }
+                if word_diff {
+                    Self::attach_inline_segments(&mut hunk_lines);
                 }
 
                 // このハンクの関数コンテキストヘッダーを抽出する。
@@ -406,13 +372,78 @@ impl DiffState {
 
             file_diffs.push(FileDiff {
                 path,
-                added_lines: total_added,
-                deleted_lines: total_deleted,
+                added_lines,
+                deleted_lines,
                 hunks,
             });
         }
 
         Ok(file_diffs)
+    }
+
+    /// word diff 用に、ハンク内の削除行と追加行を対にして行内の変更箇所を求める。
+    ///
+    /// libgit2 は行単位までしか出さないので、置き換えとみなせる削除ブロックと
+    /// 追加ブロックを並び順で対応付け、対になった行同士を単語単位で diff する。
+    /// 対応が付かない余りの行(片側だけ増減した分)は行全体をそのまま描画させる。
+    fn attach_inline_segments(lines: &mut [DiffLine]) {
+        let mut i = 0;
+        while i < lines.len() {
+            if lines[i].tag != DiffLineTag::Delete {
+                i += 1;
+                continue;
+            }
+            let del_start = i;
+            while i < lines.len() && lines[i].tag == DiffLineTag::Delete {
+                i += 1;
+            }
+            let del_end = i;
+            let ins_start = i;
+            while i < lines.len() && lines[i].tag == DiffLineTag::Insert {
+                i += 1;
+            }
+            let ins_end = i;
+
+            for k in 0..(del_end - del_start).min(ins_end - ins_start) {
+                let old = lines[del_start + k].content.clone();
+                let new = lines[ins_start + k].content.clone();
+                let words = TextDiff::from_words(&old, &new);
+
+                let mut del_segments = Vec::new();
+                let mut ins_segments = Vec::new();
+                for change in words.iter_all_changes() {
+                    let text = change.value().to_string();
+                    match change.tag() {
+                        ChangeTag::Equal => {
+                            del_segments.push(InlineSegment {
+                                text: text.clone(),
+                                emphasized: false,
+                            });
+                            ins_segments.push(InlineSegment {
+                                text,
+                                emphasized: false,
+                            });
+                        }
+                        ChangeTag::Delete => del_segments.push(InlineSegment {
+                            text,
+                            emphasized: true,
+                        }),
+                        ChangeTag::Insert => ins_segments.push(InlineSegment {
+                            text,
+                            emphasized: true,
+                        }),
+                    }
+                }
+
+                // 強調箇所が無いなら空のままにして、行全体の描画に任せる。
+                if del_segments.iter().any(|s| s.emphasized) {
+                    lines[del_start + k].inline_segments = del_segments;
+                }
+                if ins_segments.iter().any(|s| s.emphasized) {
+                    lines[ins_start + k].inline_segments = ins_segments;
+                }
+            }
+        }
     }
 
     /// 大文字小文字だけ異なるリネームのペア(パスが大文字小文字のみ異なり、
@@ -472,20 +503,6 @@ impl DiffState {
         }
 
         skip
-    }
-
-    /// デルタが大文字小文字だけのリネームを表すかどうかを判定する。すなわち
-    /// old_path と new_path が大文字小文字を無視すれば一致するが、実際のバイト列は
-    /// 異なる場合。どちらかのパスが存在しなければ false を返す。
-    fn is_case_only_rename(delta: &git2::DiffDelta<'_>) -> bool {
-        if let (Some(old_path), Some(new_path)) = (delta.old_file().path(), delta.new_file().path())
-        {
-            let old_s = old_path.to_string_lossy();
-            let new_s = new_path.to_string_lossy();
-            old_s != new_s && old_s.eq_ignore_ascii_case(&new_s)
-        } else {
-            false
-        }
     }
 
     /// diff のファイルエントリから blob の内容を読む。blob が存在しない場合

@@ -903,3 +903,102 @@ fn base_ref_empty_string_reports_error() {
     let result = DiffState::compute_diff_range(dir.path(), "", DiffRange::Committed, false, 4);
     assert!(result.is_err(), "empty-string base should not resolve");
 }
+
+// 新内容が空で返ってきたときに全行削除へ化ける件
+
+/// リグレッション: 未ステージ変更の新内容は workdir から読むが、読めなかった
+/// ときに空文字列へフォールバックしていた。旧内容だけが残るので、1行直した
+/// だけのファイルが Changed files に +0 -<全行数> と出て git diff と食い違う。
+/// 読めなかったことは削除された証拠ではない。
+#[test]
+fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
+    use super::model::DiffRange;
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+
+    let original: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+    let oid = commit_files(&repo, None, &[("a.txt", original.as_bytes())]);
+    checkout_branch(&repo, "main", oid);
+
+    // git から見れば +1 -1 でしかない変更。
+    let path = dir.path().join("a.txt");
+    std::fs::write(&path, original.replace("line 5\n", "line five\n")).unwrap();
+
+    // 読み取りだけを失敗させる。ファイルは存在したままなので git の見え方は変わらない。
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o000);
+    std::fs::set_permissions(&path, perms).unwrap();
+
+    let files = DiffState::compute_diff_range(dir.path(), "main", DiffRange::Uncommitted, false, 4);
+
+    // tempdir の後始末が権限で失敗しないよう、判定より先に戻す。
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o644);
+    std::fs::set_permissions(&path, perms).unwrap();
+
+    if let Some(f) = files.unwrap().iter().find(|f| f.path == "a.txt") {
+        assert!(
+            f.deleted_lines < 20,
+            "read failure was reported as a full-file deletion: +{} -{}",
+            f.added_lines,
+            f.deleted_lines
+        );
+    }
+}
+
+/// 上のガードが本物の削除まで隠してしまわないこと。workdir から消えた
+/// ファイルは読めなくて当然で、全行削除が正しい表示。
+#[test]
+fn deleted_workdir_file_still_reports_full_deletion() {
+    use super::model::DiffRange;
+    use super::*;
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+
+    let original: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+    let oid = commit_files(&repo, None, &[("a.txt", original.as_bytes())]);
+    checkout_branch(&repo, "main", oid);
+
+    std::fs::remove_file(dir.path().join("a.txt")).unwrap();
+
+    let files = DiffState::compute_diff_range(dir.path(), "main", DiffRange::Uncommitted, false, 4)
+        .unwrap();
+
+    let f = files
+        .iter()
+        .find(|f| f.path == "a.txt")
+        .expect("deleted file should still be listed");
+    assert_eq!((f.added_lines, f.deleted_lines), (0, 20));
+}
+
+/// バイナリファイルは行数を出せないが、一覧から消えてはいけない。
+/// libgit2 の Patch::from_diff は「変更なし」でもバイナリでも None を返すので、
+/// 区別せずに落とすと、変更したバイナリが Changed files に現れなくなる。
+#[test]
+fn binary_file_stays_listed_without_line_counts() {
+    use super::model::DiffRange;
+    use super::*;
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+
+    let oid = commit_files(&repo, None, &[("logo.png", &[0u8, 1, 2, 0, 3, 4][..])]);
+    checkout_branch(&repo, "main", oid);
+
+    std::fs::write(dir.path().join("logo.png"), [0u8, 9, 9, 0, 7, 7, 7]).unwrap();
+
+    let files = DiffState::compute_diff_range(dir.path(), "main", DiffRange::Uncommitted, false, 4)
+        .unwrap();
+
+    let f = files
+        .iter()
+        .find(|f| f.path == "logo.png")
+        .expect("a changed binary file must stay in the list");
+    assert_eq!((f.added_lines, f.deleted_lines), (0, 0));
+    assert!(f.hunks.is_empty());
+}
+
