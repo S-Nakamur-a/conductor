@@ -83,7 +83,7 @@ impl App {
             // 総当たりで試す必要があり、その API は1画面分を超えるオフセットでは
             // アンダーフローする(Grid::visible_rows, vt100 0.15.2) — 今のところ
             // リリースビルドがオーバーフロー時にラップしてくれるおかげで生きて
-            // いるだけである。docs/pty-reflow-design.md の記述を参照。
+            // いるだけである。
             self.terminal.cache_claude = Default::default();
             self.terminal.dirty_claude = true;
         }

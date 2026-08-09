@@ -87,8 +87,7 @@ pub struct ReflowView {
     pub sweep: Option<Sweep>,
     /// Conductor 独自の ctrl+o 相当のトグル。true のとき、tool_use/tool_result
     /// ブロックを Claude のデフォルトである折りたたみ表示ではなく、常に展開して
-    /// 描画する。ブロック単位ではなくグローバルなトグル（詳細は
-    /// docs/plans/2026-07-31-native-render-parity.md を参照）。切り替えると
+    /// 描画する。ブロック単位ではなくグローバルなトグル。切り替えると
     /// cached_lines の再構築を強制する（render.rs の幅変化チェックだけでは
     /// 検知できないため）。
     pub expanded: bool,
