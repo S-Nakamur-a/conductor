@@ -163,8 +163,7 @@ impl AiCaller for CommandCaller {
         cancel: &Arc<AtomicBool>,
     ) -> Result<String, String> {
         let payload = format!("{system_prompt}\n\n{user_message}");
-        let (argv, prompt_in_argv) =
-            expand_argv(&self.cmd, &payload, self.working_dir.as_deref());
+        let (argv, prompt_in_argv) = expand_argv(&self.cmd, &payload, self.working_dir.as_deref());
         let program = argv
             .first()
             .ok_or_else(|| "AI command is empty".to_string())?
@@ -196,13 +195,22 @@ impl AiCaller for CommandCaller {
         // (ハンドルを drop する)。それでも stdin を読むツールには、永久にブロックする
         // のではなく EOF を見せなければならないし、プロンプトを 2 回送るのは
         // まったく送らないより悪いから。
-        if let Some(mut stdin) = child.stdin.take()
-            && !prompt_in_argv
-        {
-            stdin
-                .write_all(payload.as_bytes())
-                .map_err(|e| format!("Failed to write to AI command stdin: {e}"))?;
-        }
+        //
+        // 書き込みは別スレッドに出す。レビューのプロンプトはパイプのバッファ
+        // (64KB 程度) を平気で超えるので、ここで待つと stdin を読まないコマンドを
+        // 指したときに下の loop へ辿り着けず、タイムアウトもキャンセルも効かなくなる。
+        // 書けなかったこと自体は失敗にしない (相手が途中で読むのをやめた EPIPE は
+        // 正常にもなり得る)。成否は終了コードと stdout で見る。
+        let stdin_writer = child.stdin.take().map(|mut stdin| {
+            let payload = if prompt_in_argv {
+                Vec::new()
+            } else {
+                payload.into_bytes()
+            };
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(&payload);
+            })
+        });
 
         // 終了をポーリングする。キャンセルと実時間タイムアウトを尊重する。
         let start = Instant::now();
@@ -229,6 +237,10 @@ impl AiCaller for CommandCaller {
             }
         };
 
+        // 子が終わっている以上、書き手も EOF か EPIPE で必ず解ける。
+        if let Some(h) = stdin_writer {
+            let _ = h.join();
+        }
         let stdout = join_pipe_reader(stdout_reader);
         let stderr = join_pipe_reader(stderr_reader);
 
@@ -356,14 +368,18 @@ mod tests {
     /// 組むから。
     #[test]
     fn build_caller_rejects_the_removed_claude_provider() {
-        let err = build_caller(&api("claude"), &TaskEnv::default()).err().unwrap();
+        let err = build_caller(&api("claude"), &TaskEnv::default())
+            .err()
+            .unwrap();
         assert!(err.contains("claude"), "should echo the bad value: {err}");
         assert!(err.contains("command"), "should point at the way in: {err}");
     }
 
     #[test]
     fn build_caller_rejects_unknown_provider() {
-        let err = build_caller(&api("ollama"), &TaskEnv::default()).err().unwrap();
+        let err = build_caller(&api("ollama"), &TaskEnv::default())
+            .err()
+            .unwrap();
         assert!(err.contains("ollama"), "should echo the bad value: {err}");
         assert!(err.contains("gemini"), "should list valid values: {err}");
     }
@@ -568,6 +584,21 @@ mod tests {
             assert!(err.contains("empty"), "got: {err}");
         }
 
+        /// stdin を読まないコマンドに、パイプのバッファを超えるプロンプトを渡しても
+        /// 打ち切れる。書き込みを待ってから時間を見る作りだと、ここで止まったまま
+        /// タイムアウトもキャンセルも一度も効かない。レビューのプロンプトは
+        /// 実際にこの大きさになる。
+        #[test]
+        fn a_command_that_never_reads_stdin_still_times_out() {
+            let caller = sh("sleep 30", 1);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let big = "x".repeat(1 << 20);
+            let start = Instant::now();
+            let err = caller.complete(&big, &big, &cancel).unwrap_err();
+            assert!(err.contains("timed out"), "got: {err}");
+            assert!(start.elapsed() < Duration::from_secs(10));
+        }
+
         #[test]
         fn times_out_without_waiting_for_the_command() {
             let caller = sh("sleep 5", 1);
@@ -575,7 +606,10 @@ mod tests {
             let start = Instant::now();
             let err = caller.complete("s", "u", &cancel).unwrap_err();
             assert!(err.contains("timed out"), "got: {err}");
-            assert!(start.elapsed() < Duration::from_secs(4), "should not wait 5s");
+            assert!(
+                start.elapsed() < Duration::from_secs(4),
+                "should not wait 5s"
+            );
         }
 
         #[test]
@@ -597,7 +631,10 @@ mod tests {
             };
             let cancel = Arc::new(AtomicBool::new(false));
             let err = caller.complete("s", "u", &cancel).unwrap_err();
-            assert!(err.contains("definitely_not_a_real_binary_xyzzy"), "got: {err}");
+            assert!(
+                err.contains("definitely_not_a_real_binary_xyzzy"),
+                "got: {err}"
+            );
         }
     }
 }

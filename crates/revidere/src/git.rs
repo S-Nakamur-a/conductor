@@ -18,8 +18,8 @@ impl std::error::Error for GitError {}
 ///
 /// core.quotepath の既定は true で、非 ASCII のパスを "a/\343\201\202.txt" の
 /// ように 8 進エスケープ付きで囲んで出す。diff だけがそうなり、-z を付けた
-/// numstat や ls-files は生のまま出すので、放っておくと同じファイルが 2 通りの
-/// 名前で現れて変更一覧と外部オラクルが噛み合わない。false に固定して生で受ける。
+/// ls-files は生のまま出すので、放っておくと同じファイルが 2 通りの名前で現れる。
+/// false に固定して生で受ける。
 fn git(repo: &Path) -> Command {
     let mut c = Command::new("git");
     c.args(["-c", "core.quotepath=false", "-C"]).arg(repo);
@@ -154,58 +154,6 @@ pub fn untracked(repo: &Path) -> Result<Vec<String>, GitError> {
         .collect())
 }
 
-/// (path, added, deleted)。バイナリは (path, None, None)。
-pub type NumstatRow = (String, Option<usize>, Option<usize>);
-
-/// 外部オラクル。変更一覧の行数がこれと一致するかを受け入れ条件にしている。
-///
-/// -z を使うのは rename のため。付けないと git は `src/{a.rs => b/c.rs}` という
-/// 表示用の 1 つのパスに畳んでしまい、そのまま読むと実在しないパスになる。
-/// -z なら rename は「added TAB deleted TAB」の後に前像・後像が別々に並ぶ。
-pub fn numstat(repo: &Path, base: &str, head: &str) -> Result<Vec<NumstatRow>, GitError> {
-    let spec = if head == WORKTREE {
-        "HEAD".to_string()
-    } else {
-        format!("{base}...{head}")
-    };
-    let out = run(
-        repo,
-        &[
-            "diff",
-            "--numstat",
-            "-z",
-            "--find-renames",
-            "--no-ext-diff",
-            &spec,
-        ],
-    )?;
-    let mut v = Vec::new();
-    let mut it = out.split('\0');
-    while let Some(chunk) = it.next() {
-        if chunk.is_empty() {
-            continue;
-        }
-        let mut parts = chunk.splitn(3, '\t');
-        let (Some(a), Some(d)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        let path = match parts.next() {
-            // rename: 前像・後像が続く。変更一覧は後像の名前で持つので後像を採る。
-            Some("") | None => {
-                let _old = it.next();
-                match it.next() {
-                    Some(new) => new.to_string(),
-                    None => continue,
-                }
-            }
-            Some(p) => p.to_string(),
-        };
-        // バイナリは "-" が入る。
-        v.push((path, a.parse::<usize>().ok(), d.parse::<usize>().ok()));
-    }
-    Ok(v)
-}
-
 /// 作業ツリーに未コミットの変更があるか。
 /// レビュー対象は commit なので、汚れていたら見ているものとずれる可能性がある。
 pub fn is_dirty(repo: &Path) -> Result<bool, GitError> {
@@ -332,22 +280,6 @@ mod tests {
         let out = diff(&r.dir, "main", "feature").unwrap();
         assert!(out.contains("rename from a.rs"), "{out}");
         assert!(out.contains("rename to b.rs"), "{out}");
-
-        let rows = numstat(&r.dir, "main", "feature").unwrap();
-        assert_eq!(rows, vec![("b.rs".to_string(), Some(0), Some(0))]);
-    }
-
-    #[test]
-    fn numstat_reports_none_for_binary_files_rather_than_zero() {
-        let r = Repo::new();
-        r.write("readme.txt", "x\n");
-        r.commit_all("init");
-        r.git(&["checkout", "-q", "-b", "feature"]);
-        std::fs::write(r.dir.join("logo.bin"), [0u8, 1, 2, 255, 0, 3]).unwrap();
-        r.commit_all("add binary file");
-
-        let rows = numstat(&r.dir, "main", "feature").unwrap();
-        assert_eq!(rows, vec![("logo.bin".to_string(), None, None)]);
     }
 
     #[test]
@@ -370,11 +302,10 @@ mod tests {
         );
     }
 
-    /// 非 ASCII のパスが、diff でも numstat でも同じ 1 つの名前で出る。
+    /// 非 ASCII のパスが、そのままの名前で diff に出る。
     ///
-    /// core.quotepath の既定のままだと diff だけが "a/\343\201\202.txt" という
-    /// エスケープ付きの別名で出て、変更一覧のパスが実在しない文字列になる。
-    /// 外部オラクルとの突き合わせもそこで必ず落ちる。
+    /// core.quotepath の既定のままだと "a/\343\201\202.txt" というエスケープ付きの
+    /// 別名で出て、変更一覧のパスが実在しない文字列になる。
     #[test]
     fn a_non_ascii_path_is_not_octal_escaped_in_the_diff() {
         let r = Repo::new();
@@ -387,10 +318,6 @@ mod tests {
         let out = diff(&r.dir, "main", "feature").unwrap();
         assert!(out.contains("diff --git a/あ.txt b/あ.txt"), "{out}");
         assert!(!out.contains("\\343"), "8 進エスケープが残っている: {out}");
-
-        // numstat 側と同じ名前であること。ここが割れると verify が落ちる。
-        let rows = numstat(&r.dir, "main", "feature").unwrap();
-        assert_eq!(rows, vec![("あ.txt".to_string(), Some(1), Some(1))]);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //
 // 鍵は「答えを決めているものすべて」。プロンプト（＝ base/head と変更一覧）だけでは
 // 足りない。作業ツリーを見ているとき、同じ行を書き換えれば変更一覧は変わらないのに
-// 中身は別物になる。だから差分の本文と、起動するコマンドも鍵に含める。
+// 中身は別物になる。だから差分の本文と、どの AI に聞いたかも鍵に含める。
 //
 // 鍵はファイル名にするためにハッシュへ潰すが、読むときは鍵そのものを突き合わせる。
 // ハッシュの衝突で別の差分のレビューを返すのは、このツールが最も避けたい
@@ -36,15 +36,6 @@ pub struct Cache {
 impl Cache {
     pub fn new(dir: PathBuf, enabled: bool) -> Self {
         Self { dir, enabled }
-    }
-
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// 貯めてある件数。無ければ 0。
-    pub fn len(&self) -> usize {
-        entries(&self.dir).len()
     }
 
     /// 同じ鍵の応答があれば、それと在り処を返す。
@@ -86,10 +77,11 @@ impl Cache {
 
 /// 答えを決めているものすべてを 1 本の文字列にする。
 ///
-/// 起動するコマンド（モデルが変われば答えも変わる）、システムプロンプト、
-/// 実行ごとの指示、そして差分の本文。区切りに使う \0 は、いずれにも現れない。
-pub fn key(argv: &[String], system: &str, user: &str, diff: &str) -> String {
-    format!("{}\0{system}\0{user}\0{diff}", argv.join("\u{1}"))
+/// 呼び先の見分け（モデルが変われば答えも変わる。[crate::Ai::identity]）、
+/// システムプロンプト、実行ごとの指示、そして差分の本文。
+/// 区切りに使う \0 は、いずれにも現れない。
+pub fn key(ai: &str, system: &str, user: &str, diff: &str) -> String {
+    format!("{ai}\0{system}\0{user}\0{diff}")
 }
 
 /// 鍵をファイル名に潰す。突き合わせは鍵そのもので行うので、ここは
@@ -144,55 +136,57 @@ mod tests {
         p
     }
 
-    fn argv() -> Vec<String> {
-        vec!["ai".to_string()]
+    fn ai() -> &'static str {
+        "ai"
     }
 
     #[test]
     fn a_stored_answer_comes_back() {
-        let c = Cache::new(tmp(), true);
-        let k = key(&argv(), "sys", "user", "diff");
+        let dir = tmp();
+        let c = Cache::new(dir.clone(), true);
+        let k = key(ai(), "sys", "user", "diff");
         assert!(c.get(&k).is_none());
         c.put(&k, "ANSWER").unwrap();
         assert_eq!(c.get(&k).unwrap().0, "ANSWER");
-        let _ = std::fs::remove_dir_all(c.dir());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 変更一覧が同じでも中身が違えば別物。作業ツリーを見ているときに、同じ行を
     /// 書き換えるとこうなる。ここで当たると、前の内容のレビューを黙って返す。
     #[test]
     fn the_same_ledger_with_different_content_is_a_miss() {
-        let c = Cache::new(tmp(), true);
-        let before = key(&argv(), "sys", "user", "-  let a = 1;\n+  let a = 2;");
-        let after = key(&argv(), "sys", "user", "-  let a = 1;\n+  let a = 3;");
+        let dir = tmp();
+        let c = Cache::new(dir.clone(), true);
+        let before = key(ai(), "sys", "user", "-  let a = 1;\n+  let a = 2;");
+        let after = key(ai(), "sys", "user", "-  let a = 1;\n+  let a = 3;");
         c.put(&before, "OLD").unwrap();
         assert!(c.get(&after).is_none(), "内容が違うのに当たった");
-        let _ = std::fs::remove_dir_all(c.dir());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// コマンドが変われば、答えを出すモデルも変わる。
+    /// 呼び先が変われば、答えを出すモデルも変わる。
     #[test]
-    fn a_different_command_is_a_miss() {
-        let c = Cache::new(tmp(), true);
-        c.put(&key(&argv(), "s", "u", "d"), "A").unwrap();
-        let other = vec!["another-ai".to_string()];
-        assert!(c.get(&key(&other, "s", "u", "d")).is_none());
-        let _ = std::fs::remove_dir_all(c.dir());
+    fn a_different_ai_is_a_miss() {
+        let dir = tmp();
+        let c = Cache::new(dir.clone(), true);
+        c.put(&key(ai(), "s", "u", "d"), "A").unwrap();
+        assert!(c.get(&key("another-ai", "s", "u", "d")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_disabled_cache_never_reads() {
         let dir = tmp();
         Cache::new(dir.clone(), true)
-            .put(&key(&argv(), "s", "u", "d"), "A")
+            .put(&key(ai(), "s", "u", "d"), "A")
             .unwrap();
         let off = Cache::new(dir.clone(), false);
-        assert!(off.get(&key(&argv(), "s", "u", "d")).is_none());
+        assert!(off.get(&key(ai(), "s", "u", "d")).is_none());
         // 書く側は止めない。次の実行で使えるように上書きしておきたい。
-        assert!(off.put(&key(&argv(), "s", "u", "d"), "B").is_ok());
+        assert!(off.put(&key(ai(), "s", "u", "d"), "B").is_ok());
         assert_eq!(
             Cache::new(dir.clone(), true)
-                .get(&key(&argv(), "s", "u", "d"))
+                .get(&key(ai(), "s", "u", "d"))
                 .unwrap()
                 .0,
             "B"
@@ -203,12 +197,13 @@ mod tests {
     /// 壊れたファイルは「無い」として扱う。聞き直せば済む。
     #[test]
     fn a_corrupt_entry_is_a_miss() {
-        let c = Cache::new(tmp(), true);
-        let k = key(&argv(), "s", "u", "d");
+        let dir = tmp();
+        let c = Cache::new(dir.clone(), true);
+        let k = key(ai(), "s", "u", "d");
         c.put(&k, "A").unwrap();
-        std::fs::write(c.dir().join(format!("{}.json", digest(&k))), "{ broken").unwrap();
+        std::fs::write(dir.join(format!("{}.json", digest(&k))), "{ broken").unwrap();
         assert!(c.get(&k).is_none());
-        let _ = std::fs::remove_dir_all(c.dir());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

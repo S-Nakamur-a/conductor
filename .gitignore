@@ -1,6 +1,5 @@
 /target
 /.conductor/
-/.revidere/
 node_modules/
 dist/
 .env

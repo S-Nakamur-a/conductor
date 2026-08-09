@@ -1,7 +1,6 @@
-//! revidere の成果物 (`<worktree>/.revidere/review.json`) を読み、読む順を組む。
+//! revidere の成果物 (`<worktree>/.conductor/review.json`) を読み、読む順を組む。
 //!
-//! conductor は成果物を読むだけで、解析は revidere の CLI が持つ (S4 で
-//! [crate::app::App] が `revidere analyze` を起こす)。ここに AI 呼び出しは無い。
+//! ここは読むだけ。成果物を作る側は [crate::app::revidere]。
 //!
 //! 型を宣言し直さない
 //!

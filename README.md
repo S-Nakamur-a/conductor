@@ -129,12 +129,13 @@ terminal keybindings keep working while you review:
    scroll, `n`/`N` move between sections, `Enter` opens the section's location
    in the Viewer (where you can leave a comment), `q` closes it.
 
-   revidere lives in this repository (`crates/revidere*`) and ships inside the
-   `conductor` binary, so there is nothing extra to install — `conductor
-   revidere analyze` is the same command Conductor runs for you. It decides
-   which AI to call from its own `~/.config/revidere/config.toml`, so Conductor
-   never picks the model. Replies are cached on the diff itself, so re-running
-   on an unchanged diff returns instantly — `alt+w` skips the cache.
+   revidere lives in this repository (`crates/revidere`) and ships inside the
+   `conductor` binary, so there is nothing extra to install. It calls the AI
+   through the same `[api]` section as every other AI feature here — but note
+   that this one needs `provider = "command"` pointing at an agentic CLI: the
+   model is expected to read the repository itself, which a plain HTTP
+   completion cannot do. Replies are cached on the diff itself, so re-running on
+   an unchanged diff returns instantly — `alt+w` skips the cache.
 5. **Publish comments** — palette: *Review: Publish Comments to GitHub* posts
    your inline review comments (and replies) back to the PR via `gh`.
 

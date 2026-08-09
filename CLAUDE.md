@@ -59,29 +59,28 @@ its current session id back.
   `claude_sessions/rotation.rs` infers the rotation from the logs instead. It is
   deliberately conservative — see its module docs for what it refuses to guess.
 
-### Review analyser (`conductor revidere`, `crates/revidere*`)
+### Review analyser (`crates/revidere`)
 
-revidere turns a git diff into `<worktree>/.revidere/review.json`: every changed
+revidere turns a git diff into `<worktree>/.conductor/review.json`: every changed
 line sorted into sections by importance, plus a coverage check that no changed
 line is left unexplained. It lives in this repo as workspace members:
+`crates/revidere` (the whole analyser plus the artifact types and `ReadingOrder`)
+and `crates/revidere-fixtures` (shared test scaffolding).
 
-| Crate | Role |
-|---|---|
-| `crates/revidere` | The artifact's types, the diff ledger, and `ReadingOrder`. What conductor links against to *read* a review |
-| `crates/revidere-cli` | The analysis itself — prompt, AI invocation, response parsing, response cache. `lib.rs` holds it; the `revidere` bin and `conductor revidere` both call its `run()` |
-| `crates/revidere-fixtures` | Test scaffolding shared by the above |
-
-- **Why in the binary:** same reason as `mcp-serve` and `cc-hook`. A separately
-  installed `revidere` on `PATH` drifts from the conductor that reads its output,
-  and the release tarball could not carry it at all.
-- **Still a child process:** `app/revidere.rs` spawns `current_exe() revidere
-  analyze` rather than calling `run()` on a thread — cancelling then only has to
-  kill a process, which takes the AI command down with it.
-- **Exit codes are contract:** 0 success, 1 failure, **2 = artifact written but
-  the coverage check failed**. Folding 2 into "non-zero is failure" throws away a
-  readable review.
-- Conductor never picks the model: the AI command comes from revidere's own
-  `~/.config/revidere/config.toml`.
+- **One entry point:** `revidere::analyze(&Options, &dyn Ai)`. It has no binary and
+  no CLI — conductor is the only caller (`app/revidere.rs`, on a worker thread).
+- **The AI is injected.** revidere never spawns anything; conductor implements
+  `revidere::Ai` over `ai_caller`, so the review runs on the same `[api]` config as
+  every other AI feature. `provider = "gemini"` will *not* work: the prompt hands
+  over the ledger only, and the model is expected to read the repository itself, so
+  it needs an agentic CLI under `provider = "command"`.
+- **Cache identity:** the stored-answer key includes `Ai::identity()`. If that ever
+  goes constant, changing models silently returns the old model's answer.
+- **Failing coverage is not a failure.** `analyze` returns the artifact either way;
+  `review.coverage.is_complete()` is what distinguishes them. Treating an
+  incomplete review as an error throws away a readable one.
+- revidere writes nothing to stdout/stderr (the host owns a TUI) — progress goes
+  through `log`.
 
 ## Architecture
 
@@ -145,8 +144,8 @@ Status bar
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
 | `term_caps.rs` | Terminal capability probing — OSC 11 background-colour query driving light/dark theme auto-selection |
 | `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
-| `revidere.rs` | Loads the review artifact (`<worktree>/.revidere/review.json`) via the `revidere` library and builds its `ReadingOrder` — read-only, no AI |
-| `app/revidere.rs` | Runs `conductor revidere analyze` as a background child process (one per branch, cancellable) and jumps from a section into the Viewer |
+| `revidere.rs` | Loads the review artifact (`<worktree>/.conductor/review.json`) via the `revidere` library and builds its `ReadingOrder` — read-only, no AI |
+| `app/revidere.rs` | Runs `revidere::analyze` on a worker thread (one per branch, cancellable), wires `ai_caller` into its `Ai` seam, and jumps from a section into the Viewer |
 | `ui/revidere_view.rs` | The full-screen two-column review view (reading order \| diff) |
 | `app/review_publish.rs` | Publishes review comments to GitHub via `gh`, tracking which comments are already posted |
 
@@ -158,7 +157,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
-- **Review artifact:** `<worktree>/.revidere/review.json`, written by `conductor revidere analyze` (gitignored)
+- **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions

@@ -32,27 +32,22 @@ impl FileWatcher {
             move |result: Result<Event, notify::Error>| {
                 if let Ok(event) = result {
                     // 変更系のイベントだけ通知する (アクセスのみのイベントは無視)。
-                    if !(event.kind.is_modify()
-                        || event.kind.is_create()
-                        || event.kind.is_remove())
+                    if !(event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove())
                     {
                         return;
                     }
-                    // .git/ .conductor/ .revidere/ 内の変更は無視する。git の操作
+                    // .git/ .conductor/ 内の変更は無視する。git の操作
                     // (git status など) はインデックスファイルに触るので、そのままだと
-                    // 高コストなリフレッシュが走ってしまう。.revidere は解析中に
-                    // 貯めた応答を書き続けるので同じ理由で外す (成果物ができたことは
-                    // 解析の終了で分かるので、監視から知る必要が無い)。最初の 1 件
+                    // 高コストなリフレッシュが走ってしまう。.conductor はレビューの
+                    // 解析が貯めた応答を書き続けるので同じ理由で外す (成果物ができた
+                    // ことは解析の終了で分かるので、監視から知る必要が無い)。最初の 1 件
                     // だけでなくイベント内の全パスを見るのは、リネームイベントが
                     // (from, to) を持つため — .git から作業ツリーへの移動は、
                     // paths[0] が .git 側であっても実際の変更だから。
                     let any_real_path = event.paths.iter().any(|path| {
-                        !path.components().any(|c| {
-                            matches!(
-                                c.as_os_str().to_str(),
-                                Some(".git" | ".conductor" | ".revidere")
-                            )
-                        })
+                        !path
+                            .components()
+                            .any(|c| matches!(c.as_os_str().to_str(), Some(".git" | ".conductor")))
                     });
                     if any_real_path {
                         let _ = sender.send(FsEvent::Changed);

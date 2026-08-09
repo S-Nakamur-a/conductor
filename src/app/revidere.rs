@@ -1,41 +1,39 @@
 //! [App] における revidere の駆動: 成果物の読み直しと、解析の起動。
 //!
-//! 解析は `conductor revidere analyze` を子プロセスとして起こす。実装は
-//! crates/revidere-cli にあり、同じバイナリに入っている。どの AI を使うかは
-//! revidere の `[ai] command` に委ねたままなので、「conductor はどのモデルが
-//! 答えるかを決めない」という規則はそのまま。委譲先が 1 段増えているだけ。
+//! 解析そのものは revidere が持ち、AI をどう呼ぶかだけをここから差し込む
+//! ([AiSeam])。呼び先は他の AI 機能と同じ `[api]` 設定なので、レビューのために
+//! 別の設定ファイルを用意する必要は無い。
 //!
-//! 見るのは常に作業ツリー (`--head worktree`)
+//! ただし `provider = "gemini"` では使えない。プロンプトが渡すのは変更箇所の
+//! 一覧までで、中身はモデルが自分でリポジトリを読む前提のため、素の HTTP 補完
+//! ではなくエージェント型の CLI を指した `provider = "command"` が要る。
+//!
+//! 見るのは常に作業ツリー
 //!
 //! レビューしたいものは大抵まだコミットされていない。merge-base 固定だと、
 //! いま手元で書いているものが画面に出るまで一度コミットしなければならない。
-//! 出力先も既定のまま (`<worktree>/.revidere/review.json`) にしてある —
-//! conductor の worktree はそれぞれ別ディレクトリなので、ブランチごとに
-//! 自然に分かれる。
+//! 出力先は `<worktree>/.conductor/review.json` — conductor の worktree は
+//! それぞれ別ディレクトリなので、ブランチごとに自然に分かれる。
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
-use std::time::Duration;
 
 use super::*;
 
-/// 子プロセスの終了を待つ間のポーリング間隔。
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
-
-/// 解析 1 回の実時間の上限。revidere 自身にも `[ai] timeout_secs` があるが、
-/// そちらが効かない壊れ方 (子プロセスが応答しない) でも conductor 側が
-/// 諦められるようにしておく。
-const RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// 解析 1 回の AI 呼び出しに与える実時間の上限 (秒)。
+///
+/// `[api] command_timeout_secs` の既定は数秒のブランチ命名を想定した値なので、
+/// 差分を読んで語る呼び出しはそのままでは打ち切られる。予算を知っているのは
+/// タスクの側という [crate::ai_caller::TaskEnv] の考え方どおり、ここで上書きする。
+const AI_TIMEOUT_SECS: u64 = 15 * 60;
 
 /// 解析が終わったときの結果。
 pub enum RunOutcome {
     /// 成果物ができた。coverage_complete が false なら、成果物はあるが
-    /// 説明もれ検査は通っていない (revidere の終了コード 2)。
+    /// 説明もれ検査は通っていない。
     Done { coverage_complete: bool },
     /// 走らせられなかった / 途中で落ちた。
     Failed(String),
@@ -49,8 +47,8 @@ pub struct RevidereRun {
 }
 
 impl RevidereRun {
-    /// ワーカーに停止を通知する。ワーカーは子プロセスをポーリングする合間に
-    /// これを見るので、revidere とその先の AI コマンドは確実に kill される。
+    /// ワーカーに停止を通知する。AI を待っている間もこの旗は見られていて
+    /// ([crate::ai_caller::CommandCaller])、走っている AI コマンドは kill される。
     fn abort(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
@@ -110,7 +108,7 @@ impl RevidereRuns {
                 Ok(outcome) => outcome,
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
-                    RunOutcome::Failed("revidere analyze ended without a result".to_string())
+                    RunOutcome::Failed("the analysis ended without a result".to_string())
                 }
             };
             finished.push(FinishedRun {
@@ -173,9 +171,8 @@ impl App {
 
     /// 2 列のレビュービューを開く (w)。成果物が無ければ作り方を案内して開かない。
     pub fn cmd_show_revidere(&mut self) {
-        // 門を通さずに読み直す。ユーザが端末で revidere analyze を打った直後
-        // かもしれないし、成果物が同じでも作業ツリーが動いていれば読む順は
-        // 変わっている。
+        // 門を通さずに読み直す。成果物が同じでも作業ツリーが動いていれば
+        // 読む順は変わっている。
         self.reload_revidere_now();
         if let Some(why) = self.revidere.load_error.clone() {
             self.set_status(
@@ -200,12 +197,11 @@ impl App {
         self.set_focus(Focus::Revidere);
     }
 
-    /// 選択中の worktree に対して `revidere analyze` を起こす。
+    /// 選択中の worktree の解析を起こす。
     ///
-    /// `force` は revidere に `--no-cache` を渡す。既定ではキャッシュが
-    /// 効くので、diff が動いていなければ AI は起動せず即座に返る — 旧
-    /// walkthrough が「同じコミットならスキップ」で自前に持っていた判断は、
-    /// こちらでは revidere のキャッシュがそのまま引き受ける。
+    /// `force` は貯めた応答を捨てる。既定では効くので、diff が動いていなければ
+    /// AI は起動せず即座に返る — 旧 walkthrough が「同じコミットならスキップ」で
+    /// 自前に持っていた判断は、こちらでは revidere のキャッシュが引き受ける。
     pub fn cmd_analyze_revidere(&mut self, force: bool) {
         let branch = self.selected_worktree_branch();
         if branch.is_empty() {
@@ -223,15 +219,16 @@ impl App {
             return;
         }
         let worktree = self.selected_worktree_path();
+        let api = self.config.api.clone();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
         let worker_cancel = cancel.clone();
         std::thread::spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_analyze(&worktree, force, &worker_cancel)
+                run_analyze(&worktree, force, &api, &worker_cancel)
             }))
-            .unwrap_or_else(|_| RunOutcome::Failed("revidere analyze thread panicked".to_string()));
+            .unwrap_or_else(|_| RunOutcome::Failed("the analysis thread panicked".to_string()));
             // receiver が閉じているのはアプリが先に進んだということ。
             // 報告先も後始末すべきものも無い。
             let _ = tx.send(outcome);
@@ -323,7 +320,7 @@ impl App {
     }
 
     /// 実行中の解析をすべて止める。終了時に一度だけ呼ばれる。これが無いと、
-    /// メインループが止まったあとも子プロセスが孤児として走り続ける。
+    /// メインループが止まったあとも AI コマンドが孤児として走り続ける。
     pub fn shutdown_revidere(&mut self) {
         self.revidere.runs.abort_all();
     }
@@ -372,96 +369,72 @@ fn artifact_stamp(worktree: &std::path::Path) -> Option<(PathBuf, std::time::Sys
     Some((path, modified))
 }
 
-/// `conductor revidere analyze` を 1 回最後まで走らせる。ブロッキング。
+/// revidere の解析を 1 回最後まで走らせる。ブロッキング。
 ///
-/// 解析の実装は同じバイナリの中にあるが、それでも子プロセスとして起こす。
-/// 中断がプロセスを kill するだけで済み、その先の AI コマンドまで確実に
-/// 道連れにできるため。スレッドで直接呼ぶと、AI の待ちを割り込めない。
-///
-/// 終了コードの読み方は revidere の約束どおり: 0 が成功、2 は「成果物は
-/// できたが説明もれ検査が通らなかった」。2 を失敗として扱うと、読める成果物が
-/// 画面に出ないまま捨てられる。
-fn run_analyze(worktree: &PathBuf, force: bool, cancel: &Arc<AtomicBool>) -> RunOutcome {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => return RunOutcome::Failed(format!("could not find conductor itself: {e}")),
+/// 説明もれ検査に落ちても失敗にはしない。読める成果物ができている以上、
+/// 画面に出さずに捨てる理由が無い。
+fn run_analyze(
+    worktree: &std::path::Path,
+    force: bool,
+    api: &crate::config::ApiConfig,
+    cancel: &Arc<AtomicBool>,
+) -> RunOutcome {
+    let env = crate::ai_caller::TaskEnv {
+        timeout_secs: Some(AI_TIMEOUT_SECS),
+        working_dir: Some(worktree.to_path_buf()),
     };
-    let mut command = Command::new(exe);
-    command
-        .args(["revidere", "analyze", "--repo"])
-        .arg(worktree)
-        .args(["--head", ::revidere::git::WORKTREE]);
-    if force {
-        command.arg("--no-cache");
-    }
-    command.current_dir(worktree);
-
-    let mut child = match command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+    let caller = match crate::ai_caller::build_caller(api, &env) {
         Ok(c) => c,
-        Err(e) => return RunOutcome::Failed(format!("could not start revidere: {e}")),
+        Err(e) => return RunOutcome::Failed(e),
     };
-
-    // stdout と stderr はそれぞれ専用スレッドで吸い出す。AI コマンドが
-    // 進捗を吐き続けてパイプのバッファを埋め、終了する前にデッドロックする
-    // のを防ぐため (ai_caller と同じ理由・同じ形)。
-    let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
-    let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
-
-    let start = std::time::Instant::now();
-    let status = loop {
-        if cancel.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return RunOutcome::Failed("cancelled".to_string());
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if start.elapsed() >= RUN_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return RunOutcome::Failed(format!(
-                        "timed out after {} minutes",
-                        RUN_TIMEOUT.as_secs() / 60
-                    ));
-                }
-                std::thread::sleep(POLL_INTERVAL);
-            }
-            Err(e) => return RunOutcome::Failed(format!("could not wait on revidere: {e}")),
-        }
+    let ai = AiSeam {
+        caller,
+        identity: identity(api),
+        cancel: cancel.clone(),
     };
-
-    let stdout = join_pipe_reader(stdout_reader);
-    let stderr = join_pipe_reader(stderr_reader);
-    log::info!("revidere analyze finished ({status}):\n{stdout}");
-
-    match status.code() {
-        Some(0) => RunOutcome::Done {
-            coverage_complete: true,
+    let options = ::revidere::Options {
+        repo: worktree.to_path_buf(),
+        base: None,
+        head: ::revidere::git::WORKTREE.to_string(),
+        cache: !force,
+    };
+    match ::revidere::analyze(&options, &ai) {
+        Ok(review) => RunOutcome::Done {
+            coverage_complete: review.coverage.is_complete(),
         },
-        Some(2) => RunOutcome::Done {
-            coverage_complete: false,
-        },
-        _ => RunOutcome::Failed(tail_chars(stderr.trim(), 300).to_string()),
+        Err(e) => RunOutcome::Failed(tail_chars(&e.to_string(), 300).to_string()),
     }
 }
 
-/// 子プロセスのパイプをワーカースレッドで最後まで読み、UTF-8 として寛容にデコードする。
-fn spawn_pipe_reader<R: Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<String> {
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = pipe.read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).into_owned()
-    })
+/// revidere の AI の継ぎ目を、conductor の [crate::ai_caller] に繋ぐ。
+struct AiSeam {
+    caller: Box<dyn crate::ai_caller::AiCaller>,
+    identity: String,
+    cancel: Arc<AtomicBool>,
 }
 
-fn join_pipe_reader(handle: Option<std::thread::JoinHandle<String>>) -> String {
-    handle.and_then(|h| h.join().ok()).unwrap_or_default()
+impl ::revidere::Ai for AiSeam {
+    fn complete(&self, system: &str, user: &str) -> Result<String, String> {
+        self.caller.complete(system, user, &self.cancel)
+    }
+
+    fn identity(&self) -> String {
+        self.identity.clone()
+    }
+}
+
+/// 貯めた応答の鍵に混ぜる、呼び先の見分け。
+///
+/// 答えを出しているものが変わったら別物として扱えればよいので、provider と
+/// その provider が実際に叩く先だけを並べる。
+fn identity(api: &crate::config::ApiConfig) -> String {
+    let provider = api.provider.trim().to_lowercase();
+    let target = if provider == "command" {
+        api.command.join(" ")
+    } else {
+        api.model.clone()
+    };
+    format!("{provider}:{target}")
 }
 
 /// s の末尾 n 文字 (文字境界を壊さず)。

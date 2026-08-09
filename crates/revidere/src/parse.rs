@@ -3,7 +3,7 @@
 // 応答は「JSON だけ返せ」と言ってあるが、地の文やコードフェンスが付くことは
 // 現実に起きる。ここで許容するのは取り出しまでで、中身の緩さは許容しない。
 
-use revidere::review::{Confidence, Coverage, Impact, Overview, Review, Section, Side};
+use crate::review::{Confidence, Coverage, Impact, Overview, Review, Section, Side};
 use serde::Deserialize;
 
 #[derive(Debug)]
@@ -35,7 +35,7 @@ pub fn review(raw: &str, base: &str, head: &str) -> Result<Review, ParseError> {
     let g: Generated = serde_json::from_str(json)
         .map_err(|e| ParseError(format!("JSON を型に落とせない: {e}")))?;
     let mut r = Review {
-        schema: revidere::review::SCHEMA_VERSION,
+        schema: crate::review::SCHEMA_VERSION,
         base: base.to_string(),
         head: head.to_string(),
         overview: g.overview,
@@ -147,7 +147,7 @@ pub fn extract_object(s: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    use revidere::review::Importance;
+    use crate::review::Importance;
 
     const MINIMAL: &str = r#"{
       "overview": {"problem":"p","change":"c","mechanism":"m","placement":"pl","scope":"s"},
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn parses_a_minimal_answer() {
         let r = review(MINIMAL, "main", "HEAD").unwrap();
-        assert_eq!(r.schema, revidere::review::SCHEMA_VERSION);
+        assert_eq!(r.schema, crate::review::SCHEMA_VERSION);
         assert_eq!(r.sections.len(), 1);
         assert_eq!(r.sections[0].importance, Importance::Core);
         // coverage は検査の出力なので、パースの時点では空。

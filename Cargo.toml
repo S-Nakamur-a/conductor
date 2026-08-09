@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/revidere", "crates/revidere-cli", "crates/revidere-fixtures"]
+members = ["crates/revidere", "crates/revidere-fixtures"]
 
 [package]
 name = "conductor"
@@ -40,11 +40,10 @@ tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
-# レビュー成果物 (<worktree>/.revidere/review.json) の型と読む順。
+# レビュー成果物 (<worktree>/.conductor/review.json) を作る側と読む側の両方。
+# AI をどう呼ぶかは持っていないので、ai_caller を繋ぐのは conductor
+# (src/app/revidere.rs)。
 revidere = { path = "crates/revidere" }
-# 解析の実装。`conductor revidere ...` が同じ実装を通るように、別バイナリを
-# PATH から探すのではなくここから呼ぶ (src/app/revidere.rs のモジュール doc)。
-revidere-cli = { path = "crates/revidere-cli" }
 libc = "0.2"
 # 1つのインポートで済むファサード (keymap-core + keymap-config + keymap-seq)。
 # crossterm フィーチャーで KeyInput::try_from(KeyEvent) が使えるようになる。

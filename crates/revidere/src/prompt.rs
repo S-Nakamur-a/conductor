@@ -139,7 +139,7 @@ pub fn user(base: &str, head: &str, ledger: &str) -> String {
     // 作業ツリーを見るときは `A...B` が意味を持たない。`worktree` は git の
     // リビジョンではないので、そのまま組むとモデルは失敗するコマンドを実行し、
     // 差分を読まないまま台帳だけを頼りに答えることになる。
-    let worktree = head == revidere::git::WORKTREE;
+    let worktree = head == crate::git::WORKTREE;
     let range = if worktree {
         format!("`{base}` から作業ツリーまでの変更")
     } else {
@@ -235,7 +235,7 @@ mod tests {
     /// 書くとモデルが実行するコマンドが失敗し、差分を読まないまま答える。
     #[test]
     fn the_worktree_prompt_does_not_ask_git_for_a_revision_named_worktree() {
-        let p = user("abc1234", revidere::git::WORKTREE, "src/a.rs\n  new: 1\n");
+        let p = user("abc1234", crate::git::WORKTREE, "src/a.rs\n  new: 1\n");
         assert!(
             !p.contains("...worktree"),
             "存在しないリビジョンを指している: {p}"

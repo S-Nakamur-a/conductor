@@ -7,13 +7,16 @@ use serde::{Deserialize, Serialize};
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// revidere が書き出すものの置き場。成果物も貯めた応答もこの下。
-pub const DIR: &str = ".revidere";
-
-/// 成果物の既定の置き場。`<repo>/.revidere/review.json`。
 ///
-/// 書く側（CLI）と読む側（ホスト）が別々にこのパスを組み立てると、片方だけ
-/// 変えたときに「書いたのに読まれない」が黙って起きる。形を決めているのは
-/// このクレートなので、置き場もここが持つ。
+/// ホスト (conductor) が他の作業ファイルを置いているのと同じディレクトリ。
+/// 隠しディレクトリを 2 つに分けても、無視する設定と掃除の手間が倍になるだけ。
+pub const DIR: &str = ".conductor";
+
+/// 成果物の既定の置き場。`<repo>/.conductor/review.json`。
+///
+/// 書く側と読む側が別々にこのパスを組み立てると、片方だけ変えたときに
+/// 「書いたのに読まれない」が黙って起きる。形を決めているのはこのクレートなので、
+/// 置き場もここが持つ。
 pub fn artifact_path(repo_root: &std::path::Path) -> std::path::PathBuf {
     repo_root.join(DIR).join("review.json")
 }
@@ -263,9 +266,9 @@ mod tests {
     /// 成果物の置き場は、書く側と読む側が同じ 1 つの関数から得る。
     /// ここが割れると「書いたのに読まれない」が黙って起きる。
     #[test]
-    fn the_artifact_lives_under_the_revidere_directory() {
+    fn the_artifact_lives_under_the_host_directory() {
         let p = artifact_path(std::path::Path::new("/repo"));
-        assert_eq!(p, std::path::Path::new("/repo/.revidere/review.json"));
+        assert_eq!(p, std::path::Path::new("/repo/.conductor/review.json"));
         assert!(p.starts_with(std::path::Path::new("/repo").join(DIR)));
     }
 
