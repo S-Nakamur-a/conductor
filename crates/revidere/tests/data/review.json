@@ -1,0 +1,444 @@
+{
+  "schema": 1,
+  "base": "82a8a0a",
+  "head": "914ef61",
+  "overview": {
+    "problem": "3 つ。(1) crates.io に出せる形になっていない — ライセンス、説明、リポジトリ URL が無く、workspace の revidere が path だけなので、これに依存する 2 つのバイナリを公開できない。(2) git diff のパスが core.quotepath の既定で 8 進エスケープされ、-z を付けた numstat と名前が割れる。(3) AI コマンドの stdin を本スレッドで書いていたので、stdin を読まないコマンドにパイプのバッファ（64KB 程度）を超えるプロンプトを渡すと書き込みで詰まり、打ち切りの判定に一度も辿り着けない。加えて clone しただけでは何も見られない（AI の設定をしないと画面に辿り着けない）。",
+    "change": "公開に要る責務（ライセンス表示、クレートごとの説明、版付きの内部依存、テスト専用クレートの非公開化）を manifest 群に足す。git の起動を 1 つの関数に寄せてパスの出方を固定する。AI 呼び出しの stdin 書き込みを別スレッドへ出し、待つ場所を打ち切りループ 1 か所に寄せる。Makefile に、同梱のデモを AI 抜きで開く導線と、画面の突き合わせを足す。",
+    "mechanism": "manifest 側は workspace.package に license/repository/readme を置き、各クレートが .workspace で引く。内部依存の revidere に version を書くことで、公開後は crates.io の登録済みの版として解決できる。git.rs は新しい git(repo) が `-c core.quotepath=false -C <repo>` まで組んだ Command を返し、既存の run() と未追跡ファイルの --no-index 呼び出しの両方がこれを通る。ai.rs は child.stdin を take して書き込みスレッドへ move し、子の終了を待つ既存の try_wait ループの後で join する。Makefile は release ビルド済みのバイナリのパスと、同梱の成果物 crates/revidere/tests/data/review.json を変数に持ち、view の --dump を使って画面を採る。",
+    "placement": "パスの正規化を git.rs の 1 関数に置いたのは、このファイルが「git への接続点はここ 1 箇所」を掲げていて、diff と numstat の両方がここを通るため。設定は git 側の -c で渡していて、パーサ側でエスケープを戻す道は採っていない。デモの成果物をクレートの tests/data に置いたのは、ライブラリのテストが成果物の形の固定にも同じファイルを使うから（Makefile のコメントに理由が書いてある）。テスト専用の revidere-fixtures は publish = false にし、dev-dependencies は公開時に外れる性質に乗って、参照している revidere と revidere-view の公開を通している。",
+    "scope": "12 ファイル（LICENSE 追加を含む）。実際に読むべきは 3 つ — crates/revidere/src/git.rs、crates/revidere-cli/src/ai.rs、Cargo.toml。残りは manifest の定型、Makefile、README/CLAUDE.md。"
+  },
+  "sections": [
+    {
+      "title": "crates.io に出せる形にする",
+      "body": "workspace.package に license / repository / readme を置き、3 つの公開クレートがそれを .workspace で引く。説明・keywords・categories はクレートごとに違うので各 manifest に直接書く。workspace.dependencies の revidere に version = \"0.2.0\" を足したのは、path だけだと revidere-cli と revidere-view を crates.io に出せないため。テスト専用の revidere-fixtures は publish = false にして、dev-dependencies 経由でしか参照されていないという性質（crates/revidere/Cargo.toml:19、crates/revidere-view/Cargo.toml:25 のいずれも dev-dependencies）に乗せて、参照側の公開を通している。",
+      "importance": "core",
+      "reason": "コミットが掲げている目的の 1 つ「crate として公開できる形にする」そのもの。他の変更の帰結ではなく、これが起点になっている。",
+      "ranges": [
+        {
+          "path": "Cargo.toml",
+          "side": "new",
+          "start": 15,
+          "end": 19
+        },
+        {
+          "path": "Cargo.toml",
+          "side": "new",
+          "start": 22,
+          "end": 24
+        },
+        {
+          "path": "Cargo.toml",
+          "side": "old",
+          "start": 17,
+          "end": 17
+        },
+        {
+          "path": "crates/revidere/Cargo.toml",
+          "side": "new",
+          "start": 5,
+          "end": 10
+        },
+        {
+          "path": "crates/revidere-cli/Cargo.toml",
+          "side": "new",
+          "start": 5,
+          "end": 10
+        },
+        {
+          "path": "crates/revidere-view/Cargo.toml",
+          "side": "new",
+          "start": 5,
+          "end": 10
+        },
+        {
+          "path": "crates/revidere-fixtures/Cargo.toml",
+          "side": "new",
+          "start": 5,
+          "end": 7
+        }
+      ]
+    },
+    {
+      "title": "git の起動を 1 か所に寄せて core.quotepath=false を固定する",
+      "body": "`git(repo)` が `-c core.quotepath=false -C <repo>` まで組んだ Command を返すようにし、run() と、未追跡ファイルを --no-index で起こす呼び出しの両方をこれに通す。quotepath の既定は true で、diff だけが非 ASCII のパスを `\"a/\\343\\201\\202.txt\"` と 8 進エスケープして出す。-z を付けた numstat と ls-files は生のまま出すので、放っておくと同じファイルが 2 通りの名前で現れる。パーサ側（crates/revidere/src/diff/parser.rs:198）は囲みのダブルクォートを外すだけでエスケープを戻さないので、台帳のパスが実在しない文字列になっていた。",
+      "importance": "core",
+      "reason": "コミットが掲げている「パスの穴を塞ぐ」そのもの。他の変更の帰結ではない。",
+      "ranges": [
+        {
+          "path": "crates/revidere/src/git.rs",
+          "side": "new",
+          "start": 17,
+          "end": 28
+        },
+        {
+          "path": "crates/revidere/src/git.rs",
+          "side": "new",
+          "start": 30,
+          "end": 30
+        },
+        {
+          "path": "crates/revidere/src/git.rs",
+          "side": "new",
+          "start": 128,
+          "end": 128
+        },
+        {
+          "path": "crates/revidere/src/git.rs",
+          "side": "old",
+          "start": 18,
+          "end": 20
+        },
+        {
+          "path": "crates/revidere/src/git.rs",
+          "side": "old",
+          "start": 118,
+          "end": 120
+        }
+      ]
+    },
+    {
+      "title": "AI コマンドの stdin を別スレッドで書く",
+      "body": "本スレッドで write_all していたのをやめ、payload を move した書き込みスレッドを立てる。argv でプロンプトを渡した場合は空を書いて閉じるだけにして、stdin を読むコマンドに EOF を見せる従来の性質は保つ。書き込みの失敗は握り潰し（相手が途中で読むのをやめた EPIPE は正常にもなり得る）、成否は終了コードと stdout で見る。join は打ち切りループを抜けた後 — 子が終わっていれば書き手は EOF か EPIPE で必ず解ける。",
+      "importance": "core",
+      "reason": "コミットが掲げている「打ち切りの穴を塞ぐ」そのもの。stdin を読まないコマンドに 64KB を超えるプロンプトを渡すと、以前は write_all が返らず try_wait のループに一度も入れないので timeout_secs が働かなかった。",
+      "ranges": [
+        {
+          "path": "crates/revidere-cli/src/ai.rs",
+          "side": "new",
+          "start": 108,
+          "end": 126
+        },
+        {
+          "path": "crates/revidere-cli/src/ai.rs",
+          "side": "new",
+          "start": 147,
+          "end": 150
+        },
+        {
+          "path": "crates/revidere-cli/src/ai.rs",
+          "side": "old",
+          "start": 108,
+          "end": 116
+        }
+      ]
+    },
+    {
+      "title": "同梱のデモと日常の操作を Makefile に入れる",
+      "body": "release ビルド済みのバイナリを変数に持ち、analyze（作業ツリーを解析）、view、demo（同梱の成果物を AI 抜きで開く）、dev（端末を起こさず 1 画面 --dump する）、demo-update（デモを採り直す）を足す。AI= を渡すと --ai で一時的にコマンドを差し替えられる（設定ファイルを書き換えると貯めた応答が全部外れるため）。demo は成果物が無ければ採り方を案内して落ちる。",
+      "importance": "core",
+      "reason": "「clone しただけで全部動く」という、公開やパス・打ち切りの修正とは独立した目的の実装。どれかの帰結として出ているものではない。",
+      "ranges": [
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 1,
+          "end": 1
+        },
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 3,
+          "end": 27
+        },
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 38,
+          "end": 44
+        },
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 62,
+          "end": 87
+        },
+        {
+          "path": "Makefile",
+          "side": "old",
+          "start": 1,
+          "end": 1
+        },
+        {
+          "path": "Makefile",
+          "side": "old",
+          "start": 3,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "title": "MIT ライセンスの実体を置く",
+      "body": "MIT ライセンス全文の LICENSE を追加し、README の末尾から指す。",
+      "importance": "follow",
+      "reason": "manifest に license = \"MIT\" と書いた帰結。ファイルはビルドにもランタイムにも入らないので、プログラムの振る舞いは変わらない。",
+      "ranges": [
+        {
+          "path": "LICENSE",
+          "side": "new",
+          "start": 1,
+          "end": 21
+        },
+        {
+          "path": "README.md",
+          "side": "new",
+          "start": 212,
+          "end": 215
+        }
+      ],
+      "relations": [
+        {
+          "to": "crates.io に出せる形にする",
+          "reason": "license フィールドを宣言したので、それが指す実体が要る",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "README の入れ方と依存の書き方を公開後のものにする",
+      "body": "`cargo install revidere-cli revidere-view` の節を足し、ホストの依存の書き方を git 指定から `revidere = \"0.2\"` に差し替える。",
+      "importance": "follow",
+      "reason": "公開できる形にした帰結として手順が変わっただけで、README はビルドに入らないので動くものは何も変わらない。読んだ人がコピーする内容が git 依存から版依存に変わる、という間接の効果だけ。",
+      "ranges": [
+        {
+          "path": "README.md",
+          "side": "new",
+          "start": 34,
+          "end": 39
+        },
+        {
+          "path": "README.md",
+          "side": "new",
+          "start": 150,
+          "end": 150
+        },
+        {
+          "path": "README.md",
+          "side": "old",
+          "start": 143,
+          "end": 143
+        }
+      ],
+      "relations": [
+        {
+          "to": "crates.io に出せる形にする",
+          "reason": "版を指せるようにしたので、README の依存の書き方がそれに追従する",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "LoadError をクレートのルートから辿れるようにする",
+      "body": "`pub use annotate::{Annotations, LoadError}` に変え、Annotations::from_json の Err 型を、Annotations と同じ場所から書けるようにする。",
+      "importance": "follow",
+      "reason": "annotate は今も `pub mod annotate`（crates/revidere/src/lib.rs:14）なので、`revidere::annotate::LoadError` は前から書けた。使える型が増えたのではなく短い綴りが増えただけで、動くものは変わらない。公開クレートとしての面を整える帰結。",
+      "ranges": [
+        {
+          "path": "crates/revidere/src/lib.rs",
+          "side": "new",
+          "start": 22,
+          "end": 25
+        },
+        {
+          "path": "crates/revidere/src/lib.rs",
+          "side": "old",
+          "start": 22,
+          "end": 22
+        }
+      ],
+      "relations": [
+        {
+          "to": "crates.io に出せる形にする",
+          "reason": "外のホストが使う公開面を整える一環で、公開の帰結として出ている",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "README のライブラリ例に diff を取る 2 行を足す",
+      "body": "例が `ReadingOrder::build(&diff, &ann)` に渡す `diff` をどこからも作っていなかったので、`git::diff` と `diff::parse` の 2 行を補う。",
+      "importance": "minor",
+      "reason": "ドキュメントの例の穴埋めで、本体のコードは 1 行も動いていない。",
+      "ranges": [
+        {
+          "path": "README.md",
+          "side": "new",
+          "start": 168,
+          "end": 171
+        }
+      ],
+      "relations": [
+        {
+          "to": "crates.io に出せる形にする",
+          "reason": "公開で README が入口になるので、例がそのままでは通らない状態を直している",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "非 ASCII のパスが diff と numstat で割れないことのテスト",
+      "body": "日本語名のファイルを 1 つ変えたリポジトリを作り、diff の見出しが `diff --git a/あ.txt b/あ.txt` になること、`\\343` が残らないこと、numstat 側が同じ名前 1 つで返すことを見る。",
+      "importance": "minor",
+      "reason": "テストの追加だけで、本体の振る舞いには関与しない。",
+      "ranges": [
+        {
+          "path": "crates/revidere/src/git.rs",
+          "side": "new",
+          "start": 373,
+          "end": 395
+        }
+      ],
+      "relations": [
+        {
+          "to": "git の起動を 1 か所に寄せて core.quotepath=false を固定する",
+          "reason": "この修正が効いていること（2 通りの名前が出ないこと）を検証している",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "stdin を読まないコマンドでも打ち切れることのテスト",
+      "body": "1MB のプロンプトを `sleep 30` に渡し、timeout 1 秒で「打ち切った」が返り、10 秒以内に戻ることを見る。修正前の作りだとここで止まる。",
+      "importance": "minor",
+      "reason": "テストの追加だけで、本体の振る舞いには関与しない。",
+      "ranges": [
+        {
+          "path": "crates/revidere-cli/src/ai.rs",
+          "side": "new",
+          "start": 310,
+          "end": 328
+        }
+      ],
+      "relations": [
+        {
+          "to": "AI コマンドの stdin を別スレッドで書く",
+          "reason": "書き込みで詰まらなくなったことを、詰まる条件（大きいプロンプト × 読まないコマンド）で検証している",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "デモの案内を README と CLAUDE.md に足す",
+      "body": "「よく打つものは Makefile にある」の 1 文に、AI の設定をする前に画面だけ見られることを添える。",
+      "importance": "minor",
+      "reason": "ドキュメントの 1 文ずつで、本体は動いていない。",
+      "ranges": [
+        {
+          "path": "README.md",
+          "side": "new",
+          "start": 40,
+          "end": 41
+        },
+        {
+          "path": "README.md",
+          "side": "old",
+          "start": 34,
+          "end": 34
+        },
+        {
+          "path": "CLAUDE.md",
+          "side": "new",
+          "start": 25,
+          "end": 25
+        },
+        {
+          "path": "CLAUDE.md",
+          "side": "old",
+          "start": 25,
+          "end": 25
+        }
+      ],
+      "relations": [
+        {
+          "to": "同梱のデモと日常の操作を Makefile に入れる",
+          "reason": "足された make demo を案内している",
+          "primary": true
+        }
+      ]
+    },
+    {
+      "title": "画面を採って突き合わせる golden",
+      "body": "6 通りの（タブ・幅・高さ・スクロール位置）で --dump した出力を tests/golden に採る golden と、今の出力と 1 バイト単位で比べる golden-check。折り返しと留めた面の両方が写る組み合わせを選んである。",
+      "importance": "minor",
+      "reason": "画面の書き直しに対するテストの足場で、製品側のコードは含まない。",
+      "ranges": [
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 28,
+          "end": 31
+        },
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 45,
+          "end": 47
+        },
+        {
+          "path": "Makefile",
+          "side": "new",
+          "start": 88,
+          "end": 110
+        }
+      ],
+      "relations": [
+        {
+          "to": "同梱のデモと日常の操作を Makefile に入れる",
+          "reason": "採る画面の入力が、そこで決めた同梱のデモ（DEMO）と --dump の変数に乗っている",
+          "primary": true
+        }
+      ]
+    }
+  ],
+  "impacts": [
+    {
+      "feature": "非 ASCII のファイル名を含むリポジトリのレビュー",
+      "change": "日本語などのパスが、diff・台帳・成果物・画面のどこでも同じ 1 つの名前で出るようになる。これまでは diff だけが 8 進エスケープ付きの別名になり、台帳のパスが実在しない文字列になっていた。その結果、台帳を git 自身の集計と突き合わせる verify（crates/revidere-cli/src/main.rs:192 以降）は「numstat にあるが台帳に無い」で必ず落ち、AI が返した節の path とも噛み合わないので充足検査が通らなかった。",
+      "verify": "日本語名のファイルを 1 つ変えたブランチで `revidere ledger` と `revidere verify` を打ち、パスがそのまま出て「一致」になること。git.rs のテスト a_non_ascii_path_is_not_octal_escaped_in_the_diff も同じことを見ている。",
+      "gap": "quotepath=false が外すのは非 ASCII バイトの引用だけで、空白や引用符やタブを含むパスは今もクォート＋バックスラッシュ escape で出る。パーサは囲みの \" を外すだけでエスケープを戻さない（crates/revidere/src/diff/parser.rs:198）ので、その種の名前では同じ割れ方が残る。",
+      "confidence": "fact"
+    },
+    {
+      "feature": "大きい差分の解析（analyze）",
+      "change": "プロンプトがパイプのバッファを超える大きさでも、設定した AI コマンドが stdin を読まない作りなら、打ち切りの時間が働いて「N 秒で応答が無いので打ち切った」で戻るようになる。これまでは書き込みが埋まった時点で本スレッドが止まり、打ち切り判定に一度も到達せず、手で殺すまで待つことになっていた。",
+      "verify": "stdin を読まないコマンド（例: `sleep 30`）を --ai に渡し、大きい差分で analyze して、設定した秒数で打ち切りのメッセージが出ること。",
+      "gap": "書き込みの失敗を握り潰しているので、プロンプトが途中までしか渡らなかった場合でも、コマンドが 0 で終わって何か返せば正常な応答として受け取る。途中までのプロンプトに対する答えかどうかはここでは分からない。",
+      "confidence": "fact"
+    },
+    {
+      "feature": "配布と導入（cargo install / ホストの依存の書き方）",
+      "change": "3 つのクレートに公開に必要な欄が揃い、内部依存が版で解決できるようになったので、公開すれば `cargo install revidere-cli revidere-view` と `revidere = \"0.2\"` が成り立つ。ホスト側は git 指定を捨てられる。",
+      "verify": "`cargo publish --dry-run` を 3 クレートで通すこと。revidere-fixtures は publish = false で、参照は両方 dev-dependencies（crates/revidere/Cargo.toml:19、crates/revidere-view/Cargo.toml:25）なので公開の障害にならない。",
+      "gap": "この差分には公開そのものは含まれていない。crates.io に上がるまで、README に書いた cargo install と `revidere = \"0.2\"` は失敗する。実際に登録済みかどうかはリポジトリからは確認できなかった。",
+      "confidence": "guess"
+    },
+    {
+      "feature": "clone 直後に画面を見る（make demo）",
+      "change": "Makefile は「clone しただけで全部動く」と書き、demo が同梱の成果物 crates/revidere/tests/data/review.json を AI 抜きで開く導線になっている。ただしこのコミットにその成果物は入っていない（914ef61 の tree に crates/revidere/tests 以下も tests/golden も無く、作業ツリーでは未追跡のまま）。clone した人が make demo を打つと、demo のガードが働いて「デモの成果物が無い」と案内して落ち、make demo-update（AI が要る。4〜5 分）へ回されることになる。golden-check も同じ理由で今は突き合わせる相手が無い。",
+      "verify": "`git ls-tree -r HEAD --name-only | grep tests/` に何も出ないこと。別ディレクトリへ clone して make demo を打つと案内が出て終わること。",
+      "gap": "成果物と採ってある画面を追跡対象にするか、Makefile の宣言（1 行目と demo のコメント）を実態に合わせるかが決まっていない。",
+      "confidence": "fact"
+    },
+    {
+      "feature": "画面の書き直しに対する安全網",
+      "change": "TUI の描画を書き換えたときに、6 通りの幅・高さ・スクロール位置の出力を 1 バイト単位で比べられるようになる。折り返しと留めた面が写る位置が選んであるので、そこの崩れは検出できる。",
+      "verify": "make golden で採ってから、描画に手を入れて make golden-check が落ちること。",
+      "gap": "make test は cargo test と clippy だけで golden-check を呼ばないので、意識して打たない限り効かない。CI に入っているかどうかはこの差分からは分からない。",
+      "confidence": "fact"
+    },
+    {
+      "feature": "ホストへの組み込み（成果物の読み込みエラーの扱い）",
+      "change": "JSON の破損とスキーマ版違いを出し分ける型を `revidere::LoadError` と書けるようになる。扱える状態が増えたわけではなく、これまでの `revidere::annotate::LoadError` も引き続き書ける。",
+      "verify": "ホスト側で `use revidere::LoadError;` が通ること。",
+      "confidence": "fact"
+    }
+  ],
+  "coverage": {
+    "total": 262,
+    "classified": 262,
+    "unclassified": [],
+    "conflicts": [],
+    "unknown": []
+  }
+}

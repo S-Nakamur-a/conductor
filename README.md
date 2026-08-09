@@ -30,7 +30,7 @@ cd conductor
 make install
 ```
 
-`make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`). The MCP server ships inside this same binary, so there's nothing else to install for it.
+`make install` installs the `conductor` binary to `~/.cargo/bin/` (`cargo install --path .`). The MCP server and the revidere review analyser ship inside this same binary, so there's nothing else to install for them.
 
 ### 2. Install the Claude Code plugin
 
@@ -121,7 +121,7 @@ terminal keybindings keep working while you review:
    jumps only work for Rust, Go, and TypeScript** — other languages show no
    hints.
 4. **AI review** — `W` (palette: *Review: Analyse with revidere*) runs
-   [revidere](https://github.com/S-Nakamur-a/revidere) over the worktree's
+   **revidere** over the worktree's
    diff. It sorts every changed line into sections by importance
    (core / ripple / follow / minor) and checks that **no changed line is left
    unexplained**. `w` then opens the result as a full-screen two-column view:
@@ -129,8 +129,10 @@ terminal keybindings keep working while you review:
    scroll, `n`/`N` move between sections, `Enter` opens the section's location
    in the Viewer (where you can leave a comment), `q` closes it.
 
-   revidere is a separate binary and must be on your `PATH`; it decides which
-   AI to call from its own `~/.config/revidere/config.toml`, so Conductor
+   revidere lives in this repository (`crates/revidere*`) and ships inside the
+   `conductor` binary, so there is nothing extra to install — `conductor
+   revidere analyze` is the same command Conductor runs for you. It decides
+   which AI to call from its own `~/.config/revidere/config.toml`, so Conductor
    never picks the model. Replies are cached on the diff itself, so re-running
    on an unchanged diff returns instantly — `alt+w` skips the cache.
 5. **Publish comments** — palette: *Review: Publish Comments to GitHub* posts

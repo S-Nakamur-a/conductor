@@ -10,10 +10,14 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 
 - **Build:** `cargo build`
 - **Run:** `cargo run` or `cargo run -- <repo-path>` (defaults to current directory)
-- **Test:** `cargo test` (tests are inline `#[cfg(test)]` modules in `git_engine.rs`, `config.rs`, `review_store.rs`)
+- **Test:** `cargo test --workspace` (tests are inline `#[cfg(test)]` modules in `git_engine.rs`, `config.rs`, `review_store.rs`)
 - **Run single test:** `cargo test <test_name>` (e.g., `cargo test test_parse_full_config`)
-- **Lint:** `cargo clippy`
-- **Check:** `cargo check`
+- **Lint:** `cargo clippy --workspace`
+- **Check:** `cargo check --workspace`
+
+Bare `cargo test` / `cargo clippy` only cover the `conductor` package — the
+`crates/revidere*` members need `--workspace`. `default-members` is deliberately
+left alone so `cargo run` stays unambiguous.
 - **Logging:** Set `RUST_LOG=debug` (or `info`, `warn`) before running
 
 ### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
@@ -54,6 +58,30 @@ its current session id back.
 - **Fallback:** when the hook stays silent (hooks disabled, older CLI),
   `claude_sessions/rotation.rs` infers the rotation from the logs instead. It is
   deliberately conservative — see its module docs for what it refuses to guess.
+
+### Review analyser (`conductor revidere`, `crates/revidere*`)
+
+revidere turns a git diff into `<worktree>/.revidere/review.json`: every changed
+line sorted into sections by importance, plus a coverage check that no changed
+line is left unexplained. It lives in this repo as workspace members:
+
+| Crate | Role |
+|---|---|
+| `crates/revidere` | The artifact's types, the diff ledger, and `ReadingOrder`. What conductor links against to *read* a review |
+| `crates/revidere-cli` | The analysis itself — prompt, AI invocation, response parsing, response cache. `lib.rs` holds it; the `revidere` bin and `conductor revidere` both call its `run()` |
+| `crates/revidere-fixtures` | Test scaffolding shared by the above |
+
+- **Why in the binary:** same reason as `mcp-serve` and `cc-hook`. A separately
+  installed `revidere` on `PATH` drifts from the conductor that reads its output,
+  and the release tarball could not carry it at all.
+- **Still a child process:** `app/revidere.rs` spawns `current_exe() revidere
+  analyze` rather than calling `run()` on a thread — cancelling then only has to
+  kill a process, which takes the AI command down with it.
+- **Exit codes are contract:** 0 success, 1 failure, **2 = artifact written but
+  the coverage check failed**. Folding 2 into "non-zero is failure" throws away a
+  readable review.
+- Conductor never picks the model: the AI command comes from revidere's own
+  `~/.config/revidere/config.toml`.
 
 ## Architecture
 
@@ -118,7 +146,7 @@ Status bar
 | `term_caps.rs` | Terminal capability probing — OSC 11 background-colour query driving light/dark theme auto-selection |
 | `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
 | `revidere.rs` | Loads the review artifact (`<worktree>/.revidere/review.json`) via the `revidere` library and builds its `ReadingOrder` — read-only, no AI |
-| `app/revidere.rs` | Runs `revidere analyze` as a background child process (one per branch, cancellable) and jumps from a section into the Viewer |
+| `app/revidere.rs` | Runs `conductor revidere analyze` as a background child process (one per branch, cancellable) and jumps from a section into the Viewer |
 | `ui/revidere_view.rs` | The full-screen two-column review view (reading order \| diff) |
 | `app/review_publish.rs` | Publishes review comments to GitHub via `gh`, tracking which comments are already posted |
 
@@ -130,7 +158,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
-- **Review artifact:** `<worktree>/.revidere/review.json`, written by `revidere` (gitignored)
+- **Review artifact:** `<worktree>/.revidere/review.json`, written by `conductor revidere analyze` (gitignored)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions

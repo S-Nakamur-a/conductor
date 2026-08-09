@@ -464,6 +464,7 @@ dependencies = [
  "regex",
  "reqwest",
  "revidere",
+ "revidere-cli",
  "rmcp",
  "rusqlite",
  "schemars",
@@ -2477,8 +2478,26 @@ dependencies = [
 name = "revidere"
 version = "0.2.0"
 dependencies = [
+ "revidere-fixtures",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "revidere-cli"
+version = "0.2.0"
+dependencies = [
+ "revidere",
+ "serde",
+ "serde_json",
+ "toml 1.1.3+spec-1.1.0",
+]
+
+[[package]]
+name = "revidere-fixtures"
+version = "0.2.0"
+dependencies = [
+ "revidere",
 ]
 
 [[package]]

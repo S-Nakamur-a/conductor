@@ -1,0 +1,10 @@
+[package]
+name = "revidere-fixtures"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+# テストからしか呼ばれないが、dev-dependencies から参照できるように普通の
+# ライブラリとして作る (#[cfg(test)] は呼ぶ側で付ける)。
+[dependencies]
+revidere = { path = "../revidere" }

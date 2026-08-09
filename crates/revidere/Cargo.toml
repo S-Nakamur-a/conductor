@@ -1,0 +1,14 @@
+[package]
+name = "revidere"
+version = "0.2.0"
+edition = "2021"
+publish = false
+description = "Reading order and coverage checking for AI-assisted git diff review"
+
+# 成果物を読むための最小限だけ。描画も AI 呼び出しもここには入れない。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+revidere-fixtures = { path = "../revidere-fixtures" }

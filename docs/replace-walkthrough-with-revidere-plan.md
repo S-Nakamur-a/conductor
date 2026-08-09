@@ -599,15 +599,23 @@ pty でマウスを注入して確認したこと (200x50 と 200x22):
 - Esc で Explorer に戻る
 - 追加行に背景色 (`48;2;20;60;20`)、行の途中で前景色が切り替わる (構文トークン)
 
-## 8. 後でやること (GitHub 公開後)
+## 8. revidere を同梱する (2026-08-09)
 
-- `Cargo.toml` の `path` → `git` へ (§2.5)。差分は 1 行
-- `Cargo.lock` に revidere の rev が刻まれるので commit する
-- `.github/workflows/release.yml` のビルドが通ることを確認 (現状 path 依存では通らない)
-- `cargo install --path .` がリポジトリの並びに依存しなくなることを確認
-- **revidere を `cargo install` で配れるようにする** — conductor が PATH 上の
-  `revidere` に依存する以上、README の導入手順に 1 行足す必要がある
-- revidere 側に投げる 2 件:
-  - **`.revidere/` を自分の未追跡走査から外す** (§7 の 1。実害が一番大きい)
-  - `verify` が未追跡のシンボリックリンクで数え違える (§5.4)
-- README の「ホストは今のところ 1 つ」(`README.md:186-199`) が古くなるので更新を依頼
+外部依存として公開するのをやめ、conductor のリポジトリに取り込んだ。
+
+- `crates/revidere` (成果物の型と読む順) / `crates/revidere-cli` (解析) /
+  `crates/revidere-fixtures` (テストの骨組み) をワークスペースのメンバーにする
+- `crates/revidere-view` は持ち込まない。同じ役目を `Focus::Revidere` の
+  2 列ビューが引き受けているので、同じ画面を 1 リポジトリに 2 つ抱えない
+- 解析は `conductor revidere analyze` として本体のバイナリに入れた。
+  `mcp-serve` や `cc-hook` と同じ理由で、別の成果物にすると必ずずれる。
+  PATH 探索が消えるので、リリースの tarball だけで AI レビューが動く
+- 実装は `crates/revidere-cli` のライブラリ側にあり、`revidere` バイナリと
+  `conductor revidere` の両方が同じ `run()` を通る
+- 子プロセスとして起こすのは変えない。中断がプロセスの kill で済み、その先の
+  AI コマンドまで確実に道連れにできるため
+
+残っているもの:
+
+- **`.revidere/` を自分の未追跡走査から外す** (§7 の 1。実害が一番大きい)
+- `verify` が未追跡のシンボリックリンクで数え違える (§5.4)

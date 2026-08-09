@@ -1,9 +1,9 @@
 //! [App] における revidere の駆動: 成果物の読み直しと、解析の起動。
 //!
-//! 解析は `revidere analyze` を子プロセスとして起こす。conductor がどの AI を
-//! 使うかを決めるのではなく、revidere の `[ai] command` に委ねる形になっている
-//! ので、「conductor はどのモデルが答えるかを決めない」という規則はそのまま。
-//! 委譲先が 1 段増えているだけ。
+//! 解析は `conductor revidere analyze` を子プロセスとして起こす。実装は
+//! crates/revidere-cli にあり、同じバイナリに入っている。どの AI を使うかは
+//! revidere の `[ai] command` に委ねたままなので、「conductor はどのモデルが
+//! 答えるかを決めない」という規則はそのまま。委譲先が 1 段増えているだけ。
 //!
 //! 見るのは常に作業ツリー (`--head worktree`)
 //!
@@ -372,16 +372,23 @@ fn artifact_stamp(worktree: &std::path::Path) -> Option<(PathBuf, std::time::Sys
     Some((path, modified))
 }
 
-/// `revidere analyze` を 1 回最後まで走らせる。ブロッキング。
+/// `conductor revidere analyze` を 1 回最後まで走らせる。ブロッキング。
 ///
-/// 終了コードの読み方は revidere の約束どおり: 0 が成功、**2 は「成果物は
-/// できたが充足検査が通らなかった」**。2 を失敗として扱うと、読める成果物が
+/// 解析の実装は同じバイナリの中にあるが、それでも子プロセスとして起こす。
+/// 中断がプロセスを kill するだけで済み、その先の AI コマンドまで確実に
+/// 道連れにできるため。スレッドで直接呼ぶと、AI の待ちを割り込めない。
+///
+/// 終了コードの読み方は revidere の約束どおり: 0 が成功、2 は「成果物は
+/// できたが充足検査が通らなかった」。2 を失敗として扱うと、読める成果物が
 /// 画面に出ないまま捨てられる。
 fn run_analyze(worktree: &PathBuf, force: bool, cancel: &Arc<AtomicBool>) -> RunOutcome {
-    let mut command = Command::new("revidere");
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return RunOutcome::Failed(format!("could not find conductor itself: {e}")),
+    };
+    let mut command = Command::new(exe);
     command
-        .arg("analyze")
-        .arg("--repo")
+        .args(["revidere", "analyze", "--repo"])
         .arg(worktree)
         .args(["--head", ::revidere::git::WORKTREE]);
     if force {
@@ -396,11 +403,6 @@ fn run_analyze(worktree: &PathBuf, force: bool, cancel: &Arc<AtomicBool>) -> Run
         .spawn()
     {
         Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return RunOutcome::Failed(
-                "`revidere` is not on PATH — install it with `cargo install --path crates/revidere-cli`".to_string(),
-            );
-        }
         Err(e) => return RunOutcome::Failed(format!("could not start revidere: {e}")),
     };
 

@@ -32,6 +32,13 @@ pub fn handle_cli_fast_path() -> Option<Result<()>> {
             Some(Ok(()))
         }
         "mcp-serve" => Some(crate::mcp_serve::run()),
+        // レビュー成果物を作る解析。conductor 自身が子プロセスとして
+        // ここを呼ぶ (src/app/revidere.rs)。終了コードに意味があり
+        // (2 = 充足検査に落ちた)、Result では表せないのでここで抜ける。
+        "revidere" => {
+            let code = revidere_cli::run(std::env::args().skip(2));
+            std::process::exit(code as i32);
+        }
         // Claude Code の SessionStart フックとして呼ばれる。mcp-serve と同じく
         // 端末に触る前に処理する必要がある (stdin/stdout を占有するため)。
         "cc-hook" => Some(crate::cc_hook::run()),
@@ -46,10 +53,16 @@ fn print_help() {
 Usage: conductor [REPO_PATH]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
+       conductor revidere <SUBCOMMAND>
 
   REPO_PATH    Git repository to open (defaults to the current directory)
 
 Commands:
+  revidere     Analyse a diff into a review artifact, and the rest of the
+               revidere CLI. Run `conductor revidere --help` for its own
+               usage. Conductor calls this itself when you analyse a
+               worktree; it is also usable by hand.
+
   mcp-serve    Serve the review database to Claude Code over stdio (MCP).
                Started automatically by conductor and by the Claude Code
                plugin; not usually run by hand.
