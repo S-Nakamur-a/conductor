@@ -13,7 +13,7 @@
 //!
 //! conductor は git2 で自前の diff を持っているが、読む順を組むには解析が
 //! 見たのと同じ diff が要る。パスの綴り・削除行の前像行番号・rename の扱いが
-//! 1 つでもずれると、節が指す位置が台帳から外れて「説明の無い変更行」に化ける。
+//! 1 つでもずれると、項目が指す位置が変更一覧から外れて「説明の無い変更行」に化ける。
 //! 同じ関数から取れば、その食い違いは起きようがない。
 
 use std::path::Path;
@@ -22,7 +22,7 @@ use revidere::{Annotations, ReadingOrder};
 
 /// 読み込み済みの成果物と、そこから組んだ読む順。
 pub struct Review {
-    /// 節・概要・機能への影響・充足検査。行から節を引く索引を内部に持つ。
+    /// 項目・概要・機能への影響・説明もれ検査。行から項目を引く索引を内部に持つ。
     pub annotations: Annotations,
     /// diff を歩いて重要度順に並べたもの。画面に出るのはこちら。
     pub order: ReadingOrder,
@@ -32,12 +32,12 @@ pub struct Review {
 }
 
 impl Review {
-    /// 全ての変更位置がちょうど 1 つの節に属し、行番号の作り話も無いか。
+    /// 全ての変更箇所がちょうど 1 つの項目に属し、行番号の作り話も無いか。
     pub fn is_complete(&self) -> bool {
         self.annotations.coverage().is_complete()
     }
 
-    /// 台帳にある変更位置の総数。
+    /// 変更一覧にある変更箇所の総数。
     pub fn total_positions(&self) -> usize {
         self.annotations.coverage().total
     }

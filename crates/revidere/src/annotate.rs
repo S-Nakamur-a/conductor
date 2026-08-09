@@ -1,6 +1,6 @@
 // 成果物を「行から引ける」形にしたもの。読む側が最初に触る面。
 //
-// 成果物 (review.rs) は節の側から範囲を持っているが、diff を描く側が欲しいのは
+// 成果物 (review.rs) は項目の側から範囲を持っているが、diff を描く側が欲しいのは
 // 逆向きの「この行の持ち主は」で、毎回 sections を線形に走るのは描画のたびに
 // 効く。ここで一度だけ索引を作る。
 
@@ -93,8 +93,8 @@ impl Annotations {
         for (idx, ctx) in self.review.sections.iter().enumerate() {
             for r in &ctx.ranges {
                 for p in r.positions() {
-                    // 取り合いは充足検査が別に報告している。ここでは先着を採る。
-                    // 後から来た方で上書きすると、同じ成果物でも節の並び順で
+                    // 取り合いは説明もれ検査が別に報告している。ここでは先着を採る。
+                    // 後から来た方で上書きすると、同じ成果物でも項目の並び順で
                     // 色が変わることになる。
                     match (p.side, p.line) {
                         (Side::File, _) => {
@@ -113,10 +113,10 @@ impl Annotations {
         }
     }
 
-    /// この位置を持っている節の番号（sections() の添字）。
+    /// この位置を持っている項目の番号（sections() の添字）。
     ///
-    /// 重要度ではなく番号が要るのは、同じ節に属する行をひとまとまりに
-    /// 集めたいとき（order.rs）。同じ重要度でも別の節なら別の束になる。
+    /// 重要度ではなく番号が要るのは、同じ項目に属する行をひとまとまりに
+    /// 集めたいとき（order.rs）。同じ重要度でも別の項目なら別の束になる。
     pub(crate) fn owner(&self, pos: &Position) -> Option<usize> {
         match (pos.side, pos.line) {
             (Side::File, _) => self.file_level.get(&pos.path).copied(),
@@ -126,7 +126,7 @@ impl Annotations {
         }
     }
 
-    /// 全ての節。重要度順に並んでいる。
+    /// 全ての項目。重要度順に並んでいる。
     pub fn sections(&self) -> &[Section] {
         &self.review.sections
     }

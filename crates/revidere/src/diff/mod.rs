@@ -1,6 +1,6 @@
-// unified diff の型。パース (parser.rs) と台帳 (ledger.rs) が共有する。
+// unified diff の型。パース (parser.rs) と変更一覧 (ledger.rs) が共有する。
 //
-// 台帳と描画で別々に diff を解釈すると、色を塗れない行が「どちらの都合か」を
+// 変更一覧と描画で別々に diff を解釈すると、色を塗れない行が「どちらの都合か」を
 // 追えなくなるので、パーサは 1 つに保つ。
 
 pub mod ledger;

@@ -1,7 +1,7 @@
 // 読む順。diff を 1 本の流れにして、重要度順に並べ替える。
 //
-// ループの主語は節ではなく台帳（diff）。節を回してその節が触る行を出す形だと、
-// 節が漏らした行は画面から消える。台帳を回して行の持ち主を引く形なら、成果物が
+// ループの主語は項目ではなく変更一覧（diff）。項目を回してその項目が触る行を出す形だと、
+// 項目が漏らした行は画面から消える。変更一覧を回して行の持ち主を引く形なら、成果物が
 // どれだけ壊れていても、ラベルの無い素の diff に退化するだけで行は消えない。
 // order_covers_every_changed_line_exactly_once がこれを固定している。
 
@@ -38,21 +38,21 @@ pub struct Block {
     pub whole_file: bool,
 }
 
-/// 1 つの節に属するかたまりの集まり。
+/// 1 つの項目に属するかたまりの集まり。
 #[derive(Debug, Clone)]
 pub struct PlacedSection {
-    /// sections() の添字。None は「どの節も説明していない」束。
+    /// sections() の添字。None は「どの項目も説明していない」束。
     pub section: Option<usize>,
     pub importance: Option<Importance>,
     pub blocks: Vec<Block>,
-    /// この節が持っている変更行の数。借りた行は数えない。
+    /// この項目が持っている変更行の数。借りた行は数えない。
     pub changed: usize,
-    /// 森の中での深さ。根が 0。持ち主の無い節も 0。
+    /// 森の中での深さ。根が 0。持ち主の無い項目も 0。
     pub depth: usize,
 }
 
 impl PlacedSection {
-    /// 節は在るのに、その節が指す行が diff に 1 つも無い状態。
+    /// 項目は在るのに、その項目が指す行が diff に 1 つも無い状態。
     ///
     /// 黙って消すと「AI が在ると言った変更が無かった」ことに気付けないので、
     /// 空のまま残して画面に出す。
@@ -65,12 +65,12 @@ impl PlacedSection {
 #[derive(Debug, Clone, Default)]
 pub struct ReadingOrder {
     pub sections: Vec<PlacedSection>,
-    /// 節の並びを決めた森。親子や、指す先の無かった関係を引くのに使う。
+    /// 項目の並びを決めた森。親子や、指す先の無かった関係を引くのに使う。
     pub forest: Forest,
 }
 
 impl ReadingOrder {
-    /// 台帳を歩いて束に切り、重要度順に並べる。持ち主の無い束は末尾。
+    /// 変更一覧を歩いて束に切り、重要度順に並べる。持ち主の無い束は末尾。
     ///
     /// 末尾に置くのは、置き場所が意味を持つのが「成果物が不完全なとき」
     /// だけだから。そのとき要るのは知ることであって最初に読むことではなく、
@@ -130,7 +130,7 @@ impl ReadingOrder {
             })
             .collect();
 
-        // 指している行が diff に 1 つも無かった節も、空の節として残す。
+        // 指している行が diff に 1 つも無かった項目も、空の項目として残す。
         for (i, c) in ann.sections().iter().enumerate() {
             if !sections.iter().any(|s| s.section == Some(i)) {
                 sections.push(PlacedSection {
@@ -153,9 +153,9 @@ impl ReadingOrder {
         ReadingOrder { sections, forest }
     }
 
-    /// 流れが持っている変更位置。借りた行は含まない。
+    /// 流れが持っている変更箇所。借りた行は含まない。
     ///
-    /// これが台帳と一致することが、このモジュールの存在理由。
+    /// これが変更一覧と一致することが、このモジュールの存在理由。
     pub fn positions(&self) -> Vec<Position> {
         let mut out = Vec::new();
         for s in &self.sections {
@@ -176,9 +176,9 @@ impl ReadingOrder {
         out
     }
 
-    /// 成果物の節の添字から、それを置いた PlacedSection の位置を引く。
-    /// 関係を辿って移動するのに使う。指す行が 1 つも無かった節も空のまま
-    /// 置いてあるので、どの節にも必ず対応する位置がある。
+    /// 成果物の項目の添字から、それを置いた PlacedSection の位置を引く。
+    /// 関係を辿って移動するのに使う。指す行が 1 つも無かった項目も空のまま
+    /// 置いてあるので、どの項目にも必ず対応する位置がある。
     pub fn index_of(&self, section: usize) -> Option<usize> {
         self.sections
             .iter()
@@ -190,9 +190,9 @@ impl ReadingOrder {
         self.sections.iter().map(|s| s.changed).sum()
     }
 
-    /// どの節も説明していない変更行の数。成果物が完全なら 0。
+    /// どの項目も説明していない変更行の数。成果物が完全なら 0。
     ///
-    /// 成果物に記録された充足検査の数字ではなく、いま画面に出るものから
+    /// 成果物に記録された説明もれ検査の数字ではなく、いま画面に出るものから
     /// 数え直した値。作業ツリーを見ている成果物では両者がずれる。
     pub fn unowned(&self) -> usize {
         self.sections
@@ -302,7 +302,7 @@ diff --git a/src/a.rs b/src/a.rs
     fn order_covers_every_changed_line_exactly_once() {
         for review in [
             &review(),
-            // 節がゼロ
+            // 項目がゼロ
             &review().replace(
                 r#""ranges":[{"path":"src/a.rs","side":"old","start":9,"end":9}]"#,
                 r#""ranges":[]"#,
@@ -321,7 +321,7 @@ diff --git a/src/a.rs b/src/a.rs
                     r#""title":"中核","body":"b","importance":"core","reason":"r",
                      "relations":[{"to":"追従","reason":"r","primary":true}],"#,
                 ),
-            // 関係が実在しない節を指している
+            // 関係が実在しない項目を指している
             &review().replace(
                 r#""title":"追従","body":"b","importance":"follow","reason":"r","#,
                 r#""title":"追従","body":"b","importance":"follow","reason":"r",
@@ -334,7 +334,7 @@ diff --git a/src/a.rs b/src/a.rs
             got.sort();
             want.sort();
             assert_eq!(got.len(), want.len(), "重複または取りこぼしがある: {got:?}");
-            assert_eq!(got, want, "台帳と一致していない");
+            assert_eq!(got, want, "変更一覧と一致していない");
         }
     }
 
@@ -362,7 +362,7 @@ diff --git a/src/a.rs b/src/a.rs
     #[test]
     fn the_unowned_section_goes_last() {
         // 追従が指していた old:9 を実在しない行へずらすと、その行は
-        // 持ち主を失う。持ち主なしの節は末尾。
+        // 持ち主を失う。持ち主なしの項目は末尾。
         let review = review().replace(
             r#"{"path":"src/a.rs","side":"old","start":9,"end":9}"#,
             r#"{"path":"src/a.rs","side":"old","start":99,"end":99}"#,
@@ -379,7 +379,7 @@ diff --git a/src/a.rs b/src/a.rs
     #[test]
     fn borrowed_lines_are_not_counted_as_owned() {
         let (_, _, o) = built(&review());
-        // 中核の節には追従の行（-gone）が借り物として写り込むが、
+        // 中核の項目には追従の行（-gone）が借り物として写り込むが、
         // 持ち物としては数えない。
         let core = &o.sections[0];
         let borrowed: usize = core
@@ -442,7 +442,7 @@ diff --git a/src/a.rs b/src/a.rs
         }
     }
 
-    /// 一色（1 つの節）が new:1 と new:end を指す成果物。間の行はすべて文脈行。
+    /// 一色（1 つの項目）が new:1 と new:end を指す成果物。間の行はすべて文脈行。
     fn single_owner_review(end: u32) -> String {
         format!(
             r#"{{

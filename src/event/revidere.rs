@@ -29,13 +29,13 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 
-    // 総括は 1 列で読むだけの画面なので、節に関わるキーは効かない。
+    // 概要は 1 列で読むだけの画面なので、項目に関わるキーは効かない。
     if app.revidere.show_overview {
         match action {
             Action::NavigateDown => scroll_overview(app, SCROLL_STEP as isize),
             Action::NavigateUp => scroll_overview(app, -(SCROLL_STEP as isize)),
             Action::GoToTop => app.revidere.overview_scroll = 0,
-            // 総括を読み終えたら次は節。読む順の入口として enter も通す。
+            // 概要を読み終えたら次は項目。読む順の入口として enter も通す。
             Action::Select => app.revidere.show_overview = false,
             Action::ExitSubPanel => app.set_focus(Focus::Explorer),
             _ => {}
@@ -57,7 +57,7 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
         }
         Action::RevidereNextSection => step_section(app, 1),
         Action::RevidererPrevSection => step_section(app, -1),
-        // 節が指す位置を通常の Viewer で開く。レビューコメントは Viewer 側に
+        // 項目が指す位置を通常の Viewer で開く。レビューコメントは Viewer 側に
         // あるので、ここが 2 列ビューと既存のコメント作成をつなぐ唯一の口になる。
         Action::Select => app.jump_to_selected_section(),
         Action::ExitSubPanel => app.set_focus(Focus::Explorer),
@@ -83,9 +83,9 @@ pub(super) fn scroll_overview(app: &mut App, delta: isize) {
     app.revidere.overview_scroll = (cur + delta).max(0) as usize;
 }
 
-/// 節の選択を delta 分動かし、右の diff をその節の先頭へ送る。
+/// 項目の選択を delta 分動かし、右の diff をその項目の先頭へ送る。
 ///
-/// 空の節 (成果物が指した位置が diff に無かった節) も飛ばさずに止まる。
+/// 空の項目 (成果物が指した位置が diff に無かった項目) も飛ばさずに止まる。
 /// 黙って飛ばすと、「在ると言った変更が無かった」ことに気付けなくなる。
 pub(super) fn step_section(app: &mut App, delta: isize) {
     let len = section_count(app);

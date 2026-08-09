@@ -1,6 +1,6 @@
 // unified diff（`git diff` の出力）のパース。
 //
-// ここの責務はテキストを Diff の型へ写すことだけ。行から変更位置を取り出す
+// ここの責務はテキストを Diff の型へ写すことだけ。行から変更箇所を取り出す
 // のは ledger.rs の仕事で、ここでは行番号の割り当てと種別の判定までしかしない。
 
 use super::{Diff, DiffLine, FileDiff, FileKind, Hunk, Tag};

@@ -1,29 +1,29 @@
 //! revidere のレビュービュー。画面は 2 つあり、行き先ごとにキーが分かれている。
 //!
-//! - 総括 (1 列, o): 段階 1 の 5 欄と、機能への影響
-//! - 節 + diff (2 列, d): 左に読む順 (節一覧)、右にその順で並べた diff
+//! - 概要 (1 列, o): 段階 1 の 5 欄と、機能への影響
+//! - 項目 + diff (2 列, d): 左に読む順 (項目一覧)、右にその順で並べた diff
 //!
-//! 総括を 2 列側の先頭に混ぜず別画面にしているのは、読むのが最初の一度きり
+//! 概要を 2 列側の先頭に混ぜず別画面にしているのは、読むのが最初の一度きり
 //! だから。混ぜると、そのあとずっと縦を取り続ける。GitHub が PR の説明と
 //! Files changed を分けているのと同じ切り分け。
 //!
 //! 画面全体を占有する。3 列アコーディオンの一部として狭いペインに押し込むと、
-//! 節の説明と diff を同時に読むという、このビューの唯一の用途が成立しない。
+//! 項目の説明と diff を同時に読むという、このビューの唯一の用途が成立しない。
 //!
-//! 右の列を歩くのは diff であって節ではない
+//! 右の列を歩くのは diff であって項目ではない
 //!
 //! 行を出しているのは [revidere::ReadingOrder] で、その中のループの主語は
-//! 台帳 (diff) の側にある。節が漏らしても変更行は消えず、最悪でも帯の無い
-//! 素の diff に退化する。ここで節を回して「その節が触るファイル」を出す形に
+//! 変更一覧 (diff) の側にある。項目が漏らしても変更行は消えず、最悪でも帯の無い
+//! 素の diff に退化する。ここで項目を回して「その項目が触るファイル」を出す形に
 //! 書き直すと、その保証が失われる。
 //!
-//! 節の先頭行は描画中に記録する
+//! 項目の先頭行は描画中に記録する
 //!
-//! n/N のジャンプ先は「その節より前が出した表示行の総和」だが、本文の折り返しが
+//! n/N のジャンプ先は「その項目より前が出した表示行の総和」だが、本文の折り返しが
 //! 幅に依存するので、幅を知らない場所では数えられない。描画のたびに
 //! [crate::app::RevidereState::section_rows] へ書き込み、キー処理はそれを読む
 //! (diff ペインの screen_entry_map と同じ作り)。左列も同様に、画面の行から
-//! 節を引くための対応表 (list_rows) を描画中に書く。
+//! 項目を引くための対応表 (list_rows) を描画中に書く。
 //!
 //! 右列はキャッシュする
 //!
@@ -44,7 +44,7 @@ use revidere::Tag;
 use crate::app::App;
 use crate::revidere::{Review, importance_color};
 
-/// 左列 (読む順) が取る幅の割合。revidere-view と同じ配分で、節の見出しが
+/// 左列 (読む順) が取る幅の割合。revidere-view と同じ配分で、項目の見出しが
 /// 2〜3 行に収まりつつ diff 側に十分な幅が残る。
 const LIST_PCT: u16 = 32;
 
@@ -53,7 +53,11 @@ const LIST_PCT: u16 = 32;
 const IMPACT_INDENT: usize = 6;
 const IMPACT_LABEL_W: usize = 8;
 
-/// 総括の 1 列表示で本文を流し込む最大の幅。端から端まで伸びた 1 行は、
+/// 左列の重要度ラベルが取る幅 (表示列)。一番長い「影響あり」に合わせる。
+/// 揃えないと、ラベルの長さの違いだけで見出しの左端がぎざぎざになる。
+const LABEL_W: usize = 8;
+
+/// 概要の 1 列表示で本文を流し込む最大の幅。端から端まで伸びた 1 行は、
 /// 折り返した先で目が戻る場所を見失う。
 const READING_W: usize = 110;
 
@@ -69,13 +73,13 @@ pub struct DiffRender {
     section_rows: Vec<usize>,
 }
 
-/// レビュービューを area 全体に描画する。総括の 1 列か、節 + diff の 2 列。
+/// レビュービューを area 全体に描画する。概要の 1 列か、項目 + diff の 2 列。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 成果物が無い状態でここへ来ることはない (cmd_show_revidere が弾く) が、
     // worktree の切り替えで手元から消えることはある。
     let Some(review) = app.revidere.current.take() else {
         // 当たり判定を消しておく。列が無いのに残しておくと、マウスが
-        // 存在しない節を選ぶ。
+        // 存在しない項目を選ぶ。
         app.revidere.list_area = Rect::default();
         app.revidere.diff_area = Rect::default();
         app.revidere.list_rows.clear();
@@ -89,8 +93,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     if app.revidere.show_overview {
-        // 節の当たり判定は消す。左列が無いので、残っていると総括の本文を
-        // クリックしたときに見えない節が選ばれる。
+        // 項目の当たり判定は消す。左列が無いので、残っていると概要の本文を
+        // クリックしたときに見えない項目が選ばれる。
         app.revidere.list_area = Rect::default();
         app.revidere.diff_area = area;
         app.revidere.list_rows.clear();
@@ -114,7 +118,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.revidere.current = Some(review);
 }
 
-/// 総括だけを 1 列で描く。
+/// 概要だけを 1 列で描く。
 fn render_overview(frame: &mut Frame, area: Rect, app: &mut App, review: &Review) {
     // 本文が長いので幅は取り過ぎない。端から端まで伸びた 1 行は、折り返した先で
     // 目が戻る場所を見失う。余った幅は枠の外に出して中央に置く — 枠だけ全幅で
@@ -132,7 +136,7 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &mut App, review: &Review
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(height).collect();
 
     let title = format!(
-        " 総括  {}..{}  (d: 節と diff へ) ",
+        " 概要  {}..{}  (d: 項目と diff へ) ",
         review.base, review.head
     );
     frame.render_widget(Paragraph::new(visible).block(bordered(&title, app)), area);
@@ -163,10 +167,10 @@ fn bordered<'a>(title: &'a str, app: &App) -> Block<'a> {
         .border_style(Style::default().fg(app.theme.border_focused))
 }
 
-/// 左列: 節を読む順に並べる。森の深さぶん字下げし、重要度の帯を先頭に置く。
+/// 左列: 項目を読む順に並べる。森の深さぶん字下げし、重要度の帯を先頭に置く。
 ///
-/// 戻り値は「画面に出した行 → 節の番号」。見出しの折り返しで 1 節が何行にも
-/// なるので、クリックした行から節を割り算では引けない。
+/// 戻り値は「画面に出した行 → 項目の番号」。見出しの折り返しで 1 項目が何行にも
+/// なるので、クリックした行から項目を割り算では引けない。
 fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review) -> Vec<usize> {
     let theme = &app.theme;
     let inner_w = area.width.saturating_sub(4) as usize;
@@ -180,14 +184,14 @@ fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review
         let indent = "  ".repeat(placed.depth);
         let (label, color) = match placed.importance {
             Some(imp) => (imp.label_ja(), importance_color(imp)),
-            // どの節も説明していない変更。末尾にまとまる。
-            None => ("未分類", theme.muted),
+            // どの項目でも説明されていない変更。末尾にまとまる。
+            None => ("説明なし", theme.muted),
         };
         let title = placed
             .section
             .and_then(|s| sections.get(s))
             .map(|s| s.title.as_str())
-            .unwrap_or("(どの節にも属さない変更)");
+            .unwrap_or("(どの項目でも説明されていない変更)");
 
         let selected = i == app.revidere.selected;
         let title_style = if selected {
@@ -199,13 +203,14 @@ fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review
             Style::default().fg(theme.fg)
         };
 
-        // 見出しは折り返して全部出す。切ると、似た書き出しの節が見分けられない。
-        let width = inner_w.saturating_sub(indent.len() + label.chars().count() + 2);
+        // 見出しは折り返して全部出す。切ると、似た書き出しの項目が見分けられない。
+        let pad = " ".repeat(LABEL_W.saturating_sub(unicode_width::UnicodeWidthStr::width(label)));
+        let width = inner_w.saturating_sub(indent.len() + LABEL_W + 2);
         for (n, chunk) in wrap(title, width.max(8)).into_iter().enumerate() {
             let head = if n == 0 {
-                format!("{indent}▌{label} ")
+                format!("{indent}▌{label}{pad} ")
             } else {
-                format!("{indent}▌{} ", " ".repeat(label.chars().count()))
+                format!("{indent}▌{} ", " ".repeat(LABEL_W))
             };
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(head, Style::default().fg(color)),
@@ -213,11 +218,11 @@ fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review
             ])));
             section_of_row.push(i);
         }
-        // 節が在るのに指す行が diff に 1 つも無い状態。黙って消すと
+        // 項目が在るのに指す行が diff に 1 つも無い状態。黙って消すと
         // 「在ると言った変更が無かった」ことに気付けない。
         if placed.is_empty() {
             items.push(ListItem::new(Line::from(Span::styled(
-                format!("{indent}   (この節が指す変更が diff に無い)"),
+                format!("{indent}   (この項目が指す変更が diff に無い)"),
                 Style::default().fg(theme.warning),
             ))));
             section_of_row.push(i);
@@ -234,9 +239,9 @@ fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review
         .min(items.len().saturating_sub(1));
     let visible: Vec<ListItem> = items.into_iter().skip(scroll).take(height).collect();
 
-    // 総括は別画面なので、そこへ戻る道は枠題に書いておかないと分からない。
+    // 概要は別画面なので、そこへ戻る道は枠題に書いておかないと分からない。
     frame.render_widget(
-        List::new(visible).block(bordered(" 読む順  (o: 総括へ) ", app)),
+        List::new(visible).block(bordered(" 読む順  (o: 概要へ) ", app)),
         area,
     );
 
@@ -296,7 +301,7 @@ fn render_diff_column(frame: &mut Frame, area: Rect, app: &mut App, review: &Rev
     app.revidere.diff_cache = Some(cache);
 }
 
-/// 読む順そのものを 1 本の流れとして組み立てる。戻り値は行と、節ごとの先頭行。
+/// 読む順そのものを 1 本の流れとして組み立てる。戻り値は行と、項目ごとの先頭行。
 fn build_diff_lines(app: &App, area: Rect, review: &Review) -> (Vec<Line<'static>>, Vec<usize>) {
     let theme = &app.theme;
     let inner_w = area.width.saturating_sub(2) as usize;
@@ -310,12 +315,12 @@ fn build_diff_lines(app: &App, area: Rect, review: &Review) -> (Vec<Line<'static
         section_rows.push(lines.len());
         let (label, color) = match placed.importance {
             Some(imp) => (imp.label_ja(), importance_color(imp)),
-            None => ("未分類", theme.muted),
+            None => ("説明なし", theme.muted),
         };
         let section = placed.section.and_then(|s| sections.get(s));
         let title = section
             .map(|s| s.title.as_str())
-            .unwrap_or("どの節も説明していない変更");
+            .unwrap_or("どの項目でも説明されていない変更");
 
         lines.push(Line::from(Span::styled(
             format!("── {label} {title}"),
@@ -328,17 +333,19 @@ fn build_diff_lines(app: &App, area: Rect, review: &Review) -> (Vec<Line<'static
                     Style::default().fg(theme.fg),
                 )));
             }
-            // なぜその重要度なのかは全節必須。誤分類は機械では見つからないが、
+            // なぜその重要度なのかは全項目必須。誤分類は機械では見つからないが、
             // 理由が読めれば人が見つけられる — だから畳まずに出す。
             if let Some(reason) = &section.reason {
-                for (n, chunk) in wrap(reason, inner_w.saturating_sub(8))
+                let first = format!("  なぜ{label}: ");
+                let indent_w = unicode_width::UnicodeWidthStr::width(first.as_str());
+                for (n, chunk) in wrap(reason, inner_w.saturating_sub(indent_w))
                     .into_iter()
                     .enumerate()
                 {
                     let head = if n == 0 {
-                        format!("  なぜ{label}: ")
+                        first.clone()
                     } else {
-                        "            ".to_string()
+                        " ".repeat(indent_w)
                     };
                     lines.push(Line::from(Span::styled(
                         format!("{head}{chunk}"),
@@ -384,12 +391,12 @@ fn build_diff_lines(app: &App, area: Rect, review: &Review) -> (Vec<Line<'static
     (lines, section_rows)
 }
 
-/// 右列の先頭に総括を置く。5 欄と、機能への影響。
+/// 右列の先頭に概要を置く。5 欄と、機能への影響。
 ///
-/// 節より前に読むものなので流れの先頭に置く。畳んだり別画面にしたりしないのは、
-/// これを読まずに節から読み始めると、個々の変更が何のためかが分からないまま
-/// 進むことになるため。節の先頭行 (section_rows) はこの後から数え始めるので、
-/// 節を選べばここは通り過ぎ、g (先頭へ) で戻ってくる。
+/// 項目より前に読むものなので流れの先頭に置く。畳んだり別画面にしたりしないのは、
+/// これを読まずに項目から読み始めると、個々の変更が何のためかが分からないまま
+/// 進むことになるため。項目の先頭行 (section_rows) はこの後から数え始めるので、
+/// 項目を選べばここは通り過ぎ、g (先頭へ) で戻ってくる。
 fn push_overview(
     lines: &mut Vec<Line<'static>>,
     review: &Review,
@@ -404,7 +411,7 @@ fn push_overview(
         ))
     };
 
-    lines.push(head("── 総括", theme.accent));
+    lines.push(head("── 概要", theme.accent));
     lines.push(Line::from(""));
     for (key, value) in [
         ("困っていたこと", &overview.problem),
@@ -550,7 +557,7 @@ fn diff_line(
         .or(line.old_line)
         .map(|n| format!("{n:>5}"))
         .unwrap_or_else(|| "     ".to_string());
-    // 帯はこの行がこの節の持ち物であることの印。借りてきた文脈行には付かない。
+    // 帯はこの行がこの項目の持ち物であることの印。借りてきた文脈行には付かない。
     let band = if owned { "▌" } else { " " };
     let band_style = if owned {
         Style::default().fg(band_color)
@@ -646,7 +653,7 @@ mod tests {
         }
     }
 
-    /// 幅 0 で無限ループや空返しにならないこと。狭い端末で節一覧の幅が
+    /// 幅 0 で無限ループや空返しにならないこと。狭い端末で項目一覧の幅が
     /// 潰れたときにここへ来る。
     #[test]
     fn wrap_with_zero_width_returns_the_text_untouched() {

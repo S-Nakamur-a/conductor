@@ -19,7 +19,7 @@ impl std::error::Error for GitError {}
 /// core.quotepath の既定は true で、非 ASCII のパスを "a/\343\201\202.txt" の
 /// ように 8 進エスケープ付きで囲んで出す。diff だけがそうなり、-z を付けた
 /// numstat や ls-files は生のまま出すので、放っておくと同じファイルが 2 通りの
-/// 名前で現れて台帳と外部オラクルが噛み合わない。false に固定して生で受ける。
+/// 名前で現れて変更一覧と外部オラクルが噛み合わない。false に固定して生で受ける。
 fn git(repo: &Path) -> Command {
     let mut c = Command::new("git");
     c.args(["-c", "core.quotepath=false", "-C"]).arg(repo);
@@ -81,7 +81,7 @@ pub fn guess_base(repo: &Path) -> Result<String, GitError> {
 /// 「このブランチで何をしたか」ではなくなる。
 ///
 /// 文脈行はモデルには不要（自分でファイルを読む）だが、
-/// 台帳の行番号を正しく数えるには必須なので既定の 3 行を保つ。
+/// 変更一覧の行番号を正しく数えるには必須なので既定の 3 行を保つ。
 pub fn diff(repo: &Path, base: &str, head: &str) -> Result<String, GitError> {
     // 作業ツリーを見るときは 3 点指定が意味を持たない。
     if head == WORKTREE {
@@ -93,7 +93,7 @@ pub fn diff(repo: &Path, base: &str, head: &str) -> Result<String, GitError> {
         &[
             "diff",
             // rename を rename として出す。出さないと削除＋追加に化けて
-            // 変更位置が水増しされる。
+            // 変更箇所が水増しされる。
             "--find-renames",
             "--no-color",
             "--no-ext-diff",
@@ -157,7 +157,7 @@ pub fn untracked(repo: &Path) -> Result<Vec<String>, GitError> {
 /// (path, added, deleted)。バイナリは (path, None, None)。
 pub type NumstatRow = (String, Option<usize>, Option<usize>);
 
-/// 外部オラクル。台帳の行数がこれと一致するかを受け入れ条件にしている。
+/// 外部オラクル。変更一覧の行数がこれと一致するかを受け入れ条件にしている。
 ///
 /// -z を使うのは rename のため。付けないと git は `src/{a.rs => b/c.rs}` という
 /// 表示用の 1 つのパスに畳んでしまい、そのまま読むと実在しないパスになる。
@@ -190,7 +190,7 @@ pub fn numstat(repo: &Path, base: &str, head: &str) -> Result<Vec<NumstatRow>, G
             continue;
         };
         let path = match parts.next() {
-            // rename: 前像・後像が続く。台帳は後像の名前で持つので後像を採る。
+            // rename: 前像・後像が続く。変更一覧は後像の名前で持つので後像を採る。
             Some("") | None => {
                 let _old = it.next();
                 match it.next() {
@@ -373,7 +373,7 @@ mod tests {
     /// 非 ASCII のパスが、diff でも numstat でも同じ 1 つの名前で出る。
     ///
     /// core.quotepath の既定のままだと diff だけが "a/\343\201\202.txt" という
-    /// エスケープ付きの別名で出て、台帳のパスが実在しない文字列になる。
+    /// エスケープ付きの別名で出て、変更一覧のパスが実在しない文字列になる。
     /// 外部オラクルとの突き合わせもそこで必ず落ちる。
     #[test]
     fn a_non_ascii_path_is_not_octal_escaped_in_the_diff() {

@@ -1,4 +1,4 @@
-// 台帳。パースした Diff から変更位置の集合を取り出し、プロンプトに載せる
+// 変更一覧。パースした Diff から変更箇所の集合を取り出し、プロンプトに載せる
 // 要約（ledger_summary）を作る。テキストは読まず、parser.rs が作った型だけを見る。
 
 use super::{DiffLine, FileDiff, FileKind, Tag};
@@ -6,7 +6,7 @@ use crate::review::{Position, Side};
 use std::collections::BTreeSet;
 
 impl DiffLine {
-    /// この行が指す変更位置。文脈行は位置を持たない。
+    /// この行が指す変更箇所。文脈行は位置を持たない。
     pub fn position(&self, path: &str) -> Option<Position> {
         match self.tag {
             Tag::Context => None,
@@ -33,7 +33,7 @@ impl FileDiff {
             .count()
     }
 
-    /// このファイルが持つ変更位置。行を持たない変更はファイル単位の位置 1 つになる。
+    /// このファイルが持つ変更箇所。行を持たない変更はファイル単位の位置 1 つになる。
     ///
     /// ここで空を返すと「変更が無かった」と区別が付かなくなるので、
     /// 行が無くても必ず 1 つは出す。
@@ -53,12 +53,12 @@ impl FileDiff {
 }
 
 impl super::Diff {
-    /// 全ての変更位置。並びは安定（パス、side、行番号の順）。
+    /// 全ての変更箇所。並びは安定（パス、side、行番号の順）。
     pub fn positions(&self) -> BTreeSet<Position> {
         self.files.iter().flat_map(|f| f.positions()).collect()
     }
 
-    /// プロンプトに載せる台帳。1 行ずつ並べると長くなりすぎるので、
+    /// プロンプトに載せる変更一覧。1 行ずつ並べると長くなりすぎるので、
     /// 連続した行番号を範囲へ畳んで出す。
     pub fn ledger_summary(&self) -> String {
         let mut out = String::new();

@@ -27,11 +27,11 @@ pub const USAGE: &str = "\
 revidere — git diff を入口にした 3 段階のレビュー支援
 
   revidere analyze [options]   差分を解析して成果物 JSON を書く
-  revidere verify  [options]   台帳が git と一致するかだけ確かめる
-  revidere ledger  [options]   変更位置の台帳を表示する
+  revidere verify  [options]   変更一覧が git と一致するかだけ確かめる
+  revidere ledger  [options]   変更箇所の一覧を表示する
   revidere prompt  [options]   AI に渡すプロンプトを表示する（起動はしない）
   revidere config  [options]   AI の設定の読み先と、無ければ雛形を表示する
-  revidere check <file>        既存の成果物に充足検査をかけ直す
+  revidere check <file>        既存の成果物の説明もれを調べ直す
 
 options:
   --repo <path>   対象リポジトリ（既定: カレントディレクトリ）
@@ -45,12 +45,12 @@ options:
   --ai <cmd>      AI コマンドを空白区切りで上書きする（既定: 設定ファイルの
                   [ai] command。revidere は AI CLI を同梱しない）
   --timeout <s>   AI の実時間上限を上書きする（既定: 設定ファイル / 900）
-  --no-repair     未分類が残っても差し戻さない
+  --no-repair     説明なしが残っても差し戻さない
   --no-cache      貯めた応答を使わず、AI に聞き直す（結果は貯め直す）
 ";
 
 /// サブコマンド名以降の引数を受け取って実行し、終了コードを返す。
-/// 0 成功 / 1 失敗 / 2 処理は通ったが充足検査に落ちた。
+/// 0 成功 / 1 失敗 / 2 処理は通ったが説明もれが残った。
 pub fn run(argv: impl Iterator<Item = String>) -> u8 {
     let mut argv = argv;
     let Some(cmd) = argv.next() else {
@@ -184,15 +184,15 @@ fn load_diff(
 fn cmd_ledger(o: &args::DiffArgs) -> Result<bool, CliError> {
     let (_, _, _, d) = load_diff(&o.repo, o.base.as_deref(), &o.head)?;
     print!("{}", d.ledger_summary());
-    println!("---\n変更位置 {} 件", d.positions().len());
+    println!("---\n変更箇所 {} 件", d.positions().len());
     Ok(true)
 }
 
-/// 台帳が git 自身の集計と一致するか。外部オラクルとの突き合わせ。
+/// 変更一覧が git 自身の集計と一致するか。外部オラクルとの突き合わせ。
 fn cmd_verify(o: &args::DiffArgs) -> Result<bool, CliError> {
     let (root, base, head, d) = load_diff(&o.repo, o.base.as_deref(), &o.head)?;
     let stat = git::numstat(&root, &base, &head)?;
-    // 未追跡ファイルは numstat に出ないが台帳には入る。差ではなく想定内の増分。
+    // 未追跡ファイルは numstat に出ないが変更一覧には入る。差ではなく想定内の増分。
     let untracked = if head == git::WORKTREE {
         git::untracked(&root)?
     } else {
@@ -201,7 +201,7 @@ fn cmd_verify(o: &args::DiffArgs) -> Result<bool, CliError> {
     let mut ok = true;
     if stat.len() + untracked.len() != d.files.len() {
         println!(
-            "ファイル数が違う: numstat {} + 未追跡 {} / 台帳 {}",
+            "ファイル数が違う: numstat {} + 未追跡 {} / 変更一覧 {}",
             stat.len(),
             untracked.len(),
             d.files.len()
@@ -209,11 +209,11 @@ fn cmd_verify(o: &args::DiffArgs) -> Result<bool, CliError> {
         ok = false;
     }
     if !untracked.is_empty() {
-        println!("未追跡 {} ファイルを台帳に含めた", untracked.len());
+        println!("未追跡 {} ファイルを変更一覧に含めた", untracked.len());
     }
     for (path, added, deleted) in &stat {
         let Some(f) = d.file(path) else {
-            println!("{path}: numstat にあるが台帳に無い");
+            println!("{path}: numstat にあるが変更一覧に無い");
             ok = false;
             continue;
         };
@@ -223,7 +223,7 @@ fn cmd_verify(o: &args::DiffArgs) -> Result<bool, CliError> {
         };
         if f.added() != *a || f.deleted() != *dl {
             println!(
-                "{path}: numstat +{a} -{dl} / 台帳 +{} -{}",
+                "{path}: numstat +{a} -{dl} / 変更一覧 +{} -{}",
                 f.added(),
                 f.deleted()
             );
@@ -231,7 +231,7 @@ fn cmd_verify(o: &args::DiffArgs) -> Result<bool, CliError> {
         }
     }
     println!(
-        "{}: {} ファイル / 変更位置 {} 件",
+        "{}: {} ファイル / 変更箇所 {} 件",
         if ok { "一致" } else { "不一致" },
         d.files.len(),
         d.positions().len()
@@ -291,7 +291,7 @@ fn cmd_analyze(o: &args::AnalyzeArgs) -> Result<bool, CliError> {
     let d = diff::parse(&text);
     let ledger = d.positions();
     eprintln!(
-        "{}: {base}...{head} / {} ファイル / 変更位置 {} 件",
+        "{}: {base}...{head} / {} ファイル / 変更箇所 {} 件",
         root.display(),
         d.files.len(),
         ledger.len()
@@ -322,11 +322,11 @@ fn cmd_analyze(o: &args::AnalyzeArgs) -> Result<bool, CliError> {
     let mut r = parse::review(&raw, &base_oid, &head_oid)?;
     r.coverage = coverage::check(&ledger, &r.sections);
 
-    // 未分類が残ったら、残りだけを渡して差し戻す。全部やり直させると
+    // 説明の無い変更が残ったら、残りだけを渡して差し戻す。全部やり直させると
     // 正しく分類できていた部分まで揺れる。
     if o.repair && !r.coverage.unclassified.is_empty() {
         eprintln!(
-            "未分類が {} 件残ったので差し戻す",
+            "説明の無い変更が {} 件残ったので差し戻す",
             r.coverage.unclassified.len()
         );
         let gaps = coverage::gap_summary(&r.coverage.unclassified);
@@ -370,10 +370,10 @@ fn write_artifact(path: &Path, r: &Review) -> Result<(), CliError> {
 /// 検査結果を標準出力へ。破れは黙って通さない。
 fn report(r: &Review) {
     let c = &r.coverage;
-    println!("変更位置 {} 件 / 分類済み {} 件", c.total, c.classified);
+    println!("変更箇所 {} 件 / 説明あり {} 件", c.total, c.classified);
     for (label, items) in [
-        ("どの節にも属していない", &c.unclassified),
-        ("複数の節が取り合っている", &c.conflicts),
+        ("どの項目でも説明されていない", &c.unclassified),
+        ("複数の項目が取り合っている", &c.conflicts),
         ("変更されていない位置を指している", &c.unknown),
     ] {
         if items.is_empty() {
@@ -388,9 +388,9 @@ fn report(r: &Review) {
         }
     }
     if c.is_complete() {
-        println!("\n充足検査: 通過");
+        println!("\n説明もれ: なし");
     } else {
-        println!("\n充足検査: 未通過");
+        println!("\n説明もれ: あり");
     }
     let mut counts = [0usize; 4];
     for ctx in &r.sections {
@@ -400,6 +400,6 @@ fn report(r: &Review) {
         .iter()
         .map(|i| format!("{} {}", i.label_ja(), counts[*i as usize]))
         .collect();
-    println!("節 {} 件（{}）", r.sections.len(), labels.join(" / "));
+    println!("項目 {} 件（{}）", r.sections.len(), labels.join(" / "));
     println!("機能への影響 {} 件", r.impacts.len());
 }

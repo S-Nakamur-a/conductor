@@ -18,7 +18,7 @@ pub fn artifact_path(repo_root: &std::path::Path) -> std::path::PathBuf {
     repo_root.join(DIR).join("review.json")
 }
 
-/// 変更位置がどちら側のものか。
+/// 変更箇所がどちら側のものか。
 ///
 /// 削除行を後像の行番号に寄せる妥協をしないために Old を一級で持つ。
 /// 後像行番号しか持てないホストがあっても、こちらのモデルは縮めない。
@@ -33,7 +33,7 @@ pub enum Side {
     File,
 }
 
-/// 変更位置 1 つ。分割できない最小の単位で、分類はこの粒度で行う。
+/// 変更箇所 1 つ。分割できない最小の単位で、分類はこの粒度で行う。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Position {
     pub path: String,
@@ -84,7 +84,7 @@ pub struct Range {
 }
 
 impl Range {
-    /// この範囲が指す位置を列挙する。台帳に無い位置もそのまま返す
+    /// この範囲が指す位置を列挙する。変更一覧に無い位置もそのまま返す
     /// （存在しない行を指したことを検査側で捕まえるため、ここでは黙らせない）。
     pub fn positions(&self) -> Vec<Position> {
         match (self.side, self.start, self.end) {
@@ -98,9 +98,9 @@ impl Range {
     }
 }
 
-/// 変更の重要度。全ての変更位置がちょうど 1 つに属する。
+/// 変更の重要度。全ての変更箇所がちょうど 1 つに属する。
 ///
-/// 節ごとに 2 段で決まる。1 問目「主目的そのものか、その帰結か」。
+/// 項目ごとに 2 段で決まる。1 問目「主目的そのものか、その帰結か」。
 /// 帰結だったときだけ 2 問目「その帰結で振る舞いが変わったか」。
 /// 振る舞いを見るのは帰結の中を割るためだけで、Core とは競合しない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -119,10 +119,10 @@ pub enum Importance {
 impl Importance {
     pub fn label_ja(self) -> &'static str {
         match self {
-            Importance::Core => "中核",
-            Importance::Ripple => "波及",
-            Importance::Follow => "追従",
-            Importance::Minor => "周辺",
+            Importance::Core => "本題",
+            Importance::Ripple => "影響あり",
+            Importance::Follow => "影響なし",
+            Importance::Minor => "おまけ",
         }
     }
 
@@ -150,7 +150,7 @@ pub struct Overview {
     pub scope: String,
 }
 
-/// 段階 2 の 1 節。
+/// 段階 2 の 1 項目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
     pub title: String,
@@ -163,22 +163,22 @@ pub struct Section {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub ranges: Vec<Range>,
-    /// 他の節との関係。無い節もある。
+    /// 他の項目との関係。無い項目もある。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<Relation>,
 }
 
-/// 節から節への関係。「これは何の帰結か」を指す。
+/// 項目から項目への関係。「これは何の帰結か」を指す。
 ///
-/// 相手を添字ではなく title で指す。添字は数え間違えても黙って別の節を
+/// 相手を添字ではなく title で指す。添字は数え間違えても黙って別の項目を
 /// 指すが、title なら存在しない相手を指したことが後から分かる。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relation {
-    /// 相手の節の title。
+    /// 相手の項目の title。
     pub to: String,
     /// なぜそう言えるのか。関係の種類はここへ吸収してあり、別の欄にはしない。
     pub reason: String,
-    /// 主の関係。読む順はこれだけを辿るので、1 つの節に高々 1 つ。
+    /// 主の関係。読む順はこれだけを辿るので、1 つの項目に高々 1 つ。
     #[serde(default)]
     pub primary: bool,
 }
@@ -206,23 +206,23 @@ pub struct Impact {
     pub confidence: Confidence,
 }
 
-/// 充足検査の結果。生成物ではなく検査の出力なので、モデルには書かせない。
+/// 説明もれ検査の結果。生成物ではなく検査の出力なので、モデルには書かせない。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Coverage {
-    /// 台帳にある変更位置の総数。
+    /// 変更一覧にある変更箇所の総数。
     pub total: usize,
-    /// ちょうど 1 つの節に属した位置の数。
+    /// ちょうど 1 つの項目に属した位置の数。
     pub classified: usize,
-    /// どの節にも属さなかった位置。
+    /// どの項目にも属さなかった位置。
     pub unclassified: Vec<Position>,
-    /// 2 つ以上の節に属した位置。
+    /// 2 つ以上の項目に属した位置。
     pub conflicts: Vec<Position>,
-    /// 節が指したが、台帳に存在しない位置。行番号の作り話を捕まえる。
+    /// 項目が指したが、変更一覧に存在しない位置。行番号の作り話を捕まえる。
     pub unknown: Vec<Position>,
 }
 
 impl Coverage {
-    /// 全ての変更位置がちょうど 1 つの節に属し、作り話も無いか。
+    /// 全ての変更箇所がちょうど 1 つの項目に属し、作り話も無いか。
     pub fn is_complete(&self) -> bool {
         self.unclassified.is_empty() && self.conflicts.is_empty() && self.unknown.is_empty()
     }

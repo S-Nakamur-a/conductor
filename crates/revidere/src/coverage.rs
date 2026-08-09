@@ -1,13 +1,13 @@
-// 充足検査。ライブラリの存在理由はここにある。
+// 説明もれ検査。ライブラリの存在理由はここにある。
 //
 // 「diff の全ての変更に何らかの色が付いている」を守るのはこの関数だけで、
 // 破れたときに黙って通さないことが唯一の仕事。ただし見つかるのは分類漏れまでで、
-// 誤分類は機械では見つからない（節の理由を人が読んで見つける）。
+// 誤分類は機械では見つからない（項目の理由を人が読んで見つける）。
 
 use crate::review::{Coverage, Position, Section};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 台帳と節の集合を突き合わせる。
+/// 変更一覧と項目の集合を突き合わせる。
 ///
 /// 3 種類の破れ（Coverage の各欄）は混ぜずに別々に数える。混ぜると原因が追えない。
 pub fn check(ledger: &BTreeSet<Position>, sections: &[Section]) -> Coverage {
@@ -15,8 +15,8 @@ pub fn check(ledger: &BTreeSet<Position>, sections: &[Section]) -> Coverage {
     let mut unknown: BTreeSet<Position> = BTreeSet::new();
 
     for ctx in sections {
-        // 同じ節が範囲を重ねて書いても二重計上しない。二重計上を conflicts に
-        // 出すと、本当に別々の節が同じ行を取り合っている場合と区別が付かなくなる。
+        // 同じ項目が範囲を重ねて書いても二重計上しない。二重計上を conflicts に
+        // 出すと、本当に別々の項目が同じ行を取り合っている場合と区別が付かなくなる。
         let mut seen_here: BTreeSet<Position> = BTreeSet::new();
         for range in &ctx.ranges {
             for p in range.positions() {
@@ -53,7 +53,7 @@ pub fn check(ledger: &BTreeSet<Position>, sections: &[Section]) -> Coverage {
     }
 }
 
-/// 未分類の位置だけを、モデルへ差し戻すための台帳へ畳む。
+/// 説明なしの位置だけを、モデルへ差し戻すための変更一覧へ畳む。
 ///
 /// 全体をやり直させると、既に正しく分類できた部分まで揺れる。
 pub fn gap_summary(unclassified: &[Position]) -> String {
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn one_section_overlapping_its_own_ranges_is_not_a_conflict() {
-        // 同じ節が範囲を重ねて書いても、二重計上を conflicts に出さない。
+        // 同じ項目が範囲を重ねて書いても、二重計上を conflicts に出さない。
         // 出すと本当の取り合いと区別が付かなくなる。
         let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 5)]);
         let c = check(

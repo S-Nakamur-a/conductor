@@ -165,7 +165,7 @@ fn analyze_reports_the_missing_ai_configuration_before_touching_a_broken_diff() 
     assert!(matches!(e, CliError::Config(_)), "{e:?}");
 }
 
-// verify は台帳の集計を git 自身の numstat と突き合わせる。
+// verify は変更一覧の集計を git 自身の numstat と突き合わせる。
 #[test]
 fn verify_matches_git_numstat_for_a_clean_commit_range() {
     let repo = Repo::new();
@@ -181,7 +181,7 @@ fn verify_matches_git_numstat_for_a_clean_commit_range() {
     assert!(cmd_verify(&args).unwrap());
 }
 
-// worktree モードでは、numstat に出ない未追跡ファイルを台帳側の
+// worktree モードでは、numstat に出ない未追跡ファイルを変更一覧側の
 // 想定内の増分として数える。
 #[test]
 fn verify_counts_untracked_files_into_the_worktree_ledger() {
@@ -275,14 +275,14 @@ mod subprocess {
         );
     }
 
-    // 差し戻し（repair）で未分類が減らなかったら、差し戻し後の結果は
+    // 差し戻し（repair）で説明なしが減らなかったら、差し戻し後の結果は
     // 採らず元の結果を使う。
     #[test]
     fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
         let repo = Repo::new();
         repo.write("a.txt", "1\n2\n3\n");
         let base = repo.commit_all("base");
-        // 追加行を 2 つにして、初回で 1 件だけ未分類のまま残す。
+        // 追加行を 2 つにして、初回で 1 件だけ説明なしのまま残す。
         repo.write("a.txt", "1\n2\n3\n4\n5\n");
         let head = repo.commit_all("head");
 
@@ -310,7 +310,7 @@ mod subprocess {
             cache: true,
         };
         let ok = cmd_analyze(&args).unwrap();
-        assert!(!ok, "未分類が残るので充足検査は通らない");
+        assert!(!ok, "説明なしが残るので説明もれ検査は通らない");
         let saved = Review::from_json(&std::fs::read_to_string(&out).unwrap()).unwrap();
         assert_eq!(
             saved.coverage.unclassified.len(),

@@ -15,26 +15,26 @@ pub struct RevidereState {
     /// 実行中の解析。ブランチごとに高々 1 本なので worktree 同士が
     /// 待ち合わせにならない。
     pub runs: RevidereRuns,
-    /// 2 列ビューの左列 (節一覧) の選択位置。
+    /// 2 列ビューの左列 (項目一覧) の選択位置。
     pub selected: usize,
     /// 左列の垂直スクロールオフセット。
     pub list_scroll: usize,
     /// 右列 (diff) の垂直スクロールオフセット。
     pub diff_scroll: usize,
-    /// 総括の 1 列表示に切り替わっているか。
+    /// 概要の 1 列表示に切り替わっているか。
     ///
-    /// 開いた直後はこちら。総括は節より先に読むものだが、読むのは最初の
+    /// 開いた直後はこちら。概要は項目より先に読むものだが、読むのは最初の
     /// 一度で、そのあとずっと画面を取り続けるものではない (GitHub が PR の
     /// 説明と Files changed を分けているのと同じ切り分け)。
     pub show_overview: bool,
-    /// 総括の垂直スクロールオフセット。diff と分けて持つのは、行き来しても
+    /// 概要の垂直スクロールオフセット。diff と分けて持つのは、行き来しても
     /// それぞれの読みかけの位置が残るようにするため。
     pub overview_scroll: usize,
     /// 最後に読んだ成果物の (パス, 更新時刻)。ここが変わっていなければ
     /// 読み直しを丸ごと飛ばす — [crate::revidere::load] は git diff を取り直す
     /// ので、コメントが 1 件書かれるたびに走らせるには重い。
     pub loaded_from: Option<(std::path::PathBuf, std::time::SystemTime)>,
-    /// 節ごとの、右列での先頭行。本文の折り返しが幅に依存するので描画中に
+    /// 項目ごとの、右列での先頭行。本文の折り返しが幅に依存するので描画中に
     /// 書き込まれ、n/N のジャンプがこれを読む (diff ペインの screen_entry_map
     /// と同じ作り)。描画前は空。
     pub section_rows: Vec<usize>,
@@ -44,8 +44,8 @@ pub struct RevidereState {
     /// 成果物の版。[Self::replace] のたびに進み、右列のキャッシュキーに入る。
     /// 中身を比較する代わりの安い指紋。
     pub epoch: u64,
-    /// 左列のいま画面に出ている行 → 節の番号。クリックした行がどの節かを
-    /// 引くのに使う。折り返しで 1 節が複数行になるので、単純な割り算では
+    /// 左列のいま画面に出ている行 → 項目の番号。クリックした行がどの項目かを
+    /// 引くのに使う。折り返しで 1 項目が複数行になるので、単純な割り算では
     /// 引けない。
     pub list_rows: Vec<usize>,
     /// 左列と右列の画面上の位置。マウスのヒットテストに使う。このビューは
@@ -63,13 +63,13 @@ impl RevidereState {
 
     /// 成果物を差し替え、そこに紐づく選択とスクロールを畳む。
     ///
-    /// 選択だけ残すと、節の数が減ったときに存在しない節を指したままになる。
+    /// 選択だけ残すと、項目の数が減ったときに存在しない項目を指したままになる。
     pub fn replace(&mut self, review: Option<Box<crate::revidere::Review>>) {
         self.current = review;
         self.selected = 0;
         self.list_scroll = 0;
         self.diff_scroll = 0;
-        // 別の成果物は別の総括。開いた直後と同じく総括から読ませる。
+        // 別の成果物は別の概要。開いた直後と同じく概要から読ませる。
         self.show_overview = true;
         self.overview_scroll = 0;
         self.section_rows.clear();

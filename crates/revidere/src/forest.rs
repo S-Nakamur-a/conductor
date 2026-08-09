@@ -1,33 +1,33 @@
-// 節の親子。primary の関係だけを辿ってできる森。
+// 項目の親子。primary の関係だけを辿ってできる森。
 //
 // 関係は複数書ける。結合テストが中核 2 つをまとめて検証していることは
 // 実際にあるし、それを 1 本に潰すのは嘘になる。ただし読む順が辿るのは
 // primary 1 本だけにしてある。多重グラフのまま並べようとすると深さ優先の
 // 順が一意に決まらず、「上から下まで読めば diff の全部」という背骨が作れない。
 //
-// 採取は多重、表示は森。primary 以外は節が 2 か所に出る形ではなく、
-// 節の脇の言及として出す。
+// 採取は多重、表示は森。primary 以外は項目が 2 か所に出る形ではなく、
+// 項目の脇の言及として出す。
 
 use crate::review::Section;
 use std::collections::HashMap;
 
-/// 節の並びと親子。
+/// 項目の並びと親子。
 #[derive(Debug, Clone, Default)]
 pub struct Forest {
-    /// 節ごとの親。無い・解決できない・巡回するものは None。
+    /// 項目ごとの親。無い・解決できない・巡回するものは None。
     parent: Vec<Option<usize>>,
-    /// 深さ優先で辿った節の並び。全ての節がちょうど 1 回出る。
+    /// 深さ優先で辿った項目の並び。全ての項目がちょうど 1 回出る。
     order: Vec<usize>,
-    /// 節ごとの深さ。根が 0。
+    /// 項目ごとの深さ。根が 0。
     depth: Vec<usize>,
     /// 親から見た子。並びは重要度順。
     children: Vec<Vec<usize>>,
     /// title から添字。関係の相手を引くのに使う。
     by_title: HashMap<String, usize>,
-    /// 解決できなかった関係。(節の添字, 指していた title)
+    /// 解決できなかった関係。(項目の添字, 指していた title)
     ///
     /// 黙って捨てない。モデルが「在る」と言った相手が無かったことは、
-    /// 充足検査の unknown と同じ種類の破れで、人が読んで気付ける必要がある。
+    /// 説明もれ検査の unknown と同じ種類の破れで、人が読んで気付ける必要がある。
     dangling: Vec<(usize, String)>,
 }
 
@@ -62,7 +62,7 @@ impl Forest {
             }
         }
 
-        // 巡回を切る。親を辿って自分へ戻るなら、その節を根にする。
+        // 巡回を切る。親を辿って自分へ戻るなら、その項目を根にする。
         for i in 0..n {
             let mut at = parent[i];
             for _ in 0..n {
@@ -123,7 +123,7 @@ impl Forest {
         self.parent.get(i).copied().flatten()
     }
 
-    /// 深さ優先で辿った節の並び。
+    /// 深さ優先で辿った項目の並び。
     pub fn order(&self) -> &[usize] {
         &self.order
     }
@@ -133,7 +133,7 @@ impl Forest {
         self.depth.get(i).copied().unwrap_or(0)
     }
 
-    /// 並びの中での位置。節を並べ替えるのに使う。
+    /// 並びの中での位置。項目を並べ替えるのに使う。
     pub fn rank(&self, i: usize) -> usize {
         self.order
             .iter()
@@ -141,12 +141,12 @@ impl Forest {
             .unwrap_or(self.order.len())
     }
 
-    /// この節を親に持つ節。並びは重要度順。
+    /// この項目を親に持つ項目。並びは重要度順。
     pub fn children(&self, i: usize) -> &[usize] {
         self.children.get(i).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// title から節の添字。関係の相手を引く。
+    /// title から項目の添字。関係の相手を引く。
     pub fn resolve(&self, title: &str) -> Option<usize> {
         self.by_title.get(title).copied()
     }
@@ -241,8 +241,8 @@ mod tests {
         assert_eq!(f.parent(2), Some(0));
     }
 
-    /// 親を辿って巡回しても、全ての節がちょうど 1 回だけ並びに出る。
-    /// 出ない節があると、その節が持つ変更行が画面から消える。
+    /// 親を辿って巡回しても、全ての項目がちょうど 1 回だけ並びに出る。
+    /// 出ない項目があると、その項目が持つ変更行が画面から消える。
     #[test]
     fn a_cycle_does_not_lose_or_repeat_any_section() {
         let sections = vec![
@@ -264,13 +264,13 @@ mod tests {
     }
 
     /// 実在しない相手を指したことは黙って捨てず dangling に残す。
-    /// 捨てると、モデルが在ると言った節が無かったことに気付けない。
+    /// 捨てると、モデルが在ると言った項目が無かったことに気付けない。
     #[test]
     fn a_relation_pointing_at_an_unknown_title_is_reported_as_dangling() {
-        let sections = vec![section("A", Importance::Core, vec![("架空の節", true)])];
+        let sections = vec![section("A", Importance::Core, vec![("架空の項目", true)])];
         let f = Forest::build(&sections);
         assert_eq!(f.parent(0), None);
-        assert_eq!(f.dangling(), [(0, "架空の節".to_string())]);
+        assert_eq!(f.dangling(), [(0, "架空の項目".to_string())]);
     }
 
     /// 同じ title が 2 つあるときは先着で解決する。後着を採ると、関係の相手が

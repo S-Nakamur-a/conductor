@@ -35,7 +35,7 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// 解析が終わったときの結果。
 pub enum RunOutcome {
     /// 成果物ができた。coverage_complete が false なら、成果物はあるが
-    /// 充足検査は通っていない (revidere の終了コード 2)。
+    /// 説明もれ検査は通っていない (revidere の終了コード 2)。
     Done { coverage_complete: bool },
     /// 走らせられなかった / 途中で落ちた。
     Failed(String),
@@ -250,11 +250,11 @@ impl App {
         );
     }
 
-    /// 2 列ビューで選択中の節が指す位置を、通常の Viewer で開く (Enter)。
+    /// 2 列ビューで選択中の項目が指す位置を、通常の Viewer で開く (Enter)。
     ///
     /// レビューコメントを書けるのは Viewer なので、ここが 2 列ビューと既存の
-    /// コメント作成をつなぐ口になる。着地先はその節が最初に持っている変更行で、
-    /// 借りた文脈行は飛ばす — 節の話の中心は、借りた行ではなく持ち物の行にある。
+    /// コメント作成をつなぐ口になる。着地先はその項目が最初に持っている変更行で、
+    /// 借りた文脈行は飛ばす — 項目の話の中心は、借りた行ではなく持ち物の行にある。
     pub fn jump_to_selected_section(&mut self) {
         let Some(review) = self.revidere.current.as_ref() else {
             return;
@@ -263,7 +263,7 @@ impl App {
             return;
         };
         // 最初の「持ち物の行」を持つ束を探す。行を持たない変更 (バイナリなど) しか
-        // 無い節は開く先が無いので、そう言って止まる。
+        // 無い項目は開く先が無いので、そう言って止まる。
         let target = placed.blocks.iter().find_map(|b| {
             let line = b.lines.iter().find(|l| l.owned)?;
             Some((b.path.clone(), line.line.new_line.or(line.line.old_line)))
@@ -276,7 +276,7 @@ impl App {
             return;
         };
 
-        // 節のパスの綴りと diff 側のそれは違いうるので、diff 側の表記に寄せる。
+        // 項目のパスの綴りと diff 側のそれは違いうるので、diff 側の表記に寄せる。
         let Some(file_path) = self.diff_state.resolve_changed_path(&path) else {
             self.set_status(
                 format!("Section's file isn't in this diff: {path}"),
@@ -379,7 +379,7 @@ fn artifact_stamp(worktree: &std::path::Path) -> Option<(PathBuf, std::time::Sys
 /// 道連れにできるため。スレッドで直接呼ぶと、AI の待ちを割り込めない。
 ///
 /// 終了コードの読み方は revidere の約束どおり: 0 が成功、2 は「成果物は
-/// できたが充足検査が通らなかった」。2 を失敗として扱うと、読める成果物が
+/// できたが説明もれ検査が通らなかった」。2 を失敗として扱うと、読める成果物が
 /// 画面に出ないまま捨てられる。
 fn run_analyze(worktree: &PathBuf, force: bool, cancel: &Arc<AtomicBool>) -> RunOutcome {
     let exe = match std::env::current_exe() {
