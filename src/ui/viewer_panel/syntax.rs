@@ -42,16 +42,7 @@ pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
             }
         };
 
-        // 未コミット分を先に処理する（ビューアでは未コミット分が優先される）。
-        for file_diff in &app.diff_state.uncommitted_files {
-            if file_diff.path == *current {
-                insert_annotations(file_diff, &mut annotations);
-                break;
-            }
-        }
-
-        // コミット済み分は後で処理する（or_insert により未コミット分の上書きは起きない）。
-        for file_diff in &app.diff_state.committed_files {
+        for file_diff in &app.diff_state.files {
             if file_diff.path == *current {
                 insert_annotations(file_diff, &mut annotations);
                 break;

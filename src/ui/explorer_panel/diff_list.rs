@@ -1,5 +1,5 @@
-//! エクスプローラ下半分の変更ファイル一覧（Committed / Uncommitted セクション）と
-//! ファイルごとのレビューコメント数バッジの描画。
+//! エクスプローラ下半分の変更ファイル一覧と、ファイルごとのレビューコメント数
+//! バッジの描画。
 
 use crate::app::{App, Focus};
 use crate::viewer::file_icon;
@@ -10,9 +10,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem};
 
 /// Changed-files の各行のファイル名色が表す、4種類の git ステージ状態のいずれか。
-/// DiffSection（committed/uncommitted、どちらのセクションに対して diff を
-/// 取るか）とは別物 — ファイルが Uncommitted でも、ここでの色は Staged に
-/// なりうる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FileStageState {
     Untracked,
@@ -62,9 +59,9 @@ fn status_color(theme: &crate::theme::Theme, state: FileStageState) -> ratatui::
     }
 }
 
-/// diff 対象ファイル一覧（下半分）を Committed / Uncommitted セクション付きで描画する。
+/// diff 対象ファイル一覧（下半分）をディレクトリツリーとして描画する。
 pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
-    use crate::diff_state::{DiffListEntry, DiffSection};
+    use crate::diff_state::DiffListEntry;
 
     let theme = &app.theme;
     let vs_explorer = &app.viewer_state.explorer;
@@ -80,7 +77,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
         theme.border_unfocused
     };
 
-    let total = app.diff_state.committed_files.len() + app.diff_state.uncommitted_files.len();
+    let total = app.diff_state.files.len();
     let title = diff_list_title(total, app.diff_state.error.is_some());
 
     // ボーダーの太さは Explorer カラム全体、タイトルの強調はその下半分に
@@ -97,9 +94,9 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.diff_list_scroll;
 
-    // 以前は base 解決の失敗が完全に無音だった: committed セクションが単に
-    // 空で返ってきて「変更なし」に見えてしまっていた。メッセージを先頭行に
-    // 固定して両者を混同しないようにする。このバナーは display_list の
+    // 以前は base 解決の失敗が完全に無音だった: 一覧が単に空で返ってきて
+    // 「変更なし」に見えてしまっていた。メッセージを先頭行に固定して両者を
+    // 混同しないようにする。このバナーは display_list の
     // 一部ではないため選択もできず、ナビゲーションキーが扱うインデックスも
     // ずらさない — コストはリストの高さ1行分だけ。改行はスペースに潰す。
     // 複数行の ListItem はここで確保した1行より多くの行を静かに消費して
@@ -148,40 +145,25 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     Span::styled(name.clone(), style),
                 ])))
             }
-            DiffListEntry::File {
-                section,
-                file_index,
-                depth,
-            } => {
-                let files = match section {
-                    DiffSection::Committed => &app.diff_state.committed_files,
-                    DiffSection::Uncommitted => &app.diff_state.uncommitted_files,
-                };
+            DiffListEntry::File { file_index, depth } => {
                 // インデックスアクセスではなく .get を使う: display_list と
-                // セクションごとのファイル vector は異なるティックで再構築される
-                // ため、片方が古いままレンダリングされるフレームがありうる。
-                // 行をスキップすればチラつきで済むが、インデックスアクセスだと
-                // 描画処理の内側からアプリ全体を落としかねない。上のファイル
-                // ツリーも同様の対応をしている。
-                let file_diff = files.get(*file_index)?;
+                // ファイル vector は異なるティックで再構築されるため、片方が
+                // 古いままレンダリングされるフレームがありうる。行をスキップ
+                // すればチラつきで済むが、インデックスアクセスだと描画処理の
+                // 内側からアプリ全体を落としかねない。上のファイルツリーも
+                // 同様の対応をしている。
+                let file_diff = app.diff_state.files.get(*file_index)?;
 
                 let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
 
                 let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
-                // 由来マーカー: C = committed（HEAD にある）、U = uncommitted
-                // （作業ツリー）。両方で変更されたファイルは2回表示される。
-                let marker = match section {
-                    DiffSection::Committed => "C",
-                    DiffSection::Uncommitted => "U",
-                };
-                let prefix = format!("  {indent}{marker} {icon} ");
+                let prefix = format!("  {indent}{icon} ");
 
                 // ファイル名の色はファイルの git ステージ状態
                 // （untracked / unstaged / staged / committed）を表す。
-                // is_new/is_deleted によるセクション分けとは連動しない —
-                // 既に追跡済みで単に変更されただけのファイルは "new" でも
-                // "deleted" でもなく、以前は一律 theme.fg に落ちていた。
+                // 行数はベースからの合計なので、その内訳がコミット済みか
+                // 手元の編集かはこの色でしか分からない。
                 let stage_state =
                     file_stage_state(app.viewer_state.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
@@ -192,9 +174,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                     diff_focused,
                     app.list_hover.diff_list.phase(idx),
                 );
-                // ファイル名以外の部分 — インデント、由来マーカー、アイコン、
-                // 行数 — は hover の下線を外し、下線がファイル名だけに
-                // 付くようにする。
+                // ファイル名以外の部分 — インデント、アイコン、行数 — は
+                // hover の下線を外し、下線がファイル名だけに付くようにする。
                 let decoration = crate::ui::common::list_row::decoration_style(style);
                 // 行の背景/選択スタイルは style（row_style 経由）から来るが、
                 // +added/-deleted はステージ状態に関わらず自前の前景色を保つ
@@ -263,7 +244,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
 }
 
 /// changed-files ブロックのタイトルを組み立てる。— diff error サフィックスは
-/// 「何かが失敗して committed セクションが欠けている」場合と、本当に
+/// 「何かが失敗してベースからの変更が欠けている」場合と、本当に
 /// (0) である場合を区別するためのもの。これが無いと両者は同じ見た目になる。
 /// あえて "base error" とはしていない: base ref の解決失敗はよくある原因の
 /// 一つに過ぎず、HEAD が解決できない場合や merge-base が見つからない場合も
@@ -333,8 +314,8 @@ mod tests {
         assert!(diff_list_title(0, true).contains("error"));
     }
 
-    /// base 解決が失敗しても uncommitted セクションは生き残るので、件数は
-    /// 0 以外になり、かつエラーマーカーも表示される — 両方が出ていること。
+    /// base 解決が失敗しても HEAD 基準の一覧は生き残るので、件数は 0 以外に
+    /// なり、かつエラーマーカーも表示される — 両方が出ていること。
     #[test]
     fn error_title_keeps_the_count() {
         let title = diff_list_title(17, true);

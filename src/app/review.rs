@@ -65,7 +65,7 @@ impl App {
     pub fn open_diff_file_at_selected(&mut self) {
         let idx = self.viewer_state.explorer.diff_list_selected;
         let (file_path, file_diff_clone) = match self.diff_state.resolve_file(idx) {
-            Some((f, _)) => (f.path.clone(), f.clone()),
+            Some(f) => (f.path.clone(), f.clone()),
             None => return,
         };
         let tab_width = self.config.viewer.tab_width;

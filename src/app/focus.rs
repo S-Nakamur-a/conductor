@@ -95,9 +95,7 @@ impl App {
                 if self.viewer_state.tree.file_tree.is_empty() {
                     self.refresh_viewer();
                 }
-                if self.diff_state.committed_files.is_empty()
-                    && self.diff_state.uncommitted_files.is_empty()
-                {
+                if self.diff_state.files.is_empty() {
                     self.refresh_diff();
                 }
             }
