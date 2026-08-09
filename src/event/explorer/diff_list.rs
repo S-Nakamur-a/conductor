@@ -64,7 +64,7 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::ToggleViewed) => {
             let selected = app.viewer_state.explorer.diff_list_selected;
-            if let Some((file_diff, _)) = app.diff_state.resolve_file(selected) {
+            if let Some(file_diff) = app.diff_state.resolve_file(selected) {
                 let path = file_diff.path.clone();
                 app.toggle_path_viewed(&path);
             }

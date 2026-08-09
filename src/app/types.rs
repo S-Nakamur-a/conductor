@@ -251,8 +251,7 @@ pub struct BackgroundOps {
 
 /// バックグラウンド diff 計算の結果。
 pub struct BgDiffResult {
-    pub committed: Vec<crate::diff_state::FileDiff>,
-    pub uncommitted: Vec<crate::diff_state::FileDiff>,
+    pub files: Vec<crate::diff_state::FileDiff>,
     pub error: Option<String>,
 }
 

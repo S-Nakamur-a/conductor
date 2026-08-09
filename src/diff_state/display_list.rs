@@ -4,14 +4,13 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::model::{DiffListEntry, DiffSection, DiffState, DiffViewMode, FileDiff};
+use super::model::{DiffListEntry, DiffState, DiffViewMode, FileDiff};
 
 impl DiffState {
     /// 空の DiffState を新規作成する。
     pub fn new(base_branch: &str, view_mode: DiffViewMode) -> Self {
         let mut state = Self {
-            committed_files: Vec::new(),
-            uncommitted_files: Vec::new(),
+            files: Vec::new(),
             display_list: Vec::new(),
             collapsed_dirs: HashSet::new(),
             scroll: 0,
@@ -24,10 +23,7 @@ impl DiffState {
         state
     }
 
-    /// フラット化した表示リストを再構築する。コミット済みと未コミットの変更を
-    /// 1つのディレクトリツリーに統合する。ファイルは C/U マークと解決のために
-    /// 出自(DiffSection)を保持し、ディレクトリは出自をまたいで統合されるので
-    /// src/ は両方の種類の変更があっても1回しか現れない。
+    /// フラット化した表示リストを再構築する。
     pub fn rebuild_display_list(&mut self) {
         self.display_list.clear();
 
@@ -36,46 +32,28 @@ impl DiffState {
             self.display_list.push(DiffListEntry::Summary {});
         }
 
-        Self::build_tree_entries(
-            &self.committed_files,
-            &self.uncommitted_files,
-            &self.collapsed_dirs,
-            &mut self.display_list,
-        );
+        Self::build_tree_entries(&self.files, &self.collapsed_dirs, &mut self.display_list);
     }
 
-    /// 両方の出自のファイルにまたがる1つのディレクトリツリーを構築する。
-    /// コミット済みと未コミットの両方で変更されたファイルは、統合された同じ
-    /// ディレクトリノード配下に、出自ごとに2回(マークで区別して)現れる。
+    /// 変更ファイルからディレクトリツリーを構築する。
     fn build_tree_entries(
-        committed: &[FileDiff],
-        uncommitted: &[FileDiff],
+        files: &[FileDiff],
         collapsed_dirs: &HashSet<String>,
         display_list: &mut Vec<DiffListEntry>,
     ) {
-        // 統合ツリーの葉: どの出自リスト・インデックスに解決されるかを保持する。
+        // ツリーの葉: 元の files のどのインデックスに解決されるかを保持する。
         struct Leaf {
-            section: DiffSection,
             index: usize,
             path: String,
         }
-        let mut leaves: Vec<Leaf> = Vec::with_capacity(committed.len() + uncommitted.len());
-        for (i, f) in committed.iter().enumerate() {
-            leaves.push(Leaf {
-                section: DiffSection::Committed,
-                index: i,
+        let mut leaves: Vec<Leaf> = files
+            .iter()
+            .enumerate()
+            .map(|(index, f)| Leaf {
+                index,
                 path: f.path.clone(),
-            });
-        }
-        for (i, f) in uncommitted.iter().enumerate() {
-            leaves.push(Leaf {
-                section: DiffSection::Uncommitted,
-                index: i,
-                path: f.path.clone(),
-            });
-        }
-        // 同じパスの兄弟をまとめる。安定ソートなので同一パスではコミット済みが
-        // 未コミットより先に来る。
+            })
+            .collect();
         leaves.sort_by(|a, b| a.path.cmp(&b.path));
 
         // ディレクトリパスと、そこに直接属する葉のインデックスを集める。
@@ -164,7 +142,6 @@ impl DiffState {
                 }
                 for &li in &node.leaves {
                     display_list.push(DiffListEntry::File {
-                        section: leaves[li].section,
                         file_index: leaves[li].index,
                         depth: depth + 1,
                     });
@@ -177,29 +154,18 @@ impl DiffState {
         }
         for &li in &top_level {
             display_list.push(DiffListEntry::File {
-                section: leaves[li].section,
                 file_index: leaves[li].index,
                 depth: 0,
             });
         }
     }
 
-    /// 表示リストのインデックスをファイル参照とそのセクションに解決する。
+    /// 表示リストのインデックスをファイル参照に解決する。
     ///
-    /// セクションヘッダーまたは範囲外のインデックスの場合は None を返す。
-    pub fn resolve_file(&self, display_idx: usize) -> Option<(&FileDiff, DiffSection)> {
+    /// ディレクトリ行、サマリー行、範囲外のインデックスの場合は None を返す。
+    pub fn resolve_file(&self, display_idx: usize) -> Option<&FileDiff> {
         match self.display_list.get(display_idx)? {
-            DiffListEntry::File {
-                section,
-                file_index,
-                ..
-            } => {
-                let files = match section {
-                    DiffSection::Committed => &self.committed_files,
-                    DiffSection::Uncommitted => &self.uncommitted_files,
-                };
-                files.get(*file_index).map(|f| (f, *section))
-            }
+            DiffListEntry::File { file_index, .. } => self.files.get(*file_index),
             DiffListEntry::Directory { .. } | DiffListEntry::Summary {} => None,
         }
     }
@@ -209,19 +175,14 @@ impl DiffState {
     /// ファイルを開いた際(例: walkthrough のステップのファイルへジャンプする場合)に、
     /// diff リストのカーソルを同期させておくために使う。
     pub fn display_index_for_path(&self, path: &str) -> Option<usize> {
-        (0..self.display_list.len()).find(|&idx| self.resolve_file(idx).is_some_and(|(f, _)| f.path == path))
+        (0..self.display_list.len())
+            .find(|&idx| self.resolve_file(idx).is_some_and(|f| f.path == path))
     }
 
-    /// diff 内の全ての変更パス。両セクションを合わせて重複を除いたもの。
-    /// [Self::display_index_for_path] と違い表示リストを無視するので、
-    /// 折りたたまれたディレクトリ内のファイルも存在するものとして数える。
+    /// diff 内の全ての変更パス。[Self::display_index_for_path] と違い表示リストを
+    /// 無視するので、折りたたまれたディレクトリ内のファイルも存在するものとして数える。
     pub fn changed_paths(&self) -> Vec<&str> {
-        let mut paths: Vec<&str> = self
-            .committed_files
-            .iter()
-            .chain(self.uncommitted_files.iter())
-            .map(|f| f.path.as_str())
-            .collect();
+        let mut paths: Vec<&str> = self.files.iter().map(|f| f.path.as_str()).collect();
         paths.sort_unstable();
         paths.dedup();
         paths

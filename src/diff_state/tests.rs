@@ -1,7 +1,7 @@
 //! diff_state モジュールのテスト。インラインセグメントの強調、大文字小文字だけの
 //! リネームのフィルタリング、display list ナビゲーションのエッジケース、
 //! ベース ref の解決(リモート追跡 ref・タグ・OID、および解決不能なベースが
-//! 未コミット diff まで巻き込まないこと)を検証する。
+//! 変更一覧を消し去らないこと)を検証する。
 
 use similar::{ChangeTag, TextDiff};
 
@@ -52,6 +52,28 @@ fn set_remote_tracking_ref(repo: &git2::Repository, name: &str, oid: git2::Oid) 
         .unwrap();
 }
 
+/// ベースからの変更ファイル一覧。ベース解決に失敗した理由は [base_error] で見る。
+fn changed_files(dir: &std::path::Path, base: &str) -> Vec<super::FileDiff> {
+    super::DiffState::compute_changed_files(dir, base, false, 4)
+        .unwrap()
+        .0
+}
+
+/// 変更ファイルのパス一覧。
+fn changed_paths(dir: &std::path::Path, base: &str) -> Vec<String> {
+    changed_files(dir, base)
+        .iter()
+        .map(|f| f.path.clone())
+        .collect()
+}
+
+/// ベースを解決できず HEAD にフォールバックした理由(成功時は None)。
+fn base_error(dir: &std::path::Path, base: &str) -> Option<String> {
+    super::DiffState::compute_changed_files(dir, base, false, 4)
+        .unwrap()
+        .1
+}
+
 #[test]
 fn test_inline_segments_populated_for_replace() {
     let old = "hello world\n";
@@ -76,9 +98,6 @@ fn test_inline_segments_populated_for_replace() {
 /// はこれらを除外すべきである。
 #[test]
 fn test_case_only_rename_filtered_out() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -121,8 +140,7 @@ fn test_case_only_rename_filtered_out() {
         .unwrap();
     repo.set_head("refs/heads/feature").unwrap();
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false, 4).unwrap();
+    let files = changed_files(dir.path(), "main");
 
     // 内容が同一の大文字小文字だけのリネームは除外されるべき。
     assert!(
@@ -135,9 +153,6 @@ fn test_case_only_rename_filtered_out() {
 /// 内容変更を伴う大文字小文字リネームはフィルタで除外されないことを検証する。
 #[test]
 fn test_case_rename_with_content_change_kept() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -179,8 +194,7 @@ fn test_case_rename_with_content_change_kept() {
         .unwrap();
     repo.set_head("refs/heads/feature").unwrap();
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "main", DiffRange::Committed, false, 4).unwrap();
+    let files = changed_files(dir.path(), "main");
 
     // 実際に内容変更を伴うリネームは表示されるべき。
     assert!(
@@ -223,7 +237,7 @@ fn expand_already_expanded_dir_does_not_panic() {
 /// インデックスではなくパス(walkthrough のステップへのジャンプなど)で開かれた
 /// 際に diff リストのカーソルを再同期するために使う。
 #[test]
-fn display_index_for_path_finds_committed_and_uncommitted_files() {
+fn display_index_for_path_finds_files() {
     use super::*;
     let file = |path: &str| FileDiff {
         path: path.to_string(),
@@ -232,17 +246,14 @@ fn display_index_for_path_finds_committed_and_uncommitted_files() {
         hunks: Vec::new(),
     };
     let mut ds = DiffState::new("main", DiffViewMode::Unified);
-    ds.committed_files = vec![file("src/a.rs")];
-    ds.uncommitted_files = vec![file("src/b.rs")];
+    ds.files = vec![file("src/a.rs"), file("src/b.rs")];
     ds.display_list = vec![
         DiffListEntry::File {
-            section: DiffSection::Committed,
             file_index: 0,
             depth: 0,
         },
         DiffListEntry::File {
-            section: DiffSection::Uncommitted,
-            file_index: 0,
+            file_index: 1,
             depth: 0,
         },
     ];
@@ -254,11 +265,11 @@ fn display_index_for_path_finds_committed_and_uncommitted_files() {
 
 // 寛容なパス解決(walkthrough のステップ / コメントのアンカー)
 
-/// コミット済み diff が paths に触れる DiffState を作り、display list を構築する。
+/// diff が paths に触れる DiffState を作り、display list を構築する。
 fn diff_state_with(paths: &[&str]) -> super::DiffState {
     use super::*;
     let mut ds = DiffState::new("main", DiffViewMode::Unified);
-    ds.committed_files = paths
+    ds.files = paths
         .iter()
         .map(|p| FileDiff {
             path: (*p).to_string(),
@@ -341,7 +352,7 @@ fn reveal_path_expands_collapsed_ancestors() {
 
     let idx = ds.reveal_path("src/deep/nested/c.rs").expect("row after reveal");
     assert_eq!(
-        ds.resolve_file(idx).map(|(f, _)| f.path.as_str()),
+        ds.resolve_file(idx).map(|f| f.path.as_str()),
         Some("src/deep/nested/c.rs")
     );
 }
@@ -353,9 +364,6 @@ fn reveal_path_expands_collapsed_ancestors() {
 /// 解決できなければならない。
 #[test]
 fn base_ref_resolves_remote_tracking_ref() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -371,11 +379,8 @@ fn base_ref_resolves_remote_tracking_ref() {
         "test setup invariant: no local 'main' branch should exist"
     );
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "origin/main", DiffRange::Committed, false, 4)
-            .unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, vec!["b.txt"]);
+    assert_eq!(changed_paths(dir.path(), "origin/main"), vec!["b.txt"]);
+    assert_eq!(base_error(dir.path(), "origin/main"), None);
 }
 
 /// 同じ解決は、メイン worktree だけでなくリンクされた worktree の Repository
@@ -383,9 +388,6 @@ fn base_ref_resolves_remote_tracking_ref() {
 /// 共有の commondir に存在するからである。
 #[test]
 fn base_ref_resolves_from_linked_worktree() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -422,20 +424,14 @@ fn base_ref_resolves_from_linked_worktree() {
         .unwrap();
     assert!(status.success(), "git worktree add failed");
 
-    let files =
-        DiffState::compute_diff_range(&wt_path, "origin/main", DiffRange::Committed, false, 4)
-            .unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, vec!["b.txt"]);
+    assert_eq!(changed_paths(&wt_path, "origin/main"), vec!["b.txt"]);
+    assert_eq!(base_error(&wt_path, "origin/main"), None);
 }
 
 /// 軽量タグ、注釈付きタグ、完全な OID、短縮 OID のいずれも同じベースコミットに
 /// 解決しなければならない。
 #[test]
 fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -455,11 +451,13 @@ fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
     let short_oid = &full_oid[..7];
 
     for base in ["v-lw", "v-ann", full_oid.as_str(), short_oid] {
-        let files = DiffState::compute_diff_range(dir.path(), base, DiffRange::Committed, false, 4)
-            .unwrap_or_else(|e| panic!("base '{base}' failed to resolve: {e:#}"));
-        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(
-            paths,
+            base_error(dir.path(), base),
+            None,
+            "base '{base}' failed to resolve"
+        );
+        assert_eq!(
+            changed_paths(dir.path(), base),
             vec!["b.txt"],
             "base '{base}' produced unexpected diff"
         );
@@ -470,9 +468,6 @@ fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
 /// ない)設定済みベースは、origin/ フォールバック経由で解決しなければならない。
 #[test]
 fn base_ref_falls_back_to_origin_prefix() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -489,30 +484,21 @@ fn base_ref_falls_back_to_origin_prefix() {
         "test setup invariant: no local 'develop' branch should exist"
     );
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "develop", DiffRange::Committed, false, 4)
-            .unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, vec!["b.txt"]);
+    assert_eq!(changed_paths(dir.path(), "develop"), vec!["b.txt"]);
+    assert_eq!(base_error(dir.path(), "develop"), None);
 }
 
 /// 直接にも origin/ 経由にも解決しないベースは、呼び出し側が実際に指定した
 /// ベース名を含むエラーを報告しなければならない。
 #[test]
 fn base_ref_unresolvable_reports_error() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
     let oid = commit_files(&repo, None, &[("a.txt", b"a")]);
     checkout_branch(&repo, "main", oid);
 
-    let err =
-        DiffState::compute_diff_range(dir.path(), "nonexistent", DiffRange::Committed, false, 4)
-            .unwrap_err();
-    let msg = format!("{err:#}");
+    let msg = base_error(dir.path(), "nonexistent").expect("expected an error to be set");
     assert!(msg.contains("nonexistent"), "error message was: {msg}");
 }
 
@@ -525,9 +511,6 @@ fn base_ref_unresolvable_reports_error() {
 /// エラーメッセージの文言だけでなく予期しない Ok として現れるようにする。
 #[test]
 fn base_ref_error_does_not_double_the_origin_prefix() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -538,10 +521,7 @@ fn base_ref_error_does_not_double_the_origin_prefix() {
     // 失敗する代わりにここに着地してしまう。
     set_remote_tracking_ref(&repo, "origin/origin/weird", oid);
 
-    let err =
-        DiffState::compute_diff_range(dir.path(), "origin/weird", DiffRange::Committed, false, 4)
-            .unwrap_err();
-    let msg = format!("{err:#}");
+    let msg = base_error(dir.path(), "origin/weird").expect("expected an error to be set");
     assert!(msg.contains("origin/weird"), "error message was: {msg}");
     assert!(
         !msg.contains("origin/origin"),
@@ -559,9 +539,6 @@ fn base_ref_error_does_not_double_the_origin_prefix() {
 /// 2つの選択肢のうちより紛らわしい方になってしまう。
 #[test]
 fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -586,24 +563,18 @@ fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
     let head_oid = commit_files(&repo, Some(&tag_commit), &[("head.txt", b"c")]);
     checkout_branch(&repo, "feature", head_oid);
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "dup", DiffRange::Committed, false, 4).unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(
-        paths,
+        changed_paths(dir.path(), "dup"),
         vec!["head.txt"],
         "expected 'dup' to resolve to the tag (only head.txt ahead of it), \
          not the branch (which would also include from_tag.txt)"
     );
 }
 
-/// 未コミット diff(HEAD vs workdir+index)はベースに一切依存しないので、
-/// 解決不能なベースがあってもその計算を妨げてはならない。
+/// 解決不能なベースは HEAD 基準へのフォールバックで扱う。手元の変更が
+/// ベース設定のミスで丸ごと見えなくなってはならない。
 #[test]
-fn uncommitted_range_ignores_unresolvable_base() {
-    use super::model::DiffRange;
-    use super::*;
-
+fn unresolvable_base_falls_back_to_head() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -612,19 +583,15 @@ fn uncommitted_range_ignores_unresolvable_base() {
 
     std::fs::write(dir.path().join("c.txt"), b"new file").unwrap();
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "nonexistent", DiffRange::Uncommitted, false, 4)
-            .unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, vec!["c.txt"]);
+    assert_eq!(changed_paths(dir.path(), "nonexistent"), vec!["c.txt"]);
 }
 
-// ベースの解決失敗時に load_diff が未コミットをクリアしてはならない
+// ベースの解決失敗時に load_diff が手元の変更をクリアしてはならない
 
-/// 解決不能なベースを与えた load_diff は、両方の diff セクションをクリアするのではなく、
-/// 未コミットの変更とエラーの両方をきちんと表に出さなければならない。
+/// 解決不能なベースを与えた load_diff は、一覧をクリアするのではなく、
+/// 手元の変更とエラーの両方をきちんと表に出さなければならない。
 #[test]
-fn load_diff_keeps_uncommitted_when_base_unresolvable() {
+fn load_diff_keeps_files_when_base_unresolvable() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -638,25 +605,19 @@ fn load_diff_keeps_uncommitted_when_base_unresolvable() {
     let mut ds = DiffState::new("nonexistent", DiffViewMode::Unified);
     ds.load_diff(dir.path(), "nonexistent", false, 4);
 
-    assert!(ds.committed_files.is_empty());
     let err = ds.error.as_deref().expect("expected an error to be set");
     assert!(err.contains("nonexistent"), "error message was: {err}");
 
-    let uncommitted_paths: Vec<&str> = ds
-        .uncommitted_files
-        .iter()
-        .map(|f| f.path.as_str())
-        .collect();
-    assert_eq!(uncommitted_paths, vec!["c.txt"]);
+    let paths: Vec<&str> = ds.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, vec!["c.txt"]);
     assert!(
         ds.display_index_for_path("c.txt").is_some(),
-        "display_list should still include the uncommitted file"
+        "display_list should still include the file"
     );
 }
 
 /// HEAD が設定されたベースとの merge-base に等しい場合(0コミット先行)、
-/// コミット済みセクションは正当に空であり、エラーも出ない
-/// 未コミットの変更だけが表示されるべきである。
+/// エラーは出ず、未コミットの変更だけが表示されるべきである。
 #[test]
 fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
     use super::*;
@@ -676,33 +637,18 @@ fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
     let mut ds = DiffState::new("release", DiffViewMode::Unified);
     ds.load_diff(dir.path(), "release", false, 4);
 
-    assert!(ds.committed_files.is_empty());
     assert!(ds.error.is_none());
 
-    let uncommitted_paths: Vec<&str> = ds
-        .uncommitted_files
-        .iter()
-        .map(|f| f.path.as_str())
-        .collect();
-    assert_eq!(uncommitted_paths, vec!["c.txt"]);
+    let paths: Vec<&str> = ds.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, vec!["c.txt"]);
 }
 
 /// 元のバグ報告をエンドツーエンドで再現する: ベースが origin/main として
 /// 保存され(ローカルの main ブランチはない)、大量の未コミット変更を抱えたまま
 /// origin/main から1コミット遅れている worktree。修正前は main が
-/// find_branch(Local) 経由での解決に失敗し、その失敗が両方の diff セクションを
-/// 消し去っていた ─ 変更済み/未追跡ファイルが実際には全て存在するにもかかわらず
+/// find_branch(Local) 経由での解決に失敗し、その失敗が diff 一覧を消し去って
+/// いた ─ 変更済み/未追跡ファイルが実際には全て存在するにもかかわらず
 /// "Changed files (0)" と報告されていた。
-///
-/// このテストが確かめたい微妙な点: ここでコミット済みが0件であること自体は
-/// 正しく、バグの症状ではない。1コミット遅れとは merge-base(origin/main, HEAD)
-/// == HEAD を意味するので、修正の有無にかかわらずコミット済みセクションは
-/// 正当に空である。修正が変えるのは ds.error が(ベースが解決したので)
-/// None になり、uncommitted_files が全ての変更済み/未追跡ファイルを
-/// 保持し続ける点である ─ 修正前はコミット済みセクションと一緒にどちらも
-/// クリアされ、全てが黙って(0)に潰れていた。下のコミット済みが空である
-/// アサーションを「バグはコミット済みが0と表示されること」と読んではならない。
-/// それは元々0以外を示すべきではない。
 #[test]
 fn load_diff_reproduces_the_silent_zero_files_report() {
     use super::*;
@@ -742,16 +688,10 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
 
     // 修正の効果: ベースが解決したのでエラーなし。
     assert_eq!(ds.error, None);
-    // 正当に空(1コミット遅れ)であり、バグではない。
-    assert!(ds.committed_files.is_empty());
 
-    let uncommitted_paths: Vec<&str> = ds
-        .uncommitted_files
-        .iter()
-        .map(|f| f.path.as_str())
-        .collect();
+    let paths: Vec<&str> = ds.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(
-        uncommitted_paths,
+        paths,
         vec!["tracked1.txt", "tracked2.txt", "untracked1.txt", "untracked2.txt"]
     );
     for path in ["tracked1.txt", "tracked2.txt", "untracked1.txt", "untracked2.txt"] {
@@ -766,11 +706,9 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
 
 /// ベースと HEAD が共通の履歴を持たない(shallow clone が生む形と同じ、
 /// 無関係な2つのルートコミット)場合、repo.merge_base() は失敗する。
-/// 計画の「やらないこと」リストは、これがコミット済みを未コミットと一緒に
-/// 巻き込まないこと、そして理由が見える形になっていることを約束しており、
-/// このテストはその両方を確かめる。
+/// このときも一覧は HEAD 基準で残り、理由が見える形になっていること。
 #[test]
-fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
+fn load_diff_keeps_files_when_merge_base_is_unrelated() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -789,7 +727,6 @@ fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
     let mut ds = DiffState::new("other", DiffViewMode::Unified);
     ds.load_diff(dir.path(), "other", false, 4);
 
-    assert!(ds.committed_files.is_empty());
     let err = ds.error.as_deref().expect("expected an error to be set");
     // 失敗モードとベースの両方を名指ししなければならない。そうしないと
     // base_ref_unresolvable_reports_error の解決不能 ref エラーと区別が
@@ -798,23 +735,17 @@ fn load_diff_keeps_uncommitted_when_merge_base_is_unrelated() {
     assert!(err.contains("merge-base"), "error message was: {err}");
     assert!(err.contains("other"), "error message was: {err}");
 
-    let uncommitted_paths: Vec<&str> = ds
-        .uncommitted_files
-        .iter()
-        .map(|f| f.path.as_str())
-        .collect();
-    assert_eq!(uncommitted_paths, vec!["c.txt"]);
+    let paths: Vec<&str> = ds.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, vec!["c.txt"]);
 }
 
 /// コミットが0件の worktree(git init しただけで HEAD が "unborn")は
 /// panic してはならず、変更0件と黙って報告するのではなくエラーを表に
 /// 出さなければならない。
 ///
-/// これは既存の制限であり、この変更が退行させたものではない: ここでの
-/// workdir ファイルは技術的には全て未追跡だが、未コミット diff はそれでも
-/// 比較対象となる HEAD ツリーを必要とし、それが存在しない。この変更が
-/// もたらすのは、説明のつかない "Changed files (0)" の代わりに理由が
-/// error に載るようになることである。
+/// ここでの workdir ファイルは技術的には全て未追跡だが、diff はそれでも
+/// 比較対象となるツリーを必要とし、それが存在しない。説明のつかない
+/// "Changed files (0)" ではなく、理由が error に載る。
 #[test]
 fn load_diff_on_unborn_head_reports_error_without_panicking() {
     use super::*;
@@ -828,43 +759,33 @@ fn load_diff_on_unborn_head_reports_error_without_panicking() {
 
     let err = ds.error.as_deref().expect("expected an error to be set");
     assert!(err.contains("HEAD"), "error message was: {err}");
-    assert!(ds.committed_files.is_empty());
-    assert!(ds.uncommitted_files.is_empty());
+    assert!(ds.files.is_empty());
     assert!(ds.display_list.is_empty());
 }
 
-/// ベースとして "HEAD" を指定すると diff エンジン上は no-op になる:
-/// merge-base(HEAD, HEAD) == HEAD なので、コミット済み diff は常に空で
-/// エラーにもならない。これは diff エンジンとしては正しい挙動である —
-/// "HEAD" はそもそもベースとして役に立たないというだけの話だ。worktree が
-/// "HEAD" をベースとして保存してしまわないようにするのは書き込み側の責務
-/// (GitEngine::resolve_base_ref / worktree_crud.rs)であり、この関数が
-/// 特別扱いすべきことではない。
+/// ベースとして "HEAD" を指定すると、merge-base(HEAD, HEAD) == HEAD なので
+/// コミット済みの変更は何も出ず、作業ツリーの変更だけが残る。エラーにもならない。
+/// これは diff エンジンとしては正しい挙動である — "HEAD" はそもそもベースとして
+/// 役に立たないというだけの話だ。worktree が "HEAD" をベースとして保存して
+/// しまわないようにするのは書き込み側の責務(GitEngine::resolve_base_ref /
+/// worktree_crud.rs)であり、この関数が特別扱いすべきことではない。
 #[test]
-fn base_ref_head_yields_an_empty_committed_diff() {
-    use super::model::DiffRange;
-    use super::*;
-
+fn base_ref_head_yields_only_the_working_tree_changes() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
     let oid = commit_files(&repo, None, &[("a.txt", b"a")]);
     checkout_branch(&repo, "main", oid);
 
-    let files =
-        DiffState::compute_diff_range(dir.path(), "HEAD", DiffRange::Committed, false, 4).unwrap();
-    assert!(files.is_empty());
+    assert!(changed_files(dir.path(), "HEAD").is_empty());
+    assert_eq!(base_error(dir.path(), "HEAD"), None);
 }
 
 /// コミット以外のオブジェクトに解決されるベース(ここでは blob を直接
-/// 指す軽量タグ)は、黙って空の diff を返すのではなくエラーを報告しな
-/// ければならない — Ok(vec![]) だけを見ている呼び出し側からは両者が
-/// 同じに見えてしまう。
+/// 指す軽量タグ)は、黙ってフォールバックするのではなく理由を報告しな
+/// ければならない — 一覧だけを見ている呼び出し側からは両者が同じに見える。
 #[test]
 fn base_ref_pointing_at_a_blob_reports_error() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -875,10 +796,7 @@ fn base_ref_pointing_at_a_blob_reports_error() {
     let blob_obj = repo.find_object(blob_oid, None).unwrap();
     repo.tag_lightweight("blob-tag", &blob_obj, false).unwrap();
 
-    let err =
-        DiffState::compute_diff_range(dir.path(), "blob-tag", DiffRange::Committed, false, 4)
-            .unwrap_err();
-    let msg = format!("{err:#}");
+    let msg = base_error(dir.path(), "blob-tag").expect("expected an error to be set");
     assert!(msg.contains("blob-tag"), "error message was: {msg}");
 }
 
@@ -887,21 +805,61 @@ fn base_ref_pointing_at_a_blob_reports_error() {
 /// 済み: revparse_single("") は何かに解決されるのではなく InvalidSpec で
 /// エラーになるので、これは既に安全である — このテストはそれを固定する
 /// ためのもので、将来の git2 アップグレードでこれが
-/// base_ref_head_yields_an_empty_committed_diff と同じ "HEAD" の罠に
+/// base_ref_head_yields_only_the_working_tree_changes と同じ "HEAD" の罠に
 /// 黙って変わってしまわないようにする。
 #[test]
 fn base_ref_empty_string_reports_error() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
     let oid = commit_files(&repo, None, &[("a.txt", b"a")]);
     checkout_branch(&repo, "main", oid);
 
-    let result = DiffState::compute_diff_range(dir.path(), "", DiffRange::Committed, false, 4);
-    assert!(result.is_err(), "empty-string base should not resolve");
+    assert!(
+        base_error(dir.path(), "").is_some(),
+        "empty-string base should not resolve"
+    );
+}
+
+// 1ファイル = 1エントリ
+
+/// この変更の存在理由: コミット済みと未コミットを別々に計算していた頃は、
+/// コミットしたファイルを再編集すると同じファイルが2行に分かれて出ていた。
+/// 1本の diff にまとめた今は、行数もベースからの合計になっていること。
+#[test]
+fn a_file_edited_after_commit_stays_one_entry() {
+    use super::*;
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+
+    let base_oid = commit_files(&repo, None, &[("a.txt", b"base\n")]);
+    checkout_branch(&repo, "main", base_oid);
+    let base_commit = repo.find_commit(base_oid).unwrap();
+
+    // ブランチ側で1行追加してコミット。
+    let head_oid = commit_files(&repo, Some(&base_commit), &[("a.txt", b"base\ncommitted\n")]);
+    checkout_branch(&repo, "feature", head_oid);
+
+    // コミット済みのファイルをさらに編集する。
+    std::fs::write(dir.path().join("a.txt"), b"base\ncommitted\nedited\n").unwrap();
+
+    let files = changed_files(dir.path(), "main");
+    assert_eq!(
+        files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+        vec!["a.txt"],
+        "a file changed both in a commit and in the worktree must not be listed twice"
+    );
+    assert_eq!((files[0].added_lines, files[0].deleted_lines), (2, 0));
+
+    // 表示リストも同じで、行は1つだけ。
+    let mut ds = DiffState::new("main", DiffViewMode::Unified);
+    ds.load_diff(dir.path(), "main", false, 4);
+    let listed: Vec<&str> = (0..ds.display_list.len())
+        .filter_map(|idx| ds.resolve_file(idx))
+        .map(|f| f.path.as_str())
+        .collect();
+    assert_eq!(listed, vec!["a.txt"]);
 }
 
 // 新内容が空で返ってきたときに全行削除へ化ける件
@@ -912,8 +870,6 @@ fn base_ref_empty_string_reports_error() {
 /// 読めなかったことは削除された証拠ではない。
 #[test]
 fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
-    use super::model::DiffRange;
-    use super::*;
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
@@ -932,14 +888,14 @@ fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
     perms.set_mode(0o000);
     std::fs::set_permissions(&path, perms).unwrap();
 
-    let files = DiffState::compute_diff_range(dir.path(), "main", DiffRange::Uncommitted, false, 4);
+    let files = changed_files(dir.path(), "main");
 
     // tempdir の後始末が権限で失敗しないよう、判定より先に戻す。
     let mut perms = std::fs::metadata(&path).unwrap().permissions();
     perms.set_mode(0o644);
     std::fs::set_permissions(&path, perms).unwrap();
 
-    if let Some(f) = files.unwrap().iter().find(|f| f.path == "a.txt") {
+    if let Some(f) = files.iter().find(|f| f.path == "a.txt") {
         assert!(
             f.deleted_lines < 20,
             "read failure was reported as a full-file deletion: +{} -{}",
@@ -953,9 +909,6 @@ fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
 /// ファイルは読めなくて当然で、全行削除が正しい表示。
 #[test]
 fn deleted_workdir_file_still_reports_full_deletion() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -965,8 +918,7 @@ fn deleted_workdir_file_still_reports_full_deletion() {
 
     std::fs::remove_file(dir.path().join("a.txt")).unwrap();
 
-    let files = DiffState::compute_diff_range(dir.path(), "main", DiffRange::Uncommitted, false, 4)
-        .unwrap();
+    let files = changed_files(dir.path(), "main");
 
     let f = files
         .iter()
@@ -980,9 +932,6 @@ fn deleted_workdir_file_still_reports_full_deletion() {
 /// 区別せずに落とすと、変更したバイナリが Changed files に現れなくなる。
 #[test]
 fn binary_file_stays_listed_without_line_counts() {
-    use super::model::DiffRange;
-    use super::*;
-
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -991,8 +940,7 @@ fn binary_file_stays_listed_without_line_counts() {
 
     std::fs::write(dir.path().join("logo.png"), [0u8, 9, 9, 0, 7, 7, 7]).unwrap();
 
-    let files = DiffState::compute_diff_range(dir.path(), "main", DiffRange::Uncommitted, false, 4)
-        .unwrap();
+    let files = changed_files(dir.path(), "main");
 
     let f = files
         .iter()
@@ -1001,4 +949,3 @@ fn binary_file_stays_listed_without_line_counts() {
     assert_eq!((f.added_lines, f.deleted_lines), (0, 0));
     assert!(f.hunks.is_empty());
 }
-

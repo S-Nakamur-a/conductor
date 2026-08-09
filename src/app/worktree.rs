@@ -368,40 +368,26 @@ impl App {
     }
 }
 
-/// バックグラウンドのワークツリー切り替えワーカーのために、両方の diff 範囲を計算する。
+/// バックグラウンドのワークツリー切り替えワーカーのために diff を計算する。
 ///
-/// 直接テストできるようワーカーのクロージャから切り出してある。ここが表現している
-/// ルール — コミット済み側の失敗はエラーとして記録するが、ベース ref に依存しない
-/// 未コミット側の diff は止めてはいけない — をこのモジュールはかつて誤って実装して
-/// おり、bg.diff.start のクロージャの中では何もそれを確認できなかった。同じ2つの
-/// 範囲を扱う [DiffState::load_diff] と対応する。
+/// 直接テストできるようワーカーのクロージャから切り出してある。同期版の
+/// [DiffState::load_diff] と対応する。
 fn compute_bg_diff(
     path: &std::path::Path,
     base_branch: &str,
     word_diff: bool,
     tab_width: usize,
 ) -> BgDiffResult {
-    let mut result = BgDiffResult {
-        committed: Vec::new(),
-        uncommitted: Vec::new(),
-        error: None,
-    };
-    match DiffState::compute_diff_range_static(path, base_branch, true, word_diff, tab_width) {
-        Ok(mut files) => {
-            files.sort_by(|a, b| a.path.cmp(&b.path));
-            result.committed = files;
-        }
-        Err(e) => result.error = Some(format!("{e:#}")),
+    match DiffState::compute_changed_files(path, base_branch, word_diff, tab_width) {
+        Ok((files, base_error)) => BgDiffResult {
+            files,
+            error: base_error,
+        },
+        Err(e) => BgDiffResult {
+            files: Vec::new(),
+            error: Some(format!("{e:#}")),
+        },
     }
-    match DiffState::compute_diff_range_static(path, base_branch, false, word_diff, tab_width) {
-        Ok(mut files) => {
-            files.sort_by(|a, b| a.path.cmp(&b.path));
-            result.uncommitted = files;
-        }
-        // これ単体では致命的ではない: コミット済み側はまだ表示する価値があるかもしれない。
-        Err(e) => log::warn!("failed to compute uncommitted diff: {e:#}"),
-    }
-    result
 }
 
 /// 完了したバックグラウンド diff を [DiffState] へ反映する。
@@ -411,14 +397,11 @@ fn compute_bg_diff(
 /// に依存しないで済むようにするため — 依存すればモジュールの依存関係が逆転して
 /// しまう。
 ///
-/// 2つのファイル一覧は error が設定されている場合も含めて無条件に反映する。
-/// エラーはベース ref の解決からしか発生せず、未コミット一覧（HEAD と
-/// workdir+index の比較）はベース ref に依存しない。コミット済み一覧と一緒に
-/// エラーをクリアしてしまうと、不正なベース ref とクリーンなツリーが見分け
-/// つかなくなっていた。
+/// ファイル一覧は error が設定されている場合も無条件に反映する。ベース ref を
+/// 解決できないときは HEAD 基準にフォールバックした一覧が入っており、一緒に
+/// 捨ててしまうと不正なベース ref とクリーンなツリーが見分けつかなくなる。
 fn apply_bg_diff_result(diff_state: &mut DiffState, result: BgDiffResult) {
-    diff_state.committed_files = result.committed;
-    diff_state.uncommitted_files = result.uncommitted;
+    diff_state.files = result.files;
     diff_state.error = result.error;
     diff_state.rebuild_display_list();
 }
@@ -437,39 +420,33 @@ mod tests {
         }
     }
 
-    /// 報告されたバグ: 解決できないベース ref を指定すると、以前は未コミット一覧まで
+    /// 報告されたバグ: 解決できないベース ref を指定すると、以前は手元の変更まで
     /// 消えてしまい、17個の変更ファイルが (0) と表示されていた。
     #[test]
-    fn bg_diff_result_with_error_keeps_uncommitted() {
+    fn bg_diff_result_with_error_keeps_the_files() {
         let mut ds = DiffState::new("origin/main", DiffViewMode::Unified);
         apply_bg_diff_result(
             &mut ds,
             BgDiffResult {
-                committed: Vec::new(),
-                uncommitted: vec![file("CLAUDE.md"), file("src/config.rs")],
+                files: vec![file("CLAUDE.md"), file("src/config.rs")],
                 error: Some("base ref 'origin/main' not found".to_string()),
             },
         );
 
-        assert!(ds.committed_files.is_empty());
         assert_eq!(
-            ds.uncommitted_files
-                .iter()
-                .map(|f| f.path.as_str())
-                .collect::<Vec<_>>(),
+            ds.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
             vec!["CLAUDE.md", "src/config.rs"],
         );
         assert!(ds.error.is_some(), "the failure must stay visible");
 
         // 単に空でないことを確認するのではなく、display list を通してすべての File
-        // エントリを解決する。diff_list.rs はエントリの file_index で
-        // committed_files/uncommitted_files を参照するため、ファイルのベクタを
-        // 差し替えたあとに display list を再構築し忘れていると、次の描画で
-        // out-of-bounds パニックが起きる。これは「何かがリストされた」ではなく
-        // 「常に再構築する」という不変条件を確かめるためのものである。
+        // エントリを解決する。diff_list.rs はエントリの file_index で files を
+        // 参照するため、ファイルのベクタを差し替えたあとに display list を再構築し
+        // 忘れていると、次の描画で out-of-bounds パニックが起きる。これは「何かが
+        // リストされた」ではなく「常に再構築する」という不変条件を確かめるためのもの。
         let listed: Vec<&str> = (0..ds.display_list.len())
             .filter_map(|idx| ds.resolve_file(idx))
-            .map(|(f, _section)| f.path.as_str())
+            .map(|f| f.path.as_str())
             .collect();
         // 入力順ではなくディレクトリでグループ化した順序: ディレクトリノード配下の
         // ファイルはトップレベルのファイルより前に来る。
@@ -500,24 +477,18 @@ mod tests {
     }
 
     /// 修正のうち bg ワーカー側の半分を検証する。apply_bg_diff_result は
-    /// 「反映」側しか証明しないので、こちらはコミット済み側が失敗した後もワーカーが
-    /// 未コミット側の diff を計算し続けることを証明する。Err アームに return を
-    /// 戻すとこのテストが検知する。
+    /// 「反映」側しか証明しないので、こちらはベースを解決できなくてもワーカーが
+    /// HEAD 基準の diff を返し続けることを証明する。
     #[test]
-    fn compute_bg_diff_keeps_uncommitted_when_base_is_unresolvable() {
+    fn compute_bg_diff_keeps_the_files_when_base_is_unresolvable() {
         let dir = repo_with_uncommitted_change();
 
         let result = compute_bg_diff(dir.path(), "no-such-base", false, 4);
 
         let err = result.error.as_deref().expect("base failure must be recorded");
         assert!(err.contains("no-such-base"), "error was: {err}");
-        assert!(result.committed.is_empty());
         assert_eq!(
-            result
-                .uncommitted
-                .iter()
-                .map(|f| f.path.as_str())
-                .collect::<Vec<_>>(),
+            result.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
             vec!["dirty.txt"],
         );
     }
@@ -530,13 +501,8 @@ mod tests {
         let result = compute_bg_diff(dir.path(), "main", false, 4);
 
         assert_eq!(result.error, None);
-        assert!(result.committed.is_empty(), "feature == main, so nothing committed");
         assert_eq!(
-            result
-                .uncommitted
-                .iter()
-                .map(|f| f.path.as_str())
-                .collect::<Vec<_>>(),
+            result.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
             vec!["dirty.txt"],
         );
     }
@@ -550,13 +516,12 @@ mod tests {
         apply_bg_diff_result(
             &mut ds,
             BgDiffResult {
-                committed: vec![file("src/main.rs")],
-                uncommitted: Vec::new(),
+                files: vec![file("src/main.rs")],
                 error: None,
             },
         );
 
         assert!(ds.error.is_none());
-        assert_eq!(ds.committed_files.len(), 1);
+        assert_eq!(ds.files.len(), 1);
     }
 }

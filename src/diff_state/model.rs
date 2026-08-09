@@ -23,14 +23,7 @@ impl From<DiffView> for DiffViewMode {
     }
 }
 
-// セクション / 表示リスト
-
-/// diff ファイルがどちらのセクションに属するか。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiffSection {
-    Committed,
-    Uncommitted,
-}
+// 表示リスト
 
 /// explorer パネルに表示するフラット化リストの1エントリ。
 #[derive(Debug, Clone)]
@@ -46,10 +39,8 @@ pub enum DiffListEntry {
         /// このディレクトリが折りたたまれているか。
         collapsed: bool,
     },
-    /// 変更のあったファイル。section は行の C/U マーク表示と、元のリストへの
-    /// 逆引きの両方に使う出自(コミット済みか未コミットか)を記録する。
+    /// 変更のあったファイル。file_index は DiffState::files への添字。
     File {
-        section: DiffSection,
         file_index: usize,
         /// ネスト深度(0 がトップレベルのファイル)。
         depth: usize,
@@ -58,17 +49,6 @@ pub enum DiffListEntry {
     /// 選択すると Viewer にサマリー全文が開く。将来メタデータ(鮮度など)を
     /// 追加しても既存の match アームを壊さないよう struct variant にしている。
     Summary {},
-}
-
-// 内部の diff 範囲(旧・公開型 DiffScope の置き換え)
-
-/// どの範囲を計算するか。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DiffRange {
-    /// merge-base(base, HEAD)..HEAD — コミット済みの変更のみ。
-    Committed,
-    /// HEAD..workdir+index — 未コミットの変更のみ。
-    Uncommitted,
 }
 
 // 行レベルの型
@@ -135,10 +115,10 @@ pub struct FileDiff {
 /// Diff モード UI の全状態。
 #[derive(Debug, Clone)]
 pub struct DiffState {
-    /// コミット済みの変更(merge-base..HEAD)。
-    pub committed_files: Vec<FileDiff>,
-    /// 未コミットの変更(HEAD vs workdir+index)。
-    pub uncommitted_files: Vec<FileDiff>,
+    /// ブランチがベースに対して加えた変更(merge-base..workdir+index)。
+    /// コミット済みと未コミットを1つの diff にまとめてあるので、コミット後に
+    /// 再編集したファイルも1エントリのままになる。
+    pub files: Vec<FileDiff>,
     /// explorer パネル用にフラット化した表示リスト。
     pub display_list: Vec<DiffListEntry>,
     /// 折りたたまれているディレクトリパスの集合(素のリポジトリ相対パスをキーにする)。

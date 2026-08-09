@@ -86,13 +86,10 @@ pub fn filter_publishable(
 }
 
 /// [start, end] (新側の行番号) の両方が、file_path の同一の差分ハンクに
-/// 収まるかどうか。どちらの差分セクション (コミット済み・未コミット) も対象にする。
-/// レビューコメントはどちらのセクションに対して付けられたかを記録しないため、
-/// 両方を調べる。
+/// 収まるかどうか。
 fn line_range_in_diff(file_path: &str, start: u32, end: u32, diff: &DiffState) -> bool {
-    diff.committed_files
+    diff.files
         .iter()
-        .chain(diff.uncommitted_files.iter())
         .filter(|fd| fd.path == file_path)
         .any(|fd| {
             fd.hunks.iter().any(|hunk| {
@@ -350,7 +347,7 @@ mod tests {
                 content: String::new(),
             })
             .collect();
-        ds.committed_files = vec![FileDiff {
+        ds.files = vec![FileDiff {
             path: path.to_string(),
             added_lines: new_lines.len(),
             deleted_lines: 0,

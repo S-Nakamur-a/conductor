@@ -10,9 +10,7 @@ use git2::Repository;
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 
-use super::model::{
-    DiffHunk, DiffLine, DiffLineTag, DiffRange, DiffState, FileDiff, InlineSegment,
-};
+use super::model::{DiffHunk, DiffLine, DiffLineTag, DiffState, FileDiff, InlineSegment};
 
 /// ハンクの前後に付けるコンテキスト行数。git の既定と同じ 3 行。
 const CONTEXT_LINES: u32 = 3;
@@ -57,11 +55,8 @@ fn resolve_base_commit(repo: &Repository, base: &str) -> Result<git2::Oid> {
 }
 
 impl DiffState {
-    /// worktree_path のリポジトリについて base_branch と HEAD の diff を読み込み、
+    /// worktree_path のリポジトリについてベースからの変更を読み込み、
     /// 以前に保持していた diff データを置き換える。
-    ///
-    /// コミット済み(merge-base..HEAD)と未コミット(HEAD vs workdir+index)の
-    /// 両方の diff を計算する。
     pub fn load_diff(
         &mut self,
         worktree_path: &Path,
@@ -70,45 +65,15 @@ impl DiffState {
         tab_width: usize,
     ) {
         self.base_branch = base_branch.to_string();
-        self.error = None;
 
-        // コミット済みの diff を計算する。
-        match Self::compute_diff_range(
-            worktree_path,
-            base_branch,
-            DiffRange::Committed,
-            word_diff,
-            tab_width,
-        ) {
-            Ok(mut files) => {
-                files.sort_by(|a, b| a.path.cmp(&b.path));
-                self.committed_files = files;
+        match Self::compute_changed_files(worktree_path, base_branch, word_diff, tab_width) {
+            Ok((files, base_error)) => {
+                self.files = files;
+                self.error = base_error;
             }
             Err(e) => {
-                self.committed_files.clear();
+                self.files.clear();
                 self.error = Some(format!("{e:#}"));
-                // 下の未コミット計算にはそのまま進む。未コミット側は base_branch
-                // に依存しないので、不正なベースが未コミットの変更まで隠してしまっては
-                // ならない。
-            }
-        }
-
-        // 未コミットの diff を計算する。
-        match Self::compute_diff_range(
-            worktree_path,
-            base_branch,
-            DiffRange::Uncommitted,
-            word_diff,
-            tab_width,
-        ) {
-            Ok(mut files) => {
-                files.sort_by(|a, b| a.path.cmp(&b.path));
-                self.uncommitted_files = files;
-            }
-            Err(e) => {
-                self.uncommitted_files.clear();
-                // 致命的ではない: コミット済みの diff は正常に読み込めている。
-                log::warn!("failed to compute uncommitted diff: {e:#}");
             }
         }
 
@@ -173,32 +138,19 @@ impl DiffState {
         None
     }
 
-    /// バックグラウンドでの diff 計算用の公開ラッパー。
+    /// merge-base(base, HEAD) から作業ツリー(index 込み)までのファイル単位 diff を
+    /// パス順に並べて返す。コミット済みと未コミットを1本の diff にまとめているので、
+    /// コミット後に再編集したファイルも1エントリのままになる。
     ///
-    /// committed: true なら merge-base..HEAD、false なら HEAD vs workdir+index を計算する。
-    pub fn compute_diff_range_static(
+    /// 2つ目の戻り値は「ベースを解決できず HEAD を基準にフォールバックした」理由。
+    /// ベース解決の失敗で一覧ごと空にすると手元の未コミット変更まで見えなくなるので、
+    /// 一覧は返した上で理由だけを別に渡す。
+    pub fn compute_changed_files(
         worktree_path: &Path,
         base_branch: &str,
-        committed: bool,
         word_diff: bool,
         tab_width: usize,
-    ) -> Result<Vec<FileDiff>> {
-        let range = if committed {
-            DiffRange::Committed
-        } else {
-            DiffRange::Uncommitted
-        };
-        Self::compute_diff_range(worktree_path, base_branch, range, word_diff, tab_width)
-    }
-
-    /// git2 + similar を使い、指定した範囲についてファイル単位の diff を計算する。
-    pub(super) fn compute_diff_range(
-        worktree_path: &Path,
-        base_branch: &str,
-        range: DiffRange,
-        word_diff: bool,
-        tab_width: usize,
-    ) -> Result<Vec<FileDiff>> {
+    ) -> Result<(Vec<FileDiff>, Option<String>)> {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open repo at {}", worktree_path.display()))?;
 
@@ -208,39 +160,49 @@ impl DiffState {
             .with_context(|| "cannot resolve HEAD")?
             .peel_to_commit()
             .with_context(|| "cannot peel HEAD to commit")?;
-        let head_oid = head_commit.id();
+        let head_tree = head_commit.tree()?;
 
-        // range に応じて git2 の diff を構築する。
-        let diff = match range {
-            DiffRange::Committed => {
-                // merge-base(base, HEAD)..HEAD
-                let base_oid = resolve_base_commit(&repo, base_branch)?;
-                let merge_base_oid = repo.merge_base(base_oid, head_oid).with_context(|| {
-                    format!("cannot find merge-base between '{base_branch}' and HEAD")
-                })?;
-                let merge_base_tree = repo
-                    .find_commit(merge_base_oid)?
-                    .tree()
-                    .with_context(|| "cannot get merge-base tree")?;
-                let head_tree = head_commit.tree()?;
-                let mut opts = git2::DiffOptions::new();
-                opts.context_lines(CONTEXT_LINES);
-                repo.diff_tree_to_tree(Some(&merge_base_tree), Some(&head_tree), Some(&mut opts))?
-            }
-            DiffRange::Uncommitted => {
-                // HEAD..workdir+index
-                let head_tree = head_commit.tree()?;
-                let mut opts = git2::DiffOptions::new();
-                opts.include_untracked(true);
-                opts.recurse_untracked_dirs(true);
-                // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、
-                // パッチが作られないので追加行数が 0 になってしまう。
-                opts.show_untracked_content(true);
-                opts.context_lines(CONTEXT_LINES);
-                repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut opts))?
-            }
-        };
+        let (base_tree, base_error) =
+            match Self::merge_base_tree(&repo, base_branch, head_commit.id()) {
+                Ok(tree) => (tree, None),
+                Err(e) => (head_tree, Some(format!("{e:#}"))),
+            };
 
+        let mut opts = git2::DiffOptions::new();
+        opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
+        // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、
+        // パッチが作られないので追加行数が 0 になってしまう。
+        opts.show_untracked_content(true);
+        opts.context_lines(CONTEXT_LINES);
+        let diff = repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
+        let files = Self::file_diffs_from(&repo, &diff, word_diff, tab_width)?;
+        Ok((files, base_error))
+    }
+
+    /// base と HEAD の merge-base のツリーを解決する。
+    fn merge_base_tree<'r>(
+        repo: &'r Repository,
+        base_branch: &str,
+        head_oid: git2::Oid,
+    ) -> Result<git2::Tree<'r>> {
+        let base_oid = resolve_base_commit(repo, base_branch)?;
+        let merge_base_oid = repo
+            .merge_base(base_oid, head_oid)
+            .with_context(|| format!("cannot find merge-base between '{base_branch}' and HEAD"))?;
+        repo.find_commit(merge_base_oid)?
+            .tree()
+            .with_context(|| "cannot get merge-base tree")
+    }
+
+    /// git2 の diff をファイル単位の [FileDiff] に展開する(行内 diff は
+    /// word_diff のときだけ計算する)。返り値はパス順。
+    fn file_diffs_from(
+        repo: &Repository,
+        diff: &git2::Diff<'_>,
+        word_diff: bool,
+        tab_width: usize,
+    ) -> Result<Vec<FileDiff>> {
         let mut file_diffs = Vec::new();
 
         // スキップするデルタのインデックス集合を作る: 大文字小文字だけ異なり
@@ -248,7 +210,7 @@ impl DiffState {
         // ファイル内容が同一でもパスの大文字小文字だけが異なる削除+追加のペア
         // (例: "Photo.png" 削除、"photo.png" 追加)を git が報告することがある。
         // blob の OID と小文字化したパスを比較してこれらのペアを検出する。
-        let skip_indices = Self::find_case_only_rename_indices(&diff);
+        let skip_indices = Self::find_case_only_rename_indices(diff);
 
         let num_deltas = diff.deltas().len();
         for delta_idx in 0..num_deltas {
@@ -271,7 +233,7 @@ impl DiffState {
             // として表示される事故の発生源だった。libgit2 に任せると内容の取得も
             // 行数も git 本体と同じ経路になり、.gitattributes のフィルタや改行
             // 正規化、バイナリ判定もそのまま効く。
-            let patch = match git2::Patch::from_diff(&diff, delta_idx) {
+            let patch = match git2::Patch::from_diff(diff, delta_idx) {
                 Ok(p) => p,
                 Err(e) => {
                     // 1ファイルの失敗で一覧全体を落とさない。数字を捏造するより
@@ -315,7 +277,7 @@ impl DiffState {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             let func_pattern = Self::func_pattern_for_ext(ext);
-            let old_content = Self::blob_content(&repo, &delta.old_file());
+            let old_content = Self::blob_content(repo, &delta.old_file());
             let old_lines: Vec<&str> = old_content.lines().collect();
 
             let mut hunks = Vec::new();
@@ -378,6 +340,7 @@ impl DiffState {
             });
         }
 
+        file_diffs.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(file_diffs)
     }
 

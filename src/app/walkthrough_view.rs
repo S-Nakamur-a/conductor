@@ -122,7 +122,7 @@ impl App {
 
         // 折りたたまれたディレクトリの中にあるファイルは、展開されるまで表示行が
         // 存在しないため、行を探す前に reveal する。
-        let Some((file_diff, _)) = self
+        let Some(file_diff) = self
             .diff_state
             .reveal_path(&file_path)
             .and_then(|i| self.diff_state.resolve_file(i))
@@ -189,7 +189,7 @@ mod tests {
     /// を通じて解決される。
     #[test]
     fn saved_walkthrough_round_trips_for_ui_consumption() {
-        use crate::diff_state::{DiffListEntry, DiffSection, DiffState, DiffViewMode, FileDiff};
+        use crate::diff_state::{DiffListEntry, DiffState, DiffViewMode, FileDiff};
         use crate::review_store::ReviewStore;
         use crate::walkthrough::{NewWalkthroughStep, WalkthroughStatus, WalkthroughStepKind};
 
@@ -235,14 +235,13 @@ mod tests {
         // jump_to_walkthrough_step が要求するのと全く同じ形で diff リストを
         // 通じて解決できなければならない。
         let mut ds = DiffState::new("main", DiffViewMode::Unified);
-        ds.committed_files = vec![FileDiff {
+        ds.files = vec![FileDiff {
             path: core.file_path.clone(),
             added_lines: 3,
             deleted_lines: 0,
             hunks: Vec::new(),
         }];
         ds.display_list = vec![DiffListEntry::File {
-            section: DiffSection::Committed,
             file_index: 0,
             depth: 0,
         }];
