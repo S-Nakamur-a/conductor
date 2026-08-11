@@ -117,7 +117,9 @@ pub fn apply_auto_theme(app: &mut App) {
             );
         }
         None => {
-            log::info!("OSC11 auto-detected background (luminance={lum:.2}): keeping current theme");
+            log::info!(
+                "OSC11 auto-detected background (luminance={lum:.2}): keeping current theme"
+            );
         }
     }
 }

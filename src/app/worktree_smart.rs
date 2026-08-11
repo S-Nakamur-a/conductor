@@ -64,7 +64,7 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
 /// エージェント的な CLI は、プロンプトをどれだけ強く書いても、たまに会話的に
 /// 答えてしまうことがあり、1回のフォーマット崩れで smart-worktree フロー全体を
 /// 潰すべきではない。このタスクは数秒の純粋なテキスト生成なので、ここでのリトライは
-/// 安く済む — これはまさに、walkthrough 生成がリトライを*しない*理由でもある。
+/// 安く済む。数分かかるタスクなら、同じ判断にはならない。
 const SMART_WORKTREE_ATTEMPTS: usize = 3;
 
 /// smart worktree 用の LLM 生成(ブランチ名 + プロンプト)を実行する。
@@ -75,8 +75,7 @@ const SMART_WORKTREE_ATTEMPTS: usize = 3;
 /// チェックする。
 ///
 /// このタスクは [api] command_timeout_secs をそのまま使う: ブランチ名を
-/// 付けるのは数秒のテキスト生成であり、独自の遥かに大きな予算を要求する
-/// walkthrough 生成とは違う。
+/// 付けるのは数秒のテキスト生成なので、独自の予算を要求する理由が無い。
 fn run_smart_generation(
     desc: &str,
     cancel_token: &Arc<AtomicBool>,

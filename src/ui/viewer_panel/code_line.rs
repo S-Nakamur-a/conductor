@@ -243,7 +243,8 @@ pub(super) fn render_code_line_rows(
     // シンボルのヒントラベルを適用する（Vimium 風）。
     let content_spans = if app.code_nav.symbol_hint.active {
         let hints_on_line: Vec<_> = app
-            .code_nav.symbol_hint
+            .code_nav
+            .symbol_hint
             .hints
             .iter()
             .filter(|h| h.line == line_1)

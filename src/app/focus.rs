@@ -14,6 +14,10 @@ pub enum Focus {
     /// 埋め込みエディタパネル（PTY内のvim/emacs）。マージされた
     /// Explorer+Viewer領域を占有する。[App::editor] がSomeの間のみ到達可能。
     Editor,
+    /// revidere の 2 列レビュービュー。他の 3 列とは並ばず画面全体を占有する
+    /// ので、Tab の輪には入れていない — 入る口は w とパレットだけ、出る口は
+    /// Esc/q と、Tab が Explorer へ抜けること。
+    Revidere,
 }
 
 impl Focus {
@@ -28,6 +32,7 @@ impl Focus {
             Focus::Viewer => KeyContext::Viewer,
             Focus::TerminalClaude | Focus::TerminalShell => KeyContext::Terminal,
             Focus::Editor => KeyContext::Editor,
+            Focus::Revidere => KeyContext::Revidere,
         }
     }
 
@@ -200,6 +205,8 @@ impl App {
             Focus::Viewer => Focus::TerminalClaude,
             Focus::Editor => Focus::TerminalClaude,
             Focus::TerminalClaude => Focus::TerminalShell,
+            // 2 列ビューは画面全体を占有しているので、Tab は輪に戻る動き。
+            Focus::Revidere => Focus::Explorer,
         };
         // 他のどこからであれExplorer列に着地したときは、常にファイルツリー
         // （上のパネル）から始まる。
@@ -227,6 +234,7 @@ impl App {
             Focus::Editor => Focus::TerminalShell,
             Focus::TerminalClaude => Focus::Viewer,
             Focus::TerminalShell => Focus::TerminalClaude,
+            Focus::Revidere => Focus::Explorer,
         };
         // Viewer側からExplorer列に入ると、（一番近い）変更ファイルパネルに
         // 着地するので、さらにTabで戻るとツリーに到達する。

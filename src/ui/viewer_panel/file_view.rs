@@ -14,10 +14,10 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
-use super::code_line::{render_code_line_rows, FileLineRenderCtx};
+use super::code_line::{FileLineRenderCtx, render_code_line_rows};
 use super::comment_thread::new_comment_anchor_end;
-use super::diff_view::{build_walkthrough_banner, render_diff_view, render_walkthrough_banner};
-use super::markdown_view::{render_markdown_view, toggle_segments, toggle_spans, TOGGLE_W};
+use super::diff_view::render_diff_view;
+use super::markdown_view::{TOGGLE_W, render_markdown_view, toggle_segments, toggle_spans};
 use super::media_view::render_media_view;
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
@@ -114,27 +114,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .border_type(border_type)
         .border_style(Style::default().fg(border_color));
 
-    // unified diff モード: 専用レンダラーに委譲する。このファイルに紐づく
-    // ウォークスルーステップをツアー中なら、上部を全幅バナーとして切り出し、
-    // ステップの解説を Explorer ペインに詰め込むのではなく Viewer の幅で読める
-    // ようにする。
+    // unified diff モード: 専用レンダラーに委譲する。
     if vs.diff_view.diff_mode && !vs.diff_view.diff_view_lines.is_empty() {
-        let diff_area = match build_walkthrough_banner(app, area.width) {
-            Some((title, lines)) if area.height > 8 => {
-                // バナーには Viewer の高さの最大 2/5 程度を確保し、diff 側は
-                // 3 行未満にはしない。
-                let content_h = (lines.len() as u16).saturating_add(2);
-                let max_h = (area.height * 2 / 5).max(4);
-                let banner_h = content_h.min(max_h).min(area.height.saturating_sub(3));
-                let banner_area = Rect::new(area.x, area.y, area.width, banner_h);
-                let diff_area =
-                    Rect::new(area.x, area.y + banner_h, area.width, area.height - banner_h);
-                render_walkthrough_banner(frame, banner_area, app, &title, &lines);
-                diff_area
-            }
-            _ => area,
-        };
-        render_diff_view(frame, diff_area, app, block);
+        render_diff_view(frame, area, app, block);
         return;
     }
 

@@ -64,17 +64,10 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
     } else {
         " Explorer ".to_string()
     };
-    // walkthrough 準備完了のサイン。コメントバッジの「まだ開いていないものが
-    // ある」というパターンを踏襲する。walkthrough ビューを既に表示している
-    // ときはバッジが冗長になるので隠す。
-    let walkthrough_ready = matches!(
-        app.walkthrough.current.as_ref().map(|wt| wt.header.status),
-        Some(crate::walkthrough::WalkthroughStatus::Ready)
-    );
-    if walkthrough_ready
-        && app.viewer_state.explorer.explorer_bottom_view
-            != crate::viewer::ExplorerBottomView::Walkthrough
-    {
+    // レビューの成果物があるサイン。コメントバッジの「まだ開いていないものが
+    // ある」というパターンを踏襲する。2 列ビューを開いている間はここが
+    // 描かれないので、冗長になる心配は無い。
+    if app.revidere.has_review() {
         title.push_str("\u{1f9ed} ");
     }
 

@@ -144,14 +144,14 @@
 "d" = "show_diff_list"
 "c" = "show_comment_list"
 "C" = "open_comment_list"
-"w" = "show_walkthrough"
-# Shift+W generates the walkthrough — the "heavier" sibling of w=show,
-# mirroring the do/undo shift-pairing used elsewhere. Dispatched as a global
-# action, so it fires even though this Explorer layer owns the chord. It skips
-# when a walkthrough already exists for the current commit; Alt+w forces a
-# rebuild past that skip.
-"W" = "generate_walkthrough"
-"alt+w" = "force_generate_walkthrough"
+"w" = "show_revidere"
+# Shift+W runs the analysis — the "heavier" sibling of w=show, mirroring the
+# do/undo shift-pairing used elsewhere. Dispatched as a global action, so it
+# fires even though this Explorer layer owns the chord. revidere caches its
+# reply keyed on the diff itself, so pressing W twice on an unchanged diff
+# returns instantly without starting the AI; alt+w skips the cache.
+"W" = "analyze_revidere"
+"alt+w" = "force_analyze_revidere"
 "/" = "search_filename"
 ":" = "command_palette"
 
@@ -200,23 +200,29 @@
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
 
-# ── Explorer: walkthrough ───────────────────────────────────────────────────────
-[layers.explorer_walkthrough]
-"tab" = "cycle_focus_forward"
-"shift+tab" = "cycle_focus_backward"
+# ── Revidere: the two-column review view ────────────────────────────────────────
+# Occupies the whole screen, so this layer owns every key: there is no other
+# panel underneath to fall through to.
+[layers.revidere]
 "j" = "navigate_down"
 "down" = "navigate_down"
 "k" = "navigate_up"
 "up" = "navigate_up"
-"enter" = "select"
 "g" = "go_to_top"
 "G" = "go_to_bottom"
-"space" = "view_comment_detail"
-# Jump to the next/previous step immediately and stay on this view, unlike
-# `enter` (which jumps and moves focus to the Viewer) — lets a reviewer page
-# through the whole walkthrough with the diff following along.
-"n" = "walkthrough_next_step"
-"N" = "walkthrough_prev_step"
+# Move between sections rather than lines, with the diff following along —
+# the same n/N pairing the comment list uses.
+"enter" = "select"
+"n" = "revidere_next_section"
+"N" = "revidere_prev_section"
+# GitHub が PR description と Files changed を分けているのと同じ切り分け。総括は
+# 読むのは最初の一度で、そのあとずっと画面を取り続けるものではない。行き先ごとに
+# キーを分けてあるので、いまどちらを出していても押した結果は同じ。
+"o" = "revidere_show_overview"
+"d" = "revidere_show_sections"
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"q" = "exit_sub_panel"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"

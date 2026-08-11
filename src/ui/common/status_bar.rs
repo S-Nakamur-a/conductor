@@ -112,6 +112,14 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
             ("new shell", &[Action::NewShell]),
             ("session", &[Action::NextSession]),
         ],
+        Focus::Revidere => &[
+            ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
+            (
+                "section",
+                &[Action::RevidereNextSection, Action::RevidererPrevSection],
+            ),
+            ("close", &[Action::ExitSubPanel]),
+        ],
         Focus::Editor => &[
             ("Claude", &[Action::LeaveTerminal]),
             ("zoom", &[Action::TogglePanelExpand]),

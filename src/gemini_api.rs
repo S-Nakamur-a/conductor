@@ -2,7 +2,7 @@
 //!
 //! Google Gemini API 向けのブロッキング HTTP クライアント。[api] の継ぎ目
 //! (ai_caller.rs を参照) の背後にある 2 つのプロバイダのうちの 1 つ。素の HTTP
-//! なのでリポジトリを読めない。コードを必要とするタスク (walkthrough の生成) は
+//! なのでリポジトリを読めない。リポジトリを読ませる必要のあるタスクは、
 //! こちらではなく command プロバイダを使うこと。
 
 use anyhow::{Context, Result, bail};

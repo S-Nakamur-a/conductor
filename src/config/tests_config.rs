@@ -43,11 +43,11 @@ fn diff_view_serde() {
 /// 削除しても既存インストールを壊してはならない。
 #[test]
 fn removed_review_prompt_keys_are_ignored() {
-    let cfg: ReviewConfig = toml::from_str(
-        "prompt_template = \"…{comments}\"\nprompt_action = \"send_to_session\"\n",
+    // walkthrough_language も、revidere へ移った今は「知らない鍵」の側にいる。
+    let _cfg: ReviewConfig = toml::from_str(
+        "prompt_template = \"…{comments}\"\nprompt_action = \"send_to_session\"\nwalkthrough_language = \"日本語\"\n",
     )
     .expect("stale keys should be ignored, not rejected");
-    assert!(cfg.walkthrough_language.is_none());
 }
 
 /// 削除済みの [rich] セクションが残った設定ファイルも読み込みに失敗しては

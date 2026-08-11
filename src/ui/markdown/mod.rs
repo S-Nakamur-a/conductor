@@ -62,7 +62,7 @@ use syntect::parsing::SyntaxSet;
 use crate::theme::Theme;
 
 /// どちらの見た目で描画するか。このレンダラは conductor 自身のリッチな UI
-/// （change summary、レビューコメント、walkthrough）と Claude Code のトランスクリプト
+/// （change summary、レビューコメント）と Claude Code のトランスクリプト
 /// オーバーレイ（reflow のスクロールアップビュー）の両方で共用されており、両者は
 /// リストマーカーと見出しの装飾に異なる見た目を求める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

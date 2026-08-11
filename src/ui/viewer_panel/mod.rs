@@ -25,6 +25,9 @@ mod syntax;
 
 pub use file_view::render;
 pub(crate) use markdown_view::toggle_segments;
+// revidere の 2 列ビューも syntect のトークンを描くので、タブの展開は同じ
+// 実装を使う。1 行の中で列を引き継ぐのが要点なので、単純な置換では代われない。
+pub(crate) use syntax::expand_tabs_at;
 
 /// インラインスレッドのアクション行の共有定義。
 ///

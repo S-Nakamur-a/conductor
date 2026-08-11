@@ -107,7 +107,7 @@ impl App {
             },
             should_quit: false,
             editor: None,
-            walkthrough: Default::default(),
+            revidere: Default::default(),
             publish: Default::default(),
             worktrees: Default::default(),
             config,

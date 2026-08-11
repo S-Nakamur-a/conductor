@@ -45,7 +45,7 @@ fn wrap_preserves_blank_source_lines() {
 fn wrap_overlong_single_word_is_hard_split() {
     // Claude Code に対して実測: Wx150 を57カラムの予算で折り返すと 57 / 57 / 36 に
     // なるので、分割不能な連続文字はあふれさせるのではなくカラム境界で切られる
-    // （あふれさせるのは ui::walkthrough_pane::wrap_text の挙動だが、ここでは
+    // （あふれさせるのは markdown 側の折り返しの挙動だが、ここでは
     // 一致を優先する）。
     assert_eq!(
         wrap_plain_text("supercalifragilistic", 5),

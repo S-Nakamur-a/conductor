@@ -234,7 +234,7 @@ fn expand_already_expanded_dir_does_not_panic() {
 }
 
 /// display_index_for_path は resolve_file の逆であり、ファイルがリストの
-/// インデックスではなくパス(walkthrough のステップへのジャンプなど)で開かれた
+/// インデックスではなくパス(節が指す位置へのジャンプなど)で開かれた
 /// 際に diff リストのカーソルを再同期するために使う。
 #[test]
 fn display_index_for_path_finds_files() {
@@ -263,7 +263,7 @@ fn display_index_for_path_finds_files() {
     assert_eq!(ds.display_index_for_path("src/missing.rs"), None);
 }
 
-// 寛容なパス解決(walkthrough のステップ / コメントのアンカー)
+// 寛容なパス解決(revidere の節 / コメントのアンカー)
 
 /// diff が paths に触れる DiffState を作り、display list を構築する。
 fn diff_state_with(paths: &[&str]) -> super::DiffState {

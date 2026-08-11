@@ -8,7 +8,7 @@
 //! 責務ごとに分割している。[schema] はテーブル作成とバージョンベースの
 //! マイグレーションを担当し、それ以外の各サブモジュールはそれぞれ1領域
 //! （レビュー、返信、テンプレート、セッション履歴、worktree/PR メタデータ、
-//! walkthrough、表示状態、ゲーミフィケーション統計）に対応する
+//! 表示状態、ゲーミフィケーション統計）に対応する
 //! impl ReviewStore ブロックを1つ持つ。このモジュール自体は ReviewStore
 //! 構造体本体、db_path、そして外部から見えるパス crate::review_store::X を
 //! 変えないための公開の再エクスポートだけを持つ。
@@ -23,7 +23,6 @@ mod templates;
 #[cfg(test)]
 mod test_support;
 mod view_state;
-mod walkthroughs;
 mod worktree_metadata;
 
 use std::fs;

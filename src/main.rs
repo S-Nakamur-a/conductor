@@ -35,6 +35,7 @@ mod repo_path;
 mod review_publish;
 mod review_state;
 mod review_store;
+mod revidere;
 mod rust_test;
 mod search_result_tree;
 mod startup;
@@ -49,7 +50,6 @@ mod timer;
 mod ui;
 mod update_checker;
 mod viewer;
-mod walkthrough;
 mod worktree_ops;
 
 use std::io;

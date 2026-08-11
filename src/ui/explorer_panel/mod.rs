@@ -59,9 +59,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         crate::viewer::ExplorerBottomView::Comments => {
             comment_list::render_comment_list(frame, chunks[1], app, focused);
         }
-        crate::viewer::ExplorerBottomView::Walkthrough => {
-            super::walkthrough_pane::render(frame, chunks[1], app, focused);
-        }
         crate::viewer::ExplorerBottomView::DiffList => {
             diff_list::render_diff_list(frame, chunks[1], app, focused);
         }

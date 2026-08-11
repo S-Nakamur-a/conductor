@@ -1,0 +1,16 @@
+[package]
+name = "revidere"
+version = "0.2.0"
+edition = "2021"
+publish = false
+description = "Reading order and coverage checking for AI-assisted git diff review"
+
+# 描画も AI の起動もここには入れない。log は解析の進捗を出すためだけ
+# (ホストは TUI なので、直接 stdout/stderr へ書くと画面が壊れる)。
+[dependencies]
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+revidere-fixtures = { path = "../revidere-fixtures" }

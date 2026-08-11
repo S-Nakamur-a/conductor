@@ -75,8 +75,9 @@ impl App {
                 let grow_right = matches!(dir, ResizeDir::Right);
                 match self.focus {
                     // worktree ストリップは全幅で、3つのリサイズ可能な列の1つではない —
-                    // ここからリサイズするものは何もない。
-                    Focus::Worktree => false,
+                    // ここからリサイズするものは何もない。2 列ビューも同様に、
+                    // 3 列レイアウトの外にいるので動かす境界を持たない。
+                    Focus::Worktree | Focus::Revidere => false,
                     // 最左列: 左右キーはExplorer|Viewer境界を動かす。
                     Focus::Explorer => {
                         self.move_explorer_viewer_divider(if grow_right { step } else { -step })

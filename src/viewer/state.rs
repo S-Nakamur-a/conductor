@@ -148,8 +148,6 @@ pub enum ExplorerBottomView {
     DiffList,
     /// レビューコメント一覧。
     Comments,
-    /// AI walkthrough（各ステップ + 選択中ステップの本文）。
-    Walkthrough,
 }
 
 /// Explorer パネルの状態（選択、スクロール）。
@@ -183,21 +181,6 @@ pub struct ExplorerState {
     pub inline_reply_comment_id: Option<String>,
     /// インラインリプライ入力のテキストバッファ。
     pub inline_reply_buffer: TextInput,
-    /// walkthrough 表示中の選択中ステップのインデックス（j/k で動かすリストの
-    /// カーソル）。
-    pub walkthrough_selected: usize,
-    /// Viewer が現在反映しているステップのインデックス — 最後に「ジャンプした」
-    /// ステップ（Enter/n/N）で、Viewer の全幅ステップバナーと行範囲の下線を
-    /// 駆動する。walkthrough_selected とは別に持つことで、j/k でリストの
-    /// カーソルを動かしただけでは Viewer がレビュアーの足元から動いてしまわない
-    /// ようにしている。いずれかのステップにジャンプするまでは None。
-    pub walkthrough_viewing: Option<usize>,
-    /// walkthrough ステップ一覧の垂直スクロールオフセット。
-    pub walkthrough_scroll: usize,
-    /// 少なくとも一度ジャンプしたことのある walkthrough ステップの ID。
-    pub viewed_steps: HashSet<String>,
-    /// walkthrough ステップの詳細オーバーレイ（space）が開いているか。
-    pub walkthrough_detail_active: bool,
     /// レビュアーが「viewed」を付けたファイルの相対パス。
     pub viewed: HashSet<String>,
 }
@@ -218,11 +201,6 @@ impl Default for ExplorerState {
             inline_reply_line: None,
             inline_reply_comment_id: None,
             inline_reply_buffer: TextInput::new_multiline(),
-            walkthrough_selected: 0,
-            walkthrough_viewing: None,
-            walkthrough_scroll: 0,
-            viewed_steps: HashSet::new(),
-            walkthrough_detail_active: false,
             viewed: HashSet::new(),
         }
     }

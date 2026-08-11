@@ -1,7 +1,6 @@
 //! Explorer の2つの行ベースリスト（file tree, Changed files）で共有する
 //! hover/selection の状態とスタイリング。selection/focus/hover の優先順位ルールを
-//! 各パネルで再導出させて食い違わせるのではなく、一箇所に集約するためにここに置く —
-//! docs/plans/2026-07-30-ui-affordance-feedback.md の ADR D3 を参照。
+//! 各パネルで再導出させて食い違わせるのではなく、一箇所に集約するためにここに置く。
 
 use ratatui::style::{Modifier, Style};
 use std::time::{Duration, Instant};

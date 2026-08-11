@@ -10,10 +10,14 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 
 - **Build:** `cargo build`
 - **Run:** `cargo run` or `cargo run -- <repo-path>` (defaults to current directory)
-- **Test:** `cargo test` (tests are inline `#[cfg(test)]` modules in `git_engine.rs`, `config.rs`, `review_store.rs`)
+- **Test:** `cargo test --workspace` (tests are inline `#[cfg(test)]` modules in `git_engine.rs`, `config.rs`, `review_store.rs`)
 - **Run single test:** `cargo test <test_name>` (e.g., `cargo test test_parse_full_config`)
-- **Lint:** `cargo clippy`
-- **Check:** `cargo check`
+- **Lint:** `cargo clippy --workspace`
+- **Check:** `cargo check --workspace`
+
+Bare `cargo test` / `cargo clippy` only cover the `conductor` package — the
+`crates/revidere*` members need `--workspace`. `default-members` is deliberately
+left alone so `cargo run` stays unambiguous.
 - **Logging:** Set `RUST_LOG=debug` (or `info`, `warn`) before running
 
 ### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
@@ -26,9 +30,9 @@ release channels and drifted apart.
 - **Run by hand:** `conductor mcp-serve --db <path>` (speaks JSON-RPC on stdout)
 - **Who starts it:** `plugins/conductor/.mcp.json`, for the interactive Claude Code
   sessions inside the TUI (it resolves the DB from `$CONDUCTOR_DB_PATH`, injected by
-  `pty_manager/spawn.rs`). Conductor's own walkthrough generation does *not* go
-  through MCP — it parses the model's JSON reply and writes the rows itself
-- **Tool contract:** the 8 `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
+  `pty_manager/spawn.rs`). The AI review does *not* go through MCP — its
+  artifact is a JSON file written by `revidere` (see `revidere.rs` below)
+- **Tool contract:** the 7 `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
   comments become the JSON Schema descriptions the model reads, so changing one
   changes the tool's public contract — treat them as API, not commentary.
 
@@ -54,6 +58,29 @@ its current session id back.
 - **Fallback:** when the hook stays silent (hooks disabled, older CLI),
   `claude_sessions/rotation.rs` infers the rotation from the logs instead. It is
   deliberately conservative — see its module docs for what it refuses to guess.
+
+### Review analyser (`crates/revidere`)
+
+revidere turns a git diff into `<worktree>/.conductor/review.json`: every changed
+line sorted into sections by importance, plus a coverage check that no changed
+line is left unexplained. It lives in this repo as workspace members:
+`crates/revidere` (the whole analyser plus the artifact types and `ReadingOrder`)
+and `crates/revidere-fixtures` (shared test scaffolding).
+
+- **One entry point:** `revidere::analyze(&Options, &dyn Ai)`. It has no binary and
+  no CLI — conductor is the only caller (`app/revidere.rs`, on a worker thread).
+- **The AI is injected.** revidere never spawns anything; conductor implements
+  `revidere::Ai` over `ai_caller`, so the review runs on the same `[api]` config as
+  every other AI feature. `provider = "gemini"` will *not* work: the prompt hands
+  over the ledger only, and the model is expected to read the repository itself, so
+  it needs an agentic CLI under `provider = "command"`.
+- **Cache identity:** the stored-answer key includes `Ai::identity()`. If that ever
+  goes constant, changing models silently returns the old model's answer.
+- **Failing coverage is not a failure.** `analyze` returns the artifact either way;
+  `review.coverage.is_complete()` is what distinguishes them. Treating an
+  incomplete review as an error throws away a readable one.
+- revidere writes nothing to stdout/stderr (the host owns a TUI) — progress goes
+  through `log`.
 
 ## Architecture
 
@@ -90,6 +117,9 @@ Status bar
   Terminal, with focus-driven widths. Any panel can be maximized (`Ctrl+Alt+Z`),
   and resized tmux-style with `Ctrl+Alt+Arrow` (ratios persist to config.toml).
 - Explorer column is split 50/50 (file tree top, diff/comment list bottom).
+- The revidere review view (`Focus::Revidere`, `w`) is *not* part of the
+  accordion: it takes `main_area` whole as two columns (reading order | diff)
+  and hides the terminal column. `ui/layout/render.rs` short-circuits there.
 - Terminal column is split 80/20 vertically (Claude Code top, Shell bottom).
 - When the embedded editor is active (`Focus::Editor`), it merges the
   Explorer+Viewer columns into one PTY panel.
@@ -99,7 +129,7 @@ Status bar
 
 | Module | Role |
 |--------|------|
-| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `walkthrough_view.rs`) |
+| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `revidere.rs`) |
 | `event/` | Keyboard/mouse event dispatch based on Focus and overlay state (per-context submodules) |
 | `menu/` | Menu bar model (`model.rs` — which command sits under which menu), interaction state (`state.rs`), and availability predicates for the greyed-out rows (`enabled.rs`) |
 | `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
@@ -114,8 +144,9 @@ Status bar
 | `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
 | `term_caps.rs` | Terminal capability probing — OSC 11 background-colour query driving light/dark theme auto-selection |
 | `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
-| `walkthrough.rs` | AI walkthrough data model, generation prompt, and reply parser — generation runs through the `[api]` seam (`ai_caller.rs`) on a background thread, never by spawning a CLI |
-| `app/walkthrough_view.rs` | Explorer walkthrough-view methods for `App` — step selection, jumping to a step's diff location, and the "viewed" file/step toggle |
+| `revidere.rs` | Loads the review artifact (`<worktree>/.conductor/review.json`) via the `revidere` library and builds its `ReadingOrder` — read-only, no AI |
+| `app/revidere.rs` | Runs `revidere::analyze` on a worker thread (one per branch, cancellable), wires `ai_caller` into its `Ai` seam, and jumps from a section into the Viewer |
+| `ui/revidere_view.rs` | The full-screen two-column review view (reading order \| diff) |
 | `app/review_publish.rs` | Publishes review comments to GitHub via `gh`, tracking which comments are already posted |
 
 ### UI Modules (`src/ui/`)
@@ -126,6 +157,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
+- **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions

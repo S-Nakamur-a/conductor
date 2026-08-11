@@ -66,6 +66,12 @@ struct Chip {
     waiting: bool,
     active: bool,
     is_current: bool,
+    /// revidere の解析の状態。マーカーの色を決めるのに使う。
+    review: crate::revidere::ArtifactState,
+    /// マーカーとチップ末尾の空白。解析していない worktree では空白だけ。
+    /// チップ本体とは別の Span にして色を変えるので、幅も別に持つ。
+    review_text: String,
+    review_width: u16,
 }
 
 /// バーに表示するチップのウィンドウ [start, end) を計算する。
@@ -210,7 +216,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             {
                 text.push_str(&format!(" \u{2193}{b}"));
             }
-            text.push(' ');
+            // revidere の状態は常に見えていてほしい。複数の worktree で
+            // 走らせると、終わったのがどれかはステータス行の 1 本では追えない。
+            // チップ末尾の空白と一緒に別 Span にするのは、状態ごとに色を
+            // 変えるため — 形でも色でも分かるようにしておく。
+            let review = crate::revidere::artifact_state(
+                &wt.path,
+                wt.head_time,
+                app.revidere.runs.is_running(&wt.branch),
+            );
+            let review_text = match review {
+                crate::revidere::ArtifactState::None => " ".to_string(),
+                crate::revidere::ArtifactState::Running => {
+                    format!(" {} ", crate::ui::common::spinner_frame(app.ui_tick))
+                }
+                other => format!(" {} ", other.marker()),
+            };
 
             // Claude/Shell セッションタブに合わせて [x]（以前は ✕）。チップの
             // 塗りつぶし背景のすぐ外側に置くので、危険色の赤が読みやすいまま
@@ -223,6 +244,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 waiting,
                 active,
                 is_current: i == app.worktrees.selected_index(),
+                review,
+                review_width: w(&review_text),
+                review_text,
                 text,
             }
         })
@@ -236,7 +260,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let avail_full = chips_max_x.saturating_sub(x);
 
     // オーバーフローヒントなしですべて収まるか？収まるならヒント分の確保を省く。
-    let slots: Vec<u16> = chips.iter().map(|c| c.width + c.del_width).collect();
+    let slots: Vec<u16> = chips
+        .iter()
+        .map(|c| c.width + c.review_width + c.del_width)
+        .collect();
     let all_fit = visible_window(&slots, sep_w, avail_full, 0, 0, false).1 == total;
 
     // スクロールが必要な場合、左右のオーバーフローヒントの分の場所を確保する。
@@ -310,12 +337,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             chip_style
         };
         spans.push(Span::styled(chip.text.clone(), chip_style));
+        // マーカーは前景色だけ差し替える。背景はチップのまま（選択中の塗り
+        // つぶしや hover の上に別の背景を重ねると、どちらの状態か読めなくなる）。
+        let review_style = match chip.review {
+            crate::revidere::ArtifactState::None => chip_style,
+            crate::revidere::ArtifactState::Running => chip_style.fg(app.theme.accent),
+            crate::revidere::ArtifactState::Fresh => chip_style.fg(success),
+            crate::revidere::ArtifactState::Stale => chip_style.fg(warning),
+        };
+        spans.push(Span::styled(
+            chip.review_text.clone(),
+            review_style.add_modifier(Modifier::BOLD),
+        ));
         hits.push(WtbarHit {
             x0: x,
-            x1: x + chip.width,
+            x1: x + chip.width + chip.review_width,
             action: WtbarAction::Select(i),
         });
-        x += chip.width;
+        x += chip.width + chip.review_width;
 
         if !chip.del.is_empty() {
             let del_style = Style::default().fg(error);

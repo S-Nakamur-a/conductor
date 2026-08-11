@@ -1,4 +1,4 @@
-//! Explorer のファイルツリー・diff リスト・walkthrough ステップリストが共有する
+//! Explorer のファイルツリーと diff リストが共有する
 //! スクロール位置の管理。それぞれ選択中のインデックスを自分のスクロール窓の中に
 //! 収める。
 
@@ -30,20 +30,5 @@ pub(in crate::event) fn adjust_diff_list_scroll(app: &mut App) {
         app.viewer_state.explorer.diff_list_scroll = selected;
     } else if selected >= app.viewer_state.explorer.diff_list_scroll + page_size {
         app.viewer_state.explorer.diff_list_scroll = selected.saturating_sub(page_size - 1);
-    }
-}
-
-/// walkthrough_selected が見える位置に収まるよう walkthrough_scroll を調整する。
-/// diff リストとは explorer_diff_list_height を共有している。両ビューは Explorer
-/// 下部ペインの同じ矩形を占有し（排他的に表示されるため、どちらが表示中でも
-/// 高さは常に最新の値になる）。
-pub(in crate::event) fn adjust_walkthrough_scroll(app: &mut App) {
-    let selected = app.viewer_state.explorer.walkthrough_selected;
-    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
-
-    if selected < app.viewer_state.explorer.walkthrough_scroll {
-        app.viewer_state.explorer.walkthrough_scroll = selected;
-    } else if selected >= app.viewer_state.explorer.walkthrough_scroll + page_size {
-        app.viewer_state.explorer.walkthrough_scroll = selected.saturating_sub(page_size - 1);
     }
 }

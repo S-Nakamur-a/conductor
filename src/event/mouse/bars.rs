@@ -23,7 +23,8 @@ fn start_worktree_creation(app: &mut App) {
 pub(super) fn wtbar_page_step(app: &App) -> usize {
     use crate::ui::worktree_bar::WtbarAction;
     let visible = app
-        .wtbar.hits
+        .wtbar
+        .hits
         .iter()
         .filter(|h| matches!(h.action, WtbarAction::Select(_)))
         .count();
@@ -46,7 +47,8 @@ pub(super) fn handle_wtbar_click(
     use crate::ui::worktree_bar::WtbarAction;
 
     let action = app
-        .wtbar.hits
+        .wtbar
+        .hits
         .iter()
         .find(|h| col >= h.x0 && col < h.x1)
         .map(|h| h.action);

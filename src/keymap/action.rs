@@ -25,7 +25,7 @@ keymap_suite::actions! {
         /// あり、これがデフォルトのチョードが f10 である理由。Alt+文字の
         /// ニーモニックは使わない: alt+<文字> はすでにここで密に使われて
         /// いる（alt+h/l のフォーカス循環、alt+t のテーマピッカー、alt+w の
-        /// walkthrough）ので、ニーモニックのセットはそこから奪うことになる。
+        /// レビュー解析）ので、ニーモニックのセットはそこから奪うことになる。
         FocusMenuBar => "focus_menu_bar",
         CycleFocusForward => "cycle_focus_forward",
         CycleFocusBackward => "cycle_focus_backward",
@@ -161,28 +161,31 @@ keymap_suite::actions! {
         OpenThemePicker => "open_theme_picker",
 
         // PR レビュー
-        /// AI walkthrough を Explorer の下段ペインビューとして表示する。
-        ShowWalkthrough => "show_walkthrough",
+        /// revidere の 2 列レビュービュー (節一覧 + diff) を開く。成果物が
+        /// 無ければ開かず、作り方を案内する。
+        ShowRevidere => "show_revidere",
+        /// 2 列ビューの中で、次/前の節へ飛ぶ。左の選択と右の diff が一緒に動く。
+        RevidereNextSection => "revidere_next_section",
+        RevidererPrevSection => "revidere_prev_section",
+        /// 総括の 1 列表示へ / 節 + diff の 2 列表示へ。
+        ///
+        /// 1 つのキーで交互に切り替えないのは、押した結果がいまどちらを
+        /// 出しているかで変わるため。行き先が決まっているほうが、キーの
+        /// 割り当てを説明するのも試すのも素直になる。
+        RevidereShowOverview => "revidere_show_overview",
+        RevidereShowSections => "revidere_show_sections",
         /// ファイル（diff リストの行、または現在 Viewer の diff モードで
         /// 開いているファイル）の「viewed」マークを切り替える。
         ToggleViewed => "toggle_viewed",
-        /// walkthrough のステップ選択を次/前のステップへ動かし、即座に
-        /// そこへジャンプする（Explorer の Walkthrough ビューでのみ）。
-        WalkthroughNextStep => "walkthrough_next_step",
-        WalkthroughPrevStep => "walkthrough_prev_step",
         /// PR番号/URL 入力のオーバーレイを開き、プルリクエスト用の worktree を
         /// 取得する（または既存のものを再利用する）。
         ReviewPullRequest => "review_pull_request",
-        /// 選択中の worktree のブランチについて、バックグラウンドのヘッドレス
-        /// Claude セッションで AI walkthrough を生成する（または再生成する）。
-        /// デフォルトではパレット限定: g はどこでも「先頭へ移動」の慣習であり、
-        /// 数分かかる生成処理を、うっかり押したキーから発火させるにはコストが
-        /// 高すぎる。
-        GenerateWalkthrough => "generate_walkthrough",
-        /// 現在のブランチ先端にすでに walkthrough が存在していても再生成する —
-        /// GenerateWalkthrough の「同じコミットならスキップする」を回避する
-        /// 抜け道（例えば、改善された生成プロンプトを反映させたい場合など）。
-        ForceGenerateWalkthrough => "force_generate_walkthrough",
+        /// 選択中の worktree に `revidere analyze` をかける。数分かかるので、
+        /// 押し間違いで走り出さないよう Shift を要求している。
+        AnalyzeRevidere => "analyze_revidere",
+        /// 貯めた応答を使わずに聞き直す (revidere の --no-cache)。プロンプトを
+        /// 直したときなど、diff が同じでも結果を作り直したい場合の抜け道。
+        ForceAnalyzeRevidere => "force_analyze_revidere",
         /// このブランチの未公開のレビューコメントを、それらが開かれた元の
         /// GitHub PR に公開する。パレット限定: 取り消せない外部アクションであり、
         /// 常に先に y/n の確認オーバーレイを通す。
@@ -232,13 +235,15 @@ impl Action {
             Action::PullWorktree => "Pull worktree",
             Action::SessionHistory => "Session history",
             Action::OpenPullRequest => "Open pull request",
-            Action::ShowWalkthrough => "Show AI walkthrough",
+            Action::ShowRevidere => "Show the review (sections + diff)",
+            Action::RevidereNextSection => "Jump to next section",
+            Action::RevidererPrevSection => "Jump to previous section",
+            Action::RevidereShowOverview => "Show the overview (1 column)",
+            Action::RevidereShowSections => "Show the sections + diff (2 columns)",
+            Action::AnalyzeRevidere => "Analyse this worktree with revidere",
+            Action::ForceAnalyzeRevidere => "Re-analyse, ignoring the cached reply",
             Action::ToggleViewed => "Toggle file viewed",
-            Action::WalkthroughNextStep => "Jump to next walkthrough step",
-            Action::WalkthroughPrevStep => "Jump to previous walkthrough step",
             Action::ReviewPullRequest => "Review a pull request by number or URL",
-            Action::GenerateWalkthrough => "Generate an AI walkthrough of this branch's diff",
-            Action::ForceGenerateWalkthrough => "Regenerate the walkthrough (ignore same-commit skip)",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",
             Action::ShowDiffList => "Show changed-files list",
             Action::ShowCommentList => "Show comment list",

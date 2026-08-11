@@ -24,9 +24,7 @@ use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{
-    Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 const RAW_LABEL: &str = "Raw";
 const RENDERED_LABEL: &str = "Rendered";
@@ -183,7 +181,10 @@ mod tests {
     #[test]
     fn toggle_halves_are_adjacent_and_correctly_sized() {
         let seg = toggle_segments(0, 80).unwrap();
-        assert_eq!(seg.raw.end, seg.rendered.start, "no dead gap between halves");
+        assert_eq!(
+            seg.raw.end, seg.rendered.start,
+            "no dead gap between halves"
+        );
         // "[Raw" と "|Rendered]"。
         assert_eq!(seg.raw.end - seg.raw.start, 1 + RAW_LABEL.len() as u16);
         assert_eq!(
@@ -208,7 +209,10 @@ mod tests {
         for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 100, 300] {
             let seg = toggle_segments(7, w).unwrap();
             assert!(seg.raw.start > 7, "must not overlap the left border");
-            assert!(seg.rendered.end < 7 + w, "must not overrun the right border");
+            assert!(
+                seg.rendered.end < 7 + w,
+                "must not overrun the right border"
+            );
         }
     }
 
@@ -229,7 +233,11 @@ mod tests {
         use ratatui::widgets::{Block, Borders};
 
         let theme = Theme::default();
-        for title in [" f.md ", " 設計メモ.md ", " a/very/deeply/nested/path/notes.md "] {
+        for title in [
+            " f.md ",
+            " 設計メモ.md ",
+            " a/very/deeply/nested/path/notes.md ",
+        ] {
             for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 40, 60, 120] {
                 let mut term = Terminal::new(TestBackend::new(w, 5)).unwrap();
                 // レンダラーがタイトルに割り当てるのと同じ予算: 枠線 + トグル +

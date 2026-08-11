@@ -162,6 +162,8 @@ pub(crate) fn accordion_widths(
         // 消えたフルスクリーンのエディタになる。
         Some(Focus::Editor) => (0, total_width, 0),
         Some(Focus::TerminalClaude | Focus::TerminalShell) => (0, 0, 0),
+        // 2 列ビューは main_area 全体を自分で取るので、列幅は使われない。
+        Some(Focus::Revidere) => (0, 0, 0),
         None => {
             // デフォルトの比率。worktree カラムは廃止済み（その状態は上部ストリップに
             // 移った）ので幅は0になり、空いたスペースは explorer と viewer の

@@ -124,7 +124,8 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         MouseEventKind::Down(MouseButton::Left) => {
             // レベル2: プレビューをクリックするとそこへジャンプし、全部閉じる。
             if let Some(pr) = app
-                .code_nav.hover_info
+                .code_nav
+                .hover_info
                 .refs
                 .as_ref()
                 .and_then(|r| r.preview.as_ref())
@@ -163,7 +164,8 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         }
         MouseEventKind::ScrollDown => {
             if app
-                .code_nav.hover_info
+                .code_nav
+                .hover_info
                 .refs
                 .as_ref()
                 .is_some_and(|r| in_rect(r.rect))
@@ -175,7 +177,8 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         }
         MouseEventKind::ScrollUp => {
             if app
-                .code_nav.hover_info
+                .code_nav
+                .hover_info
                 .refs
                 .as_ref()
                 .is_some_and(|r| in_rect(r.rect))
@@ -347,6 +350,50 @@ fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool
 }
 
 /// 1件のマウスイベントを処理し、必要に応じてアプリケーション状態を更新する。
+/// revidere の 2 列ビューのマウス操作。
+///
+/// フォーカスは動かさない。このビューを出るのは Esc だけ、というのが約束で、
+/// 節を選ぼうとしたクリックで画面ごと入れ替わるのはその約束を破る。
+///
+/// 左列は節の選択、右列は diff のスクロール。当たり判定に使う矩形と
+/// 「画面の行 → 節」の対応表は、幅で変わるので描画側が書いている。
+fn handle_revidere_mouse(app: &mut App, mouse: MouseEvent) {
+    // 総括は 1 列で読むだけの画面。ホイールだけ効かせる。
+    if app.revidere.show_overview {
+        match mouse.kind {
+            MouseEventKind::ScrollDown => super::revidere::scroll_overview(app, SCROLL_LINES),
+            MouseEventKind::ScrollUp => super::revidere::scroll_overview(app, -SCROLL_LINES),
+            _ => {}
+        }
+        return;
+    }
+
+    let list = app.revidere.list_area;
+    let in_list = list.width > 0 && mouse.column >= list.x && mouse.column < list.x + list.width;
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) if in_list => {
+            // 枠線の内側が 1 行目。
+            let Some(offset) = mouse.row.checked_sub(list.y + 1) else {
+                return;
+            };
+            if let Some(idx) = app.revidere.list_rows.get(offset as usize).copied() {
+                super::revidere::select_section(app, idx);
+            }
+        }
+        // 左列のホイールは節を送る。行ではなく節で動かすのは、左列の
+        // スクロール位置が選択に従属していて単独では動かせないため。
+        MouseEventKind::ScrollDown if in_list => super::revidere::step_section(app, 1),
+        MouseEventKind::ScrollUp if in_list => super::revidere::step_section(app, -1),
+        MouseEventKind::ScrollDown => super::revidere::scroll_diff(app, SCROLL_LINES),
+        MouseEventKind::ScrollUp => super::revidere::scroll_diff(app, -SCROLL_LINES),
+        _ => {}
+    }
+}
+
+/// 右列のホイール 1 段で動かす行数。
+const SCROLL_LINES: isize = 3;
+
 pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui::layout::Rect) {
     // インタラクティブなホバーモーダルスタック（ポップアップ → 参照リスト → プレビュー）が
     // マウスを最初に受け取る: その各部分へのクリックはさらに下の階層へ潜り、上での移動は
@@ -391,6 +438,20 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // Movedは下で自分のcandidateを別途管理する。
     if !matches!(mouse.kind, MouseEventKind::Moved) && app.clear_hover() {
         app.dirty.mark_all();
+    }
+
+    // revidere の 2 列ビューは main_area をアコーディオンとは別の割り方で
+    // 使うので、以下のカラム判定に流すと必ず違うペインに当たり、そこの
+    // ハンドラがフォーカスを移してビューが閉じてしまう。ここで止める。
+    // main_area の外 (タイトル・メニュー・worktree ストリップ) はこのビューでも
+    // 出ているので、そのまま下へ通す。
+    if app.focus == Focus::Revidere
+        && main_area.height > 0
+        && row >= main_area.y
+        && row < main_area.y + main_area.height
+    {
+        handle_revidere_mouse(app, mouse);
+        return;
     }
 
     let geom = ClickGeometry {

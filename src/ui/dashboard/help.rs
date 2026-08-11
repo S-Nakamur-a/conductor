@@ -129,7 +129,6 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
             ("Explorer — file tree", KeyContext::Explorer),
             ("Explorer — changed files", KeyContext::ExplorerDiffList),
             ("Explorer — comment list", KeyContext::ExplorerCommentList),
-            ("Explorer — walkthrough", KeyContext::ExplorerWalkthrough),
         ],
         Focus::Viewer => &[
             ("Viewer", KeyContext::Viewer),
@@ -137,6 +136,7 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
         ],
         Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
         Focus::Editor => &[("Editor panel", KeyContext::Editor)],
+        Focus::Revidere => &[("Review — sections + diff", KeyContext::Revidere)],
     };
     for (title, ctx) in panel_ctxs {
         section(&mut lines, title, *ctx);
@@ -180,12 +180,6 @@ fn help_review_commands_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
         lines,
         "palette".to_string(),
         "Review: Review Pull Request…",
-        theme,
-    );
-    help_key_dyn(
-        lines,
-        "palette".to_string(),
-        "Review: Generate Walkthrough",
         theme,
     );
     help_key_dyn(

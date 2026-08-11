@@ -39,10 +39,9 @@
 //! コマンドではなく機能の側に属するもの
 //!
 //! 各タスクは自分のシステムプロンプトを書き、制約はそこに置く。スマート worktree の
-//! 命名はモデルに「ツールを使わず JSON オブジェクト 1 つで答えよ」と伝え、
-//! walkthrough の生成は逆に「差分を読みに行け」と伝える。形式から外れた応答を
-//! 再試行するかどうかも同様に機能側の判断。再試行のコスト (ブランチ名なら数秒、
-//! walkthrough なら数分) を知っているのはその機能だけだから。
+//! 命名はモデルに「ツールを使わず JSON オブジェクト 1 つで答えよ」と伝える。
+//! 形式から外れた応答を再試行するかどうかも同様に機能側の判断。再試行のコストを
+//! 知っているのはその機能だけだから。
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -164,8 +163,7 @@ impl AiCaller for CommandCaller {
         cancel: &Arc<AtomicBool>,
     ) -> Result<String, String> {
         let payload = format!("{system_prompt}\n\n{user_message}");
-        let (argv, prompt_in_argv) =
-            expand_argv(&self.cmd, &payload, self.working_dir.as_deref());
+        let (argv, prompt_in_argv) = expand_argv(&self.cmd, &payload, self.working_dir.as_deref());
         let program = argv
             .first()
             .ok_or_else(|| "AI command is empty".to_string())?
@@ -197,13 +195,22 @@ impl AiCaller for CommandCaller {
         // (ハンドルを drop する)。それでも stdin を読むツールには、永久にブロックする
         // のではなく EOF を見せなければならないし、プロンプトを 2 回送るのは
         // まったく送らないより悪いから。
-        if let Some(mut stdin) = child.stdin.take()
-            && !prompt_in_argv
-        {
-            stdin
-                .write_all(payload.as_bytes())
-                .map_err(|e| format!("Failed to write to AI command stdin: {e}"))?;
-        }
+        //
+        // 書き込みは別スレッドに出す。レビューのプロンプトはパイプのバッファ
+        // (64KB 程度) を平気で超えるので、ここで待つと stdin を読まないコマンドを
+        // 指したときに下の loop へ辿り着けず、タイムアウトもキャンセルも効かなくなる。
+        // 書けなかったこと自体は失敗にしない (相手が途中で読むのをやめた EPIPE は
+        // 正常にもなり得る)。成否は終了コードと stdout で見る。
+        let stdin_writer = child.stdin.take().map(|mut stdin| {
+            let payload = if prompt_in_argv {
+                Vec::new()
+            } else {
+                payload.into_bytes()
+            };
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(&payload);
+            })
+        });
 
         // 終了をポーリングする。キャンセルと実時間タイムアウトを尊重する。
         let start = Instant::now();
@@ -230,6 +237,10 @@ impl AiCaller for CommandCaller {
             }
         };
 
+        // 子が終わっている以上、書き手も EOF か EPIPE で必ず解ける。
+        if let Some(h) = stdin_writer {
+            let _ = h.join();
+        }
         let stdout = join_pipe_reader(stdout_reader);
         let stderr = join_pipe_reader(stderr_reader);
 
@@ -275,9 +286,9 @@ fn tail_chars(s: &str, n: usize) -> &str {
 /// どのディレクトリについての話か。
 ///
 /// どちらもプロバイダ単位ではなくタスク単位。スマート worktree の命名は数秒の
-/// 純粋なテキスト生成だが、walkthrough はエージェントが差分を読む数分の作業。
-/// 1 つの [api] command_timeout_secs で両方をまかなうことはできないし、
-/// 作業ディレクトリが要るのは後者だけ。
+/// 純粋なテキスト生成なので [api] command_timeout_secs をそのまま使うが、
+/// 数分かかるタスクが同じ設定値に頭打ちにされては困る。予算を知っているのは
+/// タスクの側なので、上書きの口をここに開けてある。
 #[derive(Debug, Clone, Default)]
 pub struct TaskEnv {
     /// 設定されていれば [api] command_timeout_secs を上書きする。0 で無効。
@@ -298,9 +309,9 @@ pub struct TaskEnv {
 /// 動かすためにあるのがまさに provider = "command" で、ユーザーが直接 CLI を
 /// 指定すれば、Conductor はその背後のモデルが何かを知る必要が無い。
 ///
-/// なお "gemini" は素の HTTP 補完なのでリポジトリを読めない。コードを必要と
-/// するタスク (walkthrough の生成) は、エージェント型の CLI を指した "command"
-/// の下でのみ動く。
+/// なお "gemini" は素の HTTP 補完なのでリポジトリを読めない。リポジトリを
+/// 読ませる必要のあるタスクは、エージェント型の CLI を指した "command" の
+/// 下でのみ動く。
 pub fn build_caller(api: &ApiConfig, env: &TaskEnv) -> Result<Box<dyn AiCaller>, String> {
     match api.provider.trim().to_lowercase().as_str() {
         "gemini" => Ok(Box::new(GeminiCaller {
@@ -357,14 +368,18 @@ mod tests {
     /// 組むから。
     #[test]
     fn build_caller_rejects_the_removed_claude_provider() {
-        let err = build_caller(&api("claude"), &TaskEnv::default()).err().unwrap();
+        let err = build_caller(&api("claude"), &TaskEnv::default())
+            .err()
+            .unwrap();
         assert!(err.contains("claude"), "should echo the bad value: {err}");
         assert!(err.contains("command"), "should point at the way in: {err}");
     }
 
     #[test]
     fn build_caller_rejects_unknown_provider() {
-        let err = build_caller(&api("ollama"), &TaskEnv::default()).err().unwrap();
+        let err = build_caller(&api("ollama"), &TaskEnv::default())
+            .err()
+            .unwrap();
         assert!(err.contains("ollama"), "should echo the bad value: {err}");
         assert!(err.contains("gemini"), "should list valid values: {err}");
     }
@@ -443,8 +458,8 @@ mod tests {
         }
 
         /// タイムアウトを指定したタスクはその値を使い、設定の値は指定が無いときだけ
-        /// 埋める。walkthrough の生成はこれに依存している。数秒の命名を想定した
-        /// command_timeout_secs の下で、数分にわたって走るため。
+        /// 埋める。数秒の命名を想定した command_timeout_secs の下で、それより
+        /// 長く走るタスクが頭打ちにされないための口。
         ///
         /// 組み立てた caller を覗くのではなく振る舞いで検証する。設定側は
         /// タイムアウトを完全に無効にしてあるので、コマンドが kill されるのは
@@ -569,6 +584,21 @@ mod tests {
             assert!(err.contains("empty"), "got: {err}");
         }
 
+        /// stdin を読まないコマンドに、パイプのバッファを超えるプロンプトを渡しても
+        /// 打ち切れる。書き込みを待ってから時間を見る作りだと、ここで止まったまま
+        /// タイムアウトもキャンセルも一度も効かない。レビューのプロンプトは
+        /// 実際にこの大きさになる。
+        #[test]
+        fn a_command_that_never_reads_stdin_still_times_out() {
+            let caller = sh("sleep 30", 1);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let big = "x".repeat(1 << 20);
+            let start = Instant::now();
+            let err = caller.complete(&big, &big, &cancel).unwrap_err();
+            assert!(err.contains("timed out"), "got: {err}");
+            assert!(start.elapsed() < Duration::from_secs(10));
+        }
+
         #[test]
         fn times_out_without_waiting_for_the_command() {
             let caller = sh("sleep 5", 1);
@@ -576,7 +606,10 @@ mod tests {
             let start = Instant::now();
             let err = caller.complete("s", "u", &cancel).unwrap_err();
             assert!(err.contains("timed out"), "got: {err}");
-            assert!(start.elapsed() < Duration::from_secs(4), "should not wait 5s");
+            assert!(
+                start.elapsed() < Duration::from_secs(4),
+                "should not wait 5s"
+            );
         }
 
         #[test]
@@ -598,7 +631,10 @@ mod tests {
             };
             let cancel = Arc::new(AtomicBool::new(false));
             let err = caller.complete("s", "u", &cancel).unwrap_err();
-            assert!(err.contains("definitely_not_a_real_binary_xyzzy"), "got: {err}");
+            assert!(
+                err.contains("definitely_not_a_real_binary_xyzzy"),
+                "got: {err}"
+            );
         }
     }
 }

@@ -65,9 +65,6 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.review_state.comment_detail_active {
         super::super::review::render_comment_detail_overlay(frame, area, app);
     }
-    if app.viewer_state.explorer.walkthrough_detail_active {
-        super::super::walkthrough_pane::render_detail_overlay(frame, area, app);
-    }
     // ActiveOverlay に基づくオーバーレイ群。
     match app.overlays.active {
         crate::overlay::ActiveOverlay::None => {}

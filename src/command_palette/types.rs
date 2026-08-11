@@ -49,8 +49,8 @@ pub enum CommandId {
     ShowReviewTemplates,
     SessionHistory,
     ReviewPullRequest,
-    GenerateWalkthrough,
-    ForceGenerateWalkthrough,
+    AnalyzeRevidere,
+    ForceAnalyzeRevidere,
     PublishReview,
 
     // Repository
@@ -63,7 +63,7 @@ pub enum CommandId {
     // Explorer
     ShowDiffList,
     ShowCommentList,
-    ShowWalkthrough,
+    ShowRevidere,
 
     // Viewer / Review
     AddReviewComment,

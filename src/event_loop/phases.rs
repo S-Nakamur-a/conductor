@@ -61,8 +61,7 @@ impl FrameSignals {
             // エディタは Explorer/Viewer カラムを占めるので、その再描画は
             // TERMINAL ではなく EXPLORER/VIEWER の dirty ビットに乗る。
             if app.editor.is_some() {
-                app.dirty
-                    .mark(DirtyPanels::EXPLORER | DirtyPanels::VIEWER);
+                app.dirty.mark(DirtyPanels::EXPLORER | DirtyPanels::VIEWER);
             }
         }
 
@@ -91,6 +90,9 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
         // フォーカスのボーダーが遷移中はフレームを流し続ける。
         _ if app.has_active_transition() => TICK_RATE_ACTIVE,
         _ if !app.terminal.cc_waiting_worktrees.is_empty() => PULSE_TICK_INTERVAL,
+        // 解析中はストリップのスピナーが回る。数分続くものなので、worktree の
+        // 作成 (数秒) と同じ 60fps では回さない。
+        _ if !app.revidere.runs.is_empty() => PULSE_TICK_INTERVAL,
         _ if signals.decoration_active => DECORATION_TICK_INTERVAL,
         _ => TICK_RATE_IDLE,
     }
@@ -99,7 +101,11 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
 /// 溜まっているイベントを [MAX_DRAIN] の予算まで捌く。
 ///
 /// まとめて捌くのは、高速スクロールで 1 イベント 1 フレームにならないようにするため。
-pub(super) fn drain_events(app: &mut App, loop_state: &mut LoopState, tick: Duration) -> Result<()> {
+pub(super) fn drain_events(
+    app: &mut App,
+    loop_state: &mut LoopState,
+    tick: Duration,
+) -> Result<()> {
     if !crossterm_poll(tick)? {
         return Ok(());
     }
@@ -178,7 +184,9 @@ pub(super) fn mark_continuous_dirty(app: &mut App) {
     if overlay_animating {
         app.dirty.mark_all();
     }
-    if !app.worktree_mgr.pending_worktrees.is_empty() {
+    // worktree 作成中と revidere の解析中は、どちらもストリップの上で
+    // スピナーが回る。イベントが来ないと止まって見える。
+    if !app.worktree_mgr.pending_worktrees.is_empty() || !app.revidere.runs.is_empty() {
         app.dirty.mark(DirtyPanels::WORKTREE);
     }
     // リフローのスイープ演出: 進行中は毎フレーム、ターミナルパネルを dirty に。

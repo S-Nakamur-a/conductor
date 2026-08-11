@@ -124,11 +124,17 @@ impl GitEngine {
         let (added, modified, deleted, staged) = Self::status_counts(&repo).unwrap_or((0, 0, 0, 0));
         let is_clean = added == 0 && modified == 0 && deleted == 0;
         let (ahead, behind) = Self::ahead_behind_upstream(&repo);
-        let head_oid = repo
-            .head()
-            .ok()
+        let head = repo.head().ok();
+        let head_oid = head
+            .as_ref()
             .and_then(|h| h.target())
             .map(|oid| oid.to_string());
+        // committer の時刻。commit / amend / rebase / merge のどれも新しい
+        // 時刻を刻むので、「この時刻より古い成果物は、いまの HEAD より前の
+        // ものだ」と言える。repo はもう開いているので追加のコストはほぼ無い。
+        let head_time = head
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.time().seconds());
 
         Ok(WorktreeInfo {
             path: path.to_path_buf(),
@@ -142,6 +148,7 @@ impl GitEngine {
             ahead,
             behind,
             head_oid,
+            head_time,
         })
     }
 

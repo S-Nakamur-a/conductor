@@ -8,12 +8,12 @@ use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use super::comment_thread::{build_inline_compose_lines, build_inline_thread_lines, new_comment_anchor_end};
-use super::diff_line::{render_diff_content_line, DiffLineRenderCtx};
+use super::comment_thread::{
+    build_inline_compose_lines, build_inline_thread_lines, new_comment_anchor_end,
+};
+use super::diff_line::{DiffLineRenderCtx, render_diff_content_line};
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
 
@@ -89,77 +89,6 @@ fn render_expandable_context(
     }
 }
 
-/// Explorer がウォークスルー閲覧モードで、かつ Viewer が選択中のウォークスルー
-/// ステップの紐づくファイルを表示している場合に、diff の上に載せる全幅バナー
-/// （ステップタイトル＋ Markdown 描画された本文）を組み立てる。これは、
-/// ウォークスルーの解説が Explorer の狭いペインに閉じ込められてしまう問題への
-/// 対処になっている: ここでは説明文が Viewer の全幅で読め、それが指すコードの
-/// すぐ上に置かれる。今このステップのファイルをツアー中でなければ None
-/// （バナーなし）を返す。
-pub(super) fn build_walkthrough_banner(app: &App, width: u16) -> Option<(String, Vec<Line<'static>>)> {
-    if app.viewer_state.explorer.explorer_bottom_view
-        != crate::viewer::ExplorerBottomView::Walkthrough
-    {
-        return None;
-    }
-    let steps = &app.walkthrough.current.as_ref()?.steps;
-    // バナーはリストのカーソルではなく「ジャンプ先」のステップに追従するので、
-    // j/k でステップ一覧を眺めているだけでは Viewer は変化しない。
-    let step = steps.get(app.viewer_state.explorer.walkthrough_viewing?)?;
-    // 画面上の diff が実際にこのステップのファイルであるときだけ表示する。
-    if app.viewer_state.content.current_file.as_deref() != Some(step.file_path.as_str()) {
-        return None;
-    }
-    let title = format!(
-        " {} {} — {} ",
-        crate::ui::walkthrough_pane::step_icon(step.kind),
-        step.kind,
-        step.title
-    );
-    let lines = crate::ui::markdown::render_markdown(
-        &step.body,
-        (width as usize).saturating_sub(3),
-        &app.theme,
-        &app.highlight.syntax_set,
-        &app.highlight.theme,
-    );
-    Some((title, lines))
-}
-
-/// ウォークスルーステップのバナーを area に描画する: ステップの Markdown 本文を
-/// 収めた枠付きボックスで、利用可能な高さでクリップされ、本文があふれた場合は
-/// 全文表示のオーバーレイを指し示すヒントを添える。
-pub(super) fn render_walkthrough_banner(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    title: &str,
-    lines: &[Line<'static>],
-) {
-    let theme = &app.theme;
-    let block = Block::default()
-        .title(Span::styled(
-            title.to_string(),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(theme.border_secondary));
-    let inner_h = area.height.saturating_sub(2) as usize;
-    let visible: Vec<Line> = if inner_h > 0 && lines.len() > inner_h {
-        let mut v: Vec<Line> = lines.iter().take(inner_h.saturating_sub(1)).cloned().collect();
-        v.push(Line::from(Span::styled(
-            "…  (space: 全文)",
-            Style::default().fg(theme.muted),
-        )));
-        v
-    } else {
-        lines.to_vec()
-    };
-    frame.render_widget(ratatui::widgets::Clear, area);
-    frame.render_widget(Paragraph::new(visible).block(block), area);
-}
-
 /// unified diff ビュー（GitHub 風）を描画する。
 pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -187,21 +116,6 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         let inline_reply_line = vs.explorer.inline_reply_line;
         let compose_anchor_end = new_comment_anchor_end(app);
 
-        // 選択中のウォークスルーステップの行範囲（このペインで開いているファイルに
-        // 紐づいている場合のみ）。
-        let walkthrough_highlight = (|| {
-            let steps = &app.walkthrough.current.as_ref()?.steps;
-            // リストのカーソルではなく「ジャンプ先」のステップの範囲に下線を引く。
-            // これにより j/k で動くのは Explorer の選択だけになる。
-            let step = steps.get(vs.explorer.walkthrough_viewing?)?;
-            if vs.content.current_file.as_deref() != Some(step.file_path.as_str()) {
-                return None;
-            }
-            let start = step.line_start?;
-            let end = step.line_end.unwrap_or(start);
-            Some((start as usize, end as usize))
-        })();
-
         let line_ctx = DiffLineRenderCtx {
             vs,
             theme,
@@ -210,7 +124,6 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             area_width: area.width,
             comment_lines: &comment_lines,
             comment_end_lines: &comment_end_lines,
-            walkthrough_highlight,
         };
 
         let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
@@ -332,9 +245,13 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             horizontal: 0,
             vertical: 1,
         });
-        let mut scrollbar_state =
-            ScrollbarState::new(vs.diff_view.diff_view_lines.len().saturating_sub(inner_height))
-                .position(vs.diff_view.diff_view_scroll);
+        let mut scrollbar_state = ScrollbarState::new(
+            vs.diff_view
+                .diff_view_lines
+                .len()
+                .saturating_sub(inner_height),
+        )
+        .position(vs.diff_view.diff_view_scroll);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None);

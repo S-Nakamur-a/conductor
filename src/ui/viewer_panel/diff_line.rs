@@ -19,10 +19,6 @@ pub(super) struct DiffLineRenderCtx<'a> {
     pub(super) area_width: u16,
     pub(super) comment_lines: &'a std::collections::HashSet<usize>,
     pub(super) comment_end_lines: &'a std::collections::HashSet<usize>,
-    /// レビューモードで現在選択されている walkthrough ステップの、new 側の行範囲（両端含む）。
-    /// このファイルを指している場合のみ値を持つ。レビューモード外・walkthrough なし・
-    /// 他ファイルを指している場合は None。
-    pub(super) walkthrough_highlight: Option<(usize, usize)>,
 }
 
 /// diff の1行分（コンテキスト/追加/削除）の表示行を組み立てる。
@@ -47,11 +43,6 @@ pub(super) fn render_diff_content_line(
     let is_gutter_hovered = new_line_no
         .map(|n| vs.click.hover_gutter_line == Some(n))
         .unwrap_or(false);
-    let is_in_walkthrough_highlight = new_line_no.is_some_and(|n| {
-        ctx.walkthrough_highlight
-            .is_some_and(|(lo, hi)| n >= lo && n <= hi)
-    });
-
     // ガターのマーカー。
     let (gutter_prefix, diff_bg, emphasis_bg) = match tag {
         DiffLineTag::Insert => (
@@ -223,17 +214,6 @@ pub(super) fn render_diff_content_line(
     let content_max_w = (ctx.area_width as usize)
         .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
-
-    // 現在の walkthrough ステップの行範囲に下線を引く。既存の選択/diff の背景色と
-    // 競合しないハイライトで、そのステップがカレントである間だけ表示される。
-    let content_spans: Vec<Span> = if is_in_walkthrough_highlight {
-        content_spans
-            .into_iter()
-            .map(|s| Span::styled(s.content, s.style.add_modifier(Modifier::UNDERLINED)))
-            .collect()
-    } else {
-        content_spans
-    };
 
     let mut spans = vec![marker, gutter_span, badge];
     spans.extend(content_spans);
