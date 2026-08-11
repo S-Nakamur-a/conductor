@@ -49,7 +49,6 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
         Action::GoToTop => {
             app.revidere.selected = 0;
             app.revidere.diff_scroll = 0;
-            app.revidere.list_scroll = 0;
         }
         Action::GoToBottom => {
             let last = section_count(app).saturating_sub(1);

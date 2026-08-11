@@ -17,8 +17,6 @@ pub struct RevidereState {
     pub runs: RevidereRuns,
     /// 2 列ビューの左列 (項目一覧) の選択位置。
     pub selected: usize,
-    /// 左列の垂直スクロールオフセット。
-    pub list_scroll: usize,
     /// 右列 (diff) の垂直スクロールオフセット。
     pub diff_scroll: usize,
     /// 概要の 1 列表示に切り替わっているか。
@@ -67,7 +65,6 @@ impl RevidereState {
     pub fn replace(&mut self, review: Option<Box<crate::revidere::Review>>) {
         self.current = review;
         self.selected = 0;
-        self.list_scroll = 0;
         self.diff_scroll = 0;
         // 別の成果物は別の概要。開いた直後と同じく概要から読ませる。
         self.show_overview = true;

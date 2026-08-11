@@ -64,9 +64,3 @@ pub struct FileDiff {
 pub struct Diff {
     pub files: Vec<FileDiff>,
 }
-
-impl Diff {
-    pub fn file(&self, path: &str) -> Option<&FileDiff> {
-        self.files.iter().find(|f| f.path == path)
-    }
-}

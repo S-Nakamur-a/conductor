@@ -17,22 +17,6 @@ impl DiffLine {
 }
 
 impl FileDiff {
-    pub fn added(&self) -> usize {
-        self.count(Tag::Add)
-    }
-
-    pub fn deleted(&self) -> usize {
-        self.count(Tag::Del)
-    }
-
-    fn count(&self, tag: Tag) -> usize {
-        self.hunks
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.tag == tag)
-            .count()
-    }
-
     /// このファイルが持つ変更箇所。行を持たない変更はファイル単位の位置 1 つになる。
     ///
     /// ここで空を返すと「変更が無かった」と区別が付かなくなるので、
