@@ -135,10 +135,7 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &mut App, review: &Review
     app.revidere.overview_scroll = scroll;
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(height).collect();
 
-    let title = format!(
-        " 概要  {}..{}  (d: 項目と diff へ) ",
-        review.base, review.head
-    );
+    let title = format!(" 概要  {}..作業ツリー  (d: 項目と diff へ) ", review.base);
     frame.render_widget(Paragraph::new(visible).block(bordered(&title, app)), area);
 }
 
@@ -285,9 +282,8 @@ fn render_diff_column(frame: &mut Frame, area: Rect, app: &mut App, review: &Rev
         .collect();
 
     let title = format!(
-        " {}..{}  変更行 {}  {} ",
+        " {}..作業ツリー  変更行 {}  {} ",
         review.base,
-        review.head,
         review.total_positions(),
         if review.is_complete() {
             "全部の変更行に説明あり"

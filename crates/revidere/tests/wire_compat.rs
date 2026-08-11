@@ -1,8 +1,8 @@
 // 実データが読めることを固定する。手書きのフィクスチャは形を writer 側に
 // 合わせて書いてしまうので、writer が壊れたときに一緒に壊れて気付けない。
 //
-// 中身は同梱のデモ（このリポジトリ自身の差分を解析した成果物）。make demo-update
-// で採り直されるので、項目の数のような採るたびに変わる値は見ない。
+// 中身は同梱のデモ（このリポジトリ自身の差分を解析した成果物）。採り直すたびに
+// 変わる値（項目の数など）は見ない。
 
 fn demo() -> revidere::Annotations {
     revidere::Annotations::from_json(include_str!("data/review.json"))

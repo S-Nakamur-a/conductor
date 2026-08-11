@@ -25,9 +25,9 @@ pub struct Review {
     pub annotations: Annotations,
     /// diff を歩いて重要度順に並べたもの。画面に出るのはこちら。
     pub order: ReadingOrder,
-    /// 成果物が対象にしていた区間。画面の見出しに出す。
+    /// 成果物が対象にしていた区間の起点。画面の見出しに出す。終点は作業ツリー
+    /// なので、対になる commit id は無い (解析時の HEAD は annotations 側)。
     pub base: String,
-    pub head: String,
 }
 
 impl Review {
@@ -71,10 +71,10 @@ pub fn load(worktree: &Path) -> LoadOutcome {
         Err(e) => return LoadOutcome::Broken(format!("{}: {e}", path.display())),
     };
 
-    // 成果物が見ていたのと同じ区間の diff を取る。作業ツリーを見ている前提で
-    // 固定しているのは、レビューしたいものが大抵まだコミットされていないため
-    // (S4 の analyze も --head worktree で走らせる)。
-    let raw = match revidere::git::diff_worktree(worktree) {
+    // 成果物が見ていたのと同じ区間の diff を取る。起点は成果物に書いてある
+    // コミット ID をそのまま使う — ここで base を推定し直すと、解析のあとに
+    // ベースが動いただけで項目の指す位置が全部ずれる。
+    let raw = match revidere::git::diff(worktree, annotations.base()) {
         Ok(d) => d,
         Err(e) => return LoadOutcome::Broken(format!("diff を取れない: {}", e.0)),
     };
@@ -83,7 +83,6 @@ pub fn load(worktree: &Path) -> LoadOutcome {
 
     LoadOutcome::Loaded(Box::new(Review {
         base: annotations.base().to_string(),
-        head: annotations.head().to_string(),
         annotations,
         order,
     }))
