@@ -61,6 +61,13 @@ const LABEL_W: usize = 8;
 /// 折り返した先で目が戻る場所を見失う。
 const READING_W: usize = 110;
 
+/// 前回からの進みに出すファイル名の数。溢れた分は件数だけ添える。
+///
+/// 履歴が書き換わったあとは「別々の履歴どうしの全差分」になって数百件に
+/// なりうる。全部出すと、この節の下にある概要の 5 欄が画面外へ押し出されて、
+/// 先に読ませたくて先頭に置いたものが逆に読まれなくなる。
+const SINCE_PREVIOUS_FILES_MAX: usize = 12;
+
 /// 組み立て済みの右列。
 ///
 /// key は「これが変わったら中身も変わる」入力の指紋。幅は折り返しを、
@@ -471,11 +478,13 @@ fn push_since_previous(
     let Some(since) = review.annotations.since_previous() else {
         return;
     };
+    // 本文でも警告でもない補足はここに寄せる。muted は背景に埋もれるテーマが
+    // あり、この節は 1 行しか出ないことがあるので、消えると節ごと壊れて見える。
+    let note = theme.diff_section_header;
+
     lines.push(Line::from(Span::styled(
         "  前回のレビューから".to_string(),
-        Style::default()
-            .fg(theme.diff_section_header)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(note).add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(Span::styled(
         format!("    {} → {}", since.previous_head, since.head),
@@ -484,30 +493,49 @@ fn push_since_previous(
     // 履歴が変わっていたら、それを先に言う。前回のコミットが辿れない以上、
     // 下のファイル一覧は「積み上げ」ではなく「別の履歴との比較」になっている。
     if since.history_rewritten {
-        for chunk in wrap(
+        push_note(
+            lines,
             "前回のコミットは今の履歴から辿れない (rebase / amend / force push)。\
              下の一覧は前回との積み上げではなく、別々の履歴どうしの比較になる。",
-            inner_w.saturating_sub(4),
-        ) {
-            lines.push(Line::from(Span::styled(
-                format!("    {chunk}"),
-                Style::default().fg(theme.warning),
-            )));
+            theme.warning,
+            inner_w,
+        );
+    }
+    match &since.files {
+        // 引けなかったことを「無い」に畳まない。
+        None => push_note(
+            lines,
+            "変わったファイルは一覧にできない (前回のコミットがもう残っていない)。",
+            theme.warning,
+            inner_w,
+        ),
+        Some(files) if files.is_empty() => {
+            push_note(lines, "変わったファイルは無い", note, inner_w)
+        }
+        Some(files) => {
+            for path in files.iter().take(SINCE_PREVIOUS_FILES_MAX) {
+                lines.push(Line::from(Span::styled(
+                    format!("    {path}"),
+                    Style::default().fg(theme.fg),
+                )));
+            }
+            let rest = files.len().saturating_sub(SINCE_PREVIOUS_FILES_MAX);
+            if rest > 0 {
+                push_note(lines, &format!("ほか {rest} 件"), note, inner_w);
+            }
         }
     }
-    if since.files.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "    変わったファイルは無い".to_string(),
-            Style::default().fg(theme.muted),
-        )));
-    }
-    for path in &since.files {
-        lines.push(Line::from(Span::styled(
-            format!("    {path}"),
-            Style::default().fg(theme.fg),
-        )));
-    }
     lines.push(Line::from(""));
+}
+
+/// 概要の本文と同じ 4 桁下げで、折り返して積む。
+fn push_note(lines: &mut Vec<Line<'static>>, text: &str, color: Color, inner_w: usize) {
+    for chunk in wrap(text, inner_w.saturating_sub(4)) {
+        lines.push(Line::from(Span::styled(
+            format!("    {chunk}"),
+            Style::default().fg(color),
+        )));
+    }
 }
 
 /// 機能への影響の 1 項目 (変化・確かめる・残る穴)。ラベルの幅は

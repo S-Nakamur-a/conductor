@@ -239,16 +239,21 @@ impl Coverage {
 /// 全部を読み直さずに済むようにする。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SincePrevious {
-    /// 前回の成果物を作ったときの HEAD コミット。
+    /// 比べる起点。今の HEAD と違う HEAD で作られた、直近の成果物が見ていた
+    /// コミット。
     pub previous_head: String,
     /// 今回の HEAD コミット。
     pub head: String,
-    /// 前回の HEAD から今の作業ツリーまでで変わったファイル。
+    /// 前回の HEAD から今の作業ツリーまでで変わったファイル。引けなければ None。
     ///
     /// 前回の成果物も作業ツリーを見ていたので、そのときの未コミットの変更は
     /// 復元できない。ここに出るのは「前回の HEAD 以降」であって
     /// 「前回のレビュー以降」ではない。
-    pub files: Vec<String>,
+    ///
+    /// 空の Vec と None を畳まない。前回のコミットがもう残っていなくて引けな
+    /// かっただけなのに「変わったファイルは無い」と言うと、山ほど動いていても
+    /// 無いと言い切ることになる。
+    pub files: Option<Vec<String>>,
     /// 前回の HEAD が今の履歴から辿れない（rebase / amend / force push、
     /// あるいは古いコミットへの巻き戻し）。
     pub history_rewritten: bool,

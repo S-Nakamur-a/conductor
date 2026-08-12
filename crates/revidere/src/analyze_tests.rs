@@ -280,9 +280,82 @@ fn a_second_review_reports_what_moved_since_the_previous_one() {
     assert!(second_head.starts_with(&since.head), "{since:?}");
     assert_eq!(
         since.files,
-        vec!["a.txt".to_string(), "later.txt".to_string()]
+        Some(vec!["a.txt".to_string(), "later.txt".to_string()])
     );
     assert!(!since.history_rewritten);
+}
+
+// 何も変えずに解析し直しても、比べる起点は動かさない。ここで起点が今になると、
+// 読む前に最新化しただけで進みが消える。差分が動いていなければ AI も呼ばない
+// 空振りに見える操作なのに、成果物は上書きされていて、もう戻せない。
+#[test]
+fn re_analyzing_without_a_new_commit_keeps_the_comparison_point() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    let first_head = repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("second");
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    let calls_before = ai.calls();
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    assert_eq!(
+        ai.calls(),
+        calls_before,
+        "貯めた応答に当たって AI は走らない"
+    );
+
+    let since = r.since_previous.expect("起点が消えていないこと");
+    assert!(
+        first_head.starts_with(&since.previous_head),
+        "起点は 2 度目のときと同じ first のまま: {since:?}"
+    );
+    assert_eq!(since.files, Some(vec!["a.txt".to_string()]));
+}
+
+// 前回のコミットがもう残っていない（gc 済み、あるいは別のリポジトリの成果物）
+// ときは、一覧を引けない。それを「変わったファイルは無い」に畳むと、山ほど
+// 動いていても無いと言い切ることになる。
+#[test]
+fn an_unreachable_previous_head_reports_no_list_instead_of_an_empty_one() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    // 成果物が指す前回のコミットを、どこにも無い oid に差し替える。
+    let root = git::root(&repo.dir).unwrap();
+    let mut stored = repo.artifact();
+    stored.head = "0123456789abcdef0123456789abcdef01234567".to_string();
+    write_artifact(&crate::review::artifact_path(&root), &stored).unwrap();
+
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("second");
+
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let since = r.since_previous.expect("2 度目には前回からの進みが付く");
+    assert!(since.history_rewritten, "{since:?}");
+    assert_eq!(since.files, None, "引けなかったことを空と畳まない");
 }
 
 // 前回のコミットが履歴から消えている（rebase / amend / force push）ことは、
