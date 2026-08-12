@@ -75,20 +75,29 @@ pub fn guess_base(repo: &Path) -> Result<String, GitError> {
     ))
 }
 
-/// レビュー対象の diff。
+/// base と HEAD の共通祖先。レビューの起点。
 ///
-/// 3 点（merge-base）を使う。2 点だとベース側の進みが差分に混ざり、
-/// 「このブランチで何をしたか」ではなくなる。
+/// ベース側の進みを差分に混ぜないための解決で、`git diff base...HEAD` の
+/// base 側にあたる。先に 1 つのコミットへ潰しておくと、そこから作業ツリーまでの
+/// 2 点指定で「ベース以降にこのブランチでしたこと全部」が 1 枚に収まる。
+pub fn merge_base(repo: &Path, base: &str) -> Result<String, GitError> {
+    Ok(run(repo, &["merge-base", base, "HEAD"])?.trim().to_string())
+}
+
+/// レビュー対象の diff。`from` から現在の作業ツリーまで。
+///
+/// 終点をコミットではなく作業ツリーにするのは、レビューしたいものが大抵まだ
+/// コミットされていないため。起点が merge-base なので、コミット済みの変更と
+/// 手元の変更が 1 枚の差分に収まる。
+///
+/// 未追跡ファイルは `git diff` に出ないので、1 件ずつ `--no-index` で
+/// 追加ファイルの差分として起こして繋ぐ。`git add -N` を使えば 1 回で済むが、
+/// それは相手の index を書き換えるので採らない。
 ///
 /// 文脈行はモデルには不要（自分でファイルを読む）だが、
 /// 変更一覧の行番号を正しく数えるには必須なので既定の 3 行を保つ。
-pub fn diff(repo: &Path, base: &str, head: &str) -> Result<String, GitError> {
-    // 作業ツリーを見るときは 3 点指定が意味を持たない。
-    if head == WORKTREE {
-        return diff_worktree(repo);
-    }
-    let spec = format!("{base}...{head}");
-    run(
+pub fn diff(repo: &Path, from: &str) -> Result<String, GitError> {
+    let mut out = run(
         repo,
         &[
             "diff",
@@ -97,30 +106,7 @@ pub fn diff(repo: &Path, base: &str, head: &str) -> Result<String, GitError> {
             "--find-renames",
             "--no-color",
             "--no-ext-diff",
-            &spec,
-        ],
-    )
-}
-
-/// `--head` にこれを渡すと、コミット間ではなく作業ツリーを見る。
-pub const WORKTREE: &str = "worktree";
-
-/// 作業ツリーの差分（HEAD vs 作業ツリー + index）。
-///
-/// レビューしたいものは大抵まだコミットされていない。
-///
-/// 未追跡ファイルは `git diff HEAD` に出ないので、1 件ずつ `--no-index` で
-/// 追加ファイルの差分として起こして繋ぐ。`git add -N` を使えば 1 回で済むが、
-/// それは相手の index を書き換えるので採らない。
-pub fn diff_worktree(repo: &Path) -> Result<String, GitError> {
-    let mut out = run(
-        repo,
-        &[
-            "diff",
-            "--find-renames",
-            "--no-color",
-            "--no-ext-diff",
-            "HEAD",
+            from,
         ],
     )?;
     for path in untracked(repo)? {
@@ -152,12 +138,6 @@ pub fn untracked(repo: &Path) -> Result<Vec<String>, GitError> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect())
-}
-
-/// 作業ツリーに未コミットの変更があるか。
-/// レビュー対象は commit なので、汚れていたら見ているものとずれる可能性がある。
-pub fn is_dirty(repo: &Path) -> Result<bool, GitError> {
-    Ok(!run(repo, &["status", "--porcelain"])?.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -216,6 +196,11 @@ mod tests {
             self.git(&["add", "-A"]);
             self.git(&["commit", "-q", "-m", msg]);
         }
+
+        /// レビューの起点。実際の呼ばれ方どおり merge-base を経由する。
+        fn from(&self, base: &str) -> String {
+            merge_base(&self.dir, base).unwrap()
+        }
     }
 
     impl Drop for Repo {
@@ -225,21 +210,74 @@ mod tests {
     }
 
     #[test]
-    fn diff_uses_the_three_point_merge_base_not_a_two_point_range() {
+    fn the_range_starts_at_the_merge_base_so_the_bases_own_progress_stays_out() {
         let r = Repo::new();
         r.write("a.txt", "1\n2\n3\n");
         r.commit_all("base");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("a.txt", "1\n2\n3\nfeature\n");
         r.commit_all("feature change");
-        // ベース側もそのあと進める。2 点だとこの進みまで差分に混ざる。
+        // ベース側もそのあと進める。共通祖先ではなく main の先端を起点にすると、
+        // この進みまで差分に混ざる。
         r.git(&["checkout", "-q", "main"]);
         r.write("b.txt", "main only\n");
         r.commit_all("main moved on");
+        r.git(&["checkout", "-q", "feature"]);
 
-        let out = diff(&r.dir, "main", "feature").unwrap();
+        let out = diff(&r.dir, &r.from("main")).unwrap();
         assert!(out.contains("feature"), "{out}");
         assert!(!out.contains("main only"), "{out}");
+    }
+
+    /// ベースからの全差分になっていること。ここが「最後のコミット以降」だけに
+    /// なると、レビューは PR 全体ではなく直近の一手しか映さなくなる。
+    #[test]
+    fn the_range_covers_every_commit_since_the_base_not_only_the_latest_one() {
+        let r = Repo::new();
+        r.write("a.txt", "1\n");
+        r.commit_all("base");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        r.write("first.txt", "first commit\n");
+        r.commit_all("first");
+        r.write("second.txt", "second commit\n");
+        r.commit_all("second");
+        // さらに未コミットの手元の変更。
+        r.write("third.txt", "not committed yet\n");
+
+        let out = diff(&r.dir, &r.from("main")).unwrap();
+        assert!(
+            out.contains("first commit"),
+            "1 つ目のコミットが無い: {out}"
+        );
+        assert!(
+            out.contains("second commit"),
+            "2 つ目のコミットが無い: {out}"
+        );
+        assert!(out.contains("not committed yet"), "手元の変更が無い: {out}");
+    }
+
+    /// 履歴が書き換わった (rebase / amend / force push) ときも、起点は
+    /// 今の HEAD とベースから引き直される。
+    #[test]
+    fn the_range_is_rebuilt_from_the_current_head_after_the_history_is_rewritten() {
+        let r = Repo::new();
+        r.write("a.txt", "1\n");
+        r.commit_all("base");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        r.write("old.txt", "abandoned work\n");
+        r.commit_all("work that will be dropped");
+
+        // 履歴ごと差し替える。前のコミットはもう辿れない。
+        r.git(&["reset", "-q", "--hard", "main"]);
+        r.write("new.txt", "rewritten work\n");
+        r.commit_all("rewritten");
+
+        let out = diff(&r.dir, &r.from("main")).unwrap();
+        assert!(out.contains("rewritten work"), "{out}");
+        assert!(
+            !out.contains("abandoned work"),
+            "捨てたはずの変更が残っている: {out}"
+        );
     }
 
     #[test]
@@ -263,7 +301,7 @@ mod tests {
 
         // 変更は 5 行目 1 つだけ。既定の文脈 3 行なら、ハンクは
         // 2〜8 行目（7 行）を覆う。
-        let out = diff(&r.dir, "main", "feature").unwrap();
+        let out = diff(&r.dir, &r.from("main")).unwrap();
         assert!(out.contains("@@ -2,7 +2,7 @@"), "{out}");
     }
 
@@ -277,24 +315,24 @@ mod tests {
         r.git(&["mv", "a.rs", "b.rs"]);
         r.commit_all("rename a.rs to b.rs");
 
-        let out = diff(&r.dir, "main", "feature").unwrap();
+        let out = diff(&r.dir, &r.from("main")).unwrap();
         assert!(out.contains("rename from a.rs"), "{out}");
         assert!(out.contains("rename to b.rs"), "{out}");
     }
 
     #[test]
-    fn worktree_diff_stitches_untracked_files_into_the_committed_diff() {
+    fn the_diff_stitches_untracked_files_into_the_committed_diff() {
         let r = Repo::new();
         r.write("a.txt", "1\n2\n3\n");
         r.commit_all("base");
         // コミット済みファイルへの未コミットの変更。
         r.write("a.txt", "1\n2\nX\n");
-        // 未追跡ファイル。`git diff HEAD` にはこれが出ない。
+        // 未追跡ファイル。`git diff` にはこれが出ない。
         r.write("new.txt", "brand new\n");
 
         // 差分がある未追跡ファイルは --no-index の終了コードが 1 になる。
         // それをエラー扱いしていたら、この呼び出し自体が失敗する。
-        let out = diff(&r.dir, "main", WORKTREE).unwrap();
+        let out = diff(&r.dir, &r.from("main")).unwrap();
         assert!(out.contains("-3") && out.contains("+X"), "{out}");
         assert!(
             out.contains("new.txt") && out.contains("brand new"),
@@ -315,7 +353,7 @@ mod tests {
         r.write("あ.txt", "2\n");
         r.commit_all("change");
 
-        let out = diff(&r.dir, "main", "feature").unwrap();
+        let out = diff(&r.dir, &r.from("main")).unwrap();
         assert!(out.contains("diff --git a/あ.txt b/あ.txt"), "{out}");
         assert!(!out.contains("\\343"), "8 進エスケープが残っている: {out}");
     }
@@ -368,15 +406,5 @@ mod tests {
         r.commit_all("init");
         let got = root(&r.dir.join("sub/dir")).unwrap();
         assert_eq!(got.canonicalize().unwrap(), r.dir.canonicalize().unwrap());
-    }
-
-    #[test]
-    fn is_dirty_reflects_uncommitted_changes() {
-        let r = Repo::new();
-        r.write("a.txt", "1\n");
-        r.commit_all("init");
-        assert!(!is_dirty(&r.dir).unwrap());
-        r.write("a.txt", "2\n");
-        assert!(is_dirty(&r.dir).unwrap());
     }
 }

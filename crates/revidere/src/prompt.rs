@@ -132,39 +132,22 @@ ranges の決まり:
 
 /// 実行ごとの指示。どの範囲を、どの台帳に対して整理するか。
 ///
-/// base/head には解決済みのコミット ID を渡すこと。`HEAD~2` のような呼び名を
-/// そのまま入れると、同じ範囲でも呼び方が違うだけでプロンプトが変わり、
-/// 貯めた応答（cache.rs）に当たらなくなる。同じ差分を二度聞くのは数分の損。
-pub fn user(base: &str, head: &str, ledger: &str) -> String {
-    // 作業ツリーを見るときは `A...B` が意味を持たない。`worktree` は git の
-    // リビジョンではないので、そのまま組むとモデルは失敗するコマンドを実行し、
-    // 差分を読まないまま台帳だけを頼りに答えることになる。
-    let worktree = head == crate::git::WORKTREE;
-    let range = if worktree {
-        format!("`{base}` から作業ツリーまでの変更")
-    } else {
-        format!("`{base}...{head}` の変更")
-    };
-    let command = if worktree {
-        "git diff HEAD".to_string()
-    } else {
-        format!("git diff {base}...{head}")
-    };
-    // 未追跡ファイルは `git diff HEAD` に出ないが、台帳には載っている
-    // （git.rs が 1 件ずつ --no-index で起こして繋いでいる）。この食い違いを
-    // 黙っていると、モデルは台帳の側を作り話だと思って無視しかねない。
-    let note = if worktree {
-        "\n未追跡ファイルは `git diff HEAD` に出ないが、台帳には載せてある。\
-         台帳にあって差分に出ないパスは、新規追加のファイルとして中身をそのまま読むこと。"
-    } else {
-        ""
-    };
+/// base には解決済みのコミット ID を渡すこと。`HEAD~2` や `origin/main` の
+/// ような呼び名をそのまま入れると、同じ範囲でも呼び方が違うだけでプロンプトが
+/// 変わり、貯めた応答（cache.rs）に当たらなくなる。同じ差分を二度聞くのは
+/// 数分の損。
+///
+/// 終点は書かない。base から先は作業ツリーまで全部が対象で、そこにコミット ID
+/// を添えるとモデルは `base...head` を読んでしまい、未コミットの変更を落とす。
+pub fn user(base: &str, ledger: &str) -> String {
     format!(
-        r#"作業ディレクトリのリポジトリで、{range}を上記の 3 段階に整理してほしい。
+        r#"作業ディレクトリのリポジトリで、`{base}` から作業ツリーまでの変更を上記の 3 段階に整理してほしい。
 
-まず自分で差分を読むこと。`{command}` を実行し、変更されたファイルと、
+まず自分で差分を読むこと。`git diff {base}` を実行し、変更されたファイルと、
 必要なら呼び出し元・呼び出し先まで読んで、何が起きているのかを掴んでから答える。
-段階 3 は変更されたコードだけを見ても書けない。それを使っている側を読む必要がある。{note}
+段階 3 は変更されたコードだけを見ても書けない。それを使っている側を読む必要がある。
+未追跡ファイルは `git diff` に出ないが、台帳には載せてある。
+台帳にあって差分に出ないパスは、新規追加のファイルとして中身をそのまま読むこと。
 
 以下が変更位置の台帳。ここに載っている位置を 1 つ残らず、ちょうど 1 つの節へ
 割り当てること。new は追加行の後像行番号、old は削除行の前像行番号。
@@ -226,38 +209,20 @@ mod tests {
 
     #[test]
     fn user_prompt_embeds_the_range_and_the_ledger() {
-        let p = user("main", "HEAD", "src/a.rs [modified]\n  new: 1-3\n");
-        assert!(p.contains("main...HEAD"));
+        let p = user("abc1234", "src/a.rs [modified]\n  new: 1-3\n");
+        assert!(p.contains("`abc1234` から作業ツリーまで"), "{p}");
         assert!(p.contains("src/a.rs [modified]"));
-    }
-
-    /// 作業ツリーを見るときは `worktree` を git のリビジョンとして書かない。
-    /// 書くとモデルが実行するコマンドが失敗し、差分を読まないまま答える。
-    #[test]
-    fn the_worktree_prompt_does_not_ask_git_for_a_revision_named_worktree() {
-        let p = user("abc1234", crate::git::WORKTREE, "src/a.rs\n  new: 1\n");
-        assert!(
-            !p.contains("...worktree"),
-            "存在しないリビジョンを指している: {p}"
-        );
-        assert!(p.contains("git diff HEAD"), "{p}");
-        assert!(p.contains("作業ツリー"), "{p}");
         // 台帳に載る未追跡ファイルが差分に出ないことを断ってある。
         assert!(p.contains("未追跡"), "{p}");
     }
 
-    /// コミット範囲のときの文面は変えない。プロンプトは貯めた応答の鍵の
-    /// 一部なので、1 文字動かすと過去の応答に当たらなくなる。
+    /// モデルに読ませる差分は、起点から作業ツリーまでの 2 点。3 点の
+    /// `base...head` を読ませると、未コミットの変更が丸ごと落ちる。
     #[test]
-    fn the_commit_range_prompt_is_unchanged_by_the_worktree_branch() {
-        let p = user("abc1234", "def5678", "src/a.rs\n  new: 1\n");
-        assert!(p.contains("`abc1234...def5678` の変更を"), "{p}");
-        assert!(p.contains("`git diff abc1234...def5678` を実行し"), "{p}");
-        assert!(
-            !p.contains("未追跡"),
-            "作業ツリー用の断りが混ざっている: {p}"
-        );
-        assert!(!p.contains("作業ツリーまで"), "{p}");
+    fn the_command_the_model_runs_ends_at_the_worktree_not_at_a_commit() {
+        let p = user("abc1234", "src/a.rs\n  new: 1\n");
+        assert!(p.contains("`git diff abc1234` を実行し"), "{p}");
+        assert!(!p.contains("..."), "3 点指定を読ませている: {p}");
     }
 
     #[test]

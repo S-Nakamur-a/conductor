@@ -70,46 +70,38 @@ pub struct Options {
     pub repo: PathBuf,
     /// 比較のベース。None なら origin/HEAD → main → master の順に推定する。
     pub base: Option<String>,
-    /// 比較の先端。[git::WORKTREE] を渡すと、コミット間ではなく作業ツリーを見る。
-    pub head: String,
     /// 貯めた応答を使うか。false なら AI に聞き直す（結果は貯め直す）。
     pub cache: bool,
 }
 
 /// 差分を解析して `<root>/.conductor/review.json` を書き、その内容を返す。
 ///
+/// 対象は毎回「ベースとの共通祖先から今の作業ツリーまで」で、成果物があっても
+/// 無くても同じ。前回の分類は一切引き継がない — コミットが進んでも、戻っても、
+/// force push で履歴ごと変わっても、今あるものだけで作り直せば正しい。
+/// 前回からの進みは [Review::since_previous] に別途持たせる。
+///
 /// 説明もれが残っていても成果物は書いて返す。読めるレビューを捨てないため。
 /// 呼ぶ側は `review.coverage.is_complete()` で見分ける。
 pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
     let root = git::root(&o.repo)?;
-    let base = match (o.base.as_deref(), o.head.as_str()) {
-        (Some(b), _) => b.to_string(),
-        // 作業ツリーを見るときのベースは HEAD しかあり得ない。
-        (None, git::WORKTREE) => "HEAD".to_string(),
-        (None, _) => git::guess_base(&root)?,
+    let base_ref = match o.base.as_deref() {
+        Some(b) => b.to_string(),
+        None => git::guess_base(&root)?,
     };
-    let head = o.head.clone();
-    let base_oid = git::short_oid(&root, &base).unwrap_or_else(|_| base.clone());
-    let head_oid = git::short_oid(&root, &head).unwrap_or_else(|_| head.clone());
+    let base_oid = git::short_oid(&root, &git::merge_base(&root, &base_ref)?)?;
+    let head_oid = git::short_oid(&root, "HEAD")?;
 
-    if head != git::WORKTREE && git::is_dirty(&root).unwrap_or(false) {
-        log::warn!(
-            "{} has uncommitted changes; the review covers {base}...{head}, \
-             which may differ from what is on screen",
-            root.display()
-        );
-    }
-
-    let text = git::diff(&root, &base, &head)?;
+    let text = git::diff(&root, &base_oid)?;
     if text.trim().is_empty() {
         return Err(AnalyzeError::NoDiff(format!(
-            "{base}...{head} に差分が無い"
+            "{base_oid} から作業ツリーまでに差分が無い"
         )));
     }
     let d = diff::parse(&text);
     let ledger = d.positions();
     log::info!(
-        "revidere: {} {base}...{head} / {} files / {} changed positions",
+        "revidere: {} {base_oid}..worktree (head {head_oid}) / {} files / {} changed positions",
         root.display(),
         d.files.len(),
         ledger.len()
@@ -140,7 +132,7 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
 
     // プロンプトには解決済みの ID を入れる。同じ範囲を HEAD~2 と呼んでも
     // コミット ID で呼んでも、同じ問いになって貯めた応答に当たる。
-    let raw = ask(&prompt::user(&base_oid, &head_oid, &d.ledger_summary()))?;
+    let raw = ask(&prompt::user(&base_oid, &d.ledger_summary()))?;
 
     let mut r = parse::review(&raw, &base_oid, &head_oid)?;
     r.coverage = coverage::check(&ledger, &r.sections);

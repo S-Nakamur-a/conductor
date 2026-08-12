@@ -118,11 +118,10 @@ impl Repo {
         Review::from_json(&text).unwrap()
     }
 
-    fn options(&self, base: Option<&str>, head: &str) -> Options {
+    fn options(&self, base: Option<&str>) -> Options {
         Options {
             repo: self.dir.clone(),
             base: base.map(str::to_string),
-            head: head.to_string(),
             cache: true,
         }
     }
@@ -159,7 +158,7 @@ fn write_artifact_creates_the_parent_directory_when_it_is_missing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// base...head に差分が無いのは、0 件成功ではなく明示的なエラー。
+// 対象範囲に差分が無いのは、0 件成功ではなく明示的なエラー。
 // AI を起こす前に分かるので、起こさないことも併せて見る。
 #[test]
 fn a_range_with_no_changes_is_an_explicit_error_not_a_silent_success() {
@@ -167,30 +166,36 @@ fn a_range_with_no_changes_is_an_explicit_error_not_a_silent_success() {
     repo.write("a.txt", "1\n2\n3\n");
     let oid = repo.commit_all("base");
     let ai = StubAi::new("", "");
-    let e = analyze(&repo.options(Some(&oid), &oid), &ai).unwrap_err();
+    let e = analyze(&repo.options(Some(&oid)), &ai).unwrap_err();
     assert!(matches!(e, AnalyzeError::NoDiff(_)), "{e:?}");
     assert_eq!(ai.calls(), 0, "差分が無いなら AI を起こす理由が無い");
 }
 
-// コミット範囲を見ているときに作業ツリーが汚れていても、
-// 処理は止めずに進む（警告だけを出す）。
+// レビューはベースから今の作業ツリーまでが対象で、直近のコミット 1 つ分では
+// ない。台帳が最後のコミットだけになっていると、それより前のコミットを指した
+// 節は「存在しない行を指した」側に落ちるので、充足検査で捕まる。
 #[test]
-fn analyze_does_not_stop_when_the_worktree_is_dirty_during_a_commit_range_review() {
+fn analyze_covers_every_commit_since_the_base_plus_the_uncommitted_work() {
     let repo = Repo::new();
+    repo.write("a.txt", "1\n");
+    repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    repo.commit_all("first");
     repo.write("a.txt", "1\n2\n3\n");
-    let base = repo.commit_all("base");
+    repo.commit_all("second");
+    // まだコミットしていない手元の変更。
     repo.write("a.txt", "1\n2\n3\n4\n");
-    let head = repo.commit_all("head");
-    // レビュー対象は上のコミット範囲。その後で作業ツリーだけ汚す。
-    repo.write("a.txt", "1\n2\n3\n4\nscratch\n");
 
     let full = answer(
-        r#"{"title":"add line 4","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":4,"end":4}]}"#,
+        r#"{"title":"lines 2-4","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":4}]}"#,
     );
     let ai = StubAi::new(&full, &full);
-    let r = analyze(&repo.options(Some(&base), &head), &ai)
-        .expect("汚れた作業ツリーで analyze を止めてはいけない");
-    assert!(r.coverage.is_complete());
+    let r = analyze(&repo.options(Some("main")), &ai).unwrap();
+
+    assert_eq!(r.coverage.total, 3, "2 つのコミットと手元の変更で 3 行");
+    assert!(r.coverage.is_complete(), "{:?}", r.coverage);
+    assert_eq!(ai.calls(), 1, "全部説明できていれば差し戻しは要らない");
 }
 
 // 差し戻し（repair）で説明なしが減らなかったら、差し戻し後の結果は
@@ -202,7 +207,7 @@ fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
     let base = repo.commit_all("base");
     // 追加行を 2 つにして、初回で 1 件だけ説明なしのまま残す。
     repo.write("a.txt", "1\n2\n3\n4\n5\n");
-    let head = repo.commit_all("head");
+    repo.commit_all("head");
 
     let initial = answer(
         r#"{"title":"add line 4","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":4,"end":4}]}"#,
@@ -212,7 +217,7 @@ fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
         r#"{"title":"nothing classified","importance":"minor","reason":"placeholder","body":"","ranges":[]}"#,
     );
     let ai = StubAi::new(&initial, &repaired);
-    let r = analyze(&repo.options(Some(&base), &head), &ai).unwrap();
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
 
     assert_eq!(ai.calls(), 2, "説明なしが残ったなら差し戻しているはず");
     assert!(!r.coverage.is_complete(), "説明なしが残っている");

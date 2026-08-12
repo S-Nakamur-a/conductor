@@ -8,10 +8,11 @@
 //! 一覧までで、中身はモデルが自分でリポジトリを読む前提のため、素の HTTP 補完
 //! ではなくエージェント型の CLI を指した `provider = "command"` が要る。
 //!
-//! 見るのは常に作業ツリー
+//! 見るのはベースから作業ツリーまで
 //!
-//! レビューしたいものは大抵まだコミットされていない。merge-base 固定だと、
-//! いま手元で書いているものが画面に出るまで一度コミットしなければならない。
+//! 起点はベースとの共通祖先で、終点は今の作業ツリー。ブランチでやったこと
+//! 全部が対象になり、まだコミットしていない手元の変更もそこに入る。作り直す
+//! ときも同じで、前回の成果物は何も引き継がない。
 //! 出力先は `<worktree>/.conductor/review.json` — conductor の worktree は
 //! それぞれ別ディレクトリなので、ブランチごとに自然に分かれる。
 
@@ -395,7 +396,6 @@ fn run_analyze(
     let options = ::revidere::Options {
         repo: worktree.to_path_buf(),
         base: None,
-        head: ::revidere::git::WORKTREE.to_string(),
         cache: !force,
     };
     match ::revidere::analyze(&options, &ai) {

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 成果物のスキーマ版。破壊的変更で上げる。
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// revidere が書き出すものの置き場。成果物も貯めた応答もこの下。
 ///
@@ -235,7 +235,9 @@ impl Coverage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Review {
     pub schema: u32,
+    /// レビューの起点。ベースと HEAD の共通祖先のコミット ID。
     pub base: String,
+    /// 解析時の HEAD コミット ID。差分の終点はここではなく作業ツリー。
     pub head: String,
     pub overview: Overview,
     /// 重要度順に並べる。同じ重要度の中は元の順を保つ。
