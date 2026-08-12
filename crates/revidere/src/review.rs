@@ -231,6 +231,29 @@ impl Coverage {
     }
 }
 
+/// 前回の成果物からの進み。作り直すたびに引き直す。
+///
+/// レビューそのものは毎回ゼロベースで作る（前回の分類を持ち越すと、履歴が
+/// 書き換わったときに何が根拠だったのか誰にも分からなくなる）。そのうえで
+/// 「前回見たときから何が動いたか」だけを別に持たせて、2 度目以降の読者が
+/// 全部を読み直さずに済むようにする。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SincePrevious {
+    /// 前回の成果物を作ったときの HEAD コミット。
+    pub previous_head: String,
+    /// 今回の HEAD コミット。
+    pub head: String,
+    /// 前回の HEAD から今の作業ツリーまでで変わったファイル。
+    ///
+    /// 前回の成果物も作業ツリーを見ていたので、そのときの未コミットの変更は
+    /// 復元できない。ここに出るのは「前回の HEAD 以降」であって
+    /// 「前回のレビュー以降」ではない。
+    pub files: Vec<String>,
+    /// 前回の HEAD が今の履歴から辿れない（rebase / amend / force push、
+    /// あるいは古いコミットへの巻き戻し）。
+    pub history_rewritten: bool,
+}
+
 /// 成果物 1 件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Review {
@@ -244,6 +267,9 @@ pub struct Review {
     pub sections: Vec<Section>,
     pub impacts: Vec<Impact>,
     pub coverage: Coverage,
+    /// 前回の成果物からの進み。初回は None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_previous: Option<SincePrevious>,
 }
 
 impl Review {

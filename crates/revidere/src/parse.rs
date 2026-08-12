@@ -42,6 +42,8 @@ pub fn review(raw: &str, base: &str, head: &str) -> Result<Review, ParseError> {
         sections: g.sections,
         impacts: g.impacts,
         coverage: Coverage::default(),
+        // 前回からの進みは git から引くもので、応答には無い。
+        since_previous: None,
     };
     validate(&r)?;
     r.sort_sections();

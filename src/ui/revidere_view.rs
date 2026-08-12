@@ -409,6 +409,7 @@ fn push_overview(
 
     lines.push(head("── 概要", theme.accent));
     lines.push(Line::from(""));
+    push_since_previous(lines, review, theme, inner_w);
     for (key, value) in [
         ("困っていたこと", &overview.problem),
         ("やったこと", &overview.change),
@@ -455,6 +456,58 @@ fn push_overview(
         }
         lines.push(Line::from(""));
     }
+}
+
+/// 前回のレビューから何が動いたか。初回は何も出さない。
+///
+/// 概要の先頭に置く。2 度目以降の読者が最初に知りたいのは「前と何が違うのか」で、
+/// レビュー本体を読み直すかどうかもそれで決まる。
+fn push_since_previous(
+    lines: &mut Vec<Line<'static>>,
+    review: &Review,
+    theme: &crate::theme::Theme,
+    inner_w: usize,
+) {
+    let Some(since) = review.annotations.since_previous() else {
+        return;
+    };
+    lines.push(Line::from(Span::styled(
+        "  前回のレビューから".to_string(),
+        Style::default()
+            .fg(theme.diff_section_header)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("    {} → {}", since.previous_head, since.head),
+        Style::default().fg(theme.fg),
+    )));
+    // 履歴が変わっていたら、それを先に言う。前回のコミットが辿れない以上、
+    // 下のファイル一覧は「積み上げ」ではなく「別の履歴との比較」になっている。
+    if since.history_rewritten {
+        for chunk in wrap(
+            "前回のコミットは今の履歴から辿れない (rebase / amend / force push)。\
+             下の一覧は前回との積み上げではなく、別々の履歴どうしの比較になる。",
+            inner_w.saturating_sub(4),
+        ) {
+            lines.push(Line::from(Span::styled(
+                format!("    {chunk}"),
+                Style::default().fg(theme.warning),
+            )));
+        }
+    }
+    if since.files.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    変わったファイルは無い".to_string(),
+            Style::default().fg(theme.muted),
+        )));
+    }
+    for path in &since.files {
+        lines.push(Line::from(Span::styled(
+            format!("    {path}"),
+            Style::default().fg(theme.fg),
+        )));
+    }
+    lines.push(Line::from(""));
 }
 
 /// 機能への影響の 1 項目 (変化・確かめる・残る穴)。ラベルの幅は

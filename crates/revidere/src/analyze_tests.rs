@@ -125,6 +125,12 @@ impl Repo {
             cache: true,
         }
     }
+
+    /// 成果物そのものを差分に数えさせないための下地。実際の利用でも
+    /// `.conductor` は無視されている。
+    fn ignore_artifacts(&self) {
+        self.write(".gitignore", ".conductor/\n");
+    }
 }
 
 impl Drop for Repo {
@@ -152,6 +158,7 @@ fn write_artifact_creates_the_parent_directory_when_it_is_missing() {
         sections: Vec::new(),
         impacts: Vec::new(),
         coverage: crate::Coverage::default(),
+        since_previous: None,
     };
     write_artifact(&path, &r).unwrap();
     assert!(path.exists());
@@ -226,4 +233,82 @@ fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
         1,
         "悪化した差し戻し後の結果ではなく、最初の結果が残っているはず"
     );
+}
+
+// 初回は比べる相手が無いので、前回からの進みは付けない。
+#[test]
+fn the_first_review_carries_no_since_previous_summary() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.write("a.txt", "1\n2\n");
+
+    let full = answer(
+        r#"{"title":"add line 2","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":2}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    assert!(r.since_previous.is_none());
+}
+
+// 2 度目は、前回の対象コミットと今回の HEAD、その間で動いたファイルを持つ。
+#[test]
+fn a_second_review_reports_what_moved_since_the_previous_one() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    let first_head = repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    // レビューのあとにもう 1 つコミットを積む。
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.write("later.txt", "added after the review\n");
+    let second_head = repo.commit_all("second");
+
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let since = r.since_previous.expect("2 度目には前回からの進みが付く");
+    assert!(first_head.starts_with(&since.previous_head), "{since:?}");
+    assert!(second_head.starts_with(&since.head), "{since:?}");
+    assert_eq!(
+        since.files,
+        vec!["a.txt".to_string(), "later.txt".to_string()]
+    );
+    assert!(!since.history_rewritten);
+}
+
+// 前回のコミットが履歴から消えている（rebase / amend / force push）ことは、
+// 黙って「変わっていない」に畳まず、そう言う。
+#[test]
+fn a_rewritten_history_is_flagged_in_the_since_previous_summary() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    repo.commit_all("work that will be dropped");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":2}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    // 履歴ごと差し替える。前回の対象コミットはもう辿れない。
+    repo.git(&["reset", "-q", "--hard", &base]);
+    repo.write("a.txt", "1\nrewritten\n");
+    repo.commit_all("rewritten");
+
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let since = r.since_previous.expect("2 度目には前回からの進みが付く");
+    assert!(since.history_rewritten, "{since:?}");
 }

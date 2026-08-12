@@ -25,5 +25,5 @@ pub use forest::Forest;
 pub use order::{Block, OrderedLine, PlacedSection, ReadingOrder};
 pub use review::{
     Confidence, Coverage, Impact, Importance, Overview, Position, Range, Relation, Review, Section,
-    Side,
+    Side, SincePrevious,
 };

@@ -91,6 +91,8 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
     };
     let base_oid = git::short_oid(&root, &git::merge_base(&root, &base_ref)?)?;
     let head_oid = git::short_oid(&root, "HEAD")?;
+    // 上書きする前に読む。前回の対象コミットはこの成果物にしか残っていない。
+    let previous_head = previous_head(&crate::review::artifact_path(&root));
 
     let text = git::diff(&root, &base_oid)?;
     if text.trim().is_empty() {
@@ -165,10 +167,37 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
         }
     }
 
+    r.since_previous = previous_head.map(|previous| since_previous(&root, previous, &head_oid));
+
     let out = crate::review::artifact_path(&root);
     write_artifact(&out, &r)?;
     log::info!("revidere: wrote {}", out.display());
     Ok(r)
+}
+
+/// 前回の成果物が見ていた HEAD コミット。無ければ（初回なら）None。
+///
+/// スキーマ版が違うものは読まない。head の意味が版によって変わりうる以上、
+/// 読めた文字列をコミット ID として扱うのは推測になる。
+fn previous_head(artifact: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(artifact).ok()?;
+    let r = Review::from_json(&text).ok()?;
+    (r.schema == crate::review::SCHEMA_VERSION).then_some(r.head)
+}
+
+/// 前回の HEAD から今の作業ツリーまでの進み。
+fn since_previous(root: &Path, previous_head: String, head: &str) -> crate::review::SincePrevious {
+    // 辿れないコミットからでも diff は取れることが多い（rebase 直後のように
+    // オブジェクトがまだ残っている場合）。取れなければファイル一覧を諦めて、
+    // 履歴が変わったことだけを伝える。
+    let history_rewritten = !git::is_ancestor_of_head(root, &previous_head);
+    let files = git::changed_files(root, &previous_head).unwrap_or_default();
+    crate::review::SincePrevious {
+        previous_head,
+        head: head.to_string(),
+        files,
+        history_rewritten,
+    }
 }
 
 /// 貯めた応答の置き場。成果物と同じディレクトリの下。
