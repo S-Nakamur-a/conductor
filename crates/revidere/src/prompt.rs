@@ -128,6 +128,11 @@ ranges の決まり:
 - confidence が "fact" なのは、コードの構造から確定していることだけ。
   読んで書いた予想は "guess"。迷ったら "guess"。
 - 分からないことを埋めない。確認できなかったなら、その旨を書く。
+- 振る舞いの根拠はコード。コメントやドキュメントの主張がコードと食い違って
+  いたら、コードを採ったうえで、食い違いそのものを節に書く。読む人にとっては
+  それが直すべき点だから、黙ってコード側で上書きしない。
+  ただし「なぜこの置き方なのか」「何を退けたのか」といった意図は、コードには
+  書けずコメントや計画書にしか無いことが多い。そちらは出典として使ってよい。
 - 日本語で書く。"#;
 
 /// 実行ごとの指示。どの範囲を、どの台帳に対して整理するか。
@@ -199,6 +204,15 @@ mod tests {
     #[test]
     fn system_prompt_forbids_lumping_tests_into_one_context() {
         assert!(SYSTEM.contains("1 つの節にまとめない"));
+    }
+
+    /// 「コードを信じろ」だけにすると、コードには書けない意図 (置き場所の理由、
+    /// 退けた案) の出典まで捨てることになり、段階 1 が痩せる。両方言えていること。
+    #[test]
+    fn system_prompt_prefers_code_for_behavior_but_keeps_comments_for_intent() {
+        assert!(SYSTEM.contains("振る舞いの根拠はコード"));
+        assert!(SYSTEM.contains("食い違いそのものを節に書く"));
+        assert!(SYSTEM.contains("そちらは出典として使ってよい"));
     }
 
     #[test]
