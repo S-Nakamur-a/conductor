@@ -395,11 +395,7 @@ fn a_rewritten_history_is_flagged_in_the_since_previous_summary() {
     assert!(since.history_rewritten, "{since:?}");
 }
 
-// 前回からの差分のレビューは、ブランチ全体のレビューを消さずに別の場所へ書く。
 // 片方を見ている間にもう片方が消えると、行き来した時点で読んでいたものが変わる。
-//
-// 前回からの進みを持たないのも要件。それ自体が進みなので、入れ子になっても
-// 指すものが無い。
 #[test]
 fn the_since_previous_scope_writes_beside_the_branch_review() {
     let repo = Repo::new();

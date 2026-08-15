@@ -90,8 +90,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.revidere.list_area = Rect::default();
         app.revidere.diff_area = Rect::default();
         app.revidere.list_rows.clear();
-        // どちらの区間が無いのかを言う。p で切り替えた先が未解析のとき、
-        // 区間を伏せたままだと「レビューが消えた」ように読める。
+        // どちらの区間が無いのかを言う。伏せたままだと、p で切り替えた先が
+        // 未解析なだけなのに「レビューが消えた」ように読める。
         frame.render_widget(
             Paragraph::new(format!(
                 "[{}] のレビューはまだ無い — W で解析、p でもう一方の区間へ。",
@@ -533,10 +533,7 @@ fn push_since_previous(
             if rest > 0 {
                 push_note(lines, &format!("ほか {rest} 件"), note, inner_w);
             }
-            // ファイル名だけでは、指摘をどう直したのかは読めない。前回の指摘は
-            // conductor の外 (Claude Code の会話や GitHub) にあって取り込めない
-            // ので、直しを確かめる手立ては「どこがどう変わったか」を読むことしか
-            // ない。その行き先をここで指す。
+            // ファイル名だけでは、指摘をどう直したのかは読めない。その行き先を指す。
             push_note(
                 lines,
                 "p: この区間だけのレビューへ (どこがどう変わったかを読む)",

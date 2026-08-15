@@ -222,8 +222,8 @@ impl App {
         let worktree = self.selected_worktree_path();
         let api = self.config.api.clone();
         let scope = self.revidere.scope;
-        // 前回からの差分の起点は、ブランチ全体の成果物にしか書かれていない。
-        // 無いのは 1 度目のレビューを作った直後で、比べる前回がまだ存在しない。
+        // 起点はブランチ全体の成果物にしか書かれていない。無いのは 1 度目の
+        // レビューを作った直後で、比べる前回がまだ存在しない。
         let base = match scope {
             ::revidere::Scope::Base => None,
             ::revidere::Scope::SincePrevious => match crate::revidere::previous_head(&worktree) {
@@ -260,9 +260,8 @@ impl App {
         });
         // フォーカスは動かさない。パレットから始めても、動いている端末から
         // 入力を奪わないようにするため。
-        // どちらの区間を解析しているかを必ず言う。区間はビューを閉じても
-        // 残るので、外から W を押したときに黙って前回からの差分を作られると、
-        // 数分待った先で別のものが出てくる。
+        // どちらの区間かを言う。区間はビューを閉じても残るので、外から W を
+        // 押すと、数分待った先で思っていない方が出てくることがある。
         self.set_status(
             format!(
                 "Analysing [{}] with revidere — this takes a few minutes.",
@@ -272,11 +271,9 @@ impl App {
         );
     }
 
-    /// 見る区間を、ブランチ全体と「前回のレビューから」で切り替える (p)。
+    /// 見る区間を切り替えて読み直す (p)。区間の意味は [revidere::Scope]。
     ///
-    /// 指摘そのものは conductor の外 (Claude Code の会話や GitHub) にあって
-    /// 取り込めない。読み直す側にできるのは「前回から何がどう変わったか」を
-    /// 見ることだけなので、そこへは同じ画面のまま行けるようにする。
+    /// 切り替えた結果は画面が名乗るので、ここではステータスに出さない。
     pub fn cmd_toggle_revidere_scope(&mut self) {
         self.revidere.scope = match self.revidere.scope {
             ::revidere::Scope::Base => ::revidere::Scope::SincePrevious,
@@ -288,29 +285,6 @@ impl App {
         self.revidere.diff_scroll = 0;
         self.revidere.overview_scroll = 0;
         self.reload_revidere_now();
-
-        if self.revidere.current.is_some() {
-            self.set_status(
-                crate::revidere::scope_label(self.revidere.scope).to_string(),
-                StatusLevel::Info,
-            );
-            return;
-        }
-        // 成果物が無いのは「まだ解析していない」。切り替えたのに何も変わらない
-        // ように見えるのが一番困るので、次にどうすればよいかまで言う。
-        let hint = match self.revidere.scope {
-            ::revidere::Scope::Base => "press W to analyse this branch",
-            ::revidere::Scope::SincePrevious => {
-                "press W to analyse what changed since the last review"
-            }
-        };
-        self.set_status(
-            format!(
-                "{} — no review yet ({hint}).",
-                crate::revidere::scope_label(self.revidere.scope)
-            ),
-            StatusLevel::Warning,
-        );
     }
 
     /// 2 列ビューで選択中の項目が指す位置を、通常の Viewer で開く (Enter)。

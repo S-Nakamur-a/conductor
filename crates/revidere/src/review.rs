@@ -14,10 +14,9 @@ pub const DIR: &str = ".conductor";
 
 /// どの区間を見たレビューか。
 ///
-/// 同じ作業ツリーに 2 つのレビューが同時に要る。ブランチが何をしたのかと、
-/// 前回のレビューから何を直したのか。後者は指摘への対応を読むためのもので、
-/// 指摘そのものは conductor の外 (Claude Code の会話や GitHub) にあるから、
-/// 「どこがどう変わったか」を読ませるしかない。
+/// 後者が要るのは、指摘そのものが conductor の外 (Claude Code の会話や
+/// GitHub) にあって取り込めないから。直しを確かめる手立ては「どこがどう
+/// 変わったか」を読むことしかない。
 ///
 /// 1 枚の成果物に両方を持たせない。網羅性 (全ての変更箇所がちょうど 1 つの
 /// 項目に属する) は区間ごとの性質で、混ぜると検査が意味を失う。
@@ -38,9 +37,8 @@ pub enum Scope {
 pub fn artifact_path(repo_root: &std::path::Path, scope: Scope) -> std::path::PathBuf {
     let name = match scope {
         Scope::Base => "review.json",
-        // 起点をファイル名に入れない。1 ラウンド 1 枚で上書きしていく方が、
-        // 溜まったものを掃除する責任を負わずに済む。どの起点で作ったかは
-        // 中の base に書いてあるので、古い回のものかは読めば分かる。
+        // 起点をファイル名に入れない。1 ラウンド 1 枚で上書きする方が、溜まった
+        // ものを掃除せずに済む。どの起点で作ったかは中の base で分かる。
         Scope::SincePrevious => "review-since-previous.json",
     };
     repo_root.join(DIR).join(name)

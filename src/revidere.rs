@@ -103,9 +103,9 @@ pub fn load(worktree: &Path, scope: Scope) -> LoadOutcome {
 
 /// いまのブランチ全体のレビューが「前回」と見ているコミット。
 ///
-/// 前回からの差分を解析するときの起点であり、その成果物が今の回のものかを
-/// 見分ける鍵でもある。持ち主はブランチ全体の成果物 1 つだけ — 2 か所に
-/// 写しを持つと、片方だけ古くなったときに黙って別の区間を見ることになる。
+/// 差分を解析するときの起点であり、その成果物が今の回のものかを見分ける鍵
+/// でもある。写しを 2 か所に持つと、片方だけ古くなったときに黙って別の区間を
+/// 見ることになるので、持ち主はブランチ全体の成果物 1 つだけ。
 pub fn previous_head(worktree: &Path) -> Option<String> {
     let path = revidere::review::artifact_path(worktree, Scope::Base);
     let text = std::fs::read_to_string(path).ok()?;
@@ -234,9 +234,8 @@ mod tests {
         )
     }
 
-    /// 前の回の「前回からの差分」が残っていても、それを今の回として出さない。
-    /// 起点が違えば見ている区間そのものが違うので、直しを読んでいるつもりで
-    /// 1 つ前のラウンドを読むことになる。
+    /// 前の回の成果物が残っていても、それを今の回として出さない。起点が違えば
+    /// 区間が違うので、直しを読んでいるつもりで 1 つ前のラウンドを読むことになる。
     #[test]
     fn a_since_previous_artifact_from_an_earlier_round_counts_as_missing() {
         let dir = tempfile::tempdir().unwrap();

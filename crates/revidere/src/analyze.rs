@@ -75,10 +75,8 @@ pub struct Options {
     pub base: Option<String>,
     /// 貯めた応答を使うか。false なら AI に聞き直す（結果は貯め直す）。
     pub cache: bool,
-    /// どちらの区間のレビューとして書き出すか。置き場がこれで決まる。
-    ///
-    /// [Scope::SincePrevious] を選ぶなら base に前回の起点コミットを渡すこと。
-    /// ここは「どの成果物として残すか」だけを決め、区間そのものは base が決める。
+    /// どの成果物として残すか。区間そのものを決めるのは base の方なので、
+    /// [Scope::SincePrevious] にするなら base に前回の起点コミットを渡すこと。
     pub scope: Scope,
 }
 

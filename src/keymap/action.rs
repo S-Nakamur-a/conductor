@@ -174,8 +174,6 @@ keymap_suite::actions! {
         /// 割り当てを説明するのも試すのも素直になる。
         RevidereShowOverview => "revidere_show_overview",
         RevidereShowSections => "revidere_show_sections",
-        /// 見る区間を、ブランチ全体と「前回のレビューから」で切り替える。
-        ///
         /// 上の 2 つと違って交互に切り替えるのは、行き先が 2 つしかなく、
         /// どちらを見ているかが画面の見出しに常に出ているため。
         RevidereToggleScope => "revidere_toggle_scope",
