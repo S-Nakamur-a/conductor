@@ -5,7 +5,10 @@
 // 2 か所に散る。
 
 use crate::cache::{self, Cache};
-use crate::{coverage, diff, git, parse, prompt, review::Review};
+use crate::{
+    coverage, diff, git, parse, prompt,
+    review::{Review, Scope},
+};
 use std::path::{Path, PathBuf};
 
 /// プロンプトを補完テキストに変えるもの。ホストが実装する。
@@ -72,6 +75,11 @@ pub struct Options {
     pub base: Option<String>,
     /// 貯めた応答を使うか。false なら AI に聞き直す（結果は貯め直す）。
     pub cache: bool,
+    /// どちらの区間のレビューとして書き出すか。置き場がこれで決まる。
+    ///
+    /// [Scope::SincePrevious] を選ぶなら base に前回の起点コミットを渡すこと。
+    /// ここは「どの成果物として残すか」だけを決め、区間そのものは base が決める。
+    pub scope: Scope,
 }
 
 /// 差分を解析して `<root>/.conductor/review.json` を書き、その内容を返す。
@@ -91,10 +99,15 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
     };
     let base_oid = git::short_oid(&root, &git::merge_base(&root, &base_ref)?)?;
     let head_oid = git::short_oid(&root, "HEAD")?;
+    // 前回からの進みを持つのはブランチ全体のレビューだけ。前回からの差分を
+    // 見ているレビューにとっては、それ自体が進みなので入れ子になる。
+    //
     // 上書きする前に読む。前回の対象コミットはこの成果物にしか残っていない。
     // git を引くのもここ — AI を待つ数分の間に HEAD が動くと、下で書き出す
     // head と一覧が別々の時点を指すことになる。
-    let since_previous = previous_head(&crate::review::artifact_path(&root), &head_oid)
+    let since_previous = (o.scope == Scope::Base)
+        .then(|| previous_head(&crate::review::artifact_path(&root, Scope::Base), &head_oid))
+        .flatten()
         .map(|previous| since_previous(&root, previous, &head_oid));
 
     let text = git::diff(&root, &base_oid)?;
@@ -172,7 +185,7 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
 
     r.since_previous = since_previous;
 
-    let out = crate::review::artifact_path(&root);
+    let out = crate::review::artifact_path(&root, o.scope);
     write_artifact(&out, &r)?;
     log::info!("revidere: wrote {}", out.display());
     Ok(r)

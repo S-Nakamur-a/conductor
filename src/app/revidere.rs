@@ -140,7 +140,7 @@ impl App {
     /// 面倒を見る。
     pub fn reload_revidere(&mut self) {
         let worktree = self.selected_worktree_path();
-        let stamp = artifact_stamp(&worktree);
+        let stamp = artifact_stamp(&worktree, self.revidere.scope);
         if stamp.is_some() && stamp == self.revidere.loaded_from && self.revidere.has_review() {
             return;
         }
@@ -151,8 +151,8 @@ impl App {
     /// 最新でなければならない場面で使う。
     pub fn reload_revidere_now(&mut self) {
         let worktree = self.selected_worktree_path();
-        let stamp = artifact_stamp(&worktree);
-        match crate::revidere::load(&worktree) {
+        let stamp = artifact_stamp(&worktree, self.revidere.scope);
+        match crate::revidere::load(&worktree, self.revidere.scope) {
             crate::revidere::LoadOutcome::Missing => {
                 self.revidere.replace(None);
                 self.revidere.load_error = None;
@@ -221,13 +221,31 @@ impl App {
         }
         let worktree = self.selected_worktree_path();
         let api = self.config.api.clone();
+        let scope = self.revidere.scope;
+        // 前回からの差分の起点は、ブランチ全体の成果物にしか書かれていない。
+        // 無いのは 1 度目のレビューを作った直後で、比べる前回がまだ存在しない。
+        let base = match scope {
+            ::revidere::Scope::Base => None,
+            ::revidere::Scope::SincePrevious => match crate::revidere::previous_head(&worktree) {
+                Some(b) => Some(b),
+                None => {
+                    self.set_status(
+                        "No previous review to compare against yet — analyse the branch \
+                             (W), commit, then analyse again."
+                            .to_string(),
+                        StatusLevel::Warning,
+                    );
+                    return;
+                }
+            },
+        };
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
         let worker_cancel = cancel.clone();
         std::thread::spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_analyze(&worktree, force, &api, &worker_cancel)
+                run_analyze(&worktree, force, scope, base, &api, &worker_cancel)
             }))
             .unwrap_or_else(|_| RunOutcome::Failed("the analysis thread panicked".to_string()));
             // receiver が閉じているのはアプリが先に進んだということ。
@@ -242,9 +260,56 @@ impl App {
         });
         // フォーカスは動かさない。パレットから始めても、動いている端末から
         // 入力を奪わないようにするため。
+        // どちらの区間を解析しているかを必ず言う。区間はビューを閉じても
+        // 残るので、外から W を押したときに黙って前回からの差分を作られると、
+        // 数分待った先で別のものが出てくる。
         self.set_status(
-            "Analysing this worktree with revidere — this takes a few minutes.".to_string(),
+            format!(
+                "Analysing [{}] with revidere — this takes a few minutes.",
+                crate::revidere::scope_label(scope)
+            ),
             StatusLevel::Info,
+        );
+    }
+
+    /// 見る区間を、ブランチ全体と「前回のレビューから」で切り替える (p)。
+    ///
+    /// 指摘そのものは conductor の外 (Claude Code の会話や GitHub) にあって
+    /// 取り込めない。読み直す側にできるのは「前回から何がどう変わったか」を
+    /// 見ることだけなので、そこへは同じ画面のまま行けるようにする。
+    pub fn cmd_toggle_revidere_scope(&mut self) {
+        self.revidere.scope = match self.revidere.scope {
+            ::revidere::Scope::Base => ::revidere::Scope::SincePrevious,
+            ::revidere::Scope::SincePrevious => ::revidere::Scope::Base,
+        };
+        // 区間ごとに読みかけの位置は別物。持ち越すと、行数の違う diff の
+        // 途中にいきなり着地する。
+        self.revidere.selected = 0;
+        self.revidere.diff_scroll = 0;
+        self.revidere.overview_scroll = 0;
+        self.reload_revidere_now();
+
+        if self.revidere.current.is_some() {
+            self.set_status(
+                crate::revidere::scope_label(self.revidere.scope).to_string(),
+                StatusLevel::Info,
+            );
+            return;
+        }
+        // 成果物が無いのは「まだ解析していない」。切り替えたのに何も変わらない
+        // ように見えるのが一番困るので、次にどうすればよいかまで言う。
+        let hint = match self.revidere.scope {
+            ::revidere::Scope::Base => "press W to analyse this branch",
+            ::revidere::Scope::SincePrevious => {
+                "press W to analyse what changed since the last review"
+            }
+        };
+        self.set_status(
+            format!(
+                "{} — no review yet ({hint}).",
+                crate::revidere::scope_label(self.revidere.scope)
+            ),
+            StatusLevel::Warning,
         );
     }
 
@@ -364,8 +429,11 @@ impl App {
 }
 
 /// 成果物の (パス, 更新時刻)。無ければ None。
-fn artifact_stamp(worktree: &std::path::Path) -> Option<(PathBuf, std::time::SystemTime)> {
-    let path = ::revidere::review::artifact_path(worktree);
+fn artifact_stamp(
+    worktree: &std::path::Path,
+    scope: ::revidere::Scope,
+) -> Option<(PathBuf, std::time::SystemTime)> {
+    let path = ::revidere::review::artifact_path(worktree, scope);
     let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
     Some((path, modified))
 }
@@ -377,6 +445,8 @@ fn artifact_stamp(worktree: &std::path::Path) -> Option<(PathBuf, std::time::Sys
 fn run_analyze(
     worktree: &std::path::Path,
     force: bool,
+    scope: ::revidere::Scope,
+    base: Option<String>,
     api: &crate::config::ApiConfig,
     cancel: &Arc<AtomicBool>,
 ) -> RunOutcome {
@@ -395,8 +465,9 @@ fn run_analyze(
     };
     let options = ::revidere::Options {
         repo: worktree.to_path_buf(),
-        base: None,
+        base,
         cache: !force,
+        scope,
     };
     match ::revidere::analyze(&options, &ai) {
         Ok(review) => RunOutcome::Done {

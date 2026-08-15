@@ -17,7 +17,7 @@
 
 use std::path::Path;
 
-use revidere::{Annotations, ReadingOrder};
+use revidere::{Annotations, ReadingOrder, Scope};
 
 /// 読み込み済みの成果物と、そこから組んだ読む順。
 pub struct Review {
@@ -59,8 +59,8 @@ pub enum LoadOutcome {
 /// 「ファイルが無い」をライブラリではなくここで判定するのは revidere の
 /// 想定どおり。ホストにとって成果物が無いのは正常な状態なので、ライブラリの
 /// 関心から外してある。
-pub fn load(worktree: &Path) -> LoadOutcome {
-    let path = revidere::review::artifact_path(worktree);
+pub fn load(worktree: &Path, scope: Scope) -> LoadOutcome {
+    let path = revidere::review::artifact_path(worktree, scope);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return LoadOutcome::Missing,
@@ -70,6 +70,19 @@ pub fn load(worktree: &Path) -> LoadOutcome {
         Ok(a) => a,
         Err(e) => return LoadOutcome::Broken(format!("{}: {e}", path.display())),
     };
+    // 前回からの差分は 1 ラウンド 1 枚。起点が今の前回と違えば、それは前の回の
+    // 成果物で、この回についてはまだ解析していないのと同じ。壊れてはいないので
+    // Broken ではなく Missing に寄せる。
+    if scope == Scope::SincePrevious
+        && Some(annotations.base()) != previous_head(worktree).as_deref()
+    {
+        log::info!(
+            "revidere: {} is from an earlier round (base {})",
+            path.display(),
+            annotations.base()
+        );
+        return LoadOutcome::Missing;
+    }
 
     // 成果物が見ていたのと同じ区間の diff を取る。起点は成果物に書いてある
     // コミット ID をそのまま使う — ここで base を推定し直すと、解析のあとに
@@ -86,6 +99,26 @@ pub fn load(worktree: &Path) -> LoadOutcome {
         annotations,
         order,
     }))
+}
+
+/// いまのブランチ全体のレビューが「前回」と見ているコミット。
+///
+/// 前回からの差分を解析するときの起点であり、その成果物が今の回のものかを
+/// 見分ける鍵でもある。持ち主はブランチ全体の成果物 1 つだけ — 2 か所に
+/// 写しを持つと、片方だけ古くなったときに黙って別の区間を見ることになる。
+pub fn previous_head(worktree: &Path) -> Option<String> {
+    let path = revidere::review::artifact_path(worktree, Scope::Base);
+    let text = std::fs::read_to_string(path).ok()?;
+    let annotations = Annotations::from_json(&text).ok()?;
+    Some(annotations.since_previous()?.previous_head.clone())
+}
+
+/// 画面とステータスに出す区間の呼び名。1 か所で持つ。
+pub fn scope_label(scope: Scope) -> &'static str {
+    match scope {
+        Scope::Base => "ブランチ全体",
+        Scope::SincePrevious => "前回のレビューから",
+    }
 }
 
 /// 重要度の色。revidere の目安をテーマの世界へ写す。
@@ -139,7 +172,7 @@ pub fn artifact_state(worktree: &Path, head_time: Option<i64>, running: bool) ->
     if running {
         return ArtifactState::Running;
     }
-    let path = revidere::review::artifact_path(worktree);
+    let path = revidere::review::artifact_path(worktree, Scope::Base);
     let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
         return ArtifactState::None;
     };
@@ -167,7 +200,10 @@ mod tests {
     #[test]
     fn a_missing_artifact_is_not_an_error() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(matches!(load(dir.path()), LoadOutcome::Missing));
+        assert!(matches!(
+            load(dir.path(), Scope::Base),
+            LoadOutcome::Missing
+        ));
     }
 
     /// 読めたテキストが成果物として通らないのは異常で、黙って Missing に
@@ -175,20 +211,78 @@ mod tests {
     #[test]
     fn a_broken_artifact_reports_why() {
         let dir = tempfile::tempdir().unwrap();
-        let path = revidere::review::artifact_path(dir.path());
+        let path = revidere::review::artifact_path(dir.path(), Scope::Base);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{ not json").unwrap();
-        match load(dir.path()) {
+        match load(dir.path(), Scope::Base) {
             LoadOutcome::Broken(msg) => assert!(msg.contains("JSON"), "got: {msg}"),
             _ => panic!("壊れた JSON は Broken になるはず"),
         }
+    }
+
+    /// 成果物 1 枚ぶんの JSON。区間の起点と、前回の起点だけを差し替える。
+    fn artifact(base: &str, previous: Option<&str>) -> String {
+        let since = previous
+            .map(|p| {
+                format!(
+                    r#","since_previous":{{"previous_head":"{p}","head":"h","files":[],"history_rewritten":false}}"#
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            r#"{{"schema":2,"base":"{base}","head":"h","overview":{{"problem":"","change":"","mechanism":"","placement":"","scope":""}},"sections":[],"impacts":[],"coverage":{{"total":0,"classified":0,"unclassified":[],"conflicts":[],"unknown":[]}}{since}}}"#
+        )
+    }
+
+    /// 前の回の「前回からの差分」が残っていても、それを今の回として出さない。
+    /// 起点が違えば見ている区間そのものが違うので、直しを読んでいるつもりで
+    /// 1 つ前のラウンドを読むことになる。
+    #[test]
+    fn a_since_previous_artifact_from_an_earlier_round_counts_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = revidere::review::artifact_path(dir.path(), Scope::Base);
+        std::fs::create_dir_all(base_path.parent().unwrap()).unwrap();
+        std::fs::write(&base_path, artifact("b0", Some("p2"))).unwrap();
+        std::fs::write(
+            revidere::review::artifact_path(dir.path(), Scope::SincePrevious),
+            // 起点が今の前回 (p2) ではなく、1 つ前の回のもの。
+            artifact("p1", None),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            load(dir.path(), Scope::SincePrevious),
+            LoadOutcome::Missing
+        ));
+    }
+
+    /// 起点が今の前回と一致していれば、それは今の回のもの。Missing に
+    /// 畳んでしまうと、解析済みでも毎回作り直させることになる。
+    #[test]
+    fn a_since_previous_artifact_for_this_round_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = revidere::review::artifact_path(dir.path(), Scope::Base);
+        std::fs::create_dir_all(base_path.parent().unwrap()).unwrap();
+        std::fs::write(&base_path, artifact("b0", Some("p2"))).unwrap();
+        std::fs::write(
+            revidere::review::artifact_path(dir.path(), Scope::SincePrevious),
+            artifact("p2", None),
+        )
+        .unwrap();
+
+        // git の無い一時ディレクトリなので diff は取れず Broken まで進む。
+        // ここで見たいのは「起点が合っていれば捨てられない」ことだけ。
+        assert!(matches!(
+            load(dir.path(), Scope::SincePrevious),
+            LoadOutcome::Broken(_)
+        ));
     }
 
     /// 成果物を書いてから積んだコミットは、成果物を古くすること。
     #[test]
     fn a_commit_made_after_the_artifact_makes_it_stale() {
         let dir = tempfile::tempdir().unwrap();
-        let path = revidere::review::artifact_path(dir.path());
+        let path = revidere::review::artifact_path(dir.path(), Scope::Base);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{}").unwrap();
 

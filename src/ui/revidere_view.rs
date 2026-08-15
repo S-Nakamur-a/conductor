@@ -90,10 +90,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.revidere.list_area = Rect::default();
         app.revidere.diff_area = Rect::default();
         app.revidere.list_rows.clear();
+        // どちらの区間が無いのかを言う。p で切り替えた先が未解析のとき、
+        // 区間を伏せたままだと「レビューが消えた」ように読める。
         frame.render_widget(
-            Paragraph::new("No review artifact — press W to analyse this worktree.")
-                .style(Style::default().fg(app.theme.muted))
-                .block(bordered(" Review ", app)),
+            Paragraph::new(format!(
+                "[{}] のレビューはまだ無い — W で解析、p でもう一方の区間へ。",
+                crate::revidere::scope_label(app.revidere.scope)
+            ))
+            .style(Style::default().fg(app.theme.warning))
+            .block(bordered(" Review ", app)),
             area,
         );
         return;
@@ -142,7 +147,11 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &mut App, review: &Review
     app.revidere.overview_scroll = scroll;
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(height).collect();
 
-    let title = format!(" 概要  {}..作業ツリー  (d: 項目と diff へ) ", review.base);
+    let title = format!(
+        " 概要 [{}]  {}..作業ツリー  (d: 項目と diff へ / p: 区間を切り替え) ",
+        crate::revidere::scope_label(app.revidere.scope),
+        review.base
+    );
     frame.render_widget(Paragraph::new(visible).block(bordered(&title, app)), area);
 }
 
@@ -289,7 +298,8 @@ fn render_diff_column(frame: &mut Frame, area: Rect, app: &mut App, review: &Rev
         .collect();
 
     let title = format!(
-        " {}..作業ツリー  変更行 {}  {} ",
+        " [{}] {}..作業ツリー  変更行 {}  {} ",
+        crate::revidere::scope_label(app.revidere.scope),
         review.base,
         review.total_positions(),
         if review.is_complete() {
@@ -523,6 +533,16 @@ fn push_since_previous(
             if rest > 0 {
                 push_note(lines, &format!("ほか {rest} 件"), note, inner_w);
             }
+            // ファイル名だけでは、指摘をどう直したのかは読めない。前回の指摘は
+            // conductor の外 (Claude Code の会話や GitHub) にあって取り込めない
+            // ので、直しを確かめる手立ては「どこがどう変わったか」を読むことしか
+            // ない。その行き先をここで指す。
+            push_note(
+                lines,
+                "p: この区間だけのレビューへ (どこがどう変わったかを読む)",
+                note,
+                inner_w,
+            );
         }
     }
     lines.push(Line::from(""));

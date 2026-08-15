@@ -174,6 +174,11 @@ keymap_suite::actions! {
         /// 割り当てを説明するのも試すのも素直になる。
         RevidereShowOverview => "revidere_show_overview",
         RevidereShowSections => "revidere_show_sections",
+        /// 見る区間を、ブランチ全体と「前回のレビューから」で切り替える。
+        ///
+        /// 上の 2 つと違って交互に切り替えるのは、行き先が 2 つしかなく、
+        /// どちらを見ているかが画面の見出しに常に出ているため。
+        RevidereToggleScope => "revidere_toggle_scope",
         /// ファイル（diff リストの行、または現在 Viewer の diff モードで
         /// 開いているファイル）の「viewed」マークを切り替える。
         ToggleViewed => "toggle_viewed",
@@ -240,6 +245,9 @@ impl Action {
             Action::RevidererPrevSection => "Jump to previous section",
             Action::RevidereShowOverview => "Show the overview (1 column)",
             Action::RevidereShowSections => "Show the sections + diff (2 columns)",
+            Action::RevidereToggleScope => {
+                "Switch between the whole branch and what changed since the last review"
+            }
             Action::AnalyzeRevidere => "Analyse this worktree with revidere",
             Action::ForceAnalyzeRevidere => "Re-analyse, ignoring the cached reply",
             Action::ToggleViewed => "Toggle file viewed",

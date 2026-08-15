@@ -220,6 +220,13 @@
 # キーを分けてあるので、いまどちらを出していても押した結果は同じ。
 "o" = "revidere_show_overview"
 "d" = "revidere_show_sections"
+# 列の軸 (o/d) とは別の軸。見ている区間を「ブランチ全体」と「前回のレビューから」で
+# 入れ替える。指摘そのものは conductor の外にあって取り込めないので、直しを読むには
+# 前回からの差分を見るしかない。W はこのレイヤーからも解析を起こせるように置いてある
+# — 切り替えた先がまだ未解析のとき、いったん抜けないと作れないのでは行き止まりになる。
+"p" = "revidere_toggle_scope"
+"W" = "analyze_revidere"
+"alt+w" = "force_analyze_revidere"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "q" = "exit_sub_panel"

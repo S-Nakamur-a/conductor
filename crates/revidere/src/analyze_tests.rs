@@ -114,7 +114,11 @@ impl Repo {
     /// 書き出された成果物。パスは書く側と同じ関数から得る。
     fn artifact(&self) -> Review {
         let root = git::root(&self.dir).unwrap();
-        let text = std::fs::read_to_string(crate::review::artifact_path(&root)).unwrap();
+        let text = std::fs::read_to_string(crate::review::artifact_path(
+            &root,
+            crate::review::Scope::Base,
+        ))
+        .unwrap();
         Review::from_json(&text).unwrap()
     }
 
@@ -123,6 +127,7 @@ impl Repo {
             repo: self.dir.clone(),
             base: base.map(str::to_string),
             cache: true,
+            scope: crate::review::Scope::Base,
         }
     }
 
@@ -347,7 +352,11 @@ fn an_unreachable_previous_head_reports_no_list_instead_of_an_empty_one() {
     let root = git::root(&repo.dir).unwrap();
     let mut stored = repo.artifact();
     stored.head = "0123456789abcdef0123456789abcdef01234567".to_string();
-    write_artifact(&crate::review::artifact_path(&root), &stored).unwrap();
+    write_artifact(
+        &crate::review::artifact_path(&root, crate::review::Scope::Base),
+        &stored,
+    )
+    .unwrap();
 
     repo.write("a.txt", "1\n2\n3\n");
     repo.commit_all("second");
@@ -384,4 +393,56 @@ fn a_rewritten_history_is_flagged_in_the_since_previous_summary() {
     let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
     let since = r.since_previous.expect("2 度目には前回からの進みが付く");
     assert!(since.history_rewritten, "{since:?}");
+}
+
+// 前回からの差分のレビューは、ブランチ全体のレビューを消さずに別の場所へ書く。
+// 片方を見ている間にもう片方が消えると、行き来した時点で読んでいたものが変わる。
+//
+// 前回からの進みを持たないのも要件。それ自体が進みなので、入れ子になっても
+// 指すものが無い。
+#[test]
+fn the_since_previous_scope_writes_beside_the_branch_review() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    let first_head = repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("second");
+    let branch = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let previous = branch
+        .since_previous
+        .expect("2 度目には前回からの進みが付く")
+        .previous_head;
+    assert!(first_head.starts_with(&previous));
+
+    let mut delta_options = repo.options(Some(&previous));
+    delta_options.scope = crate::review::Scope::SincePrevious;
+    let delta = analyze(&delta_options, &ai).unwrap();
+
+    assert_eq!(delta.base, previous, "起点は前回のレビューのコミット");
+    assert!(
+        delta.since_previous.is_none(),
+        "前回からの差分そのものを見ているレビューは、さらに前回からの進みを持たない"
+    );
+
+    let root = git::root(&repo.dir).unwrap();
+    let branch_path = crate::review::artifact_path(&root, crate::review::Scope::Base);
+    let delta_path = crate::review::artifact_path(&root, crate::review::Scope::SincePrevious);
+    assert!(delta_path.exists());
+    let still_there = Review::from_json(&std::fs::read_to_string(&branch_path).unwrap()).unwrap();
+    assert_eq!(
+        still_there.base,
+        base[..still_there.base.len()],
+        "ブランチ全体のレビューは上書きされていない"
+    );
 }

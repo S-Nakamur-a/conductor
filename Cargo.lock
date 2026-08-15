@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "conductor"
-version = "0.106.0"
+version = "0.107.0"
 dependencies = [
  "aa-media",
  "anyhow",
@@ -2475,7 +2475,7 @@ dependencies = [
 
 [[package]]
 name = "revidere"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "log",
  "revidere-fixtures",

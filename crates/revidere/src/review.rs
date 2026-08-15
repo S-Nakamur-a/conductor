@@ -12,13 +12,38 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// 隠しディレクトリを 2 つに分けても、無視する設定と掃除の手間が倍になるだけ。
 pub const DIR: &str = ".conductor";
 
-/// 成果物の既定の置き場。`<repo>/.conductor/review.json`。
+/// どの区間を見たレビューか。
+///
+/// 同じ作業ツリーに 2 つのレビューが同時に要る。ブランチが何をしたのかと、
+/// 前回のレビューから何を直したのか。後者は指摘への対応を読むためのもので、
+/// 指摘そのものは conductor の外 (Claude Code の会話や GitHub) にあるから、
+/// 「どこがどう変わったか」を読ませるしかない。
+///
+/// 1 枚の成果物に両方を持たせない。網羅性 (全ての変更箇所がちょうど 1 つの
+/// 項目に属する) は区間ごとの性質で、混ぜると検査が意味を失う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// ベースブランチとの共通祖先から作業ツリーまで。
+    #[default]
+    Base,
+    /// 前回のレビューが見ていたコミットから作業ツリーまで。
+    SincePrevious,
+}
+
+/// 成果物の置き場。`<repo>/.conductor/review.json` とその前回差分版。
 ///
 /// 書く側と読む側が別々にこのパスを組み立てると、片方だけ変えたときに
 /// 「書いたのに読まれない」が黙って起きる。形を決めているのはこのクレートなので、
 /// 置き場もここが持つ。
-pub fn artifact_path(repo_root: &std::path::Path) -> std::path::PathBuf {
-    repo_root.join(DIR).join("review.json")
+pub fn artifact_path(repo_root: &std::path::Path, scope: Scope) -> std::path::PathBuf {
+    let name = match scope {
+        Scope::Base => "review.json",
+        // 起点をファイル名に入れない。1 ラウンド 1 枚で上書きしていく方が、
+        // 溜まったものを掃除する責任を負わずに済む。どの起点で作ったかは
+        // 中の base に書いてあるので、古い回のものかは読めば分かる。
+        Scope::SincePrevious => "review-since-previous.json",
+    };
+    repo_root.join(DIR).join(name)
 }
 
 /// 変更箇所がどちら側のものか。
@@ -301,9 +326,20 @@ mod tests {
     /// ここが割れると「書いたのに読まれない」が黙って起きる。
     #[test]
     fn the_artifact_lives_under_the_host_directory() {
-        let p = artifact_path(std::path::Path::new("/repo"));
+        let p = artifact_path(std::path::Path::new("/repo"), Scope::Base);
         assert_eq!(p, std::path::Path::new("/repo/.conductor/review.json"));
         assert!(p.starts_with(std::path::Path::new("/repo").join(DIR)));
+    }
+
+    /// 2 つの区間が同じファイルを取り合うと、片方を見ている間にもう片方が
+    /// 消える。別々の置き場であることを固定する。
+    #[test]
+    fn the_two_scopes_do_not_share_a_file() {
+        let repo = std::path::Path::new("/repo");
+        assert_ne!(
+            artifact_path(repo, Scope::Base),
+            artifact_path(repo, Scope::SincePrevious)
+        );
     }
 
     fn range(side: Side, start: Option<u32>, end: Option<u32>) -> Range {
