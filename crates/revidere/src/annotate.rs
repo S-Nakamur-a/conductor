@@ -150,6 +150,11 @@ impl Annotations {
     pub fn head(&self) -> &str {
         &self.review.head
     }
+
+    /// 前回の成果物からの進み。初回は None。
+    pub fn since_previous(&self) -> Option<&crate::review::SincePrevious> {
+        self.review.since_previous.as_ref()
+    }
 }
 
 #[cfg(test)]

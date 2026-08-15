@@ -220,6 +220,11 @@
 # キーを分けてあるので、いまどちらを出していても押した結果は同じ。
 "o" = "revidere_show_overview"
 "d" = "revidere_show_sections"
+# p は列 (o/d) とは別の軸で、見ている区間を入れ替える。W をこのレイヤーにも置くのは、
+# 切り替えた先が未解析のときに、いったん抜けないと作れないのでは行き止まりになるため。
+"p" = "revidere_toggle_scope"
+"W" = "analyze_revidere"
+"alt+w" = "force_analyze_revidere"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "q" = "exit_sub_panel"

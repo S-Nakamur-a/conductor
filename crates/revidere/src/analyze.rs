@@ -5,7 +5,10 @@
 // 2 か所に散る。
 
 use crate::cache::{self, Cache};
-use crate::{coverage, diff, git, parse, prompt, review::Review};
+use crate::{
+    coverage, diff, git, parse, prompt,
+    review::{Review, Scope},
+};
 use std::path::{Path, PathBuf};
 
 /// プロンプトを補完テキストに変えるもの。ホストが実装する。
@@ -72,6 +75,9 @@ pub struct Options {
     pub base: Option<String>,
     /// 貯めた応答を使うか。false なら AI に聞き直す（結果は貯め直す）。
     pub cache: bool,
+    /// どの成果物として残すか。区間そのものを決めるのは base の方なので、
+    /// [Scope::SincePrevious] にするなら base に前回の起点コミットを渡すこと。
+    pub scope: Scope,
 }
 
 /// 差分を解析して `<root>/.conductor/review.json` を書き、その内容を返す。
@@ -91,6 +97,16 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
     };
     let base_oid = git::short_oid(&root, &git::merge_base(&root, &base_ref)?)?;
     let head_oid = git::short_oid(&root, "HEAD")?;
+    // 前回からの進みを持つのはブランチ全体のレビューだけ。前回からの差分を
+    // 見ているレビューにとっては、それ自体が進みなので入れ子になる。
+    //
+    // 上書きする前に読む。前回の対象コミットはこの成果物にしか残っていない。
+    // git を引くのもここ — AI を待つ数分の間に HEAD が動くと、下で書き出す
+    // head と一覧が別々の時点を指すことになる。
+    let since_previous = (o.scope == Scope::Base)
+        .then(|| previous_head(&crate::review::artifact_path(&root, Scope::Base), &head_oid))
+        .flatten()
+        .map(|previous| since_previous(&root, previous, &head_oid));
 
     let text = git::diff(&root, &base_oid)?;
     if text.trim().is_empty() {
@@ -165,10 +181,48 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
         }
     }
 
-    let out = crate::review::artifact_path(&root);
+    r.since_previous = since_previous;
+
+    let out = crate::review::artifact_path(&root, o.scope);
     write_artifact(&out, &r)?;
     log::info!("revidere: wrote {}", out.display());
     Ok(r)
+}
+
+/// 比べる起点にする、前の HEAD コミット。無ければ（初回なら）None。
+///
+/// スキーマ版が違うものは読まない。head の意味が版によって変わりうる以上、
+/// 読めた文字列をコミット ID として扱うのは推測になる。
+///
+/// HEAD が動いていなければ起点も動かさない。解析し直すだけで起点が今になると、
+/// 読む前に最新化した人から進みが消える。差分が動いていなければ AI を呼ばずに
+/// 即座に返る操作なので、ただの空振りに見えて実際には成果物を上書きしていて、
+/// 前の起点はもうどこにも残っていない。
+fn previous_head(artifact: &Path, head: &str) -> Option<String> {
+    let text = std::fs::read_to_string(artifact).ok()?;
+    let r = Review::from_json(&text).ok()?;
+    if r.schema != crate::review::SCHEMA_VERSION {
+        return None;
+    }
+    if r.head == head {
+        return r.since_previous.map(|s| s.previous_head);
+    }
+    Some(r.head)
+}
+
+/// 前回の HEAD から今の作業ツリーまでの進み。
+fn since_previous(root: &Path, previous_head: String, head: &str) -> crate::review::SincePrevious {
+    // 辿れないコミットからでも diff は取れることが多い（rebase 直後のように
+    // オブジェクトがまだ残っている場合）。取れなければファイル一覧は None に
+    // して、履歴が変わったことだけを伝える。
+    let history_rewritten = !git::is_ancestor_of_head(root, &previous_head);
+    let files = git::changed_files(root, &previous_head).ok();
+    crate::review::SincePrevious {
+        previous_head,
+        head: head.to_string(),
+        files,
+        history_rewritten,
+    }
 }
 
 /// 貯めた応答の置き場。成果物と同じディレクトリの下。

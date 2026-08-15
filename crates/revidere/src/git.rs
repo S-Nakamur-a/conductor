@@ -140,6 +140,32 @@ pub fn untracked(repo: &Path) -> Result<Vec<String>, GitError> {
         .collect())
 }
 
+/// rev が今の HEAD から辿れるか。
+///
+/// 辿れないのは、そのコミットが履歴から消えたということ (rebase / amend /
+/// force push、あるいは古いコミットへの巻き戻し)。前回のレビューの続きとして
+/// 差分を語ってよいかの判断に使う。
+pub fn is_ancestor_of_head(repo: &Path, rev: &str) -> bool {
+    run(repo, &["merge-base", "--is-ancestor", rev, "HEAD"]).is_ok()
+}
+
+/// from から作業ツリーまでで変わったファイル。
+///
+/// [diff] と同じ範囲を名前だけで見る。未追跡ファイルは `git diff` に出ないので
+/// こちらでも繋ぐ — 新しく足したファイルが「変わっていない」側に落ちると、
+/// 前回からの進みとして一番読みたいものが消える。
+pub fn changed_files(repo: &Path, from: &str) -> Result<Vec<String>, GitError> {
+    let mut files: Vec<String> = run(repo, &["diff", "--find-renames", "--name-only", from])?
+        .lines()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    files.extend(untracked(repo)?);
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +221,10 @@ mod tests {
         fn commit_all(&self, msg: &str) {
             self.git(&["add", "-A"]);
             self.git(&["commit", "-q", "-m", msg]);
+        }
+
+        fn head(&self) -> String {
+            self.git(&["rev-parse", "HEAD"]).trim().to_string()
         }
 
         /// レビューの起点。実際の呼ばれ方どおり merge-base を経由する。
@@ -266,17 +296,35 @@ mod tests {
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("old.txt", "abandoned work\n");
         r.commit_all("work that will be dropped");
+        let dropped = r.head();
 
         // 履歴ごと差し替える。前のコミットはもう辿れない。
         r.git(&["reset", "-q", "--hard", "main"]);
         r.write("new.txt", "rewritten work\n");
         r.commit_all("rewritten");
 
+        assert!(!is_ancestor_of_head(&r.dir, &dropped));
         let out = diff(&r.dir, &r.from("main")).unwrap();
         assert!(out.contains("rewritten work"), "{out}");
         assert!(
             !out.contains("abandoned work"),
             "捨てたはずの変更が残っている: {out}"
+        );
+    }
+
+    #[test]
+    fn changed_files_lists_both_new_commits_and_untracked_files() {
+        let r = Repo::new();
+        r.write("a.txt", "1\n");
+        r.commit_all("base");
+        let previous = r.head();
+        r.write("committed.txt", "x\n");
+        r.commit_all("later commit");
+        r.write("untracked.txt", "y\n");
+
+        assert_eq!(
+            changed_files(&r.dir, &previous).unwrap(),
+            vec!["committed.txt".to_string(), "untracked.txt".to_string()]
         );
     }
 

@@ -114,7 +114,11 @@ impl Repo {
     /// 書き出された成果物。パスは書く側と同じ関数から得る。
     fn artifact(&self) -> Review {
         let root = git::root(&self.dir).unwrap();
-        let text = std::fs::read_to_string(crate::review::artifact_path(&root)).unwrap();
+        let text = std::fs::read_to_string(crate::review::artifact_path(
+            &root,
+            crate::review::Scope::Base,
+        ))
+        .unwrap();
         Review::from_json(&text).unwrap()
     }
 
@@ -123,7 +127,14 @@ impl Repo {
             repo: self.dir.clone(),
             base: base.map(str::to_string),
             cache: true,
+            scope: crate::review::Scope::Base,
         }
+    }
+
+    /// 成果物そのものを差分に数えさせないための下地。実際の利用でも
+    /// `.conductor` は無視されている。
+    fn ignore_artifacts(&self) {
+        self.write(".gitignore", ".conductor/\n");
     }
 }
 
@@ -152,6 +163,7 @@ fn write_artifact_creates_the_parent_directory_when_it_is_missing() {
         sections: Vec::new(),
         impacts: Vec::new(),
         coverage: crate::Coverage::default(),
+        since_previous: None,
     };
     write_artifact(&path, &r).unwrap();
     assert!(path.exists());
@@ -225,5 +237,208 @@ fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
         repo.artifact().coverage.unclassified.len(),
         1,
         "悪化した差し戻し後の結果ではなく、最初の結果が残っているはず"
+    );
+}
+
+// 初回は比べる相手が無いので、前回からの進みは付けない。
+#[test]
+fn the_first_review_carries_no_since_previous_summary() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.write("a.txt", "1\n2\n");
+
+    let full = answer(
+        r#"{"title":"add line 2","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":2}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    assert!(r.since_previous.is_none());
+}
+
+// 2 度目は、前回の対象コミットと今回の HEAD、その間で動いたファイルを持つ。
+#[test]
+fn a_second_review_reports_what_moved_since_the_previous_one() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    let first_head = repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    // レビューのあとにもう 1 つコミットを積む。
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.write("later.txt", "added after the review\n");
+    let second_head = repo.commit_all("second");
+
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let since = r.since_previous.expect("2 度目には前回からの進みが付く");
+    assert!(first_head.starts_with(&since.previous_head), "{since:?}");
+    assert!(second_head.starts_with(&since.head), "{since:?}");
+    assert_eq!(
+        since.files,
+        Some(vec!["a.txt".to_string(), "later.txt".to_string()])
+    );
+    assert!(!since.history_rewritten);
+}
+
+// 何も変えずに解析し直しても、比べる起点は動かさない。ここで起点が今になると、
+// 読む前に最新化しただけで進みが消える。差分が動いていなければ AI も呼ばない
+// 空振りに見える操作なのに、成果物は上書きされていて、もう戻せない。
+#[test]
+fn re_analyzing_without_a_new_commit_keeps_the_comparison_point() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    let first_head = repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("second");
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    let calls_before = ai.calls();
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    assert_eq!(
+        ai.calls(),
+        calls_before,
+        "貯めた応答に当たって AI は走らない"
+    );
+
+    let since = r.since_previous.expect("起点が消えていないこと");
+    assert!(
+        first_head.starts_with(&since.previous_head),
+        "起点は 2 度目のときと同じ first のまま: {since:?}"
+    );
+    assert_eq!(since.files, Some(vec!["a.txt".to_string()]));
+}
+
+// 前回のコミットがもう残っていない（gc 済み、あるいは別のリポジトリの成果物）
+// ときは、一覧を引けない。それを「変わったファイルは無い」に畳むと、山ほど
+// 動いていても無いと言い切ることになる。
+#[test]
+fn an_unreachable_previous_head_reports_no_list_instead_of_an_empty_one() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    // 成果物が指す前回のコミットを、どこにも無い oid に差し替える。
+    let root = git::root(&repo.dir).unwrap();
+    let mut stored = repo.artifact();
+    stored.head = "0123456789abcdef0123456789abcdef01234567".to_string();
+    write_artifact(
+        &crate::review::artifact_path(&root, crate::review::Scope::Base),
+        &stored,
+    )
+    .unwrap();
+
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("second");
+
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let since = r.since_previous.expect("2 度目には前回からの進みが付く");
+    assert!(since.history_rewritten, "{since:?}");
+    assert_eq!(since.files, None, "引けなかったことを空と畳まない");
+}
+
+// 前回のコミットが履歴から消えている（rebase / amend / force push）ことは、
+// 黙って「変わっていない」に畳まず、そう言う。
+#[test]
+fn a_rewritten_history_is_flagged_in_the_since_previous_summary() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    repo.commit_all("work that will be dropped");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":2}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    // 履歴ごと差し替える。前回の対象コミットはもう辿れない。
+    repo.git(&["reset", "-q", "--hard", &base]);
+    repo.write("a.txt", "1\nrewritten\n");
+    repo.commit_all("rewritten");
+
+    let r = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let since = r.since_previous.expect("2 度目には前回からの進みが付く");
+    assert!(since.history_rewritten, "{since:?}");
+}
+
+// 片方を見ている間にもう片方が消えると、行き来した時点で読んでいたものが変わる。
+#[test]
+fn the_since_previous_scope_writes_beside_the_branch_review() {
+    let repo = Repo::new();
+    repo.ignore_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("a.txt", "1\n2\n");
+    let first_head = repo.commit_all("first");
+
+    let full = answer(
+        r#"{"title":"changes","importance":"core","reason":"main change","body":"","ranges":[{"path":"a.txt","side":"new","start":2,"end":3}]}"#,
+    );
+    let ai = StubAi::new(&full, &full);
+    analyze(&repo.options(Some(&base)), &ai).unwrap();
+
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("second");
+    let branch = analyze(&repo.options(Some(&base)), &ai).unwrap();
+    let previous = branch
+        .since_previous
+        .expect("2 度目には前回からの進みが付く")
+        .previous_head;
+    assert!(first_head.starts_with(&previous));
+
+    let mut delta_options = repo.options(Some(&previous));
+    delta_options.scope = crate::review::Scope::SincePrevious;
+    let delta = analyze(&delta_options, &ai).unwrap();
+
+    assert_eq!(delta.base, previous, "起点は前回のレビューのコミット");
+    assert!(
+        delta.since_previous.is_none(),
+        "前回からの差分そのものを見ているレビューは、さらに前回からの進みを持たない"
+    );
+
+    let root = git::root(&repo.dir).unwrap();
+    let branch_path = crate::review::artifact_path(&root, crate::review::Scope::Base);
+    let delta_path = crate::review::artifact_path(&root, crate::review::Scope::SincePrevious);
+    assert!(delta_path.exists());
+    let still_there = Review::from_json(&std::fs::read_to_string(&branch_path).unwrap()).unwrap();
+    assert_eq!(
+        still_there.base,
+        base[..still_there.base.len()],
+        "ブランチ全体のレビューは上書きされていない"
     );
 }

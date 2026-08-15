@@ -26,6 +26,19 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
             app.revidere.show_overview = false;
             return;
         }
+        // 区間の切り替えと解析の起動は、どちらの列を出していても同じ意味。
+        Action::RevidereToggleScope => {
+            app.cmd_toggle_revidere_scope();
+            return;
+        }
+        Action::AnalyzeRevidere => {
+            app.cmd_analyze_revidere(false);
+            return;
+        }
+        Action::ForceAnalyzeRevidere => {
+            app.cmd_analyze_revidere(true);
+            return;
+        }
         _ => {}
     }
 

@@ -61,6 +61,13 @@ const LABEL_W: usize = 8;
 /// 折り返した先で目が戻る場所を見失う。
 const READING_W: usize = 110;
 
+/// 前回からの進みに出すファイル名の数。溢れた分は件数だけ添える。
+///
+/// 履歴が書き換わったあとは「別々の履歴どうしの全差分」になって数百件に
+/// なりうる。全部出すと、この節の下にある概要の 5 欄が画面外へ押し出されて、
+/// 先に読ませたくて先頭に置いたものが逆に読まれなくなる。
+const SINCE_PREVIOUS_FILES_MAX: usize = 12;
+
 /// 組み立て済みの右列。
 ///
 /// key は「これが変わったら中身も変わる」入力の指紋。幅は折り返しを、
@@ -83,10 +90,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.revidere.list_area = Rect::default();
         app.revidere.diff_area = Rect::default();
         app.revidere.list_rows.clear();
+        // どちらの区間が無いのかを言う。伏せたままだと、p で切り替えた先が
+        // 未解析なだけなのに「レビューが消えた」ように読める。
         frame.render_widget(
-            Paragraph::new("No review artifact — press W to analyse this worktree.")
-                .style(Style::default().fg(app.theme.muted))
-                .block(bordered(" Review ", app)),
+            Paragraph::new(format!(
+                "[{}] のレビューはまだ無い — W で解析、p でもう一方の区間へ。",
+                crate::revidere::scope_label(app.revidere.scope)
+            ))
+            .style(Style::default().fg(app.theme.warning))
+            .block(bordered(" Review ", app)),
             area,
         );
         return;
@@ -135,7 +147,11 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &mut App, review: &Review
     app.revidere.overview_scroll = scroll;
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(height).collect();
 
-    let title = format!(" 概要  {}..作業ツリー  (d: 項目と diff へ) ", review.base);
+    let title = format!(
+        " 概要 [{}]  {}..作業ツリー  (d: 項目と diff へ / p: 区間を切り替え) ",
+        crate::revidere::scope_label(app.revidere.scope),
+        review.base
+    );
     frame.render_widget(Paragraph::new(visible).block(bordered(&title, app)), area);
 }
 
@@ -282,7 +298,8 @@ fn render_diff_column(frame: &mut Frame, area: Rect, app: &mut App, review: &Rev
         .collect();
 
     let title = format!(
-        " {}..作業ツリー  変更行 {}  {} ",
+        " [{}] {}..作業ツリー  変更行 {}  {} ",
+        crate::revidere::scope_label(app.revidere.scope),
         review.base,
         review.total_positions(),
         if review.is_complete() {
@@ -409,6 +426,7 @@ fn push_overview(
 
     lines.push(head("── 概要", theme.accent));
     lines.push(Line::from(""));
+    push_since_previous(lines, review, theme, inner_w);
     for (key, value) in [
         ("困っていたこと", &overview.problem),
         ("やったこと", &overview.change),
@@ -454,6 +472,86 @@ fn push_overview(
             push_labeled(lines, label, value, color, inner_w);
         }
         lines.push(Line::from(""));
+    }
+}
+
+/// 前回のレビューから何が動いたか。初回は何も出さない。
+///
+/// 概要の先頭に置く。2 度目以降の読者が最初に知りたいのは「前と何が違うのか」で、
+/// レビュー本体を読み直すかどうかもそれで決まる。
+fn push_since_previous(
+    lines: &mut Vec<Line<'static>>,
+    review: &Review,
+    theme: &crate::theme::Theme,
+    inner_w: usize,
+) {
+    let Some(since) = review.annotations.since_previous() else {
+        return;
+    };
+    // 本文でも警告でもない補足はここに寄せる。muted は背景に埋もれるテーマが
+    // あり、この節は 1 行しか出ないことがあるので、消えると節ごと壊れて見える。
+    let note = theme.diff_section_header;
+
+    lines.push(Line::from(Span::styled(
+        "  前回のレビューから".to_string(),
+        Style::default().fg(note).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("    {} → {}", since.previous_head, since.head),
+        Style::default().fg(theme.fg),
+    )));
+    // 履歴が変わっていたら、それを先に言う。前回のコミットが辿れない以上、
+    // 下のファイル一覧は「積み上げ」ではなく「別の履歴との比較」になっている。
+    if since.history_rewritten {
+        push_note(
+            lines,
+            "前回のコミットは今の履歴から辿れない (rebase / amend / force push)。\
+             下の一覧は前回との積み上げではなく、別々の履歴どうしの比較になる。",
+            theme.warning,
+            inner_w,
+        );
+    }
+    match &since.files {
+        // 引けなかったことを「無い」に畳まない。
+        None => push_note(
+            lines,
+            "変わったファイルは一覧にできない (前回のコミットがもう残っていない)。",
+            theme.warning,
+            inner_w,
+        ),
+        Some(files) if files.is_empty() => {
+            push_note(lines, "変わったファイルは無い", note, inner_w)
+        }
+        Some(files) => {
+            for path in files.iter().take(SINCE_PREVIOUS_FILES_MAX) {
+                lines.push(Line::from(Span::styled(
+                    format!("    {path}"),
+                    Style::default().fg(theme.fg),
+                )));
+            }
+            let rest = files.len().saturating_sub(SINCE_PREVIOUS_FILES_MAX);
+            if rest > 0 {
+                push_note(lines, &format!("ほか {rest} 件"), note, inner_w);
+            }
+            // ファイル名だけでは、指摘をどう直したのかは読めない。その行き先を指す。
+            push_note(
+                lines,
+                "p: この区間だけのレビューへ (どこがどう変わったかを読む)",
+                note,
+                inner_w,
+            );
+        }
+    }
+    lines.push(Line::from(""));
+}
+
+/// 概要の本文と同じ 4 桁下げで、折り返して積む。
+fn push_note(lines: &mut Vec<Line<'static>>, text: &str, color: Color, inner_w: usize) {
+    for chunk in wrap(text, inner_w.saturating_sub(4)) {
+        lines.push(Line::from(Span::styled(
+            format!("    {chunk}"),
+            Style::default().fg(color),
+        )));
     }
 }
 
