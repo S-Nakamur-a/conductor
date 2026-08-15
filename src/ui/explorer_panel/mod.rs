@@ -20,6 +20,7 @@ mod file_tree;
 mod search_box;
 
 pub use comment_list::render_comment_list_overlay;
+pub(crate) use diff_list::revidere_badge_cols;
 
 /// 指定領域に Explorer (ファイルツリー) パネルを描画する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {

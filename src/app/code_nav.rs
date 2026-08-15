@@ -123,6 +123,7 @@ impl App {
         self.wtbar.hover = None;
         self.terminal.claude_tab_hover = None;
         self.terminal.shell_tab_hover = None;
+        self.revidere.badge_hover = false;
     }
 
     /// マウスが現在乗っているシンボルを記録する（マウス移動イベントから呼ばれる）。

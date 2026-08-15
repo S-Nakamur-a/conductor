@@ -208,6 +208,24 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.code_nav.symbol_action.active
 }
 
+/// Changed files パネル右上の revidere 状態チップの上にセル (col, row) があるか。
+///
+/// クリックとホバーの両方がここを通るので、光っている場所と押せる場所は
+/// 構造的にずれない。矩形は描画側と同じ [crate::ui::explorer_panel::revidere_badge_cols]
+/// から引く。埋め込みエディタが出ている間は Explorer カラムがその PTY に隠れる
+/// ので、チップも無いものとして扱う。
+fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
+    if app.editor.is_some()
+        || row != geom.explorer_mid_y
+        || app.viewer_state.explorer.explorer_bottom_view
+            != crate::viewer::ExplorerBottomView::DiffList
+    {
+        return false;
+    }
+    crate::ui::explorer_panel::revidere_badge_cols(app, geom.left_end, geom.explorer_w)
+        .is_some_and(|cols| cols.contains(&col))
+}
+
 /// 指定した divider が現在マウスリサイズのためにつかめる状態かどうか。パネルが
 /// 最大化されている間は常に不可（列が両端に折りたたまれ、境界の意味が失われるため）。
 /// また、エディタがExplorer+Viewer列を1つのPTYに合体させている間は、Explorer側の
@@ -517,6 +535,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
+            // revidere の状態チップは Explorer の横境界と同じ行にあるので、
+            // 境界より先に見る。そうしないと 10 セルぶんが常に境界に食われて
+            // 押せない。チップは右枠の内側にあり、縦の境界のセルとは重ならない。
+            if revidere_badge_hit(app, col, row, &geom) {
+                app.cmd_revidere_badge_click();
+                return;
+            }
+
             // パネル境界をつかんでマウスリサイズを開始する。下のエディタ再フォーカスや
             // カラムのルーティングより先にチェックすることで、境界は常にその上に
             // 乗っているパネルより優先される（[<=>] 展開ボタンは境界より数セル内側に
@@ -649,6 +675,10 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             let tree_scroll = app.viewer_state.tree.tree_scroll;
             app.list_hover.explorer_tree
                 .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
+
+            // revidere の状態チップ。カーソルがそこから外れれば false に戻るので、
+            // 離れたときの消灯も同じ 1 行で済む。
+            app.revidere.badge_hover = revidere_badge_hit(app, col, row, &geom);
 
             // Explorerの下半分にある変更ファイル（diff）リストについても同様。
             let diff_scroll = app.viewer_state.explorer.diff_list_scroll;
