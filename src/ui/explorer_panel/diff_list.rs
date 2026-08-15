@@ -2,12 +2,61 @@
 //! バッジの描画。
 
 use crate::app::{App, Focus};
+use crate::revidere::ArtifactState;
 use crate::viewer::file_icon;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem};
+
+/// 右上に出す revidere の状態チップの幅。
+///
+/// 状態が変わっても幅は変わらない。当たり判定はここから導いていて、描画された
+/// 文字列を測っているわけではないので、状態ごとに幅が動くと押せる場所がずれる。
+const REVIDERE_BADGE_W: u16 = 10;
+
+/// 状態チップが占める画面の列。左のタイトルと重なるほど狭ければ None
+/// (描画側もクリック側もこれで揃って諦めるので、見えないチップは押せない)。
+///
+/// 右寄せタイトルは右枠の 1 つ内側で終わる。
+pub(crate) fn revidere_badge_cols(app: &App, x: u16, width: u16) -> Option<std::ops::Range<u16>> {
+    let title = diff_list_title(app.diff_state.files.len(), app.diff_state.error.is_some());
+    badge_cols(x, width, title.chars().count() as u16)
+}
+
+fn badge_cols(x: u16, width: u16, title_w: u16) -> Option<std::ops::Range<u16>> {
+    let end = x + width.checked_sub(1)?;
+    let start = end.checked_sub(REVIDERE_BADGE_W)?;
+    (start > x + title_w).then_some(start..end)
+}
+
+/// 状態チップの文字列。幅は常に [REVIDERE_BADGE_W]。
+///
+/// 色だけで区別すると色覚や配色によって読めなくなるので、形でも分かるように
+/// している (worktree ストリップの印と同じ考え方)。
+fn revidere_badge_label(state: ArtifactState, ui_tick: u64) -> String {
+    let marker = match state {
+        ArtifactState::Running => crate::ui::common::spinner_frame(ui_tick),
+        ArtifactState::Fresh => "\u{2713}",
+        ArtifactState::Stale => "!",
+        ArtifactState::None => "\u{25cb}",
+    };
+    format!(" {marker} review ")
+}
+
+/// 状態チップの色。muted は複数のテーマで見えなくなるので使わない。
+fn revidere_badge_color(
+    theme: &crate::theme::Theme,
+    state: ArtifactState,
+) -> ratatui::style::Color {
+    match state {
+        ArtifactState::None => theme.hint,
+        ArtifactState::Running => theme.accent,
+        ArtifactState::Fresh => theme.success,
+        ArtifactState::Stale => theme.warning,
+    }
+}
 
 /// Changed-files の各行のファイル名色が表す、4種類の git ステージ状態のいずれか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,9 +136,30 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     } else {
         Style::default().fg(theme.muted)
     };
-    let block = crate::ui::common::PanelChrome::new(theme, title, panel_focused, border_color)
+    let mut block = crate::ui::common::PanelChrome::new(theme, title, panel_focused, border_color)
         .with_title_style(title_style)
         .into_block();
+
+    // revidere の状態は消えない場所に出す。ステータス行のフラッシュだけだと、
+    // 数分かかる解析が終わったのか、そもそも走っているのかが後から分からない。
+    if revidere_badge_cols(app, area.x, area.width).is_some() {
+        let state = app.revidere_artifact_state();
+        let mut style = Style::default()
+            .fg(revidere_badge_color(theme, state))
+            .add_modifier(Modifier::BOLD);
+        // hover は前景の下線で示す。背景を敷くとテーマによっては枠線ごと
+        // 潰れて、どこが押せるのか逆に読めなくなる。
+        if app.revidere.badge_hover {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        block = block.title_top(
+            Line::from(Span::styled(
+                revidere_badge_label(state, app.ui_tick),
+                style,
+            ))
+            .alignment(Alignment::Right),
+        );
+    }
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = vs_explorer.diff_list_scroll;
@@ -138,10 +208,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 // prefix を切り離すことで、hover 時の下線が名前の位置で
                 // 止まるようにする（list_row::decoration_style を参照）。
                 Some(ListItem::new(Line::from(vec![
-                    Span::styled(
-                        prefix,
-                        crate::ui::common::list_row::decoration_style(style),
-                    ),
+                    Span::styled(prefix, crate::ui::common::list_row::decoration_style(style)),
                     Span::styled(name.clone(), style),
                 ])))
             }
@@ -369,6 +436,71 @@ mod tests {
         // None は「GitStatusMap にこのパスのエントリが無い」ことを表し、
         // つまり HEAD に対してクリーンな状態。
         assert_eq!(diff_file_status_color(&theme, None), theme.success);
+    }
+
+    /// 状態が変わっても幅が変わらないこと。当たり判定は幅を定数から導いて
+    /// いるので、ここがずれると「見えている場所と押せる場所」が食い違う。
+    #[test]
+    fn every_state_renders_the_same_width() {
+        for state in [
+            ArtifactState::None,
+            ArtifactState::Running,
+            ArtifactState::Fresh,
+            ArtifactState::Stale,
+        ] {
+            let label = revidere_badge_label(state, 0);
+            assert_eq!(
+                unicode_width::UnicodeWidthStr::width(label.as_str()),
+                REVIDERE_BADGE_W as usize,
+                "{state:?}: {label:?}"
+            );
+        }
+    }
+
+    /// 右寄せタイトルが実際に落ちる位置と、当たり判定の矩形が一致すること。
+    /// この 2 つは別々に計算されているので、ratatui の右寄せの寸法が変われば
+    /// クリックだけ 1 セルずれる、という壊れ方をする。
+    #[test]
+    fn the_hit_box_is_where_ratatui_puts_the_badge() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::widgets::{Block, Borders};
+
+        let width = 40u16;
+        let title = diff_list_title(3, false);
+        let cols = badge_cols(0, width, title.chars().count() as u16).expect("40 幅なら出る");
+        let label = revidere_badge_label(ArtifactState::Fresh, 0);
+
+        let mut terminal = Terminal::new(TestBackend::new(width, 3)).unwrap();
+        terminal
+            .draw(|f| {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(title.clone())
+                    .title_top(Line::from(label.clone()).alignment(Alignment::Right));
+                f.render_widget(block, f.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let top: String = (0..width).map(|x| buf[(x, 0)].symbol()).collect();
+        let at = top
+            .chars()
+            .position(|c| c == '\u{2713}')
+            .expect("チップが上枠に出ている");
+        assert_eq!(at as u16, cols.start + 1, "枠内の位置: {top:?}");
+        assert!(cols.contains(&(at as u16)));
+        // 縦の境界のセル (右枠とその 1 つ外) は掴む余地を残すこと。
+        assert!(cols.end < width);
+    }
+
+    /// 狭いパネルではチップを出さない。出さないものは押せないことが同じ
+    /// 判定から導かれるので、見えないボタンは生まれない。
+    #[test]
+    fn a_narrow_panel_hides_the_badge() {
+        let title_w = diff_list_title(0, false).chars().count() as u16;
+        assert!(badge_cols(0, 20, title_w).is_none());
+        assert!(badge_cols(0, 40, title_w).is_some());
     }
 
     /// 編集して git add し、さらに編集したファイルは WT_* と INDEX_* の

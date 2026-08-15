@@ -198,6 +198,40 @@ impl App {
         self.set_focus(Focus::Revidere);
     }
 
+    /// 選択中の worktree の解析がいまどの状態か。
+    ///
+    /// 常設表示もクリックもここだけを見る。画面が「最新」と言っているのに
+    /// 押すと解析が始まる、のような食い違いが起きようがないようにするため。
+    pub fn revidere_artifact_state(&self) -> crate::revidere::ArtifactState {
+        let head_time = self
+            .worktrees
+            .get(self.worktrees.selected_index())
+            .and_then(|w| w.head_time);
+        crate::revidere::artifact_state(
+            &self.selected_worktree_path(),
+            head_time,
+            self.revidere
+                .runs
+                .is_running(&self.selected_worktree_branch()),
+        )
+    }
+
+    /// Changed files パネルの状態チップを押したとき。
+    ///
+    /// 解析中は止めない。数分かかる仕事を、枠の中の 10 セルを 1 回押しただけで
+    /// 確認も無く捨てられるようにはしない。
+    pub fn cmd_revidere_badge_click(&mut self) {
+        use crate::revidere::ArtifactState;
+        match self.revidere_artifact_state() {
+            ArtifactState::Running => self.set_status(
+                "revidere is analysing this branch — this takes a few minutes.".to_string(),
+                StatusLevel::Info,
+            ),
+            ArtifactState::Fresh => self.cmd_show_revidere(),
+            ArtifactState::None | ArtifactState::Stale => self.cmd_analyze_revidere(false),
+        }
+    }
+
     /// 選択中の worktree の解析を起こす。
     ///
     /// `force` は貯めた応答を捨てる。既定では効くので、diff が動いていなければ
