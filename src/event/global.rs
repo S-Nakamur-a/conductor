@@ -185,7 +185,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::AnalyzeRevidere => {
-            app.cmd_analyze_revidere(false);
+            app.cmd_confirm_analyze_revidere();
             true
         }
         Action::ForceAnalyzeRevidere => {

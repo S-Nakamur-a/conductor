@@ -113,6 +113,16 @@ pub fn previous_head(worktree: &Path) -> Option<String> {
     Some(annotations.since_previous()?.previous_head.clone())
 }
 
+/// その区間の成果物が解析したときの HEAD。成果物が無ければ None。
+///
+/// 読む順を組む [load] と違って diff を取らないので、確認ダイアログのように
+/// 「作り直しか、初めてか」だけを知りたい場面で使える。
+pub fn artifact_head(worktree: &Path, scope: Scope) -> Option<String> {
+    let text = std::fs::read_to_string(revidere::review::artifact_path(worktree, scope)).ok()?;
+    let annotations = Annotations::from_json(&text).ok()?;
+    Some(annotations.head().to_string())
+}
+
 /// 画面とステータスに出す区間の呼び名。1 か所で持つ。
 pub fn scope_label(scope: Scope) -> &'static str {
     match scope {
@@ -275,6 +285,19 @@ mod tests {
             load(dir.path(), Scope::SincePrevious),
             LoadOutcome::Broken(_)
         ));
+    }
+
+    /// 確認ダイアログは「作り直しか、初めてか」をこれで見分ける。無いのに
+    /// 何かを返すと、押していないのに作り直しの文言が出る。
+    #[test]
+    fn artifact_head_reads_the_commit_the_review_was_made_for() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(artifact_head(dir.path(), Scope::Base), None);
+
+        let path = revidere::review::artifact_path(dir.path(), Scope::Base);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, artifact("b0", None)).unwrap();
+        assert_eq!(artifact_head(dir.path(), Scope::Base).as_deref(), Some("h"));
     }
 
     /// 成果物を書いてから積んだコミットは、成果物を古くすること。

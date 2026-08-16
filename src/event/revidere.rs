@@ -32,7 +32,7 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
             return;
         }
         Action::AnalyzeRevidere => {
-            app.cmd_analyze_revidere(false);
+            app.cmd_confirm_analyze_revidere();
             return;
         }
         Action::ForceAnalyzeRevidere => {

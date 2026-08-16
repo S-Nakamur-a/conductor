@@ -113,6 +113,9 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
         crate::overlay::ActiveOverlay::ThemePicker => {
             super::super::theme_picker::render_theme_picker_overlay(frame, area, app);
         }
+        crate::overlay::ActiveOverlay::RevidereConfirm => {
+            super::super::dashboard::render_revidere_confirm_overlay(frame, area, app);
+        }
     }
     // ファジーなファイル名検索（「ジャンプ先」）モーダル ―― explorer カラムが
     // 折りたたまれていて（viewer 最大化時）も動くようトップレベルで描画する。
