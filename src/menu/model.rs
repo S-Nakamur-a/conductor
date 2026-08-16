@@ -76,10 +76,25 @@ const SEP: MenuItem = MenuItem::Separator;
 // tests::every_command_is_reachable が読む。このリストはメニューが意図的に
 // 省いているものの記録であり、テストがその記録を黙って古びさせないようにする。
 // 読み手はそのテストだけなので cfg(test) に閉じてある。
-//
-// 現在は空である。つまり、すべての CommandId がメニューから到達できる。
 #[cfg(test)]
-pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[];
+pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[
+    (
+        CommandId::AddReviewComment,
+        "コメントは Viewer で行を選んでから書くもので、メニューから始めても宛先が無い",
+    ),
+    (
+        CommandId::EditComment,
+        "対象は一覧で選択中のコメント。選択を持たないメニューからは指せない",
+    ),
+    (CommandId::ReplyToComment, "EditComment と同じ"),
+    (CommandId::DeleteComment, "EditComment と同じ"),
+    (CommandId::ToggleCommentResolve, "EditComment と同じ"),
+    (CommandId::ViewCommentDetail, "EditComment と同じ"),
+    (
+        CommandId::ForceAnalyzeRevidere,
+        "作り直しは Review current branch の確認ダイアログが兼ねる。こちらは確認を飛ばす近道",
+    ),
+];
 
 /// メニューバーの並び (左から右)。
 pub const MENUS: &[Menu] = &[
@@ -118,31 +133,24 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::OpenPullRequest, "Open Pull Request in Browser"),
         ],
     },
+    // レビューを作る → 読む → コメントを書く → 公開する、の順。コメントは
+    // レビューの中にあるものなので、レビュー側の行より下に置く。
     Menu {
         title: "Review",
         items: &[
-            cmd(CommandId::AddReviewComment, "Add Comment"),
-            cmd(CommandId::EditComment, "Edit Comment"),
-            cmd(CommandId::ReplyToComment, "Reply to Comment"),
-            cmd(CommandId::DeleteComment, "Delete Comment"),
-            cmd(CommandId::ToggleCommentResolve, "Toggle Resolved"),
-            cmd(CommandId::ViewCommentDetail, "View Comment Detail"),
+            // 作る口は 2 つだけ。どちらも同じ解析に続き、違うのは対象の
+            // worktree をどこから持ってくるかだけ。
+            cmd(CommandId::AnalyzeRevidere, "Review current branch"),
+            cmd(CommandId::ReviewPullRequest, "Review Pull Request…"),
+            SEP,
+            // revidere の行は View 配下の他の表示切り替えとではなく Review 配下に
+            // まとめている。レビューを読むこと自体がレビュー活動だから。
+            cmd(CommandId::ShowRevidere, "Show Review"),
             SEP,
             cmd(CommandId::ShowReviewComments, "Show Comments"),
             cmd(CommandId::ShowReviewTemplates, "Show Templates"),
             SEP,
-            cmd(CommandId::ReviewPullRequest, "Review Pull Request…"),
-            // revidere の行は View 配下の他の表示切り替えとではなく Review 配下に
-            // まとめている。レビューを読むこと自体がレビュー活動であり、まだ
-            // 解析していない場合に "show" の隣に "analyse" があるのが望ましい。
-            cmd(CommandId::ShowRevidere, "Show Review"),
-            cmd(CommandId::AnalyzeRevidere, "Analyse with revidere"),
-            cmd(CommandId::ForceAnalyzeRevidere, "Re-analyse (ignore cache)"),
-            SEP,
             cmd(CommandId::PublishReview, "Publish Comments to GitHub…"),
-            SEP,
-            cmd(CommandId::SessionHistory, "Session History"),
-            cmd(CommandId::SaveSessionHistory, "Save Session History"),
         ],
     },
     Menu {
@@ -187,6 +195,9 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::NewClaudeCode, "New Claude Code Session"),
             cmd(CommandId::NewShell, "New Shell Session"),
             cmd(CommandId::ResumeClaudeSession, "Resume Claude Session…"),
+            SEP,
+            cmd(CommandId::SaveSessionHistory, "Save Terminal Output"),
+            cmd(CommandId::SessionHistory, "Saved Terminal Output…"),
         ],
     },
     Menu {

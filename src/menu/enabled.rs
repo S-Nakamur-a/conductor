@@ -67,21 +67,6 @@ pub fn command_enabled(id: CommandId, app: &App) -> bool {
         CommandId::ToggleMarkdownRender => app.viewer_state.markdown_toggle_available(),
 
         // Review
-        // コメントは Viewer で開いているファイルに紐づく
-        // (app/review_commands.rs の if let Some(file_path) = …current_file)。
-        CommandId::AddReviewComment => app.viewer_state.content.current_file.is_some(),
-
-        // どちらもコメントリストがフォーカスされたサブパネルであり、かつ
-        // 空でないことを前提とする(app/review_commands.rs)。
-        CommandId::DeleteComment | CommandId::ToggleCommentResolve => comment_list_focused(app),
-
-        // どちらもまず選択中のコメントを解決し、なければ "No comment
-        // selected." で打ち切る(app/review_commands.rs)。
-        CommandId::EditComment | CommandId::ReplyToComment => app
-            .review_state
-            .selected_comment_idx(app.viewer_state.explorer.comment_list_selected)
-            .is_some(),
-
         // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに
         // 紐づく PR があるかは get_pr_review_meta クエリが必要なので、
         // そこはコマンド側に任せる。
@@ -89,13 +74,4 @@ pub fn command_enabled(id: CommandId, app: &App) -> bool {
 
         _ => true,
     }
-}
-
-/// Explorer 下部ペインがコメントリストを表示し、フォーカスがあり、行を持つか
-/// どうか — cmd_delete_comment と cmd_toggle_comment_resolve の双方が
-/// 明示する前提条件。
-fn comment_list_focused(app: &App) -> bool {
-    app.viewer_state.explorer.explorer_bottom_view == crate::viewer::ExplorerBottomView::Comments
-        && app.viewer_state.explorer.explorer_focus_on_diff_list
-        && !app.review_state.comment_list_rows.is_empty()
 }

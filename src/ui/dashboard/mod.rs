@@ -15,6 +15,7 @@ mod history;
 mod input;
 mod repo;
 mod resume_session;
+mod review_confirm;
 mod update;
 mod worktree;
 
@@ -28,6 +29,7 @@ pub use help::render_help_overlay;
 pub use history::render_history_overlay;
 pub use repo::{render_open_repo_overlay, render_pr_input_overlay, render_repo_selector_overlay};
 pub use resume_session::render_resume_session_overlay;
+pub use review_confirm::render_revidere_confirm_overlay;
 pub use update::{
     render_publish_confirm_overlay, render_update_confirm_overlay, render_update_progress_overlay,
 };

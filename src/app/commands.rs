@@ -49,7 +49,7 @@ impl App {
             }
             CommandId::SessionHistory => self.cmd_session_history(),
             CommandId::ReviewPullRequest => self.cmd_review_pull_request(),
-            CommandId::AnalyzeRevidere => self.cmd_analyze_revidere(false),
+            CommandId::AnalyzeRevidere => self.cmd_confirm_analyze_revidere(),
             CommandId::ForceAnalyzeRevidere => self.cmd_analyze_revidere(true),
             CommandId::PublishReview => self.cmd_publish_review(),
             CommandId::OpenRepo => self.cmd_open_repo(),

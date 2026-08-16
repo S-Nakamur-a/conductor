@@ -241,6 +241,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 ActiveOverlay::WorktreeSwitcher => handle_worktree_key(app, key),
                 ActiveOverlay::CommentList => handle_explorer_comment_list_key(app, key),
                 ActiveOverlay::ThemePicker => handle_theme_picker_key(app, key),
+                ActiveOverlay::RevidereConfirm => handle_revidere_confirm_key(app, key),
                 ActiveOverlay::None => unreachable!(),
             }
             return;

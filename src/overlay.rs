@@ -44,6 +44,34 @@ pub enum ActiveOverlay {
     /// テーマピッカー。上下で切り替え、移動のたびにライブプレビュー、Enter で
     /// 確定、Esc でピッカーを開いた時点のテーマへ戻す。
     ThemePicker,
+    /// レビューを作る前の確認。
+    RevidereConfirm,
+}
+
+/// 確認を出した時点で、その worktree の成果物がどうなっているか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RevidereArtifact {
+    /// まだ無い。
+    #[default]
+    None,
+    /// あるが、解析したときのコミットから先へ進んでいる。
+    Stale,
+    /// いまのコミットを見て作られている。
+    Current,
+}
+
+/// レビューを作る前の確認のオーバーレイ状態。
+///
+/// AI の呼び出しは数分と費用がかかるので、w / W の押し間違いや、メニューの
+/// 隣の行を選んだだけで走り出さないようにしている。文言と、作り直しに
+/// 貯めた応答を捨てるかどうかは artifact が決める。
+#[derive(Default)]
+pub struct RevidereConfirmOverlay {
+    pub branch: String,
+    /// 見る区間の呼び名 ([crate::revidere::scope_label])。区間はビューを
+    /// 閉じても残るので、いまどちらを作ろうとしているかを名乗る。
+    pub scope: &'static str,
+    pub artifact: RevidereArtifact,
 }
 
 /// テーマピッカーのオーバーレイ状態。
@@ -377,4 +405,5 @@ pub struct OverlayManager {
     pub help: HelpOverlay,
     pub command_palette: CommandPaletteOverlay,
     pub theme_picker: ThemePickerOverlay,
+    pub revidere_confirm: RevidereConfirmOverlay,
 }

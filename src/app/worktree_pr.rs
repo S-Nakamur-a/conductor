@@ -74,6 +74,10 @@ impl App {
                     ),
                     StatusLevel::Success,
                 );
+                // 取り込んだだけでは読む順が無い。「Review Pull Request」は
+                // ブランチのレビューと同じ解析へ続く 1 本の道なので、そのまま
+                // 確認へ渡す。
+                self.cmd_confirm_analyze_revidere();
             }
             crate::pr_intake::PrIntakeOutcome::Failed { error } => {
                 self.overlays.pr_input.error = Some(error.to_string());

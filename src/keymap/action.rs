@@ -162,7 +162,7 @@ keymap_suite::actions! {
 
         // PR レビュー
         /// revidere の 2 列レビュービュー (節一覧 + diff) を開く。成果物が
-        /// 無ければ開かず、作り方を案内する。
+        /// 無ければ開かず、その場で作るかを聞く。
         ShowRevidere => "show_revidere",
         /// 2 列ビューの中で、次/前の節へ飛ぶ。左の選択と右の diff が一緒に動く。
         RevidereNextSection => "revidere_next_section",
@@ -183,11 +183,12 @@ keymap_suite::actions! {
         /// PR番号/URL 入力のオーバーレイを開き、プルリクエスト用の worktree を
         /// 取得する（または既存のものを再利用する）。
         ReviewPullRequest => "review_pull_request",
-        /// 選択中の worktree に `revidere analyze` をかける。数分かかるので、
-        /// 押し間違いで走り出さないよう Shift を要求している。
+        /// 選択中の worktree のレビューを作る。数分と費用がかかるので、
+        /// 走り出す前に確認を挟む。
         AnalyzeRevidere => "analyze_revidere",
-        /// 貯めた応答を使わずに聞き直す (revidere の --no-cache)。プロンプトを
-        /// 直したときなど、diff が同じでも結果を作り直したい場合の抜け道。
+        /// 確認も、貯めた応答も飛ばして聞き直す (revidere の --no-cache)。
+        /// プロンプトを直したときなど、diff が同じでも結果を作り直したい
+        /// 場合の抜け道。
         ForceAnalyzeRevidere => "force_analyze_revidere",
         /// このブランチの未公開のレビューコメントを、それらが開かれた元の
         /// GitHub PR に公開する。パレット限定: 取り消せない外部アクションであり、
@@ -236,7 +237,7 @@ impl Action {
             Action::ResetMainToOrigin => "Reset main to origin",
             Action::CherryPick => "Cherry-pick",
             Action::PullWorktree => "Pull worktree",
-            Action::SessionHistory => "Session history",
+            Action::SessionHistory => "Saved terminal output",
             Action::OpenPullRequest => "Open pull request",
             Action::ShowRevidere => "Show the review (sections + diff)",
             Action::RevidereNextSection => "Jump to next section",
@@ -246,8 +247,8 @@ impl Action {
             Action::RevidereToggleScope => {
                 "Switch between the whole branch and what changed since the last review"
             }
-            Action::AnalyzeRevidere => "Analyse this worktree with revidere",
-            Action::ForceAnalyzeRevidere => "Re-analyse, ignoring the cached reply",
+            Action::AnalyzeRevidere => "Review this branch (asks first)",
+            Action::ForceAnalyzeRevidere => "Re-analyse without asking, ignoring the cached reply",
             Action::ToggleViewed => "Toggle file viewed",
             Action::ReviewPullRequest => "Review a pull request by number or URL",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",

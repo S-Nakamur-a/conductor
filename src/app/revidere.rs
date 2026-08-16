@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use super::*;
+use crate::overlay::{ActiveOverlay, RevidereArtifact, RevidereConfirmOverlay};
 
 /// 解析 1 回の AI 呼び出しに与える実時間の上限 (秒)。
 ///
@@ -170,7 +171,7 @@ impl App {
         }
     }
 
-    /// 2 列のレビュービューを開く (w)。成果物が無ければ作り方を案内して開かない。
+    /// 2 列のレビュービューを開く (w)。成果物が無ければ、その場で作るかを聞く。
     pub fn cmd_show_revidere(&mut self) {
         // 門を通さずに読み直す。成果物が同じでも作業ツリーが動いていれば
         // 読む順は変わっている。
@@ -183,16 +184,8 @@ impl App {
             return;
         }
         if self.revidere.current.is_none() {
-            let branch = self.selected_worktree_branch();
-            let hint = if self.revidere.runs.is_running(&branch) {
-                "analysing now — this takes a few minutes"
-            } else {
-                "press W (or the palette's Analyze entry) to build one"
-            };
-            self.set_status(
-                format!("No review artifact for this worktree — {hint}."),
-                StatusLevel::Warning,
-            );
+            // 「無い」と言って終わるより、作る口をその場で出したほうが早い。
+            self.cmd_confirm_analyze_revidere();
             return;
         }
         self.set_focus(Focus::Revidere);
@@ -219,7 +212,7 @@ impl App {
     /// Changed files パネルの状態チップを押したとき。
     ///
     /// 解析中は止めない。数分かかる仕事を、枠の中の 10 セルを 1 回押しただけで
-    /// 確認も無く捨てられるようにはしない。
+    /// 確認も無く捨てられるようにはしない。始めるほうも同じ理由で確認を通す。
     pub fn cmd_revidere_badge_click(&mut self) {
         use crate::revidere::ArtifactState;
         match self.revidere_artifact_state() {
@@ -228,8 +221,48 @@ impl App {
                 StatusLevel::Info,
             ),
             ArtifactState::Fresh => self.cmd_show_revidere(),
-            ArtifactState::None | ArtifactState::Stale => self.cmd_analyze_revidere(false),
+            ArtifactState::None | ArtifactState::Stale => self.cmd_confirm_analyze_revidere(),
         }
+    }
+
+    /// 解析の前に確認を出す (W、メニューの 2 つの入口、PR の取り込みの後)。
+    ///
+    /// AI の呼び出しは数分と費用がかかるので、走り出す前に一度止める。
+    /// worktree が無いときや既に走っているときの断り方は解析側が持っている
+    /// ので、ここでは確認を挟まずそのまま渡す。
+    pub fn cmd_confirm_analyze_revidere(&mut self) {
+        let branch = self.selected_worktree_branch();
+        if branch.is_empty() || self.revidere.runs.is_running(&branch) {
+            self.cmd_analyze_revidere(false);
+            return;
+        }
+        let scope = self.revidere.scope;
+        let head = self.worktrees.selected().and_then(|w| w.head_oid.clone());
+        let artifact = match crate::revidere::artifact_head(&self.selected_worktree_path(), scope) {
+            None => RevidereArtifact::None,
+            Some(analysed) if Some(&analysed) == head.as_ref() => RevidereArtifact::Current,
+            Some(_) => RevidereArtifact::Stale,
+        };
+        self.overlays.revidere_confirm = RevidereConfirmOverlay {
+            branch,
+            scope: crate::revidere::scope_label(scope),
+            artifact,
+        };
+        self.overlays.active = ActiveOverlay::RevidereConfirm;
+    }
+
+    /// 確認を通ったので解析を始める。
+    ///
+    /// 同じコミットの成果物があるなら貯めた応答を捨てる。捨てないと、作り直しを
+    /// 選んだのに前と同じ答えがそのまま返ってくる。
+    pub fn confirm_analyze_revidere(&mut self) {
+        let force = self.overlays.revidere_confirm.artifact == RevidereArtifact::Current;
+        self.overlays.active = ActiveOverlay::None;
+        self.cmd_analyze_revidere(force);
+    }
+
+    pub fn cancel_analyze_revidere(&mut self) {
+        self.overlays.active = ActiveOverlay::None;
     }
 
     /// 選択中の worktree の解析を起こす。

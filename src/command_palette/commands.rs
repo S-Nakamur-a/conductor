@@ -266,10 +266,10 @@ pub const COMMANDS: &[PaletteCommand] = &[
     },
     PaletteCommand {
         id: CommandId::SessionHistory,
-        label: "Review: Session History",
-        category: CommandCategory::Review,
+        label: "Terminal: Saved Output…",
+        category: CommandCategory::Terminal,
         action: Some(Action::SessionHistory),
-        keywords: "history log",
+        keywords: "history log session output snapshot saved terminal claude shell",
     },
     PaletteCommand {
         id: CommandId::ReviewPullRequest,
@@ -280,14 +280,14 @@ pub const COMMANDS: &[PaletteCommand] = &[
     },
     PaletteCommand {
         id: CommandId::AnalyzeRevidere,
-        label: "Review: Analyse with revidere",
+        label: "Review: Review Current Branch…",
         category: CommandCategory::Review,
         action: Some(Action::AnalyzeRevidere),
-        keywords: "revidere analyse analyze generate ai review sections coverage",
+        keywords: "revidere analyse analyze generate ai review sections coverage branch",
     },
     PaletteCommand {
         id: CommandId::ForceAnalyzeRevidere,
-        label: "Review: Re-analyse (ignore cache)",
+        label: "Review: Re-analyse Current Branch",
         category: CommandCategory::Review,
         action: Some(Action::ForceAnalyzeRevidere),
         keywords: "revidere reanalyse regenerate force ignore cache rebuild ai review",
@@ -343,10 +343,10 @@ pub const COMMANDS: &[PaletteCommand] = &[
     },
     PaletteCommand {
         id: CommandId::SaveSessionHistory,
-        label: "Session: Save History",
-        category: CommandCategory::Review,
+        label: "Terminal: Save Output",
+        category: CommandCategory::Terminal,
         action: None,
-        keywords: "save record session",
+        keywords: "save record session output snapshot scrollback",
     },
     // Repository
     PaletteCommand {

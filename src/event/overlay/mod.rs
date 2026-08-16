@@ -23,8 +23,8 @@ mod worktree;
 pub(super) use misc::{handle_command_palette_key, handle_help_key, handle_theme_picker_key};
 pub(super) use repo::{handle_open_repo_key, handle_pr_input_key, handle_repo_selector_key};
 pub(super) use review::{
-    handle_comment_detail_key, handle_review_input_key, handle_review_search_key,
-    handle_review_template_key,
+    handle_comment_detail_key, handle_revidere_confirm_key, handle_review_input_key,
+    handle_review_search_key, handle_review_template_key,
 };
 pub(super) use search::{
     handle_filename_search_key, handle_grep_search_key, handle_viewer_search_key,

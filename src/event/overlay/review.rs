@@ -79,6 +79,20 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
     }
 }
 
+// オーバーレイ: レビュー生成の確認
+
+pub(in crate::event) fn handle_revidere_confirm_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.confirm_analyze_revidere();
+        }
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            app.cancel_analyze_revidere();
+        }
+        _ => {}
+    }
+}
+
 // オーバーレイ: レビュー入力
 
 pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
