@@ -32,3 +32,36 @@ const BRAILLE_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "�
 pub fn spinner_frame(ui_tick: u64) -> &'static str {
     BRAILLE_SPINNER[(ui_tick as usize / 4) % BRAILLE_SPINNER.len()]
 }
+
+/// revidere の状態を表す 1 文字。幅は常に 1。
+///
+/// 色だけで区別すると配色や色覚によって読めなくなるので、形でも分かるように
+/// してある。✓ は「作業ツリーが綺麗」「ファイルを読んだ」に既に使っていて、
+/// レビューの印に流用すると git の情報と見分けが付かない。
+pub fn revidere_marker(state: crate::revidere::ArtifactState, ui_tick: u64) -> &'static str {
+    use crate::revidere::ArtifactState as S;
+    match state {
+        S::Running => spinner_frame(ui_tick),
+        S::Fresh => "\u{25a4}", // ▤
+        S::Stale => "!",
+        S::None => "\u{25cb}", // ○
+    }
+}
+
+/// revidere の状態の色。muted は複数のテーマで見えなくなるので使わない。
+///
+/// この色は必ず素の背景の上で使う。選択中の worktree チップのような塗りの
+/// 上に重ねてはいけない — 全テーマで accent と selected_bg が同じ色なので、
+/// 実行中の印が背景と完全に同色になって消える。
+pub fn revidere_color(
+    theme: &crate::theme::Theme,
+    state: crate::revidere::ArtifactState,
+) -> ratatui::style::Color {
+    use crate::revidere::ArtifactState as S;
+    match state {
+        S::None => theme.hint,
+        S::Running => theme.accent,
+        S::Fresh => theme.success,
+        S::Stale => theme.warning,
+    }
+}

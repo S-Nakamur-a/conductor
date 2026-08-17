@@ -152,21 +152,6 @@ pub enum ArtifactState {
     Stale,
 }
 
-impl ArtifactState {
-    /// ストリップに出す 1 文字。空なら出さない。
-    ///
-    /// 色だけで区別すると、色が近いテーマや色覚の違いで読めなくなるので、
-    /// 形でも分かるようにしてある。実行中はここを呼ばず、呼び出し側が
-    /// 回るスピナーに差し替える — 動いているものは動いて見えるのが早い。
-    pub fn marker(self) -> &'static str {
-        match self {
-            Self::None | Self::Running => "",
-            Self::Fresh => "\u{2713}", // ✓
-            Self::Stale => "!",
-        }
-    }
-}
-
 /// worktree の解析の状態を返す。
 ///
 /// 古いかどうかは「成果物のファイルが HEAD コミットより前に書かれたか」で
@@ -326,13 +311,14 @@ mod tests {
         assert!(artifact_state(dir.path(), Some(now + 60), true) == ArtifactState::Running);
     }
 
-    /// 成果物が無ければ何も出さないこと。走らせていないだけの worktree に
-    /// 印が付くと、印そのものが意味を失う。
+    /// 走らせていない worktree は None。ストリップに印が付かないことは
+    /// [crate::ui::worktree_bar] 側で担保している。
     #[test]
-    fn no_artifact_shows_nothing() {
+    fn no_artifact_is_none() {
         let dir = tempfile::tempdir().unwrap();
-        let state = artifact_state(dir.path(), Some(0), false);
-        assert_eq!(state, ArtifactState::None);
-        assert!(state.marker().is_empty());
+        assert_eq!(
+            artifact_state(dir.path(), Some(0), false),
+            ArtifactState::None
+        );
     }
 }
