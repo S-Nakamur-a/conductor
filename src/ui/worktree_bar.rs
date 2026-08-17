@@ -55,6 +55,26 @@ fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
 }
 
+/// チップの外に出す revidere の印。走らせていない worktree では空 — 印の
+/// 付いていない状態が「まだ解析していない」を意味するので、印そのものが
+/// 情報として効く。
+fn review_mark(state: crate::revidere::ArtifactState, ui_tick: u64) -> String {
+    match state {
+        crate::revidere::ArtifactState::None => String::new(),
+        state => format!(" {}", crate::ui::common::revidere_marker(state, ui_tick)),
+    }
+}
+
+/// 印の見た目。背景は敷かない。
+///
+/// 全テーマで accent と selected_bg が同じ色なので、選択中チップの塗りを
+/// 引き継ぐと実行中の印が背景と完全に同色になって消える。
+fn review_style(theme: &crate::theme::Theme, state: crate::revidere::ArtifactState) -> Style {
+    Style::default()
+        .fg(crate::ui::common::revidere_color(theme, state))
+        .add_modifier(Modifier::BOLD)
+}
+
 /// 描画前に集めた worktree ごとのデータ。可変幅のウィンドウを app への
 /// 借用を保持したまま計算できるようにする。
 struct Chip {
@@ -68,8 +88,7 @@ struct Chip {
     is_current: bool,
     /// revidere の解析の状態。マーカーの色を決めるのに使う。
     review: crate::revidere::ArtifactState,
-    /// マーカーとチップ末尾の空白。解析していない worktree では空白だけ。
-    /// チップ本体とは別の Span にして色を変えるので、幅も別に持つ。
+    /// チップの外に置くマーカー。解析していない worktree では空。
     review_text: String,
     review_width: u16,
 }
@@ -216,22 +235,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             {
                 text.push_str(&format!(" \u{2193}{b}"));
             }
+            text.push(' ');
             // revidere の状態は常に見えていてほしい。複数の worktree で
             // 走らせると、終わったのがどれかはステータス行の 1 本では追えない。
-            // チップ末尾の空白と一緒に別 Span にするのは、状態ごとに色を
-            // 変えるため — 形でも色でも分かるようにしておく。
+            // 出すのはチップの外 — 中に入れると、選択中チップの塗りと同じ色に
+            // なって消えるうえ、~3 や ↑1 と並んで git の情報に見える。
             let review = crate::revidere::artifact_state(
                 &wt.path,
                 wt.head_time,
                 app.revidere.runs.is_running(&wt.branch),
             );
-            let review_text = match review {
-                crate::revidere::ArtifactState::None => " ".to_string(),
-                crate::revidere::ArtifactState::Running => {
-                    format!(" {} ", crate::ui::common::spinner_frame(app.ui_tick))
-                }
-                other => format!(" {} ", other.marker()),
-            };
+            let review_text = review_mark(review, app.ui_tick);
 
             // Claude/Shell セッションタブに合わせて [x]（以前は ✕）。チップの
             // 塗りつぶし背景のすぐ外側に置くので、危険色の赤が読みやすいまま
@@ -337,24 +351,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             chip_style
         };
         spans.push(Span::styled(chip.text.clone(), chip_style));
-        // マーカーは前景色だけ差し替える。背景はチップのまま（選択中の塗り
-        // つぶしや hover の上に別の背景を重ねると、どちらの状態か読めなくなる）。
-        let review_style = match chip.review {
-            crate::revidere::ArtifactState::None => chip_style,
-            crate::revidere::ArtifactState::Running => chip_style.fg(app.theme.accent),
-            crate::revidere::ArtifactState::Fresh => chip_style.fg(success),
-            crate::revidere::ArtifactState::Stale => chip_style.fg(warning),
-        };
-        spans.push(Span::styled(
-            chip.review_text.clone(),
-            review_style.add_modifier(Modifier::BOLD),
-        ));
         hits.push(WtbarHit {
             x0: x,
-            x1: x + chip.width + chip.review_width,
+            x1: x + chip.width,
             action: WtbarAction::Select(i),
         });
-        x += chip.width + chip.review_width;
+        x += chip.width;
 
         if !chip.del.is_empty() {
             let del_style = Style::default().fg(error);
@@ -370,6 +372,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 action: WtbarAction::Delete(i),
             });
             x += chip.del_width;
+        }
+
+        // revidere のマーカーはチップの塗りの外に置く。背景を敷かないので
+        // 全テーマで色がそのまま出るし、塗りの外にあること自体が「チップ本体
+        // とは別のもの」という手掛かりになる。押したときはチップと同じく
+        // その worktree へ移る。
+        if chip.review_width > 0 {
+            spans.push(Span::styled(
+                chip.review_text.clone(),
+                review_style(&app.theme, chip.review),
+            ));
+            hits.push(WtbarHit {
+                x0: x,
+                x1: x + chip.review_width,
+                action: WtbarAction::Select(i),
+            });
+            x += chip.review_width;
         }
     }
 
@@ -429,7 +448,42 @@ pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{WtbarAction, WtbarHit, hit_at, visible_window};
+    use super::{WtbarAction, WtbarHit, hit_at, review_mark, review_style, visible_window};
+    use crate::revidere::ArtifactState;
+    use crate::theme::Theme;
+
+    /// 走らせていない worktree には何も出さない。印が付いていないこと自体が
+    /// 「まだ解析していない」を意味するので、ここが空でなくなると印が意味を失う。
+    #[test]
+    fn an_unanalysed_worktree_gets_no_mark() {
+        assert_eq!(review_mark(ArtifactState::None, 0), "");
+        for state in [
+            ArtifactState::Running,
+            ArtifactState::Fresh,
+            ArtifactState::Stale,
+        ] {
+            assert_eq!(
+                unicode_width::UnicodeWidthStr::width(review_mark(state, 0).as_str()),
+                2,
+                "{state:?}"
+            );
+        }
+    }
+
+    /// 印に背景を敷かないこと。どのテーマでも accent は selected_bg と同じ色で、
+    /// 選択中チップの塗りを引き継いだ瞬間に実行中の印が背景と同色になって消える。
+    #[test]
+    fn the_mark_never_carries_a_background() {
+        let theme = Theme::from_name("catppuccin-mocha");
+        assert_eq!(theme.accent, theme.selected_bg, "前提が変わっている");
+        for state in [
+            ArtifactState::Running,
+            ArtifactState::Fresh,
+            ArtifactState::Stale,
+        ] {
+            assert!(review_style(&theme, state).bg.is_none(), "{state:?}");
+        }
+    }
 
     // 幅が均一な10個のチップ、区切り文字幅は1。
     const W: &[u16] = &[10, 10, 10, 10, 10, 10, 10, 10, 10, 10];

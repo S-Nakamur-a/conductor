@@ -32,30 +32,11 @@ fn badge_cols(x: u16, width: u16, title_w: u16) -> Option<std::ops::Range<u16>> 
 }
 
 /// 状態チップの文字列。幅は常に [REVIDERE_BADGE_W]。
-///
-/// 色だけで区別すると色覚や配色によって読めなくなるので、形でも分かるように
-/// している (worktree ストリップの印と同じ考え方)。
 fn revidere_badge_label(state: ArtifactState, ui_tick: u64) -> String {
-    let marker = match state {
-        ArtifactState::Running => crate::ui::common::spinner_frame(ui_tick),
-        ArtifactState::Fresh => "\u{2713}",
-        ArtifactState::Stale => "!",
-        ArtifactState::None => "\u{25cb}",
-    };
-    format!(" {marker} review ")
-}
-
-/// 状態チップの色。muted は複数のテーマで見えなくなるので使わない。
-fn revidere_badge_color(
-    theme: &crate::theme::Theme,
-    state: ArtifactState,
-) -> ratatui::style::Color {
-    match state {
-        ArtifactState::None => theme.hint,
-        ArtifactState::Running => theme.accent,
-        ArtifactState::Fresh => theme.success,
-        ArtifactState::Stale => theme.warning,
-    }
+    format!(
+        " {} review ",
+        crate::ui::common::revidere_marker(state, ui_tick)
+    )
 }
 
 /// Changed-files の各行のファイル名色が表す、4種類の git ステージ状態のいずれか。
@@ -145,7 +126,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     if revidere_badge_cols(app, area.x, area.width).is_some() {
         let state = app.revidere_artifact_state();
         let mut style = Style::default()
-            .fg(revidere_badge_color(theme, state))
+            .fg(crate::ui::common::revidere_color(theme, state))
             .add_modifier(Modifier::BOLD);
         // hover は前景の下線で示す。背景を敷くとテーマによっては枠線ごと
         // 潰れて、どこが押せるのか逆に読めなくなる。
@@ -484,9 +465,10 @@ mod tests {
 
         let buf = terminal.backend().buffer();
         let top: String = (0..width).map(|x| buf[(x, 0)].symbol()).collect();
+        let marker = crate::ui::common::revidere_marker(ArtifactState::Fresh, 0);
         let at = top
             .chars()
-            .position(|c| c == '\u{2713}')
+            .position(|c| c.to_string() == marker)
             .expect("チップが上枠に出ている");
         assert_eq!(at as u16, cols.start + 1, "枠内の位置: {top:?}");
         assert!(cols.contains(&(at as u16)));
