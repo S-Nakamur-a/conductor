@@ -13,6 +13,12 @@ use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+/// 終了時に読み取りスレッドの終了を待つ上限。
+///
+/// 突いても起きないスレッド (FIFO が外から消された等) のために終了そのものを
+/// 諦めるより、後始末を捨てて抜けられるほうがよい。
+const SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// MCP がリフレッシュ用パイプへ書いたときに送られるイベント。
 #[derive(Debug)]
 pub struct RefreshEvent;
@@ -247,7 +253,7 @@ impl Drop for RefreshPipe {
         }
 
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            crate::background::join_or_abandon(thread, SHUTDOWN_JOIN_TIMEOUT);
         }
         let _ = std::fs::remove_file(&self.pipe_path);
     }
@@ -369,5 +375,26 @@ mod tests {
             original,
             "signal_refresh overwrote a regular file"
         );
+    }
+
+    /// Ctrl+Q が効かなくなる退行の番人。
+    ///
+    /// FIFO が外から消えると読み取りスレッドは誰も辿り着けない inode の
+    /// open() で寝たままになり、突いても起きない。終了はそれでも進むこと。
+    #[test]
+    fn dropping_a_listener_whose_pipe_vanished_does_not_hang() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe_path = dir.path().join("refresh.pipe");
+        let listener = RefreshPipe::from_path(pipe_path.clone()).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::remove_file(&pipe_path).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            drop(listener);
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("shutdown hung on a vanished FIFO");
     }
 }
