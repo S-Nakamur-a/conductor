@@ -115,6 +115,17 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         }
     }
 
+    // 保留中の 'z' キー — 折りたたみの2打鍵目を待っている。プレーンファイル
+    // 表示専用: diff 表示の折りたたみは ExpandableContext という別の仕組みで、
+    // 同じキーに2つの意味を持たせない。
+    if app.viewer_state.pending_z_key {
+        app.viewer_state.pending_z_key = false;
+        if !app.viewer_state.diff_view.diff_mode {
+            handle_fold_key(app, key);
+            return;
+        }
+    }
+
     // 統合 diff モードは独自のナビゲーションを持つ。
     if app.viewer_state.diff_view.diff_mode {
         handle_viewer_diff_mode_key(app, key);
@@ -152,25 +163,14 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     }
 
     match action {
-        Some(Action::NavigateDown) if app.viewer_state.content.file_scroll + 1 < total => {
-            app.viewer_state.content.file_scroll += 1;
-        }
-        Some(Action::NavigateUp) => {
-            app.viewer_state.content.file_scroll =
-                app.viewer_state.content.file_scroll.saturating_sub(1);
-        }
-        Some(Action::ScrollHalfPageDown) => {
-            app.viewer_state.content.file_scroll =
-                (app.viewer_state.content.file_scroll + 15).min(total.saturating_sub(1));
-        }
-        Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.content.file_scroll =
-                app.viewer_state.content.file_scroll.saturating_sub(15);
-        }
+        // 移動はすべて可視行を歩く（畳んだ中にカーソルが入らない）。
+        Some(Action::NavigateDown) => app.viewer_state.move_cursor_lines(1),
+        Some(Action::NavigateUp) => app.viewer_state.move_cursor_lines(-1),
+        Some(Action::ScrollHalfPageDown) => app.viewer_state.move_cursor_lines(15),
+        Some(Action::ScrollHalfPageUp) => app.viewer_state.move_cursor_lines(-15),
         Some(Action::GoToTop) => enter_g_prefix_mode(app),
-        Some(Action::GoToBottom) => {
-            app.viewer_state.content.file_scroll = total.saturating_sub(1);
-        }
+        Some(Action::GoToBottom) => app.viewer_state.goto_last_visible_line(),
+        Some(Action::FoldPrefix) => app.viewer_state.pending_z_key = true,
         Some(Action::SearchInFile) => {
             app.viewer_state.search.search_active = true;
             app.viewer_state.search.search_query.clear();
@@ -214,6 +214,28 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         Some(Action::ToggleMarkdownRender) => {
             app.cmd_toggle_markdown_render();
         }
+        _ => {}
+    }
+}
+
+/// 'z' の2打鍵目を処理する（vim の折りたたみ）。
+///
+/// 対象はカーソル行（＝ビューポート最上行）。その行がブロックの見出しでなければ、
+/// それを含む最も内側のブロックが動く — vim の za/zc と同じ。
+fn handle_fold_key(app: &mut App, key: KeyEvent) {
+    let vs = &mut app.viewer_state;
+    match key.code {
+        KeyCode::Char('a') => {
+            vs.fold_toggle_cursor();
+        }
+        KeyCode::Char('c') => {
+            vs.fold_close_cursor();
+        }
+        KeyCode::Char('o') => {
+            vs.fold_open_cursor();
+        }
+        KeyCode::Char('R') => vs.fold_open_all(),
+        KeyCode::Char('M') => vs.fold_close_all(),
         _ => {}
     }
 }

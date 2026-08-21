@@ -145,9 +145,8 @@ pub(super) fn handle_viewer_column_click(
             use crate::ui::viewer_panel::thread_actions;
             // 列オフセットからどのアクションがクリックされたかを判定する。レンダラが
             // その行を描画するのに使うのと同じレイアウト定数を使う。
-            // レンダラとのオフセットの対応: gutter_total_width() は digits+4、
-            // レンダラのインデントは marker(2) + digits + 6 (left_pad) + 4
-            // ("  │ ") = marker + gutter_total_width() + 2 + 4。
+            // レンダラとのオフセットの対応: left_pad は marker +
+            // gutter_total_width() + 2（バッジ）で、そこに "  │ " の4列が続く。
             let content_x = inner_x + marker_w + gutter_w + 2 + 4;
             let click_col = col.saturating_sub(content_x) as usize;
             if click_col < thread_actions::reply_end() {
@@ -237,6 +236,21 @@ pub(super) fn handle_viewer_column_click(
             )
         {
             app.viewer_state.expand_context_at(idx, false);
+        }
+    }
+
+    // 折りたたみマーカー。ガターの中にあるので、コメント作成へ落ちる前に
+    // ここで捌く。当たり判定の列は in_fold_zone が持つ（ホバーの罫線と共有）。
+    if !app.viewer_state.diff_view.diff_mode
+        && row >= inner_y
+        && super::in_fold_zone(col, inner_x + marker_w + gutter_w)
+    {
+        let screen_offset = (row - inner_y) as usize;
+        if let Some(line_1) = resolve_screen_line(app, screen_offset)
+            && app.viewer_state.content.folds.is_foldable(line_1)
+        {
+            app.viewer_state.fold_toggle_at(line_1);
+            return;
         }
     }
 

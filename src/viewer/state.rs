@@ -85,6 +85,10 @@ pub struct FileContentState {
     /// render 中に構築される画面行のマッピング。マウスイベントハンドラが
     /// 画面上の位置をファイルの行/スレッドアクションへ変換するのに使う。
     pub screen_row_map: Vec<ScreenRow>,
+    /// 開いているファイルの折りたたみ範囲と、そのうち今閉じているもの。
+    /// 「ファイルの行」と「画面に出る行」の食い違いはここだけが知っている
+    /// （[crate::viewer::FoldState] のモジュールコメントを参照）。
+    pub folds: crate::viewer::FoldState,
     /// 現在のファイル中の実行可能なテスト。1始まりの行番号をキーにする。
     /// 言語ごとのスキャナ（*_test.go には [crate::go_test]、*.rs には
     /// [crate::rust_test]）が埋める。それ以外のファイルでは空。▶ 実行ボタンを
@@ -323,6 +327,14 @@ impl Default for ClickTracker {
 /// 常に新規コメントを開始する。
 pub const COMMENT_MARKER_W: u16 = 2;
 
+/// ガターのうち行番号が使わない列数:
+///   diff の +/-(1) + 空白(1) + 折りたたみマーカー(1) + 空白(1) + '│'(1) + 空白(1)
+///
+/// 行番号の桁数と足して [ViewerState::gutter_total_width] になる。描画も
+/// マウスのヒットテストもインラインスレッドのインデントもこの幅ぶんだけ
+/// 右にずれるので、別々の数字で持つと1列ずれて気づかれない。
+pub const GUTTER_FIXED_W: usize = 6;
+
 /// Viewer モードが保持する全ての状態。
 #[derive(Default)]
 pub struct ViewerState {
@@ -346,6 +358,8 @@ pub struct ViewerState {
     pub click: ClickTracker,
     /// 'g' が押されて2つ目のキー（gd, gi, gr）待ちかどうか。
     pub pending_g_key: bool,
+    /// 'z' が押されて2つ目のキー（za, zc, zo, zR, zM）待ちかどうか。
+    pub pending_z_key: bool,
     /// viewer がファイル内容/diff の代わりにブランチの change summary 疑似
     /// ファイル（"SUMMARY" エントリ）を表示しているか。diff_view.diff_mode とは
     /// 排他。enter_summary_view / exit_summary_view を参照。

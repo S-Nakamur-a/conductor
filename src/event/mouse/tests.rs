@@ -5,7 +5,7 @@ use super::explorer_panel::{diff_list_row_at, explorer_tree_row_at};
 use super::viewer_panel::{
     MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
 };
-use super::{ClickGeometry, Column, register_double_click, register_double_click_on};
+use super::{ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on};
 use std::time::{Duration, Instant};
 
 /// 指定したカラム境界でClickGeometryを構築する。幅/高さは、[<=>] 展開ボタン
@@ -527,4 +527,21 @@ mod menu_clicks {
             MenuClick::Open(_)
         ));
     }
+}
+
+/// 折りたたみマーカーの当たり判定。三角の1列だけだと狙えないので、行番号より
+/// 右のガターをまとめて受ける — ただし行番号（コメント作成）とガターの外
+/// （バッジの「+」）までは広げない。
+#[test]
+fn the_fold_marker_claims_the_gutter_right_of_the_line_number() {
+    // ガターは [10, 20)。隙間が 15、マーカーが 16、隙間が 17、区切り線が 18、
+    // 空白が 19。
+    let gutter_end = 20;
+    assert!(!in_fold_zone(14, gutter_end), "行番号の最終桁はコメント側の担当");
+    assert!(in_fold_zone(15, gutter_end));
+    assert!(in_fold_zone(16, gutter_end));
+    assert!(in_fold_zone(17, gutter_end));
+    assert!(in_fold_zone(18, gutter_end));
+    assert!(in_fold_zone(19, gutter_end));
+    assert!(!in_fold_zone(20, gutter_end), "バッジ列はコメント側の担当");
 }

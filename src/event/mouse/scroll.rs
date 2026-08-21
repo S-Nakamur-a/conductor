@@ -160,20 +160,10 @@ pub(super) fn handle_mouse_scroll(
                 }
             }
         } else {
-            let total = app.viewer_state.content.file_content.len();
-            if total > 0 {
-                if delta > 0 {
-                    app.viewer_state.content.file_scroll = (app.viewer_state.content.file_scroll
-                        + delta.unsigned_abs() as usize)
-                        .min(total.saturating_sub(1));
-                } else {
-                    app.viewer_state.content.file_scroll = app
-                        .viewer_state
-                        .content
-                        .file_scroll
-                        .saturating_sub(delta.unsigned_abs() as usize);
-                }
-            }
+            // 折りたたんだ行を跨がないよう、可視行を歩いて動かす。生の加減算だと
+            // 畳んだぶんだけ行き過ぎ、着地点が隠れていれば描画側が畳みを開いて
+            // しまう（ホイールで畳みが勝手に開く）。
+            app.viewer_state.move_cursor_lines(delta as isize);
         }
     } else {
         // ターミナルパネル（右カラム）。

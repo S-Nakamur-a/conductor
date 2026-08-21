@@ -7,10 +7,8 @@ use super::file_view::UnifiedDiffEntry;
 use super::state::ViewerState;
 
 impl ViewerState {
-    /// viewer パネルの行番号領域が使う gutter の総幅（列数）を返す。gutter の
-    /// 構成は次の通り:
-    ///   prefix(1) + digits(gutter_width) + space(1) + '│'(1) + space(1)
-    /// = gutter_width + 4
+    /// viewer パネルの行番号領域が使う gutter の総幅（列数）を返す。行番号の
+    /// 桁数に [crate::viewer::GUTTER_FIXED_W] を足したもの。
     pub fn gutter_total_width(&self) -> u16 {
         let digit_w = if self.diff_view.diff_mode {
             // renderer の gutter 幅と厳密に一致させないと、マウスの当たり判定
@@ -23,7 +21,7 @@ impl ViewerState {
         } else {
             digit_count(self.content.file_content.len())
         };
-        (digit_w + 4) as u16
+        (digit_w + crate::viewer::GUTTER_FIXED_W) as u16
     }
 
     // unified diff 表示

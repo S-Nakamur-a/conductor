@@ -64,7 +64,10 @@ pub(super) fn render_diff_content_line(
         None => " ".repeat(gutter_width),
     };
 
-    let num = format!("{gutter_prefix}{line_num_str} \u{2502} ");
+    // 空白2つのうち1つは、ファイル表示で折りたたみマーカーが入る列。diff 表示
+    // には折りたたみが無いが、幅を揃えておかないとモードを切り替えるたびに
+    // コードが1列ずれる。
+    let num = format!("{gutter_prefix}{line_num_str}   \u{2502} ");
     let gutter_style = if is_selected {
         Style::default()
             .fg(theme.gutter_selected_fg)
@@ -212,7 +215,7 @@ pub(super) fn render_diff_content_line(
 
     // 水平スクロールを適用し、パネル幅（枠線 + マーカー列 + ガター + バッジ）でクリップする。
     let content_max_w = (ctx.area_width as usize)
-        .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
+        .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 4);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
     let mut spans = vec![marker, gutter_span, badge];
