@@ -40,6 +40,18 @@ use git2::Repository;
 
 pub use recently_modified::recently_modified_files;
 
+/// このリポジトリの .conductor ディレクトリ。
+///
+/// linked worktree から起動されても、メインワークツリー側の 1 つを指す。
+/// ここに置くリソース (データベース、ソケット、ロック) はリポジトリ単位で
+/// 1 つなので、worktree ごとに分かれてしまうと相手が見えなくなる。
+pub fn conductor_dir(repo_path: &Path) -> PathBuf {
+    GitEngine::open(repo_path)
+        .and_then(|e| e.main_worktree_path())
+        .unwrap_or_else(|_| repo_path.to_path_buf())
+        .join(".conductor")
+}
+
 /// 1つの worktree に関する情報。
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {

@@ -22,6 +22,7 @@ mod git_engine;
 mod go_test;
 mod grep_search;
 mod hover_info;
+mod instance_lock;
 mod jump_history;
 mod keymap;
 mod mcp_serve;
@@ -80,12 +81,31 @@ fn main() -> Result<()> {
         return result;
     }
 
+    // 端末に触る前に。断られたら通常スクリーンのまま理由を出して終わりたい。
+    let repo_path = startup::resolve_repo_path()?;
+    let _instance_lock = match instance_lock::acquire(&repo_path) {
+        Ok(Some(lock)) => Some(lock),
+        Ok(None) => {
+            anyhow::bail!(
+                "conductor is already open on this repository:\n  {}\n\n\
+                 All worktrees of a repository share one window.\n\
+                 Switch to that window, or close it first.",
+                instance_lock::locked_repo_root(&repo_path).display()
+            );
+        }
+        // 排他できないことを理由にリポジトリを開けなくするほうが害が大きい。
+        Err(e) => {
+            log::warn!("could not take the single-instance lock: {e:#}");
+            None
+        }
+    };
+
     let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
     log::debug!("keyboard_enhanced = {keyboard_enhanced}");
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     enter_tui(terminal.backend_mut(), keyboard_enhanced)?;
 
-    let mut app = App::new(startup::resolve_repo_path()?);
+    let mut app = App::new(repo_path);
     execute!(io::stdout(), SetTitle(format!("conductor - {}", app.repo.main_name)))?;
 
     // raw mode に入ったあと・イベントループが stdin を読み始める前でなければ

@@ -76,6 +76,22 @@ impl<T> BackgroundOp<T> {
     }
 }
 
+/// スレッドの終了を待つ。ただし期限を切って、超えたら見捨てる。
+///
+/// 終了時の join が外部リソース待ちのスレッドで固まると、端末を戻す前に
+/// プロセスごと止まってユーザーが Ctrl+Q で抜けられなくなる。後始末より
+/// 抜けられることを優先する。
+pub fn join_or_abandon(thread: std::thread::JoinHandle<()>, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while !thread.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    thread.join().is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +134,28 @@ mod tests {
         assert!(op.is_running());
         op.clear();
         assert!(!op.is_running());
+    }
+
+    #[test]
+    fn join_or_abandon_gives_up_on_a_wedged_thread() {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let wedged = std::thread::spawn(move || {
+            let _ = rx.recv();
+        });
+        let start = std::time::Instant::now();
+        assert!(!super::join_or_abandon(
+            wedged,
+            std::time::Duration::from_millis(100)
+        ));
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        drop(tx);
+    }
+
+    #[test]
+    fn join_or_abandon_waits_for_a_thread_that_finishes() {
+        let t = std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        });
+        assert!(super::join_or_abandon(t, std::time::Duration::from_secs(5)));
     }
 }

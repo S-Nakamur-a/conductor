@@ -26,6 +26,9 @@ use std::time::Duration;
 /// メモリを食わせないための歯止め。
 const MAX_MESSAGE_BYTES: usize = 8 * 1024;
 
+/// 終了時に accept ループの終了を待つ上限。
+const SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Claude Code の状態変化の種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CcNotifyKind {
@@ -205,7 +208,9 @@ impl Drop for CcNotifyListener {
         // accept() のブロックを解くためにソケットへ接続する。
         let _ = UnixStream::connect(&self.socket_path);
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            // accept() は突いても起きないことがある (ソケットが外から消された等)。
+            // 後始末より、端末を戻して抜けられることを優先する。
+            crate::background::join_or_abandon(thread, SHUTDOWN_JOIN_TIMEOUT);
         }
         let _ = std::fs::remove_file(&self.socket_path);
     }
