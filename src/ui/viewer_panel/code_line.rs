@@ -57,8 +57,8 @@ pub(super) fn render_code_line_rows(
         _ => (" ", None),
     };
 
-    // ガター（行番号）。
-    let num = format!("{gutter_prefix}{line_1:>gutter_width$} \u{2502} ");
+    // ガター（行番号）。末尾の空白は折りたたみマーカーとの間の隙間。
+    let num = format!("{gutter_prefix}{line_1:>gutter_width$} ");
     let is_grep_highlight = vs.content.grep_highlight_line == Some(line_1);
     let gutter_style = if is_selected {
         Style::default()
@@ -84,6 +84,28 @@ pub(super) fn render_code_line_rows(
         Style::default().fg(theme.muted)
     };
     let gutter_span = Span::styled(num, gutter_style);
+
+    // 折りたたみマーカー。マウスが乗っている間は、その1列を罫線として使って
+    // 範囲のどこからどこまでかを見せる。入れ子のブロックのマーカーは残す。
+    let folds = &vs.content.folds;
+    let own_glyph = if folds.is_collapsed(line_1) {
+        Some("\u{25b6}")
+    } else if folds.is_foldable(line_1) {
+        Some("\u{25bc}")
+    } else {
+        None
+    };
+    let accent = gutter_style.fg(theme.accent);
+    let (fold_glyph, fold_style) = match (folds.hover_rule(line_1), own_glyph) {
+        (Some(crate::viewer::FoldRule::Tail), _) => ("\u{2570}", accent),
+        (Some(_), Some(g)) => (g, accent.add_modifier(Modifier::BOLD)),
+        (Some(_), None) => ("\u{2502}", accent),
+        (None, Some(g)) if folds.is_collapsed(line_1) => (g, accent.add_modifier(Modifier::BOLD)),
+        (None, Some(g)) => (g, gutter_style.fg(theme.hint)),
+        (None, None) => (" ", gutter_style),
+    };
+    let fold_span = Span::styled(fold_glyph, fold_style);
+    let separator_span = Span::styled(" \u{2502} ", gutter_style);
 
     // コメントマーカー列（行番号より前、一番左）: コメント範囲の最終行には 💬、
     // それより前の行には │ を表示する。クリックするとスレッドの開閉を切り替える —
@@ -190,7 +212,7 @@ pub(super) fn render_code_line_rows(
     // コンテンツの span に水平スクロールを適用し、パネル幅（枠線＋マーカー列＋
     // ガター＋バッジ）でクリップする。
     let content_max_w = (ctx.area_width as usize)
-        .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + 8);
+        .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 4);
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
     // ジャンプ用の下線を適用する（ジャンプ可能なシンボル上でのホバーであれば
@@ -264,7 +286,22 @@ pub(super) fn render_code_line_rows(
         content_spans
     };
 
-    let mut spans = vec![marker, gutter_span, badge];
+    // 畳んだ行は、隠れている行数を見出し行の末尾に出す。畳んだこと自体は
+    // マーカーで分かるが、どれだけ隠れているかはここでしか分からない。
+    let content_spans = match vs.content.folds.hidden_count(line_1) {
+        Some(n) => {
+            let mut spans = content_spans;
+            let unit = if n == 1 { "line" } else { "lines" };
+            spans.push(Span::styled(
+                format!(" \u{22ef} {n} {unit}"),
+                Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+            ));
+            spans
+        }
+        None => content_spans,
+    };
+
+    let mut spans = vec![marker, gutter_span, fold_span, separator_span, badge];
     spans.extend(content_spans);
 
     let mut rows: Vec<(Line<'static>, ScreenRow)> =

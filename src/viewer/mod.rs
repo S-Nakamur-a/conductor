@@ -7,10 +7,11 @@
 //! 他のサブモジュールへ分割されている（[content] はファイルを開く処理、
 //! [tree] はファイルツリーの走査・展開、[search] はファイル内検索とファイル名検索、
 //! [diff_view] は unified diff 表示、[highlight] は syntect によるシンタックスハイライト、
-//! [selection] はガター行選択）。
+//! [selection] はガター行選択、[fold] はコードブロックの折りたたみ）。
 
 mod content;
 mod diff_view;
+mod fold;
 mod file_tree;
 mod file_view;
 mod highlight;
@@ -20,6 +21,7 @@ mod state;
 mod tree;
 
 pub use file_tree::{FileTreeEntry, file_icon};
+pub use fold::{FoldRule, FoldState};
 // revidere の 2 列ビューは開いているファイルではなく diff の行を直接ハイライト
 // するので、ViewerState を経由せず構文定義だけを引く。拡張子のエイリアス表を
 // 2 つ持つと、片方だけ直したときに同じファイルが場所によって色付いたり

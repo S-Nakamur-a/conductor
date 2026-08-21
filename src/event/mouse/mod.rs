@@ -82,6 +82,17 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
     }
 }
 
+/// col が折りたたみマーカーの当たり判定に入るか。gutter_end はガターの右端
+/// （排他）。
+///
+/// マーカーの1列だけでは三角が小さすぎて狙えないので、行番号より右のガター
+/// （隙間・マーカー・区切り線・その右の空白）をまとめて受ける。行番号そのもの
+/// はコメント作成に残す。ホバーの罫線とクリックが同じ範囲を見るように、判定は
+/// ここにしかない。
+pub(super) fn in_fold_zone(col: u16, gutter_end: u16) -> bool {
+    col < gutter_end && col + 5 >= gutter_end
+}
+
 /// 何らかのオーバーレイ/モーダルがアクティブな場合に true を返す。この場合は
 /// マウスイベントを全て消費し、背景のパネルに届かないようにする。
 /// マウスイベントをインタラクティブなホバーモーダルのスタックに対して振り分ける。
@@ -710,6 +721,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 app.viewer_state.click.hover_line = resolved;
                 app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
 
+                // 折りたたみマーカーの上にいる間だけ、その範囲の端から端までを
+                // マーカー列の罫線で示す。
+                let on_fold = !app.viewer_state.diff_view.diff_mode
+                    && in_fold_zone(col, inner_x + marker_w + gutter_w);
+                app.viewer_state
+                    .content
+                    .folds
+                    .set_hover(if on_fold { resolved } else { None });
+
                 let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
                     || mouse.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -771,6 +791,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             } else {
                 app.viewer_state.click.hover_line = None;
                 app.viewer_state.click.hover_gutter_line = None;
+                app.viewer_state.content.folds.set_hover(None);
                 app.set_underline_candidate(None, false);
                 app.set_mouse_hover_candidate(None);
             }

@@ -43,6 +43,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 共有借用を取る前に diff 注釈キャッシュを埋める。
     ensure_diff_annotations_cached(app);
 
+    // 描画の直前に、カーソル行が畳みの中に隠れていないかだけを正す。file_scroll を
+    // 書く経路（検索・定義ジャンプ・grep・履歴復元）はどれもここに合流するので、
+    // 「飛んだ先が畳まれていたら開く」の判断はこの1か所で足りる。
+    //
+    // diff 表示は除く。そこでの file_scroll は diff カーソルの写しでしかなく、
+    // 画面に出ない畳みを開いてしまうと、素の表示へ戻ったときに理由の分からない
+    // 開き方をして見える。
+    if !app.viewer_state.diff_view.diff_mode {
+        app.viewer_state.reveal_cursor_line();
+    }
+
     let theme = &app.theme;
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
@@ -206,16 +217,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         comment_end_lines: &comment_end_lines,
     };
 
-    for (line_no, content) in vs
+    // 畳まれた行を飛ばして可視行だけを描く。どの行が画面に出るかを決めるのは
+    // FoldState ひとつで、ここは受け取った並びをそのまま流すだけ。
+    let total_lines = vs.content.file_content.len();
+    for line_1 in vs
         .content
-        .file_content
-        .iter()
-        .enumerate()
-        .skip(vs.content.file_scroll)
+        .folds
+        .visible_from(vs.content.file_scroll + 1, total_lines)
     {
         if remaining == 0 {
             break;
         }
+        let line_no = line_1 - 1;
+        let content = &vs.content.file_content[line_no];
 
         let rows = render_code_line_rows(
             app,
@@ -253,7 +267,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // ファイルの行数がパネルに収まりきらない場合にスクロールバーを描画する —
     // トリガーも見た目も Explorer のファイルツリーと同じ。
-    if vs.content.file_content.len() > inner_height {
+    // 尺もつまみも可視行で数える。ファイルの総行数のままだと、畳んだ直後に
+    // つまみだけが縮まずに残り、どれだけ隠れているのか読めなくなる。
+    let visible_total = vs.visible_line_count();
+    if visible_total > inner_height {
         let mut scrollbar_area = area.inner(Margin {
             horizontal: 0,
             vertical: 1,
@@ -261,9 +278,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // トラックをパンくず行より下に置き、コード領域だけをカバーするようにする。
         scrollbar_area.y += breadcrumb_height;
         scrollbar_area.height = scrollbar_area.height.saturating_sub(breadcrumb_height);
-        let mut scrollbar_state =
-            ScrollbarState::new(vs.content.file_content.len().saturating_sub(inner_height))
-                .position(vs.content.file_scroll);
+        let mut scrollbar_state = ScrollbarState::new(visible_total.saturating_sub(inner_height))
+            .position(vs.cursor_visible_index());
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None);

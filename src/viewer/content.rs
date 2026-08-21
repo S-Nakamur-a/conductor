@@ -38,6 +38,7 @@ impl ViewerState {
 
         // メディアファイル（画像/動画）は aa-media 経由で扱う。
         if media_state::is_media_file(relative_path) {
+            self.content.folds.clear();
             self.content.file_content.clear();
             self.content.current_file = Some(relative_path.to_string());
             self.content.file_scroll = 0;
@@ -69,6 +70,10 @@ impl ViewerState {
                 // タブも含めて書かれたままのファイルが必要なため。
                 self.content.code_mask =
                     crate::symbol_index::CodeMask::compute(&text, relative_path);
+                // 折りたたみ範囲も展開前の text から求める（tree-sitter もインデント
+                // 幅も、書かれたままのファイルを前提にしている）。同じファイルの
+                // 再読み込みなら開閉は FoldState 側が引き継ぐ。
+                self.content.folds.rebuild(&text, relative_path);
                 // ▶ 実行ボタン向けに、実行可能なテストを検出する。言語ごとに振り分ける:
                 // Go の *_test.go と Rust の *.rs。
                 self.content.test_runs = if relative_path.ends_with(".rs") {
@@ -83,6 +88,7 @@ impl ViewerState {
                 // 付いて本文と区別が付かず、Viewer 側からは「空 = 未選択」と
                 // 見分けられなかった。
                 log::warn!("failed to read {}: {e}", full.display());
+                self.content.folds.clear();
                 self.content.file_content.clear();
                 self.content.load_error = Some(e.to_string());
                 self.content.current_file = Some(relative_path.to_string());

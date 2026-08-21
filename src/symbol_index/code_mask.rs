@@ -295,22 +295,31 @@ fn grammar_for(ext: &str) -> Option<Grammar> {
     // つけずに済む。
     const TS: &[&str] = &["comment", "string_fragment"];
 
-    let (language, masked, format_capable) = match ext {
-        "rs" => (tree_sitter_rust::LANGUAGE.into(), RUST, RUST_FORMAT),
-        "go" => (tree_sitter_go::LANGUAGE.into(), GO, NONE),
-        "ts" | "js" => (
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            TS,
-            NONE,
-        ),
-        "tsx" | "jsx" => (tree_sitter_typescript::LANGUAGE_TSX.into(), TS, NONE),
+    let (masked, format_capable) = match ext {
+        "rs" => (RUST, RUST_FORMAT),
+        "go" => (GO, NONE),
+        "ts" | "js" | "tsx" | "jsx" => (TS, NONE),
         _ => return None,
     };
     Some(Grammar {
-        language,
+        language: language_for_ext(ext)?,
         masked,
         format_capable,
     })
+}
+
+/// 拡張子から tree-sitter の文法を引く。
+///
+/// マスクと折りたたみで別々に持つと、対応言語が片方だけ増えたときに、同じ
+/// ファイルがジャンプはできるのに畳めない（あるいはその逆）という状態になる。
+pub(crate) fn language_for_ext(ext: &str) -> Option<tree_sitter::Language> {
+    match ext {
+        "rs" => Some(tree_sitter_rust::LANGUAGE.into()),
+        "go" => Some(tree_sitter_go::LANGUAGE.into()),
+        "ts" | "js" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        "tsx" | "jsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        _ => None,
+    }
 }
 
 /// pre-order 走査でマスク対象ノードのバイト範囲を集める。一度一致したら
