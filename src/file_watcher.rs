@@ -12,8 +12,12 @@ use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 /// ファイル監視からメインループへ送られるイベント。
 #[derive(Debug)]
 pub enum FsEvent {
-    /// 1 つ以上のファイルが変更された。
-    Changed,
+    /// ファイルが変更された。パスは .git / .conductor を除いた最初の 1 件。
+    ///
+    /// パスを載せているのは意味索引の作り直し (`semantic_index`) のため。
+    /// あちらは変更が索引に載るファイルかどうかを gitignore で判定しており、
+    /// 判定できないと target/ の書き換えで静穏時間が永久に来なくなる。
+    Changed(PathBuf),
 }
 
 /// worktree のディレクトリを監視するファイルシステムウォッチャ。
@@ -44,13 +48,13 @@ impl FileWatcher {
                     // だけでなくイベント内の全パスを見るのは、リネームイベントが
                     // (from, to) を持つため — .git から作業ツリーへの移動は、
                     // paths[0] が .git 側であっても実際の変更だから。
-                    let any_real_path = event.paths.iter().any(|path| {
+                    let real_path = event.paths.iter().find(|path| {
                         !path
                             .components()
                             .any(|c| matches!(c.as_os_str().to_str(), Some(".git" | ".conductor")))
                     });
-                    if any_real_path {
-                        let _ = sender.send(FsEvent::Changed);
+                    if let Some(path) = real_path {
+                        let _ = sender.send(FsEvent::Changed(path.clone()));
                     }
                 }
             },

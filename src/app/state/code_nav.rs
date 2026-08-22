@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::jump_history::JumpHistory;
 use crate::overlay::{HoverInfoOverlay, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
+use crate::semantic_index::SemanticIndex;
 use crate::symbol_index::SymbolIndex;
 
 /// 定義ジャンプ / 参照検索 / ホバー情報を成り立たせている状態。
@@ -14,7 +15,13 @@ use crate::symbol_index::SymbolIndex;
 /// こちらのポップアップはビューアの上に重なって共存しうる。
 pub struct CodeNav {
     /// tree-sitter で作ったシンボル索引 (バックグラウンドで構築)。
+    ///
+    /// [`semantic`](Self::semantic) が答えられない位置を埋める構文層でもある
+    /// (`semantic_index::Bridge`)。索引がまだ無い / Rust ではない / 生成時から
+    /// 内容が変わったファイル、のいずれでもここに落ちる。
     pub index: SymbolIndex,
+    /// SCIP 索引による意味層。確信度つきで答え、答えられなければ構文層に回す。
+    pub semantic: SemanticIndex,
     /// ジャンプ元へ戻るための履歴。
     pub history: JumpHistory,
     /// 参照一覧のポップアップ。
@@ -32,6 +39,7 @@ impl CodeNav {
     pub fn new(root: PathBuf) -> Self {
         Self {
             index: SymbolIndex::new(root),
+            semantic: SemanticIndex::default(),
             history: JumpHistory::new(),
             references: ReferencesOverlay::default(),
             symbol_hint: SymbolHintOverlay::default(),

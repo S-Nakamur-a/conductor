@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
 use crate::app::App;
+use crate::overlay::RefRow;
 
 /// area の中央に参照オーバーレイポップアップを描画する。
 pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
@@ -51,41 +52,54 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let scroll = overlay.scroll;
 
     let items: Vec<ListItem> = overlay
-        .results
-        .iter()
+        .rows()
+        .into_iter()
         .enumerate()
         .skip(scroll)
         .take(visible_height)
-        .map(|(i, reference)| {
+        .map(|(i, row)| {
             let is_selected = i == overlay.selected;
-            let file_span = Span::styled(
-                format!("{}:{}", reference.file_path, reference.line),
-                Style::default()
-                    .fg(if is_selected {
-                        theme.selected_fg
-                    } else {
-                        theme.accent
-                    })
-                    .add_modifier(if is_selected {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            );
-            let content_span = Span::styled(
-                format!("  {}", reference.content.trim()),
-                Style::default().fg(if is_selected {
+            let fg = |normal| {
+                if is_selected {
                     theme.selected_fg
                 } else {
-                    theme.muted
-                }),
-            );
+                    normal
+                }
+            };
+            let spans = match row {
+                RefRow::File {
+                    path,
+                    count,
+                    collapsed,
+                } => vec![
+                    Span::styled(
+                        format!("{} {path}", if collapsed { '▸' } else { '▾' }),
+                        Style::default()
+                            .fg(fg(theme.accent))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(format!("  {count}"), Style::default().fg(fg(theme.info))),
+                ],
+                RefRow::Hit { index } => {
+                    let reference = &overlay.results[index];
+                    vec![
+                        Span::styled(
+                            format!("    {:>5}  ", reference.line),
+                            Style::default().fg(fg(theme.info)),
+                        ),
+                        Span::styled(
+                            reference.content.trim().to_string(),
+                            Style::default().fg(fg(theme.fg)),
+                        ),
+                    ]
+                }
+            };
             let style = if is_selected {
                 Style::default().bg(theme.selected_bg).fg(theme.selected_fg)
             } else {
                 Style::default()
             };
-            ListItem::new(Line::from(vec![file_span, content_span])).style(style)
+            ListItem::new(Line::from(spans)).style(style)
         })
         .collect();
 
@@ -95,11 +109,13 @@ pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     // ヒント行。
     let hint = Paragraph::new(Line::from(vec![
         Span::styled("j/k", Style::default().fg(theme.accent)),
-        Span::styled(": navigate  ", Style::default().fg(theme.muted)),
+        Span::styled(": navigate  ", Style::default().fg(theme.fg)),
+        Span::styled("h/l", Style::default().fg(theme.accent)),
+        Span::styled(": fold  ", Style::default().fg(theme.fg)),
         Span::styled("Enter", Style::default().fg(theme.accent)),
-        Span::styled(": jump  ", Style::default().fg(theme.muted)),
+        Span::styled(": jump  ", Style::default().fg(theme.fg)),
         Span::styled("Esc", Style::default().fg(theme.accent)),
-        Span::styled(": close", Style::default().fg(theme.muted)),
+        Span::styled(": close", Style::default().fg(theme.fg)),
     ]));
     frame.render_widget(hint, hint_area);
 }

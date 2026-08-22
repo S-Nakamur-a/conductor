@@ -1,0 +1,840 @@
+//! sheaf-core の [`Store`] を conductor に橋渡しする層。
+//!
+//! # なぜ `.conductor/` を main worktree 側から読むか
+//!
+//! リンクされた worktree は自分の `.conductor/` を持たない。これは既存の前提で、
+//! レビュー DB も同じ扱いをしている（[`crate::mcp_serve::resolve`]）。索引ファイルを
+//! worktree ごとに置く運用にはしないので、`load` は `repo_root` から `commondir()`
+//! を辿って main worktree のパスを解決する。`repo_root` にはどの worktree のパスを
+//! 渡してもよい（呼び出し元がリンクされた worktree で起動していても構わない）。
+//! 照合先のツリー（`tree_root`）は選択中の worktree のパスで、これは別物である。
+//!
+//! # なぜ出自の申告が要るか
+//!
+//! SCIP 索引はソース本文を持たない（rust-analyzer が `Document.text` を空にする）ため、
+//! 索引だけを見ても「生成した時点でファイルがどんな内容だったか」が分からない。
+//! `Store::load` が受け取る期待ハッシュの表は、その出自を外から渡すためのもの。
+//! 出自はコミットではなく生成時にディスク上にあった内容のハッシュで記録する。
+//! `make index` が作業ツリーを索引する一方でコミットを出自として申告すると、
+//! 未追跡ファイルが索引に載っていても永久に鮮度の検査を通らなくなる。
+//!
+//! # 触るファイル
+//!
+//! - `.conductor/index.scip`: SCIP 索引そのもの。
+//! - `.conductor/index.hashes`: 索引を生成した時点の内容ハッシュの表。
+//!   1 行 1 ファイルで `<sha1> <相対パス>`。
+
+mod bridge;
+
+pub use bridge::Bridge;
+pub use sheaf_core::Outcome as Regenerated;
+
+use sheaf_core::{IndexSource, Regenerator, RustAnalyzer, Slot, Store, Target};
+use std::path::{Path, PathBuf};
+
+/// 索引を作る道具。生成・出自の読み書き・投入の 3 箇所で同じものを指す必要がある。
+/// 道具が変われば同じソースから別の索引が出るので、sheaf は前の道具が書いた出自の表を
+/// 読まない。ここを分けると、読む側と書く側が食い違って全部が構文層に落ちる。
+const PRODUCER: RustAnalyzer = RustAnalyzer;
+
+/// 索引 (sheaf-core の [`Store`]) の有無と、その作り直しを保持する。
+///
+/// どちらも sheaf の型で、ここにあるのは呼び出しの取り次ぎだけ。
+#[derive(Default)]
+pub struct SemanticIndex {
+    slot: Slot,
+    regenerator: Regenerator,
+    /// main worktree の `.conductor/`。解決に git2 のリポジトリオープンが要るので
+    /// 覚えておく。外側の `None` は「まだ引いていない」、内側は「git リポジトリでない」。
+    conductor_dir: Option<Option<PathBuf>>,
+}
+
+impl SemanticIndex {
+    /// `tree_root` に向いている索引。向いていなければ `None`。
+    pub fn store(&self, tree_root: &Path) -> Option<&Store> {
+        self.slot.get(tree_root)
+    }
+
+    /// ファイルが変わったことを伝える。どのツリーの変更を数えるかは sheaf 側が決める。
+    pub fn note_change(&mut self, changed: &Path, tree_root: &Path) {
+        self.regenerator.note_change(changed, tree_root);
+    }
+
+    /// 作り直しを 1 周進める。始めどきなら始め、終わっていれば結果を返す。
+    ///
+    /// 毎フレーム呼ばれる。待つものが無いうちに置き場所を組み立てないのは、
+    /// そこに git2 のリポジトリオープンが要るため。
+    pub fn tick_regeneration(&mut self, repo_root: &Path, tree_root: &Path) -> Option<Regenerated> {
+        if !self.regenerator.is_pending() && !self.regenerator.is_running() {
+            return None;
+        }
+        let dir = self.conductor_dir(repo_root)?.to_path_buf();
+        let target = target(&dir, tree_root)?;
+        self.regenerator.tick(&target)
+    }
+
+    fn conductor_dir(&mut self, repo_root: &Path) -> Option<&Path> {
+        self.conductor_dir
+            .get_or_insert_with(|| main_conductor_dir(repo_root))
+            .as_deref()
+    }
+
+    #[cfg(test)]
+    pub fn is_pending(&self) -> bool {
+        self.regenerator.is_pending()
+    }
+
+    /// 走っている生成を止める。worktree を切り替えたときに呼ぶ。
+    pub fn abort_regeneration(&mut self) {
+        self.regenerator.abort();
+    }
+
+    /// 別のツリーを見に行くことになったなら、読み直しを待たずに捨てる。
+    pub fn invalidate_if_retargeted(&mut self, tree_root: &Path) {
+        self.slot.retarget(tree_root);
+    }
+
+    /// 背景ロードの結果を取り込む。取り込まなかったときは `false` を返すので、
+    /// 呼び出し側はそれを見て読み直しを起こす。
+    pub fn accept(&mut self, requested: &Path, current: &Path, store: Option<Store>) -> bool {
+        self.slot.accept(requested, current, store)
+    }
+}
+
+/// 索引を 1 本作って置く。`conductor index` の実体。
+///
+/// 初回の 1 本を作るための口。以後は編集が収束するたびに conductor 自身が作り直す。
+pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
+    let dir = main_conductor_dir(repo_root)
+        .ok_or_else(|| anyhow::anyhow!("{} が git リポジトリではない", repo_root.display()))?;
+    let target = target(&dir, repo_root).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} に Cargo.toml が無い (Rust の索引だけを作る)",
+            repo_root.display()
+        )
+    })?;
+    let index = target.index.clone();
+    match sheaf_core::generate_once(target, std::sync::Arc::new(PRODUCER)) {
+        Regenerated::Ready { store, .. } => {
+            println!(
+                "{} に索引を置いた ({} document、うち出自を言えないもの {})",
+                index.display(),
+                store.len(),
+                store.missing_provenance()
+            );
+            Ok(())
+        }
+        Regenerated::Failed(why) | Regenerated::Unavailable(why) => Err(anyhow::anyhow!(why)),
+        Regenerated::Busy => Err(anyhow::anyhow!("ほかのプロセスが索引を作っている")),
+    }
+}
+
+/// main worktree の `.conductor/index.scip` を、`tree_root` のツリーに向けてロードする。
+///
+/// 索引ファイルか出自の表(`index.hashes`)のどちらかが無ければ `None`。
+/// 出自を言えない索引を読んでも、`Store` は結局すべてのファイルを「変更あり」と
+/// 扱って構文層に落とすだけなので、その場合は最初からロードしない。
+pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
+    let conductor_dir = main_conductor_dir(repo_root)?;
+    let expected = sheaf_core::read_provenance(&conductor_dir.join("index.hashes"), &PRODUCER)?;
+    // 索引ルートはリポジトリルートそのものなので subroot は空。複数の索引ルートを
+    // 束ねるのは Store::load ができるが、いまは Rust の 1 本しか作っていない。
+    let source = IndexSource {
+        index: conductor_dir.join("index.scip"),
+        subroot: PathBuf::new(),
+        expected,
+    };
+    Store::load(std::slice::from_ref(&source), tree_root).ok()
+}
+
+/// 索引を作る対象と、成果物の置き場所。置き場所の規約だけが conductor の持ち物で、
+/// 生成そのものは sheaf 側にある。
+fn target(dir: &Path, tree_root: &Path) -> Option<Target> {
+    // Rust の索引しか作らないので、Cargo.toml が無いツリーでは生成そのものを起こさない。
+    // rust-analyzer は対象を認識できなくても終了コード 0 で空の索引を書くことがある。
+    if !tree_root.join("Cargo.toml").is_file() {
+        return None;
+    }
+    Some(Target {
+        root: tree_root.to_path_buf(),
+        index: dir.join("index.scip"),
+        hashes: dir.join("index.hashes"),
+        log: dir.join("index.log"),
+        // 索引を分けても本数の上限が消えないよう、リポジトリに 1 つだけ置く。
+        lock: dir.join("generate.lock"),
+    })
+}
+
+/// `repo_root` の main worktree での `.conductor/` を返す。
+///
+/// `repo_root` がリンクされた worktree のパスでも、`commondir()` は常に main の
+/// `.git` を指すので、その親を辿れば main のルートになる
+/// （`mcp_serve::resolve::resolve_db_path_with` が同じ考え方でレビュー DB を探している）。
+fn main_conductor_dir(repo_root: &Path) -> Option<PathBuf> {
+    let repo = git2::Repository::open(repo_root).ok()?;
+    Some(repo.commondir().parent()?.join(".conductor"))
+}
+
+/// SCIP のシンボル文字列から、その語を囲んでいるものの綴りを組み立てる。
+///
+/// `rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel.` から
+/// `app::types::App` を作る。所属が分かると、ホバーが説明しているのがどの型の
+/// フィールドなのかが名前だけで判る。
+///
+/// 綴りを組み立てられない形 (ローカル変数の `local 3`、型引数、逆クォートで
+/// 括られた名前) では None。当てにいくと別物の名前を出すことになる。
+pub fn container_path(symbol: &str) -> Option<String> {
+    // シンボルは `<scheme> <manager> <package> <version> <descriptors>`。
+    let descriptors = symbol.split(' ').nth(4)?;
+    let mut parts = Vec::new();
+    let mut name = String::new();
+    let mut chars = descriptors.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            // 名前空間・型・項の区切り。ここまでが 1 つの descriptor。
+            '/' | '#' | '.' => {
+                if name.is_empty() {
+                    return None;
+                }
+                parts.push(std::mem::take(&mut name));
+            }
+            // メソッドの曖昧さ回避 `name(1).`。名前は括弧の前で確定しているので読み飛ばす。
+            '(' => {
+                if !chars.by_ref().any(|c| c == ')') {
+                    return None;
+                }
+            }
+            // 型引数、マクロ、メタ、逆クォート。綴りを組み立てる規則を持っていない。
+            ')' | '[' | ']' | '!' | ':' | '`' => return None,
+            _ => name.push(c),
+        }
+    }
+    // 末尾の descriptor は聞かれた語そのもの。囲んでいるものだけを返す。
+    parts.pop()?;
+    (!parts.is_empty()).then(|| parts.join("::"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// commit_sha でコミットした状態のリポジトリを tempdir に作る。
+    /// 戻り値は (repo_root, commit_sha)。
+    fn init_repo_with_commit(files: &[(&str, &str)]) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        for (rel, content) in files {
+            let path = dir.path().join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, content).unwrap();
+        }
+
+        let mut index = repo.index().unwrap();
+        for (rel, _) in files {
+            index.add_path(Path::new(rel)).unwrap();
+        }
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("test", "test@example.com").unwrap();
+        let commit_id = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        (dir, commit_id.to_string())
+    }
+
+    #[test]
+    fn no_scip_and_no_hashes_file_is_none() {
+        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", "fn f() {}\n")]);
+        assert!(load(dir.path(), dir.path()).is_none());
+    }
+
+    #[test]
+    fn missing_scip_file_is_none() {
+        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", "fn f() {}\n")]);
+        let conductor_dir = dir.path().join(".conductor");
+        std::fs::create_dir_all(&conductor_dir).unwrap();
+        std::fs::write(conductor_dir.join("index.hashes"), "").unwrap();
+        assert!(load(dir.path(), dir.path()).is_none());
+    }
+
+    /// 引数を無視してひたすら sleep するだけの producer。生成が走っている最中を
+    /// 安定して作るために使う。
+    struct SlowProducer(PathBuf);
+
+    impl sheaf_core::Producer for SlowProducer {
+        fn command(&self, _out: &Path) -> Vec<String> {
+            vec![self.0.to_string_lossy().into_owned()]
+        }
+    }
+
+    #[test]
+    fn tick_regeneration_は生成が走っていても即座に返る() {
+        // 「バックグラウンドでやっている」ことの回帰ガード。索引の読み込みや
+        // 生成の待ち合わせがここに紛れ込むと、呼び出し元(イベントループ)を止める。
+        use std::time::{Duration, Instant};
+
+        // Rust のツリーとして認識されないと生成そのものが起きない (target を参照)。
+        let (dir, _commit) = init_repo_with_commit(&[
+            ("src/lib.rs", "fn f() {}\n"),
+            ("Cargo.toml", "[package]\nname = \"x\"\n"),
+        ]);
+        std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
+
+        let script = dir.path().join("slow-producer.sh");
+        std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).unwrap();
+
+        let mut semantic = SemanticIndex {
+            slot: Slot::default(),
+            regenerator: sheaf_core::Regenerator::new(std::sync::Arc::new(SlowProducer(script))),
+            ..Default::default()
+        };
+        semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
+
+        // 静穏時間が経つのを待って、生成が実際に走っている状態を作る。
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let outcome = semantic.tick_regeneration(dir.path(), dir.path());
+            assert!(
+                outcome.is_none(),
+                "30 秒 sleep する producer がもう終わっているはずがない"
+            );
+            if !semantic.is_pending() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "生成が始まらない");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let at = Instant::now();
+        let outcome = semantic.tick_regeneration(dir.path(), dir.path());
+        let elapsed = at.elapsed();
+
+        assert!(outcome.is_none());
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "tick が生成を待ってしまっている: {elapsed:?}"
+        );
+
+        semantic.abort_regeneration();
+    }
+
+    #[test]
+    fn cargo_toml_の無いツリーでは生成を起こさない() {
+        // Rust の索引しか作らないので、Go や TypeScript だけのリポジトリで
+        // rust-analyzer を起動しても意味が無い。しかも認識できない対象に対して
+        // 終了コード 0 で空の索引を書くことがあるので、起こさないこと自体が答え。
+        let (dir, _commit) = init_repo_with_commit(&[("main.go", "package main\n")]);
+        let mut semantic = SemanticIndex::default();
+        semantic.note_change(&dir.path().join("main.go"), dir.path());
+
+        assert!(
+            semantic.tick_regeneration(dir.path(), dir.path()).is_none(),
+            "Cargo.toml が無いのに生成が始まった"
+        );
+    }
+
+    #[test]
+    fn missing_hashes_file_is_none() {
+        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", "fn f() {}\n")]);
+        let conductor_dir = dir.path().join(".conductor");
+        std::fs::create_dir_all(&conductor_dir).unwrap();
+        // 本物の SCIP を置いても、index.hashes が無ければ None を返すこと。
+        // ここで壊れた索引を置くと、index.hashes を見ずに投入が失敗しても
+        // 結果として None になり、このテストが検査したいことを検査できなくなる。
+        write_index(&conductor_dir.join("index.scip"));
+        assert!(load(dir.path(), dir.path()).is_none());
+    }
+
+    const SOURCE: &str = "pub fn greet() {}\nfn caller() { greet(); }\n";
+    const SYMBOL: &str = "scip-test cargo demo 0.1.0 greet().";
+
+    /// 渡した各ファイルが SOURCE を説明する索引を書き出す。greet の定義が 0 行目、
+    /// 呼び出しが 1 行目。
+    ///
+    /// シンボルはファイルごとに変える。`Store` はシンボル文字列だけで定義を引く
+    /// (ファイルをまたいで同じ文字列を使うと別ファイルの定義まで拾ってしまう)ので、
+    /// 複数ファイルを 1 つの索引に入れるときは同じ SYMBOL を使い回せない。
+    fn write_index_for(path: &Path, rels: &[&str]) {
+        use protobuf::{EnumOrUnknown, Message, MessageField};
+        use scip::types::{Document, Index, Metadata, Occurrence, TextEncoding};
+
+        let documents = rels
+            .iter()
+            .map(|rel| {
+                let symbol = format!("{SYMBOL} {rel}");
+                let occurrence = |range: Vec<i32>, roles: i32| Occurrence {
+                    range,
+                    symbol: symbol.clone(),
+                    symbol_roles: roles,
+                    ..Default::default()
+                };
+                Document {
+                    relative_path: rel.to_string(),
+                    language: "rust".to_string(),
+                    occurrences: vec![
+                        occurrence(vec![0, 7, 12], 1),
+                        occurrence(vec![1, 14, 19], 0),
+                    ],
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let index = Index {
+            metadata: MessageField::some(Metadata {
+                text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
+                ..Default::default()
+            }),
+            documents,
+            ..Default::default()
+        };
+        std::fs::write(path, index.write_to_bytes().unwrap()).unwrap();
+    }
+
+    fn write_index(path: &Path) {
+        write_index_for(path, &["src/lib.rs"]);
+    }
+
+    /// `fn caller() { greet(); }` の greet の位置を、索引に向けて引く。
+    fn definition_of_greet_at(
+        store: &Store,
+        tree_root: &Path,
+        rel: &str,
+    ) -> sheaf_core::Definition {
+        let abs = tree_root.join(rel);
+        let source = std::fs::read_to_string(&abs).unwrap();
+        let mask = crate::symbol_index::CodeMask::compute(&source, rel);
+        let index = crate::symbol_index::SymbolIndex::new(tree_root.to_path_buf());
+        let bridge = Bridge {
+            abs_path: &abs,
+            source: &source,
+            mask: &mask,
+            index: &index,
+        };
+        sheaf_core::definition_at(store, &bridge, Path::new(rel), 1, 14)
+    }
+
+    fn definition_of_greet(store: &Store, tree_root: &Path) -> sheaf_core::Definition {
+        definition_of_greet_at(store, tree_root, "src/lib.rs")
+    }
+
+    /// `index.scip` と、`repo_root` に今ある `src/lib.rs` の内容から計算した
+    /// `index.hashes` を置く。「生成時点でディスクにあった内容」を申告する体で、
+    /// コミットされているかどうかは問わない。
+    fn place_index(repo_root: &Path) {
+        let conductor_dir = repo_root.join(".conductor");
+        std::fs::create_dir_all(&conductor_dir).unwrap();
+        write_index(&conductor_dir.join("index.scip"));
+        let content = std::fs::read(repo_root.join("src/lib.rs")).unwrap();
+        write_hashes(
+            &conductor_dir.join("index.hashes"),
+            &[("src/lib.rs", sheaf_core::blob_hash(&content))],
+        );
+    }
+
+    /// 出自の表を置く。書式は sheaf の持ち物なので `write_provenance` に書かせる。
+    /// 見出しには producer の素性が入り、読む側がそれを照合する。手で綴ると、
+    /// 読み書きのどちらかが変わったときに、表が黙って読まれなくなる。
+    fn write_hashes(path: &Path, entries: &[(&str, String)]) {
+        let expected = entries
+            .iter()
+            .map(|(rel, hash)| (PathBuf::from(rel), hash.clone()))
+            .collect();
+        sheaf_core::write_provenance(path, &PRODUCER, &expected).unwrap();
+    }
+
+    #[test]
+    fn indexed_tree_answers_with_exact() {
+        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+
+        let store = load(dir.path(), dir.path()).expect("索引と出自の申告が揃っている");
+        assert_eq!(
+            definition_of_greet(&store, dir.path()),
+            sheaf_core::Definition::Exact(vec![sheaf_core::Location {
+                path: PathBuf::from("src/lib.rs"),
+                line: 0,
+                col: 7,
+            }])
+        );
+    }
+
+    #[test]
+    fn linked_worktree_finds_the_index_at_the_main_worktree() {
+        // リンクされた worktree の Repository::workdir() はリンク先自身を指すので、
+        // repo_root にそれをそのまま渡すと、main 側にしか無い .conductor/ が
+        // 見つからない。commondir() を辿って main を解決できているかを確かめる。
+        let (dir, commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+
+        let wt_parent = tempfile::tempdir().unwrap();
+        let wt_path = wt_parent.path().join("linked-wt");
+        let status = std::process::Command::new("git")
+            // ユーザのグローバル/システム git 設定から隔離し、テスト対象と
+            // 無関係な理由で失敗しないようにする。
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .args([
+                "-C",
+                dir.path().to_str().unwrap(),
+                "worktree",
+                "add",
+                "-b",
+                "wt-branch",
+                wt_path.to_str().unwrap(),
+                &commit,
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git worktree add failed");
+
+        let store = load(&wt_path, &wt_path).expect("main 側の索引が見つかるはず");
+        assert!(matches!(
+            definition_of_greet(&store, &wt_path),
+            sheaf_core::Definition::Exact(_)
+        ));
+    }
+
+    #[test]
+    fn other_tree_with_the_same_content_still_answers() {
+        // worktree の形。内容が同じファイルは索引を使い回せる。これが成り立たないと
+        // worktree ごとに索引を作ることになり、この設計の意味が無くなる。
+        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(other.path().join("src")).unwrap();
+        std::fs::write(other.path().join("src/lib.rs"), SOURCE).unwrap();
+
+        let store = load(dir.path(), other.path()).expect("索引と出自の申告が揃っている");
+        assert!(matches!(
+            definition_of_greet(&store, other.path()),
+            sheaf_core::Definition::Exact(_)
+        ));
+    }
+
+    #[test]
+    fn other_tree_with_a_changed_file_does_not_answer() {
+        // 同じ worktree の形だが、そのファイルが編集されている。索引の言う 0 行目は
+        // もう greet の定義ではないので、確信度つきで答えてはいけない。
+        //
+        // 聞く行(1行目)は両方のツリーで同じにしてある。ここを動かすと、問い合わせ位置が
+        // 別の語にずれて「語が無い」で落ちるだけになり、鮮度を検査しないまま緑になる。
+        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(other.path().join("src")).unwrap();
+        std::fs::write(
+            other.path().join("src/lib.rs"),
+            "pub fn hello() {}\nfn caller() { greet(); }\n",
+        )
+        .unwrap();
+
+        let store = load(dir.path(), other.path()).expect("索引と出自の申告が揃っている");
+        assert!(!matches!(
+            definition_of_greet(&store, other.path()),
+            sheaf_core::Definition::Exact(_)
+        ));
+    }
+
+    /// 実際に置かれている索引で、git2 のツリー走査と投入が通ることを見る。
+    /// 合成した索引では、実索引の Document 数(345)やパスの綴りまでは検査できない。
+    #[test]
+    #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
+    fn real_index_loads_from_the_repository_it_was_generated_for() {
+        let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect(
+            "CONDUCTOR_TEST_REPO に .conductor/index.scip を置いたリポジトリのパスを渡すこと",
+        );
+        let repo_root = Path::new(&repo_root);
+
+        let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
+        println!(
+            "{} Document / ルート外 {} / 保持 {:.1}MB",
+            store.len(),
+            store.outside_root(),
+            store.retained_bytes() as f64 / 1048576.0,
+        );
+        assert!(!store.is_empty());
+        assert_eq!(store.outside_root(), 0, "ツリー外を指す Document がある");
+    }
+
+    /// 呼び出し口(`App::pick_line_identifier`)が選ばせうる位置を、リポジトリの
+    /// 実ファイルで全部叩く。索引が実際にどれだけ答えるかと、飛び先が
+    /// リポジトリ内の実在する位置であることを見る。
+    ///
+    /// 呼び出し口は viewer が持つタブ展開済みの行から出現インデックスを取るが、
+    /// 対象は Rust なのでタブを含む行が無く、ここでは元ソースから取っている。
+    #[test]
+    #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
+    fn real_index_answers_across_the_repository() {
+        use super::container_path;
+        use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
+
+        let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
+        let repo_root = Path::new(&repo_root);
+        let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
+
+        let dirty = std::process::Command::new("git")
+            .args([
+                "-C",
+                repo_root.to_str().unwrap(),
+                "diff",
+                "--name-only",
+                "HEAD",
+            ])
+            .output()
+            .unwrap();
+        let dirty: Vec<String> = String::from_utf8_lossy(&dirty.stdout)
+            .lines()
+            .map(String::from)
+            .collect();
+
+        let (mut asked, mut exact, mut examples) = (0usize, 0usize, Vec::new());
+        let (mut containers, mut named) = (0usize, Vec::new());
+        let mut slowest = std::time::Duration::ZERO;
+        for rel in [
+            "src/repo_path.rs",
+            "src/jump_history.rs",
+            "src/background.rs",
+        ] {
+            let abs = repo_root.join(rel);
+            let source = std::fs::read_to_string(&abs).unwrap();
+            let mask = crate::symbol_index::CodeMask::compute(&source, rel);
+            let index = crate::symbol_index::SymbolIndex::new(repo_root.to_path_buf());
+            let bridge = Bridge {
+                abs_path: &abs,
+                source: &source,
+                mask: &mask,
+                index: &index,
+            };
+            for (line, text) in source.lines().enumerate() {
+                for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {
+                    let Some((start, end)) = occurrence_span_in_source(text, k) else {
+                        continue;
+                    };
+                    if text.get(start..end) != Some(word.as_str()) {
+                        continue;
+                    }
+                    asked += 1;
+                    let at = std::time::Instant::now();
+                    let answer = sheaf_core::definition_at(
+                        &store,
+                        &bridge,
+                        Path::new(rel),
+                        line as u32,
+                        start as u32,
+                    );
+                    slowest = slowest.max(at.elapsed());
+                    if let sheaf_core::Definition::Exact(locations) = answer {
+                        exact += 1;
+                        if let Some(path) = sheaf_core::symbols_at(
+                            &store,
+                            &bridge,
+                            Path::new(rel),
+                            line as u32,
+                            start as u32,
+                        )
+                        .iter()
+                        .find_map(|id| container_path(id.as_str()))
+                        {
+                            containers += 1;
+                            if named.len() < 5 {
+                                named.push(format!("  {word} <- {path}"));
+                            }
+                        }
+                        for loc in &locations {
+                            // 飛び先は必ずリポジトリ内の実在する行でなければならない。
+                            let target = repo_root.join(&loc.path);
+                            let text = std::fs::read_to_string(&target).unwrap_or_else(|_| {
+                                panic!("飛び先が存在しない: {}", target.display())
+                            });
+                            assert!(
+                                (loc.line as usize) < text.lines().count(),
+                                "飛び先の行がファイルの外: {}:{}",
+                                loc.path.display(),
+                                loc.line
+                            );
+                        }
+                        if examples.len() < 5 {
+                            examples.push(format!("  {rel}:{line} {word} -> {:?}", locations[0]));
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("汚れているファイル {} 件", dirty.len());
+        println!("問い合わせ {asked} 箇所 / Exact {exact} / 最遅 1 クエリ {slowest:?}");
+        println!("所属の綴りが出た {containers} 箇所");
+        for n in &named {
+            println!("{n}");
+        }
+        for e in &examples {
+            println!("{e}");
+        }
+        assert!(exact > 0, "索引が1件も答えていない");
+        assert!(
+            slowest < std::time::Duration::from_millis(100),
+            "1 クエリが gd の予算(100ms)を超えた: {slowest:?}"
+        );
+    }
+
+    // 「向き先が違うツリーには答えない」の検査は sheaf 側 (`Slot`) にある。
+    // 判定そのものがあちらにあるので、こちらに写しを置くと片方だけが古くなる。
+
+    #[test]
+    fn 符号から所属の綴りを組み立てる() {
+        assert_eq!(
+            container_path("rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel."),
+            Some("app::types::App".to_string())
+        );
+        // 末尾の descriptor は聞かれた語そのもの。型そのものを聞いたらモジュールが残る。
+        assert_eq!(
+            container_path("rust-analyzer cargo conductor 0.1.0 app/types/App#"),
+            Some("app::types".to_string())
+        );
+        // メソッドの曖昧さ回避は名前の後ろに付くだけなので、綴りは組み立てられる。
+        assert_eq!(
+            container_path("rust-analyzer cargo conductor 0.1.0 app/App#set_focus()."),
+            Some("app::App".to_string())
+        );
+    }
+
+    #[test]
+    fn 綴りを組み立てられない符号では黙る() {
+        // メソッドの曖昧さ回避、型引数、逆クォート、ローカル。当てにいくと別物の名前になる。
+        for symbol in [
+            "rust-analyzer cargo conductor 0.1.0 app/impl#[Focus]next().",
+            "rust-analyzer cargo conductor 0.1.0 app/`weird name`#",
+            "local 3",
+        ] {
+            assert_eq!(container_path(symbol), None, "{symbol}");
+        }
+    }
+
+    #[test]
+    fn nested_paths_are_spelled_the_way_scip_spells_them() {
+        // 表の鍵は SCIP の relative_path と突き合わせられる。綴りがずれると
+        // 一致するファイルが 1 つも無くなり、全部が構文層に落ちる。誤答にはならないので
+        // 気づけず、テストも緑のままになる。深い階層で綴りを固定しておく。
+        let dir = tempfile::tempdir().unwrap();
+        let hashes_path = dir.path().join("index.hashes");
+        write_hashes(
+            &hashes_path,
+            &[
+                ("src/deep/nested/lib.rs", "0".repeat(40)),
+                ("top.rs", "1".repeat(40)),
+            ],
+        );
+
+        let hashes = sheaf_core::read_provenance(&hashes_path, &PRODUCER).unwrap();
+
+        let mut keys: Vec<_> = hashes.keys().map(|p| p.to_string_lossy()).collect();
+        keys.sort();
+        assert_eq!(keys, ["src/deep/nested/lib.rs", "top.rs"]);
+    }
+
+    /// `index.hashes` に書かれたハッシュが、そのまま(取り直さずに)期待ハッシュの表に
+    /// 入ることを確かめる。
+    #[test]
+    fn expected_hashes_uses_the_recorded_hash_as_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let hashes_path = dir.path().join("index.hashes");
+        let hash = sheaf_core::blob_hash(b"fn f() {}\n");
+        write_hashes(&hashes_path, &[("src/lib.rs", hash.clone())]);
+
+        let hashes = sheaf_core::read_provenance(&hashes_path, &PRODUCER).unwrap();
+        assert_eq!(hashes.get(Path::new("src/lib.rs")), Some(&hash));
+    }
+
+    /// `load` が実際に返す `Store` の鮮度判定を、4 通りのファイルで見る。生きたリポジトリの
+    /// Exact 率は汚れ具合で変わるため assert できないので、固定の一時リポジトリに
+    /// 1 ファイルずつ用意して個別に検査する。
+    #[test]
+    fn provenance_table_governs_freshness_per_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // (a) 生成後に触っていないファイル。
+        let untouched = "src/untouched.rs";
+        // (b) コミットされていない(未追跡の)ファイル。ここが今日永久に落ちている箇所。
+        let untracked = "src/untracked.rs";
+        // (c) 生成後に編集されたファイル。
+        let edited = "src/edited.rs";
+        // (d) 生成の前後でハッシュが食い違うファイル。index.hashes に載らない。
+        let racy = "src/racy.rs";
+
+        for rel in [untouched, untracked, edited, racy] {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, SOURCE).unwrap();
+        }
+
+        // untouched と edited はコミットしておく。untracked は git に足さないままにして、
+        // 出自の申告が git のトラッキング状態と無関係に効くことを確かめる。
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(untouched)).unwrap();
+        index.add_path(Path::new(edited)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("test", "test@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        let conductor_dir = dir.path().join(".conductor");
+        std::fs::create_dir_all(&conductor_dir).unwrap();
+        write_index_for(
+            &conductor_dir.join("index.scip"),
+            &[untouched, untracked, edited, racy],
+        );
+
+        // 生成手順を模す。racy は前後でハッシュが食い違った体にして書かない。
+        let hash = sheaf_core::blob_hash(SOURCE.as_bytes());
+        write_hashes(
+            &conductor_dir.join("index.hashes"),
+            &[
+                (untouched, hash.clone()),
+                (untracked, hash.clone()),
+                (edited, hash),
+            ],
+        );
+
+        // edited は生成が終わった後に編集される。呼び出し箇所(1行目)は変えていないので、
+        // クエリの単語自体は引き続き greet を指す。
+        std::fs::write(
+            dir.path().join(edited),
+            "pub fn hello() {}\nfn caller() { greet(); }\n",
+        )
+        .unwrap();
+
+        let store = load(dir.path(), dir.path()).expect("索引と出自の申告が揃っている");
+
+        assert!(matches!(
+            definition_of_greet_at(&store, dir.path(), untouched),
+            sheaf_core::Definition::Exact(_)
+        ));
+        assert!(
+            matches!(
+                definition_of_greet_at(&store, dir.path(), untracked),
+                sheaf_core::Definition::Exact(_)
+            ),
+            "未追跡でも index.hashes に載っていれば Exact になるはず(今日の欠陥の修正対象)"
+        );
+        assert!(!matches!(
+            definition_of_greet_at(&store, dir.path(), edited),
+            sheaf_core::Definition::Exact(_)
+        ));
+        assert!(!matches!(
+            definition_of_greet_at(&store, dir.path(), racy),
+            sheaf_core::Definition::Exact(_)
+        ));
+    }
+}

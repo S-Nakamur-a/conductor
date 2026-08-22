@@ -35,6 +35,12 @@ pub fn handle_cli_fast_path() -> Option<Result<()>> {
         // Claude Code の SessionStart フックとして呼ばれる。mcp-serve と同じく
         // 端末に触る前に処理する必要がある (stdin/stdout を占有するため)。
         "cc-hook" => Some(crate::cc_hook::run()),
+        // 索引を 1 本作って終わる。以後の作り直しは conductor 自身がやるので、
+        // 手で呼ぶのは初回だけ。
+        "index" => Some(
+            resolve_repo_path_from(std::env::args().nth(2))
+                .and_then(|root| crate::semantic_index::build_index(&root)),
+        ),
         _ => None,
     }
 }
@@ -44,12 +50,20 @@ fn print_help() {
         r#"conductor {}
 
 Usage: conductor [REPO_PATH]
+       conductor index [REPO_PATH]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
 
   REPO_PATH    Git repository to open (defaults to the current directory)
 
 Commands:
+  index        Build the SCIP code index once, into the main worktree's
+               .conductor/. Requires rust-analyzer on PATH and a Cargo.toml
+               at the repository root; other languages fall back to the
+               tree-sitter index. Takes ~13s on a repository this size.
+               conductor rebuilds the index itself once edits settle, so this
+               is only needed for the first one.
+
   mcp-serve    Serve the review database to Claude Code over stdio (MCP).
                Started automatically by conductor and by the Claude Code
                plugin; not usually run by hand.
@@ -80,7 +94,13 @@ Options:
 /// 無く、.conductor/ だけが残る)。discover は既にルートならそのまま返し、
 /// リンクされた worktree はメインではなく自分自身のルートに解決される。
 pub fn resolve_repo_path() -> Result<PathBuf> {
-    let arg_path = match std::env::args().nth(1) {
+    resolve_repo_path_from(std::env::args().nth(1))
+}
+
+/// [resolve_repo_path] の本体。引数の位置はサブコマンドの有無で変わる
+/// (`conductor <path>` は 1 番目、`conductor index <path>` は 2 番目)。
+pub fn resolve_repo_path_from(arg: Option<String>) -> Result<PathBuf> {
+    let arg_path = match arg {
         Some(path) => {
             let p = PathBuf::from(&path);
             if p.is_absolute() {

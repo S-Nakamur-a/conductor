@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/revidere", "crates/revidere-fixtures"]
+members = ["crates/revidere", "crates/revidere-fixtures", "crates/sheaf-core"]
 
 [package]
 name = "conductor"
@@ -44,6 +44,9 @@ tree-sitter-typescript = "0.23"
 # AI をどう呼ぶかは持っていないので、ai_caller を繋ぐのは conductor
 # (src/app/revidere.rs)。
 revidere = { path = "crates/revidere" }
+# SCIP 索引に確信度つきで答えさせる意味層。構文層 (tree-sitter) は sheaf が
+# trait でしか持たないので、その実装は conductor 側 (src/semantic_index/bridge.rs)。
+sheaf-core = { path = "crates/sheaf-core" }
 libc = "0.2"
 # 1つのインポートで済むファサード (keymap-core + keymap-config + keymap-seq)。
 # crossterm フィーチャーで KeyInput::try_from(KeyEvent) が使えるようになる。
@@ -70,3 +73,7 @@ opt-level = 2
 
 [dev-dependencies]
 tempfile = "3"
+# semantic_index の検査が SCIP 索引を組み立てるのに要る。sheaf-core は公開 API に
+# これらの型を出さないので、本体側の依存には入らない。
+protobuf = "3.7"
+scip = "0.9"

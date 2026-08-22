@@ -39,6 +39,7 @@ mod review_store;
 mod revidere;
 mod rust_test;
 mod search_result_tree;
+mod semantic_index;
 mod startup;
 mod symbol_index;
 mod term_caps;
@@ -113,6 +114,7 @@ fn main() -> Result<()> {
     startup::apply_auto_theme(&mut app);
 
     app.start_symbol_index_build();
+    app.start_semantic_index_load();
 
     let result = event_loop::run_loop(&mut terminal, &mut app);
 

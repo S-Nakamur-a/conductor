@@ -144,7 +144,7 @@ pub(super) fn handle_viewer_column_click(
                         &app.viewer_state.content.code_mask,
                     )
                 {
-                    handle_symbol_click_jump(app, &symbol, screen_offset);
+                    handle_symbol_click_jump(app, &symbol, line_1 - 1, content_col, screen_offset);
                 }
             }
         }
@@ -430,70 +430,25 @@ pub(in crate::event) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
 }
 
 /// viewer内のシンボルに対するCmd+Clickでの定義へのジャンプを処理する。
-fn handle_symbol_click_jump(app: &mut App, symbol: &str, source_screen_row: usize) {
-    if !app.code_nav.index.is_available() {
-        app.set_status(
-            "Symbol index not ready yet".to_string(),
-            StatusLevel::Warning,
-        );
-        return;
-    }
-
-    let defs = app.code_nav.index.find_definitions(symbol);
-
-    // 文脈に応じた動作: カーソルが定義箇所にある場合は代わりに参照を表示する。
-    if app.is_cursor_at_definition(symbol) {
-        // 既に定義箇所にいる — 参照を表示する。
-        let root = app.code_nav.index.root();
-        let refs = app.code_nav.index.find_references(symbol, &root);
-        if refs.is_empty() {
-            app.set_status(
-                format!("No references found for '{symbol}'"),
-                StatusLevel::Warning,
-            );
-        } else {
-            app.code_nav.references.active = true;
-            app.code_nav.references.symbol_name = symbol.to_string();
-            app.code_nav.references.results = refs;
-            app.code_nav.references.selected = 0;
-            app.code_nav.references.scroll = 0;
-        }
-        return;
-    }
-
-    match defs.len() {
-        0 => {
-            app.set_status(
-                format!("No definition found for '{symbol}'"),
-                StatusLevel::Warning,
-            );
-        }
-        1 => {
-            let file = defs[0].file_path.clone();
-            let line = defs[0].line;
-            app.jump_to_location(&file, line, source_screen_row);
-            app.set_status(
-                format!("Jumped to definition of '{symbol}' (Ctrl+O to go back)"),
-                StatusLevel::Success,
-            );
-        }
-        n => {
-            app.code_nav.references.active = true;
-            app.code_nav.references.symbol_name = format!("{symbol} (definitions)");
-            app.code_nav.references.results = defs
-                .iter()
-                .map(|d| crate::symbol_index::Reference {
-                    file_path: d.file_path.clone(),
-                    line: d.line,
-                    content: format!("{:?} {}", d.kind, d.name),
-                })
-                .collect();
-            app.code_nav.references.selected = 0;
-            app.code_nav.references.scroll = 0;
-            app.set_status(
-                format!("{n} definitions found for '{symbol}'"),
-                StatusLevel::Info,
-            );
-        }
-    }
+///
+/// キーボードの gd と同じ実装に合流させてある。クリックは行と桁を持っているので、
+/// 行内の語を選ばせる手順だけ飛ばして対象を直接渡す。
+fn handle_symbol_click_jump(
+    app: &mut App,
+    symbol: &str,
+    line_idx: usize,
+    rendered_col: usize,
+    source_screen_row: usize,
+) {
+    let occurrence = app
+        .occurrence_at_rendered_column(line_idx, rendered_col)
+        .unwrap_or(0);
+    crate::event::viewer::code_nav::run(
+        app,
+        crate::overlay::HintAction::Definition,
+        line_idx,
+        occurrence,
+        symbol,
+        source_screen_row,
+    );
 }
