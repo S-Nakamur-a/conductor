@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 pub use persist::{
     config_file_path, generate_default_config, persist_layout_proportions,
-    persist_ui_high_contrast, persist_ui_theme,
+    persist_ui_high_contrast, persist_ui_icons, persist_ui_theme,
 };
 // AppearanceSnapshot はまだクレート内のどこからも名前で参照されていない
 // (呼び出し側は型推論やフィールドアクセスを使っている)が、このモジュールの
@@ -35,8 +35,8 @@ pub use persist::{
 // crate::config::* 配下で re-export し続ける。
 #[allow(unused_imports)]
 pub use sections::{
-    ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, LayoutConfig, ReviewConfig,
-    TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
+    ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, IconSet, LayoutConfig,
+    ReviewConfig, TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
 };
 #[allow(unused_imports)]
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};

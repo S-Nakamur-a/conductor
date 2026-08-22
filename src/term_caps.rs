@@ -1,12 +1,17 @@
 //! 端末への問い合わせによるケイパビリティ検出。
 //!
-//! 今のところ用途は 1 つ、背景色 (OSC 11) の問い合わせで、明るい端末を検出
+//! 用途は 2 つある。1 つは背景色 (OSC 11) の問い合わせで、明るい端末を検出
 //! したらライトテーマへ自動で切り替えるために使う。この問い合わせは raw mode に
 //! 入ったあと、かつ crossterm のイベントループが stdin を読み始める前に実行
 //! しなければならない。そうしないと問い合わせへの応答が入力イベントとして
 //! 飲み込まれてしまう。
+//!
+//! もう 1 つはファイルアイコンの文字セットの判定で、こちらは端末に問い合わせず
+//! TERM_PROGRAM だけを見る ([detect_icon_set] にその理由がある)。
 
 use std::io::Write;
+
+use crate::config::IconSet;
 
 /// OSC 11 で端末に背景色を問い合わせ、相対輝度を返す
 /// (0.0 = 黒、1.0 = 白、線形スケール)。
@@ -125,6 +130,34 @@ pub fn auto_theme_for_background(lum: f64, configured: Option<&str>) -> Option<&
     }
 }
 
+/// 端末が Nerd Font のシンボルを同梱しているなら [IconSet::Nerd] を返す。
+///
+/// 判定できないときは None を返す — 呼び出し側はフォールバックのまま進み、
+/// 設定ファイルにも何も書かない。ユーザのフォントに何が入っているかは端末に
+/// 問い合わせられないので、同梱が公表されている端末だけを Some にしている。
+///
+/// tmux の中では TERM_PROGRAM が tmux に置き換わって内側の端末が見えないため、
+/// 同じく None を返す (背景色の問い合わせが tmux を諦めるのと同じ理由)。
+pub fn detect_icon_set() -> Option<IconSet> {
+    let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+    icon_set_for_term_program(&term_program)
+}
+
+/// TERM_PROGRAM の値から文字セットを選ぶ純粋関数。
+///
+/// Ghostty は 1.2.0 以降 symbols-only の Nerd Font を同梱してフォールバックに
+/// 使い、WezTerm は Symbols Nerd Font Mono をビルトインのフォールバックとして
+/// 持つ。どちらもユーザがどのフォントを設定していてもグリフが出る。
+/// kitty・Alacritty・iTerm2 は同梱しないのでユーザのフォント次第となり、
+/// ここでは判定しない。
+pub fn icon_set_for_term_program(term_program: &str) -> Option<IconSet> {
+    if term_program.eq_ignore_ascii_case("ghostty") || term_program.eq_ignore_ascii_case("WezTerm")
+    {
+        return Some(IconSet::Nerd);
+    }
+    None
+}
+
 /// ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST をパースして相対輝度を返す。
 ///
 /// 各チャネルは 16 進 4 桁の値 (0000-FFFF)。輝度の計算には一般的な慣習に合わせて
@@ -237,5 +270,38 @@ mod tests {
         let dark = super::parse_osc11_luminance("\x1b]11;rgb:1e/1e/2e\x1b\\");
         assert!(dark.is_some());
         assert!(dark.unwrap() < 0.2, "dark bg via 8-bit channels");
+    }
+
+    /// Nerd Font のシンボルを同梱している端末だけを Nerd と判定すること。
+    #[test]
+    fn icon_set_only_for_terminals_bundling_the_symbols() {
+        use crate::config::IconSet;
+        for name in ["ghostty", "Ghostty", "WezTerm", "wezterm"] {
+            assert_eq!(
+                super::icon_set_for_term_program(name),
+                Some(IconSet::Nerd),
+                "{name} は Nerd Font のシンボルを同梱している"
+            );
+        }
+    }
+
+    /// フォントを同梱しない端末と、tmux 越しで内側が見えない場合は判定しないこと。
+    /// ここで推測すると、Nerd Font を入れていないユーザの画面が tofu で埋まる。
+    #[test]
+    fn icon_set_declines_to_guess() {
+        for name in [
+            "kitty",
+            "Alacritty",
+            "iTerm.app",
+            "Apple_Terminal",
+            "tmux",
+            "",
+        ] {
+            assert_eq!(
+                super::icon_set_for_term_program(name),
+                None,
+                "{name} からはフォントの有無が判らない"
+            );
+        }
     }
 }

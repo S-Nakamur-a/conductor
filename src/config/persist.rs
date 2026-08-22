@@ -134,6 +134,11 @@ pub fn generate_default_config() -> String {
 #                                       # and switches to catppuccin-latte for that session (no file write).
 # high_contrast = false                 # boost the active theme's contrast (brighter/deeper text, borders,
 #                                       # accents). Works with any theme; toggle live from the command palette.
+# icons = "unicode"                     # glyph set for file icons: nerd | unicode
+#                                       # "nerd" needs a Nerd Font (or a terminal that bundles the symbols —
+#                                       # Ghostty and WezTerm do). Terminals cannot report which font is in
+#                                       # use, so on first run conductor picks a set from $TERM_PROGRAM and
+#                                       # writes the result here. Edit it freely; an explicit value always wins.
 
 [layout]
 # explorer_width_pct = 24               # explorer column width % (default: 24)
@@ -288,6 +293,28 @@ pub fn persist_ui_high_contrast(enabled: bool) -> Result<()> {
         generate_default_config()
     };
     let updated = upsert_section_kv(&contents, "ui", "high_contrast", &enabled.to_string());
+    write_atomic(&path, &updated)?;
+    Ok(())
+}
+
+/// 自動判定したアイコンの文字セットを [ui] セクションに書き込む。
+///
+/// テーマの自動判定 (こちらはセッション限りで永続化しない) と違って書き戻すのは、
+/// 判定材料が TERM_PROGRAM しかないためである。tmux 越しや未知の端末では判定が
+/// 効かず、同じ端末でも起動経路によって結果が変わりうる。一度ファイルに書いて
+/// しまえば以降は環境に左右されず、ユーザが直せば恒久的にそれが優先される。
+pub fn persist_ui_icons(set: crate::config::IconSet) -> Result<()> {
+    let path = config_file_path();
+    let contents = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        generate_default_config()
+    };
+    let value = match set {
+        crate::config::IconSet::Nerd => "\"nerd\"",
+        crate::config::IconSet::Unicode => "\"unicode\"",
+    };
+    let updated = upsert_section_kv(&contents, "ui", "icons", value);
     write_atomic(&path, &updated)?;
     Ok(())
 }

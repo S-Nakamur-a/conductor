@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::git_engine::status_map::GitStatusMap;
 
-use super::file_tree::{FileTreeEntry, file_icon};
+use super::file_tree::{FileTreeEntry, dir_icon, file_icon};
 use super::state::ViewerState;
 
 impl ViewerState {
@@ -473,7 +473,7 @@ impl ViewerState {
                 .to_string();
 
             let icon = if is_dir {
-                "\u{1f4c1}"
+                dir_icon(false)
             } else {
                 file_icon(&name)
             };

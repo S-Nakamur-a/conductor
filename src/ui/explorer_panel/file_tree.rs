@@ -85,6 +85,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         .into_block();
 
     let scroll = app.viewer_state.tree.tree_scroll;
+    let icon_set = app.config.ui.icon_set();
 
     let items: Vec<ListItem> = visible
         .iter()
@@ -96,17 +97,27 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
             let indent = indent_for_depth(entry.depth);
 
             // 名前部分と切り離すことで、hover 時の下線を名前自体に限定できる
-            // (list_row::decoration_style を参照)。
+            // (list_row::decoration_style を参照)。アイコンをさらに分けているのは
+            // 種別ごとの色を乗せるため。
+            //
+            // 矢印に小三角 (U+25B8/25BE) を使うのは、大きい方 (U+25B6/25BC) が
+            // Emoji プロパティを持ち端末によっては幅2で描かれるためである。
             let prefix = if entry.is_dir {
                 let arrow = if entry.is_expanded {
-                    "\u{25bc}" // ▼
+                    "\u{25be}" // ▾
                 } else {
-                    "\u{25b6}" // ▶
+                    "\u{25b8}" // ▸
                 };
-                format!("{indent}{arrow} {} ", entry.icon)
+                format!("{indent}{arrow} ")
             } else {
-                format!("{indent}  {} ", entry.icon)
+                format!("{indent}  ")
             };
+            let icon = if entry.is_dir {
+                crate::viewer::dir_icon(entry.is_expanded)
+            } else {
+                entry.icon
+            };
+            let glyph = format!("{} ", icon.glyph(icon_set));
 
             // 未追跡/無視エントリはファイルかディレクトリかに関わらず暗く表示し、
             // 下のディレクトリ/ファイルの色分けより優先する。ここで
@@ -133,11 +144,23 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 hover,
             );
 
+            let decoration = crate::ui::common::list_row::decoration_style(style);
+            // アイコンの色はファイル種別を表すが、選択行と減光対象の行では行の色に
+            // 譲る。選択の背景色の上で種別色が読める保証は11テーマぶんには無く、
+            // untracked/ignored の減光はアイコンにも及ぶべきだからである。
+            let icon_style = if vis_idx == selected_vis_idx
+                || !matches!(
+                    entry.git_state,
+                    crate::git_engine::status_map::TreeGitState::Tracked
+                ) {
+                decoration
+            } else {
+                decoration.fg(icon.role.color(theme))
+            };
+
             Some(ListItem::new(Line::from(vec![
-                Span::styled(
-                    prefix,
-                    crate::ui::common::list_row::decoration_style(style),
-                ),
+                Span::styled(prefix, decoration),
+                Span::styled(glyph, icon_style),
                 Span::styled(entry.name.clone(), style),
             ])))
         })

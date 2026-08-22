@@ -260,4 +260,31 @@ pub struct UiConfig {
     /// (light テーマでは)濃くする。組み込み・カスタムを問わず全テーマで
     /// 動作する。
     pub high_contrast: bool,
+    /// ファイルアイコンに使う文字セット。None のときは初回起動時に端末を見て
+    /// 決定し、その結果をこのファイルへ書き戻す (startup::apply_auto_icons)。
+    pub icons: Option<IconSet>,
+}
+
+impl UiConfig {
+    /// 実際に描画で使う文字セット。未設定のまま自動判定も効かなかった場合は
+    /// どの端末でも読めるフォールバックにする。
+    pub fn icon_set(&self) -> IconSet {
+        self.icons.unwrap_or(IconSet::Unicode)
+    }
+}
+
+/// ファイルアイコンに使う文字セット。
+///
+/// Nerd Font が入っているかどうかは端末に問い合わせられない (フォント情報を
+/// アプリへ渡す仕組みが無い)。字形を描いてカーソル位置を測る手も、幅を決めて
+/// いるのが端末の幅テーブルであってフォントではないため、字が出ていなくても
+/// 同じ結果になり判別できない。判るのは「その端末が Nerd Font のシンボルを
+/// 同梱しているか」だけで、そこから決めるのが term_caps::detect_icon_set。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IconSet {
+    /// Nerd Font の私用領域のグリフ。
+    Nerd,
+    /// Nerd Font を必要としない汎用の記号。
+    Unicode,
 }

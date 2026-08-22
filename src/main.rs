@@ -112,6 +112,9 @@ fn main() -> Result<()> {
     // raw mode に入ったあと・イベントループが stdin を読み始める前でなければ
     // ならない。端末への問い合わせの応答を自分で stdin から読むため。
     startup::apply_auto_theme(&mut app);
+    // こちらは端末に問い合わせないので順序の制約は無いが、外観の初期化として
+    // 隣に置いている。
+    startup::apply_auto_icons(&mut app);
 
     app.start_symbol_index_build();
     app.start_semantic_index_load();

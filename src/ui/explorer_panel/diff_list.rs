@@ -94,6 +94,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     use crate::diff_state::DiffListEntry;
 
     let theme = &app.theme;
+    let icon_set = app.config.ui.icon_set();
     let vs_explorer = &app.viewer_state.explorer;
     let on_diff = vs_explorer.explorer_focus_on_diff_list;
     let diff_focused = panel_focused && on_diff;
@@ -206,7 +207,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
 
                 let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
-                let prefix = format!("  {indent}{icon} ");
+                let prefix = format!("  {indent}");
+                let glyph = format!("{} ", icon.glyph(icon_set));
 
                 // ファイル名の色はファイルの git ステージ状態
                 // （untracked / unstaged / staged / committed）を表す。
@@ -235,8 +237,17 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
 
                 // GitHub 風のコメントバッジ: レビューコメントがあるファイルには
                 // 💬N を表示し、未解決のものが残っているかで色を変える。
+                // アイコンの色はファイル種別を表すが、選択行では行の色に譲る。
+                // 選択の背景色の上で種別色が読める保証が11テーマぶんには無いため。
+                let icon_style = if idx == vs_explorer.diff_list_selected {
+                    decoration
+                } else {
+                    counts_style(icon.role.color(theme))
+                };
+
                 let mut spans = vec![
                     Span::styled(prefix, decoration),
+                    Span::styled(glyph, icon_style),
                     Span::styled(filename.to_string(), style),
                     Span::styled(
                         format!(" +{}", file_diff.added_lines),
