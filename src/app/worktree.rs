@@ -284,7 +284,8 @@ impl App {
         if let Some((root, entries, git_status)) = self.bg.file_tree.poll() {
             // 3 つまとめて差し替える。根だけ先に新しくなると、まだ古いエントリ
             // を指しているクリックが別ブランチの同名ファイルを黙って開く。
-            self.viewer_state.replace_tree(root, entries, git_status);
+            self.viewer_state
+                .replace_tree(root, entries, git_status, self.config.viewer.tab_width);
             // このワークツリーのファイルツリーが揃ったので、以前見ていたファイルと
             // スクロール位置を復元する（一度だけ）。
             self.consume_pending_view_restore();

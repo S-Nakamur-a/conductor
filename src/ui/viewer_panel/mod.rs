@@ -9,7 +9,7 @@
 //! 描画する（Raw/Rendered ヘッダー切り替えも含む）、[media_view] は画像/動画、
 //! [comment_thread] はインラインのレビューコメントスレッドと新規コメント作成ボックス、
 //! [syntax] は syntax/diff の注釈ヘルパー、[span_utils] は汎用の Span 操作、
-//! [search_box] はパネル内検索入力。
+//! [search_box] はパネル内検索入力、[tab_row] は開いているファイルのタブ行。
 
 mod code_line;
 mod comment_thread;
@@ -22,6 +22,7 @@ mod search_box;
 mod span_utils;
 mod summary_view;
 mod syntax;
+mod tab_row;
 
 pub use file_view::render;
 pub(crate) use markdown_view::toggle_segments;

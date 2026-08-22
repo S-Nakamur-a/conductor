@@ -36,11 +36,19 @@ impl ViewerState {
         root: PathBuf,
         entries: Vec<FileTreeEntry>,
         git_status: GitStatusMap,
+        tab_width: usize,
     ) {
+        let root_changed = self.tree.root != root;
         self.tree.root = root;
         self.tree.file_tree = entries;
         self.tree.git_status = git_status;
         self.invalidate_visible_cache();
+        // 相対パスの指す先が変わるので、新しい根に無いファイルのタブは閉じる。
+        // 同じ根への再走査では触らない — 一時的に消えたファイルのタブまで
+        // 勝手に閉じてしまう。
+        if root_changed {
+            self.prune_tabs_to_root(tab_width);
+        }
     }
 
     /// worktree_path 以下のファイルシステムを歩いてファイルツリーを構築する。
@@ -58,12 +66,14 @@ impl ViewerState {
     /// 根を受け取る唯一の入口。ここで [ViewerState::root] を確定させ、以降
     /// ファイルを開く・子を読む・検索候補を集めるのはすべてこの根に対して行う。
     pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) -> bool {
+        let root_changed = self.tree.root != worktree_path;
         self.tree.root = worktree_path.to_path_buf();
+        if root_changed {
+            self.prune_tabs_to_root(tab_width);
+        }
 
         // クリアする前に状態を退避しておく。
         let prev_file = self.content.current_file.clone();
-        let prev_file_scroll = self.content.file_scroll;
-        let prev_h_scroll = self.content.h_scroll;
         let expanded_dirs: Vec<String> = self
             .tree
             .file_tree
@@ -127,55 +137,18 @@ impl ViewerState {
             idx += 1;
         }
 
-        // 以前開いていたファイルがまだ存在するなら再度開く。
-        if let Some(ref rel_path) = prev_file {
-            let full = worktree_path.join(rel_path);
-            if full.is_file() {
-                // ツリーのリフレッシュをまたいで viewer の「モード」を保持し、
-                // ファイルウォッチャーや定期リフレッシュが unified diff 表示や
-                // SUMMARY 疑似ファイルからユーザーを追い出さないようにする。
-                // 以下の open_file は exit_diff_mode を経由し両方をクリアしてしまうので、
-                // 全てのモードフラグをここで退避し、後で戻す必要がある。
-                let was_diff_mode = self.diff_view.diff_mode;
-                let prev_diff_lines = if was_diff_mode {
-                    std::mem::take(&mut self.diff_view.diff_view_lines)
-                } else {
-                    Vec::new()
-                };
-                let prev_diff_scroll = self.diff_view.diff_view_scroll;
-                let prev_diff_max_line_no = self.diff_view.diff_view_max_line_no;
-                let was_summary = self.show_summary;
-                let prev_summary_scroll = self.summary_scroll;
-                // open_file はレンダリング済み markdown のスクロールをリセットする
-                // （特定のドキュメントに紐づくインデックスだから）。これはユーザー自身が
-                // ファイルを開いた場合には正しい挙動だが、ここでは不適切 — ウォッチャーや
-                // 3秒ポーリングが、読んでいる途中の読者を文章の先頭に引き戻してしまう。
-                let prev_md_scroll = self.md_scroll;
-
-                self.open_file(rel_path, tab_width);
-                self.content.file_scroll = prev_file_scroll;
-                self.content.h_scroll = prev_h_scroll;
-                self.md_scroll = prev_md_scroll;
-
-                if was_diff_mode {
-                    self.diff_view.diff_mode = true;
-                    self.diff_view.diff_view_lines = prev_diff_lines;
-                    self.diff_view.diff_view_scroll = prev_diff_scroll;
-                    self.diff_view.diff_view_max_line_no = prev_diff_max_line_no;
-                }
-                // diff モードとは排他（enter_summary_view を参照）なので、
-                // 上のブロックと競合することはない。
-                if was_summary {
-                    self.show_summary = true;
-                    self.summary_scroll = prev_summary_scroll;
-                }
-
-                // tree_selected をファイルエントリに合わせて復元しようとする。
-                if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == *rel_path) {
-                    self.tree.tree_selected = idx;
-                }
+        // 以前開いていたファイルがまだ存在するなら、読んでいた位置と表示モード
+        // （unified diff / SUMMARY / markdown）を保ったまま読み直す。ウォッチャー
+        // や3秒ポーリングが読者を追い出さないようにするのが要点。
+        // ファイルが削除されていた場合は、自然に「ファイル未選択」のまま留まる。
+        if let Some(ref rel_path) = prev_file
+            && worktree_path.join(rel_path).is_file()
+        {
+            self.reload_active_file(rel_path, tab_width);
+            // tree_selected をファイルエントリに合わせて復元しようとする。
+            if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == *rel_path) {
+                self.tree.tree_selected = idx;
             }
-            // ファイルが削除されていた場合は、自然に「ファイル未選択」のまま留まる。
         }
 
         // 再構築をまたいでツリーのカーソルを固定する。ファイルが開いている場合は

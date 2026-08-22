@@ -97,6 +97,7 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
             ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),
             ("search", &[Action::SearchInFile]),
+            ("tab", &[Action::NextViewerTab, Action::CloseViewerTab]),
             ("thread", &[Action::ToggleInlineThread]),
             ("back", &[Action::ExitToExplorer]),
         ],

@@ -22,6 +22,7 @@ use super::media_view::render_media_view;
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
 use super::summary_view::render_summary_view;
+use super::tab_row;
 use super::syntax::ensure_diff_annotations_cached;
 
 /// 与えられた area に Viewer（ファイル内容）パネルを描画する。
@@ -31,6 +32,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     // 画面行マップをクリアし、diff/media モードで古いデータが使われないようにする。
     app.viewer_state.content.screen_row_map.clear();
+    app.viewer_state.tab_row_hits.clear();
 
     // Summary 疑似ファイル: ブランチの変更サマリーがパネル全体を占める。
     // 描画関数が &mut App を取れるよう、共有借用の前にチェックする。
@@ -164,17 +166,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 Style::default().fg(theme.muted),
             ),
         };
-        let placeholder = Paragraph::new(text).style(style).block(block);
+        let mut body = String::new();
+        if tab_row::is_visible(vs) {
+            // タブ行のぶんだけ本文を下げる。
+            body.push('\n');
+        }
+        body.push_str(&text);
+        let placeholder = Paragraph::new(body).style(style).block(block);
         frame.render_widget(placeholder, area);
+        render_tab_row(frame, area, app);
         return;
     }
 
     // ジャンプ履歴からパンくずリストを組み立てる。
     let breadcrumb_visible = build_breadcrumb_line(app);
 
-    // パンくずバーの高さぶんを見込む（表示されているときは1行）。
+    // パンくずバーとタブ行の高さぶんを見込む（表示されているときは各1行）。
     let breadcrumb_height: u16 = if breadcrumb_visible.is_some() { 1 } else { 0 };
-    let inner_height = (area.height.saturating_sub(2 + breadcrumb_height)) as usize;
+    let tab_row_height: u16 = if tab_row::is_visible(vs) { 1 } else { 0 };
+    let inner_height =
+        (area.height.saturating_sub(2 + breadcrumb_height + tab_row_height)) as usize;
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // diff 注釈は ViewerState にキャッシュされている（関数の入口で埋めた）。
@@ -254,6 +265,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // パンくずバーをブロック内の先頭行として先頭に追加する。
     let mut all_lines = Vec::new();
+    if tab_row_height > 0 {
+        // タブ行は別ウィジェットとして重ねるので、ここでは場所だけ空ける。
+        all_lines.push(Line::default());
+    }
     if let Some(crumb_line) = breadcrumb_visible {
         all_lines.push(crumb_line);
     }
@@ -276,8 +291,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             vertical: 1,
         });
         // トラックをパンくず行より下に置き、コード領域だけをカバーするようにする。
-        scrollbar_area.y += breadcrumb_height;
-        scrollbar_area.height = scrollbar_area.height.saturating_sub(breadcrumb_height);
+        let head_rows = breadcrumb_height + tab_row_height;
+        scrollbar_area.y += head_rows;
+        scrollbar_area.height = scrollbar_area.height.saturating_sub(head_rows);
         let mut scrollbar_state = ScrollbarState::new(visible_total.saturating_sub(inner_height))
             .position(vs.cursor_visible_index());
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -327,7 +343,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if breadcrumb_height > 0 {
         screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
     }
+    if tab_row_height > 0 {
+        screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
+    }
     app.viewer_state.content.screen_row_map = screen_row_map;
+
+    render_tab_row(frame, area, app);
+}
+
+/// ブロック内側の先頭行にタブ行を重ね、クリック領域を記録する。
+pub(super) fn render_tab_row(frame: &mut Frame, area: Rect, app: &mut App) {
+    if !tab_row::is_visible(&app.viewer_state) || area.width < 3 || area.height < 3 {
+        return;
+    }
+    let row = Rect::new(area.x + 1, area.y + 1, area.width - 2, 1);
+    app.viewer_state.tab_row_hits =
+        tab_row::render(frame, row, &app.theme, &app.viewer_state);
 }
 
 /// Viewer のタイトルを max_w **表示カラム数**に収める。左側から省略し

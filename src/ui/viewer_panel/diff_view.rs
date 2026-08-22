@@ -91,7 +91,13 @@ fn render_expandable_context(
 
 /// unified diff ビュー（GitHub 風）を描画する。
 pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
-    let inner_height = area.height.saturating_sub(2) as usize;
+    // タブ行は素のファイル表示と同じくブロック内側の先頭行に重ねる。
+    let tab_row_height: u16 = if super::tab_row::is_visible(&app.viewer_state) {
+        1
+    } else {
+        0
+    };
+    let inner_height = area.height.saturating_sub(2 + tab_row_height) as usize;
 
     // 表示行と、画面行→コメント/エントリのマップを組み立てる。インライン
     // コメントスレッドは、コメントされた各範囲の最終行の後に挿入される
@@ -227,12 +233,23 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         (lines, srm, entry_map)
     };
 
+    // タブ行は描画上も画面行マップ上も先頭を 1 行占める。マップがずれると
+    // クリックとホバーが 1 行ずれて着地する。
+    let mut screen_row_map = screen_row_map;
+    let mut screen_entry_map = screen_entry_map;
+    let mut lines = lines;
+    if tab_row_height > 0 {
+        lines.insert(0, Line::default());
+        screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
+        screen_entry_map.insert(0, None);
+    }
     app.viewer_state.content.screen_row_map = screen_row_map;
     app.viewer_state.diff_view.screen_entry_map = screen_entry_map;
 
     frame.render_widget(ratatui::widgets::Clear, area);
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
+    super::file_view::render_tab_row(frame, area, app);
 
     // 選択ヒントのオーバーレイを表示する。
     let theme = &app.theme;
@@ -241,10 +258,12 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
     // diff の行数がパネルに収まりきらない場合にスクロールバーを描画する —
     // トリガーも見た目も Explorer のファイルツリーと同じ。
     if vs.diff_view.diff_view_lines.len() > inner_height {
-        let scrollbar_area = area.inner(Margin {
+        let mut scrollbar_area = area.inner(Margin {
             horizontal: 0,
             vertical: 1,
         });
+        scrollbar_area.y += tab_row_height;
+        scrollbar_area.height = scrollbar_area.height.saturating_sub(tab_row_height);
         let mut scrollbar_state = ScrollbarState::new(
             vs.diff_view
                 .diff_view_lines

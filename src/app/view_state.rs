@@ -204,6 +204,50 @@ impl App {
         self.set_status(msg.to_string(), StatusLevel::Info);
     }
 
+    /// Viewer の次のタブへ切り替える。
+    pub fn next_viewer_tab(&mut self) {
+        let tab_width = self.config.viewer.tab_width;
+        self.viewer_state.next_tab(tab_width);
+        self.after_viewer_tab_change();
+    }
+
+    /// Viewer の前のタブへ切り替える。
+    pub fn prev_viewer_tab(&mut self) {
+        let tab_width = self.config.viewer.tab_width;
+        self.viewer_state.prev_tab(tab_width);
+        self.after_viewer_tab_change();
+    }
+
+    /// idx のタブをアクティブにする（タブ行のクリック）。
+    pub fn focus_viewer_tab(&mut self, idx: usize) {
+        let tab_width = self.config.viewer.tab_width;
+        self.viewer_state.focus_tab(idx, tab_width);
+        self.after_viewer_tab_change();
+    }
+
+    /// idx のタブを閉じる。省略時はアクティブなタブ。
+    pub fn close_viewer_tab(&mut self, idx: Option<usize>) {
+        let tab_width = self.config.viewer.tab_width;
+        let idx = idx.unwrap_or(self.viewer_state.active_tab);
+        let Some(closed) = self.viewer_state.tabs.get(idx).map(|t| t.path.clone()) else {
+            return;
+        };
+        self.viewer_state.close_tab(idx, tab_width);
+        self.after_viewer_tab_change();
+        self.set_status(format!("Closed {closed}"), StatusLevel::Info);
+    }
+
+    /// タブが切り替わったあと、ファイルに紐づくキャッシュを新しいファイルへ貼り直す。
+    /// ハイライトもコメントも「今開いているファイル」が前提なので、貼り直しを
+    /// 忘れると前のタブの色とコメントがそのまま残る。
+    fn after_viewer_tab_change(&mut self) {
+        self.rehighlight_viewer();
+        if let Some(path) = self.viewer_state.content.current_file.clone() {
+            self.review_state.build_file_comment_cache(&path);
+            self.viewer_state.reveal_file_in_tree(&path);
+        }
+    }
+
     /// ファイルパス（現在のworktreeからの相対パス）をViewerパネルで開く。
     ///
     /// 指定があれば line（1始まり）へジャンプする。Explorerツリー内で
