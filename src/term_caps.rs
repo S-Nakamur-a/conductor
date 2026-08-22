@@ -11,7 +11,7 @@
 
 use std::io::Write;
 
-use crate::config::IconSet;
+use crate::icons::IconSet;
 
 /// OSC 11 で端末に背景色を問い合わせ、相対輝度を返す
 /// (0.0 = 黒、1.0 = 白、線形スケール)。
@@ -275,7 +275,7 @@ mod tests {
     /// Nerd Font のシンボルを同梱している端末だけを Nerd と判定すること。
     #[test]
     fn icon_set_only_for_terminals_bundling_the_symbols() {
-        use crate::config::IconSet;
+        use crate::icons::IconSet;
         for name in ["ghostty", "Ghostty", "WezTerm", "wezterm"] {
             assert_eq!(
                 super::icon_set_for_term_program(name),

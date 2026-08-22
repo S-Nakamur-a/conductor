@@ -100,13 +100,13 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
             // (list_row::decoration_style を参照)。アイコンをさらに分けているのは
             // 種別ごとの色を乗せるため。
             let prefix = if entry.is_dir {
-                let arrow = crate::viewer::expand_arrow(entry.is_expanded, icon_set);
+                let arrow = crate::icons::expand_arrow(entry.is_expanded, icon_set);
                 format!("{indent}{arrow} ")
             } else {
                 format!("{indent}  ")
             };
             let icon = if entry.is_dir {
-                crate::viewer::dir_icon(entry.is_expanded)
+                crate::icons::dir_icon(entry.is_expanded)
             } else {
                 entry.icon
             };

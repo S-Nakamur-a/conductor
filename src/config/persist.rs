@@ -303,7 +303,7 @@ pub fn persist_ui_high_contrast(enabled: bool) -> Result<()> {
 /// 判定材料が TERM_PROGRAM しかないためである。tmux 越しや未知の端末では判定が
 /// 効かず、同じ端末でも起動経路によって結果が変わりうる。一度ファイルに書いて
 /// しまえば以降は環境に左右されず、ユーザが直せば恒久的にそれが優先される。
-pub fn persist_ui_icons(set: crate::config::IconSet) -> Result<()> {
+pub fn persist_ui_icons(set: crate::icons::IconSet) -> Result<()> {
     let path = config_file_path();
     let contents = if path.exists() {
         std::fs::read_to_string(&path)?
@@ -311,8 +311,8 @@ pub fn persist_ui_icons(set: crate::config::IconSet) -> Result<()> {
         generate_default_config()
     };
     let value = match set {
-        crate::config::IconSet::Nerd => "\"nerd\"",
-        crate::config::IconSet::Unicode => "\"unicode\"",
+        crate::icons::IconSet::Nerd => "\"nerd\"",
+        crate::icons::IconSet::Unicode => "\"unicode\"",
     };
     let updated = upsert_section_kv(&contents, "ui", "icons", value);
     write_atomic(&path, &updated)?;

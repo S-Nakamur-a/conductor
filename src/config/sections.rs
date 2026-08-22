@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::icons::IconSet;
+
 /// [general] セクション。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -273,18 +275,3 @@ impl UiConfig {
     }
 }
 
-/// ファイルアイコンに使う文字セット。
-///
-/// Nerd Font が入っているかどうかは端末に問い合わせられない (フォント情報を
-/// アプリへ渡す仕組みが無い)。字形を描いてカーソル位置を測る手も、幅を決めて
-/// いるのが端末の幅テーブルであってフォントではないため、字が出ていなくても
-/// 同じ結果になり判別できない。判るのは「その端末が Nerd Font のシンボルを
-/// 同梱しているか」だけで、そこから決めるのが term_caps::detect_icon_set。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum IconSet {
-    /// Nerd Font の私用領域のグリフ。
-    Nerd,
-    /// Nerd Font を必要としない汎用の記号。
-    Unicode,
-}

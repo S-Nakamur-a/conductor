@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::git_engine::status_map::GitStatusMap;
+use crate::icons::{dir_icon, file_icon};
 
-use super::file_tree::{FileTreeEntry, dir_icon, file_icon};
+use super::file_tree::FileTreeEntry;
 use super::state::ViewerState;
 
 impl ViewerState {

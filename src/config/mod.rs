@@ -35,7 +35,7 @@ pub use persist::{
 // crate::config::* 配下で re-export し続ける。
 #[allow(unused_imports)]
 pub use sections::{
-    ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, IconSet, LayoutConfig,
+    ApiConfig, CcusageConfig, DiffConfig, DiffView, GeneralConfig, LayoutConfig,
     ReviewConfig, TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
 };
 #[allow(unused_imports)]

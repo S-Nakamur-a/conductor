@@ -131,7 +131,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         let expanded = app.review_state.expanded_comments.contains(&comment.id);
                         format!(
                             "{} ",
-                            crate::viewer::expand_arrow(expanded, app.config.ui.icon_set())
+                            crate::icons::expand_arrow(expanded, app.config.ui.icon_set())
                         )
                     } else {
                         "  ".to_string()

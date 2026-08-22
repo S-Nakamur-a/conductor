@@ -22,6 +22,7 @@ mod git_engine;
 mod go_test;
 mod grep_search;
 mod hover_info;
+mod icons;
 mod instance_lock;
 mod jump_history;
 mod keymap;

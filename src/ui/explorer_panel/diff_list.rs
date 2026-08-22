@@ -3,7 +3,7 @@
 
 use crate::app::{App, Focus};
 use crate::revidere::ArtifactState;
-use crate::viewer::file_icon;
+use crate::icons::file_icon;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
@@ -176,8 +176,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 ..
             } => {
                 let indent = "  ".repeat(*depth);
-                let arrow = crate::viewer::expand_arrow(!*collapsed, icon_set);
-                let icon = crate::viewer::dir_icon(!*collapsed);
+                let arrow = crate::icons::expand_arrow(!*collapsed, icon_set);
+                let icon = crate::icons::dir_icon(!*collapsed);
                 // ディレクトリのアイコン色は行の色 (theme.info) と同じなので、
                 // ファイル行と違って span を分ける必要がない。
                 let prefix = format!("  {indent}{arrow} {} ", icon.glyph(icon_set));
