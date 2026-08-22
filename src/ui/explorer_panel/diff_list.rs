@@ -176,8 +176,13 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 ..
             } => {
                 let indent = "  ".repeat(*depth);
-                let arrow = if *collapsed { "\u{25b6}" } else { "\u{25bc}" };
-                let prefix = format!("  {indent}{arrow} \u{1f4c1} ");
+                // 上のファイルツリーと同じ字形。小三角なのは大きい方
+                // (U+25B6/25BC) が Emoji プロパティを持ち幅2で描かれうるため。
+                let arrow = if *collapsed { "\u{25b8}" } else { "\u{25be}" };
+                let icon = crate::viewer::dir_icon(!*collapsed);
+                // ディレクトリのアイコン色は行の色 (theme.info) と同じなので、
+                // ファイル行と違って span を分ける必要がない。
+                let prefix = format!("  {indent}{arrow} {} ", icon.glyph(icon_set));
 
                 let style = crate::ui::common::list_row::row_style(
                     theme,

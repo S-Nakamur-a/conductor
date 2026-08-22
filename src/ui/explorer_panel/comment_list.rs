@@ -129,9 +129,9 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                     // 展開インジケータ（返信がある場合のみ意味を持つ）。
                     let expand_indicator = if reply_count > 0 {
                         if app.review_state.expanded_comments.contains(&comment.id) {
-                            "\u{25bc} " // ▼
+                            "\u{25be} " // ▾
                         } else {
-                            "\u{25b6} " // ▶
+                            "\u{25b8} " // ▸
                         }
                     } else {
                         "  "
