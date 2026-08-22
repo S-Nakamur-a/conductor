@@ -99,15 +99,8 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
             // 名前部分と切り離すことで、hover 時の下線を名前自体に限定できる
             // (list_row::decoration_style を参照)。アイコンをさらに分けているのは
             // 種別ごとの色を乗せるため。
-            //
-            // 矢印に小三角 (U+25B8/25BE) を使うのは、大きい方 (U+25B6/25BC) が
-            // Emoji プロパティを持ち端末によっては幅2で描かれるためである。
             let prefix = if entry.is_dir {
-                let arrow = if entry.is_expanded {
-                    "\u{25be}" // ▾
-                } else {
-                    "\u{25b8}" // ▸
-                };
+                let arrow = crate::viewer::expand_arrow(entry.is_expanded, icon_set);
                 format!("{indent}{arrow} ")
             } else {
                 format!("{indent}  ")

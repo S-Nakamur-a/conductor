@@ -22,7 +22,7 @@ mod state;
 mod tabs;
 mod tree;
 
-pub use file_tree::{FileTreeEntry, dir_icon, file_icon};
+pub use file_tree::{FileTreeEntry, dir_icon, expand_arrow, file_icon};
 pub use fold::{FoldRule, FoldState};
 // revidere の 2 列ビューは開いているファイルではなく diff の行を直接ハイライト
 // するので、ViewerState を経由せず構文定義だけを引く。拡張子のエイリアス表を

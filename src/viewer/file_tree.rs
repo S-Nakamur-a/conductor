@@ -140,6 +140,21 @@ pub fn dir_icon(is_expanded: bool) -> FileIcon {
     if is_expanded { DIR_OPEN } else { DIR }
 }
 
+/// リストの展開/折りたたみマーカー。末尾のスペースは含まない。
+///
+/// Nerd Font 側は Codicons の chevron で、VSCode のエクスプローラが使っている
+/// ものと同じ字形である。フォールバックは幅1を保証できる範囲で chevron に
+/// 最も近い形を選んでいる — 塗りつぶしの三角 (U+25B6/25BC) は Emoji プロパティを
+/// 持ち、端末によっては幅2で描かれる。
+pub fn expand_arrow(is_expanded: bool, set: IconSet) -> &'static str {
+    match (set, is_expanded) {
+        (IconSet::Nerd, true) => "\u{eab4}",
+        (IconSet::Nerd, false) => "\u{eab6}",
+        (IconSet::Unicode, true) => "\u{2304}",
+        (IconSet::Unicode, false) => "\u{203a}",
+    }
+}
+
 /// ファイルの拡張子や名前からアイコンを返す。
 pub fn file_icon(name: &str) -> FileIcon {
     let lower = name.to_ascii_lowercase();
@@ -296,6 +311,22 @@ mod tests {
                 "U+{:04X} は私用領域にある",
                 ch as u32
             );
+        }
+    }
+
+    /// 展開マーカーもアイコンと同じく、どちらの文字セットでも幅1であること。
+    #[test]
+    fn expand_arrows_are_single_column() {
+        for set in [IconSet::Nerd, IconSet::Unicode] {
+            for expanded in [true, false] {
+                let arrow = expand_arrow(expanded, set);
+                assert_eq!(
+                    arrow.width(),
+                    1,
+                    "{arrow:?} ({set:?}) は {} カラム",
+                    arrow.width()
+                );
+            }
         }
     }
 

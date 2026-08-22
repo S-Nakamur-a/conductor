@@ -128,13 +128,13 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
 
                     // 展開インジケータ（返信がある場合のみ意味を持つ）。
                     let expand_indicator = if reply_count > 0 {
-                        if app.review_state.expanded_comments.contains(&comment.id) {
-                            "\u{25be} " // ▾
-                        } else {
-                            "\u{25b8} " // ▸
-                        }
+                        let expanded = app.review_state.expanded_comments.contains(&comment.id);
+                        format!(
+                            "{} ",
+                            crate::viewer::expand_arrow(expanded, app.config.ui.icon_set())
+                        )
                     } else {
-                        "  "
+                        "  ".to_string()
                     };
 
                     // 本文は最初の行のみ表示する。改行をスペースに潰すと
