@@ -60,6 +60,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             area,
             &app.review_state,
             &app.theme,
+            app.config.ui.icon_set(),
         );
     }
     if app.review_state.comment_detail_active {

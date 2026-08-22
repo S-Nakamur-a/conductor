@@ -59,16 +59,22 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         .position(|&i| i == tree_selected)
         .unwrap_or(0);
 
+    let icon_set = app.config.ui.icon_set();
+    let panel_icon = crate::icons::PANEL_EXPLORER.labeled(icon_set);
     let mut title = if visible.len() > inner_height {
-        format!(" Explorer ({}/{}) ", selected_vis_idx + 1, visible.len())
+        format!(
+            " {panel_icon}Explorer ({}/{}) ",
+            selected_vis_idx + 1,
+            visible.len()
+        )
     } else {
-        " Explorer ".to_string()
+        format!(" {panel_icon}Explorer ")
     };
     // レビューの成果物があるサイン。コメントバッジの「まだ開いていないものが
     // ある」というパターンを踏襲する。2 列ビューを開いている間はここが
     // 描かれないので、冗長になる心配は無い。
     if app.revidere.has_review() {
-        title.push_str("\u{1f9ed} ");
+        title.push_str(&crate::icons::PANEL_REVIEW.labeled(icon_set));
     }
 
     let theme = &app.theme;
@@ -85,7 +91,6 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         .into_block();
 
     let scroll = app.viewer_state.tree.tree_scroll;
-    let icon_set = app.config.ui.icon_set();
 
     let items: Vec<ListItem> = visible
         .iter()

@@ -12,23 +12,27 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-/// コメント種別の絵文字アイコン。
-pub fn kind_icon(kind: CommentKind) -> &'static str {
+/// コメント種別のアイコン。
+pub fn kind_icon(kind: CommentKind, set: crate::icons::IconSet) -> &'static str {
     match kind {
-        CommentKind::Suggest => "\u{1f4a1}", // 💡
-        CommentKind::Question => "\u{2753}", // ❓
+        CommentKind::Suggest => crate::icons::KIND_SUGGEST.get(set),
+        CommentKind::Question => crate::icons::KIND_QUESTION.get(set),
     }
 }
 
 /// コメント種別バッジのスタイル付き Span。
-pub fn kind_badge_span(kind: CommentKind, theme: &Theme) -> Span<'static> {
+pub fn kind_badge_span(
+    kind: CommentKind,
+    theme: &Theme,
+    set: crate::icons::IconSet,
+) -> Span<'static> {
     match kind {
         CommentKind::Suggest => Span::styled(
-            format!("{} ", kind_icon(kind)),
+            format!("{} ", kind_icon(kind, set)),
             Style::default().fg(theme.success),
         ),
         CommentKind::Question => Span::styled(
-            format!("{} ", kind_icon(kind)),
+            format!("{} ", kind_icon(kind, set)),
             Style::default().fg(theme.info),
         ),
     }
@@ -51,7 +55,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 CommentKind::Suggest => "Suggest",
                 CommentKind::Question => "Question",
             };
-            let icon = kind_icon(app.review_state.input_kind);
+            let icon = kind_icon(app.review_state.input_kind, app.config.ui.icon_set());
             format!(" {icon} New {kind_label} (Tab: toggle | Shift+Enter: newline) ")
         }
         ReviewInputMode::EditingComment => " Edit Comment (Shift+Enter: newline) ".to_string(),
@@ -190,6 +194,7 @@ pub fn render_template_picker_overlay(
     area: Rect,
     state: &ReviewState,
     theme: &Theme,
+    icon_set: crate::icons::IconSet,
 ) {
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
     let popup_height = 15_u16.min(area.height.saturating_sub(4));
@@ -220,7 +225,7 @@ pub fn render_template_picker_overlay(
     for (i, tmpl) in state.templates.iter().enumerate() {
         let is_selected = i == state.template_selected;
 
-        let badge = kind_badge_span(tmpl.kind, theme);
+        let badge = kind_badge_span(tmpl.kind, theme, icon_set);
 
         let max_body_len = (popup_width as usize).saturating_sub(tmpl.name.chars().count() + 10);
         let body_preview: String = tmpl.body.chars().take(max_body_len).collect();
@@ -271,7 +276,7 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         None => return,
     };
 
-    let icon = kind_icon(comment.kind);
+    let icon = kind_icon(comment.kind, app.config.ui.icon_set());
     let kind_label = match comment.kind {
         CommentKind::Suggest => "Suggest",
         CommentKind::Question => "Question",
@@ -357,7 +362,11 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
             Style::default().fg(theme.muted),
         )));
         lines.push(Line::from(Span::styled(
-            format!(" \u{1f4ac} Replies ({})", replies.len()), // 💬
+            format!(
+                " {} Replies ({})",
+                crate::icons::COMMENT.get(app.config.ui.icon_set()),
+                replies.len()
+            ),
             Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::raw("")));

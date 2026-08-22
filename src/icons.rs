@@ -280,14 +280,14 @@ pub const PANEL_CHANGED: Glyph = Glyph::nerd_only("\u{eae1}");
 /// レビューコメント一覧。
 pub const PANEL_COMMENTS: Glyph = Glyph::nerd_only("\u{eac7}");
 
-/// ファイル内容/diff のビューア。
-pub const PANEL_VIEWER: Glyph = Glyph::nerd_only("\u{ea7b}");
-
 /// PTY のパネル。
 pub const PANEL_TERMINAL: Glyph = Glyph::nerd_only("\u{ea85}");
 
 /// revidere のレビュービュー。
 pub const PANEL_REVIEW: Glyph = Glyph::nerd_only("\u{eab3}");
+
+/// 別プロセスに grab されていて操作できないパネル。
+pub const LOCKED: Glyph = Glyph::new("\u{ea75}", "\u{22a0}");
 
 // --- メニューバー -----------------------------------------------------------
 
@@ -333,9 +333,9 @@ mod tests {
             ("PANEL_EXPLORER", PANEL_EXPLORER),
             ("PANEL_CHANGED", PANEL_CHANGED),
             ("PANEL_COMMENTS", PANEL_COMMENTS),
-            ("PANEL_VIEWER", PANEL_VIEWER),
             ("PANEL_TERMINAL", PANEL_TERMINAL),
             ("PANEL_REVIEW", PANEL_REVIEW),
+            ("LOCKED", LOCKED),
             ("MENU_REPO", MENU_REPO),
             ("MENU_WORKTREE", MENU_WORKTREE),
             ("MENU_REVIEW", MENU_REVIEW),
