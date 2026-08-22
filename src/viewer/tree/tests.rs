@@ -100,7 +100,7 @@ fn tree_root_and_entries_switch_together() {
         &mut entries,
         &GitStatusMap::default(),
     );
-    vs.replace_tree(b.path().to_path_buf(), entries, GitStatusMap::default());
+    vs.replace_tree(b.path().to_path_buf(), entries, GitStatusMap::default(), 4);
 
     // 相対パスは同じでも、読むのは差し替え後の根の下のファイル。
     vs.open_file("shared.txt", 4);

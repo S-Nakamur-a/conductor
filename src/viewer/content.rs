@@ -15,11 +15,53 @@ impl ViewerState {
         self.content.cached_diff_annotations_file = None;
     }
 
-    /// ファイルを開いて（読み込んで）、その行を file_content に格納する。
+    /// ファイルを開く。既に開いているファイルなら新しいタブを増やさず、その
+    /// タブをアクティブにして読んでいた位置へ戻る。
     ///
     /// relative_path は表示中のツリーの根からの相対。絶対パスに戻すのは
     /// [ViewerState::root] だけで、呼び出し側は根を知らなくてよい。
     pub fn open_file(&mut self, relative_path: &str, tab_width: usize) {
+        if self.activate_tab_for(relative_path) {
+            self.load_active_file(relative_path, tab_width);
+        } else {
+            self.reload_active_file(relative_path, tab_width);
+        }
+    }
+
+    /// アクティブなタブの中身をディスクから読み直し、読んでいた位置と表示モード
+    /// （diff / SUMMARY / markdown のスクロール）を保つ。
+    ///
+    /// [ViewerState::load_active_file] は表示モードを畳んでしまうので、退避と
+    /// 復元をここ 1 か所に閉じ込めている。ファイルウォッチャーの再読み込みも
+    /// タブ切り替えも同じ要求なので、別々に書くと片方だけ直る。
+    pub(in crate::viewer) fn reload_active_file(&mut self, relative_path: &str, tab_width: usize) {
+        let file_scroll = self.content.file_scroll;
+        let h_scroll = self.content.h_scroll;
+        let md_scroll = self.md_scroll;
+        let diff = self
+            .diff_view
+            .diff_mode
+            .then(|| std::mem::take(&mut self.diff_view));
+        let summary = self.show_summary.then_some(self.summary_scroll);
+
+        self.load_active_file(relative_path, tab_width);
+
+        let last_line = self.content.file_content.len().saturating_sub(1);
+        self.content.file_scroll = file_scroll.min(last_line);
+        self.content.h_scroll = h_scroll;
+        self.md_scroll = md_scroll;
+        if let Some(diff) = diff {
+            self.diff_view = diff;
+        }
+        if let Some(scroll) = summary {
+            self.show_summary = true;
+            self.summary_scroll = scroll;
+        }
+    }
+
+    /// アクティブなタブの中身を読み込んで file_content に格納する。タブの
+    /// 出し入れには関知しない — 入口は [ViewerState::open_file] の側。
+    pub(in crate::viewer) fn load_active_file(&mut self, relative_path: &str, tab_width: usize) {
         self.exit_diff_mode();
         // md_rendered は意図的に維持する（このモードはファイルをまたいで持続する）。
         // スクロール位置は維持しない — 古いドキュメントを指す値になるため。

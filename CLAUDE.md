@@ -116,6 +116,13 @@ Status bar
 - The main area is a three-column accordion (`ui/layout.rs`): Explorer | Viewer |
   Terminal, with focus-driven widths. Any panel can be maximized (`Ctrl+Alt+Z`),
   and resized tmux-style with `Ctrl+Alt+Arrow` (ratios persist to config.toml).
+- The Viewer keeps several files open at once. `ViewerState` owns a `tabs` list
+  plus an active index; only the active tab's state lives in the flat
+  `content`/`search`/`diff_view`/`selection` fields, and the rest is stashed on
+  the tab it belongs to (`viewer/tabs.rs`) — one copy, never two. `open_file`
+  is the single entry point and reuses an existing tab. The strip is drawn on
+  the block's first inner row (`ui/viewer_panel/tab_row.rs`), the same slot the
+  breadcrumb uses, so `screen_row_map` gets a placeholder for it.
 - Explorer column is split 50/50 (file tree top, diff/comment list bottom).
 - The revidere review view (`Focus::Revidere`, `w`) is *not* part of the
   accordion: it takes `main_area` whole as two columns (reading order | diff)
@@ -134,7 +141,7 @@ Status bar
 | `menu/` | Menu bar model (`model.rs` — which command sits under which menu), interaction state (`state.rs`), and availability predicates for the greyed-out rows (`enabled.rs`) |
 | `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
 | `diff_state.rs` | Diff data model (file diffs, hunks, lines) using `similar` crate |
-| `viewer/` | File tree model (`file_tree.rs`) and file content buffer (`file_view.rs`) |
+| `viewer/` | File tree model (`file_tree.rs`), file content buffer (`file_view.rs`), and the open-file tabs (`tabs.rs`) |
 | `review_store.rs` | SQLite persistence (`.conductor/conductor.db`) for reviews, sessions, templates, history |
 | `pty_manager.rs` | PTY session management — spawn, read/write, resize; vt100 parser for rendering; output scanner for Claude Code |
 | `file_watcher.rs` | Filesystem change detection via `notify` crate, debounced at 500ms |

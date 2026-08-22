@@ -7,7 +7,8 @@
 //! 他のサブモジュールへ分割されている（[content] はファイルを開く処理、
 //! [tree] はファイルツリーの走査・展開、[search] はファイル内検索とファイル名検索、
 //! [diff_view] は unified diff 表示、[highlight] は syntect によるシンタックスハイライト、
-//! [selection] はガター行選択、[fold] はコードブロックの折りたたみ）。
+//! [selection] はガター行選択、[fold] はコードブロックの折りたたみ、
+//! [tabs] は複数ファイルを同時に開くためのタブ）。
 
 mod content;
 mod diff_view;
@@ -18,6 +19,7 @@ mod highlight;
 mod search;
 mod selection;
 mod state;
+mod tabs;
 mod tree;
 
 pub use file_tree::{FileTreeEntry, file_icon};

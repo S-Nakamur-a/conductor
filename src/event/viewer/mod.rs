@@ -36,6 +36,18 @@ fn enter_g_prefix_mode(app: &mut App) {
     app.code_nav.symbol_hint.input.clear();
 }
 
+/// タブの切り替え/クローズ。素のファイル表示・diff 表示・レンダリング済み
+/// markdown のどれでも同じ意味なので、3 つの分岐で共有する。
+fn handle_tab_action(app: &mut App, action: Option<Action>) -> bool {
+    match action {
+        Some(Action::NextViewerTab) => app.next_viewer_tab(),
+        Some(Action::PrevViewerTab) => app.prev_viewer_tab(),
+        Some(Action::CloseViewerTab) => app.close_viewer_tab(None),
+        _ => return false,
+    }
+    true
+}
+
 /// Viewer パネルがフォーカスされているときのキーを処理する。
 pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     // インライン返信の入力モード
@@ -158,6 +170,12 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // タブ操作も空バッファのガードより前へ。読めなかったファイルのタブが
+    // 閉じられなくなるのを避ける。
+    if handle_tab_action(app, action) {
+        return;
+    }
+
     if total == 0 {
         return;
     }
@@ -253,6 +271,10 @@ pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) {
     let total = app.viewer_state.md_total_lines;
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
+    if handle_tab_action(app, action) {
+        return;
+    }
+
     match action {
         Some(Action::ToggleMarkdownRender) => app.cmd_toggle_markdown_render(),
         Some(Action::ExitToExplorer) => app.set_focus(crate::app::Focus::Explorer),
@@ -333,6 +355,10 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
     // ファジーなファイル名ジャンプ — 最大化された diff ビューアからも到達できる。
     if let Some(Action::SearchFilename) = action {
         super::open_filename_search(app);
+        return;
+    }
+
+    if handle_tab_action(app, action) {
         return;
     }
 

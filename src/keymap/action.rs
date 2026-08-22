@@ -96,6 +96,12 @@ keymap_suite::actions! {
         /// Viewer に表示中のファイルを外部エディタ（$VISUAL / $EDITOR）で開く:
         /// TUI を一時停止し、エディタを実行してから、復帰して再読み込みする。
         OpenInEditor => "open_in_editor",
+        /// Viewer で開いているファイルのタブを次/前へ切り替える。閉じるのは
+        /// CloseViewerTab。ターミナルのセッションタブ (NextSession) とは
+        /// 別の列に並ぶ別物なので、アクションも分けている。
+        NextViewerTab => "next_viewer_tab",
+        PrevViewerTab => "prev_viewer_tab",
+        CloseViewerTab => "close_viewer_tab",
         /// Viewer 内の markdown ファイルを raw ソースとレンダリング済みの
         /// プロースの間で切り替える。他のファイル（および diff モード）では
         /// 何もしない。両方のビューが異なるのは markdown だけだから。
@@ -278,6 +284,9 @@ impl Action {
             Action::AddComment => "Add comment on line",
             Action::ExitToExplorer => "Back to Explorer",
             Action::OpenInEditor => "Open in $EDITOR",
+            Action::NextViewerTab => "Next file tab",
+            Action::PrevViewerTab => "Previous file tab",
+            Action::CloseViewerTab => "Close file tab",
             Action::ToggleMarkdownRender => "Toggle markdown Raw / Rendered",
             Action::LeaveTerminal => "Leave terminal (keep session)",
             Action::ScrollbackUp => "Scrollback up",

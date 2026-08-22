@@ -100,6 +100,20 @@ pub(super) fn handle_viewer_column_click(
 
     let inner_x = explorer_end + 1; // 左枠の内側
     let inner_y = main_area.y + 1; // 上枠の内側
+
+    // タブ行は内側の先頭行。判定は描画が記録したクリック領域だけで行う —
+    // タブ行を描かないモード（メディア/SUMMARY など）ではこれが空になるので、
+    // その行のクリックを飲み込まずに通常の処理へ落ちる。
+    if row == inner_y
+        && let Some(action) = crate::ui::tab_bar::hit_at(&app.viewer_state.tab_row_hits, col)
+    {
+        match action {
+            crate::ui::tab_bar::TabAction::Select(idx) => app.focus_viewer_tab(idx),
+            crate::ui::tab_bar::TabAction::Close(idx) => app.close_viewer_tab(Some(idx)),
+            _ => {}
+        }
+        return;
+    }
     let marker_w = crate::viewer::COMMENT_MARKER_W;
     let gutter_w = app.viewer_state.gutter_total_width();
     let on_gutter = col >= inner_x && col < inner_x + marker_w + gutter_w;

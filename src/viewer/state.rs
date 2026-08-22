@@ -320,6 +320,27 @@ impl Default for ClickTracker {
 
 // メイン構造体
 
+/// Viewer で開いているファイル 1 つ分のタブ。
+pub struct ViewerTab {
+    /// 表示中のツリーの根からの相対パス。
+    pub path: String,
+    /// 非アクティブな間の退避先。アクティブなタブの状態は ViewerState 側の
+    /// content/search/diff_view/selection が実体を持つので None になる。
+    /// 実体を 2 か所に置かないことで、どちらが本物かを迷う余地を無くしている。
+    pub(in crate::viewer) stashed: Option<TabView>,
+}
+
+/// タブ 1 つ分の、ファイルに紐づく状態のまとまり。
+#[derive(Default)]
+pub(in crate::viewer) struct TabView {
+    pub(in crate::viewer) content: FileContentState,
+    pub(in crate::viewer) search: SearchState,
+    pub(in crate::viewer) diff_view: DiffViewState,
+    pub(in crate::viewer) selection: LineSelection,
+    pub(in crate::viewer) md_scroll: usize,
+}
+
+
 /// Viewer の最も左にあるコメントマーカー列の幅（列数） — 💬/│ の
 /// スレッドマーカーが存在する場所で、行番号の左側にある。「+」バッジ列
 /// （行番号の右側）とは別に保つことで、既存スレッドの開閉と新規コメントの
@@ -340,7 +361,11 @@ pub const GUTTER_FIXED_W: usize = 6;
 pub struct ViewerState {
     /// ファイルツリー管理。
     pub tree: FileTreeState,
-    /// ファイル内容表示。
+    /// 開いているファイルのタブ。開いた順に並ぶ。
+    pub tabs: Vec<ViewerTab>,
+    /// tabs 内のアクティブなタブの位置。tabs が空のときは意味を持たない。
+    pub active_tab: usize,
+    /// ファイル内容表示 — アクティブなタブの実体。
     pub content: FileContentState,
     /// ファイル内検索。
     pub search: SearchState,
@@ -356,6 +381,9 @@ pub struct ViewerState {
     pub media_state: MediaState,
     /// ダブルクリック追跡。
     pub click: ClickTracker,
+    /// タブ行のクリック領域（render 中に更新される）。マウス処理が幅を
+    /// 計算し直さず、描画とまったく同じジオメトリを引けるようにする。
+    pub tab_row_hits: Vec<crate::ui::tab_bar::TabHit>,
     /// 'g' が押されて2つ目のキー（gd, gi, gr）待ちかどうか。
     pub pending_g_key: bool,
     /// 'z' が押されて2つ目のキー（za, zc, zo, zR, zM）待ちかどうか。

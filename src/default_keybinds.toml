@@ -264,6 +264,12 @@
 # rendered prose. Bound in this layer only — the rendered view resolves its keys
 # against it too, so one binding covers both directions.
 "m" = "toggle_markdown_render"
+# File tabs — several files stay open at once in the Viewer; t/T walk them and
+# x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
+# same three work in diff mode so the strip behaves identically in both.
+"t" = "next_viewer_tab"
+"T" = "prev_viewer_tab"
+"x" = "close_viewer_tab"
 # 'z' opens the Vim fold chord: za toggles, zc closes, zo opens, zR opens every
 # fold, zM closes every fold. Only the prefix is bound — the second key is read
 # by the viewer handler, exactly like the g-prefixed jumps (gd/gi/gr).
@@ -312,6 +318,12 @@
 "K" = "prev_changed_file"
 "c" = "add_comment"
 "v" = "toggle_viewed"
+# File tabs — several files stay open at once in the Viewer; t/T walk them and
+# x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
+# same three work in diff mode so the strip behaves identically in both.
+"t" = "next_viewer_tab"
+"T" = "prev_viewer_tab"
+"x" = "close_viewer_tab"
 # 'e' for "edit": open the file under review in $VISUAL/$EDITOR for a quick
 # manual fix without leaving the diff workflow (reloads on return).
 "e" = "open_in_editor"
