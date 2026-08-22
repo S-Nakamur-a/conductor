@@ -7,7 +7,7 @@
 //! 開閉と返信入力）、code_nav（g プレフィックスで発火する定義へ移動・
 //! 実装へ移動・参照検索）。
 
-mod code_nav;
+pub(in crate::event) mod code_nav;
 mod diff_nav;
 mod inline_reply;
 
@@ -18,7 +18,10 @@ use crate::keymap::{Action, KeyContext};
 
 use super::explorer::open_viewer_comment_detail;
 
-use code_nav::{handle_find_references, handle_go_to_definition, handle_go_to_implementation};
+use code_nav::{
+    handle_find_references, handle_go_to_definition, handle_go_to_implementation,
+    handle_show_hover_info,
+};
 use diff_nav::{next_change_block, next_comment_line, prev_change_block, prev_comment_line};
 use inline_reply::{handle_inline_reply_input, start_inline_reply, toggle_inline_thread};
 
@@ -86,7 +89,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             // すでに content.file_scroll を diff カーソルへ同期している。
             KeyCode::Char('K') | KeyCode::Char('h') => {
                 app.code_nav.symbol_hint = Default::default();
-                app.show_hover_info();
+                handle_show_hover_info(app);
                 return;
             }
             KeyCode::Char('g') => {
@@ -209,7 +212,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             app.jump_forward();
         }
         Some(Action::ShowHoverInfo) => {
-            app.show_hover_info();
+            handle_show_hover_info(app);
         }
         Some(Action::ToggleMarkdownRender) => {
             app.cmd_toggle_markdown_render();
@@ -477,7 +480,7 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         }
         Some(Action::ShowHoverInfo) => {
             app.viewer_state.sync_file_scroll_to_diff_scroll();
-            app.show_hover_info();
+            handle_show_hover_info(app);
         }
         _ => {}
     }

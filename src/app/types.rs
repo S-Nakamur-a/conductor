@@ -245,6 +245,9 @@ pub struct BackgroundOps {
     pub branch_details: BackgroundOp<git_engine::BranchDetails>,
     /// バックグラウンドのシンボルインデックス構築。
     pub symbol_index: BackgroundOp<Result<usize, String>>,
+    /// バックグラウンドの意味索引ロード。要求した時点の向き先を添えて返すのは、
+    /// 読んでいる間に worktree が動いたかを受け取る側が判定できるようにするため。
+    pub semantic_index: BackgroundOp<(std::path::PathBuf, Option<sheaf_core::Store>)>,
     /// リフロー式トランスクリプトビュー用のバックグラウンドセッションログ解析。
     pub reflow_load: BackgroundOp<Vec<crate::claude_log::LogEntry>>,
 }

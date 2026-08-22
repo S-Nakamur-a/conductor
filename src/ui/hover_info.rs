@@ -45,39 +45,54 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     // info への不変借用を先に終わらせてから app.code_nav.hover_info に
     // ヒットテスト用の Rect を書き戻せるよう、所有データとして取り出しておく。
-    let (symbol_name, signature_lines, doc_lines, loc, ref_count, ref_count_capped) = {
+    let (symbol_name, mut body, def_label, ref_count, ref_count_capped) = {
         let info = app.code_nav.hover_info.info.as_ref().unwrap();
-        let mut loc = format!("{}  {}:{}", info.kind, info.file_path, info.line);
+        let mut def_label = format!("▸ {}:{}", info.file_path, info.line);
+        if !info.kind.is_empty() {
+            def_label.push_str(&format!("  {}", info.kind));
+        }
         if info.def_count > 1 {
-            loc.push_str(&format!("  (+{} defs)", info.def_count - 1));
+            def_label.push_str(&format!("  (+{} defs)", info.def_count - 1));
+        }
+        def_label.push_str(" — click to jump");
+
+        // 本文の行: シグネチャ、doc。場所と参照はクリックできるフッターに置く。
+        let mut body: Vec<Line> = Vec::new();
+        if let Some(container) = &info.container {
+            body.push(Line::from(Span::styled(
+                container.clone(),
+                Style::default()
+                    .fg(theme.info)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
+        // 聞かれた位置がその定義そのものなら、シグネチャは画面に見えているものの写し。
+        if !info.on_definition_line {
+            body.extend(highlighted_signature(app, info));
+        }
+        if !info.doc_lines.is_empty() {
+            if !body.is_empty() {
+                body.push(Line::from(""));
+            }
+            for doc in &info.doc_lines {
+                body.push(Line::from(Span::styled(
+                    doc.clone(),
+                    Style::default().fg(theme.fg),
+                )));
+            }
         }
         (
             info.symbol_name.clone(),
-            info.signature_lines.clone(),
-            info.doc_lines.clone(),
-            loc,
+            body,
+            def_label,
             info.ref_count,
             info.ref_count_capped,
         )
     };
     let refs_present = ref_count > 0;
-
-    // 本文の行: シグネチャ、doc、そして場所のフッター。
-    let mut body: Vec<Line> = Vec::new();
-    for sig in &signature_lines {
-        body.push(Line::from(Span::styled(
-            sig.clone(),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-        )));
-    }
-    if !doc_lines.is_empty() {
+    if !body.is_empty() {
         body.push(Line::from(""));
-        for doc in &doc_lines {
-            body.push(Line::from(Span::styled(doc.clone(), Style::default().fg(theme.fg))));
-        }
     }
-    body.push(Line::from(""));
-    body.push(Line::from(Span::styled(loc, Style::default().fg(theme.muted))));
 
     // クリック可能な refs 行（専用に確保した最下行に描画する）。+ は件数が
     // 上限で打ち切られたことを示す印で、ありふれた名前の場合に、数え終えて
@@ -88,11 +103,11 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
         format!("▸ {ref_count} refs — click to list")
     };
 
-    // 幅は本文 + refs 行のうち最も広いものに合わせる。
+    // 幅は本文 + フッター 2 行のうち最も広いものに合わせる。
     let content_w = body
         .iter()
         .map(|l| l.width())
-        .chain(std::iter::once(refs_label.chars().count()))
+        .chain([refs_label.chars().count(), def_label.chars().count()])
         .max()
         .unwrap_or(20)
         .clamp(20, 100) as u16;
@@ -105,7 +120,8 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
             if w == 0 { 1 } else { w.div_ceil(inner_w).max(1) }
         })
         .sum();
-    let inner_h = (body_h + if refs_present { 1 } else { 0 }).max(1);
+    let footer_h = 1 + usize::from(refs_present);
+    let inner_h = (body_h + footer_h).max(1);
     let popup_height = (inner_h as u16 + 2).min(host.height.saturating_sub(2)).max(3);
 
     let popup_area = place(host, app.code_nav.hover_info.anchor_row, app.code_nav.hover_info.anchor_col, popup_width, popup_height);
@@ -118,25 +134,83 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let refs_hit = if refs_present && inner.height >= 1 {
-        let body_area = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
-        let refs_row = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+    // フッターは下から順に: 参照 (あれば)、定義位置。どちらもクリックできる。
+    let footer_h = (footer_h as u16).min(inner.height);
+    let body_h = inner.height.saturating_sub(footer_h);
+    if body_h > 0 {
+        let body_area = Rect::new(inner.x, inner.y, inner.width, body_h);
         frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), body_area);
+    }
+    let row = |offset: u16| Rect::new(inner.x, inner.y + body_h + offset, inner.width, 1);
+
+    let mut def_hit = Rect::default();
+    let mut refs_hit = Rect::default();
+    if footer_h >= 1 {
+        def_hit = row(0);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                def_label,
+                Style::default().fg(theme.fg),
+            ))),
+            def_hit,
+        );
+    }
+    if footer_h >= 2 {
+        refs_hit = row(1);
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 refs_label,
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             ))),
-            refs_row,
+            refs_hit,
         );
-        refs_row
-    } else {
-        frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-        Rect::default()
-    };
+    }
 
     app.code_nav.hover_info.info_rect = popup_area;
     app.code_nav.hover_info.refs_hit = refs_hit;
+    app.code_nav.hover_info.def_hit = def_hit;
+}
+
+/// シグネチャの各行を、定義があるファイルの文法で色付けする。
+///
+/// シグネチャは宣言の断片なので、パーサの状態はファイル先頭からの続きにならない。
+/// 全部を単色にするよりは読める、という割り切りは revidere のハンク表示と同じ。
+fn highlighted_signature(app: &App, info: &crate::hover_info::HoverInfo) -> Vec<Line<'static>> {
+    use syntect::easy::HighlightLines;
+
+    let syntax_set = &app.highlight.syntax_set;
+    let syntax = crate::viewer::find_syntax(
+        syntax_set,
+        Some(info.file_path.as_str()),
+        info.signature_lines.first().map(String::as_str),
+    );
+    let mut h = HighlightLines::new(syntax, &app.highlight.theme);
+
+    info.signature_lines
+        .iter()
+        .map(|text| {
+            let with_nl = format!("{text}\n");
+            let Ok(ranges) = h.highlight_line(&with_nl, syntax_set) else {
+                return Line::from(Span::styled(
+                    text.clone(),
+                    Style::default().fg(app.theme.accent),
+                ));
+            };
+            Line::from(
+                ranges
+                    .into_iter()
+                    .map(|(style, piece)| {
+                        Span::styled(
+                            piece.trim_end_matches('\n').to_string(),
+                            syntect_tui::translate_style(style)
+                                .unwrap_or_default()
+                                .bg(ratatui::style::Color::Reset),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
 }
 
 /// 参照一覧（レベル1） — 基本ポップアップの下に配置する（余白がなければ上）。

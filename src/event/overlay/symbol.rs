@@ -5,13 +5,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::App;
+use crate::overlay::RefRow;
 
 use super::overlay_list_nav;
 
 // 参照オーバーレイ
 
 pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
-    let count = app.code_nav.references.results.len();
+    let count = app.code_nav.references.rows().len();
     if count == 0 {
         if key.code == KeyCode::Esc {
             app.code_nav.references.active = false;
@@ -29,17 +30,49 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // 選択行がファイルの見出しか、その中の 1 件か。
+    let selected = app.code_nav.references.selected;
+    let picked = match app.code_nav.references.rows().get(selected) {
+        Some(RefRow::File {
+            path, collapsed, ..
+        }) => Ok((path.to_string(), *collapsed)),
+        Some(RefRow::Hit { index }) => Err(*index),
+        None => return,
+    };
+
     match key.code {
         KeyCode::Esc => {
             app.code_nav.references.active = false;
         }
-        KeyCode::Enter => {
-            let selected = app.code_nav.references.selected;
-            if let Some(reference) = app.code_nav.references.results.get(selected).cloned() {
-                app.code_nav.references.active = false;
-                app.jump_to_location(&reference.file_path, reference.line, 0);
+        KeyCode::Char('h') | KeyCode::Char('l') => {
+            let fold = key.code == KeyCode::Char('h');
+            match &picked {
+                // 見出しの上では h/l が開閉。既にその状態なら何もしない。
+                Ok((path, collapsed)) if *collapsed == fold => {
+                    app.code_nav.references.toggle(path);
+                    adjust_references_scroll(app);
+                }
+                // 1 件の上での h は、そのファイルの見出しへ上がる。
+                Err(index) if fold => {
+                    let path = app.code_nav.references.results[*index].file_path.clone();
+                    app.code_nav.references.select_file(&path);
+                    adjust_references_scroll(app);
+                }
+                _ => {}
             }
         }
+        KeyCode::Enter => match picked {
+            Ok((path, _)) => {
+                app.code_nav.references.toggle(&path);
+                adjust_references_scroll(app);
+            }
+            Err(index) => {
+                if let Some(reference) = app.code_nav.references.results.get(index).cloned() {
+                    app.code_nav.references.active = false;
+                    app.jump_to_location(&reference.file_path, reference.line, 0);
+                }
+            }
+        },
         _ => {}
     }
 }
@@ -76,11 +109,33 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
                 .cloned();
             // ヒント表示を消す。
             let scroll = app.viewer_state.content.file_scroll;
+            let pending = app.code_nav.symbol_hint.pending;
             app.code_nav.symbol_hint = Default::default();
-            if let Some(hint) = matched {
-                // このシンボル向けのアクションオーバーレイを組み立てる。
-                let screen_row = hint.line.saturating_sub(1).saturating_sub(scroll);
-                open_symbol_action_overlay(app, &hint.symbol_name, screen_row);
+            let Some(hint) = matched else {
+                return;
+            };
+            match pending {
+                // gd / gr が行内の語を選ばせた。索引は名前ではなく位置で引くので、
+                // ラベルの桁から出現番号に戻してから渡す。
+                Some(action) => {
+                    let line_idx = hint.line.saturating_sub(1);
+                    if let Some(occurrence) =
+                        app.occurrence_at_rendered_column(line_idx, hint.start_col)
+                    {
+                        crate::event::viewer::code_nav::run(
+                            app,
+                            action,
+                            line_idx,
+                            occurrence,
+                            &hint.symbol_name,
+                            0,
+                        );
+                    }
+                }
+                None => {
+                    let screen_row = hint.line.saturating_sub(1).saturating_sub(scroll);
+                    open_symbol_action_overlay(app, &hint.symbol_name, screen_row);
+                }
             }
         }
         _ => {
@@ -236,18 +291,16 @@ fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
             );
         }
         _ => {
-            app.code_nav.references.active = true;
-            app.code_nav.references.symbol_name = format!("{symbol} (definitions)");
-            app.code_nav.references.results = defs
-                .iter()
-                .map(|d| crate::symbol_index::Reference {
-                    file_path: d.file_path.clone(),
-                    line: d.line,
-                    content: format!("{:?} {}", d.kind, d.name),
-                })
-                .collect();
-            app.code_nav.references.selected = 0;
-            app.code_nav.references.scroll = 0;
+            app.code_nav.references.show(
+                format!("{symbol} (definitions)"),
+                defs.iter()
+                    .map(|d| crate::symbol_index::Reference {
+                        file_path: d.file_path.clone(),
+                        line: d.line,
+                        content: format!("{:?} {}", d.kind, d.name),
+                    })
+                    .collect(),
+            );
         }
     }
 }
@@ -269,18 +322,17 @@ fn jump_to_symbol_implementation(app: &mut App, symbol: &str, screen_row: usize)
             );
         }
         _ => {
-            app.code_nav.references.active = true;
-            app.code_nav.references.symbol_name = format!("{symbol} (implementations)");
-            app.code_nav.references.results = impls
-                .iter()
-                .map(|d| crate::symbol_index::Reference {
-                    file_path: d.file_path.clone(),
-                    line: d.line,
-                    content: format!("{:?} {}", d.kind, d.name),
-                })
-                .collect();
-            app.code_nav.references.selected = 0;
-            app.code_nav.references.scroll = 0;
+            app.code_nav.references.show(
+                format!("{symbol} (implementations)"),
+                impls
+                    .iter()
+                    .map(|d| crate::symbol_index::Reference {
+                        file_path: d.file_path.clone(),
+                        line: d.line,
+                        content: format!("{:?} {}", d.kind, d.name),
+                    })
+                    .collect(),
+            );
         }
     }
 }
@@ -295,9 +347,5 @@ fn jump_to_symbol_references(app: &mut App, symbol: &str) {
         );
         return;
     }
-    app.code_nav.references.active = true;
-    app.code_nav.references.symbol_name = symbol.to_string();
-    app.code_nav.references.results = refs;
-    app.code_nav.references.selected = 0;
-    app.code_nav.references.scroll = 0;
+    app.code_nav.references.show(symbol.to_string(), refs);
 }

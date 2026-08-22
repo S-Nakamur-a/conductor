@@ -39,16 +39,33 @@ pub struct HoverInfo {
     /// 上限で数えるのを止めたか。true のとき実際の総数は ref_count ちょうどではなく
     /// 「それ以上」を意味する。末尾の + として描画する。
     pub ref_count_capped: bool,
+    /// その語を囲んでいるものの綴り (`app::types::App`)。索引が答え、かつ
+    /// 綴りを組み立てられたときだけ。名前だけではどの型のフィールドか判らない。
+    pub container: Option<String>,
+    /// 聞かれた位置がその定義そのものだったか。シグネチャを出しても画面に見えて
+    /// いるものの写しにしかならないので、描画側はそれを省く。
+    pub on_definition_line: bool,
 }
 
-/// symbol のホバー情報を組み立てる。複数箇所で定義されている名前については
-/// current_file 内の定義を優先する。インデックスが未完成、シンボルに定義が無い、
-/// ファイルが読めない、のいずれかなら (黙って) None を返す。
-pub fn build_hover_info(
+/// ホバーが説明する定義の位置。意味索引が位置で答えたものでも、
+/// シンボルインデックスを名前で引いたものでも、ここから先の扱いは同じ。
+pub struct DefSite {
+    pub file_path: String,
+    /// 1 始まり。
+    pub line: usize,
+    /// 定義の種別 ("Struct" など)。位置しか分からないときは空。
+    pub kind: String,
+    /// 候補の総数。2 以上なら、表示しているのはそのうちの 1 つ。
+    pub def_count: usize,
+}
+
+/// シンボルインデックスを名前で引いて定義位置を決める。複数箇所で定義されて
+/// いる名前については current_file 内の定義を優先する。
+pub fn resolve_def_site(
     index: &SymbolIndex,
     symbol: &str,
     current_file: Option<&str>,
-) -> Option<HoverInfo> {
+) -> Option<DefSite> {
     if !index.is_available() {
         return None;
     }
@@ -57,7 +74,17 @@ pub fn build_hover_info(
         .iter()
         .find(|d| Some(d.file_path.as_str()) == current_file)
         .or_else(|| defs.first())?;
+    Some(DefSite {
+        file_path: def.file_path.clone(),
+        line: def.line,
+        kind: format!("{:?}", def.kind),
+        def_count: defs.len(),
+    })
+}
 
+/// 定義位置からホバー情報を組み立てる。ファイルが読めない、行がファイルの外、
+/// のいずれかなら (黙って) None を返す。
+pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Option<HoverInfo> {
     let root = index.root();
     let source = std::fs::read_to_string(root.join(&def.file_path)).ok()?;
     let lines: Vec<&str> = source.lines().collect();
@@ -74,14 +101,16 @@ pub fn build_hover_info(
 
     Some(HoverInfo {
         symbol_name: symbol.to_string(),
-        kind: format!("{:?}", def.kind),
-        file_path: def.file_path.clone(),
+        kind: def.kind,
+        file_path: def.file_path,
         line: def.line,
         doc_lines: extract_doc_comment(&lines, def_idx),
         signature_lines: extract_signature(&lines, def_idx),
-        def_count: defs.len(),
+        def_count: def.def_count,
         ref_count,
         ref_count_capped,
+        on_definition_line: false,
+        container: None,
     })
 }
 
@@ -91,6 +120,7 @@ pub fn build_hover_info(
 fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
     let indent = lines[def_idx].len() - lines[def_idx].trim_start().len();
     let mut out = Vec::new();
+    let mut depth = 0i32;
     for raw in lines.iter().skip(def_idx).take(MAX_SIGNATURE_LINES) {
         let dedented = if raw.len() >= indent && raw[..indent.min(raw.len())].trim().is_empty() {
             &raw[indent..]
@@ -109,11 +139,27 @@ fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
         if trimmed_end.ends_with(';') {
             return out;
         }
+        depth += bracket_delta(trimmed_end);
+        // 構造体のフィールドや enum の要素は , で終わる。囲みの外側にいるときだけ
+        // 区切りとして扱う — 引数を複数行に割った関数の途中で切ってしまわないように。
+        if depth <= 0 && trimmed_end.ends_with(',') {
+            return out;
+        }
     }
     if lines.len() > def_idx + MAX_SIGNATURE_LINES {
         out.push("…".to_string());
     }
     out
+}
+
+/// 行が開いた括弧の数から閉じた括弧の数を引いたもの。角括弧は数えない
+/// (Option<String> のような型と大小比較を字面で見分けられないため)。
+fn bracket_delta(line: &str) -> i32 {
+    line.chars().fold(0, |acc, c| match c {
+        '(' | '[' | '{' => acc + 1,
+        ')' | ']' | '}' => acc - 1,
+        _ => acc,
+    })
 }
 
 /// def_idx (0 始まり) の直上にあるコメントブロックを集める。属性・デコレータの行
@@ -250,6 +296,82 @@ mod tests {
     }
 
     #[test]
+    fn 構造体のフィールドは次のアイテムまで飲み込まない() {
+        // 索引がフィールドに答えるようになるまで、ホバーがこの位置に来ることは
+        // なかった。, を区切りにしていなかったので、上限の 8 行ぶん次のアイテムを
+        // そのまま読み込んでいた。
+        let src = "\
+pub struct A {
+    pub session_name: Option<String>,
+}
+
+/// 次のアイテム。
+pub struct B {
+}
+";
+        assert_eq!(sig(src, 2), vec!["pub session_name: Option<String>,"]);
+    }
+
+    #[test]
+    fn 複数行に割った引数は途中で切らない() {
+        // 行末の , は囲みの中では区切りにならない。
+        let src = "\
+pub fn add(
+    a: i64,
+    b: i64,
+) -> i64 {
+    a + b
+}
+";
+        assert_eq!(
+            sig(src, 1),
+            vec!["pub fn add(", "    a: i64,", "    b: i64,", ") -> i64"]
+        );
+    }
+
+    #[test]
+    fn tree_sitter_が定義を知らない位置でも意味索引の位置から組み立てられる() {
+        // ホバーが黙る一番多い理由は、tree-sitter が名前で定義を引けないこと
+        // (ローカル束縛、フィールド、モジュール名)。意味索引が位置で答えた
+        // ときは、その名前の定義を知らなくても中身を出せなければならない。
+        let dir = std::env::temp_dir().join(format!("hover_pos_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = "\
+fn caller() {
+    /// 途中の束縛。
+    let total = 1 + 2;
+    let _ = total;
+}
+";
+        std::fs::write(dir.join("lib.rs"), src).unwrap();
+        let index = SymbolIndex::new(dir.clone());
+        index.build().unwrap();
+
+        // 前提: 名前では引けない。
+        assert!(
+            resolve_def_site(&index, "total", Some("lib.rs")).is_none(),
+            "この検査の前提が崩れている: tree-sitter が total の定義を持っている"
+        );
+
+        let info = build_hover_info(
+            &index,
+            "total",
+            DefSite {
+                file_path: "lib.rs".to_string(),
+                line: 3,
+                kind: String::new(),
+                def_count: 1,
+            },
+        )
+        .expect("位置から組み立てられる");
+        assert_eq!(info.signature_lines, vec!["let total = 1 + 2;"]);
+        assert_eq!(info.doc_lines, vec!["途中の束縛。"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn end_to_end_over_real_index() {
         // 一時リポジトリに対して本物の tree-sitter インデックスを作り、
         // 経路全体 (find_definitions → 読み取り → 抽出) を通してホバー情報を解決する。
@@ -272,7 +394,8 @@ fn caller() {
         let index = SymbolIndex::new(dir.clone());
         index.build().unwrap();
 
-        let info = build_hover_info(&index, "add", Some("lib.rs")).expect("hover info");
+        let site = resolve_def_site(&index, "add", Some("lib.rs")).expect("定義位置");
+        let info = build_hover_info(&index, "add", site).expect("hover info");
         assert_eq!(info.symbol_name, "add");
         assert_eq!(info.kind, "Function");
         assert_eq!(info.file_path, "lib.rs");
@@ -286,7 +409,7 @@ fn caller() {
         assert!(info.ref_count >= 2, "ref_count = {}", info.ref_count);
 
         // 定義の無い名前は何も返さない (黙る)。
-        assert!(build_hover_info(&index, "nonexistent_symbol", None).is_none());
+        assert!(resolve_def_site(&index, "nonexistent_symbol", None).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

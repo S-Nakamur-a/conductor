@@ -1,0 +1,23 @@
+[package]
+name = "sheaf-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[dependencies]
+# protobuf は scip の生成コードが要求する。Message トレイトが scope に無いと
+# parse_from_bytes が呼べないので直接依存に入れる。公開 API には出さないので
+# 組み込む側は protobuf を知らずに済む。
+protobuf = "3.7"
+scip = "0.9"
+sha1 = "0.10"
+thiserror = "2"
+# 出自を取る対象のファイルを数えるのに使う。gitignore を尊重するので
+# ビルド成果物が入らず、追跡されていないファイルは入る。
+ignore = "0.4"
+# 生成した producer を孫ごと止めるため (プロセスグループへのシグナル)。
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

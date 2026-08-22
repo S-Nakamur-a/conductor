@@ -3,52 +3,154 @@
 
 use super::App;
 use super::focus::Focus;
+use crate::app::StatusLevel;
+use crate::hover_info::HoverInfo;
+use crate::overlay::{HintAction, SymbolHint, SymbolHintOverlay};
+use sheaf_core::{Definition, Location, References};
+
+/// gd / gr がカーソル行から決めた対象。
+pub enum LinePick {
+    /// 行に候補が 1 つだけあった (行番号・出現番号・綴り)。
+    One(usize, usize, String),
+    /// 候補が複数あったのでヒントを出した。続きは選択後に走る。
+    Asked,
+    /// 候補が無い。
+    None,
+}
+
+/// どの層が答えたか。
+///
+/// 飛んだ先の見た目からは区別が付かない。索引が答えたのか構文層に落ちたのかで
+/// 行番号の信頼度が違うので、答えるたびに名乗る。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnsweredBy {
+    /// SCIP 索引。聞かれた位置のファイルも飛び先も索引生成時のまま。
+    Index,
+    /// 構文層。索引に無い語、生成後に変わったファイル、索引そのものが無い場合。
+    TreeSitter,
+}
+
+impl AnsweredBy {
+    fn label(self) -> &'static str {
+        match self {
+            AnsweredBy::Index => "index",
+            AnsweredBy::TreeSitter => "tree-sitter",
+        }
+    }
+}
+
+/// 意味索引への 1 回の問い合わせに要るもの。タブ展開前の座標で持つ。
+struct SemanticSite {
+    rel: std::path::PathBuf,
+    abs: std::path::PathBuf,
+    source: String,
+    line: u32,
+    col: u32,
+}
 
 impl App {
     // コードナビゲーションのヘルパー
 
-    /// 現在のビューア行からカーソル位置のシンボルを抽出する。
+    /// 行と桁で指定したシンボルのホバー情報を組み立てる。
     ///
-    /// ここで言う「カーソル」は今も画面最上行を指しており、実際のテキストカーソルとは違う。
-    /// その食い違いは別途把握済みの既知の問題であり、ここでは扱わない。
-    pub fn get_symbol_at_cursor(&self) -> Option<String> {
-        let scroll = self.viewer_state.content.file_scroll;
-        let line = self.viewer_state.content.file_content.get(scroll)?;
-        let line_1 = scroll + 1;
-        extract_symbol_from_line(line, line_1, &self.viewer_state.content.code_mask)
+    /// 意味索引に位置で聞き、答えなければシンボルインデックスを名前で引く。
+    /// 索引が答えた位置は gd の飛び先と同じなので、両者の説明がずれない。
+    fn hover_info_at(&self, symbol: &str, line_1: usize, start_col: usize) -> Option<HoverInfo> {
+        let current_file = self.viewer_state.content.current_file.clone();
+        let site = self
+            .semantic_def_site(symbol, line_1, start_col)
+            .or_else(|| {
+                crate::hover_info::resolve_def_site(
+                    &self.code_nav.index,
+                    symbol,
+                    current_file.as_deref(),
+                )
+            })?;
+        let same_line =
+            Some(site.file_path.as_str()) == current_file.as_deref() && site.line == line_1;
+        let mut info = crate::hover_info::build_hover_info(&self.code_nav.index, symbol, site)?;
+        info.on_definition_line = same_line;
+        info.container = self.semantic_container(line_1, start_col);
+        Some(info)
     }
 
-    /// ビューアのカーソル位置にあるシンボルについて、ホバー情報のポップアップを
-    /// 明示的に表示する（最上行の最初の識別子を対象とし、gd と同じ検索を使う）。
+    /// 意味索引に定義位置を聞く。Exact のときだけ採る -- Enclosing は「囲んでいる
+    /// 型の定義」であって、聞かれた語の定義ではない。
+    fn semantic_def_site(
+        &self,
+        symbol: &str,
+        line_1: usize,
+        start_col: usize,
+    ) -> Option<crate::hover_info::DefSite> {
+        let line_idx = line_1.checked_sub(1)?;
+        let occurrence = self.occurrence_at_rendered_column(line_idx, start_col)?;
+        let Definition::Exact(locations) = self.semantic_definition(line_idx, occurrence)? else {
+            return None;
+        };
+        let first = locations.first()?;
+        let file_path = first.path.to_string_lossy().into_owned();
+        let line = first.line as usize + 1;
+        Some(crate::hover_info::DefSite {
+            kind: self.definition_kind_at(symbol, &file_path, line),
+            file_path,
+            line,
+            def_count: locations.len(),
+        })
+    }
+
+    /// その位置の語を囲んでいるものの綴り。索引が答えられなければ None。
+    fn semantic_container(&self, line_1: usize, start_col: usize) -> Option<String> {
+        let tree_root = self.selected_worktree_path();
+        let store = self.code_nav.semantic.store(&tree_root)?;
+        let line_idx = line_1.checked_sub(1)?;
+        let occurrence = self.occurrence_at_rendered_column(line_idx, start_col)?;
+        let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
+        let bridge = self.bridge(&site);
+        sheaf_core::symbols_at(store, &bridge, &site.rel, site.line, site.col)
+            .iter()
+            .find_map(|id| crate::semantic_index::container_path(id.as_str()))
+    }
+
+    /// 索引が返した位置に tree-sitter の定義が重なっていれば、その種別を借りる。
+    /// 見つからなくても答えは変わらず、種別の見出しが付かないだけ。
+    fn definition_kind_at(&self, symbol: &str, file_path: &str, line: usize) -> String {
+        self.code_nav
+            .index
+            .find_definitions(symbol)
+            .iter()
+            .find(|d| d.file_path == file_path && d.line == line)
+            .map(|d| format!("{:?}", d.kind))
+            .unwrap_or_default()
+    }
+
+    /// ビューアのカーソル行から選んだシンボルについて、ホバー情報のポップアップを
+    /// 明示的に表示する。
     ///
     /// K キーに割り当てられた、待ち時間なしの即時トリガー。ユーザが意図して押した
     /// 操作なので、ポップアップを出せない場合でもステータス表示でフィードバックを返す。
     /// 何も表示しない受動的な自動ホバーとは異なる。
-    pub fn show_hover_info(&mut self) {
+    pub fn show_hover_info_at(&mut self, line_idx: usize, symbol: &str) {
         use crate::app::StatusLevel;
 
-        let symbol = match self.get_symbol_at_cursor() {
-            Some(s) => s,
-            None => {
-                self.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
-                return;
-            }
-        };
-        if !self.code_nav.index.is_available() {
-            self.set_status(
-                "Symbol index not ready yet".to_string(),
-                StatusLevel::Warning,
-            );
-            return;
-        }
         let current_file = self.viewer_state.content.current_file.clone();
-        match crate::hover_info::build_hover_info(
-            &self.code_nav.index,
-            &symbol,
-            current_file.as_deref(),
-        ) {
+        let start_col = self
+            .viewer_state
+            .content
+            .file_content
+            .get(line_idx)
+            .and_then(|line| {
+                crate::app::code_identifiers_on_line(
+                    line,
+                    line_idx + 1,
+                    &self.viewer_state.content.code_mask,
+                )
+                .find(|(_, _, word)| word == symbol)
+                .map(|(_, start, _)| start)
+            });
+        let info = start_col.and_then(|col| self.hover_info_at(symbol, line_idx + 1, col));
+        match info {
             Some(info) => {
-                self.code_nav.hover_info.shown_file = current_file.clone();
+                self.code_nav.hover_info.shown_file = current_file;
                 self.code_nav.hover_info.info = Some(info);
             }
             None => {
@@ -140,7 +242,8 @@ impl App {
         match cand {
             Some((symbol, line, anchor_row, anchor_col, start_col, end_col)) => {
                 let same = self
-                    .code_nav.hover_info
+                    .code_nav
+                    .hover_info
                     .pending
                     .as_ref()
                     .is_some_and(|c| c.symbol == symbol && c.line == line);
@@ -332,7 +435,8 @@ impl App {
 
         // 十分な時間静止した候補を解決する。
         let ready = self
-            .code_nav.hover_info
+            .code_nav
+            .hover_info
             .pending
             .as_ref()
             .is_some_and(|c| !c.resolved && c.since.elapsed() >= HOVER_IDLE);
@@ -349,8 +453,7 @@ impl App {
                     c.line,
                 )
             };
-            let info =
-                crate::hover_info::build_hover_info(&self.code_nav.index, &symbol, file.as_deref());
+            let info = self.hover_info_at(&symbol, line, start_col);
             if let Some(c) = self.code_nav.hover_info.pending.as_mut() {
                 c.resolved = true;
             }
@@ -448,6 +551,21 @@ impl App {
         self.dirty.mark_all();
     }
 
+    /// ホバーが説明している定義へ飛び、ポップアップを畳む。
+    pub fn jump_to_hover_definition(&mut self) {
+        let Some((file, line)) = self
+            .code_nav
+            .hover_info
+            .info
+            .as_ref()
+            .map(|i| (i.file_path.clone(), i.line))
+        else {
+            return;
+        };
+        self.clear_hover();
+        self.jump_to_location(&file, line, 0);
+    }
+
     /// リスト中の参照行 idx について、コードプレビュー（レベル2）を開く。
     pub fn open_hover_preview(&mut self, idx: usize) {
         let (file, line) = match self.code_nav.hover_info.refs.as_mut() {
@@ -471,7 +589,8 @@ impl App {
     /// 開いているプレビューの位置へジャンプし、ホバースタック全体を閉じる。
     pub fn hover_jump_to_preview(&mut self) {
         let target = self
-            .code_nav.hover_info
+            .code_nav
+            .hover_info
             .refs
             .as_ref()
             .and_then(|r| r.preview.as_ref())
@@ -518,6 +637,17 @@ impl App {
     /// カーソルが現在、指定したシンボルの定義位置と一致する（あるいは非常に
     /// 近い）かどうかを調べる。現在のファイル+行がシンボルの定義位置のいずれか
     /// と一致すれば true を返す。
+    /// その答えが「聞かれた位置そのもの」を指しているか。
+    ///
+    /// 定義の上でジャンプを押したときに参照一覧へ切り替えるための判定。索引の答えは
+    /// 位置なので、行の近さで当てにいく必要が無い。
+    pub fn definition_is_here(&self, answer: &Definition, line_idx: usize) -> bool {
+        let Some(current) = self.viewer_state.content.current_file.as_deref() else {
+            return false;
+        };
+        answer_points_at(answer, current, line_idx)
+    }
+
     pub fn is_cursor_at_definition(&self, symbol: &str) -> bool {
         let cur_file = match &self.viewer_state.content.current_file {
             Some(f) => f,
@@ -655,6 +785,329 @@ impl App {
         });
     }
 
+    /// 一覧のポップアップを開き直す。
+    fn show_reference_list(&mut self, title: String, results: Vec<crate::symbol_index::Reference>) {
+        self.code_nav.references.show(
+            title,
+            results,
+        );
+    }
+
+    /// 意味索引が返した定義を画面に反映する。
+    ///
+    /// [`Definition::Exact`] と [`Definition::Enclosing`] は主張の強さが違うので混ぜない。
+    /// 後者は聞かれた語の定義ではなく、それを囲んでいる型の定義なので、飛び先が何なのかを
+    /// 名乗ってから見せる。
+    pub fn apply_semantic_definition(
+        &mut self,
+        symbol: &str,
+        answer: Definition,
+        source_screen_row: usize,
+    ) {
+        let root = self.selected_worktree_path();
+        match answer {
+            Definition::NotCode => {
+                self.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
+            }
+            Definition::Exact(locations) => self.jump_or_list(
+                &root,
+                symbol,
+                &locations,
+                source_screen_row,
+                AnsweredBy::Index,
+                "definition",
+                "definitions",
+            ),
+            Definition::Syntactic(locations) if locations.is_empty() => {
+                self.set_status(
+                    format!("No definition found for '{symbol}' [tree-sitter]"),
+                    StatusLevel::Warning,
+                );
+            }
+            Definition::Syntactic(locations) => self.jump_or_list(
+                &root,
+                symbol,
+                &locations,
+                source_screen_row,
+                AnsweredBy::TreeSitter,
+                "definition",
+                "definitions",
+            ),
+            Definition::Enclosing(found) => {
+                let locations: Vec<_> = found.iter().map(|e| e.definition.clone()).collect();
+                let types: Vec<&str> = found.iter().map(|e| e.ty.as_str()).collect();
+                let results = locations_to_references(&root, &locations);
+                match results.len() {
+                    0 => self.set_status(
+                        format!("No definition found for '{symbol}'"),
+                        StatusLevel::Warning,
+                    ),
+                    1 => {
+                        let (file, line) = (results[0].file_path.clone(), results[0].line);
+                        self.jump_to_location(&file, line, source_screen_row);
+                        self.set_status(
+                            format!(
+                                "'{symbol}' itself is not indexed — jumped to its enclosing type [index] {file}:{line}"
+                            ),
+                            StatusLevel::Info,
+                        );
+                    }
+                    n => {
+                        self.show_reference_list(format!("{symbol} (enclosing types)"), results);
+                        self.set_status(
+                            format!(
+                                "'{symbol}' itself is not indexed — {n} enclosing types [index]"
+                            ),
+                            StatusLevel::Info,
+                        );
+                        log::debug!("enclosing types for {symbol}: {types:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn jump_or_list(
+        &mut self,
+        root: &std::path::Path,
+        symbol: &str,
+        locations: &[Location],
+        source_screen_row: usize,
+        by: AnsweredBy,
+        one: &str,
+        many: &str,
+    ) {
+        let results = locations_to_references(root, locations);
+        match results.len() {
+            0 => self.set_status(
+                format!("No {one} found for '{symbol}'"),
+                StatusLevel::Warning,
+            ),
+            1 => {
+                let (file, line) = (results[0].file_path.clone(), results[0].line);
+                self.jump_to_location(&file, line, source_screen_row);
+                self.set_status(
+                    format!(
+                        "Jumped to {one} of '{symbol}' [{}] {file}:{line}",
+                        by.label()
+                    ),
+                    StatusLevel::Success,
+                );
+            }
+            n => {
+                self.show_reference_list(format!("{symbol} ({many}, {})", by.label()), results);
+                self.set_status(
+                    format!("{n} {many} found for '{symbol}' [{}]", by.label()),
+                    StatusLevel::Info,
+                );
+            }
+        }
+    }
+
+    /// 意味索引が返した参照を画面に反映する。
+    ///
+    /// [`sheaf_core::Found::via_interface`] は直接参照と分けて後ろに並べる。そこへ実行が
+    /// 届くとは限らない (実測で 9 件中 8 件が静的に別の実装へ解決される例がある) ので、
+    /// 直接参照と同じ確信度で読まれると誤りになる。
+    pub fn apply_semantic_references(&mut self, symbol: &str, answer: References) {
+        let root = self.selected_worktree_path();
+        let (results, title, by) = match answer {
+            References::NotCode => {
+                self.set_status("No symbol under cursor".to_string(), StatusLevel::Warning);
+                return;
+            }
+            References::Syntactic(locations) => (
+                locations_to_references(&root, &locations),
+                symbol.to_string(),
+                AnsweredBy::TreeSitter,
+            ),
+            References::Exact(found) => {
+                let mut results = locations_to_references(&root, &found.direct);
+                let indirect: Vec<_> = found
+                    .via_interface
+                    .iter()
+                    .map(|v| v.reference.clone())
+                    .collect();
+                let via = locations_to_references(&root, &indirect);
+                let title = if via.is_empty() {
+                    format!("{symbol} (index)")
+                } else {
+                    format!(
+                        "{symbol} (index: {} direct, {} via interface)",
+                        results.len(),
+                        via.len()
+                    )
+                };
+                results.extend(via);
+                (results, title, AnsweredBy::Index)
+            }
+        };
+
+        if results.is_empty() {
+            self.set_status(
+                format!("No references found for '{symbol}' [{}]", by.label()),
+                StatusLevel::Warning,
+            );
+            return;
+        }
+        let title = if by == AnsweredBy::TreeSitter {
+            format!("{title} (tree-sitter)")
+        } else {
+            title
+        };
+        self.set_status(
+            format!(
+                "{} references for '{symbol}' [{}]",
+                results.len(),
+                by.label()
+            ),
+            StatusLevel::Info,
+        );
+        self.show_reference_list(title, results);
+    }
+
+    /// 意味索引を `tree_root` に向けて読み直す。
+    ///
+    /// パースは実測 67ms なのでフレームに置かない。読み終わるまでの間に選択中の
+    /// worktree が動いていたら [`Slot::accept`] が取り込みを拒むので、その場合は
+    /// [`Self::poll_semantic_index`] が読み直しを起こす。
+    pub fn start_semantic_index_load(&mut self) {
+        if self.bg.semantic_index.is_running() {
+            return;
+        }
+        let repo_root = self.repo.path.clone();
+        let tree_root = self.selected_worktree_path();
+        self.code_nav.semantic.invalidate_if_retargeted(&tree_root);
+        self.bg.semantic_index.start(move |tx| {
+            let store = crate::semantic_index::load(&repo_root, &tree_root);
+            let _ = tx.send((tree_root, store));
+        });
+    }
+
+    /// gd / gr がカーソル行のどの語を対象にするか決める。
+    ///
+    /// 行内カーソルが無いので、候補が複数ある行では選ばせるしかない。以前は
+    /// 先頭の 1 つを黙って選んでいて、`pub use model::MenuItem;` のような行では
+    /// 意図しない語に飛んでいた。
+    pub fn pick_line_identifier(&mut self, action: HintAction) -> LinePick {
+        let line_idx = self.viewer_state.content.file_scroll;
+        let Some(line) = self.viewer_state.content.file_content.get(line_idx) else {
+            return LinePick::None;
+        };
+        // ラベルは 1 文字なので 26 個で頭打ちになる。
+        let choices: Vec<_> = crate::app::code_identifiers_on_line(
+            line,
+            line_idx + 1,
+            &self.viewer_state.content.code_mask,
+        )
+        .take(26)
+        .collect();
+
+        if choices.len() <= 1 {
+            return match choices.into_iter().next() {
+                Some((occurrence, _, word)) => LinePick::One(line_idx, occurrence, word),
+                None => LinePick::None,
+            };
+        }
+
+        let what = match action {
+            HintAction::Definition => "definition",
+            HintAction::Implementation => "implementation",
+            HintAction::References => "references",
+            HintAction::Hover => "hover info",
+        };
+        self.set_status(
+            format!("Pick a symbol for {what} (Esc to cancel)"),
+            StatusLevel::Info,
+        );
+        self.code_nav.symbol_hint = SymbolHintOverlay {
+            active: true,
+            hints: choices
+                .iter()
+                .enumerate()
+                .map(|(i, (_, start, word))| SymbolHint {
+                    label: ((b'a' + i as u8) as char).to_string(),
+                    symbol_name: word.clone(),
+                    line: line_idx + 1,
+                    start_col: *start,
+                })
+                .collect(),
+            input: String::new(),
+            pending: Some(action),
+        };
+        LinePick::Asked
+    }
+
+    /// 描画された行の `col` 列に重なっている識別子が、その行の何番目の出現か。
+    pub fn occurrence_at_rendered_column(&self, line_idx: usize, col: usize) -> Option<usize> {
+        let line = self.viewer_state.content.file_content.get(line_idx)?;
+        crate::symbol_index::identifier_occurrences(line)
+            .position(|(start, end, _)| col >= start && col < end)
+    }
+
+    /// 意味索引に定義を聞く。索引が無い(まだ作っていない、別のツリーを見ている、
+    /// Rust ではない)なら `None` を返し、呼び出し側は従来の経路へ落ちる。
+    ///
+    /// `Some` のときは構文層への切り替えまで含めて sheaf 側で済んでいる
+    /// ([`Definition::Syntactic`] が tree-sitter の答え)。
+    pub fn semantic_definition(&self, line_idx: usize, occurrence: usize) -> Option<Definition> {
+        let tree_root = self.selected_worktree_path();
+        let store = self.code_nav.semantic.store(&tree_root)?;
+        let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
+        let bridge = self.bridge(&site);
+        Some(sheaf_core::definition_at(
+            store, &bridge, &site.rel, site.line, site.col,
+        ))
+    }
+
+    /// 意味索引に参照を聞く。返り値の読み方は [`Self::semantic_definition`] と同じ。
+    ///
+    /// 構文層に落ちるとツリー全体を歩く(ありふれた名前で実測 200 ファイル約 157ms)。
+    /// 描画のたびに走る経路からは呼ばない。
+    pub fn semantic_references(&self, line_idx: usize, occurrence: usize) -> Option<References> {
+        let tree_root = self.selected_worktree_path();
+        let store = self.code_nav.semantic.store(&tree_root)?;
+        let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
+        let bridge = self.bridge(&site);
+        Some(sheaf_core::references_at(
+            store, &bridge, &site.rel, site.line, site.col,
+        ))
+    }
+
+    /// 問い合わせ位置を、索引が使う座標(タブ展開前のバイト位置)に直す。
+    ///
+    /// viewer が持つ行はタブを展開済みで、索引の列は展開前を指す。展開は識別子の
+    /// 数も並びも変えないので、出現番号を経由すれば列だけを戻せる。
+    fn semantic_site(
+        &self,
+        tree_root: &std::path::Path,
+        line_idx: usize,
+        occurrence: usize,
+    ) -> Option<SemanticSite> {
+        let rel = self.viewer_state.content.current_file.clone()?;
+        let abs = tree_root.join(&rel);
+        let source = std::fs::read_to_string(&abs).ok()?;
+        let (col, _) =
+            crate::app::occurrence_span_in_source(source.lines().nth(line_idx)?, occurrence)?;
+        Some(SemanticSite {
+            rel: std::path::PathBuf::from(rel),
+            abs,
+            source,
+            line: line_idx as u32,
+            col: col as u32,
+        })
+    }
+
+    fn bridge<'a>(&'a self, site: &'a SemanticSite) -> crate::semantic_index::Bridge<'a> {
+        crate::semantic_index::Bridge {
+            abs_path: &site.abs,
+            source: &site.source,
+            mask: &self.viewer_state.content.code_mask,
+            index: &self.code_nav.index,
+        }
+    }
+
     /// シンボルインデックス中にそのシンボルの定義があるかを調べる。
     pub fn can_jump_to_symbol(&self, name: &str) -> bool {
         if !self.code_nav.index.is_available() {
@@ -714,6 +1167,56 @@ impl App {
             })
             .collect()
     }
+}
+
+/// 答えが (file, line_idx) を指しているか。line_idx も [`Location::line`] も 0 始まり。
+///
+/// Exact 以外は false。構文層の答えは名前一致でしかないので、同名の別物を
+/// 「ここが定義」と判定してしまう。
+fn answer_points_at(answer: &Definition, file: &str, line_idx: usize) -> bool {
+    let Definition::Exact(locations) = answer else {
+        return false;
+    };
+    locations
+        .iter()
+        .any(|loc| loc.path == std::path::Path::new(file) && loc.line as usize == line_idx)
+}
+
+/// 索引が返した位置に、その行の本文を添えて参照一覧の形にする。
+///
+/// 索引は行と列しか返さないが、一覧は本文を見せる。同じファイルを何度も読まないよう
+/// まとめて読む — 参照は 1 ファイルに固まって出ることが多い。
+///
+/// 本文を読めなかった行は落とさずに空文字で残す。索引がその位置を答えたという事実は、
+/// こちらがファイルを読めたかどうかとは別で、黙って消すと件数が合わなくなる。
+pub fn locations_to_references(
+    root: &std::path::Path,
+    locations: &[sheaf_core::Location],
+) -> Vec<crate::symbol_index::Reference> {
+    use std::collections::HashMap;
+
+    let mut sources: HashMap<&std::path::Path, Option<Vec<String>>> = HashMap::new();
+    locations
+        .iter()
+        .map(|loc| {
+            let lines = sources.entry(&loc.path).or_insert_with(|| {
+                std::fs::read_to_string(root.join(&loc.path))
+                    .ok()
+                    .map(|text| text.lines().map(str::to_string).collect())
+            });
+            let content = lines
+                .as_ref()
+                .and_then(|l| l.get(loc.line as usize))
+                .cloned()
+                .unwrap_or_default();
+            crate::symbol_index::Reference {
+                file_path: loc.path.to_string_lossy().to_string(),
+                // sheaf の Location::line は 0 始まり、Reference::line は 1 始まり。
+                line: loc.line as usize + 1,
+                content,
+            }
+        })
+        .collect()
 }
 
 /// rel_path 内の line_1（1始まり）を中心に、前後数行を含むコードプレビュー
@@ -806,34 +1309,28 @@ fn underline_debounce_ready(elapsed: std::time::Duration, resolved: bool) -> boo
 
 // シンボル抽出のための自由関数
 
-/// カーソル位置にあたるソースコード行からシンボル名を抽出する。
-/// line_1（1始まり）上で [mask] がコードだと判定した最初の識別子を
-/// 返す――単に識別子の形をした最初の単語ではない。コメントや文字列
-/// リテラル内の単語（//! Building … 内の Building や、
-/// let x = 1; // build the index 内の index など）は、以前の
-/// 「コメントのみの行を除外する」処理と同様にスキップされるが、行単位では
-/// なく出現位置単位で判定するため、実コードの行末に付いたコメントが
-/// その行前半のコードまで隠してしまうことはなくなった。
-///
-/// 以前は //、/*、*、# を見る単独のプレフィックスチェックだった。
-/// これでは行頭から始まるコメントしか捉えられず、行の途中のコメントや
-/// 文字列リテラルを見分ける手段がなく、現在マスクが一箇所で決めている
-/// 判定を重複させていた。[App::build_symbol_hints](crate::app::App::build_symbol_hints)
-/// と同じ「列挙してゲートする」形になっている。
-pub fn extract_symbol_from_line(
-    line: &str,
+/// 行の中で飛び先になりうる識別子を、出現番号・開始桁・綴りの組で列挙する。
+pub fn code_identifiers_on_line<'a>(
+    line: &'a str,
     line_1: usize,
-    mask: &crate::symbol_index::CodeMask,
-) -> Option<String> {
-    for (k, (_, _, word)) in crate::symbol_index::identifier_occurrences(line).enumerate() {
-        if !mask.is_code(line_1, k) {
-            continue;
-        }
-        if word.len() > 1 && !is_rust_keyword(word) {
-            return Some(word.to_string());
-        }
-    }
-    None
+    mask: &'a crate::symbol_index::CodeMask,
+) -> impl Iterator<Item = (usize, usize, String)> + 'a {
+    crate::symbol_index::identifier_occurrences(line)
+        .enumerate()
+        .filter(move |(k, _)| mask.is_code(line_1, *k))
+        .filter(|(_, (_, _, word))| word.len() > 1 && !is_rust_keyword(word))
+        .map(|(k, (start, _, word))| (k, start, word.to_string()))
+}
+
+/// 元ソースの行での、`k` 番目の識別子のバイト範囲。
+///
+/// 出現の番号は viewer が持つタブ展開済みの行から取るが、索引の列は展開前の
+/// バイト位置を指す。タブ展開は識別子の数も並びも変えないので番号はそのまま通り、
+/// 列だけがここで戻る。
+pub fn occurrence_span_in_source(source_line: &str, k: usize) -> Option<(usize, usize)> {
+    crate::symbol_index::identifier_occurrences(source_line)
+        .nth(k)
+        .map(|(start, end, _)| (start, end))
 }
 
 /// 単語が Rust のキーワードかどうかを調べる（シンボルとして扱うべきではない）。
@@ -994,6 +1491,70 @@ mod tests {
         assert_eq!(result, Some(("_handler".to_string(), 4, 12)));
     }
 
+    // answer_points_at
+
+    fn at(path: &str, line: u32) -> Location {
+        Location {
+            path: std::path::PathBuf::from(path),
+            line,
+            col: 0,
+        }
+    }
+
+    #[test]
+    fn 定義が聞かれた行そのものを指していれば真() {
+        let answer = Definition::Exact(vec![at("src/app/focus.rs", 53)]);
+        assert!(answer_points_at(&answer, "src/app/focus.rs", 53));
+        // 1 行ずれただけでも別の場所。Location::line も line_idx も 0 始まり。
+        assert!(!answer_points_at(&answer, "src/app/focus.rs", 54));
+        assert!(!answer_points_at(&answer, "src/app/mod.rs", 53));
+    }
+
+    #[test]
+    fn 構文層の答えは定義位置の判定に使わない() {
+        // 名前一致でしかないので、同名の別物を「ここが定義」と誤判定する。
+        let answer = Definition::Syntactic(vec![at("src/app/focus.rs", 53)]);
+        assert!(!answer_points_at(&answer, "src/app/focus.rs", 53));
+    }
+
+    // code_identifiers_on_line
+
+    #[test]
+    fn 再輸出の行はモジュール名と型名の両方を候補に出す() {
+        // gd が先頭の 1 つを黙って選んでいた頃は、この行では必ず model が
+        // 対象になり、MenuItem には辿り着けなかった。
+        let src = "pub use model::MenuItem;\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let words: Vec<String> = code_identifiers_on_line(src.lines().next().unwrap(), 1, &mask)
+            .map(|(_, _, word)| word)
+            .collect();
+        assert_eq!(words, vec!["model", "MenuItem"]);
+    }
+
+    #[test]
+    fn 候補の開始桁から出現番号に戻せる() {
+        // 選んだラベルの桁は occurrence_at_rendered_column で番号に戻され、
+        // その番号で索引を引く。桁と番号がずれると別の語の定義に飛ぶ。
+        let src = "pub use model::MenuItem;\n";
+        let line = src.lines().next().unwrap();
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        for (occurrence, start, word) in code_identifiers_on_line(line, 1, &mask) {
+            let back = crate::symbol_index::identifier_occurrences(line)
+                .position(|(s, e, _)| start >= s && start < e);
+            assert_eq!(back, Some(occurrence), "{word} の桁から番号に戻せない");
+        }
+    }
+
+    #[test]
+    fn コメントの中の語は候補にしない() {
+        let src = "fn f() {\n    let x = 1; // build the index\n}\n";
+        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
+        let words: Vec<String> = code_identifiers_on_line(src.lines().nth(1).unwrap(), 2, &mask)
+            .map(|(_, _, word)| word)
+            .collect();
+        assert!(words.is_empty(), "{words:?}");
+    }
+
     // masked_symbol_at_column
 
     #[test]
@@ -1070,6 +1631,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 行内候補の先頭。マスク・キーワード・1 文字の除外が効いているかを見るための短縮形。
+    fn first_candidate(
+        line: &str,
+        line_1: usize,
+        mask: &crate::symbol_index::CodeMask,
+    ) -> Option<String> {
+        code_identifiers_on_line(line, line_1, mask)
+            .next()
+            .map(|(_, _, word)| word)
+    }
+
     #[test]
     fn extract_symbol_from_line_skips_comments_via_mask() {
         // doc/行/ブロックコメントは、実在の型名とたまたま同じ英単語("Building"
@@ -1098,12 +1670,12 @@ pub struct Building {
         let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
         let line = |n: usize| src.lines().nth(n - 1).unwrap();
 
-        assert_eq!(extract_symbol_from_line(line(1), 1, &mask), None);
-        assert_eq!(extract_symbol_from_line(line(2), 2, &mask), None);
-        assert_eq!(extract_symbol_from_line(line(3), 3, &mask), None);
-        assert_eq!(extract_symbol_from_line(line(4), 4, &mask), None);
+        assert_eq!(first_candidate(line(1), 1, &mask), None);
+        assert_eq!(first_candidate(line(2), 2, &mask), None);
+        assert_eq!(first_candidate(line(3), 3, &mask), None);
+        assert_eq!(first_candidate(line(4), 4, &mask), None);
         // 上の複数行ブロックコメントの継続行。
-        assert_eq!(extract_symbol_from_line(line(7), 7, &mask), None);
+        assert_eq!(first_candidate(line(7), 7, &mask), None);
 
         // #[derive(Debug)] はもはや特別扱いで除外されない。アトリビュートは
         // 地の文ではなく本物の構文であり、マスクがマスクするのはコメントと
@@ -1112,17 +1684,17 @@ pub struct Building {
         // 解決不能扱いしていたが、マスクは「コメントか文字列か」で線引きして
         // おり、アトリビュートはそのどちらでもない。
         assert_eq!(
-            extract_symbol_from_line(line(10), 10, &mask),
+            first_candidate(line(10), 10, &mask),
             Some("derive".to_string())
         );
 
         // 実際のコード行は引き続き最初の識別子として解決される。
         assert_eq!(
-            extract_symbol_from_line(line(13), 13, &mask),
+            first_candidate(line(13), 13, &mask),
             Some("state".to_string())
         );
         assert_eq!(
-            extract_symbol_from_line(line(15), 15, &mask),
+            first_candidate(line(15), 15, &mask),
             Some("Building".to_string())
         );
     }
@@ -1137,7 +1709,7 @@ pub struct Building {
         let src = "fn f() {\n    let x = 1; // build the index\n}\n";
         let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
         let line = src.lines().nth(1).unwrap();
-        assert_eq!(extract_symbol_from_line(line, 2, &mask), None);
+        assert_eq!(first_candidate(line, 2, &mask), None);
 
         // 同じ形だが、コメントの前に実際の識別子がある場合。修正が行全体を
         // 過剰にマスクしていないことを確認するため、これは解決されなければならない。
@@ -1145,7 +1717,7 @@ pub struct Building {
         let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
         let line = src.lines().nth(1).unwrap();
         assert_eq!(
-            extract_symbol_from_line(line, 2, &mask),
+            first_candidate(line, 2, &mask),
             Some("value".to_string())
         );
 
@@ -1153,7 +1725,7 @@ pub struct Building {
         let src = "fn f() {\n    let s = \"index\";\n}\n";
         let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
         let line = src.lines().nth(1).unwrap();
-        assert_eq!(extract_symbol_from_line(line, 2, &mask), None);
+        assert_eq!(first_candidate(line, 2, &mask), None);
     }
 
     // ジャンプ下線の判定関数

@@ -191,14 +191,115 @@ pub struct PrInputOverlay {
     pub bg_op: BackgroundOp<crate::pr_intake::PrIntakeOutcome>,
 }
 
+/// 参照一覧の 1 行。ファイルの見出しか、その中の 1 件か。
+pub enum RefRow<'a> {
+    File {
+        path: &'a str,
+        count: usize,
+        collapsed: bool,
+    },
+    Hit {
+        index: usize,
+    },
+}
+
 /// コードナビゲーション: 参照一覧のオーバーレイ状態 (gr = Find References)。
 #[derive(Default)]
 pub struct ReferencesOverlay {
     pub active: bool,
     pub symbol_name: String,
     pub results: Vec<crate::symbol_index::Reference>,
+    /// [`Self::rows`] が返す行の番号。結果そのものの番号ではない。
     pub selected: usize,
     pub scroll: usize,
+    /// 畳んでいるファイル。
+    pub collapsed: std::collections::HashSet<String>,
+}
+
+impl ReferencesOverlay {
+    /// 結果を差し替えて開く。
+    ///
+    /// ファイルが複数あるときは最初の 1 つだけ開いておく。実索引で 1 シンボルが
+    /// 15 ファイル 63 箇所に散るので、全部開くと見出しが流れて数が読めない。
+    pub fn show(&mut self, title: String, results: Vec<crate::symbol_index::Reference>) {
+        self.collapsed = {
+            let mut files: Vec<&str> = Vec::new();
+            for r in &results {
+                if !files.contains(&r.file_path.as_str()) {
+                    files.push(&r.file_path);
+                }
+            }
+            files.iter().skip(1).map(|f| f.to_string()).collect()
+        };
+        self.active = true;
+        self.symbol_name = title;
+        self.results = results;
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    /// ファイルごとにまとめた表示行。畳んだファイルは見出しだけ。
+    pub fn rows(&self) -> Vec<RefRow<'_>> {
+        let mut order: Vec<&str> = Vec::new();
+        let mut groups: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+        for (i, r) in self.results.iter().enumerate() {
+            let path = r.file_path.as_str();
+            groups
+                .entry(path)
+                .or_insert_with(|| {
+                    order.push(path);
+                    Vec::new()
+                })
+                .push(i);
+        }
+        let mut rows = Vec::new();
+        for path in order {
+            let hits = &groups[path];
+            let collapsed = self.collapsed.contains(path);
+            rows.push(RefRow::File {
+                path,
+                count: hits.len(),
+                collapsed,
+            });
+            if !collapsed {
+                rows.extend(hits.iter().map(|&index| RefRow::Hit { index }));
+            }
+        }
+        rows
+    }
+
+    /// 検査用。行の並びを綴りで見る。
+    #[cfg(test)]
+    fn row_labels(&self) -> Vec<String> {
+        self.rows()
+            .iter()
+            .map(|r| match r {
+                RefRow::File {
+                    path,
+                    count,
+                    collapsed,
+                } => format!("{} {path} ({count})", if *collapsed { '+' } else { '-' }),
+                RefRow::Hit { index } => format!("  {}", self.results[*index].line),
+            })
+            .collect()
+    }
+
+    /// 見出しの開閉を切り替える。選択行が消えないよう、その見出し自身に選択を寄せる。
+    pub fn toggle(&mut self, path: &str) {
+        if !self.collapsed.remove(path) {
+            self.collapsed.insert(path.to_string());
+        }
+        self.select_file(path);
+    }
+
+    /// そのファイルの見出しへ選択を移す。
+    pub fn select_file(&mut self, path: &str) {
+        self.selected = self
+            .rows()
+            .iter()
+            .position(|r| matches!(r, RefRow::File { path: p, .. } if *p == path))
+            .unwrap_or(0);
+    }
 }
 
 /// Vimium 風のナビゲーション中に表示するシンボルのヒント 1 件。
@@ -214,6 +315,15 @@ pub struct SymbolHint {
     pub start_col: usize,
 }
 
+/// ヒントを選んだあとに走らせる操作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HintAction {
+    Definition,
+    Implementation,
+    References,
+    Hover,
+}
+
 /// Vimium 風のシンボルヒントのオーバーレイ。Viewer で g を押すと出る。
 #[derive(Default)]
 pub struct SymbolHintOverlay {
@@ -222,6 +332,11 @@ pub struct SymbolHintOverlay {
     pub hints: Vec<SymbolHint>,
     /// ラベル照合のためにここまで入力された文字 (0〜2 文字)。
     pub input: String,
+    /// 選択後に走らせる操作。None なら従来どおりアクションメニューを開く。
+    ///
+    /// gd / gr が行内の語を選ばせるために使う。この経路のラベルは 1 文字なので、
+    /// 「入力が溜まったか」ではこの状態を判別できず、別の印が要る。
+    pub pending: Option<HintAction>,
 }
 
 /// 選択したシンボルに対して実行できるアクション。
@@ -349,6 +464,8 @@ pub struct HoverInfoOverlay {
     /// 基本ポップアップ内の N refs のクリック可能領域 (シンボルに参照が
     /// 無ければ大きさ 0)。描画側が書き込む。
     pub refs_hit: ratatui::layout::Rect,
+    /// 定義位置の行のクリック可能領域。押すとその定義へ飛ぶ。描画側が書き込む。
+    pub def_hit: ratatui::layout::Rect,
     pub refs: Option<HoverRefs>,
 }
 
@@ -406,4 +523,52 @@ pub struct OverlayManager {
     pub command_palette: CommandPaletteOverlay,
     pub theme_picker: ThemePickerOverlay,
     pub revidere_confirm: RevidereConfirmOverlay,
+}
+
+#[cfg(test)]
+mod references_tests {
+    use super::*;
+    use crate::symbol_index::Reference;
+
+    fn hit(file: &str, line: usize) -> Reference {
+        Reference {
+            file_path: file.to_string(),
+            line,
+            content: String::new(),
+        }
+    }
+
+    #[test]
+    fn 開いたときは最初のファイルだけ展開する() {
+        let mut o = ReferencesOverlay::default();
+        o.show(
+            "sym".into(),
+            vec![hit("a.rs", 1), hit("a.rs", 9), hit("b.rs", 4)],
+        );
+        assert_eq!(o.row_labels(), ["- a.rs (2)", "  1", "  9", "+ b.rs (1)"]);
+    }
+
+    #[test]
+    fn 同じファイルが飛び飛びでも1つの見出しにまとまる() {
+        // 索引と tree-sitter で並び順が違う。並びに依存すると片方だけ壊れる。
+        let mut o = ReferencesOverlay::default();
+        o.show(
+            "sym".into(),
+            vec![hit("a.rs", 1), hit("b.rs", 4), hit("a.rs", 9)],
+        );
+        assert_eq!(o.row_labels(), ["- a.rs (2)", "  1", "  9", "+ b.rs (1)"]);
+    }
+
+    #[test]
+    fn 畳んでも選択はその見出しに残る() {
+        let mut o = ReferencesOverlay::default();
+        o.show(
+            "sym".into(),
+            vec![hit("a.rs", 1), hit("a.rs", 9), hit("b.rs", 4)],
+        );
+        o.selected = 2; // a.rs の 2 件目
+        o.toggle("a.rs");
+        assert_eq!(o.selected, 0, "消えた行に選択が残っている");
+        assert_eq!(o.row_labels(), ["+ a.rs (2)", "+ b.rs (1)"]);
+    }
 }

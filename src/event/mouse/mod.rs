@@ -160,6 +160,11 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 app.open_hover_refs();
                 return true;
             }
+            // 場所の行をクリックするとその定義へ飛ぶ。
+            if in_rect(app.code_nav.hover_info.def_hit) {
+                app.jump_to_hover_definition();
+                return true;
+            }
             if in_rect(app.code_nav.hover_info.info_rect) {
                 return true;
             }

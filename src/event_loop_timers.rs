@@ -160,7 +160,11 @@ pub(crate) fn poll_watchers(
 
     // ファイルシステムの変更イベント (デバウンスあり)。
     if let Some(watcher) = file_watcher {
-        while watcher.poll().is_some() {
+        while let Some(crate::file_watcher::FsEvent::Changed(path)) = watcher.poll() {
+            // 索引の作り直しは自前の静穏時間 (3 秒) で数えるので、下の FS_DEBOUNCE
+            // とは別に、1 件ずつそのまま渡す。
+            let tree_root = app.selected_worktree_path();
+            app.code_nav.semantic.note_change(&path, &tree_root);
             if !*fs_pending {
                 *fs_first_seen = Some(Instant::now());
             }
@@ -181,6 +185,11 @@ pub(crate) fn poll_watchers(
             app.dirty.mark_all();
         }
     }
+
+    // 意味索引の作り直し。静穏時間の計測と子プロセスの見張りは sheaf 側にあり、
+    // ここでやるのはチャネルを覗くのと時刻の比較だけ (索引の読み込みとパースは
+    // ワーカースレッドにある)。
+    tick_semantic_regeneration(app);
 
     // 設定ファイルの変更イベント (デバウンスあり)。FS のイベントより短いのは、
     // 2 つのイベント列が独立しているから。worktree ポーリングによる作り直しが
@@ -220,5 +229,41 @@ pub(crate) fn poll_watchers(
         app.refresh_reviews();
         app.dirty.mark_all();
         log::debug!("refresh_pipe: reloaded reviews from MCP trigger");
+    }
+}
+
+/// 意味索引の作り直しを 1 周進める。
+///
+/// 成果は選択中の worktree ではなく索引そのものに乗るので、生成が終わったら
+/// 読み直す。生成が向いていたツリーと今の選択が違えば `Slot` が取り込みを拒み、
+/// [`crate::app::App::start_semantic_index_load`] が正しい向きで読み直す。
+fn tick_semantic_regeneration(app: &mut App) {
+    let repo_root = app.repo.path.clone();
+    let tree_root = app.selected_worktree_path();
+    let Some(outcome) = app
+        .code_nav
+        .semantic
+        .tick_regeneration(&repo_root, &tree_root)
+    else {
+        return;
+    };
+    match outcome {
+        // 生成側が投入済みの Store をそのまま受け取る。読み直すと 67ms のパースを
+        // もう一度払うことになる。生成中に worktree が動いていれば accept が拒むので、
+        // そのときだけ正しい向きで読み直す。
+        crate::semantic_index::Regenerated::Ready { root, store } => {
+            log::info!("semantic index regenerated: {} documents", store.len());
+            if !app.code_nav.semantic.accept(&root, &tree_root, Some(store)) {
+                app.start_semantic_index_load();
+            }
+        }
+        // 待機に戻すのは sheaf 側がやる。ここで作り直しを起こすと二重に走る。
+        crate::semantic_index::Regenerated::Busy => {}
+        crate::semantic_index::Regenerated::Failed(why) => {
+            log::warn!("semantic index regeneration failed: {why}");
+        }
+        crate::semantic_index::Regenerated::Unavailable(why) => {
+            log::info!("semantic index disabled: {why}");
+        }
     }
 }

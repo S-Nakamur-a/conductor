@@ -294,8 +294,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // 1b3. Symbol ヒントオーバーレイの入力 (ラベルの2文字目)
-    if app.code_nav.symbol_hint.active && !app.code_nav.symbol_hint.input.is_empty() {
+    // 1b3. Symbol ヒントオーバーレイの入力 (ラベルの2文字目、または gd / gr の行内選択)
+    if app.code_nav.symbol_hint.active
+        && (app.code_nav.symbol_hint.pending.is_some()
+            || !app.code_nav.symbol_hint.input.is_empty())
+    {
         handle_symbol_hint_key(app, key);
         return;
     }
@@ -361,6 +364,9 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
                 app.code_nav.hover_info.refs.as_ref().map(|r| r.selected)
             {
                 app.open_hover_preview(sel);
+            } else {
+                // 参照一覧を開いていないときの Enter は、説明している定義へ飛ぶ。
+                app.jump_to_hover_definition();
             }
         }
         _ => {}
