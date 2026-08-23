@@ -291,9 +291,11 @@ pub(super) fn run_background_work(app: &mut App, loop_state: &mut LoopState) {
     // (150ms・猶予なし) デバウンス。tick_underline_hover を参照。
     app.tick_underline_hover();
 
-    if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch && app.check_grep_debounce()
-    {
-        app.dirty.mark_all();
+    if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch {
+        let root = app.viewer_state.root().to_path_buf();
+        if app.overlays.grep_search.check_debounce(&root) {
+            app.dirty.mark_all();
+        }
     }
     if !app.terminal.deferred_prompts.is_empty() {
         app.flush_deferred_prompts();

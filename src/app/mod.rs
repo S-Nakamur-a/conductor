@@ -14,7 +14,6 @@ mod reflow;
 mod repo;
 mod review;
 mod review_commands;
-mod review_delete;
 mod review_edit;
 mod review_history;
 mod review_publish;
@@ -37,7 +36,6 @@ mod worktree_branches;
 mod worktree_commands;
 mod worktree_crud;
 mod worktree_grab;
-mod worktree_grep;
 mod worktree_pr;
 mod worktree_smart;
 
@@ -67,7 +65,7 @@ pub use focus::Focus;
 pub use panel_resize::{Divider, ResizeDir};
 pub use reflow::ReflowView;
 pub use types::{
-    BackgroundOps, BgDiffResult, CcusageInfo, DirtyPanels, GrabbedBranch, PendingViewRestore,
+    BackgroundOps, BgDiffResult, CcusageInfo, DirtyPanels, GrabbedBranch, Notice, PendingViewRestore,
     PendingWorktree, PendingWorktreeOp, SmartGenResult, StatusLevel, StatusMessage,
     WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
 };

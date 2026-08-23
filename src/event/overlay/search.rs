@@ -127,11 +127,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.grep_search.input_focused = true;
             } else {
                 app.overlays.active = ActiveOverlay::None;
-                app.overlays.grep_search.running = false;
-                app.overlays.grep_search.bg_op.clear();
-                app.overlays.grep_search.bg_op_phase2.clear();
-                app.overlays.grep_search.debounce_deadline = None;
-                app.overlays.grep_search.phase1_active = false;
+                app.overlays.grep_search.cancel();
             }
             return;
         }
@@ -142,24 +138,24 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         // Ctrl+r / Ctrl+i / Ctrl+v / Cmd+Backspace — 常に利用可能。
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
-            app.schedule_grep_search();
+            app.overlays.grep_search.schedule();
             return;
         }
         KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlays.grep_search.case_sensitive = !app.overlays.grep_search.case_sensitive;
-            app.schedule_grep_search();
+            app.overlays.grep_search.schedule();
             return;
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
             app.overlays.grep_search.input_focused = true;
-            app.schedule_grep_search();
+            app.overlays.grep_search.schedule();
             return;
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
             app.overlays.grep_search.query.delete_to_line_start();
             app.overlays.grep_search.input_focused = true;
-            app.schedule_grep_search();
+            app.overlays.grep_search.schedule();
             return;
         }
         // 入力欄で下矢印を押すとフォーカスが結果側に移る。
@@ -178,11 +174,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 .cloned();
             if let Some(result) = result {
                 app.overlays.active = ActiveOverlay::None;
-                app.overlays.grep_search.running = false;
-                app.overlays.grep_search.bg_op.clear();
-                app.overlays.grep_search.bg_op_phase2.clear();
-                app.overlays.grep_search.debounce_deadline = None;
-                app.overlays.grep_search.phase1_active = false;
+                app.overlays.grep_search.cancel();
 
                 app.viewer_state.reveal_file_in_tree(&result.file_path);
                 let tab_width = app.config.viewer.tab_width;
@@ -216,7 +208,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         if app.overlays.grep_search.query.handle_key(key) {
             match key.code {
                 KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                    app.schedule_grep_search();
+                    app.overlays.grep_search.schedule();
                 }
                 _ => {}
             }
@@ -336,13 +328,13 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(_) => {
             app.overlays.grep_search.input_focused = true;
             if app.overlays.grep_search.query.handle_key(key) {
-                app.schedule_grep_search();
+                app.overlays.grep_search.schedule();
             }
         }
         KeyCode::Backspace | KeyCode::Delete => {
             app.overlays.grep_search.input_focused = true;
             if app.overlays.grep_search.query.handle_key(key) {
-                app.schedule_grep_search();
+                app.overlays.grep_search.schedule();
             }
         }
         _ => {}
