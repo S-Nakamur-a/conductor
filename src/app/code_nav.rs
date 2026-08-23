@@ -1004,6 +1004,22 @@ impl App {
     /// パースは実測 67ms なのでフレームに置かない。読み終わるまでの間に選択中の
     /// worktree が動いていたら [`Slot::accept`] が取り込みを拒むので、その場合は
     /// [`Self::poll_semantic_index`] が読み直しを起こす。
+    /// いま読んでいるファイルの索引ルートを作り直させる。
+    ///
+    /// 索引はファイル単位で鮮度を持つので、別のツリーで生成された索引は、
+    /// そのツリーと内容が違うファイルについてだけ答えなくなる。読むだけの
+    /// worktree では編集が起きず作り直しの引き金が引かれないので、手で頼む口が要る。
+    pub(super) fn cmd_rebuild_code_index(&mut self) {
+        if self.code_nav.semantic.rebuild_reading() {
+            self.set_status_info("Rebuilding the code index for this file…".to_string());
+        } else {
+            self.set_status(
+                "No indexable file open".to_string(),
+                crate::app::StatusLevel::Warning,
+            );
+        }
+    }
+
     pub fn start_semantic_index_load(&mut self) {
         if self.bg.semantic_index.is_running() {
             return;

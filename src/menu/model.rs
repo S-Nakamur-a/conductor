@@ -25,10 +25,7 @@ use crate::command_palette::CommandId;
 pub enum MenuItem {
     /// 実行可能なコマンド。label はドロップダウンに表示するテキスト、id が
     /// 実行される対象。
-    Command {
-        id: CommandId,
-        label: &'static str,
-    },
+    Command { id: CommandId, label: &'static str },
     /// 関連コマンド群の間に置く、選択不可の区切り。
     Separator,
 }
@@ -109,6 +106,7 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::SwitchRepo, "Switch Repository…"),
             SEP,
             cmd(CommandId::RefreshDiff, "Refresh Diff"),
+            cmd(CommandId::RebuildCodeIndex, "Rebuild Code Index"),
             SEP,
             cmd(CommandId::Quit, "Quit Conductor"),
         ],

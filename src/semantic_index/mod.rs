@@ -25,25 +25,121 @@
 //! 1 行 1 ファイルの `<sha1> <相対パス>`。名前の付け方は [`roots`] にある。
 
 mod bridge;
+mod history;
 mod roots;
 
 pub use bridge::Bridge;
 pub use sheaf_core::Outcome as Regenerated;
 
+use history::Trigger;
 use roots::IndexRoot;
 use sheaf_core::{IndexSource, Regenerator, Slot, Store};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+/// いま読んでいるファイルに対して索引がどこまで答えられるか。
+///
+/// 呼び出し側が知りたいのは `Stale` だけだが、「まだ無い」と「対象外」と
+/// 「古い」を 1 つの `bool` に潰すと、作っている最中に古いと言うことになる。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reading {
+    /// 前回と同じファイル。何も起きていない。
+    Unchanged,
+    /// 索引が今の内容を説明している。
+    Indexed,
+    /// 索引はあるが、このファイルは作った時点から変わっている。
+    Stale,
+    /// このルートを索引しているところ。
+    Building,
+    /// 索引の対象ではない。
+    NotIndexed,
+}
 
 /// 索引ルート 1 本と、その作り直し係。
 struct Root {
     at: IndexRoot,
     regenerator: Regenerator,
+    /// 走っている 1 世代の顛末。記録に残すためだけに持つ。
+    run: Run,
 }
 
 impl Root {
     /// 作り直しを待っているか、走っているか。
     fn is_working(&self) -> bool {
         self.regenerator.is_pending() || self.regenerator.is_running()
+    }
+
+    /// 作り直しを頼む。既に待っている/走っているならきっかけは上書きしない
+    /// (最初に頼んだものがその世代の理由)。
+    fn request(&mut self, trigger: Trigger) {
+        if !self.is_working() {
+            self.run = Run::asked(trigger);
+        }
+        self.regenerator.request();
+    }
+
+    /// 終わった 1 世代を記録して、計測を畳む。
+    fn record(&mut self, dir: &Path, outcome: &Regenerated) {
+        self.log(
+            dir,
+            match outcome {
+                Regenerated::Ready { store, .. } => history::Outcome::Ready {
+                    documents: store.len(),
+                },
+                Regenerated::Failed(why) => history::Outcome::Failed(why),
+                Regenerated::Busy => history::Outcome::Busy,
+                Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
+            },
+        );
+        self.run = Run::default();
+    }
+
+    fn log(&self, dir: &Path, outcome: history::Outcome<'_>) {
+        history::append(
+            dir,
+            &history::Entry {
+                root: &self.at.subroot,
+                lang: self.at.lang.tag(),
+                trigger: self.run.trigger.unwrap_or(Trigger::Change),
+                waited: self.run.waited(),
+                took: self.run.took(),
+                outcome,
+                restarts: self.run.restarts,
+            },
+        );
+    }
+}
+
+/// 生成 1 世代ぶんの計測。
+#[derive(Default)]
+struct Run {
+    trigger: Option<Trigger>,
+    asked_at: Option<Instant>,
+    started_at: Option<Instant>,
+    /// 走っている間に来た変更の数。0 でなければ、その索引は置いた時点で既に古い。
+    restarts: usize,
+}
+
+impl Run {
+    fn asked(trigger: Trigger) -> Self {
+        Run {
+            trigger: Some(trigger),
+            asked_at: Some(Instant::now()),
+            ..Default::default()
+        }
+    }
+
+    fn waited(&self) -> std::time::Duration {
+        let (asked, started) = (self.asked_at, self.started_at);
+        match (asked, started) {
+            (Some(a), Some(s)) => s.duration_since(a),
+            (Some(a), None) => a.elapsed(),
+            _ => std::time::Duration::ZERO,
+        }
+    }
+
+    fn took(&self) -> std::time::Duration {
+        self.started_at.map(|s| s.elapsed()).unwrap_or_default()
     }
 }
 
@@ -80,22 +176,48 @@ impl SemanticIndex {
     /// 毎フレーム呼ばれる前提で、前回と同じファイルなら即座に返る。開く経路が
     /// 12 箇所あるので、そのどこかを通し忘れるより「いま何を読んでいるか」を
     /// 毎周見るほうが落ちない。
-    pub fn note_open(&mut self, rel: &Path, repo_root: &Path, tree_root: &Path) {
+    pub fn note_open(&mut self, rel: &Path, repo_root: &Path, tree_root: &Path) -> Reading {
+        // 先に索引ルートを合わせる。ツリーが変われば sync_roots が reading も落とすので、
+        // 同じ相対パスのファイルを開いたまま worktree を切り替えても取りこぼさない。
+        self.sync_roots(tree_root);
         if self.reading.as_deref() == Some(rel) {
-            return;
+            return Reading::Unchanged;
         }
         self.reading = Some(rel.to_path_buf());
-        self.sync_roots(tree_root);
         let Some(index) = self.owning_root(rel) else {
-            return;
+            return Reading::NotIndexed;
         };
         let Some(dir) = self.conductor_dir(repo_root).map(Path::to_path_buf) else {
-            return;
+            return Reading::NotIndexed;
         };
         // 既にあるものを作り直さない。開くたびに走らせると producer が止まらなくなる。
         if self.roots[index].at.source(&dir).is_none() {
-            self.roots[index].regenerator.request();
+            self.roots[index].request(Trigger::Open);
+            return Reading::Building;
         }
+        if self.roots[index].is_working() {
+            return Reading::Building;
+        }
+        // 索引はあるが、このファイルの今の内容は説明できていない。黙って構文層に
+        // 落ちるので、言わないと「ジャンプが甘い」としか見えない。
+        match self.slot.get(tree_root) {
+            Some(store) if !store.is_current(rel) => Reading::Stale,
+            _ => Reading::Indexed,
+        }
+    }
+
+    /// いま読んでいるファイルの索引ルートを作り直す。画面からの頼み。
+    ///
+    /// 読んでいるファイルがどの索引ルートにも属さなければ `false`。
+    pub fn rebuild_reading(&mut self) -> bool {
+        let Some(rel) = self.reading.clone() else {
+            return false;
+        };
+        let Some(index) = self.owning_root(&rel) else {
+            return false;
+        };
+        self.roots[index].request(Trigger::Manual);
+        true
     }
 
     /// ファイルが変わったことを伝える。作り直すのは、それを含む索引ルート 1 本だけ。
@@ -108,7 +230,18 @@ impl SemanticIndex {
             return;
         };
         let at = tree_root.join(&self.roots[index].at.subroot);
-        self.roots[index].regenerator.note_change(changed, &at);
+        let root = &mut self.roots[index];
+        let was_working = root.is_working();
+        root.regenerator.note_change(changed, &at);
+        if !root.is_working() {
+            return;
+        }
+        if root.regenerator.is_running() {
+            // この世代の索引には入らない変更。置いた時点で既に古い。
+            root.run.restarts += 1;
+        } else if !was_working {
+            root.run = Run::asked(Trigger::Change);
+        }
     }
 
     /// `rel` を索引に載せるルート。同じ言語のルートが入れ子なら深いほうが持つ
@@ -136,7 +269,12 @@ impl SemanticIndex {
         // 同じ周に 2 本が終わることはほとんど無い。
         self.roots.iter_mut().find_map(|root| {
             let target = root.at.target(&dir, tree_root);
-            root.regenerator.tick(&target)
+            let outcome = root.regenerator.tick(&target);
+            // producer が立ったのはこの tick の中なので、前後で見て時刻を取る。
+            if root.regenerator.is_running() && root.run.started_at.is_none() {
+                root.run.started_at = Some(Instant::now());
+            }
+            outcome.inspect(|outcome| root.record(&dir, outcome))
         })
     }
 
@@ -154,6 +292,7 @@ impl SemanticIndex {
             .map(|at| Root {
                 regenerator: Regenerator::new(at.lang.producer()),
                 at,
+                run: Run::default(),
             })
             .collect();
     }
@@ -170,9 +309,16 @@ impl SemanticIndex {
     }
 
     /// 走っている生成を止める。worktree を切り替えたときに呼ぶ。
-    pub fn abort_regeneration(&mut self) {
+    ///
+    /// 止めた時点までの producer の時間は捨てることになるので、記録に残す。
+    pub fn abort_regeneration(&mut self, repo_root: &Path) {
+        let dir = self.conductor_dir(repo_root).map(Path::to_path_buf);
         for root in &mut self.roots {
+            if let (true, Some(dir)) = (root.regenerator.is_running(), dir.as_deref()) {
+                root.log(dir, history::Outcome::Aborted);
+            }
             root.regenerator.abort();
+            root.run = Run::default();
         }
     }
 
@@ -209,7 +355,28 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
     for at in &found {
         let target = at.target(&dir, repo_root);
         let index = target.index.clone();
-        match sheaf_core::generate_once(target, at.lang.producer()) {
+        let at_start = Instant::now();
+        let outcome = sheaf_core::generate_once(target, at.lang.producer());
+        history::append(
+            &dir,
+            &history::Entry {
+                root: &at.subroot,
+                lang: at.lang.tag(),
+                trigger: Trigger::Cli,
+                waited: std::time::Duration::ZERO,
+                took: at_start.elapsed(),
+                outcome: match &outcome {
+                    Regenerated::Ready { store, .. } => history::Outcome::Ready {
+                        documents: store.len(),
+                    },
+                    Regenerated::Failed(why) => history::Outcome::Failed(why),
+                    Regenerated::Busy => history::Outcome::Busy,
+                    Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
+                },
+                restarts: 0,
+            },
+        );
+        match outcome {
             Regenerated::Ready { store, .. } => println!(
                 "{} に索引を置いた ({} document、うち出自を言えないもの {})",
                 index.display(),
@@ -398,6 +565,7 @@ mod tests {
                 regenerator: sheaf_core::Regenerator::new(std::sync::Arc::new(SlowProducer(
                     script,
                 ))),
+                run: Run::default(),
             }],
             ..Default::default()
         };
@@ -428,7 +596,7 @@ mod tests {
             "tick が生成を待ってしまっている: {elapsed:?}"
         );
 
-        semantic.abort_regeneration();
+        semantic.abort_regeneration(dir.path());
     }
 
     #[test]
@@ -484,6 +652,12 @@ mod tests {
         ]);
         let root = dir.path();
         build_index(root).expect("Go のツリーを索引できない");
+
+        // 生成 1 件につき 1 行。あとから「いつ・どこを・どれだけかけて」を追える。
+        let log = std::fs::read_to_string(root.join(".conductor/index-history.log")).unwrap();
+        assert_eq!(log.lines().count(), 1, "{log}");
+        assert!(log.contains("trigger=cli"), "{log}");
+        assert!(log.contains("ok documents=2"), "{log}");
 
         let store = load(root, root).expect("置いた索引を読めない");
         let rel = Path::new("main.go");
@@ -647,6 +821,80 @@ mod tests {
                 col: 5,
             }])
         );
+    }
+
+    /// 索引を投入済みの `SemanticIndex`。
+    fn loaded(repo_root: &Path) -> SemanticIndex {
+        let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
+        let mut semantic = SemanticIndex::default();
+        assert!(semantic.accept(repo_root, repo_root, Some(store)));
+        semantic
+    }
+
+    #[test]
+    fn 索引が今の内容を説明できているときは何も言わない() {
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+        let mut semantic = loaded(dir.path());
+
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Indexed
+        );
+    }
+
+    #[test]
+    fn 索引より新しいファイルを読んでいることを伝える() {
+        // 別のツリーで生成された索引は、内容が違うファイルについてだけ答えなくなる。
+        // 黙って構文層に落ちるので、言わないと「ジャンプが甘い」としか見えない。
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
+        let mut semantic = loaded(dir.path());
+
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Stale
+        );
+        // 伝えるだけで、勝手には作り直さない。worktree を行き来するたびに
+        // 14 秒 / 2.3GiB を払うことになるため。作り直すかは人が決める。
+        assert!(!semantic.roots.iter().any(|r| r.is_working()));
+    }
+
+    #[test]
+    fn 手で頼まれたら読んでいるルートを作り直す() {
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+        let mut semantic = loaded(dir.path());
+        semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path());
+
+        assert!(semantic.rebuild_reading());
+        assert!(semantic.roots.iter().any(|r| r.regenerator.is_pending()));
+    }
+
+    #[test]
+    fn 同じパスのまま別のツリーへ移ったら索引ルートを引き直す() {
+        // 「前回と同じファイル」の早期リターンが索引ルートの引き直しより前にあると、
+        // 相対パスが同じファイルを開いたまま worktree を移ったときに、前のツリーの
+        // 索引ルートを使い続ける。
+        let (rust, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        let (plain, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        let mut semantic = SemanticIndex::default();
+
+        semantic.note_open(Path::new("src/lib.rs"), rust.path(), rust.path());
+        assert_eq!(semantic.roots.len(), 1);
+
+        semantic.note_open(Path::new("src/lib.rs"), plain.path(), plain.path());
+        assert!(
+            semantic.roots.is_empty(),
+            "目印の無いツリーに移ったのに前のツリーの索引ルートが残っている"
+        );
+    }
+
+    #[test]
+    fn 読んでいるファイルが無ければ手の作り直しは断る() {
+        let mut semantic = SemanticIndex::default();
+        assert!(!semantic.rebuild_reading());
     }
 
     #[test]

@@ -371,6 +371,13 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::OpenPullRequest),
         keywords: "pr github browser web open",
     },
+    PaletteCommand {
+        id: CommandId::RebuildCodeIndex,
+        label: "Repo: Rebuild Code Index",
+        category: CommandCategory::Repository,
+        action: None,
+        keywords: "index scip code jump definition stale rebuild regenerate semantic",
+    },
     // App
     PaletteCommand {
         id: CommandId::CheckForUpdate,

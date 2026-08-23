@@ -76,7 +76,7 @@ impl Language {
         }
     }
 
-    fn tag(self) -> &'static str {
+    pub fn tag(self) -> &'static str {
         match self {
             Language::Rust => "rust",
             Language::Go => "go",

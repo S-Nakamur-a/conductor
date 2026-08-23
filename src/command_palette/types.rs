@@ -87,6 +87,7 @@ pub enum CommandId {
     // App
     UpdateAndRestart,
     CheckForUpdate,
+    RebuildCodeIndex,
     Quit,
 
     // UI

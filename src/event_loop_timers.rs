@@ -242,9 +242,18 @@ fn tick_semantic_regeneration(app: &mut App) {
     // 読んでいるファイルの索引ルートに索引が無ければ、ここで作りに行かせる。
     // 索引ルートは実在するリポジトリで 109 本になるので、まとめては作らない。
     if let Some(rel) = app.viewer_state.content.current_file.clone() {
-        app.code_nav
-            .semantic
-            .note_open(std::path::Path::new(&rel), &repo_root, &tree_root);
+        let reading =
+            app.code_nav
+                .semantic
+                .note_open(std::path::Path::new(&rel), &repo_root, &tree_root);
+        // 索引が古いと構文層に静かに落ちる。言わないと「ジャンプが甘い」としか
+        // 見えないので、そのファイルを開いたときに 1 度だけ出す。
+        if reading == crate::semantic_index::Reading::Stale {
+            app.set_status(
+                "Code index is older than this file — Repo ▸ Rebuild Code Index".to_string(),
+                crate::app::StatusLevel::Warning,
+            );
+        }
     }
     let Some(outcome) = app
         .code_nav

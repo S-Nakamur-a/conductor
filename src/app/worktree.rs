@@ -40,7 +40,8 @@ impl App {
         if n <= 1 {
             return;
         }
-        self.worktrees.select((self.worktrees.selected_index() + 1) % n);
+        self.worktrees
+            .select((self.worktrees.selected_index() + 1) % n);
         self.on_worktree_changed();
     }
 
@@ -51,7 +52,8 @@ impl App {
         if n <= 1 {
             return;
         }
-        self.worktrees.select((self.worktrees.selected_index() + n - 1) % n);
+        self.worktrees
+            .select((self.worktrees.selected_index() + n - 1) % n);
         self.on_worktree_changed();
     }
 
@@ -97,7 +99,8 @@ impl App {
         self.start_symbol_index_build();
         // 走っている生成は前のツリーを索引している。止めないと、その結果が
         // 新しいツリーの索引として置かれる。
-        self.code_nav.semantic.abort_regeneration();
+        let repo_root = self.repo.path.clone();
+        self.code_nav.semantic.abort_regeneration(&repo_root);
         self.start_semantic_index_load();
 
         // ファイル一覧はバックグラウンドの diff が届くまで意図的に残す（空のペインに
@@ -490,10 +493,17 @@ mod tests {
 
         let result = compute_bg_diff(dir.path(), "no-such-base", false, 4);
 
-        let err = result.error.as_deref().expect("base failure must be recorded");
+        let err = result
+            .error
+            .as_deref()
+            .expect("base failure must be recorded");
         assert!(err.contains("no-such-base"), "error was: {err}");
         assert_eq!(
-            result.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            result
+                .files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
             vec!["dirty.txt"],
         );
     }
@@ -507,7 +517,11 @@ mod tests {
 
         assert_eq!(result.error, None);
         assert_eq!(
-            result.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            result
+                .files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
             vec!["dirty.txt"],
         );
     }

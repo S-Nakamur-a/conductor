@@ -160,7 +160,25 @@ Where the index lives and who builds it:
   `Regenerator` rebuilds whenever edits go quiet for 3s. It ignores gitignored
   paths — without that, `target/` churn would reset the quiescence timer forever
   and the index would never be rebuilt. That is why `FsEvent::Changed` carries a
-  path. Routine rebuilds stay silent; the status bar reports only the first index. Note that `Lock::acquire` distinguishes "someone
+  path. Routine rebuilds stay silent; the status bar reports only the first index.
+- **Staleness is reported, not repaired.** One index serves every worktree and
+  freshness is per file by content hash, so a worktree whose files differ from the
+  ones the index was generated against loses `Exact` on exactly those files — the
+  diff you are reviewing. Editing anything in that root heals it (`note_change`
+  regenerates against the tree you are in), but a read-only review never triggers
+  that. So `note_open` returns [`Reading::Stale`] when `Store::is_current` says the
+  open file is not the one the index describes, the status bar says so once, and
+  **Repo ▸ Rebuild Code Index** is the manual repair. Rebuilding automatically was
+  rejected: the index can only describe one tree, so bouncing between two worktrees
+  would re-pay ~14s / 2.36GB each way — the per-switch cost that ruled out an LSP.
+- **Every generation appends one line to `.conductor/index-history.log`**
+  (`semantic_index/history.rs`): when, which root, what triggered it (`open` /
+  `change` / `manual` / `cli`), how long it waited for quiescence, how long the
+  producer ran, and the outcome. `busy`, `aborted`, and `stale-on-arrival
+  changes=N` (edits that landed mid-generation, so that index was old the moment
+  it was written) are the wasted-work markers. This is separate from
+  `index.<lang>.log`, which is the producer's own output and is overwritten each
+  run. The history file is capped at 512KB, oldest half dropped. Note that `Lock::acquire` distinguishes "someone
   else is generating" from "the directory is not there yet" — collapsing the two
   made every first-ever `conductor index` answer `Busy`.
 - The index producers are external tools. sheaf's `tests/go_definition.rs` and
@@ -337,7 +355,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
 - **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
-- **Code index:** `<main worktree>/.conductor/index.<lang>.scip` plus `index.<lang>.hashes` (provenance) and `index.<lang>.log`, one set per index root, and a single `generate.lock` — one directory per repository, shared by every worktree
+- **Code index:** `<main worktree>/.conductor/index.<lang>.scip` plus `index.<lang>.hashes` (provenance) and `index.<lang>.log`, one set per index root, and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions
