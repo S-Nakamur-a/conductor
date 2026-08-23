@@ -104,9 +104,17 @@ pub enum IconRole {
 
 impl IconRole {
     /// この種別のアイコン色。
+    ///
+    /// theme.accent はここでは使わない。多くのテーマで accent は
+    /// border_focused や selected_bg と同じ値で、「今どこにフォーカスが
+    /// あるか」を示す状態の色になっている。ファイル種別のような静的な属性に
+    /// 同じ色を割り当てると、フォーカス中のパネルでアイコンが枠線に溶ける。
+    ///
+    /// ソースコードが本文色なのは、数が最も多いからである。字形が既に種別を
+    /// 示しているので、多数派を落ち着かせて残りを色で立たせるほうが読みやすい。
     pub fn color(self, theme: &Theme) -> Color {
         match self {
-            IconRole::Code => theme.accent,
+            IconRole::Code => theme.fg,
             IconRole::Markup => theme.success,
             IconRole::Data => theme.warning,
             IconRole::Doc => theme.info,
