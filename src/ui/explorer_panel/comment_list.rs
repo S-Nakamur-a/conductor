@@ -28,6 +28,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
     use crate::review_state::CommentListRow;
 
     let theme = &app.theme;
+    let icon_set = app.config.ui.icon_set();
     let vs_explorer = &app.viewer_state.explorer;
     let list_focused = panel_focused && vs_explorer.explorer_focus_on_diff_list;
     let border_color = if list_focused {
@@ -45,7 +46,10 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
         .iter()
         .filter(|c| c.status == crate::review_store::CommentStatus::Pending)
         .count();
-    let title = format!(" Comments ({pending}/{total}) ");
+    let title = format!(
+        " {}Comments ({pending}/{total}) ",
+        crate::icons::PANEL_COMMENTS.labeled(icon_set)
+    );
     // 一覧全体に対する一括送信ボタン。viewer_panel::thread_actions にある
     // コメント単位の「ask claude」アクションとは別物。
     const ASK_CLAUDE_ALL_LABEL: &str = " ✨ Ask Claude All ";
@@ -96,7 +100,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                     let resolved =
                         comment.status == crate::review_store::CommentStatus::Resolved;
 
-                    let kind_badge = crate::ui::review::kind_icon(comment.kind);
+                    let kind_badge = crate::ui::review::kind_icon(comment.kind, icon_set);
                     let status_marker = if resolved { "\u{2713}" } else { "\u{25cb}" };
 
                     let filename = comment
@@ -128,13 +132,13 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
 
                     // 展開インジケータ（返信がある場合のみ意味を持つ）。
                     let expand_indicator = if reply_count > 0 {
-                        if app.review_state.expanded_comments.contains(&comment.id) {
-                            "\u{25bc} " // ▼
-                        } else {
-                            "\u{25b6} " // ▶
-                        }
+                        let expanded = app.review_state.expanded_comments.contains(&comment.id);
+                        format!(
+                            "{} ",
+                            crate::icons::expand_arrow(expanded, app.config.ui.icon_set())
+                        )
                     } else {
-                        "  "
+                        "  ".to_string()
                     };
 
                     // 本文は最初の行のみ表示する。改行をスペースに潰すと
@@ -148,7 +152,8 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         String::new()
                     };
 
-                    let fixed = format!("{expand_indicator}{status_marker} {kind_badge} {location} ");
+                    let fixed =
+                        format!("{expand_indicator}{status_marker} {kind_badge} {location} ");
                     let max_body = (area.width as usize).saturating_sub(
                         unicode_width::UnicodeWidthStr::width(fixed.as_str())
                             + unicode_width::UnicodeWidthStr::width(more_suffix.as_str())
@@ -196,7 +201,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                             Span::styled(expand_indicator.to_string(), dim),
                             Span::styled(status_marker.to_string(), marker_style),
                             Span::raw(" "),
-                            crate::ui::review::kind_badge_span(comment.kind, theme),
+                            crate::ui::review::kind_badge_span(comment.kind, theme, icon_set),
                             Span::styled(location, dim),
                             Span::raw(" "),
                             Span::styled(body, body_style),

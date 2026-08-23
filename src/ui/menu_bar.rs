@@ -52,8 +52,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     for (i, menu) in MENUS.iter().enumerate() {
         let text = format!(
-            "{pad}{title}{pad}",
+            "{pad}{icon}{title}{pad}",
             pad = " ".repeat(TITLE_PAD as usize),
+            icon = menu.icon.labeled(app.config.ui.icon_set()),
             title = menu.title
         );
         let w = width(&text);

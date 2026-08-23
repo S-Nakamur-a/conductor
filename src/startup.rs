@@ -144,6 +144,26 @@ pub fn apply_auto_theme(app: &mut App) {
     }
 }
 
+/// ファイルアイコンの文字セットが未設定なら、端末から判定して設定ファイルへ書く。
+///
+/// 判定できたときに書き戻すのは、判定材料が TERM_PROGRAM しかないため
+/// (config::persist_ui_icons を参照)。書き込みに失敗しても今回のセッションは
+/// 判定結果で描けるので、警告だけ出して続ける。
+pub fn apply_auto_icons(app: &mut App) {
+    if app.config.ui.icons.is_some() {
+        return; // 明示的な設定が常に優先。
+    }
+    let Some(set) = term_caps::detect_icon_set() else {
+        log::info!("icon set: could not tell from $TERM_PROGRAM, keeping the fallback glyphs");
+        return;
+    };
+    app.config.ui.icons = Some(set);
+    match crate::config::persist_ui_icons(set) {
+        Ok(()) => log::info!("icon set: detected {set:?} from $TERM_PROGRAM, wrote it to config"),
+        Err(e) => log::warn!("icon set: detected {set:?} but could not write it to config: {e}"),
+    }
+}
+
 /// 更新が入っていれば、同じ引数で自分自身を exec し直す (戻らない)。
 ///
 /// exec はプロセスイメージを置き換えるので、この先の Drop も後続のコードも

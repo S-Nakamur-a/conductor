@@ -21,6 +21,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let border_color = app.animated_border_color(Focus::TerminalClaude);
 
     let is_grabbed = app.is_selected_worktree_grabbed();
+    let icon_set = app.config.ui.icon_set();
+    let panel_icon = crate::icons::PANEL_TERMINAL.labeled(icon_set);
+    let locked = format!(" {}", crate::icons::LOCKED.get(icon_set));
 
     let sessions = app.current_worktree_claude_sessions();
 
@@ -32,11 +35,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 選択中の worktree が grab されている場合、セッションの代わりにロック表示を出す。
     if is_grabbed {
         let block = if is_expanded {
-            Block::default().title(" Claude Code \u{1f512} ")
+            Block::default().title(format!(" {panel_icon}Claude Code{locked} "))
         } else {
             Block::default()
                 .title(Span::styled(
-                    " Claude Code \u{1f512} ",
+                    format!(" {panel_icon}Claude Code{locked} "),
                     Style::default().fg(theme.muted),
                 ))
                 .borders(Borders::ALL)
@@ -71,10 +74,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             Style::default().fg(theme.muted)
         };
         let block = if is_expanded {
-            Block::default().title(Span::styled(" Claude Code ", title_style))
+            Block::default().title(Span::styled(
+                format!(" {panel_icon}Claude Code "),
+                title_style,
+            ))
         } else {
             Block::default()
-                .title(Span::styled(" Claude Code ", title_style))
+                .title(Span::styled(
+                    format!(" {panel_icon}Claude Code "),
+                    title_style,
+                ))
                 .borders(Borders::ALL)
                 .border_type(border_type)
                 .border_style(Style::default().fg(border_color))

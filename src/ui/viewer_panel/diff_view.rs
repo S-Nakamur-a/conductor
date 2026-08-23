@@ -130,6 +130,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             area_width: area.width,
             comment_lines: &comment_lines,
             comment_end_lines: &comment_end_lines,
+            icon_set: app.config.ui.icon_set(),
         };
 
         let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
@@ -198,6 +199,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
                     &app.highlight.syntax_set,
                     &app.highlight.theme,
                     &app.markdown_cache,
+                    app.config.ui.icon_set(),
                 );
                 for (l, rt) in thread {
                     if remaining == 0 {

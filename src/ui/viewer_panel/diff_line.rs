@@ -19,6 +19,7 @@ pub(super) struct DiffLineRenderCtx<'a> {
     pub(super) area_width: u16,
     pub(super) comment_lines: &'a std::collections::HashSet<usize>,
     pub(super) comment_end_lines: &'a std::collections::HashSet<usize>,
+    pub(super) icon_set: crate::icons::IconSet,
 }
 
 /// diff の1行分（コンテキスト/追加/削除）の表示行を組み立てる。
@@ -35,6 +36,7 @@ pub(super) fn render_diff_content_line(
     let theme = ctx.theme;
     let gutter_width = ctx.gutter_width;
     let tab_width = ctx.tab_width;
+    let icon_set = ctx.icon_set;
 
     let is_selected = new_line_no.map(|n| vs.is_line_selected(n)).unwrap_or(false);
     let is_hovered = new_line_no
@@ -88,30 +90,31 @@ pub(super) fn render_diff_content_line(
     };
     let gutter_span = Span::styled(num, gutter_style);
 
-    // コメントマーカー列（最左端、行番号より前）: 範囲の終端行には 💬、
-    // それより前の範囲行には │ を表示する。クリックするとスレッドの開閉を切り替える。
+    // コメントマーカー列（最左端、行番号より前）。プレーンビュー
+    // （code_line.rs）と同じ並びで、コメント範囲の終端・範囲の途中・選択範囲の
+    // 終端・コメント開始ボタンの順に優先する。
+    let range_end = vs
+        .selected_range()
+        .filter(|(start, end)| end > start)
+        .is_some_and(|(_, end)| *new_line_no == Some(end));
+    let accent_marker = Style::default().fg(theme.accent);
     let marker = if new_line_no.is_some_and(|n| ctx.comment_end_lines.contains(&n)) {
-        Span::styled("💬", Style::default().fg(theme.accent))
+        Span::styled(crate::icons::COMMENT.labeled(icon_set), accent_marker)
     } else if new_line_no.is_some_and(|n| ctx.comment_lines.contains(&n)) {
-        Span::styled("│ ", Style::default().fg(theme.accent))
-    } else {
-        Span::raw("  ")
-    };
-
-    // バッジ列（行番号の右）: ガターにホバーしたとき GitHub 風の "+" ボタンを表示する
-    // （クリックでコメント作成を開始）。既存コメントの有無は問わない。
-    // （diff ビューでは ▶ テストマーカーは描画しない）
-    let badge = if is_gutter_hovered {
+        Span::styled(crate::icons::COMMENT_SPAN.labeled(icon_set), accent_marker)
+    } else if range_end {
+        Span::styled(crate::icons::RANGE_END.labeled(icon_set), accent_marker)
+    } else if is_gutter_hovered {
         Span::styled(
-            "+ ",
-            Style::default()
-                .fg(theme.selected_fg)
-                .bg(theme.accent)
-                .add_modifier(Modifier::BOLD),
+            crate::icons::ADD_COMMENT.labeled(icon_set),
+            accent_marker.add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("  ")
     };
+
+    // バッジ列（行番号の右）。diff ビューにはテスト実行マーカーが無いので常に空。
+    let badge = Span::raw("  ");
 
     // コンテンツのスタイリング。
     let content_spans: Vec<Span> = if is_selected {

@@ -59,16 +59,22 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         .position(|&i| i == tree_selected)
         .unwrap_or(0);
 
+    let icon_set = app.config.ui.icon_set();
+    let panel_icon = crate::icons::PANEL_EXPLORER.labeled(icon_set);
     let mut title = if visible.len() > inner_height {
-        format!(" Explorer ({}/{}) ", selected_vis_idx + 1, visible.len())
+        format!(
+            " {panel_icon}Explorer ({}/{}) ",
+            selected_vis_idx + 1,
+            visible.len()
+        )
     } else {
-        " Explorer ".to_string()
+        format!(" {panel_icon}Explorer ")
     };
     // レビューの成果物があるサイン。コメントバッジの「まだ開いていないものが
     // ある」というパターンを踏襲する。2 列ビューを開いている間はここが
     // 描かれないので、冗長になる心配は無い。
     if app.revidere.has_review() {
-        title.push_str("\u{1f9ed} ");
+        title.push_str(&crate::icons::PANEL_REVIEW.labeled(icon_set));
     }
 
     let theme = &app.theme;
@@ -96,17 +102,20 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
             let indent = indent_for_depth(entry.depth);
 
             // 名前部分と切り離すことで、hover 時の下線を名前自体に限定できる
-            // (list_row::decoration_style を参照)。
+            // (list_row::decoration_style を参照)。アイコンをさらに分けているのは
+            // 種別ごとの色を乗せるため。
             let prefix = if entry.is_dir {
-                let arrow = if entry.is_expanded {
-                    "\u{25bc}" // ▼
-                } else {
-                    "\u{25b6}" // ▶
-                };
-                format!("{indent}{arrow} {} ", entry.icon)
+                let arrow = crate::icons::expand_arrow(entry.is_expanded, icon_set);
+                format!("{indent}{arrow} ")
             } else {
-                format!("{indent}  {} ", entry.icon)
+                format!("{indent}  ")
             };
+            let icon = if entry.is_dir {
+                crate::icons::dir_icon(entry.is_expanded)
+            } else {
+                entry.icon
+            };
+            let glyph = format!("{} ", icon.glyph(icon_set));
 
             // 未追跡/無視エントリはファイルかディレクトリかに関わらず暗く表示し、
             // 下のディレクトリ/ファイルの色分けより優先する。ここで
@@ -133,11 +142,23 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 hover,
             );
 
+            let decoration = crate::ui::common::list_row::decoration_style(style);
+            // アイコンの色はファイル種別を表すが、選択行と減光対象の行では行の色に
+            // 譲る。選択の背景色の上で種別色が読める保証は11テーマぶんには無く、
+            // untracked/ignored の減光はアイコンにも及ぶべきだからである。
+            let icon_style = if vis_idx == selected_vis_idx
+                || !matches!(
+                    entry.git_state,
+                    crate::git_engine::status_map::TreeGitState::Tracked
+                ) {
+                decoration
+            } else {
+                decoration.fg(icon.role.color(theme))
+            };
+
             Some(ListItem::new(Line::from(vec![
-                Span::styled(
-                    prefix,
-                    crate::ui::common::list_row::decoration_style(style),
-                ),
+                Span::styled(prefix, decoration),
+                Span::styled(glyph, icon_style),
                 Span::styled(entry.name.clone(), style),
             ])))
         })

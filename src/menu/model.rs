@@ -53,6 +53,9 @@ impl MenuItem {
 pub struct Menu {
     /// メニューバー本体に表示される単語。
     pub title: &'static str,
+    /// タイトルの前に置くアイコン。Nerd Font が無い環境では描かれない
+    /// （メニューバーは横幅が厳しく、記号で埋めても意味が伝わらないため）。
+    pub icon: crate::icons::Glyph,
     pub items: &'static [MenuItem],
 }
 
@@ -100,6 +103,7 @@ pub const INTENTIONALLY_UNLISTED: &[(CommandId, &str)] = &[
 pub const MENUS: &[Menu] = &[
     Menu {
         title: "Repo",
+        icon: crate::icons::MENU_REPO,
         items: &[
             cmd(CommandId::OpenRepo, "Open Repository…"),
             cmd(CommandId::SwitchRepo, "Switch Repository…"),
@@ -111,6 +115,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Worktree",
+        icon: crate::icons::MENU_WORKTREE,
         items: &[
             cmd(CommandId::CreateWorktree, "New Worktree…"),
             cmd(CommandId::DeleteWorktree, "Delete Worktree…"),
@@ -137,6 +142,7 @@ pub const MENUS: &[Menu] = &[
     // レビューの中にあるものなので、レビュー側の行より下に置く。
     Menu {
         title: "Review",
+        icon: crate::icons::MENU_REVIEW,
         items: &[
             // 作る口は 2 つだけ。どちらも同じ解析に続き、違うのは対象の
             // worktree をどこから持ってくるかだけ。
@@ -155,6 +161,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "View",
+        icon: crate::icons::MENU_VIEW,
         items: &[
             cmd(CommandId::ShowDiffList, "Changed Files"),
             cmd(CommandId::ShowCommentList, "Comment List"),
@@ -167,6 +174,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Panel",
+        icon: crate::icons::MENU_PANEL,
         items: &[
             cmd(CommandId::FocusWorktree, "Focus Worktree"),
             cmd(CommandId::FocusExplorer, "Focus Explorer"),
@@ -184,6 +192,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Search",
+        icon: crate::icons::MENU_SEARCH,
         items: &[
             cmd(CommandId::SearchInFile, "Search in File…"),
             cmd(CommandId::SearchFullText, "Full-text Search (Grep)…"),
@@ -191,6 +200,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Terminal",
+        icon: crate::icons::MENU_TERMINAL,
         items: &[
             cmd(CommandId::NewClaudeCode, "New Claude Code Session"),
             cmd(CommandId::NewShell, "New Shell Session"),
@@ -202,6 +212,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Help",
+        icon: crate::icons::MENU_HELP,
         items: &[
             cmd(CommandId::ToggleHelp, "Keyboard Shortcuts"),
             SEP,

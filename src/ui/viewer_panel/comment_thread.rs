@@ -25,6 +25,7 @@ pub(super) fn build_inline_thread_lines<'a>(
     syntax_set: &syntect::parsing::SyntaxSet,
     syntect_theme: &syntect::highlighting::Theme,
     md_cache: &crate::ui::markdown::MarkdownCache,
+    icon_set: crate::icons::IconSet,
 ) -> Vec<(Line<'a>, crate::viewer::ScreenRow)> {
     // 展開されたスレッドは resolved を含む全コメントを表示する。resolved なコメントは
     // あくまで「デフォルトで」折りたたまれているだけなので（expand_threads_for_file 参照）、
@@ -115,7 +116,7 @@ pub(super) fn build_inline_thread_lines<'a>(
         // 執筆者の byline: 種別バッジ（💡/❓）+ 執筆者名。GitHub のコメントヘッダーに
         // 似た形。resolved なコメントには byline の末尾に控えめな「✓ resolved」マーカーが
         // 付く（これはスレッドを明示的に開いたときのみ表示される）。
-        let kind = crate::ui::review::kind_icon(comment.kind);
+        let kind = crate::ui::review::kind_icon(comment.kind, icon_set);
         let mut byline = vec![
             Span::styled(format!("{kind} "), content_style),
             Span::styled(

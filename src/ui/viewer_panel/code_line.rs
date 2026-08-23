@@ -42,6 +42,7 @@ pub(super) fn render_code_line_rows(
     let theme = ctx.theme;
     let tab_width = ctx.tab_width;
     let gutter_width = ctx.gutter_width;
+    let icon_set = app.config.ui.icon_set();
 
     let line_1 = line_no + 1;
     let is_selected = vs.is_line_selected(line_1);
@@ -89,9 +90,9 @@ pub(super) fn render_code_line_rows(
     // 範囲のどこからどこまでかを見せる。入れ子のブロックのマーカーは残す。
     let folds = &vs.content.folds;
     let own_glyph = if folds.is_collapsed(line_1) {
-        Some("\u{25b6}")
+        Some(crate::icons::expand_arrow(false, icon_set))
     } else if folds.is_foldable(line_1) {
-        Some("\u{25bc}")
+        Some(crate::icons::expand_arrow(true, icon_set))
     } else {
         None
     };
@@ -107,36 +108,41 @@ pub(super) fn render_code_line_rows(
     let fold_span = Span::styled(fold_glyph, fold_style);
     let separator_span = Span::styled(" \u{2502} ", gutter_style);
 
-    // コメントマーカー列（行番号より前、一番左）: コメント範囲の最終行には 💬、
-    // それより前の行には │ を表示する。クリックするとスレッドの開閉を切り替える —
-    // ガター/バッジ側とは独立させてあるので、新規コメントの開始はどの行でも
-    // 同じように動く。
+    // コメントマーカー列（行番号より前、一番左）。上から順に:
+    // コメント範囲の最終行、範囲の途中、選択範囲の終端、そしてガターに hover して
+    // いる行のコメント開始ボタン。押せるものを行の左端に揃えてあるのは、GitHub や
+    // VSCode と同じ位置に手が伸びるようにするためである。
+    //
+    // 選択範囲の終端マーカーはコメントのマーカーより優先度が低い。選択は一時的な
+    // 状態なので、既にそこにあるコメントを隠してまで出すものではない。
+    let range_end = vs
+        .selected_range()
+        .filter(|(start, end)| end > start)
+        .is_some_and(|(_, end)| end == line_1);
+    let accent_marker = Style::default().fg(theme.accent);
     let marker = if ctx.comment_end_lines.contains(&line_1) {
-        Span::styled("💬", Style::default().fg(theme.accent))
+        Span::styled(crate::icons::COMMENT.labeled(icon_set), accent_marker)
     } else if ctx.comment_lines.contains(&line_1) {
-        Span::styled("│ ", Style::default().fg(theme.accent))
+        Span::styled(crate::icons::COMMENT_SPAN.labeled(icon_set), accent_marker)
+    } else if range_end {
+        Span::styled(crate::icons::RANGE_END.labeled(icon_set), accent_marker)
+    } else if is_gutter_hovered {
+        Span::styled(
+            crate::icons::ADD_COMMENT.labeled(icon_set),
+            accent_marker.add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::raw("  ")
     };
 
-    // バッジ列（行番号の右）: 実行可能なテスト行には ▶、それ以外はガターホバー時に
-    // GitHub 風の「+」ボタン（クリックでコメント開始）を表示する — 既存コメントの
-    // 有無に関わらず表示する。
+    // バッジ列（行番号の右）: 実行可能なテスト行の再生ボタン。クリックすると
+    // テストコマンド（go test …や cargo test …）を Shell の PTY に送る
+    // （event/mouse.rs で処理）。
     let badge = if vs.content.test_runs.contains_key(&line_1) {
-        // 実行可能なテスト行: ▶ ボタンをクリックするとテストコマンド（go test …や
-        // cargo test …）を Shell の PTY に送る（event/mouse.rs で処理）。
         Span::styled(
-            "\u{25b6} ",
+            crate::icons::RUN_TEST.labeled(icon_set),
             Style::default()
                 .fg(theme.success)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else if is_gutter_hovered {
-        Span::styled(
-            "+ ",
-            Style::default()
-                .fg(theme.selected_fg)
-                .bg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
@@ -325,6 +331,7 @@ pub(super) fn render_code_line_rows(
             &app.highlight.syntax_set,
             &app.highlight.theme,
             &app.markdown_cache,
+            icon_set,
         );
         rows.extend(thread_lines);
     }
