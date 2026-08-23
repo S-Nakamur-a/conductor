@@ -59,6 +59,10 @@ impl From<String> for StatusMessage {
     }
 }
 
+/// ステータスバーへ流したい通知。App から切り出したサブシステムが、
+/// set_status を呼ぶ代わりにこれを返す。
+pub type Notice = (String, StatusLevel);
+
 /// フラット化された worktree 一覧の1行(worktree 見出し行 + セッションのインライン行)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeListRow {

@@ -5,7 +5,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::review_store::{CommentKind, CommentTemplate, ReviewComment, ReviewReply, ReviewStore};
+use crate::app::{Notice, StatusLevel};
+use crate::review_store::{
+    Author, CommentKind, CommentStatus, CommentTemplate, ReviewComment, ReviewReply, ReviewStore,
+};
 use crate::text_input::TextInput;
 
 /// 仮想的なコメント一覧の 1 行。
@@ -329,6 +332,253 @@ impl ReviewState {
                 self.template_selected = 0;
             }
         }
+    }
+}
+
+/// レビューコメント/返信の編集・ステータス切り替え・スレッド展開・削除。
+///
+/// 削除は常に y/n の確認を経る: request_delete_at / begin_delete が保留中の
+/// 対象を記録してプロンプトを返し、confirm_delete が実際に削除し、
+/// cancel_delete は何も削除せずに取り消す。
+impl ReviewState {
+    /// 現在選択中のコメントの本文を更新する。
+    pub fn update_selected_body(&mut self, store: &ReviewStore, worktree: &str, new_body: &str) {
+        let Some(id) = self.selected_comment().map(|c| c.id.clone()) else {
+            return;
+        };
+        self.status_message = Some(match store.update_review_body(&id, new_body) {
+            Ok(()) => "Comment updated.".to_string(),
+            Err(e) => {
+                log::warn!("failed to update review body: {e}");
+                format!("Error: {e}")
+            }
+        });
+        self.load_comments(store, worktree);
+    }
+
+    /// 表示上の選択位置にある項目の編集を開始する — 返信の行が選択されて
+    /// いれば返信を、そうでなければコメントを対象にする。
+    pub fn start_edit_at(&mut self, visual: usize) {
+        if let Some((c_idx, r_idx)) = self.selected_reply_at(visual) {
+            let Some((reply_id, parent_id)) = self.reply_id_at(c_idx, r_idx) else {
+                return;
+            };
+            let body = self
+                .cached_replies
+                .get(&parent_id)
+                .and_then(|rs| rs.get(r_idx))
+                .map(|r| r.body.clone())
+                .unwrap_or_default();
+            self.input_buffer.set_text(&body);
+            self.editing_reply = Some((reply_id, parent_id));
+            self.input_mode = ReviewInputMode::EditingReply;
+            self.status_message = Some("Edit reply (Enter to save, Esc to cancel)".to_string());
+        } else if let Some(comment_idx) = self.selected_comment_idx(visual)
+            && let Some(comment) = self.comments.get(comment_idx)
+        {
+            let body = comment.body.clone();
+            self.input_buffer.set_text(&body);
+            self.input_mode = ReviewInputMode::EditingComment;
+            self.selected = comment_idx;
+            self.status_message = Some("Edit comment (Enter to save, Esc to cancel)".to_string());
+        }
+    }
+
+    /// 編集中の返信(EditingReply モード)の本文を保存する。
+    pub fn update_editing_reply_body(
+        &mut self,
+        store: &ReviewStore,
+        worktree: &str,
+        new_body: &str,
+    ) {
+        let Some((reply_id, parent_id)) = self.editing_reply.clone() else {
+            return;
+        };
+        let result = store.update_reply_body(&reply_id, new_body);
+        if result.is_ok() {
+            self.load_comments(store, worktree);
+            self.refresh_replies(store, &parent_id);
+        }
+        self.editing_reply = None;
+        self.status_message = Some(match result {
+            Ok(()) => "Reply updated.".to_string(),
+            Err(e) => format!("Error: {e}"),
+        });
+    }
+
+    /// 表示上の選択位置にあるコメントのステータスを切り替える(Pending <-> Resolved)。
+    pub fn toggle_status_at(
+        &mut self,
+        store: &ReviewStore,
+        worktree: &str,
+        visual: usize,
+    ) -> Option<Notice> {
+        let (id, current) = self
+            .selected_comment_idx(visual)
+            .and_then(|idx| self.comments.get(idx))
+            .map(|c| (c.id.clone(), c.status))?;
+
+        let new_status = match current {
+            CommentStatus::Pending => CommentStatus::Resolved,
+            CommentStatus::Resolved => CommentStatus::Pending,
+        };
+        let notice = match store.update_review_status(&id, new_status) {
+            Ok(()) => (
+                format!("Comment marked as {}.", new_status.as_str()),
+                StatusLevel::Success,
+            ),
+            Err(e) => {
+                log::warn!("failed to update review status: {e}");
+                (format!("Error: {e}"), StatusLevel::Error)
+            }
+        };
+        self.load_comments(store, worktree);
+        Some(notice)
+    }
+
+    /// 表示上の選択位置にあるコメントへ返信を追加する。
+    pub fn add_reply_at(
+        &mut self,
+        store: &ReviewStore,
+        worktree: &str,
+        visual: usize,
+        body: &str,
+    ) -> Option<Notice> {
+        let review_id = self
+            .selected_comment_idx(visual)
+            .and_then(|idx| self.comments.get(idx))
+            .map(|c| c.id.clone())?;
+
+        let notice = match store.add_reply(&review_id, body, Author::User) {
+            Ok(()) => ("Reply added.".to_string(), StatusLevel::Success),
+            Err(e) => {
+                log::warn!("failed to add reply: {e}");
+                (format!("Error: {e}"), StatusLevel::Error)
+            }
+        };
+        // キャッシュ済みの返信を無効化して再読み込みする。
+        self.cached_replies.remove(&review_id);
+        self.load_comments(store, worktree);
+        if self.expanded_comments.contains(&review_id)
+            && let Ok(replies) = store.get_replies(&review_id)
+        {
+            self.cached_replies.insert(review_id, replies);
+            self.rebuild_comment_list_rows();
+        }
+        Some(notice)
+    }
+
+    /// 表示上の選択位置にあるコメントスレッドの展開状態を切り替える。
+    ///
+    /// 返信を持つ CommentListRow::Comment の行にのみ作用する。展開時は
+    /// DB から返信を読み込んでキャッシュし、行リストを作り直す。
+    pub fn toggle_expansion_at(
+        &mut self,
+        store: Option<&ReviewStore>,
+        visual: usize,
+    ) -> Option<Notice> {
+        let Some(CommentListRow::Comment { comment_idx }) = self.comment_list_rows.get(visual)
+        else {
+            return None;
+        };
+        let comment = self.comments.get(*comment_idx)?;
+        if self.reply_counts.get(&comment.id).copied().unwrap_or(0) == 0 {
+            return None;
+        }
+        let comment_id = comment.id.clone();
+
+        if self.expanded_comments.contains(&comment_id) {
+            self.expanded_comments.remove(&comment_id);
+        } else {
+            if !self.cached_replies.contains_key(&comment_id)
+                && let Some(store) = store
+            {
+                match store.get_replies(&comment_id) {
+                    Ok(replies) => {
+                        self.cached_replies.insert(comment_id.clone(), replies);
+                    }
+                    Err(e) => {
+                        log::warn!("failed to load replies: {e}");
+                        return Some((format!("Error loading replies: {e}"), StatusLevel::Error));
+                    }
+                }
+            }
+            self.expanded_comments.insert(comment_id);
+        }
+        self.rebuild_comment_list_rows();
+        None
+    }
+
+    /// 表示上の選択位置にある項目の削除を開始する — 返信の行が選択されて
+    /// いれば返信そのものを、そうでなければコメント全体を対象にする。
+    /// 実際の削除は [Self::confirm_delete] が行う。確認プロンプトを返す。
+    /// (以前は返信の行を選んでも親コメントが削除されるデータロスのバグがあった。)
+    pub fn request_delete_at(&mut self, visual: usize) -> Option<Notice> {
+        let target = if let Some((c_idx, r_idx)) = self.selected_reply_at(visual) {
+            self.reply_id_at(c_idx, r_idx)
+                .map(|(id, parent_id)| PendingDelete::Reply { id, parent_id })
+        } else {
+            self.selected_comment_idx(visual)
+                .and_then(|idx| self.comments.get(idx))
+                .map(|c| PendingDelete::Comment { id: c.id.clone() })
+        };
+        Some(self.begin_delete(target?))
+    }
+
+    /// id で指定したコメントの削除を、同じ y/n 確認を通して開始する。
+    pub fn request_delete_comment(&mut self, comment_id: String) -> Notice {
+        self.begin_delete(PendingDelete::Comment { id: comment_id })
+    }
+
+    fn begin_delete(&mut self, target: PendingDelete) -> Notice {
+        let prompt = match &target {
+            PendingDelete::Reply { .. } => "Delete this reply? (y/n)",
+            PendingDelete::Comment { .. } => "Delete this comment and its replies? (y/n)",
+        };
+        self.pending_delete = Some(target);
+        self.input_mode = ReviewInputMode::ConfirmingDelete;
+        (prompt.to_string(), StatusLevel::Warning)
+    }
+
+    /// 何も削除せずに保留中の削除確認をキャンセルする。
+    pub fn cancel_delete(&mut self) {
+        self.pending_delete = None;
+        self.input_mode = ReviewInputMode::Normal;
+        self.status_message = None;
+    }
+
+    /// 確認済みの削除(コメントまたは単一の返信)を実行し、再読み込みする。
+    /// current_file はコメントバッジのキャッシュを作り直す対象。
+    pub fn confirm_delete(
+        &mut self,
+        store: Option<&ReviewStore>,
+        worktree: &str,
+        current_file: Option<&str>,
+    ) -> Option<Notice> {
+        let target = self.pending_delete.take();
+        self.input_mode = ReviewInputMode::Normal;
+        let (target, store) = (target?, store?);
+
+        let (result, ok_text) = match &target {
+            PendingDelete::Comment { id } => (store.delete_review(id), "Comment deleted."),
+            PendingDelete::Reply { id, .. } => (store.delete_reply(id), "Reply deleted."),
+        };
+        if result.is_ok() {
+            self.load_comments(store, worktree);
+            if let PendingDelete::Reply { parent_id, .. } = &target {
+                self.refresh_replies(store, parent_id);
+            }
+        }
+        if let Some(file) = current_file {
+            self.build_file_comment_cache(file);
+        }
+        Some(match result {
+            Ok(()) => (ok_text.to_string(), StatusLevel::Success),
+            Err(e) => {
+                log::warn!("delete failed: {e}");
+                (format!("Error: {e}"), StatusLevel::Error)
+            }
+        })
     }
 }
 

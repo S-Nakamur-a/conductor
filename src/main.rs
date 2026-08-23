@@ -30,6 +30,7 @@ mod mcp_serve;
 mod media_state;
 mod menu;
 mod overlay;
+mod overlay_grep;
 mod pr_intake;
 mod pty_manager;
 mod refresh_pipe;
