@@ -20,30 +20,45 @@
 //!
 //! # 触るファイル
 //!
-//! - `.conductor/index.scip`: SCIP 索引そのもの。
-//! - `.conductor/index.hashes`: 索引を生成した時点の内容ハッシュの表。
-//!   1 行 1 ファイルで `<sha1> <相対パス>`。
+//! 索引ルート 1 本につき `.conductor/` に `index.<言語>[.<ルート>].{scip,hashes,log}` の
+//! 3 つ。`scip` が索引そのもの、`hashes` が生成した時点の内容ハッシュの表で、
+//! 1 行 1 ファイルの `<sha1> <相対パス>`。名前の付け方は [`roots`] にある。
 
 mod bridge;
+mod roots;
 
 pub use bridge::Bridge;
 pub use sheaf_core::Outcome as Regenerated;
 
-use sheaf_core::{IndexSource, Regenerator, RustAnalyzer, Slot, Store, Target};
+use roots::IndexRoot;
+use sheaf_core::{IndexSource, Regenerator, Slot, Store};
 use std::path::{Path, PathBuf};
 
-/// 索引を作る道具。生成・出自の読み書き・投入の 3 箇所で同じものを指す必要がある。
-/// 道具が変われば同じソースから別の索引が出るので、sheaf は前の道具が書いた出自の表を
-/// 読まない。ここを分けると、読む側と書く側が食い違って全部が構文層に落ちる。
-const PRODUCER: RustAnalyzer = RustAnalyzer;
+/// 索引ルート 1 本と、その作り直し係。
+struct Root {
+    at: IndexRoot,
+    regenerator: Regenerator,
+}
+
+impl Root {
+    /// 作り直しを待っているか、走っているか。
+    fn is_working(&self) -> bool {
+        self.regenerator.is_pending() || self.regenerator.is_running()
+    }
+}
 
 /// 索引 (sheaf-core の [`Store`]) の有無と、その作り直しを保持する。
 ///
-/// どちらも sheaf の型で、ここにあるのは呼び出しの取り次ぎだけ。
+/// `Store` は 1 つで、ツリーの中の索引ルートすべてを束ねたもの。作り直しはルートごとに
+/// 独立して走る (道具も成果物も別なので、片方の失敗をもう片方に伝播させない)。
 #[derive(Default)]
 pub struct SemanticIndex {
     slot: Slot,
-    regenerator: Regenerator,
+    /// いま列挙してある索引ルートと、その列挙元のツリー。ツリーが変われば引き直す。
+    roots: Vec<Root>,
+    tree: PathBuf,
+    /// ツリーを引き直す前に来た「1 本作ってほしい」。
+    requested: bool,
     /// main worktree の `.conductor/`。解決に git2 のリポジトリオープンが要るので
     /// 覚えておく。外側の `None` は「まだ引いていない」、内側は「git リポジトリでない」。
     conductor_dir: Option<Option<PathBuf>>,
@@ -60,26 +75,60 @@ impl SemanticIndex {
     /// 生成が起きるのは編集が収束したときだけなので、これが無いと索引の無い
     /// リポジトリでは何か 1 ファイル編集するまで全部が構文層に落ち続ける。
     /// その差は画面に出ないので、ユーザからは「ジャンプが甘い」としか見えない。
+    ///
+    /// 索引ルートの列挙にはツリーが要るが、ここには渡ってこない。覚えておいて
+    /// [`Self::tick_regeneration`] で配る。
     pub fn request_build(&mut self) {
-        self.regenerator.request();
+        self.requested = true;
     }
 
-    /// ファイルが変わったことを伝える。どのツリーの変更を数えるかは sheaf 側が決める。
+    /// ファイルが変わったことを伝える。変更を数えるのは、それを含む索引ルートだけ。
     pub fn note_change(&mut self, changed: &Path, tree_root: &Path) {
-        self.regenerator.note_change(changed, tree_root);
+        self.sync_roots(tree_root);
+        for root in &mut self.roots {
+            let at = tree_root.join(&root.at.subroot);
+            root.regenerator.note_change(changed, &at);
+        }
     }
 
     /// 作り直しを 1 周進める。始めどきなら始め、終わっていれば結果を返す。
     ///
-    /// 毎フレーム呼ばれる。待つものが無いうちに置き場所を組み立てないのは、
-    /// そこに git2 のリポジトリオープンが要るため。
+    /// 毎フレーム呼ばれる。待つものが無いうちにツリーを歩いたり置き場所を
+    /// 組み立てたりしないのは、そこにファイルシステムと git2 の参照が要るため。
     pub fn tick_regeneration(&mut self, repo_root: &Path, tree_root: &Path) -> Option<Regenerated> {
-        if !self.regenerator.is_pending() && !self.regenerator.is_running() {
+        if !self.requested && !self.roots.iter().any(|r| r.is_working()) {
             return None;
         }
+        self.sync_roots(tree_root);
         let dir = self.conductor_dir(repo_root)?.to_path_buf();
-        let target = target(&dir, tree_root)?;
-        self.regenerator.tick(&target)
+        if std::mem::take(&mut self.requested) {
+            for root in &mut self.roots {
+                root.regenerator.request();
+            }
+        }
+        // 1 周で返すのは 1 本ぶん。生成はロックで直列化されているので、
+        // 同じ周に 2 本が終わることはほとんど無い。
+        self.roots.iter_mut().find_map(|root| {
+            let target = root.at.target(&dir, tree_root);
+            root.regenerator.tick(&target)
+        })
+    }
+
+    /// 索引ルートの列挙を `tree_root` に合わせる。ツリーが変わっていなければ何もしない。
+    fn sync_roots(&mut self, tree_root: &Path) {
+        if self.tree == tree_root {
+            return;
+        }
+        self.tree = tree_root.to_path_buf();
+        // 走っている生成は前のツリーを索引している。Regenerator を捨てれば
+        // Drop がプロセスグループごと止める。
+        self.roots = roots::discover(tree_root)
+            .into_iter()
+            .map(|at| Root {
+                regenerator: Regenerator::new(at.lang.producer()),
+                at,
+            })
+            .collect();
     }
 
     fn conductor_dir(&mut self, repo_root: &Path) -> Option<&Path> {
@@ -90,12 +139,15 @@ impl SemanticIndex {
 
     #[cfg(test)]
     pub fn is_pending(&self) -> bool {
-        self.regenerator.is_pending()
+        self.roots.iter().any(|r| r.regenerator.is_pending())
     }
 
     /// 走っている生成を止める。worktree を切り替えたときに呼ぶ。
     pub fn abort_regeneration(&mut self) {
-        self.regenerator.abort();
+        self.requested = false;
+        for root in &mut self.roots {
+            root.regenerator.abort();
+        }
     }
 
     /// 別のツリーを見に行くことになったなら、読み直しを待たずに捨てる。
@@ -110,68 +162,68 @@ impl SemanticIndex {
     }
 }
 
-/// 索引を 1 本作って置く。`conductor index` の実体。
+/// ツリーの索引ルートをすべて索引して置く。`conductor index` の実体。
 ///
 /// 初回の 1 本を作るための口。以後は編集が収束するたびに conductor 自身が作り直す。
+///
+/// 1 本が失敗しても残りは作る。道具は言語ごとに別なので、scip-go が入っていない
+/// ことを理由に Rust の索引まで諦めるのは筋が違う。
 pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
     let dir = main_conductor_dir(repo_root)
         .ok_or_else(|| anyhow::anyhow!("{} が git リポジトリではない", repo_root.display()))?;
-    let target = target(&dir, repo_root).ok_or_else(|| {
-        anyhow::anyhow!(
-            "{} に Cargo.toml が無い (Rust の索引だけを作る)",
+    let found = roots::discover(repo_root);
+    if found.is_empty() {
+        anyhow::bail!(
+            "{} に索引の作り方が分からない (Cargo.toml / go.mod / tsconfig.json のどれも無い)",
             repo_root.display()
-        )
-    })?;
-    let index = target.index.clone();
-    match sheaf_core::generate_once(target, std::sync::Arc::new(PRODUCER)) {
-        Regenerated::Ready { store, .. } => {
-            println!(
+        );
+    }
+
+    let mut failures = Vec::new();
+    for at in &found {
+        let target = at.target(&dir, repo_root);
+        let index = target.index.clone();
+        match sheaf_core::generate_once(target, at.lang.producer()) {
+            Regenerated::Ready { store, .. } => println!(
                 "{} に索引を置いた ({} document、うち出自を言えないもの {})",
                 index.display(),
                 store.len(),
                 store.missing_provenance()
-            );
-            Ok(())
+            ),
+            Regenerated::Failed(why) | Regenerated::Unavailable(why) => {
+                failures.push(format!("{:?}: {why}", at.lang))
+            }
+            Regenerated::Busy => {
+                failures.push(format!("{:?}: ほかのプロセスが索引を作っている", at.lang))
+            }
         }
-        Regenerated::Failed(why) | Regenerated::Unavailable(why) => Err(anyhow::anyhow!(why)),
-        Regenerated::Busy => Err(anyhow::anyhow!("ほかのプロセスが索引を作っている")),
     }
+
+    if failures.len() == found.len() {
+        anyhow::bail!("{}", failures.join("\n"));
+    }
+    for why in &failures {
+        eprintln!("索引を作れなかった {why}");
+    }
+    Ok(())
 }
 
-/// main worktree の `.conductor/index.scip` を、`tree_root` のツリーに向けてロードする。
+/// main worktree に置いてある索引を、`tree_root` のツリーに向けてロードする。
 ///
-/// 索引ファイルか出自の表(`index.hashes`)のどちらかが無ければ `None`。
-/// 出自を言えない索引を読んでも、`Store` は結局すべてのファイルを「変更あり」と
-/// 扱って構文層に落とすだけなので、その場合は最初からロードしない。
+/// 索引ルートは `tree_root` から引き直す。索引の中の相対パスをツリーのどこへ
+/// 接ぎ木するかは、ツリーの側にあるルートで決まるため。
+///
+/// 1 本も投入できなければ `None`。
 pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
     let conductor_dir = main_conductor_dir(repo_root)?;
-    let expected = sheaf_core::read_provenance(&conductor_dir.join("index.hashes"), &PRODUCER)?;
-    // 索引ルートはリポジトリルートそのものなので subroot は空。複数の索引ルートを
-    // 束ねるのは Store::load ができるが、いまは Rust の 1 本しか作っていない。
-    let source = IndexSource {
-        index: conductor_dir.join("index.scip"),
-        subroot: PathBuf::new(),
-        expected,
-    };
-    Store::load(std::slice::from_ref(&source), tree_root).ok()
-}
-
-/// 索引を作る対象と、成果物の置き場所。置き場所の規約だけが conductor の持ち物で、
-/// 生成そのものは sheaf 側にある。
-fn target(dir: &Path, tree_root: &Path) -> Option<Target> {
-    // Rust の索引しか作らないので、Cargo.toml が無いツリーでは生成そのものを起こさない。
-    // rust-analyzer は対象を認識できなくても終了コード 0 で空の索引を書くことがある。
-    if !tree_root.join("Cargo.toml").is_file() {
+    let sources: Vec<IndexSource> = roots::discover(tree_root)
+        .iter()
+        .filter_map(|at| at.source(&conductor_dir))
+        .collect();
+    if sources.is_empty() {
         return None;
     }
-    Some(Target {
-        root: tree_root.to_path_buf(),
-        index: dir.join("index.scip"),
-        hashes: dir.join("index.hashes"),
-        log: dir.join("index.log"),
-        // 索引を分けても本数の上限が消えないよう、リポジトリに 1 つだけ置く。
-        lock: dir.join("generate.lock"),
-    })
+    Store::load(&sources, tree_root).ok()
 }
 
 /// `repo_root` の main worktree での `.conductor/` を返す。
@@ -218,7 +270,23 @@ pub fn kind_label(kind: sheaf_core::SymbolKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::roots::Language;
     use super::*;
+
+    /// 索引ルートの目印。これが無いツリーは索引の対象にならないので、
+    /// 索引を置く検査ではソースと一緒にこれも置く。
+    const CARGO_TOML: (&str, &str) = ("Cargo.toml", "[package]\nname = \"demo\"\n");
+
+    /// Rust の索引を作る道具。出自の表の読み書きは道具ごとに照合されるので、
+    /// 検査でも本番と同じものを渡す。
+    fn producer() -> std::sync::Arc<dyn sheaf_core::Producer> {
+        Language::Rust.producer()
+    }
+
+    /// Rust の索引ルート 1 本ぶんの成果物の名前。
+    fn artifact(dir: &Path, ext: &str) -> PathBuf {
+        dir.join(format!("index.rust.{ext}"))
+    }
 
     /// commit_sha でコミットした状態のリポジトリを tempdir に作る。
     /// 戻り値は (repo_root, commit_sha)。
@@ -249,16 +317,16 @@ mod tests {
 
     #[test]
     fn no_scip_and_no_hashes_file_is_none() {
-        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", "fn f() {}\n")]);
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         assert!(load(dir.path(), dir.path()).is_none());
     }
 
     #[test]
     fn missing_scip_file_is_none() {
-        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", "fn f() {}\n")]);
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
-        std::fs::write(conductor_dir.join("index.hashes"), "").unwrap();
+        std::fs::write(artifact(&conductor_dir, "hashes"), "").unwrap();
         assert!(load(dir.path(), dir.path()).is_none());
     }
 
@@ -292,9 +360,19 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&script, perms).unwrap();
 
+        // 索引ルートを直に組む。ツリーを既に引いてあることにしておかないと、
+        // sync_roots が rust-analyzer を持つ Regenerator に差し替えてしまう。
         let mut semantic = SemanticIndex {
-            slot: Slot::default(),
-            regenerator: sheaf_core::Regenerator::new(std::sync::Arc::new(SlowProducer(script))),
+            tree: dir.path().to_path_buf(),
+            roots: vec![Root {
+                at: IndexRoot {
+                    subroot: PathBuf::new(),
+                    lang: Language::Rust,
+                },
+                regenerator: sheaf_core::Regenerator::new(std::sync::Arc::new(SlowProducer(
+                    script,
+                ))),
+            }],
             ..Default::default()
         };
         semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
@@ -328,29 +406,96 @@ mod tests {
     }
 
     #[test]
-    fn cargo_toml_の無いツリーでは生成を起こさない() {
-        // Rust の索引しか作らないので、Go や TypeScript だけのリポジトリで
-        // rust-analyzer を起動しても意味が無い。しかも認識できない対象に対して
-        // 終了コード 0 で空の索引を書くことがあるので、起こさないこと自体が答え。
+    fn 索引ルートの無いツリーでは生成を起こさない() {
+        // どの目印も無いツリーに道具を向けても意味が無い。しかも認識できない対象に
+        // 対して終了コード 0 で空の索引を書くことがあるので、起こさないこと自体が答え。
         let (dir, _commit) = init_repo_with_commit(&[("main.go", "package main\n")]);
         let mut semantic = SemanticIndex::default();
         semantic.note_change(&dir.path().join("main.go"), dir.path());
 
         assert!(
             semantic.tick_regeneration(dir.path(), dir.path()).is_none(),
-            "Cargo.toml が無いのに生成が始まった"
+            "目印が無いのに生成が始まった"
+        );
+    }
+
+    #[test]
+    fn go_のツリーには_scip_go_を向ける() {
+        // ここが Rust 決め打ちだと、Go のリポジトリは索引が 1 本も無いまま
+        // tree-sitter の名前一致に落ち続ける。画面には出ないので気づけない。
+        let (dir, _commit) =
+            init_repo_with_commit(&[("go.mod", "module demo\n"), ("main.go", "package main\n")]);
+
+        let mut semantic = SemanticIndex::default();
+        semantic.note_change(&dir.path().join("main.go"), dir.path());
+
+        assert!(semantic.is_pending(), "go.mod があるのに生成を待っていない");
+        let argv = semantic.roots[0]
+            .at
+            .lang
+            .producer()
+            .command(Path::new("/o"));
+        assert_eq!(argv[0], "scip-go");
+    }
+
+    /// conductor が Go のツリーに scip-go を向け、その索引で `Exact` に答えるまでを
+    /// 一続きで見る。読み取り側は sheaf のテストが見ているので、ここで見たいのは
+    /// host 側の配線 (道具の選択・成果物の名前・投入) だけ。
+    ///
+    /// scip-go が無ければ飛ばさずに落とす。飛ばすと、配線が壊れていても緑になる。
+    #[test]
+    fn go_のツリーを索引して定義に飛べる() {
+        let (dir, _commit) = init_repo_with_commit(&[
+            ("go.mod", "module example.com/app\n\ngo 1.21\n"),
+            (
+                "pkg/greet/greet.go",
+                "package greet\n\nfunc Greet() string {\n\treturn \"hi\"\n}\n",
+            ),
+            (
+                "main.go",
+                "package main\n\nimport \"example.com/app/pkg/greet\"\n\nfunc main() {\n\tprintln(greet.Greet())\n}\n",
+            ),
+        ]);
+        let root = dir.path();
+        build_index(root).expect("Go のツリーを索引できない");
+
+        let store = load(root, root).expect("置いた索引を読めない");
+        let rel = Path::new("main.go");
+        let source = std::fs::read_to_string(root.join(rel)).unwrap();
+        let (line, text) = source
+            .lines()
+            .enumerate()
+            .find(|(_, t)| t.contains("greet.Greet()"))
+            .unwrap();
+        let col = text.find("Greet()").unwrap();
+
+        let mask = crate::symbol_index::CodeMask::compute(&source, "main.go");
+        let index = crate::symbol_index::SymbolIndex::new(root.to_path_buf());
+        let bridge = Bridge {
+            abs_path: &root.join(rel),
+            source: &source,
+            mask: &mask,
+            index: &index,
+        };
+        assert_eq!(
+            sheaf_core::definition_at(&store, &bridge, rel, line as u32, col as u32),
+            sheaf_core::Definition::Exact(vec![sheaf_core::Location {
+                path: PathBuf::from("pkg/greet/greet.go"),
+                line: 2,
+                col: 5,
+            }])
         );
     }
 
     #[test]
     fn missing_hashes_file_is_none() {
-        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", "fn f() {}\n")]);
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
-        // 本物の SCIP を置いても、index.hashes が無ければ None を返すこと。
-        // ここで壊れた索引を置くと、index.hashes を見ずに投入が失敗しても
+        // 本物の SCIP を置いても、出自の表が無ければ None を返すこと。
+        // ここで壊れた索引を置くと、出自の表を見ずに投入が失敗しても
         // 結果として None になり、このテストが検査したいことを検査できなくなる。
-        write_index(&conductor_dir.join("index.scip"));
+        write_index(&artifact(&conductor_dir, "scip"));
         assert!(load(dir.path(), dir.path()).is_none());
     }
 
@@ -426,16 +571,16 @@ mod tests {
         definition_of_greet_at(store, tree_root, "src/lib.rs")
     }
 
-    /// `index.scip` と、`repo_root` に今ある `src/lib.rs` の内容から計算した
-    /// `index.hashes` を置く。「生成時点でディスクにあった内容」を申告する体で、
-    /// コミットされているかどうかは問わない。
+    /// Rust の索引と、`repo_root` に今ある `src/lib.rs` の内容から計算した出自の表を
+    /// 置く。「生成時点でディスクにあった内容」を申告する体で、コミットされているか
+    /// どうかは問わない。
     fn place_index(repo_root: &Path) {
         let conductor_dir = repo_root.join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
-        write_index(&conductor_dir.join("index.scip"));
+        write_index(&artifact(&conductor_dir, "scip"));
         let content = std::fs::read(repo_root.join("src/lib.rs")).unwrap();
         write_hashes(
-            &conductor_dir.join("index.hashes"),
+            &artifact(&conductor_dir, "hashes"),
             &[("src/lib.rs", sheaf_core::blob_hash(&content))],
         );
     }
@@ -448,12 +593,12 @@ mod tests {
             .iter()
             .map(|(rel, hash)| (PathBuf::from(rel), hash.clone()))
             .collect();
-        sheaf_core::write_provenance(path, &PRODUCER, &expected).unwrap();
+        sheaf_core::write_provenance(path, &*producer(), &expected).unwrap();
     }
 
     #[test]
     fn indexed_tree_answers_with_exact() {
-        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
 
         let store = load(dir.path(), dir.path()).expect("索引と出自の申告が揃っている");
@@ -472,7 +617,7 @@ mod tests {
         // リンクされた worktree の Repository::workdir() はリンク先自身を指すので、
         // repo_root にそれをそのまま渡すと、main 側にしか無い .conductor/ が
         // 見つからない。commondir() を辿って main を解決できているかを確かめる。
-        let (dir, commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        let (dir, commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
 
         let wt_parent = tempfile::tempdir().unwrap();
@@ -507,11 +652,12 @@ mod tests {
     fn other_tree_with_the_same_content_still_answers() {
         // worktree の形。内容が同じファイルは索引を使い回せる。これが成り立たないと
         // worktree ごとに索引を作ることになり、この設計の意味が無くなる。
-        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
 
         let other = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(other.path().join("src")).unwrap();
+        std::fs::write(other.path().join(CARGO_TOML.0), CARGO_TOML.1).unwrap();
         std::fs::write(other.path().join("src/lib.rs"), SOURCE).unwrap();
 
         let store = load(dir.path(), other.path()).expect("索引と出自の申告が揃っている");
@@ -528,11 +674,12 @@ mod tests {
         //
         // 聞く行(1行目)は両方のツリーで同じにしてある。ここを動かすと、問い合わせ位置が
         // 別の語にずれて「語が無い」で落ちるだけになり、鮮度を検査しないまま緑になる。
-        let (dir, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
 
         let other = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(other.path().join("src")).unwrap();
+        std::fs::write(other.path().join(CARGO_TOML.0), CARGO_TOML.1).unwrap();
         std::fs::write(
             other.path().join("src/lib.rs"),
             "pub fn hello() {}\nfn caller() { greet(); }\n",
@@ -549,11 +696,10 @@ mod tests {
     /// 実際に置かれている索引で、git2 のツリー走査と投入が通ることを見る。
     /// 合成した索引では、実索引の Document 数(345)やパスの綴りまでは検査できない。
     #[test]
-    #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
+    #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
     fn real_index_loads_from_the_repository_it_was_generated_for() {
-        let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect(
-            "CONDUCTOR_TEST_REPO に .conductor/index.scip を置いたリポジトリのパスを渡すこと",
-        );
+        let repo_root = std::env::var("CONDUCTOR_TEST_REPO")
+            .expect("CONDUCTOR_TEST_REPO に .conductor/ へ索引を置いたリポジトリのパスを渡すこと");
         let repo_root = Path::new(&repo_root);
 
         let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
@@ -573,7 +719,7 @@ mod tests {
     /// 落ちるのは、宣言の綴りが変わって読めなくなったとき (`Signature` の
     /// フィールド番号がまさにそれ) と、種別の番号が変わったとき。
     #[test]
-    #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
+    #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
     fn real_index_describes_what_it_answers() {
         use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
 
@@ -674,7 +820,7 @@ mod tests {
     /// 呼び出し口は viewer が持つタブ展開済みの行から出現インデックスを取るが、
     /// 対象は Rust なのでタブを含む行が無く、ここでは元ソースから取っている。
     #[test]
-    #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
+    #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
     fn real_index_answers_across_the_repository() {
         use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
 
@@ -813,7 +959,7 @@ mod tests {
             ],
         );
 
-        let hashes = sheaf_core::read_provenance(&hashes_path, &PRODUCER).unwrap();
+        let hashes = sheaf_core::read_provenance(&hashes_path, &*producer()).unwrap();
 
         let mut keys: Vec<_> = hashes.keys().map(|p| p.to_string_lossy()).collect();
         keys.sort();
@@ -829,7 +975,7 @@ mod tests {
         let hash = sheaf_core::blob_hash(b"fn f() {}\n");
         write_hashes(&hashes_path, &[("src/lib.rs", hash.clone())]);
 
-        let hashes = sheaf_core::read_provenance(&hashes_path, &PRODUCER).unwrap();
+        let hashes = sheaf_core::read_provenance(&hashes_path, &*producer()).unwrap();
         assert_eq!(hashes.get(Path::new("src/lib.rs")), Some(&hash));
     }
 
@@ -850,6 +996,7 @@ mod tests {
         // (d) 生成の前後でハッシュが食い違うファイル。index.hashes に載らない。
         let racy = "src/racy.rs";
 
+        std::fs::write(dir.path().join(CARGO_TOML.0), CARGO_TOML.1).unwrap();
         for rel in [untouched, untracked, edited, racy] {
             let path = dir.path().join(rel);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -871,14 +1018,14 @@ mod tests {
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
         write_index_for(
-            &conductor_dir.join("index.scip"),
+            &artifact(&conductor_dir, "scip"),
             &[untouched, untracked, edited, racy],
         );
 
         // 生成手順を模す。racy は前後でハッシュが食い違った体にして書かない。
         let hash = sheaf_core::blob_hash(SOURCE.as_bytes());
         write_hashes(
-            &conductor_dir.join("index.hashes"),
+            &artifact(&conductor_dir, "hashes"),
             &[
                 (untouched, hash.clone()),
                 (untracked, hash.clone()),

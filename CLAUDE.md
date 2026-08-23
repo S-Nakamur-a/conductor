@@ -127,19 +127,19 @@ only its edited files fall through.
 
 Where the index lives and who builds it:
 
-- `<main worktree>/.conductor/{index.scip,index.hashes,index.log,generate.lock}`.
-  Linked worktrees have no `.conductor/` of their own, so `semantic_index` walks
-  `git2::Repository::commondir()` to the main one — the same move
-  `mcp_serve::resolve` makes for the review DB. The lock is per repository on
-  purpose: one producer peaks at 2.36GB, so the cap must not split per worktree.
-- **Generation is Rust only; reading is not.** `RustAnalyzer` is the sole producer
-  conductor runs, gated on a `Cargo.toml` at the tree root, so a Go or TypeScript
-  repository opened in conductor still answers entirely through tree-sitter.
-  sheaf-core itself is producer-independent and verified against real `scip-go` and
-  `scip-typescript` indexes (kind, declaration, doc, container, and implementations
-  all resolve); `ScipGo` / `ScipTypescript` are ready. What is missing is the host
-  side: choosing a producer per tree, and holding several index roots at once
-  (`go.mod` ×8 and `tsconfig.json` ×9 in one repository are the known real cases).
+- `<main worktree>/.conductor/`, one set of `index.<lang>.{scip,hashes,log}` per
+  index root, plus a single `generate.lock`. Linked worktrees have no `.conductor/`
+  of their own, so `semantic_index` walks `git2::Repository::commondir()` to the
+  main one — the same move `mcp_serve::resolve` makes for the review DB. The lock
+  is per repository on purpose: one producer peaks at 2.36GB, so the cap must not
+  split per index root or per worktree. The artifact names must, though — sharing
+  one name means the second generation overwrites the first index.
+- **The producer is chosen per index root** (`semantic_index/roots.rs`), by the
+  marker file that names one: `Cargo.toml` → `RustAnalyzer`, `go.mod` → `ScipGo`,
+  `tsconfig.json` → `ScipTypescript`. A tree with no marker is not indexed at all;
+  pointing a producer at a tree it cannot recognise is worse than not running it,
+  because rust-analyzer and scip-go both write an empty index and exit 0. Each root
+  regenerates independently — a missing `scip-go` must not cost the Rust index.
 - `conductor index` builds the first one (~14s here). After that `Regenerator`
   rebuilds whenever edits go quiet for 3s. It ignores gitignored paths — without
   that, `target/` churn would reset the quiescence timer forever and the index
@@ -323,7 +323,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
 - **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
-- **Code index:** `<main worktree>/.conductor/index.scip` plus `index.hashes` (provenance), `index.log`, `generate.lock` — one per repository, shared by every worktree
+- **Code index:** `<main worktree>/.conductor/index.<lang>.scip` plus `index.<lang>.hashes` (provenance) and `index.<lang>.log`, one set per index root, and a single `generate.lock` — one directory per repository, shared by every worktree
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions
