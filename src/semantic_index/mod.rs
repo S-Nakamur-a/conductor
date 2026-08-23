@@ -57,8 +57,8 @@ pub struct SemanticIndex {
     /// いま列挙してある索引ルートと、その列挙元のツリー。ツリーが変われば引き直す。
     roots: Vec<Root>,
     tree: PathBuf,
-    /// ツリーを引き直す前に来た「1 本作ってほしい」。
-    requested: bool,
+    /// いま読んでいるファイル。同じものを繰り返し告げられたときに何もしないため。
+    reading: Option<PathBuf>,
     /// main worktree の `.conductor/`。解決に git2 のリポジトリオープンが要るので
     /// 覚えておく。外側の `None` は「まだ引いていない」、内側は「git リポジトリでない」。
     conductor_dir: Option<Option<PathBuf>>,
@@ -70,42 +70,68 @@ impl SemanticIndex {
         self.slot.get(tree_root)
     }
 
-    /// 索引がまだ無いので 1 本作ってほしい、と伝える。
+    /// いまこのファイルを読んでいる、と伝える。それを含む索引ルートに索引が
+    /// まだ無ければ 1 本作らせる。
     ///
-    /// 生成が起きるのは編集が収束したときだけなので、これが無いと索引の無い
-    /// リポジトリでは何か 1 ファイル編集するまで全部が構文層に落ち続ける。
-    /// その差は画面に出ないので、ユーザからは「ジャンプが甘い」としか見えない。
+    /// 索引ルートは実在するリポジトリで 109 本になることがあり、まとめて作ると
+    /// 数十分かかる。conductor が索引を引くのは読んでいるファイルの上だけなので、
+    /// 読むところから順に作る。全部まとめて作りたいときは `conductor index`。
     ///
-    /// 索引ルートの列挙にはツリーが要るが、ここには渡ってこない。覚えておいて
-    /// [`Self::tick_regeneration`] で配る。
-    pub fn request_build(&mut self) {
-        self.requested = true;
+    /// 毎フレーム呼ばれる前提で、前回と同じファイルなら即座に返る。開く経路が
+    /// 12 箇所あるので、そのどこかを通し忘れるより「いま何を読んでいるか」を
+    /// 毎周見るほうが落ちない。
+    pub fn note_open(&mut self, rel: &Path, repo_root: &Path, tree_root: &Path) {
+        if self.reading.as_deref() == Some(rel) {
+            return;
+        }
+        self.reading = Some(rel.to_path_buf());
+        self.sync_roots(tree_root);
+        let Some(index) = self.owning_root(rel) else {
+            return;
+        };
+        let Some(dir) = self.conductor_dir(repo_root).map(Path::to_path_buf) else {
+            return;
+        };
+        // 既にあるものを作り直さない。開くたびに走らせると producer が止まらなくなる。
+        if self.roots[index].at.source(&dir).is_none() {
+            self.roots[index].regenerator.request();
+        }
     }
 
-    /// ファイルが変わったことを伝える。変更を数えるのは、それを含む索引ルートだけ。
+    /// ファイルが変わったことを伝える。作り直すのは、それを含む索引ルート 1 本だけ。
     pub fn note_change(&mut self, changed: &Path, tree_root: &Path) {
         self.sync_roots(tree_root);
-        for root in &mut self.roots {
-            let at = tree_root.join(&root.at.subroot);
-            root.regenerator.note_change(changed, &at);
-        }
+        let Ok(rel) = changed.strip_prefix(tree_root) else {
+            return;
+        };
+        let Some(index) = self.owning_root(rel) else {
+            return;
+        };
+        let at = tree_root.join(&self.roots[index].at.subroot);
+        self.roots[index].regenerator.note_change(changed, &at);
+    }
+
+    /// `rel` を索引に載せるルート。同じ言語のルートが入れ子なら深いほうが持つ
+    /// ([`Store::load`] の衝突の解き方に合わせる)。
+    fn owning_root(&self, rel: &Path) -> Option<usize> {
+        let lang = roots::Language::of_file(rel)?;
+        self.roots
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.at.lang == lang && rel.starts_with(&r.at.subroot))
+            .max_by_key(|(_, r)| r.at.subroot.components().count())
+            .map(|(i, _)| i)
     }
 
     /// 作り直しを 1 周進める。始めどきなら始め、終わっていれば結果を返す。
     ///
-    /// 毎フレーム呼ばれる。待つものが無いうちにツリーを歩いたり置き場所を
-    /// 組み立てたりしないのは、そこにファイルシステムと git2 の参照が要るため。
+    /// 毎フレーム呼ばれる。待つものが無いうちに置き場所を組み立てないのは、
+    /// そこに git2 のリポジトリオープンが要るため。
     pub fn tick_regeneration(&mut self, repo_root: &Path, tree_root: &Path) -> Option<Regenerated> {
-        if !self.requested && !self.roots.iter().any(|r| r.is_working()) {
+        if !self.roots.iter().any(|r| r.is_working()) {
             return None;
         }
-        self.sync_roots(tree_root);
         let dir = self.conductor_dir(repo_root)?.to_path_buf();
-        if std::mem::take(&mut self.requested) {
-            for root in &mut self.roots {
-                root.regenerator.request();
-            }
-        }
         // 1 周で返すのは 1 本ぶん。生成はロックで直列化されているので、
         // 同じ周に 2 本が終わることはほとんど無い。
         self.roots.iter_mut().find_map(|root| {
@@ -120,6 +146,7 @@ impl SemanticIndex {
             return;
         }
         self.tree = tree_root.to_path_buf();
+        self.reading = None;
         // 走っている生成は前のツリーを索引している。Regenerator を捨てれば
         // Drop がプロセスグループごと止める。
         self.roots = roots::discover(tree_root)
@@ -144,7 +171,6 @@ impl SemanticIndex {
 
     /// 走っている生成を止める。worktree を切り替えたときに呼ぶ。
     pub fn abort_regeneration(&mut self) {
-        self.requested = false;
         for root in &mut self.roots {
             root.regenerator.abort();
         }
@@ -481,6 +507,142 @@ mod tests {
             sheaf_core::definition_at(&store, &bridge, rel, line as u32, col as u32),
             sheaf_core::Definition::Exact(vec![sheaf_core::Location {
                 path: PathBuf::from("pkg/greet/greet.go"),
+                line: 2,
+                col: 5,
+            }])
+        );
+    }
+
+    /// 索引ルートが 2 本ある Go のツリー。`.conductor/` も掘っておく。
+    fn nested_go_tree() -> tempfile::TempDir {
+        let (dir, _commit) = init_repo_with_commit(&[
+            ("go.mod", "module demo\n"),
+            ("main.go", "package main\n"),
+            ("services/api/go.mod", "module demo/api\n"),
+            ("services/api/api.go", "package api\n"),
+        ]);
+        std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn 読んでいるファイルの索引ルートだけに索引を作らせる() {
+        // 実在するリポジトリで索引ルートは 109 本になる。まとめて作ると数十分。
+        let dir = nested_go_tree();
+        let mut semantic = SemanticIndex::default();
+
+        semantic.note_open(Path::new("services/api/api.go"), dir.path(), dir.path());
+
+        let pending: Vec<_> = semantic
+            .roots
+            .iter()
+            .filter(|r| r.regenerator.is_pending())
+            .map(|r| r.at.subroot.clone())
+            .collect();
+        assert_eq!(pending, vec![PathBuf::from("services/api")]);
+    }
+
+    #[test]
+    fn 索引が既にあるルートには作り直しを頼まない() {
+        // 開くたびに頼むと、大きなリポジトリでは producer が止まらなくなる。
+        let dir = nested_go_tree();
+        let at = IndexRoot {
+            subroot: PathBuf::from("services/api"),
+            lang: Language::Go,
+        };
+        let conductor_dir = dir.path().join(".conductor");
+        let target = at.target(&conductor_dir, dir.path());
+        write_index_for(&target.index, &["api.go"]);
+        sheaf_core::write_provenance(&target.hashes, &*at.lang.producer(), &Default::default())
+            .unwrap();
+
+        let mut semantic = SemanticIndex::default();
+        semantic.note_open(Path::new("services/api/api.go"), dir.path(), dir.path());
+
+        assert!(
+            !semantic.roots.iter().any(|r| r.regenerator.is_pending()),
+            "索引があるのに作り直しを頼んだ"
+        );
+    }
+
+    #[test]
+    fn 入れ子のルートの編集は外側の索引を起こさない() {
+        // go.mod はモジュールの境界なので、外側の索引に内側のパッケージは入らない。
+        // 起こすと、変わっていない索引を作り直すだけになる。
+        let dir = nested_go_tree();
+        let mut semantic = SemanticIndex::default();
+
+        semantic.note_change(&dir.path().join("services/api/api.go"), dir.path());
+
+        let pending: Vec<_> = semantic
+            .roots
+            .iter()
+            .filter(|r| r.regenerator.is_pending())
+            .map(|r| r.at.subroot.clone())
+            .collect();
+        assert_eq!(pending, vec![PathBuf::from("services/api")]);
+    }
+
+    #[test]
+    fn 索引に載らないファイルの変更では作り直さない() {
+        let dir = nested_go_tree();
+        let mut semantic = SemanticIndex::default();
+
+        semantic.note_change(&dir.path().join("README.md"), dir.path());
+
+        assert!(!semantic.roots.iter().any(|r| r.regenerator.is_pending()));
+    }
+
+    /// 入れ子の索引ルートで作った索引が、ツリーのルートから見た正しいパスに飛ぶ。
+    ///
+    /// 索引の中の綴りは索引ルート相対 (`handler/handler.go`) なので、接ぎ木を
+    /// 誤ると存在しないパスへ飛ぶ。誤答なので、落ちるまで気づけない。
+    #[test]
+    fn 入れ子の索引ルートの中で定義に飛べる() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        for (rel, content) in [
+            ("go.mod", "module example.com/app\n\ngo 1.21\n"),
+            ("main.go", "package main\n\nfunc main() {}\n"),
+            ("services/api/go.mod", "module example.com/api\n\ngo 1.21\n"),
+            (
+                "services/api/handler/handler.go",
+                "package handler\n\nfunc Handle() string {\n\treturn \"ok\"\n}\n",
+            ),
+            (
+                "services/api/main.go",
+                "package main\n\nimport \"example.com/api/handler\"\n\nfunc main() {\n\tprintln(handler.Handle())\n}\n",
+            ),
+        ] {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, content).unwrap();
+        }
+        let root = dir.path();
+        build_index(root).expect("2 本の索引ルートを索引できない");
+
+        let store = load(root, root).expect("置いた索引を読めない");
+        let rel = Path::new("services/api/main.go");
+        let source = std::fs::read_to_string(root.join(rel)).unwrap();
+        let (line, text) = source
+            .lines()
+            .enumerate()
+            .find(|(_, t)| t.contains("handler.Handle()"))
+            .unwrap();
+        let col = text.find("Handle()").unwrap();
+
+        let mask = crate::symbol_index::CodeMask::compute(&source, "main.go");
+        let index = crate::symbol_index::SymbolIndex::new(root.to_path_buf());
+        let bridge = Bridge {
+            abs_path: &root.join(rel),
+            source: &source,
+            mask: &mask,
+            index: &index,
+        };
+        assert_eq!(
+            sheaf_core::definition_at(&store, &bridge, rel, line as u32, col as u32),
+            sheaf_core::Definition::Exact(vec![sheaf_core::Location {
+                path: PathBuf::from("services/api/handler/handler.go"),
                 line: 2,
                 col: 5,
             }])

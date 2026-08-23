@@ -140,13 +140,27 @@ Where the index lives and who builds it:
   pointing a producer at a tree it cannot recognise is worse than not running it,
   because rust-analyzer and scip-go both write an empty index and exit 0. Each root
   regenerates independently — a missing `scip-go` must not cost the Rust index.
-- `conductor index` builds the first one (~14s here). After that `Regenerator`
-  rebuilds whenever edits go quiet for 3s. It ignores gitignored paths — without
-  that, `target/` churn would reset the quiescence timer forever and the index
-  would never be rebuilt. That is why `FsEvent::Changed` carries a path.
-- Booting without an index does not wait for an edit: a load that finds nothing
-  calls `Regenerator::request`, and the status bar reports the result once.
-  Routine rebuilds stay silent. Note that `Lock::acquire` distinguishes "someone
+- **Index roots are found by walking the tree, and only the one you are reading
+  gets built.** Measured on a real monorepo: 109 roots (75 `tsconfig.json`, 19
+  `Cargo.toml`, 15 `go.mod`), 324ms to enumerate. Building all of them would take
+  tens of minutes, and again every time edits go quiet — so `note_open` requests
+  exactly the root that owns the file in the Viewer, and only when that root has
+  no index yet. `note_change` does the same for the root that owns the edit.
+  `conductor index` is the way to build every root at once. Two consequences: a
+  repository with no index yet stays syntactic until a file is opened (opening one
+  is the only way to jump anyway), and `note_open` is called every frame from
+  `tick_semantic_regeneration` rather than from the 12 places that open a file —
+  missing one of those would be silent.
+- Enumeration honours `.gitignore` and skips `node_modules` / `vendor`; without
+  that, a committed `node_modules` alone contributes hundreds of roots. Nested
+  `Cargo.toml` under a root one is a workspace member and is *not* a separate
+  root (rust-analyzer covers it, and each producer peaks at 2.36GB); nested
+  `go.mod` and `tsconfig.json` are module/project boundaries and *are*.
+- `conductor index` builds the first ones (~14s for this repository). After that
+  `Regenerator` rebuilds whenever edits go quiet for 3s. It ignores gitignored
+  paths — without that, `target/` churn would reset the quiescence timer forever
+  and the index would never be rebuilt. That is why `FsEvent::Changed` carries a
+  path. Routine rebuilds stay silent; the status bar reports only the first index. Note that `Lock::acquire` distinguishes "someone
   else is generating" from "the directory is not there yet" — collapsing the two
   made every first-ever `conductor index` answer `Busy`.
 - The index producers are external tools. sheaf's `tests/go_definition.rs` and

@@ -239,6 +239,13 @@ pub(crate) fn poll_watchers(
 fn tick_semantic_regeneration(app: &mut App) {
     let repo_root = app.repo.path.clone();
     let tree_root = app.selected_worktree_path();
+    // 読んでいるファイルの索引ルートに索引が無ければ、ここで作りに行かせる。
+    // 索引ルートは実在するリポジトリで 109 本になるので、まとめては作らない。
+    if let Some(rel) = app.viewer_state.content.current_file.clone() {
+        app.code_nav
+            .semantic
+            .note_open(std::path::Path::new(&rel), &repo_root, &tree_root);
+    }
     let Some(outcome) = app
         .code_nav
         .semantic
