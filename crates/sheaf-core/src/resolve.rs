@@ -4,9 +4,9 @@
 //! インライン引数がそれで、実測でひとつも occurrence が無い一方、rust-analyzer は
 //! 同じ位置で定義を返す）。したがって切り替えの判定は位置ごとに行う。
 
-use crate::store::Resolved;
+use crate::store::{Implemented, Resolved};
 use crate::syntactic::{SyntacticAnswer, SyntacticLayer, Token};
-use crate::{Definition, References, Store, SymbolId};
+use crate::{Definition, Implementations, References, Store, SymbolDetail};
 use std::path::Path;
 
 /// その位置にある語の定義を答える。
@@ -32,24 +32,48 @@ pub fn definition_at(
     }
 }
 
-/// その位置の語が指しているシンボル。所属や綴りを見せるためのもので、
-/// どこにあるかの主張ではない。
+/// その位置の語について、索引が書いている説明。所属・種別・宣言を見せるための
+/// もので、どこにあるかの主張ではない。
 ///
 /// 索引が最新でない、その位置に occurrence が無い、識別子ではない、のいずれでも
-/// 空を返す。[`definition_at`] が [`Definition::Exact`] を返した位置でだけ使うこと —
+/// 空を返す。[`definition_at`] が [`Definition::Exact`] を返した位置でだけ使うこと --
 /// 構文層に落ちた答えの横に索引由来の綴りを並べると、出どころの違う 2 つが
 /// 1 つの説明に見える。
-pub fn symbols_at(
+pub fn describe_at(
     store: &Store,
     syntactic: &dyn SyntacticLayer,
     rel: &Path,
     line: u32,
     col: u32,
-) -> Vec<SymbolId> {
+) -> Vec<SymbolDetail> {
     let abs = store.root().join(rel);
     match syntactic.token_at(&abs, line, col) {
-        Token::Word(span) => store.symbols_in(rel, span).unwrap_or_default(),
+        Token::Word(span) => store.describe_in(rel, span).unwrap_or_default(),
         Token::NotWord | Token::Unknown => Vec::new(),
+    }
+}
+
+/// その位置の語が trait なら、それを実装している impl ブロック。
+///
+/// 索引が答えられなければ [`Implementations::Unknown`] を返す。ここだけは構文層に
+/// 落とさない -- 実装の探索は名前の一致で当てにいく作業で、位置から始まる問いの
+/// 答えとしては別物になる。落とすかどうかは呼び出し側が決める。
+pub fn implementations_at(
+    store: &Store,
+    syntactic: &dyn SyntacticLayer,
+    rel: &Path,
+    line: u32,
+    col: u32,
+) -> Implementations {
+    let abs = store.root().join(rel);
+    match syntactic.token_at(&abs, line, col) {
+        Token::NotWord => Implementations::NotCode,
+        Token::Word(span) => match store.implementations_in(rel, span) {
+            Some(Implemented::Declared(found)) => Implementations::Exact(found),
+            Some(Implemented::Derived(found)) => Implementations::Derived(found),
+            None => Implementations::Unknown,
+        },
+        Token::Unknown => Implementations::Unknown,
     }
 }
 

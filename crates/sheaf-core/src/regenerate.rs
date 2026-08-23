@@ -126,6 +126,21 @@ impl Regenerator {
         matches!(self.state, State::Pending { .. })
     }
 
+    /// 変更を待たずに 1 本作らせる。索引がまだ 1 本も無いときの口。
+    ///
+    /// 静穏時間は変更のときと同じに置く。組み込む側が起動直後にこれを呼ぶので、
+    /// すぐ始めると起動と生成 (実測 2.3GiB) が重なる。
+    ///
+    /// 走っている最中と、producer を起動できないと分かったあとは何もしない。
+    pub fn request(&mut self) {
+        if self.disabled || matches!(self.state, State::Running) {
+            return;
+        }
+        self.state = State::Pending {
+            last_change: Instant::now(),
+        };
+    }
+
     /// `root` のツリーの中でファイルが変わった。
     ///
     /// 索引に載らないファイルは数えない。ビルド成果物は数秒おきに書き換わるので、

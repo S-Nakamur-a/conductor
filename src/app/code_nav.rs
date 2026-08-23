@@ -39,6 +39,44 @@ impl AnsweredBy {
     }
 }
 
+/// 索引の宣言をポップアップに載せる最大行数。超えたら … で切り詰める。
+/// 索引の宣言は where 節を畳まずに書くので、長いものは実際に長い。
+const MAX_INDEX_SIGNATURE_LINES: usize = 8;
+
+/// 索引が答えた説明を、ホバーが受け取る形にする。
+///
+/// 同じ位置に複数の符号が乗ることがある (`Struct { file_path }` の省略記法だと
+/// フィールドとローカル束縛の両方) ので、説明を持っているものを先に採る。
+fn indexed_detail(described: &[sheaf_core::SymbolDetail]) -> crate::hover_info::IndexedDetail {
+    let detail = described
+        .iter()
+        .find(|d| d.signature.is_some())
+        .or_else(|| described.first());
+    let Some(detail) = detail else {
+        return Default::default();
+    };
+    let mut signature_lines: Vec<String> = detail
+        .signature
+        .iter()
+        .flat_map(|s| s.lines())
+        .map(str::to_string)
+        .collect();
+    if signature_lines.len() > MAX_INDEX_SIGNATURE_LINES {
+        signature_lines.truncate(MAX_INDEX_SIGNATURE_LINES);
+        signature_lines.push("…".to_string());
+    }
+    crate::hover_info::IndexedDetail {
+        kind: crate::semantic_index::kind_label(detail.kind).to_string(),
+        signature_lines,
+        doc_lines: detail
+            .documentation
+            .iter()
+            .flat_map(|d| d.lines())
+            .map(str::to_string)
+            .collect(),
+    }
+}
+
 /// 意味索引への 1 回の問い合わせに要るもの。タブ展開前の座標で持つ。
 struct SemanticSite {
     rel: std::path::PathBuf,
@@ -57,8 +95,11 @@ impl App {
     /// 索引が答えた位置は gd の飛び先と同じなので、両者の説明がずれない。
     fn hover_info_at(&self, symbol: &str, line_1: usize, start_col: usize) -> Option<HoverInfo> {
         let current_file = self.viewer_state.content.current_file.clone();
+        // 索引への問い合わせは 1 回にまとめる。所属と説明で別々に聞くと、同じ位置に
+        // 2 回 Document をデコードすることになる。
+        let described = self.semantic_description(line_1, start_col);
         let site = self
-            .semantic_def_site(symbol, line_1, start_col)
+            .semantic_def_site(line_1, start_col, described.as_deref())
             .or_else(|| {
                 crate::hover_info::resolve_def_site(
                     &self.code_nav.index,
@@ -70,17 +111,36 @@ impl App {
             Some(site.file_path.as_str()) == current_file.as_deref() && site.line == line_1;
         let mut info = crate::hover_info::build_hover_info(&self.code_nav.index, symbol, site)?;
         info.on_definition_line = same_line;
-        info.container = self.semantic_container(line_1, start_col);
+        info.container = described
+            .as_ref()
+            .and_then(|d| d.iter().find_map(|s| s.container.clone()));
         Some(info)
+    }
+
+    /// 意味索引に、その位置の語について書いてあることを聞く。
+    fn semantic_description(
+        &self,
+        line_1: usize,
+        start_col: usize,
+    ) -> Option<Vec<sheaf_core::SymbolDetail>> {
+        let tree_root = self.selected_worktree_path();
+        let store = self.code_nav.semantic.store(&tree_root)?;
+        let line_idx = line_1.checked_sub(1)?;
+        let occurrence = self.occurrence_at_rendered_column(line_idx, start_col)?;
+        let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
+        let bridge = self.bridge(&site);
+        Some(sheaf_core::describe_at(
+            store, &bridge, &site.rel, site.line, site.col,
+        ))
     }
 
     /// 意味索引に定義位置を聞く。Exact のときだけ採る -- Enclosing は「囲んでいる
     /// 型の定義」であって、聞かれた語の定義ではない。
     fn semantic_def_site(
         &self,
-        symbol: &str,
         line_1: usize,
         start_col: usize,
+        described: Option<&[sheaf_core::SymbolDetail]>,
     ) -> Option<crate::hover_info::DefSite> {
         let line_idx = line_1.checked_sub(1)?;
         let occurrence = self.occurrence_at_rendered_column(line_idx, start_col)?;
@@ -88,39 +148,14 @@ impl App {
             return None;
         };
         let first = locations.first()?;
-        let file_path = first.path.to_string_lossy().into_owned();
-        let line = first.line as usize + 1;
         Some(crate::hover_info::DefSite {
-            kind: self.definition_kind_at(symbol, &file_path, line),
-            file_path,
-            line,
+            file_path: first.path.to_string_lossy().into_owned(),
+            line: first.line as usize + 1,
+            // 索引が種別を答えるので、tree-sitter から借りるのはもうやめている。
+            kind: String::new(),
             def_count: locations.len(),
+            detail: described.map(indexed_detail),
         })
-    }
-
-    /// その位置の語を囲んでいるものの綴り。索引が答えられなければ None。
-    fn semantic_container(&self, line_1: usize, start_col: usize) -> Option<String> {
-        let tree_root = self.selected_worktree_path();
-        let store = self.code_nav.semantic.store(&tree_root)?;
-        let line_idx = line_1.checked_sub(1)?;
-        let occurrence = self.occurrence_at_rendered_column(line_idx, start_col)?;
-        let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
-        let bridge = self.bridge(&site);
-        sheaf_core::symbols_at(store, &bridge, &site.rel, site.line, site.col)
-            .iter()
-            .find_map(|id| crate::semantic_index::container_path(id.as_str()))
-    }
-
-    /// 索引が返した位置に tree-sitter の定義が重なっていれば、その種別を借りる。
-    /// 見つからなくても答えは変わらず、種別の見出しが付かないだけ。
-    fn definition_kind_at(&self, symbol: &str, file_path: &str, line: usize) -> String {
-        self.code_nav
-            .index
-            .find_definitions(symbol)
-            .iter()
-            .find(|d| d.file_path == file_path && d.line == line)
-            .map(|d| format!("{:?}", d.kind))
-            .unwrap_or_default()
     }
 
     /// ビューアのカーソル行から選んだシンボルについて、ホバー情報のポップアップを
@@ -787,10 +822,7 @@ impl App {
 
     /// 一覧のポップアップを開き直す。
     fn show_reference_list(&mut self, title: String, results: Vec<crate::symbol_index::Reference>) {
-        self.code_nav.references.show(
-            title,
-            results,
-        );
+        self.code_nav.references.show(title, results);
     }
 
     /// 意味索引が返した定義を画面に反映する。
@@ -1071,6 +1103,23 @@ impl App {
         let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
         let bridge = self.bridge(&site);
         Some(sheaf_core::references_at(
+            store, &bridge, &site.rel, site.line, site.col,
+        ))
+    }
+
+    /// 意味索引に、その位置の trait を実装しているものを聞く。返り値の読み方は
+    /// [`Self::semantic_definition`] と同じだが、こちらは構文層に落ちない
+    /// ([`sheaf_core::Implementations::Unknown`] が「索引が答えられない」)。
+    pub fn semantic_implementations(
+        &self,
+        line_idx: usize,
+        occurrence: usize,
+    ) -> Option<sheaf_core::Implementations> {
+        let tree_root = self.selected_worktree_path();
+        let store = self.code_nav.semantic.store(&tree_root)?;
+        let site = self.semantic_site(&tree_root, line_idx, occurrence)?;
+        let bridge = self.bridge(&site);
+        Some(sheaf_core::implementations_at(
             store, &bridge, &site.rel, site.line, site.col,
         ))
     }
@@ -1716,10 +1765,7 @@ pub struct Building {
         let src = "fn f() {\n    let value = 1; // build the index\n}\n";
         let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
         let line = src.lines().nth(1).unwrap();
-        assert_eq!(
-            first_candidate(line, 2, &mask),
-            Some("value".to_string())
-        );
+        assert_eq!(first_candidate(line, 2, &mask), Some("value".to_string()));
 
         // 文字列リテラルも同様にその中身を隠す。
         let src = "fn f() {\n    let s = \"index\";\n}\n";

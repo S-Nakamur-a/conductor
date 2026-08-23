@@ -15,7 +15,7 @@ pub use regenerate::{
     Outcome, Producer, Regenerator, RustAnalyzer, ScipGo, ScipTypescript, Target, generate_once,
     read_provenance, write_provenance,
 };
-pub use resolve::{definition_at, references_at, symbols_at};
+pub use resolve::{definition_at, describe_at, implementations_at, references_at};
 pub use store::{IndexSource, Slot, Store};
 pub use syntactic::{SyntacticAnswer, SyntacticLayer, Token};
 
@@ -181,6 +181,86 @@ pub struct ViaInterface {
     /// 1 なら、その参照が届く先はこの実装しかない。多いほど、この実装に届く見込みは薄い
     /// （実測で 51 実装が 1 箇所の呼び出しを共有している例がある）。
     pub implementations: u32,
+}
+
+/// trait / interface の実装先の答え。
+///
+/// producer によって根拠の強さが違うので variant を分けてある。scip-go と
+/// scip-typescript は SCIP の `relationships` に実装関係を書くので、それを
+/// そのまま返せる。rust-analyzer は 1 件も書かない (実測: このリポジトリの索引で
+/// SymbolInformation 22,434 件すべてが空) ので、符号の綴りから導出するしかない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Implementations {
+    /// 索引が `relationships` に書いている実装先。0 件は「探したが無い」。
+    Exact(Vec<Implementation>),
+    /// 符号の綴りから導出した。0 件は「探したが無い」。
+    ///
+    /// 同名の trait がリポジトリに 2 つあると混ざる。飛び先は正しい impl ブロック
+    /// だが、その trait が聞かれたものと同じとは限らない。
+    Derived(Vec<Implementation>),
+    /// 索引が答えられない。索引が無い、聞かれたファイルが索引生成時と違う、
+    /// その位置に occurrence が無い、のいずれか。
+    ///
+    /// `Derived(vec![])` (探したが無い) とは別物として持つ。
+    Unknown,
+    /// その位置に識別子が無い。
+    NotCode,
+}
+
+/// trait を実装している impl ブロック 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Implementation {
+    /// impl ブロックの位置。型の定義ではなく `impl X for T` の行を指す。
+    pub site: Location,
+    /// 実装している型の綴り。符号の断片であって完全な符号ではない。
+    pub ty: String,
+}
+
+/// 索引がそのシンボルについて書いている説明。
+///
+/// 位置についての主張ではないので [`Definition`] とは別の口にしてある。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolDetail {
+    pub symbol: SymbolId,
+    pub kind: SymbolKind,
+    /// その語を囲んでいるものの綴り (`app::types::App`)。組み立てられない形では None。
+    pub container: Option<String>,
+    /// 索引が書いた宣言 (`fn token_at(&self, path: &Path) -> Token`)。
+    /// 型は producer が解決したもので、ソースの字面ではない。
+    pub signature: Option<String>,
+    /// doc コメント。索引が持っていなければ空。
+    pub documentation: Vec<String>,
+}
+
+/// シンボルの種別。
+///
+/// 言語をまたいで名前が要るので、綴りは Rust に寄せていない。Go の interface と
+/// Rust の trait は分けてある — 実装を持てるかどうかが違い、ジャンプの意味も違う。
+/// 読み取れなかった種別は [`Unknown`](SymbolKind::Unknown) にする。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolKind {
+    AssociatedType,
+    Constant,
+    Enum,
+    EnumMember,
+    Class,
+    Field,
+    Function,
+    ImplBlock,
+    Interface,
+    Method,
+    Module,
+    Package,
+    Parameter,
+    SelfParameter,
+    Static,
+    Struct,
+    Trait,
+    TypeAlias,
+    TypeParameter,
+    Variable,
+    /// 索引が種別を書いていないか、書いた番号が表に無かった。
+    Unknown,
 }
 
 /// シンボルの識別子。中身の構造は後で決めるので、いまは SCIP のシンボル文字列を

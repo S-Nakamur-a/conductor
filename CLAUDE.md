@@ -132,13 +132,23 @@ Where the index lives and who builds it:
   `git2::Repository::commondir()` to the main one — the same move
   `mcp_serve::resolve` makes for the review DB. The lock is per repository on
   purpose: one producer peaks at 2.36GB, so the cap must not split per worktree.
-- **Rust only.** `RustAnalyzer` is the sole producer, gated on a `Cargo.toml` at
-  the tree root; Go and TypeScript keep going through the tree-sitter fallback
-  unchanged. sheaf has `ScipGo` / `ScipTypescript` ready when we want them.
+- **Generation is Rust only; reading is not.** `RustAnalyzer` is the sole producer
+  conductor runs, gated on a `Cargo.toml` at the tree root, so a Go or TypeScript
+  repository opened in conductor still answers entirely through tree-sitter.
+  sheaf-core itself is producer-independent and verified against real `scip-go` and
+  `scip-typescript` indexes (kind, declaration, doc, container, and implementations
+  all resolve); `ScipGo` / `ScipTypescript` are ready. What is missing is the host
+  side: choosing a producer per tree, and holding several index roots at once
+  (`go.mod` ×8 and `tsconfig.json` ×9 in one repository are the known real cases).
 - `conductor index` builds the first one (~14s here). After that `Regenerator`
   rebuilds whenever edits go quiet for 3s. It ignores gitignored paths — without
   that, `target/` churn would reset the quiescence timer forever and the index
   would never be rebuilt. That is why `FsEvent::Changed` carries a path.
+- Booting without an index does not wait for an edit: a load that finds nothing
+  calls `Regenerator::request`, and the status bar reports the result once.
+  Routine rebuilds stay silent. Note that `Lock::acquire` distinguishes "someone
+  else is generating" from "the directory is not there yet" — collapsing the two
+  made every first-ever `conductor index` answer `Busy`.
 - The index producers are external tools. sheaf's `tests/go_definition.rs` and
   `tests/ts_definition.rs` really launch `scip-go` / `npx` and **fail rather than
   skip** where they are absent. `#[ignore]`d tests need a real index; see
@@ -153,12 +163,51 @@ the UI thread, and `references_at` may fall through to a full tree walk (measure
 `hover_info::DefSite` is the seam: whoever resolved the position, the popup is
 built the same way, and a site the index found needs no tree-sitter definition at
 all (that absence is why hover used to stay silent on locals, fields and module
-names). The popup's header line is the **container** (`app::types::App`), built
-from the SCIP symbol by `semantic_index::container_path` — sheaf exposes the raw
-symbol string through `symbols_at`, deliberately outside `Definition` because it
-is not a claim about a location. The formatter returns `None` rather than guess
-on impl blocks, type parameters and locals, so it covers 99 of 217 `Exact`
-answers measured here.
+names).
+
+Its **declaration and kind** come from the index too, through `describe_at`.
+`SymbolInformation` carries both for every symbol rust-analyzer emits (measured:
+656 of 656 own-crate positions across three files), and the declaration is the
+producer's resolved type, not the source text — `let message: String` where the
+line reads `let message = who.greet();`. Scraping the definition line is the
+fallback, not the default. Two things make this harder than reading a field:
+
+- **`signature_documentation` is not what the scip crate says it is.** scip 0.9
+  generates a `Signature` with the text at field 2; rust-analyzer and scip-go both
+  write the older spelling, a `Document` with the text at field 5. Typed access
+  compiles and returns an empty string forever, so `store::signature_text` reads
+  both. **scip-typescript writes no `signature_documentation` at all** — its
+  declaration is a ```` ```ts ```` fence at `documentation[0]`, which
+  `store::fenced_declaration` lifts out (the remaining entries stay as doc).
+- **`kind`'s numbers are not the crate's.** The SCIP enum was renumbered, and the
+  producers' numbers do not line up with scip 0.9's (function is 17 there and 24
+  here). They do line up with **each other** — rust-analyzer and scip-go write the
+  same older numbering, verified against both indexes — so `store/kind.rs` is one
+  table with no tool name in it. Do not route these through `scip::types::Kind`,
+  and do not reintroduce a per-tool table: scip-typescript writes no `kind`, and a
+  table keyed on the tool would have silently answered `Unknown` for everything a
+  given tool had not been observed writing. Producers that omit `kind` fall to
+  `kind::from_declaration`, which reads the declaration's leading word (or
+  TypeScript's `(method)` / `(property)` prefix).
+
+The popup keeps one fixed shape so the reading order does not move per kind:
+container on the left of the header, kind on the right, declaration under it, doc
+under that, then the clickable location and "N refs". The container
+(`app::types::App`) arrives as `SymbolDetail.container` — sheaf-core builds it, so
+conductor never parses a SCIP symbol string. Three things it has to get right:
+
+- **A local has no spelling of its own.** `local 3` carries the enclosing function
+  in `SymbolInformation.enclosing_symbol` instead, and that is where the container
+  comes from. Adding it took the measured coverage from 99 to 193 of the `Exact`
+  answers in this repository — locals and parameters are most of the positions a
+  reader hovers.
+- **The separator comes from the file extension**, not the producer: `::` for
+  `.rs`, `.` for everything else.
+- **A backticked descriptor is a file for TypeScript and a generic type for
+  Rust.** ``src/`greet.tsx`/Loud#`` should drop the file (the popup shows the
+  location anyway); `` `Bridge<'a>`#`` must not be dropped, because the result
+  would name a different type. So it is dropped only in namespace position, and
+  anywhere else the formatter returns `None` rather than guess.
 
 Pressing a jump key **on** a definition shows its references instead. That test is
 `answer_points_at`: the index's own answer must name the position that was asked
@@ -166,10 +215,28 @@ about. It used to compare the top visible line against a tree-sitter name lookup
 with a ±2-line tolerance, which meant it never fired for fields or locals and
 misfired whenever the viewport had scrolled.
 
-Still on tree-sitter, deliberately: go-to-implementation (sheaf keeps
-`implements`/`implementers` internal and only counts implementers), and the
-symbol-action overlay (it shows definitions, implementations and references
-together, so it moves when implementations do).
+Go-to-implementation answers at two different strengths, and the variant says
+which. **rust-analyzer emits no SCIP `relationships` at all** (measured: 0 of
+22,434 `SymbolInformation` in this repository's index); scip-go and
+scip-typescript both do. Where they exist, the reverse of `implementers` *is* the
+answer and it comes back as `Implementations::Exact`. Where they do not, all that
+is left is the spelling of the symbols themselves: `impl#[Loud][Greeter]` names
+both sides, `store::impl_pair` reads the pair off it, and the answer is
+`Implementations::Derived`. The two are never mixed into one list — merging them
+would drag a producer-declared answer down to the weaker claim. Two consequences
+worth knowing before touching the derived path:
+
+- **The key is a bare spelling, not a symbol.** Two same-named traits in one
+  repository would merge. That is why the answer is not `Exact`.
+- **A generic impl has no block symbol.** `impl<'a> SyntacticLayer for Bridge<'a>`
+  puts nothing but its methods in the index, so the landing point is the earliest
+  definition under that `(trait, type, file)` — the `impl` line when the block
+  symbol exists, the first method inside it otherwise. Both land in the right
+  block; only the former lands on the right line.
+
+Still on tree-sitter, deliberately: the symbol-action overlay (it shows
+definitions, implementations and references together by name, so it moves when
+that overlay moves), and `gi` itself whenever the index stays silent.
 
 ## Architecture
 
