@@ -286,6 +286,25 @@ mod tests {
     }
 
     #[test]
+    fn 言語ごとに違う道具を起動する() {
+        // ここが 1 つに潰れると、Go や TypeScript のツリーに rust-analyzer が向く。
+        // 認識できない対象には終了コード 0 で空の索引を書くので、失敗に見えない。
+        let program = |lang: Language| lang.producer().command(Path::new("/o"))[0].clone();
+
+        assert_eq!(program(Language::Rust), "rust-analyzer");
+        assert_eq!(program(Language::Go), "scip-go");
+        // scip-typescript は npx 越しに版を固定して起動する。
+        assert_eq!(program(Language::TypeScript), "npx");
+        assert!(
+            Language::TypeScript
+                .producer()
+                .command(Path::new("/o"))
+                .iter()
+                .any(|a| a.starts_with("@sourcegraph/scip-typescript@"))
+        );
+    }
+
+    #[test]
     fn 拡張子と目印から言語を引く() {
         assert_eq!(Language::of_file(Path::new("a/b.go")), Some(Language::Go));
         assert_eq!(
