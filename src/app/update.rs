@@ -158,6 +158,11 @@ impl App {
                 self.start_semantic_index_load();
             } else if let Some(n) = documents {
                 log::info!("Semantic index loaded: {n} documents");
+            } else {
+                // 索引がまだ無い。作らせないと、何か編集するまで作り直しの
+                // 引き金が引かれないまま構文層に落ち続ける。
+                self.code_nav.semantic.request_build();
+                log::info!("No semantic index yet; requested a build");
             }
         }
 

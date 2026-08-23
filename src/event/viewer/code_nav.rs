@@ -46,8 +46,7 @@ pub(in crate::event) fn run(
         HintAction::Definition => {
             go_to_definition_at(app, line_idx, occurrence, symbol, source_screen_row)
         }
-        // 実装ジャンプは索引に問い合わせ口が無いので位置を使わない。
-        HintAction::Implementation => go_to_implementation_at(app, symbol),
+        HintAction::Implementation => go_to_implementation_at(app, line_idx, occurrence, symbol),
         HintAction::References => find_references_at(app, line_idx, occurrence, symbol),
         HintAction::Hover => app.show_hover_info_at(line_idx, symbol),
     }
@@ -138,7 +137,18 @@ fn go_to_definition_at(
     }
 }
 
-fn go_to_implementation_at(app: &mut App, symbol: &str) {
+fn go_to_implementation_at(app: &mut App, line_idx: usize, occurrence: usize, symbol: &str) {
+    // 索引が答えるのは「この trait を実装しているもの」で、名前の一致ではない。
+    // 索引が黙ったときだけ下の名前ベースの経路へ落ちる。
+    if let Some(
+        sheaf_core::Implementations::Exact(impls) | sheaf_core::Implementations::Derived(impls),
+    ) = app.semantic_implementations(line_idx, occurrence)
+        && !impls.is_empty()
+    {
+        apply_semantic_implementations(app, symbol, impls);
+        return;
+    }
+
     if !app.code_nav.index.is_available() {
         app.set_status(
             "Symbol index not ready yet".to_string(),
@@ -183,6 +193,46 @@ fn go_to_implementation_at(app: &mut App, symbol: &str) {
             );
         }
     }
+}
+
+/// 索引が導出した実装先を、ジャンプか一覧にする。
+///
+/// 索引に impl ブロックの符号が無い形 (ジェネリックな impl) では、着地点はその
+/// ブロックの最初のメソッドになる。飛び先の行そのものより「どの型の実装か」が
+/// 要る情報なので、一覧にはその型を並べる。
+fn apply_semantic_implementations(
+    app: &mut App,
+    symbol: &str,
+    impls: Vec<sheaf_core::Implementation>,
+) {
+    if let [only] = impls.as_slice() {
+        let file = only.site.path.to_string_lossy().into_owned();
+        let line = only.site.line as usize + 1;
+        let ty = only.ty.clone();
+        app.jump_to_location(&file, line, 0);
+        app.set_status(
+            format!("Jumped to {ty}'s impl of '{symbol}' [index] {file}:{line}"),
+            StatusLevel::Success,
+        );
+        return;
+    }
+
+    let n = impls.len();
+    app.code_nav.references.show(
+        format!("{symbol} (implementations, index)"),
+        impls
+            .iter()
+            .map(|imp| crate::symbol_index::Reference {
+                file_path: imp.site.path.to_string_lossy().into_owned(),
+                line: imp.site.line as usize + 1,
+                content: format!("impl {symbol} for {}", imp.ty),
+            })
+            .collect(),
+    );
+    app.set_status(
+        format!("{n} implementations found for '{symbol}' [index]"),
+        StatusLevel::Info,
+    );
 }
 
 fn find_references_at(app: &mut App, line_idx: usize, occurrence: usize, symbol: &str) {

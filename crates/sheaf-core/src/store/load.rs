@@ -6,8 +6,14 @@
 
 use super::column::{Lines, location_of, usable_range};
 use super::scip_split::{self, Split};
-use super::{DocEntry, Implements, Store, is_definition, is_local, parse_document};
-use crate::Result;
+use super::{
+    DocEntry, Implementation, Implements, Store, TraitImpls, impl_pair, is_definition, is_local,
+    parse_document,
+};
+use crate::{Location, Result};
+
+/// (trait の綴り, 型の綴り, ファイル) -> いちばん上の定義位置。投入中だけ使う。
+type ImplSites = HashMap<(Box<str>, Box<str>, PathBuf), Location>;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -97,6 +103,10 @@ impl Store {
         let mut implements: Vec<Implements> = vec![HashMap::new(); sources.len()];
         let mut implementers: Vec<HashMap<Box<str>, HashSet<Box<str>>>> =
             vec![HashMap::new(); sources.len()];
+        // (trait の綴り, 型の綴り, ファイル) -> いちばん上の定義位置。
+        // ブロックの符号とメソッドの符号の両方が来るので、いちばん上を採ると
+        // ブロックがあれば impl の行に、無ければその中の最初のメソッドに落ちる。
+        let mut impl_sites: Vec<ImplSites> = vec![HashMap::new(); sources.len()];
         let mut doc_paths: Vec<PathBuf> = Vec::with_capacity(owners.len());
         let mut missing_provenance = 0;
         for (path, owner) in owners {
@@ -137,6 +147,19 @@ impl Store {
                     let Some(loc) = location_of(&range, &path) else {
                         continue;
                     };
+                    // rust-analyzer は relationships を出さないので、trait と実装の
+                    // 対応はこの符号の綴りからしか取れない。
+                    if let Some((ty, implemented)) = impl_pair(&occ.symbol) {
+                        let key = (implemented.into(), ty.into(), path.clone());
+                        impl_sites[index]
+                            .entry(key)
+                            .and_modify(|held| {
+                                if (loc.line, loc.col) < (held.line, held.col) {
+                                    *held = loc.clone();
+                                }
+                            })
+                            .or_insert_with(|| loc.clone());
+                    }
                     definitions[index]
                         .entry(occ.symbol.as_str().into())
                         .or_insert_with(Vec::new)
@@ -189,10 +212,26 @@ impl Store {
             definitions,
             references,
             implements,
-            // 実装の集合はここまでで確定するので、数だけ残して符号は捨てる。
             implementers: implementers
                 .into_iter()
-                .map(|m| m.into_iter().map(|(k, v)| (k, v.len() as u32)).collect())
+                .map(|m| {
+                    m.into_iter()
+                        .map(|(k, v)| (k, v.into_iter().collect()))
+                        .collect()
+                })
+                .collect(),
+            trait_impls: impl_sites
+                .into_iter()
+                .map(|sites| {
+                    let mut out: TraitImpls = HashMap::new();
+                    for ((implemented, ty, _), site) in sites {
+                        out.entry(implemented).or_default().push(Implementation {
+                            site,
+                            ty: ty.into_string(),
+                        });
+                    }
+                    out
+                })
                 .collect(),
             doc_paths,
             outside_root,

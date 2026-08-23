@@ -89,9 +89,8 @@ pub(crate) fn run_due_timers(
                 // 新規作成されたファイルが現れるようにする。安い処理 (子は遅延読み込み)
                 // で、変化があったときだけ再描画する。
                 if app.refresh_viewer() {
-                    app.dirty.mark(
-                        crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER,
-                    );
+                    app.dirty
+                        .mark(crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER);
                 }
                 app.check_diff_viewer_staleness();
             }
@@ -253,8 +252,18 @@ fn tick_semantic_regeneration(app: &mut App) {
         // そのときだけ正しい向きで読み直す。
         crate::semantic_index::Regenerated::Ready { root, store } => {
             log::info!("semantic index regenerated: {} documents", store.len());
+            // 索引が無い状態から埋まったときだけ知らせる。作り直しは編集が
+            // 収まるたびに走るので、毎回出すと status がそれで埋まる。
+            let was_absent = app.code_nav.semantic.store(&tree_root).is_none();
+            let documents = store.len();
             if !app.code_nav.semantic.accept(&root, &tree_root, Some(store)) {
                 app.start_semantic_index_load();
+            } else if was_absent {
+                let unit = if documents == 1 { "file" } else { "files" };
+                app.set_status(
+                    format!("Code index ready ({documents} {unit})"),
+                    crate::app::StatusLevel::Success,
+                );
             }
         }
         // 待機に戻すのは sheaf 側がやる。ここで作り直しを起こすと二重に走る。

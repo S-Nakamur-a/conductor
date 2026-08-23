@@ -23,14 +23,19 @@ pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let host = {
         let vr = app.layout.cache.columns[2];
-        if vr.width > 0 && vr.height > 0 { vr } else { area }
+        if vr.width > 0 && vr.height > 0 {
+            vr
+        } else {
+            area
+        }
     };
     render_base_popup(frame, host, app);
     // レベル1: 参照一覧（ピン留め）。レベル2: プレビュー。
     if app.code_nav.hover_info.refs.is_some() {
         render_refs_list(frame, host, app);
         if app
-            .code_nav.hover_info
+            .code_nav
+            .hover_info
             .refs
             .as_ref()
             .is_some_and(|r| r.preview.is_some())
@@ -45,29 +50,22 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     // info への不変借用を先に終わらせてから app.code_nav.hover_info に
     // ヒットテスト用の Rect を書き戻せるよう、所有データとして取り出しておく。
-    let (symbol_name, mut body, def_label, ref_count, ref_count_capped) = {
+    // 見出しは 1 行に固定する。所属を左、種別を右に置き、種別ごとに行の並びは
+    // 変えない。並びが種別で動くと、次にどこを見ればよいかが毎回変わる。
+    let (symbol_name, mut body, container, kind, def_label, ref_count, ref_count_capped) = {
         let info = app.code_nav.hover_info.info.as_ref().unwrap();
         let mut def_label = format!("▸ {}:{}", info.file_path, info.line);
-        if !info.kind.is_empty() {
-            def_label.push_str(&format!("  {}", info.kind));
-        }
         if info.def_count > 1 {
             def_label.push_str(&format!("  (+{} defs)", info.def_count - 1));
         }
         def_label.push_str(" — click to jump");
 
-        // 本文の行: シグネチャ、doc。場所と参照はクリックできるフッターに置く。
+        // 本文の行: シグネチャ、doc。見出しは幅が決まってから足す。場所と参照は
+        // クリックできるフッターに置く。
         let mut body: Vec<Line> = Vec::new();
-        if let Some(container) = &info.container {
-            body.push(Line::from(Span::styled(
-                container.clone(),
-                Style::default()
-                    .fg(theme.info)
-                    .add_modifier(Modifier::ITALIC),
-            )));
-        }
-        // 聞かれた位置がその定義そのものなら、シグネチャは画面に見えているものの写し。
-        if !info.on_definition_line {
+        // 索引の宣言は型が解決済みで、画面の字面とは違うものを見せている。
+        // 字面の写しにしかならない tree-sitter 由来のときだけ、定義行の上で省く。
+        if info.signature_from_index || !info.on_definition_line {
             body.extend(highlighted_signature(app, info));
         }
         if !info.doc_lines.is_empty() {
@@ -84,6 +82,8 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
         (
             info.symbol_name.clone(),
             body,
+            info.container.clone().unwrap_or_default(),
+            info.kind.clone(),
             def_label,
             info.ref_count,
             info.ref_count_capped,
@@ -93,6 +93,7 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
     if !body.is_empty() {
         body.push(Line::from(""));
     }
+    let header_w = header_width(&container, &kind);
 
     // クリック可能な refs 行（専用に確保した最下行に描画する）。+ は件数が
     // 上限で打ち切られたことを示す印で、ありふれた名前の場合に、数え終えて
@@ -103,28 +104,49 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
         format!("▸ {ref_count} refs — click to list")
     };
 
-    // 幅は本文 + フッター 2 行のうち最も広いものに合わせる。
+    // 幅は見出し + 本文 + フッター 2 行のうち最も広いものに合わせる。
     let content_w = body
         .iter()
         .map(|l| l.width())
-        .chain([refs_label.chars().count(), def_label.chars().count()])
+        .chain([
+            refs_label.chars().count(),
+            def_label.chars().count(),
+            header_w,
+        ])
         .max()
         .unwrap_or(20)
         .clamp(20, 100) as u16;
     let popup_width = (content_w + 4).min(host.width.saturating_sub(2)).max(4);
-    let inner_w = popup_width.saturating_sub(4).max(1) as usize;
+    // 本文を描くのは枠の内側ちょうど。ここを狭く見積もると、折り返さない行を
+    // 折り返す前提で高さを取って、本文の下に空行が残る。
+    let inner_w = popup_width.saturating_sub(2).max(1) as usize;
+    if header_w > 0 {
+        body.insert(0, header_line(&container, &kind, inner_w, &theme));
+    }
     let body_h: usize = body
         .iter()
         .map(|l| {
             let w = l.width();
-            if w == 0 { 1 } else { w.div_ceil(inner_w).max(1) }
+            if w == 0 {
+                1
+            } else {
+                w.div_ceil(inner_w).max(1)
+            }
         })
         .sum();
     let footer_h = 1 + usize::from(refs_present);
     let inner_h = (body_h + footer_h).max(1);
-    let popup_height = (inner_h as u16 + 2).min(host.height.saturating_sub(2)).max(3);
+    let popup_height = (inner_h as u16 + 2)
+        .min(host.height.saturating_sub(2))
+        .max(3);
 
-    let popup_area = place(host, app.code_nav.hover_info.anchor_row, app.code_nav.hover_info.anchor_col, popup_width, popup_height);
+    let popup_area = place(
+        host,
+        app.code_nav.hover_info.anchor_row,
+        app.code_nav.hover_info.anchor_col,
+        popup_width,
+        popup_height,
+    );
 
     frame.render_widget(Clear, popup_area);
     let block = Block::default()
@@ -160,7 +182,9 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 refs_label,
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ))),
             refs_hit,
         );
@@ -273,7 +297,10 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
             Style::default().fg(theme.fg)
         };
         let row_area = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
-        frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), row_area);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(text, style))),
+            row_area,
+        );
         row_hits.push((idx, row_area));
     }
     refs.rect = popup_area;
@@ -285,13 +312,15 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
 fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
     let theme = app.theme.clone();
     let list_rect = app
-        .code_nav.hover_info
+        .code_nav
+        .hover_info
         .refs
         .as_ref()
         .map(|r| r.rect)
         .unwrap_or_default();
     let Some(preview) = app
-        .code_nav.hover_info
+        .code_nav
+        .hover_info
         .refs
         .as_mut()
         .and_then(|r| r.preview.as_mut())
@@ -308,7 +337,9 @@ fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
         .max()
         .unwrap_or(30) as u16;
     let popup_width = (content_w + 2).min(host.width.saturating_sub(2)).max(10);
-    let popup_height = (preview.lines.len() as u16 + 2).min(host.height.saturating_sub(2)).max(3);
+    let popup_height = (preview.lines.len() as u16 + 2)
+        .min(host.height.saturating_sub(2))
+        .max(3);
 
     // 一覧の右側に収まればそこ、収まらなければ下、host 内にクランプする。
     let right_x = list_rect.x + list_rect.width;
@@ -319,7 +350,9 @@ fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
         let y = if below + popup_height <= host.y + host.height {
             below
         } else {
-            (host.y + host.height).saturating_sub(popup_height).max(host.y)
+            (host.y + host.height)
+                .saturating_sub(popup_height)
+                .max(host.y)
         };
         let x = list_rect
             .x
@@ -344,7 +377,10 @@ fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
             let is_center = *n == preview.center_line;
             let num_style = Style::default().fg(theme.muted);
             let text_style = if is_center {
-                Style::default().fg(theme.fg).bg(theme.selected_bg).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.fg)
+                    .bg(theme.selected_bg)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.fg)
             };
@@ -373,4 +409,52 @@ fn place(host: Rect, anchor_row: u16, anchor_col: u16, w: u16, h: u16) -> Rect {
     let max_x = (host.x + host.width).saturating_sub(w);
     let x = anchor_col.clamp(host.x, max_x.max(host.x));
     Rect::new(x, y, w, h)
+}
+
+/// 見出し行が要る幅。所属も種別も無ければ 0 で、行そのものを出さない。
+fn header_width(container: &str, kind: &str) -> usize {
+    let (left, right) = (container.chars().count(), kind.chars().count());
+    match (left, right) {
+        (0, 0) => 0,
+        (0, r) => r,
+        (l, 0) => l,
+        // あいだは最低 2 文字空ける。詰まると 1 つの語に見える。
+        (l, r) => l + 2 + r,
+    }
+}
+
+/// 所属を左、種別を右に置いた見出し行。幅が足りなければ右寄せをやめて詰める。
+fn header_line(
+    container: &str,
+    kind: &str,
+    inner_w: usize,
+    theme: &crate::theme::Theme,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    if !container.is_empty() {
+        spans.push(Span::styled(
+            container.to_string(),
+            Style::default()
+                .fg(theme.info)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    }
+    if !kind.is_empty() {
+        // 所属が無くても右端に置く。左に寄せると、すぐ下に並ぶ宣言の先頭と
+        // 同じ列から始まって、種別が宣言の一部に見える。
+        let used = container.chars().count() + kind.chars().count();
+        let gap = inner_w
+            .saturating_sub(used)
+            .max(usize::from(!container.is_empty()) * 2);
+        if gap > 0 {
+            spans.push(Span::raw(" ".repeat(gap)));
+        }
+        spans.push(Span::styled(
+            kind.to_string(),
+            Style::default()
+                .fg(theme.hint)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    }
+    Line::from(spans)
 }

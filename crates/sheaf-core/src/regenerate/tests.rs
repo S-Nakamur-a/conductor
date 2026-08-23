@@ -210,7 +210,9 @@ fn ロックを取れなかったら待機に戻って編集を待たずにや�
     let mut regen = Regenerator::new(h.script(&format!("echo x >> {}", counter.display())));
     let target = h.target();
 
-    let held = Lock::acquire(&target.lock).expect("検査側がロックを取れない");
+    let held = Lock::acquire(&target.lock)
+        .expect("ロックを置けない")
+        .expect("検査側がロックを取れない");
 
     make_due(&mut regen, &h);
     let outcome = drive(&mut regen, &target);
@@ -658,4 +660,28 @@ fn 本物の_rust_analyzer_で_ready_に到達する() {
     );
     assert!(target.index.is_file());
     assert!(target.hashes.is_file());
+}
+
+#[test]
+fn 置き場所がまだ無いだけならビジーにしない() {
+    // 索引を一度も作っていないリポジトリは `.conductor/` を持たない。ここを
+    // ロックの取得失敗と同じ扱いにすると、初回の生成が必ず「ほかのプロセスが
+    // 索引を作っている」で終わる。
+    let h = Harness::new();
+    let counter = h.dir.path().join("runs");
+    let mut regen = Regenerator::new(h.script(&format!("echo x >> {}", counter.display())));
+    let mut target = h.target();
+    let fresh = h.dir.path().join("never-made/.conductor");
+    target.lock = fresh.join("generate.lock");
+    target.index = fresh.join("index.scip");
+    target.hashes = fresh.join("index.hashes");
+    target.log = fresh.join("index.log");
+
+    make_due(&mut regen, &h);
+    let outcome = drive(&mut regen, &target);
+    assert!(
+        !matches!(outcome, Outcome::Busy),
+        "置き場所が無いだけなのに Busy を返した"
+    );
+    assert!(counter.exists(), "producer が走っていない");
 }

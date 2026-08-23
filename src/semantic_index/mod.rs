@@ -55,6 +55,15 @@ impl SemanticIndex {
         self.slot.get(tree_root)
     }
 
+    /// 索引がまだ無いので 1 本作ってほしい、と伝える。
+    ///
+    /// 生成が起きるのは編集が収束したときだけなので、これが無いと索引の無い
+    /// リポジトリでは何か 1 ファイル編集するまで全部が構文層に落ち続ける。
+    /// その差は画面に出ないので、ユーザからは「ジャンプが甘い」としか見えない。
+    pub fn request_build(&mut self) {
+        self.regenerator.request();
+    }
+
     /// ファイルが変わったことを伝える。どのツリーの変更を数えるかは sheaf 側が決める。
     pub fn note_change(&mut self, changed: &Path, tree_root: &Path) {
         self.regenerator.note_change(changed, tree_root);
@@ -175,43 +184,36 @@ fn main_conductor_dir(repo_root: &Path) -> Option<PathBuf> {
     Some(repo.commondir().parent()?.join(".conductor"))
 }
 
-/// SCIP のシンボル文字列から、その語を囲んでいるものの綴りを組み立てる。
+/// 種別を、ホバーの見出しに置く 1 語にする。
 ///
-/// `rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel.` から
-/// `app::types::App` を作る。所属が分かると、ホバーが説明しているのがどの型の
-/// フィールドなのかが名前だけで判る。
-///
-/// 綴りを組み立てられない形 (ローカル変数の `local 3`、型引数、逆クォートで
-/// 括られた名前) では None。当てにいくと別物の名前を出すことになる。
-pub fn container_path(symbol: &str) -> Option<String> {
-    // シンボルは `<scheme> <manager> <package> <version> <descriptors>`。
-    let descriptors = symbol.split(' ').nth(4)?;
-    let mut parts = Vec::new();
-    let mut name = String::new();
-    let mut chars = descriptors.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            // 名前空間・型・項の区切り。ここまでが 1 つの descriptor。
-            '/' | '#' | '.' => {
-                if name.is_empty() {
-                    return None;
-                }
-                parts.push(std::mem::take(&mut name));
-            }
-            // メソッドの曖昧さ回避 `name(1).`。名前は括弧の前で確定しているので読み飛ばす。
-            '(' => {
-                if !chars.by_ref().any(|c| c == ')') {
-                    return None;
-                }
-            }
-            // 型引数、マクロ、メタ、逆クォート。綴りを組み立てる規則を持っていない。
-            ')' | '[' | ']' | '!' | ':' | '`' => return None,
-            _ => name.push(c),
-        }
+/// 綴りは Rust の宣言キーワードに寄せてある。ホバーの本文には索引が書いた宣言が
+/// そのまま並ぶので、見出しだけ英語の分類名 (`Function`) にすると 2 つの語彙が
+/// 混ざる。読めない種別は空にして、見出しごと出さない。
+pub fn kind_label(kind: sheaf_core::SymbolKind) -> &'static str {
+    use sheaf_core::SymbolKind::*;
+    match kind {
+        Function => "fn",
+        Method => "method",
+        Struct => "struct",
+        Class => "class",
+        Enum => "enum",
+        EnumMember => "variant",
+        Field => "field",
+        Trait => "trait",
+        Interface => "interface",
+        Package => "package",
+        TypeAlias => "type",
+        AssociatedType => "assoc type",
+        ImplBlock => "impl",
+        Module => "mod",
+        Constant => "const",
+        Static => "static",
+        Variable => "let",
+        Parameter => "param",
+        SelfParameter => "self",
+        TypeParameter => "type param",
+        Unknown => "",
     }
-    // 末尾の descriptor は聞かれた語そのもの。囲んでいるものだけを返す。
-    parts.pop()?;
-    (!parts.is_empty()).then(|| parts.join("::"))
 }
 
 #[cfg(test)]
@@ -565,6 +567,106 @@ mod tests {
         assert_eq!(store.outside_root(), 0, "ツリー外を指す Document がある");
     }
 
+    /// 索引が説明を答える割合を、実リポジトリの実 Bridge (tree-sitter) 越しに測る。
+    ///
+    /// 合成した索引では、rust-analyzer が実際に何を書くかを検査できない。ここが
+    /// 落ちるのは、宣言の綴りが変わって読めなくなったとき (`Signature` の
+    /// フィールド番号がまさにそれ) と、種別の番号が変わったとき。
+    #[test]
+    #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
+    fn real_index_describes_what_it_answers() {
+        use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
+
+        let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
+        let repo_root = Path::new(&repo_root);
+        let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
+
+        // 索引はこのワークスペースのシンボルしか説明を持たない (rust-analyzer は
+        // SCIP の external_symbols を書かないので、std や ratatui の語は符号だけ)。
+        // 全体の割合で見ると、その欠落と自前の欠落が混ざって回帰に気づけない。
+        let own = |symbol: &str| {
+            symbol.starts_with("local ")
+                || matches!(
+                    symbol.split(' ').nth(2),
+                    Some("conductor" | "sheaf-core" | "revidere" | "revidere-fixtures")
+                )
+        };
+
+        let (mut asked, mut described, mut own_described, mut own_signature) = (0, 0, 0, 0);
+        let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+        for rel in [
+            "src/repo_path.rs",
+            "src/jump_history.rs",
+            "src/hover_info.rs",
+        ] {
+            let abs = repo_root.join(rel);
+            let source = std::fs::read_to_string(&abs).unwrap();
+            let mask = crate::symbol_index::CodeMask::compute(&source, rel);
+            let index = crate::symbol_index::SymbolIndex::new(repo_root.to_path_buf());
+            let bridge = Bridge {
+                abs_path: &abs,
+                source: &source,
+                mask: &mask,
+                index: &index,
+            };
+            for (line, text) in source.lines().enumerate() {
+                for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {
+                    let Some((start, end)) = occurrence_span_in_source(text, k) else {
+                        continue;
+                    };
+                    if text.get(start..end) != Some(word.as_str()) {
+                        continue;
+                    }
+                    asked += 1;
+                    let answer = sheaf_core::describe_at(
+                        &store,
+                        &bridge,
+                        Path::new(rel),
+                        line as u32,
+                        start as u32,
+                    );
+                    let Some(detail) = answer.first() else {
+                        continue;
+                    };
+                    described += 1;
+                    if !own(detail.symbol.as_str()) {
+                        continue;
+                    }
+                    own_described += 1;
+                    if detail.signature.is_some() {
+                        own_signature += 1;
+                    }
+                    let label = kind_label(detail.kind);
+                    if !label.is_empty() {
+                        *kinds.entry(label).or_default() += 1;
+                    }
+                }
+            }
+        }
+
+        println!(
+            "聞いた {asked} / 符号が付いた {described} / うち自前 {own_described} / 宣言 {own_signature}"
+        );
+        println!("種別の内訳: {kinds:?}");
+        assert!(
+            own_described > 100,
+            "索引がほとんど答えていない: {own_described}"
+        );
+        // 自前のシンボルには索引が必ず SymbolInformation を書く。ここが落ちるのは
+        // 宣言の綴りか種別の番号が変わったとき。
+        assert!(
+            own_signature * 20 >= own_described * 19,
+            "自前のシンボルの宣言が読めていない: {own_signature}/{own_described}"
+        );
+        let with_kind: usize = kinds.values().sum();
+        assert!(
+            with_kind * 20 >= own_described * 19,
+            "自前のシンボルの種別が読めていない: {with_kind}/{own_described}"
+        );
+        // 分類が 1 種類に潰れていたら、番号の対応表が壊れている。
+        assert!(kinds.len() >= 5, "種別が偏りすぎ: {kinds:?}");
+    }
+
     /// 呼び出し口(`App::pick_line_identifier`)が選ばせうる位置を、リポジトリの
     /// 実ファイルで全部叩く。索引が実際にどれだけ答えるかと、飛び先が
     /// リポジトリ内の実在する位置であることを見る。
@@ -574,7 +676,6 @@ mod tests {
     #[test]
     #[ignore = ".conductor/index.scip を置いたリポジトリが要る"]
     fn real_index_answers_across_the_repository() {
-        use super::container_path;
         use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
 
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
@@ -634,7 +735,7 @@ mod tests {
                     slowest = slowest.max(at.elapsed());
                     if let sheaf_core::Definition::Exact(locations) = answer {
                         exact += 1;
-                        if let Some(path) = sheaf_core::symbols_at(
+                        if let Some(path) = sheaf_core::describe_at(
                             &store,
                             &bridge,
                             Path::new(rel),
@@ -642,7 +743,7 @@ mod tests {
                             start as u32,
                         )
                         .iter()
-                        .find_map(|id| container_path(id.as_str()))
+                        .find_map(|d| d.container.clone())
                         {
                             containers += 1;
                             if named.len() < 5 {
@@ -690,33 +791,11 @@ mod tests {
     // 判定そのものがあちらにあるので、こちらに写しを置くと片方だけが古くなる。
 
     #[test]
-    fn 符号から所属の綴りを組み立てる() {
-        assert_eq!(
-            container_path("rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel."),
-            Some("app::types::App".to_string())
-        );
-        // 末尾の descriptor は聞かれた語そのもの。型そのものを聞いたらモジュールが残る。
-        assert_eq!(
-            container_path("rust-analyzer cargo conductor 0.1.0 app/types/App#"),
-            Some("app::types".to_string())
-        );
-        // メソッドの曖昧さ回避は名前の後ろに付くだけなので、綴りは組み立てられる。
-        assert_eq!(
-            container_path("rust-analyzer cargo conductor 0.1.0 app/App#set_focus()."),
-            Some("app::App".to_string())
-        );
-    }
-
-    #[test]
-    fn 綴りを組み立てられない符号では黙る() {
-        // メソッドの曖昧さ回避、型引数、逆クォート、ローカル。当てにいくと別物の名前になる。
-        for symbol in [
-            "rust-analyzer cargo conductor 0.1.0 app/impl#[Focus]next().",
-            "rust-analyzer cargo conductor 0.1.0 app/`weird name`#",
-            "local 3",
-        ] {
-            assert_eq!(container_path(symbol), None, "{symbol}");
-        }
+    fn 読めない種別は見出しごと出さない() {
+        // 種別を読めなかったときにそれらしい名前を返すと、ホバーが自信を持って嘘を出す。
+        assert_eq!(kind_label(sheaf_core::SymbolKind::Unknown), "");
+        assert_eq!(kind_label(sheaf_core::SymbolKind::Function), "fn");
+        assert_eq!(kind_label(sheaf_core::SymbolKind::Variable), "let");
     }
 
     #[test]

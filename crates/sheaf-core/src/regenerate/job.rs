@@ -39,8 +39,14 @@ pub(super) struct Job {
 impl Job {
     pub(super) fn run(self) -> Outcome {
         let _lock = match Lock::acquire(&self.target.lock) {
-            Some(lock) => lock,
-            None => return Outcome::Busy,
+            Ok(Some(lock)) => lock,
+            Ok(None) => return Outcome::Busy,
+            Err(e) => {
+                return Outcome::Failed(format!(
+                    "ロックを置けない ({}): {e}",
+                    self.target.lock.display()
+                ));
+            }
         };
 
         // 索引の置き場所は、同じリポジトリを開いた別のプロセスと共有していることがある。
@@ -223,10 +229,18 @@ pub(super) struct Lock(std::fs::File);
 impl Lock {
     /// 取れなければ諦める。待たないのは、待っている間に対象のツリーが
     /// 変わってしまい、待った先で作るものが古くなるため。次の変更で作り直す。
-    pub(super) fn acquire(path: &Path) -> Option<Self> {
-        let file = std::fs::File::create(path).ok()?;
+    ///
+    /// **「ほかが持っている」と「置き場所が使えない」を分ける。** 混ぜると、
+    /// 置き場所のディレクトリがまだ無いだけのときに「ほかのプロセスが索引を
+    /// 作っている」と報告することになる (索引を一度も作っていないリポジトリが
+    /// まさにその状態で、`conductor index` が必ずそう答えていた)。
+    pub(super) fn acquire(path: &Path) -> std::io::Result<Option<Self>> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let file = std::fs::File::create(path)?;
         let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
-        (unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(Lock(file))
+        Ok((unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(Lock(file)))
     }
 }
 

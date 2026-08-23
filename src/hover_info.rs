@@ -21,7 +21,8 @@ const REF_COUNT_CAP: usize = 50;
 pub struct HoverInfo {
     /// シンボル名 (ポップアップのタイトル)。
     pub symbol_name: String,
-    /// 定義の種別 (例: "Function", "Struct")。シンボルインデックス由来。
+    /// 定義の種別 (例: "fn", "struct")。索引が答えていればそちら、
+    /// 無ければシンボルインデックス由来。どちらも無ければ空。
     pub kind: String,
     /// 定義があるファイルのパス (リポジトリルートからの相対)。
     pub file_path: String,
@@ -45,6 +46,30 @@ pub struct HoverInfo {
     /// 聞かれた位置がその定義そのものだったか。シグネチャを出しても画面に見えて
     /// いるものの写しにしかならないので、描画側はそれを省く。
     pub on_definition_line: bool,
+    /// シグネチャが索引由来か。索引のシグネチャは型が解決済みで、字面とは違うものを
+    /// 見せている (`let source: String` に対して字面は `let source = read(..)?`)ので、
+    /// 定義行の上でも省かない。
+    pub signature_from_index: bool,
+}
+
+/// 索引がその語について書いていた説明。
+///
+/// 組み立ては呼び出し側 ([`crate::app::App`]) の仕事で、ここは受け取るだけ。
+/// ホバーの組み立てを意味索引に依存させないため。
+#[derive(Default)]
+pub struct IndexedDetail {
+    /// 種別のラベル ("fn", "struct")。読めなければ空。
+    pub kind: String,
+    /// 索引が書いた宣言。行に割ってある。
+    pub signature_lines: Vec<String>,
+    /// 索引が持っている doc コメント。
+    pub doc_lines: Vec<String>,
+}
+
+impl IndexedDetail {
+    fn is_empty(&self) -> bool {
+        self.kind.is_empty() && self.signature_lines.is_empty() && self.doc_lines.is_empty()
+    }
 }
 
 /// ホバーが説明する定義の位置。意味索引が位置で答えたものでも、
@@ -57,6 +82,8 @@ pub struct DefSite {
     pub kind: String,
     /// 候補の総数。2 以上なら、表示しているのはそのうちの 1 つ。
     pub def_count: usize,
+    /// 索引がその語について書いていた説明。無ければソースから読み取る。
+    pub detail: Option<IndexedDetail>,
 }
 
 /// シンボルインデックスを名前で引いて定義位置を決める。複数箇所で定義されて
@@ -79,11 +106,17 @@ pub fn resolve_def_site(
         line: def.line,
         kind: format!("{:?}", def.kind),
         def_count: defs.len(),
+        detail: None,
     })
 }
 
 /// 定義位置からホバー情報を組み立てる。ファイルが読めない、行がファイルの外、
 /// のいずれかなら (黙って) None を返す。
+///
+/// 索引が説明を持っていればそちらを使う。索引の宣言は producer が型を解決した
+/// もので、定義行を読み直して作る写しより中身が濃い (`let source: String` に対して
+/// 字面は `let source = std::fs::read_to_string(..)?`)。doc だけは索引が持たない
+/// ことが多い (doc コメントのある項目に限られる) ので、無ければソースから拾う。
 pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Option<HoverInfo> {
     let root = index.root();
     let source = std::fs::read_to_string(root.join(&def.file_path)).ok()?;
@@ -92,6 +125,22 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
     if def_idx >= lines.len() {
         return None;
     }
+    let indexed = def.detail.filter(|d| !d.is_empty());
+    let signature_from_index = indexed
+        .as_ref()
+        .is_some_and(|d| !d.signature_lines.is_empty());
+    let kind = match indexed.as_ref().map(|d| d.kind.as_str()) {
+        Some(k) if !k.is_empty() => k.to_string(),
+        _ => def.kind,
+    };
+    let doc_lines = match indexed.as_ref().filter(|d| !d.doc_lines.is_empty()) {
+        Some(d) => d.doc_lines.clone(),
+        None => extract_doc_comment(&lines, def_idx),
+    };
+    let signature_lines = match indexed.filter(|d| !d.signature_lines.is_empty()) {
+        Some(d) => d.signature_lines,
+        None => extract_signature(&lines, def_idx),
+    };
 
     // 正確な数ではなく上限付き。これはポインタがシンボル上で止まるたびに UI
     // スレッドで走るが、ありふれた名前の正確な数を出すにはその名前が現れる全ファイルを
@@ -101,16 +150,17 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
 
     Some(HoverInfo {
         symbol_name: symbol.to_string(),
-        kind: def.kind,
+        kind,
         file_path: def.file_path,
         line: def.line,
-        doc_lines: extract_doc_comment(&lines, def_idx),
-        signature_lines: extract_signature(&lines, def_idx),
+        doc_lines,
+        signature_lines,
         def_count: def.def_count,
         ref_count,
         ref_count_capped,
         on_definition_line: false,
         container: None,
+        signature_from_index,
     })
 }
 
@@ -230,6 +280,7 @@ fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     fn sig(src: &str, def_line_1: usize) -> Vec<String> {
         let lines: Vec<&str> = src.lines().collect();
@@ -241,6 +292,89 @@ mod tests {
         extract_doc_comment(&lines, def_line_1 - 1)
     }
 
+    /// 索引が説明を持っていたことにして、その位置のホバーを組み立てる。
+    fn with_index(dir: &Path, symbol: &str, line: usize, detail: IndexedDetail) -> HoverInfo {
+        let index = SymbolIndex::new(dir.to_path_buf());
+        index.build().unwrap();
+        build_hover_info(
+            &index,
+            symbol,
+            DefSite {
+                file_path: "lib.rs".to_string(),
+                line,
+                kind: String::new(),
+                def_count: 1,
+                detail: Some(detail),
+            },
+        )
+        .expect("hover info")
+    }
+
+    fn scratch(tag: &str, src: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hover_idx_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lib.rs"), src).unwrap();
+        dir
+    }
+
+    #[test]
+    fn 索引の宣言は字面の写しより優先される() {
+        // 索引は型を解決済みで、字面には型が書かれていない。ここを字面から
+        // 読み直すと、この機能でいちばん効く位置が一番貧しくなる。
+        let dir = scratch("prefer", "fn caller() {\n    let total = 1 + 2;\n}\n");
+        let info = with_index(
+            &dir,
+            "total",
+            2,
+            IndexedDetail {
+                kind: "let".to_string(),
+                signature_lines: vec!["let total: i32".to_string()],
+                doc_lines: Vec::new(),
+            },
+        );
+        assert_eq!(info.signature_lines, vec!["let total: i32"]);
+        assert_eq!(info.kind, "let");
+        assert!(info.signature_from_index);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn 索引が_doc_を持たなければソースから拾う() {
+        // 索引の documentation は doc コメントのある項目にしか付かない。
+        // 種別と宣言だけ索引から採り、doc は今までどおり読み取る。
+        let dir = scratch("doc", "/// 足し算。\npub fn add(a: i64) -> i64 { a }\n");
+        let info = with_index(
+            &dir,
+            "add",
+            2,
+            IndexedDetail {
+                kind: "fn".to_string(),
+                signature_lines: vec!["pub fn add(a: i64) -> i64".to_string()],
+                doc_lines: Vec::new(),
+            },
+        );
+        assert_eq!(info.doc_lines, vec!["足し算。"]);
+        assert_eq!(info.signature_lines, vec!["pub fn add(a: i64) -> i64"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn 索引が答えなければ従来どおり字面から組み立てる() {
+        let dir = scratch(
+            "fallback",
+            "/// 足し算。\npub fn add(a: i64) -> i64 {\n    a\n}\n",
+        );
+        let index = SymbolIndex::new(dir.clone());
+        index.build().unwrap();
+        let site = resolve_def_site(&index, "add", Some("lib.rs")).expect("定義位置");
+        let info = build_hover_info(&index, "add", site).expect("hover info");
+        assert_eq!(info.signature_lines, vec!["pub fn add(a: i64) -> i64"]);
+        assert_eq!(info.kind, "Function");
+        assert!(!info.signature_from_index);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn signature_single_line_fn() {
         let src = "pub fn foo(a: usize) -> bool {\n    true\n}\n";
@@ -250,7 +384,10 @@ mod tests {
     #[test]
     fn signature_multi_line_fn() {
         let src = "fn foo(\n    a: usize,\n    b: &str,\n) -> bool {\n    true\n}\n";
-        assert_eq!(sig(src, 1), vec!["fn foo(", "    a: usize,", "    b: &str,", ") -> bool"]);
+        assert_eq!(
+            sig(src, 1),
+            vec!["fn foo(", "    a: usize,", "    b: &str,", ") -> bool"]
+        );
     }
 
     #[test]
@@ -362,6 +499,7 @@ fn caller() {
                 line: 3,
                 kind: String::new(),
                 def_count: 1,
+                detail: None,
             },
         )
         .expect("位置から組み立てられる");
@@ -404,7 +542,10 @@ fn caller() {
             info.doc_lines,
             vec!["Adds two numbers together.", "Returns their sum."]
         );
-        assert_eq!(info.signature_lines, vec!["pub fn add(a: i64, b: i64) -> i64"]);
+        assert_eq!(
+            info.signature_lines,
+            vec!["pub fn add(a: i64, b: i64) -> i64"]
+        );
         // "add" は定義箇所と呼び出し箇所の 2 つに現れる。
         assert!(info.ref_count >= 2, "ref_count = {}", info.ref_count);
 
