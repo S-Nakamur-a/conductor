@@ -247,7 +247,11 @@ pub struct BackgroundOps {
     pub symbol_index: BackgroundOp<Result<usize, String>>,
     /// バックグラウンドの意味索引ロード。要求した時点の向き先を添えて返すのは、
     /// 読んでいる間に worktree が動いたかを受け取る側が判定できるようにするため。
-    pub semantic_index: BackgroundOp<(std::path::PathBuf, Option<sheaf_core::Store>)>,
+    pub semantic_index: BackgroundOp<(
+        std::path::PathBuf,
+        crate::semantic_index::Survey,
+        Option<sheaf_core::Store>,
+    )>,
     /// リフロー式トランスクリプトビュー用のバックグラウンドセッションログ解析。
     pub reflow_load: BackgroundOp<Vec<crate::claude_log::LogEntry>>,
 }

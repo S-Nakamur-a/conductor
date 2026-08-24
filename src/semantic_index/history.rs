@@ -99,6 +99,36 @@ pub enum Outcome<'a> {
     Unavailable(&'a str),
     /// 対象のツリーが変わったので捨てた。ここまでの producer の時間は無駄になる。
     Aborted,
+    /// いまの内容の索引が既にあったので、producer を起こさずに済ませた。
+    Reused,
+}
+
+impl<'a> From<&'a sheaf_core::Regenerated> for Outcome<'a> {
+    fn from(outcome: &'a sheaf_core::Regenerated) -> Self {
+        use sheaf_core::Regenerated as R;
+        match outcome {
+            R::Ready { documents } => Outcome::Ready {
+                documents: *documents,
+            },
+            R::Failed(why) => Outcome::Failed(why),
+            R::Busy => Outcome::Busy,
+            R::Unavailable(why) => Outcome::Unavailable(why),
+        }
+    }
+}
+
+impl<'a> From<&'a sheaf_core::Outcome> for Outcome<'a> {
+    fn from(outcome: &'a sheaf_core::Outcome) -> Self {
+        use sheaf_core::Outcome as O;
+        match outcome {
+            O::Ready { store } => Outcome::Ready {
+                documents: store.len(),
+            },
+            O::Failed(why) => Outcome::Failed(why),
+            O::Busy => Outcome::Busy,
+            O::Unavailable(why) => Outcome::Unavailable(why),
+        }
+    }
 }
 
 /// 1 件書く。書けなくても何もしない (記録が取れないことで生成を止めない)。
@@ -130,6 +160,7 @@ pub fn append(dir: &Path, entry: &Entry<'_>) {
             let _ = write!(line, "result=unavailable reason={}", one_line(why));
         }
         Outcome::Aborted => line.push_str("result=aborted"),
+        Outcome::Reused => line.push_str("result=reused"),
     }
 
     let mut waste: Vec<String> = Vec::new();

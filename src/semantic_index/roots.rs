@@ -139,7 +139,130 @@ fn covered_by_ancestor(at: &IndexRoot, all: &[IndexRoot]) -> bool {
     })
 }
 
+/// 内容の鍵の長さ (16 進の桁数)。
+///
+/// 48 ビット。1 本の索引ルートが同時に持つ世代は数個なので衝突は起こらない。
+/// 長くすると置き場所を `ls` したときに読めなくなる。
+const KEY_LEN: usize = 12;
+
+/// 索引ルート 1 本が置き場所に残せる世代の数。
+///
+/// 世代を残すのは、worktree を行き来したときに作り直さずに済ませるため。この
+/// リポジトリの索引が 1 本 14.5MB なので、4 世代で 58MB。持つ worktree の数を
+/// 超えて残しても、二度と一致しない索引がディスクを食うだけになる。
+const GENERATIONS: usize = 4;
+
 impl IndexRoot {
+    /// このルートの producer が読むファイルの内容から決まる鍵。
+    ///
+    /// 成果物の名前に入れることで、内容の違うツリーの索引を並べて持てる。worktree を
+    /// 行き来しても、前に作った索引がまだ在れば producer を起動せずに済む。
+    ///
+    /// 畳むのはこの言語のファイルだけである。ルート配下の全ファイルを畳むと、画像を
+    /// 差し替えただけで鍵が変わり、中身の同じ索引をもう一度作ることになる。
+    ///
+    /// `deeper` はこのルートの中にある、同じ言語のより深い索引ルート (このルートから
+    /// 見た相対パス)。そこは別の索引が持つので、数えると内側の編集で外側の鍵まで動く。
+    ///
+    /// 実測 (109 ルートのモノレポ) で最も重いルートが 110ms。UI スレッドでは呼ばない。
+    pub fn content_key(&self, tree_root: &Path, deeper: &[PathBuf]) -> String {
+        let at = tree_root.join(&self.subroot);
+        let table = ignore::WalkBuilder::new(&at)
+            .require_git(false)
+            .filter_entry(|entry| !VENDORED.iter().any(|skip| entry.file_name() == *skip))
+            .build()
+            .flatten()
+            .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
+            .filter_map(|entry| {
+                let rel = entry.path().strip_prefix(&at).ok()?.to_path_buf();
+                let content = std::fs::read(entry.path()).ok()?;
+                Some((rel, sheaf_core::blob_hash(&content)))
+            });
+        self.fold(table, deeper)
+    }
+
+    /// (相対パス, 内容ハッシュ) の表を鍵に畳む。
+    ///
+    /// 入口が 2 つある (ツリーを歩いたものと、producer が書いた出自の表) ので、
+    /// 絞り込みの規則はここ 1 箇所に置く。ずれると、生成した索引の名前と、次に
+    /// そのツリーを見たときに探す名前が食い違い、毎回作り直しになる。
+    pub fn fold(
+        &self,
+        table: impl Iterator<Item = (PathBuf, String)>,
+        deeper: &[PathBuf],
+    ) -> String {
+        let mut mine: Vec<(PathBuf, String)> = table
+            .filter(|(rel, _)| Language::of_file(rel) == Some(self.lang))
+            .filter(|(rel, _)| !deeper.iter().any(|inner| rel.starts_with(inner)))
+            .filter(|(rel, _)| {
+                !rel.components()
+                    .any(|c| VENDORED.iter().any(|skip| c.as_os_str() == *skip))
+            })
+            .collect();
+        mine.sort();
+
+        let mut folded = Vec::new();
+        for (rel, hash) in mine {
+            folded.extend_from_slice(rel.to_string_lossy().as_bytes());
+            folded.push(0);
+            folded.extend_from_slice(hash.as_bytes());
+            folded.push(b'\n');
+        }
+        let mut key = sheaf_core::blob_hash(&folded);
+        key.truncate(KEY_LEN);
+        key
+    }
+
+    /// 置き場所に残っている、このルートの世代を新しい順に。
+    fn generations(&self, dir: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
+        let prefix = format!("{}.", self.stem());
+        let mut found: Vec<_> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_str()?.to_string();
+                let key = name.strip_prefix(&prefix)?.strip_suffix(".scip")?;
+                // 幹が入れ子の関係にあることがある (index.go と index.go.api)。
+                // 鍵の形で切り分けないと、深いルートの世代を浅いルートが数える。
+                if key.len() != KEY_LEN || !key.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return None;
+                }
+                let at = entry.metadata().ok()?.modified().ok()?;
+                Some((at, entry.path()))
+            })
+            .collect();
+        found.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+        found
+    }
+
+    /// このルートの索引が 1 本でも置いてあるか。
+    ///
+    /// 鍵の計算はツリーを歩くので、読む見込みのないルートには払わない。
+    pub fn has_any_generation(&self, dir: &Path) -> bool {
+        !self.generations(dir).is_empty()
+    }
+
+    /// 古い世代を落とす。新しいほうから [`GENERATIONS`] 本だけ残す。
+    ///
+    /// 名前に鍵が入る前に置かれた索引も落とす。誰も読まないのに 1 本 14.5MB
+    /// 残り続けるため。
+    ///
+    /// 消せなくても何もしない。残るのはディスクの無駄だけで、答えは変わらない。
+    pub fn prune(&self, dir: &Path) {
+        let stale = self
+            .generations(dir)
+            .into_iter()
+            .skip(GENERATIONS)
+            .map(|(_, index)| index)
+            .chain(std::iter::once(dir.join(format!("{}.scip", self.stem()))));
+        for index in stale {
+            let _ = std::fs::remove_file(&index);
+            let _ = std::fs::remove_file(index.with_extension("hashes"));
+            let _ = std::fs::remove_file(index.with_extension("log"));
+        }
+    }
+
     /// 成果物のファイル名の幹。
     ///
     /// 区切りを `_` に潰すだけだと `a/b` と `a_b` が同じ名前になり、2 本の索引が
@@ -160,9 +283,18 @@ impl IndexRoot {
         stem
     }
 
+    /// `key` の内容に対する成果物の幹。
+    fn stem_for(&self, key: &str) -> String {
+        format!("{}.{key}", self.stem())
+    }
+
     /// このルートを索引する対象と、成果物の置き場所。
-    pub fn target(&self, dir: &Path, tree_root: &Path) -> Target {
-        let stem = self.stem();
+    ///
+    /// `key` は索引しようとしているツリーの [`content_key`](Self::content_key)。
+    /// 名前に入れておかないと、別の内容の worktree に移った生成が前の索引を
+    /// 上書きしてしまい、戻ってきたときに作り直しになる。
+    pub fn target(&self, dir: &Path, tree_root: &Path, key: &str) -> Target {
+        let stem = self.stem_for(key);
         Target {
             root: tree_root.join(&self.subroot),
             index: dir.join(format!("{stem}.scip")),
@@ -172,34 +304,60 @@ impl IndexRoot {
         }
     }
 
+    /// `key` の内容そのものを説明する索引が置いてあるか。
+    ///
+    /// 作り直すかどうかはこれで決める。[`source`](Self::source) は一致しなければ
+    /// 最新の世代に落ちるので、そちらで判断すると永久に作り直さない。
+    pub fn has_generation(&self, dir: &Path, key: &str) -> bool {
+        dir.join(format!("{}.scip", self.stem_for(key))).is_file()
+    }
+
     /// 置いてある索引を投入元にする。索引か出自の表のどちらかが無ければ `None`。
+    ///
+    /// 鍵が一致する世代が無ければ最新の世代に落ちる。落とさないと、ファイルを
+    /// 1 つ編集した瞬間に索引全体が見えなくなり、変えていないファイルまで構文層に
+    /// 落ちる。どのファイルが説明できるかは出自の表がファイル単位で決めるので、
+    /// 内容の違う世代を読んでも誤った答えにはならない。
     ///
     /// 出自を言えない索引を読んでも、`Store` は結局すべてのファイルを「変更あり」と
     /// 扱って構文層に落とすだけなので、その場合は最初からロードしない。
-    pub fn source(&self, dir: &Path) -> Option<IndexSource> {
-        let index = dir.join(format!("{}.scip", self.stem()));
-        if !index.is_file() {
-            return None;
-        }
+    pub fn source(&self, dir: &Path, key: &str) -> Option<IndexSource> {
+        let exact = dir.join(format!("{}.scip", self.stem_for(key)));
+        let index = if exact.is_file() {
+            exact
+        } else {
+            self.generations(dir).into_iter().next()?.1
+        };
+        let expected = self.provenance_at(&index.with_extension("hashes"))?;
         Some(IndexSource {
             index,
             subroot: self.subroot.clone(),
-            expected: self.provenance(dir)?,
+            expected,
         })
     }
 
-    /// 置いてある索引の出自の表。索引ルート相対のパス -> 内容ハッシュ。
-    pub fn provenance(&self, dir: &Path) -> Option<HashMap<PathBuf, String>> {
-        sheaf_core::read_provenance(
-            &dir.join(format!("{}.hashes", self.stem())),
-            &*self.lang.producer(),
-        )
+    /// `key` の世代の出自の表。索引ルート相対のパス -> 内容ハッシュ。
+    pub fn provenance(&self, dir: &Path, key: &str) -> Option<HashMap<PathBuf, String>> {
+        self.provenance_at(&dir.join(format!("{}.hashes", self.stem_for(key))))
+    }
+
+    /// 最新の世代の出自の表。作り直しの前後でソースがどれだけ動いたかを比べる基準。
+    pub fn newest_provenance(&self, dir: &Path) -> Option<HashMap<PathBuf, String>> {
+        let (_, index) = self.generations(dir).into_iter().next()?;
+        self.provenance_at(&index.with_extension("hashes"))
+    }
+
+    fn provenance_at(&self, path: &Path) -> Option<HashMap<PathBuf, String>> {
+        sheaf_core::read_provenance(path, &*self.lang.producer())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 名前の衝突だけを見る検査で使う、適当な内容の鍵。
+    const KEY: &str = "0123456789ab";
 
     fn root(subroot: &str, lang: Language) -> IndexRoot {
         IndexRoot {
@@ -323,15 +481,15 @@ mod tests {
     fn 索引ルートごとに成果物の名前が変わる() {
         let dir = Path::new("/artifacts");
         let tree = Path::new("/tree");
-        let names = |r: &IndexRoot| r.target(dir, tree).index;
+        let names = |r: &IndexRoot| r.target(dir, tree, KEY).index;
 
         assert_eq!(
             names(&root("", Language::Rust)),
-            Path::new("/artifacts/index.rust.scip")
+            Path::new("/artifacts/index.rust.0123456789ab.scip")
         );
         assert_eq!(
             names(&root("services/api", Language::Go)),
-            Path::new("/artifacts/index.go.services_api.scip")
+            Path::new("/artifacts/index.go.services_api.0123456789ab.scip")
         );
     }
 
@@ -341,8 +499,8 @@ mod tests {
         let dir = Path::new("/artifacts");
         let tree = Path::new("/tree");
         assert_ne!(
-            root("a/b", Language::Go).target(dir, tree).index,
-            root("a_b", Language::Go).target(dir, tree).index
+            root("a/b", Language::Go).target(dir, tree, KEY).index,
+            root("a_b", Language::Go).target(dir, tree, KEY).index
         );
     }
 
@@ -352,8 +510,10 @@ mod tests {
         let dir = Path::new("/artifacts");
         let tree = Path::new("/tree");
         assert_eq!(
-            root("", Language::Rust).target(dir, tree).lock,
-            root("services/api", Language::Go).target(dir, tree).lock
+            root("", Language::Rust).target(dir, tree, KEY).lock,
+            root("services/api", Language::Go)
+                .target(dir, tree, KEY)
+                .lock
         );
     }
 }

@@ -151,9 +151,10 @@ impl App {
 
         // 意味索引 (SCIP)。読んでいる間に worktree が動いていたら取り込まれないので、
         // 拒まれたことを見て読み直す。見ないと、新しいツリーの索引が二度と読まれない。
-        if let Some((requested, store)) = self.bg.semantic_index.poll() {
+        if let Some((requested, survey, store)) = self.bg.semantic_index.poll() {
             let current = self.selected_worktree_path();
             let documents = store.as_ref().map(|s| s.len());
+            self.code_nav.semantic.install(survey, &current);
             if !self.code_nav.semantic.accept(&requested, &current, store) {
                 self.start_semantic_index_load();
             } else if let Some(n) = documents {

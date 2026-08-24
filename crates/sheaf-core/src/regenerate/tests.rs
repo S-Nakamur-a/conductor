@@ -88,13 +88,27 @@ fn make_due(regen: &mut Regenerator, h: &Harness) {
 }
 
 /// 走り終わるまで tick を回す。
-fn drive(regen: &mut Regenerator, target: &Target) -> Outcome {
+fn drive(regen: &mut Regenerator, target: &Target) -> Regenerated {
     loop {
         if let Some(outcome) = regen.tick(target) {
             return outcome;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// 置かれた索引を読み直す。
+///
+/// [`Regenerator::tick`] は索引そのものを返さないので、投入された中身を見る検査は
+/// 利用側と同じくディスクから読む。
+fn reload(target: &Target, producer: &dyn Producer) -> Store {
+    let expected = crate::read_provenance(&target.hashes, producer).expect("出自を読めない");
+    let source = crate::IndexSource {
+        index: target.index.clone(),
+        subroot: PathBuf::new(),
+        expected,
+    };
+    Store::load(std::slice::from_ref(&source), &target.root).expect("置いた索引を読めない")
 }
 
 /// タイムアウトだけ差し替える包み。上限は 300 秒なので、そのままでは検査が書けない。
@@ -159,7 +173,8 @@ fn 変更したファイルも再生成が終われば_exact_に戻る() {
     let h = Harness::new();
     let fixture = h.dir.path().join("fixture.scip");
     write_scip_defining_a(&fixture);
-    let mut regen = Regenerator::new(h.script(&format!("cp \"{}\" \"$1\"", fixture.display())));
+    let producer = h.script(&format!("cp \"{}\" \"$1\"", fixture.display()));
+    let mut regen = Regenerator::new(Arc::clone(&producer));
     let target = h.target();
     let rel = Path::new("src/lib.rs");
     let span = crate::Span {
@@ -170,9 +185,10 @@ fn 変更したファイルも再生成が終われば_exact_に戻る() {
     };
 
     make_due(&mut regen, &h);
-    let Outcome::Ready { store, .. } = drive(&mut regen, &target) else {
+    let Regenerated::Ready { .. } = drive(&mut regen, &target) else {
         panic!("最初の生成が Ready にならなかった");
     };
+    let store = reload(&target, &*producer);
     assert!(
         store.definitions_in(rel, span).is_some(),
         "生成直後なのに索引が答えない"
@@ -191,13 +207,35 @@ fn 変更したファイルも再生成が終われば_exact_に戻る() {
     drop(store);
 
     make_due(&mut regen, &h);
-    let Outcome::Ready { store, .. } = drive(&mut regen, &target) else {
+    let Regenerated::Ready { .. } = drive(&mut regen, &target) else {
         panic!("作り直しが Ready にならなかった");
     };
+    let store = reload(&target, &*producer);
     assert!(
         store.definitions_in(rel, span).is_some(),
         "作り直したのに構文層のままになっている"
     );
+}
+
+#[test]
+fn 手で頼まれたぶんだけ静穏時間を待たない() {
+    // request の遅れは起動と生成 (実測 2.3GiB) が重なるのを避けるためのもので、
+    // 押した本人が待っている場面には当たらない。待つと 3 秒何も起きない。
+    let h = Harness::new();
+    let counter = h.dir.path().join("runs");
+    let producer = h.script(&format!("echo x >> {}", counter.display()));
+    let target = h.target();
+
+    let mut waits = Regenerator::new(Arc::clone(&producer));
+    waits.request();
+    waits.tick(&target);
+    assert!(!waits.is_running(), "静穏時間を待たずに始めた");
+
+    let mut now = Regenerator::new(producer);
+    now.request_now();
+    now.tick(&target);
+    assert!(now.is_running(), "手で頼んだのに次の周で始まらなかった");
+    let _ = drive(&mut now, &target);
 }
 
 #[test]
@@ -217,7 +255,7 @@ fn ロックを取れなかったら待機に戻って編集を待たずにや�
     make_due(&mut regen, &h);
     let outcome = drive(&mut regen, &target);
     assert!(
-        matches!(outcome, Outcome::Busy),
+        matches!(outcome, Regenerated::Busy),
         "ロックを取れなかったのに Busy 以外を返した"
     );
     assert!(
@@ -271,7 +309,7 @@ fn 上限の時間で終わらない_producer_は孫ごと止める() {
     let outcome = drive(&mut regen, &target);
     let took = started.elapsed();
 
-    let Outcome::Failed(why) = outcome else {
+    let Regenerated::Failed(why) = outcome else {
         panic!("上限を過ぎても Failed にならなかった");
     };
     assert!(why.contains("終わらない"), "別の理由で失敗した: {why}");
@@ -308,7 +346,7 @@ fn producer_を起動できなければ以後試みない() {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(matches!(outcome, Outcome::Unavailable(_)));
+    assert!(matches!(outcome, Regenerated::Unavailable(_)));
 
     // 同じパスに動く producer を置いても、もう起動しない。
     let counter = h.dir.path().join("runs");
@@ -408,10 +446,10 @@ fn 索引の置き場所が違っても生成は同時に走らない() {
     // producer が索引を書かないので、ロック以外の理由でも生成は失敗する。
     // Busy はロックを取れなかったときにしか返らないので、これで区別できる。
     assert!(
-        matches!(outcome, Outcome::Busy),
+        matches!(outcome, Regenerated::Busy),
         "置き場所が違うだけで 2 本目が走った: {}",
         match outcome {
-            Outcome::Failed(why) | Outcome::Unavailable(why) => why,
+            Regenerated::Failed(why) | Regenerated::Unavailable(why) => why,
             _ => "Ready".into(),
         }
     );
@@ -499,7 +537,7 @@ fn producer_が_document_0件の索引を書いても_ready_にしない() {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(matches!(outcome, Outcome::Failed(_)));
+    assert!(matches!(outcome, Regenerated::Failed(_)));
     assert!(!h.target().hashes.exists());
     assert!(!h.target().index.exists());
     assert_eq!(leftover_temp_files(&h), Vec::<String>::new());
@@ -516,7 +554,7 @@ fn producer_が失敗しても索引も出自も置かない() {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(matches!(outcome, Outcome::Failed(_)));
+    assert!(matches!(outcome, Regenerated::Failed(_)));
     assert!(!h.target().hashes.exists());
     assert!(!h.target().index.exists());
     assert_eq!(leftover_temp_files(&h), Vec::<String>::new());
@@ -585,7 +623,7 @@ fn producer_が成功すると索引を置いてから出自を書いて_ready_�
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(matches!(outcome, Outcome::Ready { .. }));
+    assert!(matches!(outcome, Regenerated::Ready { .. }));
 
     // 出自の表は root 以下で生成をまたいで動かなかった全ファイルが対象になる
     // (producer のスクリプト自身なども含む)。ここで確かめたいのは
@@ -618,7 +656,7 @@ fn 生成中に書き換えたファイルは出自から外れる() {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(matches!(outcome, Outcome::Ready { .. }));
+    assert!(matches!(outcome, Regenerated::Ready { .. }));
 
     let body = std::fs::read_to_string(&target.hashes).unwrap();
     assert!(
@@ -655,7 +693,7 @@ fn 本物の_rust_analyzer_で_ready_に到達する() {
         std::thread::sleep(Duration::from_millis(200));
     };
     assert!(
-        matches!(outcome, Outcome::Ready { .. }),
+        matches!(outcome, Regenerated::Ready { .. }),
         "rust-analyzer での生成が Ready に到達しなかった"
     );
     assert!(target.index.is_file());
@@ -680,7 +718,7 @@ fn 置き場所がまだ無いだけならビジーにしない() {
     make_due(&mut regen, &h);
     let outcome = drive(&mut regen, &target);
     assert!(
-        !matches!(outcome, Outcome::Busy),
+        !matches!(outcome, Regenerated::Busy),
         "置き場所が無いだけなのに Busy を返した"
     );
     assert!(counter.exists(), "producer が走っていない");

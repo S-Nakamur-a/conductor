@@ -29,7 +29,7 @@ mod history;
 pub(crate) mod roots;
 
 pub use bridge::Bridge;
-pub use sheaf_core::Outcome as Regenerated;
+pub use sheaf_core::Regenerated;
 
 use history::Trigger;
 use roots::IndexRoot;
@@ -58,7 +58,11 @@ pub enum Reading {
     Unchanged,
     /// 索引が今の内容を説明している。
     Indexed,
-    /// 索引はあるが、このファイルは作った時点から変わっている。
+    /// 今の内容の索引はあるのに、このファイルが載っていない。
+    ///
+    /// 内容が動いただけなら [`Building`](Reading::Building) になる (その内容の索引を
+    /// 作りに行く)。ここに来るのは、producer がそのファイルを索引しなかったか、
+    /// 生成中に動いて出自から落ちたか、producer を起動できないかのいずれか。
     Stale,
     /// このルートを索引しているところ。
     Building,
@@ -71,6 +75,12 @@ pub enum Reading {
 /// 索引ルート 1 本と、その作り直し係。
 struct Root {
     at: IndexRoot,
+    /// 調査した時点のツリーの内容から決まる鍵。成果物の名前に入る。
+    ///
+    /// `None` は「編集が入って、まだ引き直せていない」。鍵が古いまま生成すると、
+    /// 出来た索引が古い内容の名前で置かれ、次に読むときには一致せず、また作り直す。
+    /// それを避けるため、鍵の無いルートは生成を始めない。
+    key: Option<String>,
     regenerator: Regenerator,
     /// 走っている 1 世代の顛末。記録に残すためだけに持つ。
     run: Run,
@@ -88,33 +98,25 @@ impl Root {
         if !self.is_working() {
             self.run = Run::asked(trigger, cause);
         }
-        self.regenerator.request();
+        match trigger {
+            Trigger::Manual => self.regenerator.request_now(),
+            _ => self.regenerator.request(),
+        }
     }
 
     /// 前の生成から、この producer が読むファイルがどれだけ動いたか。
-    fn source_delta(&self, dir: &Path) -> history::Sources {
-        source_delta(self.run.before.as_ref(), &self.at, dir)
+    fn source_delta(&self, dir: &Path, key: &str) -> history::Sources {
+        source_delta(self.run.before.as_ref(), &self.at, dir, key)
     }
 
     /// 終わった 1 世代を記録して、計測を畳む。
-    fn record(&mut self, dir: &Path, outcome: &Regenerated) {
+    fn record(&mut self, dir: &Path, key: &str, outcome: &Regenerated) {
         // 生成に至らなかったものは、比べる相手がそもそも入れ替わっていない。
         let sources = match outcome {
-            Regenerated::Ready { .. } => self.source_delta(dir),
+            Regenerated::Ready { .. } => self.source_delta(dir, key),
             _ => history::Sources::Unknown,
         };
-        self.log_with(
-            dir,
-            sources,
-            match outcome {
-                Regenerated::Ready { store, .. } => history::Outcome::Ready {
-                    documents: store.len(),
-                },
-                Regenerated::Failed(why) => history::Outcome::Failed(why),
-                Regenerated::Busy => history::Outcome::Busy,
-                Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
-            },
-        );
+        self.log_with(dir, sources, outcome.into());
         // 生成中に変更が来ていた場合とロックを取れなかった場合、sheaf は待機に
         // 戻してもう一度走らせる。その世代のきっかけを引き継がないと、記録が
         // 「きっかけ不明・待ち時間 0 秒」になる。
@@ -234,9 +236,12 @@ impl SemanticIndex {
     /// 12 箇所あるので、そのどこかを通し忘れるより「いま何を読んでいるか」を
     /// 毎周見るほうが落ちない。
     pub fn note_open(&mut self, rel: &Path, repo_root: &Path, tree_root: &Path) -> Reading {
-        // 先に索引ルートを合わせる。ツリーが変われば sync_roots が reading も落とすので、
-        // 同じ相対パスのファイルを開いたまま worktree を切り替えても取りこぼさない。
-        self.sync_roots(tree_root);
+        // ツリーが動いていれば、いまの索引ルートは前のツリーのもの。調査が届くまで
+        // 答えを確定させない。確定させると、同じ相対パスのファイルを開いたまま
+        // worktree を切り替えたときに前のツリーの答えが残る。
+        if self.tree != tree_root {
+            return Reading::Loading;
+        }
         if self.reading.as_deref() == Some(rel) {
             return Reading::Unchanged;
         }
@@ -250,8 +255,12 @@ impl SemanticIndex {
         let Some(dir) = self.conductor_dir(repo_root).map(Path::to_path_buf) else {
             return settle(self, Reading::NotIndexed);
         };
+        // 鍵がまだ無い。調査が届いてから決める。
+        let Some(key) = self.roots[index].key.clone() else {
+            return Reading::Loading;
+        };
         // 既にあるものを作り直さない。開くたびに走らせると producer が止まらなくなる。
-        if self.roots[index].at.source(&dir).is_none() {
+        if !self.roots[index].at.has_generation(&dir, &key) {
             self.roots[index].request(Trigger::Open, Some(rel.to_path_buf()));
             return settle(self, Reading::Building);
         }
@@ -290,7 +299,9 @@ impl SemanticIndex {
 
     /// ファイルが変わったことを伝える。作り直すのは、それを含む索引ルート 1 本だけ。
     pub fn note_change(&mut self, changed: &Path, tree_root: &Path) {
-        self.sync_roots(tree_root);
+        if self.tree != tree_root {
+            return;
+        }
         let Ok(rel) = changed.strip_prefix(tree_root) else {
             return;
         };
@@ -299,6 +310,9 @@ impl SemanticIndex {
         };
         let at = tree_root.join(&self.roots[index].at.subroot);
         let root = &mut self.roots[index];
+        // 内容が動いたので鍵も動く。引き直すまで生成を始めない。始めると、
+        // 出来た索引が前の内容の名前で置かれ、次に読むときに一致しない。
+        root.key = None;
         let was_working = root.is_working();
         root.regenerator.note_change(changed, &at);
         if !root.is_working() {
@@ -316,13 +330,8 @@ impl SemanticIndex {
     /// `rel` を索引に載せるルート。同じ言語のルートが入れ子なら深いほうが持つ
     /// ([`Store::load`] の衝突の解き方に合わせる)。
     fn owning_root(&self, rel: &Path) -> Option<usize> {
-        let lang = roots::Language::of_file(rel)?;
-        self.roots
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.at.lang == lang && rel.starts_with(&r.at.subroot))
-            .max_by_key(|(_, r)| r.at.subroot.components().count())
-            .map(|(i, _)| i)
+        let all: Vec<IndexRoot> = self.roots.iter().map(|r| r.at.clone()).collect();
+        owning_root_of(&all, rel)
     }
 
     /// 作り直しを 1 周進める。始めどきなら始め、終わっていれば結果を返す。
@@ -337,39 +346,84 @@ impl SemanticIndex {
         // 1 周で返すのは 1 本ぶん。生成はロックで直列化されているので、
         // 同じ周に 2 本が終わることはほとんど無い。
         self.roots.iter_mut().find_map(|root| {
-            let target = root.at.target(&dir, tree_root);
+            // 鍵が引き直せていないルートは進めない。いま生成すると、出来た索引が
+            // 前の内容の名前で置かれ、次に読むときには一致せず、また作り直しになる。
+            let key = root.key.clone()?;
+            // この内容の索引はもう置いてある。producer を起こしても同じものが出る。
+            // 編集で行ったり来たりするだけで 14 秒 / 2.3GiB を払わないための門。
+            if root.regenerator.is_pending() && root.at.has_generation(&dir, &key) {
+                root.log_with(&dir, history::Sources::Unknown, history::Outcome::Reused);
+                root.regenerator.abort();
+                root.run = Run::default();
+                return None;
+            }
+            let target = root.at.target(&dir, tree_root, &key);
             let outcome = root.regenerator.tick(&target);
             // producer が立ったのはこの tick の中なので、前後で見て時刻を取る。
             if root.regenerator.is_running() && root.run.started_at.is_none() {
                 root.run.started_at = Some(Instant::now());
                 // producer は最後に出自の表を置き換えるので、いま読めば前の世代のもの。
-                root.run.before = root.at.provenance(&dir);
+                root.run.before = root.at.newest_provenance(&dir);
             }
             outcome.map(|outcome| {
                 let manual = root.run.trigger == Some(Trigger::Manual);
-                root.record(&dir, &outcome);
+                root.record(&dir, &key, &outcome);
+                // 世代を残すのは行き来のためで、際限なく残す意味は無い。
+                root.at.prune(&dir);
                 Finished { outcome, manual }
             })
         })
     }
 
-    /// 索引ルートの列挙を `tree_root` に合わせる。ツリーが変わっていなければ何もしない。
-    fn sync_roots(&mut self, tree_root: &Path) {
-        if self.tree == tree_root {
+    /// 索引ルートの調査が要るか。要るなら、鍵を出しておくべきルート。
+    ///
+    /// 列挙も鍵の計算もツリーを歩くので (実測でそれぞれ 149ms と最大 110ms)、
+    /// UI スレッドではやらない。呼び出し側はこれを見て [`survey`] を背景に回す。
+    ///
+    /// 鍵の要るルートを名指しで返すのは、[`survey`] が鍵を出す相手を自分で選ぶため。
+    /// 選から漏れたルートは鍵を持てず、いつまでも「調査が要る」と言い続けることになる。
+    pub fn needs_survey(&self, tree_root: &Path) -> Option<Vec<IndexRoot>> {
+        if self.tree != tree_root {
+            return Some(Vec::new());
+        }
+        let keyless: Vec<IndexRoot> = self
+            .roots
+            .iter()
+            .filter(|r| r.key.is_none())
+            .map(|r| r.at.clone())
+            .collect();
+        (!keyless.is_empty()).then_some(keyless)
+    }
+
+    /// 背景で調べた索引ルートを取り込む。
+    ///
+    /// 調べている間にツリーが動いていれば捨てる。取り込むと、いま見ていない
+    /// ツリーの鍵で生成を始めることになる。
+    pub fn install(&mut self, survey: Survey, tree_root: &Path) {
+        if survey.tree != tree_root {
             return;
         }
-        self.tree = tree_root.to_path_buf();
-        self.reading = None;
-        // 走っている生成は前のツリーを索引している。Regenerator を捨てれば
-        // Drop がプロセスグループごと止める。
-        self.roots = roots::discover(tree_root)
-            .into_iter()
-            .map(|at| Root {
-                regenerator: Regenerator::new(at.lang.producer()),
-                at,
-                run: Run::default(),
-            })
-            .collect();
+        if self.tree != tree_root {
+            self.tree = tree_root.to_path_buf();
+            self.reading = None;
+            // 走っている生成は前のツリーを索引している。Regenerator を捨てれば
+            // Drop がプロセスグループごと止める。
+            self.roots.clear();
+        }
+        for (at, key) in survey.roots {
+            match self.roots.iter_mut().find(|r| r.at == at) {
+                // 走っている生成はそのまま続ける。鍵だけ差し替えると、置かれる索引の
+                // 名前と中身が食い違うので、走っていない間にだけ入れる。
+                Some(root) if !root.regenerator.is_running() => root.key = Some(key),
+                Some(_) => {}
+                None => self.roots.push(Root {
+                    regenerator: Regenerator::new(at.lang.producer()),
+                    at,
+                    key: Some(key),
+                    run: Run::default(),
+                }),
+            }
+        }
     }
 
     fn conductor_dir(&mut self, repo_root: &Path) -> Option<&Path> {
@@ -433,11 +487,13 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
 
     let mut failures = Vec::new();
     for at in &found {
-        let target = at.target(&dir, repo_root);
+        let key = at.content_key(repo_root, &deeper_than(&found, at));
+        let target = at.target(&dir, repo_root, &key);
         let index = target.index.clone();
         let at_start = Instant::now();
-        let before = at.provenance(&dir);
+        let before = at.newest_provenance(&dir);
         let outcome = sheaf_core::generate_once(target, at.lang.producer());
+        at.prune(&dir);
         history::append(
             &dir,
             &history::Entry {
@@ -447,32 +503,27 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
                 cause: None,
                 waited: std::time::Duration::ZERO,
                 took: at_start.elapsed(),
-                outcome: match &outcome {
-                    Regenerated::Ready { store, .. } => history::Outcome::Ready {
-                        documents: store.len(),
-                    },
-                    Regenerated::Failed(why) => history::Outcome::Failed(why),
-                    Regenerated::Busy => history::Outcome::Busy,
-                    Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
-                },
+                outcome: (&outcome).into(),
                 sources: match &outcome {
-                    Regenerated::Ready { .. } => source_delta(before.as_ref(), at, &dir),
+                    sheaf_core::Outcome::Ready { .. } => {
+                        source_delta(before.as_ref(), at, &dir, &key)
+                    }
                     _ => history::Sources::Unknown,
                 },
                 changed_during: 0,
             },
         );
         match outcome {
-            Regenerated::Ready { store, .. } => println!(
+            sheaf_core::Outcome::Ready { store } => println!(
                 "{} に索引を置いた ({} document、うち出自を言えないもの {})",
                 index.display(),
                 store.len(),
                 store.missing_provenance()
             ),
-            Regenerated::Failed(why) | Regenerated::Unavailable(why) => {
+            sheaf_core::Outcome::Failed(why) | sheaf_core::Outcome::Unavailable(why) => {
                 failures.push(format!("{:?}: {why}", at.lang))
             }
-            Regenerated::Busy => {
+            sheaf_core::Outcome::Busy => {
                 failures.push(format!("{:?}: ほかのプロセスが索引を作っている", at.lang))
             }
         }
@@ -487,22 +538,104 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// ツリーを歩いて分かること。索引ルートと、それぞれの内容の鍵。
+///
+/// 歩くのに実測 149ms + ルート 1 本あたり最大 110ms かかるので、背景で作って
+/// [`SemanticIndex::install`] で取り込む。
+pub struct Survey {
+    /// 調べたツリー。取り込む側が、その間に移っていないか見るのに使う。
+    pub tree: PathBuf,
+    pub roots: Vec<(IndexRoot, String)>,
+}
+
+/// `tree_root` の索引ルートを列挙し、それぞれの内容の鍵を計算する。
+///
+/// 鍵を出すのは、`reading` を含むルート、既に成果物が置いてあるルート、そして
+/// `wanted` に名指しされたルートだけ。実在するリポジトリで索引ルートは 109 本あり、
+/// 全部の鍵を出すと 0.6 秒かかる。読みも書きもしないルートの鍵は誰も使わない。
+pub fn survey(
+    tree_root: &Path,
+    conductor_dir: Option<&Path>,
+    reading: Option<&Path>,
+    wanted: &[IndexRoot],
+) -> Survey {
+    let found = roots::discover(tree_root);
+    let owning = reading.and_then(|rel| owning_root_of(&found, rel));
+    let roots = found
+        .iter()
+        .enumerate()
+        .filter(|(i, at)| {
+            Some(*i) == owning
+                || wanted.contains(at)
+                || conductor_dir.is_some_and(|dir| at.has_any_generation(dir))
+        })
+        .map(|(_, at)| {
+            let key = at.content_key(tree_root, &deeper_than(&found, at));
+            (at.clone(), key)
+        })
+        .collect();
+    Survey {
+        tree: tree_root.to_path_buf(),
+        roots,
+    }
+}
+
+/// `at` の中にある、同じ言語のより深い索引ルート (`at` から見た相対パス)。
+fn deeper_than(all: &[IndexRoot], at: &IndexRoot) -> Vec<PathBuf> {
+    all.iter()
+        .filter(|other| other.lang == at.lang && other.subroot != at.subroot)
+        .filter_map(|other| other.subroot.strip_prefix(&at.subroot).ok())
+        .map(Path::to_path_buf)
+        .collect()
+}
+
+/// `rel` を索引に載せるルートの位置。同じ言語のルートが入れ子なら深いほうが持つ
+/// ([`Store::load`] の衝突の解き方に合わせる)。
+fn owning_root_of(all: &[IndexRoot], rel: &Path) -> Option<usize> {
+    let lang = roots::Language::of_file(rel)?;
+    all.iter()
+        .enumerate()
+        .filter(|(_, at)| at.lang == lang && rel.starts_with(&at.subroot))
+        .max_by_key(|(_, at)| at.subroot.components().count())
+        .map(|(i, _)| i)
+}
+
 /// main worktree に置いてある索引を、`tree_root` のツリーに向けてロードする。
 ///
 /// 索引ルートは `tree_root` から引き直す。索引の中の相対パスをツリーのどこへ
 /// 接ぎ木するかは、ツリーの側にあるルートで決まるため。
 ///
 /// 1 本も投入できなければ `None`。
+///
+/// 索引ルートの調査も一緒に返す。どちらもツリーを歩くので、背景の 1 回で済ませる。
+pub fn survey_and_load(
+    repo_root: &Path,
+    tree_root: &Path,
+    reading: Option<&Path>,
+    wanted: &[IndexRoot],
+) -> (Survey, Option<Store>) {
+    let conductor_dir = main_conductor_dir(repo_root);
+    let survey = survey(tree_root, conductor_dir.as_deref(), reading, wanted);
+    let store = conductor_dir.and_then(|dir| {
+        let sources: Vec<IndexSource> = survey
+            .roots
+            .iter()
+            .filter_map(|(at, key)| at.source(&dir, key))
+            .collect();
+        if sources.is_empty() {
+            return None;
+        }
+        Store::load(&sources, tree_root).ok()
+    });
+    (survey, store)
+}
+
+/// 置いてある索引を読むだけ。検査の口。
+///
+/// 読んでいるファイルを渡さないので、索引がまだ無いルートの鍵は出ない。
+#[cfg(test)]
 pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
-    let conductor_dir = main_conductor_dir(repo_root)?;
-    let sources: Vec<IndexSource> = roots::discover(tree_root)
-        .iter()
-        .filter_map(|at| at.source(&conductor_dir))
-        .collect();
-    if sources.is_empty() {
-        return None;
-    }
-    Store::load(&sources, tree_root).ok()
+    survey_and_load(repo_root, tree_root, None, &[]).1
 }
 
 /// 前の出自の表と、いま置いてある表を比べて、その producer が読むファイルが
@@ -515,11 +648,12 @@ fn source_delta(
     before: Option<&HashMap<PathBuf, String>>,
     at: &IndexRoot,
     dir: &Path,
+    key: &str,
 ) -> history::Sources {
     let Some(before) = before else {
         return history::Sources::First;
     };
-    let Some(after) = at.provenance(dir) else {
+    let Some(after) = at.provenance(dir, key) else {
         return history::Sources::Unknown;
     };
     let mine = |path: &Path| roots::Language::of_file(path) == Some(at.lang);
@@ -615,8 +749,16 @@ mod tests {
     }
 
     /// Rust の索引ルート 1 本ぶんの成果物の名前。
+    ///
+    /// 鍵は置き場所の親のツリーから出す。実際の内容の鍵で置かないと、読む側が
+    /// 探す名前と食い違って、置いたはずの索引が見つからない。
     fn artifact(dir: &Path, ext: &str) -> PathBuf {
-        dir.join(format!("index.rust.{ext}"))
+        let tree = dir.parent().expect(".conductor の親がツリー");
+        let at = IndexRoot {
+            subroot: PathBuf::new(),
+            lang: Language::Rust,
+        };
+        dir.join(format!("index.rust.{}.{ext}", key_in(tree, &at)))
     }
 
     /// commit_sha でコミットした状態のリポジトリを tempdir に作る。
@@ -703,11 +845,15 @@ mod tests {
                 regenerator: sheaf_core::Regenerator::new(std::sync::Arc::new(SlowProducer(
                     script,
                 ))),
+                key: Some("0123456789ab".to_string()),
                 run: Run::default(),
             }],
             ..Default::default()
         };
         semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
+        // 編集で鍵が落ちる。鍵の無いルートは生成を始めないので、背景の調査が
+        // 届いた状態にしておく。
+        semantic.roots[0].key = Some("0123456789ab".to_string());
 
         // 静穏時間が経つのを待って、生成が実際に走っている状態を作る。
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -758,7 +904,7 @@ mod tests {
         let (dir, _commit) =
             init_repo_with_commit(&[("go.mod", "module demo\n"), ("main.go", "package main\n")]);
 
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(dir.path(), Some("main.go"));
         semantic.note_change(&dir.path().join("main.go"), dir.path());
 
         assert!(semantic.is_pending(), "go.mod があるのに生成を待っていない");
@@ -825,6 +971,23 @@ mod tests {
         );
     }
 
+    /// このツリーに対するそのルートの鍵。成果物の名前に入るので、検査が索引を
+    /// 置くときも探すときも [`survey`] と同じ出し方をしないと見つからない。
+    fn key_in(tree: &Path, at: &IndexRoot) -> String {
+        let found = roots::discover(tree);
+        at.content_key(tree, &deeper_than(&found, at))
+    }
+
+    /// 背景の調査を済ませた `SemanticIndex`。note_open はこれが無いと
+    /// `Loading` のまま何もしない。
+    fn surveyed(tree: &Path, reading: Option<&str>) -> SemanticIndex {
+        let mut semantic = SemanticIndex::default();
+        let conductor = tree.join(".conductor");
+        let survey = survey(tree, Some(&conductor), reading.map(Path::new), &[]);
+        semantic.install(survey, tree);
+        semantic
+    }
+
     /// 索引ルートが 2 本ある Go のツリー。`.conductor/` も掘っておく。
     fn nested_go_tree() -> tempfile::TempDir {
         let (dir, _commit) = init_repo_with_commit(&[
@@ -841,7 +1004,7 @@ mod tests {
     fn 読んでいるファイルの索引ルートだけに索引を作らせる() {
         // 実在するリポジトリで索引ルートは 109 本になる。まとめて作ると数十分。
         let dir = nested_go_tree();
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(dir.path(), Some("services/api/api.go"));
 
         semantic.note_open(Path::new("services/api/api.go"), dir.path(), dir.path());
 
@@ -863,12 +1026,12 @@ mod tests {
             lang: Language::Go,
         };
         let conductor_dir = dir.path().join(".conductor");
-        let target = at.target(&conductor_dir, dir.path());
+        let target = at.target(&conductor_dir, dir.path(), &key_in(dir.path(), &at));
         write_index_for(&target.index, &["api.go"]);
         sheaf_core::write_provenance(&target.hashes, &*at.lang.producer(), &Default::default())
             .unwrap();
 
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(dir.path(), Some("services/api/api.go"));
         semantic.note_open(Path::new("services/api/api.go"), dir.path(), dir.path());
 
         assert!(
@@ -878,11 +1041,54 @@ mod tests {
     }
 
     #[test]
+    fn 鍵を失ったルートは名指しで調べ直される() {
+        // 調査は鍵を出す相手を自分で選ぶ (109 本ぶんの鍵は 0.6 秒かかる)。選から
+        // 漏れたルートは鍵が付かないまま「調査が要る」と言い続け、背景の調査が
+        // 毎フレーム走ることになる。
+        let dir = nested_go_tree();
+        let mut semantic = surveyed(dir.path(), Some("services/api/api.go"));
+        semantic.note_change(&dir.path().join("services/api/api.go"), dir.path());
+
+        let wanted = semantic
+            .needs_survey(dir.path())
+            .expect("鍵が無いのに調べ直しを求めていない");
+        assert!(!wanted.is_empty(), "鍵の要るルートを名指ししていない");
+
+        // 読んでいるファイルを渡さなくても、名指しなら鍵が付くこと。
+        semantic.install(survey(dir.path(), None, None, &wanted), dir.path());
+        assert!(
+            semantic.needs_survey(dir.path()).is_none(),
+            "調べ直したのに鍵が付いていない"
+        );
+    }
+
+    #[test]
+    fn 索引ルートが複数あればすべて畳んで読む() {
+        // 1 世代が作るのは 1 ルートぶん。それをそのまま投入すると、他のルートの
+        // 索引が黙って落ちて、そこは以後ずっと構文層で答えることになる。
+        let dir = nested_go_tree();
+        let conductor_dir = dir.path().join(".conductor");
+        for (subroot, docs) in [("", ["main.go"]), ("services/api", ["api.go"])] {
+            let at = IndexRoot {
+                subroot: PathBuf::from(subroot),
+                lang: Language::Go,
+            };
+            let target = at.target(&conductor_dir, dir.path(), &key_in(dir.path(), &at));
+            write_index_for(&target.index, &docs);
+            sheaf_core::write_provenance(&target.hashes, &*at.lang.producer(), &Default::default())
+                .unwrap();
+        }
+
+        let store = load(dir.path(), dir.path()).expect("置いた索引を読めない");
+        assert_eq!(store.len(), 2, "索引ルートのどちらかが落ちた");
+    }
+
+    #[test]
     fn 入れ子のルートの編集は外側の索引を起こさない() {
         // go.mod はモジュールの境界なので、外側の索引に内側のパッケージは入らない。
         // 起こすと、変わっていない索引を作り直すだけになる。
         let dir = nested_go_tree();
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(dir.path(), Some("services/api/api.go"));
 
         semantic.note_change(&dir.path().join("services/api/api.go"), dir.path());
 
@@ -898,7 +1104,7 @@ mod tests {
     #[test]
     fn 索引に載らないファイルの変更では作り直さない() {
         let dir = nested_go_tree();
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(dir.path(), None);
 
         semantic.note_change(&dir.path().join("README.md"), dir.path());
 
@@ -964,7 +1170,7 @@ mod tests {
     /// 索引を投入済みの `SemanticIndex`。
     fn loaded(repo_root: &Path) -> SemanticIndex {
         let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(repo_root, None);
         assert!(semantic.accept(repo_root, repo_root, Some(store)));
         semantic
     }
@@ -982,20 +1188,120 @@ mod tests {
     }
 
     #[test]
-    fn 索引より新しいファイルを読んでいることを伝える() {
-        // 別のツリーで生成された索引は、内容が違うファイルについてだけ答えなくなる。
-        // 黙って構文層に落ちるので、言わないと「ジャンプが甘い」としか見えない。
+    fn 内容の変わったツリーを読んだら作りに行く() {
+        // 索引は内容ごとに名前が分かれるので、内容が動けばその内容の索引はまだ無い。
+        // 待つのではなく作りに行かないと、worktree を移るたびに構文層のまま据え置かれる。
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
         std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
+        let mut semantic = loaded(dir.path());
+        // 調査が届いて、いまの内容の鍵に入れ替わる。
+        semantic.install(
+            survey(
+                dir.path(),
+                Some(&dir.path().join(".conductor")),
+                Some(Path::new("src/lib.rs")),
+                &[],
+            ),
+            dir.path(),
+        );
+
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Building
+        );
+        assert!(
+            semantic.roots.iter().any(|r| r.is_working()),
+            "いまの内容の索引が無いのに作りに行っていない"
+        );
+    }
+
+    /// 置き場所に残っている Rust の索引の本数。
+    fn generation_count(conductor_dir: &Path) -> usize {
+        std::fs::read_dir(conductor_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.starts_with("index.rust.") && name.ends_with(".scip")
+            })
+            .count()
+    }
+
+    #[test]
+    fn 一度作った内容の索引は戻ってきても作り直さない() {
+        // 索引を 1 本しか持たないと、内容の違う worktree を行き来するたびに
+        // 上書きし合い、戻るたびに 14 秒 / 2.3GiB を払うことになる。内容ごとに
+        // 名前を分けるのはそのため。
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        let conductor_dir = dir.path().join(".conductor");
+        let lib = dir.path().join("src/lib.rs");
+
+        // 内容 A の索引。
+        place_index(dir.path());
+        // 内容 B に移って、その索引も作られた状態にする。
+        std::fs::write(&lib, "pub fn greet() {}\nfn other() { greet(); }\n").unwrap();
+        place_index(dir.path());
+        assert_eq!(
+            generation_count(&conductor_dir),
+            2,
+            "内容が違うのに同じ名前で上書きしている"
+        );
+
+        // 内容 A に戻る。
+        std::fs::write(&lib, SOURCE).unwrap();
+        let mut semantic = surveyed(dir.path(), Some("src/lib.rs"));
+        let store = load(dir.path(), dir.path()).expect("戻った内容の索引を読めない");
+        assert!(semantic.accept(dir.path(), dir.path(), Some(store)));
+
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Indexed
+        );
+        assert!(
+            !semantic.roots.iter().any(|r| r.is_working()),
+            "前に作った内容に戻っただけなのに作り直した"
+        );
+    }
+
+    #[test]
+    fn 世代は上限まで残して古いものから落とす() {
+        // 残す意味があるのは行き来する worktree のぶんだけ。際限なく残すと、
+        // 二度と一致しない索引がディスクを食う。
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        let conductor_dir = dir.path().join(".conductor");
+        let lib = dir.path().join("src/lib.rs");
+        for n in 0..6 {
+            std::fs::write(&lib, format!("pub fn greet() {{}}\n// {n}\n")).unwrap();
+            place_index(dir.path());
+        }
+        assert_eq!(generation_count(&conductor_dir), 6);
+
+        let at = IndexRoot {
+            subroot: PathBuf::new(),
+            lang: Language::Rust,
+        };
+        at.prune(&conductor_dir);
+        assert_eq!(generation_count(&conductor_dir), 4);
+    }
+
+    #[test]
+    fn 索引が説明できないファイルを読んでいることを伝える() {
+        // 索引はいまの内容のものなのに、このファイルだけ載っていない。作り直しても
+        // 同じものが出るので、作りに行くのではなく黙って構文層に落ちる。言わないと
+        // 「ジャンプが甘い」としか見えない。
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        let conductor_dir = dir.path().join(".conductor");
+        std::fs::create_dir_all(&conductor_dir).unwrap();
+        write_index(&artifact(&conductor_dir, "scip"));
+        // 出自を 1 件も申告しない索引。鍵はツリーから出るので一致したままになる。
+        write_hashes(&artifact(&conductor_dir, "hashes"), &[]);
         let mut semantic = loaded(dir.path());
 
         assert_eq!(
             semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
             Reading::Stale
         );
-        // 伝えるだけで、勝手には作り直さない。worktree を行き来するたびに
-        // 14 秒 / 2.3GiB を払うことになるため。作り直すかは人が決める。
         assert!(!semantic.roots.iter().any(|r| r.is_working()));
     }
 
@@ -1005,9 +1311,11 @@ mod tests {
         // ここで「説明できている」と答えて確定させると、古いことを言うべき唯一の
         // 場面で必ず黙る。
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
-        place_index(dir.path());
-        std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
-        let mut semantic = SemanticIndex::default();
+        let conductor_dir = dir.path().join(".conductor");
+        std::fs::create_dir_all(&conductor_dir).unwrap();
+        write_index(&artifact(&conductor_dir, "scip"));
+        write_hashes(&artifact(&conductor_dir, "hashes"), &[]);
+        let mut semantic = surveyed(dir.path(), None);
 
         // ストアを投入する前。
         assert_eq!(
@@ -1037,22 +1345,34 @@ mod tests {
     }
 
     #[test]
-    fn 同じパスのまま別のツリーへ移ったら索引ルートを引き直す() {
-        // 「前回と同じファイル」の早期リターンが索引ルートの引き直しより前にあると、
-        // 相対パスが同じファイルを開いたまま worktree を移ったときに、前のツリーの
-        // 索引ルートを使い続ける。
+    fn 同じパスのまま別のツリーへ移ったら調査が届くまで答えない() {
+        // 「前回と同じファイル」の早期リターンがツリーの照合より前にあると、相対パスが
+        // 同じファイルを開いたまま worktree を移ったときに、前のツリーの索引ルートで
+        // 答え続ける。答えは前のブランチの行番号になるので、誤りに見えない誤答になる。
         let (rust, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let (plain, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
-        let mut semantic = SemanticIndex::default();
+        let mut semantic = surveyed(rust.path(), Some("src/lib.rs"));
 
         semantic.note_open(Path::new("src/lib.rs"), rust.path(), rust.path());
         assert_eq!(semantic.roots.len(), 1);
 
-        semantic.note_open(Path::new("src/lib.rs"), plain.path(), plain.path());
-        assert!(
-            semantic.roots.is_empty(),
-            "目印の無いツリーに移ったのに前のツリーの索引ルートが残っている"
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), plain.path(), plain.path()),
+            Reading::Loading,
+            "別のツリーなのに前のツリーの索引ルートで答えた"
         );
+        assert_eq!(
+            semantic.needs_survey(plain.path()),
+            Some(Vec::new()),
+            "ツリーが変わったのに調べ直しを求めていない"
+        );
+
+        // 調査が届けば、目印の無いツリーには索引ルートが無いこと。
+        semantic.install(
+            survey(plain.path(), None, Some(Path::new("src/lib.rs")), &[]),
+            plain.path(),
+        );
+        assert!(semantic.roots.is_empty());
     }
 
     #[test]

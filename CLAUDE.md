@@ -127,13 +127,44 @@ only its edited files fall through.
 
 Where the index lives and who builds it:
 
-- `<main worktree>/.conductor/`, one set of `index.<lang>.{scip,hashes,log}` per
-  index root, plus a single `generate.lock`. Linked worktrees have no `.conductor/`
+- `<main worktree>/.conductor/`, one set of
+  `index.<lang>[.<root>].<content key>.{scip,hashes,log}` per index root *per tree
+  content*, plus a single `generate.lock`. Linked worktrees have no `.conductor/`
   of their own, so `semantic_index` walks `git2::Repository::commondir()` to the
   main one — the same move `mcp_serve::resolve` makes for the review DB. The lock
   is per repository on purpose: one producer peaks at 2.36GB, so the cap must not
   split per index root or per worktree. The artifact names must, though — sharing
   one name means the second generation overwrites the first index.
+- **The content key is what makes worktrees cheap to move between.** It folds the
+  `(path, blob hash)` table of the files *that root's producer reads* — not every
+  file under the root, or swapping a `.png` would rename the artifact and rebuild
+  an identical index. `IndexRoot::fold` is the single place that filter lives,
+  because the same key has to come out of a tree walk and out of a provenance
+  table; if the two disagreed, every generation would write a name the next read
+  cannot find. Four generations are kept per root (`GENERATIONS`, 14.5MB each here)
+  and `prune` drops the rest by mtime, along with any keyless artifact left by an
+  older conductor.
+- **Computing it walks the tree, so it never happens on the UI thread.**
+  Measured on a real monorepo: enumerating the roots is 149ms and the heaviest
+  single root's key is 110ms. `survey()` does both on the same worker that loads
+  the index, and `SemanticIndex::install` takes the result; until it lands
+  `note_open` answers [`Reading::Loading`] rather than answering from the previous
+  tree's roots. `survey` only keys the roots it has a reason to — the one owning
+  the file being read, the ones with artifacts on disk, and the ones
+  `needs_survey` names — because keying all 109 costs 0.6s. `needs_survey`
+  returning the roots by name is load-bearing: a keyless root that the survey did
+  not pick would keep asking to be surveyed, every frame.
+- **A generation that is already on disk is not rebuilt.** `note_open` asks
+  `has_generation` for the current key, and `tick_regeneration` re-checks it
+  before starting the producer — an edit that lands the tree back on a content
+  that was already indexed writes `result=reused took=0.0s` and starts nothing.
+  A root whose key is stale (`note_change` clears it) does not generate at all
+  until the survey refreshes it, or the index would be written under the name of
+  the content it no longer describes.
+- **Reading falls back to the newest generation when no key matches.**
+  `IndexRoot::source` prefers the exact key and takes the most recent otherwise.
+  Requiring an exact match would make one keystroke hide the whole index, when
+  per-file provenance already keeps the untouched files answering `Exact`.
 - **The producer is chosen per index root** (`semantic_index/roots.rs`), by the
   marker file that names one: `Cargo.toml` → `RustAnalyzer`, `go.mod` → `ScipGo`,
   `tsconfig.json` → `ScipTypescript`. A tree with no marker is not indexed at all;
@@ -161,16 +192,17 @@ Where the index lives and who builds it:
   paths — without that, `target/` churn would reset the quiescence timer forever
   and the index would never be rebuilt. That is why `FsEvent::Changed` carries a
   path. Routine rebuilds stay silent; the status bar reports only the first index.
-- **Staleness is reported, not repaired.** One index serves every worktree and
-  freshness is per file by content hash, so a worktree whose files differ from the
-  ones the index was generated against loses `Exact` on exactly those files — the
-  diff you are reviewing. Editing anything in that root heals it (`note_change`
-  regenerates against the tree you are in), but a read-only review never triggers
-  that. So `note_open` returns [`Reading::Stale`] when `Store::is_current` says the
-  open file is not the one the index describes, the status bar says so once, and
-  **Repo ▸ Rebuild Code Index** is the manual repair. Rebuilding automatically was
-  rejected: the index can only describe one tree, so bouncing between two worktrees
-  would re-pay ~14s / 2.36GB each way — the per-switch cost that ruled out an LSP.
+- **Staleness heals itself, and only what cannot heal is reported.** Reading a
+  tree whose content has no index yet returns [`Reading::Building`] and starts one
+  — safe to do automatically only because generations are keyed by content, so
+  bouncing between two worktrees pays the ~14s / 2.36GB once per content and
+  reuses it forever after. That per-switch cost is what ruled out an LSP, and it
+  is what the key buys back. [`Reading::Stale`] is now the narrow case that
+  regenerating will not fix: the index describes this exact content yet does not
+  cover the open file (the producer skipped it, it moved mid-generation, or the
+  producer cannot be started). The status bar says so once, and
+  **Repo ▸ Rebuild Code Index** — which skips the 3s quiescence, since the person
+  who pressed it is waiting — is the manual repair.
 - **Every generation appends one `key=value` line to
   `.conductor/index-history.log`** (`semantic_index/history.rs`) — enough to
   reconstruct both the causality and whether the work was worth doing:
@@ -178,6 +210,7 @@ Where the index lives and who builds it:
   ```
   … lang=go root=services/api trigger=change cause=services/api/handler/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=+0~1-0
   … lang=go root=services/api trigger=change cause=services/api/handler/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=none waste=no-source-change
+  … lang=rust root=. trigger=change cause=src/lib.rs waited=0.2s took=0.0s result=reused
   ```
 
   `cause` is the file that triggered it, so a line answers "opening *this* built
@@ -188,8 +221,10 @@ Where the index lives and who builds it:
   re-derived the same index from the same inputs, and that is what `waste=` names.
   The other waste markers are `stale-on-arrival(N)` (edits landed mid-generation,
   so the index was old the moment it was written) and `discarded` (a worktree
-  switch threw the run away). A change to a file no producer reads writes no line
-  at all, because it starts no generation. Separate from `index.<lang>.log`, which
+  switch threw the run away). `result=reused` is the opposite of a waste marker:
+  the content already had an index, so nothing was run. A change to a file no
+  producer reads writes no line at all, because it starts no generation.
+  Separate from `index.<lang>.<key>.log`, which
   is the producer's own output and is overwritten each run. Capped at 512KB,
   oldest half dropped. Note that `Lock::acquire` distinguishes "someone
   else is generating" from "the directory is not there yet" — collapsing the two
@@ -380,7 +415,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
 - **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
-- **Code index:** `<main worktree>/.conductor/index.<lang>.scip` plus `index.<lang>.hashes` (provenance) and `index.<lang>.log`, one set per index root, and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
+- **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions

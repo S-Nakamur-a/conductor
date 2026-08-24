@@ -1023,16 +1023,34 @@ impl App {
         }
     }
 
+    /// 索引ルートを調べ直し、置いてある索引を読む。どちらもツリーを歩くので背景で。
+    ///
+    /// 読んでいるファイルを渡すのは、そのファイルの索引ルートだけは索引が無くても
+    /// 鍵を出しておくため。渡さないと、まだ索引の無いルートは鍵が出ず、生成が
+    /// 始まらない。
     pub fn start_semantic_index_load(&mut self) {
         if self.bg.semantic_index.is_running() {
             return;
         }
         let repo_root = self.repo.path.clone();
         let tree_root = self.selected_worktree_path();
+        let reading = self.viewer_state.content.current_file.clone();
+        // 鍵を失ったルートを名指しで渡す。渡さないと、調査に選ばれないまま
+        // 「鍵が無い」と言い続け、調査が毎フレーム走る。
+        let wanted = self
+            .code_nav
+            .semantic
+            .needs_survey(&tree_root)
+            .unwrap_or_default();
         self.code_nav.semantic.invalidate_if_retargeted(&tree_root);
         self.bg.semantic_index.start(move |tx| {
-            let store = crate::semantic_index::load(&repo_root, &tree_root);
-            let _ = tx.send((tree_root, store));
+            let (survey, store) = crate::semantic_index::survey_and_load(
+                &repo_root,
+                &tree_root,
+                reading.as_deref().map(std::path::Path::new),
+                &wanted,
+            );
+            let _ = tx.send((tree_root, survey, store));
         });
     }
 
