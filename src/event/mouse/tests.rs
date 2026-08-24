@@ -5,7 +5,10 @@ use super::explorer_panel::{diff_list_row_at, explorer_tree_row_at};
 use super::viewer_panel::{
     MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
 };
-use super::{ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on};
+use super::{
+    ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on,
+    terminal_tab_row_at,
+};
 use std::time::{Duration, Instant};
 
 /// 指定したカラム境界でClickGeometryを構築する。幅/高さは、[<=>] 展開ボタン
@@ -170,6 +173,18 @@ fn column_at_maps_columns_by_boundary() {
     assert_eq!(g.column_at(89), Column::Viewer);
     assert_eq!(g.column_at(90), Column::Terminal);
     assert_eq!(g.column_at(200), Column::Terminal);
+}
+
+/// ホイールでタブを送れるのは、ターミナル列の 2 本のタブ帯の行だけ。
+/// 本文の行まで拾うと、スクロールバックを遡れなくなる。
+#[test]
+fn terminal_tab_rows_are_only_the_two_strip_rows() {
+    let g = geom(20, 50, 90);
+    assert_eq!(terminal_tab_row_at(95, g.terminal_claude_y, &g), Some(true));
+    assert_eq!(terminal_tab_row_at(95, g.terminal_split_y, &g), Some(false));
+    assert_eq!(terminal_tab_row_at(95, g.terminal_split_y - 1, &g), None);
+    // 同じ行でも、ターミナル列の外は当たらない。
+    assert_eq!(terminal_tab_row_at(60, g.terminal_claude_y, &g), None);
 }
 
 #[test]

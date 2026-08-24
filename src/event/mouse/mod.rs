@@ -36,6 +36,30 @@ use worktree_panel::handle_worktree_column_click;
 // スレッドフォーカスのロジックを共有できるよう再エクスポートしている。
 pub(in crate::event) use viewer_panel::toggle_inline_thread_at;
 
+/// Viewer のタブ行（ブロック内側の先頭行）の上か。タブ行を描いていない
+/// フレームではクリック領域が空なので false になり、ホイールは本文の
+/// スクロールへ落ちる。
+fn on_viewer_tab_row(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
+    !app.viewer_state.tab_row_hits.is_empty()
+        && row == geom.main_area.y + 1
+        && matches!(geom.column_at(col), Column::Viewer)
+}
+
+/// Claude / Shell のタブ帯（各パネルの 1 行目）の上なら、Claude 側かどうかを
+/// 返す。
+fn terminal_tab_row_at(col: u16, row: u16, geom: &ClickGeometry) -> Option<bool> {
+    if !matches!(geom.column_at(col), Column::Terminal) {
+        return None;
+    }
+    if row == geom.terminal_claude_y {
+        Some(true)
+    } else if row == geom.terminal_split_y {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// 2回のクリックをダブルクリックとみなす最大間隔（ミリ秒）。
 const DOUBLE_CLICK_MS: u128 = 400;
 
@@ -501,6 +525,28 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
         terminal_split_y,
     };
 
+    // ターミナルのタブ帯の上のホイールは、本文ではなくタブを横へ送る
+    // （Viewer のタブ行・worktree ストリップと同じ）。この 1 行の上では
+    // スクロールバックを遡れなくなる。
+    if let Some(is_claude) = terminal_tab_row_at(col, row, &geom) {
+        let scroll = if is_claude {
+            &mut app.terminal.claude_tab_scroll
+        } else {
+            &mut app.terminal.shell_tab_scroll
+        };
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                *scroll += 1;
+                return;
+            }
+            MouseEventKind::ScrollUp => {
+                *scroll = scroll.saturating_sub(1);
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match mouse.kind {
         MouseEventKind::ScrollDown if wtbar_area.height > 0 && row == wtbar_area.y => {
             // worktreeストリップ上でのホイールは、横方向に約1画面ぶん
@@ -510,6 +556,12 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
         }
         MouseEventKind::ScrollUp if wtbar_area.height > 0 && row == wtbar_area.y => {
             app.wtbar.scroll = app.wtbar.scroll.saturating_sub(wtbar_page_step(app));
+        }
+        MouseEventKind::ScrollDown if on_viewer_tab_row(app, col, row, &geom) => {
+            app.viewer_state.tab_scroll += 1;
+        }
+        MouseEventKind::ScrollUp if on_viewer_tab_row(app, col, row, &geom) => {
+            app.viewer_state.tab_scroll = app.viewer_state.tab_scroll.saturating_sub(1);
         }
         MouseEventKind::ScrollDown => {
             handle_mouse_scroll(app, col, row, &geom, 3);

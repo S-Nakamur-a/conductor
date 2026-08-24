@@ -7,7 +7,9 @@
 //! 消費するだけの価値が無い。
 //!
 //! クリック領域はターミナルのタブバーと同じ [TabHit] で表すので、マウス処理は
-//! 幅を計算し直さずこの描画結果をそのまま引ける。
+//! 幅を計算し直さずこの描画結果をそのまま引ける。オーバーフローヒント
+//! （‹N / N›）もクリックできる領域で、ターミナルのタブバーや worktree
+//! ストリップと同じく窓を横へずらす。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -58,16 +60,17 @@ pub(crate) fn is_visible(vs: &ViewerState) -> bool {
     vs.tabs.len() >= 2
 }
 
-/// タブ行を area（高さ 1）に描き、クリック領域を返す。
+/// タブ行を area（高さ 1）に描き、クリック領域と解決後のスクロール位置
+/// （最初に表示したタブ。呼び出し側が state へ書き戻す）を返す。
 pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
     theme: &Theme,
     vs: &ViewerState,
-) -> Vec<TabHit> {
+) -> (Vec<TabHit>, usize) {
     let mut hits: Vec<TabHit> = Vec::new();
     if area.width == 0 || area.height == 0 || !is_visible(vs) {
-        return hits;
+        return (hits, vs.tab_scroll);
     }
 
     let close_w = w(CLOSE);
@@ -93,11 +96,17 @@ pub(crate) fn render(
     } else {
         area.width.saturating_sub(hint_reserve * 2)
     };
-    // アクティブなタブは常に見えていなければならないので、窓はそこを基準に開く。
     let (start, end) = if all_fit {
         (0, total)
     } else {
-        visible_window(&slots, sep_w, avail, vs.active_tab, vs.active_tab, true)
+        visible_window(
+            &slots,
+            sep_w,
+            avail,
+            vs.tab_scroll,
+            vs.active_tab,
+            vs.tab_reveal,
+        )
     };
 
     let mut spans: Vec<Span> = Vec::new();
@@ -105,8 +114,14 @@ pub(crate) fn render(
 
     if start > 0 {
         let hint = format!("\u{2039}{start} ");
-        x += w(&hint);
+        let hint_w = w(&hint);
         spans.push(Span::styled(hint, Style::default().fg(theme.hint)));
+        hits.push(TabHit {
+            x0: x,
+            x1: x + hint_w,
+            action: TabAction::ScrollLeft,
+        });
+        x += hint_w;
     }
 
     for (idx, label) in labels.iter().enumerate().take(end).skip(start) {
@@ -143,14 +158,18 @@ pub(crate) fn render(
     }
 
     if end < total {
-        spans.push(Span::styled(
-            format!(" {}\u{203a}", total - end),
-            Style::default().fg(theme.hint),
-        ));
+        let hint = format!(" {}\u{203a}", total - end);
+        let hint_w = w(&hint);
+        spans.push(Span::styled(hint, Style::default().fg(theme.hint)));
+        hits.push(TabHit {
+            x0: x,
+            x1: x + hint_w,
+            action: TabAction::ScrollRight,
+        });
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    hits
+    (hits, start)
 }
 
 #[cfg(test)]
@@ -166,18 +185,26 @@ mod tests {
             vs.tabs.push(crate::viewer::ViewerTab::for_test(path));
         }
         vs.active_tab = active;
+        // タブを切り替えた直後の状態。focus_tab が立てるのと同じ。
+        vs.tab_reveal = true;
         vs
     }
 
-    fn draw(width: u16, vs: &ViewerState) -> (ratatui::buffer::Buffer, Vec<TabHit>) {
+    /// [super::super::file_view::render_tab_row] と同じ書き戻しをする。
+    fn draw(width: u16, vs: &mut ViewerState) -> (ratatui::buffer::Buffer, Vec<TabHit>) {
         let theme = Theme::default();
         let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
         let mut hits = Vec::new();
+        let mut scroll = 0;
         terminal
             .draw(|f| {
-                hits = render(f, f.area(), &theme, vs);
+                let (h, s) = render(f, f.area(), &theme, vs);
+                hits = h;
+                scroll = s;
             })
             .unwrap();
+        vs.tab_scroll = scroll;
+        vs.tab_reveal = false;
         (terminal.backend().buffer().clone(), hits)
     }
 
@@ -189,9 +216,9 @@ mod tests {
     /// 1 行を使う理由が無い。
     #[test]
     fn a_single_tab_does_not_take_a_row() {
-        let vs = state(&["src/main.rs"], 0);
+        let mut vs = state(&["src/main.rs"], 0);
         assert!(!is_visible(&vs));
-        let (_, hits) = draw(40, &vs);
+        let (_, hits) = draw(40, &mut vs);
         assert!(hits.is_empty());
     }
 
@@ -208,8 +235,8 @@ mod tests {
 
     #[test]
     fn every_visible_tab_is_selectable_and_closable() {
-        let vs = state(&["a.rs", "b.rs"], 0);
-        let (_, hits) = draw(60, &vs);
+        let mut vs = state(&["a.rs", "b.rs"], 0);
+        let (_, hits) = draw(60, &mut vs);
         for idx in 0..2 {
             assert!(hits.iter().any(|h| h.action == TabAction::Select(idx)));
             assert!(hits.iter().any(|h| h.action == TabAction::Close(idx)));
@@ -228,10 +255,75 @@ mod tests {
     fn the_active_tab_stays_visible_when_tabs_overflow() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let vs = state(&refs, 11);
-        let (buf, hits) = draw(40, &vs);
+        let mut vs = state(&refs, 11);
+        let (buf, hits) = draw(40, &mut vs);
         assert!(hits.iter().any(|h| h.action == TabAction::Select(11)));
         assert!(text(&buf, 40).contains("file11.rs"));
+    }
+
+    /// はみ出したタブへはヒントのクリックで届く。ここが空だと、隠れたタブは
+    /// マウスからは一切触れない（それがこのヒントの唯一の役目）。
+    #[test]
+    fn clicking_the_overflow_hint_reaches_a_hidden_tab() {
+        let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let mut vs = state(&refs, 0);
+
+        let (_, hits) = draw(40, &mut vs);
+        let right = hits
+            .iter()
+            .find(|h| h.action == TabAction::ScrollRight)
+            .expect("右にはみ出しているのでヒントがある");
+        assert_eq!(hit_at(&hits, right.x0), Some(TabAction::ScrollRight));
+        let hidden = hits
+            .iter()
+            .filter_map(|h| match h.action {
+                TabAction::Select(idx) => Some(idx),
+                _ => None,
+            })
+            .max()
+            .unwrap()
+            + 1;
+
+        // クリック = マウス処理と同じ 1 つ右へ。
+        vs.tab_scroll += 1;
+        let (buf, hits) = draw(40, &mut vs);
+        assert!(
+            hits.iter().any(|h| h.action == TabAction::Select(hidden)),
+            "隠れていたタブ {hidden} が選べるようになる"
+        );
+        assert!(text(&buf, 40).contains(&paths[hidden]));
+
+        // 左にもはみ出したので、戻る側のヒントも出る。
+        let left = hits
+            .iter()
+            .find(|h| h.action == TabAction::ScrollLeft)
+            .expect("左にはみ出しているのでヒントがある");
+        vs.tab_scroll = vs.tab_scroll.saturating_sub(1);
+        assert_eq!(hit_at(&hits, left.x0), Some(TabAction::ScrollLeft));
+        let (_, hits) = draw(40, &mut vs);
+        assert!(hits.iter().any(|h| h.action == TabAction::Select(0)));
+    }
+
+    /// スクロールして覗いている間は、アクティブなタブへ引き戻されない。
+    #[test]
+    fn scrolling_is_not_undone_by_the_active_tab() {
+        let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let mut vs = state(&refs, 0);
+
+        draw(40, &mut vs);
+        vs.tab_scroll += 1;
+        let (_, hits) = draw(40, &mut vs);
+        assert!(
+            !hits.iter().any(|h| h.action == TabAction::Select(0)),
+            "アクティブなタブ 0 は窓の外へ出たまま"
+        );
+
+        // タブを切り替えれば戻ってくる。
+        vs.tab_reveal = true;
+        let (_, hits) = draw(40, &mut vs);
+        assert!(hits.iter().any(|h| h.action == TabAction::Select(0)));
     }
 
     /// はみ出した分は左右のヒントで数が分かる。
@@ -239,8 +331,8 @@ mod tests {
     fn overflow_is_announced_on_both_sides() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let vs = state(&refs, 6);
-        let (buf, _) = draw(40, &vs);
+        let mut vs = state(&refs, 6);
+        let (buf, _) = draw(40, &mut vs);
         let rendered = text(&buf, 40);
         assert!(rendered.contains('\u{2039}'), "left hint: {rendered}");
         assert!(rendered.contains('\u{203a}'), "right hint: {rendered}");

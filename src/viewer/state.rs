@@ -383,6 +383,13 @@ pub struct ViewerState {
     /// タブ行のクリック領域（render 中に更新される）。マウス処理が幅を
     /// 計算し直さず、描画とまったく同じジオメトリを引けるようにする。
     pub tab_row_hits: Vec<crate::ui::tab_bar::TabHit>,
+    /// タブ行の横スクロール位置（最初に表示するタブ）。render が解決後の値を
+    /// 書き戻す。
+    pub tab_scroll: usize,
+    /// 次の描画で窓をアクティブなタブまで寄せるか。タブを切り替えた側が立て、
+    /// render が下ろす。常に立てておくと、オーバーフローヒントで隠れたタブを
+    /// 覗く操作がその場で巻き戻される。
+    pub tab_reveal: bool,
     /// 'g' が押されて2つ目のキー（gd, gi, gr）待ちかどうか。
     pub pending_g_key: bool,
     /// 'z' が押されて2つ目のキー（za, zc, zo, zR, zM）待ちかどうか。

@@ -110,6 +110,12 @@ pub(super) fn handle_viewer_column_click(
         match action {
             crate::ui::tab_bar::TabAction::Select(idx) => app.focus_viewer_tab(idx),
             crate::ui::tab_bar::TabAction::Close(idx) => app.close_viewer_tab(Some(idx)),
+            crate::ui::tab_bar::TabAction::ScrollLeft => {
+                app.viewer_state.tab_scroll = app.viewer_state.tab_scroll.saturating_sub(1);
+            }
+            crate::ui::tab_bar::TabAction::ScrollRight => {
+                app.viewer_state.tab_scroll += 1;
+            }
             _ => {}
         }
         return;
