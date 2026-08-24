@@ -181,10 +181,11 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
 }
 
 /// 種別がメンバの並びを本体に持つものか。ここに挙げたものだけ定義全体を出す。
+/// class を外しているのは、本体がメソッドの実装で、宣言の並びではないから。
 fn has_member_list(kind: &str) -> bool {
     matches!(
         kind.to_ascii_lowercase().as_str(),
-        "struct" | "enum" | "interface"
+        "struct" | "enum" | "interface" | "trait"
     )
 }
 
@@ -682,6 +683,30 @@ mod m {
             body(src, 2).unwrap(),
             vec!["pub struct Inner {", "    pub a: u8,", "}"]
         );
+    }
+
+    #[test]
+    fn trait_はメソッドの並びを出す() {
+        // Go/TS の interface が中身を出すのに Rust の trait だけ見出し 1 行、
+        // という差は種別の綴りが違うだけで、見たいものは同じ。
+        let src = "\
+pub trait Store {
+    fn len(&self) -> usize;
+    fn put(&mut self, key: String);
+}
+";
+        assert_eq!(
+            body(src, 1).unwrap(),
+            vec![
+                "pub trait Store {",
+                "    fn len(&self) -> usize;",
+                "    fn put(&mut self, key: String);",
+                "}",
+            ]
+        );
+        assert!(has_member_list("trait") && has_member_list("Trait"));
+        // class は本体がメソッドの実装なので出さない。
+        assert!(!has_member_list("class"));
     }
 
     #[test]
