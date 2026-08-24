@@ -46,11 +46,7 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
         Some(Action::Select) => {
             // 選択を確定して切り替えモーダルを閉じる。
             app.overlays.active = ActiveOverlay::None;
-            match app
-                .worktrees.rows
-                .get(app.worktrees.row_selected)
-                .copied()
-            {
+            match app.worktrees.rows.get(app.worktrees.row_selected).copied() {
                 Some(WorktreeListRow::Session { pty_idx, .. }) => {
                     app.switch_claude_session(pty_idx);
                     app.set_focus(Focus::TerminalClaude);
@@ -98,13 +94,9 @@ pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) {
 
                     let mut warnings: Vec<String> = Vec::new();
                     if !is_clean {
-                        warnings.push(format!(
-                            "{dirty_count} uncommitted change(s) will be LOST"
-                        ));
+                        warnings.push(format!("{dirty_count} uncommitted change(s) will be LOST"));
                     }
-                    if let Some(main_branch) =
-                        main_branch.filter(|m| *m != branch)
-                    {
+                    if let Some(main_branch) = main_branch.filter(|m| *m != branch) {
                         match git_engine::GitEngine::open(&app.repo.path)
                             .and_then(|e| e.is_branch_merged_into(&branch, &main_branch))
                         {

@@ -209,7 +209,9 @@ mod tests {
                 None,
             )
             .unwrap();
-        store.add_reply(&review.id, "first", Author::Claude).unwrap();
+        store
+            .add_reply(&review.id, "first", Author::Claude)
+            .unwrap();
         store.add_reply(&review.id, "second", Author::User).unwrap();
 
         let replies = store.get_replies(&review.id).unwrap();

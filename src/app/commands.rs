@@ -114,7 +114,11 @@ impl App {
         if let Err(e) = crate::config::persist_ui_high_contrast(self.theme_sel.high_contrast) {
             log::warn!("failed to persist high_contrast: {e}");
         }
-        let state = if self.theme_sel.high_contrast { "on" } else { "off" };
+        let state = if self.theme_sel.high_contrast {
+            "on"
+        } else {
+            "off"
+        };
         self.set_status_info(format!("High contrast {state}"));
     }
 
@@ -206,7 +210,8 @@ impl App {
     }
 
     fn cmd_show_diff_list(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view = crate::viewer::ExplorerBottomView::DiffList;
+        self.viewer_state.explorer.explorer_bottom_view =
+            crate::viewer::ExplorerBottomView::DiffList;
         self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
@@ -217,5 +222,4 @@ impl App {
         self.viewer_state.explorer.explorer_focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
-
 }

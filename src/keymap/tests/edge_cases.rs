@@ -55,7 +55,11 @@ fn macos_unicode_fallback_chords_resolve() {
     ];
     for (glyph, action) in cases {
         let key = KeyEvent::new(KeyCode::Char(glyph), KeyModifiers::empty());
-        assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "glyph {glyph:?}");
+        assert_eq!(
+            km.resolve(&key, KeyContext::Global),
+            Some(action),
+            "glyph {glyph:?}"
+        );
     }
 }
 

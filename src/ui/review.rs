@@ -173,7 +173,9 @@ pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled(
                 "y",
-                Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(": delete   ", Style::default().fg(theme.muted)),
             Span::styled(

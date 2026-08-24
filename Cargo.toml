@@ -3,18 +3,18 @@ members = ["crates/revidere", "crates/revidere-fixtures", "crates/sheaf-core"]
 
 [package]
 name = "conductor"
-version = "0.113.1"
+version = "0.114.1"
 edition = "2024"
 
 [dependencies]
 ratatui = "0.29"
 crossterm = "0.28"
 git2 = { version = "0.20", features = ["vendored-openssl"] }
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 syntect-tui = "3.0.6"
-similar = { version = "2", features = ["inline"] }
+similar = { version = "3", features = ["inline"] }
 toml = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

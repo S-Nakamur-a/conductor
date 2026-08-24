@@ -138,7 +138,14 @@ impl DiffState {
             }
             if let Some(node) = nodes.get(dir_path) {
                 for child_dir in &node.child_dirs {
-                    emit_dir(child_dir, depth + 1, leaves, nodes, collapsed_dirs, display_list);
+                    emit_dir(
+                        child_dir,
+                        depth + 1,
+                        leaves,
+                        nodes,
+                        collapsed_dirs,
+                        display_list,
+                    );
                 }
                 for &li in &node.leaves {
                     display_list.push(DiffListEntry::File {
@@ -278,8 +285,9 @@ impl DiffState {
 
     /// 指定した表示インデックスのディレクトリを折りたたむ(他の行では何もしない)。
     pub fn collapse_section(&mut self, display_idx: usize) {
-        if let Some(DiffListEntry::Directory { path, collapsed, .. }) =
-            self.display_list.get(display_idx)
+        if let Some(DiffListEntry::Directory {
+            path, collapsed, ..
+        }) = self.display_list.get(display_idx)
             && !collapsed
         {
             let key = path.clone();
@@ -290,8 +298,9 @@ impl DiffState {
 
     /// 指定した表示インデックスのディレクトリを展開する(他の行では何もしない)。
     pub fn expand_section(&mut self, display_idx: usize) {
-        if let Some(DiffListEntry::Directory { path, collapsed, .. }) =
-            self.display_list.get(display_idx)
+        if let Some(DiffListEntry::Directory {
+            path, collapsed, ..
+        }) = self.display_list.get(display_idx)
             && *collapsed
         {
             let key = path.clone();

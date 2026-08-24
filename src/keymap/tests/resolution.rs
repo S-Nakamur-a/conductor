@@ -2,8 +2,8 @@
 //! どおりのアクションに解決されることのテスト。terminal/editor での横取りと、
 //! コンテキストからグローバルへのフォールバックを含む。
 
-use super::*;
 use super::super::map::DEFAULT_KEYBINDS;
+use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use keymap_suite::ActionName;
 
@@ -28,7 +28,10 @@ fn critical_defaults_resolve() {
     // Quit は ctrl+q に移動した。素の q は未バインド（そのまま通過）なので
     // うっかりアプリを終了させることはもうできない。
     let key_ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
-    assert_eq!(km.resolve(&key_ctrl_q, KeyContext::Global), Some(Action::Quit));
+    assert_eq!(
+        km.resolve(&key_ctrl_q, KeyContext::Global),
+        Some(Action::Quit)
+    );
     let key_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
     assert_eq!(km.resolve(&key_q, KeyContext::Global), None);
 
@@ -59,15 +62,28 @@ fn worktree_switch_and_zoom_aliases_resolve() {
     // prefix z）、ctrl+alt によるペインサイズ変更ファミリーに加わる。
     let km = default_keymap();
     let cases = [
-        (KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT), Action::NextWorktree),
-        (KeyEvent::new(KeyCode::Char('['), KeyModifiers::ALT), Action::PrevWorktree),
         (
-            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL | KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT),
+            Action::NextWorktree,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('['), KeyModifiers::ALT),
+            Action::PrevWorktree,
+        ),
+        (
+            KeyEvent::new(
+                KeyCode::Char('z'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
             Action::TogglePanelExpand,
         ),
     ];
     for (key, action) in cases {
-        assert_eq!(km.resolve(&key, KeyContext::Global), Some(action), "{key:?}");
+        assert_eq!(
+            km.resolve(&key, KeyContext::Global),
+            Some(action),
+            "{key:?}"
+        );
     }
 }
 
@@ -82,7 +98,10 @@ fn terminal_intercepts_only_firing_actions() {
     assert_eq!(km.resolve(&ctrl_q, KeyContext::Global), Some(Action::Quit));
     assert_eq!(km.resolve(&ctrl_q, KeyContext::Terminal), None);
     let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
-    assert_eq!(km.resolve(&ctrl_r, KeyContext::Global), Some(Action::SwitchRepo));
+    assert_eq!(
+        km.resolve(&ctrl_r, KeyContext::Global),
+        Some(Action::SwitchRepo)
+    );
     assert_eq!(km.resolve(&ctrl_r, KeyContext::Terminal), None);
 
     // フォーカス/ナビゲーションのチョードは PTY から奪い返される。
@@ -105,7 +124,10 @@ fn terminal_intercepts_only_firing_actions() {
     // レンダリングされるヘルプは解決結果と食い違わない: ターミナルでは Quit に
     // チョードは宣伝されないが、ターミナルで発火するアクションはそのチョードを
     // 保つ。
-    assert!(km.keys_for_action(KeyContext::Terminal, Action::Quit).is_empty());
+    assert!(
+        km.keys_for_action(KeyContext::Terminal, Action::Quit)
+            .is_empty()
+    );
     assert!(
         !km.keys_for_action(KeyContext::Terminal, Action::LeaveTerminal)
             .is_empty()
@@ -182,8 +204,10 @@ fn editor_context_steals_only_leave_and_globals() {
         km.resolve(&alt_l, KeyContext::Editor),
         Some(Action::CycleFocusForward)
     );
-    let ctrl_alt_z =
-        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL | KeyModifiers::ALT);
+    let ctrl_alt_z = KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
     assert_eq!(
         km.resolve(&ctrl_alt_z, KeyContext::Editor),
         Some(Action::TogglePanelExpand)
@@ -251,22 +275,50 @@ fn worktree_git_action_keys_resolve() {
     // 0.67 の意図的な変更。新しいバインディングを静かな退行から守るために固定する。
     let km = default_keymap();
     let cases = [
-        (KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty()), Action::PullWorktree),
-        (KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()), Action::CherryPick),
-        (KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()), Action::OpenPullRequest),
+        (
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty()),
+            Action::PullWorktree,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()),
+            Action::CherryPick,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()),
+            Action::OpenPullRequest,
+        ),
         // 'X' は解決済みグリフ 'X' + 冗長な SHIFT として届き、keymap-core が
         // "X" のバインディングに合うよう畳み込む（shift_g のテストを参照）。
-        (KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT), Action::PruneWorktrees),
+        (
+            KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT),
+            Action::PruneWorktrees,
+        ),
         // g/G はここでも go_to_top/bottom になった（以前は grab/ungrab）。
         // 他のすべてのパネルと揃えるため; grab/ungrab は b/B（"branch"、do/undo）
         // に移動した。
-        (KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty()), Action::GoToTop),
-        (KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT), Action::GoToBottom),
-        (KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()), Action::GrabBranch),
-        (KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT), Action::UngrabBranch),
+        (
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty()),
+            Action::GoToTop,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
+            Action::GoToBottom,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()),
+            Action::GrabBranch,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT),
+            Action::UngrabBranch,
+        ),
     ];
     for (key, action) in cases {
-        assert_eq!(km.resolve(&key, KeyContext::Worktree), Some(action), "{key:?}");
+        assert_eq!(
+            km.resolve(&key, KeyContext::Worktree),
+            Some(action),
+            "{key:?}"
+        );
     }
 
     // 付け替えで空いたキーは、ワークツリーパネルでは今は未バインドである
@@ -326,8 +378,7 @@ fn ctrl_tab_switches_worktree() {
         Some(Action::CycleFocusForward)
     );
     // Ctrl+Shift+Tab と Ctrl+BackTab はどちらも Ctrl+Shift+Tab に正規化される。
-    let ctrl_shift_tab =
-        KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    let ctrl_shift_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
     assert_eq!(
         km.resolve(&ctrl_shift_tab, KeyContext::Explorer),
         Some(Action::PrevWorktree)
@@ -376,14 +427,20 @@ fn f10_opens_the_menu_bar_from_every_context() {
     let km = default_keymap();
     let f10 = KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE);
 
-    assert_eq!(km.resolve(&f10, KeyContext::Global), Some(Action::FocusMenuBar));
+    assert_eq!(
+        km.resolve(&f10, KeyContext::Global),
+        Some(Action::FocusMenuBar)
+    );
     // 多くの時間が費やされる PTY 上でも含めて。
     assert_eq!(
         km.resolve(&f10, KeyContext::Terminal),
         Some(Action::FocusMenuBar),
         "must fire while a terminal panel is focused"
     );
-    assert_eq!(km.resolve(&f10, KeyContext::Explorer), Some(Action::FocusMenuBar));
+    assert_eq!(
+        km.resolve(&f10, KeyContext::Explorer),
+        Some(Action::FocusMenuBar)
+    );
 
     // そして生成されるチートシートにも宣伝されなければならない。
     assert_eq!(
@@ -397,18 +454,43 @@ fn f10_opens_the_menu_bar_from_every_context() {
 fn revidere_layer_resolves() {
     let km = default_keymap();
     let cases = [
-        (KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()), Action::NavigateDown),
-        (KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty()), Action::RevidereNextSection),
-        (KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT), Action::RevidererPrevSection),
-        (KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()), Action::Select),
-        (KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()), Action::ExitSubPanel),
+        (
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()),
+            Action::NavigateDown,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty()),
+            Action::RevidereNextSection,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT),
+            Action::RevidererPrevSection,
+        ),
+        (
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+            Action::Select,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()),
+            Action::ExitSubPanel,
+        ),
         // 画面の切り替えは行き先ごとに別のキー。1 つのキーで交互に切り替えると、
         // 押した結果がいまどちらを出しているかに依存する。
-        (KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()), Action::RevidereShowOverview),
-        (KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty()), Action::RevidereShowSections),
+        (
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()),
+            Action::RevidereShowOverview,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty()),
+            Action::RevidereShowSections,
+        ),
     ];
     for (key, action) in cases {
-        assert_eq!(km.resolve(&key, KeyContext::Revidere), Some(action), "{key:?}");
+        assert_eq!(
+            km.resolve(&key, KeyContext::Revidere),
+            Some(action),
+            "{key:?}"
+        );
     }
 }
 
@@ -416,15 +498,24 @@ fn revidere_layer_resolves() {
 fn explorer_show_and_analyze_keys_resolve() {
     let km = default_keymap();
     assert_eq!(
-        km.resolve(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty()), KeyContext::Explorer),
+        km.resolve(
+            &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty()),
+            KeyContext::Explorer
+        ),
         Some(Action::ShowRevidere)
     );
     assert_eq!(
-        km.resolve(&KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT), KeyContext::Explorer),
+        km.resolve(
+            &KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT),
+            KeyContext::Explorer
+        ),
         Some(Action::AnalyzeRevidere)
     );
     assert_eq!(
-        km.resolve(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT), KeyContext::Explorer),
+        km.resolve(
+            &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT),
+            KeyContext::Explorer
+        ),
         Some(Action::ForceAnalyzeRevidere)
     );
 }

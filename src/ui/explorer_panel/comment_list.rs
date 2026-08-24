@@ -97,8 +97,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
             match row {
                 CommentListRow::Comment { comment_idx } => {
                     let comment = app.review_state.comments.get(*comment_idx)?;
-                    let resolved =
-                        comment.status == crate::review_store::CommentStatus::Resolved;
+                    let resolved = comment.status == crate::review_store::CommentStatus::Resolved;
 
                     let kind_badge = crate::ui::review::kind_icon(comment.kind, icon_set);
                     let status_marker = if resolved { "\u{2713}" } else { "\u{25cb}" };
@@ -260,9 +259,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
                         ListItem::new(Line::from(vec![
                             Span::styled(
                                 format!("    \u{21b3} {author_label} "),
-                                Style::default()
-                                    .fg(theme.info)
-                                    .add_modifier(Modifier::BOLD),
+                                Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(body, Style::default().fg(theme.reply_text)),
                             Span::styled(more_suffix, Style::default().fg(theme.muted)),

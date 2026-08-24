@@ -98,10 +98,7 @@ fn teammate_message(id: &str, body: &str) -> DisplayBlock {
 }
 
 fn entry(role: Role, blocks: Vec<DisplayBlock>) -> LogEntry {
-    LogEntry {
-        role,
-        blocks,
-    }
+    LogEntry { role, blocks }
 }
 
 fn build(entries: &[LogEntry], expanded: bool) -> Vec<Line<'static>> {
@@ -141,7 +138,11 @@ fn only_visible_line<'a>(lines: &'a [Line<'a>]) -> &'a Line<'a> {
         .iter()
         .filter(|l| !line_text(l).trim().is_empty())
         .collect();
-    assert_eq!(visible.len(), 1, "expected exactly one visible line, got {visible:?}");
+    assert_eq!(
+        visible.len(),
+        1,
+        "expected exactly one visible line, got {visible:?}"
+    );
     visible[0]
 }
 
@@ -150,13 +151,37 @@ fn only_visible_line<'a>(lines: &'a [Line<'a>]) -> &'a Line<'a> {
 #[test]
 fn read_results_collapse_into_aggregated_count_line() {
     let entries = vec![
-        entry(Role::Assistant, vec![tool_use("Read", json!({"file_path": "/a"}))]),
+        entry(
+            Role::Assistant,
+            vec![tool_use("Read", json!({"file_path": "/a"}))],
+        ),
         entry(
             Role::User,
             vec![
-                tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["a"], false),
-                tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["b"], false),
-                tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["c"], false),
+                tool_result(
+                    ResultKind::Counted {
+                        bucket: CountedBucket::Read,
+                        from_bash: false,
+                    },
+                    &["a"],
+                    false,
+                ),
+                tool_result(
+                    ResultKind::Counted {
+                        bucket: CountedBucket::Read,
+                        from_bash: false,
+                    },
+                    &["b"],
+                    false,
+                ),
+                tool_result(
+                    ResultKind::Counted {
+                        bucket: CountedBucket::Read,
+                        from_bash: false,
+                    },
+                    &["c"],
+                    false,
+                ),
             ],
         ),
     ];
@@ -171,7 +196,14 @@ fn read_results_collapse_into_aggregated_count_line() {
 fn read_results_singular_count_uses_singular_noun() {
     let entries = vec![entry(
         Role::User,
-        vec![tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["a"], false)],
+        vec![tool_result(
+            ResultKind::Counted {
+                bucket: CountedBucket::Read,
+                from_bash: false,
+            },
+            &["a"],
+            false,
+        )],
     )];
     let lines = build(&entries, false);
     assert_eq!(
@@ -187,8 +219,22 @@ fn grep_and_glob_share_one_search_bucket_summary() {
     let entries = vec![entry(
         Role::User,
         vec![
-            tool_result(ResultKind::Counted { bucket: CountedBucket::Search, from_bash: false }, &["match1"], false),
-            tool_result(ResultKind::Counted { bucket: CountedBucket::Search, from_bash: false }, &["match2"], false),
+            tool_result(
+                ResultKind::Counted {
+                    bucket: CountedBucket::Search,
+                    from_bash: false,
+                },
+                &["match1"],
+                false,
+            ),
+            tool_result(
+                ResultKind::Counted {
+                    bucket: CountedBucket::Search,
+                    from_bash: false,
+                },
+                &["match2"],
+                false,
+            ),
         ],
     )];
     let lines = build(&entries, false);
@@ -203,8 +249,22 @@ fn bash_ls_collapses_to_listed_directories_summary() {
     let entries = vec![entry(
         Role::User,
         vec![
-            tool_result(ResultKind::Counted { bucket: CountedBucket::List, from_bash: true }, &["a"], false),
-            tool_result(ResultKind::Counted { bucket: CountedBucket::List, from_bash: true }, &["b"], false),
+            tool_result(
+                ResultKind::Counted {
+                    bucket: CountedBucket::List,
+                    from_bash: true,
+                },
+                &["a"],
+                false,
+            ),
+            tool_result(
+                ResultKind::Counted {
+                    bucket: CountedBucket::List,
+                    from_bash: true,
+                },
+                &["b"],
+                false,
+            ),
         ],
     )];
     let lines = build(&entries, false);
@@ -221,8 +281,22 @@ fn bash_cat_merges_with_read_bucket_summary() {
     let entries = vec![entry(
         Role::User,
         vec![
-            tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["file a contents"], false),
-            tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["file b contents"], false),
+            tool_result(
+                ResultKind::Counted {
+                    bucket: CountedBucket::Read,
+                    from_bash: false,
+                },
+                &["file a contents"],
+                false,
+            ),
+            tool_result(
+                ResultKind::Counted {
+                    bucket: CountedBucket::Read,
+                    from_bash: false,
+                },
+                &["file b contents"],
+                false,
+            ),
         ],
     )];
     let lines = build(&entries, false);
@@ -239,7 +313,14 @@ fn counted_result_ignores_is_error_and_still_aggregates_normally() {
     // 折り込まれる。
     let entries = vec![entry(
         Role::User,
-        vec![tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &["boom: file not found"], true)],
+        vec![tool_result(
+            ResultKind::Counted {
+                bucket: CountedBucket::Read,
+                from_bash: false,
+            },
+            &["boom: file not found"],
+            true,
+        )],
     )];
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
@@ -313,12 +394,18 @@ fn inline_tool_use_renders_bold_name_and_text_colored_arg_not_gray() {
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
 
-    assert_eq!(line.spans.len(), 3, "marker + name + arg spans, got {line:?}");
+    assert_eq!(
+        line.spans.len(),
+        3,
+        "marker + name + arg spans, got {line:?}"
+    );
     assert_eq!(line.spans[0].style, Style::default().fg(palette::SUCCESS));
     assert_eq!(line.spans[1].content.as_ref(), "Write");
     assert_eq!(
         line.spans[1].style,
-        Style::default().fg(palette::TEXT).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(palette::TEXT)
+            .add_modifier(Modifier::BOLD)
     );
     assert_eq!(line.spans[2].content.as_ref(), "(/tmp/out.txt)");
     // ネイティブのキャプチャでは引数は暗く表示されるのではなく本文テキストと
@@ -332,8 +419,14 @@ fn inline_tool_use_renders_bold_name_and_text_colored_arg_not_gray() {
 #[test]
 fn todowrite_renders_nothing_in_collapsed_mode() {
     let entries = vec![
-        entry(Role::Assistant, vec![tool_use("TodoWrite", json!({"todos": []}))]),
-        entry(Role::User, vec![tool_result(ResultKind::Inline, &["ok"], false)]),
+        entry(
+            Role::Assistant,
+            vec![tool_use("TodoWrite", json!({"todos": []}))],
+        ),
+        entry(
+            Role::User,
+            vec![tool_result(ResultKind::Inline, &["ok"], false)],
+        ),
     ];
     let lines = build(&entries, false);
     assert!(non_blank_texts(&lines).is_empty());
@@ -349,7 +442,8 @@ fn inline_error_result_draws_multiline_error_block() {
     // "Error: " のプレフィックスは最初の行にしか付かない。
     let entries = vec![entry(
         Role::User,
-        vec![tool_result(ResultKind::Inline,
+        vec![tool_result(
+            ResultKind::Inline,
             &[
                 "bash: command failed with exit code 1",
                 "second line of the error",
@@ -362,7 +456,11 @@ fn inline_error_result_draws_multiline_error_block() {
         .iter()
         .filter(|l| !line_text(l).trim().is_empty())
         .collect();
-    assert_eq!(visible.len(), 2, "first + continuation error line, got {visible:?}");
+    assert_eq!(
+        visible.len(),
+        2,
+        "first + continuation error line, got {visible:?}"
+    );
 
     let first = visible[0];
     assert_eq!(
@@ -503,7 +601,10 @@ fn teammate_message_collapsed_line_is_entirely_inactive() {
     let line = only_visible_line(&lines);
     for span in &line.spans {
         assert_eq!(span.style.fg, Some(palette::INACTIVE));
-        assert_eq!(span.style.bg, None, "spec: no background block, unlike user turns");
+        assert_eq!(
+            span.style.bg, None,
+            "spec: no background block, unlike user turns"
+        );
     }
 }
 
@@ -511,10 +612,7 @@ fn teammate_message_collapsed_line_is_entirely_inactive() {
 fn teammate_message_collapsed_ignores_the_body_entirely() {
     // 折り畳みモードでは id しかレンダリングされない — 本文テキストは短くても
     // サマリー行に漏れてはならない。
-    let entries = vec![entry(
-        Role::User,
-        vec![teammate_message("alice", "hi")],
-    )];
+    let entries = vec![entry(Role::User, vec![teammate_message("alice", "hi")])];
     let lines = build(&entries, false);
     let texts = non_blank_texts(&lines);
     assert_eq!(texts.len(), 1);
@@ -561,7 +659,10 @@ fn expanded_mode_shows_raw_tool_name_not_the_collapsed_alias() {
 
 #[test]
 fn user_text_renders_the_marker_glyph_not_the_assistant_bullet() {
-    let entries = vec![entry(Role::User, vec![DisplayBlock::Text("hi".to_string())])];
+    let entries = vec![entry(
+        Role::User,
+        vec![DisplayBlock::Text("hi".to_string())],
+    )];
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
     assert_eq!(line.spans[0].content, "\u{276f} ");
@@ -569,11 +670,18 @@ fn user_text_renders_the_marker_glyph_not_the_assistant_bullet() {
 
 #[test]
 fn user_text_marker_and_body_carry_the_background_fill_color() {
-    let entries = vec![entry(Role::User, vec![DisplayBlock::Text("hi".to_string())])];
+    let entries = vec![entry(
+        Role::User,
+        vec![DisplayBlock::Text("hi".to_string())],
+    )];
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
     for span in &line.spans {
-        assert_eq!(span.style.bg, Some(palette::USER_BG), "span {span:?} missing background fill");
+        assert_eq!(
+            span.style.bg,
+            Some(palette::USER_BG),
+            "span {span:?} missing background fill"
+        );
     }
     assert_eq!(line.spans[0].style.fg, Some(palette::USER_MARKER_FG));
     assert_eq!(line.spans[1].style.fg, Some(palette::USER_TEXT));
@@ -586,7 +694,9 @@ fn user_text_bypasses_markdown_rendering() {
     // テキストであるため。
     let entries = vec![entry(
         Role::User,
-        vec![DisplayBlock::Text("**not bold** # not a heading".to_string())],
+        vec![DisplayBlock::Text(
+            "**not bold** # not a heading".to_string(),
+        )],
     )];
     let lines = build(&entries, false);
     let texts = non_blank_texts(&lines);
@@ -679,12 +789,23 @@ fn expanded_mode_shows_every_result_line_with_no_cap() {
     let raw_refs: Vec<&str> = raw_lines.iter().map(String::as_str).collect();
     let entries = vec![entry(
         Role::User,
-        vec![tool_result(ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, &raw_refs, false)],
+        vec![tool_result(
+            ResultKind::Counted {
+                bucket: CountedBucket::Read,
+                from_bash: false,
+            },
+            &raw_refs,
+            false,
+        )],
     )];
     let lines = build(&entries, true);
     let texts = non_blank_texts(&lines);
 
-    assert_eq!(texts.len(), 12, "no cap on expanded result lines: {texts:?}");
+    assert_eq!(
+        texts.len(),
+        12,
+        "no cap on expanded result lines: {texts:?}"
+    );
     for (i, text) in texts.iter().enumerate() {
         assert!(
             text.ends_with(&format!("line{i}")),
@@ -751,7 +872,10 @@ fn two_buckets_keep_the_measured_order_and_casing() {
 fn shell_cat_counts_only_when_the_read_tool_is_absent() {
     // Bash(cat ...) と Read の実測された5通りの組み合わせ。
     let cases: [(&[(ResultKind, bool)], &str); 5] = [
-        (&[(counted(CountedBucket::Read, true), false)], "Read 1 file"),
+        (
+            &[(counted(CountedBucket::Read, true), false)],
+            "Read 1 file",
+        ),
         (
             &[
                 (counted(CountedBucket::Read, true), false),
@@ -797,7 +921,10 @@ fn shell_cat_counts_only_when_the_read_tool_is_absent() {
 #[test]
 fn counted_result_ignores_is_error_entirely() {
     // 実測: 失敗した Read でも普通のサマリーへ折り込まれる。
-    let entries = vec![results_entry(&[(counted(CountedBucket::Read, false), true)])];
+    let entries = vec![results_entry(&[(
+        counted(CountedBucket::Read, false),
+        true,
+    )])];
     assert_eq!(
         non_blank_texts(&build(&entries, false)),
         vec!["Read 1 file (ctrl+o to expand)"]
@@ -826,10 +953,7 @@ fn compact_group_matches_the_native_layout() {
         ),
         entry(Role::User, vec![annotation("Read alpha.rs (42 lines)")]),
         entry(Role::User, vec![annotation("Referenced file beta.yml")]),
-        entry(
-            Role::Assistant,
-            vec![DisplayBlock::Text("done".into())],
-        ),
+        entry(Role::Assistant, vec![DisplayBlock::Text("done".into())]),
     ];
     let rendered: Vec<String> = build(&entries, false)
         .iter()
@@ -912,7 +1036,11 @@ fn long_annotations_and_notices_stay_inside_the_panel() {
         };
         for line in build_lines(&ctx, width).lines {
             let w = unicode_width::UnicodeWidthStr::width(line_text(&line).as_str());
-            assert!(w <= width, "{w} cols at width {width}: {:?}", line_text(&line));
+            assert!(
+                w <= width,
+                "{w} cols at width {width}: {:?}",
+                line_text(&line)
+            );
         }
     }
 }
@@ -951,7 +1079,10 @@ fn a_long_annotation_wraps_instead_of_being_elided() {
     // 何も省略されない: パスのすべての文字がどこかに残っている。
     let joined: String = texts.iter().map(|t| t.trim_start()).collect();
     assert!(joined.contains(&"x".repeat(120)), "path was cut: {joined}");
-    assert!(!joined.contains('\u{2026}'), "unexpected ellipsis: {joined}");
+    assert!(
+        !joined.contains('\u{2026}'),
+        "unexpected ellipsis: {joined}"
+    );
 }
 
 #[test]

@@ -3,7 +3,10 @@ use super::*;
 #[test]
 fn complement_rotates_hue_180_and_round_trips() {
     // 純粋な赤(h=0) → 同じ彩度/明度のシアン(h=0.5)。
-    assert_eq!(Theme::complement(Color::Rgb(255, 0, 0)), Color::Rgb(0, 255, 255));
+    assert_eq!(
+        Theme::complement(Color::Rgb(255, 0, 0)),
+        Color::Rgb(0, 255, 255)
+    );
     // complement を2回適用すると(近似的に)元の色相に戻る。
     let original = Color::Rgb(203, 166, 247); // Catppuccin Mauve accent
     let twice = Theme::complement(Theme::complement(original));
@@ -157,7 +160,10 @@ fn all_names_dark_before_light() {
         .iter()
         .position(|n| Theme::from_name(n).light)
         .expect("at least one light theme");
-    assert!(last_dark < first_light, "dark themes must precede light themes");
+    assert!(
+        last_dark < first_light,
+        "dark themes must precede light themes"
+    );
 }
 
 #[test]

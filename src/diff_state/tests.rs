@@ -289,7 +289,13 @@ fn diff_state_with(paths: &[&str]) -> super::DiffState {
 fn resolve_changed_path_accepts_alternate_spellings() {
     let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs", "top.txt"]);
 
-    for spelling in ["src/a.rs", "./src/a.rs", "src//a.rs", "  src/a.rs  ", "src/a.rs/"] {
+    for spelling in [
+        "src/a.rs",
+        "./src/a.rs",
+        "src//a.rs",
+        "  src/a.rs  ",
+        "src/a.rs/",
+    ] {
         assert_eq!(
             ds.resolve_changed_path(spelling).as_deref(),
             Some("src/a.rs"),
@@ -297,10 +303,19 @@ fn resolve_changed_path_accepts_alternate_spellings() {
         );
     }
     // git diff の a/ と b/ プレフィックス。生成側がパスに残したもの。
-    assert_eq!(ds.resolve_changed_path("b/src/a.rs").as_deref(), Some("src/a.rs"));
-    assert_eq!(ds.resolve_changed_path("a/top.txt").as_deref(), Some("top.txt"));
+    assert_eq!(
+        ds.resolve_changed_path("b/src/a.rs").as_deref(),
+        Some("src/a.rs")
+    );
+    assert_eq!(
+        ds.resolve_changed_path("a/top.txt").as_deref(),
+        Some("top.txt")
+    );
     // リポジトリルートではなくサブディレクトリからの相対パスで書かれたもの。
-    assert_eq!(ds.resolve_changed_path("deep/c.rs").as_deref(), Some("src/deep/c.rs"));
+    assert_eq!(
+        ds.resolve_changed_path("deep/c.rs").as_deref(),
+        Some("src/deep/c.rs")
+    );
 }
 
 /// 本当に diff に含まれないファイルは未解決のままでなければならない。
@@ -322,7 +337,10 @@ fn resolve_changed_path_refuses_an_ambiguous_suffix() {
     let ds = diff_state_with(&["src/app/mod.rs", "src/ui/mod.rs"]);
     assert_eq!(ds.resolve_changed_path("mod.rs"), None);
     // 曖昧さを解消するのに十分なコンテキストがあれば問題なく解決する。
-    assert_eq!(ds.resolve_changed_path("ui/mod.rs").as_deref(), Some("src/ui/mod.rs"));
+    assert_eq!(
+        ds.resolve_changed_path("ui/mod.rs").as_deref(),
+        Some("src/ui/mod.rs")
+    );
 }
 
 /// リポジトリに実在するトップレベルの b/ は、b/ を diff プレフィックスとして
@@ -330,8 +348,14 @@ fn resolve_changed_path_refuses_an_ambiguous_suffix() {
 #[test]
 fn resolve_changed_path_prefers_an_exact_match_over_prefix_stripping() {
     let ds = diff_state_with(&["b/src/a.rs", "src/a.rs"]);
-    assert_eq!(ds.resolve_changed_path("b/src/a.rs").as_deref(), Some("b/src/a.rs"));
-    assert_eq!(ds.resolve_changed_path("src/a.rs").as_deref(), Some("src/a.rs"));
+    assert_eq!(
+        ds.resolve_changed_path("b/src/a.rs").as_deref(),
+        Some("b/src/a.rs")
+    );
+    assert_eq!(
+        ds.resolve_changed_path("src/a.rs").as_deref(),
+        Some("src/a.rs")
+    );
 }
 
 /// レビュアーが折りたたんだディレクトリの中にあるファイルには表示行が存在しない。
@@ -350,7 +374,9 @@ fn reveal_path_expands_collapsed_ancestors() {
         "precondition: a collapsed ancestor hides the file's row"
     );
 
-    let idx = ds.reveal_path("src/deep/nested/c.rs").expect("row after reveal");
+    let idx = ds
+        .reveal_path("src/deep/nested/c.rs")
+        .expect("row after reveal");
     assert_eq!(
         ds.resolve_file(idx).map(|f| f.path.as_str()),
         Some("src/deep/nested/c.rs")
@@ -692,9 +718,19 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
     let paths: Vec<&str> = ds.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(
         paths,
-        vec!["tracked1.txt", "tracked2.txt", "untracked1.txt", "untracked2.txt"]
+        vec![
+            "tracked1.txt",
+            "tracked2.txt",
+            "untracked1.txt",
+            "untracked2.txt"
+        ]
     );
-    for path in ["tracked1.txt", "tracked2.txt", "untracked1.txt", "untracked2.txt"] {
+    for path in [
+        "tracked1.txt",
+        "tracked2.txt",
+        "untracked1.txt",
+        "untracked2.txt",
+    ] {
         assert!(
             ds.display_index_for_path(path).is_some(),
             "display_list should include '{path}'"
@@ -838,7 +874,11 @@ fn a_file_edited_after_commit_stays_one_entry() {
     let base_commit = repo.find_commit(base_oid).unwrap();
 
     // ブランチ側で1行追加してコミット。
-    let head_oid = commit_files(&repo, Some(&base_commit), &[("a.txt", b"base\ncommitted\n")]);
+    let head_oid = commit_files(
+        &repo,
+        Some(&base_commit),
+        &[("a.txt", b"base\ncommitted\n")],
+    );
     checkout_branch(&repo, "feature", head_oid);
 
     // コミット済みのファイルをさらに編集する。

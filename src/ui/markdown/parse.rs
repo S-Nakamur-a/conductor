@@ -96,10 +96,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<MdBlock> {
         } else if is_hr(trimmed) {
             blocks.push(MdBlock::Rule);
         } else if let Some((level, htext)) = parse_heading(trimmed) {
-            blocks.push(MdBlock::Heading {
-                level,
-                text: htext,
-            });
+            blocks.push(MdBlock::Heading { level, text: htext });
         } else if let Some(rest) = trimmed.strip_prefix('>') {
             blocks.push(MdBlock::Quote(
                 rest.strip_prefix(' ').unwrap_or(rest).to_string(),
@@ -164,7 +161,7 @@ fn parse_heading(s: &str) -> Option<(u8, String)> {
     Some((hashes as u8, rest.trim_start().to_string()))
 }
 
-/// - / * / +（箇条書き）、または N. / N)（順序付き）→ ListItem。項目テキスト先頭の
+/// 箇条書き（- / * / +）と順序付き（N. / N)）を ListItem にする。項目テキスト先頭の
 /// GFM タスクマーカー（[ ] / [x] ）は checked に切り出す。
 fn parse_list_item(line: &str) -> Option<MdBlock> {
     let indent = line.len() - line.trim_start().len();
@@ -187,7 +184,10 @@ fn parse_list_item(line: &str) -> Option<MdBlock> {
     let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
     if !digits.is_empty() {
         let after = &s[digits.len()..];
-        if let Some(rest) = after.strip_prefix(". ").or_else(|| after.strip_prefix(") ")) {
+        if let Some(rest) = after
+            .strip_prefix(". ")
+            .or_else(|| after.strip_prefix(") "))
+        {
             let (checked, text) = split_task_marker(rest);
             return Some(MdBlock::ListItem {
                 ordered: Some(digits),

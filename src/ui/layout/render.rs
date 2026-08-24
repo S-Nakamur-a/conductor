@@ -162,9 +162,11 @@ fn highlight_active_divider(frame: &mut Frame, app: &App) {
             (true, edge.saturating_sub(1), lc.main_area)
         }
         Divider::ExplorerSplit => (false, lc.explorer_mid_y.saturating_sub(1), lc.columns[1]),
-        Divider::TerminalSplit => {
-            (false, lc.terminal_split[1].y.saturating_sub(1), lc.columns[3])
-        }
+        Divider::TerminalSplit => (
+            false,
+            lc.terminal_split[1].y.saturating_sub(1),
+            lc.columns[3],
+        ),
     };
 
     let buf = frame.buffer_mut();

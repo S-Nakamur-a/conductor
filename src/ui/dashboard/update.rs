@@ -28,7 +28,8 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, popup_area);
 
     let version = app
-        .update.info
+        .update
+        .info
         .as_ref()
         .map(|u| u.latest_version.as_str())
         .unwrap_or("?");

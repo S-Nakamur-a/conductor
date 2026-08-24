@@ -69,9 +69,7 @@ impl App {
                 self.viewer_state.explorer.explorer_focus_on_diff_list = true;
                 self.set_focus(Focus::Explorer);
                 self.set_status(
-                    format!(
-                        "PR #{pr_number} ready for review."
-                    ),
+                    format!("PR #{pr_number} ready for review."),
                     StatusLevel::Success,
                 );
                 // 取り込んだだけでは読む順が無い。「Review Pull Request」は

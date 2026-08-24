@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use super::locale::utf8_chunks;
 use super::PtyManager;
+use super::locale::utf8_chunks;
 
 impl PtyManager {
     /// 指定セッションインデックスの PTY へ入力データを送る。
@@ -302,9 +302,7 @@ pub(super) fn encode_mouse_wheel(
     let col = col.max(1);
     let row = row.max(1);
     match encoding {
-        vt100::MouseProtocolEncoding::Sgr => {
-            format!("\x1b[<{button};{col};{row}M").into_bytes()
-        }
+        vt100::MouseProtocolEncoding::Sgr => format!("\x1b[<{button};{col};{row}M").into_bytes(),
         // デフォルト(X10)と Utf8: CSI M Cb Cx Cy、各バイトは 32 だけオフセットする。
         // 223 を超える値はレガシー形式では表現できないため、座標が
         // ラップしないようクランプする。

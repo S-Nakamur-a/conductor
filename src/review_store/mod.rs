@@ -36,8 +36,8 @@ use rusqlite::Connection;
 // match するだけ）ため、rustc には re-export 自体が使われていると見えない。
 #[allow(unused_imports)]
 pub use model::{
-    Author, CommentKind, CommentStatus, CommentTemplate, DailyStats, PrReviewMeta,
-    ReviewComment, ReviewReply, SessionHistory, SessionStatsSnapshot, StreakInfo,
+    Author, CommentKind, CommentStatus, CommentTemplate, DailyStats, PrReviewMeta, ReviewComment,
+    ReviewReply, SessionHistory, SessionStatsSnapshot, StreakInfo,
 };
 
 /// 指定したリポジトリルートに対する conductor データベースのパスを返す。

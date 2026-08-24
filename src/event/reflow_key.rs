@@ -25,8 +25,8 @@ use crate::app::App;
 /// する際に参照するものなので、ここで古いままにしておくと、このビューが
 /// 避けようとしている最下部への強制スナップが復活してしまう。
 pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
-    use crossterm::event::KeyModifiers;
     use crate::event::reflow::{at_bottom, clamp_scroll};
+    use crossterm::event::KeyModifiers;
 
     let inner = app.reflow.last_inner_height as usize;
     let total = app.reflow.total_lines;

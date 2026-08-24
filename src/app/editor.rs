@@ -46,9 +46,10 @@ impl App {
             return;
         }
         let (worktree_name, working_dir) = self.selected_worktree_info();
-        let Some(path) =
-            editor_target(self.viewer_state.content.current_file.as_deref(), &working_dir)
-        else {
+        let Some(path) = editor_target(
+            self.viewer_state.content.current_file.as_deref(),
+            &working_dir,
+        ) else {
             self.set_status("No file open to edit".to_string(), StatusLevel::Warning);
             return;
         };
@@ -255,7 +256,10 @@ mod tests {
 
     #[test]
     fn editor_target_is_none_for_empty_path() {
-        assert_eq!(editor_target(Some(""), std::path::Path::new("/repo/wt")), None);
+        assert_eq!(
+            editor_target(Some(""), std::path::Path::new("/repo/wt")),
+            None
+        );
     }
 
     #[test]
@@ -273,7 +277,10 @@ mod tests {
 
     #[test]
     fn resolve_editor_uses_editor_when_visual_unset() {
-        assert_eq!(resolve_editor_command(None, Some("nano"), "vi"), vec!["nano"]);
+        assert_eq!(
+            resolve_editor_command(None, Some("nano"), "vi"),
+            vec!["nano"]
+        );
     }
 
     #[test]
@@ -298,7 +305,10 @@ mod tests {
             resolve_editor_command(Some(""), Some("nano"), "vi"),
             vec!["nano"]
         );
-        assert_eq!(resolve_editor_command(Some("  vim  "), None, "vi"), vec!["vim"]);
+        assert_eq!(
+            resolve_editor_command(Some("  vim  "), None, "vi"),
+            vec!["vim"]
+        );
     }
 
     #[test]

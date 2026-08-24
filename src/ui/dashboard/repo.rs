@@ -39,7 +39,8 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let items: Vec<ListItem> = app
-        .repo.known
+        .repo
+        .known
         .iter()
         .enumerate()
         .map(|(i, path)| {
@@ -161,7 +162,10 @@ pub fn render_pr_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         Style::default().fg(theme.fg)
     };
-    frame.render_widget(Paragraph::new(Span::styled(input_text, input_style)), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Span::styled(input_text, input_style)),
+        chunks[0],
+    );
     if !overlay.loading {
         set_cursor_for_input(frame, chunks[0], &overlay.buffer);
     }
@@ -169,15 +173,11 @@ pub fn render_pr_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let message = if overlay.loading {
         Some(("Fetching PR metadata via gh...".to_string(), theme.muted))
     } else {
-        overlay
-            .error
-            .as_ref()
-            .map(|e| (e.clone(), theme.error))
+        overlay.error.as_ref().map(|e| (e.clone(), theme.error))
     };
     if let Some((text, color)) = message {
-        let paragraph =
-            Paragraph::new(Span::styled(text, Style::default().fg(color)))
-                .wrap(ratatui::widgets::Wrap { trim: false });
+        let paragraph = Paragraph::new(Span::styled(text, Style::default().fg(color)))
+            .wrap(ratatui::widgets::Wrap { trim: false });
         frame.render_widget(paragraph, chunks[1]);
     }
 }

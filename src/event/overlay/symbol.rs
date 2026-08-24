@@ -102,7 +102,8 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
             let input = app.code_nav.symbol_hint.input.clone();
             // 入力に一致するヒントを探す。
             let matched = app
-                .code_nav.symbol_hint
+                .code_nav
+                .symbol_hint
                 .hints
                 .iter()
                 .find(|h| h.label == input)

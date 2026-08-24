@@ -175,7 +175,10 @@ fn menu_bar_row_comes_out_of_the_main_area() {
     let cfg = layout(24, 38, 80);
     cache.update(rect(200, 50), None, false, &cfg, 80);
 
-    assert_eq!(cache.main_area.y, cache.wtbar_area.y + cache.wtbar_area.height);
+    assert_eq!(
+        cache.main_area.y,
+        cache.wtbar_area.y + cache.wtbar_area.height
+    );
     assert_eq!(
         cache.main_area.y + cache.main_area.height,
         cache.status_area.y,
@@ -197,6 +200,9 @@ fn every_vertical_row_is_accounted_for() {
             + cache.wtbar_area.height
             + cache.main_area.height
             + cache.status_area.height;
-        assert_eq!(total, h, "regions must tile the frame exactly at height {h}");
+        assert_eq!(
+            total, h,
+            "regions must tile the frame exactly at height {h}"
+        );
     }
 }

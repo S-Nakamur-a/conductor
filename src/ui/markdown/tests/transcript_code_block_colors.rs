@@ -27,13 +27,26 @@ fn span<'a>(lines: &'a [Line<'static>], text: &str) -> &'a Span<'static> {
 
 fn assert_fg(lines: &[Line<'static>], text: &str, color: Color) {
     let s = span(lines, text);
-    assert_eq!(s.style.fg, Some(color), "{text:?} expected fg {color:?}, got {:?}", s.style.fg);
+    assert_eq!(
+        s.style.fg,
+        Some(color),
+        "{text:?} expected fg {color:?}, got {:?}",
+        s.style.fg
+    );
 }
 
 fn assert_fg_dim(lines: &[Line<'static>], text: &str, color: Color) {
     let s = span(lines, text);
-    assert_eq!(s.style.fg, Some(color), "{text:?} expected fg {color:?}, got {:?}", s.style.fg);
-    assert!(s.style.add_modifier.contains(Modifier::DIM), "{text:?} expected DIM modifier");
+    assert_eq!(
+        s.style.fg,
+        Some(color),
+        "{text:?} expected fg {color:?}, got {:?}",
+        s.style.fg
+    );
+    assert!(
+        s.style.add_modifier.contains(Modifier::DIM),
+        "{text:?} expected DIM modifier"
+    );
 }
 
 /// word を単独の識別子として見たときの色を探す。周囲の句読点/空白と一緒に
@@ -51,8 +64,16 @@ fn assert_word_fg(lines: &[Line<'static>], word: &str, color: Color) {
     let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
     for line in lines {
         for s in &line.spans {
-            if s.content.split(|c: char| !is_word_char(c)).any(|tok| tok == word) {
-                assert_eq!(s.style.fg, Some(color), "{word:?} expected fg {color:?}, got {:?}", s.style.fg);
+            if s.content
+                .split(|c: char| !is_word_char(c))
+                .any(|tok| tok == word)
+            {
+                assert_eq!(
+                    s.style.fg,
+                    Some(color),
+                    "{word:?} expected fg {color:?}, got {:?}",
+                    s.style.fg
+                );
                 assert!(
                     !s.style.add_modifier.contains(Modifier::DIM),
                     "{word:?} unexpectedly carries DIM (Type vs Builtin mix-up?)"
@@ -73,7 +94,11 @@ fn transcript_code_block_has_no_card_chrome() {
     for span in &lines[0].spans {
         assert_eq!(span.style.bg, None, "no background colour");
     }
-    assert_eq!(lines[0].spans[0].content.as_ref(), "let", "content starts at column 0, no left inset");
+    assert_eq!(
+        lines[0].spans[0].content.as_ref(),
+        "let",
+        "content starts at column 0, no left inset"
+    );
 }
 
 #[test]
@@ -101,7 +126,9 @@ struct S { field: Vec<u8> }";
     assert_fg(&lines, "from", Color::Yellow);
     assert_fg(&lines, "Some", Color::Yellow);
 
-    for ty in ["str", "bool", "Option", "u32", "String", "usize", "Vec", "u8"] {
+    for ty in [
+        "str", "bool", "Option", "u32", "String", "usize", "Vec", "u8",
+    ] {
         assert_fg_dim(&lines, ty, Color::Cyan);
     }
 
@@ -129,7 +156,9 @@ class C(object):\n\
 
     assert_fg(&lines, "# python comment", Color::Green);
 
-    for kw in ["import", "def", "return", "for", "in", "if", "class", "object", "pass"] {
+    for kw in [
+        "import", "def", "return", "for", "in", "if", "class", "object", "pass",
+    ] {
         assert_fg(&lines, kw, Color::Blue);
     }
 

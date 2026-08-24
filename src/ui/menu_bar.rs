@@ -136,9 +136,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
                     .iter()
                     .find(|c| c.id == *id)
                     .and_then(|c| c.action)
-                    .and_then(|a| {
-                        crate::ui::common::representative_chord(&app.keymap, context, a)
-                    })
+                    .and_then(|a| crate::ui::common::representative_chord(&app.keymap, context, a))
                     .unwrap_or_default();
                 Row::Command {
                     label,

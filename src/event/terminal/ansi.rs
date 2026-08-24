@@ -285,35 +285,77 @@ mod tests {
 
     #[test]
     fn arrows_use_csi_in_normal_cursor_mode() {
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Up), false), Some(b"\x1b[A".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Down), false), Some(b"\x1b[B".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Right), false), Some(b"\x1b[C".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Left), false), Some(b"\x1b[D".to_vec()));
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Up), false),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Down), false),
+            Some(b"\x1b[B".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Right), false),
+            Some(b"\x1b[C".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Left), false),
+            Some(b"\x1b[D".to_vec())
+        );
     }
 
     #[test]
     fn arrows_use_ss3_in_application_cursor_mode() {
         // DECCKM が有効な場合、less/bat/vim などのページャやエディタは SS3 を
         // 期待する — bat で矢印キースクロールが効くのはこのためである。
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Up), true), Some(b"\x1bOA".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Down), true), Some(b"\x1bOB".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Right), true), Some(b"\x1bOC".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Left), true), Some(b"\x1bOD".to_vec()));
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Up), true),
+            Some(b"\x1bOA".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Down), true),
+            Some(b"\x1bOB".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Right), true),
+            Some(b"\x1bOC".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Left), true),
+            Some(b"\x1bOD".to_vec())
+        );
     }
 
     #[test]
     fn home_end_honor_application_cursor_mode() {
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Home), false), Some(b"\x1b[H".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::End), false), Some(b"\x1b[F".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::Home), true), Some(b"\x1bOH".to_vec()));
-        assert_eq!(key_event_to_ansi(&key(KeyCode::End), true), Some(b"\x1bOF".to_vec()));
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Home), false),
+            Some(b"\x1b[H".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::End), false),
+            Some(b"\x1b[F".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::Home), true),
+            Some(b"\x1bOH".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&key(KeyCode::End), true),
+            Some(b"\x1bOF".to_vec())
+        );
     }
 
     #[test]
     fn modified_arrows_stay_csi_regardless_of_cursor_mode() {
         // 修飾キーがある場合、DECCKM に関わらず xterm は CSI の 1;<param> 形式を使う。
         let shift_up = KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT);
-        assert_eq!(key_event_to_ansi(&shift_up, true), Some(b"\x1b[1;2A".to_vec()));
-        assert_eq!(key_event_to_ansi(&shift_up, false), Some(b"\x1b[1;2A".to_vec()));
+        assert_eq!(
+            key_event_to_ansi(&shift_up, true),
+            Some(b"\x1b[1;2A".to_vec())
+        );
+        assert_eq!(
+            key_event_to_ansi(&shift_up, false),
+            Some(b"\x1b[1;2A".to_vec())
+        );
     }
 }

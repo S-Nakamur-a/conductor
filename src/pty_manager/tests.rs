@@ -4,9 +4,9 @@
 
 use std::collections::VecDeque;
 
+use super::PtyManager;
 use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence};
 use super::locale::{utf8_chunks, utf8_locale_overrides};
-use super::PtyManager;
 
 #[test]
 fn arrow_sequence_honors_decckm_and_direction() {

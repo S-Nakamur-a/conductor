@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::{PtyManager, MAX_RAW_HISTORY_BYTES};
+use super::{MAX_RAW_HISTORY_BYTES, PtyManager};
 
 impl PtyManager {
     /// バックグラウンド reader スレッドの本体。
@@ -76,8 +76,7 @@ impl PtyManager {
                         // 見える。内側のスコープは、以降の CPR / オルタネート
                         // 画面処理の前に履歴のガードを解放する。
                         if let Some(raw_history) = &raw_history {
-                            let mut history =
-                                raw_history.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut history = raw_history.lock().unwrap_or_else(|e| e.into_inner());
                             history.extend(bytes.iter().copied());
                             Self::trim_raw_history(&mut history, MAX_RAW_HISTORY_BYTES);
                         }

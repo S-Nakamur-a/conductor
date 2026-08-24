@@ -75,7 +75,10 @@ fn scope_splits_global_from_current_layer() {
             .find(|s| COMMANDS[s.index].action == Some(action))
             .map(|s| s.scope)
     };
-    assert_eq!(scope_of(Action::CreateWorktree), Some(CommandScope::Current));
+    assert_eq!(
+        scope_of(Action::CreateWorktree),
+        Some(CommandScope::Current)
+    );
     assert_eq!(scope_of(Action::Quit), Some(CommandScope::Global));
     // viewer 専用のアクションはグローバルでも worktree レイヤーでもない。
     assert_eq!(scope_of(Action::SearchInFile), Some(CommandScope::Other));

@@ -30,9 +30,7 @@ pub(super) use search::{
     handle_filename_search_key, handle_grep_search_key, handle_viewer_search_key,
 };
 pub(super) use session::{handle_history_key, handle_resume_session_key};
-pub(super) use symbol::{
-    handle_references_key, handle_symbol_action_key, handle_symbol_hint_key,
-};
+pub(super) use symbol::{handle_references_key, handle_symbol_action_key, handle_symbol_hint_key};
 pub(super) use vcs::{
     handle_cherry_pick_key, handle_grab_key, handle_prune_key, handle_switch_branch_key,
 };

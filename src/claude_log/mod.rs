@@ -14,9 +14,9 @@ mod convert;
 mod model;
 mod schema;
 mod session;
-mod tool_class;
 #[cfg(test)]
 mod tests;
+mod tool_class;
 
 pub use session::load_session;
 

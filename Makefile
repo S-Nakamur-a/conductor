@@ -1,4 +1,4 @@
-.PHONY: install build dev clean
+.PHONY: install build dev clean hooks fmt
 
 install:
 	cargo install --path .
@@ -11,3 +11,9 @@ dev:
 
 clean:
 	cargo clean
+
+fmt:
+	cargo fmt --all
+
+hooks:
+	git config core.hooksPath .githooks
