@@ -161,7 +161,7 @@ fn parse_heading(s: &str) -> Option<(u8, String)> {
     Some((hashes as u8, rest.trim_start().to_string()))
 }
 
-/// - / * / +（箇条書き）、または N. / N)（順序付き）→ ListItem。項目テキスト先頭の
+/// 箇条書き（- / * / +）と順序付き（N. / N)）を ListItem にする。項目テキスト先頭の
 /// GFM タスクマーカー（[ ] / [x] ）は checked に切り出す。
 fn parse_list_item(line: &str) -> Option<MdBlock> {
     let indent = line.len() - line.trim_start().len();
