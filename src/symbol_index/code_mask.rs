@@ -226,7 +226,10 @@ fn subtract_format_args(source: &str, start: usize, end: usize) -> Vec<(usize, u
         }
         let name_start = i + 1;
         let mut j = name_start;
-        if bytes.get(j).is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_') {
+        if bytes
+            .get(j)
+            .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
+        {
             j += 1;
             while bytes
                 .get(j)
@@ -440,7 +443,8 @@ fn real(x: i32) -> Foo {
 
     #[test]
     fn go_masks_comments_and_both_string_forms() {
-        let src = "package main\n// Foo does things\nfunc Bar() {\n\ts := \"Foo\"\n\tr := `Foo raw`\n}\n";
+        let src =
+            "package main\n// Foo does things\nfunc Bar() {\n\ts := \"Foo\"\n\tr := `Foo raw`\n}\n";
         let mask = CodeMask::compute(src, "main.go");
 
         assert_eq!(

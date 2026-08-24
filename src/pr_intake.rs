@@ -57,7 +57,10 @@ impl std::fmt::Display for PrIntakeError {
                 "`gh` (GitHub CLI) is not installed. Install it from https://cli.github.com/ and retry."
             ),
             PrIntakeError::GhNotAuthenticated => {
-                write!(f, "Not logged in to GitHub CLI. Run `gh auth login` and retry.")
+                write!(
+                    f,
+                    "Not logged in to GitHub CLI. Run `gh auth login` and retry."
+                )
             }
             PrIntakeError::PrNotFound(n) => write!(f, "Pull request #{n} not found."),
             PrIntakeError::NetworkError => write!(
@@ -76,7 +79,10 @@ impl std::fmt::Display for PrIntakeError {
 /// 「見つからない」に該当したときに PR を名指しできるよう pr_number を持ち回る。
 fn classify_failure_text(pr_number: u64, text: &str) -> PrIntakeError {
     let lower = text.to_lowercase();
-    if lower.contains("gh auth login") || lower.contains("not logged in") || lower.contains("authentication") {
+    if lower.contains("gh auth login")
+        || lower.contains("not logged in")
+        || lower.contains("authentication")
+    {
         PrIntakeError::GhNotAuthenticated
     } else if lower.contains("could not resolve host")
         || lower.contains("connection timed out")
@@ -190,7 +196,9 @@ pub enum PrIntakeOutcome {
         worktree_path: PathBuf,
         meta: Option<FetchedPr>,
     },
-    Failed { error: PrIntakeError },
+    Failed {
+        error: PrIntakeError,
+    },
 }
 
 /// PR 取り込みの一連の流れを同期的に実行する。input を PR 番号へ解決し、
@@ -338,7 +346,10 @@ mod tests {
     #[test]
     fn classify_failure_text_detects_auth() {
         assert_eq!(
-            classify_failure_text(1, "To get started with GitHub CLI, please run:  gh auth login"),
+            classify_failure_text(
+                1,
+                "To get started with GitHub CLI, please run:  gh auth login"
+            ),
             PrIntakeError::GhNotAuthenticated
         );
     }
@@ -358,7 +369,10 @@ mod tests {
     #[test]
     fn classify_failure_text_detects_network_error() {
         assert_eq!(
-            classify_failure_text(1, "fatal: unable to access: Could not resolve host: github.com"),
+            classify_failure_text(
+                1,
+                "fatal: unable to access: Could not resolve host: github.com"
+            ),
             PrIntakeError::NetworkError
         );
     }
@@ -430,7 +444,11 @@ mod tests {
         let outcome = intake_pr(&repo_path, None, "42");
         match outcome {
             PrIntakeOutcome::Failed { error } => {
-                assert!(error.to_string().contains(&broken_dir.display().to_string()));
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&broken_dir.display().to_string())
+                );
             }
             PrIntakeOutcome::Ready { .. } => panic!("expected Failed, got Ready"),
         }

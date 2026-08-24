@@ -69,10 +69,7 @@ fn gutter_markers_are_exactly_one_column() {
 #[test]
 fn with_marker_prepends_glyph_to_first_line() {
     let style = Style::default().fg(Color::Green);
-    let lines = vec![
-        Line::from("hello"),
-        Line::from("world"),
-    ];
+    let lines = vec![Line::from("hello"), Line::from("world")];
     let result = with_marker(lines, ">", style);
     assert_eq!(result.len(), 2);
     // 最初の行の最初の span がマーカー。

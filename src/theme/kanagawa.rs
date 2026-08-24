@@ -61,9 +61,8 @@ impl Theme {
             comment_user_bg: Color::Rgb(38, 56, 56),
             reply_text: Color::Rgb(127, 180, 202),
 
-            code_bg: Color::Rgb(18, 18, 24), // sumiInk0
+            code_bg: Color::Rgb(18, 18, 24),    // sumiInk0
             code_fg: Color::Rgb(210, 126, 153), // 桜色のピンク
-
         }
     }
 }

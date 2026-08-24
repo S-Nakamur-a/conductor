@@ -5,9 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 /// 深さレベルごとのインデント文字列のキャッシュ。確保の繰り返しを避ける。
 const INDENT_CACHE: &[&str] = &[

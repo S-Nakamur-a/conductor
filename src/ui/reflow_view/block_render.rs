@@ -56,7 +56,9 @@ impl Default for TranscriptStyles {
             tools: ToolStyles {
                 marker: Style::default().fg(palette::SUCCESS),
                 marker_err: Style::default().fg(palette::ERROR),
-                name: Style::default().fg(palette::TEXT).add_modifier(Modifier::BOLD),
+                name: Style::default()
+                    .fg(palette::TEXT)
+                    .add_modifier(Modifier::BOLD),
                 // ツールの引数は本文と同じ色で、薄くしない。実測の画面では
                 // ⏺ Write(/tmp/out.txt) の (...) 部分が灰色ではなく本文と同色になっている。
                 arg: Style::default().fg(palette::TEXT),
@@ -294,7 +296,13 @@ fn render_teammate_message(
         return lines;
     }
     let body_width = width.saturating_sub(MARKER_COLS);
-    let md_lines = markdown(ctx, md_theme, &format!("{ei}:{bi}:teammate"), body, body_width);
+    let md_lines = markdown(
+        ctx,
+        md_theme,
+        &format!("{ei}:{bi}:teammate"),
+        body,
+        body_width,
+    );
     lines.extend(with_marker(md_lines, " ", styles.result));
     lines
 }

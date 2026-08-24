@@ -176,7 +176,11 @@ fn find_references_skips_comment_and_string_hits() {
 
     // 実際にコード位置の参照なのは4行目の呼び出しだけである — 1行目の
     // コメントと3行目の文字列リテラルは返ってきてはならない。
-    assert_eq!(refs.len(), 1, "expected exactly one code-position hit: {refs:?}");
+    assert_eq!(
+        refs.len(),
+        1,
+        "expected exactly one code-position hit: {refs:?}"
+    );
     assert_eq!(refs[0].line, 4);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -206,7 +210,10 @@ fn hover_reference_count_stays_within_a_frame() {
     let elapsed = start.elapsed();
 
     assert!(count > 0, "sanity: `new` should be found at all");
-    assert!(capped, "sanity: `new` should exceed a cap of 50 in this repo");
+    assert!(
+        capped,
+        "sanity: `new` should exceed a cap of 50 in this repo"
+    );
     assert!(
         elapsed < std::time::Duration::from_millis(30),
         "hover reference count took {elapsed:?}; uncapped this measured ~157ms \
@@ -228,7 +235,10 @@ fn find_references_defers_parsing_to_files_that_match() {
     let refs = idx.find_references("count_references_upto", &root);
     let elapsed = start.elapsed();
 
-    assert!(!refs.is_empty(), "sanity: the symbol should be found at all");
+    assert!(
+        !refs.is_empty(),
+        "sanity: the symbol should be found at all"
+    );
     assert!(
         elapsed < std::time::Duration::from_millis(80),
         "took {elapsed:?}; parsing every visited file instead of only the \

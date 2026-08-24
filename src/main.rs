@@ -35,10 +35,10 @@ mod pr_intake;
 mod pty_manager;
 mod refresh_pipe;
 mod repo_path;
+mod revidere;
 mod review_publish;
 mod review_state;
 mod review_store;
-mod revidere;
 mod rust_test;
 mod search_result_tree;
 mod semantic_index;
@@ -60,14 +60,12 @@ use std::io;
 
 use anyhow::Result;
 use crossterm::event::{
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    DisableLineWrap, EnableLineWrap,
-    EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
-    supports_keyboard_enhancement,
+    DisableLineWrap, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -109,7 +107,10 @@ fn main() -> Result<()> {
     enter_tui(terminal.backend_mut(), keyboard_enhanced)?;
 
     let mut app = App::new(repo_path);
-    execute!(io::stdout(), SetTitle(format!("conductor - {}", app.repo.main_name)))?;
+    execute!(
+        io::stdout(),
+        SetTitle(format!("conductor - {}", app.repo.main_name))
+    )?;
 
     // raw mode に入ったあと・イベントループが stdin を読み始める前でなければ
     // ならない。端末への問い合わせの応答を自分で stdin から読むため。

@@ -2,10 +2,10 @@
 //! parsing（ブロック/インライン/テーブルの解析）と rendering（折り返し・
 //! 堅牢性・コードブロック/transcript の描画・キャッシュ）に関心事ごとに分けてある。
 
-use super::*;
 use super::inline::inline_spans;
 use super::parse::{Align, split_table_row};
 use super::wrap::display_width;
+use super::*;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::highlighting::ThemeSet;

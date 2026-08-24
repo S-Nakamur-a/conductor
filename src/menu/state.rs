@@ -186,10 +186,7 @@ pub fn first_selectable(items: &[MenuItem]) -> usize {
 
 /// items 内で最後に選択可能な行。なければ 0。
 pub fn last_selectable(items: &[MenuItem]) -> usize {
-    items
-        .iter()
-        .rposition(MenuItem::is_selectable)
-        .unwrap_or(0)
+    items.iter().rposition(MenuItem::is_selectable).unwrap_or(0)
 }
 
 /// from から dir 方向(+1 で下、-1 で上)へ1行選択を進める。区切りは

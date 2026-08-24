@@ -8,8 +8,8 @@
 use std::borrow::Cow;
 
 use ratatui::layout::Alignment;
-use ratatui::style::{Modifier, Style};
 use ratatui::style::Color;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 

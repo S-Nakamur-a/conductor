@@ -213,7 +213,10 @@ impl FoldState {
 
     /// line_1 が可視行の何番目か（0始まり）。スクロールバーのつまみの位置。
     pub fn visible_index(&self, line_1: usize, total: usize) -> usize {
-        (1..=line_1.min(total)).filter(|l| !self.is_hidden(*l)).count().saturating_sub(1)
+        (1..=line_1.min(total))
+            .filter(|l| !self.is_hidden(*l))
+            .count()
+            .saturating_sub(1)
     }
 
     /// line_1 から可視行を delta 行ぶん進める（負なら戻る）。端で止まる。
@@ -581,7 +584,10 @@ mod tests {
     #[test]
     fn hovering_a_marker_marks_its_whole_range() {
         let mut folds = FoldState::default();
-        folds.rebuild("fn outer() {\n    if cond {\n        inner();\n    }\n}\n", "a.rs");
+        folds.rebuild(
+            "fn outer() {\n    if cond {\n        inner();\n    }\n}\n",
+            "a.rs",
+        );
         folds.set_hover(Some(1));
         assert_eq!(folds.hover_rule(1), Some(FoldRule::Head));
         assert_eq!(folds.hover_rule(2), Some(FoldRule::Body));

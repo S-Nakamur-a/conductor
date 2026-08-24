@@ -93,7 +93,12 @@ pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent)
 pub(in crate::event) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) {
     let count = app.overlays.theme_picker.themes.len();
 
-    if overlay_list_nav(&app.keymap, &key, &mut app.overlays.theme_picker.selected, count) {
+    if overlay_list_nav(
+        &app.keymap,
+        &key,
+        &mut app.overlays.theme_picker.selected,
+        count,
+    ) {
         // ライブプレビュー: 永続化せずに新しくハイライトされたテーマを適用する。
         let name = app
             .overlays

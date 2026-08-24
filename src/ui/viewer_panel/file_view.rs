@@ -22,8 +22,8 @@ use super::media_view::render_media_view;
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
 use super::summary_view::render_summary_view;
-use super::tab_row;
 use super::syntax::ensure_diff_annotations_cached;
+use super::tab_row;
 
 /// 与えられた area に Viewer（ファイル内容）パネルを描画する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -184,8 +184,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // パンくずバーとタブ行の高さぶんを見込む（表示されているときは各1行）。
     let breadcrumb_height: u16 = if breadcrumb_visible.is_some() { 1 } else { 0 };
     let tab_row_height: u16 = if tab_row::is_visible(vs) { 1 } else { 0 };
-    let inner_height =
-        (area.height.saturating_sub(2 + breadcrumb_height + tab_row_height)) as usize;
+    let inner_height = (area
+        .height
+        .saturating_sub(2 + breadcrumb_height + tab_row_height)) as usize;
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // diff 注釈は ViewerState にキャッシュされている（関数の入口で埋めた）。
@@ -357,8 +358,7 @@ pub(super) fn render_tab_row(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
     let row = Rect::new(area.x + 1, area.y + 1, area.width - 2, 1);
-    app.viewer_state.tab_row_hits =
-        tab_row::render(frame, row, &app.theme, &app.viewer_state);
+    app.viewer_state.tab_row_hits = tab_row::render(frame, row, &app.theme, &app.viewer_state);
 }
 
 /// Viewer のタイトルを max_w **表示カラム数**に収める。左側から省略し

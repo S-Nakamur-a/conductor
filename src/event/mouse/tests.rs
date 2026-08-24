@@ -537,7 +537,10 @@ fn the_fold_marker_claims_the_gutter_right_of_the_line_number() {
     // ガターは [10, 20)。隙間が 15、マーカーが 16、隙間が 17、区切り線が 18、
     // 空白が 19。
     let gutter_end = 20;
-    assert!(!in_fold_zone(14, gutter_end), "行番号の最終桁はコメント側の担当");
+    assert!(
+        !in_fold_zone(14, gutter_end),
+        "行番号の最終桁はコメント側の担当"
+    );
     assert!(in_fold_zone(15, gutter_end));
     assert!(in_fold_zone(16, gutter_end));
     assert!(in_fold_zone(17, gutter_end));

@@ -1,8 +1,8 @@
 //! コメントを保持したまま編集する upsert_section_kv/upsert_ui_theme と
 //! is_section_header のテスト。
 
-use super::*;
 use super::persist::{is_section_header, upsert_section_kv, upsert_ui_theme};
+use super::*;
 
 #[test]
 fn upsert_high_contrast_inserts_into_ui_section() {
@@ -38,7 +38,10 @@ fn upsert_section_kv_inserts_layout_value_over_commented_default() {
 fn upsert_section_kv_replaces_existing_layout_value() {
     let contents = "[layout]\nexplorer_width_pct = 24\nviewer_width_pct = 38\n";
     let result = upsert_section_kv(contents, "layout", "viewer_width_pct", "42");
-    assert_eq!(result, "[layout]\nexplorer_width_pct = 24\nviewer_width_pct = 42\n");
+    assert_eq!(
+        result,
+        "[layout]\nexplorer_width_pct = 24\nviewer_width_pct = 42\n"
+    );
 }
 
 #[test]
@@ -67,8 +70,7 @@ fn upsert_ui_theme_replaces_existing_theme_line() {
     let contents = "[ui]\ntheme = \"dracula\"\n";
     let result = upsert_ui_theme(contents, "github-light");
     assert_eq!(
-        result,
-        "[ui]\ntheme = \"github-light\"\n",
+        result, "[ui]\ntheme = \"github-light\"\n",
         "existing theme line must be replaced in place"
     );
 }

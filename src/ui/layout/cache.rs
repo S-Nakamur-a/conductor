@@ -169,8 +169,7 @@ pub(crate) fn accordion_widths(
             // 移った）ので幅は0になり、空いたスペースは explorer と viewer の
             // レビューペインに回る。
             let min_col = 3_u16;
-            let explorer =
-                ((total_width as u32 * explorer_pct as u32 / 100) as u16).max(min_col);
+            let explorer = ((total_width as u32 * explorer_pct as u32 / 100) as u16).max(min_col);
             let viewer = ((total_width as u32 * viewer_pct as u32 / 100) as u16).max(min_col);
             (0, explorer, viewer)
         }

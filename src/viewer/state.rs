@@ -340,7 +340,6 @@ pub(in crate::viewer) struct TabView {
     pub(in crate::viewer) md_scroll: usize,
 }
 
-
 /// Viewer の最も左にあるコメントマーカー列の幅（列数） — 💬/│ の
 /// スレッドマーカーが存在する場所で、行番号の左側にある。「+」バッジ列
 /// （行番号の右側）とは別に保つことで、既存スレッドの開閉と新規コメントの

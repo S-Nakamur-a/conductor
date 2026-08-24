@@ -10,7 +10,6 @@
 mod clipboard;
 mod dialogs;
 mod explorer;
-mod revidere;
 mod global;
 mod menu;
 mod mouse;
@@ -19,6 +18,7 @@ mod overlay_helpers;
 mod paste;
 pub mod reflow;
 mod reflow_key;
+mod revidere;
 mod scroll;
 mod terminal;
 mod viewer;
@@ -354,15 +354,14 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Down | KeyCode::Char('j') => app.hover_refs_move(1),
         KeyCode::Enter => {
             let has_preview = app
-                .code_nav.hover_info
+                .code_nav
+                .hover_info
                 .refs
                 .as_ref()
                 .is_some_and(|r| r.preview.is_some());
             if has_preview {
                 app.hover_jump_to_preview();
-            } else if let Some(sel) =
-                app.code_nav.hover_info.refs.as_ref().map(|r| r.selected)
-            {
+            } else if let Some(sel) = app.code_nav.hover_info.refs.as_ref().map(|r| r.selected) {
                 app.open_hover_preview(sel);
             } else {
                 // 参照一覧を開いていないときの Enter は、説明している定義へ飛ぶ。
@@ -437,7 +436,9 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
     // 押しても終了しない。実際の終了方法をフラッシュ表示してから、通常
     // どおり転送する。
     if key.code == KeyCode::Char('q')
-        && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+        && key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
     {
         app.set_status_info(
             "Ctrl+Q is sent to the terminal here. To quit Conductor: Ctrl+Esc to leave, then Ctrl+Q.".to_string(),

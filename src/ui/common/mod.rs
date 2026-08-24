@@ -16,11 +16,11 @@ mod worktree_label;
 #[cfg(test)]
 mod tests;
 
+pub use panel_chrome::PanelChrome;
 pub use pty::{PtyRenderCache, build_pty_lines, render_pty_cached};
 pub use status_bar::render_status_bar;
 pub(crate) use status_bar::representative_chord;
 pub use title_bar::render_title_bar;
-pub use panel_chrome::PanelChrome;
 pub use worktree_label::render_worktree_label;
 
 /// 非同期処理中に使う点字スピナーのフレーム一覧。

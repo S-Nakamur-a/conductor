@@ -22,8 +22,7 @@ use crate::test_run::{TestRun, TestRunKind, shell_single_quote};
 /// トップレベルのテスト関数: 0 桁目から始まる func TestXxx(。レシーバ付きの
 /// メソッド (func (s *Suite) TestX() はあえて対象外にしている。go test -run
 /// では直接指定できないため。
-static FUNC_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^func\s+(Test\w*)\s*\(").unwrap());
+static FUNC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^func\s+(Test\w*)\s*\(").unwrap());
 
 /// 名前が文字列リテラルのサブテスト呼び出し: x.Run("name"。テーブル駆動の
 /// t.Run(tt.name, …) のようなリテラルでないものは飛ばす。関数単位のボタンが
@@ -132,7 +131,10 @@ fn go_test_cmd(run_pattern: &str, target: &str) -> String {
     // run_pattern はリテラルのシングルクォートで囲んで安全: 関数名は \w のみで、
     // ' を含むサブテスト名はここへ来る前に弾かれているため、埋め込みの
     // シングルクォートは現れない。
-    format!("go test -run '{run_pattern}' {}", shell_single_quote(target))
+    format!(
+        "go test -run '{run_pattern}' {}",
+        shell_single_quote(target)
+    )
 }
 
 /// ファイルに対応する go test のパッケージ引数。入れ子のファイルなら ./dir、

@@ -47,23 +47,38 @@ pub(crate) fn render_table_boxed(
     let style = Style::default().fg(Color::Reset);
 
     let mut out = Vec::with_capacity(rows.len() * 2 + 3);
-    out.push(clip_line(border_cells(&inner, '\u{250c}', '\u{252c}', '\u{2510}', style), width));
+    out.push(clip_line(
+        border_cells(&inner, '\u{250c}', '\u{252c}', '\u{2510}', style),
+        width,
+    ));
     out.extend(render_row(headers, &inner, theme, style, width));
-    out.push(clip_line(border_cells(&inner, '\u{251c}', '\u{253c}', '\u{2524}', style), width));
+    out.push(clip_line(
+        border_cells(&inner, '\u{251c}', '\u{253c}', '\u{2524}', style),
+        width,
+    ));
     for (idx, row) in rows.iter().enumerate() {
         out.extend(render_row(row, &inner, theme, style, width));
         if idx + 1 < rows.len() {
-            out.push(clip_line(border_cells(&inner, '\u{251c}', '\u{253c}', '\u{2524}', style), width));
+            out.push(clip_line(
+                border_cells(&inner, '\u{251c}', '\u{253c}', '\u{2524}', style),
+                width,
+            ));
         }
     }
-    out.push(clip_line(border_cells(&inner, '\u{2514}', '\u{2534}', '\u{2518}', style), width));
+    out.push(clip_line(
+        border_cells(&inner, '\u{2514}', '\u{2534}', '\u{2518}', style),
+        width,
+    ));
     out
 }
 
 /// 各列の自然な内側幅: ヘッダーとすべての本体セルにわたる
 /// max(セルの表示幅) + 2（左右に1列ずつのパディング）。
 fn natural_inner_widths(headers: &[String], rows: &[Vec<String>], theme: &Theme) -> Vec<usize> {
-    let mut w: Vec<usize> = headers.iter().map(|h| rendered_width(h, theme) + 2).collect();
+    let mut w: Vec<usize> = headers
+        .iter()
+        .map(|h| rendered_width(h, theme) + 2)
+        .collect();
     for row in rows {
         for (k, cell) in row.iter().enumerate() {
             if let Some(col) = w.get_mut(k) {
@@ -151,7 +166,12 @@ fn wrap_cell(text: &str, inner_w: usize, style: Style, theme: &Theme) -> Vec<Vec
         return vec![Vec::new()];
     }
     let content_w = inner_w.saturating_sub(2).max(1);
-    let cells = spans_to_cells(&inline_spans(text, style, theme, MarkdownFlavor::Transcript));
+    let cells = spans_to_cells(&inline_spans(
+        text,
+        style,
+        theme,
+        MarkdownFlavor::Transcript,
+    ));
     wrap_cells_raw(&cells, content_w, false)
         .into_iter()
         .map(|line| pad_left(line, inner_w, style))

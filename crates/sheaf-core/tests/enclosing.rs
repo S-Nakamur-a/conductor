@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 
 const PKG: &str = "rust-analyzer cargo demo 0.1.0";
 /// derive が作った impl。定義 occurrence を持たない。
-const DERIVED: &str = "rust-analyzer cargo demo 0.1.0 app/focus/impl#[Focus][`PartialEq<Self>`]eq().";
+const DERIVED: &str =
+    "rust-analyzer cargo demo 0.1.0 app/focus/impl#[Focus][`PartialEq<Self>`]eq().";
 /// その型。定義 occurrence を持つ。
 const TYPE: &str = "rust-analyzer cargo demo 0.1.0 app/focus/Focus#";
 
@@ -274,7 +275,10 @@ fn 実索引_derive_の_default_は型の定義に落ちる() {
         }
     );
     assert!(
-        found[0].ty.as_str().ends_with("git_engine/status_map/GitStatusMap#"),
+        found[0]
+            .ty
+            .as_str()
+            .ends_with("git_engine/status_map/GitStatusMap#"),
         "{}",
         found[0].ty.as_str()
     );

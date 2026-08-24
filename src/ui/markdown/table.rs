@@ -49,7 +49,9 @@ pub(crate) fn render_table(
 
     let widths = fit_col_widths(&natural_col_widths(headers, &rows, theme), width);
 
-    let header_style = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
+    let header_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
     let body_style = Style::default().fg(theme.fg);
 
     let mut out = Vec::with_capacity(rows.len() + 2);
@@ -69,12 +71,7 @@ pub(crate) fn render_table(
     )));
     for row in &rows {
         out.extend(render_table_row(
-            row,
-            &widths,
-            &aligns,
-            body_style,
-            width,
-            theme,
+            row, &widths, &aligns, body_style, width, theme,
         ));
     }
     out
@@ -152,9 +149,7 @@ fn render_table_row(
         .collect();
 
     let height = cols.iter().map(Vec::len).max().unwrap_or(0);
-    let blank = |col_w: usize| -> Vec<Cell> {
-        (0..col_w).map(|_| Cell::new(' ', base)).collect()
-    };
+    let blank = |col_w: usize| -> Vec<Cell> { (0..col_w).map(|_| Cell::new(' ', base)).collect() };
 
     (0..height)
         .map(|row_line| {
@@ -178,13 +173,7 @@ fn render_table_row(
 /// 描画し、単語境界で折り返し、align に従って各行をパディングする。常に最低1行を
 /// 返す（空セルは空行1つになる）ので、行の高さはセルの最大値になり、決してゼロには
 /// ならない。
-fn wrap_cell(
-    text: &str,
-    col_w: usize,
-    align: Align,
-    base: Style,
-    theme: &Theme,
-) -> Vec<Vec<Cell>> {
+fn wrap_cell(text: &str, col_w: usize, align: Align, base: Style, theme: &Theme) -> Vec<Vec<Cell>> {
     if col_w == 0 {
         return vec![Vec::new()];
     }
@@ -198,9 +187,7 @@ fn wrap_cell(
 /// 折り返し済みの行1本を align に従って col_w 桁までパディングする。
 fn pad_cell_line(cells: Vec<Cell>, col_w: usize, align: Align, base: Style) -> Vec<Cell> {
     let pad = col_w.saturating_sub(cells_width(&cells));
-    let space = |n: usize| -> Vec<Cell> {
-        (0..n).map(|_| Cell::new(' ', base)).collect()
-    };
+    let space = |n: usize| -> Vec<Cell> { (0..n).map(|_| Cell::new(' ', base)).collect() };
     match align {
         Align::Left => {
             let mut out = cells;

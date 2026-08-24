@@ -12,7 +12,10 @@ impl App {
             // 本文だけを入力するインラインの作成ボックスを開く — GitHub 風に
             // file:line のプレフィックスは入力させない。
             let (start, end) = if let Some((start, end)) = self.viewer_state.selected_range() {
-                (start as u32, if start == end { None } else { Some(end as u32) })
+                (
+                    start as u32,
+                    if start == end { None } else { Some(end as u32) },
+                )
             } else {
                 ((self.viewer_state.content.file_scroll + 1) as u32, None)
             };
@@ -69,7 +72,8 @@ impl App {
     }
 
     pub(super) fn cmd_delete_comment(&mut self) {
-        if self.viewer_state.explorer.explorer_bottom_view == crate::viewer::ExplorerBottomView::Comments
+        if self.viewer_state.explorer.explorer_bottom_view
+            == crate::viewer::ExplorerBottomView::Comments
             && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
@@ -80,7 +84,8 @@ impl App {
     }
 
     pub(super) fn cmd_toggle_comment_resolve(&mut self) {
-        if self.viewer_state.explorer.explorer_bottom_view == crate::viewer::ExplorerBottomView::Comments
+        if self.viewer_state.explorer.explorer_bottom_view
+            == crate::viewer::ExplorerBottomView::Comments
             && self.viewer_state.explorer.explorer_focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {

@@ -25,7 +25,7 @@ pub mod grep_search;
 pub mod hover_info;
 pub mod panel_overlay;
 pub mod references;
-pub mod review;
 pub mod revidere_view;
+pub mod review;
 pub mod symbol_action;
 pub mod theme_picker;

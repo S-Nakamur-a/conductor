@@ -197,7 +197,15 @@ impl PtyManager {
             cmd.env_remove(key);
         }
 
-        self.finish_spawn(SessionKind::Editor, worktree, label, working_dir, rows, cols, cmd)
+        self.finish_spawn(
+            SessionKind::Editor,
+            worktree,
+            label,
+            working_dir,
+            rows,
+            cols,
+            cmd,
+        )
     }
 
     /// spawn 経路の共有末尾処理: PTY のペアを開き、reader スレッドと vt100
@@ -261,8 +269,8 @@ impl PtyManager {
         // 端末の自動折り返しに頼る通常のシェルに限って記録する。Claude と
         // 一時的なエディタは固定幅でその場描画するため、再生してもリフロー
         // されずメモリを消費するだけなので、記録をスキップする。
-        let raw_history: Option<Arc<Mutex<VecDeque<u8>>>> = matches!(kind, SessionKind::Shell)
-            .then(|| Arc::new(Mutex::new(VecDeque::new())));
+        let raw_history: Option<Arc<Mutex<VecDeque<u8>>>> =
+            matches!(kind, SessionKind::Shell).then(|| Arc::new(Mutex::new(VecDeque::new())));
 
         // 6. PTY 出力を継続的に読み取るバックグラウンドスレッドを起動する。
         let buffer_clone = Arc::clone(&output_buffer);

@@ -16,7 +16,13 @@ fn parse_msg_content(json: &str) -> Vec<DisplayBlock> {
     // このヘルパを使うテストのうち duration の値が問題になるものは無い。
     // 例外は thinking_text_is_captured だが、それも duration ではなく
     // text フィールドを見ている — 1 は適当なプレースホルダ。
-    content_to_display_blocks(msg.content, is_user, &mut HashMap::new(), &HashSet::new(), 1)
+    content_to_display_blocks(
+        msg.content,
+        is_user,
+        &mut HashMap::new(),
+        &HashSet::new(),
+        1,
+    )
 }
 
 // 隠しコンテキストの正規化 (isMeta / ラッパー)
@@ -72,7 +78,10 @@ fn task_notification_collapses_to_its_summary() {
     );
     match &blocks[0] {
         DisplayBlock::Notice(t) => {
-            assert_eq!(t, "Background command \"Run brew audit\" completed (exit code 0)");
+            assert_eq!(
+                t,
+                "Background command \"Run brew audit\" completed (exit code 0)"
+            );
         }
         other => panic!("expected Notice, got {other:?}"),
     }
@@ -257,9 +266,8 @@ fn assistant_text_quoting_wrapper_tags_is_untouched() {
 
 #[test]
 fn string_content_becomes_single_text_block() {
-    let blocks = parse_msg_content(
-        r#"{"type":"user","message":{"role":"user","content":"hello world"}}"#,
-    );
+    let blocks =
+        parse_msg_content(r#"{"type":"user","message":{"role":"user","content":"hello world"}}"#);
     assert_eq!(blocks.len(), 1);
     assert!(matches!(blocks[0], DisplayBlock::Text(_)));
 }
@@ -361,7 +369,9 @@ fn tool_result_keeps_all_lines_no_cap() {
     );
     let blocks = parse_msg_content(&json);
     match &blocks[0] {
-        DisplayBlock::ToolResult { lines, is_error, .. } => {
+        DisplayBlock::ToolResult {
+            lines, is_error, ..
+        } => {
             assert_eq!(lines.len(), 10);
             assert_eq!(lines[0], "line0");
             assert_eq!(lines[9], "line9");
@@ -384,7 +394,13 @@ fn tool_result_id_resolves_across_records_in_one_session() {
     assert_eq!(entries.len(), 2);
     assert!(matches!(
         &entries[1].blocks[0],
-        DisplayBlock::ToolResult { kind: ResultKind::Counted { bucket: CountedBucket::Read, from_bash: false }, .. }
+        DisplayBlock::ToolResult {
+            kind: ResultKind::Counted {
+                bucket: CountedBucket::Read,
+                from_bash: false
+            },
+            ..
+        }
     ));
 }
 
@@ -400,7 +416,10 @@ fn tool_result_with_unknown_tool_use_id_is_hidden() {
     );
     assert!(matches!(
         &blocks[0],
-        DisplayBlock::ToolResult { kind: ResultKind::Hidden, .. }
+        DisplayBlock::ToolResult {
+            kind: ResultKind::Hidden,
+            ..
+        }
     ));
 }
 
@@ -676,7 +695,11 @@ fn load_session_thinking_duration_ignores_skipped_meta_record_as_previous() {
         r#"{"type":"assistant","timestamp":"2026-07-31T00:00:05Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"reasoning","signature":"x"}]}}"#,
     ]);
     let entries = load_session(f.path());
-    assert_eq!(entries.len(), 2, "the isMeta record must not produce an entry");
+    assert_eq!(
+        entries.len(),
+        2,
+        "the isMeta record must not produce an entry"
+    );
     match &entries[1].blocks[0] {
         DisplayBlock::Thinking { duration_secs, .. } => assert_eq!(*duration_secs, 5),
         other => panic!("expected Thinking, got {other:?}"),
@@ -726,18 +749,12 @@ fn compact_sequence_produces_the_measured_blocks() {
     assert_eq!(blocks.len(), 5, "got {blocks:?}");
     assert!(matches!(blocks[0], DisplayBlock::CompactBoundary));
     assert!(matches!(blocks[1], DisplayBlock::Text(t) if t == "/compact"));
-    assert!(
-        matches!(blocks[2], DisplayBlock::Annotation { lines }
-            if lines == &["Compacted (ctrl+o to see full summary)".to_string()])
-    );
-    assert!(
-        matches!(blocks[3], DisplayBlock::Annotation { lines }
-            if lines == &["Read alpha.rs (42 lines)".to_string()])
-    );
-    assert!(
-        matches!(blocks[4], DisplayBlock::Annotation { lines }
-            if lines == &["Referenced file beta.yml".to_string()])
-    );
+    assert!(matches!(blocks[2], DisplayBlock::Annotation { lines }
+            if lines == &["Compacted (ctrl+o to see full summary)".to_string()]));
+    assert!(matches!(blocks[3], DisplayBlock::Annotation { lines }
+            if lines == &["Read alpha.rs (42 lines)".to_string()]));
+    assert!(matches!(blocks[4], DisplayBlock::Annotation { lines }
+            if lines == &["Referenced file beta.yml".to_string()]));
 }
 
 #[test]

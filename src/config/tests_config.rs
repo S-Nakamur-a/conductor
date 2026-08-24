@@ -55,10 +55,9 @@ fn removed_review_prompt_keys_are_ignored() {
 /// 廃止しても既存インストールの起動を壊してはならない。
 #[test]
 fn removed_rich_section_is_ignored() {
-    let cfg: Config = toml::from_str(
-        "[general]\nmain_branch = \"develop\"\n\n[rich]\nmode = \"force\"\n",
-    )
-    .expect("stale [rich] section should be ignored, not rejected");
+    let cfg: Config =
+        toml::from_str("[general]\nmain_branch = \"develop\"\n\n[rich]\nmode = \"force\"\n")
+            .expect("stale [rich] section should be ignored, not rejected");
     // 同じファイル内の他のセクションは通常どおり読めていること。
     assert_eq!(cfg.general.main_branch, "develop");
 }

@@ -22,26 +22,24 @@ pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: Key
     // Select が実際に位置へジャンプしたときだけモーダルを閉じる — 返信を持つ
     // コメントへの Select はその場でスレッドを開くだけなので、その場合は
     // モーダルを開いたままにしておく必要がある。
-    let close_after = in_modal
-        && matches!(action, Some(Action::Select))
-        && {
-            let visual = app.viewer_state.explorer.comment_list_selected;
-            match app.review_state.comment_list_rows.get(visual) {
-                Some(CommentListRow::Comment { comment_idx }) => {
-                    let has_replies = app
-                        .review_state
-                        .comments
-                        .get(*comment_idx)
-                        .and_then(|c| app.review_state.reply_counts.get(&c.id))
-                        .copied()
-                        .unwrap_or(0)
-                        > 0;
-                    !has_replies
-                }
-                Some(CommentListRow::Reply { .. }) => true,
-                None => false,
+    let close_after = in_modal && matches!(action, Some(Action::Select)) && {
+        let visual = app.viewer_state.explorer.comment_list_selected;
+        match app.review_state.comment_list_rows.get(visual) {
+            Some(CommentListRow::Comment { comment_idx }) => {
+                let has_replies = app
+                    .review_state
+                    .comments
+                    .get(*comment_idx)
+                    .and_then(|c| app.review_state.reply_counts.get(&c.id))
+                    .copied()
+                    .unwrap_or(0)
+                    > 0;
+                !has_replies
             }
-        };
+            Some(CommentListRow::Reply { .. }) => true,
+            None => false,
+        }
+    };
 
     match action {
         Some(Action::ExitSubPanel) => {

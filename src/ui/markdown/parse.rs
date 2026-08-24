@@ -96,10 +96,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<MdBlock> {
         } else if is_hr(trimmed) {
             blocks.push(MdBlock::Rule);
         } else if let Some((level, htext)) = parse_heading(trimmed) {
-            blocks.push(MdBlock::Heading {
-                level,
-                text: htext,
-            });
+            blocks.push(MdBlock::Heading { level, text: htext });
         } else if let Some(rest) = trimmed.strip_prefix('>') {
             blocks.push(MdBlock::Quote(
                 rest.strip_prefix(' ').unwrap_or(rest).to_string(),
@@ -187,7 +184,10 @@ fn parse_list_item(line: &str) -> Option<MdBlock> {
     let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
     if !digits.is_empty() {
         let after = &s[digits.len()..];
-        if let Some(rest) = after.strip_prefix(". ").or_else(|| after.strip_prefix(") ")) {
+        if let Some(rest) = after
+            .strip_prefix(". ")
+            .or_else(|| after.strip_prefix(") "))
+        {
             let (checked, text) = split_task_marker(rest);
             return Some(MdBlock::ListItem {
                 ordered: Some(digits),

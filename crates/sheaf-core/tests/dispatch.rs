@@ -442,9 +442,7 @@ fn 実リポジトリ_インタフェース経由の参照が位置ごと一致�
     assert_eq!(
         places,
         [75, 121, 129, 137, 144, 187, 233, 241, 263, 269, 276]
-            .map(|l| format!(
-                "pkg/prospects/internal/domainservice/role_reconciliation.go:{l}"
-            ))
+            .map(|l| format!("pkg/prospects/internal/domainservice/role_reconciliation.go:{l}"))
             .to_vec()
     );
 

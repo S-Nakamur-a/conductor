@@ -53,8 +53,7 @@ pub fn query_background_luminance() -> Option<f64> {
     // 応答はメインスレッドで libc::poll を使って読む。OSC 11 に対応しない端末でも
     // 期限より長くブロックしないようにするため。
     const TIMEOUT_MS: i32 = 150;
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_millis(TIMEOUT_MS as u64);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(TIMEOUT_MS as u64);
 
     let mut buf: Vec<u8> = Vec::with_capacity(64);
     loop {
@@ -256,7 +255,10 @@ mod tests {
         // 一部の端末 (古い xterm など) は OSC の終端に BEL (0x07) を使う。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x07");
         assert!(lum.is_some());
-        assert!((lum.unwrap() - 1.0).abs() < 0.01, "white bg via BEL terminator");
+        assert!(
+            (lum.unwrap() - 1.0).abs() < 0.01,
+            "white bg via BEL terminator"
+        );
     }
 
     #[test]
@@ -265,7 +267,10 @@ mod tests {
         // パーサは先頭 2 桁を読むので、これは自然に扱える。
         let lum = super::parse_osc11_luminance("\x1b]11;rgb:ff/ff/ff\x1b\\");
         assert!(lum.is_some());
-        assert!((lum.unwrap() - 1.0).abs() < 0.01, "white bg via 8-bit channels");
+        assert!(
+            (lum.unwrap() - 1.0).abs() < 0.01,
+            "white bg via 8-bit channels"
+        );
 
         let dark = super::parse_osc11_luminance("\x1b]11;rgb:1e/1e/2e\x1b\\");
         assert!(dark.is_some());

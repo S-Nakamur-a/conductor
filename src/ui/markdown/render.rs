@@ -76,8 +76,12 @@ pub(crate) fn render_block(
             out
         }
         MdBlock::Paragraph(text) => {
-            let cells =
-                spans_to_cells(&inline_spans(text, Style::default().fg(theme.fg), theme, flavor));
+            let cells = spans_to_cells(&inline_spans(
+                text,
+                Style::default().fg(theme.fg),
+                theme,
+                flavor,
+            ));
             wrap_cells(&cells, width, false)
         }
         // 実物の Claude Code は引用を dim な ▎ で示し、本文はターミナルのデフォルト色の
@@ -88,7 +92,10 @@ pub(crate) fn render_block(
             let inner = width.saturating_sub(2).max(1);
             let style = Style::default().fg(theme.fg).add_modifier(Modifier::ITALIC);
             let cells = spans_to_cells(&inline_spans(text, style, theme, flavor));
-            let bar = Span::styled("\u{258e} ".to_string(), Style::default().add_modifier(Modifier::DIM));
+            let bar = Span::styled(
+                "\u{258e} ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            );
             with_prefix(wrap_cells(&cells, inner, false), bar.clone(), bar)
         }
         MdBlock::Quote(text) => {
@@ -168,9 +175,14 @@ pub(crate) fn render_block(
             with_prefix(wrap_cells(&cells, inner, false), first, cont)
         }
         MdBlock::CodeBlock { lang, lines } => match flavor {
-            MarkdownFlavor::Rich => {
-                render_code_block(lang.as_deref(), lines, width, theme, syntax_set, syntect_theme)
-            }
+            MarkdownFlavor::Rich => render_code_block(
+                lang.as_deref(),
+                lines,
+                width,
+                theme,
+                syntax_set,
+                syntect_theme,
+            ),
             MarkdownFlavor::Transcript => {
                 render_code_block_transcript(lang.as_deref(), lines, width, syntax_set)
             }
@@ -209,7 +221,12 @@ fn render_code_block(
     let fallback = Style::default().fg(theme.fg).bg(code_bg);
 
     // カード色で塗った全幅の空行（上下のパディング）。
-    let pad_row = || Line::from(Span::styled(" ".repeat(width), Style::default().bg(code_bg)));
+    let pad_row = || {
+        Line::from(Span::styled(
+            " ".repeat(width),
+            Style::default().bg(code_bg),
+        ))
+    };
 
     let mut out = vec![pad_row()];
     for raw in lines {

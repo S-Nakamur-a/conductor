@@ -235,6 +235,26 @@ theme = "catppuccin-mocha"              # syntax highlighting theme
 # command_timeout_secs = 60             # wall-clock timeout for the command provider (0 = no timeout)
 ```
 
+## Development
+
+```sh
+cargo build              # build
+cargo test --workspace   # test (crates/ のワークスペースメンバーも含む)
+cargo clippy --workspace # lint
+make fmt                 # cargo fmt --all
+```
+
+### Git hooks
+
+Commit 時に `cargo fmt --all -- --check` を走らせる pre-commit フックが
+`.githooks/pre-commit` にあります。clone 後に一度だけ有効化してください。
+
+```sh
+make hooks   # git config core.hooksPath .githooks
+```
+
+フックが落ちた場合は `make fmt` (= `cargo fmt --all`) を実行してから commit し直します。
+
 ## Data Paths
 
 | Path | Description |

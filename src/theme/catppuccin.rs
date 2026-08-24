@@ -68,9 +68,8 @@ impl Theme {
             comment_user_bg: Color::Rgb(40, 56, 58),    // teal寄りの surface
             reply_text: Color::Rgb(166, 173, 200),      // Subtext0
 
-            code_bg: Color::Rgb(17, 17, 27), // Crust
+            code_bg: Color::Rgb(17, 17, 27),    // Crust
             code_fg: Color::Rgb(245, 194, 231), // Pink
-
         }
     }
 
@@ -108,7 +107,7 @@ impl Theme {
             selected_bg: Color::Rgb(136, 57, 239),  // Mauve
             selected_fg: Color::Rgb(239, 241, 245), // Base(白に近い)
             selected_bg_inactive: Color::Rgb(204, 208, 218), // Surface0
-            selected_fg_inactive: Color::Rgb(76, 79, 105),   // Text
+            selected_fg_inactive: Color::Rgb(76, 79, 105), // Text
 
             line_selected_bg: Color::Rgb(204, 208, 218), // Surface0
             line_selected_fg: Color::Rgb(76, 79, 105),   // Text
@@ -123,7 +122,7 @@ impl Theme {
             search_match_bg: Color::Rgb(252, 238, 190), // 明るい黄色
             search_current_fg: Color::Rgb(76, 79, 105), // Text
 
-            waiting_primary: Color::Rgb(254, 100, 11),  // Peach
+            waiting_primary: Color::Rgb(254, 100, 11), // Peach
             waiting_secondary: Color::Rgb(212, 82, 9),
 
             titlebar_bg: Color::Rgb(230, 233, 239), // Mantle
@@ -138,9 +137,8 @@ impl Theme {
             comment_user_bg: Color::Rgb(196, 228, 220),    // teal がかった明るい色
             reply_text: Color::Rgb(108, 111, 133),         // Subtext0
 
-            code_bg: Color::Rgb(230, 233, 239),  // Mantle
-            code_fg: Color::Rgb(234, 118, 203),  // Pink
-
+            code_bg: Color::Rgb(230, 233, 239), // Mantle
+            code_fg: Color::Rgb(234, 118, 203), // Pink
         }
     }
 }

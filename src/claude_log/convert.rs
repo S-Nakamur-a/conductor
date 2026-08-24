@@ -269,7 +269,11 @@ pub(super) fn content_to_display_blocks(
                     if !id.is_empty() {
                         tool_kinds.insert(id, result_kind(&name, &input));
                     }
-                    Some(DisplayBlock::ToolUse { name, input, errored })
+                    Some(DisplayBlock::ToolUse {
+                        name,
+                        input,
+                        errored,
+                    })
                 }
                 Block::ToolResult {
                     tool_use_id,

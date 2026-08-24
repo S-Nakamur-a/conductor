@@ -101,8 +101,18 @@ pub(crate) fn render_tool_use(
             ToolCategory::Inline { display_name, arg } => (display_name, arg),
         }
     };
-    let marker_style = if errored { styles.marker_err } else { styles.marker };
-    Some(tool_use_line(&display_name, arg.as_deref(), width, marker_style, styles))
+    let marker_style = if errored {
+        styles.marker_err
+    } else {
+        styles.marker
+    };
+    Some(tool_use_line(
+        &display_name,
+        arg.as_deref(),
+        width,
+        marker_style,
+        styles,
+    ))
 }
 
 /// ⏺ {display_name}({arg}) — 先頭の丸（色は marker_style で指定）、太字の名前、
@@ -224,10 +234,7 @@ fn bucket_summary_line(
             format!(", {} ", lower_first(verb))
         };
         parts.push((lead, styles.result));
-        parts.push((
-            n.to_string(),
-            styles.result.add_modifier(Modifier::BOLD),
-        ));
+        parts.push((n.to_string(), styles.result.add_modifier(Modifier::BOLD)));
         parts.push((format!(" {noun}"), styles.result));
     }
     parts.push((EXPAND_HINT.to_string(), styles.result));
@@ -322,7 +329,11 @@ pub(crate) fn render_tool_result_expanded(
     let first_prefix = format!("  {TOOL_RESULT_GLYPH}  ");
     let prefix_cols = UnicodeWidthStr::width(first_prefix.as_str());
     let cont_indent = " ".repeat(prefix_cols);
-    let connector_style = if is_error { styles.result_err } else { body_style };
+    let connector_style = if is_error {
+        styles.result_err
+    } else {
+        body_style
+    };
 
     if lines.is_empty() {
         let s = truncate_to_width(&format!("{first_prefix}(no content)"), width);

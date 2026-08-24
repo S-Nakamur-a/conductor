@@ -39,7 +39,8 @@ pub(super) fn build_inline_thread_lines<'a>(
 
     use crate::viewer::ScreenRow;
     let mut out: Vec<(Line, ScreenRow)> = Vec::new();
-    let left_pad = crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 2; // マーカー + ガター + バッジ
+    let left_pad =
+        crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 2; // マーカー + ガター + バッジ
     let gutter_pad: String = " ".repeat(left_pad);
     let border_style = Style::default().fg(theme.accent);
     // 執筆者ごとに面の色味を変え、「誰が書いたか」を一目でわかるようにする。Claude の
@@ -330,7 +331,8 @@ pub(super) fn build_inline_compose_lines<'a>(
 ) -> Vec<(Line<'a>, crate::viewer::ScreenRow)> {
     use crate::viewer::ScreenRow;
     let bg = theme.comment_user_bg;
-    let left_pad = crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 2;
+    let left_pad =
+        crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 2;
     let gutter_pad: String = " ".repeat(left_pad);
     let border_style = Style::default().fg(theme.accent);
     let bg_style = Style::default().bg(bg);

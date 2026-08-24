@@ -95,7 +95,9 @@ impl StringState {
             self.interrupted = false;
         }
         let is_interpolation = scopes.iter().any(|s| {
-            s.contains("interpolation.") || s.contains("expansion") || s.contains("embedded")
+            s.contains("interpolation.")
+                || s.contains("expansion")
+                || s.contains("embedded")
                 || s.starts_with("variable.")
         });
         if self.in_string && is_interpolation {
@@ -180,7 +182,10 @@ fn classify(
             Category::Keyword
         };
     }
-    if scopes.iter().any(|s| s.starts_with("entity.name.function.")) {
+    if scopes
+        .iter()
+        .any(|s| s.starts_with("entity.name.function."))
+    {
         return Category::FunctionName;
     }
     // 文法が明示的にタグ付けするビルトイン関数（Python の range、Bash の echo）。
@@ -223,7 +228,10 @@ fn classify(
     // 使っているビルトインは object のみで、この位置で同様に読まれる Python の
     // 全ビルトイン（int、Exception、...）を網羅した検証済みリストではない。
     // 実際の実物キャプチャからのみ拡張すること。
-    if scopes.iter().any(|s| s.starts_with("entity.other.inherited-class.")) {
+    if scopes
+        .iter()
+        .any(|s| s.starts_with("entity.other.inherited-class."))
+    {
         return if text == "object" {
             Category::Keyword
         } else {
