@@ -26,7 +26,7 @@
 
 mod bridge;
 mod history;
-mod roots;
+pub(crate) mod roots;
 
 pub use bridge::Bridge;
 pub use sheaf_core::Outcome as Regenerated;
@@ -37,6 +37,16 @@ use sheaf_core::{IndexSource, Regenerator, Slot, Store};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+/// 終わった生成 1 世代。
+///
+/// 手で頼まれたものかどうかを添えるのは、結果を画面に出すかの判断に要るため。
+/// 編集のたびの作り直しまで知らせると status がそれで埋まるが、押した本人には
+/// 終わったことを言わないと、効かなかったのか動いているのか分からない。
+pub struct Finished {
+    pub outcome: Regenerated,
+    pub manual: bool,
+}
 
 /// いま読んでいるファイルに対して索引がどこまで答えられるか。
 ///
@@ -52,6 +62,8 @@ pub enum Reading {
     Stale,
     /// このルートを索引しているところ。
     Building,
+    /// 索引はあるが、まだ読み込めていない。答えは次の周に持ち越す。
+    Loading,
     /// 索引の対象ではない。
     NotIndexed,
 }
@@ -80,33 +92,8 @@ impl Root {
     }
 
     /// 前の生成から、この producer が読むファイルがどれだけ動いたか。
-    ///
-    /// 出自の表には索引ルートの全ファイルが載るので、その言語のものだけを数える。
-    /// 絞らないと、README を直しただけの生成が「ソースが動いた」に見える。
     fn source_delta(&self, dir: &Path) -> history::Sources {
-        let Some(before) = &self.run.before else {
-            return history::Sources::First;
-        };
-        let Some(after) = self.at.provenance(dir) else {
-            return history::Sources::Unknown;
-        };
-        let mine = |path: &Path| roots::Language::of_file(path) == Some(self.at.lang);
-        let mut delta = history::SourceDelta::default();
-        for (path, hash) in &after {
-            if !mine(path) {
-                continue;
-            }
-            match before.get(path) {
-                None => delta.added += 1,
-                Some(was) if was != hash => delta.modified += 1,
-                Some(_) => {}
-            }
-        }
-        delta.removed = before
-            .keys()
-            .filter(|p| mine(p) && !after.contains_key(*p))
-            .count();
-        history::Sources::Delta(delta)
+        source_delta(self.run.before.as_ref(), &self.at, dir)
     }
 
     /// 終わった 1 世代を記録して、計測を畳む。
@@ -128,7 +115,21 @@ impl Root {
                 Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
             },
         );
-        self.run = Run::default();
+        // 生成中に変更が来ていた場合とロックを取れなかった場合、sheaf は待機に
+        // 戻してもう一度走らせる。その世代のきっかけを引き継がないと、記録が
+        // 「きっかけ不明・待ち時間 0 秒」になる。
+        self.run = if self.regenerator.is_pending() {
+            match self.run.next_cause.take() {
+                Some(cause) => Run::asked(Trigger::Change, Some(cause)),
+                // ロックを取れずにやり直すだけなので、元のきっかけのまま。
+                None => Run::asked(
+                    self.run.trigger.unwrap_or(Trigger::Change),
+                    self.run.cause.clone(),
+                ),
+            }
+        } else {
+            Run::default()
+        };
     }
 
     fn log_with(&self, dir: &Path, sources: history::Sources, outcome: history::Outcome<'_>) {
@@ -143,7 +144,7 @@ impl Root {
                 took: self.run.took(),
                 outcome,
                 sources,
-                changes_during: self.run.changes_during,
+                changed_during: self.run.changed_during.len(),
             },
         );
     }
@@ -160,8 +161,14 @@ struct Run {
     /// producer が立つ直前の出自の表。作り終えたものと比べて、この生成に
     /// 意味があったかを言うために取っておく。
     before: Option<HashMap<PathBuf, String>>,
-    /// 走っている間に来た変更の数。0 でなければ、その索引は置いた時点で既に古い。
-    changes_during: usize,
+    /// 走っている間に変わったファイル。空でなければ、その索引は置いた時点で既に古い。
+    /// 件数ではなくファイルで持つ — 監視は 1 回の保存で複数のイベントを上げるので、
+    /// 生の件数を出すと編集 2 回が 6 に見える。
+    changed_during: std::collections::HashSet<PathBuf>,
+    /// 走っている間に来た変更のうち、最後のもの。この世代が終わったあとに
+    /// もう一度走るときのきっかけになる。引き継がないと、その世代の記録が
+    /// 「きっかけ不明・待ち時間 0 秒」になる。
+    next_cause: Option<PathBuf>,
 }
 
 impl Run {
@@ -200,9 +207,14 @@ pub struct SemanticIndex {
     tree: PathBuf,
     /// いま読んでいるファイル。同じものを繰り返し告げられたときに何もしないため。
     reading: Option<PathBuf>,
-    /// main worktree の `.conductor/`。解決に git2 のリポジトリオープンが要るので
-    /// 覚えておく。外側の `None` は「まだ引いていない」、内側は「git リポジトリでない」。
-    conductor_dir: Option<Option<PathBuf>>,
+    /// main worktree の `.conductor/` と、それを引いた元のリポジトリ。解決に
+    /// git2 のリポジトリオープンが要るので覚えておく。内側の `None` は
+    /// 「git リポジトリでない」。
+    ///
+    /// リポジトリを覚えておくのは、切り替えを取りこぼさないため。成果物の名前は
+    /// リポジトリをまたいで同じ (`index.rust.scip`) なので、引き直さないと
+    /// 切り替え先の索引を切り替え元へ書き込み、相手の索引を上書きしてしまう。
+    conductor_dir: Option<(PathBuf, Option<PathBuf>)>,
 }
 
 impl SemanticIndex {
@@ -228,27 +240,38 @@ impl SemanticIndex {
         if self.reading.as_deref() == Some(rel) {
             return Reading::Unchanged;
         }
-        self.reading = Some(rel.to_path_buf());
+        let settle = |me: &mut Self, answer| {
+            me.reading = Some(rel.to_path_buf());
+            answer
+        };
         let Some(index) = self.owning_root(rel) else {
-            return Reading::NotIndexed;
+            return settle(self, Reading::NotIndexed);
         };
         let Some(dir) = self.conductor_dir(repo_root).map(Path::to_path_buf) else {
-            return Reading::NotIndexed;
+            return settle(self, Reading::NotIndexed);
         };
         // 既にあるものを作り直さない。開くたびに走らせると producer が止まらなくなる。
         if self.roots[index].at.source(&dir).is_none() {
             self.roots[index].request(Trigger::Open, Some(rel.to_path_buf()));
-            return Reading::Building;
+            return settle(self, Reading::Building);
         }
         if self.roots[index].is_working() {
-            return Reading::Building;
+            return settle(self, Reading::Building);
         }
+        // 索引の読み込みは別スレッドなので、worktree を切り替えた直後は間に合って
+        // いない。ここで「説明できている」と答えて答えを確定させると、古いことを
+        // 言うべき唯一の場面 (別のツリーへ移った直後) で必ず黙ることになる。
+        let Some(store) = self.slot.get(tree_root) else {
+            return Reading::Loading;
+        };
         // 索引はあるが、このファイルの今の内容は説明できていない。黙って構文層に
         // 落ちるので、言わないと「ジャンプが甘い」としか見えない。
-        match self.slot.get(tree_root) {
-            Some(store) if !store.is_current(rel) => Reading::Stale,
-            _ => Reading::Indexed,
-        }
+        let answer = if store.is_current(rel) {
+            Reading::Indexed
+        } else {
+            Reading::Stale
+        };
+        settle(self, answer)
     }
 
     /// いま読んでいるファイルの索引ルートを作り直す。画面からの頼み。
@@ -283,7 +306,8 @@ impl SemanticIndex {
         }
         if root.regenerator.is_running() {
             // この世代の索引には入らない変更。置いた時点で既に古い。
-            root.run.changes_during += 1;
+            root.run.changed_during.insert(rel.to_path_buf());
+            root.run.next_cause = Some(rel.to_path_buf());
         } else if !was_working {
             root.run = Run::asked(Trigger::Change, Some(rel.to_path_buf()));
         }
@@ -305,7 +329,7 @@ impl SemanticIndex {
     ///
     /// 毎フレーム呼ばれる。待つものが無いうちに置き場所を組み立てないのは、
     /// そこに git2 のリポジトリオープンが要るため。
-    pub fn tick_regeneration(&mut self, repo_root: &Path, tree_root: &Path) -> Option<Regenerated> {
+    pub fn tick_regeneration(&mut self, repo_root: &Path, tree_root: &Path) -> Option<Finished> {
         if !self.roots.iter().any(|r| r.is_working()) {
             return None;
         }
@@ -321,7 +345,11 @@ impl SemanticIndex {
                 // producer は最後に出自の表を置き換えるので、いま読めば前の世代のもの。
                 root.run.before = root.at.provenance(&dir);
             }
-            outcome.inspect(|outcome| root.record(&dir, outcome))
+            outcome.map(|outcome| {
+                let manual = root.run.trigger == Some(Trigger::Manual);
+                root.record(&dir, &outcome);
+                Finished { outcome, manual }
+            })
         })
     }
 
@@ -345,9 +373,14 @@ impl SemanticIndex {
     }
 
     fn conductor_dir(&mut self, repo_root: &Path) -> Option<&Path> {
-        self.conductor_dir
-            .get_or_insert_with(|| main_conductor_dir(repo_root))
-            .as_deref()
+        if self
+            .conductor_dir
+            .as_ref()
+            .is_none_or(|(at, _)| at != repo_root)
+        {
+            self.conductor_dir = Some((repo_root.to_path_buf(), main_conductor_dir(repo_root)));
+        }
+        self.conductor_dir.as_ref()?.1.as_deref()
     }
 
     #[cfg(test)]
@@ -403,6 +436,7 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
         let target = at.target(&dir, repo_root);
         let index = target.index.clone();
         let at_start = Instant::now();
+        let before = at.provenance(&dir);
         let outcome = sheaf_core::generate_once(target, at.lang.producer());
         history::append(
             &dir,
@@ -421,8 +455,11 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
                     Regenerated::Busy => history::Outcome::Busy,
                     Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
                 },
-                sources: history::Sources::Unknown,
-                changes_during: 0,
+                sources: match &outcome {
+                    Regenerated::Ready { .. } => source_delta(before.as_ref(), at, &dir),
+                    _ => history::Sources::Unknown,
+                },
+                changed_during: 0,
             },
         );
         match outcome {
@@ -468,6 +505,42 @@ pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
     Store::load(&sources, tree_root).ok()
 }
 
+/// 前の出自の表と、いま置いてある表を比べて、その producer が読むファイルが
+/// どれだけ動いたかを言う。
+///
+/// 出自の表には索引ルートの全ファイルが載るので、その言語のものだけを数える。
+/// 絞らないと、README を直しただけの生成が「ソースが動いた」に見えて、
+/// 要らなかった生成を無駄だと言えなくなる。
+fn source_delta(
+    before: Option<&HashMap<PathBuf, String>>,
+    at: &IndexRoot,
+    dir: &Path,
+) -> history::Sources {
+    let Some(before) = before else {
+        return history::Sources::First;
+    };
+    let Some(after) = at.provenance(dir) else {
+        return history::Sources::Unknown;
+    };
+    let mine = |path: &Path| roots::Language::of_file(path) == Some(at.lang);
+    let mut delta = history::SourceDelta::default();
+    for (path, hash) in &after {
+        if !mine(path) {
+            continue;
+        }
+        match before.get(path) {
+            None => delta.added += 1,
+            Some(was) if was != hash => delta.modified += 1,
+            Some(_) => {}
+        }
+    }
+    delta.removed = before
+        .keys()
+        .filter(|p| mine(p) && !after.contains_key(*p))
+        .count();
+    history::Sources::Delta(delta)
+}
+
 /// `repo_root` の main worktree での `.conductor/` を返す。
 ///
 /// `repo_root` がリンクされた worktree のパスでも、`commondir()` は常に main の
@@ -476,6 +549,22 @@ pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
 fn main_conductor_dir(repo_root: &Path) -> Option<PathBuf> {
     let repo = git2::Repository::open(repo_root).ok()?;
     Some(repo.commondir().parent()?.join(".conductor"))
+}
+
+/// 名前しか根拠が無い答えを、その言語のファイルに限るための判定。
+///
+/// tree-sitter の索引は名前でしか引けないので、`.go` の `rollbar` が `.tsx` の
+/// `const rollbar` に当たる。言語が違えば同じ綴りでも別物で、当たったところで
+/// 得るものが無い。分類できない拡張子は通す — 落とすと、いま答えているものまで
+/// 黙って消える。
+pub fn same_language(asking: &Path, candidate: &Path) -> bool {
+    match (
+        roots::Language::of_file(asking),
+        roots::Language::of_file(candidate),
+    ) {
+        (Some(here), Some(there)) => here == there,
+        _ => true,
+    }
 }
 
 /// 種別を、ホバーの見出しに置く 1 語にする。
@@ -911,6 +1000,32 @@ mod tests {
     }
 
     #[test]
+    fn 索引をまだ読み込めていないうちは答えを確定させない() {
+        // 索引の読み込みは別スレッドで、worktree 切替の直後は間に合っていない。
+        // ここで「説明できている」と答えて確定させると、古いことを言うべき唯一の
+        // 場面で必ず黙る。
+        let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        place_index(dir.path());
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
+        let mut semantic = SemanticIndex::default();
+
+        // ストアを投入する前。
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Loading
+        );
+
+        // 投入されたら、聞き直して古いと言えること。
+        let store = load(dir.path(), dir.path()).unwrap();
+        assert!(semantic.accept(dir.path(), dir.path(), Some(store)));
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Stale,
+            "読み込み待ちの周で答えを確定させてしまっている"
+        );
+    }
+
+    #[test]
     fn 手で頼まれたら読んでいるルートを作り直す() {
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
@@ -937,6 +1052,32 @@ mod tests {
         assert!(
             semantic.roots.is_empty(),
             "目印の無いツリーに移ったのに前のツリーの索引ルートが残っている"
+        );
+    }
+
+    #[test]
+    fn リポジトリを切り替えたら成果物の置き場所も引き直す() {
+        // 成果物の名前はリポジトリをまたいで同じ (index.rust.scip) なので、
+        // 置き場所を引き直さないと、切り替え先の索引を切り替え元へ書き込む。
+        // 相手の索引を別のリポジトリの内容で上書きすることになる。
+        let (first, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        let (second, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+        let mut semantic = SemanticIndex::default();
+
+        // macOS の /var は /private/var への symlink で、git2 は解決した側を返す。
+        let expected = |repo: &Path| repo.canonicalize().unwrap().join(".conductor");
+
+        semantic.note_open(Path::new("src/lib.rs"), first.path(), first.path());
+        assert_eq!(
+            semantic.conductor_dir(first.path()),
+            Some(expected(first.path()).as_path())
+        );
+
+        semantic.note_open(Path::new("src/lib.rs"), second.path(), second.path());
+        assert_eq!(
+            semantic.conductor_dir(second.path()),
+            Some(expected(second.path()).as_path()),
+            "切り替え元の .conductor を指したまま"
         );
     }
 

@@ -99,7 +99,10 @@ fn go_to_definition_at(
         return;
     }
 
-    let defs = app.code_nav.index.find_definitions(symbol);
+    let defs = app
+        .code_nav
+        .index
+        .find_definitions(symbol, std::path::Path::new(app.reading_file()));
     match defs.len() {
         0 => {
             app.set_status(

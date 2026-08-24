@@ -255,14 +255,15 @@ fn tick_semantic_regeneration(app: &mut App) {
             );
         }
     }
-    let Some(outcome) = app
+    let Some(finished) = app
         .code_nav
         .semantic
         .tick_regeneration(&repo_root, &tree_root)
     else {
         return;
     };
-    match outcome {
+    let manual = finished.manual;
+    match finished.outcome {
         // 生成側が投入済みの Store をそのまま受け取る。読み直すと 67ms のパースを
         // もう一度払うことになる。生成中に worktree が動いていれば accept が拒むので、
         // そのときだけ正しい向きで読み直す。
@@ -270,7 +271,8 @@ fn tick_semantic_regeneration(app: &mut App) {
             log::info!("semantic index regenerated: {} documents", store.len());
             // 索引が無い状態から埋まったときだけ知らせる。作り直しは編集が
             // 収まるたびに走るので、毎回出すと status がそれで埋まる。
-            let was_absent = app.code_nav.semantic.store(&tree_root).is_none();
+            // 手で頼まれたときは必ず知らせる。押した本人が結果を待っている。
+            let was_absent = manual || app.code_nav.semantic.store(&tree_root).is_none();
             let documents = store.len();
             if !app.code_nav.semantic.accept(&root, &tree_root, Some(store)) {
                 app.start_semantic_index_load();
@@ -286,6 +288,12 @@ fn tick_semantic_regeneration(app: &mut App) {
         crate::semantic_index::Regenerated::Busy => {}
         crate::semantic_index::Regenerated::Failed(why) => {
             log::warn!("semantic index regeneration failed: {why}");
+            if manual {
+                app.set_status(
+                    format!("Could not rebuild the code index: {why}"),
+                    crate::app::StatusLevel::Error,
+                );
+            }
         }
         crate::semantic_index::Regenerated::Unavailable(why) => {
             log::info!("semantic index disabled: {why}");

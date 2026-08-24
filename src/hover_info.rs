@@ -96,7 +96,8 @@ pub fn resolve_def_site(
     if !index.is_available() {
         return None;
     }
-    let defs = index.find_definitions(symbol);
+    // 名前でしか引けないので、いま読んでいるファイルと同じ言語のものに絞る。
+    let defs = index.find_definitions(symbol, std::path::Path::new(current_file.unwrap_or("")));
     let def = defs
         .iter()
         .find(|d| Some(d.file_path.as_str()) == current_file)

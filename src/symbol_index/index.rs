@@ -188,13 +188,20 @@ impl SymbolIndex {
     }
 
     /// 指定した名前に一致する定義シンボルを探す。
-    pub fn find_definitions(&self, name: &str) -> Vec<Symbol> {
+    /// `from` のファイルから見た、その名前の定義。
+    ///
+    /// 名前しか根拠が無いので、別の言語のファイルにある同名の定義は落とす。
+    /// 落とさないと Go の `rollbar` が TypeScript の `const rollbar` に当たり、
+    /// ホバーがその宣言をそのまま答えとして出す。`from` は問い合わせ元のファイルで、
+    /// 分類できない拡張子なら絞らない。
+    pub fn find_definitions(&self, name: &str, from: &Path) -> Vec<Symbol> {
         let data = self.data.lock().unwrap();
         data.symbols
             .iter()
             .filter(|s| {
                 s.name == name && !matches!(s.kind, SymbolKind::Field | SymbolKind::EnumVariant)
             })
+            .filter(|s| crate::semantic_index::same_language(from, Path::new(&s.file_path)))
             .cloned()
             .collect()
     }

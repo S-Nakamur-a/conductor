@@ -102,7 +102,8 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
             let input = app.code_nav.symbol_hint.input.clone();
             // 入力に一致するヒントを探す。
             let matched = app
-                .code_nav.symbol_hint
+                .code_nav
+                .symbol_hint
                 .hints
                 .iter()
                 .find(|h| h.label == input)
@@ -152,7 +153,10 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
     let mut actions = Vec::new();
 
     // 定義。
-    let defs = app.code_nav.index.find_definitions(symbol_name);
+    let defs = app
+        .code_nav
+        .index
+        .find_definitions(symbol_name, std::path::Path::new(app.reading_file()));
     if defs.len() == 1 {
         actions.push(SymbolAction {
             key: 'd',
@@ -275,7 +279,10 @@ pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
 }
 
 fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
-    let defs = app.code_nav.index.find_definitions(symbol);
+    let defs = app
+        .code_nav
+        .index
+        .find_definitions(symbol, std::path::Path::new(app.reading_file()));
     match defs.len() {
         0 => {
             app.set_status(

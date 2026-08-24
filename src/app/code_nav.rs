@@ -690,7 +690,10 @@ impl App {
         };
         // カーソル行は1始まり（file_scroll は0始まり）。
         let cursor_line = self.viewer_state.content.file_scroll + 1;
-        let defs = self.code_nav.index.find_definitions(symbol);
+        let defs = self
+            .code_nav
+            .index
+            .find_definitions(symbol, std::path::Path::new(cur_file));
         defs.iter().any(|d| {
             d.file_path == *cur_file && (d.line as isize - cursor_line as isize).unsigned_abs() <= 2
         })
@@ -1173,12 +1176,27 @@ impl App {
         }
     }
 
+    /// いま Viewer で読んでいるファイル (worktree からの相対パス)。開いていなければ空。
+    ///
+    /// 名前でしか引けない検索の絞り込みに要る。空のパスは分類できないので絞らない。
+    pub fn reading_file(&self) -> &str {
+        self.viewer_state
+            .content
+            .current_file
+            .as_deref()
+            .unwrap_or("")
+    }
+
     /// シンボルインデックス中にそのシンボルの定義があるかを調べる。
     pub fn can_jump_to_symbol(&self, name: &str) -> bool {
         if !self.code_nav.index.is_available() {
             return false;
         }
-        !self.code_nav.index.find_definitions(name).is_empty()
+        !self
+            .code_nav
+            .index
+            .find_definitions(name, std::path::Path::new(self.reading_file()))
+            .is_empty()
     }
 
     /// ビューアに表示中の行についてシンボルヒントを構築する。

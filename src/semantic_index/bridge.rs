@@ -82,7 +82,7 @@ impl<'a> SyntacticLayer for Bridge<'a> {
         };
         let locations = self
             .index
-            .find_definitions(word)
+            .find_definitions(word, self.abs_path)
             .into_iter()
             .map(|s| Location {
                 path: PathBuf::from(s.file_path),
@@ -108,6 +108,9 @@ impl<'a> SyntacticLayer for Bridge<'a> {
             .index
             .find_references(word, &root)
             .into_iter()
+            .filter(|r| {
+                crate::semantic_index::same_language(self.abs_path, Path::new(&r.file_path))
+            })
             .map(|r| Location {
                 path: PathBuf::from(r.file_path),
                 // Reference::line は 1 始まり、sheaf-core の Location::line は 0 始まり。
@@ -207,6 +210,48 @@ fn caller() {
     }
 
     #[test]
+    fn 別の言語の同名の定義には落とさない() {
+        // tree-sitter の索引は名前でしか引けないので、Go の rollbar が
+        // TypeScript の const rollbar に当たる。実際に踏んだ症状がこれ。
+        let dir = tempfile::tempdir().unwrap();
+        let go = "package main\n\nfunc use() { rollbar.SetToken(\"x\") }\n";
+        std::fs::write(dir.path().join("main.go"), go).unwrap();
+        std::fs::write(
+            dir.path().join("page.tsx"),
+            "const rollbar = useRollbar();\n",
+        )
+        .unwrap();
+        let index = SymbolIndex::new(dir.path().to_path_buf());
+        index.build().unwrap();
+
+        let path = dir.path().join("main.go");
+        let mask = CodeMask::compute(go, "main.go");
+        let bridge = Bridge {
+            abs_path: &path,
+            source: go,
+            mask: &mask,
+            index: &index,
+        };
+        let line = go.lines().position(|l| l.contains("rollbar")).unwrap() as u32;
+        let col = go
+            .lines()
+            .nth(line as usize)
+            .unwrap()
+            .find("rollbar")
+            .unwrap() as u32;
+
+        let SyntacticAnswer::Found(locations) = bridge.definition_at(&path, line, col) else {
+            panic!("識別子として認識されていない");
+        };
+        assert!(
+            locations
+                .iter()
+                .all(|l| l.path.extension().is_none_or(|e| e != "tsx")),
+            "Go のファイルから TypeScript の定義に落ちた: {locations:?}"
+        );
+    }
+
+    #[test]
     fn token_at_different_file_is_unknown() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
@@ -275,7 +320,7 @@ fn caller() {
         let path = dir.path().join("lib.rs");
 
         let symbol = index
-            .find_definitions("value")
+            .find_definitions("value", Path::new("lib.rs"))
             .into_iter()
             .next()
             .expect("value の定義が索引に無い");

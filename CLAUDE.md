@@ -283,6 +283,18 @@ Still on tree-sitter, deliberately: the symbol-action overlay (it shows
 definitions, implementations and references together by name, so it moves when
 that overlay moves), and `gi` itself whenever the index stays silent.
 
+**A name-only answer never crosses languages.** `SymbolIndex::find_definitions`
+takes the file being read and drops candidates whose language differs
+(`semantic_index::same_language`; an unclassifiable extension is kept, because
+dropping it would silently remove answers that work today). Without it, hovering
+`rollbar` in a Go file answered with a TypeScript `const rollbar = useRollbar()`
+and printed its declaration as if it were the answer — measured on a real
+monorepo, and the symptom that started this work. Note what the index alone does
+*not* fix: a third-party package has no definition inside the tree, so those
+positions fall through to this layer no matter how good the index is. The right
+answer there is silence (`No definition indexed for 'rollbar'`), which is what
+the filter produces.
+
 ## Architecture
 
 ### Application Structure

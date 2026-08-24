@@ -84,8 +84,8 @@ pub struct Entry<'a> {
     pub took: Duration,
     pub outcome: Outcome<'a>,
     pub sources: Sources,
-    /// 生成中に来た変更の数。0 でなければ、その索引は置いた時点で既に古い。
-    pub changes_during: usize,
+    /// 生成中に変わったファイルの数。0 でなければ、その索引は置いた時点で既に古い。
+    pub changed_during: usize,
 }
 
 pub enum Outcome<'a> {
@@ -145,8 +145,8 @@ pub fn append(dir: &Path, entry: &Entry<'_>) {
         }
         Sources::Unknown => {}
     }
-    if entry.changes_during > 0 {
-        waste.push(format!("stale-on-arrival({})", entry.changes_during));
+    if entry.changed_during > 0 {
+        waste.push(format!("stale-on-arrival({} files)", entry.changed_during));
     }
     if matches!(entry.outcome, Outcome::Aborted) {
         waste.push("discarded".into());
@@ -243,7 +243,7 @@ mod tests {
             took: Duration::from_millis(1_800),
             outcome,
             sources,
-            changes_during: 0,
+            changed_during: 0,
         }
     }
 
@@ -315,12 +315,12 @@ mod tests {
             Outcome::Ready { documents: 1 },
             Sources::Delta(SourceDelta::default()),
         );
-        e.changes_during = 2;
+        e.changed_during = 2;
         append(dir.path(), &e);
 
         let log = written(&dir);
         assert!(
-            log.contains("waste=no-source-change,stale-on-arrival(2)"),
+            log.contains("waste=no-source-change,stale-on-arrival(2 files)"),
             "{log}"
         );
     }
