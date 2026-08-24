@@ -34,6 +34,7 @@ pub use sheaf_core::Outcome as Regenerated;
 use history::Trigger;
 use roots::IndexRoot;
 use sheaf_core::{IndexSource, Regenerator, Slot, Store};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -71,17 +72,53 @@ impl Root {
 
     /// 作り直しを頼む。既に待っている/走っているならきっかけは上書きしない
     /// (最初に頼んだものがその世代の理由)。
-    fn request(&mut self, trigger: Trigger) {
+    fn request(&mut self, trigger: Trigger, cause: Option<PathBuf>) {
         if !self.is_working() {
-            self.run = Run::asked(trigger);
+            self.run = Run::asked(trigger, cause);
         }
         self.regenerator.request();
     }
 
+    /// 前の生成から、この producer が読むファイルがどれだけ動いたか。
+    ///
+    /// 出自の表には索引ルートの全ファイルが載るので、その言語のものだけを数える。
+    /// 絞らないと、README を直しただけの生成が「ソースが動いた」に見える。
+    fn source_delta(&self, dir: &Path) -> history::Sources {
+        let Some(before) = &self.run.before else {
+            return history::Sources::First;
+        };
+        let Some(after) = self.at.provenance(dir) else {
+            return history::Sources::Unknown;
+        };
+        let mine = |path: &Path| roots::Language::of_file(path) == Some(self.at.lang);
+        let mut delta = history::SourceDelta::default();
+        for (path, hash) in &after {
+            if !mine(path) {
+                continue;
+            }
+            match before.get(path) {
+                None => delta.added += 1,
+                Some(was) if was != hash => delta.modified += 1,
+                Some(_) => {}
+            }
+        }
+        delta.removed = before
+            .keys()
+            .filter(|p| mine(p) && !after.contains_key(*p))
+            .count();
+        history::Sources::Delta(delta)
+    }
+
     /// 終わった 1 世代を記録して、計測を畳む。
     fn record(&mut self, dir: &Path, outcome: &Regenerated) {
-        self.log(
+        // 生成に至らなかったものは、比べる相手がそもそも入れ替わっていない。
+        let sources = match outcome {
+            Regenerated::Ready { .. } => self.source_delta(dir),
+            _ => history::Sources::Unknown,
+        };
+        self.log_with(
             dir,
+            sources,
             match outcome {
                 Regenerated::Ready { store, .. } => history::Outcome::Ready {
                     documents: store.len(),
@@ -94,17 +131,19 @@ impl Root {
         self.run = Run::default();
     }
 
-    fn log(&self, dir: &Path, outcome: history::Outcome<'_>) {
+    fn log_with(&self, dir: &Path, sources: history::Sources, outcome: history::Outcome<'_>) {
         history::append(
             dir,
             &history::Entry {
                 root: &self.at.subroot,
                 lang: self.at.lang.tag(),
                 trigger: self.run.trigger.unwrap_or(Trigger::Change),
+                cause: self.run.cause.as_deref(),
                 waited: self.run.waited(),
                 took: self.run.took(),
                 outcome,
-                restarts: self.run.restarts,
+                sources,
+                changes_during: self.run.changes_during,
             },
         );
     }
@@ -114,16 +153,22 @@ impl Root {
 #[derive(Default)]
 struct Run {
     trigger: Option<Trigger>,
+    /// きっかけになったファイル。ツリーのルートからの相対パス。
+    cause: Option<PathBuf>,
     asked_at: Option<Instant>,
     started_at: Option<Instant>,
+    /// producer が立つ直前の出自の表。作り終えたものと比べて、この生成に
+    /// 意味があったかを言うために取っておく。
+    before: Option<HashMap<PathBuf, String>>,
     /// 走っている間に来た変更の数。0 でなければ、その索引は置いた時点で既に古い。
-    restarts: usize,
+    changes_during: usize,
 }
 
 impl Run {
-    fn asked(trigger: Trigger) -> Self {
+    fn asked(trigger: Trigger, cause: Option<PathBuf>) -> Self {
         Run {
             trigger: Some(trigger),
+            cause,
             asked_at: Some(Instant::now()),
             ..Default::default()
         }
@@ -192,7 +237,7 @@ impl SemanticIndex {
         };
         // 既にあるものを作り直さない。開くたびに走らせると producer が止まらなくなる。
         if self.roots[index].at.source(&dir).is_none() {
-            self.roots[index].request(Trigger::Open);
+            self.roots[index].request(Trigger::Open, Some(rel.to_path_buf()));
             return Reading::Building;
         }
         if self.roots[index].is_working() {
@@ -216,7 +261,7 @@ impl SemanticIndex {
         let Some(index) = self.owning_root(&rel) else {
             return false;
         };
-        self.roots[index].request(Trigger::Manual);
+        self.roots[index].request(Trigger::Manual, Some(rel.clone()));
         true
     }
 
@@ -238,9 +283,9 @@ impl SemanticIndex {
         }
         if root.regenerator.is_running() {
             // この世代の索引には入らない変更。置いた時点で既に古い。
-            root.run.restarts += 1;
+            root.run.changes_during += 1;
         } else if !was_working {
-            root.run = Run::asked(Trigger::Change);
+            root.run = Run::asked(Trigger::Change, Some(rel.to_path_buf()));
         }
     }
 
@@ -273,6 +318,8 @@ impl SemanticIndex {
             // producer が立ったのはこの tick の中なので、前後で見て時刻を取る。
             if root.regenerator.is_running() && root.run.started_at.is_none() {
                 root.run.started_at = Some(Instant::now());
+                // producer は最後に出自の表を置き換えるので、いま読めば前の世代のもの。
+                root.run.before = root.at.provenance(&dir);
             }
             outcome.inspect(|outcome| root.record(&dir, outcome))
         })
@@ -315,7 +362,7 @@ impl SemanticIndex {
         let dir = self.conductor_dir(repo_root).map(Path::to_path_buf);
         for root in &mut self.roots {
             if let (true, Some(dir)) = (root.regenerator.is_running(), dir.as_deref()) {
-                root.log(dir, history::Outcome::Aborted);
+                root.log_with(dir, history::Sources::Unknown, history::Outcome::Aborted);
             }
             root.regenerator.abort();
             root.run = Run::default();
@@ -363,6 +410,7 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
                 root: &at.subroot,
                 lang: at.lang.tag(),
                 trigger: Trigger::Cli,
+                cause: None,
                 waited: std::time::Duration::ZERO,
                 took: at_start.elapsed(),
                 outcome: match &outcome {
@@ -373,7 +421,8 @@ pub fn build_index(repo_root: &Path) -> anyhow::Result<()> {
                     Regenerated::Busy => history::Outcome::Busy,
                     Regenerated::Unavailable(why) => history::Outcome::Unavailable(why),
                 },
-                restarts: 0,
+                sources: history::Sources::Unknown,
+                changes_during: 0,
             },
         );
         match outcome {
@@ -657,7 +706,7 @@ mod tests {
         let log = std::fs::read_to_string(root.join(".conductor/index-history.log")).unwrap();
         assert_eq!(log.lines().count(), 1, "{log}");
         assert!(log.contains("trigger=cli"), "{log}");
-        assert!(log.contains("ok documents=2"), "{log}");
+        assert!(log.contains("result=ok documents=2"), "{log}");
 
         let store = load(root, root).expect("置いた索引を読めない");
         let rel = Path::new("main.go");

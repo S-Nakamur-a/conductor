@@ -5,6 +5,7 @@
 //! ピークが 2.3GiB なので、ルートごとに分けると同時に立つ本数の上限が黙って消える。
 
 use sheaf_core::{IndexSource, Producer, RustAnalyzer, ScipGo, ScipTypescript, Target};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -176,20 +177,23 @@ impl IndexRoot {
     /// 出自を言えない索引を読んでも、`Store` は結局すべてのファイルを「変更あり」と
     /// 扱って構文層に落とすだけなので、その場合は最初からロードしない。
     pub fn source(&self, dir: &Path) -> Option<IndexSource> {
-        let stem = self.stem();
-        let index = dir.join(format!("{stem}.scip"));
+        let index = dir.join(format!("{}.scip", self.stem()));
         if !index.is_file() {
             return None;
         }
-        let expected = sheaf_core::read_provenance(
-            &dir.join(format!("{stem}.hashes")),
-            &*self.lang.producer(),
-        )?;
         Some(IndexSource {
             index,
             subroot: self.subroot.clone(),
-            expected,
+            expected: self.provenance(dir)?,
         })
+    }
+
+    /// 置いてある索引の出自の表。索引ルート相対のパス -> 内容ハッシュ。
+    pub fn provenance(&self, dir: &Path) -> Option<HashMap<PathBuf, String>> {
+        sheaf_core::read_provenance(
+            &dir.join(format!("{}.hashes", self.stem())),
+            &*self.lang.producer(),
+        )
     }
 }
 

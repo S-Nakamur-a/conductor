@@ -171,14 +171,27 @@ Where the index lives and who builds it:
   **Repo ▸ Rebuild Code Index** is the manual repair. Rebuilding automatically was
   rejected: the index can only describe one tree, so bouncing between two worktrees
   would re-pay ~14s / 2.36GB each way — the per-switch cost that ruled out an LSP.
-- **Every generation appends one line to `.conductor/index-history.log`**
-  (`semantic_index/history.rs`): when, which root, what triggered it (`open` /
-  `change` / `manual` / `cli`), how long it waited for quiescence, how long the
-  producer ran, and the outcome. `busy`, `aborted`, and `stale-on-arrival
-  changes=N` (edits that landed mid-generation, so that index was old the moment
-  it was written) are the wasted-work markers. This is separate from
-  `index.<lang>.log`, which is the producer's own output and is overwritten each
-  run. The history file is capped at 512KB, oldest half dropped. Note that `Lock::acquire` distinguishes "someone
+- **Every generation appends one `key=value` line to
+  `.conductor/index-history.log`** (`semantic_index/history.rs`) — enough to
+  reconstruct both the causality and whether the work was worth doing:
+
+  ```
+  … lang=go root=services/api trigger=change cause=services/api/handler/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=+0~1-0
+  … lang=go root=services/api trigger=change cause=services/api/handler/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=none waste=no-source-change
+  ```
+
+  `cause` is the file that triggered it, so a line answers "opening *this* built
+  *that*". `sources` is the provenance table before the producer ran against the
+  one it wrote, **counted only over files of that root's language** — the table
+  lists every file in the root, so a `.md` edit would otherwise read as "the
+  sources moved" and hide a pointless rebuild. `sources=none` means the producer
+  re-derived the same index from the same inputs, and that is what `waste=` names.
+  The other waste markers are `stale-on-arrival(N)` (edits landed mid-generation,
+  so the index was old the moment it was written) and `discarded` (a worktree
+  switch threw the run away). A change to a file no producer reads writes no line
+  at all, because it starts no generation. Separate from `index.<lang>.log`, which
+  is the producer's own output and is overwritten each run. Capped at 512KB,
+  oldest half dropped. Note that `Lock::acquire` distinguishes "someone
   else is generating" from "the directory is not there yet" — collapsing the two
   made every first-ever `conductor index` answer `Busy`.
 - The index producers are external tools. sheaf's `tests/go_definition.rs` and
