@@ -57,12 +57,16 @@ Usage: conductor [REPO_PATH]
   REPO_PATH    Git repository to open (defaults to the current directory)
 
 Commands:
-  index        Build the SCIP code index once, into the main worktree's
-               .conductor/. Requires rust-analyzer on PATH and a Cargo.toml
-               at the repository root; other languages fall back to the
-               tree-sitter index. Takes ~13s on a repository this size.
-               conductor rebuilds the index itself once edits settle, so this
-               is only needed for the first one.
+  index        Build the SCIP code index for every index root in the tree,
+               into the main worktree's .conductor/. An index root is a
+               directory holding Cargo.toml (rust-analyzer), go.mod (scip-go)
+               or tsconfig.json (scip-typescript); the tool for each must be
+               on PATH. A root whose tool is missing is skipped and the rest
+               are still built. Takes ~14s on a repository this size, and a
+               large monorepo has enough roots to take minutes.
+               Running conductor normally indexes only the root holding the
+               file you open, and rebuilds it once edits settle, so this
+               command is for building everything up front.
 
   mcp-serve    Serve the review database to Claude Code over stdio (MCP).
                Started automatically by conductor and by the Claude Code

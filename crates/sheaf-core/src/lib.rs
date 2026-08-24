@@ -12,8 +12,8 @@ mod syntactic;
 
 pub use hash::blob_hash;
 pub use regenerate::{
-    Outcome, Producer, Regenerator, RustAnalyzer, ScipGo, ScipTypescript, Target, generate_once,
-    read_provenance, write_provenance,
+    Outcome, Producer, Regenerated, Regenerator, RustAnalyzer, ScipGo, ScipTypescript, Target,
+    generate_once, read_provenance, write_provenance,
 };
 pub use resolve::{definition_at, describe_at, implementations_at, references_at};
 pub use store::{IndexSource, Slot, Store};

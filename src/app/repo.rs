@@ -15,6 +15,11 @@ impl App {
         }
         // ストアを差し替える前に、離脱するリポジトリのビューを永続化する。
         self.persist_view_state();
+        // 走っている意味索引の生成は離脱するリポジトリのもの。repo.path を
+        // 差し替える前に止める。あとで止めると、そのリポジトリの成果物を
+        // 切り替え先の .conductor へ置きに行く。
+        let leaving = self.repo.path.clone();
+        self.code_nav.semantic.abort_regeneration(&leaving);
         self.repo.known_index = index;
         self.repo.path = self.repo.known[index].clone();
 
@@ -64,6 +69,10 @@ impl App {
         // worktree切り替えは on_worktree_changed を経由するが、リポジトリの
         // 切り替えは決してそこを通らない。
         self.start_symbol_index_build();
+        // 意味索引も同じ理由で照準し直す。worktree 切替は on_worktree_changed を
+        // 通るが、リポジトリの切替はそこを通らない。読み直さないと、離れた
+        // リポジトリのストアを抱えたまま構文層に落ち続ける。
+        self.start_semantic_index_load();
         self.refresh_reviews();
         self.terminal.active_claude_session = None;
         self.terminal.active_shell_session = None;

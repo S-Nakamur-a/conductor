@@ -690,7 +690,10 @@ impl App {
         };
         // カーソル行は1始まり（file_scroll は0始まり）。
         let cursor_line = self.viewer_state.content.file_scroll + 1;
-        let defs = self.code_nav.index.find_definitions(symbol);
+        let defs = self
+            .code_nav
+            .index
+            .find_definitions(symbol, std::path::Path::new(cur_file));
         defs.iter().any(|d| {
             d.file_path == *cur_file && (d.line as isize - cursor_line as isize).unsigned_abs() <= 2
         })
@@ -1004,16 +1007,50 @@ impl App {
     /// パースは実測 67ms なのでフレームに置かない。読み終わるまでの間に選択中の
     /// worktree が動いていたら [`Slot::accept`] が取り込みを拒むので、その場合は
     /// [`Self::poll_semantic_index`] が読み直しを起こす。
+    /// いま読んでいるファイルの索引ルートを作り直させる。
+    ///
+    /// 索引はファイル単位で鮮度を持つので、別のツリーで生成された索引は、
+    /// そのツリーと内容が違うファイルについてだけ答えなくなる。読むだけの
+    /// worktree では編集が起きず作り直しの引き金が引かれないので、手で頼む口が要る。
+    pub(super) fn cmd_rebuild_code_index(&mut self) {
+        if self.code_nav.semantic.rebuild_reading() {
+            self.set_status_info("Rebuilding the code index for this file…".to_string());
+        } else {
+            self.set_status(
+                "No indexable file open".to_string(),
+                crate::app::StatusLevel::Warning,
+            );
+        }
+    }
+
+    /// 索引ルートを調べ直し、置いてある索引を読む。どちらもツリーを歩くので背景で。
+    ///
+    /// 読んでいるファイルを渡すのは、そのファイルの索引ルートだけは索引が無くても
+    /// 鍵を出しておくため。渡さないと、まだ索引の無いルートは鍵が出ず、生成が
+    /// 始まらない。
     pub fn start_semantic_index_load(&mut self) {
         if self.bg.semantic_index.is_running() {
             return;
         }
         let repo_root = self.repo.path.clone();
         let tree_root = self.selected_worktree_path();
+        let reading = self.viewer_state.content.current_file.clone();
+        // 鍵を失ったルートを名指しで渡す。渡さないと、調査に選ばれないまま
+        // 「鍵が無い」と言い続け、調査が毎フレーム走る。
+        let wanted = self
+            .code_nav
+            .semantic
+            .needs_survey(&tree_root)
+            .unwrap_or_default();
         self.code_nav.semantic.invalidate_if_retargeted(&tree_root);
         self.bg.semantic_index.start(move |tx| {
-            let store = crate::semantic_index::load(&repo_root, &tree_root);
-            let _ = tx.send((tree_root, store));
+            let (survey, store) = crate::semantic_index::survey_and_load(
+                &repo_root,
+                &tree_root,
+                reading.as_deref().map(std::path::Path::new),
+                &wanted,
+            );
+            let _ = tx.send((tree_root, survey, store));
         });
     }
 
@@ -1157,12 +1194,27 @@ impl App {
         }
     }
 
+    /// いま Viewer で読んでいるファイル (worktree からの相対パス)。開いていなければ空。
+    ///
+    /// 名前でしか引けない検索の絞り込みに要る。空のパスは分類できないので絞らない。
+    pub fn reading_file(&self) -> &str {
+        self.viewer_state
+            .content
+            .current_file
+            .as_deref()
+            .unwrap_or("")
+    }
+
     /// シンボルインデックス中にそのシンボルの定義があるかを調べる。
     pub fn can_jump_to_symbol(&self, name: &str) -> bool {
         if !self.code_nav.index.is_available() {
             return false;
         }
-        !self.code_nav.index.find_definitions(name).is_empty()
+        !self
+            .code_nav
+            .index
+            .find_definitions(name, std::path::Path::new(self.reading_file()))
+            .is_empty()
     }
 
     /// ビューアに表示中の行についてシンボルヒントを構築する。

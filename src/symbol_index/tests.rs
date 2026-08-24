@@ -16,7 +16,7 @@ fn test_symbol_index_new() {
 #[test]
 fn test_find_definitions_empty() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
-    let results = idx.find_definitions("foo");
+    let results = idx.find_definitions("foo", std::path::Path::new(""));
     assert!(results.is_empty());
 }
 
@@ -121,7 +121,7 @@ fn test_find_definitions_filters_fields() {
         ];
         data.available = true;
     }
-    let defs = idx.find_definitions("Foo");
+    let defs = idx.find_definitions("Foo", std::path::Path::new(""));
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].kind, SymbolKind::Struct);
 }
@@ -291,8 +291,14 @@ fn rerooting_replaces_what_the_index_answers_for() {
 
     let idx = SymbolIndex::new(a.clone());
     idx.build().unwrap();
-    assert!(!idx.find_definitions("only_in_a").is_empty());
-    assert!(idx.find_definitions("only_in_b").is_empty());
+    assert!(
+        !idx.find_definitions("only_in_a", std::path::Path::new(""))
+            .is_empty()
+    );
+    assert!(
+        idx.find_definitions("only_in_b", std::path::Path::new(""))
+            .is_empty()
+    );
 
     idx.set_root(b.clone());
     // 再構築が反映されるまで、インデックスはたった今離れたツリーを使って
@@ -301,12 +307,19 @@ fn rerooting_replaces_what_the_index_answers_for() {
         !idx.is_available(),
         "re-rooting must invalidate until the rebuild lands"
     );
-    assert!(idx.find_definitions("only_in_a").is_empty());
+    assert!(
+        idx.find_definitions("only_in_a", std::path::Path::new(""))
+            .is_empty()
+    );
 
     idx.build().unwrap();
-    assert!(!idx.find_definitions("only_in_b").is_empty());
     assert!(
-        idx.find_definitions("only_in_a").is_empty(),
+        !idx.find_definitions("only_in_b", std::path::Path::new(""))
+            .is_empty()
+    );
+    assert!(
+        idx.find_definitions("only_in_a", std::path::Path::new(""))
+            .is_empty(),
         "symbols from the previous root must not survive"
     );
 
@@ -325,7 +338,10 @@ fn rerooting_to_the_same_path_is_a_no_op() {
 
     idx.set_root(a.clone());
     assert!(idx.is_available(), "same root must not invalidate");
-    assert!(!idx.find_definitions("keep").is_empty());
+    assert!(
+        !idx.find_definitions("keep", std::path::Path::new(""))
+            .is_empty()
+    );
 
     let _ = std::fs::remove_dir_all(&a);
 }
@@ -367,7 +383,8 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
         "a build stamped with the previous generation must publish nothing"
     );
     assert!(
-        idx.find_definitions("from_old_tree").is_empty(),
+        idx.find_definitions("from_old_tree", std::path::Path::new(""))
+            .is_empty(),
         "stale symbols leaked into the re-rooted index"
     );
     assert!(
@@ -377,7 +394,10 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
 
     // re-root の *後* に始まったビルドは通常どおり公開される。
     idx.build().unwrap();
-    assert!(!idx.find_definitions("from_new_tree").is_empty());
+    assert!(
+        !idx.find_definitions("from_new_tree", std::path::Path::new(""))
+            .is_empty()
+    );
 
     let _ = std::fs::remove_dir_all(&old);
     let _ = std::fs::remove_dir_all(&new);

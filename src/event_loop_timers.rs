@@ -239,37 +239,64 @@ pub(crate) fn poll_watchers(
 fn tick_semantic_regeneration(app: &mut App) {
     let repo_root = app.repo.path.clone();
     let tree_root = app.selected_worktree_path();
-    let Some(outcome) = app
+    // 索引ルートの列挙も内容の鍵もツリーを歩くので、UI スレッドではやらない。
+    // 要るときだけ背景に回して、届くまでは Loading のまま持ち越す。
+    if app.code_nav.semantic.needs_survey(&tree_root).is_some() {
+        app.start_semantic_index_load();
+    }
+    // 読んでいるファイルの索引ルートに索引が無ければ、ここで作りに行かせる。
+    // 索引ルートは実在するリポジトリで 109 本になるので、まとめては作らない。
+    if let Some(rel) = app.viewer_state.content.current_file.clone() {
+        let reading =
+            app.code_nav
+                .semantic
+                .note_open(std::path::Path::new(&rel), &repo_root, &tree_root);
+        // 索引がこのファイルを説明できないと、黙って構文層に落ちる。言わないと
+        // 「ジャンプが甘い」としか見えないので、そのファイルを開いたときに 1 度だけ出す。
+        // 内容が動いただけなら作りに行っている (Building) ので、ここには来ない。
+        if reading == crate::semantic_index::Reading::Stale {
+            app.set_status(
+                "Code index does not cover this file — Repo ▸ Rebuild Code Index".to_string(),
+                crate::app::StatusLevel::Warning,
+            );
+        }
+    }
+    let Some(finished) = app
         .code_nav
         .semantic
         .tick_regeneration(&repo_root, &tree_root)
     else {
         return;
     };
-    match outcome {
-        // 生成側が投入済みの Store をそのまま受け取る。読み直すと 67ms のパースを
-        // もう一度払うことになる。生成中に worktree が動いていれば accept が拒むので、
-        // そのときだけ正しい向きで読み直す。
-        crate::semantic_index::Regenerated::Ready { root, store } => {
-            log::info!("semantic index regenerated: {} documents", store.len());
+    let manual = finished.manual;
+    match finished.outcome {
+        // 1 世代が作るのは索引ルート 1 本ぶんで、画面が引くのは全ルートを畳んだもの。
+        // 受け取った Store をそのまま入れると、他のルートの索引が黙って落ちる。
+        // 成果物はもうディスクに置かれているので、読み直しに任せる。
+        crate::semantic_index::Regenerated::Ready { documents } => {
+            log::info!("semantic index regenerated: {documents} documents");
             // 索引が無い状態から埋まったときだけ知らせる。作り直しは編集が
             // 収まるたびに走るので、毎回出すと status がそれで埋まる。
-            let was_absent = app.code_nav.semantic.store(&tree_root).is_none();
-            let documents = store.len();
-            if !app.code_nav.semantic.accept(&root, &tree_root, Some(store)) {
-                app.start_semantic_index_load();
-            } else if was_absent {
+            // 手で頼まれたときは必ず知らせる。押した本人が結果を待っている。
+            if manual || app.code_nav.semantic.store(&tree_root).is_none() {
                 let unit = if documents == 1 { "file" } else { "files" };
                 app.set_status(
                     format!("Code index ready ({documents} {unit})"),
                     crate::app::StatusLevel::Success,
                 );
             }
+            app.start_semantic_index_load();
         }
         // 待機に戻すのは sheaf 側がやる。ここで作り直しを起こすと二重に走る。
         crate::semantic_index::Regenerated::Busy => {}
         crate::semantic_index::Regenerated::Failed(why) => {
             log::warn!("semantic index regeneration failed: {why}");
+            if manual {
+                app.set_status(
+                    format!("Could not rebuild the code index: {why}"),
+                    crate::app::StatusLevel::Error,
+                );
+            }
         }
         crate::semantic_index::Regenerated::Unavailable(why) => {
             log::info!("semantic index disabled: {why}");

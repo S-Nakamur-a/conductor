@@ -68,6 +68,7 @@ impl App {
             CommandId::OpenPullRequest => self.open_pr_in_browser(),
             CommandId::UpdateAndRestart => self.cmd_update_and_restart(),
             CommandId::CheckForUpdate => self.cmd_check_for_update(),
+            CommandId::RebuildCodeIndex => self.cmd_rebuild_code_index(),
             CommandId::ToggleHighContrast => self.cmd_toggle_high_contrast(),
             CommandId::SearchFullText => self.cmd_search_full_text(),
             CommandId::Quit => self.should_quit = true,

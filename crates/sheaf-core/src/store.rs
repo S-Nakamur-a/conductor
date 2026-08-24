@@ -684,7 +684,13 @@ impl Store {
 
     /// そのファイルが索引生成時の内容のままか。読めなければ「そのままではない」とする。
     /// 出自を申告されていないファイルもここで落ちる。
-    fn is_current(&self, rel: &Path) -> bool {
+    /// そのファイルが、索引を作った時点の内容のままか。
+    ///
+    /// `false` はそのファイルについて `Exact` が一切返らないことを意味する。
+    /// 索引に無いファイルも `false` になる (どちらも「索引はこの内容を説明できない」で、
+    /// 呼び出し側にとっては同じ)。組み込む側がこれを見るのは、索引が古いことを
+    /// 画面に出すため。出さないと、ジャンプが構文層に落ちたことに気づけない。
+    pub fn is_current(&self, rel: &Path) -> bool {
         let Some(recorded) = self.docs.get(rel).and_then(|e| e.source_hash.as_ref()) else {
             return false;
         };

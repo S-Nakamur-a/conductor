@@ -106,6 +106,7 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::SwitchRepo, "Switch Repository…"),
             SEP,
             cmd(CommandId::RefreshDiff, "Refresh Diff"),
+            cmd(CommandId::RebuildCodeIndex, "Rebuild Code Index"),
             SEP,
             cmd(CommandId::Quit, "Quit Conductor"),
         ],

@@ -46,14 +46,14 @@ pub struct Target {
     pub lock: PathBuf,
 }
 
-/// 生成が終わったときに返るもの。
+/// [`generate_once`] が返すもの。作った索引そのものが付く。
 ///
 /// Ready だけが大きいが、この enum が動くのは生成 1 回につき 1 度チャネルを
 /// 渡るときだけ。箱に入れると確保が 1 つ増え、受け取る側が外す手間も増える。
 #[allow(clippy::large_enum_variant)]
 pub enum Outcome {
     /// 新しい索引を投入できた。
-    Ready { root: PathBuf, store: Store },
+    Ready { store: Store },
     /// 生成に失敗した。古い索引はそのまま使い続ける。
     Failed(String),
     /// ほかが索引を作っていてロックを取れなかった。
@@ -66,12 +66,44 @@ pub enum Outcome {
     Unavailable(String),
 }
 
+/// [`Regenerator::tick`] が返すもの。[`Outcome`] と違って索引そのものは付かない。
+///
+/// 1 世代が作るのは索引ルート 1 本ぶんで、読み手が引くのは全ルートを畳んだもの。
+/// 1 本ぶんの [`Store`] をそのまま投入すると、他のルートの索引が黙って落ちて、
+/// 以後そこは構文層に落ち続ける。成果物はディスクに置いてあるので、受け取った側は
+/// 読み直せばよい。渡せるようにしておくと、パース時間を惜しんで投入する書き方が
+/// いつでも書けてしまうので、型の側で渡さない。
+pub enum Regenerated {
+    /// 新しい索引を置いた。読み直すと反映される。
+    Ready {
+        documents: usize,
+    },
+    Failed(String),
+    Busy,
+    Unavailable(String),
+}
+
+impl From<Outcome> for Regenerated {
+    fn from(outcome: Outcome) -> Self {
+        match outcome {
+            Outcome::Ready { store } => Regenerated::Ready {
+                documents: store.len(),
+            },
+            Outcome::Failed(why) => Regenerated::Failed(why),
+            Outcome::Busy => Regenerated::Busy,
+            Outcome::Unavailable(why) => Regenerated::Unavailable(why),
+        }
+    }
+}
+
 enum State {
     Idle,
     /// 変更を受けた。`last_change` から [`QUIESCENCE`] 静かなら生成を始める。
     Pending {
         last_change: Instant,
     },
+    /// 待つ理由が無い。次の [`Regenerator::tick`] で始める。
+    Due,
     Running,
 }
 
@@ -121,9 +153,9 @@ impl Regenerator {
         matches!(self.state, State::Running)
     }
 
-    /// 静穏時間の計測中か。
+    /// 始まるのを待っているか。静穏時間の計測中か、次の tick で始まる状態。
     pub fn is_pending(&self) -> bool {
-        matches!(self.state, State::Pending { .. })
+        matches!(self.state, State::Pending { .. } | State::Due)
     }
 
     /// 変更を待たずに 1 本作らせる。索引がまだ 1 本も無いときの口。
@@ -141,6 +173,18 @@ impl Regenerator {
         };
     }
 
+    /// 静穏時間を待たずに始める。手で頼まれたぶんの口。
+    ///
+    /// [`request`](Self::request) が待つのは起動と生成が重なるのを避けるためで、
+    /// 押した本人が結果を待っている場面には当たらない。待つと、押してから 3 秒
+    /// 何も起きない。
+    pub fn request_now(&mut self) {
+        if self.disabled || matches!(self.state, State::Running) {
+            return;
+        }
+        self.state = State::Due;
+    }
+
     /// `root` のツリーの中でファイルが変わった。
     ///
     /// 索引に載らないファイルは数えない。ビルド成果物は数秒おきに書き換わるので、
@@ -156,6 +200,8 @@ impl Regenerator {
         }
         match self.state {
             State::Running => self.restart = true,
+            // 手で頼まれたぶんを追い越さない。待たせると押した本人が待つことになる。
+            State::Due => {}
             _ => {
                 self.state = State::Pending {
                     last_change: Instant::now(),
@@ -202,7 +248,7 @@ impl Regenerator {
     ///
     /// ここでやるのはチャネルを覗くのと時刻の比較だけ。索引の読み込みと
     /// パース (実測 67ms) はワーカースレッドの側に置いてある。
-    pub fn tick(&mut self, target: &Target) -> Option<Outcome> {
+    pub fn tick(&mut self, target: &Target) -> Option<Regenerated> {
         if let Some(rx) = &self.rx {
             match rx.try_recv() {
                 Ok(outcome) => {
@@ -223,7 +269,7 @@ impl Regenerator {
                     if let Outcome::Unavailable(_) = outcome {
                         self.disabled = true;
                     }
-                    return Some(outcome);
+                    return Some(outcome.into());
                 }
                 Err(mpsc::TryRecvError::Empty) => return None,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -232,9 +278,12 @@ impl Regenerator {
                 }
             }
         }
-        if let State::Pending { last_change } = self.state
-            && last_change.elapsed() >= QUIESCENCE
-        {
+        let due = match self.state {
+            State::Pending { last_change } => last_change.elapsed() >= QUIESCENCE,
+            State::Due => true,
+            _ => false,
+        };
+        if due {
             self.start(target);
         }
         None

@@ -105,10 +105,7 @@ impl Job {
             return Outcome::Failed(format!("出自を書けない: {e}"));
         }
 
-        Outcome::Ready {
-            root: self.target.root.clone(),
-            store,
-        }
+        Outcome::Ready { store }
     }
 
     fn spawn_and_wait(&self, out: &Path) -> Result<(), Failure> {

@@ -153,18 +153,18 @@ impl App {
 
         // 意味索引 (SCIP)。読んでいる間に worktree が動いていたら取り込まれないので、
         // 拒まれたことを見て読み直す。見ないと、新しいツリーの索引が二度と読まれない。
-        if let Some((requested, store)) = self.bg.semantic_index.poll() {
+        if let Some((requested, survey, store)) = self.bg.semantic_index.poll() {
             let current = self.selected_worktree_path();
             let documents = store.as_ref().map(|s| s.len());
+            self.code_nav.semantic.install(survey, &current);
             if !self.code_nav.semantic.accept(&requested, &current, store) {
                 self.start_semantic_index_load();
             } else if let Some(n) = documents {
                 log::info!("Semantic index loaded: {n} documents");
             } else {
-                // 索引がまだ無い。作らせないと、何か編集するまで作り直しの
-                // 引き金が引かれないまま構文層に落ち続ける。
-                self.code_nav.semantic.request_build();
-                log::info!("No semantic index yet; requested a build");
+                // 索引はまだ無い。読んでいるファイルの索引ルートに対して
+                // SemanticIndex::note_open が作らせる。
+                log::info!("No semantic index yet");
             }
         }
 

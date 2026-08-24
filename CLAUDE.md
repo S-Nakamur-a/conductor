@@ -121,18 +121,87 @@ Two SCIP traps that typed access will not save you from:
   silently answer `Unknown`. Producers that omit it fall to
   `kind::from_declaration`.
 
-Where it lives: `<main worktree>/.conductor/{index.scip,index.hashes,index.log,
-generate.lock}`. Linked worktrees have no `.conductor/`, so `semantic_index`
-walks `git2::Repository::commondir()` to the main one — the same move
+Where it lives: `<main worktree>/.conductor/`, one set of
+`index.<lang>[.<root>].<key>.{scip,hashes,log}` per index root *per tree
+content*, plus a single `generate.lock` and `index-history.log`. Linked
+worktrees have no `.conductor/`, so `semantic_index` walks
+`git2::Repository::commondir()` to the main one — the same move
 `mcp_serve::resolve` makes for the review DB. The lock is per repository on
-purpose: one producer peaks at 2.36GB, so the cap must not split per worktree.
+purpose: one producer peaks at 2.36GB, so the cap must not split per index root
+or per worktree. The names must, though, or the second generation overwrites the
+first.
 
-- **Generation is Rust only; reading is not.** `RustAnalyzer` is the sole
-  producer conductor runs, gated on a root `Cargo.toml`, so a Go or TypeScript
-  repository still answers entirely through tree-sitter. sheaf-core itself is
-  producer-independent and verified against real `scip-go` / `scip-typescript`
-  indexes; what is missing is the host side — choosing a producer per tree and
-  holding several index roots at once.
+- **The producer is chosen per index root** (`semantic_index/roots.rs`) by the
+  marker naming one: `Cargo.toml` → `RustAnalyzer`, `go.mod` → `ScipGo`,
+  `tsconfig.json` → `ScipTypescript`. A tree with no marker is not indexed:
+  pointing a producer at a tree it cannot recognise is worse than not running it,
+  because rust-analyzer and scip-go both write an empty index and exit 0. Roots
+  regenerate independently — a missing `scip-go` must not cost the Rust index.
+  Enumeration honours `.gitignore` and skips `node_modules` / `vendor`; a nested
+  `Cargo.toml` is a workspace member and *not* a root, nested `go.mod` /
+  `tsconfig.json` are module boundaries and *are*.
+- **Only the root you are reading gets built.** A real monorepo has 109 roots
+  (75 `tsconfig.json`, 19 `Cargo.toml`, 15 `go.mod`); building all of them takes
+  minutes, and again every time edits go quiet. `note_open` requests exactly the
+  root owning the file in the Viewer, `note_change` the root owning the edit, and
+  `conductor index` is the way to build every root at once. That is why
+  `note_open` is called every frame from `tick_semantic_regeneration` rather than
+  from the 12 places that open a file — missing one would be silent.
+- **Generations are keyed by content, which is what makes worktrees cheap to move
+  between.** The key folds the `(path, blob hash)` table of the files *that
+  root's producer reads* — not every file under it, or swapping a `.png` would
+  rename the artifact and rebuild an identical index. `IndexRoot::fold` is the
+  single place that filter lives, because the same key has to come out of a tree
+  walk and out of a provenance table; if the two disagreed, every generation
+  would write a name the next read cannot find. Four are kept per root (14.5MB
+  each here) and `prune` drops the rest by mtime, along with any keyless artifact
+  an older conductor left behind.
+- **Computing it walks the tree, so it never happens on the UI thread.**
+  Enumerating the roots is 149ms and the heaviest single key 110ms, measured on
+  that monorepo. `survey()` does both on the same worker that loads the index and
+  `SemanticIndex::install` takes the result; until it lands, `note_open` answers
+  `Reading::Loading` rather than answering from the previous tree's roots.
+  `survey` only keys the roots it has a reason to — the one owning the file being
+  read, the ones with artifacts on disk, and the ones `needs_survey` names —
+  because keying all 109 costs 0.6s. `needs_survey` returning the roots *by name*
+  is load-bearing: a keyless root the survey did not pick would keep asking to be
+  surveyed, every frame.
+- **What is already on disk is not rebuilt, and staleness heals itself.**
+  `note_open` asks `has_generation` for the current key and `tick_regeneration`
+  re-checks it before starting the producer, so an edit that lands the tree back
+  on already-indexed content writes `result=reused took=0.0s` and starts nothing.
+  Reading content with no index yet answers `Reading::Building` and starts one —
+  safe to do automatically only because generations are keyed, so bouncing
+  between two worktrees pays the ~14s / 2.36GB once per content and reuses it
+  after. `Reading::Stale` is the narrow case regenerating will not fix: the index
+  describes this exact content yet does not cover the open file.
+  **Repo ▸ Rebuild Code Index** skips the 3s quiescence, since the person who
+  pressed it is waiting. A root whose key is stale (`note_change` clears it) does
+  not generate until the survey refreshes it, or the index would be written under
+  the name of content it no longer describes.
+- **Reading falls back to the newest generation when no key matches**
+  (`IndexRoot::source`). Requiring an exact match would make one keystroke hide
+  the whole index, when per-file provenance already keeps the untouched files
+  answering `Exact`.
+- **Every generation appends one `key=value` line to `index-history.log`**
+  (`semantic_index/history.rs`) — enough to reconstruct both the causality and
+  whether the work was worth doing:
+
+  ```
+  … lang=go root=services/api trigger=change cause=services/api/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=+0~1-0
+  … lang=rust root=. trigger=change cause=src/lib.rs waited=0.2s took=0.0s result=reused
+  ```
+
+  `cause` is the file that triggered it, so a line answers "opening *this* built
+  *that*". `sources` compares the provenance table before the producer ran
+  against the one it wrote, **counted only over that root's language** — the
+  table lists every file in the root, so a `.md` edit would otherwise read as
+  "the sources moved" and hide a pointless rebuild. `sources=none` earns
+  `waste=no-source-change`; the other markers are `stale-on-arrival(N)` (edits
+  landed mid-generation, so the index was old when written) and `discarded` (a
+  worktree switch threw the run away). A change to a file no producer reads
+  writes no line at all. Capped at 512KB, oldest half dropped. Separate from the
+  producer's own `index.<lang>.<key>.log`, overwritten each run.
 - `Regenerator` rebuilds when edits go quiet for 3s, **ignoring gitignored
   paths** — without that, `target/` churn would reset the quiescence timer
   forever. That is why `FsEvent::Changed` carries a path. `Lock::acquire`
@@ -145,6 +214,18 @@ purpose: one producer peaks at 2.36GB, so the cap must not split per worktree.
 
 sheaf-core's comments, test names, and error messages are Japanese, and its
 public API deliberately exposes no `protobuf` / `scip` types.
+
+**A name-only answer never crosses languages.** `SymbolIndex::find_definitions`
+takes the file being read and drops candidates whose language differs
+(`semantic_index::same_language`; an unclassifiable extension is kept, because
+dropping it would silently remove answers that work today). Without it, hovering
+`rollbar` in a Go file answered with a TypeScript `const rollbar = useRollbar()`
+and printed its declaration as if it were the answer — measured on a real
+monorepo, and the symptom that started this work. Note what the index alone does
+*not* fix: a third-party package has no definition inside the tree, so those
+positions fall through to this layer no matter how good the index is. The right
+answer there is silence (`No definition indexed for 'rollbar'`), which is what
+the filter produces.
 
 ## Architecture
 
@@ -217,7 +298,7 @@ Each file renders one panel or overlay popup. `common.rs` has shared rendering h
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
 - **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
-- **Code index:** `<main worktree>/.conductor/index.scip` plus `index.hashes` (provenance), `index.log`, `generate.lock` — one per repository, shared by every worktree
+- **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
 ## Conventions
