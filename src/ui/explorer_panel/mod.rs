@@ -50,7 +50,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         == crate::viewer::ExplorerBottomView::DiffList
         && app.diff_state.error.is_some();
     let banner_rows = diff_list::diff_list_banner_rows(shows_error_banner);
-    let diff_inner_height = (chunks[1].height.saturating_sub(2) as usize).saturating_sub(banner_rows);
+    let diff_inner_height =
+        (chunks[1].height.saturating_sub(2) as usize).saturating_sub(banner_rows);
     app.viewer_state.explorer.explorer_tree_height = tree_inner_height.max(1);
     app.viewer_state.explorer.explorer_diff_list_height = diff_inner_height.max(1);
     app.viewer_state.explorer.explorer_diff_banner_rows = banner_rows;

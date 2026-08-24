@@ -346,7 +346,12 @@ pub fn persist_layout_proportions(
         "explorer_width_pct",
         &explorer_width_pct.to_string(),
     );
-    let updated = upsert_section_kv(&updated, "layout", "viewer_width_pct", &viewer_width_pct.to_string());
+    let updated = upsert_section_kv(
+        &updated,
+        "layout",
+        "viewer_width_pct",
+        &viewer_width_pct.to_string(),
+    );
     let updated = upsert_section_kv(
         &updated,
         "layout",

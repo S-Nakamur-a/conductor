@@ -4,7 +4,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::git_engine;

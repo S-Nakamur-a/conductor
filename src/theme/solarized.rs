@@ -63,7 +63,6 @@ impl Theme {
 
             code_bg: Color::Rgb(0, 33, 42), // base03、base より一段暗い
             code_fg: Color::Rgb(211, 54, 130), // magenta
-
         }
     }
 
@@ -77,13 +76,13 @@ impl Theme {
         Self {
             name: "solarized-light",
             light: true,
-            fg: Color::Rgb(101, 123, 131),     // base00 — 本文テキスト
-            accent: Color::Rgb(38, 139, 210),  // blue
-            muted: Color::Rgb(147, 161, 161),  // base1 — 区切り線用の中間グレー
-            success: Color::Rgb(133, 153, 0),  // green
-            error: Color::Rgb(220, 50, 47),    // red
-            warning: Color::Rgb(181, 137, 0),  // yellow
-            info: Color::Rgb(42, 161, 152),    // cyan
+            fg: Color::Rgb(101, 123, 131),    // base00 — 本文テキスト
+            accent: Color::Rgb(38, 139, 210), // blue
+            muted: Color::Rgb(147, 161, 161), // base1 — 区切り線用の中間グレー
+            success: Color::Rgb(133, 153, 0), // green
+            error: Color::Rgb(220, 50, 47),   // red
+            warning: Color::Rgb(181, 137, 0), // yellow
+            info: Color::Rgb(42, 161, 152),   // cyan
 
             diff_add: Color::Rgb(133, 153, 0),
             diff_add_bg: Color::Rgb(232, 244, 210),
@@ -93,12 +92,12 @@ impl Theme {
             diff_del_bg_emphasis: Color::Rgb(248, 206, 200),
             diff_section_header: Color::Rgb(147, 161, 161), // base1
 
-            border_focused: Color::Rgb(38, 139, 210),  // blue
+            border_focused: Color::Rgb(38, 139, 210), // blue
             border_unfocused: Color::Rgb(147, 161, 161), // base1
             border_secondary: Color::Rgb(131, 148, 150), // base0
 
-            selected_bg: Color::Rgb(38, 139, 210),   // blue
-            selected_fg: Color::Rgb(253, 246, 227),  // base3(最も明るい)
+            selected_bg: Color::Rgb(38, 139, 210),  // blue
+            selected_fg: Color::Rgb(253, 246, 227), // base3(最も明るい)
             selected_bg_inactive: Color::Rgb(238, 232, 213), // base2
             selected_fg_inactive: Color::Rgb(101, 123, 131), // base00
 
@@ -110,12 +109,12 @@ impl Theme {
             gutter_hover_fg: Color::Rgb(131, 148, 150),   // base0
             gutter_hover_bg: Color::Rgb(245, 238, 218),   // base3 と base2 の中間
 
-            hint: Color::Rgb(131, 148, 150),             // base0
-            search_match_fg: Color::Rgb(181, 137, 0),    // yellow
-            search_match_bg: Color::Rgb(253, 240, 184),  // 明るい黄色
+            hint: Color::Rgb(131, 148, 150),              // base0
+            search_match_fg: Color::Rgb(181, 137, 0),     // yellow
+            search_match_bg: Color::Rgb(253, 240, 184),   // 明るい黄色
             search_current_fg: Color::Rgb(253, 246, 227), // base3
 
-            waiting_primary: Color::Rgb(203, 75, 22),   // orange
+            waiting_primary: Color::Rgb(203, 75, 22), // orange
             waiting_secondary: Color::Rgb(160, 60, 18),
 
             titlebar_bg: Color::Rgb(238, 232, 213), // base2
@@ -130,9 +129,8 @@ impl Theme {
             comment_user_bg: Color::Rgb(216, 236, 232),    // teal がかった明るい色
             reply_text: Color::Rgb(88, 110, 117),          // base01
 
-            code_bg: Color::Rgb(228, 222, 200),  // base2 よりわずかに暗い
-            code_fg: Color::Rgb(211, 54, 130),   // magenta
-
+            code_bg: Color::Rgb(228, 222, 200), // base2 よりわずかに暗い
+            code_fg: Color::Rgb(211, 54, 130),  // magenta
         }
     }
 }

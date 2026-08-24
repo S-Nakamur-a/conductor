@@ -1,0 +1,9 @@
+#!/bin/sh
+# make hooks (git config core.hooksPath .githooks) で有効化する
+set -e
+
+if ! cargo fmt --all -- --check; then
+	echo "" >&2
+	echo "pre-commit: rustfmt 未適用のファイルがあります。'cargo fmt --all' を実行してから commit してください。" >&2
+	exit 1
+fi

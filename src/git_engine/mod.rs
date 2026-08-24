@@ -6,17 +6,17 @@
 //! 機能は責務ごとに兄弟サブモジュールへ分割されており、いずれも共有の
 //! [GitEngine] ハンドルにメソッドを実装している:
 //!
-//! - [worktree_ops]: worktree/ブランチの列挙とステータススナップショット
-//! - [worktree_create]: worktree の作成(ベース ref、リモートブランチ、
+//! - `worktree_ops`: worktree/ブランチの列挙とステータススナップショット
+//! - `worktree_create`: worktree の作成(ベース ref、リモートブランチ、
 //!   または fetch 済みブランチから)とベース ref の鮮度確認
-//! - [worktree_delete]: ブランチ削除と worktree の削除/整理
-//! - [grab]: wt grab/wt ungrab のブランチ入れ替えワークフロー
-//! - [branch_lineage]: 親/派生ブランチの検出と PR URL の構築
-//! - [fetch]: git fetch へのシェルアウト
-//! - [merge]: pull、main へのマージ、origin へのハードリセット
-//! - [cherry_pick]: コミットの一覧取得と worktree への cherry-pick
-//! - [recently_modified]: worktree の最近変更されたファイルパス
-//! - [status_map]: Explorer のファイルツリー(薄暗い表示)と Changed
+//! - `worktree_delete`: ブランチ削除と worktree の削除/整理
+//! - `grab`: wt grab/wt ungrab のブランチ入れ替えワークフロー
+//! - `branch_lineage`: 親/派生ブランチの検出と PR URL の構築
+//! - `fetch`: git fetch へのシェルアウト
+//! - `merge`: pull、main へのマージ、origin へのハードリセット
+//! - `cherry_pick`: コミットの一覧取得と worktree への cherry-pick
+//! - `recently_modified`: worktree の最近変更されたファイルパス
+//! - `status_map`: Explorer のファイルツリー(薄暗い表示)と Changed
 //!   files 一覧(ステージ状態の色分け)で共有される、パス -> git status
 //!   のルックアップ
 

@@ -5,7 +5,10 @@
 //! 答えの対象に入ってくる」という形で誤答の経路を作るので、そこを重点的に見る。
 
 use scip::types::{Document, Index, Metadata, Occurrence, SymbolRole, ToolInfo};
-use sheaf_core::{Definition, IndexSource, Location, Span, Store, SyntacticAnswer, SyntacticLayer, Token, blob_hash, definition_at};
+use sheaf_core::{
+    Definition, IndexSource, Location, Span, Store, SyntacticAnswer, SyntacticLayer, Token,
+    blob_hash, definition_at,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -130,7 +133,11 @@ fn 索引ルートが2つあっても同じstoreから両方引ける() {
     // api/ と api/nested/ が別々の索引ルート。入れ子は実在する形で、
     // 実測した対象では go.mod が 8 個あり、うち 1 つが別の索引ルートの下にいた。
     let outer_hash = put(&root, "api/main.go", "package main\n\nfunc Outer() {}\n");
-    let inner_hash = put(&root, "api/nested/lib.go", "package nested\n\nfunc Inner() {}\n");
+    let inner_hash = put(
+        &root,
+        "api/nested/lib.go",
+        "package nested\n\nfunc Inner() {}\n",
+    );
 
     let outer_index = root.join("outer.scip");
     write_index(
@@ -152,7 +159,11 @@ fn 索引ルートが2つあっても同じstoreから両方引ける() {
     let store = Store::load(
         &[
             source(&outer_index, "api", vec![provenance("main.go", outer_hash)]),
-            source(&inner_index, "api/nested", vec![provenance("lib.go", inner_hash)]),
+            source(
+                &inner_index,
+                "api/nested",
+                vec![provenance("lib.go", inner_hash)],
+            ),
         ],
         &root,
     )
@@ -189,8 +200,16 @@ fn 同じ符号が別の索引にあっても混ざらない() {
     // 座標に索引ルートの情報が入らないので、別の索引ルートの同じ相対パスの
     // ファイルが同じ符号を持つ。またいで突き合わせると誤った定義を Exact で返す。
     let root = workdir("same-symbol");
-    let a_hash = put(&root, "appA/types/routes.d.ts", "export const marker = 1;\n");
-    let b_hash = put(&root, "appB/types/routes.d.ts", "export const marker = 2;\n");
+    let a_hash = put(
+        &root,
+        "appA/types/routes.d.ts",
+        "export const marker = 1;\n",
+    );
+    let b_hash = put(
+        &root,
+        "appB/types/routes.d.ts",
+        "export const marker = 2;\n",
+    );
 
     const SHARED: &str = "scip-typescript npm . . types/`routes.d.ts`/marker.";
 
@@ -213,8 +232,16 @@ fn 同じ符号が別の索引にあっても混ざらない() {
 
     let store = Store::load(
         &[
-            source(&a_index, "appA", vec![provenance("types/routes.d.ts", a_hash)]),
-            source(&b_index, "appB", vec![provenance("types/routes.d.ts", b_hash)]),
+            source(
+                &a_index,
+                "appA",
+                vec![provenance("types/routes.d.ts", a_hash)],
+            ),
+            source(
+                &b_index,
+                "appB",
+                vec![provenance("types/routes.d.ts", b_hash)],
+            ),
         ],
         &root,
     )
@@ -243,7 +270,10 @@ fn 接ぎ木してもルートの外に出るdocumentは捨てる() {
     write_index(
         &index,
         vec![
-            doc("main.go", vec![occurrence(vec![0, 8, 12], "m/Main().", DEF)]),
+            doc(
+                "main.go",
+                vec![occurrence(vec![0, 8, 12], "m/Main().", DEF)],
+            ),
             // api/ から見て 2 つ上がるとリポジトリルートの外。
             doc(
                 "../../outside.go",
@@ -338,10 +368,7 @@ fn パスが衝突したらいちばん深い索引ルートが勝つ() {
     write_index(
         &front_index,
         vec![
-            doc(
-                "app.ts",
-                vec![occurrence(vec![0, 13, 14], "front/a.", DEF)],
-            ),
+            doc("app.ts", vec![occurrence(vec![0, 13, 14], "front/a.", DEF)]),
             // front から見た ../common/tokens/src/mui.d.ts。所有者は common/tokens。
             doc(
                 "../common/tokens/src/mui.d.ts",
@@ -371,7 +398,11 @@ fn パスが衝突したらいちばん深い索引ルートが勝つ() {
                     provenance("../common/tokens/src/mui.d.ts", own_hash.clone()),
                 ],
             ),
-            source(&tokens_index, "common/tokens", vec![provenance("src/mui.d.ts", own_hash)]),
+            source(
+                &tokens_index,
+                "common/tokens",
+                vec![provenance("src/mui.d.ts", own_hash)],
+            ),
         ],
         &root,
     )

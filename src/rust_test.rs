@@ -39,7 +39,10 @@ enum FileTarget {
 ///
 /// relative_path が対応対象の .rs ファイルでない (src/ とトップレベルの
 /// tests/ の外にある) か、テストを含まない場合は空のマップを返す。
-pub fn scan_rust_test_runs(file_content: &[String], relative_path: &str) -> HashMap<usize, TestRun> {
+pub fn scan_rust_test_runs(
+    file_content: &[String],
+    relative_path: &str,
+) -> HashMap<usize, TestRun> {
     let mut runs = HashMap::new();
 
     let Some(target) = file_target(relative_path) else {
@@ -394,10 +397,7 @@ mod tests {
         let runs = scan_rust_test_runs(&src, "src/ai_caller.rs");
 
         // 内側のモジュールボタン (3 行目) は入れ子のモジュールに絞られる。
-        assert_eq!(
-            runs[&3].command,
-            "cargo test 'ai_caller::tests::command::'"
-        );
+        assert_eq!(runs[&3].command, "cargo test 'ai_caller::tests::command::'");
         // 外側のモジュールボタン (2 行目)。
         assert_eq!(runs[&2].command, "cargo test 'ai_caller::tests::'");
         // 関数は入れ子を含む完全なパスを持つ (5 行目)。

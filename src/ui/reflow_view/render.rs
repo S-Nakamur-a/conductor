@@ -198,18 +198,11 @@ pub(super) fn render_jump_badge(frame: &mut Frame, area: Rect, following: bool) 
         .find(|l| UnicodeWidthStr::width(**l) < area.width as usize)?;
     let w = UnicodeWidthStr::width(*label) as u16;
 
-    let rect = Rect::new(
-        area.x + area.width - w,
-        area.y + area.height - 1,
-        w,
-        1,
-    );
+    let rect = Rect::new(area.x + area.width - w, area.y + area.height - 1, w, 1);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             *label,
-            Style::default()
-                .fg(palette::INACTIVE)
-                .bg(palette::USER_BG),
+            Style::default().fg(palette::INACTIVE).bg(palette::USER_BG),
         ))),
         rect,
     );

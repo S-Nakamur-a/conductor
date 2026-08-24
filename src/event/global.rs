@@ -139,17 +139,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         }
         Action::SearchFullText => {
             app.overlays.active = ActiveOverlay::GrepSearch;
-            app.overlays.grep_search.query.clear();
-            app.overlays.grep_search.result_tree = Default::default();
-            app.overlays.grep_search.pending_matches.clear();
-            app.overlays.grep_search.selected = 0;
-            app.overlays.grep_search.scroll = 0;
-            app.overlays.grep_search.running = false;
-            app.overlays.grep_search.bg_op.clear();
-            app.overlays.grep_search.bg_op_phase2.clear();
-            app.overlays.grep_search.debounce_deadline = None;
-            app.overlays.grep_search.phase1_active = false;
-            app.overlays.grep_search.input_focused = true;
+            app.overlays.grep_search.reset();
             true
         }
         Action::TogglePanelExpand => {

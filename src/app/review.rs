@@ -125,8 +125,7 @@ impl App {
             .comments
             .iter()
             .filter(|c| {
-                c.file_path == file_path
-                    && c.status != crate::review_store::CommentStatus::Resolved
+                c.file_path == file_path && c.status != crate::review_store::CommentStatus::Resolved
             })
             .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
             .collect();

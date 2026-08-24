@@ -455,8 +455,7 @@ mod tests {
     fn only_the_hovered_row_is_underlined() {
         let theme = test_theme();
         let base = theme.fg;
-        let underlined =
-            |style: Style| style.add_modifier.contains(Modifier::UNDERLINED);
+        let underlined = |style: Style| style.add_modifier.contains(Modifier::UNDERLINED);
 
         assert!(underlined(row_style(
             &theme,

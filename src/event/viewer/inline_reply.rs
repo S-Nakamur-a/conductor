@@ -89,7 +89,10 @@ pub(super) fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
     // モーダルと同じ規約にすることで、インライン返信も本格的な複数行フォーム
     // になる。
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.viewer_state.explorer.inline_reply_buffer.insert_char('\n');
+        app.viewer_state
+            .explorer
+            .inline_reply_buffer
+            .insert_char('\n');
         return;
     }
     match key.code {
@@ -171,7 +174,10 @@ pub(super) fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
         }
         _ => {
             // 通常の編集操作（文字入力、矢印、Home/End、単語単位移動、Backspace/Delete）。
-            app.viewer_state.explorer.inline_reply_buffer.handle_key(key);
+            app.viewer_state
+                .explorer
+                .inline_reply_buffer
+                .handle_key(key);
         }
     }
 }

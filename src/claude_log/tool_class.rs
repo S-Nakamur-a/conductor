@@ -186,20 +186,32 @@ mod tests {
     #[test]
     fn read_is_counted_bucket_read() {
         let input = json!({"file_path": "/a.txt"});
-        assert_eq!(classify("Read", &input), ToolCategory::Counted(CountedBucket::Read));
+        assert_eq!(
+            classify("Read", &input),
+            ToolCategory::Counted(CountedBucket::Read)
+        );
     }
 
     #[test]
     fn grep_and_glob_are_counted_bucket_search() {
         let input = json!({"pattern": "foo"});
-        assert_eq!(classify("Grep", &input), ToolCategory::Counted(CountedBucket::Search));
-        assert_eq!(classify("Glob", &input), ToolCategory::Counted(CountedBucket::Search));
+        assert_eq!(
+            classify("Grep", &input),
+            ToolCategory::Counted(CountedBucket::Search)
+        );
+        assert_eq!(
+            classify("Glob", &input),
+            ToolCategory::Counted(CountedBucket::Search)
+        );
     }
 
     #[test]
     fn bash_ls_is_counted_bucket_list() {
         let input = json!({"command": "ls -la /tmp"});
-        assert_eq!(classify("Bash", &input), ToolCategory::Counted(CountedBucket::List));
+        assert_eq!(
+            classify("Bash", &input),
+            ToolCategory::Counted(CountedBucket::List)
+        );
     }
 
     #[test]
@@ -207,7 +219,10 @@ mod tests {
         // 元のテーブルでは cat のシェル呼び出しは Read ツール自身の bucket
         // に合流する — どちらも1つの "Read N files" 行にカウントされる。
         let input = json!({"command": "cat foo.txt"});
-        assert_eq!(classify("Bash", &input), ToolCategory::Counted(CountedBucket::Read));
+        assert_eq!(
+            classify("Bash", &input),
+            ToolCategory::Counted(CountedBucket::Read)
+        );
     }
 
     #[test]
@@ -225,7 +240,10 @@ mod tests {
     #[test]
     fn bash_leading_whitespace_still_dispatches_on_first_word() {
         let input = json!({"command": "   ls /tmp"});
-        assert_eq!(classify("Bash", &input), ToolCategory::Counted(CountedBucket::List));
+        assert_eq!(
+            classify("Bash", &input),
+            ToolCategory::Counted(CountedBucket::List)
+        );
     }
 
     #[test]
@@ -330,5 +348,4 @@ mod tests {
         let input = json!({"unrelated": "x"});
         assert_eq!(unknown_tool_arg(&input), None);
     }
-
 }

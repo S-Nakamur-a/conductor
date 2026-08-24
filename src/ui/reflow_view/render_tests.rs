@@ -114,10 +114,7 @@ fn build(entries: &[LogEntry], expanded: bool) -> Vec<Option<u16>> {
 }
 
 fn entry(role: Role, blocks: Vec<DisplayBlock>) -> LogEntry {
-    LogEntry {
-        role,
-        blocks,
-    }
+    LogEntry { role, blocks }
 }
 
 /// 穴はグリフがどこにあってもその直後に置かれる — グリフの位置は常にカラム0とは
@@ -164,7 +161,11 @@ fn user_turns_get_no_hole() {
 /// この対策は黙って効かなくなってしまう。
 #[test]
 fn every_ambiguous_gutter_glyph_is_registered() {
-    for glyph in [ASSISTANT_MARKER, TOOL_RESULT_GLYPH, super::glyphs::THINKING_GLYPH] {
+    for glyph in [
+        ASSISTANT_MARKER,
+        TOOL_RESULT_GLYPH,
+        super::glyphs::THINKING_GLYPH,
+    ] {
         let ch = glyph.chars().next().unwrap();
         assert!(
             super::glyphs::is_width_ambiguous(ch),
@@ -173,7 +174,10 @@ fn every_ambiguous_gutter_glyph_is_registered() {
         );
     }
     // ……そして意図的にそうでない2つ。
-    for glyph in [super::glyphs::USER_MARKER, super::glyphs::TEAMMATE_MESSAGE_GLYPH] {
+    for glyph in [
+        super::glyphs::USER_MARKER,
+        super::glyphs::TEAMMATE_MESSAGE_GLYPH,
+    ] {
         let ch = glyph.chars().next().unwrap();
         assert!(!super::glyphs::is_width_ambiguous(ch), "{glyph:?}");
     }
@@ -216,11 +220,11 @@ fn wide_and_multi_char_clusters_do_not_shift_the_hole() {
     // これらすべての本文について穴はカラム3にある。
     for body in [
         "plain",
-        "日本語の全角テキスト",                            // width-2 CJK
+        "日本語の全角テキスト", // width-2 CJK
         "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family", // ZWJ, 7 chars / 2 cols
-        "\u{26a0}\u{fe0f} warn",                          // emoji-presentation selector
-        "\u{1f44b}\u{1f3fd} wave",                        // skin-tone modifier
-        "e\u{0301}\u{0301} combining",                    // combining marks
+        "\u{26a0}\u{fe0f} warn",       // emoji-presentation selector
+        "\u{1f44b}\u{1f3fd} wave",     // skin-tone modifier
+        "e\u{0301}\u{0301} combining", // combining marks
     ] {
         let holes = build(
             &[entry(
@@ -337,11 +341,7 @@ fn screen_text(buf: &Buffer) -> String {
 fn no_badge_while_following() {
     let (hit, buf) = draw_badge(40, 6, true);
     assert_eq!(hit, None);
-    assert!(
-        !screen_text(&buf).contains("(G)"),
-        "{}",
-        screen_text(&buf)
-    );
+    assert!(!screen_text(&buf).contains("(G)"), "{}", screen_text(&buf));
 }
 
 #[test]
@@ -427,7 +427,11 @@ fn reflow_fixture() -> Vec<LogEntry> {
     (0..40)
         .map(|i| {
             entry(
-                if i % 2 == 0 { Role::Assistant } else { Role::User },
+                if i % 2 == 0 {
+                    Role::Assistant
+                } else {
+                    Role::User
+                },
                 vec![DisplayBlock::Text(format!(
                     "Turn {i}: {}",
                     "the quick brown fox jumps over the lazy dog ".repeat(4)

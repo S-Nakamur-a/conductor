@@ -134,8 +134,7 @@ pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App
             .smart_description_buffer
             .text_after_cursor()
     );
-    let (rows, cur_row, cur_col) =
-        wrap_with_cursor(&display, text_width as usize, '\u{2588}');
+    let (rows, cur_row, cur_col) = wrap_with_cursor(&display, text_width as usize, '\u{2588}');
 
     // ポップアップは内容に合わせて拡張する: 枠線(2) + テキスト行 + ヒント(1)、
     // ただし画面に収まる範囲にクランプする。テキストが表示可能な高さを超えたら、

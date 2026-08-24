@@ -35,9 +35,7 @@ fn corpus_files() -> Option<Vec<PathBuf>> {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
-        .filter(|p| {
-            std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
-        })
+        .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES))
         .collect();
     // readdir の順序に依存せず、失敗が再現可能になるようソートする。
     files.sort();
@@ -176,6 +174,11 @@ fn rebuilding_at_a_previous_width_reproduces_it() {
         let first = texts(&h.build(&cache, &entries, 80, false).lines);
         let _ = h.build(&cache, &entries, 40, false);
         let back = texts(&h.build(&cache, &entries, 80, false).lines);
-        assert_eq!(first, back, "{}: 80 -> 40 -> 80 was not idempotent", path.display());
+        assert_eq!(
+            first,
+            back,
+            "{}: 80 -> 40 -> 80 was not idempotent",
+            path.display()
+        );
     }
 }

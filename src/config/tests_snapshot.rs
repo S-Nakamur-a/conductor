@@ -61,11 +61,19 @@ fn appearance_snapshot_detects_each_live_field_change() {
 
     let mut c = base.clone();
     c.ui.theme = Some(String::from("dracula"));
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "ui.theme");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "ui.theme"
+    );
 
     let mut c = base.clone();
     c.viewer.theme = String::from("nord");
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "viewer.theme");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "viewer.theme"
+    );
 
     let mut c = base.clone();
     c.viewer.syntax_theme_file = Some(String::from("/custom.tmTheme"));
@@ -77,31 +85,59 @@ fn appearance_snapshot_detects_each_live_field_change() {
 
     let mut c = base.clone();
     c.viewer.tab_width = 4; // デフォルトは2
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "viewer.tab_width");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "viewer.tab_width"
+    );
 
     let mut c = base.clone();
     c.diff.word_diff = false; // デフォルトは true
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "diff.word_diff");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "diff.word_diff"
+    );
 
     let mut c = base.clone();
     c.diff.default_view = DiffView::SideBySide; // デフォルトは Unified
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "diff.default_view");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "diff.default_view"
+    );
 
     let mut c = base.clone();
     c.general.decoration = String::from("space");
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "general.decoration");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "general.decoration"
+    );
 
     let mut c = base.clone();
     c.layout.explorer_width_pct = 30;
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "layout.explorer_width_pct");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "layout.explorer_width_pct"
+    );
 
     let mut c = base.clone();
     c.layout.viewer_width_pct = 42;
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "layout.viewer_width_pct");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "layout.viewer_width_pct"
+    );
 
     let mut c = base.clone();
     c.layout.terminal_split_pct = 70;
-    assert_ne!(c.appearance_snapshot(), base.appearance_snapshot(), "layout.terminal_split_pct");
+    assert_ne!(
+        c.appearance_snapshot(),
+        base.appearance_snapshot(),
+        "layout.terminal_split_pct"
+    );
 }
 
 /// has_restart_changes: live フィールドのみ変えたら false。
@@ -166,82 +202,127 @@ fn every_field_is_either_live_or_restart() {
     {
         let mut c = base.clone();
         c.general.repo = Some(PathBuf::from("/p"));
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.repo");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.repo"
+        );
     }
     {
         let mut c = base.clone();
         c.general.main_branch = String::from("master");
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.main_branch");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.main_branch"
+        );
     }
     {
         let mut c = base.clone();
         c.general.shell = String::from("/bin/fish");
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.shell");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.shell"
+        );
     }
     {
         let mut c = base.clone();
         c.general.repos = vec![PathBuf::from("/p")];
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.repos");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.repos"
+        );
     }
     {
         let mut c = base.clone();
         c.general.worktree_dir = Some(PathBuf::from("/wt"));
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.worktree_dir");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.worktree_dir"
+        );
     }
     {
         let mut c = base.clone();
         c.general.decoration = String::from("space");
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.decoration");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.decoration"
+        );
     }
     {
         let mut c = base.clone();
         c.general.auto_resume = false; // デフォルトは true
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.auto_resume");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.auto_resume"
+        );
     }
     {
         let mut c = base.clone();
         c.general.auto_resume_main = true;
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "general.auto_resume_main");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "general.auto_resume_main"
+        );
     }
     // terminal
     {
         let mut c = base.clone();
         c.terminal.active_scrollback = 9999;
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "terminal.active_scrollback");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "terminal.active_scrollback"
+        );
     }
     // viewer (live)
     {
         let mut c = base.clone();
         c.viewer.theme = String::from("nord");
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "viewer.theme");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "viewer.theme"
+        );
     }
     {
         let mut c = base.clone();
         c.viewer.tab_width = 4; // デフォルトは2
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "viewer.tab_width");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "viewer.tab_width"
+        );
     }
     // diff (live)
     {
         let mut c = base.clone();
         c.diff.word_diff = false; // デフォルトは true
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "diff.word_diff");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "diff.word_diff"
+        );
     }
     // api
     {
         let mut c = base.clone();
         c.api.provider = String::from("claude"); // デフォルトは "gemini"
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "api.provider");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "api.provider"
+        );
     }
     // ccusage
     {
         let mut c = base.clone();
         c.ccusage.enabled = true;
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "ccusage.enabled");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "ccusage.enabled"
+        );
     }
     // layout (live)
     {
         let mut c = base.clone();
         c.layout.explorer_width_pct = 30;
-        assert!(c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c), "layout.explorer_width_pct");
+        assert!(
+            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
+            "layout.explorer_width_pct"
+        );
     }
 }

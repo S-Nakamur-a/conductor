@@ -35,10 +35,7 @@ fn wrap_preserves_source_newlines_as_independent_lines() {
 
 #[test]
 fn wrap_preserves_blank_source_lines() {
-    assert_eq!(
-        wrap_plain_text("a\n\nb", 10),
-        vec!["a", "", "b"]
-    );
+    assert_eq!(wrap_plain_text("a\n\nb", 10), vec!["a", "", "b"]);
 }
 
 #[test]
@@ -65,7 +62,10 @@ fn wrap_hard_split_never_breaks_a_full_width_glyph() {
     // 予算5に2カラムのグリフ: 1行につき2文字、半分だけのグリフになる行は無い。
     let chunks = wrap_plain_text(&"あ".repeat(5), 5);
     for c in &chunks {
-        assert!(unicode_width::UnicodeWidthStr::width(c.as_str()) <= 5, "{c:?}");
+        assert!(
+            unicode_width::UnicodeWidthStr::width(c.as_str()) <= 5,
+            "{c:?}"
+        );
     }
     assert_eq!(chunks.concat(), "あ".repeat(5));
 }
@@ -92,7 +92,9 @@ fn pad_string_wider_than_target_unchanged() {
 // render_user_text
 
 fn marker_style() -> Style {
-    Style::default().fg(palette::USER_MARKER_FG).bg(palette::USER_BG)
+    Style::default()
+        .fg(palette::USER_MARKER_FG)
+        .bg(palette::USER_BG)
 }
 
 fn body_style() -> Style {
@@ -108,7 +110,10 @@ fn first_line_gets_the_marker_continuation_lines_get_blank_indent() {
         marker_style(),
         body_style(),
     );
-    assert!(lines.len() > 1, "expected the body to wrap onto multiple lines");
+    assert!(
+        lines.len() > 1,
+        "expected the body to wrap onto multiple lines"
+    );
     assert_eq!(lines[0].spans[0].content, "\u{276f} ");
     assert_eq!(lines[1].spans[0].content, "  ");
 }
@@ -123,7 +128,10 @@ fn every_line_is_padded_to_the_full_panel_width_for_the_background() {
             .iter()
             .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
             .sum();
-        assert_eq!(total, width, "line {line:?} must fill the full width for its background");
+        assert_eq!(
+            total, width,
+            "line {line:?} must fill the full width for its background"
+        );
     }
 }
 
@@ -137,7 +145,13 @@ fn marker_and_body_spans_carry_the_background_color() {
 
 #[test]
 fn source_newlines_survive_as_separate_lines_each_with_their_own_gutter_slot() {
-    let lines = render_user_text("first\nsecond", 20, "\u{276f}", marker_style(), body_style());
+    let lines = render_user_text(
+        "first\nsecond",
+        20,
+        "\u{276f}",
+        marker_style(),
+        body_style(),
+    );
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0].spans[0].content, "\u{276f} ");
     assert_eq!(lines[1].spans[0].content, "  ");
@@ -146,8 +160,17 @@ fn source_newlines_survive_as_separate_lines_each_with_their_own_gutter_slot() {
 #[test]
 fn body_wraps_at_width_minus_marker_cols() {
     // width=10 なら body_width = 10 - MARKER_COLS(2) = テキスト用に8カラム残る。
-    let lines = render_user_text("abcdefgh ijkl", 10, "\u{276f}", marker_style(), body_style());
-    assert!(lines.len() >= 2, "8-col budget must force a wrap: {lines:?}");
+    let lines = render_user_text(
+        "abcdefgh ijkl",
+        10,
+        "\u{276f}",
+        marker_style(),
+        body_style(),
+    );
+    assert!(
+        lines.len() >= 2,
+        "8-col budget must force a wrap: {lines:?}"
+    );
     // このテストが依存する定数をガードしておく。MARKER_COLS が変わったとき、
     // 誤った予算のまま黙って通ってしまうのではなく、はっきり失敗させるため。
     assert_eq!(MARKER_COLS, 2);
@@ -185,6 +208,9 @@ fn zwj_sequence_is_never_split() {
     let wrapped = wrap_plain_text(&family.repeat(3), 4);
     assert_eq!(wrapped.concat(), family.repeat(3));
     for line in &wrapped {
-        assert!(unicode_width::UnicodeWidthStr::width(line.as_str()) <= 4, "{line:?}");
+        assert!(
+            unicode_width::UnicodeWidthStr::width(line.as_str()) <= 4,
+            "{line:?}"
+        );
     }
 }

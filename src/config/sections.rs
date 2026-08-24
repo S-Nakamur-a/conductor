@@ -274,4 +274,3 @@ impl UiConfig {
         self.icons.unwrap_or(IconSet::Unicode)
     }
 }
-

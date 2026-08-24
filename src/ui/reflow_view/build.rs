@@ -3,7 +3,6 @@
 //! 変わったときだけ再構築する。App から独立しているので、App を構築せずに単体で
 //! 生成・テストできる。
 
-
 use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;

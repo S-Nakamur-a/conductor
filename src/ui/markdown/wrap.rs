@@ -201,7 +201,11 @@ pub(crate) fn with_prefix(
         .enumerate()
         .map(|(idx, line)| {
             let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(if idx == 0 { first.clone() } else { cont.clone() });
+            spans.push(if idx == 0 {
+                first.clone()
+            } else {
+                cont.clone()
+            });
             spans.extend(line.spans);
             Line::from(spans)
         })

@@ -277,8 +277,14 @@ mod tests {
         for i in 0..=100 {
             let p = i as f64 / 100.0;
             let v = transition_eased(p);
-            assert!((0.0..=1.0).contains(&v), "transition_eased({p}) = {v} out of range");
-            assert!(v >= prev - 1e-12, "transition_eased must be monotonic non-decreasing");
+            assert!(
+                (0.0..=1.0).contains(&v),
+                "transition_eased({p}) = {v} out of range"
+            );
+            assert!(
+                v >= prev - 1e-12,
+                "transition_eased must be monotonic non-decreasing"
+            );
             prev = v;
         }
     }

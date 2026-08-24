@@ -39,8 +39,14 @@ fn headings_parse_with_level() {
     assert_eq!(
         parse_blocks("# Title\n### Sub"),
         vec![
-            MdBlock::Heading { level: 1, text: "Title".to_string() },
-            MdBlock::Heading { level: 3, text: "Sub".to_string() },
+            MdBlock::Heading {
+                level: 1,
+                text: "Title".to_string()
+            },
+            MdBlock::Heading {
+                level: 3,
+                text: "Sub".to_string()
+            },
         ]
     );
 }
@@ -50,10 +56,30 @@ fn list_items_bullet_and_ordered() {
     assert_eq!(
         parse_blocks("- a\n* b\n1. c\n2) d"),
         vec![
-            MdBlock::ListItem { ordered: None, checked: None, text: "a".to_string(), indent: 0 },
-            MdBlock::ListItem { ordered: None, checked: None, text: "b".to_string(), indent: 0 },
-            MdBlock::ListItem { ordered: Some("1".to_string()), checked: None, text: "c".to_string(), indent: 0 },
-            MdBlock::ListItem { ordered: Some("2".to_string()), checked: None, text: "d".to_string(), indent: 0 },
+            MdBlock::ListItem {
+                ordered: None,
+                checked: None,
+                text: "a".to_string(),
+                indent: 0
+            },
+            MdBlock::ListItem {
+                ordered: None,
+                checked: None,
+                text: "b".to_string(),
+                indent: 0
+            },
+            MdBlock::ListItem {
+                ordered: Some("1".to_string()),
+                checked: None,
+                text: "c".to_string(),
+                indent: 0
+            },
+            MdBlock::ListItem {
+                ordered: Some("2".to_string()),
+                checked: None,
+                text: "d".to_string(),
+                indent: 0
+            },
         ]
     );
     // マーカーの後にスペースがない → 普通の段落。
@@ -81,7 +107,10 @@ fn fence_without_lang_and_crlf() {
     assert_eq!(
         blocks,
         vec![
-            MdBlock::CodeBlock { lang: None, lines: vec!["code".to_string()] },
+            MdBlock::CodeBlock {
+                lang: None,
+                lines: vec!["code".to_string()]
+            },
             MdBlock::Blank,
         ]
     );
@@ -116,7 +145,12 @@ fn snake_case_and_bare_star_stay_literal() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     // アンダースコアは強調にならない。
-    let spans = inline_spans("call set_change_summary here", base, &theme, MarkdownFlavor::Rich);
+    let spans = inline_spans(
+        "call set_change_summary here",
+        base,
+        &theme,
+        MarkdownFlavor::Rich,
+    );
     assert_eq!(joined(&spans), "call set_change_summary here");
     assert_eq!(spans.len(), 1, "no styled split for snake_case");
     // 2 * 3: 両側にスペースがあるアスタリスクはそのまま文字として扱われる。
@@ -163,7 +197,16 @@ fn unclosed_inline_delimiters_stay_literal() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     for input in [
-        "a `b", "a *b", "a **b", "*", "`", "a ~~b", "~~", "~", "a ~ b", "~/foo",
+        "a `b",
+        "a *b",
+        "a **b",
+        "*",
+        "`",
+        "a ~~b",
+        "~~",
+        "~",
+        "a ~ b",
+        "~/foo",
         "a ~~ b ~~ c",
     ] {
         let spans = inline_spans(input, base, &theme, MarkdownFlavor::Rich);
@@ -188,7 +231,12 @@ fn strikethrough_does_not_nest_inner_markup() {
     // — ただし取り消し線の外側にあるインラインマークアップは引き続き機能する。
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
-    let spans = inline_spans("~~old **bold**~~ and **real**", base, &theme, MarkdownFlavor::Rich);
+    let spans = inline_spans(
+        "~~old **bold**~~ and **real**",
+        base,
+        &theme,
+        MarkdownFlavor::Rich,
+    );
     assert!(
         spans
             .iter()
@@ -220,10 +268,30 @@ fn task_checkboxes_parse() {
     assert_eq!(
         parse_blocks("- [ ] todo\n- [x] done\n- [X] also\n1. [ ] num"),
         vec![
-            MdBlock::ListItem { ordered: None, checked: Some(false), text: "todo".to_string(), indent: 0 },
-            MdBlock::ListItem { ordered: None, checked: Some(true), text: "done".to_string(), indent: 0 },
-            MdBlock::ListItem { ordered: None, checked: Some(true), text: "also".to_string(), indent: 0 },
-            MdBlock::ListItem { ordered: Some("1".to_string()), checked: Some(false), text: "num".to_string(), indent: 0 },
+            MdBlock::ListItem {
+                ordered: None,
+                checked: Some(false),
+                text: "todo".to_string(),
+                indent: 0
+            },
+            MdBlock::ListItem {
+                ordered: None,
+                checked: Some(true),
+                text: "done".to_string(),
+                indent: 0
+            },
+            MdBlock::ListItem {
+                ordered: None,
+                checked: Some(true),
+                text: "also".to_string(),
+                indent: 0
+            },
+            MdBlock::ListItem {
+                ordered: Some("1".to_string()),
+                checked: Some(false),
+                text: "num".to_string(),
+                indent: 0
+            },
         ]
     );
 }
@@ -348,7 +416,13 @@ fn wide_table_cells_wrap_instead_of_losing_content() {
         | toggle | switches a markdown file between raw source and rendered prose |\n\
         | scroll | independent of the raw view |";
     let words = [
-        "switches", "markdown", "between", "source", "rendered", "prose", "independent",
+        "switches",
+        "markdown",
+        "between",
+        "source",
+        "rendered",
+        "prose",
+        "independent",
     ];
     for width in [20usize, 30, 40, 60, 100] {
         let text: String = render(table, width)
@@ -437,7 +511,10 @@ fn table_alignment_does_not_change_cell_width() {
         .iter()
         .map(|d| display_width(&line_text(&mk(d)[2])))
         .collect();
-    assert!(full.iter().all(|&w| w == full[0]), "row widths differ: {full:?}");
+    assert!(
+        full.iter().all(|&w| w == full[0]),
+        "row widths differ: {full:?}"
+    );
     let _ = widths;
 }
 
@@ -457,7 +534,12 @@ fn links_render_text_and_url() {
     let base = Style::default().fg(theme.fg);
 
     // リンクテキストを表示し、URL は控えめな括弧書きで保持する。
-    let spans = inline_spans("see [the docs](https://example.com) now", base, &theme, MarkdownFlavor::Rich);
+    let spans = inline_spans(
+        "see [the docs](https://example.com) now",
+        base,
+        &theme,
+        MarkdownFlavor::Rich,
+    );
     assert_eq!(joined(&spans), "see the docs (https://example.com) now");
     assert!(
         spans.iter().any(|s| s.content == "the docs"
@@ -466,7 +548,12 @@ fn links_render_text_and_url() {
     );
 
     // リンクテキスト内のインラインマークアップにも引き続きスタイルが付く。
-    let spans = inline_spans("[**bold** link](https://x.io)", base, &theme, MarkdownFlavor::Rich);
+    let spans = inline_spans(
+        "[**bold** link](https://x.io)",
+        base,
+        &theme,
+        MarkdownFlavor::Rich,
+    );
     assert!(
         spans
             .iter()
@@ -481,11 +568,21 @@ fn self_titled_and_empty_links_show_url_once() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
-    let spans = inline_spans("[https://x.com](https://x.com)", base, &theme, MarkdownFlavor::Rich);
+    let spans = inline_spans(
+        "[https://x.com](https://x.com)",
+        base,
+        &theme,
+        MarkdownFlavor::Rich,
+    );
     assert_eq!(joined(&spans), "https://x.com");
 
     // 末尾のスラッシュや大文字小文字の違いがあっても1つにまとまる。
-    let spans = inline_spans("[https://x.com/](https://x.com)", base, &theme, MarkdownFlavor::Rich);
+    let spans = inline_spans(
+        "[https://x.com/](https://x.com)",
+        base,
+        &theme,
+        MarkdownFlavor::Rich,
+    );
     assert_eq!(joined(&spans), "https://x.com");
 
     let spans = inline_spans("[](https://x.com)", base, &theme, MarkdownFlavor::Rich);

@@ -12,7 +12,16 @@ fn wraps_to_width_and_preserves_words() {
     for line in &lines {
         assert!(display_width(&line_text(line)) <= 9);
     }
-    assert_eq!(lines.iter().map(line_text).collect::<Vec<_>>().join(" ").replace("  ", " ").trim(), "the quick brown fox");
+    assert_eq!(
+        lines
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace("  ", " ")
+            .trim(),
+        "the quick brown fox"
+    );
 }
 
 #[test]
@@ -108,7 +117,12 @@ fn code_block_is_highlighted_and_carded() {
     // syntect が複数のスタイル付き span に分割する。
     let content = &lines[1];
     assert!(line_text(content).contains("let x = 1;"));
-    assert!(content.spans.iter().all(|s| s.style.bg == Some(theme.code_bg)));
+    assert!(
+        content
+            .spans
+            .iter()
+            .all(|s| s.style.bg == Some(theme.code_bg))
+    );
     assert!(content.spans.len() > 2);
     // カード全体が端から端まで幅を埋める。
     assert_eq!(display_width(&line_text(content)), 40);
@@ -216,21 +230,39 @@ fn transcript_h1_is_bold_italic_underlined_h2_h3_stay_bold_only() {
     let h1 = render_transcript("# Title", 30);
     let span = &h1[0].spans[0];
     assert!(span.style.add_modifier.contains(Modifier::BOLD), "H1 bold");
-    assert!(span.style.add_modifier.contains(Modifier::ITALIC), "H1 italic");
-    assert!(span.style.add_modifier.contains(Modifier::UNDERLINED), "H1 underlined");
+    assert!(
+        span.style.add_modifier.contains(Modifier::ITALIC),
+        "H1 italic"
+    );
+    assert!(
+        span.style.add_modifier.contains(Modifier::UNDERLINED),
+        "H1 underlined"
+    );
 
     for src in ["## Sub", "### Subsub"] {
         let lines = render_transcript(src, 30);
         let span = &lines[0].spans[0];
-        assert!(!span.style.add_modifier.contains(Modifier::ITALIC), "{src}: not italic");
-        assert!(!span.style.add_modifier.contains(Modifier::UNDERLINED), "{src}: not underlined");
+        assert!(
+            !span.style.add_modifier.contains(Modifier::ITALIC),
+            "{src}: not italic"
+        );
+        assert!(
+            !span.style.add_modifier.contains(Modifier::UNDERLINED),
+            "{src}: not underlined"
+        );
     }
 
     // Rich フレーバーの H1 は影響を受けない（太字のみ、斜体/下線なし）。
     let rich_h1 = render("# Title", 30);
     let rich_span = &rich_h1[0].spans[1]; // spans[0] はカラーバー
-    assert!(!rich_span.style.add_modifier.contains(Modifier::ITALIC), "Rich H1 stays bold-only");
-    assert!(!rich_span.style.add_modifier.contains(Modifier::UNDERLINED), "Rich H1 stays bold-only");
+    assert!(
+        !rich_span.style.add_modifier.contains(Modifier::ITALIC),
+        "Rich H1 stays bold-only"
+    );
+    assert!(
+        !rich_span.style.add_modifier.contains(Modifier::UNDERLINED),
+        "Rich H1 stays bold-only"
+    );
 }
 
 #[test]
@@ -239,11 +271,21 @@ fn transcript_task_checkbox_renders_literally_unstyled() {
     // チェックボックスのマーカーは本文テキストのまま、普通の箇条書き項目として残る。
     let (theme, _, _) = fixtures();
     let lines = render_transcript("- [ ] unchecked task\n- [x] checked task", 40);
-    assert_eq!(lines[0].spans[0].content.as_ref(), "- ", "ordinary dash bullet, not dropped");
-    let unchecked_text: String = lines[0].spans[1..].iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(
+        lines[0].spans[0].content.as_ref(),
+        "- ",
+        "ordinary dash bullet, not dropped"
+    );
+    let unchecked_text: String = lines[0].spans[1..]
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
     assert_eq!(unchecked_text, "[ ] unchecked task");
     assert_eq!(lines[1].spans[0].content.as_ref(), "- ");
-    let checked_text: String = lines[1].spans[1..].iter().map(|s| s.content.as_ref()).collect();
+    let checked_text: String = lines[1].spans[1..]
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
     assert_eq!(checked_text, "[x] checked task");
     // 特別な色付けはなし: 箇条書きマーカーも本文も本文色のままで、
     // theme.success（「完了」を表す緑）や theme.muted（「後退」を表すグレー）には
@@ -258,7 +300,11 @@ fn transcript_task_checkbox_renders_literally_unstyled() {
     let rich = render("- [ ] todo\n- [x] done", 40);
     assert_eq!(rich[0].spans[0].content.as_ref(), "[ ] ");
     assert_eq!(rich[1].spans[0].content.as_ref(), "[x] ");
-    assert_eq!(rich[1].spans[0].style.fg, Some(theme.success), "Rich still colours [x] green");
+    assert_eq!(
+        rich[1].spans[0].style.fg,
+        Some(theme.success),
+        "Rich still colours [x] green"
+    );
 }
 
 #[test]
@@ -292,14 +338,27 @@ fn transcript_quote_uses_dim_glyph_and_default_colour_italic_body() {
     let lines = render_transcript("> quoted text", 40);
     let glyph = &lines[0].spans[0];
     assert_eq!(glyph.content.as_ref(), "\u{258e} ", "▎ glyph, not │");
-    assert!(glyph.style.add_modifier.contains(Modifier::DIM), "glyph is dim");
+    assert!(
+        glyph.style.add_modifier.contains(Modifier::DIM),
+        "glyph is dim"
+    );
     assert_eq!(glyph.style.fg, None, "glyph carries no explicit colour");
 
-    let body: String = lines[0].spans[1..].iter().map(|s| s.content.as_ref()).collect();
+    let body: String = lines[0].spans[1..]
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
     assert_eq!(body, "quoted text");
     for span in &lines[0].spans[1..] {
-        assert_eq!(span.style.fg, Some(theme.fg), "body is default colour, not muted");
-        assert!(span.style.add_modifier.contains(Modifier::ITALIC), "body stays italic");
+        assert_eq!(
+            span.style.fg,
+            Some(theme.fg),
+            "body is default colour, not muted"
+        );
+        assert!(
+            span.style.add_modifier.contains(Modifier::ITALIC),
+            "body stays italic"
+        );
     }
 
     // Rich フレーバーは muted 色の「│ 」バーと muted 斜体の本文を維持する
@@ -331,14 +390,19 @@ fn transcript_heading_does_not_stack_double_blank() {
     let texts: Vec<String> = lines.iter().map(line_text).collect();
     let h = texts.iter().position(|t| t == "Head").unwrap();
     assert_eq!(texts[h + 1], "", "one blank below");
-    assert_eq!(texts[h + 2], "body", "body immediately after the single blank");
+    assert_eq!(
+        texts[h + 2],
+        "body",
+        "body immediately after the single blank"
+    );
 }
 
 #[test]
 fn transcript_lines_stay_within_width() {
     // ダッシュの箇条書きと太字見出しは折り返し幅を決してはみ出さない。
     for width in [4usize, 8, 20, 40] {
-        for line in render_transcript("### 見出し\n- あいうえお item\n1. another one", width) {
+        for line in render_transcript("### 見出し\n- あいうえお item\n1. another one", width)
+        {
             assert!(display_width(&line_text(&line)) <= width);
         }
     }
@@ -371,7 +435,11 @@ fn transcript_table_renders_as_boxed_grid() {
     // テーブルのどこにも色や太字はない。
     for line in &lines {
         for span in &line.spans {
-            assert_eq!(span.style.fg, Some(Color::Reset), "table text carries no colour");
+            assert_eq!(
+                span.style.fg,
+                Some(Color::Reset),
+                "table text carries no colour"
+            );
             assert_eq!(span.style.bg, None, "table has no background");
             assert!(
                 !span.style.add_modifier.contains(Modifier::BOLD),
@@ -403,19 +471,34 @@ fn rich_table_stays_borderless_after_transcript_boxed_table_change() {
     let table = "| h1 | h2 |\n| --- | --- |\n| a | b |";
     let lines = render(table, 40);
     let joined: String = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
-    for boxed_char in ['\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{251c}', '\u{2524}', '\u{252c}', '\u{2534}', '\u{253c}'] {
-        assert!(!joined.contains(boxed_char), "Rich table must not use box-drawing borders");
+    for boxed_char in [
+        '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{251c}', '\u{2524}', '\u{252c}',
+        '\u{2534}', '\u{253c}',
+    ] {
+        assert!(
+            !joined.contains(boxed_char),
+            "Rich table must not use box-drawing borders"
+        );
     }
     let (theme, _, _) = fixtures();
-    assert_eq!(lines[0].spans[0].style.fg, Some(theme.accent), "Rich header keeps its accent colour");
-    assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::BOLD), "Rich header stays bold");
+    assert_eq!(
+        lines[0].spans[0].style.fg,
+        Some(theme.accent),
+        "Rich header keeps its accent colour"
+    );
+    assert!(
+        lines[0].spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD),
+        "Rich header stays bold"
+    );
 }
 
 #[test]
 fn apply_background_fills_only_bare_spans() {
     let (theme, ss, st) = fixtures();
-    let mut lines =
-        render_markdown("text with `code`", 40, &theme, &ss, &st);
+    let mut lines = render_markdown("text with `code`", 40, &theme, &ss, &st);
     let bg = theme.comment_preview_bg;
     apply_background(&mut lines, bg);
     for line in &lines {

@@ -8,315 +8,212 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 
 ## Commands
 
-- **Build:** `cargo build`
-- **Run:** `cargo run` or `cargo run -- <repo-path>` (defaults to current directory)
-- **Test:** `cargo test --workspace` (tests are inline `#[cfg(test)]` modules in `git_engine.rs`, `config.rs`, `review_store.rs`)
-- **Run single test:** `cargo test <test_name>` (e.g., `cargo test test_parse_full_config`)
-- **Lint:** `cargo clippy --workspace`
-- **Check:** `cargo check --workspace`
+`cargo build` · `cargo run [-- <repo-path>]` · `cargo test --workspace` ·
+`cargo clippy --workspace` · `cargo check --workspace` · `make fmt`.
+Set `RUST_LOG=debug` for logging.
 
-Bare `cargo test` / `cargo clippy` only cover the `conductor` package — the
-`crates/revidere*` and `crates/sheaf-core` members need `--workspace`.
+**Always pass `--workspace`** — bare `cargo test` / `cargo clippy` only cover the
+`conductor` package, not `crates/revidere*` or `crates/sheaf-core`.
 `default-members` is deliberately left alone so `cargo run` stays unambiguous.
-- **Logging:** Set `RUST_LOG=debug` (or `info`, `warn`) before running
+
+A pre-commit hook (`make hooks`, once per clone) runs `cargo fmt --all -- --check`.
 
 ### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
 
 The review DB tools are served by the conductor binary itself over stdio — no
 separate build step, no Node. `cargo install --path .` updates the binary and its
 MCP tools together, which is the point: they used to be two artifacts on two
-release channels and drifted apart.
+release channels and drifted apart. `plugins/conductor/.mcp.json` starts it for
+the Claude Code sessions inside the TUI, resolving the DB from
+`$CONDUCTOR_DB_PATH` (injected by `pty_manager/spawn.rs`). The AI review does
+*not* go through MCP — its artifact is a JSON file written by `revidere`.
 
-- **Run by hand:** `conductor mcp-serve --db <path>` (speaks JSON-RPC on stdout)
-- **Who starts it:** `plugins/conductor/.mcp.json`, for the interactive Claude Code
-  sessions inside the TUI (it resolves the DB from `$CONDUCTOR_DB_PATH`, injected by
-  `pty_manager/spawn.rs`). The AI review does *not* go through MCP — its
-  artifact is a JSON file written by `revidere` (see `revidere.rs` below)
-- **Tool contract:** the 7 `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
+- **Tool contract:** the `#[tool]` handlers in `src/mcp_serve/tools.rs`. Their doc
   comments become the JSON Schema descriptions the model reads, so changing one
   changes the tool's public contract — treat them as API, not commentary.
-
-Never print to stdout from anything reachable by `mcp-serve`; it would corrupt the
-protocol. Logging goes to stderr (env_logger's default).
+- **Never print to stdout** from anything reachable by `mcp-serve`; it would
+  corrupt the protocol. Logging goes to stderr.
 
 ### Session hook (`conductor cc-hook`, `src/cc_hook.rs`)
 
-`/clear` rotates Claude Code's log to a **new session id**, and nothing on disk
-links the old file to the new one — so a panel pinned to its spawn-time
-`--session-id` would keep showing the pre-clear transcript forever. The fix is a
-`SessionStart` hook that runs inside the panel's own Claude process and reports
-its current session id back.
-
-- **Who installs it:** `pty_manager/spawn.rs` writes `.conductor/claude-hooks.json`
-  and passes it as `--settings` on every Claude spawn, plus `CONDUCTOR_PANEL_ID`
-  and `CONDUCTOR_NOTIFY_SOCK` in the environment. `--settings` *adds a layer* —
-  the user's own settings and the project's `.claude/settings.json` keep working.
-- **Why the binary and not `plugins/`:** same reason `mcp-serve` lives here — a
-  separately released plugin drifts, and the failure is silent (scrollback just
-  shows stale history). `cargo install --path .` ships the binary and the hook
-  together.
-- **Fallback:** when the hook stays silent (hooks disabled, older CLI),
-  `claude_sessions/rotation.rs` infers the rotation from the logs instead. It is
-  deliberately conservative — see its module docs for what it refuses to guess.
+`/clear` rotates Claude Code's log to a **new session id** and nothing on disk
+links the old file to the new one, so a panel pinned to its spawn-time
+`--session-id` would show the pre-clear transcript forever. A `SessionStart` hook
+runs inside the panel's own Claude process and reports the current id back.
+`pty_manager/spawn.rs` writes `.conductor/claude-hooks.json` and passes it as
+`--settings` on every spawn (that *adds a layer*, so the user's own settings keep
+working), plus `CONDUCTOR_PANEL_ID` and `CONDUCTOR_NOTIFY_SOCK`. It lives in the
+binary rather than `plugins/` for the same reason `mcp-serve` does: a separately
+released plugin drifts, and the failure is silent. When the hook stays quiet
+(hooks disabled, older CLI), `claude_sessions/rotation.rs` infers the rotation
+from the logs — deliberately conservative, see its module docs.
 
 ### Review analyser (`crates/revidere`)
 
 revidere turns a git diff into `<worktree>/.conductor/review.json`: every changed
 line sorted into sections by importance, plus a coverage check that no changed
-line is left unexplained. It lives in this repo as workspace members:
-`crates/revidere` (the whole analyser plus the artifact types and `ReadingOrder`)
-and `crates/revidere-fixtures` (shared test scaffolding).
+line is left unexplained. `crates/revidere-fixtures` is shared test scaffolding.
 
-- **One entry point:** `revidere::analyze(&Options, &dyn Ai)`. It has no binary and
-  no CLI — conductor is the only caller (`app/revidere.rs`, on a worker thread).
+- **One entry point:** `revidere::analyze(&Options, &dyn Ai)`. No binary, no CLI —
+  conductor is the only caller (`app/revidere.rs`, on a worker thread).
 - **The AI is injected.** revidere never spawns anything; conductor implements
-  `revidere::Ai` over `ai_caller`, so the review runs on the same `[api]` config as
-  every other AI feature. `provider = "gemini"` will *not* work: the prompt hands
-  over the ledger only, and the model is expected to read the repository itself, so
-  it needs an agentic CLI under `provider = "command"`.
-- **Cache identity:** the stored-answer key includes `Ai::identity()`. If that ever
-  goes constant, changing models silently returns the old model's answer.
-- **Failing coverage is not a failure.** `analyze` returns the artifact either way;
-  `review.coverage.is_complete()` is what distinguishes them. Treating an
-  incomplete review as an error throws away a readable one.
-- revidere writes nothing to stdout/stderr (the host owns a TUI) — progress goes
-  through `log`.
+  `revidere::Ai` over `ai_caller`, so the review runs on the same `[api]` config
+  as every other AI feature. `provider = "gemini"` will *not* work: the prompt
+  hands over the ledger only and the model must read the repository itself, so it
+  needs an agentic CLI under `provider = "command"`.
+- **Cache identity** includes `Ai::identity()`. If that goes constant, changing
+  models silently returns the old model's answer.
+- **Failing coverage is not a failure.** `analyze` returns the artifact either
+  way; `review.coverage.is_complete()` distinguishes them.
+- revidere writes nothing to stdout/stderr (the host owns a TUI) — use `log`.
 
 ### Code index (`crates/sheaf-core`, `src/semantic_index/`)
 
 sheaf-core holds a SCIP index split per file, keyed by content hash, and answers
-position queries (go-to-definition, find-references) **with a confidence level
-attached**. It was developed in its own repository (`../sheaf`) and vendored here
-as a workspace member. `src/semantic_index/` is conductor's side of the seam.
+position queries (go-to-definition, find-references, go-to-implementation)
+**with a confidence level attached**. It was developed in its own repository
+(`../sheaf`) and vendored here as a workspace member; `src/semantic_index/` is
+conductor's side of the seam. An LSP was evaluated and rejected — conductor's
+jumps run at review time, so an LSP's residency buys nothing it needs.
 
 **tree-sitter is not replaced — it is the layer underneath.** sheaf-core defines
-the syntactic layer as a trait and ships no implementation, and it will not even
-consult the index unless `token_at` answers. `semantic_index::bridge::Bridge`
-implements that trait over the existing `CodeMask` + `SymbolIndex`, so every
-position where the index has nothing to say lands on today's answer, marked
-`Definition::Syntactic` rather than `Exact`.
+the syntactic layer as a trait and ships no implementation, and will not consult
+the index unless `token_at` answers. `semantic_index::bridge::Bridge` implements
+that trait over `CodeMask` + `SymbolIndex`, so every position the index cannot
+answer lands on today's answer, marked `Definition::Syntactic` rather than
+`Exact`. Deliberately still tree-sitter-only: the symbol-action overlay, `gi`
+when the index is silent, and the hover popup's reference count
+(`count_references_upto`, capped at 50 — it runs on the UI thread).
 
-Why an index and not a language server: conductor's jumps only run at review
-time, after the implementation is finished, so the thing an LSP's residency buys
-— incremental re-analysis on every keystroke — is a requirement conductor does
-not have. Measured on this repository, rust-analyzer peaks at 3.70GB
-(`analysis-stats`) and does not persist its analysis, so a per-worktree or
-per-focus server re-pays ~13s on every switch. The index is 14.5MB on disk and
-1.10x that resident, and **one index serves every worktree** — freshness is
-per-file by content hash, so a worktree on the same branch answers `Exact` and
-only its edited files fall through.
+Invariants. Breaking any of these turns a weak answer into a confident one:
 
 - **The confidence cannot be bypassed.** `Definition` / `References` keep the
   positions inside their variants, so there is no way to get a `Location` without
-  deciding which variant you got. Claims of different strength live in different
-  types (`Exact` vs `Enclosing`, `Found::direct` vs `Found::via_interface`), and
-  `Syntactic(vec![])` ("looked, found nothing") is distinct from `NotCode`
-  ("not an identifier"). `lib.rs` pins this with ```compile_fail``` doctests —
-  if you touch the public API, check they still fail to compile.
-- **Provenance is all-or-nothing.** If any file an answer depended on differs from
-  its state at index time, the whole answer is dropped and the query falls through
-  to the syntactic layer. Returning the surviving subset would silently hide the
-  missing candidates behind an `Exact`.
-- **The syntactic layer cannot fake an `Exact`.** `SyntacticAnswer` has no variant
-  that reaches it. A fallback answer stays visibly a fallback.
-- **Design tie-breakers, in order:** (1) N worktrees must not multiply memory,
-  (2) keep the producer's accuracy, (3) never answer wrongly — no answer is better.
-- Comments, test names, and error messages are Japanese, and the public API
-  deliberately exposes no `protobuf` / `scip` types (conductor pulls them in as
-  dev-dependencies only, to fabricate index fixtures in tests).
+  deciding which variant you got, and `Syntactic(vec![])` ("looked, found
+  nothing") is distinct from `NotCode`. `lib.rs` pins this with
+  ```compile_fail``` doctests — check they still fail to compile.
+- **Provenance is all-or-nothing.** If any file an answer depended on changed
+  since index time, the whole answer is dropped and the query falls through.
+  Returning the surviving subset would hide the missing candidates behind an
+  `Exact`.
+- **Exact and Derived are never merged.** Go-to-implementation answers `Exact`
+  from SCIP `relationships` where the producer emits them (scip-go,
+  scip-typescript) and `Derived` from the symbol spelling where it does not
+  (rust-analyzer emits none) — `store::impl_pair`. Merging would drag a
+  producer-declared answer down to the weaker claim. The derived key is a bare
+  spelling, so two same-named traits collide; that is why it is not `Exact`.
+- When in doubt: never answer wrongly — no answer is better — and never let N
+  worktrees multiply memory.
 
-Where the index lives and who builds it:
+Two SCIP traps that typed access will not save you from:
 
-- `<main worktree>/.conductor/`, one set of
-  `index.<lang>[.<root>].<content key>.{scip,hashes,log}` per index root *per tree
-  content*, plus a single `generate.lock`. Linked worktrees have no `.conductor/`
-  of their own, so `semantic_index` walks `git2::Repository::commondir()` to the
-  main one — the same move `mcp_serve::resolve` makes for the review DB. The lock
-  is per repository on purpose: one producer peaks at 2.36GB, so the cap must not
-  split per index root or per worktree. The artifact names must, though — sharing
-  one name means the second generation overwrites the first index.
-- **The content key is what makes worktrees cheap to move between.** It folds the
-  `(path, blob hash)` table of the files *that root's producer reads* — not every
-  file under the root, or swapping a `.png` would rename the artifact and rebuild
-  an identical index. `IndexRoot::fold` is the single place that filter lives,
-  because the same key has to come out of a tree walk and out of a provenance
-  table; if the two disagreed, every generation would write a name the next read
-  cannot find. Four generations are kept per root (`GENERATIONS`, 14.5MB each here)
-  and `prune` drops the rest by mtime, along with any keyless artifact left by an
-  older conductor.
-- **Computing it walks the tree, so it never happens on the UI thread.**
-  Measured on a real monorepo: enumerating the roots is 149ms and the heaviest
-  single root's key is 110ms. `survey()` does both on the same worker that loads
-  the index, and `SemanticIndex::install` takes the result; until it lands
-  `note_open` answers [`Reading::Loading`] rather than answering from the previous
-  tree's roots. `survey` only keys the roots it has a reason to — the one owning
-  the file being read, the ones with artifacts on disk, and the ones
-  `needs_survey` names — because keying all 109 costs 0.6s. `needs_survey`
-  returning the roots by name is load-bearing: a keyless root that the survey did
-  not pick would keep asking to be surveyed, every frame.
-- **A generation that is already on disk is not rebuilt.** `note_open` asks
-  `has_generation` for the current key, and `tick_regeneration` re-checks it
-  before starting the producer — an edit that lands the tree back on a content
-  that was already indexed writes `result=reused took=0.0s` and starts nothing.
-  A root whose key is stale (`note_change` clears it) does not generate at all
-  until the survey refreshes it, or the index would be written under the name of
-  the content it no longer describes.
-- **Reading falls back to the newest generation when no key matches.**
-  `IndexRoot::source` prefers the exact key and takes the most recent otherwise.
-  Requiring an exact match would make one keystroke hide the whole index, when
-  per-file provenance already keeps the untouched files answering `Exact`.
-- **The producer is chosen per index root** (`semantic_index/roots.rs`), by the
-  marker file that names one: `Cargo.toml` → `RustAnalyzer`, `go.mod` → `ScipGo`,
-  `tsconfig.json` → `ScipTypescript`. A tree with no marker is not indexed at all;
+- **`signature_documentation` is not what the scip crate says it is.** scip 0.9
+  generates a `Signature` with the text at field 2; rust-analyzer and scip-go
+  write the older spelling, a `Document` with the text at field 5. Typed access
+  compiles and returns an empty string forever, so `store::signature_text` reads
+  both. scip-typescript writes none — its declaration is a ```` ```ts ```` fence
+  at `documentation[0]`, lifted out by `store::fenced_declaration`.
+- **`kind`'s numbers are not the crate's.** The enum was renumbered (function is
+  17 in scip 0.9, 24 in what the producers write), but the producers agree with
+  *each other*, so `store/kind.rs` is one table with no tool name in it. Do not
+  route these through `scip::types::Kind`, and do not reintroduce a per-tool
+  table: scip-typescript writes no `kind` at all, and a tool-keyed table would
+  silently answer `Unknown`. Producers that omit it fall to
+  `kind::from_declaration`.
+
+Where it lives: `<main worktree>/.conductor/`, one set of
+`index.<lang>[.<root>].<key>.{scip,hashes,log}` per index root *per tree
+content*, plus a single `generate.lock` and `index-history.log`. Linked
+worktrees have no `.conductor/`, so `semantic_index` walks
+`git2::Repository::commondir()` to the main one — the same move
+`mcp_serve::resolve` makes for the review DB. The lock is per repository on
+purpose: one producer peaks at 2.36GB, so the cap must not split per index root
+or per worktree. The names must, though, or the second generation overwrites the
+first.
+
+- **The producer is chosen per index root** (`semantic_index/roots.rs`) by the
+  marker naming one: `Cargo.toml` → `RustAnalyzer`, `go.mod` → `ScipGo`,
+  `tsconfig.json` → `ScipTypescript`. A tree with no marker is not indexed:
   pointing a producer at a tree it cannot recognise is worse than not running it,
-  because rust-analyzer and scip-go both write an empty index and exit 0. Each root
-  regenerates independently — a missing `scip-go` must not cost the Rust index.
-- **Index roots are found by walking the tree, and only the one you are reading
-  gets built.** Measured on a real monorepo: 109 roots (75 `tsconfig.json`, 19
-  `Cargo.toml`, 15 `go.mod`), 324ms to enumerate. Building all of them would take
-  tens of minutes, and again every time edits go quiet — so `note_open` requests
-  exactly the root that owns the file in the Viewer, and only when that root has
-  no index yet. `note_change` does the same for the root that owns the edit.
-  `conductor index` is the way to build every root at once. Two consequences: a
-  repository with no index yet stays syntactic until a file is opened (opening one
-  is the only way to jump anyway), and `note_open` is called every frame from
-  `tick_semantic_regeneration` rather than from the 12 places that open a file —
-  missing one of those would be silent.
-- Enumeration honours `.gitignore` and skips `node_modules` / `vendor`; without
-  that, a committed `node_modules` alone contributes hundreds of roots. Nested
-  `Cargo.toml` under a root one is a workspace member and is *not* a separate
-  root (rust-analyzer covers it, and each producer peaks at 2.36GB); nested
-  `go.mod` and `tsconfig.json` are module/project boundaries and *are*.
-- `conductor index` builds the first ones (~14s for this repository). After that
-  `Regenerator` rebuilds whenever edits go quiet for 3s. It ignores gitignored
-  paths — without that, `target/` churn would reset the quiescence timer forever
-  and the index would never be rebuilt. That is why `FsEvent::Changed` carries a
-  path. Routine rebuilds stay silent; the status bar reports only the first index.
-- **Staleness heals itself, and only what cannot heal is reported.** Reading a
-  tree whose content has no index yet returns [`Reading::Building`] and starts one
-  — safe to do automatically only because generations are keyed by content, so
-  bouncing between two worktrees pays the ~14s / 2.36GB once per content and
-  reuses it forever after. That per-switch cost is what ruled out an LSP, and it
-  is what the key buys back. [`Reading::Stale`] is now the narrow case that
-  regenerating will not fix: the index describes this exact content yet does not
-  cover the open file (the producer skipped it, it moved mid-generation, or the
-  producer cannot be started). The status bar says so once, and
-  **Repo ▸ Rebuild Code Index** — which skips the 3s quiescence, since the person
-  who pressed it is waiting — is the manual repair.
-- **Every generation appends one `key=value` line to
-  `.conductor/index-history.log`** (`semantic_index/history.rs`) — enough to
-  reconstruct both the causality and whether the work was worth doing:
+  because rust-analyzer and scip-go both write an empty index and exit 0. Roots
+  regenerate independently — a missing `scip-go` must not cost the Rust index.
+  Enumeration honours `.gitignore` and skips `node_modules` / `vendor`; a nested
+  `Cargo.toml` is a workspace member and *not* a root, nested `go.mod` /
+  `tsconfig.json` are module boundaries and *are*.
+- **Only the root you are reading gets built.** A real monorepo has 109 roots
+  (75 `tsconfig.json`, 19 `Cargo.toml`, 15 `go.mod`); building all of them takes
+  minutes, and again every time edits go quiet. `note_open` requests exactly the
+  root owning the file in the Viewer, `note_change` the root owning the edit, and
+  `conductor index` is the way to build every root at once. That is why
+  `note_open` is called every frame from `tick_semantic_regeneration` rather than
+  from the 12 places that open a file — missing one would be silent.
+- **Generations are keyed by content, which is what makes worktrees cheap to move
+  between.** The key folds the `(path, blob hash)` table of the files *that
+  root's producer reads* — not every file under it, or swapping a `.png` would
+  rename the artifact and rebuild an identical index. `IndexRoot::fold` is the
+  single place that filter lives, because the same key has to come out of a tree
+  walk and out of a provenance table; if the two disagreed, every generation
+  would write a name the next read cannot find. Four are kept per root (14.5MB
+  each here) and `prune` drops the rest by mtime, along with any keyless artifact
+  an older conductor left behind.
+- **Computing it walks the tree, so it never happens on the UI thread.**
+  Enumerating the roots is 149ms and the heaviest single key 110ms, measured on
+  that monorepo. `survey()` does both on the same worker that loads the index and
+  `SemanticIndex::install` takes the result; until it lands, `note_open` answers
+  `Reading::Loading` rather than answering from the previous tree's roots.
+  `survey` only keys the roots it has a reason to — the one owning the file being
+  read, the ones with artifacts on disk, and the ones `needs_survey` names —
+  because keying all 109 costs 0.6s. `needs_survey` returning the roots *by name*
+  is load-bearing: a keyless root the survey did not pick would keep asking to be
+  surveyed, every frame.
+- **What is already on disk is not rebuilt, and staleness heals itself.**
+  `note_open` asks `has_generation` for the current key and `tick_regeneration`
+  re-checks it before starting the producer, so an edit that lands the tree back
+  on already-indexed content writes `result=reused took=0.0s` and starts nothing.
+  Reading content with no index yet answers `Reading::Building` and starts one —
+  safe to do automatically only because generations are keyed, so bouncing
+  between two worktrees pays the ~14s / 2.36GB once per content and reuses it
+  after. `Reading::Stale` is the narrow case regenerating will not fix: the index
+  describes this exact content yet does not cover the open file.
+  **Repo ▸ Rebuild Code Index** skips the 3s quiescence, since the person who
+  pressed it is waiting. A root whose key is stale (`note_change` clears it) does
+  not generate until the survey refreshes it, or the index would be written under
+  the name of content it no longer describes.
+- **Reading falls back to the newest generation when no key matches**
+  (`IndexRoot::source`). Requiring an exact match would make one keystroke hide
+  the whole index, when per-file provenance already keeps the untouched files
+  answering `Exact`.
+- **Every generation appends one `key=value` line to `index-history.log`**
+  (`semantic_index/history.rs`) — enough to reconstruct both the causality and
+  whether the work was worth doing:
 
   ```
-  … lang=go root=services/api trigger=change cause=services/api/handler/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=+0~1-0
-  … lang=go root=services/api trigger=change cause=services/api/handler/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=none waste=no-source-change
+  … lang=go root=services/api trigger=change cause=services/api/handler.go waited=3.1s took=0.2s result=ok documents=2 sources=+0~1-0
   … lang=rust root=. trigger=change cause=src/lib.rs waited=0.2s took=0.0s result=reused
   ```
 
   `cause` is the file that triggered it, so a line answers "opening *this* built
-  *that*". `sources` is the provenance table before the producer ran against the
-  one it wrote, **counted only over files of that root's language** — the table
-  lists every file in the root, so a `.md` edit would otherwise read as "the
-  sources moved" and hide a pointless rebuild. `sources=none` means the producer
-  re-derived the same index from the same inputs, and that is what `waste=` names.
-  The other waste markers are `stale-on-arrival(N)` (edits landed mid-generation,
-  so the index was old the moment it was written) and `discarded` (a worktree
-  switch threw the run away). `result=reused` is the opposite of a waste marker:
-  the content already had an index, so nothing was run. A change to a file no
-  producer reads writes no line at all, because it starts no generation.
-  Separate from `index.<lang>.<key>.log`, which
-  is the producer's own output and is overwritten each run. Capped at 512KB,
-  oldest half dropped. Note that `Lock::acquire` distinguishes "someone
-  else is generating" from "the directory is not there yet" — collapsing the two
-  made every first-ever `conductor index` answer `Busy`.
-- The index producers are external tools. sheaf's `tests/go_definition.rs` and
-  `tests/ts_definition.rs` really launch `scip-go` / `npx` and **fail rather than
-  skip** where they are absent. `#[ignore]`d tests need a real index; see
-  `SHEAF_TEST_INDEX` / `SHEAF_TEST_ROOT`, and `CONDUCTOR_TEST_REPO` for
+  *that*". `sources` compares the provenance table before the producer ran
+  against the one it wrote, **counted only over that root's language** — the
+  table lists every file in the root, so a `.md` edit would otherwise read as
+  "the sources moved" and hide a pointless rebuild. `sources=none` earns
+  `waste=no-source-change`; the other markers are `stale-on-arrival(N)` (edits
+  landed mid-generation, so the index was old when written) and `discarded` (a
+  worktree switch threw the run away). A change to a file no producer reads
+  writes no line at all. Capped at 512KB, oldest half dropped. Separate from the
+  producer's own `index.<lang>.<key>.log`, overwritten each run.
+- `Regenerator` rebuilds when edits go quiet for 3s, **ignoring gitignored
+  paths** — without that, `target/` churn would reset the quiescence timer
+  forever. That is why `FsEvent::Changed` carries a path. `Lock::acquire`
+  distinguishes "someone else is generating" from "the directory is not there
+  yet"; collapsing the two made every first-ever `conductor index` answer `Busy`.
+- sheaf's `tests/{go,ts}_definition.rs` really launch `scip-go` / `npx` and
+  **fail rather than skip** where absent. `#[ignore]`d tests need a real index —
+  see `SHEAF_TEST_INDEX` / `SHEAF_TEST_ROOT`, and `CONDUCTOR_TEST_REPO` for
   `src/semantic_index/`'s own.
 
-The hover popup resolves its **definition** through the index like `gd` does, so
-the two never disagree about where a symbol lives. Its **reference count** stays
-on tree-sitter's capped counter (`count_references_upto`, 50) — that one runs on
-the UI thread, and `references_at` may fall through to a full tree walk (measured
-157ms). The list behind "N refs" is a click, which already pays that walk today.
-`hover_info::DefSite` is the seam: whoever resolved the position, the popup is
-built the same way, and a site the index found needs no tree-sitter definition at
-all (that absence is why hover used to stay silent on locals, fields and module
-names).
-
-Its **declaration and kind** come from the index too, through `describe_at`.
-`SymbolInformation` carries both for every symbol rust-analyzer emits (measured:
-656 of 656 own-crate positions across three files), and the declaration is the
-producer's resolved type, not the source text — `let message: String` where the
-line reads `let message = who.greet();`. Scraping the definition line is the
-fallback, not the default. Two things make this harder than reading a field:
-
-- **`signature_documentation` is not what the scip crate says it is.** scip 0.9
-  generates a `Signature` with the text at field 2; rust-analyzer and scip-go both
-  write the older spelling, a `Document` with the text at field 5. Typed access
-  compiles and returns an empty string forever, so `store::signature_text` reads
-  both. **scip-typescript writes no `signature_documentation` at all** — its
-  declaration is a ```` ```ts ```` fence at `documentation[0]`, which
-  `store::fenced_declaration` lifts out (the remaining entries stay as doc).
-- **`kind`'s numbers are not the crate's.** The SCIP enum was renumbered, and the
-  producers' numbers do not line up with scip 0.9's (function is 17 there and 24
-  here). They do line up with **each other** — rust-analyzer and scip-go write the
-  same older numbering, verified against both indexes — so `store/kind.rs` is one
-  table with no tool name in it. Do not route these through `scip::types::Kind`,
-  and do not reintroduce a per-tool table: scip-typescript writes no `kind`, and a
-  table keyed on the tool would have silently answered `Unknown` for everything a
-  given tool had not been observed writing. Producers that omit `kind` fall to
-  `kind::from_declaration`, which reads the declaration's leading word (or
-  TypeScript's `(method)` / `(property)` prefix).
-
-The popup keeps one fixed shape so the reading order does not move per kind:
-container on the left of the header, kind on the right, declaration under it, doc
-under that, then the clickable location and "N refs". The container
-(`app::types::App`) arrives as `SymbolDetail.container` — sheaf-core builds it, so
-conductor never parses a SCIP symbol string. Three things it has to get right:
-
-- **A local has no spelling of its own.** `local 3` carries the enclosing function
-  in `SymbolInformation.enclosing_symbol` instead, and that is where the container
-  comes from. Adding it took the measured coverage from 99 to 193 of the `Exact`
-  answers in this repository — locals and parameters are most of the positions a
-  reader hovers.
-- **The separator comes from the file extension**, not the producer: `::` for
-  `.rs`, `.` for everything else.
-- **A backticked descriptor is a file for TypeScript and a generic type for
-  Rust.** ``src/`greet.tsx`/Loud#`` should drop the file (the popup shows the
-  location anyway); `` `Bridge<'a>`#`` must not be dropped, because the result
-  would name a different type. So it is dropped only in namespace position, and
-  anywhere else the formatter returns `None` rather than guess.
-
-Pressing a jump key **on** a definition shows its references instead. That test is
-`answer_points_at`: the index's own answer must name the position that was asked
-about. It used to compare the top visible line against a tree-sitter name lookup
-with a ±2-line tolerance, which meant it never fired for fields or locals and
-misfired whenever the viewport had scrolled.
-
-Go-to-implementation answers at two different strengths, and the variant says
-which. **rust-analyzer emits no SCIP `relationships` at all** (measured: 0 of
-22,434 `SymbolInformation` in this repository's index); scip-go and
-scip-typescript both do. Where they exist, the reverse of `implementers` *is* the
-answer and it comes back as `Implementations::Exact`. Where they do not, all that
-is left is the spelling of the symbols themselves: `impl#[Loud][Greeter]` names
-both sides, `store::impl_pair` reads the pair off it, and the answer is
-`Implementations::Derived`. The two are never mixed into one list — merging them
-would drag a producer-declared answer down to the weaker claim. Two consequences
-worth knowing before touching the derived path:
-
-- **The key is a bare spelling, not a symbol.** Two same-named traits in one
-  repository would merge. That is why the answer is not `Exact`.
-- **A generic impl has no block symbol.** `impl<'a> SyntacticLayer for Bridge<'a>`
-  puts nothing but its methods in the index, so the landing point is the earliest
-  definition under that `(trait, type, file)` — the `impl` line when the block
-  symbol exists, the first method inside it otherwise. Both land in the right
-  block; only the former lands on the right line.
-
-Still on tree-sitter, deliberately: the symbol-action overlay (it shows
-definitions, implementations and references together by name, so it moves when
-that overlay moves), and `gi` itself whenever the index stays silent.
+sheaf-core's comments, test names, and error messages are Japanese, and its
+public API deliberately exposes no `protobuf` / `scip` types.
 
 **A name-only answer never crosses languages.** `SymbolIndex::find_definitions`
 takes the file being read and drops candidates whose language differs
@@ -334,77 +231,63 @@ the filter produces.
 
 ### Application Structure
 
-Single-struct state model: `App` in `app/` (`app/mod.rs`, with logic split across `app/review.rs`, `app/terminal.rs`, `app/worktree.rs`) holds all application state as flat fields. No ECS or component architecture.
-
-**Main loop** (`main.rs`): 60fps event loop — polls crossterm events at 16ms, handles keys/mouse, checks file watcher, refreshes worktrees periodically (3s), scans Claude Code PTY output for file-change patterns.
-
-**Event dispatch** (`event/`, dispatched from `event/mod.rs` into per-context submodules `global`/`explorer`/`viewer`/`terminal`/`worktree`/`overlay`/`mouse`): Overlay modes (worktree input, cherry-pick, branch switch, review input, etc.) take absolute priority and consume all keys. Otherwise, the `Focus` enum routes input to the focused panel. Terminal panels forward all keys except Esc directly to PTY.
+`App` in `app/` holds all state as flat fields — no ECS, no components. `main.rs`
+runs a 60fps loop: crossterm events at 16ms, file watcher, a worktree refresh
+every 3s, and a scan of Claude Code's PTY output for file-change patterns.
+`event/` dispatches per context: overlay modes (worktree input, cherry-pick,
+branch switch, …) take absolute priority and consume all keys; otherwise `Focus`
+routes to the focused panel, and terminal panels forward everything but Esc
+straight to the PTY.
 
 ### Layout
 
 ```
-Title bar
-Menu bar (full width)
-Worktree monitor strip (full width)
+Title bar / Menu bar / Worktree monitor strip   (all full width)
 Explorer | Viewer | Terminal (Claude Code / Shell)
 Status bar
 ```
 
-- The **menu bar** (`ui/menu_bar.rs`, `menu/`) is a permanent one-row strip of
-  dropdown menus directly under the title bar — the browsable route to the same
-  commands the palette and the keybindings run. `f10` focuses it. Unlike the
-  worktree strip it stays visible while a panel is maximized. Menu rows carry a
-  `CommandId` and go through `App::execute_palette_command`, so the menu holds
-  no command logic of its own; `menu/model.rs` is taxonomy and labels only.
+A three-column accordion (`ui/layout.rs`) with focus-driven widths: Explorer
+(50/50 tree over diff/comment list), Viewer, Terminal (80/20 Claude Code over
+shell). `Ctrl+Alt+Z` maximizes, `Ctrl+Alt+Arrow` resizes tmux-style (ratios
+persist), `Focus::Editor` merges Explorer+Viewer into one PTY panel. The menu bar
+(`ui/menu_bar.rs`, `menu/`, `f10`) and the worktree strip (`ui/worktree_bar.rs`)
+are full-width rows, not columns; only the menu bar survives a maximize. Menu
+rows carry a `CommandId` and go through `App::execute_palette_command`, so
+`menu/model.rs` is taxonomy and labels only, with no command logic.
 
-- The worktree list is **not** a column: it lives in a full-width monitor strip
-  along the top (`ui/worktree_bar.rs`), showing every worktree's branch, dirty
-  count, ahead/behind, and Claude Code waiting/active state. Hidden while a panel
-  is maximized.
-- The main area is a three-column accordion (`ui/layout.rs`): Explorer | Viewer |
-  Terminal, with focus-driven widths. Any panel can be maximized (`Ctrl+Alt+Z`),
-  and resized tmux-style with `Ctrl+Alt+Arrow` (ratios persist to config.toml).
-- The Viewer keeps several files open at once. `ViewerState` owns a `tabs` list
-  plus an active index; only the active tab's state lives in the flat
+- **The Viewer keeps several files open at once.** `ViewerState` owns a `tabs`
+  list plus an active index; only the active tab's state lives in the flat
   `content`/`search`/`diff_view`/`selection` fields, and the rest is stashed on
-  the tab it belongs to (`viewer/tabs.rs`) — one copy, never two. `open_file`
-  is the single entry point and reuses an existing tab. The strip is drawn on
-  the block's first inner row (`ui/viewer_panel/tab_row.rs`), the same slot the
-  breadcrumb uses, so `screen_row_map` gets a placeholder for it.
-- Explorer column is split 50/50 (file tree top, diff/comment list bottom).
+  the tab it belongs to (`viewer/tabs.rs`) — one copy, never two. `open_file` is
+  the single entry point and reuses an existing tab. The strip draws on the
+  block's first inner row (`ui/viewer_panel/tab_row.rs`), the same slot the
+  breadcrumb uses, so `screen_row_map` needs a placeholder for it.
 - The revidere review view (`Focus::Revidere`, `w`) is *not* part of the
-  accordion: it takes `main_area` whole as two columns (reading order | diff)
-  and hides the terminal column. `ui/layout/render.rs` short-circuits there.
-- Terminal column is split 80/20 vertically (Claude Code top, Shell bottom).
-- When the embedded editor is active (`Focus::Editor`), it merges the
-  Explorer+Viewer columns into one PTY panel.
-- Tab cycles focus; panel-specific vim-style keys (j/k, h/l, g/G, /)
+  accordion: it takes `main_area` whole as two columns (reading order | diff) and
+  hides the terminal column. `ui/layout/render.rs` short-circuits there.
 
 ### Key Modules
 
 | Module | Role |
 |--------|------|
-| `app/` | All application state and business logic methods (`mod.rs` + `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `revidere.rs`) |
-| `event/` | Keyboard/mouse event dispatch based on Focus and overlay state (per-context submodules) |
-| `menu/` | Menu bar model (`model.rs` — which command sits under which menu), interaction state (`state.rs`), and availability predicates for the greyed-out rows (`enabled.rs`) |
-| `git_engine.rs` | All git operations via `git2` (no shell-out) — worktrees, diffs, branches, cherry-pick, merge |
-| `diff_state.rs` | Diff data model (file diffs, hunks, lines) using `similar` crate |
-| `viewer/` | File tree model (`file_tree.rs`), file content buffer (`file_view.rs`), and the open-file tabs (`tabs.rs`) |
-| `review_store.rs` | SQLite persistence (`.conductor/conductor.db`) for reviews, sessions, templates, history |
-| `pty_manager.rs` | PTY session management — spawn, read/write, resize; vt100 parser for rendering; output scanner for Claude Code |
-| `file_watcher.rs` | Filesystem change detection via `notify` crate, debounced at 500ms |
+| `app/` | All application state and business logic (`mod.rs` plus `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `revidere.rs`) |
+| `event/` | Keyboard/mouse dispatch by Focus and overlay state (per-context submodules) |
+| `menu/` | Menu taxonomy (`model.rs`), interaction state (`state.rs`), greyed-out predicates (`enabled.rs`) |
+| `git_engine/` | All git operations via `git2`, no shell-out — worktrees, diffs, branches, cherry-pick, merge |
+| `diff_state/` | Diff data model (file diffs, hunks, lines) over the `similar` crate |
+| `viewer/` | File tree (`file_tree.rs`), content buffer (`file_view.rs`), open-file tabs (`tabs.rs`) |
+| `review_store/` | SQLite persistence (`.conductor/conductor.db`) for reviews, sessions, templates, history |
+| `pty_manager/` | PTY spawn/read/write/resize, vt100 parsing for rendering, output scanner for Claude Code |
+| `claude_sessions/` | Which `.jsonl` transcript backs a panel (`rotation.rs` is the hook-less `/clear` fallback) |
+| `cc_notify.rs` / `cc_hook.rs` | Unix-socket channel from Claude Code hooks — waiting/active state and the `SessionStart` session-id report |
+| `semantic_index/` | conductor's side of sheaf-core (`mod.rs`) and the `SyntacticLayer` over tree-sitter (`bridge.rs`) |
+| `revidere.rs` / `app/revidere.rs` | Loading the review artifact and building its `ReadingOrder` (read-only) / running `analyze` on a worker thread |
+| `file_watcher.rs` | Filesystem changes via `notify`, debounced at 500ms |
 | `instance_lock.rs` | `.conductor/conductor.lock` の flock による単独起動の担保 — リポジトリ (全 worktree 込み) につき 1 ウィンドウ。ロックは fd の寿命に紐づくので、クラッシュ後の後始末は要らない |
-| `cc_notify.rs` / `cc_hook.rs` | Unix-socket channel from Claude Code hooks — waiting/active state, and the `SessionStart` report that keeps a panel's session id correct across `/clear` |
-| `claude_sessions/` | Resolving which `.jsonl` transcript backs a panel (`rotation.rs` is the hook-less fallback for `/clear`) |
-| `config.rs` | Config loading from `~/.config/conductor/config.toml` |
-| `theme.rs` | Color themes (catppuccin-mocha default, dracula, nord, solarized-dark) |
-| `term_caps.rs` | Terminal capability probing — OSC 11 background-colour query driving light/dark theme auto-selection |
-| `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree for review (re-entrant: reuses an existing valid worktree) |
-| `semantic_index/` | conductor's side of sheaf-core: where the index lives (`mod.rs`) and the `SyntacticLayer` implementation over tree-sitter (`bridge.rs`) |
-| `revidere.rs` | Loads the review artifact (`<worktree>/.conductor/review.json`) via the `revidere` library and builds its `ReadingOrder` — read-only, no AI |
-| `app/revidere.rs` | Runs `revidere::analyze` on a worker thread (one per branch, cancellable), wires `ai_caller` into its `Ai` seam, and jumps from a section into the Viewer |
-| `ui/revidere_view.rs` | The full-screen two-column review view (reading order \| diff) |
-| `app/review_publish.rs` | Publishes review comments to GitHub via `gh`, tracking which comments are already posted |
+| `term_caps.rs` | OSC 11 background-colour probe driving light/dark theme auto-selection |
+| `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree (re-entrant: reuses a valid one) |
+| `config/` · `theme/` | Config loading from `~/.config/conductor/config.toml` · colour themes |
 
 ### UI Modules (`src/ui/`)
 

@@ -51,7 +51,8 @@ impl App {
         self.rebuild_worktree_list_rows();
         let sel = self.worktrees.selected_index();
         if let Some(pos) = self
-            .worktrees.rows
+            .worktrees
+            .rows
             .iter()
             .position(|r| matches!(r, super::WorktreeListRow::Worktree(i) if *i == sel))
         {
@@ -133,7 +134,12 @@ impl App {
         }
         let tab_width = self.config.viewer.tab_width;
         self.viewer_state.open_file(&restore.file, tab_width);
-        let max = self.viewer_state.content.file_content.len().saturating_sub(1);
+        let max = self
+            .viewer_state
+            .content
+            .file_content
+            .len()
+            .saturating_sub(1);
         self.viewer_state.content.file_scroll = restore.scroll.min(max);
     }
 

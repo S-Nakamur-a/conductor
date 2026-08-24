@@ -107,7 +107,9 @@ impl App {
     pub fn poll_all_background_ops(&mut self) {
         self.poll_bg_branches();
         self.poll_bg_pull();
-        self.poll_grep_search();
+        if let Some((text, level)) = self.overlays.grep_search.poll() {
+            self.set_status(text, level);
+        }
         self.poll_update_progress();
         self.poll_reflow_load();
         self.poll_pr_url();

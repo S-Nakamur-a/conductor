@@ -119,7 +119,9 @@ fn hash_tree(root: &Path) -> BTreeMap<PathBuf, String> {
             continue;
         };
         for entry in entries.flatten() {
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
             if kind.is_dir() {
                 stack.push(entry.path());
             } else if kind.is_file()

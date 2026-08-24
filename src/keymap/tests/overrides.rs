@@ -39,7 +39,10 @@ fn user_override_adds_a_chord() {
 fn user_override_shadows_a_default_chord() {
     // ワークツリーで "g" -> go_to_top に再バインドする（デフォルトは grab_branch）。
     let mut layer = toml::Table::new();
-    layer.insert("g".to_string(), toml::Value::String("go_to_top".to_string()));
+    layer.insert(
+        "g".to_string(),
+        toml::Value::String("go_to_top".to_string()),
+    );
     let mut layers = toml::Table::new();
     layers.insert("worktree".to_string(), toml::Value::Table(layer));
     let mut user = toml::Table::new();
@@ -140,7 +143,10 @@ fn in_layer_conflict_is_warned() {
     // 1つのレイヤー内で同じチョードの2通りの綴り: keymap-config が Conflict
     // を報告し、後の方のバインディングが勝つ。
     let mut keys = toml::Table::new();
-    keys.insert("ctrl+x".to_string(), toml::Value::String("quit".to_string()));
+    keys.insert(
+        "ctrl+x".to_string(),
+        toml::Value::String("quit".to_string()),
+    );
     keys.insert(
         "control+x".to_string(),
         toml::Value::String("show_help".to_string()),

@@ -27,8 +27,8 @@ use super::args::{
     SetChangeSummary,
 };
 use super::reply::{
-    ensure_not_blank, err_text, line_range, normalize_repo_relative, ok_text,
-    render_thread, short_id,
+    ensure_not_blank, err_text, line_range, normalize_repo_relative, ok_text, render_thread,
+    short_id,
 };
 use super::resolve;
 use crate::review_store::{Author, CommentKind, CommentStatus, ReviewStore};
@@ -374,7 +374,6 @@ impl McpServer {
             None => ok_text(format!("No change summary set for branch \"{target}\".")),
         }
     }
-
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -395,7 +394,7 @@ impl ServerHandler for McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     // tools/list
 
     #[test]

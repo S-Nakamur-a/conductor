@@ -61,9 +61,8 @@ impl Theme {
             comment_user_bg: Color::Rgb(52, 64, 54),
             reply_text: Color::Rgb(131, 165, 152),
 
-            code_bg: Color::Rgb(29, 32, 33), // bg0_h
+            code_bg: Color::Rgb(29, 32, 33),    // bg0_h
             code_fg: Color::Rgb(211, 134, 155), // 紫がかったピンク
-
         }
     }
 }

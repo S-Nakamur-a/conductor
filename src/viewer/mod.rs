@@ -12,9 +12,9 @@
 
 mod content;
 mod diff_view;
-mod fold;
 mod file_tree;
 mod file_view;
+mod fold;
 mod highlight;
 mod search;
 mod selection;

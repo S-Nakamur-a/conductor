@@ -97,7 +97,9 @@ impl ReviewStore {
                  base_ref  = excluded.base_ref,
                  head_ref  = excluded.head_ref,
                  author    = excluded.author",
-            params![branch, pr_number, pr_url, pr_title, base_ref, head_ref, author],
+            params![
+                branch, pr_number, pr_url, pr_title, base_ref, head_ref, author
+            ],
         )?;
         Ok(())
     }
@@ -177,7 +179,10 @@ mod tests {
 
         let meta = store.get_pr_review_meta("feat/x").unwrap().unwrap();
         assert_eq!(meta.pr_number, Some(42));
-        assert_eq!(meta.pr_url.as_deref(), Some("https://github.com/o/r/pull/42"));
+        assert_eq!(
+            meta.pr_url.as_deref(),
+            Some("https://github.com/o/r/pull/42")
+        );
 
         // upsert なので重複せず上書きされる。
         store

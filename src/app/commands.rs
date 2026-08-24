@@ -125,17 +125,7 @@ impl App {
 
     fn cmd_search_full_text(&mut self) {
         self.overlays.active = ActiveOverlay::GrepSearch;
-        self.overlays.grep_search.query.clear();
-        self.overlays.grep_search.result_tree = Default::default();
-        self.overlays.grep_search.pending_matches.clear();
-        self.overlays.grep_search.selected = 0;
-        self.overlays.grep_search.scroll = 0;
-        self.overlays.grep_search.running = false;
-        self.overlays.grep_search.bg_op.clear();
-        self.overlays.grep_search.bg_op_phase2.clear();
-        self.overlays.grep_search.debounce_deadline = None;
-        self.overlays.grep_search.phase1_active = false;
-        self.overlays.grep_search.input_focused = true;
+        self.overlays.grep_search.reset();
     }
 
     fn cmd_new_claude_code(&mut self) {

@@ -155,17 +155,16 @@ impl App {
             let desc_panic = desc.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // フェーズ1: LLM生成。
-                let gen_result =
-                    match run_smart_generation(&desc, &cancel, &api, &repo_path) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            let _ = tx.send(WorktreeOpResult::SmartFailed {
-                                description: desc,
-                                error: e,
-                            });
-                            return;
-                        }
-                    };
+                let gen_result = match run_smart_generation(&desc, &cancel, &api, &repo_path) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send(WorktreeOpResult::SmartFailed {
+                            description: desc,
+                            error: e,
+                        });
+                        return;
+                    }
+                };
 
                 if gen_result.branch.is_empty() {
                     let _ = tx.send(WorktreeOpResult::SmartFailed {

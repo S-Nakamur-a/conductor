@@ -217,8 +217,9 @@ pub(super) fn render_code_line_rows(
 
     // コンテンツの span に水平スクロールを適用し、パネル幅（枠線＋マーカー列＋
     // ガター＋バッジ）でクリップする。
-    let content_max_w = (ctx.area_width as usize)
-        .saturating_sub(crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 4);
+    let content_max_w = (ctx.area_width as usize).saturating_sub(
+        crate::viewer::COMMENT_MARKER_W as usize + gutter_width + crate::viewer::GUTTER_FIXED_W + 4,
+    );
     let content_spans = h_scroll_spans(content_spans, vs.content.h_scroll, content_max_w);
 
     // ジャンプ用の下線を適用する（ジャンプ可能なシンボル上でのホバーであれば

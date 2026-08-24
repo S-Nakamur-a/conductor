@@ -132,7 +132,8 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
             _ => continue,
         };
 
-        let duration_secs = thinking_duration_secs(prev_displayed_ts.as_deref(), this_ts.as_deref());
+        let duration_secs =
+            thinking_duration_secs(prev_displayed_ts.as_deref(), this_ts.as_deref());
 
         let blocks = content_to_display_blocks(
             msg.content,
@@ -145,10 +146,7 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
             continue;
         }
 
-        entries.push(LogEntry {
-            role,
-            blocks,
-        });
+        entries.push(LogEntry { role, blocks });
         prev_displayed_ts = this_ts;
     }
     entries

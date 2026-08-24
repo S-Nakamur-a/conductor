@@ -226,7 +226,9 @@ impl App {
         let e = self.config.layout.explorer_width_pct;
         let v = self.config.layout.viewer_width_pct;
         let t = 100u16.saturating_sub(e.saturating_add(v));
-        self.set_status_info(format!("Layout: Explorer {e}% / Viewer {v}% / Terminal {t}%"));
+        self.set_status_info(format!(
+            "Layout: Explorer {e}% / Viewer {v}% / Terminal {t}%"
+        ));
     }
 
     /// 実行時のClaude領域高さパーセントを delta ポイント分調整する。
@@ -235,9 +237,10 @@ impl App {
     /// 広げる。結果の分割をフラッシュ表示する。比率が変わったかを返す。
     /// 永続化は呼び出し側が行う。
     fn adjust_terminal_split(&mut self, delta: i16) -> bool {
-        let next = (self.layout.terminal_split_pct as i16 + delta)
-            .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
-            as u16;
+        let next = (self.layout.terminal_split_pct as i16 + delta).clamp(
+            Self::TERMINAL_SPLIT_MIN as i16,
+            Self::TERMINAL_SPLIT_MAX as i16,
+        ) as u16;
         if next == self.layout.terminal_split_pct {
             return false;
         }
@@ -259,9 +262,10 @@ impl App {
     /// パネルが使える最低限を保つようクランプされる。フラッシュ表示する。
     /// 比率が変わったかを返す。永続化は呼び出し側が行う。
     fn adjust_explorer_split(&mut self, delta: i16) -> bool {
-        let next = (self.config.layout.explorer_split_pct as i16 + delta)
-            .clamp(Self::TERMINAL_SPLIT_MIN as i16, Self::TERMINAL_SPLIT_MAX as i16)
-            as u16;
+        let next = (self.config.layout.explorer_split_pct as i16 + delta).clamp(
+            Self::TERMINAL_SPLIT_MIN as i16,
+            Self::TERMINAL_SPLIT_MAX as i16,
+        ) as u16;
         if next == self.config.layout.explorer_split_pct {
             return false;
         }
@@ -359,7 +363,10 @@ mod tests {
         for delta in [-50i16, -20, -5, 5, 20, 50] {
             let (e, v) = clamp_ev_divider(24, 38, delta, MIN);
             let t = 100u16.saturating_sub(e + v);
-            assert!(e >= MIN && v >= MIN && t >= MIN, "ev delta={delta}: {e}/{v}/{t}");
+            assert!(
+                e >= MIN && v >= MIN && t >= MIN,
+                "ev delta={delta}: {e}/{v}/{t}"
+            );
 
             let v2 = clamp_vt_divider(24, 38, delta, MIN);
             let t2 = 100u16.saturating_sub(24 + v2);

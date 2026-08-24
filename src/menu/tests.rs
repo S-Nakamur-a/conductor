@@ -138,7 +138,11 @@ fn step_selection_skips_separators() {
 #[test]
 fn step_selection_wraps_at_both_ends() {
     let items = sample();
-    assert_eq!(step_selection(&items, 3, 1), 0, "past the end wraps to first");
+    assert_eq!(
+        step_selection(&items, 3, 1),
+        0,
+        "past the end wraps to first"
+    );
     assert_eq!(
         step_selection(&items, 0, -1),
         3,
