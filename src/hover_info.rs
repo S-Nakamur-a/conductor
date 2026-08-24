@@ -13,6 +13,11 @@ use crate::symbol_index::SymbolIndex;
 const MAX_SIGNATURE_LINES: usize = 8;
 /// doc コメントとして集める最大行数。超えたら … で切り詰める。
 const MAX_DOC_LINES: usize = 12;
+/// struct / enum の定義本体を載せる最大行数。超えたぶんは行数だけ知らせる。
+const MAX_DEFINITION_LINES: usize = 24;
+/// 定義本体の閉じ波括弧を探して読む最大行数。ここに収まらない宣言は
+/// 波括弧の数え上げが信用できないので、本体を出すのをやめる。
+const MAX_DEFINITION_SCAN: usize = 512;
 /// ポップアップが参照を数えるのを諦めて「50+」と出すまでの件数。
 /// フレーム内で走る経路なので作業量に上限を設ける。呼び出し側を参照。
 const REF_COUNT_CAP: usize = 50;
@@ -30,7 +35,8 @@ pub struct HoverInfo {
     pub line: usize,
     /// 定義の直上にある doc コメントの各行 (コメント記号は除去済み)。
     pub doc_lines: Vec<String>,
-    /// 宣言のシグネチャの各行 (インデントを揃え、本体を開く波括弧は除去済み)。
+    /// 宣言の各行 (インデントを揃えてある)。関数などは本体を開く波括弧まで、
+    /// struct / enum はフィールド・バリアントを含む定義全体。
     pub signature_lines: Vec<String>,
     /// 名前に一致した定義の数 (2 以上なら、表示しているのは複数あるうちの 1 つ)。
     pub def_count: usize,
@@ -127,9 +133,6 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
         return None;
     }
     let indexed = def.detail.filter(|d| !d.is_empty());
-    let signature_from_index = indexed
-        .as_ref()
-        .is_some_and(|d| !d.signature_lines.is_empty());
     let kind = match indexed.as_ref().map(|d| d.kind.as_str()) {
         Some(k) if !k.is_empty() => k.to_string(),
         _ => def.kind,
@@ -138,9 +141,21 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
         Some(d) => d.doc_lines.clone(),
         None => extract_doc_comment(&lines, def_idx),
     };
-    let signature_lines = match indexed.filter(|d| !d.signature_lines.is_empty()) {
-        Some(d) => d.signature_lines,
-        None => extract_signature(&lines, def_idx),
+    // 索引も字面も struct / enum は見出しの 1 行しか答えない。見たいのは中身なので、
+    // 本体を切り出せたときだけそちらを採る。
+    let members = has_member_list(&kind)
+        .then(|| extract_definition(&lines, def_idx))
+        .flatten();
+    let signature_from_index = members.is_none()
+        && indexed
+            .as_ref()
+            .is_some_and(|d| !d.signature_lines.is_empty());
+    let signature_lines = match members {
+        Some(body) => body,
+        None => match indexed.filter(|d| !d.signature_lines.is_empty()) {
+            Some(d) => d.signature_lines,
+            None => extract_signature(&lines, def_idx),
+        },
     };
 
     // 正確な数ではなく上限付き。これはポインタがシンボル上で止まるたびに UI
@@ -162,6 +177,59 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
         on_definition_line: false,
         container: None,
         signature_from_index,
+    })
+}
+
+/// 種別がメンバの並びを本体に持つものか。ここに挙げたものだけ定義全体を出す。
+fn has_member_list(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "struct" | "enum" | "interface"
+    )
+}
+
+/// def_idx (0 始まり) から始まる宣言を、本体を閉じる波括弧まで丸ごと取り出す。
+/// 本体を持たない宣言 (`struct Foo;`, `struct Foo(u32);`) と、閉じ波括弧が
+/// [MAX_DEFINITION_SCAN] 行以内に見つからないものは None。
+///
+/// 波括弧は字面で数えるので、文字列リテラルの中の波括弧には騙される。
+/// 定義位置しか分かっていない他ファイルを構文解析する余裕はここには無い。
+fn extract_definition(lines: &[&str], def_idx: usize) -> Option<Vec<String>> {
+    let indent = lines[def_idx].len() - lines[def_idx].trim_start().len();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut opened = false;
+    for raw in lines.iter().skip(def_idx).take(MAX_DEFINITION_SCAN) {
+        let dedented = if raw.len() >= indent && raw[..indent.min(raw.len())].trim().is_empty() {
+            &raw[indent..]
+        } else {
+            raw.trim_start()
+        };
+        let text = dedented.trim_end();
+        if !opened && !text.contains('{') && text.ends_with(';') {
+            return None;
+        }
+        opened |= text.contains('{');
+        depth += brace_delta(text);
+        out.push(text.to_string());
+        if opened && depth <= 0 {
+            if out.len() > MAX_DEFINITION_LINES {
+                let hidden = out.len() - MAX_DEFINITION_LINES;
+                out.truncate(MAX_DEFINITION_LINES);
+                out.push(format!("… (+{hidden} lines)"));
+            }
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// 行が開いた波括弧の数から閉じた波括弧の数を引いたもの。
+fn brace_delta(line: &str) -> i32 {
+    line.chars().fold(0, |acc, c| match c {
+        '{' => acc + 1,
+        '}' => acc - 1,
+        _ => acc,
     })
 }
 
@@ -286,6 +354,11 @@ mod tests {
     fn sig(src: &str, def_line_1: usize) -> Vec<String> {
         let lines: Vec<&str> = src.lines().collect();
         extract_signature(&lines, def_line_1 - 1)
+    }
+
+    fn body(src: &str, def_line_1: usize) -> Option<Vec<String>> {
+        let lines: Vec<&str> = src.lines().collect();
+        extract_definition(&lines, def_line_1 - 1)
     }
 
     fn doc(src: &str, def_line_1: usize) -> Vec<String> {
@@ -553,6 +626,117 @@ fn caller() {
         // 定義の無い名前は何も返さない (黙る)。
         assert!(resolve_def_site(&index, "nonexistent_symbol", None).is_none());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn 構造体は定義全体を出す() {
+        let src = "\
+pub struct Foo {
+    pub a: usize,
+    pub b: String,
+}
+pub struct Next;
+";
+        assert_eq!(
+            body(src, 1).unwrap(),
+            vec![
+                "pub struct Foo {",
+                "    pub a: usize,",
+                "    pub b: String,",
+                "}",
+            ]
+        );
+    }
+
+    #[test]
+    fn enum_は入れ子の波括弧を数えて閉じる() {
+        let src = "\
+enum E {
+    A,
+    B { x: u8 },
+    C(String),
+}
+";
+        assert_eq!(
+            body(src, 1).unwrap(),
+            vec![
+                "enum E {",
+                "    A,",
+                "    B { x: u8 },",
+                "    C(String),",
+                "}"
+            ]
+        );
+    }
+
+    #[test]
+    fn インデントされた定義は左に詰める() {
+        let src = "\
+mod m {
+    pub struct Inner {
+        pub a: u8,
+    }
+}
+";
+        assert_eq!(
+            body(src, 2).unwrap(),
+            vec!["pub struct Inner {", "    pub a: u8,", "}"]
+        );
+    }
+
+    #[test]
+    fn 本体を持たない宣言は定義全体にならない() {
+        assert!(
+            body(
+                "pub struct Unit;
+",
+                1
+            )
+            .is_none()
+        );
+        assert!(
+            body(
+                "pub struct Tuple(u32);
+",
+                1
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn 長すぎる定義は残り行数を添えて切る() {
+        let mut src = String::from("pub struct Big {\n");
+        for i in 0..40 {
+            src.push_str(&format!("    pub f{i}: u8,\n"));
+        }
+        src.push_str("}\n");
+        let out = body(&src, 1).unwrap();
+        // 切り詰めた本文 + 残り行数の 1 行。
+        assert_eq!(out.len(), MAX_DEFINITION_LINES + 1);
+        assert_eq!(out.last().unwrap(), "… (+18 lines)");
+    }
+
+    #[test]
+    fn 構造体のホバーは索引の見出し1行より定義全体を選ぶ() {
+        // 索引は struct に "pub struct Foo" しか書かない。中身が見たくて
+        // ホバーしているので、字面から切り出した定義全体を優先する。
+        let dir = scratch("members", "pub struct Foo {\n    pub a: usize,\n}\n");
+        let info = with_index(
+            &dir,
+            "Foo",
+            1,
+            IndexedDetail {
+                kind: "struct".to_string(),
+                signature_lines: vec!["pub struct Foo".to_string()],
+                doc_lines: Vec::new(),
+            },
+        );
+        assert_eq!(
+            info.signature_lines,
+            vec!["pub struct Foo {", "    pub a: usize,", "}"]
+        );
+        assert!(!info.signature_from_index);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
