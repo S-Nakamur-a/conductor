@@ -8,7 +8,7 @@ Terminal-based Git workspace and code review TUI written in Rust. Manages multip
 
 | Dependency | Version | Notes |
 |---|---|---|
-| **Rust toolchain** | 1.85+ | Edition 2024. Install via [rustup](https://rustup.rs/) |
+| **Rust toolchain** | 1.88+ | Edition 2024. Install via [rustup](https://rustup.rs/) |
 | **Git** | 2.x | Used for worktree operations (`git worktree add`, `git fetch`, etc.) |
 | **Claude Code** | latest | `claude` CLI must be in `$PATH`. Install via `npm install -g @anthropic-ai/claude-code` |
 | **Node.js + npm** | 20+ | Required for Claude Code installation |
