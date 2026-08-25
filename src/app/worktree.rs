@@ -123,7 +123,7 @@ impl App {
                 let _ = store.set_selected_worktree(&new_branch);
             }
             if let Ok(Some((Some(file), line))) = store.get_view_state(&new_branch) {
-                self.view_restore.pending = Some(crate::app::PendingViewRestore {
+                self.view_restore.pending = Some(crate::types::PendingViewRestore {
                     file,
                     scroll: line.max(0) as usize,
                 });

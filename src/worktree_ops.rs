@@ -5,8 +5,8 @@
 
 use std::sync::mpsc;
 
-use crate::app::{GrabbedBranch, PendingWorktree, WorktreeInputMode, WorktreeOpResult};
 use crate::text_input::TextInput;
+use crate::types::{GrabbedBranch, PendingWorktree, WorktreeInputMode, WorktreeOpResult};
 
 /// worktree 管理の状態。
 pub struct WorktreeManager {

@@ -2,10 +2,10 @@
 //! 雑多なコマンドハンドラ群: テーマの切り替え、terminal/search の
 //! 入口、リポジトリ/コメント一覧のナビゲーションショートカット。
 
-use super::focus::Focus;
 use super::panel_resize::ResizeDir;
 use super::{App, StatusLevel, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
+use crate::types::Focus;
 
 impl App {
     pub fn execute_palette_command(&mut self, id: crate::command_palette::CommandId) {

@@ -24,7 +24,10 @@ mod model;
 mod tests;
 
 pub(crate) use code_mask::language_for_ext;
-pub use code_mask::{CodeMask, identifier_occurrences};
+pub use code_mask::{
+    CodeMask, code_identifiers_on_line, identifier_occurrences, is_rust_keyword,
+    occurrence_span_in_source,
+};
 pub use index::SymbolIndex;
 // Reference は現在 app/ から crate::symbol_index::Reference として外部利用されている。
 // Symbol/SymbolKind は今のところこのモジュールツリー内で super::model::X としてのみ

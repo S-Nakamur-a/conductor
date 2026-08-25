@@ -2,8 +2,8 @@
 
 use std::ops::Deref;
 
-use crate::app::types::WorktreeListRow;
 use crate::git_engine::WorktreeInfo;
+use crate::types::WorktreeListRow;
 
 /// 発見済みの worktree 一覧と、いま選択しているもの。
 ///

@@ -2,10 +2,11 @@
 //! バックグラウンドでのシンボルインデックス構築、画面上のシンボルヒントを扱う。
 
 use super::App;
-use super::focus::Focus;
 use crate::app::StatusLevel;
 use crate::hover_info::HoverInfo;
 use crate::overlay::{HintAction, SymbolHint, SymbolHintOverlay};
+use crate::symbol_index::is_rust_keyword;
+use crate::types::Focus;
 use sheaf_core::{Definition, Location, References};
 
 /// gd / gr がカーソル行から決めた対象。
@@ -174,7 +175,7 @@ impl App {
             .file_content
             .get(line_idx)
             .and_then(|line| {
-                crate::app::code_identifiers_on_line(
+                crate::symbol_index::code_identifiers_on_line(
                     line,
                     line_idx + 1,
                     &self.viewer_state.content.code_mask,
@@ -1065,7 +1066,7 @@ impl App {
             return LinePick::None;
         };
         // ラベルは 1 文字なので 26 個で頭打ちになる。
-        let choices: Vec<_> = crate::app::code_identifiers_on_line(
+        let choices: Vec<_> = crate::symbol_index::code_identifiers_on_line(
             line,
             line_idx + 1,
             &self.viewer_state.content.code_mask,
@@ -1174,8 +1175,10 @@ impl App {
         let rel = self.viewer_state.content.current_file.clone()?;
         let abs = tree_root.join(&rel);
         let source = std::fs::read_to_string(&abs).ok()?;
-        let (col, _) =
-            crate::app::occurrence_span_in_source(source.lines().nth(line_idx)?, occurrence)?;
+        let (col, _) = crate::symbol_index::occurrence_span_in_source(
+            source.lines().nth(line_idx)?,
+            occurrence,
+        )?;
         Some(SemanticSite {
             rel: std::path::PathBuf::from(rel),
             abs,
@@ -1408,77 +1411,6 @@ fn underline_debounce_ready(elapsed: std::time::Duration, resolved: bool) -> boo
     !resolved && elapsed >= std::time::Duration::from_millis(HOVER_UNDERLINE_MS)
 }
 
-// シンボル抽出のための自由関数
-
-/// 行の中で飛び先になりうる識別子を、出現番号・開始桁・綴りの組で列挙する。
-pub fn code_identifiers_on_line<'a>(
-    line: &'a str,
-    line_1: usize,
-    mask: &'a crate::symbol_index::CodeMask,
-) -> impl Iterator<Item = (usize, usize, String)> + 'a {
-    crate::symbol_index::identifier_occurrences(line)
-        .enumerate()
-        .filter(move |(k, _)| mask.is_code(line_1, *k))
-        .filter(|(_, (_, _, word))| word.len() > 1 && !is_rust_keyword(word))
-        .map(|(k, (start, _, word))| (k, start, word.to_string()))
-}
-
-/// 元ソースの行での、`k` 番目の識別子のバイト範囲。
-///
-/// 出現の番号は viewer が持つタブ展開済みの行から取るが、索引の列は展開前の
-/// バイト位置を指す。タブ展開は識別子の数も並びも変えないので番号はそのまま通り、
-/// 列だけがここで戻る。
-pub fn occurrence_span_in_source(source_line: &str, k: usize) -> Option<(usize, usize)> {
-    crate::symbol_index::identifier_occurrences(source_line)
-        .nth(k)
-        .map(|(start, end, _)| (start, end))
-}
-
-/// 単語が Rust のキーワードかどうかを調べる（シンボルとして扱うべきではない）。
-pub fn is_rust_keyword(word: &str) -> bool {
-    matches!(
-        word,
-        "as" | "async"
-            | "await"
-            | "break"
-            | "const"
-            | "continue"
-            | "crate"
-            | "dyn"
-            | "else"
-            | "enum"
-            | "extern"
-            | "false"
-            | "fn"
-            | "for"
-            | "if"
-            | "impl"
-            | "in"
-            | "let"
-            | "loop"
-            | "match"
-            | "mod"
-            | "move"
-            | "mut"
-            | "pub"
-            | "ref"
-            | "return"
-            | "self"
-            | "Self"
-            | "static"
-            | "struct"
-            | "super"
-            | "trait"
-            | "true"
-            | "type"
-            | "unsafe"
-            | "use"
-            | "where"
-            | "while"
-            | "yield"
-    )
-}
-
 /// 行中の特定の列にあるシンボル（識別子）を抽出する。
 /// (symbol_text, start_col, end_col) を返す。列は0始まりの文字オフセット。
 pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize, usize)> {
@@ -1538,6 +1470,7 @@ pub fn masked_symbol_at_column(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::symbol_index::code_identifiers_on_line;
 
     #[test]
     fn test_extract_symbol_at_column_basic() {

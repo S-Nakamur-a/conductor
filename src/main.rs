@@ -51,6 +51,7 @@ mod test_run;
 mod text_input;
 mod theme;
 mod timer;
+pub mod types;
 mod ui;
 mod update_checker;
 mod viewer;

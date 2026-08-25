@@ -3,8 +3,8 @@
 use ratatui::layout::Rect;
 
 use super::{LayoutCache, accordion_widths};
-use crate::app::Focus;
 use crate::config::LayoutConfig;
+use crate::types::Focus;
 
 /// 指定した比率で最小限の LayoutConfig を組み立てる。
 fn layout(explorer: u16, viewer: u16, terminal: u16) -> LayoutConfig {

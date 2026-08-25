@@ -14,12 +14,13 @@ use crate::review_store::{self, ReviewStore};
 use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
-use super::focus::Focus;
 use super::state::{
     CodeNav, Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
 };
-use super::types::{BackgroundOps, DirtyPanels};
+use super::types::BackgroundOps;
 use super::{App, GrabbedBranch, StatusLevel};
+use crate::types::DirtyPanels;
+use crate::types::Focus;
 
 impl App {
     /// 与えられたリポジトリパスを根とする新しい App を作成する。
