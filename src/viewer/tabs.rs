@@ -30,6 +30,7 @@ impl ViewerState {
         let Some(path) = self.tabs.get(idx).map(|t| t.path.clone()) else {
             return;
         };
+        self.tab_reveal = true;
         if idx != self.active_tab {
             self.stash_active_view();
             self.active_tab = idx;
@@ -68,6 +69,7 @@ impl ViewerState {
         if idx >= self.tabs.len() {
             return;
         }
+        self.tab_reveal = true;
         if idx != self.active_tab {
             self.tabs.remove(idx);
             if idx < self.active_tab {
@@ -103,6 +105,7 @@ impl ViewerState {
         if self.tabs.len() == before {
             return;
         }
+        self.tab_reveal = true;
         match active_path.and_then(|p| self.tabs.iter().position(|t| t.path == p)) {
             Some(idx) => self.active_tab = idx,
             None => {
@@ -121,6 +124,7 @@ impl ViewerState {
     /// relative_path のタブを用意してアクティブにする。既に開いていればそれを使う。
     /// 新しく作った場合だけ true を返す。
     pub(in crate::viewer) fn activate_tab_for(&mut self, relative_path: &str) -> bool {
+        self.tab_reveal = true;
         if let Some(idx) = self.tabs.iter().position(|t| t.path == relative_path) {
             if idx != self.active_tab {
                 self.stash_active_view();

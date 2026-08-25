@@ -358,7 +358,10 @@ pub(super) fn render_tab_row(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
     let row = Rect::new(area.x + 1, area.y + 1, area.width - 2, 1);
-    app.viewer_state.tab_row_hits = tab_row::render(frame, row, &app.theme, &app.viewer_state);
+    let (hits, scroll) = tab_row::render(frame, row, &app.theme, &app.viewer_state);
+    app.viewer_state.tab_row_hits = hits;
+    app.viewer_state.tab_scroll = scroll;
+    app.viewer_state.tab_reveal = false;
 }
 
 /// Viewer のタイトルを max_w **表示カラム数**に収める。左側から省略し
