@@ -14,6 +14,17 @@ use crate::git_engine::status_map::GitStatusMap;
 use super::*;
 
 impl App {
+    /// file watcher が監視すべきパス: 通常は各 worktree のパス。worktree が
+    /// 1 つもない場合 (例: 素の非 git ディレクトリ) はリポジトリのパス自身にする。
+    /// これにより Explorer はそこでのファイル変更でも自動更新され続ける。
+    pub fn watch_paths(&self) -> Vec<std::path::PathBuf> {
+        if self.worktrees.is_empty() {
+            vec![self.repo.path.clone()]
+        } else {
+            self.worktrees.iter().map(|w| w.path.clone()).collect()
+        }
+    }
+
     // ワークツリー作成・削除のヘルパー
 
     /// パスを指定してワークツリーを選択し、UI の更新をトリガーする。

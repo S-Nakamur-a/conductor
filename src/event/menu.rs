@@ -40,7 +40,7 @@ fn activate(app: &mut App, menu_idx: usize, item_idx: usize) {
     };
     // グレーアウトした行は存在が見えるように選択可能なままにしてあるが、
     // 実行しても何も起きない — 無効化された GUI 項目をクリックするのと同じ。
-    if !crate::menu::command_enabled(id, app) {
+    if !app.command_enabled(id) {
         return;
     }
     // 先にメニューを閉じる: OpenRepo のようなコマンドはオーバーレイを積むので、

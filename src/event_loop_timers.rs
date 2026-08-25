@@ -8,7 +8,6 @@
 use std::time::{Duration, Instant};
 
 use crate::app::App;
-use crate::event_loop::watch_paths_for;
 
 /// この周回で発火時刻に達した周期タイマーをすべて実行する。git と worktree の
 /// ポーリング、装飾・鼓動の再描画周期、PTY の後始末、Claude Code の
@@ -66,7 +65,7 @@ pub(crate) fn run_due_timers(
                 // 監視対象のパス集合が変わったらファイル監視を作り直す (git init で
                 // 最初の worktree ができた、worktree が追加・削除された、など)。
                 // これが無いと古い集合を監視し続けて新しいファイルを取りこぼす。
-                let desired = watch_paths_for(app);
+                let desired = app.watch_paths();
                 if desired != *current_watch_paths {
                     match crate::file_watcher::FileWatcher::new(&desired) {
                         Ok(w) => {

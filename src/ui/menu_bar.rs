@@ -141,7 +141,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
                 Row::Command {
                     label,
                     chord,
-                    enabled: crate::menu::command_enabled(*id, app),
+                    enabled: app.command_enabled(*id),
                 }
             }
         })

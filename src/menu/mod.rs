@@ -9,7 +9,9 @@
 //! メニューバー自体は独自の振る舞いを持たない。各行は
 //! [CommandId](crate::command_palette::CommandId) を持ち、実行時には
 //! [App::execute_palette_command](crate::app::App::execute_palette_command) を
-//! 呼ぶ。これはパレットが使うのと同じエントリポイントであり、event::global の
+//! 呼ぶ。行を実行できるかの判定も同じ側にあり
+//! ([App::command_enabled](crate::app::App::command_enabled))、
+//! これはパレットが使うのと同じエントリポイントであり、event::global の
 //! キーボード操作が呼ぶメソッドとも同じである。行の右側に表示されるショートカットは
 //! キーマップからその都度読み取るので、ユーザ設定でのリバインドはこのモジュールに
 //! 手を入れずとも反映される。
@@ -17,18 +19,15 @@
 //! - [model] — 静的テーブル。どのコマンドがどのメニューに属するか。
 //! - [state] — インタラクション状態([MenuFocus])と、キーボード/マウス
 //!   両ハンドラが共有する純粋なナビゲーションヘルパー。
-//! - [enabled] — コマンドが今実行可能かどうか。グレーアウト行の判定に使う。
 //!
 //! 描画は [crate::ui::menu_bar]、入力処理は [crate::event::menu](キー)と
 //! crate::event::mouse(クリックとホバー)が担う。
 
-pub mod enabled;
 pub mod model;
 pub mod state;
 
 #[cfg(test)]
 mod tests;
 
-pub use enabled::command_enabled;
 pub use model::MenuItem;
 pub use state::{MenuFocus, MenuState};
