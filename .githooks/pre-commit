@@ -2,13 +2,6 @@
 # make hooks (git config core.hooksPath .githooks) で有効化する
 set -e
 
-# core.hooksPath を向けると .git/hooks は一切読まれなくなるので、
-# テンプレート由来の個人フックをここから呼び直す。
-safety="$HOME/.config/git/hooks-lib/check_commit_safety.sh"
-if [ -x "$safety" ]; then
-	"$safety" --quiet
-fi
-
 if ! cargo fmt --all -- --check; then
 	echo "" >&2
 	echo "pre-commit: rustfmt 未適用のファイルがあります。'cargo fmt --all' を実行してから commit してください。" >&2

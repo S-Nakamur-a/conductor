@@ -16,7 +16,9 @@ Set `RUST_LOG=debug` for logging.
 `conductor` package, not `crates/revidere*` or `crates/sheaf-core`.
 `default-members` is deliberately left alone so `cargo run` stays unambiguous.
 
-A pre-commit hook (`make hooks`, once per clone) runs `cargo fmt --all -- --check`.
+CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace` on every
+pull request. `.githooks/pre-commit` runs the same fmt check locally, but wiring
+it up is each developer's own business — the repository does not install it.
 
 ### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
 

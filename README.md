@@ -140,12 +140,13 @@ cargo build               # build
 cargo test --workspace    # test — bare `cargo test` skips the crates/ members
 cargo clippy --workspace  # lint
 make fmt                  # cargo fmt --all
-make hooks                # enable the pre-commit hook (once per clone)
 ```
 
-`make hooks` points `core.hooksPath` at `.githooks/`, whose `pre-commit` runs
-`cargo fmt --all -- --check`. If it rejects a commit, run `make fmt` and commit
-again.
+CI checks formatting and clippy on every pull request. `.githooks/pre-commit`
+runs the same `cargo fmt --all -- --check` locally if you want to catch it before
+pushing — wiring it up is left to you, since hook setups vary. Pointing git at it
+directly is `git config core.hooksPath .githooks`; if you already run your own
+hook manager, call the script from there instead.
 
 ## Data Paths
 
