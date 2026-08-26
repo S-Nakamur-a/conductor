@@ -447,10 +447,8 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
 
     // 残りのキーはすべてアクティブな PTY セッションへ転送する。
     let session_idx = match app.focus {
-        Focus::TerminalClaude => app.terminal.active_claude_session,
-        Focus::TerminalShell => app.terminal.active_shell_session,
         Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
-        _ => unreachable!(),
+        f => app.terminal.pane(f).and_then(|p| p.active_session),
     };
     if let Some(idx) = session_idx {
         forward_key_to_pty(app, idx, key);
@@ -488,7 +486,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             // スクロールバックバッファではなく無限スクロールバックの
             // reflow ビューに入る。
             if app.focus == Focus::TerminalClaude
-                && app.terminal.scroll_claude == 0
+                && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
@@ -505,35 +503,23 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            let page = match app.focus {
-                Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
-                Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
-                _ => unreachable!(),
+            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+                unreachable!()
             };
-            let scroll = match app.focus {
-                Focus::TerminalClaude => &mut app.terminal.scroll_claude,
-                Focus::TerminalShell => &mut app.terminal.scroll_shell,
-                _ => unreachable!(),
-            };
-            *scroll = scroll.saturating_add(page.max(1));
+            let page = pane.size.0 as usize / 2;
+            pane.scroll = pane.scroll.saturating_add(page.max(1));
         }
         Action::ScrollbackDown => {
-            let page = match app.focus {
-                Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
-                Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
-                _ => unreachable!(),
+            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+                unreachable!()
             };
-            let scroll = match app.focus {
-                Focus::TerminalClaude => &mut app.terminal.scroll_claude,
-                Focus::TerminalShell => &mut app.terminal.scroll_shell,
-                _ => unreachable!(),
-            };
-            *scroll = scroll.saturating_sub(page.max(1));
+            let page = pane.size.0 as usize / 2;
+            pane.scroll = pane.scroll.saturating_sub(page.max(1));
         }
         Action::ScrollbackTop => {
             // ScrollbackUp と同じ横取り: Claude ライブ表示から reflow へ直接ジャンプする。
             if app.focus == Focus::TerminalClaude
-                && app.terminal.scroll_claude == 0
+                && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
@@ -542,17 +528,15 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            match app.focus {
-                Focus::TerminalClaude => app.terminal.scroll_claude = 1000,
-                Focus::TerminalShell => app.terminal.scroll_shell = 1000,
-                _ => unreachable!(),
+            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+                pane.scroll = 1000;
             }
         }
-        Action::SnapToLive => match app.focus {
-            Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-            Focus::TerminalShell => app.terminal.scroll_shell = 0,
-            _ => unreachable!(),
-        },
+        Action::SnapToLive => {
+            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+                pane.scroll = 0;
+            }
+        }
         Action::OpenFileFromTerminal => terminal::open_file_from_terminal_output(app),
         Action::NextSession => app.cycle_terminal_session(true),
         Action::PrevSession => app.cycle_terminal_session(false),

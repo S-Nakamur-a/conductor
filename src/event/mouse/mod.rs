@@ -530,9 +530,9 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // スクロールバックを遡れなくなる。
     if let Some(is_claude) = terminal_tab_row_at(col, row, &geom) {
         let scroll = if is_claude {
-            &mut app.terminal.claude_tab_scroll
+            &mut app.terminal.claude.tab_scroll
         } else {
-            &mut app.terminal.shell_tab_scroll
+            &mut app.terminal.shell.tab_scroll
         };
         match mouse.kind {
             MouseEventKind::ScrollDown => {
@@ -724,13 +724,13 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // ターミナル列であることもゲート条件に含めている。そうしないと、
             // タブバーの行がExplorer/Viewer列の無関係な行と一致してしまう
             // ことがある。
-            app.terminal.claude_tab_hover = if col >= viewer_end && row == terminal_claude_y {
-                crate::ui::tab_bar::hit_at(&app.terminal.claude_tab_hits, col)
+            app.terminal.claude.tab_hover = if col >= viewer_end && row == terminal_claude_y {
+                crate::ui::tab_bar::hit_at(&app.terminal.claude.tab_hits, col)
             } else {
                 None
             };
-            app.terminal.shell_tab_hover = if col >= viewer_end && row == terminal_split_y {
-                crate::ui::tab_bar::hit_at(&app.terminal.shell_tab_hits, col)
+            app.terminal.shell.tab_hover = if col >= viewer_end && row == terminal_split_y {
+                crate::ui::tab_bar::hit_at(&app.terminal.shell.tab_hits, col)
             } else {
                 None
             };

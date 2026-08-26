@@ -1,6 +1,6 @@
 //! bracketed-paste イベントの処理。
 
-use crate::app::{App, Focus, WorktreeInputMode};
+use crate::app::{App, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
@@ -87,11 +87,7 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         return;
     }
 
-    let session_idx = match app.focus {
-        Focus::TerminalClaude => app.terminal.active_claude_session,
-        Focus::TerminalShell => app.terminal.active_shell_session,
-        _ => None,
-    };
+    let session_idx = app.terminal.pane(app.focus).and_then(|p| p.active_session);
 
     // grab されている worktree の terminal へのペーストはブロックする。
     if app.is_selected_worktree_grabbed() {
@@ -104,10 +100,8 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         if let Err(e) = app.terminal.pty_manager.write_paste_to_session(idx, &data) {
             log::warn!("failed to write paste data to PTY session: {e}");
         } else {
-            match app.focus {
-                Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-                Focus::TerminalShell => app.terminal.scroll_shell = 0,
-                _ => {}
+            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+                pane.scroll = 0;
             }
             app.clear_cc_waiting_signal(idx);
         }

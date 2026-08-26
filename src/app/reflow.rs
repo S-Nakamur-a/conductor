@@ -135,7 +135,7 @@ impl App {
         // 前セッションの最終書き込み以降に始まり、他パネルが pin していない」
         // ログしか後続と認めない。新規に起動しただけの claude はこの形に
         // ならないので、上に書いた乗っ取りは起きない。
-        let Some(idx) = self.terminal.active_claude_session else {
+        let Some(idx) = self.terminal.claude.active_session else {
             self.set_status(
                 "No Claude session for this panel; transcript unavailable".to_string(),
                 StatusLevel::Warning,
@@ -264,15 +264,15 @@ impl App {
         // 古い結果が届いたり、次回オープン時に紛れ込んだりしないようにする。
         self.bg.reflow_load.clear();
         // Claude のスクロールバックをリセットし、ライブの末尾を即座に表示する。
-        self.terminal.scroll_claude = 0;
+        self.terminal.claude.scroll = 0;
         // 次のフレームで PTY の新しいスナップショットを強制する。reflow ビューが
         // 表示されている間 PTY パネルは何も描画していなかったため、cache_claude には
         // スクロールバック前のフレームが残っている。閉じた直後に新しい出力が来なければ
         // （Claude がプロンプトで待機中など）このキャッシュが残り続け、入力欄が
         // 再表示されない。キャッシュをクリアして dirty を立てることでライブの末尾を
         // 即座に再構築する。
-        self.terminal.cache_claude = Default::default();
-        self.terminal.dirty_claude = true;
+        self.terminal.claude.cache = Default::default();
+        self.terminal.claude.dirty = true;
     }
 
     /// reflow トランスクリプトビューを終了し、即座にライブ PTY へ戻る。

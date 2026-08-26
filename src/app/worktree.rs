@@ -157,23 +157,23 @@ impl App {
 
         // アクティブなセッションを新しいワークツリーに合わせて更新する。
         let wt_name = self.selected_worktree_branch();
-        let claude_sessions = self.current_worktree_claude_sessions();
-        self.terminal.active_claude_session = claude_sessions.first().map(|(idx, _)| *idx);
-        let shell_sessions = self.current_worktree_shell_sessions();
-        self.terminal.active_shell_session = shell_sessions.first().map(|(idx, _)| *idx);
-
-        // PTY セッションを有効化する。
-        if let Some(idx) = self.terminal.active_claude_session {
-            self.terminal.pty_manager.activate_session(idx);
+        for focus in [Focus::TerminalClaude, Focus::TerminalShell] {
+            let Some(kind) = self.terminal.pane(focus).map(|p| p.kind) else {
+                continue;
+            };
+            let first = self
+                .current_worktree_sessions(kind)
+                .first()
+                .map(|(idx, _)| *idx);
+            if let Some(pane) = self.terminal.pane_mut(focus) {
+                pane.active_session = first;
+                pane.scroll = 0;
+                pane.cache = Default::default();
+            }
+            if let Some(idx) = first {
+                self.terminal.pty_manager.activate_session(idx);
+            }
         }
-        if let Some(idx) = self.terminal.active_shell_session {
-            self.terminal.pty_manager.activate_session(idx);
-        }
-
-        self.terminal.scroll_claude = 0;
-        self.terminal.scroll_shell = 0;
-        self.terminal.cache_claude = Default::default();
-        self.terminal.cache_shell = Default::default();
 
         // 重い処理をバックグラウンドスレッドへディスパッチする。
         if let Some(wt) = self.worktrees.selected() {

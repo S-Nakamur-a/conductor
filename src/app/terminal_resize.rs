@@ -63,7 +63,7 @@ impl App {
 
     /// Claude の PTY セッションの端末コンテンツ領域サイズを更新し、リサイズする。
     pub fn update_claude_terminal_size(&mut self, rows: u16, cols: u16) {
-        self.terminal.size_claude = (rows, cols);
+        self.terminal.claude.size = (rows, cols);
         if self.resize_sessions_of_kind(pty_manager::SessionKind::ClaudeCode, rows, cols) {
             // グリッドが新しい幅で再構築されたので、キャッシュ済みの描画は古くなっている。
             //
@@ -84,21 +84,21 @@ impl App {
             // アンダーフローする(Grid::visible_rows, vt100 0.15.2) — 今のところ
             // リリースビルドがオーバーフロー時にラップしてくれるおかげで生きて
             // いるだけである。
-            self.terminal.cache_claude = Default::default();
-            self.terminal.dirty_claude = true;
+            self.terminal.claude.cache = Default::default();
+            self.terminal.claude.dirty = true;
         }
     }
 
     /// Shell の PTY セッションの端末コンテンツ領域サイズを更新し、リサイズする。
     pub fn update_shell_terminal_size(&mut self, rows: u16, cols: u16) {
-        self.terminal.size_shell = (rows, cols);
+        self.terminal.shell.size = (rows, cols);
         if self.resize_sessions_of_kind(pty_manager::SessionKind::Shell, rows, cols) {
             // 上の Claude パネルと同様: 描画キャッシュを無効化し、読者のスクロール
             // オフセットは保持する。実際にこれが発火するのは今のところ shell だけ
             // であり、resize_session が reflow を報告する契機となる
             // raw_history を記録しているのは shell セッションだけである。
-            self.terminal.cache_shell = Default::default();
-            self.terminal.dirty_shell = true;
+            self.terminal.shell.cache = Default::default();
+            self.terminal.shell.dirty = true;
         }
     }
 

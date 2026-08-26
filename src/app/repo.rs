@@ -74,8 +74,8 @@ impl App {
         // リポジトリのストアを抱えたまま構文層に落ち続ける。
         self.start_semantic_index_load();
         self.refresh_reviews();
-        self.terminal.active_claude_session = None;
-        self.terminal.active_shell_session = None;
+        self.terminal.claude.active_session = None;
+        self.terminal.shell.active_session = None;
 
         self.set_status(
             format!("Switched to repository: {}", self.repo.main_name),
@@ -137,8 +137,8 @@ impl App {
                     self.diff_state.view_mode,
                 );
                 self.refresh_reviews();
-                self.terminal.active_claude_session = None;
-                self.terminal.active_shell_session = None;
+                self.terminal.claude.active_session = None;
+                self.terminal.shell.active_session = None;
 
                 // まだ無ければrepo_listに追加する。
                 if !self.repo.known.contains(&canonical) {

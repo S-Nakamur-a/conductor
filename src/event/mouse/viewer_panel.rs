@@ -14,7 +14,7 @@ fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
     let prompt = format!("/conductor:address-conductor-comment {comment_id}\n");
 
     // アクティブなClaude Codeセッションに書き込む。
-    if let Some(idx) = app.terminal.active_claude_session {
+    if let Some(idx) = app.terminal.claude.active_session {
         if app.terminal.pty_manager.is_waiting_for_input(idx) {
             let _ = app
                 .terminal
@@ -42,7 +42,7 @@ fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
 /// 依存しない — コマンド（go test … や cargo test … など）はスキャナが
 /// 組み立てる。
 fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
-    let Some(idx) = app.terminal.active_shell_session else {
+    let Some(idx) = app.terminal.shell.active_session else {
         app.set_status(
             "No shell session to run tests".to_string(),
             StatusLevel::Warning,
@@ -63,7 +63,7 @@ fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
         return;
     }
     // Shellターミナルを最新の末尾までスクロールし、コマンドが見えるようにする。
-    app.terminal.scroll_shell = 0;
+    app.terminal.shell.scroll = 0;
     app.set_focus(Focus::TerminalShell);
     app.set_status(format!("Running {}", run.label), StatusLevel::Info);
 }

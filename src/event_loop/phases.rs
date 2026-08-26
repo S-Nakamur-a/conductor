@@ -52,8 +52,8 @@ impl FrameSignals {
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
 
         if pty_dirty {
-            app.terminal.dirty_claude = true;
-            app.terminal.dirty_shell = true;
+            app.terminal.claude.dirty = true;
+            app.terminal.shell.dirty = true;
             if let Some(editor) = app.editor.as_mut() {
                 editor.dirty = true;
             }

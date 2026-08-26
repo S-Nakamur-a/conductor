@@ -41,18 +41,7 @@ pub(crate) fn run_due_timers(
                 app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
             }
             "unfocused_terminal" => {
-                match app.focus {
-                    crate::app::Focus::TerminalClaude => {
-                        app.terminal.cache_shell = Default::default();
-                    }
-                    crate::app::Focus::TerminalShell => {
-                        app.terminal.cache_claude = Default::default();
-                    }
-                    _ => {
-                        app.terminal.cache_claude = Default::default();
-                        app.terminal.cache_shell = Default::default();
-                    }
-                }
+                app.terminal.drop_inactive_caches(app.focus);
                 app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
             }
             // I/O の重いタイマー。入力中はスクロールが固まるので飛ばす。

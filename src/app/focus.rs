@@ -64,7 +64,7 @@ impl App {
             Focus::TerminalClaude => {
                 // ユーザーがターミナルパネルにフォーカスしたらCC待機シグナルを
                 // クリアする。実際に入力したときだけでなく。
-                if let Some(idx) = self.terminal.active_claude_session {
+                if let Some(idx) = self.terminal.claude.active_session {
                     self.clear_cc_waiting_signal(idx);
                 }
             }

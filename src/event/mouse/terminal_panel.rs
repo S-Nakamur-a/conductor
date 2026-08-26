@@ -31,15 +31,15 @@ pub(super) fn handle_terminal_column_click(
     if has_open_modifier {
         let (session_idx, content_y, scroll_offset) = if row < terminal_split_y {
             (
-                app.terminal.active_claude_session,
+                app.terminal.claude.active_session,
                 main_area.y + 1,
-                app.terminal.scroll_claude,
+                app.terminal.claude.scroll,
             )
         } else {
             (
-                app.terminal.active_shell_session,
+                app.terminal.shell.active_session,
                 terminal_split_y + 1,
-                app.terminal.scroll_shell,
+                app.terminal.shell.scroll,
             )
         };
         if row > content_y
@@ -97,10 +97,13 @@ pub(super) fn handle_terminal_column_click(
         // タブ帯（Claudeパネルの1行目）へのクリック。
         if row == terminal_claude_y {
             handle_terminal_tab_click(app, col, true);
-        } else if app.current_worktree_claude_sessions().is_empty() {
+        } else if app
+            .current_worktree_sessions(crate::pty_manager::SessionKind::ClaudeCode)
+            .is_empty()
+        {
             // 新しいClaude Codeセッションを起動するにはダブルクリックが必要。
             if register_double_click(
-                &mut app.terminal.claude_blank_last_click,
+                &mut app.terminal.claude.blank_last_click,
                 std::time::Instant::now(),
             ) {
                 spawn_terminal_session(app);
@@ -111,10 +114,13 @@ pub(super) fn handle_terminal_column_click(
         // タブ帯（Shellパネルの1行目）へのクリック。
         if row == terminal_split_y {
             handle_terminal_tab_click(app, col, false);
-        } else if app.current_worktree_shell_sessions().is_empty() {
+        } else if app
+            .current_worktree_sessions(crate::pty_manager::SessionKind::Shell)
+            .is_empty()
+        {
             // 新しいShellセッションを起動するにはダブルクリックが必要。
             if register_double_click(
-                &mut app.terminal.shell_blank_last_click,
+                &mut app.terminal.shell.blank_last_click,
                 std::time::Instant::now(),
             ) {
                 spawn_terminal_session(app);

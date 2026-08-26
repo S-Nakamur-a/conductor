@@ -259,8 +259,8 @@ impl App {
         self.list_hover.clear();
         // バー・タブバーのホバー状態（背景色ベースの表現に変更済み）。
         self.wtbar.hover = None;
-        self.terminal.claude_tab_hover = None;
-        self.terminal.shell_tab_hover = None;
+        self.terminal.claude.tab_hover = None;
+        self.terminal.shell.tab_hover = None;
         self.revidere.badge_hover = false;
     }
 

@@ -34,10 +34,8 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
         log::warn!("failed to write to PTY session: {e}");
     } else {
         // ユーザがターミナルに入力したらライブ表示に戻す。
-        match app.focus {
-            Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-            Focus::TerminalShell => app.terminal.scroll_shell = 0,
-            _ => {}
+        if let Some(pane) = app.terminal.pane_mut(app.focus) {
+            pane.scroll = 0;
         }
         // Claude Code セッションにユーザ入力を送ったら CC 待機シグナルをクリアする。
         app.clear_cc_waiting_signal(session_idx);
@@ -83,9 +81,9 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
 
     let hit = {
         let hits = if is_claude {
-            &app.terminal.claude_tab_hits
+            &app.terminal.claude.tab_hits
         } else {
-            &app.terminal.shell_tab_hits
+            &app.terminal.shell.tab_hits
         };
         hits.iter()
             .find(|h| click_col >= h.x0 && click_col < h.x1)
@@ -102,7 +100,7 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
             if is_claude {
                 app.switch_claude_session(global_idx);
             } else {
-                app.terminal.switch_shell_session(global_idx);
+                app.switch_shell_session(global_idx);
             }
         }
         TabAction::Close(global_idx) => {
@@ -127,9 +125,9 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
             // 狙っていなかったセッションを kill してしまう。ヒット領域を
             // クリアすることで、次のクリックは新しい描画を待つことになる。
             if is_claude {
-                app.terminal.claude_tab_hits.clear();
+                app.terminal.claude.tab_hits.clear();
             } else {
-                app.terminal.shell_tab_hits.clear();
+                app.terminal.shell.tab_hits.clear();
             }
         }
         TabAction::Add => {
@@ -158,17 +156,17 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
         }
         TabAction::ScrollLeft => {
             let scroll = if is_claude {
-                &mut app.terminal.claude_tab_scroll
+                &mut app.terminal.claude.tab_scroll
             } else {
-                &mut app.terminal.shell_tab_scroll
+                &mut app.terminal.shell.tab_scroll
             };
             *scroll = scroll.saturating_sub(1);
         }
         TabAction::ScrollRight => {
             let scroll = if is_claude {
-                &mut app.terminal.claude_tab_scroll
+                &mut app.terminal.claude.tab_scroll
             } else {
-                &mut app.terminal.shell_tab_scroll
+                &mut app.terminal.shell.tab_scroll
             };
             *scroll += 1;
         }
@@ -180,14 +178,10 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
 /// Ctrl+G（またはユーザ設定のキー）で発火する。アクティブな PTY セッションの
 /// 画面に表示されている行を、カーソル行から上方向へスキャンする。
 pub(super) fn open_file_from_terminal_output(app: &mut App) {
-    let (session_idx, scroll_offset) = match app.focus {
-        Focus::TerminalClaude => (
-            app.terminal.active_claude_session,
-            app.terminal.scroll_claude,
-        ),
-        Focus::TerminalShell => (app.terminal.active_shell_session, app.terminal.scroll_shell),
-        _ => return,
+    let Some(pane) = app.terminal.pane(app.focus) else {
+        return;
     };
+    let (session_idx, scroll_offset) = (pane.active_session, pane.scroll);
 
     let Some(idx) = session_idx else {
         app.set_status(
