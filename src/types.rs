@@ -45,6 +45,47 @@ impl Focus {
         }
     }
 
+    /// コマンドパレットなど、パネルを名指しする場所で使う表示名。
+    ///
+    /// パネル番号オーバーレイ (ui::panel_overlay) はここを使わない。
+    /// あちらは Explorer の下半分を「Diff List」として独立に数えるので、
+    /// Focus と 1 対 1 で対応しない。
+    pub fn label(self) -> &'static str {
+        match self {
+            Focus::Worktree => "Worktree",
+            Focus::Explorer => "Explorer",
+            Focus::Viewer => "Viewer",
+            Focus::TerminalClaude => "Claude Code",
+            Focus::TerminalShell => "Shell",
+            Focus::Editor => "Editor",
+            Focus::Revidere => "Review",
+        }
+    }
+
+    /// Tab の輪で次に来るパネル。
+    ///
+    /// Revidere は画面全体を占有するので輪には並ばず、抜ける先だけを持つ。
+    pub fn next_in_cycle(self) -> Focus {
+        match self {
+            Focus::Worktree | Focus::TerminalShell => Focus::Explorer,
+            Focus::Explorer => Focus::Viewer,
+            Focus::Viewer | Focus::Editor => Focus::TerminalClaude,
+            Focus::TerminalClaude => Focus::TerminalShell,
+            Focus::Revidere => Focus::Explorer,
+        }
+    }
+
+    /// [Self::next_in_cycle] の逆回り。
+    pub fn prev_in_cycle(self) -> Focus {
+        match self {
+            Focus::Worktree | Focus::Explorer | Focus::Editor => Focus::TerminalShell,
+            Focus::Viewer => Focus::Explorer,
+            Focus::TerminalClaude => Focus::Viewer,
+            Focus::TerminalShell => Focus::TerminalClaude,
+            Focus::Revidere => Focus::Explorer,
+        }
+    }
+
     /// このパネルがPTYをホストし、その内部のプログラム（Claude Code、
     /// シェル、エディタ）が生のキー入力を受け取るべきかどうか。イベント
     /// ディスパッチャはこれらのパネルをPTY転送経路に通す。キーマップが

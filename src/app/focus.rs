@@ -156,15 +156,7 @@ impl App {
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
-        let next = match self.focus {
-            Focus::Worktree | Focus::TerminalShell => Focus::Explorer,
-            Focus::Explorer => Focus::Viewer,
-            Focus::Viewer => Focus::TerminalClaude,
-            Focus::Editor => Focus::TerminalClaude,
-            Focus::TerminalClaude => Focus::TerminalShell,
-            // 2 列ビューは画面全体を占有しているので、Tab は輪に戻る動き。
-            Focus::Revidere => Focus::Explorer,
-        };
+        let next = self.focus.next_in_cycle();
         // 他のどこからであれExplorer列に着地したときは、常にファイルツリー
         // （上のパネル）から始まる。
         if next == Focus::Explorer {
@@ -185,14 +177,7 @@ impl App {
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
-        let prev = match self.focus {
-            Focus::Worktree | Focus::Explorer => Focus::TerminalShell,
-            Focus::Viewer => Focus::Explorer,
-            Focus::Editor => Focus::TerminalShell,
-            Focus::TerminalClaude => Focus::Viewer,
-            Focus::TerminalShell => Focus::TerminalClaude,
-            Focus::Revidere => Focus::Explorer,
-        };
+        let prev = self.focus.prev_in_cycle();
         // Viewer側からExplorer列に入ると、（一番近い）変更ファイルパネルに
         // 着地するので、さらにTabで戻るとツリーに到達する。
         if prev == Focus::Explorer {

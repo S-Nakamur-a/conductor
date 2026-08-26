@@ -315,15 +315,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     // 2. terminal 以外のパネル — keymap で解決する
 
-    let context = match app.focus {
-        Focus::Worktree => KeyContext::Worktree,
-        Focus::Explorer => KeyContext::Explorer,
-        Focus::Viewer => KeyContext::Viewer,
-        Focus::Revidere => KeyContext::Revidere,
-        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
-    };
-
-    if let Some(action) = app.keymap.resolve(&key, context)
+    if let Some(action) = app.keymap.resolve(&key, app.focus.key_context())
         && dispatch_global_action(app, action)
     {
         return;
