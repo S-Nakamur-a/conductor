@@ -11,10 +11,12 @@ mod clipboard;
 mod dialogs;
 mod explorer;
 mod global;
+pub(crate) mod input_target;
 mod menu;
 mod mouse;
 mod overlay;
 mod overlay_helpers;
+use input_target::InputTarget;
 mod paste;
 pub mod reflow;
 mod reflow_key;
@@ -116,38 +118,9 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
 }
 
 /// テキスト入力欄が現在フォーカスされていて、印字可能な文字をリテラル
-/// テキストとして挿入することを期待している場合に true。[handle_paste_event]
-/// に列挙されている入力先すべてに対応する。あの関数と歩調を合わせてある:
-/// あちらに宛先を追加したらここにも追加すること。なお
-/// WorktreeInputMode::Confirming* の y/n サブモードはテキスト入力では
-/// ないので、これは false になる点に注意。
+/// テキストとして挿入することを期待している場合に true。
 fn is_text_input_active(app: &App) -> bool {
-    if app.viewer_state.explorer.inline_reply_line.is_some()
-        || app.review_state.input_mode != ReviewInputMode::Normal
-        || app.review_state.search_active
-        || app.viewer_state.search.search_active
-        || app.viewer_state.filename_search.filename_search_active
-    {
-        return true;
-    }
-    if matches!(
-        app.worktree_mgr.input_mode,
-        WorktreeInputMode::CreatingWorktree
-            | WorktreeInputMode::CreatingWorktreeBase
-            | WorktreeInputMode::SmartDescription
-    ) {
-        return true;
-    }
-    matches!(
-        app.overlays.active,
-        ActiveOverlay::GrepSearch
-            | ActiveOverlay::SwitchBranch
-            | ActiveOverlay::CommandPalette
-            | ActiveOverlay::OpenRepo
-            | ActiveOverlay::PrInput
-            | ActiveOverlay::History
-            | ActiveOverlay::ResumeSession
-    )
+    InputTarget::active(app).is_some()
 }
 
 // 公開 API の re-export。
