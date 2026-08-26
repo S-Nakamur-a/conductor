@@ -57,16 +57,6 @@ impl MenuFocus {
     }
 }
 
-/// メニューバー行上のクリック可能なトップレベルタイトル。x0 は含み、x1 は
-/// 含まない。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BarHit {
-    pub x0: u16,
-    pub x1: u16,
-    /// [MENUS](super::model::MENUS) へのインデックス。
-    pub menu: usize,
-}
-
 /// 開いたドロップダウン内のクリック可能な行。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemHit {
@@ -84,7 +74,7 @@ pub struct ItemHit {
 pub struct MenuState {
     pub focus: MenuFocus,
     /// 直近のバー描画で記録されたトップレベルタイトルのヒット領域。
-    pub bar_hits: Vec<BarHit>,
+    pub bar_hits: crate::hit_map::ColumnSpans<usize>,
     /// 直近のドロップダウン描画で記録された行のヒット領域。ドロップダウンが
     /// 開いていない間は空。
     pub item_hits: Vec<ItemHit>,
@@ -149,10 +139,7 @@ impl MenuState {
 
     /// バー行上で col の位置にあるトップレベルタイトル(あれば)。
     pub fn bar_hit_at(&self, col: u16) -> Option<usize> {
-        self.bar_hits
-            .iter()
-            .find(|h| col >= h.x0 && col < h.x1)
-            .map(|h| h.menu)
+        self.bar_hits.at(col)
     }
 
     /// 画面上の絶対行 row にあるドロップダウン行(あれば)と、それが

@@ -715,7 +715,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // ない限り常にNoneになり、これは「マウスがバーから離れた」ことの
             // クリアも兼ねる。
             app.wtbar.hover = if wtbar_area.height > 0 && row == wtbar_area.y {
-                crate::ui::worktree_bar::hit_at(&app.wtbar.hits, col)
+                app.wtbar.hits.at(col)
             } else {
                 None
             };
@@ -725,12 +725,12 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // タブバーの行がExplorer/Viewer列の無関係な行と一致してしまう
             // ことがある。
             app.terminal.claude.tab_hover = if col >= viewer_end && row == terminal_claude_y {
-                crate::ui::tab_bar::hit_at(&app.terminal.claude.tab_hits, col)
+                app.terminal.claude.tab_hits.at(col)
             } else {
                 None
             };
             app.terminal.shell.tab_hover = if col >= viewer_end && row == terminal_split_y {
-                crate::ui::tab_bar::hit_at(&app.terminal.shell.tab_hits, col)
+                app.terminal.shell.tab_hits.at(col)
             } else {
                 None
             };

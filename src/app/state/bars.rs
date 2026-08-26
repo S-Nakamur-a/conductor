@@ -1,6 +1,6 @@
 //! 画面上端の worktree モニタストリップ (worktree bar) の状態。
 
-use crate::ui::worktree_bar::{WtbarAction, WtbarHit};
+use crate::ui::worktree_bar::WtbarAction;
 
 /// worktree ストリップの横スクロール位置とマウス当たり判定。
 ///
@@ -9,7 +9,7 @@ use crate::ui::worktree_bar::{WtbarAction, WtbarHit};
 #[derive(Default)]
 pub struct WtbarState {
     /// 直近の描画が記録したクリック領域 (worktree 選択 / 削除 / 追加)。
-    pub hits: Vec<WtbarHit>,
+    pub hits: crate::hit_map::ColumnSpans<WtbarAction>,
     /// 先頭に表示している worktree チップの添字 (横スクロール位置)。
     /// ホイールと矢印でページングされ、描画のたびに再クランプされる。
     pub scroll: usize,

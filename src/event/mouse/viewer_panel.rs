@@ -105,7 +105,7 @@ pub(super) fn handle_viewer_column_click(
     // タブ行を描かないモード（メディア/SUMMARY など）ではこれが空になるので、
     // その行のクリックを飲み込まずに通常の処理へ落ちる。
     if row == inner_y
-        && let Some(action) = crate::ui::tab_bar::hit_at(&app.viewer_state.tab_row_hits, col)
+        && let Some(action) = app.viewer_state.tab_row_hits.at(col)
     {
         match action {
             crate::ui::tab_bar::TabAction::Select(idx) => app.focus_viewer_tab(idx),

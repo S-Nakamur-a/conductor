@@ -25,8 +25,8 @@ pub(super) fn wtbar_page_step(app: &App) -> usize {
     let visible = app
         .wtbar
         .hits
-        .iter()
-        .filter(|h| matches!(h.action, WtbarAction::Select(_)))
+        .spans()
+        .filter(|(_, _, a)| matches!(a, WtbarAction::Select(_)))
         .count();
     visible.saturating_sub(1).max(1)
 }
@@ -46,12 +46,7 @@ pub(super) fn handle_wtbar_click(
     use crate::app::{StatusLevel, WorktreeInputMode};
     use crate::ui::worktree_bar::WtbarAction;
 
-    let action = app
-        .wtbar
-        .hits
-        .iter()
-        .find(|h| col >= h.x0 && col < h.x1)
-        .map(|h| h.action);
+    let action = app.wtbar.hits.at(col);
 
     match action {
         Some(WtbarAction::Select(i)) if i < app.worktrees.len() => {

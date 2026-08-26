@@ -6,6 +6,7 @@
 //! フィールドが 10 組並んでおり、どちらのパネルかを選ぶ
 //! `match focus` が呼び出し側に 14 箇所あった。
 
+use crate::hit_map::ColumnSpans;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -13,7 +14,7 @@ use std::time::Instant;
 use crate::pty_manager;
 use crate::types::Focus;
 use crate::ui::common::PtyRenderCache;
-use crate::ui::tab_bar::{TabAction, TabHit};
+use crate::ui::tab_bar::TabAction;
 
 /// 端末パネル 1 枚ぶんの状態。
 pub struct TerminalPane {
@@ -36,7 +37,7 @@ pub struct TerminalPane {
     /// 次の描画でアクティブなタブが見えるようタブ列をずらす。
     pub tab_reveal: bool,
     /// タブ列のクリック可能領域。描画のたびに記録する。
-    pub tab_hits: Vec<TabHit>,
+    pub tab_hits: ColumnSpans<TabAction>,
     /// タブ列のどの領域にポインタが乗っているか。描画を変えるのは Close だけだが、
     /// アクションごと保存することで「ホバーが何を意味するか」を
     /// イベント側ではなく描画側が決められる。
@@ -55,7 +56,7 @@ impl TerminalPane {
             dirty: true,
             tab_scroll: 0,
             tab_reveal: false,
-            tab_hits: Vec::new(),
+            tab_hits: ColumnSpans::default(),
             tab_hover: None,
         }
     }

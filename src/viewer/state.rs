@@ -382,7 +382,7 @@ pub struct ViewerState {
     pub click: ClickTracker,
     /// タブ行のクリック領域（render 中に更新される）。マウス処理が幅を
     /// 計算し直さず、描画とまったく同じジオメトリを引けるようにする。
-    pub tab_row_hits: Vec<crate::ui::tab_bar::TabHit>,
+    pub tab_row_hits: crate::hit_map::ColumnSpans<crate::ui::tab_bar::TabAction>,
     /// タブ行の横スクロール位置（最初に表示するタブ）。render が解決後の値を
     /// 書き戻す。
     pub tab_scroll: usize,

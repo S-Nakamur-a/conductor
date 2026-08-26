@@ -11,6 +11,7 @@
 //! （‹N / N›）もクリックできる領域で、ターミナルのタブバーや worktree
 //! ストリップと同じく窓を横へずらす。
 
+use crate::hit_map::ColumnSpans;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -19,7 +20,7 @@ use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::Theme;
-use crate::ui::tab_bar::{TabAction, TabHit};
+use crate::ui::tab_bar::TabAction;
 use crate::ui::worktree_bar::visible_window;
 use crate::viewer::ViewerState;
 
@@ -67,8 +68,8 @@ pub(crate) fn render(
     area: Rect,
     theme: &Theme,
     vs: &ViewerState,
-) -> (Vec<TabHit>, usize) {
-    let mut hits: Vec<TabHit> = Vec::new();
+) -> (ColumnSpans<TabAction>, usize) {
+    let mut hits = ColumnSpans::default();
     if area.width == 0 || area.height == 0 || !is_visible(vs) {
         return (hits, vs.tab_scroll);
     }
@@ -116,11 +117,7 @@ pub(crate) fn render(
         let hint = format!("\u{2039}{start} ");
         let hint_w = w(&hint);
         spans.push(Span::styled(hint, Style::default().fg(theme.hint)));
-        hits.push(TabHit {
-            x0: x,
-            x1: x + hint_w,
-            action: TabAction::ScrollLeft,
-        });
+        hits.push(x, x + hint_w, TabAction::ScrollLeft);
         x += hint_w;
     }
 
@@ -144,16 +141,12 @@ pub(crate) fn render(
         spans.push(Span::styled(label.clone(), style));
         spans.push(Span::raw(" "));
         spans.push(Span::styled("[x]", Style::default().fg(theme.error)));
-        hits.push(TabHit {
-            x0: x,
-            x1: x + label_w + 1,
-            action: TabAction::Select(idx),
-        });
-        hits.push(TabHit {
-            x0: x + label_w + 1,
-            x1: x + label_w + close_w,
-            action: TabAction::Close(idx),
-        });
+        hits.push(x, x + label_w + 1, TabAction::Select(idx));
+        hits.push(
+            x + label_w + 1,
+            x + label_w + close_w,
+            TabAction::Close(idx),
+        );
         x += label_w + close_w;
     }
 
@@ -161,11 +154,7 @@ pub(crate) fn render(
         let hint = format!(" {}\u{203a}", total - end);
         let hint_w = w(&hint);
         spans.push(Span::styled(hint, Style::default().fg(theme.hint)));
-        hits.push(TabHit {
-            x0: x,
-            x1: x + hint_w,
-            action: TabAction::ScrollRight,
-        });
+        hits.push(x, x + hint_w, TabAction::ScrollRight);
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -175,7 +164,7 @@ pub(crate) fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::tab_bar::hit_at;
+
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -191,10 +180,10 @@ mod tests {
     }
 
     /// [super::super::file_view::render_tab_row] と同じ書き戻しをする。
-    fn draw(width: u16, vs: &mut ViewerState) -> (ratatui::buffer::Buffer, Vec<TabHit>) {
+    fn draw(width: u16, vs: &mut ViewerState) -> (ratatui::buffer::Buffer, ColumnSpans<TabAction>) {
         let theme = Theme::default();
         let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
-        let mut hits = Vec::new();
+        let mut hits = ColumnSpans::default();
         let mut scroll = 0;
         terminal
             .draw(|f| {
@@ -238,15 +227,15 @@ mod tests {
         let mut vs = state(&["a.rs", "b.rs"], 0);
         let (_, hits) = draw(60, &mut vs);
         for idx in 0..2 {
-            assert!(hits.iter().any(|h| h.action == TabAction::Select(idx)));
-            assert!(hits.iter().any(|h| h.action == TabAction::Close(idx)));
+            assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Select(idx)));
+            assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Close(idx)));
         }
         // Select 領域のクリックはそのタブに当たる。
         let sel = hits
-            .iter()
-            .find(|h| h.action == TabAction::Select(1))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Select(1))
             .unwrap();
-        assert_eq!(hit_at(&hits, sel.x0), Some(TabAction::Select(1)));
+        assert_eq!(hits.at(sel.0), Some(TabAction::Select(1)));
     }
 
     /// アクティブなタブは、はみ出していても必ず見えていなければならない —
@@ -257,7 +246,7 @@ mod tests {
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
         let mut vs = state(&refs, 11);
         let (buf, hits) = draw(40, &mut vs);
-        assert!(hits.iter().any(|h| h.action == TabAction::Select(11)));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Select(11)));
         assert!(text(&buf, 40).contains("file11.rs"));
     }
 
@@ -271,14 +260,14 @@ mod tests {
 
         let (_, hits) = draw(40, &mut vs);
         let right = hits
-            .iter()
-            .find(|h| h.action == TabAction::ScrollRight)
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::ScrollRight)
             .expect("右にはみ出しているのでヒントがある");
-        assert_eq!(hit_at(&hits, right.x0), Some(TabAction::ScrollRight));
+        assert_eq!(hits.at(right.0), Some(TabAction::ScrollRight));
         let hidden = hits
-            .iter()
-            .filter_map(|h| match h.action {
-                TabAction::Select(idx) => Some(idx),
+            .spans()
+            .filter_map(|(_, _, a)| match a {
+                TabAction::Select(idx) => Some(*idx),
                 _ => None,
             })
             .max()
@@ -289,20 +278,21 @@ mod tests {
         vs.tab_scroll += 1;
         let (buf, hits) = draw(40, &mut vs);
         assert!(
-            hits.iter().any(|h| h.action == TabAction::Select(hidden)),
+            hits.spans()
+                .any(|(_, _, a)| *a == TabAction::Select(hidden)),
             "隠れていたタブ {hidden} が選べるようになる"
         );
         assert!(text(&buf, 40).contains(&paths[hidden]));
 
         // 左にもはみ出したので、戻る側のヒントも出る。
         let left = hits
-            .iter()
-            .find(|h| h.action == TabAction::ScrollLeft)
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::ScrollLeft)
             .expect("左にはみ出しているのでヒントがある");
         vs.tab_scroll = vs.tab_scroll.saturating_sub(1);
-        assert_eq!(hit_at(&hits, left.x0), Some(TabAction::ScrollLeft));
+        assert_eq!(hits.at(left.0), Some(TabAction::ScrollLeft));
         let (_, hits) = draw(40, &mut vs);
-        assert!(hits.iter().any(|h| h.action == TabAction::Select(0)));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Select(0)));
     }
 
     /// スクロールして覗いている間は、アクティブなタブへ引き戻されない。
@@ -316,14 +306,14 @@ mod tests {
         vs.tab_scroll += 1;
         let (_, hits) = draw(40, &mut vs);
         assert!(
-            !hits.iter().any(|h| h.action == TabAction::Select(0)),
+            !hits.spans().any(|(_, _, a)| *a == TabAction::Select(0)),
             "アクティブなタブ 0 は窓の外へ出たまま"
         );
 
         // タブを切り替えれば戻ってくる。
         vs.tab_reveal = true;
         let (_, hits) = draw(40, &mut vs);
-        assert!(hits.iter().any(|h| h.action == TabAction::Select(0)));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Select(0)));
     }
 
     /// はみ出した分は左右のヒントで数が分かる。

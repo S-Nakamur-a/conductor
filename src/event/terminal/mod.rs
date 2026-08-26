@@ -79,15 +79,10 @@ pub(super) fn spawn_terminal_session(app: &mut App) {
 pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude: bool) {
     use crate::ui::tab_bar::TabAction;
 
-    let hit = {
-        let hits = if is_claude {
-            &app.terminal.claude.tab_hits
-        } else {
-            &app.terminal.shell.tab_hits
-        };
-        hits.iter()
-            .find(|h| click_col >= h.x0 && click_col < h.x1)
-            .map(|h| h.action)
+    let hit = if is_claude {
+        app.terminal.claude.tab_hits.at(click_col)
+    } else {
+        app.terminal.shell.tab_hits.at(click_col)
     };
     let Some(action) = hit else {
         return;
