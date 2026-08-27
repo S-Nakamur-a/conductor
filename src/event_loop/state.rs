@@ -7,7 +7,6 @@ use ratatui::layout::Rect;
 
 use super::{
     ACTIVITY_TIMEOUT, DECORATION_TICK_INTERVAL, PULSE_TICK_INTERVAL, UNFOCUSED_TERMINAL_REFRESH,
-    watch_paths_for,
 };
 use crate::app::{App, Focus};
 use crate::timer;
@@ -94,7 +93,7 @@ impl LoopState {
         // 監視対象は後で (worktree_poll タイマーの中で) 変化に応じて作り直す —
         // ユーザーが素のフォルダで git init したり worktree を増減させたりしても
         // 新しいファイルが見えるように。
-        let watch_paths = watch_paths_for(app);
+        let watch_paths = app.watch_paths();
         let file_watcher = match crate::file_watcher::FileWatcher::new(&watch_paths) {
             Ok(w) => Some(w),
             Err(e) => {

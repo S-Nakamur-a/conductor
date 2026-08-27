@@ -17,38 +17,48 @@ impl App {
     /// そのトランスクリプトは古くなり、ここで畳む必要がある。これは
     /// [TerminalState::switch_claude_session] 内でのスクロール/キャッシュリセット
     /// (「パネルが今表示しているのは別セッション」という同じ不変条件)と対応するが、
-    /// reflow の状態は App 側にあるため、この close は一段上のレイヤで行う必要が
-    /// ある。全ての Claude セッション切り替えをこのラッパー経由にすることで、
-    /// タブ/ストリップの切り替え後にパネルが前のセッションのトランスクリプトを
-    /// 描画し続けることを防いでいる。
-    pub fn switch_claude_session(&mut self, idx: usize) {
-        if self.reflow.active {
+    /// focus が指す端末パネルの表示を、添字 idx のセッションへ切り替える。
+    ///
+    /// Claude パネルでは reflow ビューも閉じる。reflow の状態は App 側にあるので
+    /// TerminalState だけでは閉じられず、開いたままだとパネルが前のセッションの
+    /// トランスクリプトを描き続ける。全ての切り替えをここに通すのはそのため。
+    pub fn switch_session(&mut self, focus: Focus, idx: usize) {
+        if focus == Focus::TerminalClaude && self.reflow.active {
             self.close_reflow();
         }
-        self.terminal.switch_claude_session(idx);
+        let Some(pane) = self.terminal.pane_mut(focus) else {
+            return;
+        };
+        pane.switch_to(idx);
+        self.terminal.pty_manager.activate_session(idx);
+    }
+
+    /// Claude パネルの切り替え。[Self::switch_session] の別名。
+    pub fn switch_claude_session(&mut self, idx: usize) {
+        self.switch_session(Focus::TerminalClaude, idx);
+    }
+
+    /// Shell パネルの切り替え。[Self::switch_session] の別名。
+    pub fn switch_shell_session(&mut self, idx: usize) {
+        self.switch_session(Focus::TerminalShell, idx);
     }
 
     /// フォーカス中のターミナルパネルで次(forward)または前のセッションタブへ
     /// 巡回する — タブをクリックする操作のキーボード版。ターミナルパネルが
     /// フォーカスされていて、かつセッションが2つ以上ない限り何もしない。周回する。
     pub fn cycle_terminal_session(&mut self, forward: bool) {
-        let (sessions, active): (Vec<usize>, Option<usize>) = match self.focus {
-            Focus::TerminalClaude => (
-                self.current_worktree_claude_sessions()
-                    .iter()
-                    .map(|(i, _)| *i)
-                    .collect(),
-                self.terminal.active_claude_session,
-            ),
-            Focus::TerminalShell => (
-                self.current_worktree_shell_sessions()
-                    .iter()
-                    .map(|(i, _)| *i)
-                    .collect(),
-                self.terminal.active_shell_session,
-            ),
-            _ => return,
+        let Some((kind, active)) = self
+            .terminal
+            .pane(self.focus)
+            .map(|p| (p.kind, p.active_session))
+        else {
+            return;
         };
+        let sessions: Vec<usize> = self
+            .current_worktree_sessions(kind)
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
         if sessions.len() <= 1 {
             return;
         }
@@ -61,11 +71,7 @@ impl App {
             (pos + sessions.len() - 1) % sessions.len()
         };
         let target = sessions[next];
-        match self.focus {
-            Focus::TerminalClaude => self.switch_claude_session(target),
-            Focus::TerminalShell => self.terminal.switch_shell_session(target),
-            _ => {}
-        }
+        self.switch_session(self.focus, target);
     }
 
     /// 現在選択中の worktree に新しい Claude Code の PTY セッションを起動する。
@@ -95,7 +101,7 @@ impl App {
             .unwrap_or(&SESSION_ICONS[used_ids.len() % SESSION_ICONS.len()]);
         let label = format!("CC:{id}");
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal.size_claude;
+        let (rows, cols) = self.terminal.claude.size;
         let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::ClaudeCode,
             &worktree_name,
@@ -125,7 +131,7 @@ impl App {
             .count();
         let label = format!("SH:{}", sh_count + 1);
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal.size_shell;
+        let (rows, cols) = self.terminal.shell.size;
         let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::Shell,
             &worktree_name,
@@ -138,7 +144,7 @@ impl App {
             &self.repo.path,
             None,
         )?;
-        self.terminal.switch_shell_session(idx);
+        self.switch_shell_session(idx);
         Ok(idx)
     }
 
@@ -164,8 +170,8 @@ impl App {
 
         // アクティブセッションのインデックスを調整する。
         for a in [
-            &mut self.terminal.active_claude_session,
-            &mut self.terminal.active_shell_session,
+            &mut self.terminal.claude.active_session,
+            &mut self.terminal.shell.active_session,
         ]
         .into_iter()
         .flatten()
@@ -192,31 +198,29 @@ impl App {
         // 異なる — ヘルパー経由で切り替えてスクロールと描画キャッシュをリセットする
         // (そうしないとパネルが閉じたセッションの古い出力を表示し続けてしまう)。
         // 残っているセッションがない場合はキャッシュを直接クリアする。
-        if self.terminal.active_claude_session == Some(usize::MAX) {
-            match self
-                .current_worktree_claude_sessions()
-                .first()
-                .map(|(idx, _)| *idx)
-            {
-                Some(idx) => self.switch_claude_session(idx),
-                None => {
-                    self.terminal.active_claude_session = None;
-                    self.terminal.scroll_claude = 0;
-                    self.terminal.cache_claude = Default::default();
-                }
+        for focus in [Focus::TerminalClaude, Focus::TerminalShell] {
+            let Some((kind, active)) = self
+                .terminal
+                .pane(focus)
+                .map(|p| (p.kind, p.active_session))
+            else {
+                continue;
+            };
+            if active != Some(usize::MAX) {
+                continue;
             }
-        }
-        if self.terminal.active_shell_session == Some(usize::MAX) {
-            match self
-                .current_worktree_shell_sessions()
+            let next = self
+                .current_worktree_sessions(kind)
                 .first()
-                .map(|(idx, _)| *idx)
-            {
-                Some(idx) => self.terminal.switch_shell_session(idx),
+                .map(|(idx, _)| *idx);
+            match next {
+                Some(idx) => self.switch_session(focus, idx),
                 None => {
-                    self.terminal.active_shell_session = None;
-                    self.terminal.scroll_shell = 0;
-                    self.terminal.cache_shell = Default::default();
+                    if let Some(pane) = self.terminal.pane_mut(focus) {
+                        pane.active_session = None;
+                        pane.scroll = 0;
+                        pane.cache = Default::default();
+                    }
                 }
             }
         }
@@ -264,8 +268,8 @@ impl App {
 
                 // アクティブセッションのインデックスを調整する。
                 for a in [
-                    &mut self.terminal.active_claude_session,
-                    &mut self.terminal.active_shell_session,
+                    &mut self.terminal.claude.active_session,
+                    &mut self.terminal.shell.active_session,
                 ]
                 .into_iter()
                 .flatten()
@@ -281,11 +285,10 @@ impl App {
 
         if removed_any {
             // 取り除かれたセッションを指していたインデックスをクリアする。
-            if self.terminal.active_claude_session == Some(usize::MAX) {
-                self.terminal.active_claude_session = None;
-            }
-            if self.terminal.active_shell_session == Some(usize::MAX) {
-                self.terminal.active_shell_session = None;
+            for pane in self.terminal.panes_mut() {
+                if pane.active_session == Some(usize::MAX) {
+                    pane.active_session = None;
+                }
             }
         }
 
@@ -293,30 +296,19 @@ impl App {
     }
 
     /// 現在選択中の worktree に属する Claude Code セッションについて、
-    /// (index_in_pty_manager, &PtySession) のペアを返す。
-    pub fn current_worktree_claude_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
+    /// 現在選択中の worktree にある、指定種別の PTY セッション。
+    /// pty_manager 全体の添字を添えて返す。
+    pub fn current_worktree_sessions(
+        &self,
+        kind: pty_manager::SessionKind,
+    ) -> Vec<(usize, &pty_manager::PtySession)> {
         let wt_path = self.selected_worktree_path();
         self.terminal
             .pty_manager
             .sessions()
             .iter()
             .enumerate()
-            .filter(|(_, s)| {
-                s.working_dir == wt_path && s.kind == pty_manager::SessionKind::ClaudeCode
-            })
-            .collect()
-    }
-
-    /// 現在選択中の worktree に属する Shell セッションについて、
-    /// (index_in_pty_manager, &PtySession) のペアを返す。
-    pub fn current_worktree_shell_sessions(&self) -> Vec<(usize, &pty_manager::PtySession)> {
-        let wt_path = self.selected_worktree_path();
-        self.terminal
-            .pty_manager
-            .sessions()
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.working_dir == wt_path && s.kind == pty_manager::SessionKind::Shell)
+            .filter(|(_, s)| s.working_dir == wt_path && s.kind == kind)
             .collect()
     }
 }

@@ -61,8 +61,9 @@ impl App {
         // まずアクティブな Claude セッションを試し、なければ Shell を試す。
         let active_idx = self
             .terminal
-            .active_claude_session
-            .or(self.terminal.active_shell_session);
+            .claude
+            .active_session
+            .or(self.terminal.shell.active_session);
         let active_idx = match active_idx {
             Some(idx) => idx,
             None => {

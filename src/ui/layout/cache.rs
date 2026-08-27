@@ -13,7 +13,7 @@ pub struct LayoutCache {
     /// このキャッシュを計算した時のフレーム領域（キャッシュキー）。
     pub frame_area: Rect,
     /// このキャッシュを計算した時の最大化パネル状態（キャッシュキー）。
-    pub expanded_panel: Option<crate::app::Focus>,
+    pub expanded_panel: Option<crate::types::Focus>,
     /// 通知バーが表示されていたか（キャッシュキー）。
     pub has_notifications: bool,
     /// このキャッシュ計算時に使った Explorer カラム幅の割合（キャッシュキー）。
@@ -50,7 +50,7 @@ impl LayoutCache {
     pub fn update(
         &mut self,
         frame_area: Rect,
-        expanded_panel: Option<crate::app::Focus>,
+        expanded_panel: Option<crate::types::Focus>,
         has_notifications: bool,
         layout: &crate::config::LayoutConfig,
         terminal_split_pct: u16,
@@ -145,12 +145,12 @@ impl LayoutCache {
 /// 受け取る。explorer_pct と viewer_pct は設定された割合（0〜100）で、
 /// デフォルト（未最大化）のレイアウトでのみ使われる。
 pub(crate) fn accordion_widths(
-    expanded_panel: Option<crate::app::Focus>,
+    expanded_panel: Option<crate::types::Focus>,
     total_width: u16,
     explorer_pct: u16,
     viewer_pct: u16,
 ) -> (u16, u16, u16) {
-    use crate::app::Focus;
+    use crate::types::Focus;
 
     match expanded_panel {
         Some(Focus::Worktree) => (total_width, 0, 0),

@@ -381,7 +381,7 @@ fn indexed_double_click_resets_on_different_idx() {
 
 mod menu_clicks {
     use super::super::menu::{MenuClick, classify_menu_click};
-    use crate::menu::state::{BarHit, ItemHit, MenuFocus, MenuState};
+    use crate::menu::state::{ItemHit, MenuFocus, MenuState};
     use ratatui::layout::Rect;
 
     const BAR_ROW: u16 = 1;
@@ -389,19 +389,11 @@ mod menu_clicks {
     /// 行1に2つのタイトルがあり、任意でメニュー1のドロップダウンが行2..6で
     /// 開いている状態。有効な行が1つ（3）、無効な行が1つ（4）ある。
     fn state(open: bool) -> MenuState {
+        let mut bar_hits = crate::hit_map::ColumnSpans::default();
+        bar_hits.push(0, 6, 0);
+        bar_hits.push(6, 16, 1);
         let mut s = MenuState {
-            bar_hits: vec![
-                BarHit {
-                    x0: 0,
-                    x1: 6,
-                    menu: 0,
-                },
-                BarHit {
-                    x0: 6,
-                    x1: 16,
-                    menu: 1,
-                },
-            ],
+            bar_hits,
             ..Default::default()
         };
         if open {

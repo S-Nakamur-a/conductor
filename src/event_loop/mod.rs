@@ -36,17 +36,6 @@ const PULSE_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// PTY 出力の可視性と CPU 使用量のバランスを取る。
 const UNFOCUSED_TERMINAL_REFRESH: Duration = Duration::from_millis(500);
 
-/// file watcher が監視すべきパス: 通常は各 worktree のパス。worktree が
-/// 1 つもない場合 (例: 素の非 git ディレクトリ) はリポジトリのパス自身にする。
-/// これにより Explorer はそこでのファイル変更でも自動更新され続ける。
-pub(crate) fn watch_paths_for(app: &App) -> Vec<std::path::PathBuf> {
-    if app.worktrees.is_empty() {
-        vec![app.repo.path.clone()]
-    } else {
-        app.worktrees.iter().map(|w| w.path.clone()).collect()
-    }
-}
-
 /// ユーザが終了するまで draw → poll → handle サイクルを回す。
 ///
 /// 1 周の並びは「入力からピクセルまで」の遅延で決まっている: イベントを待って

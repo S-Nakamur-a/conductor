@@ -68,7 +68,7 @@ impl App {
     /// resize-pane -L/-R/-U/-D と同じ挙動。中央（Viewer）列は両方の境界を
     /// 押せるので、縮むことしかできない窮屈なペインにはならない。
     pub fn resize_focused_pane(&mut self, dir: ResizeDir) {
-        use super::focus::Focus;
+        use crate::types::Focus;
         let step = Self::RESIZE_STEP_PCT as i16;
         let changed = match dir {
             ResizeDir::Left | ResizeDir::Right => {

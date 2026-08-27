@@ -9,6 +9,7 @@
 //! （render_switcher_overlay）にある。
 
 use crate::app::App;
+use crate::hit_map::ColumnSpans;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -29,26 +30,6 @@ pub enum WtbarAction {
     ScrollLeft,
     /// 右端に隠れている worktree を見せるためにストリップをスクロールする。
     ScrollRight,
-}
-
-/// worktree バーのクリック可能領域。バーの1行における絶対画面カラム
-/// （x0 は含む、x1 は含まない）で表す。
-#[derive(Clone, Copy, Debug)]
-pub struct WtbarHit {
-    pub x0: u16,
-    pub x1: u16,
-    pub action: WtbarAction,
-}
-
-/// 与えられた絶対画面カラムがどの WtbarAction に該当するかを、バーの直前の
-/// render 呼び出しで記録されたヒット領域から判定する。純粋関数なので、
-/// render() 自体は &mut App を取り TestBackend のテストでは検証できなくても
-/// （バーの見た目上の hover 結果は手動/実機での確認に委ねる）、hover対象の
-/// ロジックはユニットテスト可能。
-pub fn hit_at(hits: &[WtbarHit], col: u16) -> Option<WtbarAction> {
-    hits.iter()
-        .find(|h| col >= h.x0 && col < h.x1)
-        .map(|h| h.action)
 }
 
 fn w(s: &str) -> u16 {
@@ -182,7 +163,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let max_x = area.x + area.width;
     let mut x = area.x;
     let mut spans: Vec<Span> = Vec::new();
-    let mut hits: Vec<WtbarHit> = Vec::new();
+    let mut hits = ColumnSpans::default();
 
     // 識別マーカー（worktree 作成中は回転する）。
     {
@@ -311,11 +292,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             hint,
             Style::default().fg(if waiting_left { warning } else { muted }),
         ));
-        hits.push(WtbarHit {
-            x0: x,
-            x1: x + hw,
-            action: WtbarAction::ScrollLeft,
-        });
+        hits.push(x, x + hw, WtbarAction::ScrollLeft);
         x += hw;
     }
 
@@ -351,11 +328,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             chip_style
         };
         spans.push(Span::styled(chip.text.clone(), chip_style));
-        hits.push(WtbarHit {
-            x0: x,
-            x1: x + chip.width,
-            action: WtbarAction::Select(i),
-        });
+        hits.push(x, x + chip.width, WtbarAction::Select(i));
         x += chip.width;
 
         if !chip.del.is_empty() {
@@ -366,11 +339,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 del_style
             };
             spans.push(Span::styled(chip.del, del_style));
-            hits.push(WtbarHit {
-                x0: x,
-                x1: x + chip.del_width,
-                action: WtbarAction::Delete(i),
-            });
+            hits.push(x, x + chip.del_width, WtbarAction::Delete(i));
             x += chip.del_width;
         }
 
@@ -383,11 +352,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 chip.review_text.clone(),
                 review_style(&app.theme, chip.review),
             ));
-            hits.push(WtbarHit {
-                x0: x,
-                x1: x + chip.review_width,
-                action: WtbarAction::Select(i),
-            });
+            hits.push(x, x + chip.review_width, WtbarAction::Select(i));
             x += chip.review_width;
         }
     }
@@ -401,11 +366,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             hint,
             Style::default().fg(if waiting_right { warning } else { muted }),
         ));
-        hits.push(WtbarHit {
-            x0: x,
-            x1: x + hw,
-            action: WtbarAction::ScrollRight,
-        });
+        hits.push(x, x + hw, WtbarAction::ScrollRight);
         x += hw;
     }
 
@@ -419,11 +380,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         add,
         Style::default().fg(success).add_modifier(Modifier::BOLD),
     ));
-    hits.push(WtbarHit {
-        x0: x,
-        x1: x + add_w,
-        action: WtbarAction::Add,
-    });
+    hits.push(x, x + add_w, WtbarAction::Add);
 
     app.wtbar.scroll = start;
     app.wtbar.reveal_selected = false;
@@ -448,7 +405,7 @@ pub fn render_switcher_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{WtbarAction, WtbarHit, hit_at, review_mark, review_style, visible_window};
+    use super::{review_mark, review_style, visible_window};
     use crate::revidere::ArtifactState;
     use crate::theme::Theme;
 
@@ -546,41 +503,5 @@ mod tests {
     #[test]
     fn empty_list_is_handled() {
         assert_eq!(visible_window(&[], 1, 100, 0, 0, true), (0, 0));
-    }
-
-    fn sample_hits() -> Vec<WtbarHit> {
-        vec![
-            WtbarHit {
-                x0: 0,
-                x1: 5,
-                action: WtbarAction::Select(0),
-            },
-            WtbarHit {
-                x0: 5,
-                x1: 8,
-                action: WtbarAction::Delete(0),
-            },
-        ]
-    }
-
-    #[test]
-    fn hit_at_finds_the_action_owning_the_column() {
-        let hits = sample_hits();
-        assert_eq!(hit_at(&hits, 0), Some(WtbarAction::Select(0)));
-        assert_eq!(hit_at(&hits, 4), Some(WtbarAction::Select(0)));
-        assert_eq!(hit_at(&hits, 5), Some(WtbarAction::Delete(0)));
-        assert_eq!(hit_at(&hits, 7), Some(WtbarAction::Delete(0)));
-    }
-
-    #[test]
-    fn hit_at_is_none_outside_every_region() {
-        let hits = sample_hits();
-        assert_eq!(hit_at(&hits, 8), None);
-        assert_eq!(hit_at(&hits, 100), None);
-    }
-
-    #[test]
-    fn hit_at_is_none_for_empty_hits() {
-        assert_eq!(hit_at(&[], 3), None);
     }
 }

@@ -1,10 +1,8 @@
 //! bracketed-paste イベントの処理。
 
-use crate::app::{App, Focus, WorktreeInputMode};
-use crate::overlay::ActiveOverlay;
-use crate::review_state::ReviewInputMode;
+use crate::app::App;
 
-use super::is_text_input_active;
+use super::input_target::InputTarget;
 
 /// bracketed-paste イベントを処理する。テキスト入力のオーバーレイ/モーダルが
 /// あればまずそちらがペーストを受け取る (これにより IME 確定済みのマルチ
@@ -22,76 +20,18 @@ pub fn handle_paste_event(app: &mut App, data: String) {
     // として届けるため。フォーカスだけをゲートにすると、そのペーストが
     // モーダルの裏にいる Claude/Shell の PTY へ転送されてしまい、入力した
     // 日本語が入力欄から消えて terminal 側に出てしまう。半角 ASCII は
-    // 通常のキーイベントとして届くので影響を受けない。is_text_input_active
-    // と歩調を合わせてある: 以下の宛先はすべてそちらにも列挙されている。
-    if is_text_input_active(app) {
-        // ペーストデータをアクティブなオーバーレイの入力バッファへ振り分ける。
-        let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
-
-        if app.viewer_state.explorer.inline_reply_line.is_some() {
-            app.viewer_state
-                .explorer
-                .inline_reply_buffer
-                .insert_str(&single_line);
-        } else if app.review_state.input_mode != ReviewInputMode::Normal {
-            // レビュー入力は複数行。
-            app.review_state.input_buffer.insert_str(&data);
-        } else if app.worktree_mgr.input_mode == WorktreeInputMode::SmartDescription {
-            // スマート説明は複数行。
-            app.worktree_mgr.smart_description_buffer.insert_str(&data);
-        } else if app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktree
-            || app.worktree_mgr.input_mode == WorktreeInputMode::CreatingWorktreeBase
-        {
-            app.worktree_mgr.input_buffer.insert_str(&single_line);
-        } else if app.overlays.active == ActiveOverlay::GrepSearch {
-            app.overlays.grep_search.query.insert_str(&single_line);
-            app.overlays.grep_search.input_focused = true;
-            app.overlays.grep_search.schedule();
-        } else if app.viewer_state.search.search_active {
-            app.viewer_state
-                .search
-                .search_query
-                .insert_str(&single_line);
-        } else if app.viewer_state.filename_search.filename_search_active {
-            app.viewer_state
-                .filename_search
-                .filename_search_query
-                .insert_str(&single_line);
-        } else if app.review_state.search_active {
-            app.review_state.search_query.insert_str(&single_line);
-            app.review_state.apply_filter();
+    // 通常のキーイベントとして届くので影響を受けない。
+    if let Some(target) = InputTarget::active(app) {
+        if target.is_multiline() {
+            target.insert(app, &data);
         } else {
-            match app.overlays.active {
-                ActiveOverlay::SwitchBranch => {
-                    app.overlays.switch_branch.filter.insert_str(&single_line);
-                }
-                ActiveOverlay::CommandPalette => {
-                    app.overlays.command_palette.filter.insert_str(&single_line);
-                }
-                ActiveOverlay::OpenRepo => {
-                    app.overlays.open_repo.buffer.insert_str(&single_line);
-                }
-                ActiveOverlay::PrInput => {
-                    app.overlays.pr_input.buffer.insert_str(&single_line);
-                    app.overlays.pr_input.error = None;
-                }
-                ActiveOverlay::History => {
-                    app.overlays.history.search_query.insert_str(&single_line);
-                }
-                ActiveOverlay::ResumeSession => {
-                    app.overlays.resume_session.filter.insert_str(&single_line);
-                }
-                _ => {}
-            }
+            let single_line: String = data.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+            target.insert(app, &single_line);
         }
         return;
     }
 
-    let session_idx = match app.focus {
-        Focus::TerminalClaude => app.terminal.active_claude_session,
-        Focus::TerminalShell => app.terminal.active_shell_session,
-        _ => None,
-    };
+    let session_idx = app.terminal.pane(app.focus).and_then(|p| p.active_session);
 
     // grab されている worktree の terminal へのペーストはブロックする。
     if app.is_selected_worktree_grabbed() {
@@ -104,10 +44,8 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         if let Err(e) = app.terminal.pty_manager.write_paste_to_session(idx, &data) {
             log::warn!("failed to write paste data to PTY session: {e}");
         } else {
-            match app.focus {
-                Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-                Focus::TerminalShell => app.terminal.scroll_shell = 0,
-                _ => {}
+            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+                pane.scroll = 0;
             }
             app.clear_cc_waiting_signal(idx);
         }

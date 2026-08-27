@@ -365,6 +365,75 @@ fn collect_masked_ranges(
     }
 }
 
+/// 行の中で飛び先になりうる識別子を、出現番号・開始桁・綴りの組で列挙する。
+pub fn code_identifiers_on_line<'a>(
+    line: &'a str,
+    line_1: usize,
+    mask: &'a crate::symbol_index::CodeMask,
+) -> impl Iterator<Item = (usize, usize, String)> + 'a {
+    crate::symbol_index::identifier_occurrences(line)
+        .enumerate()
+        .filter(move |(k, _)| mask.is_code(line_1, *k))
+        .filter(|(_, (_, _, word))| word.len() > 1 && !is_rust_keyword(word))
+        .map(|(k, (start, _, word))| (k, start, word.to_string()))
+}
+
+/// 元ソースの行での、`k` 番目の識別子のバイト範囲。
+///
+/// 出現の番号は viewer が持つタブ展開済みの行から取るが、索引の列は展開前の
+/// バイト位置を指す。タブ展開は識別子の数も並びも変えないので番号はそのまま通り、
+/// 列だけがここで戻る。
+pub fn occurrence_span_in_source(source_line: &str, k: usize) -> Option<(usize, usize)> {
+    crate::symbol_index::identifier_occurrences(source_line)
+        .nth(k)
+        .map(|(start, end, _)| (start, end))
+}
+
+/// 単語が Rust のキーワードかどうかを調べる（シンボルとして扱うべきではない）。
+pub fn is_rust_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "yield"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

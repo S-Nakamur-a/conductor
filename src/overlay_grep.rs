@@ -8,9 +8,9 @@
 
 use std::path::Path;
 
-use crate::app::{Notice, StatusLevel};
 use crate::grep_search::GrepProgress;
 use crate::overlay::GrepSearchOverlay;
+use crate::types::{Notice, StatusLevel};
 
 impl GrepSearchOverlay {
     /// オーバーレイを開くときの初期状態に戻す。

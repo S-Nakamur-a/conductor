@@ -14,6 +14,17 @@ use crate::git_engine::status_map::GitStatusMap;
 use super::*;
 
 impl App {
+    /// file watcher が監視すべきパス: 通常は各 worktree のパス。worktree が
+    /// 1 つもない場合 (例: 素の非 git ディレクトリ) はリポジトリのパス自身にする。
+    /// これにより Explorer はそこでのファイル変更でも自動更新され続ける。
+    pub fn watch_paths(&self) -> Vec<std::path::PathBuf> {
+        if self.worktrees.is_empty() {
+            vec![self.repo.path.clone()]
+        } else {
+            self.worktrees.iter().map(|w| w.path.clone()).collect()
+        }
+    }
+
     // ワークツリー作成・削除のヘルパー
 
     /// パスを指定してワークツリーを選択し、UI の更新をトリガーする。
@@ -123,7 +134,7 @@ impl App {
                 let _ = store.set_selected_worktree(&new_branch);
             }
             if let Ok(Some((Some(file), line))) = store.get_view_state(&new_branch) {
-                self.view_restore.pending = Some(crate::app::PendingViewRestore {
+                self.view_restore.pending = Some(crate::types::PendingViewRestore {
                     file,
                     scroll: line.max(0) as usize,
                 });
@@ -146,23 +157,23 @@ impl App {
 
         // アクティブなセッションを新しいワークツリーに合わせて更新する。
         let wt_name = self.selected_worktree_branch();
-        let claude_sessions = self.current_worktree_claude_sessions();
-        self.terminal.active_claude_session = claude_sessions.first().map(|(idx, _)| *idx);
-        let shell_sessions = self.current_worktree_shell_sessions();
-        self.terminal.active_shell_session = shell_sessions.first().map(|(idx, _)| *idx);
-
-        // PTY セッションを有効化する。
-        if let Some(idx) = self.terminal.active_claude_session {
-            self.terminal.pty_manager.activate_session(idx);
+        for focus in [Focus::TerminalClaude, Focus::TerminalShell] {
+            let Some(kind) = self.terminal.pane(focus).map(|p| p.kind) else {
+                continue;
+            };
+            let first = self
+                .current_worktree_sessions(kind)
+                .first()
+                .map(|(idx, _)| *idx);
+            if let Some(pane) = self.terminal.pane_mut(focus) {
+                pane.active_session = first;
+                pane.scroll = 0;
+                pane.cache = Default::default();
+            }
+            if let Some(idx) = first {
+                self.terminal.pty_manager.activate_session(idx);
+            }
         }
-        if let Some(idx) = self.terminal.active_shell_session {
-            self.terminal.pty_manager.activate_session(idx);
-        }
-
-        self.terminal.scroll_claude = 0;
-        self.terminal.scroll_shell = 0;
-        self.terminal.cache_claude = Default::default();
-        self.terminal.cache_shell = Default::default();
 
         // 重い処理をバックグラウンドスレッドへディスパッチする。
         if let Some(wt) = self.worktrees.selected() {

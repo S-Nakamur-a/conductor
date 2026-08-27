@@ -1641,7 +1641,7 @@ mod tests {
     #[test]
     #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
     fn real_index_describes_what_it_answers() {
-        use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
+        use crate::symbol_index::{code_identifiers_on_line, occurrence_span_in_source};
 
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
         let repo_root = Path::new(&repo_root);
@@ -1742,7 +1742,7 @@ mod tests {
     #[test]
     #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
     fn real_index_answers_across_the_repository() {
-        use crate::app::{code_identifiers_on_line, occurrence_span_in_source};
+        use crate::symbol_index::{code_identifiers_on_line, occurrence_span_in_source};
 
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
         let repo_root = Path::new(&repo_root);

@@ -2,10 +2,10 @@
 //! 雑多なコマンドハンドラ群: テーマの切り替え、terminal/search の
 //! 入口、リポジトリ/コメント一覧のナビゲーションショートカット。
 
-use super::focus::Focus;
 use super::panel_resize::ResizeDir;
 use super::{App, StatusLevel, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
+use crate::types::Focus;
 
 impl App {
     pub fn execute_palette_command(&mut self, id: crate::command_palette::CommandId) {
@@ -80,6 +80,84 @@ impl App {
     ///
     /// theme_name を復元先として保持しておくことで、(ライブプレビューで動いた
     /// 後でも)Esc でピッカーを開いた時点で有効だったテーマに戻せる。
+    /// id が現在のアプリ状態に対して実行可能かどうか — メニューのグレーアウト判定。
+    ///
+    /// デフォルトは実行可能とする。ここにケースを書くのは、コマンド自身がすでに
+    /// 具体的な箇所で実行を拒否している場合だけで、各ケースにはその箇所を明記する。
+    /// この非対称性は意図的である。誤って false にすると、全操作を一覧するはずの
+    /// この UI から動くはずの操作が黙って消える。一方 true を誤っても今日の挙動
+    /// 以上の代償はない — コマンドはそのまま実行され、パレットから実行したときと
+    /// 同じようにステータスバーで結果を報告する。
+    ///
+    /// したがってケースを追加する際のルールは、対応する既存のチェック箇所を指し示す
+    /// ことである。コマンド名から前提条件を推測して作ってはいけない。
+    ///
+    /// 本当の前提条件が I/O(SQLite の読み取りや git の呼び出し)を要する場合は、
+    /// そのうち安価な部分だけをここで再現する。開いているドロップダウンの表示中の
+    /// 行すべてに対して毎フレーム呼ばれるため、レビュー DB に問い合わせるような
+    /// 判定はレンダーループの中に DB ラウンドトリップを持ち込むことになる。
+    pub fn command_enabled(&self, id: crate::command_palette::CommandId) -> bool {
+        let selected_worktree = self.worktrees.selected();
+
+        match id {
+            // App
+            // Action::UpdateAndRestart はリリースが見つかっている場合以外は
+            // 何もしない(event/global.rs、if self.update.info.is_some())。
+            crate::command_palette::CommandId::UpdateAndRestart => self.update.info.is_some(),
+
+            // Repository
+            // リポジトリ選択は切替先が複数あるときのみ開く
+            // (event/global.rs、if self.repo.known.len() > 1)。
+            crate::command_palette::CommandId::SwitchRepo => self.repo.known.len() > 1,
+
+            // Worktree
+            // ストリップの削除ボタンは main worktree と削除処理中の worktree を
+            // 拒否する(event/mouse/bars.rs)。
+            crate::command_palette::CommandId::DeleteWorktree => selected_worktree
+                .is_some_and(|w| !w.is_main && !self.is_worktree_pending_delete(&w.path)),
+
+            // "Cannot merge main into itself."(app/worktree_commands.rs)。
+            crate::command_palette::CommandId::MergeToMain => {
+                selected_worktree.is_some_and(|w| !w.is_main)
+            }
+
+            // "Already grabbing a branch. Ungrab first (G)."
+            // (app/worktree_commands.rs)。後続の「grab 可能な非 main worktree が
+            // ない」というチェックはここでは再現しない。オーバーレイ状態を変更する
+            // load_grab_branches() が必要になるため。
+            crate::command_palette::CommandId::GrabBranch => {
+                self.worktree_mgr.grabbed_branch.is_none()
+            }
+
+            // "Not grabbing — nothing to ungrab."(app/commands.rs)。
+            crate::command_palette::CommandId::UngrabBranch => {
+                self.worktree_mgr.grabbed_branch.is_some()
+            }
+
+            // "No worktree selected."(app/worktree_pr.rs)。ブランチに実際に
+            // PR があるかどうかは git 呼び出しが必要なので、そこはコマンド側に
+            // 任せる。
+            crate::command_palette::CommandId::OpenPullRequest => selected_worktree.is_some(),
+
+            // Viewer
+            // "Raw/Rendered applies to a markdown file in the Viewer"
+            // (app/view_state.rs) — コマンドが参照するのと同じヘルパー。
+            crate::command_palette::CommandId::ToggleMarkdownRender => {
+                self.viewer_state.markdown_toggle_available()
+            }
+
+            // Review
+            // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに
+            // 紐づく PR があるかは get_pr_review_meta クエリが必要なので、
+            // そこはコマンド側に任せる。
+            crate::command_palette::CommandId::PublishReview => {
+                self.review_store.is_some() && selected_worktree.is_some()
+            }
+
+            _ => true,
+        }
+    }
+
     pub fn cmd_open_theme_picker(&mut self) {
         let themes: Vec<String> = crate::theme::Theme::all_names()
             .iter()

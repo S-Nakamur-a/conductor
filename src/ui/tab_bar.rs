@@ -13,6 +13,7 @@
 //! 描画時にクリック可能な領域（絶対スクリーン列）を記録するので、マウス処理は
 //! 幅を再計算するのではなく、まったく同じジオメトリを参照する。
 
+use crate::hit_map::ColumnSpans;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -67,25 +68,6 @@ pub enum TabAction {
     ScrollRight,
 }
 
-/// タブバーのクリック可能な領域。バーの1行における絶対スクリーン列
-/// （x0 は含む、x1 は含まない）で表す。
-#[derive(Clone, Copy, Debug)]
-pub struct TabHit {
-    pub x0: u16,
-    pub x1: u16,
-    pub action: TabAction,
-}
-
-/// 与えられた絶対スクリーン列がどの TabAction に該当するかを、バーの直近の
-/// render 呼び出しで記録されたヒット領域から判定する。行には関知しない
-/// — マウスが実際にタブバーの行にあるかどうかは呼び出し側が自分で確認してから
-/// 呼ぶこと（クリック処理と、hover 追跡機能が入ってからはそちらも同様）。
-pub fn hit_at(hits: &[TabHit], col: u16) -> Option<TabAction> {
-    hits.iter()
-        .find(|h| col >= h.x0 && col < h.x1)
-        .map(|h| h.action)
-}
-
 /// 描画する1つのセッションタブ。
 pub struct TabItem {
     /// グローバル PTY セッションインデックス（Select/Close が運ぶ値）。
@@ -119,8 +101,8 @@ pub fn render(
     reveal: bool,
     is_expanded: bool,
     hover: Option<TabAction>,
-) -> (Vec<TabHit>, usize) {
-    let mut hits: Vec<TabHit> = Vec::new();
+) -> (ColumnSpans<TabAction>, usize) {
+    let mut hits = ColumnSpans::default();
     if area.width == 0 || area.height == 0 {
         return (hits, scroll);
     }
@@ -182,11 +164,7 @@ pub fn render(
         let hint = format!("\u{2039}{} ", start);
         let hw = w(&hint);
         spans.push(Span::styled(hint, Style::default().fg(theme.muted)));
-        hits.push(TabHit {
-            x0: x,
-            x1: x + hw,
-            action: TabAction::ScrollLeft,
-        });
+        hits.push(x, x + hw, TabAction::ScrollLeft);
         x += hw;
     }
 
@@ -228,16 +206,12 @@ pub fn render(
         spans.push(Span::styled("[x]", close_style));
         // Select はラベル（+ close サフィックスの先頭スペース）をカバーし、
         // Close は "[x]" の文字だけをカバーする。
-        hits.push(TabHit {
-            x0: x,
-            x1: x + label_w + 1,
-            action: TabAction::Select(item.global_idx),
-        });
-        hits.push(TabHit {
-            x0: x + label_w + 1,
-            x1: x + label_w + close_w,
-            action: TabAction::Close(item.global_idx),
-        });
+        hits.push(x, x + label_w + 1, TabAction::Select(item.global_idx));
+        hits.push(
+            x + label_w + 1,
+            x + label_w + close_w,
+            TabAction::Close(item.global_idx),
+        );
         x += label_w + close_w;
     }
 
@@ -246,11 +220,7 @@ pub fn render(
         let hint = format!(" {}\u{203a}", total - end);
         let hw = w(&hint);
         spans.push(Span::styled(hint, Style::default().fg(theme.muted)));
-        hits.push(TabHit {
-            x0: x,
-            x1: x + hw,
-            action: TabAction::ScrollRight,
-        });
+        hits.push(x, x + hw, TabAction::ScrollRight);
         x += hw;
     }
 
@@ -271,11 +241,7 @@ pub fn render(
             .fg(theme.success)
             .add_modifier(Modifier::BOLD),
     ));
-    hits.push(TabHit {
-        x0: x,
-        x1: x + w(add),
-        action: TabAction::Add,
-    });
+    hits.push(x, x + w(add), TabAction::Add);
     x += w(add);
 
     // 固定された展開トグル。
@@ -285,11 +251,7 @@ pub fn render(
         expand_label,
         Style::default().fg(expand_color),
     ));
-    hits.push(TabHit {
-        x0: x,
-        x1: x + w(expand_label),
-        action: TabAction::Expand,
-    });
+    hits.push(x, x + w(expand_label), TabAction::Expand);
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
     (hits, start)
@@ -313,7 +275,7 @@ mod tests {
             .collect()
     }
 
-    fn render_hits(width: u16, items: &[TabItem], scroll: usize) -> Vec<TabHit> {
+    fn render_hits(width: u16, items: &[TabItem], scroll: usize) -> ColumnSpans<TabAction> {
         render_hits_hover(width, items, scroll, None)
     }
 
@@ -322,10 +284,10 @@ mod tests {
         items: &[TabItem],
         scroll: usize,
         hover: Option<TabAction>,
-    ) -> Vec<TabHit> {
+    ) -> ColumnSpans<TabAction> {
         let theme = Theme::default();
         let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
-        let mut captured = Vec::new();
+        let mut captured = ColumnSpans::default();
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -361,24 +323,24 @@ mod tests {
         // 真っ先に切り取られていた。常に存在し、クリックできなければならない。
         let hits = render_hits(30, &items(20), 0);
         assert!(
-            hits.iter().any(|h| h.action == TabAction::Add),
+            hits.spans().any(|(_, _, a)| *a == TabAction::Add),
             "the [+] new-session button must always be hittable"
         );
-        assert!(hits.iter().any(|h| h.action == TabAction::Expand));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Expand));
     }
 
     #[test]
     fn overflow_exposes_scroll_affordances() {
         let hits = render_hits(24, &items(20), 5);
-        assert!(hits.iter().any(|h| h.action == TabAction::ScrollLeft));
-        assert!(hits.iter().any(|h| h.action == TabAction::ScrollRight));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::ScrollLeft));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::ScrollRight));
     }
 
     #[test]
     fn pinned_cluster_sits_flush_against_the_right_edge() {
         let width = 40u16;
         let hits = render_hits(width, &items(3), 0);
-        let rightmost = hits.iter().map(|h| h.x1).max().unwrap();
+        let rightmost = hits.spans().map(|(_, x1, _)| x1).max().unwrap();
         assert_eq!(
             rightmost, width,
             "expand toggle should end at the right edge"
@@ -396,12 +358,12 @@ mod tests {
         }];
         let width = 30u16;
         let hits = render_hits(width, &items, 0);
-        assert!(hits.iter().any(|h| h.action == TabAction::Add));
-        assert!(hits.iter().any(|h| h.action == TabAction::Expand));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Add));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Expand));
         // バーの右端を超えて何かがはみ出してはならない。
-        assert!(hits.iter().all(|h| h.x1 <= width));
+        assert!(hits.spans().all(|(_, x1, _)| x1 <= width));
         // 単一のタブは選択可能なままである。
-        assert!(hits.iter().any(|h| h.action == TabAction::Select(0)));
+        assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Select(0)));
     }
 
     #[test]
@@ -409,7 +371,7 @@ mod tests {
         let hits = render_hits(80, &items(3), 0);
         for i in 0..3 {
             assert!(
-                hits.iter().any(|h| h.action == TabAction::Select(i)),
+                hits.spans().any(|(_, _, a)| *a == TabAction::Select(i)),
                 "tab {i} should be selectable when everything fits"
             );
         }
@@ -446,11 +408,11 @@ mod tests {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let close_hit = hits
-            .iter()
-            .find(|h| h.action == TabAction::Close(1))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Close(1))
             .unwrap();
         let buf = render_buffer(80, &items, None);
-        assert_eq!(buf[(close_hit.x0, 0)].fg, theme.error);
+        assert_eq!(buf[(close_hit.0, 0)].fg, theme.error);
     }
 
     #[test]
@@ -461,11 +423,11 @@ mod tests {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let close_hit = hits
-            .iter()
-            .find(|h| h.action == TabAction::Close(0))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Close(0))
             .unwrap();
         let buf = render_buffer(80, &items, None);
-        assert_eq!(buf[(close_hit.x0, 0)].fg, theme.error);
+        assert_eq!(buf[(close_hit.0, 0)].fg, theme.error);
     }
 
     #[test]
@@ -474,22 +436,22 @@ mod tests {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let hovered = hits
-            .iter()
-            .find(|h| h.action == TabAction::Close(1))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Close(1))
             .unwrap();
         let other = hits
-            .iter()
-            .find(|h| h.action == TabAction::Close(0))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Close(0))
             .unwrap();
 
         let hovered_buf = render_buffer(80, &items, Some(TabAction::Close(1)));
-        assert_eq!(hovered_buf[(hovered.x0, 0)].bg, theme.gutter_hover_bg);
+        assert_eq!(hovered_buf[(hovered.0, 0)].bg, theme.gutter_hover_bg);
         // 他方のタブの close ボタンは、タブ1の hover の影響を受けない。
-        assert_ne!(hovered_buf[(other.x0, 0)].bg, theme.gutter_hover_bg);
+        assert_ne!(hovered_buf[(other.0, 0)].bg, theme.gutter_hover_bg);
 
         // hover がまったくない場合、どちらの close ボタンにも背景は付かない。
         let no_hover_buf = render_buffer(80, &items, None);
-        assert_ne!(no_hover_buf[(hovered.x0, 0)].bg, theme.gutter_hover_bg);
+        assert_ne!(no_hover_buf[(hovered.0, 0)].bg, theme.gutter_hover_bg);
     }
 
     #[test]
@@ -497,18 +459,18 @@ mod tests {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let close_hit = hits
-            .iter()
-            .find(|h| h.action == TabAction::Close(1))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Close(1))
             .unwrap();
-        assert_eq!(hit_at(&hits, close_hit.x0), Some(TabAction::Close(1)));
+        assert_eq!(hits.at(close_hit.0), Some(TabAction::Close(1)));
     }
 
     #[test]
     fn hit_at_is_none_outside_every_region() {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
-        let past_everything = hits.iter().map(|h| h.x1).max().unwrap() + 1;
-        assert_eq!(hit_at(&hits, past_everything), None);
+        let past_everything = hits.spans().map(|(_, x1, _)| x1).max().unwrap() + 1;
+        assert_eq!(hits.at(past_everything), None);
     }
 
     #[test]
@@ -521,10 +483,10 @@ mod tests {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let close_hit = hits
-            .iter()
-            .find(|h| h.action == TabAction::Close(1))
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Close(1))
             .unwrap();
         let buf = render_buffer(80, &items, Some(TabAction::Close(1)));
-        assert_ne!(buf[(close_hit.x0 - 1, 0)].bg, theme.gutter_hover_bg);
+        assert_ne!(buf[(close_hit.0 - 1, 0)].bg, theme.gutter_hover_bg);
     }
 }

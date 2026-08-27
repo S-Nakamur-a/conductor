@@ -8,7 +8,7 @@ use super::{ClickGeometry, register_double_click_on};
 /// /conductor:address-conductor-comment 経由で未対応コメントを全てClaudeに送る（IDなし＝一括モード）。
 fn ask_claude_all_comments(app: &mut App) {
     let prompt = "/conductor:address-conductor-comment\n".to_string();
-    if let Some(idx) = app.terminal.active_claude_session {
+    if let Some(idx) = app.terminal.claude.active_session {
         if app.terminal.pty_manager.is_waiting_for_input(idx) {
             let _ = app
                 .terminal

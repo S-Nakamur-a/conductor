@@ -24,7 +24,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let panel_icon = crate::icons::PANEL_TERMINAL.labeled(icon_set);
     let locked = format!(" {}", crate::icons::LOCKED.get(icon_set));
 
-    let sessions = app.current_worktree_shell_sessions();
+    let sessions = app.current_worktree_sessions(crate::pty_manager::SessionKind::Shell);
 
     let is_expanded = matches!(
         app.expanded_panel,
@@ -90,7 +90,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|(global_idx, session)| crate::ui::tab_bar::TabItem {
             global_idx: *global_idx,
             label: format!("[{}]", session.label),
-            is_active: Some(*global_idx) == app.terminal.active_shell_session,
+            is_active: Some(*global_idx) == app.terminal.shell.active_session,
             label_style: Style::default(),
         })
         .collect();
@@ -99,14 +99,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         chunks[0],
         theme,
         &tab_items,
-        app.terminal.shell_tab_scroll,
-        app.terminal.shell_tab_reveal,
+        app.terminal.shell.tab_scroll,
+        app.terminal.shell.tab_reveal,
         is_expanded,
-        app.terminal.shell_tab_hover,
+        app.terminal.shell.tab_hover,
     );
-    app.terminal.shell_tab_hits = hits;
-    app.terminal.shell_tab_scroll = scroll;
-    app.terminal.shell_tab_reveal = false;
+    app.terminal.shell.tab_hits = hits;
+    app.terminal.shell.tab_scroll = scroll;
+    app.terminal.shell.tab_reveal = false;
 
     // PTY出力。
     let output_area = chunks[1];
@@ -119,7 +119,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             .border_style(Style::default().fg(border_color))
     };
 
-    if let Some(active_idx) = app.terminal.active_shell_session {
+    if let Some(active_idx) = app.terminal.shell.active_session {
         if let Some(screen_arc) = app.terminal.pty_manager.get_screen(active_idx) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
@@ -128,13 +128,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // スナップショットを再構築する。PTYリーダースレッドが vt100 の mutex を
             // 保持している間にブロックしないよう try_lock を使う。
             let scroll_changed =
-                app.terminal.cache_shell.effective_offset != app.terminal.scroll_shell;
-            if (app.terminal.cache_shell.lines.is_empty()
-                || (focused && app.terminal.dirty_shell)
+                app.terminal.shell.cache.effective_offset != app.terminal.shell.scroll;
+            if (app.terminal.shell.cache.lines.is_empty()
+                || (focused && app.terminal.shell.dirty)
                 || scroll_changed)
                 && let Some(cache) = crate::ui::common::build_pty_lines(
                     &screen_arc,
-                    app.terminal.scroll_shell,
+                    app.terminal.shell.scroll,
                     inner.height,
                     inner.width,
                 )
@@ -142,14 +142,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 // スクロールオフセットを vt100 側で実際にクランプされた位置と同期させ、
                 // スクロールがスクロールバックバッファを超えたときに無限に再構築される
                 // のを防ぐ。
-                app.terminal.scroll_shell = cache.effective_offset;
-                app.terminal.cache_shell = cache;
-                app.terminal.dirty_shell = false;
+                app.terminal.shell.scroll = cache.effective_offset;
+                app.terminal.shell.cache = cache;
+                app.terminal.shell.dirty = false;
             }
             crate::ui::common::render_pty_cached(
                 frame,
                 inner,
-                &app.terminal.cache_shell,
+                &app.terminal.shell.cache,
                 &app.theme,
             );
 
@@ -157,7 +157,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // 覆っていないときに IME 用のカーソル位置を設定する。
             if focused
                 && !app.is_any_overlay_active()
-                && let Some((row, col)) = app.terminal.cache_shell.cursor_position
+                && let Some((row, col)) = app.terminal.shell.cache.cursor_position
             {
                 let cursor_x = inner.x + col;
                 let cursor_y = inner.y + row;

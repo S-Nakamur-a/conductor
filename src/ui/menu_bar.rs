@@ -17,8 +17,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
+use crate::hit_map::ColumnSpans;
 use crate::menu::model::{MENUS, MenuItem};
-use crate::menu::state::{BarHit, ItemHit};
+use crate::menu::state::ItemHit;
 
 /// トップレベルのタイトルの両側に置く空白カラム。ハイライトに少し余裕を
 /// 持たせ、クリック対象も広げる。
@@ -47,7 +48,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let bar_bg = ratatui::style::Color::Reset;
 
     let mut spans: Vec<Span> = Vec::new();
-    let mut hits: Vec<BarHit> = Vec::new();
+    let mut hits: ColumnSpans<usize> = ColumnSpans::default();
     let mut x = area.x;
 
     for (i, menu) in MENUS.iter().enumerate() {
@@ -85,11 +86,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         };
 
         spans.push(Span::styled(text, style));
-        hits.push(BarHit {
-            x0: x,
-            x1: x + w,
-            menu: i,
-        });
+        hits.push(x, x + w, i);
         x += w;
     }
 
@@ -141,7 +138,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
                 Row::Command {
                     label,
                     chord,
-                    enabled: crate::menu::command_enabled(*id, app),
+                    enabled: app.command_enabled(*id),
                 }
             }
         })
@@ -172,9 +169,9 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
     let anchor_x = app
         .menu
         .bar_hits
-        .iter()
-        .find(|h| h.menu == menu_idx)
-        .map(|h| h.x0)
+        .spans()
+        .find(|(_, _, m)| **m == menu_idx)
+        .map(|(x0, _, _)| x0)
         .unwrap_or(frame_area.x);
     // 右側のメニューがはみ出す場合でもポップアップが画面内に収まるようにする。
     let max_x = (frame_area.x + frame_area.width).saturating_sub(popup_w);

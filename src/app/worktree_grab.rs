@@ -149,7 +149,7 @@ impl App {
             .count();
         let label = format!("CC:{}", cc_count + 1);
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal.size_claude;
+        let (rows, cols) = self.terminal.claude.size;
         let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::ClaudeCode,
             &worktree_name,

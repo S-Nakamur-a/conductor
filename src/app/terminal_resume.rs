@@ -71,7 +71,7 @@ impl App {
             label
         };
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal.size_claude;
+        let (rows, cols) = self.terminal.claude.size;
         let idx = self.terminal.pty_manager.spawn_session(
             pty_manager::SessionKind::ClaudeCode,
             &worktree_name,
@@ -124,7 +124,7 @@ impl App {
 
         let selected_wt_path = self.selected_worktree_path();
         let shell = self.config.general.shell.clone();
-        let (rows, cols) = self.terminal.size_claude;
+        let (rows, cols) = self.terminal.claude.size;
         let repo_path = self.repo.path.clone();
         let mut resumed_count = 0;
 

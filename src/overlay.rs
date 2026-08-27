@@ -6,7 +6,6 @@
 //! どのオーバーレイが表示中かは ActiveOverlay 列挙型が持つ。以前は各構造体に
 //! active: bool を持たせていた。
 
-use crate::app::Focus;
 use crate::background::BackgroundOp;
 use crate::claude_sessions::ResumableSession;
 use crate::git_engine::CommitInfo;
@@ -14,6 +13,7 @@ use crate::grep_search::GrepProgress;
 use crate::review_store::SessionHistory;
 use crate::search_result_tree::SearchResultTree;
 use crate::text_input::TextInput;
+use crate::types::Focus;
 
 /// 現在アクティブなオーバーレイ (同時に高々 1 つ)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

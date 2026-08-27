@@ -1,8 +1,8 @@
 //! Viewer/diffのリフレッシュと、worktreeブランチごとに永続化される
 //! 「ユーザーがどこを見ていたか」のビュー状態（開いていたファイル + スクロール位置）。
 
-use super::focus::Focus;
 use super::{App, PendingViewRestore, StatusLevel};
+use crate::types::Focus;
 
 impl App {
     /// 現在選択中のworktreeのViewerファイルツリーを再読み込みする。

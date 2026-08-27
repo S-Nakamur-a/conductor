@@ -5,11 +5,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::app::{Notice, StatusLevel};
 use crate::review_store::{
     Author, CommentKind, CommentStatus, CommentTemplate, ReviewComment, ReviewReply, ReviewStore,
 };
 use crate::text_input::TextInput;
+use crate::types::{Notice, StatusLevel};
 
 /// 仮想的なコメント一覧の 1 行。
 ///

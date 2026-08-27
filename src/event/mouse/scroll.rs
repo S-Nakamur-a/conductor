@@ -186,9 +186,9 @@ pub(super) fn handle_mouse_scroll(
         // ScrollUp（delta < 0）は古いコンテンツ方向 / 履歴方向へ移動する。
         let up = delta < 0;
         let (session_idx, content_y) = if row < terminal_split_y {
-            (app.terminal.active_claude_session, main_area.y + 1)
+            (app.terminal.claude.active_session, main_area.y + 1)
         } else {
-            (app.terminal.active_shell_session, terminal_split_y + 1)
+            (app.terminal.shell.active_session, terminal_split_y + 1)
         };
 
         // 画面全体を占有するフルスクリーンアプリはホイールを自分で処理する:
@@ -264,23 +264,23 @@ pub(super) fn handle_mouse_scroll(
                 // 見つからない場合は何もしない（ステータス表示のみ）ので、ホイールを
                 // 永遠に飲み込むのではなくvt100バッファへフォールバックする。
                 let opened =
-                    if app.terminal.scroll_claude == 0 && !app.is_selected_worktree_grabbed() {
+                    if app.terminal.claude.scroll == 0 && !app.is_selected_worktree_grabbed() {
                         app.open_reflow();
                         app.reflow.active
                     } else {
                         false
                     };
                 if !opened {
-                    app.terminal.scroll_claude =
-                        app.terminal.scroll_claude.saturating_add(abs_delta);
+                    app.terminal.claude.scroll =
+                        app.terminal.claude.scroll.saturating_add(abs_delta);
                 }
             } else {
-                app.terminal.scroll_claude = app.terminal.scroll_claude.saturating_sub(abs_delta);
+                app.terminal.claude.scroll = app.terminal.claude.scroll.saturating_sub(abs_delta);
             }
         } else if up {
-            app.terminal.scroll_shell = app.terminal.scroll_shell.saturating_add(abs_delta);
+            app.terminal.shell.scroll = app.terminal.shell.scroll.saturating_add(abs_delta);
         } else {
-            app.terminal.scroll_shell = app.terminal.scroll_shell.saturating_sub(abs_delta);
+            app.terminal.shell.scroll = app.terminal.shell.scroll.saturating_sub(abs_delta);
         }
     }
 }

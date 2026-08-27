@@ -63,15 +63,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         return;
     }
 
-    let current_label = match app.focus {
-        crate::app::Focus::Worktree => "Worktree",
-        crate::app::Focus::Explorer => "Explorer",
-        crate::app::Focus::Viewer => "Viewer",
-        crate::app::Focus::TerminalClaude => "Claude Code",
-        crate::app::Focus::TerminalShell => "Shell",
-        crate::app::Focus::Editor => "Editor",
-        crate::app::Focus::Revidere => "Review",
-    };
+    let current_label = app.focus.label();
     let scope_header = |scope: command_palette::CommandScope| match scope {
         command_palette::CommandScope::Current => current_label,
         command_palette::CommandScope::Global => "Global",

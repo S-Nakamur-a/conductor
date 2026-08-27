@@ -3,7 +3,7 @@ members = ["crates/revidere", "crates/revidere-fixtures", "crates/sheaf-core"]
 
 [package]
 name = "conductor"
-version = "0.116.2"
+version = "0.116.8"
 edition = "2024"
 
 [dependencies]

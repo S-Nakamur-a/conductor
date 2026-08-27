@@ -55,19 +55,20 @@ use crate::theme::Theme;
 use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
+pub use crate::types::Focus;
+pub use crate::types::{
+    DirtyPanels, GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp,
+    SmartGenResult, StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow,
+    WorktreeOpResult,
+};
 pub use code_nav::{
-    LinePick, UnderlineColorKind, code_identifiers_on_line, masked_symbol_at_column,
-    occurrence_span_in_source, popup_highlight_range, underline_color_kind,
+    LinePick, UnderlineColorKind, masked_symbol_at_column, popup_highlight_range,
+    underline_color_kind,
 };
 pub use editor::EditorPanel;
-pub use focus::Focus;
 pub use panel_resize::{Divider, ResizeDir};
 pub use reflow::ReflowView;
-pub use types::{
-    BackgroundOps, BgDiffResult, CcusageInfo, DirtyPanels, GrabbedBranch, Notice,
-    PendingViewRestore, PendingWorktree, PendingWorktreeOp, SmartGenResult, StatusLevel,
-    StatusMessage, WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
-};
+pub use types::{BackgroundOps, BgDiffResult, CcusageInfo};
 pub use update::UpdateState;
 
 /// すべてのUIパネルで共有されるトップレベルのアプリケーション状態。

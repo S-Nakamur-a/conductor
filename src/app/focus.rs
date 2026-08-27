@@ -1,53 +1,10 @@
-//! パネルフォーカスモデル: どのパネルがキーボードフォーカスを持つか、
-//! フォーカス循環の順序、フォーカス変化に伴う境界線の色のグライドアニメーション。
+//! フォーカス変更に伴う App 側の処理: 遅延読み込み、フォーカス循環、
+//! 境界線のグライドアニメーション。
+//!
+//! [Focus] 型そのものは [crate::types] にある。
 
 use super::App;
-
-/// 現在キーボードフォーカスを持っているパネル。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    Worktree,
-    Explorer,
-    Viewer,
-    TerminalClaude,
-    TerminalShell,
-    /// 埋め込みエディタパネル（PTY内のvim/emacs）。マージされた
-    /// Explorer+Viewer領域を占有する。[App::editor] がSomeの間のみ到達可能。
-    Editor,
-    /// revidere の 2 列レビュービュー。他の 3 列とは並ばず画面全体を占有する
-    /// ので、Tab の輪には入れていない — 入る口は w とパレットだけ、出る口は
-    /// Esc/q と、Tab が Explorer へ抜けること。
-    Revidere,
-}
-
-impl Focus {
-    /// このパネルの基本キーマップコンテキスト。両方のターミナルは
-    /// Terminalコンテキストを共有する（diff/コメントリストのようなサブ
-    /// モードはパネル自身が別に追跡する）。
-    pub fn key_context(self) -> crate::keymap::KeyContext {
-        use crate::keymap::KeyContext;
-        match self {
-            Focus::Worktree => KeyContext::Worktree,
-            Focus::Explorer => KeyContext::Explorer,
-            Focus::Viewer => KeyContext::Viewer,
-            Focus::TerminalClaude | Focus::TerminalShell => KeyContext::Terminal,
-            Focus::Editor => KeyContext::Editor,
-            Focus::Revidere => KeyContext::Revidere,
-        }
-    }
-
-    /// このパネルがPTYをホストし、その内部のプログラム（Claude Code、
-    /// シェル、エディタ）が生のキー入力を受け取るべきかどうか。イベント
-    /// ディスパッチャはこれらのパネルをPTY転送経路に通す。キーマップが
-    /// 奪い返すのは、[ターミナル内で発火する](crate::keymap::Action) コード
-    /// だけだ。
-    pub fn is_pty(self) -> bool {
-        matches!(
-            self,
-            Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor
-        )
-    }
-}
+use crate::types::Focus;
 
 impl App {
     /// パネルにフォーカスをセットする。必要になった時点でデータを遅延読み込みする。
@@ -107,7 +64,7 @@ impl App {
             Focus::TerminalClaude => {
                 // ユーザーがターミナルパネルにフォーカスしたらCC待機シグナルを
                 // クリアする。実際に入力したときだけでなく。
-                if let Some(idx) = self.terminal.active_claude_session {
+                if let Some(idx) = self.terminal.claude.active_session {
                     self.clear_cc_waiting_signal(idx);
                 }
             }
@@ -199,15 +156,7 @@ impl App {
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
-        let next = match self.focus {
-            Focus::Worktree | Focus::TerminalShell => Focus::Explorer,
-            Focus::Explorer => Focus::Viewer,
-            Focus::Viewer => Focus::TerminalClaude,
-            Focus::Editor => Focus::TerminalClaude,
-            Focus::TerminalClaude => Focus::TerminalShell,
-            // 2 列ビューは画面全体を占有しているので、Tab は輪に戻る動き。
-            Focus::Revidere => Focus::Explorer,
-        };
+        let next = self.focus.next_in_cycle();
         // 他のどこからであれExplorer列に着地したときは、常にファイルツリー
         // （上のパネル）から始まる。
         if next == Focus::Explorer {
@@ -228,14 +177,7 @@ impl App {
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
-        let prev = match self.focus {
-            Focus::Worktree | Focus::Explorer => Focus::TerminalShell,
-            Focus::Viewer => Focus::Explorer,
-            Focus::Editor => Focus::TerminalShell,
-            Focus::TerminalClaude => Focus::Viewer,
-            Focus::TerminalShell => Focus::TerminalClaude,
-            Focus::Revidere => Focus::Explorer,
-        };
+        let prev = self.focus.prev_in_cycle();
         // Viewer側からExplorer列に入ると、（一番近い）変更ファイルパネルに
         // 着地するので、さらにTabで戻るとツリーに到達する。
         if prev == Focus::Explorer {

@@ -2,8 +2,8 @@
 //! 作成、閲覧、編集、返信、削除/解決 — review_state を操作するコマンド
 //! パレットの入口。
 
-use super::focus::Focus;
 use super::{App, StatusLevel};
+use crate::types::Focus;
 
 impl App {
     pub fn cmd_add_review_comment(&mut self) {

@@ -11,10 +11,12 @@ mod clipboard;
 mod dialogs;
 mod explorer;
 mod global;
+pub(crate) mod input_target;
 mod menu;
 mod mouse;
 mod overlay;
 mod overlay_helpers;
+use input_target::InputTarget;
 mod paste;
 pub mod reflow;
 mod reflow_key;
@@ -116,38 +118,9 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
 }
 
 /// テキスト入力欄が現在フォーカスされていて、印字可能な文字をリテラル
-/// テキストとして挿入することを期待している場合に true。[handle_paste_event]
-/// に列挙されている入力先すべてに対応する。あの関数と歩調を合わせてある:
-/// あちらに宛先を追加したらここにも追加すること。なお
-/// WorktreeInputMode::Confirming* の y/n サブモードはテキスト入力では
-/// ないので、これは false になる点に注意。
+/// テキストとして挿入することを期待している場合に true。
 fn is_text_input_active(app: &App) -> bool {
-    if app.viewer_state.explorer.inline_reply_line.is_some()
-        || app.review_state.input_mode != ReviewInputMode::Normal
-        || app.review_state.search_active
-        || app.viewer_state.search.search_active
-        || app.viewer_state.filename_search.filename_search_active
-    {
-        return true;
-    }
-    if matches!(
-        app.worktree_mgr.input_mode,
-        WorktreeInputMode::CreatingWorktree
-            | WorktreeInputMode::CreatingWorktreeBase
-            | WorktreeInputMode::SmartDescription
-    ) {
-        return true;
-    }
-    matches!(
-        app.overlays.active,
-        ActiveOverlay::GrepSearch
-            | ActiveOverlay::SwitchBranch
-            | ActiveOverlay::CommandPalette
-            | ActiveOverlay::OpenRepo
-            | ActiveOverlay::PrInput
-            | ActiveOverlay::History
-            | ActiveOverlay::ResumeSession
-    )
+    InputTarget::active(app).is_some()
 }
 
 // 公開 API の re-export。
@@ -315,15 +288,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     // 2. terminal 以外のパネル — keymap で解決する
 
-    let context = match app.focus {
-        Focus::Worktree => KeyContext::Worktree,
-        Focus::Explorer => KeyContext::Explorer,
-        Focus::Viewer => KeyContext::Viewer,
-        Focus::Revidere => KeyContext::Revidere,
-        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
-    };
-
-    if let Some(action) = app.keymap.resolve(&key, context)
+    if let Some(action) = app.keymap.resolve(&key, app.focus.key_context())
         && dispatch_global_action(app, action)
     {
         return;
@@ -447,10 +412,8 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
 
     // 残りのキーはすべてアクティブな PTY セッションへ転送する。
     let session_idx = match app.focus {
-        Focus::TerminalClaude => app.terminal.active_claude_session,
-        Focus::TerminalShell => app.terminal.active_shell_session,
         Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
-        _ => unreachable!(),
+        f => app.terminal.pane(f).and_then(|p| p.active_session),
     };
     if let Some(idx) = session_idx {
         forward_key_to_pty(app, idx, key);
@@ -488,7 +451,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             // スクロールバックバッファではなく無限スクロールバックの
             // reflow ビューに入る。
             if app.focus == Focus::TerminalClaude
-                && app.terminal.scroll_claude == 0
+                && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
@@ -505,35 +468,23 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            let page = match app.focus {
-                Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
-                Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
-                _ => unreachable!(),
+            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+                unreachable!()
             };
-            let scroll = match app.focus {
-                Focus::TerminalClaude => &mut app.terminal.scroll_claude,
-                Focus::TerminalShell => &mut app.terminal.scroll_shell,
-                _ => unreachable!(),
-            };
-            *scroll = scroll.saturating_add(page.max(1));
+            let page = pane.size.0 as usize / 2;
+            pane.scroll = pane.scroll.saturating_add(page.max(1));
         }
         Action::ScrollbackDown => {
-            let page = match app.focus {
-                Focus::TerminalClaude => app.terminal.size_claude.0 as usize / 2,
-                Focus::TerminalShell => app.terminal.size_shell.0 as usize / 2,
-                _ => unreachable!(),
+            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+                unreachable!()
             };
-            let scroll = match app.focus {
-                Focus::TerminalClaude => &mut app.terminal.scroll_claude,
-                Focus::TerminalShell => &mut app.terminal.scroll_shell,
-                _ => unreachable!(),
-            };
-            *scroll = scroll.saturating_sub(page.max(1));
+            let page = pane.size.0 as usize / 2;
+            pane.scroll = pane.scroll.saturating_sub(page.max(1));
         }
         Action::ScrollbackTop => {
             // ScrollbackUp と同じ横取り: Claude ライブ表示から reflow へ直接ジャンプする。
             if app.focus == Focus::TerminalClaude
-                && app.terminal.scroll_claude == 0
+                && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
@@ -542,17 +493,15 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            match app.focus {
-                Focus::TerminalClaude => app.terminal.scroll_claude = 1000,
-                Focus::TerminalShell => app.terminal.scroll_shell = 1000,
-                _ => unreachable!(),
+            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+                pane.scroll = 1000;
             }
         }
-        Action::SnapToLive => match app.focus {
-            Focus::TerminalClaude => app.terminal.scroll_claude = 0,
-            Focus::TerminalShell => app.terminal.scroll_shell = 0,
-            _ => unreachable!(),
-        },
+        Action::SnapToLive => {
+            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+                pane.scroll = 0;
+            }
+        }
         Action::OpenFileFromTerminal => terminal::open_file_from_terminal_output(app),
         Action::NextSession => app.cycle_terminal_session(true),
         Action::PrevSession => app.cycle_terminal_session(false),

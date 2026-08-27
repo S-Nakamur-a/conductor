@@ -1,6 +1,6 @@
 //! 「ユーザーがどこを見ていたか」の保存と復元。
 
-use crate::app::types::PendingViewRestore;
+use crate::types::PendingViewRestore;
 
 /// worktree を切り替えても、再起動しても、元の場所に戻すための状態。
 #[derive(Default)]

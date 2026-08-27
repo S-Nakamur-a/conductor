@@ -25,7 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let panel_icon = crate::icons::PANEL_TERMINAL.labeled(icon_set);
     let locked = format!(" {}", crate::icons::LOCKED.get(icon_set));
 
-    let sessions = app.current_worktree_claude_sessions();
+    let sessions = app.current_worktree_sessions(crate::pty_manager::SessionKind::ClaudeCode);
 
     let is_expanded = matches!(
         app.expanded_panel,
@@ -106,7 +106,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|(global_idx, session)| {
             let is_waiting = app.terminal.pty_manager.is_waiting_for_input(*global_idx);
-            let is_active = Some(*global_idx) == app.terminal.active_claude_session;
+            let is_active = Some(*global_idx) == app.terminal.claude.active_session;
             let label_style = if is_waiting {
                 if suppress_blink {
                     Style::default().fg(theme.waiting_primary)
@@ -135,14 +135,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         chunks[0],
         theme,
         &tab_items,
-        app.terminal.claude_tab_scroll,
-        app.terminal.claude_tab_reveal,
+        app.terminal.claude.tab_scroll,
+        app.terminal.claude.tab_reveal,
         is_expanded,
-        app.terminal.claude_tab_hover,
+        app.terminal.claude.tab_hover,
     );
-    app.terminal.claude_tab_hits = hits;
-    app.terminal.claude_tab_scroll = scroll;
-    app.terminal.claude_tab_reveal = false;
+    app.terminal.claude.tab_hits = hits;
+    app.terminal.claude.tab_scroll = scroll;
+    app.terminal.claude.tab_reveal = false;
 
     // PTY出力。
     let output_area = chunks[1];
@@ -194,7 +194,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    if let Some(active_idx) = app.terminal.active_claude_session {
+    if let Some(active_idx) = app.terminal.claude.active_session {
         if let Some(screen_arc) = app.terminal.pty_manager.get_screen(active_idx) {
             let inner = output_block.inner(output_area);
             frame.render_widget(output_block, output_area);
@@ -204,13 +204,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // vt100 の mutex を保持している間ブロックしないよう try_lock を
             // 使う — UI の応答性を保つため。
             let scroll_changed =
-                app.terminal.cache_claude.effective_offset != app.terminal.scroll_claude;
-            if (app.terminal.cache_claude.lines.is_empty()
-                || (focused && app.terminal.dirty_claude)
+                app.terminal.claude.cache.effective_offset != app.terminal.claude.scroll;
+            if (app.terminal.claude.cache.lines.is_empty()
+                || (focused && app.terminal.claude.dirty)
                 || scroll_changed)
                 && let Some(cache) = crate::ui::common::build_pty_lines(
                     &screen_arc,
-                    app.terminal.scroll_claude,
+                    app.terminal.claude.scroll,
                     inner.height,
                     inner.width,
                 )
@@ -218,15 +218,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 // スクロールがスクロールバックバッファを超えたときの無限再構築を
                 // 防ぐため、スクロールオフセットを vt100 側の実際のクランプ済み
                 // 位置と同期させる。
-                app.terminal.scroll_claude = cache.effective_offset;
-                app.terminal.cache_claude = cache;
-                app.terminal.dirty_claude = false;
+                app.terminal.claude.scroll = cache.effective_offset;
+                app.terminal.claude.cache = cache;
+                app.terminal.claude.dirty = false;
             }
             // try_lock が失敗した場合（リーダースレッドがビジー）、古いキャッシュを使い続ける。
             crate::ui::common::render_pty_cached(
                 frame,
                 inner,
-                &app.terminal.cache_claude,
+                &app.terminal.claude.cache,
                 &app.theme,
             );
 
@@ -234,7 +234,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // オーバーレイもない場合に IME 用のカーソル位置を設定する。
             if focused
                 && !app.is_any_overlay_active()
-                && let Some((row, col)) = app.terminal.cache_claude.cursor_position
+                && let Some((row, col)) = app.terminal.claude.cache.cursor_position
             {
                 let cursor_x = inner.x + col;
                 let cursor_y = inner.y + row;

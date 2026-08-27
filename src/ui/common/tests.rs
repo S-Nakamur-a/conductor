@@ -2,8 +2,8 @@
 //! バッジ色計算の WCAG コントラスト保証。
 
 mod status_bar_tests {
-    use crate::app::Focus;
     use crate::keymap::{Action, KeyContext, KeyMap};
+    use crate::types::Focus;
     use crate::ui::common::representative_chord;
     use crate::ui::common::status_bar::status_bar_hint;
 

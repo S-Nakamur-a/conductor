@@ -3,8 +3,8 @@
 
 use std::path::PathBuf;
 
-use super::focus::Focus;
 use super::{App, StatusLevel};
+use crate::types::Focus;
 
 /// 稼働中の埋め込みエディタパネル（PTY内のvim/emacs）の状態。
 ///
