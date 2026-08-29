@@ -186,7 +186,6 @@ fn git_status_map_classify_file_under_gitignored_dir_inherits_ignored_via_prefix
     assert_eq!(map.classify("build/deep/x.txt"), TreeGitState::Ignored);
 }
 
-/// dir を含むファイルシステムが大文字小文字を区別しないかを実測する。
 fn fs_ignores_case(dir: &Path) -> bool {
     let probe = dir.join("CaseProbe");
     fs::write(&probe, b"").unwrap();
@@ -195,8 +194,6 @@ fn fs_ignores_case(dir: &Path) -> bool {
     ignores
 }
 
-/// パスの大文字小文字だけが異なる2つのエントリを持つリポジトリを作って
-/// checkout する。
 fn build_case_colliding_fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let repo = git2::Repository::init(tmp.path()).expect("init repo");
@@ -221,15 +218,12 @@ fn build_case_colliding_fixture() -> tempfile::TempDir {
     tmp
 }
 
-/// リグレッション: ケース衝突する2エントリのうちディスク上の実ファイルに
-/// 対応付けられなかった方を、libgit2 は削除として報告する。git 本体は同じ
-/// 状態を clean と報告するので、こちらも何も報告してはならない。
+/// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
+/// git 本体は clean と報告する。
 #[test]
 fn git_status_map_case_colliding_entry_is_not_deleted() {
     let tmp = build_case_colliding_fixture();
     if !fs_ignores_case(tmp.path()) {
-        // 大文字小文字を区別するファイルシステムでは2エントリが別々の
-        // 実ファイルになり、この食い違い自体が起きない。
         return;
     }
 
@@ -239,8 +233,7 @@ fn git_status_map_case_colliding_entry_is_not_deleted() {
     assert_eq!(map.status("instagram.png"), None);
 }
 
-/// 実在判定でケース衝突の偽の削除を落とす際に、本物の削除まで
-/// 巻き添えにしてはならない。
+/// 実在判定が本物の削除まで巻き添えにしていないこと。
 #[test]
 fn git_status_map_real_deletion_is_reported() {
     let tmp = build_fixture();

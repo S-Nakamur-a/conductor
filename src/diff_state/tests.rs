@@ -990,7 +990,6 @@ fn binary_file_stays_listed_without_line_counts() {
     assert!(f.hunks.is_empty());
 }
 
-/// dir を含むファイルシステムが大文字小文字を区別しないかを実測する。
 fn fs_ignores_case(dir: &std::path::Path) -> bool {
     let probe = dir.join("CaseProbe");
     std::fs::write(&probe, b"").unwrap();
@@ -999,17 +998,12 @@ fn fs_ignores_case(dir: &std::path::Path) -> bool {
     ignores
 }
 
-/// リグレッション: index にパスの大文字小文字だけが異なる2つのエントリ
-/// ("Instagram.png" と "instagram.png") があるリポジトリを、大文字小文字を
-/// 区別しないファイルシステムに置いた場合。ディスク上の実ファイルは1つしか
-/// なく git 本体は clean と報告するが、libgit2 は実ファイルを片方の
-/// エントリにだけ対応付け、もう片方を削除として報告していた。
+/// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
+/// git 本体は clean と報告する。
 #[test]
 fn test_case_colliding_entry_not_reported_as_deleted() {
     let dir = tempfile::tempdir().unwrap();
     if !fs_ignores_case(dir.path()) {
-        // 大文字小文字を区別するファイルシステムでは2つのエントリが別々の
-        // 実ファイルになり、この食い違い自体が起きない。
         return;
     }
 
@@ -1046,8 +1040,7 @@ fn test_case_colliding_entry_not_reported_as_deleted() {
     );
 }
 
-/// 本物の削除は、大文字小文字を区別しないファイルシステムでも残る。
-/// 実在判定でケース衝突の偽デルタを落とす際に、巻き添えにしてはならない。
+/// 実在判定が本物の削除まで巻き添えにしていないこと。
 #[test]
 fn test_real_deletion_still_reported() {
     let dir = tempfile::tempdir().unwrap();
