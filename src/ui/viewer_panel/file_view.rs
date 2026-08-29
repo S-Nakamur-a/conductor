@@ -56,6 +56,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.viewer_state.reveal_cursor_line();
     }
 
+    // 差分表示の file_scroll は diff カーソルの写しなので、行を囲むものを聞いても
+    // 意味が無い。畳みがあると file_scroll 自身は画面に出ないことがある。
+    let top_visible = if app.viewer_state.diff_view.diff_mode {
+        None
+    } else {
+        let content = &app.viewer_state.content;
+        content
+            .folds
+            .visible_from(content.file_scroll + 1, content.file_content.len())
+            .next()
+    };
+    let sticky_declaration = top_visible.and_then(|line_1| app.sticky_declaration_line(line_1 - 1));
+
     let theme = &app.theme;
     let vs = &app.viewer_state;
     let tab_width = app.config.viewer.tab_width;
@@ -192,12 +205,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // ジャンプ履歴からパンくずリストを組み立てる。
     let breadcrumb_visible = build_breadcrumb_line(app);
 
+    let sticky_visible = sticky_declaration.and_then(|line| build_sticky_line(theme, vs, line));
+
     // パンくずバーとタブ行の高さぶんを見込む（表示されているときは各1行）。
     let breadcrumb_height: u16 = if breadcrumb_visible.is_some() { 1 } else { 0 };
+    let sticky_height: u16 = if sticky_visible.is_some() { 1 } else { 0 };
     let tab_row_height: u16 = if tab_row::is_visible(vs) { 1 } else { 0 };
     let inner_height = (area
         .height
-        .saturating_sub(2 + breadcrumb_height + tab_row_height)) as usize;
+        .saturating_sub(2 + breadcrumb_height + sticky_height + tab_row_height))
+        as usize;
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // diff 注釈は ViewerState にキャッシュされている（関数の入口で埋めた）。
@@ -284,6 +301,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if let Some(crumb_line) = breadcrumb_visible {
         all_lines.push(crumb_line);
     }
+    if let Some(sticky) = sticky_visible {
+        all_lines.push(sticky);
+    }
     all_lines.extend(lines);
 
     // スクロール時に古いコンテンツが残らないよう、先に area をクリアする。
@@ -303,7 +323,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             vertical: 1,
         });
         // トラックをパンくず行より下に置き、コード領域だけをカバーするようにする。
-        let head_rows = breadcrumb_height + tab_row_height;
+        let head_rows = breadcrumb_height + sticky_height + tab_row_height;
         scrollbar_area.y += head_rows;
         scrollbar_area.height = scrollbar_area.height.saturating_sub(head_rows);
         let mut scrollbar_state = ScrollbarState::new(visible_total.saturating_sub(inner_height))
@@ -352,6 +372,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 含まれていなかったので、その下のすべての行がマップ上で1行ずつ上にずれて
     // いた（クリック/ホバーが1行ずれて着地する）。描画内容とマップが1対1で
     // 揃うよう、選択不可のプレースホルダーを挿入する。
+    if sticky_height > 0 {
+        screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
+    }
     if breadcrumb_height > 0 {
         screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
     }
@@ -410,6 +433,24 @@ pub(super) fn fit_title(raw: &str, max_w: usize) -> String {
 
 fn display_width(s: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// 画面の外へ出た宣言行を、コードの上に貼り付けて出す。
+fn build_sticky_line(
+    theme: &crate::theme::Theme,
+    vs: &crate::viewer::ViewerState,
+    declaration: usize,
+) -> Option<Line<'static>> {
+    let text = vs.content.file_content.get(declaration)?;
+    let style = Style::default().fg(theme.muted);
+    // コードの開始列をコード行と揃える。ガターの内訳は code_line の spans と同じ。
+    let width = digit_count(vs.content.file_content.len());
+    let marker = " ".repeat(crate::viewer::COMMENT_MARKER_W as usize);
+    let gutter = format!(" {:>width$}   \u{2502}   ", declaration + 1);
+    Some(Line::from(vec![
+        Span::styled(format!("{marker}{gutter}"), style),
+        Span::styled(text.trim_end().to_string(), style),
+    ]))
 }
 
 /// ジャンプ履歴＋現在位置からパンくずの Line を組み立てる。

@@ -153,8 +153,7 @@ impl SymbolIndex {
 
         // ファイルの外から引けないシンボルは索引に載せない。ここは名前でしか
         // 引けないので、同名のローカルを区別する手立てが無く、別のファイルの
-        // ものが答えとして出てしまう。SCIP は local に一意な符号を振るので
-        // Document の中でなら引けるが、その区別はここには無い。
+        // ものが答えとして出てしまう。
         symbols.retain(|s| s.scope == Scope::Global);
 
         Ok(self.publish(symbols, generation))
