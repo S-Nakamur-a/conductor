@@ -130,7 +130,7 @@ pub(crate) fn render(
             x += sep_w;
         }
         let label_w = w(label);
-        let style = if idx == vs.active_tab {
+        let mut style = if idx == vs.active_tab {
             Style::default()
                 .fg(theme.selected_fg)
                 .bg(theme.selected_bg)
@@ -138,6 +138,9 @@ pub(crate) fn render(
         } else {
             Style::default().fg(theme.fg)
         };
+        if vs.tabs[idx].status.is_preview() {
+            style = style.add_modifier(Modifier::ITALIC);
+        }
         spans.push(Span::styled(label.clone(), style));
         spans.push(Span::raw(" "));
         spans.push(Span::styled("[x]", Style::default().fg(theme.error)));
@@ -236,6 +239,26 @@ mod tests {
             .find(|(_, _, a)| **a == TabAction::Select(1))
             .unwrap();
         assert_eq!(hits.at(sel.0), Some(TabAction::Select(1)));
+    }
+
+    /// preview タブは italic で描く。永続タブとの違いはここにしか出ない。
+    #[test]
+    fn a_preview_tab_is_drawn_in_italic() {
+        let mut vs = state(&["a.rs", "b.rs"], 1);
+        vs.tabs[1].status = crate::viewer::ViewerTabStatus::Preview;
+        let (buf, hits) = draw(60, &mut vs);
+        let start = hits
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Select(1))
+            .unwrap()
+            .0;
+        assert!(buf[(start, 0)].modifier.contains(Modifier::ITALIC));
+        let persistent = hits
+            .spans()
+            .find(|(_, _, a)| **a == TabAction::Select(0))
+            .unwrap()
+            .0;
+        assert!(!buf[(persistent, 0)].modifier.contains(Modifier::ITALIC));
     }
 
     /// アクティブなタブは、はみ出していても必ず見えていなければならない —

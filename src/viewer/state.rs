@@ -328,6 +328,22 @@ pub struct ViewerTab {
     /// content/search/diff_view/selection が実体を持つので None になる。
     /// 実体を 2 か所に置かないことで、どちらが本物かを迷う余地を無くしている。
     pub(in crate::viewer) stashed: Option<TabView>,
+    /// このタブの寿命。
+    pub status: ViewerTabStatus,
+}
+
+/// タブの寿命 — いつ閉じるかを決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewerTabStatus {
+    /// 明示的に閉じるまで残る。
+    #[default]
+    Persistent,
+    /// ちょっと見るために開いただけ。フォーカスが外れると閉じる。
+    ///
+    /// Preview は高々 1 枚で、しかも必ずアクティブなタブ — フォーカスが移る
+    /// 経路（[ViewerState::focus_tab] と [ViewerState::activate_tab_for]）が
+    /// 移る前に閉じるので、非アクティブな Preview は存在しない。
+    Preview,
 }
 
 /// タブ 1 つ分の、ファイルに紐づく状態のまとまり。
