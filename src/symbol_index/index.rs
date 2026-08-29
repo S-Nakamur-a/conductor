@@ -11,7 +11,7 @@ use super::CodeMask;
 use super::extract_go::extract_go_symbols;
 use super::extract_rust::extract_rust_symbols;
 use super::extract_ts::extract_ts_symbols;
-use super::model::{Reference, Symbol, SymbolKind};
+use super::model::{Reference, Scope, Symbol, SymbolKind};
 
 /// mutex で保護された内部データ。
 pub(super) struct IndexData {
@@ -151,6 +151,12 @@ impl SymbolIndex {
             }
         }
 
+        // ファイルの外から引けないシンボルは索引に載せない。ここは名前でしか
+        // 引けないので、同名のローカルを区別する手立てが無く、別のファイルの
+        // ものが答えとして出てしまう。SCIP は local に一意な符号を振るので
+        // Document の中でなら引けるが、その区別はここには無い。
+        symbols.retain(|s| s.scope == Scope::Global);
+
         Ok(self.publish(symbols, generation))
     }
 
@@ -211,7 +217,7 @@ impl SymbolIndex {
         let data = self.data.lock().unwrap();
         data.symbols
             .iter()
-            .filter(|s| s.kind == SymbolKind::Impl && s.scope.as_deref() == Some(name))
+            .filter(|s| s.kind == SymbolKind::Impl && s.parent.as_deref() == Some(name))
             .cloned()
             .collect()
     }

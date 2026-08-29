@@ -1,7 +1,7 @@
 //! 言語ごとのシンボル抽出器（extract_rust、extract_go、extract_ts）が共有する
 //! tree-sitter AST 走査ヘルパー。
 
-use super::model::{Symbol, SymbolKind};
+use super::model::{Scope, Symbol, SymbolKind};
 
 /// 各ノードに対して pre-order で visitor を呼ぶ汎用 AST ウォーカー。
 ///
@@ -31,12 +31,29 @@ pub(super) fn walk_tree(
     }
 }
 
+/// そのノードが、外から引けない器の中にあるか。
+///
+/// 言語ごとに違うのは器の名前だけなので、遡り方はここに 1 つ持つ。抽出器が
+/// 種別ごとに「これはトップレベルか」を思い出す形にすると、思い出さなくても
+/// コンパイルが通り、新しい種別や新しい言語のたびに同じ穴が空く。
+pub(super) fn scope_within(node: tree_sitter::Node, enclosures: &[&str]) -> Scope {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if enclosures.contains(&ancestor.kind()) {
+            return Scope::Local;
+        }
+        current = ancestor.parent();
+    }
+    Scope::Global
+}
+
 /// "name" フィールドを子に持つノードから、名前付きシンボルを抽出する。
 pub(super) fn extract_named_symbol(
     node: tree_sitter::Node,
     source: &str,
     file_path: &str,
     kind: SymbolKind,
+    scope: Scope,
     name_field: &str,
 ) -> Option<Symbol> {
     let name_node = node.child_by_field_name(name_field)?;
@@ -48,9 +65,10 @@ pub(super) fn extract_named_symbol(
     Some(Symbol {
         name,
         kind,
+        scope,
         file_path: file_path.to_string(),
         line,
-        scope: None,
+        parent: None,
     })
 }
 

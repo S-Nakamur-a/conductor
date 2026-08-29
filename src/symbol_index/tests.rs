@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::extract_rust::extract_rust_symbols;
 use super::index::SymbolIndex;
-use super::model::{Symbol, SymbolKind};
+use super::model::{Scope, Symbol, SymbolKind};
 
 #[test]
 fn test_symbol_index_new() {
@@ -84,9 +84,9 @@ macro_rules! my_macro {
     // フィールドを確認する。
     assert!(names.contains(&"field_a"));
 
-    // impl を確認する — scope は "MyStruct" のはず。
+    // impl を確認する — parent は "MyStruct" のはず。
     let impl_sym = symbols.iter().find(|s| s.kind == SymbolKind::Impl).unwrap();
-    assert_eq!(impl_sym.scope.as_deref(), Some("MyStruct"));
+    assert_eq!(impl_sym.parent.as_deref(), Some("MyStruct"));
 
     // impl 内の関数を確認する。
     let draw_fns: Vec<_> = symbols.iter().filter(|s| s.name == "draw").collect();
@@ -109,14 +109,16 @@ fn test_find_definitions_filters_fields() {
                 kind: SymbolKind::Struct,
                 file_path: "lib.rs".to_string(),
                 line: 1,
-                scope: None,
+                scope: Scope::Global,
+                parent: None,
             },
             Symbol {
                 name: "Foo".to_string(),
                 kind: SymbolKind::Field,
                 file_path: "lib.rs".to_string(),
                 line: 5,
-                scope: None,
+                scope: Scope::Global,
+                parent: None,
             },
         ];
         data.available = true;
@@ -256,7 +258,8 @@ fn test_find_implementations() {
             kind: SymbolKind::Impl,
             file_path: "lib.rs".to_string(),
             line: 10,
-            scope: Some("MyStruct".to_string()),
+            scope: Scope::Global,
+            parent: Some("MyStruct".to_string()),
         }];
         data.available = true;
     }
@@ -276,7 +279,11 @@ fn scratch_tree(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for (name, body) in files {
-        std::fs::write(dir.join(name), body).unwrap();
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, body).unwrap();
     }
     dir
 }
@@ -374,7 +381,8 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
         kind: SymbolKind::Function,
         file_path: "old.rs".to_string(),
         line: 1,
-        scope: None,
+        scope: Scope::Global,
+        parent: None,
     }];
     let published = idx.publish(stale, stamped);
 
@@ -431,4 +439,62 @@ fn find_references_keeps_hits_in_unparseable_languages() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 関数の中の宣言は、どの言語でも定義候補にならない。
+///
+/// 名前でしか引けないので、載せると別のファイルの同名のローカルが答えになる
+/// (.tsx の data が無関係な .ts の const data を引き当てたのがこれ)。言語を
+/// またいで 1 つの性質として見る — 言語ごとに書くと、次に足した言語で同じ穴が空く。
+#[test]
+fn locals_are_never_definition_candidates() {
+    let dir = scratch_tree(
+        "locals",
+        &[
+            (
+                "lib/helper.rs",
+                "pub const SHARED_RS: u32 = 1;\n\npub fn load() -> u32 {\n    const HIDDEN_RS: u32 = 2;\n    static ALSO_RS: u32 = 3;\n    HIDDEN_RS + ALSO_RS\n}\n",
+            ),
+            (
+                "lib/helper.go",
+                "package helper\n\nconst SharedGo = 1\n\nvar (\n\tGroupedGo = 2\n)\n\nfunc load() int {\n\tconst hiddenGo = 3\n\tvar alsoGo = 4\n\treturn hiddenGo + alsoGo\n}\n",
+            ),
+            (
+                "lib/helper.ts",
+                "export const sharedTs = 1;\n\nfor (const topLoopTs of [1]) {\n    console.log(topLoopTs);\n}\n\nexport function load() {\n    const hiddenTs = 2;\n    return hiddenTs;\n}\n",
+            ),
+        ],
+    );
+    let idx = SymbolIndex::new(dir);
+    idx.build().unwrap();
+
+    // 問い合わせ元は同じ言語の別ファイル。tsx から ts を引く形が元の症状。
+    for (from, hidden, visible) in [
+        ("main.rs", &["HIDDEN_RS", "ALSO_RS"][..], &["SHARED_RS"][..]),
+        (
+            "main.go",
+            &["hiddenGo", "alsoGo"][..],
+            &["SharedGo", "GroupedGo"][..],
+        ),
+        (
+            "Page.tsx",
+            &["hiddenTs", "topLoopTs"][..],
+            &["sharedTs"][..],
+        ),
+    ] {
+        let at = std::path::Path::new(from);
+        for name in hidden {
+            assert!(
+                idx.find_definitions(name, at).is_empty(),
+                "{from} から見て {name} が定義候補に残っている"
+            );
+        }
+        for name in visible {
+            assert_eq!(
+                idx.find_definitions(name, at).len(),
+                1,
+                "{from} から見て {name} が定義候補から消えている"
+            );
+        }
+    }
 }
