@@ -989,3 +989,54 @@ fn binary_file_stays_listed_without_line_counts() {
     assert_eq!((f.added_lines, f.deleted_lines), (0, 0));
     assert!(f.hunks.is_empty());
 }
+
+fn fs_ignores_case(dir: &std::path::Path) -> bool {
+    let probe = dir.join("CaseProbe");
+    std::fs::write(&probe, b"").unwrap();
+    let ignores = dir.join("caseprobe").is_file();
+    std::fs::remove_file(&probe).unwrap();
+    ignores
+}
+
+/// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
+/// git 本体は clean と報告する。
+#[test]
+fn test_case_colliding_entry_not_reported_as_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    if !fs_ignores_case(dir.path()) {
+        eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");
+        return;
+    }
+
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    let blob = repo.blob(b"image data\n").unwrap();
+    let mut tb = repo.treebuilder(None).unwrap();
+    tb.insert("Instagram.png", blob, 0o100644).unwrap();
+    tb.insert("instagram.png", blob, 0o100644).unwrap();
+    let tree_oid = tb.write().unwrap();
+    let tree = repo.find_tree(tree_oid).unwrap();
+    let sig = test_signature();
+    repo.commit(
+        Some("refs/heads/main"),
+        &sig,
+        &sig,
+        "both cases",
+        &tree,
+        &[],
+    )
+    .unwrap();
+    repo.set_head("refs/heads/main").unwrap();
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+
+    let files = changed_files(dir.path(), "main");
+
+    assert!(
+        files.is_empty(),
+        "case-colliding index entry should not be reported as a change, got: {:?}",
+        files
+            .iter()
+            .map(|f| (&f.path, f.added_lines, f.deleted_lines))
+            .collect::<Vec<_>>()
+    );
+}

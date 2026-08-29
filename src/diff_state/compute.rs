@@ -205,12 +205,8 @@ impl DiffState {
     ) -> Result<Vec<FileDiff>> {
         let mut file_diffs = Vec::new();
 
-        // スキップするデルタのインデックス集合を作る: 大文字小文字だけ異なり
-        // 内容が同一のパス。大文字小文字を区別しないファイルシステム(macOS)では、
-        // ファイル内容が同一でもパスの大文字小文字だけが異なる削除+追加のペア
-        // (例: "Photo.png" 削除、"photo.png" 追加)を git が報告することがある。
-        // blob の OID と小文字化したパスを比較してこれらのペアを検出する。
-        let skip_indices = Self::find_case_only_rename_indices(diff);
+        let mut skip_indices = Self::find_case_only_rename_indices(diff);
+        skip_indices.extend(Self::find_deletions_still_on_disk(repo, diff));
 
         let num_deltas = diff.deltas().len();
         for delta_idx in 0..num_deltas {
@@ -407,6 +403,26 @@ impl DiffState {
                 }
             }
         }
+    }
+
+    /// 大文字小文字を区別しない FS ではケース違いの2エントリに実ファイルが1つしか
+    /// 無く、libgit2 は余った方を削除として報告する(git 本体は clean)。DiffOptions
+    /// では直らない — ignore_case が変えるのはデルタの並び順だけ。
+    fn find_deletions_still_on_disk(
+        repo: &Repository,
+        diff: &git2::Diff<'_>,
+    ) -> std::collections::HashSet<usize> {
+        let Some(workdir) = repo.workdir() else {
+            return std::collections::HashSet::new();
+        };
+        diff.deltas()
+            .enumerate()
+            .filter(|(_, delta)| delta.status() == git2::Delta::Deleted)
+            .filter_map(|(idx, delta)| {
+                let path = delta.old_file().path()?;
+                workdir.join(path).is_file().then_some(idx)
+            })
+            .collect()
     }
 
     /// 大文字小文字だけ異なるリネームのペア(パスが大文字小文字のみ異なり、

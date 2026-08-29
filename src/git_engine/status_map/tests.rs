@@ -185,3 +185,66 @@ fn git_status_map_classify_file_under_gitignored_dir_inherits_ignored_via_prefix
     // プレフィックスを遡っている場合のみこのテストは通る。
     assert_eq!(map.classify("build/deep/x.txt"), TreeGitState::Ignored);
 }
+
+fn fs_ignores_case(dir: &Path) -> bool {
+    let probe = dir.join("CaseProbe");
+    fs::write(&probe, b"").unwrap();
+    let ignores = dir.join("caseprobe").is_file();
+    fs::remove_file(&probe).unwrap();
+    ignores
+}
+
+fn build_case_colliding_fixture() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("create temp dir");
+    let repo = git2::Repository::init(tmp.path()).expect("init repo");
+    let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+
+    let blob = repo.blob(b"image data\n").unwrap();
+    let mut tb = repo.treebuilder(None).unwrap();
+    tb.insert("Instagram.png", blob, 0o100644).unwrap();
+    tb.insert("instagram.png", blob, 0o100644).unwrap();
+    let tree_oid = tb.write().unwrap();
+    let tree = repo.find_tree(tree_oid).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "both cases", &tree, &[])
+        .unwrap();
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+    // libgit2 の checkout は衝突する2エントリを index 上で1つに畳んでしまう。
+    // git 本体が clone / checkout したリポジトリは両方を保持するので、書き戻す。
+    let mut index = repo.index().unwrap();
+    index.read_tree(&tree).unwrap();
+    index.write().unwrap();
+
+    tmp
+}
+
+/// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
+/// git 本体は clean と報告する。
+#[test]
+fn git_status_map_case_colliding_entry_is_not_deleted() {
+    let tmp = build_case_colliding_fixture();
+    if !fs_ignores_case(tmp.path()) {
+        eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");
+        return;
+    }
+
+    let map = GitStatusMap::load(tmp.path()).unwrap();
+
+    assert_eq!(map.status("Instagram.png"), None);
+    assert_eq!(map.status("instagram.png"), None);
+}
+
+#[test]
+fn git_status_map_real_deletion_is_reported() {
+    let tmp = build_fixture();
+    fs::remove_file(tmp.path().join("untouched.txt")).unwrap();
+
+    let map = GitStatusMap::load(tmp.path()).unwrap();
+
+    assert!(
+        map.status("untouched.txt")
+            .is_some_and(|s| s.is_wt_deleted()),
+        "a real deletion should still be reported, got: {:?}",
+        map.status("untouched.txt")
+    );
+}
