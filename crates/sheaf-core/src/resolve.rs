@@ -6,7 +6,7 @@
 
 use crate::store::{Implemented, Resolved};
 use crate::syntactic::{SyntacticAnswer, SyntacticLayer, Token};
-use crate::{Definition, Implementations, References, Store, SymbolDetail};
+use crate::{Definition, Enclosures, Implementations, References, Store, SymbolDetail};
 use std::path::Path;
 
 /// その位置にある語の定義を答える。
@@ -50,6 +50,16 @@ pub fn describe_at(
     match syntactic.token_at(&abs, line, col) {
         Token::Word(span) => store.describe_in(rel, span).unwrap_or_default(),
         Token::NotWord | Token::Unknown => Vec::new(),
+    }
+}
+
+/// その行を囲んでいるシンボル。内側が先。
+///
+/// 位置ではなく行だけで引くので構文層は要らない。
+pub fn enclosures_at(store: &Store, rel: &Path, line: u32) -> Enclosures {
+    match store.enclosures_in(rel, line) {
+        Some(found) => Enclosures::Exact(found),
+        None => Enclosures::Unknown,
     }
 }
 

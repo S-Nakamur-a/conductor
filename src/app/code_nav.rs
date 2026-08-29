@@ -118,6 +118,31 @@ impl App {
         Some(info)
     }
 
+    /// top が中にいるシンボルのうち、宣言が画面の外にあるいちばん内側のもの。
+    pub fn sticky_declaration_line(&mut self, top: usize) -> Option<usize> {
+        let key = (self.viewer_state.content.current_file.clone()?, top);
+        if self.code_nav.sticky.asked.as_ref() != Some(&key) {
+            let found = self.enclosing_declaration_out_of_view(&key.0, key.1);
+            self.code_nav.sticky.declaration = found;
+            self.code_nav.sticky.asked = Some(key);
+        }
+        self.code_nav.sticky.declaration
+    }
+
+    fn enclosing_declaration_out_of_view(&self, rel: &str, top: usize) -> Option<usize> {
+        let tree_root = self.selected_worktree_path();
+        let store = self.code_nav.semantic.store(&tree_root)?;
+        let sheaf_core::Enclosures::Exact(found) =
+            sheaf_core::enclosures_at(store, std::path::Path::new(rel), top as u32)
+        else {
+            return None;
+        };
+        found
+            .iter()
+            .map(|e| e.declaration.line as usize)
+            .find(|line| *line < top)
+    }
+
     /// 意味索引に、その位置の語について書いてあることを聞く。
     fn semantic_description(
         &self,

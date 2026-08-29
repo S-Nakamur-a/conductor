@@ -15,7 +15,7 @@ pub use regenerate::{
     Outcome, Producer, Regenerated, Regenerator, RustAnalyzer, ScipGo, ScipTypescript, Target,
     generate_once, read_provenance, write_provenance,
 };
-pub use resolve::{definition_at, describe_at, implementations_at, references_at};
+pub use resolve::{definition_at, describe_at, enclosures_at, implementations_at, references_at};
 pub use store::{IndexSource, Slot, Store};
 pub use syntactic::{SyntacticAnswer, SyntacticLayer, Token};
 
@@ -115,6 +115,28 @@ pub struct Enclosing {
     /// 同じモジュールに同名の型があると別物に届き得るので、利用側が何に飛ぶのかを
     /// 見せられるようにしてある。
     pub ty: SymbolId,
+}
+
+/// ある行を囲んでいるシンボル 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Enclosure {
+    /// 宣言の位置。囲んでいる範囲の先頭とは限らない (doc コメントは範囲に入る)。
+    pub declaration: Location,
+    /// 囲んでいる範囲。0 始まり、両端を含む。
+    pub first_line: u32,
+    pub last_line: u32,
+}
+
+/// ある行を囲んでいるシンボルの答え。
+///
+/// [`Definition`] と同じく、「探して無かった」と「答えられない」を分ける。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Enclosures {
+    /// 索引が答えた。内側が先。空なら囲むものが無い。
+    Exact(Vec<Enclosure>),
+    /// 索引が無い、聞かれたファイルが索引生成時と違う、producer が
+    /// `enclosing_range` を書かない、のいずれか。
+    Unknown,
 }
 
 /// 参照検索の答え。

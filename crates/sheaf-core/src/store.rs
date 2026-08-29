@@ -19,8 +19,8 @@ pub use slot::Slot;
 
 use self::column::{Lines, contained_in, location_of, usable_range};
 use crate::{
-    Enclosing, Found, Implementation, Location, Result, SheafError, Span, SymbolDetail, SymbolId,
-    ViaInterface, blob_hash,
+    Enclosing, Enclosure, Found, Implementation, Location, Result, SheafError, Span, SymbolDetail,
+    SymbolId, ViaInterface, blob_hash,
 };
 use protobuf::Message;
 use scip::types::{Document, SymbolInformation, SymbolRole};
@@ -518,6 +518,49 @@ impl Store {
         Some(out)
     }
 
+    /// その行を囲んでいるシンボルを索引から引く。内側が先。
+    pub(crate) fn enclosures_in(&self, rel: &Path, line: u32) -> Option<Vec<Enclosure>> {
+        if !self.is_current(rel) {
+            return None;
+        }
+        let entry = self.docs.get(rel)?;
+        let doc = parse_document(&self.bytes[entry.index][entry.span.clone()]).ok()?;
+        let content = (entry.column_encoding != scip_split::ColumnEncoding::Utf8)
+            .then(|| std::fs::read(self.root.join(rel)))
+            .transpose()
+            .ok()?;
+        let lines = content.as_deref().map(Lines::of);
+
+        let mut found: Vec<Enclosure> = Vec::new();
+        for occ in &doc.occurrences {
+            // enclosing_range はそのシンボルの定義の範囲で、参照の occurrence にも
+            // 同じ値が付く。定義に絞らないと、参照の位置を宣言として返してしまう。
+            if !is_definition(occ.symbol_roles) {
+                continue;
+            }
+            let Some((first_line, last_line)) = enclosed_lines(&occ.enclosing_range) else {
+                continue;
+            };
+            if line < first_line || last_line < line {
+                continue;
+            }
+            let Some(range) = usable_range(&occ.range, entry.column_encoding, lines.as_ref())
+            else {
+                continue;
+            };
+            let Some(declaration) = location_of(&range, rel) else {
+                continue;
+            };
+            found.push(Enclosure {
+                declaration,
+                first_line,
+                last_line,
+            });
+        }
+        found.sort_by_key(|e| e.last_line - e.first_line);
+        Some(found)
+    }
+
     /// その語の定義を索引から引く。
     ///
     /// 依拠したファイルが1つでも変わっていれば、行番号はもう索引の言うとおりではないので None。
@@ -814,6 +857,20 @@ impl InDocument<'_> {
             })
             .collect()
     }
+}
+
+/// enclosing_range が覆う最初と最後の行。範囲の綴りは SCIP の range と同じで、
+/// 3 要素なら単一行、4 要素なら複数行。
+///
+/// typed_enclosing_range は読まない。実測でどの producer も書いておらず、書く索引が
+/// 来ても囲みが Unknown になるだけで誤った行は出さない。
+fn enclosed_lines(range: &[i32]) -> Option<(u32, u32)> {
+    let (first, last) = match *range {
+        [line, _, _] => (line, line),
+        [first, _, last, _] => (first, last),
+        _ => return None,
+    };
+    Some((u32::try_from(first).ok()?, u32::try_from(last).ok()?))
 }
 
 /// 索引全体の表に入れない符号か。Document をまたぐと別物になる。

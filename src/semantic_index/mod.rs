@@ -1633,6 +1633,48 @@ mod tests {
         assert_eq!(store.outside_root(), 0, "ツリー外を指す Document がある");
     }
 
+    /// 実索引で、行を囲んでいるシンボルが取れる。合成フィクスチャでは producer が
+    /// enclosing_range を実際に書くかを検査できない。
+    #[test]
+    #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
+    fn real_index_answers_what_encloses_a_line() {
+        let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
+        let repo_root = Path::new(&repo_root);
+        let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
+
+        let rel = Path::new("src/hover_info.rs");
+        let source = std::fs::read_to_string(repo_root.join(rel)).unwrap();
+        let declaration = source
+            .lines()
+            .position(|l| l.contains("pub fn build_hover_info"))
+            .expect("目印の関数がある");
+        let inside = declaration + 3;
+
+        let sheaf_core::Enclosures::Exact(found) =
+            sheaf_core::enclosures_at(&store, rel, inside as u32)
+        else {
+            panic!("索引が囲みを答えなかった");
+        };
+        println!(
+            "{} 行を囲むもの {} 件: {:?}",
+            inside + 1,
+            found.len(),
+            found
+                .iter()
+                .map(|e| (e.declaration.line + 1, e.first_line + 1, e.last_line + 1))
+                .collect::<Vec<_>>()
+        );
+        // 画面の外にある宣言のうちいちばん内側、が sticky に出るもの。
+        assert_eq!(
+            found
+                .iter()
+                .map(|e| e.declaration.line as usize)
+                .find(|line| *line < inside),
+            Some(declaration),
+            "画面の外にある宣言のうちいちばん内側が build_hover_info になっていない"
+        );
+    }
+
     /// 索引が説明を答える割合を、実リポジトリの実 Bridge (tree-sitter) 越しに測る。
     ///
     /// 合成した索引では、rust-analyzer が実際に何を書くかを検査できない。ここが

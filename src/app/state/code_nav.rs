@@ -32,6 +32,15 @@ pub struct CodeNav {
     pub symbol_action: SymbolActionOverlay,
     /// マウスを乗せたときに出る定義プレビュー。
     pub hover_info: HoverInfoOverlay,
+    /// スクロールで画面の外へ出た、いま中にいるシンボルの宣言行。
+    pub sticky: StickyHeader,
+}
+
+/// 描画のたびに引かれるので、同じ位置では索引に聞き直さない。
+#[derive(Default)]
+pub struct StickyHeader {
+    pub asked: Option<(String, usize)>,
+    pub declaration: Option<usize>,
 }
 
 impl CodeNav {
@@ -45,6 +54,7 @@ impl CodeNav {
             symbol_hint: SymbolHintOverlay::default(),
             symbol_action: SymbolActionOverlay::default(),
             hover_info: HoverInfoOverlay::default(),
+            sticky: StickyHeader::default(),
         }
     }
 }
