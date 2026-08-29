@@ -5,7 +5,24 @@
 //! 実体を 1 つに保つのは、アクティブなタブの状態が「タブの中」と「ViewerState
 //! の直下」の 2 か所に現れると、どちらを書いたかで表示がずれるため。
 
-use super::state::{TabView, ViewerState, ViewerTab};
+use super::state::{TabView, ViewerState, ViewerTab, ViewerTabStatus};
+
+impl ViewerTabStatus {
+    /// フォーカスが外れたら閉じるタブか。
+    pub fn is_preview(self) -> bool {
+        self == Self::Preview
+    }
+
+    /// 既に開いているタブを開き直したときの寿命。永続で開き直すと固定される —
+    /// シングルクリックしたファイルをダブルクリックで固定する経路がこれ。
+    /// 逆に、固定済みのタブがシングルクリックで preview へ戻ることはない。
+    fn reopened(self, requested: Self) -> Self {
+        match requested {
+            Self::Persistent => Self::Persistent,
+            Self::Preview => self,
+        }
+    }
+}
 
 impl ViewerTab {
     /// 描画テスト用に、中身を持たないタブを作る。
@@ -14,6 +31,7 @@ impl ViewerTab {
         Self {
             path: path.to_string(),
             stashed: None,
+            status: ViewerTabStatus::Persistent,
         }
     }
 }
@@ -27,17 +45,19 @@ impl ViewerState {
     /// idx のタブへ切り替える。中身はディスクから読み直すので、裏で編集された
     /// ファイルが古いまま表示されることはない。
     pub fn focus_tab(&mut self, idx: usize, tab_width: usize) {
-        let Some(path) = self.tabs.get(idx).map(|t| t.path.clone()) else {
+        if idx >= self.tabs.len() {
             return;
-        };
+        }
         self.tab_reveal = true;
         if idx != self.active_tab {
             self.stash_active_view();
+            let idx = self.close_preview_tab(idx);
             self.active_tab = idx;
             if let Some(view) = self.tabs[idx].stashed.take() {
                 self.restore_view(view);
             }
         }
+        let path = self.tabs[self.active_tab].path.clone();
         self.reload_active_file(&path, tab_width);
     }
 
@@ -123,25 +143,53 @@ impl ViewerState {
 
     /// relative_path のタブを用意してアクティブにする。既に開いていればそれを使う。
     /// 新しく作った場合だけ true を返す。
-    pub(in crate::viewer) fn activate_tab_for(&mut self, relative_path: &str) -> bool {
+    ///
+    /// status は開き方の要求で、既にあるタブへは
+    /// [ViewerTabStatus::reopened] を通して反映する。
+    pub(in crate::viewer) fn activate_tab_for(
+        &mut self,
+        relative_path: &str,
+        status: ViewerTabStatus,
+    ) -> bool {
         self.tab_reveal = true;
         if let Some(idx) = self.tabs.iter().position(|t| t.path == relative_path) {
-            if idx != self.active_tab {
-                self.stash_active_view();
-                self.active_tab = idx;
-                if let Some(view) = self.tabs[idx].stashed.take() {
-                    self.restore_view(view);
-                }
+            if idx == self.active_tab {
+                let tab = &mut self.tabs[idx];
+                tab.status = tab.status.reopened(status);
+                return false;
+            }
+            self.stash_active_view();
+            let idx = self.close_preview_tab(idx);
+            self.active_tab = idx;
+            if let Some(view) = self.tabs[idx].stashed.take() {
+                self.restore_view(view);
             }
             return false;
         }
         self.stash_active_view();
+        let len = self.tabs.len();
+        self.close_preview_tab(len);
         self.tabs.push(ViewerTab {
             path: relative_path.to_string(),
             stashed: None,
+            status,
         });
         self.active_tab = self.tabs.len() - 1;
         true
+    }
+
+    /// preview タブを閉じ、フォーカスの行き先 dest を詰めた添字を返す。
+    ///
+    /// preview は必ずアクティブなタブなので、呼ぶのはフォーカスが他へ移る
+    /// 直前（stash_active_view の後）だけ。閉じたタブより後ろの添字は 1 つ
+    /// 前へ動くので、行き先をここで詰めておかないと隣のファイルが開く。
+    fn close_preview_tab(&mut self, dest: usize) -> usize {
+        let Some(idx) = self.tabs.iter().position(|t| t.status.is_preview()) else {
+            return dest;
+        };
+        self.tabs.remove(idx);
+        self.clear_active_view();
+        if dest > idx { dest - 1 } else { dest }
     }
 
     /// アクティブなタブの状態をタブ側へ退避する。
@@ -276,6 +324,77 @@ mod tests {
         assert!(vs.tabs.is_empty());
         assert_eq!(vs.content.current_file, None);
         assert!(vs.content.file_content.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// シングルクリックで開いた preview タブは、次のファイルを開くと閉じる。
+    /// クリックするたびにタブが増えるのを防ぐのがこの機能の本題。
+    #[test]
+    fn a_preview_tab_is_replaced_by_the_next_one() {
+        let dir = fixture(
+            "preview",
+            &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
+        );
+        let mut vs = ViewerState::default();
+        vs.set_root(dir.clone());
+
+        vs.open_file_preview("a.txt", 4);
+        vs.open_file_preview("b.txt", 4);
+        assert_eq!(vs.tabs.len(), 1, "preview タブは同時に 1 枚だけ");
+        assert_eq!(vs.active_tab_path(), Some("b.txt"));
+        assert_eq!(vs.content.file_content, vec!["B"]);
+
+        // 永続で開いた場合も、残っていた preview は閉じる。
+        vs.open_file("c.txt", 4);
+        assert_eq!(vs.tabs.len(), 1);
+        assert_eq!(vs.active_tab_path(), Some("c.txt"));
+        assert!(!vs.tabs[0].status.is_preview());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ダブルクリック相当（preview のまま永続で開き直す）で preview が外れ、
+    /// 次のファイルを開いても残る。
+    #[test]
+    fn reopening_a_preview_tab_as_persistent_pins_it() {
+        let dir = fixture("promote", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
+        let mut vs = ViewerState::default();
+        vs.set_root(dir.clone());
+
+        vs.open_file_preview("a.txt", 4);
+        vs.open_file("a.txt", 4);
+        assert!(!vs.tabs[0].status.is_preview());
+
+        vs.open_file_preview("b.txt", 4);
+        assert_eq!(vs.tabs.len(), 2, "固定したタブは次を開いても残る");
+        assert_eq!(vs.active_tab_path(), Some("b.txt"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 別のタブへ移った時点でも preview は閉じる。閉じたぶん添字が前へ動くので、
+    /// 詰め忘れると隣のファイルが開く。
+    #[test]
+    fn focusing_another_tab_closes_the_preview() {
+        let dir = fixture(
+            "preview_focus",
+            &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
+        );
+        let mut vs = ViewerState::default();
+        vs.set_root(dir.clone());
+
+        vs.open_file("a.txt", 4);
+        vs.open_file("b.txt", 4);
+        vs.open_file_preview("c.txt", 4);
+        assert_eq!(vs.tabs.len(), 3);
+
+        vs.focus_tab(0, 4);
+        assert_eq!(vs.tabs.len(), 2);
+        assert_eq!(vs.active_tab, 0);
+        assert_eq!(vs.active_tab_path(), Some("a.txt"));
+        assert_eq!(vs.content.file_content, vec!["A"]);
+        assert!(vs.tabs.iter().all(|t| !t.status.is_preview()));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

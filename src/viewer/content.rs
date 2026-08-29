@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::media_state;
 
-use super::state::ViewerState;
+use super::state::{ViewerState, ViewerTabStatus};
 
 impl ViewerState {
     /// diff の注釈キャッシュを無効化する（diff データが変わったときに呼ぶ）。
@@ -21,7 +21,17 @@ impl ViewerState {
     /// relative_path は表示中のツリーの根からの相対。絶対パスに戻すのは
     /// [ViewerState::root] だけで、呼び出し側は根を知らなくてよい。
     pub fn open_file(&mut self, relative_path: &str, tab_width: usize) {
-        if self.activate_tab_for(relative_path) {
+        self.open_file_as(relative_path, tab_width, ViewerTabStatus::Persistent);
+    }
+
+    /// ちょっと見るためにファイルを開く。タブは Preview として立ち、フォーカス
+    /// が外れると閉じる。既に永続で開いているファイルなら永続のまま。
+    pub fn open_file_preview(&mut self, relative_path: &str, tab_width: usize) {
+        self.open_file_as(relative_path, tab_width, ViewerTabStatus::Preview);
+    }
+
+    fn open_file_as(&mut self, relative_path: &str, tab_width: usize, status: ViewerTabStatus) {
+        if self.activate_tab_for(relative_path, status) {
             self.load_active_file(relative_path, tab_width);
         } else {
             self.reload_active_file(relative_path, tab_width);

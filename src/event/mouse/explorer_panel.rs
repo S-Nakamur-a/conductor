@@ -230,7 +230,13 @@ pub(super) fn handle_explorer_column_click(
                         );
 
                         let tab_width = app.config.viewer.tab_width;
-                        app.viewer_state.open_file(&entry.path, tab_width);
+                        // シングルクリックは preview（次にどれかを開くと閉じる）、
+                        // ダブルクリックは永続。開いたまま溜まるのを防ぐ。
+                        if is_double {
+                            app.viewer_state.open_file(&entry.path, tab_width);
+                        } else {
+                            app.viewer_state.open_file_preview(&entry.path, tab_width);
+                        }
                         app.rehighlight_viewer();
                         app.review_state.build_file_comment_cache(&entry.path);
                         // シングルクリック: フォーカスをExplorerに残す。
