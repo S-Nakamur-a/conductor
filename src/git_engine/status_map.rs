@@ -66,8 +66,8 @@ impl GitStatusMap {
         Ok(Self { by_path })
     }
 
-    /// ケース違いの2エントリに実ファイルが1つしか無いとき、libgit2 は余った方を
-    /// 削除として報告する(git 本体は clean)。
+    /// 大文字小文字を区別しない FS ではケース違いの2エントリに実ファイルが1つしか
+    /// 無く、libgit2 は余った方を削除として報告する(git 本体は clean)。
     fn drop_deletion_still_on_disk(status: Status, workdir: Option<&Path>, path: &str) -> Status {
         let still_there =
             status.is_wt_deleted() && workdir.is_some_and(|workdir| workdir.join(path).is_file());

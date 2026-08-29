@@ -405,9 +405,9 @@ impl DiffState {
         }
     }
 
-    /// ケース違いの2エントリに実ファイルが1つしか無いとき、libgit2 は余った方を
-    /// 削除として報告する(git 本体は clean)。DiffOptions では直らない —
-    /// ignore_case が変えるのはデルタの並び順だけ。
+    /// 大文字小文字を区別しない FS ではケース違いの2エントリに実ファイルが1つしか
+    /// 無く、libgit2 は余った方を削除として報告する(git 本体は clean)。DiffOptions
+    /// では直らない — ignore_case が変えるのはデルタの並び順だけ。
     fn find_deletions_still_on_disk(
         repo: &Repository,
         diff: &git2::Diff<'_>,

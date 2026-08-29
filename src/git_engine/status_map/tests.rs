@@ -224,6 +224,7 @@ fn build_case_colliding_fixture() -> tempfile::TempDir {
 fn git_status_map_case_colliding_entry_is_not_deleted() {
     let tmp = build_case_colliding_fixture();
     if !fs_ignores_case(tmp.path()) {
+        eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");
         return;
     }
 
@@ -233,7 +234,6 @@ fn git_status_map_case_colliding_entry_is_not_deleted() {
     assert_eq!(map.status("instagram.png"), None);
 }
 
-/// 実在判定が本物の削除まで巻き添えにしていないこと。
 #[test]
 fn git_status_map_real_deletion_is_reported() {
     let tmp = build_fixture();
