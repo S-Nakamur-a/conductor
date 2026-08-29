@@ -471,3 +471,94 @@ fn 参照が載っていた行が消えたらfoundを返さない() {
         "参照が黙って消えたのに Found を返した: {after:?}"
     );
 }
+
+// ---- 囲みクエリ ----
+
+/// 入れ子の 2 つを載せた索引。行 1 は両方に囲まれている。
+fn build_enclosure_fixture(root: &Path) -> PathBuf {
+    use protobuf::{EnumOrUnknown, Message, MessageField};
+    use scip::types::{Document, Index, Metadata, Occurrence, TextEncoding};
+
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "mod outer {\n    pub fn inner() {}\n}\n",
+    )
+    .unwrap();
+
+    let with_enclosing = |range: Vec<i32>, symbol: &str, enclosing: Vec<i32>| Occurrence {
+        range,
+        symbol: symbol.to_string(),
+        symbol_roles: 1,
+        enclosing_range: enclosing,
+        ..Default::default()
+    };
+    let index = Index {
+        metadata: MessageField::some(Metadata {
+            project_root: format!("file://{}", root.display()),
+            text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
+            ..Default::default()
+        }),
+        documents: vec![Document {
+            relative_path: "src/lib.rs".to_string(),
+            language: "rust".to_string(),
+            occurrences: vec![
+                with_enclosing(
+                    vec![0, 4, 9],
+                    "scip-test cargo demo 0.1.0 outer/",
+                    vec![0, 0, 2, 1],
+                ),
+                with_enclosing(
+                    vec![1, 11, 16],
+                    "scip-test cargo demo 0.1.0 outer/inner().",
+                    vec![1, 4, 1, 21],
+                ),
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let index_path = root.join("index.scip");
+    std::fs::write(&index_path, index.write_to_bytes().unwrap()).unwrap();
+    index_path
+}
+
+/// 内側が先。いちばん内側だけを出す呼び出し側が、並べ替えずに先頭を取れる。
+#[test]
+fn enclosures_come_innermost_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let index_path = build_enclosure_fixture(root);
+    let store = load_single(&index_path, root, hashes_of(root, &["src/lib.rs"]));
+
+    let crate::Enclosures::Exact(found) = crate::enclosures_at(&store, Path::new("src/lib.rs"), 1)
+    else {
+        panic!("索引が囲みを答えなかった");
+    };
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].declaration.line, 1);
+    assert_eq!((found[0].first_line, found[0].last_line), (1, 1));
+    assert_eq!(found[1].declaration.line, 0);
+    assert_eq!((found[1].first_line, found[1].last_line), (0, 2));
+}
+
+/// 囲むものが無い行と、答えられない索引は別物として返る。
+#[test]
+fn nothing_enclosing_is_not_the_same_as_no_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let index_path = build_enclosure_fixture(root);
+    let store = load_single(&index_path, root, hashes_of(root, &["src/lib.rs"]));
+
+    assert_eq!(
+        crate::enclosures_at(&store, Path::new("src/other.rs"), 0),
+        crate::Enclosures::Unknown
+    );
+
+    std::fs::write(root.join("src/lib.rs"), "mod outer {}\n").unwrap();
+    assert_eq!(
+        crate::enclosures_at(&store, Path::new("src/lib.rs"), 1),
+        crate::Enclosures::Unknown,
+        "索引生成時と違うファイルに、索引の行番号を答えている"
+    );
+}
