@@ -193,6 +193,35 @@ impl App {
     /// 場面ではヒントをフラッシュ表示する。ユーザーから見えないモードを黙って
     /// ラッチするのではなく、というのもヘッダーのトグルはまさにそうした場面で
     /// 隠れているからである。
+    /// 深さ単位で1段畳む（zm）。
+    pub fn cmd_fold_one_level(&mut self) {
+        let depth = self.viewer_state.fold_collapse_deepest();
+        self.report_fold_depth(depth);
+    }
+
+    /// 深さ単位の畳み込みを1段開き戻す（zr）。
+    pub fn cmd_unfold_one_level(&mut self) {
+        let depth = self.viewer_state.fold_expand_shallowest();
+        self.report_fold_depth(depth);
+    }
+
+    /// すべて畳む（zM）。
+    pub fn cmd_fold_all(&mut self) {
+        self.viewer_state.fold_close_all();
+    }
+
+    /// すべて開く（zR）。
+    pub fn cmd_unfold_all(&mut self) {
+        self.viewer_state.fold_open_all();
+    }
+
+    /// 畳んだ段数は畳んだ跡からは読み取れないので、操作のたびに知らせる。
+    fn report_fold_depth(&mut self, depth: Option<crate::viewer::FoldDepth>) {
+        if let Some(depth) = depth {
+            self.set_status_info(format!("Fold level {}/{}", depth.level, depth.max));
+        }
+    }
+
     pub fn cmd_toggle_markdown_render(&mut self) {
         if !self.viewer_state.markdown_toggle_available() {
             self.set_status(

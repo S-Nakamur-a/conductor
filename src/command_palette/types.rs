@@ -43,6 +43,10 @@ pub enum CommandId {
     SearchInFile,
     ToggleHelp,
     ToggleMarkdownRender,
+    FoldOneLevel,
+    UnfoldOneLevel,
+    FoldAll,
+    UnfoldAll,
 
     // Review
     ShowReviewComments,

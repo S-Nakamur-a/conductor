@@ -123,13 +123,14 @@ pub(super) fn handle_viewer_column_click(
     let marker_w = crate::viewer::COMMENT_MARKER_W;
     let gutter_w = app.viewer_state.gutter_total_width();
     let on_gutter = col >= inner_x && col < inner_x + marker_w + gutter_w;
+    // コード本体が始まる列。左マージンは コメント列 + 行番号ガター + バッジ列。
+    let badge_w: u16 = 2;
+    let content_start_x = inner_x + marker_w + gutter_w + badge_w;
 
     // Cmd+Click (macOS) / Ctrl+Click — クリックしたシンボルの定義へジャンプする。
     let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
         || mouse.modifiers.contains(KeyModifiers::CONTROL);
     if has_jump_modifier && !on_gutter && !app.viewer_state.diff_view.diff_mode && row >= inner_y {
-        let badge_w: u16 = 2;
-        let content_start_x = inner_x + marker_w + gutter_w + badge_w;
         if col >= content_start_x {
             let screen_offset = (row - inner_y) as usize;
             if let Some(line_1) = resolve_screen_line(app, screen_offset) {
@@ -274,6 +275,18 @@ pub(super) fn handle_viewer_column_click(
         }
     }
 
+    // 畳んだ行は本体（見出しのコードと "⋯ N lines"）を押しても開く。マーカーの
+    // 1列は狙って当てるには細く、開きたい行はその場に見えている。
+    if !app.viewer_state.diff_view.diff_mode && row >= inner_y && col >= content_start_x {
+        let screen_offset = (row - inner_y) as usize;
+        if let Some(line_1) = resolve_screen_line(app, screen_offset)
+            && app.viewer_state.content.folds.is_collapsed(line_1)
+        {
+            app.viewer_state.fold_toggle_at(line_1);
+            return;
+        }
+    }
+
     // 左マージンのディスパッチ。マージンは役割の異なる3つのゾーンからなる:
     //   - コメントマーカー列（一番左） → その行にコメントがあれば、既存の
     //     インラインスレッドをトグルする。スレッドのフォーカスが存在するのは
@@ -284,11 +297,10 @@ pub(super) fn handle_viewer_column_click(
     //   - 2セル分のバッジ列 → テスト実行ボタン。それ以外の行では行番号ガターと
     //     同じくコメントを開始する。
     // コードの内容部分へのクリックは、単なるフォーカス変更として扱われる。
-    let badge_w: u16 = 2;
     let on_marker = col >= inner_x && col < inner_x + marker_w;
     let gutter_start = inner_x + marker_w;
     let on_number_gutter = col >= gutter_start && col < gutter_start + gutter_w;
-    let on_badge = col >= gutter_start + gutter_w && col < gutter_start + gutter_w + badge_w;
+    let on_badge = col >= gutter_start + gutter_w && col < content_start_x;
     if (on_marker || on_number_gutter || on_badge) && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         // 画面行のマッピングはインラインスレッド行と両方の表示モードを扱う

@@ -186,7 +186,7 @@ keymap_suite::actions! {
         /// ファイル（diff リストの行、または現在 Viewer の diff モードで
         /// 開いているファイル）の「viewed」マークを切り替える。
         ToggleViewed => "toggle_viewed",
-        /// 'z' — コードブロックの折りたたみの2打鍵目（za/zc/zo/zR/zM）を待つ。
+        /// 'z' — コードブロックの折りたたみの2打鍵目（za/zc/zo/zm/zr/zR/zM）を待つ。
         /// 2打鍵目そのものは gd/gi/gr と同じくハンドラ側で直接読む: 折りたたみ
         /// だけが独自の再割り当て可能な語彙を持つ理由がない。
         FoldPrefix => "fold_prefix",
@@ -259,7 +259,7 @@ impl Action {
             }
             Action::AnalyzeRevidere => "Review this branch (asks first)",
             Action::ForceAnalyzeRevidere => "Re-analyse without asking, ignoring the cached reply",
-            Action::FoldPrefix => "Fold block (za/zc/zo/zR/zM)",
+            Action::FoldPrefix => "Fold block (za/zc/zo/zm/zr/zR/zM)",
             Action::ToggleViewed => "Toggle file viewed",
             Action::ReviewPullRequest => "Review a pull request by number or URL",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",

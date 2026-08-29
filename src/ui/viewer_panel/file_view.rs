@@ -76,10 +76,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         vs.markdown_toggle_available() && toggle_segments(area.x, area.width).is_some();
     let md_toggle_w = if show_md_toggle { TOGGLE_W as usize } else { 0 };
 
+    // 深さ単位で畳んでいる間だけ、今の段数をタイトル行に出す。畳んだ跡からは
+    // 何段目にいるかが読み取れず、ステータスの一言はすぐ消える。
+    let fold_depth = vs.active_fold_depth().map(|d| {
+        let arrow = crate::icons::expand_arrow(false, app.config.ui.icon_set());
+        format!("{arrow} {}/{} ", d.level, d.max)
+    });
+    let fold_depth_w = fold_depth.as_deref().map_or(0, display_width);
+
     // 右側の [<=>] ボタン（と表示されていればトグル）と重ならないようタイトルを
-    // 切り詰める。確保するのは: 2（枠線）+ トグル + expand_label の幅 + 1（隙間）。
-    let max_title_len =
-        (area.width as usize).saturating_sub(2 + md_toggle_w + expand_label.len() + 1);
+    // 切り詰める。確保するのは: 2（枠線）+ 段数 + トグル + expand_label の幅 + 1（隙間）。
+    let max_title_len = (area.width as usize)
+        .saturating_sub(2 + fold_depth_w + md_toggle_w + expand_label.len() + 1);
     let title = match &vs.content.current_file {
         Some(path) => {
             let raw = if !vs.search.search_matches.is_empty() {
@@ -113,6 +121,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 両方のコントロールを1つの右寄せ行にまとめているので、トグルの描画有無に
     // 関わらず [<=>] は常に同じ列に位置し、既存のクリック判定もそのまま使える。
     let mut right_spans: Vec<Span> = Vec::new();
+    if let Some(label) = fold_depth {
+        right_spans.push(Span::styled(label, Style::default().fg(theme.accent)));
+    }
     if show_md_toggle {
         right_spans.extend(toggle_spans(vs.is_showing_rendered_markdown(), theme));
     }

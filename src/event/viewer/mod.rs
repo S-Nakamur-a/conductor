@@ -242,21 +242,23 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
 /// 'z' の2打鍵目を処理する（vim の折りたたみ）。
 ///
 /// 対象はカーソル行（＝ビューポート最上行）。その行がブロックの見出しでなければ、
-/// それを含む最も内側のブロックが動く — vim の za/zc と同じ。
+/// それを含む最も内側のブロックが動く — vim の za/zc と同じ。zm/zr だけは行では
+/// なく入れ子の深さを対象にし、その段のブロックをファイル全体でまとめて動かす。
 fn handle_fold_key(app: &mut App, key: KeyEvent) {
-    let vs = &mut app.viewer_state;
     match key.code {
         KeyCode::Char('a') => {
-            vs.fold_toggle_cursor();
+            app.viewer_state.fold_toggle_cursor();
         }
         KeyCode::Char('c') => {
-            vs.fold_close_cursor();
+            app.viewer_state.fold_close_cursor();
         }
         KeyCode::Char('o') => {
-            vs.fold_open_cursor();
+            app.viewer_state.fold_open_cursor();
         }
-        KeyCode::Char('R') => vs.fold_open_all(),
-        KeyCode::Char('M') => vs.fold_close_all(),
+        KeyCode::Char('m') => app.cmd_fold_one_level(),
+        KeyCode::Char('r') => app.cmd_unfold_one_level(),
+        KeyCode::Char('R') => app.cmd_unfold_all(),
+        KeyCode::Char('M') => app.cmd_fold_all(),
         _ => {}
     }
 }
