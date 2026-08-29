@@ -21,6 +21,26 @@ use std::path::Path;
 pub struct FoldRange {
     pub start: usize,
     pub end: usize,
+    /// 入れ子の深さ。最も外側が 1。
+    pub depth: usize,
+}
+
+impl FoldRange {
+    /// 深さは他の範囲との包含関係でしか決まらないので、単体では最も外側とみなす。
+    fn new(start: usize, end: usize) -> Self {
+        Self {
+            start,
+            end,
+            depth: 1,
+        }
+    }
+}
+
+/// 深さ単位でどこまで畳んだか。level は畳んだ段数で、全部開いていれば 0。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FoldDepth {
+    pub level: usize,
+    pub max: usize,
 }
 
 /// ホバー中の折りたたみ範囲の、その行での位置。マーカーの1列だけで範囲の
@@ -42,6 +62,9 @@ pub struct FoldState {
     ranges: Vec<FoldRange>,
     /// 閉じている範囲の見出し行。
     collapsed: HashSet<usize>,
+    /// 深さ単位でまとめて畳んだとき、閉じている中で最も浅い深さ。個別の開閉が
+    /// 入ると None に戻り、次の深さ操作は最も深い層からやり直す。
+    collapsed_from_depth: Option<usize>,
     /// hidden[line-1]。collapsed から導出したキャッシュで、collapsed を
     /// 触ったら必ず rebuild_hidden() で作り直す。
     hidden: Vec<bool>,
@@ -69,6 +92,7 @@ impl FoldState {
             self.collapsed.retain(|line| starts.contains(line));
         } else {
             self.collapsed.clear();
+            self.collapsed_from_depth = None;
         }
         self.rebuild_hidden();
     }
@@ -135,6 +159,7 @@ impl FoldState {
         } else {
             self.collapsed.insert(start);
         }
+        self.collapsed_from_depth = None;
         self.rebuild_hidden();
         true
     }
@@ -146,6 +171,7 @@ impl FoldState {
         };
         let changed = self.collapsed.insert(start);
         if changed {
+            self.collapsed_from_depth = None;
             self.rebuild_hidden();
         }
         changed
@@ -158,6 +184,7 @@ impl FoldState {
         };
         let changed = self.collapsed.remove(&start);
         if changed {
+            self.collapsed_from_depth = None;
             self.rebuild_hidden();
         }
         changed
@@ -166,13 +193,44 @@ impl FoldState {
     /// すべて開く（zR）。
     pub fn open_all(&mut self) {
         self.collapsed.clear();
+        self.collapsed_from_depth = None;
         self.rebuild_hidden();
     }
 
     /// すべて閉じる（zM）。
     pub fn close_all(&mut self) {
         self.collapsed = self.ranges.iter().map(|r| r.start).collect();
+        self.collapsed_from_depth = Some(1);
         self.rebuild_hidden();
+    }
+
+    /// まだ畳んでいない中で最も深い層を、全箇所まとめて畳む（zm）。
+    ///
+    /// 畳める範囲が1つも無ければ None。
+    pub fn collapse_deepest(&mut self) -> Option<FoldDepth> {
+        let max = self.max_depth()?;
+        let next = self.collapsed_from_depth.unwrap_or(max + 1);
+        if next > 1 {
+            for start in self.starts_at_depth(next - 1) {
+                self.collapsed.insert(start);
+            }
+            self.collapsed_from_depth = Some(next - 1);
+            self.rebuild_hidden();
+        }
+        Some(self.depth_level(max))
+    }
+
+    /// 深さ単位で畳んだ層のうち、最も浅いものを開き戻す（zr）。
+    pub fn expand_shallowest(&mut self) -> Option<FoldDepth> {
+        let max = self.max_depth()?;
+        if let Some(depth) = self.collapsed_from_depth {
+            for start in self.starts_at_depth(depth) {
+                self.collapsed.remove(&start);
+            }
+            self.collapsed_from_depth = (depth < max).then_some(depth + 1);
+            self.rebuild_hidden();
+        }
+        Some(self.depth_level(max))
     }
 
     /// line_1 が画面に出るまで、それを隠しているブロックを外側から開く。
@@ -194,6 +252,7 @@ impl FoldState {
             changed |= self.collapsed.remove(&start);
         }
         if changed {
+            self.collapsed_from_depth = None;
             self.rebuild_hidden();
         }
         changed
@@ -269,7 +328,34 @@ impl FoldState {
         self.prev_visible(line_1).unwrap_or(1)
     }
 
+    /// 畳める範囲の最も深い深さ。1つも無ければ None。
+    pub fn max_depth(&self) -> Option<usize> {
+        self.ranges.iter().map(|r| r.depth).max()
+    }
+
+    /// 深さ単位で畳んでいる最中なら、その段数。個別の開閉だけなら None。
+    pub fn depth(&self) -> Option<FoldDepth> {
+        let max = self.max_depth()?;
+        self.collapsed_from_depth.map(|_| self.depth_level(max))
+    }
+
     // 内部
+
+    fn starts_at_depth(&self, depth: usize) -> Vec<usize> {
+        self.ranges
+            .iter()
+            .filter(|r| r.depth == depth)
+            .map(|r| r.start)
+            .collect()
+    }
+
+    /// 内部の深さのしきい値を、ユーザに見せる「何段畳んだか」に直す。
+    fn depth_level(&self, max: usize) -> FoldDepth {
+        let level = self
+            .collapsed_from_depth
+            .map_or(0, |d| (max + 1).saturating_sub(d));
+        FoldDepth { level, max }
+    }
 
     fn range_starting_at(&self, line_1: usize) -> Option<&FoldRange> {
         self.ranges.iter().find(|r| r.start == line_1)
@@ -307,10 +393,24 @@ impl FoldState {
 /// source の折りたたみ範囲。tree-sitter で1つも取れなければインデントで求める。
 fn compute_ranges(source: &str, path: &str) -> Vec<FoldRange> {
     let ranges = syntax_ranges(source, path).unwrap_or_default();
-    if ranges.is_empty() {
+    let mut ranges = if ranges.is_empty() {
         normalize(indent_ranges(source))
     } else {
         ranges
+    };
+    assign_depths(&mut ranges);
+    ranges
+}
+
+/// 包含している範囲の数を数えて、各範囲に入れ子の深さを与える。
+///
+/// ranges は start 昇順で入れ子が壊れていないことが前提（normalize 済み）。
+fn assign_depths(ranges: &mut [FoldRange]) {
+    let mut enclosing: Vec<usize> = Vec::new();
+    for range in ranges.iter_mut() {
+        enclosing.retain(|end| *end >= range.start);
+        range.depth = enclosing.len() + 1;
+        enclosing.push(range.end);
     }
 }
 
@@ -333,7 +433,7 @@ fn syntax_ranges(source: &str, path: &str) -> Option<Vec<FoldRange>> {
             let end = node.end_position().row + 1;
             // 1行に収まっているブロックは畳んでも何も減らない。
             if end > start {
-                out.push(FoldRange { start, end });
+                out.push(FoldRange::new(start, end));
             }
         }
         if cursor.goto_first_child() {
@@ -431,10 +531,7 @@ fn indent_ranges(source: &str) -> Vec<FoldRange> {
             if let Some(last) = prev_nonblank
                 && last > top_start
             {
-                out.push(FoldRange {
-                    start: top_start + 1,
-                    end: last + 1,
-                });
+                out.push(FoldRange::new(top_start + 1, last + 1));
             }
         }
     }
@@ -552,6 +649,31 @@ impl ViewerState {
     pub fn fold_close_all(&mut self) {
         self.content.folds.close_all();
         self.clamp_cursor_to_visible();
+    }
+
+    /// 折りたたみを操作できる状態か。レンダリング済み markdown と diff 表示は
+    /// 行の畳みを持たない（diff は ExpandableContext という別の仕組み）。
+    pub fn folds_available(&self) -> bool {
+        !self.diff_view.diff_mode
+            && !self.is_showing_rendered_markdown()
+            && self.content.folds.max_depth().is_some()
+    }
+
+    /// タイトル行に出す、深さ単位の畳み具合。
+    pub fn active_fold_depth(&self) -> Option<FoldDepth> {
+        self.folds_available().then(|| self.content.folds.depth())?
+    }
+
+    /// 最も深い層をもう一段まとめて畳む（zm）。
+    pub fn fold_collapse_deepest(&mut self) -> Option<FoldDepth> {
+        let depth = self.content.folds.collapse_deepest();
+        self.clamp_cursor_to_visible();
+        depth
+    }
+
+    /// 深さ単位の畳み込みを一段開き戻す（zr）。
+    pub fn fold_expand_shallowest(&mut self) -> Option<FoldDepth> {
+        self.content.folds.expand_shallowest()
     }
 
     /// マウスで折りたたみマーカーが押されたときの入口。
@@ -858,5 +980,86 @@ fn outer() {
         assert_eq!(fs.step(1, 1, 3), 2);
         assert_eq!(fs.last_visible(3), 3);
         assert!(!fs.is_foldable(1));
+    }
+
+    /// 深さ単位の畳み込みは行ではなく段を対象にするので、同じ深さのブロックが
+    /// 何か所にあっても1回で全部畳まれる。
+    #[test]
+    fn collapsing_a_depth_folds_every_block_at_it() {
+        let src = "\
+fn a() {
+    if x {
+        p();
+    }
+}
+fn b() {
+    if y {
+        q();
+    }
+}
+";
+        let mut fs = state(src, "a.rs");
+        assert_eq!(fs.collapse_deepest(), Some(FoldDepth { level: 1, max: 2 }));
+        assert!(fs.is_collapsed(2));
+        assert!(fs.is_collapsed(7));
+        assert!(!fs.is_collapsed(1) && !fs.is_collapsed(6));
+    }
+
+    /// 深さは両端で止まる。最も浅い段まで畳んだら zm はそれ以上進まず、
+    /// 全部開き切ったら zr は何も動かさない。
+    #[test]
+    fn the_depth_stops_at_both_ends() {
+        let mut fs = state(NEST, "a.rs");
+        assert_eq!(fs.collapse_deepest().map(|d| d.level), Some(1));
+        assert_eq!(fs.collapse_deepest().map(|d| d.level), Some(2));
+        assert_eq!(fs.collapse_deepest().map(|d| d.level), Some(2));
+        assert!(fs.is_collapsed(1) && fs.is_collapsed(2));
+
+        assert_eq!(fs.expand_shallowest().map(|d| d.level), Some(1));
+        assert_eq!(fs.expand_shallowest().map(|d| d.level), Some(0));
+        assert_eq!(fs.expand_shallowest().map(|d| d.level), Some(0));
+        assert!(!fs.is_collapsed(1) && !fs.is_collapsed(2));
+    }
+
+    /// 畳める範囲が1つも無いファイルでは深さ操作そのものが成立しない。
+    #[test]
+    fn a_file_without_folds_has_no_depth() {
+        let mut fs = FoldState::default();
+        assert_eq!(fs.collapse_deepest(), None);
+        assert_eq!(fs.expand_shallowest(), None);
+    }
+
+    /// 個別に開閉したら深さの位置は失われ、次の zm は最も深い段からやり直す。
+    #[test]
+    fn folding_one_block_by_hand_forgets_the_depth() {
+        let mut fs = state(NEST, "a.rs");
+        fs.collapse_deepest();
+        fs.collapse_deepest();
+        fs.toggle(1);
+        assert_eq!(fs.collapse_deepest().map(|d| d.level), Some(1));
+    }
+
+    /// タイトル行の段数表示は深さ単位で畳んでいる間だけ出す。個別に畳んだだけの
+    /// ファイルに段数を出すと、そこから zr で開けるように見えてしまう。
+    #[test]
+    fn the_depth_shows_only_while_folding_by_depth() {
+        let mut fs = state(NEST, "a.rs");
+        assert_eq!(fs.depth(), None);
+        fs.close(1);
+        assert_eq!(fs.depth(), None);
+        fs.collapse_deepest();
+        assert_eq!(fs.depth(), Some(FoldDepth { level: 1, max: 2 }));
+        fs.toggle(2);
+        assert_eq!(fs.depth(), None);
+    }
+
+    /// zM は最も浅い段まで畳んだのと同じなので、そこから zr で1段ずつ開ける。
+    #[test]
+    fn closing_all_leaves_the_depth_at_its_deepest_level() {
+        let mut fs = state(NEST, "a.rs");
+        fs.close_all();
+        assert_eq!(fs.expand_shallowest().map(|d| d.level), Some(1));
+        assert!(!fs.is_collapsed(1));
+        assert!(fs.is_collapsed(2));
     }
 }

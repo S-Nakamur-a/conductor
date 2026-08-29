@@ -238,41 +238,50 @@ mod tests {
             " 設計メモ.md ",
             " a/very/deeply/nested/path/notes.md ",
         ] {
-            for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 40, 60, 120] {
-                let mut term = Terminal::new(TestBackend::new(w, 5)).unwrap();
-                // レンダラーがタイトルに割り当てるのと同じ予算: 枠線 + トグル +
-                // [<=>] + 隙間1列。
-                let budget = (w as usize).saturating_sub(2 + TOGGLE_W as usize + 5 + 1);
-                let fitted = crate::ui::viewer_panel::file_view::fit_title(title, budget);
-                term.draw(|f| {
-                    let mut spans = toggle_spans(false, &theme);
-                    spans.push(Span::styled("[<=>]", Style::default()));
-                    let block = Block::default()
-                        .title(Span::raw(fitted.clone()))
-                        .title_top(Line::from(spans).alignment(Alignment::Right))
-                        .borders(Borders::ALL);
-                    f.render_widget(block, Rect::new(0, 0, w, 5));
-                })
-                .unwrap();
-                let buf = term.backend().buffer().clone();
-                let seg = toggle_segments(0, w).expect("width is at least MIN_VIEWER_W");
-                let cell = |x: u16| buf[(x, 0)].symbol().to_string();
-                let ctx = format!("title={title:?} w={w}");
+            // 折りたたみの段数はトグルの左に積まれる。右寄せの行なので、これが
+            // 出てもトグルと [<=>] の列は動いてはならない。
+            for fold_depth in ["", "\u{203a} 2/5 "] {
+                for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 40, 60, 120] {
+                    let mut term = Terminal::new(TestBackend::new(w, 5)).unwrap();
+                    // レンダラーがタイトルに割り当てるのと同じ予算: 枠線 + 段数 +
+                    // トグル + [<=>] + 隙間1列。
+                    let budget = (w as usize)
+                        .saturating_sub(2 + fold_depth.chars().count() + TOGGLE_W as usize + 5 + 1);
+                    let fitted = crate::ui::viewer_panel::file_view::fit_title(title, budget);
+                    term.draw(|f| {
+                        let mut spans = Vec::new();
+                        if !fold_depth.is_empty() {
+                            spans.push(Span::styled(fold_depth, Style::default()));
+                        }
+                        spans.extend(toggle_spans(false, &theme));
+                        spans.push(Span::styled("[<=>]", Style::default()));
+                        let block = Block::default()
+                            .title(Span::raw(fitted.clone()))
+                            .title_top(Line::from(spans).alignment(Alignment::Right))
+                            .borders(Borders::ALL);
+                        f.render_widget(block, Rect::new(0, 0, w, 5));
+                    })
+                    .unwrap();
+                    let buf = term.backend().buffer().clone();
+                    let seg = toggle_segments(0, w).expect("width is at least MIN_VIEWER_W");
+                    let cell = |x: u16| buf[(x, 0)].symbol().to_string();
+                    let ctx = format!("title={title:?} w={w} fold={fold_depth:?}");
 
-                assert_eq!(cell(seg.raw.start), "[", "{ctx}: raw half starts at '['");
-                assert_eq!(
-                    cell(seg.rendered.start),
-                    "|",
-                    "{ctx}: rendered half starts at the separator"
-                );
-                assert_eq!(
-                    cell(seg.rendered.end - 1),
-                    "]",
-                    "{ctx}: rendered half ends at ']'"
-                );
-                // そして展開ボタンも、自身のクリック判定が言う位置に本当に存在する。
-                assert_eq!(cell(w - 6), "[", "{ctx}: [<=>] start");
-                assert_eq!(cell(w - 2), "]", "{ctx}: [<=>] end");
+                    assert_eq!(cell(seg.raw.start), "[", "{ctx}: raw half starts at '['");
+                    assert_eq!(
+                        cell(seg.rendered.start),
+                        "|",
+                        "{ctx}: rendered half starts at the separator"
+                    );
+                    assert_eq!(
+                        cell(seg.rendered.end - 1),
+                        "]",
+                        "{ctx}: rendered half ends at ']'"
+                    );
+                    // そして展開ボタンも、自身のクリック判定が言う位置に本当に存在する。
+                    assert_eq!(cell(w - 6), "[", "{ctx}: [<=>] start");
+                    assert_eq!(cell(w - 2), "]", "{ctx}: [<=>] end");
+                }
             }
         }
     }

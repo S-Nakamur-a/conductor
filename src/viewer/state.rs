@@ -408,7 +408,7 @@ pub struct ViewerState {
     pub tab_reveal: bool,
     /// 'g' が押されて2つ目のキー（gd, gi, gr）待ちかどうか。
     pub pending_g_key: bool,
-    /// 'z' が押されて2つ目のキー（za, zc, zo, zR, zM）待ちかどうか。
+    /// 'z' が押されて2つ目のキー（za, zc, zo, zm, zr, zR, zM）待ちかどうか。
     pub pending_z_key: bool,
     /// viewer がファイル内容/diff の代わりにブランチの change summary 疑似
     /// ファイル（"SUMMARY" エントリ）を表示しているか。diff_view.diff_mode とは

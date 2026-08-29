@@ -43,6 +43,10 @@ impl App {
             CommandId::SearchInFile => self.cmd_search_in_file(),
             CommandId::ToggleHelp => self.cmd_toggle_help(),
             CommandId::ToggleMarkdownRender => self.cmd_toggle_markdown_render(),
+            CommandId::FoldOneLevel => self.cmd_fold_one_level(),
+            CommandId::UnfoldOneLevel => self.cmd_unfold_one_level(),
+            CommandId::FoldAll => self.cmd_fold_all(),
+            CommandId::UnfoldAll => self.cmd_unfold_all(),
             CommandId::ShowReviewComments => self.cmd_show_review_comments(),
             CommandId::ShowReviewTemplates => {
                 self.review_state.template_picker_active = true;
@@ -145,6 +149,12 @@ impl App {
             crate::command_palette::CommandId::ToggleMarkdownRender => {
                 self.viewer_state.markdown_toggle_available()
             }
+
+            // 畳める範囲を持つファイルを Viewer が表示しているときだけ意味を持つ。
+            crate::command_palette::CommandId::FoldOneLevel
+            | crate::command_palette::CommandId::UnfoldOneLevel
+            | crate::command_palette::CommandId::FoldAll
+            | crate::command_palette::CommandId::UnfoldAll => self.viewer_state.folds_available(),
 
             // Review
             // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに

@@ -221,6 +221,36 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::ToggleMarkdownRender),
         keywords: "markdown md render raw preview prose readme",
     },
+    // 折りたたみの 2 打鍵目は再割り当てできる Action を持たないので、キーは
+    // ラベルに書く（chord 欄は Action からしか引けない）。
+    PaletteCommand {
+        id: CommandId::FoldOneLevel,
+        label: "Viewer: Fold One Level (zm)",
+        category: CommandCategory::View,
+        action: None,
+        keywords: "fold collapse depth nesting level outline structure zm",
+    },
+    PaletteCommand {
+        id: CommandId::UnfoldOneLevel,
+        label: "Viewer: Unfold One Level (zr)",
+        category: CommandCategory::View,
+        action: None,
+        keywords: "unfold expand depth nesting level outline structure zr",
+    },
+    PaletteCommand {
+        id: CommandId::FoldAll,
+        label: "Viewer: Fold All (zM)",
+        category: CommandCategory::View,
+        action: None,
+        keywords: "fold collapse all everything zM",
+    },
+    PaletteCommand {
+        id: CommandId::UnfoldAll,
+        label: "Viewer: Unfold All (zR)",
+        category: CommandCategory::View,
+        action: None,
+        keywords: "unfold expand all everything zR",
+    },
     PaletteCommand {
         id: CommandId::ToggleHelp,
         label: "Show Help",

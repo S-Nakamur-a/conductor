@@ -23,7 +23,7 @@ mod tabs;
 mod tree;
 
 pub use file_tree::FileTreeEntry;
-pub use fold::{FoldRule, FoldState};
+pub use fold::{FoldDepth, FoldRule, FoldState};
 // revidere の 2 列ビューは開いているファイルではなく diff の行を直接ハイライト
 // するので、ViewerState を経由せず構文定義だけを引く。拡張子のエイリアス表を
 // 2 つ持つと、片方だけ直したときに同じファイルが場所によって色付いたり
