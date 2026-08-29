@@ -51,13 +51,32 @@ impl GitStatusMap {
             .statuses(Some(&mut opts))
             .context("failed to compute git status")?;
 
+        let workdir = repo.workdir();
         let mut by_path = HashMap::with_capacity(statuses.len());
         for entry in statuses.iter() {
-            if let Some(path) = entry.path() {
-                by_path.insert(path.to_string(), entry.status());
+            let Some(path) = entry.path() else {
+                continue;
+            };
+            let status = Self::drop_deletion_still_on_disk(entry.status(), workdir, path);
+            if status.is_empty() {
+                continue;
             }
+            by_path.insert(path.to_string(), status);
         }
         Ok(Self { by_path })
+    }
+
+    /// index にケース違いの2エントリがあると、大文字小文字を区別しない
+    /// ファイルシステムでは実ファイルが1つしかなく、libgit2 は余った方を
+    /// 削除として報告する(git 本体は clean)。
+    fn drop_deletion_still_on_disk(status: Status, workdir: Option<&Path>, path: &str) -> Status {
+        let still_there =
+            status.is_wt_deleted() && workdir.is_some_and(|workdir| workdir.join(path).is_file());
+        if still_there {
+            status.difference(Status::WT_DELETED)
+        } else {
+            status
+        }
     }
 
     /// path(worktree ルートからの相対パス)に対する git2 の生の status
