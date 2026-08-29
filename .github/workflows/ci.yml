@@ -15,5 +15,11 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+      # 保存を main に限るのは、PR ブランチごとのキャッシュがリポジトリの容量枠を
+      # 食い合うため。PR は main が保存したものを読めば足りる。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings

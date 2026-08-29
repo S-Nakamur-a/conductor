@@ -53,6 +53,12 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
 
+      # matrix の値はキャッシュキーに自動では入らないので、3 ターゲットが同じ
+      # キャッシュを奪い合わないよう target を明示する。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
