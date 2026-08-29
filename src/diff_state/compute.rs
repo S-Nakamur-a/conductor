@@ -205,12 +205,10 @@ impl DiffState {
     ) -> Result<Vec<FileDiff>> {
         let mut file_diffs = Vec::new();
 
-        // スキップするデルタのインデックス集合を作る: 大文字小文字だけ異なり
-        // 内容が同一のパス。大文字小文字を区別しないファイルシステム(macOS)では、
-        // ファイル内容が同一でもパスの大文字小文字だけが異なる削除+追加のペア
-        // (例: "Photo.png" 削除、"photo.png" 追加)を git が報告することがある。
-        // blob の OID と小文字化したパスを比較してこれらのペアを検出する。
-        let skip_indices = Self::find_case_only_rename_indices(diff);
+        // 大文字小文字を区別しないファイルシステム(macOS)で libgit2 が報告する、
+        // 実体の無いデルタを落とす。
+        let mut skip_indices = Self::find_case_only_rename_indices(diff);
+        skip_indices.extend(Self::find_phantom_deletion_indices(repo, diff));
 
         let num_deltas = diff.deltas().len();
         for delta_idx in 0..num_deltas {
@@ -407,6 +405,36 @@ impl DiffState {
                 }
             }
         }
+    }
+
+    /// 削除されたと報告されたが workdir にファイルとして実在するパスの、
+    /// デルタのインデックスを見つける。
+    ///
+    /// index に大文字小文字だけが異なる2つのエントリ("Instagram.png" と
+    /// "instagram.png")がある場合、大文字小文字を区別しないファイルシステムでは
+    /// ディスク上の実ファイルは1つしかない。libgit2 はそれを片方のエントリに
+    /// だけ対応付け、もう片方を削除として報告するが、git 本体は同じ状態を
+    /// clean と判断する。この食い違いは DiffOptions では消せない(ignore_case
+    /// はデルタの並び順を変えるだけで、対応付けそのものは変わらない)ので、
+    /// 削除の報告とディスクの実体が矛盾するデルタをここで落とす。
+    ///
+    /// 判定にファイルの実在を使うので、大文字小文字を区別するファイルシステムでは
+    /// 別ケースのパスは見つからず、本物の削除はそのまま残る。
+    fn find_phantom_deletion_indices(
+        repo: &Repository,
+        diff: &git2::Diff<'_>,
+    ) -> std::collections::HashSet<usize> {
+        let Some(workdir) = repo.workdir() else {
+            return std::collections::HashSet::new();
+        };
+        diff.deltas()
+            .enumerate()
+            .filter(|(_, delta)| delta.status() == git2::Delta::Deleted)
+            .filter_map(|(idx, delta)| {
+                let path = delta.old_file().path()?;
+                workdir.join(path).is_file().then_some(idx)
+            })
+            .collect()
     }
 
     /// 大文字小文字だけ異なるリネームのペア(パスが大文字小文字のみ異なり、

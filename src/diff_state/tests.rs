@@ -989,3 +989,84 @@ fn binary_file_stays_listed_without_line_counts() {
     assert_eq!((f.added_lines, f.deleted_lines), (0, 0));
     assert!(f.hunks.is_empty());
 }
+
+/// dir を含むファイルシステムが大文字小文字を区別しないかを実測する。
+fn fs_ignores_case(dir: &std::path::Path) -> bool {
+    let probe = dir.join("CaseProbe");
+    std::fs::write(&probe, b"").unwrap();
+    let ignores = dir.join("caseprobe").is_file();
+    std::fs::remove_file(&probe).unwrap();
+    ignores
+}
+
+/// リグレッション: index にパスの大文字小文字だけが異なる2つのエントリ
+/// ("Instagram.png" と "instagram.png") があるリポジトリを、大文字小文字を
+/// 区別しないファイルシステムに置いた場合。ディスク上の実ファイルは1つしか
+/// なく git 本体は clean と報告するが、libgit2 は実ファイルを片方の
+/// エントリにだけ対応付け、もう片方を削除として報告していた。
+#[test]
+fn test_case_colliding_entry_not_reported_as_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    if !fs_ignores_case(dir.path()) {
+        // 大文字小文字を区別するファイルシステムでは2つのエントリが別々の
+        // 実ファイルになり、この食い違い自体が起きない。
+        return;
+    }
+
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    let blob = repo.blob(b"image data\n").unwrap();
+    let mut tb = repo.treebuilder(None).unwrap();
+    tb.insert("Instagram.png", blob, 0o100644).unwrap();
+    tb.insert("instagram.png", blob, 0o100644).unwrap();
+    let tree_oid = tb.write().unwrap();
+    let tree = repo.find_tree(tree_oid).unwrap();
+    let sig = test_signature();
+    repo.commit(
+        Some("refs/heads/main"),
+        &sig,
+        &sig,
+        "both cases",
+        &tree,
+        &[],
+    )
+    .unwrap();
+    repo.set_head("refs/heads/main").unwrap();
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+
+    let files = changed_files(dir.path(), "main");
+
+    assert!(
+        files.is_empty(),
+        "case-colliding index entry should not be reported as a change, got: {:?}",
+        files
+            .iter()
+            .map(|f| (&f.path, f.added_lines, f.deleted_lines))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 本物の削除は、大文字小文字を区別しないファイルシステムでも残る。
+/// 実在判定でケース衝突の偽デルタを落とす際に、巻き添えにしてはならない。
+#[test]
+fn test_real_deletion_still_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    let blob = repo.blob(b"image data\n").unwrap();
+    let mut tb = repo.treebuilder(None).unwrap();
+    tb.insert("Instagram.png", blob, 0o100644).unwrap();
+    let tree_oid = tb.write().unwrap();
+    let tree = repo.find_tree(tree_oid).unwrap();
+    let sig = test_signature();
+    repo.commit(Some("refs/heads/main"), &sig, &sig, "init", &tree, &[])
+        .unwrap();
+    repo.set_head("refs/heads/main").unwrap();
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+
+    std::fs::remove_file(dir.path().join("Instagram.png")).unwrap();
+
+    let paths = changed_paths(dir.path(), "main");
+
+    assert_eq!(paths, vec!["Instagram.png".to_string()]);
+}
