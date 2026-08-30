@@ -11,7 +11,7 @@ use crate::review_state::ReviewInputMode;
 use crate::review_store::CommentKind;
 
 use crate::event::clipboard_paste;
-use crate::event::explorer::submit_new_comment;
+use crate::explorer::input::submit_new_comment;
 
 use super::overlay_list_nav;
 

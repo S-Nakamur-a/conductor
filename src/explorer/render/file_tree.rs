@@ -132,7 +132,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 }
             };
             let hover = app.list_hover.explorer_tree.phase(vis_idx);
-            let style = crate::ui::common::list_row::row_style(
+            let style = crate::explorer::list_row::row_style(
                 theme,
                 base_fg,
                 vis_idx == selected_vis_idx,
@@ -140,7 +140,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
                 hover,
             );
 
-            let decoration = crate::ui::common::list_row::decoration_style(style);
+            let decoration = crate::explorer::list_row::decoration_style(style);
             // アイコンの色はファイル種別を表すが、選択行と減光対象の行では行の色に
             // 譲る。選択の背景色の上で種別色が読める保証は11テーマぶんには無く、
             // untracked/ignored の減光はアイコンにも及ぶべきだからである。

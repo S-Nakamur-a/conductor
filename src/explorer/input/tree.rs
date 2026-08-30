@@ -4,14 +4,14 @@
 use crossterm::event::KeyEvent;
 
 use crate::app::{App, Focus};
+use crate::explorer::ExplorerBottomView;
 use crate::keymap::{Action, KeyContext};
-use crate::viewer::ExplorerBottomView;
 
 use super::comment_list::handle_explorer_comment_list_key;
 use super::diff_list::handle_explorer_diff_list_key;
 
 /// Explorer パネルがフォーカスされているときのキーを処理する。
-pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+pub fn handle_explorer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     if app.explorer.tree.file_tree.is_empty() {
         app.refresh_viewer();
     }

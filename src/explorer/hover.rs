@@ -1,6 +1,6 @@
 //! Explorer の 2 つのリストのマウスホバー追跡。
 
-use crate::ui::common::list_row::HoverRow;
+use crate::explorer::list_row::HoverRow;
 
 /// どの行にマウスが乗っているかと、いま離れた行のフェードアウト状態。
 ///

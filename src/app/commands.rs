@@ -250,7 +250,7 @@ impl App {
     }
 
     fn cmd_show_review_comments(&mut self) {
-        self.explorer.bottom_view = crate::viewer::ExplorerBottomView::Comments;
+        self.explorer.bottom_view = crate::explorer::ExplorerBottomView::Comments;
         self.explorer.focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
@@ -298,13 +298,13 @@ impl App {
     }
 
     fn cmd_show_diff_list(&mut self) {
-        self.explorer.bottom_view = crate::viewer::ExplorerBottomView::DiffList;
+        self.explorer.bottom_view = crate::explorer::ExplorerBottomView::DiffList;
         self.explorer.focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
     fn cmd_show_comment_list(&mut self) {
-        self.explorer.bottom_view = crate::viewer::ExplorerBottomView::Comments;
+        self.explorer.bottom_view = crate::explorer::ExplorerBottomView::Comments;
         self.explorer.focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }

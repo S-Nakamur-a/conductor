@@ -186,7 +186,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 // ファイル行と違って span を分ける必要がない。
                 let prefix = format!("  {indent}{arrow} {} ", icon.glyph(icon_set));
 
-                let style = crate::ui::common::list_row::row_style(
+                let style = crate::explorer::list_row::row_style(
                     theme,
                     theme.info,
                     idx == vs_explorer.diff_list_selected,
@@ -197,7 +197,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 // prefix を切り離すことで、hover 時の下線が名前の位置で
                 // 止まるようにする（list_row::decoration_style を参照）。
                 Some(ListItem::new(Line::from(vec![
-                    Span::styled(prefix, crate::ui::common::list_row::decoration_style(style)),
+                    Span::styled(prefix, crate::explorer::list_row::decoration_style(style)),
                     Span::styled(name.clone(), style),
                 ])))
             }
@@ -224,7 +224,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 let stage_state =
                     file_stage_state(app.explorer.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
-                let style = crate::ui::common::list_row::row_style(
+                let style = crate::explorer::list_row::row_style(
                     theme,
                     base_fg,
                     idx == vs_explorer.diff_list_selected,
@@ -233,7 +233,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 );
                 // ファイル名以外の部分 — インデント、アイコン、行数 — は
                 // hover の下線を外し、下線がファイル名だけに付くようにする。
-                let decoration = crate::ui::common::list_row::decoration_style(style);
+                let decoration = crate::explorer::list_row::decoration_style(style);
                 // 行の背景/選択スタイルは style（row_style 経由）から来るが、
                 // +added/-deleted はステージ状態に関わらず自前の前景色を保つ
                 // ため、ラベルに焼き込まず別の span に分けている。
@@ -278,7 +278,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
             }
             DiffListEntry::Summary {} => {
                 let selected = idx == vs_explorer.diff_list_selected;
-                let mut style = crate::ui::common::list_row::row_style(
+                let mut style = crate::explorer::list_row::row_style(
                     theme,
                     theme.accent,
                     selected,
@@ -293,7 +293,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 Some(ListItem::new(Line::from(vec![
                     Span::styled(
                         "  \u{25A3} ",
-                        crate::ui::common::list_row::decoration_style(style),
+                        crate::explorer::list_row::decoration_style(style),
                     ),
                     Span::styled("SUMMARY", style),
                 ])))

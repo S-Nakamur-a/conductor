@@ -5,10 +5,11 @@
 //!
 //! [ViewerState] とそのサブ構造体は [state] にある。振る舞いは関心事ごとに
 //! 他のサブモジュールへ分割されている（[content] はファイルを開く処理、
-//! [tree] はファイルツリーの走査・展開、[search] はファイル内検索とファイル名検索、
+//! [search] はファイル内検索とファイル名検索、
 //! [diff_view] は unified diff 表示、[highlight] は syntect によるシンタックスハイライト、
 //! [selection] はガター行選択、[fold] はコードブロックの折りたたみ、
-//! [tabs] は複数ファイルを同時に開くためのタブ）。
+//! [tabs] は複数ファイルを同時に開くためのタブ）。ファイルツリーの走査・展開は
+//! [crate::explorer::tree] にある。
 
 mod content;
 mod diff_view;
@@ -20,7 +21,6 @@ mod search;
 mod selection;
 mod state;
 mod tabs;
-mod tree;
 
 pub use file_tree::FileTreeEntry;
 pub use fold::{FoldDepth, FoldRule, FoldState};

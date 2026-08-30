@@ -57,7 +57,7 @@ pub struct RevidereState {
     pub list_area: ratatui::layout::Rect,
     pub diff_area: ratatui::layout::Rect,
     /// Changed files パネル右上の状態チップにマウスが乗っているか。
-    /// 当たり判定は描画側 ([crate::ui::explorer_panel::revidere_badge_cols]) が
+    /// 当たり判定は描画側 ([crate::explorer::render::revidere_badge_cols]) が
     /// 持っていて、ここに残るのは光らせるかどうかだけ。
     pub badge_hover: bool,
 }

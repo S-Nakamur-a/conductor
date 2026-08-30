@@ -8,8 +8,8 @@ use std::rc::Rc;
 use crate::git_engine::status_map::GitStatusMap;
 use crate::icons::{dir_icon, file_icon};
 
-use super::file_tree::FileTreeEntry;
-use super::state::{ExplorerState, FilenameSearchState};
+use super::ExplorerState;
+use crate::viewer::{FileTreeEntry, FilenameSearchState};
 
 /// ツリーを読み直した結果、Viewer 側でやるべきこと。
 ///

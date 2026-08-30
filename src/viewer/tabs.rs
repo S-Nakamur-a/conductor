@@ -231,8 +231,8 @@ impl ViewerState {
 
 #[cfg(test)]
 mod tests {
-    use super::super::state::ExplorerState;
     use super::*;
+    use crate::explorer::ExplorerState;
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("tabs_{name}_{}", std::process::id()));

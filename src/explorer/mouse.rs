@@ -1,9 +1,10 @@
 //! Explorerカラム（ファイルツリー / 差分リスト / コメントリスト）のクリック処理。
 
 use crate::app::{App, Focus};
+use crate::event::mouse::{ClickGeometry, register_double_click_on};
+use crate::explorer::ExplorerBottomView;
 
-use super::super::explorer::navigate_to_comment_with_focus;
-use super::{ClickGeometry, register_double_click_on};
+use super::input::navigate_to_comment_with_focus;
 
 /// /conductor:address-conductor-comment 経由で未対応コメントを全てClaudeに送る（IDなし＝一括モード）。
 fn ask_claude_all_comments(app: &mut App) {
@@ -37,7 +38,7 @@ fn ask_claude_all_comments(app: &mut App) {
 ///
 /// クリックハンドラとホバートラッカー（event/mouse/mod.rs の Moved）の両方から使われる。
 /// これにより、ハイライトされた行とクリックで開かれる行が食い違うことは構造的にあり得ない。
-pub(super) fn explorer_tree_row_at(
+pub fn explorer_tree_row_at(
     geom: &ClickGeometry,
     scroll: usize,
     col: u16,
@@ -81,7 +82,7 @@ pub(super) fn explorer_tree_row_at(
 /// あるが display_list には含まれないため、各エントリはインデックスが示す位置より
 /// その分だけ下にずれる。このオフセットは両方の呼び出し側が必要とするため、
 /// 呼び出し側ではなくここに置いている。
-pub(super) fn diff_list_row_at(
+pub fn diff_list_row_at(
     geom: &ClickGeometry,
     scroll: usize,
     banner_rows: usize,
@@ -109,12 +110,7 @@ pub(super) fn diff_list_row_at(
 }
 
 /// Explorerカラム（ファイルツリー / 差分リスト / コメントリスト）内の左クリックを処理する。
-pub(super) fn handle_explorer_column_click(
-    app: &mut App,
-    col: u16,
-    row: u16,
-    geom: &ClickGeometry,
-) {
+pub fn handle_explorer_column_click(app: &mut App, col: u16, row: u16, geom: &ClickGeometry) {
     let main_area = geom.main_area;
     let explorer_mid_y = geom.explorer_mid_y;
     let explorer_end = geom.explorer_end;
@@ -127,9 +123,7 @@ pub(super) fn handle_explorer_column_click(
 
         // 下枠の「✨ Ask Claude All」ボタンへのクリックかを確認する。
         let bottom_border_y = main_area.y + main_area.height.saturating_sub(1);
-        if row == bottom_border_y
-            && app.explorer.bottom_view == crate::viewer::ExplorerBottomView::Comments
-        {
+        if row == bottom_border_y && app.explorer.bottom_view == ExplorerBottomView::Comments {
             // 「 ✨ Ask Claude All 」は右揃えで、右端から約19文字。
             let ask_label_w = 19_u16;
             let ask_start_col = explorer_end.saturating_sub(ask_label_w + 1);
@@ -143,7 +137,7 @@ pub(super) fn handle_explorer_column_click(
         if row >= inner_y {
             let click_offset = (row - inner_y) as usize;
 
-            if app.explorer.bottom_view == crate::viewer::ExplorerBottomView::Comments {
+            if app.explorer.bottom_view == ExplorerBottomView::Comments {
                 // コメントリストが表示されている場合 — コメント選択を処理する。
                 let idx = app.explorer.comment_list_scroll + click_offset;
                 let row_count = app.review_state.comment_list_rows.len();
@@ -165,7 +159,7 @@ pub(super) fn handle_explorer_column_click(
                         navigate_to_comment_with_focus(app, comment_idx, is_double);
                     }
                 }
-            } else if app.explorer.bottom_view == crate::viewer::ExplorerBottomView::DiffList {
+            } else if app.explorer.bottom_view == ExplorerBottomView::DiffList {
                 // 差分リストが表示されている場合 — 差分選択を処理する。
                 let scroll = app.explorer.diff_list_scroll;
                 let banner = app.explorer.diff_banner_rows;

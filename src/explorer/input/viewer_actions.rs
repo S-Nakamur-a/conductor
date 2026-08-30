@@ -7,7 +7,7 @@ use crate::review_state::ReviewInputMode;
 use crate::review_store::{Author, CommentKind};
 
 /// Viewer からレビューコメント入力欄を開き、位置をプレフィルする。
-pub(in crate::event) fn open_viewer_comment(app: &mut App) {
+pub fn open_viewer_comment(app: &mut App) {
     let file_path = match app.viewer.content.current_file.clone() {
         Some(p) => p,
         None => return,
@@ -32,7 +32,7 @@ pub(in crate::event) fn open_viewer_comment(app: &mut App) {
 }
 
 /// Viewer パネルから、現在行のコメント詳細モーダルを開く。
-pub(in crate::event) fn open_viewer_comment_detail(app: &mut App) {
+pub fn open_viewer_comment_detail(app: &mut App) {
     // カーソルがどの行にあるかを求める (プレビューと同じロジック)。
     let cursor_line = if let Some((start, _)) = app.viewer.selected_range() {
         start
@@ -75,7 +75,7 @@ pub(in crate::event) fn open_viewer_comment_detail(app: &mut App) {
 /// 入力バッファをパースして新しいレビューコメントを追加する。
 ///
 /// フォーマット: [s:|q:]file_path:line[-end] body_text
-pub(in crate::event) fn submit_new_comment(app: &mut App, input: &str) {
+pub fn submit_new_comment(app: &mut App, input: &str) {
     let input = input.trim();
     if input.is_empty() {
         app.review_state.status_message = Some("Empty input, cancelled.".to_string());

@@ -9,10 +9,9 @@
 
 mod clipboard;
 mod dialogs;
-mod explorer;
 mod global;
 pub(crate) mod input_target;
-mod mouse;
+pub(crate) mod mouse;
 mod overlay;
 mod overlay_helpers;
 mod paste;
@@ -30,21 +29,22 @@ use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
 use self::dialogs::{handle_publish_confirm_key, handle_update_key};
-use self::explorer::handle_explorer_comment_list_key;
-use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
 use self::overlay::*;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use self::viewer::handle_viewer_key;
 use self::worktree::handle_worktree_key;
+use crate::explorer::input::{handle_explorer_comment_list_key, handle_explorer_key};
 use crate::reflow::key::handle_reflow_key;
 
 // 元は crate::event::X だったが、今は隣接するサブモジュールへ移った項目を
 // re-export する。こうすることで、隣接モジュール側の既存の super::X 参照が
 // 変更なしに解決され続ける。
 pub(in crate::event) use self::clipboard::clipboard_paste;
-pub(in crate::event) use self::overlay_helpers::open_filename_search;
-pub(in crate::event) use self::scroll::{adjust_diff_list_scroll, adjust_tree_scroll};
+// explorer が独立モジュールへ移った後も、そちらの tree.rs / diff_list.rs から
+// 引き続き呼べるよう crate 全体へ公開する。
+pub(crate) use self::overlay_helpers::open_filename_search;
+pub(crate) use self::scroll::{adjust_diff_list_scroll, adjust_tree_scroll};
 
 // 有効なオーバーレイ
 

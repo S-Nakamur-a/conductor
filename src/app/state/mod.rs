@@ -11,7 +11,6 @@
 mod appearance;
 mod bars;
 mod code_nav;
-mod hover;
 mod layout;
 mod panel_number;
 mod publish;
@@ -25,7 +24,6 @@ pub use crate::revidere::state::RevidereState;
 pub use appearance::{Highlighting, ThemeSelection};
 pub use bars::WtbarState;
 pub use code_nav::CodeNav;
-pub use hover::ListHover;
 pub use layout::PanelLayout;
 pub use panel_number::PanelNumberOverlay;
 pub use publish::PublishState;

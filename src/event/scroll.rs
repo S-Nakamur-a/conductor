@@ -5,7 +5,7 @@
 use crate::app::App;
 
 /// tree_selected が見える位置に収まるよう tree_scroll を調整する。
-pub(in crate::event) fn adjust_tree_scroll(app: &mut App) {
+pub(crate) fn adjust_tree_scroll(app: &mut App) {
     let visible = app.explorer.visible_indices();
     let cur_vis = visible
         .iter()
@@ -22,7 +22,7 @@ pub(in crate::event) fn adjust_tree_scroll(app: &mut App) {
 }
 
 /// diff_list_selected が見える位置に収まるよう diff_list_scroll を調整する。
-pub(in crate::event) fn adjust_diff_list_scroll(app: &mut App) {
+pub(crate) fn adjust_diff_list_scroll(app: &mut App) {
     let selected = app.explorer.diff_list_selected;
     let page_size = app.explorer.diff_list_height.max(1);
 

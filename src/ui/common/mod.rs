@@ -6,7 +6,6 @@
 //! 1ファイル（[title_bar], [status_bar], [worktree_label]）。
 
 mod color;
-pub mod list_row;
 mod panel_chrome;
 mod pty;
 mod status_bar;

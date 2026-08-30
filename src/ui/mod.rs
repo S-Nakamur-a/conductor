@@ -5,7 +5,6 @@
 pub mod common;
 pub mod decoration;
 pub mod editor_panel;
-pub mod explorer_panel;
 pub mod markdown;
 pub mod tab_bar;
 pub mod terminal_claude;

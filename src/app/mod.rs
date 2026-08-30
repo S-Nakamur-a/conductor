@@ -18,8 +18,8 @@ mod review_history;
 mod review_publish;
 mod state;
 pub use state::{
-    CodeNav, Highlighting, ListHover, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
-    RevidereState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WorktreeList, WtbarState,
+    CodeNav, Highlighting, PanelLayout, PanelNumberOverlay, PublishState, RepoState, RevidereState,
+    SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WorktreeList, WtbarState,
 };
 mod terminal;
 mod terminal_cc_state;
@@ -41,6 +41,8 @@ use std::path::PathBuf;
 
 use crate::config;
 use crate::diff_state::DiffState;
+use crate::explorer::ExplorerState;
+use crate::explorer::hover::ListHover;
 use crate::git_engine;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
@@ -50,7 +52,7 @@ use crate::review_state::ReviewState;
 use crate::review_store::ReviewStore;
 use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
-use crate::viewer::{ExplorerState, ViewerState};
+use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
 pub use crate::types::Focus;

@@ -6,8 +6,8 @@ use crossterm::event::{KeyModifiers, MouseEvent};
 
 use crate::app::{App, Focus, StatusLevel};
 
-use super::super::explorer::open_viewer_comment;
 use super::{ClickGeometry, resolve_screen_line};
+use crate::explorer::input::open_viewer_comment;
 
 /// address-conductor-comment スキル経由で、アクティブなClaude CodeのPTYにコメントを送る。
 fn ask_claude_about_comment(app: &mut App, comment_id: &str) {

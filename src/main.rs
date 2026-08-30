@@ -15,6 +15,7 @@ mod diff_state;
 mod event;
 mod event_loop;
 mod event_loop_timers;
+mod explorer;
 mod file_watcher;
 mod gemini_api;
 mod git_engine;

@@ -265,8 +265,8 @@ pub fn is_markdown_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::state::ExplorerState;
     use super::*;
+    use crate::explorer::ExplorerState;
 
     /// ファイルの中身はワークツリーの実ファイルから読む。git を一切経由しないので
     /// .git の無いディレクトリでも、git 管理下の未追跡・未コミットのファイルでも

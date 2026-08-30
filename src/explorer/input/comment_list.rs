@@ -8,10 +8,7 @@ use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::CommentListRow;
 
-pub(in crate::event) fn handle_explorer_comment_list_key(
-    app: &mut App,
-    key: KeyEvent,
-) -> Option<KeyEvent> {
+pub fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let row_count = app.review_state.comment_list_rows.len();
     let action = app.keymap.resolve(&key, KeyContext::ExplorerCommentList);
 
@@ -171,7 +168,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
 /// 指定インデックスのコメントのファイルと行へ移動する。
 /// focus_viewer が true ならフォーカスを Viewer パネルへ移す。
 /// そうでなければ現在のパネルフォーカスを維持する (コメント一覧など)。
-pub(in crate::event) fn navigate_to_comment_with_focus(
+pub(in crate::explorer) fn navigate_to_comment_with_focus(
     app: &mut App,
     comment_idx: usize,
     focus_viewer: bool,

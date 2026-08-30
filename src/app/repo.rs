@@ -1,9 +1,10 @@
 //! リポジトリの選択とキャッシュされたworktree一覧: 既知のリポジトリ間の
 //! 切り替え、任意パスのオープン、gitからのworktree/ブランチ状態のリフレッシュ。
 
+use crate::explorer::ExplorerState;
 use crate::git_engine;
 use crate::review_store::{self, ReviewStore};
-use crate::viewer::{ExplorerState, ViewerState};
+use crate::viewer::ViewerState;
 
 use super::{App, StatusLevel};
 

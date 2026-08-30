@@ -72,7 +72,7 @@ impl App {
     }
 
     pub(super) fn cmd_delete_comment(&mut self) {
-        if self.explorer.bottom_view == crate::viewer::ExplorerBottomView::Comments
+        if self.explorer.bottom_view == crate::explorer::ExplorerBottomView::Comments
             && self.explorer.focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {
@@ -83,7 +83,7 @@ impl App {
     }
 
     pub(super) fn cmd_toggle_comment_resolve(&mut self) {
-        if self.explorer.bottom_view == crate::viewer::ExplorerBottomView::Comments
+        if self.explorer.bottom_view == crate::explorer::ExplorerBottomView::Comments
             && self.explorer.focus_on_diff_list
             && !self.review_state.comment_list_rows.is_empty()
         {

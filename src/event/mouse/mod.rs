@@ -4,18 +4,20 @@
 //! モジュールで共有するヒットテスト用ジオメトリ（ClickGeometry/Column）、
 //! ダブルクリック判定のヘルパーを持つ。各サブモジュールはレイアウトの1領域を
 //! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[worktree_panel]、
-//! [explorer_panel]、[viewer_panel]、[terminal_panel]、そして [scroll]
-//! （全パネル共通のホイールスクロール）。
+//! [viewer_panel]、[terminal_panel]、そして [scroll]（全パネル共通の
+//! ホイールスクロール）。Explorer カラムのクリック処理は [crate::explorer::mouse]
+//! にある。
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::{App, Focus};
+use crate::explorer::input::open_viewer_comment;
+use crate::explorer::mouse::{
+    diff_list_row_at, explorer_tree_row_at, handle_explorer_column_click,
+};
 use crate::overlay::ActiveOverlay;
 
-use super::explorer::open_viewer_comment;
-
 mod bars;
-mod explorer_panel;
 mod scroll;
 mod terminal_panel;
 mod viewer_panel;
@@ -25,7 +27,6 @@ mod worktree_panel;
 mod tests;
 
 use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
-use explorer_panel::{diff_list_row_at, explorer_tree_row_at, handle_explorer_column_click};
 use scroll::handle_mouse_scroll;
 use terminal_panel::handle_terminal_column_click;
 use viewer_panel::handle_viewer_column_click;
@@ -73,7 +74,9 @@ fn register_double_click(last: &mut std::time::Instant, now: std::time::Instant)
 
 /// [register_double_click] と同様だが、さらにクリックが前回と同じ idx に
 /// 当たっていることを要求する。*last と *last_idx の両方を更新する。
-fn register_double_click_on(
+///
+/// crate::explorer::mouse からも呼ばれるため crate 全体に公開している。
+pub(crate) fn register_double_click_on(
     last: &mut std::time::Instant,
     last_idx: &mut usize,
     idx: usize,
@@ -250,17 +253,17 @@ fn has_blocking_overlay(app: &App) -> bool {
 /// Changed files パネル右上の revidere 状態チップの上にセル (col, row) があるか。
 ///
 /// クリックとホバーの両方がここを通るので、光っている場所と押せる場所は
-/// 構造的にずれない。矩形は描画側と同じ [crate::ui::explorer_panel::revidere_badge_cols]
+/// 構造的にずれない。矩形は描画側と同じ [crate::explorer::render::revidere_badge_cols]
 /// から引く。埋め込みエディタが出ている間は Explorer カラムがその PTY に隠れる
 /// ので、チップも無いものとして扱う。
 fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
     if app.editor.is_some()
         || row != geom.explorer_mid_y
-        || app.explorer.bottom_view != crate::viewer::ExplorerBottomView::DiffList
+        || app.explorer.bottom_view != crate::explorer::ExplorerBottomView::DiffList
     {
         return false;
     }
-    crate::ui::explorer_panel::revidere_badge_cols(app, geom.left_end, geom.explorer_w)
+    crate::explorer::render::revidere_badge_cols(app, geom.left_end, geom.explorer_w)
         .is_some_and(|cols| cols.contains(&col))
 }
 
@@ -292,18 +295,20 @@ enum Column {
 /// [handle_mouse_event] の冒頭でレイアウトキャッシュからスナップショットする。
 /// これらの値をまとめておくことで、各カラムのクリックハンドラが長い引数リストを
 /// 取らずに済む。
+///
+/// crate::explorer::mouse からも参照するため crate 全体に公開している。
 #[derive(Debug, Clone, Copy)]
-struct ClickGeometry {
-    main_area: ratatui::layout::Rect,
-    left_w: u16,
-    explorer_w: u16,
-    viewer_w: u16,
-    left_end: u16,
-    explorer_end: u16,
-    viewer_end: u16,
-    explorer_mid_y: u16,
-    terminal_claude_y: u16,
-    terminal_split_y: u16,
+pub(crate) struct ClickGeometry {
+    pub(crate) main_area: ratatui::layout::Rect,
+    pub(crate) left_w: u16,
+    pub(crate) explorer_w: u16,
+    pub(crate) viewer_w: u16,
+    pub(crate) left_end: u16,
+    pub(crate) explorer_end: u16,
+    pub(crate) viewer_end: u16,
+    pub(crate) explorer_mid_y: u16,
+    pub(crate) terminal_claude_y: u16,
+    pub(crate) terminal_split_y: u16,
 }
 
 impl ClickGeometry {

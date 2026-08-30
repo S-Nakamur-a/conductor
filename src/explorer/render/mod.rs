@@ -47,7 +47,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // この行数を知る必要があるので、どのビューが表示中かを唯一知っている
     // ここから公開する。
     let shows_error_banner = app.explorer.bottom_view
-        == crate::viewer::ExplorerBottomView::DiffList
+        == crate::explorer::ExplorerBottomView::DiffList
         && app.diff_state.error.is_some();
     let banner_rows = diff_list::diff_list_banner_rows(shows_error_banner);
     let diff_inner_height =
@@ -58,10 +58,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     file_tree::render_file_tree(frame, chunks[0], app, focused);
     match app.explorer.bottom_view {
-        crate::viewer::ExplorerBottomView::Comments => {
+        crate::explorer::ExplorerBottomView::Comments => {
             comment_list::render_comment_list(frame, chunks[1], app, focused);
         }
-        crate::viewer::ExplorerBottomView::DiffList => {
+        crate::explorer::ExplorerBottomView::DiffList => {
             diff_list::render_diff_list(frame, chunks[1], app, focused);
         }
     }

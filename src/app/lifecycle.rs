@@ -6,12 +6,13 @@ use std::path::PathBuf;
 
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
+use crate::explorer::ExplorerState;
 use crate::git_engine;
 use crate::keymap::KeyMap;
 use crate::overlay::OverlayManager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
-use crate::viewer::{ExplorerState, ViewerState};
+use crate::viewer::ViewerState;
 use crate::worktree_ops::WorktreeManager;
 
 use super::state::{
