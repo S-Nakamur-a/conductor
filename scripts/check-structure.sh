@@ -31,7 +31,7 @@ check_panel() {
   done
 
   local leftovers
-  leftovers=$(ls -1d src/ui/${panel}* src/event/${panel}* \
+  leftovers=$(ls -1d src/${panel}_*.rs src/ui/${panel}* src/event/${panel}* \
                      src/event/mouse/${panel}* src/app/${panel}* src/app/state/${panel}* 2>/dev/null || true)
   if [ -n "$leftovers" ]; then
     while IFS= read -r f; do [ -n "$f" ] && bad "旧レイヤーに残存: $f"; done <<< "$leftovers"
