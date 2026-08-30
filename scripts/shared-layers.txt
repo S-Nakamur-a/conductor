@@ -12,6 +12,8 @@ src/ui/mod.rs	描画レイヤーの入口
 src/ui/layout/	三列アコーディオンの配置。各パネルの描画はここから呼ばれる
 src/ui/markdown/	Markdown 描画。viewer と reflow が使う
 src/ui/tab_bar.rs	タブ行の描画。viewer と terminal が TabAction ごと共有する
+src/ui/common/	真にパネル横断の UI プリミティブ。PanelChrome は3パネル以上、color と strip::visible_window は2〜3箇所から使う
+src/ui/chrome/	画面全幅のバー（タイトル/ステータス/worktree ラベル）。呼び出し元は src/ui/layout/render.rs のみで、特定パネルの持ち物ではない
 src/event/mod.rs	キーディスパッチの骨組み。6 段のバブリングそのもの
 src/event/input_target.rs	キーを今どの入力欄が持っているかの判定
 src/event/global.rs	どのパネルにフォーカスがあっても効くキー
@@ -19,6 +21,7 @@ src/event/paste.rs	ブラケットペーストの取り込み
 src/event/clipboard.rs	クリップボード操作
 src/event/dialogs.rs	確認ダイアログのキー
 src/event/overlay_helpers.rs	ファイル名検索モーダルの開閉。explorer と viewer の両方から起動する
+src/event/mouse/	マウスディスパッチの骨組み（エントリポイント、ヒットテスト用ジオメトリ、bars/scroll）。パネル別ハンドラは S7/S8/S15/S16 で各パネルの mouse.rs へ抽出済み
 src/app/mod.rs	App 本体。全パネルの状態を持つ
 src/app/types.rs	App が使う型
 src/app/state/	複数パネルに跨る状態
@@ -33,8 +36,6 @@ src/app/appearance.rs	テーマ切り替え
 src/app/code_nav.rs	シンボル/意味索引のバックグラウンド構築の起点だけが残る。App のライフサイクル入口（起動・worktree切替・fs変更）から直接呼ばれるので App 側に置く。本体は src/viewer/code_nav.rs
 
 [移行待ち]
-src/ui/common/	S9 で分割。title/status/worktree_label は chrome。pty は S16 で src/terminal/render/pty.rs へ移設済み
-src/event/mouse/	骨組みとパネル別ハンドラが同居している。パネル別は各パネルの mouse.rs へ
 src/ui/dashboard/	オーバーレイ群。9/12 は特定パネルの持ち物なので所有者へ散らす
 src/event/overlay/	同上。オーバーレイのキー処理を所有者へ散らす
 src/ui/grep_search.rs	grep オーバーレイ。src/grep_search/ へまとめる

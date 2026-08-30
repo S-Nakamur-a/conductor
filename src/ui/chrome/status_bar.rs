@@ -133,7 +133,7 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
     for (label, actions) in entries {
         let chords: Vec<String> = actions
             .iter()
-            .filter_map(|a| representative_chord(keymap, context, *a))
+            .filter_map(|a| crate::ui::common::representative_chord(keymap, context, *a))
             .collect();
         if !chords.is_empty() {
             parts.push(format!("{}: {label}", chords.join("/")));
@@ -144,10 +144,12 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
     // アクションへの入口であり、どのコンテキストのフッターにも含めるべきもの
     // （パレットはPTY越しでも発火するが、? は実際に発火する場所、つまり
     // ターミナル/エディタ以外でのみ表示する）。
-    if let Some(c) = representative_chord(keymap, context, Action::CommandPalette) {
+    if let Some(c) =
+        crate::ui::common::representative_chord(keymap, context, Action::CommandPalette)
+    {
         parts.push(format!("{c}: cmds"));
     }
-    if let Some(c) = representative_chord(keymap, context, Action::ShowHelp) {
+    if let Some(c) = crate::ui::common::representative_chord(keymap, context, Action::ShowHelp) {
         parts.push(format!("{c}: keys"));
     }
 
@@ -157,20 +159,4 @@ pub(super) fn status_bar_hint(focus: crate::app::Focus, keymap: &crate::keymap::
     }
 
     parts.join(" | ")
-}
-
-/// コンテキスト内のアクションに対してユーザに見せるのに最も適したキーコード1つ:
-/// 最短の ASCII のみのもの。macOS の Option グリフのフォールバック（¬, ˙, …）や
-/// その他の非ASCIIキーコードもキーマップを往復はするが画面上では意味をなさないため、
-/// 素のキーコードが存在する限りそちらを優先する。
-pub(crate) fn representative_chord(
-    keymap: &crate::keymap::KeyMap,
-    context: crate::keymap::KeyContext,
-    action: crate::keymap::Action,
-) -> Option<String> {
-    keymap
-        .keys_for_action(context, action)
-        .into_iter()
-        .filter(|c| c.is_ascii())
-        .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
 }

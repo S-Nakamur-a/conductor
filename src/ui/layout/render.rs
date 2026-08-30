@@ -31,7 +31,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let status_area = app.layout.cache.status_area;
 
     // タイトルバー
-    super::super::common::render_title_bar(frame, title_area, app);
+    super::super::chrome::render_title_bar(frame, title_area, app);
 
     // メニューバー（常に表示、タイトル直下）
     crate::menu::render::render(frame, menubar_area, app);
@@ -44,7 +44,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // 並ばないので、ターミナル列も含めてここで打ち切る。
     if app.focus == crate::app::Focus::Revidere {
         crate::revidere::render::render(frame, main_area, app);
-        super::super::common::render_status_bar(frame, status_area, app);
+        super::super::chrome::render_status_bar(frame, status_area, app);
         return;
     }
 
@@ -120,8 +120,8 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         .get(app.worktrees.selected_index())
         .map(|w| w.branch.as_str())
         .unwrap_or("");
-    super::super::common::render_status_bar(frame, status_area, app);
-    super::super::common::render_worktree_label(
+    super::super::chrome::render_status_bar(frame, status_area, app);
+    super::super::chrome::render_worktree_label(
         frame,
         status_area,
         _worktree_branch,

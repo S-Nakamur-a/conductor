@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::color::{format_tokens, name_to_color};
+use crate::ui::common::color::{format_tokens, name_to_color};
 
 /// worktree 名と作業ディレクトリを表示する、画面上部のタイトルバーを描画する。
 pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) {

@@ -2,6 +2,7 @@
 //!
 //! 各サブモジュールは統合レイアウト内の1つのパネルに対応する。
 
+pub mod chrome;
 pub mod common;
 pub mod markdown;
 pub mod tab_bar;

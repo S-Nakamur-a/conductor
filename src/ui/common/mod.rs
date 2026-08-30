@@ -1,26 +1,18 @@
-//! 複数のパネルで共有される UI コンポーネント。
+//! 複数のパネルで共有される、真にパネル横断の UI プリミティブ。
 //!
-//! セッションタブバー、ステータスバーなど再利用可能なウィジェットを提供する。
-//! 責務ごとに分割している: [color]（バッジ/コントラストの色計算）、そして
-//! トップレベルのバー・ウィジェットごとに1ファイル（[title_bar], [status_bar],
-//! [worktree_label]）。PTY 出力の描画は terminal パネルしか使わないので
-//! [crate::terminal::render::pty] にある。
+//! [PanelChrome] は3パネル以上、[color] のバッジ/コントラスト計算と
+//! [strip::visible_window] はそれぞれ2〜3箇所から使う。画面全幅のバー
+//! （タイトルバー・ステータスバー・worktree ラベル）は [crate::ui::chrome]
+//! にある。
 
-mod color;
+pub(crate) mod color;
 mod panel_chrome;
-mod status_bar;
 pub mod strip;
-mod title_bar;
-mod worktree_label;
 
 #[cfg(test)]
 mod tests;
 
 pub use panel_chrome::PanelChrome;
-pub use status_bar::render_status_bar;
-pub(crate) use status_bar::representative_chord;
-pub use title_bar::render_title_bar;
-pub use worktree_label::render_worktree_label;
 
 /// 非同期処理中に使う点字スピナーのフレーム一覧。
 const BRAILLE_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -63,4 +55,21 @@ pub fn revidere_color(
         S::Fresh => theme.success,
         S::Stale => theme.warning,
     }
+}
+
+/// コンテキスト内のアクションに対してユーザに見せるのに最も適したキーコード1つ:
+/// 最短の ASCII のみのもの。macOS の Option グリフのフォールバック（¬, ˙, …）や
+/// その他の非ASCIIキーコードもキーマップを往復はするが画面上では意味をなさないため、
+/// 素のキーコードが存在する限りそちらを優先する。ステータスバーのヒント表示に加え、
+/// コマンドパレットとメニューバーもキー表示にこれを使う。
+pub(crate) fn representative_chord(
+    keymap: &crate::keymap::KeyMap,
+    context: crate::keymap::KeyContext,
+    action: crate::keymap::Action,
+) -> Option<String> {
+    keymap
+        .keys_for_action(context, action)
+        .into_iter()
+        .filter(|c| c.is_ascii())
+        .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
 }
