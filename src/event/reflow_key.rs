@@ -24,7 +24,7 @@ use crate::app::App;
 /// reflow が最新ターンへの再固定と読者の論理位置の復元のどちらを取るか判断
 /// する際に参照するものなので、ここで古いままにしておくと、このビューが
 /// 避けようとしている最下部への強制スナップが復活してしまう。
-pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     use crate::event::reflow::{at_bottom, clamp_scroll};
     use crossterm::event::KeyModifiers;
 
@@ -40,7 +40,7 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
             if bottom {
                 // 最下部 + 単発の down キー → ライブ PTY へ戻る退場スイープを開始。
                 app.request_close_reflow();
-                return;
+                return None;
             }
             app.reflow.scroll = app.reflow.scroll.saturating_add(1);
         }
@@ -52,14 +52,14 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if bottom {
                 app.request_close_reflow();
-                return;
+                return None;
             }
             app.reflow.scroll = app.reflow.scroll.saturating_add(page);
         }
         KeyCode::PageDown => {
             if bottom {
                 app.request_close_reflow();
-                return;
+                return None;
             }
             app.reflow.scroll = app.reflow.scroll.saturating_add(page);
         }
@@ -78,7 +78,7 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
             // ビューを離れることなく最新ターン (論理的な最下部) にスナップし、
             // following を再開して次のリサイズでもそこに留まるようにする。
             app.reflow_jump_to_latest();
-            return;
+            return None;
         }
 
         // 展開 / 折りたたみ
@@ -90,14 +90,14 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.reflow.expanded = !app.reflow.expanded;
             app.reflow.needs_rebuild = true;
-            return;
+            return None;
         }
 
         // 離脱
         KeyCode::Esc => {
             // ライブ PTY へ戻る前に退場スイープを再生する。
             app.request_close_reflow();
-            return;
+            return None;
         }
 
         _ => {} // それ以外のキーはすべて黙って消費する。
@@ -123,4 +123,5 @@ pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) {
     if app.reflow.scroll != old_scroll {
         app.terminal.needs_clear = true;
     }
+    None
 }

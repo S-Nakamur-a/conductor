@@ -7,7 +7,10 @@ use crate::app::{App, StatusLevel};
 
 use crate::event::clipboard_paste;
 
-pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_worktree_input_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     use crate::app::WorktreeInputMode;
 
     match app.worktree_mgr.input_mode {
@@ -152,7 +155,7 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
             // Shift+Enter で改行を挿入する（複数行編集）。
             if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.worktree_mgr.smart_description_buffer.insert_char('\n');
-                return;
+                return None;
             }
             match key.code {
                 KeyCode::Esc => {
@@ -197,4 +200,5 @@ pub(in crate::event) fn handle_worktree_input_key(app: &mut App, key: KeyEvent) 
         }
         WorktreeInputMode::Normal => unreachable!(),
     }
+    None
 }

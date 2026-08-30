@@ -17,7 +17,10 @@ use super::overlay_list_nav;
 
 // オーバーレイ: コメント詳細
 
-pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_comment_detail_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     // keymap 経由でスクロールナビゲーションを処理する。
     if let Some(action) = app.keymap.resolve(&key, KeyContext::Overlay) {
         match action {
@@ -27,13 +30,13 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
                 {
                     app.review_state.comment_detail_scroll += 1;
                 }
-                return;
+                return None;
             }
             Action::NavigateUp => {
                 if app.review_state.comment_detail_scroll > 0 {
                     app.review_state.comment_detail_scroll -= 1;
                 }
-                return;
+                return None;
             }
             _ => {}
         }
@@ -77,11 +80,15 @@ pub(in crate::event) fn handle_comment_detail_key(app: &mut App, key: KeyEvent) 
         }
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: レビュー生成の確認
 
-pub(in crate::event) fn handle_revidere_confirm_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_revidere_confirm_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
             app.confirm_analyze_revidere();
@@ -91,11 +98,12 @@ pub(in crate::event) fn handle_revidere_confirm_key(app: &mut App, key: KeyEvent
         }
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: レビュー入力
 
-pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // 削除確認はテキストフィールドではなく y/n プロンプトなので、先に処理する。
     if app.review_state.input_mode == ReviewInputMode::ConfirmingDelete {
         match key.code {
@@ -107,13 +115,13 @@ pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             }
             _ => {}
         }
-        return;
+        return None;
     }
 
     // Shift+Enter で改行を挿入する（複数行編集）。
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
         app.review_state.input_buffer.insert_char('\n');
-        return;
+        return None;
     }
 
     match key.code {
@@ -189,11 +197,12 @@ pub(in crate::event) fn handle_review_input_key(app: &mut App, key: KeyEvent) {
             app.review_state.input_buffer.handle_key(key);
         }
     }
+    None
 }
 
 // オーバーレイ: レビュー検索
 
-pub(in crate::event) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_review_search_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
             app.review_state.search_active = false;
@@ -223,11 +232,15 @@ pub(in crate::event) fn handle_review_search_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    None
 }
 
 // オーバーレイ: レビューテンプレートピッカー
 
-pub(in crate::event) fn handle_review_template_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_review_template_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     let count = app.review_state.templates.len();
 
     if overlay_list_nav(
@@ -236,7 +249,7 @@ pub(in crate::event) fn handle_review_template_key(app: &mut App, key: KeyEvent)
         &mut app.review_state.template_selected,
         count,
     ) {
-        return;
+        return None;
     }
 
     match key.code {
@@ -275,4 +288,5 @@ pub(in crate::event) fn handle_review_template_key(app: &mut App, key: KeyEvent)
         }
         _ => {}
     }
+    None
 }

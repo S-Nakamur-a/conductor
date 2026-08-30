@@ -13,7 +13,7 @@ use super::overlay_list_nav;
 
 // オーバーレイ: ヘルプ
 
-pub(in crate::event) fn handle_help_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_help_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
             app.overlays.active = ActiveOverlay::None;
@@ -25,11 +25,15 @@ pub(in crate::event) fn handle_help_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('4') => app.overlays.help.context = Focus::TerminalClaude,
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: コマンドパレット
 
-pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_command_palette_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     use crate::command_palette;
 
     let filtered = command_palette::filter_commands(
@@ -45,7 +49,7 @@ pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent)
         &mut app.overlays.command_palette.selected,
         count,
     ) {
-        return;
+        return None;
     }
 
     match key.code {
@@ -80,6 +84,7 @@ pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent)
             }
         }
     }
+    None
 }
 
 // オーバーレイ: テーマピッカー
@@ -90,7 +95,7 @@ pub(in crate::event) fn handle_command_palette_key(app: &mut App, key: KeyEvent)
 /// たびに set_theme(name, false) を呼ぶことで、永続化せずに即座に UI へ反映する。
 /// Enter で選択したテーマを確定・永続化し、Esc でピッカーを開いた時点の
 /// テーマに戻す。
-pub(in crate::event) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let count = app.overlays.theme_picker.themes.len();
 
     if overlay_list_nav(
@@ -108,7 +113,7 @@ pub(in crate::event) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) {
             .cloned()
             .unwrap_or_default();
         app.set_theme(&name, false);
-        return;
+        return None;
     }
 
     match key.code {
@@ -131,4 +136,5 @@ pub(in crate::event) fn handle_theme_picker_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }

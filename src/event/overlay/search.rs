@@ -13,7 +13,10 @@ use super::filterable_overlay_list_nav;
 
 // オーバーレイ: ファイル名検索
 
-pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_filename_search_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
             app.viewer_state.filename_search.filename_search_active = false;
@@ -112,11 +115,12 @@ pub(in crate::event) fn handle_filename_search_key(app: &mut App, key: KeyEvent)
             }
         }
     }
+    None
 }
 
 // オーバーレイ: grep（全文）検索
 
-pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     use crate::search_result_tree::SearchTreeRow;
 
     // 入力/結果どちらにフォーカスがあっても処理するキー
@@ -129,39 +133,39 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.grep_search.cancel();
             }
-            return;
+            return None;
         }
         KeyCode::Tab | KeyCode::BackTab => {
             app.overlays.grep_search.input_focused = !app.overlays.grep_search.input_focused;
-            return;
+            return None;
         }
         // Ctrl+r / Ctrl+i / Ctrl+v / Cmd+Backspace — 常に利用可能。
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlays.grep_search.regex_mode = !app.overlays.grep_search.regex_mode;
             app.overlays.grep_search.schedule();
-            return;
+            return None;
         }
         KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlays.grep_search.case_sensitive = !app.overlays.grep_search.case_sensitive;
             app.overlays.grep_search.schedule();
-            return;
+            return None;
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(app, |a| &mut a.overlays.grep_search.query, false);
             app.overlays.grep_search.input_focused = true;
             app.overlays.grep_search.schedule();
-            return;
+            return None;
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
             app.overlays.grep_search.query.delete_to_line_start();
             app.overlays.grep_search.input_focused = true;
             app.overlays.grep_search.schedule();
-            return;
+            return None;
         }
         // 入力欄で下矢印を押すとフォーカスが結果側に移る。
         KeyCode::Down if app.overlays.grep_search.input_focused => {
             app.overlays.grep_search.input_focused = false;
-            return;
+            return None;
         }
         // Enter — 結果へジャンプするか展開を切り替える（両モードで動作）。
         KeyCode::Enter => {
@@ -198,7 +202,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             } else {
                 app.overlays.grep_search.result_tree.toggle_expand(selected);
             }
-            return;
+            return None;
         }
         _ => {}
     }
@@ -213,7 +217,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 _ => {}
             }
         }
-        return;
+        return None;
     }
 
     // 結果フォーカスモード: vim スタイルのナビゲーション
@@ -222,7 +226,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
             Action::NavigateDown => {
                 let count = app.overlays.grep_search.result_tree.visible_rows().len();
                 if count == 0 {
-                    return;
+                    return None;
                 }
                 let selected = app.overlays.grep_search.selected;
                 if app.overlays.grep_search.result_tree.is_collapsed(selected) {
@@ -237,25 +241,25 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
                 } else if selected + 1 < count {
                     app.overlays.grep_search.selected = selected + 1;
                 }
-                return;
+                return None;
             }
             Action::NavigateUp => {
                 if app.overlays.grep_search.selected > 0 {
                     app.overlays.grep_search.selected -= 1;
                 }
-                return;
+                return None;
             }
             Action::GoToTop => {
                 app.overlays.grep_search.selected = 0;
                 app.overlays.grep_search.scroll = 0;
-                return;
+                return None;
             }
             Action::GoToBottom => {
                 let count = app.overlays.grep_search.result_tree.visible_rows().len();
                 if count > 0 {
                     app.overlays.grep_search.selected = count - 1;
                 }
-                return;
+                return None;
             }
             _ => {}
         }
@@ -339,11 +343,12 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: viewer 検索
 
-pub(in crate::event) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
             app.viewer_state.search.search_active = false;
@@ -371,4 +376,5 @@ pub(in crate::event) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    None
 }

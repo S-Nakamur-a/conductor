@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, UpdateState};
 
-pub(super) fn handle_update_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_update_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match app.update.state {
         UpdateState::Confirming => match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -28,9 +28,10 @@ pub(super) fn handle_update_key(app: &mut App, key: KeyEvent) {
         }
         UpdateState::Restarting | UpdateState::Idle => {}
     }
+    None
 }
 
-pub(super) fn handle_publish_confirm_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_publish_confirm_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             app.confirm_publish_review();
@@ -40,4 +41,5 @@ pub(super) fn handle_publish_confirm_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }

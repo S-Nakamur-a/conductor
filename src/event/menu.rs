@@ -57,7 +57,7 @@ fn rescroll(app: &mut App) {
 
 /// [MenuFocus] がアクティブな間のキーを処理する。呼び出し側は、メニューが
 /// 入力を握っていることをすでに確認済み。
-pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match app.menu.focus {
         MenuFocus::Closed => {}
 
@@ -142,6 +142,7 @@ pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) {
             _ => {}
         },
     }
+    None
 }
 
 /// マウス側からの実行。クリックハンドラと共有し、クリックされた行と Enter で

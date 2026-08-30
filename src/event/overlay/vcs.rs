@@ -13,7 +13,7 @@ use super::{filterable_overlay_list_nav, overlay_list_nav};
 
 // オーバーレイ: cherry-pick
 
-pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let count = app.overlays.cherry_pick.commits.len();
 
     if overlay_list_nav(
@@ -22,7 +22,7 @@ pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
         &mut app.overlays.cherry_pick.selected,
         count,
     ) {
-        return;
+        return None;
     }
 
     match key.code {
@@ -58,11 +58,12 @@ pub(in crate::event) fn handle_cherry_pick_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: switch branch
 
-pub(in crate::event) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let filtered = app.filtered_switch_branches();
     let count = filtered.len();
 
@@ -72,22 +73,19 @@ pub(in crate::event) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
         &mut app.overlays.switch_branch.selected,
         count,
     ) {
-        return;
+        return None;
     }
 
     match key.code {
         KeyCode::Enter => {
             let filtered = app.filtered_switch_branches();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.switch_branch.selected) {
-                let Some(branch) = app
+                let branch = app
                     .overlays
                     .switch_branch
                     .branches
                     .get(original_idx)
-                    .cloned()
-                else {
-                    return;
-                };
+                    .cloned()?;
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.switch_branch.filter.clear();
                 app.create_worktree_from_remote(&branch);
@@ -116,25 +114,24 @@ pub(in crate::event) fn handle_switch_branch_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    None
 }
 
 // オーバーレイ: grab
 
-pub(in crate::event) fn handle_grab_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_grab_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let filtered = app.filtered_grab_branches();
     let count = filtered.len();
 
     if filterable_overlay_list_nav(&app.keymap, &key, &mut app.overlays.grab.selected, count) {
-        return;
+        return None;
     }
 
     match key.code {
         KeyCode::Enter => {
             let filtered = app.filtered_grab_branches();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.grab.selected) {
-                let Some(branch) = app.overlays.grab.branches.get(original_idx).cloned() else {
-                    return;
-                };
+                let branch = app.overlays.grab.branches.get(original_idx).cloned()?;
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.grab.filter.clear();
                 app.execute_grab(&branch);
@@ -163,11 +160,12 @@ pub(in crate::event) fn handle_grab_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    None
 }
 
 // オーバーレイ: prune
 
-pub(in crate::event) fn handle_prune_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_prune_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             app.overlays.active = ActiveOverlay::None;
@@ -180,4 +178,5 @@ pub(in crate::event) fn handle_prune_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }

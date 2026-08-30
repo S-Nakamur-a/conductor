@@ -8,7 +8,10 @@ use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 use crate::review_state::CommentListRow;
 
-pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_explorer_comment_list_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     let row_count = app.review_state.comment_list_rows.len();
     let action = app.keymap.resolve(&key, KeyContext::ExplorerCommentList);
 
@@ -17,7 +20,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: Key
     let in_modal = app.overlays.active == ActiveOverlay::CommentList;
     if in_modal && key.code == KeyCode::Esc {
         app.overlays.active = ActiveOverlay::None;
-        return;
+        return None;
     }
     // Select が実際に位置へジャンプしたときだけモーダルを閉じる — 返信を持つ
     // コメントへの Select はその場でスレッドを開くだけなので、その場合は
@@ -162,6 +165,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(app: &mut App, key: Key
     } else if selected >= app.viewer_state.explorer.comment_list_scroll + page_size {
         app.viewer_state.explorer.comment_list_scroll = selected.saturating_sub(page_size - 1);
     }
+    None
 }
 
 /// 指定インデックスのコメントのファイルと行へ移動する。

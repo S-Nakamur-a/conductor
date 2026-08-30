@@ -11,33 +11,31 @@ use crate::keymap::{Action, KeyContext};
 /// 1 回のスクロールで動かす行数 (j/k)。
 const SCROLL_STEP: usize = 1;
 
-pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
-    let Some(action) = app.keymap.resolve(&key, KeyContext::Revidere) else {
-        return;
-    };
+pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+    let action = app.keymap.resolve(&key, KeyContext::Revidere)?;
     // 画面の切り替えは行き先ごとにキーが分かれているので、どちらの画面から
     // でも同じ結果になる。先に受けてしまってよい。
     match action {
         Action::RevidereShowOverview => {
             app.revidere.show_overview = true;
-            return;
+            return None;
         }
         Action::RevidereShowSections => {
             app.revidere.show_overview = false;
-            return;
+            return None;
         }
         // 区間の切り替えと解析の起動は、どちらの列を出していても同じ意味。
         Action::RevidereToggleScope => {
             app.cmd_toggle_revidere_scope();
-            return;
+            return None;
         }
         Action::AnalyzeRevidere => {
             app.cmd_confirm_analyze_revidere();
-            return;
+            return None;
         }
         Action::ForceAnalyzeRevidere => {
             app.cmd_analyze_revidere(true);
-            return;
+            return None;
         }
         _ => {}
     }
@@ -53,7 +51,7 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
             Action::ExitSubPanel => app.set_focus(Focus::Explorer),
             _ => {}
         }
-        return;
+        return None;
     }
 
     match action {
@@ -75,6 +73,7 @@ pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) {
         Action::ExitSubPanel => app.set_focus(Focus::Explorer),
         _ => {}
     }
+    None
 }
 
 fn section_count(app: &App) -> usize {

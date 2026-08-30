@@ -11,7 +11,7 @@ use super::comment_list::handle_explorer_comment_list_key;
 use super::diff_list::handle_explorer_diff_list_key;
 
 /// Explorer パネルがフォーカスされているときのキーを処理する。
-pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     if app.viewer_state.tree.file_tree.is_empty() {
         app.refresh_viewer();
     }
@@ -22,27 +22,26 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
         Some(Action::ShowDiffList) => {
             app.viewer_state.explorer.explorer_bottom_view = ExplorerBottomView::DiffList;
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
-            return;
+            return None;
         }
         Some(Action::ShowCommentList) => {
             app.viewer_state.explorer.explorer_bottom_view = ExplorerBottomView::Comments;
             app.viewer_state.explorer.explorer_focus_on_diff_list = true;
-            return;
+            return None;
         }
         _ => {}
     }
 
     if app.viewer_state.explorer.explorer_focus_on_diff_list {
-        match app.viewer_state.explorer.explorer_bottom_view {
+        return match app.viewer_state.explorer.explorer_bottom_view {
             ExplorerBottomView::Comments => handle_explorer_comment_list_key(app, key),
             ExplorerBottomView::DiffList => handle_explorer_diff_list_key(app, key),
-        }
-        return;
+        };
     }
 
     let visible = app.viewer_state.visible_indices();
     if visible.is_empty() {
-        return;
+        return None;
     }
 
     let cur_vis = visible
@@ -108,4 +107,5 @@ pub(in crate::event) fn handle_explorer_key(app: &mut App, key: KeyEvent) {
     }
 
     crate::event::adjust_tree_scroll(app);
+    None
 }

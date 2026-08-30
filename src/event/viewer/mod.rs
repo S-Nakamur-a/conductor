@@ -52,25 +52,23 @@ fn handle_tab_action(app: &mut App, action: Option<Action>) -> bool {
 }
 
 /// Viewer パネルがフォーカスされているときのキーを処理する。
-pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // インライン返信の入力モード
     if app.viewer_state.explorer.inline_reply_line.is_some() {
         handle_inline_reply_input(app, key);
-        return;
+        return None;
     }
 
     // Summary 疑似ファイルビューは独自の（シンプルな）スクロールナビゲーションを持つ。
     if app.viewer_state.is_summary() {
-        handle_viewer_summary_mode_key(app, key);
-        return;
+        return handle_viewer_summary_mode_key(app, key);
     }
 
     // レンダリング済み markdown: プロースには行番号がないため、ビュー全体の
     // ナビゲーションのみ有効。以下のすべてより先にチェックする — ヒントを
     // 行番号で解決する g のシンボルヒントプレフィックスも含めて。
     if app.viewer_state.is_showing_rendered_markdown() {
-        handle_viewer_markdown_mode_key(app, key);
-        return;
+        return handle_viewer_markdown_mode_key(app, key);
     }
 
     // 保留中の 'g' キー — シンボルヒントが表示され、2つ目のキーを待っている
@@ -82,17 +80,17 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('d') => {
                 app.code_nav.symbol_hint = Default::default();
                 handle_go_to_definition(app);
-                return;
+                return None;
             }
             KeyCode::Char('i') => {
                 app.code_nav.symbol_hint = Default::default();
                 handle_go_to_implementation(app);
-                return;
+                return None;
             }
             KeyCode::Char('r') => {
                 app.code_nav.symbol_hint = Default::default();
                 handle_find_references(app);
-                return;
+                return None;
             }
             // gK / gh — hover 情報。大文字 K（Vim-LSP の慣習）と "hover" の h。
             // ヒントラベルは常に小文字で、これらの予約キーで始まることはない
@@ -102,7 +100,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('K') | KeyCode::Char('h') => {
                 app.code_nav.symbol_hint = Default::default();
                 handle_show_hover_info(app);
-                return;
+                return None;
             }
             KeyCode::Char('g') => {
                 // gg = 先頭へ移動
@@ -112,16 +110,16 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
                 } else {
                     app.viewer_state.content.file_scroll = 0;
                 }
-                return;
+                return None;
             }
             KeyCode::Esc => {
                 app.code_nav.symbol_hint = Default::default();
-                return;
+                return None;
             }
             KeyCode::Char(c) if c.is_ascii_lowercase() => {
                 // ヒントラベルの1文字目 — ヒント入力モードに入る。
                 app.code_nav.symbol_hint.input.push(c);
-                return;
+                return None;
             }
             _ => {
                 // 未知の2つ目のキー — ヒントを消す。
@@ -136,15 +134,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
     if app.viewer_state.pending_z_key {
         app.viewer_state.pending_z_key = false;
         if !app.viewer_state.diff_view.diff_mode {
-            handle_fold_key(app, key);
-            return;
+            return handle_fold_key(app, key);
         }
     }
 
     // 統合 diff モードは独自のナビゲーションを持つ。
     if app.viewer_state.diff_view.diff_mode {
-        handle_viewer_diff_mode_key(app, key);
-        return;
+        return handle_viewer_diff_mode_key(app, key);
     }
 
     let total = app.viewer_state.content.file_content.len();
@@ -156,31 +152,31 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         } else {
             app.set_focus(crate::app::Focus::Explorer);
         }
-        return;
+        return None;
     }
 
     // ファジーなファイル名ジャンプ — ファイルが開かれていなくても動作するよう
     // 空バッファのガードより前で処理し、ジャンプ後も viewer が最大化されたままになる。
     if let Some(Action::SearchFilename) = action {
         super::open_filename_search(app);
-        return;
+        return None;
     }
 
     // 外部エディタへ引き渡す — ファイルがないときにヒントを出すだけにしたいので
     // 空バッファのガードより前に処理する（何も起きない、ではなく）。
     if let Some(Action::OpenInEditor) = action {
         app.open_in_editor();
-        return;
+        return None;
     }
 
     // タブ操作も空バッファのガードより前へ。読めなかったファイルのタブが
     // 閉じられなくなるのを避ける。
     if handle_tab_action(app, action) {
-        return;
+        return None;
     }
 
     if total == 0 {
-        return;
+        return None;
     }
 
     match action {
@@ -237,6 +233,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 /// 'z' の2打鍵目を処理する（vim の折りたたみ）。
@@ -244,7 +241,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) {
 /// 対象はカーソル行（＝ビューポート最上行）。その行がブロックの見出しでなければ、
 /// それを含む最も内側のブロックが動く — vim の za/zc と同じ。zm/zr だけは行では
 /// なく入れ子の深さを対象にし、その段のブロックをファイル全体でまとめて動かす。
-fn handle_fold_key(app: &mut App, key: KeyEvent) {
+fn handle_fold_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Char('a') => {
             app.viewer_state.fold_toggle_cursor();
@@ -261,6 +258,7 @@ fn handle_fold_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('M') => app.cmd_fold_all(),
         _ => {}
     }
+    None
 }
 
 /// レンダリング済み markdown ビューをナビゲートする: スクロール、両端への
@@ -272,12 +270,12 @@ fn handle_fold_key(app: &mut App, key: KeyEvent) {
 /// もので、レンダリングされたプロースには対応する行番号がない。解決には
 /// 引き続き通常の Viewer コンテキストを使うので、切り替えても両モードで
 /// バインディングは1つのまま。
-pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let total = app.viewer_state.md_total_lines;
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
     if handle_tab_action(app, action) {
-        return;
+        return None;
     }
 
     match action {
@@ -306,13 +304,14 @@ pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 /// Viewer パネルの統合 diff モードでのキー処理。
 /// summary 疑似ファイルビューをナビゲートする: スクロール、両端へのジャンプ、
 /// または Explorer へ抜ける。diff モードのキーコンテキストを再利用するので、
 /// j/k/d/u/g/G/Esc は他の場所と同じように振る舞う。
-pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let total = app.viewer_state.summary_total_lines;
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
@@ -341,9 +340,10 @@ pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
-pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let total = app.viewer_state.diff_view.diff_view_lines.len();
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
@@ -354,38 +354,38 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
             app.viewer_state.exit_diff_mode();
             app.set_focus(crate::app::Focus::Explorer);
         }
-        return;
+        return None;
     }
 
     // ファジーなファイル名ジャンプ — 最大化された diff ビューアからも到達できる。
     if let Some(Action::SearchFilename) = action {
         super::open_filename_search(app);
-        return;
+        return None;
     }
 
     if handle_tab_action(app, action) {
-        return;
+        return None;
     }
 
     // 次/前の変更ファイルへジャンプ（GitHub 風の「次のファイル」）。
     if let Some(Action::NextChangedFile) = action {
         app.jump_to_changed_file(true);
-        return;
+        return None;
     }
     if let Some(Action::PrevChangedFile) = action {
         app.jump_to_changed_file(false);
-        return;
+        return None;
     }
 
     // レビュー対象のファイルを外部エディタへ渡し、手早く手動修正する —
     // 空バッファのガードより前に処理するので、空の diff でも動作する。
     if let Some(Action::OpenInEditor) = action {
         app.open_in_editor();
-        return;
+        return None;
     }
 
     if total == 0 {
-        return;
+        return None;
     }
 
     match action {
@@ -512,4 +512,5 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }

@@ -12,7 +12,7 @@ use super::filterable_overlay_list_nav;
 
 // オーバーレイ: セッション履歴
 
-pub(in crate::event) fn handle_history_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_history_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     if app.overlays.history.search_active {
         match key.code {
             KeyCode::Enter => {
@@ -33,13 +33,13 @@ pub(in crate::event) fn handle_history_key(app: &mut App, key: KeyEvent) {
                 app.overlays.history.search_query.handle_key(key);
             }
         }
-        return;
+        return None;
     }
 
     let count = app.overlays.history.records.len();
 
     if filterable_overlay_list_nav(&app.keymap, &key, &mut app.overlays.history.selected, count) {
-        return;
+        return None;
     }
 
     match key.code {
@@ -57,11 +57,15 @@ pub(in crate::event) fn handle_history_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: Claude セッション再開
 
-pub(in crate::event) fn handle_resume_session_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_resume_session_key(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<KeyEvent> {
     let filtered_count = app.filtered_resume_sessions().len();
 
     if filterable_overlay_list_nav(
@@ -70,22 +74,19 @@ pub(in crate::event) fn handle_resume_session_key(app: &mut App, key: KeyEvent) 
         &mut app.overlays.resume_session.selected,
         filtered_count,
     ) {
-        return;
+        return None;
     }
 
     match key.code {
         KeyCode::Enter => {
             let filtered = app.filtered_resume_sessions();
             if let Some(&(original_idx, _)) = filtered.get(app.overlays.resume_session.selected) {
-                let Some(session) = app
+                let session = app
                     .overlays
                     .resume_session
                     .sessions
                     .get(original_idx)
-                    .cloned()
-                else {
-                    return;
-                };
+                    .cloned()?;
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.resume_session.filter.clear();
                 app.set_status(
@@ -135,4 +136,5 @@ pub(in crate::event) fn handle_resume_session_key(app: &mut App, key: KeyEvent) 
             }
         }
     }
+    None
 }

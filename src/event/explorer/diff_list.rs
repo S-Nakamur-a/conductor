@@ -6,7 +6,7 @@ use crossterm::event::KeyEvent;
 use crate::app::{App, Focus};
 use crate::keymap::{Action, KeyContext};
 
-pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
+pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let count = app.diff_state.display_list.len();
     let action = app.keymap.resolve(&key, KeyContext::ExplorerDiffList);
 
@@ -73,4 +73,5 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) {
     }
 
     crate::event::adjust_diff_list_scroll(app);
+    None
 }

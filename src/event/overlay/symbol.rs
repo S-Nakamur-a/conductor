@@ -11,13 +11,13 @@ use super::overlay_list_nav;
 
 // 参照オーバーレイ
 
-pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let count = app.code_nav.references.rows().len();
     if count == 0 {
         if key.code == KeyCode::Esc {
             app.code_nav.references.active = false;
         }
-        return;
+        return None;
     }
 
     if overlay_list_nav(
@@ -27,7 +27,7 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
         count,
     ) {
         adjust_references_scroll(app);
-        return;
+        return None;
     }
 
     // 選択行がファイルの見出しか、その中の 1 件か。
@@ -37,7 +37,7 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
             path, collapsed, ..
         }) => Ok((path.to_string(), *collapsed)),
         Some(RefRow::Hit { index }) => Err(*index),
-        None => return,
+        None => return None,
     };
 
     match key.code {
@@ -75,6 +75,7 @@ pub(in crate::event) fn handle_references_key(app: &mut App, key: KeyEvent) {
         },
         _ => {}
     }
+    None
 }
 
 fn adjust_references_scroll(app: &mut App) {
@@ -92,7 +93,7 @@ fn adjust_references_scroll(app: &mut App) {
 // シンボルヒントオーバーレイ
 
 /// シンボルヒントオーバーレイがラベルの2文字目の入力を待っている間のキー入力を処理する。
-pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
             app.code_nav.symbol_hint = Default::default();
@@ -112,9 +113,7 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
             let scroll = app.viewer_state.content.file_scroll;
             let pending = app.code_nav.symbol_hint.pending;
             app.code_nav.symbol_hint = Default::default();
-            let Some(hint) = matched else {
-                return;
-            };
+            let hint = matched?;
             match pending {
                 // gd / gr が行内の語を選ばせた。索引は名前ではなく位置で引くので、
                 // ラベルの桁から出現番号に戻してから渡す。
@@ -143,6 +142,7 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) {
             app.code_nav.symbol_hint = Default::default();
         }
     }
+    None
 }
 
 /// 指定シンボルのアクションオーバーレイを組み立てて表示する。
@@ -232,7 +232,7 @@ fn open_symbol_action_overlay(app: &mut App, symbol_name: &str, source_screen_ro
 // シンボルアクションオーバーレイ
 
 /// シンボルアクションオーバーレイでのキー入力を処理する。
-pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let count = app.code_nav.symbol_action.actions.len();
 
     if overlay_list_nav(
@@ -241,7 +241,7 @@ pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
         &mut app.code_nav.symbol_action.selected,
         count,
     ) {
-        return;
+        return None;
     }
 
     let symbol = app.code_nav.symbol_action.symbol_name.clone();
@@ -276,6 +276,7 @@ pub(in crate::event) fn handle_symbol_action_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 fn jump_to_symbol_definition(app: &mut App, symbol: &str, screen_row: usize) {
