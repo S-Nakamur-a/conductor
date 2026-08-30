@@ -57,9 +57,8 @@ use crate::worktree_ops::WorktreeManager;
 
 pub use crate::types::Focus;
 pub use crate::types::{
-    DirtyPanels, GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp,
-    SmartGenResult, StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow,
-    WorktreeOpResult,
+    GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp, SmartGenResult,
+    StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
 };
 pub use code_nav::{
     LinePick, UnderlineColorKind, masked_symbol_at_column, popup_highlight_range,
@@ -73,8 +72,8 @@ pub use update::UpdateState;
 
 /// すべてのUIパネルで共有されるトップレベルのアプリケーション状態。
 pub struct App {
-    /// どのパネルが再描画を必要としているかを追跡する。
-    pub dirty: DirtyPanels,
+    /// 再描画が必要かどうか。
+    pub needs_redraw: bool,
     /// 現在のパネルフォーカス。
     pub focus: Focus,
     /// フォーカスが直前にあったパネルと、移った時刻。ボーダー色のグライド
@@ -237,6 +236,11 @@ impl App {
     /// アプリケーションの終了をリクエストする。
     pub fn quit(&mut self) {
         self.should_quit = true;
+    }
+
+    /// 次のフレームでの再描画をリクエストする。
+    pub fn request_redraw(&mut self) {
+        self.needs_redraw = true;
     }
 
     /// スタイル付きのステータスメッセージを設定する。

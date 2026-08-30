@@ -89,7 +89,7 @@ impl App {
                 // 置き換えるパネルの上にエディタの代替スクリーンがきれいに
                 // 描画されるよう、ゼロから再描画する。
                 self.terminal.needs_clear = true;
-                self.dirty.mark_all();
+                self.request_redraw();
                 self.set_status(
                     format!("Editing {fname} — Ctrl+Esc: Claude · :q: close · ctrl+alt+z: zoom"),
                     StatusLevel::Info,
@@ -113,7 +113,7 @@ impl App {
         // 同じ扱い）。
         self.refresh_viewer();
         self.refresh_diff();
-        self.dirty.mark_all();
+        self.request_redraw();
         let fname = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())

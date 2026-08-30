@@ -236,7 +236,7 @@ impl App {
         self.reflow.follow = true;
         // ロードが遅いと入場スイープはすでに終わっている可能性がある。トランスクリプトが
         // 「Loading…」プレースホルダを即座に置き換えるよう再描画する。
-        self.dirty.mark(super::DirtyPanels::TERMINAL);
+        self.request_redraw();
     }
 
     /// トランスクリプトを最新ターンへジャンプさせ、追従を再開する。

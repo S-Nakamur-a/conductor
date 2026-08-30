@@ -18,7 +18,7 @@ use super::{
     ACTIVITY_TIMEOUT, DECORATION_TICK_INTERVAL, PULSE_TICK_INTERVAL, TICK_RATE_ACTIVE,
     TICK_RATE_IDLE, TICK_RATE_TERMINAL,
 };
-use crate::app::{App, DirtyPanels};
+use crate::app::App;
 use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
 use crate::ui::layout::render_ui;
 
@@ -44,7 +44,7 @@ pub(super) struct FrameSignals {
 }
 
 impl FrameSignals {
-    /// 1 周の頭で状態を採取し、PTY 出力があれば対象パネルに dirty を立てる。
+    /// 1 周の頭で状態を採取し、PTY 出力があれば再描画を要求する。
     pub fn take(app: &mut App) -> Self {
         let decoration_active =
             crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
@@ -57,12 +57,7 @@ impl FrameSignals {
             if let Some(editor) = app.editor.as_mut() {
                 editor.dirty = true;
             }
-            app.dirty.mark(DirtyPanels::TERMINAL);
-            // エディタは Explorer/Viewer カラムを占めるので、その再描画は
-            // TERMINAL ではなく EXPLORER/VIEWER の dirty ビットに乗る。
-            if app.editor.is_some() {
-                app.dirty.mark(DirtyPanels::EXPLORER | DirtyPanels::VIEWER);
-            }
+            app.request_redraw();
         }
 
         Self {
@@ -78,7 +73,7 @@ impl FrameSignals {
 /// ターミナル系のフォーカス > 進行中の操作 > 直前の入力 > フォーカス遷移 >
 /// 待機パルス > 装飾 > アイドル。
 pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignals) -> Duration {
-    if app.dirty.any() || signals.pty_dirty {
+    if app.needs_redraw || signals.pty_dirty {
         return Duration::ZERO;
     }
     match app.focus {
@@ -113,7 +108,7 @@ pub(super) fn drain_events(
     loop {
         let event = crossterm_read()?;
         handle_event(app, loop_state, event);
-        app.dirty.mark_all();
+        app.request_redraw();
         // イベントが尽きたか、1 フレーム分の予算を使い切ったら抜ける。
         if Instant::now() >= deadline || !crossterm_poll(Duration::ZERO)? {
             return Ok(());
@@ -182,17 +177,17 @@ pub(super) fn mark_continuous_dirty(app: &mut App) {
         // ハードクリアが予約されていれば全面再描画になる。
         || app.terminal.needs_clear;
     if overlay_animating {
-        app.dirty.mark_all();
+        app.request_redraw();
     }
     // worktree 作成中と revidere の解析中は、どちらもストリップの上で
     // スピナーが回る。イベントが来ないと止まって見える。
     if !app.worktree_mgr.pending_worktrees.is_empty() || !app.revidere.runs.is_empty() {
-        app.dirty.mark(DirtyPanels::WORKTREE);
+        app.request_redraw();
     }
-    // リフローのスイープ演出: 進行中は毎フレーム、ターミナルパネルを dirty に。
+    // リフローのスイープ演出: 進行中は毎フレーム再描画を要求する。
     // (focus==TerminalClaude なので tick は既に 8ms、追加の起床要因は不要)
     if app.reflow.sweep.is_some() {
-        app.dirty.mark(DirtyPanels::TERMINAL);
+        app.request_redraw();
     }
 }
 
@@ -208,7 +203,7 @@ pub(super) fn render_frame(
     app: &mut App,
     loop_state: &mut LoopState,
 ) -> Result<()> {
-    if !app.terminal.needs_clear && !app.dirty.any() {
+    if !app.terminal.needs_clear && !app.needs_redraw {
         return Ok(());
     }
     let _ = execute!(io::stdout(), BeginSynchronizedUpdate);
@@ -217,7 +212,7 @@ pub(super) fn render_frame(
         terminal.clear()?;
         app.terminal.needs_clear = false;
     }
-    if app.dirty.any() {
+    if app.needs_redraw {
         app.ui_tick = app.ui_tick.wrapping_add(1);
         expire_status_message(app);
         app.panel_number_overlay.expire_if_due();
@@ -226,7 +221,7 @@ pub(super) fn render_frame(
             loop_state.last_frame_area = frame.area();
             render_ui(frame, app);
         })?;
-        app.dirty.clear();
+        app.needs_redraw = false;
     }
 
     let _ = execute!(io::stdout(), EndSynchronizedUpdate);
@@ -294,7 +289,7 @@ pub(super) fn run_background_work(app: &mut App, loop_state: &mut LoopState) {
     if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch {
         let root = app.viewer_state.root().to_path_buf();
         if app.overlays.grep_search.check_debounce(&root) {
-            app.dirty.mark_all();
+            app.request_redraw();
         }
     }
     if !app.terminal.deferred_prompts.is_empty() {

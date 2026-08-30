@@ -222,7 +222,7 @@ impl App {
     /// 永続化は呼び出し側に任せる（キーボード: キー押下ごと、マウス: ドラッグ
     /// リリース時）。
     fn after_horizontal_resize(&mut self) {
-        self.dirty.mark_all();
+        self.request_redraw();
         let e = self.config.layout.explorer_width_pct;
         let v = self.config.layout.viewer_width_pct;
         let t = 100u16.saturating_sub(e.saturating_add(v));
@@ -249,7 +249,7 @@ impl App {
         // 一致させておく — これによりconfigウォッチャーのリロードが no-op になり
         // （スナップショットが異なるときのみ反応する）、自己書き込みループを避ける。
         self.config.layout.terminal_split_pct = next;
-        self.dirty.mark_all();
+        self.request_redraw();
         self.set_status_info(format!(
             "Terminal split: Claude {next}% / Shell {}%",
             100 - next
@@ -270,7 +270,7 @@ impl App {
             return false;
         }
         self.config.layout.explorer_split_pct = next;
-        self.dirty.mark_all();
+        self.request_redraw();
         self.set_status_info(format!(
             "Explorer split: tree {next}% / changed files {}%",
             100 - next

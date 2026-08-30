@@ -61,7 +61,7 @@ impl App {
         // 開いているファイルを新しいテーマで塗り直す。generationが進んで
         // いるのでキャッシュは素通りしない。
         self.rehighlight_viewer();
-        self.dirty.mark_all();
+        self.request_redraw();
 
         if persist && let Err(e) = crate::config::persist_ui_theme(name) {
             log::warn!("failed to persist theme '{name}': {e}");
@@ -143,7 +143,7 @@ impl App {
         self.refresh_diff();
 
         // 全体の再描画を発生させる。
-        self.dirty.mark_all();
+        self.request_redraw();
     }
 
     /// 設定ファイルを再読み込みし、外観に関する変更を適用する。

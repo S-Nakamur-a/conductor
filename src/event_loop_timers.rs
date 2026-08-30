@@ -32,24 +32,22 @@ pub(crate) fn run_due_timers(
                 let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
                 let deco_h = panel_h.saturating_sub(list_h + detail_h);
                 if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
-                    app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                    app.request_redraw();
                 }
             }
             // どこかのセッションが待機している限り、フォーカスや装飾のアニメーション
             // 有無にかかわらず通知バーの明滅を動かす。
             "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
-                app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                app.request_redraw();
             }
             "unfocused_terminal" => {
                 app.terminal.drop_inactive_caches(app.focus);
-                app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
+                app.request_redraw();
             }
             // I/O の重いタイマー。入力中はスクロールが固まるので飛ばす。
             "worktree_poll" if !input_active => {
                 if app.refresh_worktrees() {
-                    app.dirty.mark(
-                        crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER,
-                    );
+                    app.request_redraw();
                 }
                 // 監視対象のパス集合が変わったらファイル監視を作り直す (git init で
                 // 最初の worktree ができた、worktree が追加・削除された、など)。
@@ -77,20 +75,16 @@ pub(crate) fn run_due_timers(
                 // 新規作成されたファイルが現れるようにする。安い処理 (子は遅延読み込み)
                 // で、変化があったときだけ再描画する。
                 if app.refresh_viewer() {
-                    app.dirty
-                        .mark(crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER);
+                    app.request_redraw();
                 }
                 app.check_diff_viewer_staleness();
             }
             "pty_cleanup" if !input_active && app.cleanup_dead_sessions() => {
-                app.dirty
-                    .mark(crate::app::DirtyPanels::TERMINAL | crate::app::DirtyPanels::WORKTREE);
+                app.request_redraw();
             }
             "cc_waiting" if !input_active => {
                 if app.check_cc_waiting_state() {
-                    app.dirty.mark(
-                        crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL,
-                    );
+                    app.request_redraw();
                 }
                 app.flush_deferred_prompts();
             }
@@ -99,7 +93,7 @@ pub(crate) fn run_due_timers(
                     let new_stats = store.get_today_stats().ok();
                     if new_stats != app.stats.today {
                         app.stats.today = new_stats;
-                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                        app.request_redraw();
                     }
                 }
             }
@@ -169,7 +163,7 @@ pub(crate) fn poll_watchers(
             if !app.bg.symbol_index.is_running() {
                 app.start_symbol_index_build();
             }
-            app.dirty.mark_all();
+            app.request_redraw();
         }
     }
 
@@ -202,8 +196,7 @@ pub(crate) fn poll_watchers(
     if let Some(cc_notify) = cc_notify {
         while let Some(event) = cc_notify.poll() {
             app.handle_cc_notify(event);
-            app.dirty
-                .mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
+            app.request_redraw();
         }
     }
 
@@ -214,7 +207,7 @@ pub(crate) fn poll_watchers(
         // 余分なイベントを吸い出す (連続した書き込みをまとめる)。
         while refresh_pipe.poll().is_some() {}
         app.refresh_reviews();
-        app.dirty.mark_all();
+        app.request_redraw();
         log::debug!("refresh_pipe: reloaded reviews from MCP trigger");
     }
 }

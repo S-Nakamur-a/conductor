@@ -198,7 +198,7 @@ impl App {
         self.markdown_cache.clear();
         self.reflow.last_width = 0;
         self.reflow.cache.clear();
-        self.dirty.mark_all();
+        self.request_redraw();
 
         if let Err(e) = crate::config::persist_ui_high_contrast(self.theme_sel.high_contrast) {
             log::warn!("failed to persist high_contrast: {e}");

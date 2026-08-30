@@ -19,7 +19,6 @@ use super::state::{
 };
 use super::types::BackgroundOps;
 use super::{App, GrabbedBranch, StatusLevel};
-use crate::types::DirtyPanels;
 use crate::types::Focus;
 
 impl App {
@@ -90,7 +89,8 @@ impl App {
         let inactive_scrollback = config.terminal.inactive_scrollback;
 
         let mut app = Self {
-            dirty: DirtyPanels::all(),
+            // 最初のフレームで全パネルを描画するための初期値。
+            needs_redraw: true,
             focus: Focus::Explorer,
             focus_prev: Focus::Explorer,
             // 最初のフレームで枠線の遷移演出が再生されないよう時刻を過去にずらす。

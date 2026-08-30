@@ -325,7 +325,7 @@ impl App {
                 });
                 self.code_nav.hover_info.leave_at = None;
                 if self.code_nav.hover_info.info.take().is_some() {
-                    self.dirty.mark_all();
+                    self.request_redraw();
                 }
             }
             None => {
@@ -339,7 +339,7 @@ impl App {
                         self.code_nav.hover_info.leave_at = Some(std::time::Instant::now());
                     }
                 } else if self.code_nav.hover_info.pending.take().is_some() {
-                    self.dirty.mark_all();
+                    self.request_redraw();
                 }
             }
         }
@@ -458,7 +458,7 @@ impl App {
             && self.code_nav.hover_info.shown_file != self.viewer_state.content.current_file
         {
             if self.clear_hover() {
-                self.dirty.mark_all();
+                self.request_redraw();
             }
             return;
         }
@@ -469,7 +469,7 @@ impl App {
             && left.elapsed() >= HOVER_GRACE
         {
             if self.clear_hover() {
-                self.dirty.mark_all();
+                self.request_redraw();
             }
             return;
         }
@@ -482,7 +482,7 @@ impl App {
                 return;
             }
             if self.clear_hover() {
-                self.dirty.mark_all();
+                self.request_redraw();
             }
             return;
         }
@@ -533,7 +533,7 @@ impl App {
                 self.code_nav.hover_info.target_end_col = end_col;
             }
             self.code_nav.hover_info.info = info;
-            self.dirty.mark_all();
+            self.request_redraw();
         }
     }
 
@@ -578,7 +578,7 @@ impl App {
             end_col,
             has_jump_modifier,
         });
-        self.dirty.mark_all();
+        self.request_redraw();
     }
 
     /// マウスがポップアップ自体の上に来たので、猶予期間を打ち切る。
@@ -609,7 +609,7 @@ impl App {
             row_hits: Vec::new(),
             preview: None,
         });
-        self.dirty.mark_all();
+        self.request_redraw();
     }
 
     /// ホバーが説明している定義へ飛び、ポップアップを畳む。
@@ -644,7 +644,7 @@ impl App {
         if let Some(refs) = self.code_nav.hover_info.refs.as_mut() {
             refs.preview = preview;
         }
-        self.dirty.mark_all();
+        self.request_redraw();
     }
 
     /// 開いているプレビューの位置へジャンプし、ホバースタック全体を閉じる。
@@ -671,7 +671,7 @@ impl App {
             }
             let cur = refs.selected as isize;
             refs.selected = (cur + delta).clamp(0, n as isize - 1) as usize;
-            self.dirty.mark_all();
+            self.request_redraw();
         }
     }
 
@@ -680,16 +680,16 @@ impl App {
     pub fn hover_pop_level(&mut self) -> bool {
         if let Some(refs) = self.code_nav.hover_info.refs.as_mut() {
             if refs.preview.take().is_some() {
-                self.dirty.mark_all();
+                self.request_redraw();
                 return true;
             }
             self.code_nav.hover_info.refs = None;
             self.code_nav.hover_info.pinned = false;
-            self.dirty.mark_all();
+            self.request_redraw();
             return true;
         }
         if self.clear_hover() {
-            self.dirty.mark_all();
+            self.request_redraw();
             return true;
         }
         false

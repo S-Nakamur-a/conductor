@@ -197,7 +197,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             // 非Movedクリアがそれを消してくれる）。
             if pinned {
                 app.clear_hover();
-                app.dirty.mark_all();
+                app.request_redraw();
                 return true;
             }
             false
@@ -495,7 +495,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // ポップアップを無効化する: それは今は古くなった行に紐づいていたもの。
     // Movedは下で自分のcandidateを別途管理する。
     if !matches!(mouse.kind, MouseEventKind::Moved) && app.clear_hover() {
-        app.dirty.mark_all();
+        app.request_redraw();
     }
 
     // revidere の 2 列ビューは main_area をアコーディオンとは別の割り方で

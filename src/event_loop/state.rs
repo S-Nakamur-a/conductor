@@ -71,8 +71,8 @@ impl LoopState {
         let sources = Self::open_event_sources(app);
         let timers = Self::register_timers(app);
 
-        // 最初のフレームで全パネルが描かれるように dirty を立てておく。
-        app.dirty.mark_all();
+        // 最初のフレームが描かれるように再描画を要求しておく。
+        app.request_redraw();
 
         Self {
             sources,

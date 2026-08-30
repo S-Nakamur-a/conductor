@@ -272,34 +272,3 @@ pub struct PendingViewRestore {
     /// スクロール先の一番上に表示する行(0始まり)。
     pub scroll: usize,
 }
-
-/// どの UI パネルが再描画を必要としているかを追跡する。
-#[derive(Default, Clone, Copy)]
-pub struct DirtyPanels(u8);
-
-impl DirtyPanels {
-    pub const WORKTREE: u8 = 0b0000_0001;
-    pub const EXPLORER: u8 = 0b0000_0010;
-    pub const VIEWER: u8 = 0b0000_0100;
-    pub const TERMINAL: u8 = 0b0000_1000;
-    pub const ALL: u8 = 0b0000_1111;
-
-    /// 全パネルを dirty にする — App を新規構築した直後の初期値で、
-    /// これにより最初のフレームで全パネルが描画される。
-    pub fn all() -> Self {
-        Self(Self::ALL)
-    }
-
-    pub fn mark(&mut self, bits: u8) {
-        self.0 |= bits;
-    }
-    pub fn mark_all(&mut self) {
-        self.0 = Self::ALL;
-    }
-    pub fn any(&self) -> bool {
-        self.0 != 0
-    }
-    pub fn clear(&mut self) {
-        self.0 = 0;
-    }
-}
