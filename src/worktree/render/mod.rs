@@ -5,13 +5,13 @@
 //!
 //! 描画責務で分割されている: [list] が worktree/セッション一覧（ゾーン1）を、
 //! [detail] が選択中 worktree の詳細セクション（ゾーン2）を描く。
-//! ゾーン3（装飾）は [crate::ui::decoration] を直接呼んで描画する。
+//! ゾーン3（装飾）は [crate::worktree::decoration] を直接呼んで描画する。
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::app::{App, Focus};
-use crate::ui::decoration::{self, DecorationMode};
+use crate::worktree::decoration::{self, DecorationMode};
 
 mod detail;
 mod list;

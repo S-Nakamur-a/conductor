@@ -34,17 +34,6 @@ src/app/code_nav.rs	シンボル/意味索引のバックグラウンド構築�
 
 [移行待ち]
 src/ui/common/	S9 で分割。pty は terminal 固有、title/status/worktree_label は chrome
-src/ui/worktree_panel/	S15 で src/worktree/render/ へ
-src/ui/worktree_bar.rs	S15 で src/worktree/ へ。全幅の worktree 帯
-src/ui/decoration/	S15 で src/worktree/ へ。worktree パネルの空きスペースの装飾
-src/event/worktree.rs	S15 で src/worktree/input/ へ
-src/app/worktree.rs	S15 で src/worktree/ へ
-src/app/worktree_branches.rs	S15 で src/worktree/ へ
-src/app/worktree_commands.rs	S15 で src/worktree/ へ
-src/app/worktree_crud.rs	S15 で src/worktree/ へ
-src/app/worktree_grab.rs	S15 で src/worktree/ へ
-src/app/worktree_pr.rs	S15 で src/worktree/ へ
-src/app/worktree_smart.rs	S15 で src/worktree/ へ
 src/ui/terminal_claude.rs	S16 で src/terminal/render/ へ
 src/ui/terminal_shell.rs	S16 で src/terminal/render/ へ
 src/ui/editor_panel.rs	S16 で src/terminal/render/ へ。editor は PTY パネルの一形態

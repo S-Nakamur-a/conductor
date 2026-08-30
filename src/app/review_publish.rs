@@ -2,7 +2,7 @@
 //! 可能かの算出、y/n 確認オーバーレイ(App::publish_confirm)の駆動、
 //! バックグラウンドでの gh api 呼び出しの実行を担う。実際の gh CLI/JSON の
 //! 綴りは crate::review_publish 側にある。pr_intake.rs がその
-//! app/worktree.rs のオーケストレーションと切り離されているのと同じ構成。
+//! worktree/mod.rs のオーケストレーションと切り離されているのと同じ構成。
 
 use chrono::Utc;
 

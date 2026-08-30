@@ -8,7 +8,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::*;
+use crate::app::*;
+use crate::git_engine;
 
 /// このタスクがモデルに他のタスクと異なる振る舞いを求める部分は、設定済み
 /// コマンド側ではなく全てここに置く。

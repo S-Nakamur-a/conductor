@@ -1,7 +1,8 @@
 //! [App] のブランチ/コミット周辺操作: switch/base/grab の各ブランチ一覧と
 //! フィルタリング、worktree の pull、古い worktree の prune、cherry-pick。
 
-use super::*;
+use crate::app::*;
+use crate::git_engine;
 
 impl App {
     /// 古い worktree を全て prune する。

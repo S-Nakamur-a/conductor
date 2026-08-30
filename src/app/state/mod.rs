@@ -17,7 +17,6 @@ mod repo;
 mod stats;
 mod update_flow;
 mod view_restore;
-mod worktrees;
 
 pub use crate::revidere::state::RevidereState;
 pub use appearance::{Highlighting, ThemeSelection};
@@ -29,4 +28,3 @@ pub use repo::RepoState;
 pub use stats::SessionStats;
 pub use update_flow::UpdateFlow;
 pub use view_restore::ViewRestore;
-pub use worktrees::WorktreeList;

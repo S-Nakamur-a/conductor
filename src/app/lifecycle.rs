@@ -14,7 +14,7 @@ use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
 use crate::viewer::ViewerState;
 use crate::viewer::code_nav_state::CodeNav;
-use crate::worktree_ops::WorktreeManager;
+use crate::worktree::ops::WorktreeManager;
 
 use super::state::{
     Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,

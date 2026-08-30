@@ -20,8 +20,8 @@ use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::Theme;
+use crate::ui::common::strip::visible_window;
 use crate::ui::tab_bar::TabAction;
-use crate::ui::worktree_bar::visible_window;
 use crate::viewer::ViewerState;
 
 const CLOSE: &str = " [x]";

@@ -16,7 +16,6 @@ mod overlay;
 mod overlay_helpers;
 mod paste;
 mod terminal;
-mod worktree;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -30,10 +29,10 @@ use self::dialogs::{handle_publish_confirm_key, handle_update_key};
 use self::global::dispatch_global_action;
 use self::overlay::*;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
-use self::worktree::handle_worktree_key;
 use crate::explorer::input::{handle_explorer_comment_list_key, handle_explorer_key};
 use crate::reflow::key::handle_reflow_key;
 use crate::viewer::input::handle_viewer_key;
+use crate::worktree::input::handle_worktree_key;
 
 // 元は crate::event::X だったが、今は隣接するサブモジュールへ移った項目を
 // re-export する。こうすることで、隣接モジュール側の既存の super::X 参照が

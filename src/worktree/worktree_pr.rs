@@ -6,7 +6,7 @@
 //! フォーカスへの遷移)。選択中の worktree の PR ページを直接ブラウザで
 //! 開く機能もここにある。
 
-use super::*;
+use crate::app::*;
 
 impl App {
     // PR intake(Review Pull Request オーバーレイ)

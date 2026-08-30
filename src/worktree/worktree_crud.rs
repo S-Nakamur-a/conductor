@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 
-use super::*;
+use crate::app::*;
+use crate::git_engine;
 
 impl App {
     /// ベース ref から worktree を作成する(2段階フロー) — バックグラウンドスレッドで実行する。

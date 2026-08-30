@@ -38,7 +38,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // worktree 監視ストリップ（旧左カラムと、以前あった
     // CC 待機通知バーの後継）
-    super::super::worktree_bar::render(frame, wtbar_area, app);
+    crate::worktree::bar::render(frame, wtbar_area, app);
 
     // revidere の 2 列ビューは main_area 全体を取る。3 列アコーディオンとは
     // 並ばないので、ターミナル列も含めてここで打ち切る。

@@ -317,7 +317,7 @@ mod tests {
     }
 
     /// 走らせていない worktree は None。ストリップに印が付かないことは
-    /// [crate::ui::worktree_bar] 側で担保している。
+    /// [crate::worktree::bar] 側で担保している。
     #[test]
     fn no_artifact_is_none() {
         let dir = tempfile::tempdir().unwrap();

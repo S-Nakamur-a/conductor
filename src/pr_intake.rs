@@ -4,7 +4,7 @@
 //! PR のメタデータには gh を呼び出し (ユーザーの既存の gh auth セッションに
 //! 依存する)、fetch と worktree の作成には [crate::git_engine::GitEngine] を使う。
 //! gh や git のコマンドの正確な綴り (JSON のフィールド、refspec の形式、
-//! ブランチの命名) を 1 か所にまとめるため、app/worktree.rs から分けてある。
+//! ブランチの命名) を 1 か所にまとめるため、worktree/mod.rs から分けてある。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

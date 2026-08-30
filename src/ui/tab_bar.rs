@@ -22,7 +22,7 @@ use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
-use crate::ui::worktree_bar::visible_window;
+use crate::ui::common::strip::visible_window;
 
 fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16

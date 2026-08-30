@@ -5,7 +5,9 @@
 //! Claude Code セッションがあればそれも移行して自動的に resume する。
 //! 「Ungrab」はその両方を巻き戻す。
 
-use super::*;
+use crate::app::*;
+use crate::git_engine;
+use crate::pty_manager;
 
 impl App {
     /// grab を実行する: main を選択中の worktree のブランチにチェックアウトする。

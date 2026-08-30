@@ -275,7 +275,7 @@ impl App {
     /// デコレーションアニメーションを1ティック進める。アニメーションが
     /// 実際に更新された場合（つまりmodeが None でない場合）に true を返す。
     pub fn tick_decoration(&mut self, width: u16, height: u16) -> bool {
-        use crate::ui::decoration::{DecorationActivity, DecorationMode};
+        use crate::worktree::decoration::{DecorationActivity, DecorationMode};
         let mode = DecorationMode::from_str(&self.config.general.decoration);
         if !mode.has_animation() {
             return false;
@@ -286,7 +286,7 @@ impl App {
         } else {
             DecorationActivity::Active
         };
-        crate::ui::decoration::tick_decoration(
+        crate::worktree::decoration::tick_decoration(
             &mut self.decoration_states,
             self.decoration_tick,
             width,
@@ -298,7 +298,7 @@ impl App {
     }
 
     /// 現在のセッションと日次合計の両方に統計イベントを記録する。
-    pub(super) fn record_stat(&self, field: &str) {
+    pub(crate) fn record_stat(&self, field: &str) {
         if let Some(store) = &self.review_store {
             let _ = store.increment_daily_stat(field);
             if let Some(ref sid) = self.stats.session_id {

@@ -2,11 +2,11 @@
 //! grab/prune、merge-to-main、reset-main-to-origin、cherry-pick — コマンド
 //! パレットとキーバインドから呼ばれる、確認をゲートに持つ入口。
 
-use super::{App, StatusLevel, WorktreeInputMode};
+use crate::app::{App, StatusLevel, WorktreeInputMode};
 use crate::overlay::ActiveOverlay;
 
 impl App {
-    pub(super) fn cmd_create_worktree(&mut self) {
+    pub(crate) fn cmd_create_worktree(&mut self) {
         self.worktree_mgr.input_mode = WorktreeInputMode::CreatingWorktree;
         self.worktree_mgr.input_buffer.clear();
         self.set_status_info(
@@ -14,7 +14,7 @@ impl App {
         );
     }
 
-    pub(super) fn cmd_delete_worktree(&mut self) {
+    pub(crate) fn cmd_delete_worktree(&mut self) {
         if let Some(wt) = self.worktrees.selected() {
             if wt.is_main {
                 self.set_status(
@@ -29,7 +29,7 @@ impl App {
         }
     }
 
-    pub(super) fn cmd_switch_branch(&mut self) {
+    pub(crate) fn cmd_switch_branch(&mut self) {
         self.set_status_info("Loading branches...".to_string());
         self.load_switch_branches();
         if !self.overlays.switch_branch.branches.is_empty() {
@@ -38,7 +38,7 @@ impl App {
         }
     }
 
-    pub(super) fn cmd_grab_branch(&mut self) {
+    pub(crate) fn cmd_grab_branch(&mut self) {
         if self.worktree_mgr.grabbed_branch.is_some() {
             self.set_status(
                 "Already grabbing a branch. Ungrab first (G).".to_string(),
@@ -54,7 +54,7 @@ impl App {
         }
     }
 
-    pub(super) fn cmd_prune_worktrees(&mut self) {
+    pub(crate) fn cmd_prune_worktrees(&mut self) {
         match crate::git_engine::GitEngine::open(&self.repo.path) {
             Ok(engine) => match engine.find_stale_worktrees() {
                 Ok(stale) => {
@@ -71,7 +71,7 @@ impl App {
         }
     }
 
-    pub(super) fn cmd_merge_to_main(&mut self) {
+    pub(crate) fn cmd_merge_to_main(&mut self) {
         if let Some(wt) = self.worktrees.selected() {
             if wt.is_main {
                 self.set_status(
@@ -125,7 +125,7 @@ impl App {
         }
     }
 
-    pub(super) fn cmd_cherry_pick(&mut self) {
+    pub(crate) fn cmd_cherry_pick(&mut self) {
         let current_branch = self.selected_worktree_branch();
         let source = self
             .worktrees

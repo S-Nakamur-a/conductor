@@ -106,7 +106,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             super::super::dashboard::render_help_overlay(frame, area, app);
         }
         crate::overlay::ActiveOverlay::WorktreeSwitcher => {
-            super::super::worktree_bar::render_switcher_overlay(frame, area, app);
+            crate::worktree::bar::render_switcher_overlay(frame, area, app);
         }
         crate::overlay::ActiveOverlay::CommentList => {
             crate::explorer::render::render_comment_list_overlay(frame, area, app);

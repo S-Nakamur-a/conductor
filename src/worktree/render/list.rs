@@ -87,7 +87,7 @@ pub(super) fn render_worktree_list(
         theme: &app.theme,
         // 約 1 秒周期 (60fps で 30 フレーム点灯 / 30 フレーム消灯)。
         pulse_on: (app.ui_tick / 30).is_multiple_of(2),
-        spinner: super::super::common::spinner_frame(app.ui_tick),
+        spinner: crate::ui::common::spinner_frame(app.ui_tick),
         focused_cc_wt: (app.focus == crate::app::Focus::TerminalClaude)
             .then(|| app.selected_worktree_path()),
         sessions: collect_session_rows(app),

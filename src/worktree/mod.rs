@@ -7,11 +7,28 @@
 //! 小さなヘルパー（PR URL の取得、gh の可用性チェック、worktree 操作用チャンネル）
 //! を扱う。
 
+pub mod bar;
+pub mod decoration;
+pub mod input;
+pub mod mouse;
+pub mod ops;
+pub mod render;
+pub mod state;
+mod worktree_branches;
+mod worktree_commands;
+mod worktree_crud;
+mod worktree_grab;
+mod worktree_pr;
+mod worktree_smart;
+
 use std::sync::mpsc;
 
+use crate::app::*;
+use crate::diff_state::DiffState;
+use crate::explorer::ExplorerState;
+use crate::git_engine;
 use crate::git_engine::status_map::GitStatusMap;
-
-use super::*;
+use crate::viewer::ViewerState;
 
 impl App {
     /// file watcher が監視すべきパス: 通常は各 worktree のパス。worktree が
@@ -29,8 +46,8 @@ impl App {
 
     /// パスを指定してワークツリーを選択し、UI の更新をトリガーする。
     ///
-    /// pub(super) — [super::worktree_grab] と [super::worktree_pr] で共有する。
-    pub(super) fn select_worktree_by_path(&mut self, path: &std::path::Path) {
+    /// [worktree_grab] と [worktree_pr] で共有する。
+    fn select_worktree_by_path(&mut self, path: &std::path::Path) {
         if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
             self.worktrees.select(idx);
             self.on_worktree_changed();
@@ -336,7 +353,9 @@ impl App {
     // ブランチ詳細（ワークツリー詳細パネル）
 
     /// このシステムで gh CLI が利用可能かどうかを確認する。
-    pub(super) fn check_gh_available() -> bool {
+    ///
+    /// pub(crate) — [crate::app::lifecycle] の起動処理から呼ばれる。
+    pub(crate) fn check_gh_available() -> bool {
         std::process::Command::new("gh")
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -348,8 +367,8 @@ impl App {
 
     /// ワークツリー操作の結果を送る sender を取得する（なければ遅延生成する）。
     ///
-    /// pub(super) — [super::worktree_crud] と [super::worktree_smart] で共有する。
-    pub(super) fn worktree_op_sender(&mut self) -> mpsc::Sender<WorktreeOpResult> {
+    /// [worktree_crud] と [worktree_smart] で共有する。
+    fn worktree_op_sender(&mut self) -> mpsc::Sender<WorktreeOpResult> {
         if self.worktree_mgr.bg_worktree_tx.is_none() {
             let (tx, rx) = mpsc::channel();
             self.worktree_mgr.bg_worktree_tx = Some(tx);

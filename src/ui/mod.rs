@@ -3,14 +3,11 @@
 //! 各サブモジュールは統合レイアウト内の1つのパネルに対応する。
 
 pub mod common;
-pub mod decoration;
 pub mod editor_panel;
 pub mod markdown;
 pub mod tab_bar;
 pub mod terminal_claude;
 pub mod terminal_shell;
-pub mod worktree_bar;
-pub mod worktree_panel;
 
 // トップレベルのレイアウト統括（render_ui, accordion_widths）。
 pub mod layout;

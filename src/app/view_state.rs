@@ -92,7 +92,7 @@ impl App {
     /// まだ復元待ちの場合（このセッションでこのworktreeのViewerを一度も
     /// 開いていない場合）、未消費の保留値をそのまま書き戻すことで、保存済みの
     /// 状態を空のビューで上書きしないようにする。
-    pub(super) fn save_view_for(&self, branch: &str) {
+    pub(crate) fn save_view_for(&self, branch: &str) {
         let Some(store) = &self.review_store else {
             return;
         };
@@ -166,7 +166,7 @@ impl App {
     /// 切り替え直後は片方のファイル一覧を、次のリフレッシュ後は別のファイル
     /// 一覧を表示するということが起きていた。決定ロジックを単一のメソッドに
     /// 保つことで、この不具合が静かにぶり返すのを防いでいる。
-    pub(super) fn diff_base_for(&self, branch: &str) -> String {
+    pub(crate) fn diff_base_for(&self, branch: &str) -> String {
         // PRレビュー用のworktreeは、設定されたmainブランチ以外を対象にすることが
         // ある（例: release/developブランチ）。intake時に記録されたbase refを
         // 優先し、保存されていない場合（通常のworktreeやDBが使えない場合）のみ

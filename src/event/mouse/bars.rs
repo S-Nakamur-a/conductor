@@ -21,7 +21,7 @@ fn start_worktree_creation(app: &mut App) {
 /// 重なり用に1チップ引いた値（最低1）。表示チップ数は直前の描画で記録された
 /// Select 領域から読み取る。
 pub(super) fn wtbar_page_step(app: &App) -> usize {
-    use crate::ui::worktree_bar::WtbarAction;
+    use crate::worktree::bar::WtbarAction;
     let visible = app
         .wtbar
         .hits
@@ -44,7 +44,7 @@ pub(super) fn handle_wtbar_click(
         return false;
     }
     use crate::app::{StatusLevel, WorktreeInputMode};
-    use crate::ui::worktree_bar::WtbarAction;
+    use crate::worktree::bar::WtbarAction;
 
     let action = app.wtbar.hits.at(col);
 

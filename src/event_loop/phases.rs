@@ -47,7 +47,7 @@ impl FrameSignals {
     /// 1 周の頭で状態を採取し、PTY 出力があれば再描画を要求する。
     pub fn take(app: &mut App) -> Self {
         let decoration_active =
-            crate::ui::decoration::DecorationMode::from_str(&app.config.general.decoration)
+            crate::worktree::decoration::DecorationMode::from_str(&app.config.general.decoration)
                 .has_animation();
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
 

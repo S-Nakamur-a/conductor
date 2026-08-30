@@ -1,11 +1,10 @@
 //! Worktreeカラム（worktreeリスト / インラインセッション）のクリック処理。
 
 use crate::app::{App, Focus};
-
-use super::{ClickGeometry, register_double_click, register_double_click_on};
+use crate::event::mouse::{ClickGeometry, register_double_click, register_double_click_on};
 
 /// Worktreeカラム（worktreeリスト / インラインセッション）内の左クリックを処理する。
-pub(super) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &ClickGeometry) {
+pub(crate) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &ClickGeometry) {
     let main_area = geom.main_area;
     // クリックでworktree/セッションを選択し切り替える。
     let relative_row = (row - main_area.y) as usize;

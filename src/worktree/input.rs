@@ -8,7 +8,7 @@ use crate::keymap::{Action, KeyContext};
 use crate::overlay::ActiveOverlay;
 
 /// Worktree パネルがフォーカスされている間のキーを処理する。
-pub(super) fn handle_worktree_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+pub(crate) fn handle_worktree_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // Esc は保留中のスマート worktree 作成があればそれをキャンセルする。
     // そうでなければ worktree 切り替えモーダルを閉じる (このハンドラは
     // 今そのモーダルの裏方も兼ねている)。

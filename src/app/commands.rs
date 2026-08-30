@@ -120,13 +120,13 @@ impl App {
             crate::command_palette::CommandId::DeleteWorktree => selected_worktree
                 .is_some_and(|w| !w.is_main && !self.is_worktree_pending_delete(&w.path)),
 
-            // "Cannot merge main into itself."(app/worktree_commands.rs)。
+            // "Cannot merge main into itself."(worktree/worktree_commands.rs)。
             crate::command_palette::CommandId::MergeToMain => {
                 selected_worktree.is_some_and(|w| !w.is_main)
             }
 
             // "Already grabbing a branch. Ungrab first (G)."
-            // (app/worktree_commands.rs)。後続の「grab 可能な非 main worktree が
+            // (worktree/worktree_commands.rs)。後続の「grab 可能な非 main worktree が
             // ない」というチェックはここでは再現しない。オーバーレイ状態を変更する
             // load_grab_branches() が必要になるため。
             crate::command_palette::CommandId::GrabBranch => {
@@ -138,7 +138,7 @@ impl App {
                 self.worktree_mgr.grabbed_branch.is_some()
             }
 
-            // "No worktree selected."(app/worktree_pr.rs)。ブランチに実際に
+            // "No worktree selected."(worktree/worktree_pr.rs)。ブランチに実際に
             // PR があるかどうかは git 呼び出しが必要なので、そこはコマンド側に
             // 任せる。
             crate::command_palette::CommandId::OpenPullRequest => selected_worktree.is_some(),

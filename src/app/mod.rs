@@ -19,7 +19,7 @@ mod review_publish;
 mod state;
 pub use state::{
     Highlighting, PanelLayout, PanelNumberOverlay, PublishState, RepoState, RevidereState,
-    SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WorktreeList, WtbarState,
+    SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WtbarState,
 };
 mod terminal;
 mod terminal_cc_state;
@@ -28,13 +28,6 @@ mod terminal_resume;
 mod types;
 mod update;
 mod view_state;
-mod worktree;
-mod worktree_branches;
-mod worktree_commands;
-mod worktree_crud;
-mod worktree_grab;
-mod worktree_pr;
-mod worktree_smart;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -54,7 +47,8 @@ use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
 use crate::viewer::ViewerState;
 use crate::viewer::code_nav_state::CodeNav;
-use crate::worktree_ops::WorktreeManager;
+use crate::worktree::ops::WorktreeManager;
+use crate::worktree::state::WorktreeList;
 
 pub use crate::types::Focus;
 pub use crate::types::{
@@ -159,7 +153,7 @@ pub struct App {
     pub clipboard: Option<copypasta::ClipboardContext>,
 
     /// すべてのデコレーションモードのアニメーション状態。
-    pub decoration_states: crate::ui::decoration::DecorationStates,
+    pub decoration_states: crate::worktree::decoration::DecorationStates,
 
     // ブランチ詳細 (worktree詳細パネル)
     /// 選択中worktreeの計算済みブランチ系譜とPR情報。

@@ -1,6 +1,6 @@
 //! 画面上端の worktree モニタストリップ (worktree bar) の状態。
 
-use crate::ui::worktree_bar::WtbarAction;
+use crate::worktree::bar::WtbarAction;
 
 /// worktree ストリップの横スクロール位置とマウス当たり判定。
 ///

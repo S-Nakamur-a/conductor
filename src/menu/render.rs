@@ -3,7 +3,7 @@
 //!
 //! どちらのパスもヒット領域を app.menu に記録するので、マウスハンドラは
 //! 実際に描画されたものに対してクリックを解決できる — worktree ストリップで
-//! [crate::ui::worktree_bar] が使っているのと同じ契約。
+//! [crate::worktree::bar] が使っているのと同じ契約。
 //!
 //! スタイリングは既存のポップアップに合わせている（Clear + Borders::ALL +
 //! アクセントボーダー、ハイライトには selected_bg/selected_fg）。これにより

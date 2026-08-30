@@ -9,6 +9,7 @@ mod color;
 mod panel_chrome;
 mod pty;
 mod status_bar;
+pub mod strip;
 mod title_bar;
 mod worktree_label;
 

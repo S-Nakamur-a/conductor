@@ -3,10 +3,10 @@
 //! このモジュールはエントリポイント（handle_mouse_event）と、各パネル別サブ
 //! モジュールで共有するヒットテスト用ジオメトリ（ClickGeometry/Column）、
 //! ダブルクリック判定のヘルパーを持つ。各サブモジュールはレイアウトの1領域を
-//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[worktree_panel]、
-//! [terminal_panel]、そして [scroll]（全パネル共通のホイールスクロール）。
+//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[terminal_panel]、
+//! そして [scroll]（全パネル共通のホイールスクロール）。
 //! Viewer カラムのクリック処理は [crate::viewer::mouse]、Explorer カラムは
-//! [crate::explorer::mouse] にある。
+//! [crate::explorer::mouse]、Worktree カラムは [crate::worktree::mouse] にある。
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -20,16 +20,15 @@ use crate::overlay::ActiveOverlay;
 mod bars;
 mod scroll;
 mod terminal_panel;
-mod worktree_panel;
 
 #[cfg(test)]
 mod tests;
 
 use crate::viewer::mouse::handle_viewer_column_click;
+use crate::worktree::mouse::handle_worktree_column_click;
 use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
 use scroll::handle_mouse_scroll;
 use terminal_panel::handle_terminal_column_click;
-use worktree_panel::handle_worktree_column_click;
 
 /// Viewer のタブ行（ブロック内側の先頭行）の上か。タブ行を描いていない
 /// フレームではクリック領域が空なので false になり、ホイールは本文の
@@ -61,7 +60,12 @@ const DOUBLE_CLICK_MS: u128 = 400;
 /// now にクリックを記録し、last に保存されている前回のクリックとダブル
 /// クリックを構成するか（つまり間隔が [DOUBLE_CLICK_MS] 未満か）を返す。
 /// *last を now に更新する。
-fn register_double_click(last: &mut std::time::Instant, now: std::time::Instant) -> bool {
+///
+/// crate::worktree::mouse からも呼ばれるため crate 全体に公開している。
+pub(crate) fn register_double_click(
+    last: &mut std::time::Instant,
+    now: std::time::Instant,
+) -> bool {
     let is_double = now.duration_since(*last).as_millis() < DOUBLE_CLICK_MS;
     *last = now;
     is_double
