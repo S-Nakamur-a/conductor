@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn long_paths_keep_their_tail() {
         assert_eq!(
-            elide_head("src/ui/viewer_panel/tab_row.rs", 12),
+            elide_head("src/viewer/render/tab_row.rs", 12),
             "\u{2026}/tab_row.rs"
         );
         assert_eq!(elide_head("a.rs", 12), "a.rs");

@@ -50,7 +50,7 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
         " {}Comments ({pending}/{total}) ",
         crate::icons::PANEL_COMMENTS.labeled(icon_set)
     );
-    // 一覧全体に対する一括送信ボタン。viewer_panel::thread_actions にある
+    // 一覧全体に対する一括送信ボタン。crate::viewer::render::thread_actions にある
     // コメント単位の「ask claude」アクションとは別物。
     const ASK_CLAUDE_ALL_LABEL: &str = " ✨ Ask Claude All ";
 

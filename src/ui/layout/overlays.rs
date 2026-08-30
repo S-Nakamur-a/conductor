@@ -140,17 +140,17 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // References オーバーレイ（パネルレベル、OverlayManager には含まれない）
     if app.code_nav.references.active {
-        crate::ui::references::render_references_overlay(frame, area, app);
+        crate::viewer::render::references::render_references_overlay(frame, area, app);
     }
 
     // シンボルアクションオーバーレイ（ヒント選択後）
     if app.code_nav.symbol_action.active {
-        crate::ui::symbol_action::render_symbol_action_overlay(frame, area, app);
+        crate::viewer::render::symbol_action::render_symbol_action_overlay(frame, area, app);
     }
 
     // ホバー情報ポップアップ（viewer での K）
     if app.code_nav.hover_info.info.is_some() {
-        crate::ui::hover_info::render_hover_info_overlay(frame, area, app);
+        crate::viewer::render::hover::render_hover_info_overlay(frame, area, app);
     }
 }
 

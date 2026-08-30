@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use crate::jump_history::JumpHistory;
 use crate::overlay::{HoverInfoOverlay, ReferencesOverlay, SymbolActionOverlay, SymbolHintOverlay};
 use crate::semantic_index::SemanticIndex;
 use crate::symbol_index::SymbolIndex;
+use crate::viewer::jump_history::JumpHistory;
 
 /// 定義ジャンプ / 参照検索 / ホバー情報を成り立たせている状態。
 ///

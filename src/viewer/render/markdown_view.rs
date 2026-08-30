@@ -243,7 +243,7 @@ mod tests {
                     // トグル + [<=>] + 隙間1列。
                     let budget = (w as usize)
                         .saturating_sub(2 + fold_depth.chars().count() + TOGGLE_W as usize + 5 + 1);
-                    let fitted = crate::ui::viewer_panel::file_view::fit_title(title, budget);
+                    let fitted = crate::viewer::render::file_view::fit_title(title, budget);
                     term.draw(|f| {
                         let mut spans = Vec::new();
                         if !fold_depth.is_empty() {

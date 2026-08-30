@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::media_state;
+use crate::viewer::media;
 
 use super::state::{ViewerState, ViewerTabStatus};
 
@@ -101,7 +101,7 @@ impl ViewerState {
         let full = root.join(relative_path);
 
         // メディアファイル（画像/動画）は aa-media 経由で扱う。
-        if media_state::is_media_file(relative_path) {
+        if media::is_media_file(relative_path) {
             self.content.folds.clear();
             self.content.file_content.clear();
             self.content.current_file = Some(relative_path.to_string());
@@ -167,7 +167,7 @@ impl ViewerState {
         self.content
             .current_file
             .as_deref()
-            .is_some_and(media_state::is_media_file)
+            .is_some_and(media::is_media_file)
     }
 
     /// Raw/Rendered トグルが、Viewer が今表示しているものに適用可能かどうか。
@@ -190,7 +190,7 @@ impl ViewerState {
     /// Viewer が現在、生のソースの代わりにレンダリング済み markdown を描画しているか
     /// どうか。行に紐づく機能は全てこれで判定しなければならない: レンダリング済み
     /// 表示には行番号が無いので、行選択・ホバーハイライト・コメント作成/スレッド・
-    /// 行に紐づくジャンプは、どこにも紐付けられない（ui::viewer_panel::markdown_view
+    /// 行に紐づくジャンプは、どこにも紐付けられない（viewer::render::markdown_view
     /// を参照）。
     pub fn is_showing_rendered_markdown(&self) -> bool {
         self.md_rendered && self.markdown_toggle_available()

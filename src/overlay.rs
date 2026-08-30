@@ -438,7 +438,7 @@ pub struct HoverRefs {
 /// ポップアップまで移動してクリックできるように)。
 #[derive(Default)]
 pub struct HoverInfoOverlay {
-    pub info: Option<crate::hover_info::HoverInfo>,
+    pub info: Option<crate::viewer::hover_info::HoverInfo>,
     pub pending: Option<HoverCandidate>,
     pub anchor_row: u16,
     pub anchor_col: u16,

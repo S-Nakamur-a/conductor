@@ -232,12 +232,13 @@ pub(super) fn render_code_line_rows(
             // hover_symbol はジャンプ可能だとすでに確認済みのシンボルに対してしか
             // 存在しない（tick_underline_hover を参照）ので、ここは常に Some になる —
             // unwrap_or はこの不変条件が将来崩れた場合の panic 回避のためだけにある。
-            let color = match crate::app::underline_color_kind(true, hs.has_jump_modifier)
-                .unwrap_or(crate::app::UnderlineColorKind::Hint)
-            {
-                crate::app::UnderlineColorKind::Hint => theme.hint,
-                crate::app::UnderlineColorKind::Accent => theme.accent,
-            };
+            let color =
+                match crate::viewer::code_nav::underline_color_kind(true, hs.has_jump_modifier)
+                    .unwrap_or(crate::viewer::code_nav::UnderlineColorKind::Hint)
+                {
+                    crate::viewer::code_nav::UnderlineColorKind::Hint => theme.hint,
+                    crate::viewer::code_nav::UnderlineColorKind::Accent => theme.accent,
+                };
             apply_underline_range(
                 content_spans,
                 hs.start_col,
@@ -256,7 +257,7 @@ pub(super) fn render_code_line_rows(
     // 表示されている間はハイライトし続ける — マウスはすでにそこから離れている
     // かもしれないし（下線側には離脱猶予がない）、ポップアップ自身の離脱猶予の
     // ウィンドウ内で別の場所を指しているかもしれない。
-    let content_spans = match crate::app::popup_highlight_range(
+    let content_spans = match crate::viewer::code_nav::popup_highlight_range(
         app.code_nav.hover_info.is_shown(),
         app.code_nav.hover_info.target_line,
         app.code_nav.hover_info.target_start_col,

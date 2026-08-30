@@ -8,7 +8,7 @@
 //!
 //! クリックが何を意味するかの判断は [classify_menu_click] が担う。記録済みの
 //! ヒット領域に対する純粋関数であり、
-//! [classify_margin_click](crate::event::mouse::viewer_panel::classify_margin_click)
+//! [classify_margin_click](crate::viewer::mouse::classify_margin_click)
 //! と同じ形。理由も同じで、興味深いルール（トグル・閉じる・無反応行）を App や
 //! ターミナルを立ち上げずにテストできるようにするため。
 

@@ -1,8 +1,9 @@
 //! Viewer パネルの g プレフィックス（gd / gi / gr）から呼ばれる、定義へ移動・
 //! 実装へ移動・参照検索のハンドラ。
 
-use crate::app::{App, LinePick, StatusLevel};
+use crate::app::{App, StatusLevel};
 use crate::overlay::HintAction;
+use crate::viewer::code_nav::LinePick;
 
 pub(super) fn handle_go_to_definition(app: &mut App) {
     dispatch(app, HintAction::Definition);
@@ -34,7 +35,7 @@ fn dispatch(app: &mut App, action: HintAction) {
 }
 
 /// 対象が決まったあとの実行。行内ヒントで選んだ場合もここに合流する。
-pub(in crate::event) fn run(
+pub(crate) fn run(
     app: &mut App,
     action: HintAction,
     line_idx: usize,

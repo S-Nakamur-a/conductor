@@ -19,7 +19,7 @@ pub(super) fn toggle_inline_thread(app: &mut App) {
     if !app.review_state.file_comments.contains_key(&cursor_line) {
         return;
     }
-    crate::event::mouse::toggle_inline_thread_at(app, cursor_line);
+    crate::viewer::mouse::toggle_inline_thread_at(app, cursor_line);
 }
 
 /// 現在のカーソル行に対してインライン返信モードを開始する。

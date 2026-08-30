@@ -7,7 +7,7 @@
 //! 開閉と返信入力）、code_nav（g プレフィックスで発火する定義へ移動・
 //! 実装へ移動・参照検索）。
 
-pub(in crate::event) mod code_nav;
+pub(crate) mod code_nav;
 mod diff_nav;
 mod inline_reply;
 
@@ -52,7 +52,7 @@ fn handle_tab_action(app: &mut App, action: Option<Action>) -> bool {
 }
 
 /// Viewer パネルがフォーカスされているときのキーを処理する。
-pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // インライン返信の入力モード
     if app.viewer.inline.reply_line.is_some() {
         handle_inline_reply_input(app, key);
@@ -158,7 +158,7 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
     // ファジーなファイル名ジャンプ — ファイルが開かれていなくても動作するよう
     // 空バッファのガードより前で処理し、ジャンプ後も viewer が最大化されたままになる。
     if let Some(Action::SearchFilename) = action {
-        super::open_filename_search(app);
+        crate::event::open_filename_search(app);
         return None;
     }
 
@@ -281,7 +281,7 @@ pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> O
     match action {
         Some(Action::ToggleMarkdownRender) => app.cmd_toggle_markdown_render(),
         Some(Action::ExitToExplorer) => app.set_focus(crate::app::Focus::Explorer),
-        Some(Action::SearchFilename) => super::open_filename_search(app),
+        Some(Action::SearchFilename) => crate::event::open_filename_search(app),
         // ファイル単位であって行単位ではない: レンダリング表示から $EDITOR に
         // 渡すのも同じように意味がある。
         Some(Action::OpenInEditor) => app.open_in_editor(),
@@ -319,7 +319,7 @@ pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) -> Op
             app.viewer.exit_diff_mode(); // show_summary もクリアする
             app.set_focus(crate::app::Focus::Explorer);
         }
-        Some(Action::SearchFilename) => super::open_filename_search(app),
+        Some(Action::SearchFilename) => crate::event::open_filename_search(app),
         Some(Action::NavigateDown) if app.viewer.summary_scroll + 1 < total => {
             app.viewer.summary_scroll += 1;
         }
@@ -358,7 +358,7 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
 
     // ファジーなファイル名ジャンプ — 最大化された diff ビューアからも到達できる。
     if let Some(Action::SearchFilename) = action {
-        super::open_filename_search(app);
+        crate::event::open_filename_search(app);
         return None;
     }
 

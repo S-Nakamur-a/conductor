@@ -6,7 +6,7 @@ use crossterm::event::{KeyModifiers, MouseEvent};
 
 use crate::app::{App, Focus, StatusLevel};
 
-use super::{ClickGeometry, resolve_screen_line};
+use crate::event::mouse::{ClickGeometry, resolve_screen_line};
 use crate::explorer::input::open_viewer_comment;
 
 /// address-conductor-comment スキル経由で、アクティブなClaude CodeのPTYにコメントを送る。
@@ -78,7 +78,7 @@ fn resolve_screen_action(app: &App, screen_offset: usize) -> Option<String> {
 }
 
 /// Viewer列内の左クリックを処理する（シンボルジャンプ、コメントスレッド、ガター）。
-pub(super) fn handle_viewer_column_click(
+pub(crate) fn handle_viewer_column_click(
     app: &mut App,
     mouse: MouseEvent,
     col: u16,
@@ -143,7 +143,7 @@ pub(super) fn handle_viewer_column_click(
                 // インデックスアクセスだとクリックの最中にアプリ全体を落としかねない。
                 // ホバー側のパスも既に同じ方法でこれをガードしている。
                 if let Some(line_text) = app.viewer.content.file_content.get(line_1 - 1)
-                    && let Some((symbol, _, _)) = crate::app::masked_symbol_at_column(
+                    && let Some((symbol, _, _)) = crate::viewer::code_nav::masked_symbol_at_column(
                         line_text,
                         content_col,
                         line_1,
@@ -162,7 +162,7 @@ pub(super) fn handle_viewer_column_click(
     if row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(comment_id) = resolve_screen_action(app, screen_offset) {
-            use crate::ui::viewer_panel::thread_actions;
+            use crate::viewer::render::thread_actions;
             // 列オフセットからどのアクションがクリックされたかを判定する。レンダラが
             // その行を描画するのに使うのと同じレイアウト定数を使う。
             // レンダラとのオフセットの対応: left_pad は marker +
@@ -255,7 +255,7 @@ pub(super) fn handle_viewer_column_click(
     // ここで捌く。当たり判定の列は in_fold_zone が持つ（ホバーの罫線と共有）。
     if !app.viewer.diff_view.diff_mode
         && row >= inner_y
-        && super::in_fold_zone(col, inner_x + marker_w + gutter_w)
+        && crate::event::mouse::in_fold_zone(col, inner_x + marker_w + gutter_w)
     {
         let screen_offset = (row - inner_y) as usize;
         if let Some(line_1) = resolve_screen_line(app, screen_offset)
@@ -347,7 +347,7 @@ pub(super) fn handle_viewer_column_click(
 
 /// クリックがviewerの左マージンのどのゾーンに落ちたか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MarginZone {
+pub(crate) enum MarginZone {
     /// 一番左のコメントマーカー列、行番号より前。コメントのある行では吹き出し、
     /// 範囲の途中では罫線、それ以外の行では hover 中にコメント開始ボタンが出る。
     Marker,
@@ -359,7 +359,7 @@ pub(super) enum MarginZone {
 
 /// viewerの左マージンへの左クリックが何をするか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MarginClickAction {
+pub(crate) enum MarginClickAction {
     /// クリックした行の下に差し込まれたインラインコメントスレッドをトグルする。
     ToggleThread,
     /// その行のテストコマンドをShell PTYへ送る。
@@ -376,7 +376,7 @@ pub(super) enum MarginClickAction {
 /// コメントを開始する — そのため、他のコメント範囲と重なる/入れ子になる範囲も
 /// 作成可能なままであり、コメント開始のアフォーダンスはどの行でも同じ挙動になる。
 /// テスト実行ボタンはバッジ列に自分の場所を保つ。
-pub(super) fn classify_margin_click(
+pub(crate) fn classify_margin_click(
     zone: MarginZone,
     has_comment: bool,
     has_test_run: bool,
@@ -396,7 +396,7 @@ pub(super) fn classify_margin_click(
 /// クリックは、スレッドを決して表示しない行を空振りでトグルするのではなく、
 /// 最も近い、その行をカバーしている終了行にリダイレクトする。終了行自体の
 /// 場合、最小値はその行自身になる。
-pub(super) fn thread_anchor_line(
+pub(crate) fn thread_anchor_line(
     comments: &[crate::review_store::ReviewComment],
     line_1: usize,
 ) -> usize {
@@ -410,7 +410,7 @@ pub(super) fn thread_anchor_line(
 /// line_1をカバーするコメントに対するインラインコメントスレッドをトグルする。
 /// 初回展開時に返信を読み込み、折りたたむ時は進行中の返信をキャンセルする。
 /// マウス（マーカー列のクリック）とキーボードのトグルの両方で共有される。
-pub(in crate::event) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
+pub(in crate::viewer) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
     let line_1 = app
         .review_state
         .file_comments
@@ -455,7 +455,7 @@ fn handle_symbol_click_jump(
     let occurrence = app
         .occurrence_at_rendered_column(line_idx, rendered_col)
         .unwrap_or(0);
-    crate::event::viewer::code_nav::run(
+    crate::viewer::input::code_nav::run(
         app,
         crate::overlay::HintAction::Definition,
         line_idx,

@@ -13,10 +13,11 @@ use crate::overlay::OverlayManager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
 use crate::viewer::ViewerState;
+use crate::viewer::code_nav_state::CodeNav;
 use crate::worktree_ops::WorktreeManager;
 
 use super::state::{
-    CodeNav, Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
+    Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
 };
 use super::types::BackgroundOps;
 use super::{App, GrabbedBranch, StatusLevel};

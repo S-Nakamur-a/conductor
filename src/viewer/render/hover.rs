@@ -199,7 +199,10 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
 ///
 /// シグネチャは宣言の断片なので、パーサの状態はファイル先頭からの続きにならない。
 /// 全部を単色にするよりは読める、という割り切りは revidere のハンク表示と同じ。
-fn highlighted_signature(app: &App, info: &crate::hover_info::HoverInfo) -> Vec<Line<'static>> {
+fn highlighted_signature(
+    app: &App,
+    info: &crate::viewer::hover_info::HoverInfo,
+) -> Vec<Line<'static>> {
     use syntect::easy::HighlightLines;
 
     let syntax_set = &app.highlight.syntax_set;

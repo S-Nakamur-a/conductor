@@ -617,7 +617,7 @@ fn highlight_block(
                     let style = syntect_tui::translate_style(style)
                         .unwrap_or_default()
                         .bg(Color::Reset);
-                    let text = crate::ui::viewer_panel::expand_tabs_at(
+                    let text = crate::viewer::render::expand_tabs_at(
                         text.trim_end_matches('\n'),
                         tab_width,
                         &mut col,

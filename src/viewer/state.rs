@@ -6,8 +6,8 @@
 
 use std::collections::HashSet;
 
-use crate::media_state::MediaState;
 use crate::text_input::TextInput;
+use crate::viewer::media::MediaState;
 
 use super::file_tree::ScoredFile;
 use super::file_view::UnifiedDiffEntry;

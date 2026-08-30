@@ -92,7 +92,7 @@ impl HoverRow {
 /// ポインタでリストをなぞる間にどの行が選択されているか追いにくくなるため。
 ///
 /// ADR D1（改訂版）に従い、この行ベースリストの hover は前景色のみで表現する
-/// （背景色は使わない）。これは Viewer の行 hover（src/ui/viewer_panel/code_line.rs）
+/// （背景色は使わない）。これは Viewer の行 hover（src/viewer/render/code_line.rs）
 /// の既存の前例に合わせたもの。背景色で表現する方式も試したが却下した:
 /// 11テーマ中7テーマで selected_bg_inactive と区別が付かなかった。これはまさに
 /// hover 中だがフォーカスされていない行が置かれる状態そのものである。
@@ -129,7 +129,7 @@ pub fn row_style(
     // 圧倒的に最も多い行の色である theme.fg では最も効果が弱くなる。
     // 下線はパレットに依存せず色覚特性の影響も受けず、このコードベースでは
     // 既に hover の語彙として使われている: Viewer はポインタの下にある
-    // ジャンプ可能なシンボルに下線を引く（src/ui/viewer_panel/code_line.rs）。
+    // ジャンプ可能なシンボルに下線を引く（src/viewer/render/code_line.rs）。
     // また背景色 + BOLD で表現される selection と混同することもない。
     //
     // FadingOut には意図的に持ち越さない: 下線は「ポインタが *ここにある*」

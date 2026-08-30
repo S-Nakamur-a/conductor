@@ -452,7 +452,7 @@ fn build_sticky_line(
 /// エントリが2件未満（ナビゲーションが起きていない）場合は None を返す。
 fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
     let current_file = app.viewer.content.current_file.as_ref()?;
-    let current = crate::jump_history::Location {
+    let current = crate::viewer::jump_history::Location {
         file_path: current_file.clone(),
         line: app.viewer.content.file_scroll,
         h_scroll: app.viewer.content.h_scroll,
@@ -499,7 +499,7 @@ fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
 }
 
 /// 位置情報を短いパンくずラベル「ファイル名:行番号」として整形する。
-fn breadcrumb_label(loc: &crate::jump_history::Location) -> String {
+fn breadcrumb_label(loc: &crate::viewer::jump_history::Location) -> String {
     let filename = loc.file_path.rsplit('/').next().unwrap_or(&loc.file_path);
     format!("{}:{}", filename, loc.line + 1)
 }
@@ -543,7 +543,7 @@ mod tests {
     /// 末尾を残す形で省略する。ファイル名はパスの末尾にあるため。
     #[test]
     fn elision_keeps_the_end_of_the_path() {
-        let fitted = fit_title(" src/ui/viewer_panel/file_view.rs ", 16);
+        let fitted = fit_title(" src/viewer/render/file_view.rs ", 16);
         assert!(fitted.starts_with(" \u{2026}"), "{fitted:?}");
         assert!(fitted.ends_with("file_view.rs "), "{fitted:?}");
     }

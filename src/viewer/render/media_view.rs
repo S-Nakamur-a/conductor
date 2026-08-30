@@ -2,7 +2,7 @@
 //! ハーフブロックによるカラーの ASCII アートとして描画する。
 
 use crate::app::App;
-use crate::media_state::MediaContent;
+use crate::viewer::media::MediaContent;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;

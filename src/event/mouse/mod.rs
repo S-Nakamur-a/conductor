@@ -4,9 +4,9 @@
 //! モジュールで共有するヒットテスト用ジオメトリ（ClickGeometry/Column）、
 //! ダブルクリック判定のヘルパーを持つ。各サブモジュールはレイアウトの1領域を
 //! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[worktree_panel]、
-//! [viewer_panel]、[terminal_panel]、そして [scroll]（全パネル共通の
-//! ホイールスクロール）。Explorer カラムのクリック処理は [crate::explorer::mouse]
-//! にある。
+//! [terminal_panel]、そして [scroll]（全パネル共通のホイールスクロール）。
+//! Viewer カラムのクリック処理は [crate::viewer::mouse]、Explorer カラムは
+//! [crate::explorer::mouse] にある。
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -20,21 +20,16 @@ use crate::overlay::ActiveOverlay;
 mod bars;
 mod scroll;
 mod terminal_panel;
-mod viewer_panel;
 mod worktree_panel;
 
 #[cfg(test)]
 mod tests;
 
+use crate::viewer::mouse::handle_viewer_column_click;
 use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
 use scroll::handle_mouse_scroll;
 use terminal_panel::handle_terminal_column_click;
-use viewer_panel::handle_viewer_column_click;
 use worktree_panel::handle_worktree_column_click;
-
-// event::viewer のキーボードトグルがマウスのマーカー列クリックと全く同じ
-// スレッドフォーカスのロジックを共有できるよう再エクスポートしている。
-pub(in crate::event) use viewer_panel::toggle_inline_thread_at;
 
 /// Viewer のタブ行（ブロック内側の先頭行）の上か。タブ行を描いていない
 /// フレームではクリック領域が空なので false になり、ホイールは本文の
@@ -91,7 +86,7 @@ pub(crate) fn register_double_click_on(
 /// 画面上の行オフセット（inner_yからの相対値）を、インラインスレッド行を
 /// 考慮した1始まりのファイル行番号に解決する。画面行マッピングが無い場合は
 /// 単純な算術にフォールバックする。
-fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
+pub(crate) fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
     let map = &app.viewer.content.screen_row_map;
     if !map.is_empty() {
         match map.get(screen_offset) {
@@ -115,7 +110,7 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
 /// （隙間・マーカー・区切り線・その右の空白）をまとめて受ける。行番号そのもの
 /// はコメント作成に残す。ホバーの罫線とクリックが同じ範囲を見るように、判定は
 /// ここにしかない。
-pub(super) fn in_fold_zone(col: u16, gutter_end: u16) -> bool {
+pub(crate) fn in_fold_zone(col: u16, gutter_end: u16) -> bool {
     col < gutter_end && col + 5 >= gutter_end
 }
 
@@ -394,7 +389,7 @@ fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool
         return false;
     }
     let viewer_x = geom.explorer_end;
-    let Some(seg) = crate::ui::viewer_panel::toggle_segments(viewer_x, geom.viewer_w) else {
+    let Some(seg) = crate::viewer::render::toggle_segments(viewer_x, geom.viewer_w) else {
         return false;
     };
     let want_rendered = if seg.raw.contains(&col) {
@@ -812,7 +807,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                             .file_content
                             .get(line_1 - 1)
                             .and_then(|text| {
-                                crate::app::masked_symbol_at_column(
+                                crate::viewer::code_nav::masked_symbol_at_column(
                                     text,
                                     content_col,
                                     line_1,
@@ -829,7 +824,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // なしで表示される。色だけがhas_jump_modifierに依存する
                 // （tick_underline_hoverで解決）。ここでも!diff_modeに限定して
                 // いるのは、実際のCmd+クリックによるジャンプハンドラ
-                // （viewer_panel.rs）自体が!diff_mode限定だから。diff表示で下線を
+                // （crate::viewer::mouse）自体が!diff_mode限定だから。diff表示で下線を
                 // 出すと、クリックしても実現できないジャンプを約束することに
                 // なってしまう。
                 if app.viewer.diff_view.diff_mode {

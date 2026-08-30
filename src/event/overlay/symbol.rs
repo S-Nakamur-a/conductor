@@ -122,7 +122,7 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) -> 
                     if let Some(occurrence) =
                         app.occurrence_at_rendered_column(line_idx, hint.start_col)
                     {
-                        crate::event::viewer::code_nav::run(
+                        crate::viewer::input::code_nav::run(
                             app,
                             action,
                             line_idx,

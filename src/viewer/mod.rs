@@ -22,6 +22,15 @@ mod selection;
 mod state;
 mod tabs;
 
+pub mod code_nav;
+pub mod code_nav_state;
+pub mod hover_info;
+pub mod input;
+pub mod jump_history;
+pub mod media;
+pub mod mouse;
+pub mod render;
+
 pub use file_tree::FileTreeEntry;
 pub use fold::{FoldDepth, FoldRule, FoldState};
 // revidere の 2 列ビューは開いているファイルではなく diff の行を直接ハイライト

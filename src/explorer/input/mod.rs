@@ -14,7 +14,7 @@ mod tree;
 mod viewer_actions;
 
 // navigate_to_comment_with_focus は explorer 内 (mouse.rs) からしか呼ばれないので
-// 公開範囲を crate::explorer に留める。残りは crate::event 側 (mouse/viewer_panel.rs,
+// 公開範囲を crate::explorer に留める。残りは crate::event 側 (viewer/mouse.rs,
 // viewer/mod.rs, overlay/review.rs) からも呼ばれるため crate 全体に公開する。
 pub use comment_list::handle_explorer_comment_list_key;
 pub(in crate::explorer) use comment_list::navigate_to_comment_with_focus;

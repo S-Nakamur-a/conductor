@@ -9,18 +9,22 @@
 //! 描画する（Raw/Rendered ヘッダー切り替えも含む）、[media_view] は画像/動画、
 //! [comment_thread] はインラインのレビューコメントスレッドと新規コメント作成ボックス、
 //! [syntax] は syntax/diff の注釈ヘルパー、[span_utils] は汎用の Span 操作、
-//! [search_box] はパネル内検索入力、[tab_row] は開いているファイルのタブ行。
+//! [search_box] はパネル内検索入力、[tab_row] は開いているファイルのタブ行、
+//! [hover] / [references] / [symbol_action] はコードナビゲーションのオーバーレイ描画。
 
 mod code_line;
 mod comment_thread;
 mod diff_line;
 mod diff_view;
 mod file_view;
+pub(crate) mod hover;
 mod markdown_view;
 mod media_view;
+pub(crate) mod references;
 mod search_box;
 mod span_utils;
 mod summary_view;
+pub(crate) mod symbol_action;
 mod syntax;
 mod tab_row;
 

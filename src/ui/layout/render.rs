@@ -83,7 +83,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
                 .media_state
                 .render_if_needed(&full_path, rel_path, cols, rows);
         }
-        super::super::viewer_panel::render(frame, columns[2], app);
+        crate::viewer::render::render(frame, columns[2], app);
     }
 
     // カラム3: ターミナル分割（Claude 80% / Shell 20%）

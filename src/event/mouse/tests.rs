@@ -1,14 +1,14 @@
 //! マウスのヒットテストジオメトリ、ダブルクリック判定、左マージンの
 //! クリック分類に対する単体テスト。
 
-use super::viewer_panel::{
-    MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
-};
 use super::{
     ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on,
     terminal_tab_row_at,
 };
 use crate::explorer::mouse::{diff_list_row_at, explorer_tree_row_at};
+use crate::viewer::mouse::{
+    MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
+};
 use std::time::{Duration, Instant};
 
 /// 指定したカラム境界でClickGeometryを構築する。幅/高さは、[<=>] 展開ボタン

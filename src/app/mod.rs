@@ -18,7 +18,7 @@ mod review_history;
 mod review_publish;
 mod state;
 pub use state::{
-    CodeNav, Highlighting, PanelLayout, PanelNumberOverlay, PublishState, RepoState, RevidereState,
+    Highlighting, PanelLayout, PanelNumberOverlay, PublishState, RepoState, RevidereState,
     SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WorktreeList, WtbarState,
 };
 mod terminal;
@@ -53,16 +53,13 @@ use crate::review_store::ReviewStore;
 use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
 use crate::viewer::ViewerState;
+use crate::viewer::code_nav_state::CodeNav;
 use crate::worktree_ops::WorktreeManager;
 
 pub use crate::types::Focus;
 pub use crate::types::{
     GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp, SmartGenResult,
     StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
-};
-pub use code_nav::{
-    LinePick, UnderlineColorKind, masked_symbol_at_column, popup_highlight_range,
-    underline_color_kind,
 };
 pub use editor::EditorPanel;
 pub use panel_resize::{Divider, ResizeDir};
