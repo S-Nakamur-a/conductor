@@ -70,6 +70,6 @@ pub(super) fn handle_explorer_diff_list_key(app: &mut App, key: KeyEvent) -> Opt
         _ => {}
     }
 
-    crate::event::adjust_diff_list_scroll(app);
+    app.explorer.adjust_diff_list_scroll();
     None
 }

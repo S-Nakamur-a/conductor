@@ -15,7 +15,6 @@ pub(crate) mod mouse;
 mod overlay;
 mod overlay_helpers;
 mod paste;
-mod scroll;
 mod terminal;
 mod viewer;
 mod worktree;
@@ -44,7 +43,6 @@ pub(in crate::event) use self::clipboard::clipboard_paste;
 // explorer が独立モジュールへ移った後も、そちらの tree.rs / diff_list.rs から
 // 引き続き呼べるよう crate 全体へ公開する。
 pub(crate) use self::overlay_helpers::open_filename_search;
-pub(crate) use self::scroll::{adjust_diff_list_scroll, adjust_tree_scroll};
 
 // 有効なオーバーレイ
 

@@ -107,6 +107,6 @@ pub fn handle_explorer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
         _ => {}
     }
 
-    crate::event::adjust_tree_scroll(app);
+    app.explorer.adjust_tree_scroll();
     None
 }

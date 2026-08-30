@@ -15,11 +15,10 @@ src/ui/tab_bar.rs	タブ行の描画。viewer と terminal が TabAction ごと�
 src/event/mod.rs	キーディスパッチの骨組み。6 段のバブリングそのもの
 src/event/input_target.rs	キーを今どの入力欄が持っているかの判定
 src/event/global.rs	どのパネルにフォーカスがあっても効くキー
-src/event/scroll.rs	スクロールキーの共通解釈
 src/event/paste.rs	ブラケットペーストの取り込み
 src/event/clipboard.rs	クリップボード操作
 src/event/dialogs.rs	確認ダイアログのキー
-src/event/overlay_helpers.rs	オーバーレイ共通の小物
+src/event/overlay_helpers.rs	ファイル名検索モーダルの開閉。explorer と viewer の両方から起動する
 src/app/mod.rs	App 本体。全パネルの状態を持つ
 src/app/types.rs	App が使う型
 src/app/state/	複数パネルに跨る状態
