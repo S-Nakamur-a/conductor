@@ -1,6 +1,7 @@
 //! "SUMMARY" 疑似ファイルビュー。行に紐づくレビューコメントの対となる、
 //! ブランチの変更概要を全面表示するレンダラー。
 
+use super::outcome::ScrollOutcome;
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,7 +12,12 @@ use ratatui::widgets::{Block, Paragraph};
 /// 変更概要全体を、専用のスクロール可能な全面ビュー（"SUMMARY" 疑似ファイル）として
 /// 描画する。これは行に紐づくレビューコメントに対する PR 説明文の対で、パネル全体を
 /// 使い（省略しない）、diff/file ビューと同じ j/k スクロールを再利用する。
-pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
+pub(in crate::viewer) fn render_summary_view(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    focused: bool,
+) -> ScrollOutcome {
     let inner_width = area.width.saturating_sub(2) as usize;
     let inner_height = area.height.saturating_sub(2) as usize;
 
@@ -70,13 +76,18 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
         (block, lines)
     };
 
-    // キーハンドラがスクロールをクランプできるよう総行数を記録し、概要が短くなっても
-    // ナビゲーションが正しく効くようクランプ後のスクロール値を書き戻す。
-    app.viewer.summary_total_lines = lines.len();
+    // 総行数とクランプ後のスクロール値は、キーハンドラがスクロールを
+    // クランプできるよう呼び出し側が状態へ書き戻す（概要が短くなっても
+    // ナビゲーションが正しく効くようにするため）。
+    let total_lines = lines.len();
     let scroll = app.viewer.summary_scroll.min(lines.len().saturating_sub(1));
-    app.viewer.summary_scroll = scroll;
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(inner_height).collect();
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(Paragraph::new(visible).block(block), area);
+
+    ScrollOutcome {
+        total_lines,
+        scroll,
+    }
 }

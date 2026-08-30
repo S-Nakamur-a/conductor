@@ -17,9 +17,10 @@ mod comment_thread;
 mod diff_line;
 mod diff_view;
 mod file_view;
-pub(crate) mod hover;
+mod hover;
 mod markdown_view;
 mod media_view;
+mod outcome;
 pub(crate) mod references;
 mod search_box;
 mod span_utils;
@@ -28,8 +29,15 @@ pub(crate) mod symbol_action;
 mod syntax;
 mod tab_row;
 
-pub use file_view::render;
+// render 本体とホバーの書き戻しは crate::viewer::panel が担うので、この3つと
+// その戻り値の型は viewer までしか公開しない。summary は他の分岐と違い、
+// 可変な App 借用を要る呼び出しを一切経ずに直接呼べる（is_summary() 早期
+// リターンの中身なので）。
+pub(super) use file_view::render;
+pub(super) use hover::render_hover_info_overlay;
 pub(crate) use markdown_view::toggle_segments;
+pub(super) use outcome::{HoverOutcome, RenderOutcome};
+pub(super) use summary_view::render_summary_view;
 // revidere の 2 列ビューも syntect のトークンを描くので、タブの展開は同じ
 // 実装を使う。1 行の中で列を引き継ぐのが要点なので、単純な置換では代われない。
 pub(crate) use syntax::expand_tabs_at;

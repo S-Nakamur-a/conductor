@@ -29,10 +29,12 @@ pub mod input;
 pub mod jump_history;
 pub mod media;
 pub mod mouse;
+mod panel;
 pub mod render;
 
 pub use file_tree::FileTreeEntry;
 pub use fold::{FoldDepth, FoldRule, FoldState};
+pub use panel::{render_hover_overlay, render_panel};
 // revidere の 2 列ビューは開いているファイルではなく diff の行を直接ハイライト
 // するので、ViewerState を経由せず構文定義だけを引く。拡張子のエイリアス表を
 // 2 つ持つと、片方だけ直したときに同じファイルが場所によって色付いたり

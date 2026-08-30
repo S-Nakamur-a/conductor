@@ -2,57 +2,9 @@
 //! diff 注釈のヘルパー: diff 注釈キャッシュの構築、word-diff の span レンダラー、
 //! シンタックストークンから Span への変換。
 
-use crate::app::App;
-use crate::diff_state::{DiffLineTag, InlineSegment};
+use crate::diff_state::InlineSegment;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
-
-/// ViewerState の diff 注釈キャッシュを、現在表示中のファイルについて確実に
-/// 埋める。ファイルが変わったかキャッシュが無効化された場合（load_diff() の後
-/// など）のみ再構築する。
-pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
-    use crate::diff_state::FileDiff;
-
-    let current_file = app.viewer.content.current_file.clone();
-
-    // キャッシュがまだ有効かどうかを確認する。
-    if app.viewer.content.cached_diff_annotations.is_some()
-        && app.viewer.content.cached_diff_annotations_file == current_file
-    {
-        return;
-    }
-
-    let mut annotations = std::collections::HashMap::new();
-
-    if let Some(ref current) = current_file {
-        let insert_annotations = |file_diff: &FileDiff,
-                                  map: &mut std::collections::HashMap<
-            usize,
-            (DiffLineTag, Vec<InlineSegment>),
-        >| {
-            for hunk in &file_diff.hunks {
-                for line in &hunk.lines {
-                    if line.tag == DiffLineTag::Insert
-                        && let Some(n) = line.new_line_no
-                    {
-                        map.entry(n)
-                            .or_insert_with(|| (DiffLineTag::Insert, line.inline_segments.clone()));
-                    }
-                }
-            }
-        };
-
-        for file_diff in &app.diff_state.files {
-            if file_diff.path == *current {
-                insert_annotations(file_diff, &mut annotations);
-                break;
-            }
-        }
-    }
-
-    app.viewer.content.cached_diff_annotations = Some(annotations);
-    app.viewer.content.cached_diff_annotations_file = current_file;
-}
 
 /// 行内の diff セグメントを強調ハイライト付きで描画する。
 /// シンタックストークンが使えない Delete 行向け。fg はプレーンテキストの色

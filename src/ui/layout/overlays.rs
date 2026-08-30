@@ -150,7 +150,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // ホバー情報ポップアップ（viewer での K）
     if app.code_nav.hover_info.info.is_some() {
-        crate::viewer::render::hover::render_hover_info_overlay(frame, area, app);
+        crate::viewer::render_hover_overlay(frame, area, app);
     }
 }
 

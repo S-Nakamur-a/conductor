@@ -18,6 +18,7 @@
 
 use std::ops::Range;
 
+use super::outcome::ScrollOutcome;
 use crate::app::App;
 use crate::theme::Theme;
 use ratatui::Frame;
@@ -105,7 +106,12 @@ pub(crate) fn toggle_spans(rendered: bool, theme: &Theme) -> Vec<Span<'static>> 
 ///
 /// block は Viewer 自身のブロック（タイトル＋トグルはすでに乗っている）なので、
 /// このモードでも生ビューと同じフレームを保ち、変わるのは中身だけになる。
-pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
+pub(super) fn render_markdown_view(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    block: Block<'_>,
+) -> ScrollOutcome {
     let inner_width = area.width.saturating_sub(2) as usize;
     let inner_height = area.height.saturating_sub(2) as usize;
 
@@ -129,13 +135,6 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
         )
     };
 
-    // キー入力ハンドラがスクロールをクランプできるよう総行数を記録し、
-    // ドキュメントが縮んだ（あるいはパネルが広がって再折り返しで短くなった）
-    // 場合でもナビゲーションが応答し続けるよう、クランプ済みのスクロール位置を
-    // 書き戻す。
-    app.viewer.md_total_lines = total;
-    app.viewer.md_scroll = scroll;
-
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(Paragraph::new(visible).block(block), area);
 
@@ -150,6 +149,11 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
             .begin_symbol(None)
             .end_symbol(None);
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
+
+    ScrollOutcome {
+        total_lines: total,
+        scroll,
     }
 }
 

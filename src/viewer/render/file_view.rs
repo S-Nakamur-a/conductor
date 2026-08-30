@@ -19,56 +19,23 @@ use super::comment_thread::new_comment_anchor_end;
 use super::diff_view::render_diff_view;
 use super::markdown_view::{TOGGLE_W, render_markdown_view, toggle_segments, toggle_spans};
 use super::media_view::render_media_view;
+use super::outcome::{RenderOutcome, TabRowOutcome};
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
-use super::summary_view::render_summary_view;
-use super::syntax::ensure_diff_annotations_cached;
 use super::tab_row;
 
 /// 与えられた area に Viewer（ファイル内容）パネルを描画する。
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    // 画面行マップをクリアし、diff/media モードで古いデータが使われないようにする。
-    app.viewer.content.screen_row_map.clear();
-    app.viewer.tab_row_hits.clear();
-
-    // Summary 疑似ファイル: ブランチの変更サマリーがパネル全体を占める。
-    // 描画関数が &mut App を取れるよう、共有借用の前にチェックする。
-    if app.viewer.is_summary() {
-        let focused = app.focus == Focus::Viewer;
-        render_summary_view(frame, area, app, focused);
-        return;
-    }
-
-    // 共有借用を取る前に diff 注釈キャッシュを埋める。
-    ensure_diff_annotations_cached(app);
-
-    // 描画の直前に、カーソル行が畳みの中に隠れていないかだけを正す。file_scroll を
-    // 書く経路（検索・定義ジャンプ・grep・履歴復元）はどれもここに合流するので、
-    // 「飛んだ先が畳まれていたら開く」の判断はこの1か所で足りる。
-    //
-    // diff 表示は除く。そこでの file_scroll は diff カーソルの写しでしかなく、
-    // 画面に出ない畳みを開いてしまうと、素の表示へ戻ったときに理由の分からない
-    // 開き方をして見える。
-    if !app.viewer.diff_view.diff_mode {
-        app.viewer.reveal_cursor_line();
-    }
-
-    // 差分表示の file_scroll は diff カーソルの写しなので、行を囲むものを聞いても
-    // 意味が無い。畳みがあると file_scroll 自身は画面に出ないことがある。
-    let top_visible = if app.viewer.diff_view.diff_mode {
-        None
-    } else {
-        let content = &app.viewer.content;
-        content
-            .folds
-            .visible_from(content.file_scroll + 1, content.file_content.len())
-            .next()
-    };
-    let sticky_declaration = top_visible.and_then(|line_1| app.sticky_declaration_line(line_1 - 1));
-
+///
+/// diff 注釈キャッシュの充填・カーソル行の畳み展開・宣言貼り付け行の解決は
+/// いずれも App への可変借用を要る一方、この関数自身は結果を返すだけの純粋関数に
+/// したいので、呼び出し側 ([crate::viewer::panel]) が先に済ませ、貼り付け行
+/// だけを `sticky_declaration` として渡す。
+pub(in crate::viewer) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    sticky_declaration: Option<usize>,
+) -> RenderOutcome {
     let theme = &app.theme;
     let vs = &app.viewer;
     let tab_width = app.config.viewer.tab_width;
@@ -153,22 +120,30 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // unified diff モード: 専用レンダラーに委譲する。
     if vs.diff_view.diff_mode && !vs.diff_view.diff_view_lines.is_empty() {
-        render_diff_view(frame, area, app, block);
-        return;
+        let diff = render_diff_view(frame, area, app, block);
+        return RenderOutcome {
+            screen_row_map: Some(diff.screen_row_map),
+            screen_entry_map: Some(diff.screen_entry_map),
+            tab_row: diff.tab_row,
+            ..Default::default()
+        };
     }
 
     // メディアファイルモード: 画像/動画を ASCII アートとして描画する。
     if vs.is_current_file_media() {
         render_media_view(frame, area, app, block);
-        return;
+        return RenderOutcome::default();
     }
 
     // Markdown 描画モード。以下の行単位の描画より前で return するので、
-    // screen_row_map は空のまま（関数の入口でクリア済み）になり、ガター・
+    // screen_row_map は空のまま（呼び出し側がクリア済み）になり、ガター・
     // コメントマーカー・スレッド行は一切描画されない — 詳細は markdown_view を参照。
     if vs.is_showing_rendered_markdown() {
-        render_markdown_view(frame, area, app, block);
-        return;
+        let markdown_scroll = Some(render_markdown_view(frame, area, app, block));
+        return RenderOutcome {
+            markdown_scroll,
+            ..Default::default()
+        };
     }
 
     if vs.content.file_content.is_empty() {
@@ -198,8 +173,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         body.push_str(&text);
         let placeholder = Paragraph::new(body).style(style).block(block);
         frame.render_widget(placeholder, area);
-        render_tab_row(frame, area, app);
-        return;
+        let tab_row = render_tab_row(frame, area, theme, vs);
+        return RenderOutcome {
+            tab_row,
+            ..Default::default()
+        };
     }
 
     // ジャンプ履歴からパンくずリストを組み立てる。
@@ -360,8 +338,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         );
     }
 
-    // マウスイベント処理用に画面行マッピングを保存する。
-    // vs（&app.viewer）の借用がすべて終わった後でなければならない。
+    // マウスイベント処理用の画面行マッピング。
     //
     // パンくずバーは内部の先頭行を占めるがコード行ではなく、screen_row_map には
     // 含まれていなかったので、その下のすべての行がマップ上で1行ずつ上にずれて
@@ -376,21 +353,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if tab_row_height > 0 {
         screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
     }
-    app.viewer.content.screen_row_map = screen_row_map;
 
-    render_tab_row(frame, area, app);
+    let tab_row = render_tab_row(frame, area, theme, vs);
+    RenderOutcome {
+        screen_row_map: Some(screen_row_map),
+        tab_row,
+        ..Default::default()
+    }
 }
 
-/// ブロック内側の先頭行にタブ行を重ね、クリック領域を記録する。
-pub(super) fn render_tab_row(frame: &mut Frame, area: Rect, app: &mut App) {
-    if !tab_row::is_visible(&app.viewer) || area.width < 3 || area.height < 3 {
-        return;
+/// ブロック内側の先頭行にタブ行を重ね、クリック領域を返す。タブ行を描かない
+/// なら None（呼び出し側は tab_row_hits/tab_scroll をそのままにする）。
+pub(super) fn render_tab_row(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &crate::theme::Theme,
+    vs: &crate::viewer::ViewerState,
+) -> Option<TabRowOutcome> {
+    if !tab_row::is_visible(vs) || area.width < 3 || area.height < 3 {
+        return None;
     }
     let row = Rect::new(area.x + 1, area.y + 1, area.width - 2, 1);
-    let (hits, scroll) = tab_row::render(frame, row, &app.theme, &app.viewer);
-    app.viewer.tab_row_hits = hits;
-    app.viewer.tab_scroll = scroll;
-    app.viewer.tab_reveal = false;
+    let (hits, scroll) = tab_row::render(frame, row, theme, vs);
+    Some(TabRowOutcome { hits, scroll })
 }
 
 /// Viewer のタイトルを max_w **表示カラム数**に収める。左側から省略し

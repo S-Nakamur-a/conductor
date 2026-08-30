@@ -5,7 +5,8 @@
 //! を起点に配置される。
 //!
 //! マウス層がクリックのヒットテストを行えるよう、各レベルは自分の描画済み
-//! Rect（参照一覧は各行の Rect も）を app.code_nav.hover_info に書き戻す。
+//! Rect（参照一覧は各行の Rect も）を返し、状態への書き戻しは呼び出し側
+//! （[crate::viewer::panel]）が行う。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -15,12 +16,16 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::App;
 
+use super::outcome::{BaseOutcome, HoverOutcome, RefsOutcome};
+
 /// ホバーポップアップと、開いている子レベルがあればそれを area（フレーム）
-/// の上に描画する。
-pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.code_nav.hover_info.info.is_none() {
-        return;
-    }
+/// の上に描画する。何も表示するものが無ければ None。
+pub(in crate::viewer) fn render_hover_info_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+) -> Option<HoverOutcome> {
+    app.code_nav.hover_info.info.as_ref()?;
     let host = {
         let vr = app.layout.cache.columns[2];
         if vr.width > 0 && vr.height > 0 {
@@ -29,10 +34,13 @@ pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
             area
         }
     };
-    render_base_popup(frame, host, app);
+    let base = render_base_popup(frame, host, app);
     // レベル1: 参照一覧（ピン留め）。レベル2: プレビュー。
-    if app.code_nav.hover_info.refs.is_some() {
-        render_refs_list(frame, host, app);
+    let mut refs = None;
+    let mut preview_rect = None;
+    if app.code_nav.hover_info.refs.is_some()
+        && let Some(r) = render_refs_list(frame, host, app)
+    {
         if app
             .code_nav
             .hover_info
@@ -40,13 +48,19 @@ pub fn render_hover_info_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
             .as_ref()
             .is_some_and(|r| r.preview.is_some())
         {
-            render_preview(frame, host, app);
+            preview_rect = render_preview(frame, host, app, r.rect);
         }
+        refs = Some(r);
     }
+    Some(HoverOutcome {
+        base,
+        refs,
+        preview_rect,
+    })
 }
 
 /// シグネチャ/doc の基本ポップアップ。クリック可能な「N refs」フッター行を持つ。
-fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
+fn render_base_popup(frame: &mut Frame, host: Rect, app: &App) -> BaseOutcome {
     let theme = app.theme.clone();
     // info への不変借用を先に終わらせてから app.code_nav.hover_info に
     // ヒットテスト用の Rect を書き戻せるよう、所有データとして取り出しておく。
@@ -190,9 +204,11 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &mut App) {
         );
     }
 
-    app.code_nav.hover_info.info_rect = popup_area;
-    app.code_nav.hover_info.refs_hit = refs_hit;
-    app.code_nav.hover_info.def_hit = def_hit;
+    BaseOutcome {
+        info_rect: popup_area,
+        refs_hit,
+        def_hit,
+    }
 }
 
 /// シグネチャの各行を、定義があるファイルの文法で色付けする。
@@ -242,12 +258,10 @@ fn highlighted_signature(
 
 /// 参照一覧（レベル1） — 基本ポップアップの下に配置する（余白がなければ上）。
 /// 各行はクリック可能。
-fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
-    let theme = app.theme.clone();
+fn render_refs_list(frame: &mut Frame, host: Rect, app: &App) -> Option<RefsOutcome> {
+    let theme = &app.theme;
     let base = app.code_nav.hover_info.info_rect;
-    let Some(refs) = app.code_nav.hover_info.refs.as_mut() else {
-        return;
-    };
+    let refs = app.code_nav.hover_info.refs.as_ref()?;
 
     let count = refs.results.len();
     let title = format!(" {} · {} refs ", refs.symbol, count);
@@ -274,11 +288,13 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
 
     // 選択中の項目が見える位置を保つ。
     let vis = visible as usize;
-    if refs.selected < refs.scroll {
-        refs.scroll = refs.selected;
+    let scroll = if refs.selected < refs.scroll {
+        refs.selected
     } else if refs.selected >= refs.scroll + vis {
-        refs.scroll = refs.selected + 1 - vis;
-    }
+        refs.selected + 1 - vis
+    } else {
+        refs.scroll
+    };
 
     frame.render_widget(Clear, popup_area);
     let block = Block::default()
@@ -289,7 +305,7 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
     frame.render_widget(block, popup_area);
 
     let mut row_hits = Vec::new();
-    for (row, idx) in (refs.scroll..(refs.scroll + vis).min(count)).enumerate() {
+    for (row, idx) in (scroll..(scroll + vis).min(count)).enumerate() {
         let r = &refs.results[idx];
         let text = format!("{}:{}  {}", r.file_path, r.line, r.content.trim());
         let text: String = text.chars().take(inner_w).collect();
@@ -306,30 +322,24 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &mut App) {
         );
         row_hits.push((idx, row_area));
     }
-    refs.rect = popup_area;
-    refs.row_hits = row_hits;
+    Some(RefsOutcome {
+        rect: popup_area,
+        row_hits,
+        scroll,
+    })
 }
 
 /// コードプレビュー（レベル2） — クリックした参照の周辺ソース行。一覧の
-/// 右側に収まればそこに、収まらなければ下に配置する。
-fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
-    let theme = app.theme.clone();
-    let list_rect = app
+/// 右側に収まればそこに、収まらなければ下に配置する。list_rect は同じフレームで
+/// 描いた参照一覧の Rect（[render_refs_list] の戻り値）。
+fn render_preview(frame: &mut Frame, host: Rect, app: &App, list_rect: Rect) -> Option<Rect> {
+    let theme = &app.theme;
+    let preview = app
         .code_nav
         .hover_info
         .refs
         .as_ref()
-        .map(|r| r.rect)
-        .unwrap_or_default();
-    let Some(preview) = app
-        .code_nav
-        .hover_info
-        .refs
-        .as_mut()
-        .and_then(|r| r.preview.as_mut())
-    else {
-        return;
-    };
+        .and_then(|r| r.preview.as_ref())?;
 
     let title = format!(" {}:{} ", preview.file, preview.center_line);
     let content_w = preview
@@ -394,7 +404,7 @@ fn render_preview(frame: &mut Frame, host: Rect, app: &mut App) {
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), inner);
-    preview.rect = popup_area;
+    Some(popup_area)
 }
 
 /// 指定サイズのポップアップを、シンボルの画面上の位置を起点として host 内に

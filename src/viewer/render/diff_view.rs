@@ -14,6 +14,7 @@ use super::comment_thread::{
     build_inline_compose_lines, build_inline_thread_lines, new_comment_anchor_end,
 };
 use super::diff_line::{DiffLineRenderCtx, render_diff_content_line};
+use super::outcome::DiffViewOutcome;
 use super::search_box::render_search_box;
 use super::span_utils::digit_count;
 
@@ -90,7 +91,12 @@ fn render_expandable_context(
 }
 
 /// unified diff ビュー（GitHub 風）を描画する。
-pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
+pub(super) fn render_diff_view(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    block: Block<'_>,
+) -> DiffViewOutcome {
     // タブ行は素のファイル表示と同じくブロック内側の先頭行に重ねる。
     let tab_row_height: u16 = if super::tab_row::is_visible(&app.viewer) {
         1
@@ -245,13 +251,11 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
         screen_entry_map.insert(0, None);
     }
-    app.viewer.content.screen_row_map = screen_row_map;
-    app.viewer.diff_view.screen_entry_map = screen_entry_map;
 
     frame.render_widget(ratatui::widgets::Clear, area);
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
-    super::file_view::render_tab_row(frame, area, app);
+    let tab_row = super::file_view::render_tab_row(frame, area, &app.theme, &app.viewer);
 
     // 選択ヒントのオーバーレイを表示する。
     let theme = &app.theme;
@@ -306,6 +310,12 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             theme,
             app.is_any_overlay_active(),
         );
+    }
+
+    DiffViewOutcome {
+        screen_row_map,
+        screen_entry_map,
+        tab_row,
     }
 }
 
