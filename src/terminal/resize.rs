@@ -1,10 +1,10 @@
-//! [App] の PTY サイズ同期と diff/viewer の陳腐化ポーリング。
+//! [App] の PTY サイズ同期。
 //!
 //! Claude/Shell/エディタの PTY グリッドを、実際に描画されるパネル領域に
-//! 合わせたサイズに保つ。また、diff パネルと viewer パネルの更新要否を
-//! 判定する、tick ごとの軽量なチェックも担う。
+//! 合わせたサイズに保つ。
 
-use super::*;
+use crate::app::*;
+use crate::pty_manager;
 
 impl App {
     /// PTY セッションのサイズを、キャッシュ済みレイアウトの寸法と同期させる。
@@ -120,49 +120,5 @@ impl App {
             }
         }
         reflowed
-    }
-
-    // 変更検出の軽量ポーリング
-
-    /// 選択中の worktree の HEAD oid とステータス件数を前回の既知値と比較し、
-    /// diff パネルと viewer パネルの更新が必要かを判定する。実際に変化が
-    /// 検出された場合のみ、コストの高い refresh_diff() と refresh_viewer()
-    /// を呼び出す。
-    ///
-    /// ポーリングループ内で refresh_worktrees() の後に呼ばれる。
-    /// refresh_worktrees() はその副作用として既に HEAD oid とステータス
-    /// 件数を取得済みである。
-    pub fn check_diff_viewer_staleness(&mut self) {
-        let wt = match self.worktrees.selected() {
-            Some(wt) => wt,
-            None => return,
-        };
-
-        let current_head = self.worktree_heads.get(&wt.branch).cloned();
-        // staged をここに含めているのは、git add / git reset を可視化するため。
-        // 他の3つはインデックスを先にチェックして1ファイルにつき1バケットで
-        // 数えるため、変更済みファイルをステージしても値は変わらない — かつ
-        // ファイルウォッチャーも .git/ を無視するので役に立たず、ステージング
-        // は他に何も触らない。この要素がなければ、Explorer のステージ状態の
-        // 色は、たまたま無関係な編集が更新をトリガーしたときにしか更新されない
-        // ことになる。
-        let current_status = (wt.added, wt.modified, wt.deleted, wt.staged);
-
-        let head_changed = self.last_poll_head_oid.as_ref() != current_head.as_ref();
-        let status_changed = self.last_poll_status != Some(current_status);
-
-        if head_changed || status_changed {
-            log::debug!(
-                "Change detected for worktree '{}': head_changed={}, status_changed={}",
-                wt.branch,
-                head_changed,
-                status_changed,
-            );
-            self.refresh_diff();
-            self.refresh_viewer();
-        }
-
-        self.last_poll_head_oid = current_head;
-        self.last_poll_status = Some(current_status);
     }
 }

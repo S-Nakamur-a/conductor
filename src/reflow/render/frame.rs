@@ -129,7 +129,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 遷移演出の完了処理
     // 表示切り替え時のタイマーを進める。エントリのスイープ演出が終わったらクリアし、
     // 境界線を安定した読み取りモードの色に落ち着かせる。境界線自体の色遷移の描画は
-    // ここではなく terminal_claude::render で行う。
+    // ここではなく terminal::render::claude::render で行う。
     let entry_done = app.reflow.sweep.as_ref().is_some_and(|s| {
         crate::reflow::input::sweep_progress(&s.start, crate::reflow::input::TRANSITION_DURATION_MS)
             >= 1.0

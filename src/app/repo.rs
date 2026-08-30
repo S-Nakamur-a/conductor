@@ -308,7 +308,7 @@ impl App {
     }
 
     /// 現在選択中のworktreeの (worktree_name, working_dir) を返す。
-    pub(super) fn selected_worktree_info(&self) -> (String, std::path::PathBuf) {
+    pub(crate) fn selected_worktree_info(&self) -> (String, std::path::PathBuf) {
         self.worktrees
             .get(self.worktrees.selected_index())
             .map(|w| (w.branch.clone(), w.path.clone()))

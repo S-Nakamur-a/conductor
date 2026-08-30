@@ -1,7 +1,7 @@
 //! リフロー版トランスクリプトビュー。Claude PTY パネル内で Claude Code のセッションログを
 //! 読み取り専用・折り返し表示する。
 //!
-//! render は terminal_claude::render から app.reflow.active が true のときに呼ばれる。
+//! render は terminal::render::claude::render から app.reflow.active が true のときに呼ばれる。
 //! app.reflow 内に cached_lines ベクタを保持し、パネル幅が変わったときだけ再構築するため、
 //! .jsonl ファイルの再パースや Markdown レンダラの再実行は毎フレーム発生しない。
 //!

@@ -3,10 +3,11 @@
 //! このモジュールはエントリポイント（handle_mouse_event）と、各パネル別サブ
 //! モジュールで共有するヒットテスト用ジオメトリ（ClickGeometry/Column）、
 //! ダブルクリック判定のヘルパーを持つ。各サブモジュールはレイアウトの1領域を
-//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[terminal_panel]、
-//! そして [scroll]（全パネル共通のホイールスクロール）。
+//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、そして
+//! [scroll]（全パネル共通のホイールスクロール）。
 //! Viewer カラムのクリック処理は [crate::viewer::mouse]、Explorer カラムは
-//! [crate::explorer::mouse]、Worktree カラムは [crate::worktree::mouse] にある。
+//! [crate::explorer::mouse]、Worktree カラムは [crate::worktree::mouse]、
+//! Terminal カラムは [crate::terminal::mouse] にある。
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -19,16 +20,15 @@ use crate::overlay::ActiveOverlay;
 
 mod bars;
 mod scroll;
-mod terminal_panel;
 
 #[cfg(test)]
 mod tests;
 
+use crate::terminal::mouse::handle_terminal_column_click;
 use crate::viewer::mouse::handle_viewer_column_click;
 use crate::worktree::mouse::handle_worktree_column_click;
 use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
 use scroll::handle_mouse_scroll;
-use terminal_panel::handle_terminal_column_click;
 
 /// Viewer のタブ行（ブロック内側の先頭行）の上か。タブ行を描いていない
 /// フレームではクリック領域が空なので false になり、ホイールは本文の

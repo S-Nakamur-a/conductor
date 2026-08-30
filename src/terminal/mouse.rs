@@ -3,13 +3,13 @@
 use crossterm::event::{KeyModifiers, MouseEvent};
 
 use crate::app::{App, Focus};
-use crate::terminal_link;
+use crate::terminal::link as terminal_link;
 
-use super::super::terminal::{handle_terminal_tab_click, spawn_terminal_session};
-use super::{ClickGeometry, register_double_click};
+use crate::event::mouse::{ClickGeometry, register_double_click};
+use crate::terminal::input::{handle_terminal_tab_click, spawn_terminal_session};
 
 /// 右カラム（Claudeターミナル / Shell）内の左クリックを処理する。
-pub(super) fn handle_terminal_column_click(
+pub(crate) fn handle_terminal_column_click(
     app: &mut App,
     mouse: MouseEvent,
     col: u16,

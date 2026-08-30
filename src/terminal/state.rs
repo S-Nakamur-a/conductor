@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::pty_manager;
+use crate::terminal::render::pty::PtyRenderCache;
 use crate::types::Focus;
-use crate::ui::common::PtyRenderCache;
 use crate::ui::tab_bar::TabAction;
 
 /// 端末パネル 1 枚ぶんの状態。
@@ -66,7 +66,7 @@ impl TerminalPane {
     /// スクロール位置と描画キャッシュを落とすのが要点で、キャッシュは全セッションで
     /// 共有される 1 つのバッファだから。残したままだと、別のきっかけ (スクロール、
     /// 新しい出力) でたまたま作り直されるまで前のセッションの内容を描き続ける。
-    /// 作り直しの条件は ui::terminal_claude を参照。
+    /// 作り直しの条件は terminal::render::claude を参照。
     pub fn switch_to(&mut self, idx: usize) {
         self.active_session = Some(idx);
         self.scroll = 0;

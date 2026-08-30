@@ -85,14 +85,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if let Some(editor) = app.editor.as_mut()
         && (editor.cache.lines.is_empty() || editor.dirty)
         && let Some(cache) =
-            crate::ui::common::build_pty_lines(&screen_arc, 0, inner.height, inner.width)
+            crate::terminal::render::pty::build_pty_lines(&screen_arc, 0, inner.height, inner.width)
     {
         editor.cache = cache;
         editor.dirty = false;
     }
 
     if let Some(editor) = app.editor.as_ref() {
-        crate::ui::common::render_pty_cached(frame, inner, &editor.cache, &app.theme);
+        crate::terminal::render::pty::render_pty_cached(frame, inner, &editor.cache, &app.theme);
 
         // フォーカスがあり隠れていないときは、IME 用にハードウェアカーソルを配置する。
         if focused

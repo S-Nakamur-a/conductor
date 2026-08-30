@@ -6,7 +6,6 @@
 mod appearance;
 mod code_nav;
 mod commands;
-mod editor;
 mod focus;
 mod lifecycle;
 mod panel_resize;
@@ -21,10 +20,6 @@ pub use state::{
     Highlighting, PanelLayout, PanelNumberOverlay, PublishState, RepoState, RevidereState,
     SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WtbarState,
 };
-mod terminal;
-mod terminal_cc_state;
-mod terminal_resize;
-mod terminal_resume;
 mod types;
 mod update;
 mod view_state;
@@ -43,7 +38,8 @@ use crate::pty_manager;
 use crate::reflow::ReflowView;
 use crate::review_state::ReviewState;
 use crate::review_store::ReviewStore;
-use crate::terminal_state::TerminalState;
+use crate::terminal::editor::EditorPanel;
+use crate::terminal::state::TerminalState;
 use crate::theme::Theme;
 use crate::viewer::ViewerState;
 use crate::viewer::code_nav_state::CodeNav;
@@ -55,7 +51,6 @@ pub use crate::types::{
     GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp, SmartGenResult,
     StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
 };
-pub use editor::EditorPanel;
 pub use panel_resize::{Divider, ResizeDir};
 pub use types::{BackgroundOps, BgDiffResult, CcusageInfo};
 pub use update::UpdateState;

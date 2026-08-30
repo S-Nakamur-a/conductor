@@ -7,12 +7,12 @@ mod ansi;
 use crossterm::event::KeyEvent;
 
 use crate::app::{App, Focus, StatusLevel};
-use crate::terminal_link;
+use crate::terminal::link as terminal_link;
 
 use ansi::key_event_to_ansi;
 
 /// 指定インデックスの PTY セッションへキーイベントを転送する。
-pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
+pub(crate) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEvent) {
     // アプリケーションカーソルキーモード（DECCKM）を有効にするプログラム —
     // less/bat のようなページャや vim のようなエディタ — は矢印キーや
     // Home/End を CSI（ESC [）ではなく SS3（ESC O）として期待する。セッションの
@@ -43,7 +43,7 @@ pub(super) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
 }
 
 /// 現在のフォーカス（Claude Code か Shell）に応じて新しいターミナルセッションを起動する。
-pub(super) fn spawn_terminal_session(app: &mut App) {
+pub(crate) fn spawn_terminal_session(app: &mut App) {
     match app.focus {
         Focus::TerminalClaude => {
             app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
@@ -76,7 +76,7 @@ pub(super) fn spawn_terminal_session(app: &mut App) {
 /// クリック判定は描画時（tab_bar::render）に記録されたヒット領域に基づくので、
 /// スクロールするタブストリップと常に一致する — click_col は絶対スクリーン列
 /// （記録されている領域も同様）。
-pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude: bool) {
+pub(crate) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude: bool) {
     use crate::ui::tab_bar::TabAction;
 
     let hit = if is_claude {
@@ -172,7 +172,7 @@ pub(super) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
 ///
 /// Ctrl+G（またはユーザ設定のキー）で発火する。アクティブな PTY セッションの
 /// 画面に表示されている行を、カーソル行から上方向へスキャンする。
-pub(super) fn open_file_from_terminal_output(app: &mut App) {
+pub(crate) fn open_file_from_terminal_output(app: &mut App) {
     let Some(pane) = app.terminal.pane(app.focus) else {
         return;
     };

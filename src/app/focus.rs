@@ -42,7 +42,7 @@ impl App {
             }
         }
         // 注意: 単なるフォーカス変更では、あえてここでreflowトランスクリプトを
-        // 閉じない。キーハンドラ（event）もレンダラ（ui::terminal_claude）も
+        // 閉じない。キーハンドラ（event）もレンダラ（terminal::render::claude）も
         // reflowをfocus == TerminalClaudeでゲートしているので、他のパネルに
         // フォーカスがある間はトランスクリプトはキーを捕まえず描画もされない
         // （Claudeパネルは生のPTYにフォールバックする）。ここで解体すると

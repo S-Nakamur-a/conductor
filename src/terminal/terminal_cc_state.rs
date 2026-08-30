@@ -8,7 +8,9 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use super::*;
+use crate::app::*;
+use crate::git_engine;
+use crate::pty_manager;
 
 impl App {
     // Claude Code の入力待ち検出

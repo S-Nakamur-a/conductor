@@ -1,11 +1,21 @@
 //! [App] のターミナル/PTY セッションのライフサイクル。
 //!
 //! Claude Code と Shell の PTY セッションの起動・切り替え・終了・回収を担う。
-//! セッション再開の処理は [super::terminal_resume]、PTY サイズの同期は
-//! [super::terminal_resize]、Claude Code の waiting/active 状態検出は
-//! [super::terminal_cc_state] にある。
+//! セッション再開の処理は [terminal_resume]、PTY サイズの同期は [resize]、
+//! Claude Code の waiting/active 状態検出は [terminal_cc_state] にある。
 
-use super::*;
+pub mod editor;
+pub mod input;
+pub mod link;
+pub mod mouse;
+pub mod render;
+mod resize;
+pub mod state;
+mod terminal_cc_state;
+mod terminal_resume;
+
+use crate::app::*;
+use crate::pty_manager;
 
 const SESSION_ICONS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 

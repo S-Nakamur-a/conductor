@@ -64,7 +64,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             width: columns[1].width.saturating_add(columns[2].width),
             height: columns[1].height,
         };
-        super::super::editor_panel::render(frame, region, app);
+        crate::terminal::render::editor::render(frame, region, app);
     } else {
         // カラム1: Explorer（ファイルツリー + 差分リスト）
         crate::explorer::render::render(frame, columns[1], app);
@@ -88,8 +88,8 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // カラム3: ターミナル分割（Claude 80% / Shell 20%）
     let terminal_split = app.layout.cache.terminal_split;
-    super::super::terminal_claude::render(frame, terminal_split[0], app);
-    super::super::terminal_shell::render(frame, terminal_split[1], app);
+    crate::terminal::render::claude::render(frame, terminal_split[0], app);
+    crate::terminal::render::shell::render(frame, terminal_split[1], app);
 
     // リサイズのアフォーダンス: hover/ドラッグ中のディバイダを点灯させる
     highlight_active_divider(frame, app);

@@ -6,7 +6,8 @@
 
 use std::path::PathBuf;
 
-use super::*;
+use crate::app::*;
+use crate::pty_manager;
 
 impl App {
     /// Claude の履歴から resume 可能な Claude Code セッションを読み込む。

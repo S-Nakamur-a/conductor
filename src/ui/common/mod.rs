@@ -1,13 +1,13 @@
 //! 複数のパネルで共有される UI コンポーネント。
 //!
-//! PTY 出力の描画、セッションタブバー、ステータスバーなど再利用可能なウィジェットを提供する。
-//! 責務ごとに分割している: [pty]（vt100 → ratatui の描画とそのキャッシュ）、
-//! [color]（バッジ/コントラストの色計算）、そしてトップレベルのバー・ウィジェットごとに
-//! 1ファイル（[title_bar], [status_bar], [worktree_label]）。
+//! セッションタブバー、ステータスバーなど再利用可能なウィジェットを提供する。
+//! 責務ごとに分割している: [color]（バッジ/コントラストの色計算）、そして
+//! トップレベルのバー・ウィジェットごとに1ファイル（[title_bar], [status_bar],
+//! [worktree_label]）。PTY 出力の描画は terminal パネルしか使わないので
+//! [crate::terminal::render::pty] にある。
 
 mod color;
 mod panel_chrome;
-mod pty;
 mod status_bar;
 pub mod strip;
 mod title_bar;
@@ -17,7 +17,6 @@ mod worktree_label;
 mod tests;
 
 pub use panel_chrome::PanelChrome;
-pub use pty::{PtyRenderCache, build_pty_lines, render_pty_cached};
 pub use status_bar::render_status_bar;
 pub(crate) use status_bar::representative_chord;
 pub use title_bar::render_title_bar;

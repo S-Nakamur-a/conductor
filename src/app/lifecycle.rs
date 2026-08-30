@@ -124,7 +124,7 @@ impl App {
             diff_state,
             review_store,
             review_state: ReviewState::new(),
-            terminal: crate::terminal_state::TerminalState::new(
+            terminal: crate::terminal::state::TerminalState::new(
                 active_scrollback,
                 inactive_scrollback,
             ),

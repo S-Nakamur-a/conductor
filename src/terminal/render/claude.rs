@@ -208,7 +208,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             if (app.terminal.claude.cache.lines.is_empty()
                 || (focused && app.terminal.claude.dirty)
                 || scroll_changed)
-                && let Some(cache) = crate::ui::common::build_pty_lines(
+                && let Some(cache) = crate::terminal::render::pty::build_pty_lines(
                     &screen_arc,
                     app.terminal.claude.scroll,
                     inner.height,
@@ -223,7 +223,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 app.terminal.claude.dirty = false;
             }
             // try_lock が失敗した場合（リーダースレッドがビジー）、古いキャッシュを使い続ける。
-            crate::ui::common::render_pty_cached(
+            crate::terminal::render::pty::render_pty_cached(
                 frame,
                 inner,
                 &app.terminal.claude.cache,

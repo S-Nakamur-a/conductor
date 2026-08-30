@@ -132,7 +132,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             if (app.terminal.shell.cache.lines.is_empty()
                 || (focused && app.terminal.shell.dirty)
                 || scroll_changed)
-                && let Some(cache) = crate::ui::common::build_pty_lines(
+                && let Some(cache) = crate::terminal::render::pty::build_pty_lines(
                     &screen_arc,
                     app.terminal.shell.scroll,
                     inner.height,
@@ -146,7 +146,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 app.terminal.shell.cache = cache;
                 app.terminal.shell.dirty = false;
             }
-            crate::ui::common::render_pty_cached(
+            crate::terminal::render::pty::render_pty_cached(
                 frame,
                 inner,
                 &app.terminal.shell.cache,

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use super::{App, StatusLevel};
+use crate::app::{App, StatusLevel};
 use crate::types::Focus;
 
 /// 稼働中の埋め込みエディタパネル（PTY内のvim/emacs）の状態。
@@ -20,7 +20,7 @@ pub struct EditorPanel {
     pub path: PathBuf,
     /// エディタパネル用にキャッシュされたPTY描画出力（TerminalState内の
     /// Claude/Shellキャッシュに相当）。
-    pub cache: crate::ui::common::PtyRenderCache,
+    pub cache: crate::terminal::render::pty::PtyRenderCache,
     /// PTYリーダースレッドが再描画すべき新しい出力を出したときにセットされる。
     pub dirty: bool,
 }
@@ -170,7 +170,7 @@ impl App {
     /// キャッシュされたレイアウトから、エディタPTYのコンテンツサイズ
     /// (rows, cols)を計算する: エディタはマージされたExplorer+Viewer領域を
     /// 占有し、タイトル行と境界線（パネル最大化時は消える）を差し引く。
-    pub(super) fn editor_pty_size(&self) -> (u16, u16) {
+    pub(crate) fn editor_pty_size(&self) -> (u16, u16) {
         let cols = &self.layout.cache.columns;
         let region_w = cols[1].width.saturating_add(cols[2].width);
         let region_h = cols[1].height;

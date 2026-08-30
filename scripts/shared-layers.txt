@@ -33,16 +33,7 @@ src/app/appearance.rs	テーマ切り替え
 src/app/code_nav.rs	シンボル/意味索引のバックグラウンド構築の起点だけが残る。App のライフサイクル入口（起動・worktree切替・fs変更）から直接呼ばれるので App 側に置く。本体は src/viewer/code_nav.rs
 
 [移行待ち]
-src/ui/common/	S9 で分割。pty は terminal 固有、title/status/worktree_label は chrome
-src/ui/terminal_claude.rs	S16 で src/terminal/render/ へ
-src/ui/terminal_shell.rs	S16 で src/terminal/render/ へ
-src/ui/editor_panel.rs	S16 で src/terminal/render/ へ。editor は PTY パネルの一形態
-src/event/terminal/	S16 で src/terminal/input/ へ
-src/app/terminal.rs	S16 で src/terminal/ へ
-src/app/terminal_cc_state.rs	S16 で src/terminal/ へ
-src/app/terminal_resize.rs	S16 で src/terminal/ へ
-src/app/terminal_resume.rs	S16 で src/terminal/ へ
-src/app/editor.rs	S16 で src/terminal/ へ
+src/ui/common/	S9 で分割。title/status/worktree_label は chrome。pty は S16 で src/terminal/render/pty.rs へ移設済み
 src/event/mouse/	骨組みとパネル別ハンドラが同居している。パネル別は各パネルの mouse.rs へ
 src/ui/dashboard/	オーバーレイ群。9/12 は特定パネルの持ち物なので所有者へ散らす
 src/event/overlay/	同上。オーバーレイのキー処理を所有者へ散らす

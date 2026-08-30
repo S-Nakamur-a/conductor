@@ -15,7 +15,6 @@ pub(crate) mod mouse;
 mod overlay;
 mod overlay_helpers;
 mod paste;
-mod terminal;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -28,9 +27,9 @@ use crate::review_state::ReviewInputMode;
 use self::dialogs::{handle_publish_confirm_key, handle_update_key};
 use self::global::dispatch_global_action;
 use self::overlay::*;
-use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use crate::explorer::input::{handle_explorer_comment_list_key, handle_explorer_key};
 use crate::reflow::key::handle_reflow_key;
+use crate::terminal::input::{forward_key_to_pty, spawn_terminal_session};
 use crate::viewer::input::handle_viewer_key;
 use crate::worktree::input::handle_worktree_key;
 
@@ -458,7 +457,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                 pane.scroll = 0;
             }
         }
-        Action::OpenFileFromTerminal => terminal::open_file_from_terminal_output(app),
+        Action::OpenFileFromTerminal => crate::terminal::input::open_file_from_terminal_output(app),
         Action::NextSession => app.cycle_terminal_session(true),
         Action::PrevSession => app.cycle_terminal_session(false),
         _ => return false,
