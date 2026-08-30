@@ -1,7 +1,7 @@
 //! リポジトリの選択とキャッシュされたworktree一覧: 既知のリポジトリ間の
 //! 切り替え、任意パスのオープン、gitからのworktree/ブランチ状態のリフレッシュ。
 
-use crate::explorer::ExplorerState;
+use crate::explorer::Explorer;
 use crate::git_engine;
 use crate::review_store::{self, ReviewStore};
 use crate::viewer::ViewerState;
@@ -50,7 +50,7 @@ impl App {
         // worktreeとレビューを即座にリフレッシュする。viewer/diffは遅延読み込みする。
         self.worktrees.select(0);
         self.refresh_worktrees();
-        self.explorer = ExplorerState::default();
+        self.explorer = Explorer::default();
         self.viewer = ViewerState::default();
         // ツリーの走査は遅延させる (上のコメントのとおり) が、根だけは今ここで
         // 入れておく。空のままだと、ツリーを歩く前に開いたファイル名検索が
@@ -127,7 +127,7 @@ impl App {
 
                 self.worktrees.select(0);
                 self.refresh_worktrees();
-                self.explorer = ExplorerState::default();
+                self.explorer = Explorer::default();
                 self.viewer = ViewerState::default();
                 // 同上。ツリーは遅延させるが根は今決まっている。
                 self.explorer.set_root(self.selected_worktree_path());

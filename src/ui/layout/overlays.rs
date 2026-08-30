@@ -109,7 +109,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             crate::worktree::bar::render_switcher_overlay(frame, area, app);
         }
         crate::overlay::ActiveOverlay::CommentList => {
-            crate::explorer::render::render_comment_list_overlay(frame, area, app);
+            app.render_explorer_overlay(frame, area);
         }
         crate::overlay::ActiveOverlay::ThemePicker => {
             super::super::theme_picker::render_theme_picker_overlay(frame, area, app);

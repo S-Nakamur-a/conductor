@@ -72,8 +72,8 @@ impl App {
     }
 
     pub(super) fn cmd_delete_comment(&mut self) {
-        if self.explorer.bottom_view == crate::explorer::ExplorerBottomView::Comments
-            && self.explorer.focus_on_diff_list
+        if self.explorer.bottom() == crate::explorer::BottomView::Comments
+            && (self.explorer.focus() == crate::explorer::Pane::Bottom)
             && !self.review_state.comment_list_rows.is_empty()
         {
             self.request_delete_selected_review_item();
@@ -83,8 +83,8 @@ impl App {
     }
 
     pub(super) fn cmd_toggle_comment_resolve(&mut self) {
-        if self.explorer.bottom_view == crate::explorer::ExplorerBottomView::Comments
-            && self.explorer.focus_on_diff_list
+        if self.explorer.bottom() == crate::explorer::BottomView::Comments
+            && (self.explorer.focus() == crate::explorer::Pane::Bottom)
             && !self.review_state.comment_list_rows.is_empty()
         {
             self.toggle_selected_review_status();
@@ -96,7 +96,7 @@ impl App {
     pub(super) fn cmd_edit_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.explorer.comment_list_selected);
+            .selected_comment_idx(self.explorer.comments_cursor.selected());
         if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
             self.review_state.input_buffer.set_text(&comment.body);
             self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
@@ -111,7 +111,7 @@ impl App {
     pub(super) fn cmd_reply_to_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.explorer.comment_list_selected);
+            .selected_comment_idx(self.explorer.comments_cursor.selected());
         if let Some(idx) = comment_idx {
             self.review_state.input_buffer.clear();
             self.review_state.input_mode = crate::review_state::ReviewInputMode::ReplyingToComment;

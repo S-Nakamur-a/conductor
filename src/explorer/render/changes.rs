@@ -1,14 +1,21 @@
-//! エクスプローラ下半分の変更ファイル一覧と、ファイルごとのレビューコメント数
-//! バッジの描画。
+//! 変更ファイル一覧（Explorer 下半分、Changes ビュー）と、ファイルごとの
+//! レビューコメント数バッジの描画。
 
-use crate::app::{App, Focus};
-use crate::icons::file_icon;
-use crate::revidere::ArtifactState;
+use std::ops::Range;
+
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem};
+
+use crate::diff_state::DiffListEntry;
+use crate::explorer::ctx::{Ctx, Paint};
+use crate::explorer::state::{Explorer, Pane};
+use crate::icons::file_icon;
+use crate::revidere::ArtifactState;
+use crate::widget::list::Viewport;
+use crate::widget::row::{Row, Segment};
 
 /// 右上に出す revidere の状態チップの幅。
 ///
@@ -20,16 +27,18 @@ const REVIDERE_BADGE_W: u16 = 10;
 /// (描画側もクリック側もこれで揃って諦めるので、見えないチップは押せない)。
 ///
 /// 右寄せタイトルは右枠の 1 つ内側で終わる。
-pub(crate) fn revidere_badge_cols(app: &App, x: u16, width: u16) -> Option<std::ops::Range<u16>> {
-    let title = diff_list_title(
-        app.diff_state.files.len(),
-        app.diff_state.error.is_some(),
-        app.config.ui.icon_set(),
-    );
+pub(crate) fn revidere_badge_cols(
+    total: usize,
+    has_error: bool,
+    icon_set: crate::icons::IconSet,
+    x: u16,
+    width: u16,
+) -> Option<Range<u16>> {
+    let title = changes_title(total, has_error, icon_set);
     badge_cols(x, width, title.chars().count() as u16)
 }
 
-fn badge_cols(x: u16, width: u16, title_w: u16) -> Option<std::ops::Range<u16>> {
+fn badge_cols(x: u16, width: u16, title_w: u16) -> Option<Range<u16>> {
     let end = x + width.checked_sub(1)?;
     let start = end.checked_sub(REVIDERE_BADGE_W)?;
     (start > x + title_w).then_some(start..end)
@@ -93,54 +102,39 @@ fn status_color(theme: &crate::theme::Theme, state: FileStageState) -> ratatui::
     }
 }
 
-/// diff 対象ファイル一覧（下半分）をディレクトリツリーとして描画する。
-pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_focused: bool) {
-    use crate::diff_state::DiffListEntry;
+/// 変更ファイル一覧（下部ペインの Changes ビュー）を描画する。
+pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, paint: &Paint) {
+    let theme = ctx.theme;
+    let icon_set = ctx.config.ui.icon_set();
+    let list_focused = ctx.focused && ex.focus() == Pane::Bottom;
 
-    let theme = &app.theme;
-    let icon_set = app.config.ui.icon_set();
-    let vs_explorer = &app.explorer;
-    let on_diff = vs_explorer.focus_on_diff_list;
-    let diff_focused = panel_focused && on_diff;
-    let border_color = if diff_focused {
-        app.animated_border_color(Focus::Explorer)
-    } else if panel_focused {
-        theme.border_secondary
-    } else if on_diff {
-        app.animated_border_color(Focus::Explorer)
-    } else {
-        theme.border_unfocused
-    };
+    let total = ctx.diff.files.len();
+    let has_error = ctx.diff.error.is_some();
+    let title = changes_title(total, has_error, icon_set);
 
-    let total = app.diff_state.files.len();
-    let title = diff_list_title(total, app.diff_state.error.is_some(), icon_set);
-
-    // ボーダーの太さは Explorer カラム全体、タイトルの強調はその下半分に
-    // フォーカスがあるかで決まる。
-    let title_style = if diff_focused {
+    let title_style = if list_focused {
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.muted)
     };
-    let mut block = crate::ui::common::PanelChrome::new(theme, title, panel_focused, border_color)
+    let mut block = crate::ui::common::PanelChrome::new(theme, title, ctx.focused, paint.border)
         .with_title_style(title_style)
         .into_block();
 
     // revidere の状態は消えない場所に出す。ステータス行のフラッシュだけだと、
     // 数分かかる解析が終わったのか、そもそも走っているのかが後から分からない。
-    if revidere_badge_cols(app, area.x, area.width).is_some() {
-        let state = app.revidere_artifact_state();
+    if revidere_badge_cols(total, has_error, icon_set, area.x, area.width).is_some() {
         let mut style = Style::default()
-            .fg(crate::ui::common::revidere_color(theme, state))
+            .fg(crate::ui::common::revidere_color(theme, ctx.revidere))
             .add_modifier(Modifier::BOLD);
         // hover は前景の下線で示す。背景を敷くとテーマによっては枠線ごと
         // 潰れて、どこが押せるのか逆に読めなくなる。
-        if app.revidere.badge_hover {
+        if paint.revidere_badge_hover {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
         block = block.title_top(
             Line::from(Span::styled(
-                revidere_badge_label(state, app.ui_tick),
+                revidere_badge_label(ctx.revidere, paint.tick),
                 style,
             ))
             .alignment(Alignment::Right),
@@ -148,31 +142,32 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
     }
 
     let inner_height = area.height.saturating_sub(2) as usize;
-    let scroll = vs_explorer.diff_list_scroll;
 
     // 以前は base 解決の失敗が完全に無音だった: 一覧が単に空で返ってきて
     // 「変更なし」に見えてしまっていた。メッセージを先頭行に固定して両者を
-    // 混同しないようにする。このバナーは display_list の
-    // 一部ではないため選択もできず、ナビゲーションキーが扱うインデックスも
-    // ずらさない — コストはリストの高さ1行分だけ。改行はスペースに潰す。
-    // 複数行の ListItem はここで確保した1行より多くの行を静かに消費して
-    // しまい、List ウィジェットはパネル端で溢れた分を切り捨てるだけだから。
-    let error_banner: Option<ListItem> = app.diff_state.error.as_deref().map(|msg| {
+    // 混同しないようにする。このバナーは display_list の一部ではないため
+    // 選択もできず、ナビゲーションキーが扱うインデックスもずらさない —
+    // コストはリストの高さ1行分だけ。改行はスペースに潰す。複数行の
+    // ListItem はここで確保した1行より多くの行を静かに消費してしまい、
+    // List ウィジェットはパネル端で溢れた分を切り捨てるだけだから。
+    let error_banner: Option<ListItem> = ctx.diff.error.as_deref().map(|msg| {
         ListItem::new(Span::styled(
             format!("  \u{26a0} {}", msg.replace('\n', " ")),
             Style::default().fg(theme.error),
         ))
     });
-    let list_height = inner_height.saturating_sub(diff_list_banner_rows(error_banner.is_some()));
+    let banner_rows = changes_banner_rows(error_banner.is_some());
+    let list_height = inner_height.saturating_sub(banner_rows);
+    let view = Viewport::new(area.y + 1 + banner_rows as u16, list_height);
 
-    let entry_items = app
-        .diff_state
-        .display_list
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(list_height)
-        .filter_map(|(idx, entry)| match entry {
+    let selected = ex.changes_cursor.selected();
+    let range = ex.changes_cursor.visible(ctx.diff.display_list.len(), view);
+
+    let entry_items = range.clone().filter_map(|idx| {
+        let entry = ctx.diff.display_list.get(idx)?;
+        let selected = idx == selected;
+        let hover = paint.hover_changes.phase(idx);
+        match entry {
             DiffListEntry::Directory {
                 name,
                 depth,
@@ -183,23 +178,13 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 let arrow = crate::icons::expand_arrow(!*collapsed, icon_set);
                 let icon = crate::icons::dir_icon(!*collapsed);
                 // ディレクトリのアイコン色は行の色 (theme.info) と同じなので、
-                // ファイル行と違って span を分ける必要がない。
+                // ファイル行と違って segment を分ける必要がない。
                 let prefix = format!("  {indent}{arrow} {} ", icon.glyph(icon_set));
 
-                let style = crate::explorer::list_row::row_style(
-                    theme,
-                    theme.info,
-                    idx == vs_explorer.diff_list_selected,
-                    diff_focused,
-                    app.list_hover.diff_list.phase(idx),
-                );
-
-                // prefix を切り離すことで、hover 時の下線が名前の位置で
-                // 止まるようにする（list_row::decoration_style を参照）。
-                Some(ListItem::new(Line::from(vec![
-                    Span::styled(prefix, crate::explorer::list_row::decoration_style(style)),
-                    Span::styled(name.clone(), style),
-                ])))
+                let line = Row::new(name.clone(), theme.info)
+                    .lead([Segment::plain(prefix)])
+                    .into_line(theme, selected, list_focused, hover);
+                Some(ListItem::new(line))
             }
             DiffListEntry::File { file_index, depth } => {
                 // インデックスアクセスではなく .get を使う: display_list と
@@ -208,10 +193,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 // すればチラつきで済むが、インデックスアクセスだと描画処理の
                 // 内側からアプリ全体を落としかねない。上のファイルツリーも
                 // 同様の対応をしている。
-                let file_diff = app.diff_state.files.get(*file_index)?;
-
+                let file_diff = ctx.diff.files.get(*file_index)?;
                 let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
-
                 let indent = "  ".repeat(*depth);
                 let icon = file_icon(filename);
                 let prefix = format!("  {indent}");
@@ -221,84 +204,52 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 // （untracked / unstaged / staged / committed）を表す。
                 // 行数はベースからの合計なので、その内訳がコミット済みか
                 // 手元の編集かはこの色でしか分からない。
-                let stage_state =
-                    file_stage_state(app.explorer.tree.git_status.status(&file_diff.path));
+                let stage_state = file_stage_state(ex.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
-                let style = crate::explorer::list_row::row_style(
-                    theme,
-                    base_fg,
-                    idx == vs_explorer.diff_list_selected,
-                    diff_focused,
-                    app.list_hover.diff_list.phase(idx),
-                );
-                // ファイル名以外の部分 — インデント、アイコン、行数 — は
-                // hover の下線を外し、下線がファイル名だけに付くようにする。
-                let decoration = crate::explorer::list_row::decoration_style(style);
-                // 行の背景/選択スタイルは style（row_style 経由）から来るが、
-                // +added/-deleted はステージ状態に関わらず自前の前景色を保つ
-                // ため、ラベルに焼き込まず別の span に分けている。
-                let counts_style = |fg| Style {
-                    fg: Some(fg),
-                    ..decoration
-                };
 
-                // GitHub 風のコメントバッジ: レビューコメントがあるファイルには
-                // 💬N を表示し、未解決のものが残っているかで色を変える。
                 // アイコンの色はファイル種別を表すが、選択行では行の色に譲る。
                 // 選択の背景色の上で種別色が読める保証が11テーマぶんには無いため。
-                let icon_style = if idx == vs_explorer.diff_list_selected {
-                    decoration
+                let icon_fg = if selected {
+                    None
                 } else {
-                    counts_style(icon.role.color(theme))
+                    Some(icon.role.color(theme))
                 };
 
-                let mut spans = vec![
-                    Span::styled(prefix, decoration),
-                    Span::styled(glyph, icon_style),
-                    Span::styled(filename.to_string(), style),
-                    Span::styled(
-                        format!(" +{}", file_diff.added_lines),
-                        counts_style(theme.diff_add),
-                    ),
-                    Span::styled(
-                        format!(" -{}", file_diff.deleted_lines),
-                        counts_style(theme.diff_del),
-                    ),
+                let mut trail = vec![
+                    Segment::colored(format!(" +{}", file_diff.added_lines), theme.diff_add),
+                    Segment::colored(format!(" -{}", file_diff.deleted_lines), theme.diff_del),
                 ];
-                if let Some(badge) = comment_badge(app, &file_diff.path, theme) {
-                    spans.push(badge);
+                if let Some((text, color)) = comment_badge(ctx, &file_diff.path) {
+                    trail.push(Segment::colored(text, color));
                 }
-                if vs_explorer.viewed.contains(&file_diff.path) {
-                    spans.push(Span::styled(
-                        "  \u{2713}",
-                        Style::default().fg(theme.success),
-                    ));
+                if ex.viewed.contains(&file_diff.path) {
+                    trail.push(Segment::colored("  \u{2713}", theme.success));
                 }
-                Some(ListItem::new(Line::from(spans)))
+
+                let line = Row::new(filename.to_string(), base_fg)
+                    .lead([
+                        Segment::plain(prefix),
+                        Segment {
+                            text: glyph.into(),
+                            fg: icon_fg,
+                            bold: false,
+                        },
+                    ])
+                    .trail(trail)
+                    .into_line(theme, selected, list_focused, hover);
+                Some(ListItem::new(line))
             }
             DiffListEntry::Summary {} => {
-                let selected = idx == vs_explorer.diff_list_selected;
-                let mut style = crate::explorer::list_row::row_style(
-                    theme,
-                    theme.accent,
-                    selected,
-                    diff_focused,
-                    app.list_hover.diff_list.phase(idx),
-                );
-                // 非選択の SUMMARY 行は hover の有無に関わらず太字にする。
-                // row_style は選択時以外は BOLD を適用しないため。
-                if !selected {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                Some(ListItem::new(Line::from(vec![
-                    Span::styled(
-                        "  \u{25A3} ",
-                        crate::explorer::list_row::decoration_style(style),
-                    ),
-                    Span::styled("SUMMARY", style),
-                ])))
+                // 非選択時も常に太字にする。選択済みなら選択の強調が既に
+                // 太字なので bold_name は効果を持たない。
+                let line = Row::new("SUMMARY", theme.accent)
+                    .bold_name()
+                    .lead([Segment::plain("  \u{25A3} ")])
+                    .into_line(theme, selected, list_focused, hover);
+                Some(ListItem::new(line))
             }
-        });
+        }
+    });
     let items: Vec<ListItem> = error_banner.into_iter().chain(entry_items).collect();
 
     // 最後の項目より下の行（またはスクロールや高さ変更後の古い行）に
@@ -315,7 +266,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
 /// あえて "base error" とはしていない: base ref の解決失敗はよくある原因の
 /// 一つに過ぎず、HEAD が解決できない場合や merge-base が見つからない場合も
 /// ここに含まれるため。
-fn diff_list_title(total: usize, has_error: bool, icon_set: crate::icons::IconSet) -> String {
+fn changes_title(total: usize, has_error: bool, icon_set: crate::icons::IconSet) -> String {
     let icon = crate::icons::PANEL_CHANGED.labeled(icon_set);
     if has_error {
         format!(" {icon}Changed files ({total}) — diff error ")
@@ -331,19 +282,19 @@ fn diff_list_title(total: usize, has_error: bool, icon_set: crate::icons::IconSe
 /// マウスハンドラ（画面上のどの行が display_list のどのインデックスに
 /// 対応するか）。以前はこれらがずれてしまうことがあり、1行のずれが
 /// クリック時に別のファイルを静かに開いてしまっていた。
-pub(super) fn diff_list_banner_rows(has_error: bool) -> usize {
+pub(crate) fn changes_banner_rows(has_error: bool) -> usize {
     usize::from(has_error)
 }
 
-/// ファイルパスに対して GitHub 風のコメント数バッジ（例:  💬3）を組み立てる。
-/// レビューコメントが無ければ None。未解決のコメントがあればバッジは
-/// accent 色になり、全て解決済みなら muted 色になる。
-fn comment_badge(app: &App, file_path: &str, theme: &crate::theme::Theme) -> Option<Span<'static>> {
+/// ファイルパスに対して GitHub 風のコメント数バッジ（例: 💬3）のテキストと色を
+/// 組み立てる。レビューコメントが無ければ None。未解決のコメントがあれば
+/// accent 色、全て解決済みなら muted 色になる。
+fn comment_badge(ctx: &Ctx, file_path: &str) -> Option<(String, ratatui::style::Color)> {
     use crate::review_store::CommentStatus;
     let mut total = 0usize;
     let mut unresolved = 0usize;
-    for c in app
-        .review_state
+    for c in ctx
+        .review
         .comments
         .iter()
         .filter(|c| c.file_path == file_path)
@@ -357,16 +308,14 @@ fn comment_badge(app: &App, file_path: &str, theme: &crate::theme::Theme) -> Opt
         return None;
     }
     let color = if unresolved > 0 {
-        theme.accent
+        ctx.theme.accent
     } else {
-        theme.muted
+        ctx.theme.muted
     };
-    Some(Span::styled(
-        format!(
-            "  {}{total}",
-            crate::icons::COMMENT.get(app.config.ui.icon_set())
-        ),
-        Style::default().fg(color),
+    let icon_set = ctx.config.ui.icon_set();
+    Some((
+        format!("  {}{total}", crate::icons::COMMENT.get(icon_set)),
+        color,
     ))
 }
 
@@ -380,21 +329,21 @@ mod tests {
     #[test]
     fn error_title_differs_from_a_genuine_zero() {
         assert_ne!(
-            diff_list_title(0, true, crate::icons::IconSet::Unicode),
-            diff_list_title(0, false, crate::icons::IconSet::Unicode)
+            changes_title(0, true, crate::icons::IconSet::Unicode),
+            changes_title(0, false, crate::icons::IconSet::Unicode)
         );
         assert_eq!(
-            diff_list_title(0, false, crate::icons::IconSet::Unicode),
+            changes_title(0, false, crate::icons::IconSet::Unicode),
             " Changed files (0) "
         );
-        assert!(diff_list_title(0, true, crate::icons::IconSet::Unicode).contains("error"));
+        assert!(changes_title(0, true, crate::icons::IconSet::Unicode).contains("error"));
     }
 
     /// base 解決が失敗しても HEAD 基準の一覧は生き残るので、件数は 0 以外に
     /// なり、かつエラーマーカーも表示される — 両方が出ていること。
     #[test]
     fn error_title_keeps_the_count() {
-        let title = diff_list_title(17, true, crate::icons::IconSet::Unicode);
+        let title = changes_title(17, true, crate::icons::IconSet::Unicode);
         assert!(title.contains("(17)"), "{title}");
         assert!(title.contains("error"), "{title}");
     }
@@ -404,8 +353,8 @@ mod tests {
     /// クリックで別のファイルが開いてしまうので、契約として固定する。
     #[test]
     fn banner_costs_exactly_one_row_and_only_when_erroring() {
-        assert_eq!(diff_list_banner_rows(false), 0);
-        assert_eq!(diff_list_banner_rows(true), 1);
+        assert_eq!(changes_banner_rows(false), 0);
+        assert_eq!(changes_banner_rows(true), 1);
     }
 
     /// 色の対応表を status_color の実装から独立して再現する — 期待する色を
@@ -476,7 +425,7 @@ mod tests {
         use ratatui::widgets::{Block, Borders};
 
         let width = 40u16;
-        let title = diff_list_title(3, false, crate::icons::IconSet::Unicode);
+        let title = changes_title(3, false, crate::icons::IconSet::Unicode);
         let cols = badge_cols(0, width, title.chars().count() as u16).expect("40 幅なら出る");
         let label = revidere_badge_label(ArtifactState::Fresh, 0);
 
@@ -508,7 +457,7 @@ mod tests {
     /// 判定から導かれるので、見えないボタンは生まれない。
     #[test]
     fn a_narrow_panel_hides_the_badge() {
-        let title_w = diff_list_title(0, false, crate::icons::IconSet::Unicode)
+        let title_w = changes_title(0, false, crate::icons::IconSet::Unicode)
             .chars()
             .count() as u16;
         assert!(badge_cols(0, 20, title_w).is_none());

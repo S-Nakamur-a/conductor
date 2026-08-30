@@ -232,7 +232,7 @@ impl ViewerState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::explorer::ExplorerState;
+    use crate::explorer::Explorer;
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("tabs_{name}_{}", std::process::id()));
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn opening_files_accumulates_tabs_and_reopening_reuses_one() {
         let dir = fixture("reuse", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -272,7 +272,7 @@ mod tests {
     fn switching_tabs_restores_where_each_file_was_left() {
         let long: String = (0..50).map(|i| format!("line{i}\n")).collect();
         let dir = fixture("scroll", &[("a.txt", &long), ("b.txt", &long)]);
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn returning_to_a_tab_rereads_it_from_disk() {
         let dir = fixture("stale", &[("a.txt", "OLD\n"), ("b.txt", "B\n")]);
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn closing_a_tab_falls_back_to_a_neighbour_then_to_nothing() {
         let dir = fixture("close", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -344,7 +344,7 @@ mod tests {
             "preview",
             &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
         );
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn reopening_a_preview_tab_as_persistent_pins_it() {
         let dir = fixture("promote", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -391,7 +391,7 @@ mod tests {
             "preview_focus",
             &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
         );
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -417,7 +417,7 @@ mod tests {
     fn switching_root_drops_tabs_that_do_not_exist_there() {
         let a = fixture("root_a", &[("both.txt", "A\n"), ("only_a.txt", "A\n")]);
         let b = fixture("root_b", &[("both.txt", "B\n")]);
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(a.clone());
         let mut vs = ViewerState::default();
 

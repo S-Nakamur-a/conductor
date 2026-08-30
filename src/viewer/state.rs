@@ -217,14 +217,6 @@ pub struct ClickTracker {
     /// 範囲はドラッグ先の行まで伸び、コメントは mouse-up で開く。ドラッグ中で
     /// なければ None。
     pub gutter_drag_anchor: Option<usize>,
-    /// ダブルクリック判定用の、直近のファイルツリークリックのタイムスタンプ。
-    pub last_tree_click_time: std::time::Instant,
-    /// ファイルツリーで最後にクリックされたツリーインデックス。
-    pub last_tree_click_idx: usize,
-    /// ダブルクリック判定用の、直近のコメント一覧クリックのタイムスタンプ。
-    pub last_comment_click_time: std::time::Instant,
-    /// コメント一覧で最後にクリックされたインデックス。
-    pub last_comment_click_idx: usize,
 }
 
 impl Default for ClickTracker {
@@ -237,10 +229,6 @@ impl Default for ClickTracker {
             last_line_click_time: std::time::Instant::now(),
             last_line_click_line: 0,
             gutter_drag_anchor: None,
-            last_tree_click_time: std::time::Instant::now(),
-            last_tree_click_idx: usize::MAX,
-            last_comment_click_time: std::time::Instant::now(),
-            last_comment_click_idx: usize::MAX,
         }
     }
 }

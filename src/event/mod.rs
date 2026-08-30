@@ -27,7 +27,6 @@ use crate::review_state::ReviewInputMode;
 use self::dialogs::{handle_publish_confirm_key, handle_update_key};
 use self::global::dispatch_global_action;
 use self::overlay::*;
-use crate::explorer::input::{handle_explorer_comment_list_key, handle_explorer_key};
 use crate::reflow::key::handle_reflow_key;
 use crate::terminal::input::{forward_key_to_pty, spawn_terminal_session};
 use crate::viewer::input::handle_viewer_key;
@@ -165,7 +164,7 @@ fn stage_overlay(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
             ActiveOverlay::Help => handle_help_key(app, key),
             ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
             ActiveOverlay::WorktreeSwitcher => handle_worktree_key(app, key),
-            ActiveOverlay::CommentList => handle_explorer_comment_list_key(app, key),
+            ActiveOverlay::CommentList => app.explorer_key(key),
             ActiveOverlay::ThemePicker => handle_theme_picker_key(app, key),
             ActiveOverlay::RevidereConfirm => handle_revidere_confirm_key(app, key),
             // effective_overlay は Active(ActiveOverlay::None) を返さない。
@@ -244,7 +243,7 @@ fn stage_focus(app: &mut App, key: KeyEvent) {
             handle_worktree_key(app, key);
         }
         Focus::Explorer => {
-            handle_explorer_key(app, key);
+            app.explorer_key(key);
         }
         Focus::Viewer => {
             handle_viewer_key(app, key);

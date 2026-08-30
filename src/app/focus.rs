@@ -150,9 +150,9 @@ impl App {
         // フォーカスを切り替える。
         if self.editor.is_none()
             && self.focus == Focus::Explorer
-            && !self.explorer.focus_on_diff_list
+            && !(self.explorer.focus() == crate::explorer::Pane::Bottom)
         {
-            self.explorer.focus_on_diff_list = true;
+            self.explorer.focus_pane(crate::explorer::Pane::Bottom);
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
@@ -160,7 +160,7 @@ impl App {
         // 他のどこからであれExplorer列に着地したときは、常にファイルツリー
         // （上のパネル）から始まる。
         if next == Focus::Explorer {
-            self.explorer.focus_on_diff_list = false;
+            self.explorer.focus_pane(crate::explorer::Pane::Tree);
         }
         self.set_focus(next);
     }
@@ -171,9 +171,9 @@ impl App {
         // ファイルツリーを訪れる。
         if self.editor.is_none()
             && self.focus == Focus::Explorer
-            && self.explorer.focus_on_diff_list
+            && (self.explorer.focus() == crate::explorer::Pane::Bottom)
         {
-            self.explorer.focus_on_diff_list = false;
+            self.explorer.focus_pane(crate::explorer::Pane::Tree);
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
@@ -181,7 +181,7 @@ impl App {
         // Viewer側からExplorer列に入ると、（一番近い）変更ファイルパネルに
         // 着地するので、さらにTabで戻るとツリーに到達する。
         if prev == Focus::Explorer {
-            self.explorer.focus_on_diff_list = true;
+            self.explorer.focus_pane(crate::explorer::Pane::Bottom);
         }
         self.set_focus(prev);
     }

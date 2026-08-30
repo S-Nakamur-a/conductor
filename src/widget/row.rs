@@ -2,7 +2,8 @@
 //! hover/selection の状態とスタイリング。selection/focus/hover の優先順位ルールを
 //! 各パネルで再導出させて食い違わせるのではなく、一箇所に集約するためにここに置く。
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use std::time::{Duration, Instant};
 
 /// ポインタが離れてから行がフェードアウトし続ける時間（ミリ秒）。
@@ -235,6 +236,118 @@ fn hover_emphasis(
         }
     }
     best
+}
+
+/// 装飾の一片。`fg` は行の色より優先するが、選択行では行の色に譲る。
+///
+/// 太字だけを個別に持てるようにしてあり、下線は持てない。下線は hover が
+/// 「あなたが指しているのはこれだ」を示すために専有していて、装飾に乗ると
+/// ポインタの印ではなく行全体のテキスト入力の下線に見える。
+pub struct Segment<'a> {
+    pub text: std::borrow::Cow<'a, str>,
+    pub fg: Option<Color>,
+    pub bold: bool,
+}
+
+impl<'a> Segment<'a> {
+    pub fn plain(text: impl Into<std::borrow::Cow<'a, str>>) -> Self {
+        Self {
+            text: text.into(),
+            fg: None,
+            bold: false,
+        }
+    }
+
+    pub fn colored(text: impl Into<std::borrow::Cow<'a, str>>, fg: Color) -> Self {
+        Self {
+            text: text.into(),
+            fg: Some(fg),
+            bold: false,
+        }
+    }
+
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+}
+
+/// 一覧の 1 行。
+///
+/// 名前を装飾から分けて持つのは、hover の下線を名前だけに乗せるため。分けずに
+/// 組むこともできるが、そうすると各リストが規約として覚えていなければならず、
+/// 実際コメント一覧は覚えていない。型にしておけば忘れられない。
+pub struct Row<'a> {
+    /// 名前より前。インデント、展開矢印、アイコン。
+    pub lead: Vec<Segment<'a>>,
+    /// この行が指しているもの。
+    pub name: std::borrow::Cow<'a, str>,
+    /// 名前より後。変更行数、バッジ、印。
+    pub trail: Vec<Segment<'a>>,
+    /// 名前の地の色。hover の強調はここから導く。
+    pub name_fg: Color,
+    /// 名前を太字にする。選択行では選択の強調が既に太字なので効果はない。
+    pub name_bold: bool,
+}
+
+impl<'a> Row<'a> {
+    pub fn new(name: impl Into<std::borrow::Cow<'a, str>>, name_fg: Color) -> Self {
+        Self {
+            lead: Vec::new(),
+            name: name.into(),
+            trail: Vec::new(),
+            name_fg,
+            name_bold: false,
+        }
+    }
+
+    pub fn bold_name(mut self) -> Self {
+        self.name_bold = true;
+        self
+    }
+
+    pub fn lead(mut self, segments: impl IntoIterator<Item = Segment<'a>>) -> Self {
+        self.lead.extend(segments);
+        self
+    }
+
+    pub fn trail(mut self, segments: impl IntoIterator<Item = Segment<'a>>) -> Self {
+        self.trail.extend(segments);
+        self
+    }
+
+    /// 行の状態を当てて描ける形にする。
+    pub fn into_line(
+        self,
+        theme: &crate::theme::Theme,
+        selected: bool,
+        panel_focused: bool,
+        hover: Option<HoverPhase>,
+    ) -> Line<'a> {
+        let style = row_style(theme, self.name_fg, selected, panel_focused, hover);
+        let decoration = decoration_style(style);
+        // 選択行では種別色を捨てる。選択の背景の上で読める保証が 11 テーマぶんは無い。
+        let paint = |s: Segment<'a>| {
+            let mut style = match s.fg {
+                Some(fg) if !selected => decoration.fg(fg),
+                _ => decoration,
+            };
+            if s.bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            Span::styled(s.text, style)
+        };
+
+        let name_style = if self.name_bold {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        };
+        let mut spans: Vec<Span<'a>> = self.lead.into_iter().map(paint).collect();
+        spans.push(Span::styled(self.name, name_style));
+        spans.extend(self.trail.into_iter().map(paint));
+        Line::from(spans)
+    }
 }
 
 #[cfg(test)]

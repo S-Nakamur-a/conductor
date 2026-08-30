@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
-use crate::explorer::ExplorerState;
+use crate::explorer::Explorer;
 use crate::git_engine;
 use crate::keymap::KeyMap;
 use crate::overlay::OverlayManager;
@@ -119,7 +119,7 @@ impl App {
                 name: theme_name,
                 high_contrast,
             },
-            explorer: ExplorerState::default(),
+            explorer: Explorer::default(),
             viewer: ViewerState::default(),
             diff_state,
             review_store,

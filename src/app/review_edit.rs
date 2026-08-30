@@ -17,7 +17,7 @@ impl App {
 
     /// コメント一覧の選択位置にある項目の編集を開始する。
     pub fn start_edit_selected_review_item(&mut self) {
-        let visual = self.explorer.comment_list_selected;
+        let visual = self.explorer.comments_cursor.selected();
         self.review_state.start_edit_at(visual);
     }
 
@@ -33,7 +33,7 @@ impl App {
     /// 現在選択中のレビューコメントのステータスを切り替える(Pending <-> Resolved)。
     pub fn toggle_selected_review_status(&mut self) {
         let wt = self.selected_worktree_branch();
-        let visual = self.explorer.comment_list_selected;
+        let visual = self.explorer.comments_cursor.selected();
         let notice = self
             .review_store
             .as_ref()
@@ -44,7 +44,7 @@ impl App {
     /// (Explorer のコメント一覧から)現在選択中のコメントに返信を追加する。
     pub fn add_reply_to_selected_comment(&mut self, body: &str) {
         let wt = self.selected_worktree_branch();
-        let visual = self.explorer.comment_list_selected;
+        let visual = self.explorer.comments_cursor.selected();
         let notice = self
             .review_store
             .as_ref()
@@ -54,7 +54,7 @@ impl App {
 
     /// 現在の表示上の選択位置にあるコメントスレッドの展開状態を切り替える。
     pub fn toggle_comment_expansion(&mut self) {
-        let visual = self.explorer.comment_list_selected;
+        let visual = self.explorer.comments_cursor.selected();
         let notice = self
             .review_state
             .toggle_expansion_at(self.review_store.as_ref(), visual);
@@ -64,7 +64,7 @@ impl App {
 
     /// コメント一覧の選択位置にある項目の削除を開始する(y/n の確認を開く)。
     pub fn request_delete_selected_review_item(&mut self) {
-        let visual = self.explorer.comment_list_selected;
+        let visual = self.explorer.comments_cursor.selected();
         let notice = self.review_state.request_delete_at(visual);
         self.flash(notice);
     }
@@ -94,7 +94,7 @@ impl App {
     /// コメント一覧の行数が減ったあと、選択位置を範囲内へ収める。
     fn clamp_comment_list_selection(&mut self) {
         let row_count = self.review_state.comment_list_rows.len();
-        let selected = &mut self.explorer.comment_list_selected;
+        let selected = &mut self.explorer.comments_cursor.selected();
         *selected = row_count.saturating_sub(1).min(*selected);
     }
 

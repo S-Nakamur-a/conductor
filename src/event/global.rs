@@ -34,8 +34,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::OpenCommentList => {
-            app.explorer.comment_list_selected = 0;
-            app.explorer.comment_list_scroll = 0;
+            app.explorer.comments_cursor.reset();
             app.overlays.active = ActiveOverlay::CommentList;
             true
         }
@@ -65,7 +64,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         }
         Action::FocusExplorerDiffList => {
             app.set_focus(Focus::Explorer);
-            app.explorer.focus_on_diff_list = true;
+            app.explorer.focus_pane(crate::explorer::Pane::Bottom);
             true
         }
         Action::FocusViewer => {

@@ -43,7 +43,7 @@ impl App {
     /// 開く。ファイルジャンプ系のキーから共有される。選択エントリがファイルでなければ
     /// 何もしない。
     pub fn open_diff_file_at_selected(&mut self) {
-        let idx = self.explorer.diff_list_selected;
+        let idx = self.explorer.changes_cursor.selected();
         let (file_path, file_diff_clone) = match self.diff_state.resolve_file(idx) {
             Some(f) => (f.path.clone(), f.clone()),
             None => return,
@@ -97,7 +97,7 @@ impl App {
         // カーソルをクランプする: 古い diff_list_selected(リフレッシュでリストが
         // 縮んだ場合など)が下の後方スキャンでリスト範囲を超えてはならない。
         // 超えると display_list[i] がパニックする。
-        let cur = self.explorer.diff_list_selected.min(len);
+        let cur = self.explorer.changes_cursor.selected().min(len);
         let target = if forward {
             (cur + 1..len)
                 .find(|&i| matches!(self.diff_state.display_list[i], DiffListEntry::File { .. }))
@@ -107,7 +107,8 @@ impl App {
                 .find(|&i| matches!(self.diff_state.display_list[i], DiffListEntry::File { .. }))
         };
         if let Some(idx) = target {
-            self.explorer.diff_list_selected = idx;
+            let len = self.diff_state.display_list.len();
+            self.explorer.changes_cursor.place(idx, len);
             self.open_diff_file_at_selected();
         }
     }

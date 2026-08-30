@@ -66,7 +66,7 @@ impl App {
                 self.select_worktree_by_path(&worktree_path);
                 self.overlays.active = crate::overlay::ActiveOverlay::None;
                 self.overlays.pr_input.buffer.clear();
-                self.explorer.focus_on_diff_list = true;
+                self.explorer.focus_pane(crate::explorer::Pane::Bottom);
                 self.set_focus(Focus::Explorer);
                 self.set_status(
                     format!("PR #{pr_number} ready for review."),

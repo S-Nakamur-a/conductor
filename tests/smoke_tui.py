@@ -5,7 +5,7 @@ build と test が緑でも「実際に描けているか」は分からない�
 CUP (ESC[row;colH) を再生してセルバッファを組み直すことで、フォーカス枠の
 移動やツリーの展開といった見た目の変化を機械的に確認できる。
 
-    python3 scripts/smoke-tui.py <conductor バイナリ> <対象リポジトリ>
+    python3 tests/smoke_tui.py <conductor バイナリ> <対象リポジトリ>
 
 対象リポジトリは使い捨てのクローンにすること。conductor はリポジトリにつき
 1 ウィンドウのインスタンスロックを取るので、作業中のものを指すと弾かれる。

@@ -1,38 +1,41 @@
 //! Explorer パネル — 中央カラムのファイルツリーブラウザ。
 //!
-//! 上半分に現在選択中の worktree のファイルツリーを、下半分に変更
-//! （diff）ファイルの一覧を表示する。ファイル上で Enter を押すと
-//! Viewer パネルで開く。
+//! 上半分に現在選択中の worktree のファイルツリーを、下半分に
+//! Changes（変更ファイル一覧）と Comments（レビューコメント一覧）のいずれか
+//! を表示する。どちらを出すかは [crate::explorer::state::Explorer::bottom] が
+//! 決める。
 //!
 //! 描画の責務ごとに分割している: [file_tree] が上半分のファイルツリーを、
-//! [diff_list] が下半分の変更ファイル一覧（とそのコメントバッジ）を、
-//! [comment_list] が切り替え式のレビューコメント一覧（下部ペインと
-//! 全画面 C オーバーレイの両方）を、[search_box] がパネル内の
-//! ファイル名検索入力欄を描画する。
+//! [changes] が Changes ビュー（とそのコメントバッジ）を、[comments] が
+//! Comments ビュー（下部ペインと全画面 C オーバーレイの両方）を、
+//! [search_field] がパネル内のファイル名検索入力欄を描画する。
 
-use crate::app::{App, Focus};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 
-mod comment_list;
-mod diff_list;
+mod changes;
+mod comments;
 mod file_tree;
-mod search_box;
+pub mod geometry;
+mod search_field;
 
-pub use comment_list::render_comment_list_overlay;
-pub(crate) use diff_list::revidere_badge_cols;
+use crate::explorer::ctx::{Ctx, Paint};
+use crate::explorer::state::{BottomView, Explorer};
+
+pub(crate) use changes::revidere_badge_cols;
+pub(crate) use comments::ask_claude_all_cols;
+pub use geometry::Geometry;
 
 /// 指定領域に Explorer (ファイルツリー) パネルを描画する。
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
+pub fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, paint: &Paint) -> Geometry {
     if area.width == 0 || area.height == 0 {
-        return;
+        return Geometry::default();
     }
-    let focused = app.focus == Focus::Explorer;
 
-    // 上 (ファイルツリー) と下 (変更ファイル一覧) に分割する。比率は設定値で、
+    // 上 (ファイルツリー) と下 (Changes/Comments) に分割する。比率は設定値で、
     // 実行中に Ctrl+Alt+↑/↓ で変えられる。マウスの当たり判定を描画と一致させる
     // ため LayoutCache の explorer_mid_y と同じ計算にすること。
-    let tree_pct = app.config.layout.explorer_split_pct;
+    let tree_pct = ctx.config.layout.explorer_split_pct;
     let changed_pct = 100u16.saturating_sub(tree_pct);
     let chunks = Layout::vertical([
         Constraint::Percentage(tree_pct),
@@ -40,45 +43,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     ])
     .split(area);
 
-    // イベント処理側のスクロール計算のために、実際のパネル高さを記録する。
-    let tree_inner_height = chunks[0].height.saturating_sub(2) as usize;
-    // 変更ファイル一覧は先頭行をエラーバナーに使うが、これは display_list の
-    // 要素ではない。スクロールのページ幅とマウスの行→インデックス変換の両方が
-    // この行数を知る必要があるので、どのビューが表示中かを唯一知っている
-    // ここから公開する。
-    let shows_error_banner = app.explorer.bottom_view
-        == crate::explorer::ExplorerBottomView::DiffList
-        && app.diff_state.error.is_some();
-    let banner_rows = diff_list::diff_list_banner_rows(shows_error_banner);
-    let diff_inner_height =
-        (chunks[1].height.saturating_sub(2) as usize).saturating_sub(banner_rows);
-    app.explorer.tree_height = tree_inner_height.max(1);
-    app.explorer.diff_list_height = diff_inner_height.max(1);
-    app.explorer.diff_banner_rows = banner_rows;
-
-    file_tree::render_file_tree(frame, chunks[0], app, focused);
-    match app.explorer.bottom_view {
-        crate::explorer::ExplorerBottomView::Comments => {
-            comment_list::render_comment_list(frame, chunks[1], app, focused);
-        }
-        crate::explorer::ExplorerBottomView::DiffList => {
-            diff_list::render_diff_list(frame, chunks[1], app, focused);
-        }
+    file_tree::render(frame, chunks[0], ex, ctx, paint);
+    match ex.bottom() {
+        BottomView::Changes => changes::render(frame, chunks[1], ex, ctx, paint),
+        BottomView::Comments => comments::render(frame, chunks[1], ex, ctx, paint),
     }
 
-    // 検索入力のオーバーレイを出す (全体オーバーレイに覆われている間はカーソル配置をしない)。
-    let overlay_active = app.is_any_overlay_active();
-    if app.viewer.search.search_active {
-        search_box::render_search_box(
-            frame,
-            area,
-            &app.viewer.search.search_query,
-            &app.theme,
-            overlay_active,
-        );
-    }
+    let search_cursor = search_field::render(frame, area, ctx, paint);
+    Geometry { search_cursor }
+}
 
-    // ファイル名のあいまい検索モーダルは最上位で描画している
-    // (layout::render_ui を参照)。このパネルが幅ゼロまで畳まれていても
-    // (Viewer 最大化中など) 見えたままにするため。
+/// コメント一覧を中央全画面モーダル（C オーバーレイ）として描画する。
+/// ブランチ上の全レビューコメントの一覧を表示し、該当箇所へジャンプできる。
+/// 下部ペインと同じ描画ロジックを再利用する。
+pub fn render_comments_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    ex: &Explorer,
+    ctx: &Ctx,
+    paint: &Paint,
+) {
+    // 下限を area にクランプする。そうしないと極小ターミナルで min > max になり
+    // u16::clamp が panic する。
+    let w = ((area.width as u32 * 70 / 100) as u16).clamp(24.min(area.width), area.width);
+    let h = ((area.height as u32 * 80 / 100) as u16).clamp(6.min(area.height), area.height);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    let popup = Rect::new(x, y, w, h);
+    frame.render_widget(ratatui::widgets::Clear, popup);
+    comments::render(frame, popup, ex, ctx, paint);
 }

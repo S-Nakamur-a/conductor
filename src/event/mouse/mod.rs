@@ -12,11 +12,8 @@
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::{App, Focus};
-use crate::explorer::input::open_viewer_comment;
-use crate::explorer::mouse::{
-    diff_list_row_at, explorer_tree_row_at, handle_explorer_column_click,
-};
 use crate::overlay::ActiveOverlay;
+use crate::viewer::comment_actions::open_viewer_comment;
 
 mod bars;
 mod scroll;
@@ -258,12 +255,18 @@ fn has_blocking_overlay(app: &App) -> bool {
 fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
     if app.editor.is_some()
         || row != geom.explorer_mid_y
-        || app.explorer.bottom_view != crate::explorer::ExplorerBottomView::DiffList
+        || app.explorer.bottom() != crate::explorer::BottomView::Changes
     {
         return false;
     }
-    crate::explorer::render::revidere_badge_cols(app, geom.left_end, geom.explorer_w)
-        .is_some_and(|cols| cols.contains(&col))
+    crate::explorer::render::revidere_badge_cols(
+        app.diff_state.files.len(),
+        app.diff_state.error.is_some(),
+        app.config.ui.icon_set(),
+        geom.left_end,
+        geom.explorer_w,
+    )
+    .is_some_and(|cols| cols.contains(&col))
 }
 
 /// 指定した divider が現在マウスリサイズのためにつかめる状態かどうか。パネルが
@@ -654,7 +657,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
 
             match geom.column_at(col) {
                 Column::Worktree => handle_worktree_column_click(app, row, &geom),
-                Column::Explorer => handle_explorer_column_click(app, col, row, &geom),
+                Column::Explorer => app.explorer_click(col, row),
                 Column::Viewer => handle_viewer_column_click(app, mouse, col, row, &geom),
                 Column::Terminal => handle_terminal_column_click(app, mouse, col, row, &geom),
             }
@@ -744,19 +747,15 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // 上、など）は常にNoneになり、これがマウスが離れたときにホバーを
             // クリアするのに必要な処理そのものになる — 「ツリーから離れたか」を
             // 別途チェックする必要はない。
-            let tree_scroll = app.explorer.tree.tree_scroll;
-            app.list_hover.explorer_tree
-                .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
+            let (tree_row, changes_row) = app.explorer_hover(col, row);
+            app.list_hover.explorer_tree.set(tree_row);
 
             // revidere の状態チップ。カーソルがそこから外れれば false に戻るので、
             // 離れたときの消灯も同じ 1 行で済む。
             app.revidere.badge_hover = revidere_badge_hit(app, col, row, &geom);
 
-            // Explorerの下半分にある変更ファイル（diff）リストについても同様。
-            let diff_scroll = app.explorer.diff_list_scroll;
-            let diff_banner = app.explorer.diff_banner_rows;
-            app.list_hover.diff_list
-                .set(diff_list_row_at(&geom, diff_scroll, diff_banner, col, row));
+            // Explorer の下半分、変更ファイル一覧についても同様。
+            app.list_hover.diff_list.set(changes_row);
 
             // viewerパネルのガターハイライト用にホバー行を追跡する。レンダリング
             // 済みmarkdownはガターも行単位のハイライトも描画せず、その行は

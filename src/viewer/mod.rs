@@ -24,6 +24,7 @@ mod tabs;
 
 pub mod code_nav;
 pub mod code_nav_state;
+pub mod comment_actions;
 pub mod hover_info;
 pub mod input;
 pub mod jump_history;

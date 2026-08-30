@@ -5,7 +5,6 @@ use super::{
     ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on,
     terminal_tab_row_at,
 };
-use crate::explorer::mouse::{diff_list_row_at, explorer_tree_row_at};
 use crate::viewer::mouse::{
     MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
 };
@@ -211,113 +210,6 @@ fn expand_button_absent_for_narrow_columns() {
     let g = geom(5, 50, 90);
     assert_eq!(g.expand_button_at(0), None);
     assert_eq!(g.expand_button_at(4), None);
-}
-
-#[test]
-fn explorer_tree_row_at_rejects_the_border_row() {
-    let g = geom(20, 50, 90); // main_area.y = 1 なので、上枠は行1。
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 1), None);
-    // 枠の内側の最初の行は表示上のインデックス0に解決される。
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 2), Some(0));
-}
-
-#[test]
-fn explorer_tree_row_at_rejects_columns_outside_the_explorer() {
-    let g = geom(20, 50, 90);
-    assert_eq!(explorer_tree_row_at(&g, 0, 19, 5), None); // worktree列
-    assert_eq!(explorer_tree_row_at(&g, 0, 50, 5), None); // Viewer列
-    // Explorer自身の端の列は依然として範囲内。
-    assert_eq!(explorer_tree_row_at(&g, 0, 20, 5), Some(3));
-    assert_eq!(explorer_tree_row_at(&g, 0, 49, 5), Some(3));
-}
-
-#[test]
-fn explorer_tree_row_at_rejects_the_bottom_half() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 18), Some(16)); // 実際に描画される最後の行
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 19), None); // ツリー自身の下枠
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 20), None); // ここからChanged filesが始まる
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 25), None);
-}
-
-/// 両方のヒットテスタを、そのパネルが実際に描画する行数（レンダラが導出するのと
-/// 同じ方法、2つの枠ぶんの height - 2）に結び付ける。単に「行Nはインデックス
-/// Mに対応する」というだけのアサーションは、その関数がたまたまやっていることを
-/// なぞるにすぎない。このテストは、どちらかのパネルが枠の行を受け入れたり
-/// コンテンツ行を落としたりした瞬間に失敗する — これはまさに、画面に表示されて
-/// いなかったファイルをクリックで開いてしまうという類のバグにつながるもの。
-#[test]
-fn row_at_helpers_accept_exactly_the_rows_their_panel_draws() {
-    let g = geom(20, 50, 90);
-    let col = 30;
-
-    let tree_inner = (g.explorer_mid_y - g.main_area.y) as usize - 2;
-    let tree_hits: Vec<usize> = (0..g.explorer_mid_y)
-        .filter_map(|row| explorer_tree_row_at(&g, 0, col, row))
-        .collect();
-    assert_eq!(tree_hits, (0..tree_inner).collect::<Vec<_>>());
-
-    let diff_bottom = g.main_area.y + g.main_area.height;
-    let diff_inner = (diff_bottom - g.explorer_mid_y) as usize - 2;
-    let diff_hits: Vec<usize> = (g.explorer_mid_y..diff_bottom)
-        .filter_map(|row| diff_list_row_at(&g, 0, 0, col, row))
-        .collect();
-    assert_eq!(diff_hits, (0..diff_inner).collect::<Vec<_>>());
-}
-
-#[test]
-fn explorer_tree_row_at_adds_the_scroll_offset() {
-    let g = geom(20, 50, 90);
-    assert_eq!(explorer_tree_row_at(&g, 5, 30, 2), Some(5));
-    assert_eq!(explorer_tree_row_at(&g, 5, 30, 7), Some(10));
-}
-
-#[test]
-fn diff_list_row_at_rejects_the_top_half_and_its_border() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 19), None); // まだファイルツリー
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 20), None); // diffリスト自身の上枠
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 21), Some(0)); // diffリストの最初の行
-}
-
-#[test]
-fn diff_list_row_at_rejects_columns_outside_the_explorer() {
-    let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 19, 25), None); // worktree列
-    assert_eq!(diff_list_row_at(&g, 0, 0, 50, 25), None); // Viewer列
-    assert_eq!(diff_list_row_at(&g, 0, 0, 20, 25), Some(4));
-    assert_eq!(diff_list_row_at(&g, 0, 0, 49, 25), Some(4));
-}
-
-#[test]
-fn diff_list_row_at_rejects_the_bottom_border() {
-    // main_area = Rect::new(0, 1, .., 40) → 下枠の行は 1 + 40 - 1 = 40 で、
-    // これはリストの行ではなく「Ask Claude All」ボタンが置かれている場所。
-    let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 39), Some(18)); // diffリストの最後の行
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 40), None);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 45), None);
-}
-
-/// エラーバナーはリストの内側領域にエントリを1つ消費せずに収まるので、
-/// エントリはその分だけ下の行から始まる。ここを間違えるとクリックが1ファイル分
-/// ずれ、バナー自体が、スクロールして一番上に来ているものを開いてしまう。
-/// クリックハンドラとホバートラッカーの両方がここを通るので、オフセットは
-/// 一箇所だけ正しければよい。
-#[test]
-fn diff_list_row_at_skips_the_error_banner() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20、最初の内側行は21
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 21), None); // エントリではなくバナー
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 22), None);
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 23), Some(0)); // 最初の実エントリ
-    assert_eq!(diff_list_row_at(&g, 5, 2, 30, 23), Some(5)); // バナーの後にスクロール分
-}
-
-#[test]
-fn diff_list_row_at_adds_the_scroll_offset() {
-    let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 5, 0, 30, 21), Some(5));
-    assert_eq!(diff_list_row_at(&g, 5, 0, 30, 26), Some(10));
 }
 
 #[test]

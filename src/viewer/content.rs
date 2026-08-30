@@ -19,7 +19,7 @@ impl ViewerState {
     /// タブをアクティブにして読んでいた位置へ戻る。
     ///
     /// relative_path は表示中のツリーの根からの相対。root はその根の絶対パスで、
-    /// Explorer 側の状態 (ExplorerState::root) を呼び出し側が渡す — Viewer が
+    /// Explorer 側の状態 (Explorer::root) を呼び出し側が渡す — Viewer が
     /// Explorer をフィールドとして持つことはしない。
     pub fn open_file(&mut self, root: &Path, relative_path: &str, tab_width: usize) {
         self.open_file_as(root, relative_path, tab_width, ViewerTabStatus::Persistent);
@@ -266,7 +266,7 @@ pub fn is_markdown_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::explorer::ExplorerState;
+    use crate::explorer::Explorer;
 
     /// ファイルの中身はワークツリーの実ファイルから読む。git を一切経由しないので
     /// .git の無いディレクトリでも、git 管理下の未追跡・未コミットのファイルでも
@@ -279,7 +279,7 @@ mod tests {
         std::fs::write(dir.join("plain.txt"), "ALPHA\nBRAVO\n").unwrap();
         assert!(!dir.join(".git").exists(), "fixture must not be a git repo");
 
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -301,7 +301,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -339,7 +339,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
@@ -388,7 +388,7 @@ mod tests {
         std::fs::write(dir.join("a.rs"), "fn keep() {}\n").unwrap();
         std::fs::write(dir.join("b.py"), "def keep():\n    pass\n").unwrap();
 
-        let mut explorer = ExplorerState::default();
+        let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 

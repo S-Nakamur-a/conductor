@@ -19,7 +19,7 @@ pub(super) fn handle_mouse_scroll(
         left_end,
         explorer_end,
         viewer_end,
-        explorer_mid_y,
+        explorer_mid_y: _,
         terminal_split_y,
         ..
     } = *geom;
@@ -64,45 +64,7 @@ pub(super) fn handle_mouse_scroll(
             app.on_worktree_changed();
         }
     } else if col < explorer_end {
-        // Explorerのスクロール。
-        // スクロールが上半分（ファイルツリー）か下半分（差分リスト）かを判定する。
-        if row >= explorer_mid_y {
-            // 差分リストのスクロール。
-            let file_count = app.diff_state.display_list.len();
-            if file_count > 0 {
-                if delta > 0 {
-                    app.explorer.diff_list_scroll = app
-                        .explorer
-                        .diff_list_scroll
-                        .saturating_add(delta.unsigned_abs() as usize)
-                        .min(file_count.saturating_sub(1));
-                } else {
-                    app.explorer.diff_list_scroll = app
-                        .explorer
-                        .diff_list_scroll
-                        .saturating_sub(delta.unsigned_abs() as usize);
-                }
-            }
-        } else {
-            // ファイルツリーのスクロール。
-            let visible_count = app.explorer.visible_indices().len();
-            let page = app.explorer.tree_height.max(1);
-            let max_scroll = visible_count.saturating_sub(page);
-            if delta > 0 {
-                app.explorer.tree.tree_scroll = app
-                    .explorer
-                    .tree
-                    .tree_scroll
-                    .saturating_add(delta.unsigned_abs() as usize)
-                    .min(max_scroll);
-            } else {
-                app.explorer.tree.tree_scroll = app
-                    .explorer
-                    .tree
-                    .tree_scroll
-                    .saturating_sub(delta.unsigned_abs() as usize);
-            }
-        }
+        app.explorer_scroll(delta as isize, row);
     } else if col < viewer_end {
         // Viewerのスクロール。
         //

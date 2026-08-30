@@ -8,12 +8,12 @@ use std::rc::Rc;
 use crate::git_engine::status_map::GitStatusMap;
 use crate::icons::{dir_icon, file_icon};
 
-use super::ExplorerState;
+use super::{Explorer, FileTreeState};
 use crate::viewer::{FileTreeEntry, FilenameSearchState};
 
 /// ツリーを読み直した結果、Viewer 側でやるべきこと。
 ///
-/// ExplorerState は ViewerState を知らないので、後始末は呼び出し側 (App の
+/// Explorer は ViewerState を知らないので、後始末は呼び出し側 (App の
 /// 配線層) が行う。
 #[must_use]
 pub struct TreeReload {
@@ -28,7 +28,118 @@ pub struct TreeReload {
     pub entries_changed: bool,
 }
 
-impl ExplorerState {
+impl FileTreeState {
+    /// file_tree のインデックス idx にあるディレクトリの展開/折りたたみを切り替える。
+    pub fn toggle_dir(&mut self, idx: usize) {
+        if let Some(entry) = self.file_tree.get_mut(idx)
+            && entry.is_dir
+        {
+            entry.is_expanded = !entry.is_expanded;
+            self.invalidate_visible_cache();
+        }
+    }
+
+    /// インデックス idx のディレクトリを展開する（既に展開済み、もしくはファイル
+    /// エントリなら何もしない）。
+    pub fn expand_dir(&mut self, idx: usize) {
+        if let Some(entry) = self.file_tree.get_mut(idx)
+            && entry.is_dir
+            && !entry.is_expanded
+        {
+            entry.is_expanded = true;
+            self.invalidate_visible_cache();
+        }
+    }
+
+    /// インデックス idx のディレクトリを折りたたむ（既に折りたたみ済み、もしくは
+    /// ファイルエントリなら何もしない）。
+    pub fn collapse_dir(&mut self, idx: usize) {
+        if let Some(entry) = self.file_tree.get_mut(idx)
+            && entry.is_dir
+            && entry.is_expanded
+        {
+            entry.is_expanded = false;
+            self.invalidate_visible_cache();
+        }
+    }
+
+    /// キャッシュ済みの可視インデックスを無効化する。ツリー構造が変わるたび
+    /// （展開/折りたたみ、子の読み込み、ツリーの再読み込み）に必ず呼ぶこと。
+    pub fn invalidate_visible_cache(&mut self) {
+        *self.cached_visible_indices.borrow_mut() = None;
+    }
+
+    /// 折りたたまれたディレクトリを考慮した上で、現在可視な file_tree の
+    /// インデックス一覧を返す。結果は Rc としてキャッシュされ、
+    /// invalidate_visible_cache() が呼ばれるまで保持されるので、同一フレーム内での
+    /// 繰り返し呼び出しは実質コストゼロになる。
+    ///
+    /// 純粋なメモ化なので内部可変にしてある。`&mut` を要求すると描画が共有借用
+    /// しか持てないぶん「描く前に温めておく」という契約が呼び出し側に生まれ、
+    /// 忘れると静かに空の一覧が描かれる。
+    pub fn visible_indices(&self) -> Rc<Vec<usize>> {
+        if let Some(cached) = self.cached_visible_indices.borrow().as_ref() {
+            return Rc::clone(cached);
+        }
+
+        let mut result = Vec::with_capacity(self.file_tree.len());
+        let mut skip_depth: Option<usize> = None;
+
+        for (i, entry) in self.file_tree.iter().enumerate() {
+            if let Some(sd) = skip_depth {
+                if entry.depth > sd {
+                    continue;
+                } else {
+                    skip_depth = None;
+                }
+            }
+
+            result.push(i);
+
+            if entry.is_dir && !entry.is_expanded {
+                skip_depth = Some(entry.depth);
+            }
+        }
+
+        let rc = Rc::new(result);
+        *self.cached_visible_indices.borrow_mut() = Some(Rc::clone(&rc));
+        rc
+    }
+
+    /// file_tree のインデックス idx にあるディレクトリの直接の子要素を遅延読み込みする。
+    /// エントリがディレクトリでない、または既に子要素が読み込み済みの場合は何もしない。
+    pub fn ensure_children_loaded(&mut self, idx: usize) {
+        let (rel_path, child_depth) = match self.file_tree.get(idx) {
+            Some(e) if e.is_dir && !e.children_loaded => (e.path.clone(), e.depth + 1),
+            _ => return,
+        };
+
+        let full_path = self.root.join(&rel_path);
+
+        let mut children: Vec<FileTreeEntry> = Vec::new();
+        Explorer::walk_dir(
+            &self.root,
+            &full_path,
+            child_depth,
+            &mut children,
+            &self.git_status,
+        );
+
+        self.file_tree[idx].children_loaded = true;
+
+        if children.is_empty() {
+            return;
+        }
+
+        // 子は自分より後ろに入るので、可視インデックスで数えているカーソルは
+        // 動かない。ファイル添字で数えていた頃はここで押し出す必要があった。
+        let insert_pos = idx + 1;
+        self.file_tree.splice(insert_pos..insert_pos, children);
+        self.invalidate_visible_cache();
+    }
+}
+
+impl Explorer {
     /// 表示中のツリーを歩いた根。エントリの相対パスはここに繋いで絶対パスにする。
     pub fn root(&self) -> &Path {
         &self.tree.root
@@ -77,7 +188,7 @@ impl ExplorerState {
     /// ファイルウォッチャーによる再構築がユーザーの見ている画面を崩さない。
     /// 以前開いていたファイルが削除されていた場合は、自然に「ファイル未選択」に戻る。
     ///
-    /// 根を受け取る唯一の入口。ここで [ExplorerState::root] を確定させ、以降
+    /// 根を受け取る唯一の入口。ここで [Explorer::root] を確定させ、以降
     /// ファイルを開く・子を読む・検索候補を集めるのはすべてこの根に対して行う。
     ///
     /// 現在開いているファイルのパス (`prev_file`) は、読んでいた位置と表示モードを
@@ -99,10 +210,12 @@ impl ExplorerState {
             .collect();
         // カーソルが指すエントリと全パス集合を覚えておく。カーソル位置を復元し、
         // 再構築後のツリーが実際に変化したかを検出するために使う。
+        // カーソルは可視インデックスで数えるので、ファイル添字へ直してから引く。
         let prev_selected_path = self
             .tree
-            .file_tree
-            .get(self.tree.tree_selected)
+            .visible_indices()
+            .get(self.tree_cursor.selected())
+            .and_then(|&i| self.tree.file_tree.get(i))
             .map(|e| e.path.clone());
         let prev_paths: Vec<String> = self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
 
@@ -162,10 +275,6 @@ impl ExplorerState {
             if !worktree_path.join(rel_path).is_file() {
                 return None;
             }
-            // tree_selected をファイルエントリに合わせて復元しようとする。
-            if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == rel_path) {
-                self.tree.tree_selected = idx;
-            }
             Some(rel_path.to_string())
         });
 
@@ -173,21 +282,17 @@ impl ExplorerState {
         // 上のブロックで既にカーソルをそこに合わせている。そうでなければ以前選択していた
         // エントリを復元し、ウォッチャーや定期リフレッシュでカーソルが先頭に
         // 巻き戻されないようにする。
-        let anchored_to_open_file = reopen.as_deref().is_some_and(|f| {
-            self.tree
-                .file_tree
-                .get(self.tree.tree_selected)
-                .map(|e| e.path.as_str())
-                == Some(f)
-        });
-        if !anchored_to_open_file
-            && let Some(path) = prev_selected_path
-            && let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == path)
-        {
-            self.tree.tree_selected = idx;
-        }
-        if self.tree.tree_selected >= self.tree.file_tree.len() {
-            self.tree.tree_selected = self.tree.file_tree.len().saturating_sub(1);
+        // 開いているファイルがあればそこ、無ければ以前選んでいたパスへ戻す。
+        // ウォッチャーや定期リフレッシュでカーソルが先頭へ巻き戻らないようにする。
+        let anchor = reopen.as_deref().or(prev_selected_path.as_deref());
+        if let Some(path) = anchor {
+            let visible = self.tree.visible_indices();
+            if let Some(at) = visible
+                .iter()
+                .position(|&i| self.tree.file_tree.get(i).is_some_and(|e| e.path == path))
+            {
+                self.tree_cursor.place(at, visible.len());
+            }
         }
 
         let entries_changed = self
@@ -204,77 +309,16 @@ impl ExplorerState {
         }
     }
 
-    /// file_tree のインデックス idx にあるディレクトリの展開/折りたたみを切り替える。
-    pub fn toggle_dir(&mut self, idx: usize) {
-        if let Some(entry) = self.tree.file_tree.get_mut(idx)
-            && entry.is_dir
-        {
-            entry.is_expanded = !entry.is_expanded;
-            self.invalidate_visible_cache();
-        }
-    }
-
-    /// インデックス idx のディレクトリを展開する（既に展開済み、もしくはファイル
-    /// エントリなら何もしない）。
-    pub fn expand_dir(&mut self, idx: usize) {
-        if let Some(entry) = self.tree.file_tree.get_mut(idx)
-            && entry.is_dir
-            && !entry.is_expanded
-        {
-            entry.is_expanded = true;
-            self.invalidate_visible_cache();
-        }
-    }
-
-    /// インデックス idx のディレクトリを折りたたむ（既に折りたたみ済み、もしくは
-    /// ファイルエントリなら何もしない）。
-    pub fn collapse_dir(&mut self, idx: usize) {
-        if let Some(entry) = self.tree.file_tree.get_mut(idx)
-            && entry.is_dir
-            && entry.is_expanded
-        {
-            entry.is_expanded = false;
-            self.invalidate_visible_cache();
-        }
-    }
-
-    /// キャッシュ済みの可視インデックスを無効化する。ツリー構造が変わるたび
-    /// （展開/折りたたみ、子の読み込み、ツリーの再読み込み）に必ず呼ぶこと。
     pub fn invalidate_visible_cache(&mut self) {
-        self.tree.cached_visible_indices = None;
+        self.tree.invalidate_visible_cache();
     }
 
-    /// 折りたたまれたディレクトリを考慮した上で、現在可視な file_tree の
-    /// インデックス一覧を返す。結果は Rc としてキャッシュされ、
-    /// invalidate_visible_cache() が呼ばれるまで保持されるので、同一フレーム内での
-    /// 繰り返し呼び出しは実質コストゼロになる。
     pub fn visible_indices(&mut self) -> Rc<Vec<usize>> {
-        if let Some(ref cached) = self.tree.cached_visible_indices {
-            return Rc::clone(cached);
-        }
+        self.tree.visible_indices()
+    }
 
-        let mut result = Vec::with_capacity(self.tree.file_tree.len());
-        let mut skip_depth: Option<usize> = None;
-
-        for (i, entry) in self.tree.file_tree.iter().enumerate() {
-            if let Some(sd) = skip_depth {
-                if entry.depth > sd {
-                    continue;
-                } else {
-                    skip_depth = None;
-                }
-            }
-
-            result.push(i);
-
-            if entry.is_dir && !entry.is_expanded {
-                skip_depth = Some(entry.depth);
-            }
-        }
-
-        let rc = Rc::new(result);
-        self.tree.cached_visible_indices = Some(Rc::clone(&rc));
-        rc
+    pub fn ensure_children_loaded(&mut self, idx: usize) {
+        self.tree.ensure_children_loaded(idx);
     }
 
     // ツリーの reveal
@@ -311,16 +355,11 @@ impl ExplorerState {
             };
 
             if is_last {
-                // 対象のファイル/ディレクトリを選択する。
-                self.tree.tree_selected = idx;
-                // その項目が見えるようスクロールを調整する。
+                // 窓には触れない。画面に入れるのは高さを知る側 (入力の入口) の
+                // 仕事で、そこが次のティックで clamp する。
                 let visible = self.visible_indices();
-                if let Some(vis_pos) = visible.iter().position(|&vi| vi == idx) {
-                    let height = self.tree_height;
-                    if vis_pos < self.tree.tree_scroll || vis_pos >= self.tree.tree_scroll + height
-                    {
-                        self.tree.tree_scroll = vis_pos.saturating_sub(height / 3);
-                    }
+                if let Some(at) = visible.iter().position(|&vi| vi == idx) {
+                    self.tree_cursor.place(at, visible.len());
                 }
             } else {
                 // 途中のディレクトリ — 子要素が読み込まれていることを確認し展開する。
@@ -365,43 +404,6 @@ impl ExplorerState {
         ".nuxt",
         ".output",
     ];
-
-    /// file_tree のインデックス idx にあるディレクトリの直接の子要素を遅延読み込みする。
-    /// エントリがディレクトリでない、または既に子要素が読み込み済みの場合は何もしない。
-    pub fn ensure_children_loaded(&mut self, idx: usize) {
-        let (rel_path, child_depth) = match self.tree.file_tree.get(idx) {
-            Some(e) if e.is_dir && !e.children_loaded => (e.path.clone(), e.depth + 1),
-            _ => return,
-        };
-
-        let full_path = self.tree.root.join(&rel_path);
-
-        let mut children: Vec<FileTreeEntry> = Vec::new();
-        Self::walk_dir(
-            &self.tree.root,
-            &full_path,
-            child_depth,
-            &mut children,
-            &self.tree.git_status,
-        );
-
-        self.tree.file_tree[idx].children_loaded = true;
-
-        if children.is_empty() {
-            return;
-        }
-
-        let insert_pos = idx + 1;
-        let count = children.len();
-
-        // 挿入位置以降にある場合は tree_selected を調整する。
-        if self.tree.tree_selected >= insert_pos {
-            self.tree.tree_selected += count;
-        }
-
-        self.tree.file_tree.splice(insert_pos..insert_pos, children);
-        self.invalidate_visible_cache();
-    }
 
     /// ツリーの根以下のファイルシステム全体を歩き、ファイル名検索キャッシュを構築する。
     ///

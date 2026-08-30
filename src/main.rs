@@ -53,6 +53,7 @@ pub mod types;
 mod ui;
 mod update_checker;
 mod viewer;
+mod widget;
 mod worktree;
 
 use std::io;

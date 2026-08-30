@@ -67,7 +67,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         crate::terminal::render::editor::render(frame, region, app);
     } else {
         // カラム1: Explorer（ファイルツリー + 差分リスト）
-        crate::explorer::render::render(frame, columns[1], app);
+        app.render_explorer(frame, columns[1]);
 
         // カラム2: Viewer（ファイル内容）
         if app.viewer.is_current_file_media()

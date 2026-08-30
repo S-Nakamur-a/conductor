@@ -16,9 +16,8 @@ Set `RUST_LOG=debug` for logging.
 `conductor` package, not `crates/revidere*` or `crates/sheaf-core`.
 `default-members` is deliberately left alone so `cargo run` stays unambiguous.
 
-CI checks `cargo fmt --all -- --check`, `./scripts/check-structure.sh closure`
-(see **Application Structure**), and `cargo clippy --workspace` on every pull
-request. `.githooks/pre-commit` runs the same fmt check locally, but wiring
+CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace` on every
+pull request. `.githooks/pre-commit` runs the same fmt check locally, but wiring
 it up is each developer's own business — the repository does not install it.
 
 ### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
@@ -253,10 +252,6 @@ hold only what is genuinely cross-panel.
 - `src/app/` holds `App` itself and **cross-panel orchestration** — focus,
   lifecycle, the command palette's execution, `view_state.rs`. State owned by one
   panel lives in that panel.
-- `scripts/check-structure.sh closure` enforces this: those three directories are
-  a **closed set**, and an entry not listed with a reason in
-  `scripts/shared-layers.txt` fails CI. Adding a file there is a decision you have
-  to write down. `check-structure.sh <panel>` checks one panel is whole.
 
 `App` in `app/` holds all state as flat fields — no ECS, no components. `main.rs`
 runs a 60fps loop: crossterm events at 16ms, file watcher, a worktree refresh

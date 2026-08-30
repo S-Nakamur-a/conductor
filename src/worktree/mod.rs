@@ -25,7 +25,7 @@ use std::sync::mpsc;
 
 use crate::app::*;
 use crate::diff_state::DiffState;
-use crate::explorer::ExplorerState;
+use crate::explorer::Explorer;
 use crate::git_engine;
 use crate::git_engine::status_map::GitStatusMap;
 use crate::viewer::ViewerState;
@@ -110,7 +110,7 @@ impl App {
             self.save_view_for(&outgoing);
         }
 
-        self.explorer = ExplorerState::default();
+        self.explorer = Explorer::default();
         self.viewer = ViewerState::default();
 
         // 今ユーザが見ているツリーに対してシンボルインデックスを再構築する。ワークツリーは
@@ -204,7 +204,7 @@ impl App {
                 self.bg.file_tree.start(move |tx| {
                     // ツリー走査と同時に（メインスレッドではなく）計算することで、ワークツリー
                     // 切り替えのたびに git status 取得だけの別の停止が追加で入るのを避けている。
-                    // ExplorerState::load_file_tree の同期パスと同じフォールバック＋ログの方針:
+                    // Explorer::load_file_tree の同期パスと同じフォールバック＋ログの方針:
                     // 空のマップだと UI はすべてが追跡・コミット済みだと主張してしまうので、
                     // ここでの失敗を黙って見逃してはいけない。
                     let git_status = GitStatusMap::load(&path).unwrap_or_else(|e| {
@@ -215,7 +215,7 @@ impl App {
                         GitStatusMap::default()
                     });
                     let mut entries = Vec::new();
-                    ExplorerState::walk_dir(&path, &path, 0, &mut entries, &git_status);
+                    Explorer::walk_dir(&path, &path, 0, &mut entries, &git_status);
                     let _ = tx.send((path, entries, git_status));
                 });
             }

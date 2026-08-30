@@ -16,7 +16,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::App;
 use crate::keymap::{Action, KeyContext};
 
-use crate::explorer::input::open_viewer_comment_detail;
+use crate::viewer::comment_actions::open_viewer_comment_detail;
 
 use code_nav::{
     handle_find_references, handle_go_to_definition, handle_go_to_implementation,

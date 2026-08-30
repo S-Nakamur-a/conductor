@@ -29,7 +29,7 @@ use std::path::PathBuf;
 
 use crate::config;
 use crate::diff_state::DiffState;
-use crate::explorer::ExplorerState;
+use crate::explorer::Explorer;
 use crate::explorer::hover::ListHover;
 use crate::git_engine;
 use crate::keymap::KeyMap;
@@ -94,7 +94,7 @@ pub struct App {
     /// [Self::theme] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
     pub theme_sel: ThemeSelection,
     /// Explorerパネルの状態（ファイルツリー + diff一覧/コメント一覧の選択）。
-    pub explorer: ExplorerState,
+    pub explorer: Explorer,
     /// Viewerパネルの状態（開いているファイルのタブとその内容）。
     pub viewer: ViewerState,
     /// Diffデータの状態（Viewerのインラインハイライトに使われる）。

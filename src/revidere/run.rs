@@ -411,7 +411,8 @@ impl App {
         self.expand_threads_for_file(&file_path);
         self.viewer.build_unified_diff_view(&file_diff);
         if let Some(idx) = self.diff_state.display_index_for_path(&file_path) {
-            self.explorer.diff_list_selected = idx;
+            let len = self.diff_state.display_list.len();
+            self.explorer.changes_cursor.place(idx, len);
         }
         if let Some(pos) = line.and_then(|n| {
             self.viewer.diff_view.diff_view_lines.iter().position(|e| {
