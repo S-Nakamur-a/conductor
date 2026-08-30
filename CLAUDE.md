@@ -16,8 +16,9 @@ Set `RUST_LOG=debug` for logging.
 `conductor` package, not `crates/revidere*` or `crates/sheaf-core`.
 `default-members` is deliberately left alone so `cargo run` stays unambiguous.
 
-CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace` on every
-pull request. `.githooks/pre-commit` runs the same fmt check locally, but wiring
+CI checks `cargo fmt --all -- --check`, `./scripts/check-structure.sh closure`
+(see **Application Structure**), and `cargo clippy --workspace` on every pull
+request. `.githooks/pre-commit` runs the same fmt check locally, but wiring
 it up is each developer's own business — the repository does not install it.
 
 ### MCP Server (`conductor mcp-serve`, `src/mcp_serve/`)
@@ -233,13 +234,37 @@ the filter produces.
 
 ### Application Structure
 
+**A panel owns one directory.** `src/<panel>/` holds that panel's state, its
+rendering, and its input handling together — `menu`, `reflow`, `revidere`,
+`explorer`, `viewer`, `worktree`, `terminal`. Adding a feature to a panel means
+editing files in one directory, not four. The split used to be by layer
+(`src/ui/`, `src/app/`, `src/event/`), which made every feature a four-file
+shotgun edit and let those three trees grow to 35k lines; they are now 17k and
+hold only what is genuinely cross-panel.
+
+- `src/ui/` is for **drawing used by two or more panels** — `layout/` (the
+  accordion that calls each panel's render), `markdown/`, `common/` (`PanelChrome`,
+  colour maths, `visible_window`, `representative_chord`), `chrome/` (the
+  full-width title/status/worktree-label rows), `tab_bar.rs` (viewer and terminal
+  share `TabAction`). A file here that only one panel references belongs in that
+  panel.
+- `src/event/` holds the **dispatch skeleton only** — the key ladder, hit
+  geometry, wheel scrolling, the bar rows. Per-panel handlers live in the panel.
+- `src/app/` holds `App` itself and **cross-panel orchestration** — focus,
+  lifecycle, the command palette's execution, `view_state.rs`. State owned by one
+  panel lives in that panel.
+- `scripts/check-structure.sh closure` enforces this: those three directories are
+  a **closed set**, and an entry not listed with a reason in
+  `scripts/shared-layers.txt` fails CI. Adding a file there is a decision you have
+  to write down. `check-structure.sh <panel>` checks one panel is whole.
+
 `App` in `app/` holds all state as flat fields — no ECS, no components. `main.rs`
 runs a 60fps loop: crossterm events at 16ms, file watcher, a worktree refresh
 every 3s, and a scan of Claude Code's PTY output for file-change patterns.
-`event/` dispatches per context: overlay modes (worktree input, cherry-pick,
-branch switch, …) take absolute priority and consume all keys; otherwise `Focus`
-routes to the focused panel, and terminal panels forward everything but Esc
-straight to the PTY.
+Keys bubble outward through six stages (`event/mod.rs`): menu, overlay, panel
+popup, PTY, keymap, focus. Each stage returns `None` (consumed) or `Some(key)`
+(not mine). **The default is to consume** — that is what keeps an IME's
+composing glyphs from leaking past a text input to the outer stages.
 
 ### Layout
 
@@ -273,12 +298,17 @@ rows carry a `CommandId` and go through `App::execute_palette_command`, so
 
 | Module | Role |
 |--------|------|
-| `app/` | All application state and business logic (`mod.rs` plus `review.rs`, `terminal.rs`, `worktree.rs`, `review_publish.rs`, `revidere.rs`) |
-| `event/` | Keyboard/mouse dispatch by Focus and overlay state (per-context submodules) |
+| `app/` | `App` itself plus cross-panel orchestration — focus, lifecycle, palette execution, `view_state.rs` |
+| `event/` | The dispatch skeleton: the six-stage key ladder, `mouse/` hit geometry and wheel scrolling |
+| **Panels** | Each owns `src/<panel>/` — state at the root, `render*`, `input*`, `mouse.rs` |
+| `explorer/` | File tree (`tree.rs`) over the diff list / comment list (`ExplorerBottomView`) |
+| `viewer/` | Open-file tabs (`tabs.rs`), content buffer (`file_view.rs`), code navigation (`code_nav.rs`) |
+| `worktree/` | The full-width strip (`bar.rs`), the list (`render/`), idle-space `decoration/` |
+| `terminal/` | Claude Code / Shell / editor PTY panes — `state.rs`, `render/pty.rs`, `resize.rs` |
 | `menu/` | Menu taxonomy (`model.rs`), interaction state (`state.rs`), greyed-out predicates (`enabled.rs`) |
+| `reflow/` | The Claude transcript view — `log/` (jsonl), `render/`, width-following reflow |
 | `git_engine/` | All git operations via `git2`, no shell-out — worktrees, diffs, branches, cherry-pick, merge |
 | `diff_state/` | Diff data model (file diffs, hunks, lines) over the `similar` crate |
-| `viewer/` | File tree (`file_tree.rs`), content buffer (`file_view.rs`), open-file tabs (`tabs.rs`) |
 | `review_store/` | SQLite persistence (`.conductor/conductor.db`) for reviews, sessions, templates, history |
 | `pty_manager/` | PTY spawn/read/write/resize, vt100 parsing for rendering, output scanner for Claude Code |
 | `claude_sessions/` | Which `.jsonl` transcript backs a panel (`rotation.rs` is the hook-less `/clear` fallback) |
@@ -291,9 +321,14 @@ rows carry a `CommandId` and go through `App::execute_palette_command`, so
 | `pr_intake.rs` | Fetches a PR via `gh` and prepares its worktree (re-entrant: reuses a valid one) |
 | `config/` · `theme/` | Config loading from `~/.config/conductor/config.toml` · colour themes |
 
-### UI Modules (`src/ui/`)
+### Shared UI (`src/ui/`)
 
-Each file renders one panel or overlay popup. `common.rs` has shared rendering helpers including vt100-to-ratatui style conversion.
+Only what two or more panels draw with. `layout/` splits the frame and calls each
+panel's own `render`; `chrome/` draws the full-width rows above and below it;
+`common/` holds the primitives (panel borders, colour maths, chip-strip paging,
+key-chord formatting). `dashboard/` and the loose overlay files are the remaining
+exception — overlays whose owning panel has not been decided yet, tracked in
+`scripts/shared-layers.txt` under `[移行待ち]`.
 
 ### Data Paths
 
