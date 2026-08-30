@@ -41,12 +41,16 @@ case "${1:-all}" in
   menu)     check_panel menu     'mod.rs' 'render.rs' 'input.rs' 'mouse.rs' ;;
   reflow)   check_panel reflow   'mod.rs' 'render*'   'input.rs' ;;
   revidere) check_panel revidere 'mod.rs' 'render.rs' 'input.rs' 'state.rs' ;;
+  explorer) check_panel explorer 'mod.rs' 'render*'   'input*'   'mouse.rs' ;;
+  viewer)   check_panel viewer   'mod.rs' 'render*'   'input*'   'mouse.rs' ;;
   all)
     check_panel menu     'mod.rs' 'render.rs' 'input.rs' 'mouse.rs'
     check_panel reflow   'mod.rs' 'render*'   'input.rs'
     check_panel revidere 'mod.rs' 'render.rs' 'input.rs' 'state.rs'
+    check_panel explorer 'mod.rs' 'render*'   'input*'   'mouse.rs'
+    check_panel viewer   'mod.rs' 'render*'   'input*'   'mouse.rs'
     ;;
-  *) echo "usage: $0 [menu|reflow|revidere|all]" >&2; exit 2 ;;
+  *) echo "usage: $0 [menu|reflow|revidere|explorer|viewer|all]" >&2; exit 2 ;;
 esac
 
 exit $fail
