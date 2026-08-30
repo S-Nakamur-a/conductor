@@ -380,7 +380,7 @@ fn indexed_double_click_resets_on_different_idx() {
 // メニューバーのクリック
 
 mod menu_clicks {
-    use super::super::menu::{MenuClick, classify_menu_click};
+    use crate::menu::mouse::{MenuClick, classify_menu_click};
     use crate::menu::state::{ItemHit, MenuFocus, MenuState};
     use ratatui::layout::Rect;
 

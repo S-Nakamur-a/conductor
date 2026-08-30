@@ -51,13 +51,13 @@ fn activate(app: &mut App, menu_idx: usize, item_idx: usize) {
 
 /// ハイライトされた行をドロップダウンの可視ウィンドウ内に保つ。
 fn rescroll(app: &mut App) {
-    let visible = crate::ui::menu_bar::visible_rows(app, app.layout.cache.frame_area.height);
+    let visible = crate::menu::render::visible_rows(app, app.layout.cache.frame_area.height);
     app.menu.scroll_selection_into_view(visible);
 }
 
 /// [MenuFocus] がアクティブな間のキーを処理する。呼び出し側は、メニューが
 /// 入力を握っていることをすでに確認済み。
-pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+pub(crate) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match app.menu.focus {
         MenuFocus::Closed => {}
 
@@ -147,6 +147,6 @@ pub(super) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> 
 
 /// マウス側からの実行。クリックハンドラと共有し、クリックされた行と Enter で
 /// 選択された行がまったく同じ経路を通るようにする。
-pub(in crate::event) fn activate_item(app: &mut App, menu_idx: usize, item_idx: usize) {
+pub(in crate::menu) fn activate_item(app: &mut App, menu_idx: usize, item_idx: usize) {
     activate(app, menu_idx, item_idx);
 }

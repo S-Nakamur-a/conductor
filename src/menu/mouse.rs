@@ -1,15 +1,16 @@
 //! メニューバーとそのドロップダウンのマウス処理。
 //!
-//! この2つの入口は [handle_mouse_event](super::handle_mouse_event) 内で他のバー用
+//! この2つの入口は
+//! [handle_mouse_event](crate::event::mouse::handle_mouse_event) 内で他のバー用
 //! ハンドラより先に実行される。この順序には意味がある。handle_title_bar_click は
 //! main_area より上の全ての行を無条件に自分のものとして true を返すため、これより
 //! 後にメニューバーのクリック処理を置くと絶対に呼ばれない。
 //!
 //! クリックが何を意味するかの判断は [classify_menu_click] が担う。記録済みの
 //! ヒット領域に対する純粋関数であり、
-//! [classify_margin_click](super::viewer_panel::classify_margin_click) と同じ形。
-//! 理由も同じで、興味深いルール（トグル・閉じる・無反応行）を App やターミナルを
-//! 立ち上げずにテストできるようにするため。
+//! [classify_margin_click](crate::event::mouse::viewer_panel::classify_margin_click)
+//! と同じ形。理由も同じで、興味深いルール（トグル・閉じる・無反応行）を App や
+//! ターミナルを立ち上げずにテストできるようにするため。
 
 use crate::app::App;
 use crate::menu::MenuFocus;
@@ -18,7 +19,7 @@ use crate::menu::state::MenuState;
 
 /// 指定した位置への左クリックがメニューに対して何をすべきかを表す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuClick {
+pub(crate) enum MenuClick {
     /// menu の item を実行する。
     Activate { menu: usize, item: usize },
     /// menu のドロップダウンを開く。
@@ -39,7 +40,7 @@ fn items_of(index: usize) -> &'static [crate::menu::MenuItem] {
 
 /// (col, row) へのクリックが何を意味するかを決定する。bar_row はメニューバーの
 /// 画面上の行で、バーが描画されていない場合は None。
-pub(super) fn classify_menu_click(
+pub(crate) fn classify_menu_click(
     state: &MenuState,
     bar_row: Option<u16>,
     col: u16,
@@ -80,13 +81,13 @@ pub(super) fn classify_menu_click(
 
 /// メニューバーと開いているドロップダウンへの左クリックを処理する。クリックを
 /// 消費した場合は true を返す。
-pub(super) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
+pub(crate) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
     let bar = app.layout.cache.menubar_area;
     let bar_row = (bar.height > 0).then_some(bar.y);
 
     match classify_menu_click(&app.menu, bar_row, col, row) {
         MenuClick::Activate { menu, item } => {
-            super::super::menu::activate_item(app, menu, item);
+            super::input::activate_item(app, menu, item);
             true
         }
         MenuClick::Open(idx) => {
@@ -105,7 +106,7 @@ pub(super) fn handle_menu_click(app: &mut App, col: u16, row: u16) -> bool {
 /// メニューバーのホバーを追跡する。このマウス移動をメニューが専有する場合は true を
 /// 返し、呼び出し側は他パネルのホバー処理をスキップする（ドロップダウンの下にあるものが
 /// 光ってはいけない）。
-pub(super) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
+pub(crate) fn handle_menu_hover(app: &mut App, col: u16, row: u16) -> bool {
     let bar = app.layout.cache.menubar_area;
     let on_bar = bar.height > 0 && row == bar.y;
 

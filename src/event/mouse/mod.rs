@@ -16,7 +16,6 @@ use super::explorer::open_viewer_comment;
 
 mod bars;
 mod explorer_panel;
-mod menu;
 mod scroll;
 mod terminal_panel;
 mod viewer_panel;
@@ -584,7 +583,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // main_areaより上の行を全て「タイトル」として扱ってしまう。メニューバーは
             // 外側クリックでの閉じる処理も持っており、それはどのパネルより先に
             // クリックを見る必要がある。
-            if menu::handle_menu_click(app, col, row) {
+            if crate::menu::mouse::handle_menu_click(app, col, row) {
                 return;
             }
             // worktree/タイトルバーへのクリックを最初に消費する。
@@ -700,7 +699,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // メニューのホバーを最初にチェックし、メニューが開いている間はイベント
             // 全体を横取りする — 開いているドロップダウンの下にあるパネルが、
             // あたかも到達可能であるかのように光ってはいけない。
-            if menu::handle_menu_hover(app, col, row) {
+            if crate::menu::mouse::handle_menu_hover(app, col, row) {
                 return;
             }
 

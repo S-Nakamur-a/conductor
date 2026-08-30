@@ -34,7 +34,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     super::super::common::render_title_bar(frame, title_area, app);
 
     // メニューバー（常に表示、タイトル直下）
-    super::super::menu_bar::render(frame, menubar_area, app);
+    crate::menu::render::render(frame, menubar_area, app);
 
     // worktree 監視ストリップ（旧左カラムと、以前あった
     // CC 待機通知バーの後継）
@@ -111,7 +111,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // メニューのドロップダウン
     // コンテンツの中で最後に描画し、各パネルの上に乗せる。main_area より上にある
     // メニューバー行から垂れ下がるので、main_area ではなくフレーム全体でクランプする。
-    super::super::menu_bar::render_dropdown(frame, area, app);
+    crate::menu::render::render_dropdown(frame, area, app);
 
     // ステータスバー
     // ステータスバー右側に worktree のブランチとリポジトリを表示する。

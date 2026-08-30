@@ -12,7 +12,6 @@ mod dialogs;
 mod explorer;
 mod global;
 pub(crate) mod input_target;
-mod menu;
 mod mouse;
 mod overlay;
 mod overlay_helpers;
@@ -29,6 +28,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Focus, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
+use crate::menu::input::handle_menu_key;
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
@@ -36,7 +36,6 @@ use self::dialogs::{handle_publish_confirm_key, handle_update_key};
 use self::explorer::handle_explorer_comment_list_key;
 use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
-use self::menu::handle_menu_key;
 use self::overlay::*;
 use self::reflow_key::handle_reflow_key;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
