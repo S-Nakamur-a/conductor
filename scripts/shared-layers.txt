@@ -1,0 +1,74 @@
+# src/ui / src/event / src/app は閉じた集合として扱う。
+# ここに名前が無いエントリを置くと scripts/check-structure.sh closure が落ちる。
+#
+# パネル固有のものは src/<パネル>/ に置く。ここに足すのは、2つ以上のパネルが使う
+# ものか、全パネルの土台になっているものだけ。理由の無い行は落とす。
+#
+# 移行待ちは「まだ移していないパネル固有のもの」。ここが空になったら垂直化は完了。
+# 書式: <パス>\t<理由>
+
+[共有]
+src/ui/mod.rs	描画レイヤーの入口
+src/ui/layout/	三列アコーディオンの配置。各パネルの描画はここから呼ばれる
+src/ui/markdown/	Markdown 描画。viewer と reflow が使う
+src/ui/tab_bar.rs	タブ行の描画。viewer と terminal が TabAction ごと共有する
+src/event/mod.rs	キーディスパッチの骨組み。6 段のバブリングそのもの
+src/event/input_target.rs	キーを今どの入力欄が持っているかの判定
+src/event/global.rs	どのパネルにフォーカスがあっても効くキー
+src/event/scroll.rs	スクロールキーの共通解釈
+src/event/paste.rs	ブラケットペーストの取り込み
+src/event/clipboard.rs	クリップボード操作
+src/event/dialogs.rs	確認ダイアログのキー
+src/event/overlay_helpers.rs	オーバーレイ共通の小物
+src/app/mod.rs	App 本体。全パネルの状態を持つ
+src/app/types.rs	App が使う型
+src/app/state/	複数パネルに跨る状態
+src/app/focus.rs	フォーカス遷移
+src/app/lifecycle.rs	起動と終了
+src/app/commands.rs	コマンドパレットの実行。全パネルのコマンドを束ねる
+src/app/panel_resize.rs	パネル幅の調整と永続化
+src/app/view_state.rs	パネル横断のビュー状態
+src/app/repo.rs	リポジトリの切り替え
+src/app/update.rs	自動アップデート
+src/app/appearance.rs	テーマ切り替え
+
+[移行待ち]
+src/ui/viewer_panel/	S8 で src/viewer/render/ へ
+src/ui/hover_info.rs	S8 で src/viewer/ へ。ホバーポップアップは viewer 固有
+src/ui/references.rs	S8 で src/viewer/ へ
+src/ui/symbol_action.rs	S8 で src/viewer/ へ
+src/event/viewer/	S8 で src/viewer/input/ へ
+src/app/code_nav.rs	S8 で src/viewer/ へ
+src/ui/common/	S9 で分割。pty は terminal 固有、title/status/worktree_label は chrome
+src/ui/worktree_panel/	S15 で src/worktree/render/ へ
+src/ui/worktree_bar.rs	S15 で src/worktree/ へ。全幅の worktree 帯
+src/ui/decoration/	S15 で src/worktree/ へ。worktree パネルの空きスペースの装飾
+src/event/worktree.rs	S15 で src/worktree/input/ へ
+src/app/worktree.rs	S15 で src/worktree/ へ
+src/app/worktree_branches.rs	S15 で src/worktree/ へ
+src/app/worktree_commands.rs	S15 で src/worktree/ へ
+src/app/worktree_crud.rs	S15 で src/worktree/ へ
+src/app/worktree_grab.rs	S15 で src/worktree/ へ
+src/app/worktree_pr.rs	S15 で src/worktree/ へ
+src/app/worktree_smart.rs	S15 で src/worktree/ へ
+src/ui/terminal_claude.rs	S16 で src/terminal/render/ へ
+src/ui/terminal_shell.rs	S16 で src/terminal/render/ へ
+src/ui/editor_panel.rs	S16 で src/terminal/render/ へ。editor は PTY パネルの一形態
+src/event/terminal/	S16 で src/terminal/input/ へ
+src/app/terminal.rs	S16 で src/terminal/ へ
+src/app/terminal_cc_state.rs	S16 で src/terminal/ へ
+src/app/terminal_resize.rs	S16 で src/terminal/ へ
+src/app/terminal_resume.rs	S16 で src/terminal/ へ
+src/app/editor.rs	S16 で src/terminal/ へ
+src/event/mouse/	骨組みとパネル別ハンドラが同居している。パネル別は各パネルの mouse.rs へ
+src/ui/dashboard/	オーバーレイ群。9/12 は特定パネルの持ち物なので所有者へ散らす
+src/event/overlay/	同上。オーバーレイのキー処理を所有者へ散らす
+src/ui/grep_search.rs	grep オーバーレイ。src/grep_search/ へまとめる
+src/ui/theme_picker.rs	テーマ選択オーバーレイ。所有者は appearance
+src/ui/panel_overlay.rs	パネル上のオーバーレイ描画。所有者を決める
+src/ui/review.rs	レビューコメント一覧の描画。explorer の第3ビューなので explorer へ
+src/app/review.rs	レビュー機能。explorer へ
+src/app/review_commands.rs	レビュー機能。explorer へ
+src/app/review_edit.rs	レビュー機能。explorer へ
+src/app/review_history.rs	レビュー機能。explorer へ
+src/app/review_publish.rs	レビュー機能。explorer へ
