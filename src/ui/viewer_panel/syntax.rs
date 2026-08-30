@@ -13,11 +13,11 @@ use ratatui::text::Span;
 pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
     use crate::diff_state::FileDiff;
 
-    let current_file = app.viewer_state.content.current_file.clone();
+    let current_file = app.viewer.content.current_file.clone();
 
     // キャッシュがまだ有効かどうかを確認する。
-    if app.viewer_state.content.cached_diff_annotations.is_some()
-        && app.viewer_state.content.cached_diff_annotations_file == current_file
+    if app.viewer.content.cached_diff_annotations.is_some()
+        && app.viewer.content.cached_diff_annotations_file == current_file
     {
         return;
     }
@@ -50,8 +50,8 @@ pub(super) fn ensure_diff_annotations_cached(app: &mut App) {
         }
     }
 
-    app.viewer_state.content.cached_diff_annotations = Some(annotations);
-    app.viewer_state.content.cached_diff_annotations_file = current_file;
+    app.viewer.content.cached_diff_annotations = Some(annotations);
+    app.viewer.content.cached_diff_annotations_file = current_file;
 }
 
 /// 行内の diff セグメントを強調ハイライト付きで描画する。

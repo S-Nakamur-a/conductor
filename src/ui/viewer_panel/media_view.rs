@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Paragraph};
 /// ビューアパネル内にメディアファイル（画像/動画）を ASCII アートとして描画する。
 pub(super) fn render_media_view(frame: &mut Frame, area: Rect, app: &App, block: Block<'_>) {
     let theme = &app.theme;
-    let vs = &app.viewer_state;
+    let vs = &app.viewer;
 
     // ロックが poison していてもパニックせず復旧する。デコードスレッドは描画中このミューテックス
     // を保持しており、そこでのパニック（壊れたメディア）が次フレームで TUI 全体を巻き込んではならない。

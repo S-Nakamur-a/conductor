@@ -99,8 +99,8 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
 
     let theme = &app.theme;
     let icon_set = app.config.ui.icon_set();
-    let vs_explorer = &app.viewer_state.explorer;
-    let on_diff = vs_explorer.explorer_focus_on_diff_list;
+    let vs_explorer = &app.explorer;
+    let on_diff = vs_explorer.focus_on_diff_list;
     let diff_focused = panel_focused && on_diff;
     let border_color = if diff_focused {
         app.animated_border_color(Focus::Explorer)
@@ -222,7 +222,7 @@ pub(super) fn render_diff_list(frame: &mut Frame, area: Rect, app: &App, panel_f
                 // 行数はベースからの合計なので、その内訳がコミット済みか
                 // 手元の編集かはこの色でしか分からない。
                 let stage_state =
-                    file_stage_state(app.viewer_state.tree.git_status.status(&file_diff.path));
+                    file_stage_state(app.explorer.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
                 let style = crate::ui::common::list_row::row_style(
                     theme,

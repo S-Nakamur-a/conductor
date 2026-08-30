@@ -40,7 +40,7 @@ pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
     );
 
     let is_explorer_focused = app.focus == Focus::Explorer;
-    let on_diff_list = app.viewer_state.explorer.explorer_focus_on_diff_list;
+    let on_diff_list = app.explorer.focus_on_diff_list;
 
     let panels = [
         PanelInfo {

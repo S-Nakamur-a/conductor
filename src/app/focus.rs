@@ -54,7 +54,7 @@ impl App {
 
         match focus {
             Focus::Explorer | Focus::Viewer => {
-                if self.viewer_state.tree.file_tree.is_empty() {
+                if self.explorer.tree.file_tree.is_empty() {
                     self.refresh_viewer();
                 }
                 if self.diff_state.files.is_empty() {
@@ -76,13 +76,13 @@ impl App {
         // /を押してからTabでClaudeへ — 入力はClaudeへ行くべき）。クエリと
         // マッチ結果は保持されるので、戻ってきたときにn/Nはまだ機能する。
         if focus != Focus::Viewer {
-            self.viewer_state.search.search_active = false;
+            self.viewer.search.search_active = false;
         }
         if matches!(
             focus,
             Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor
         ) {
-            self.viewer_state.filename_search.filename_search_active = false;
+            self.viewer.filename_search.filename_search_active = false;
         }
         // 変化を記録し、フォーカスを得る/失うパネルが境界線の色をグライド
         // できるようにする（実際に変化した場合のみ。そうしないと再フォーカスで
@@ -150,9 +150,9 @@ impl App {
         // フォーカスを切り替える。
         if self.editor.is_none()
             && self.focus == Focus::Explorer
-            && !self.viewer_state.explorer.explorer_focus_on_diff_list
+            && !self.explorer.focus_on_diff_list
         {
-            self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            self.explorer.focus_on_diff_list = true;
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
@@ -160,7 +160,7 @@ impl App {
         // 他のどこからであれExplorer列に着地したときは、常にファイルツリー
         // （上のパネル）から始まる。
         if next == Focus::Explorer {
-            self.viewer_state.explorer.explorer_focus_on_diff_list = false;
+            self.explorer.focus_on_diff_list = false;
         }
         self.set_focus(next);
     }
@@ -171,9 +171,9 @@ impl App {
         // ファイルツリーを訪れる。
         if self.editor.is_none()
             && self.focus == Focus::Explorer
-            && self.viewer_state.explorer.explorer_focus_on_diff_list
+            && self.explorer.focus_on_diff_list
         {
-            self.viewer_state.explorer.explorer_focus_on_diff_list = false;
+            self.explorer.focus_on_diff_list = false;
             self.focus_changed_at = std::time::Instant::now();
             return;
         }
@@ -181,7 +181,7 @@ impl App {
         // Viewer側からExplorer列に入ると、（一番近い）変更ファイルパネルに
         // 着地するので、さらにTabで戻るとツリーに到達する。
         if prev == Focus::Explorer {
-            self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            self.explorer.focus_on_diff_list = true;
         }
         self.set_focus(prev);
     }

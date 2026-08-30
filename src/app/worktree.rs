@@ -93,7 +93,8 @@ impl App {
             self.save_view_for(&outgoing);
         }
 
-        self.viewer_state = ViewerState::default();
+        self.explorer = ExplorerState::default();
+        self.viewer = ViewerState::default();
 
         // 今ユーザが見ているツリーに対してシンボルインデックスを再構築する。ワークツリーは
         // リポジトリルートの兄弟ディレクトリなので、あるワークツリー上で構築したインデックス
@@ -186,7 +187,7 @@ impl App {
                 self.bg.file_tree.start(move |tx| {
                     // ツリー走査と同時に（メインスレッドではなく）計算することで、ワークツリー
                     // 切り替えのたびに git status 取得だけの別の停止が追加で入るのを避けている。
-                    // ViewerState::load_file_tree の同期パスと同じフォールバック＋ログの方針:
+                    // ExplorerState::load_file_tree の同期パスと同じフォールバック＋ログの方針:
                     // 空のマップだと UI はすべてが追跡・コミット済みだと主張してしまうので、
                     // ここでの失敗を黙って見逃してはいけない。
                     let git_status = GitStatusMap::load(&path).unwrap_or_else(|e| {
@@ -197,7 +198,7 @@ impl App {
                         GitStatusMap::default()
                     });
                     let mut entries = Vec::new();
-                    ViewerState::walk_dir(&path, &path, 0, &mut entries, &git_status);
+                    ExplorerState::walk_dir(&path, &path, 0, &mut entries, &git_status);
                     let _ = tx.send((path, entries, git_status));
                 });
             }
@@ -302,8 +303,14 @@ impl App {
         if let Some((root, entries, git_status)) = self.bg.file_tree.poll() {
             // 3 つまとめて差し替える。根だけ先に新しくなると、まだ古いエントリ
             // を指しているクリックが別ブランチの同名ファイルを黙って開く。
-            self.viewer_state
-                .replace_tree(root, entries, git_status, self.config.viewer.tab_width);
+            let root_changed = self.explorer.replace_tree(root, entries, git_status);
+            // 相対パスの指す先が変わるので、新しい根に無いファイルのタブは閉じる。
+            // 同じ根への再走査では触らない — 一時的に消えたファイルのタブまで
+            // 勝手に閉じてしまう。
+            if root_changed {
+                self.viewer
+                    .prune_tabs_to_root(self.explorer.root(), self.config.viewer.tab_width);
+            }
             // このワークツリーのファイルツリーが揃ったので、以前見ていたファイルと
             // スクロール位置を復元する（一度だけ）。
             self.consume_pending_view_restore();

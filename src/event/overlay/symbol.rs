@@ -110,7 +110,7 @@ pub(in crate::event) fn handle_symbol_hint_key(app: &mut App, key: KeyEvent) -> 
                 .find(|h| h.label == input)
                 .cloned();
             // ヒント表示を消す。
-            let scroll = app.viewer_state.content.file_scroll;
+            let scroll = app.viewer.content.file_scroll;
             let pending = app.code_nav.symbol_hint.pending;
             app.code_nav.symbol_hint = Default::default();
             let hint = matched?;

@@ -403,25 +403,22 @@ impl App {
 
         let file_diff = file_diff.clone();
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(&file_path, tab_width);
-        self.viewer_state.reveal_file_in_tree(&file_path);
+        self.viewer
+            .open_file(self.explorer.root(), &file_path, tab_width);
+        self.explorer.reveal_file_in_tree(&file_path);
         self.rehighlight_viewer();
         self.review_state.build_file_comment_cache(&file_path);
         self.expand_threads_for_file(&file_path);
-        self.viewer_state.build_unified_diff_view(&file_diff);
+        self.viewer.build_unified_diff_view(&file_diff);
         if let Some(idx) = self.diff_state.display_index_for_path(&file_path) {
-            self.viewer_state.explorer.diff_list_selected = idx;
+            self.explorer.diff_list_selected = idx;
         }
         if let Some(pos) = line.and_then(|n| {
-            self.viewer_state
-                .diff_view
-                .diff_view_lines
-                .iter()
-                .position(|e| {
-                    matches!(e, crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(m), .. } if *m == n as usize)
-                })
+            self.viewer.diff_view.diff_view_lines.iter().position(|e| {
+                matches!(e, crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(m), .. } if *m == n as usize)
+            })
         }) {
-            self.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
+            self.viewer.diff_view.diff_view_scroll = pos.saturating_sub(3);
         }
         self.set_focus(Focus::Viewer);
     }

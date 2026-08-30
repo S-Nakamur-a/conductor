@@ -23,8 +23,8 @@ pub struct FileTreeState {
     /// このツリーを歩いた根。エントリの相対パスはすべてここからの相対で、
     /// 絶対パスに戻せるのはこの値だけ。
     ///
-    /// 読むのは [ViewerState::root]、書くのは [ViewerState::load_file_tree] /
-    /// [ViewerState::replace_tree] / [ViewerState::set_root] だけに限る。
+    /// 読むのは [ExplorerState::root]、書くのは [ExplorerState::load_file_tree] /
+    /// [ExplorerState::replace_tree] / [ExplorerState::set_root] だけに限る。
     /// 以前は根を持たず、ファイルを開くたびに呼び出し側が「今どの worktree か」
     /// を引き直して渡していたので、表示中のツリーと開く先が食い違っても誰も
     /// 気付けなかった (worktree 切り替えはツリーの走査を裏に回すため、古い
@@ -154,37 +154,31 @@ pub enum ExplorerBottomView {
     Comments,
 }
 
-/// Explorer パネルの状態（選択、スクロール）。
+/// Explorer パネルの状態（ファイルツリー、選択、スクロール）。
 pub struct ExplorerState {
+    /// ファイルツリー管理。
+    pub tree: FileTreeState,
     /// diff 一覧中の選択中ファイルのインデックス。
     pub diff_list_selected: usize,
     /// diff 一覧の垂直スクロールオフセット。
     pub diff_list_scroll: usize,
     /// explorer パネルのフォーカスが diff 一覧（下半分）にあるか。
-    pub explorer_focus_on_diff_list: bool,
+    pub focus_on_diff_list: bool,
     /// explorer ファイルツリーペインの直近の内側の高さ（render 中に更新される）。
-    pub explorer_tree_height: usize,
+    pub tree_height: usize,
     /// explorer diff 一覧ペインの直近の内側の高さ（render 中に更新される）。
-    pub explorer_diff_list_height: usize,
+    pub diff_list_height: usize,
     /// diff 一覧がベースエラーバナーに使う行数（0 か 1、render 中に更新される）。
     /// このバナーは display_list のエントリではないので、画面行をリストの
     /// インデックスへ逆変換する処理（マウスクリック）はこれを差し引かないと
     /// 違うファイルを選んでしまう。
-    pub explorer_diff_banner_rows: usize,
+    pub diff_banner_rows: usize,
     /// explorer の下部ペインが現在表示しているビュー。
-    pub explorer_bottom_view: ExplorerBottomView,
+    pub bottom_view: ExplorerBottomView,
     /// explorer コメント一覧中の選択中コメントのインデックス。
     pub comment_list_selected: usize,
     /// explorer コメント一覧の垂直スクロールオフセット。
     pub comment_list_scroll: usize,
-    /// インラインコメントスレッドが展開されている行番号（1始まり）の集合。
-    pub expanded_inline_threads: HashSet<usize>,
-    /// インラインリプライ入力が有効な行番号（None = リプライ中でない）。
-    pub inline_reply_line: Option<usize>,
-    /// インラインリプライの対象となるコメント ID。
-    pub inline_reply_comment_id: Option<String>,
-    /// インラインリプライ入力のテキストバッファ。
-    pub inline_reply_buffer: TextInput,
     /// レビュアーが「viewed」を付けたファイルの相対パス。
     pub viewed: HashSet<String>,
 }
@@ -192,20 +186,41 @@ pub struct ExplorerState {
 impl Default for ExplorerState {
     fn default() -> Self {
         Self {
+            tree: FileTreeState::default(),
             diff_list_selected: 0,
             diff_list_scroll: 0,
-            explorer_focus_on_diff_list: false,
-            explorer_tree_height: 20,
-            explorer_diff_list_height: 20,
-            explorer_diff_banner_rows: 0,
-            explorer_bottom_view: ExplorerBottomView::default(),
+            focus_on_diff_list: false,
+            tree_height: 20,
+            diff_list_height: 20,
+            diff_banner_rows: 0,
+            bottom_view: ExplorerBottomView::default(),
             comment_list_selected: 0,
             comment_list_scroll: 0,
-            expanded_inline_threads: HashSet::new(),
-            inline_reply_line: None,
-            inline_reply_comment_id: None,
-            inline_reply_buffer: TextInput::new_multiline(),
             viewed: HashSet::new(),
+        }
+    }
+}
+
+/// Viewer のインラインコメントスレッド返信の状態 — どの行のどのコメントに
+/// 返信中かをまとめて表す、1 つの状態機械。
+pub struct InlineThreadState {
+    /// インラインコメントスレッドが展開されている行番号（1始まり）の集合。
+    pub expanded: HashSet<usize>,
+    /// インラインリプライ入力が有効な行番号（None = リプライ中でない）。
+    pub reply_line: Option<usize>,
+    /// インラインリプライの対象となるコメント ID。
+    pub reply_comment_id: Option<String>,
+    /// インラインリプライ入力のテキストバッファ。
+    pub reply_buffer: TextInput,
+}
+
+impl Default for InlineThreadState {
+    fn default() -> Self {
+        Self {
+            expanded: HashSet::new(),
+            reply_line: None,
+            reply_comment_id: None,
+            reply_buffer: TextInput::new_multiline(),
         }
     }
 }
@@ -374,8 +389,6 @@ pub const GUTTER_FIXED_W: usize = 6;
 /// Viewer モードが保持する全ての状態。
 #[derive(Default)]
 pub struct ViewerState {
-    /// ファイルツリー管理。
-    pub tree: FileTreeState,
     /// 開いているファイルのタブ。開いた順に並ぶ。
     pub tabs: Vec<ViewerTab>,
     /// tabs 内のアクティブなタブの位置。tabs が空のときは意味を持たない。
@@ -386,8 +399,8 @@ pub struct ViewerState {
     pub search: SearchState,
     /// unified diff 表示。
     pub diff_view: DiffViewState,
-    /// Explorer パネルの状態（選択、スクロール）。
-    pub explorer: ExplorerState,
+    /// インラインコメントスレッドの返信状態。
+    pub inline: InlineThreadState,
     /// コメント向けの行選択。
     pub selection: LineSelection,
     /// ファイル名のあいまい検索。

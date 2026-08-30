@@ -32,7 +32,7 @@ fn indent_for_depth(depth: usize) -> std::borrow::Cow<'static, str> {
 
 /// ファイルツリー（上半分）を描画する。
 pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, panel_focused: bool) {
-    let on_diff = app.viewer_state.explorer.explorer_focus_on_diff_list;
+    let on_diff = app.explorer.focus_on_diff_list;
     let tree_focused = panel_focused && !on_diff;
     // カラム単位のフォーカス色をアニメーションさせる。ツリーは diff list に
     // フォーカスがないときの「アクティブ」要素なので、カラムがフォーカスを
@@ -48,10 +48,10 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         app.theme.border_unfocused
     };
 
-    let visible = app.viewer_state.visible_indices();
+    let visible = app.explorer.visible_indices();
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    let tree_selected = app.viewer_state.tree.tree_selected;
+    let tree_selected = app.explorer.tree.tree_selected;
     let selected_vis_idx = visible
         .iter()
         .position(|&i| i == tree_selected)
@@ -88,7 +88,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         .with_title_style(title_style)
         .into_block();
 
-    let scroll = app.viewer_state.tree.tree_scroll;
+    let scroll = app.explorer.tree.tree_scroll;
 
     let items: Vec<ListItem> = visible
         .iter()
@@ -96,7 +96,7 @@ pub(super) fn render_file_tree(frame: &mut Frame, area: Rect, app: &mut App, pan
         .skip(scroll)
         .take(inner_height)
         .filter_map(|(vis_idx, &tree_idx)| {
-            let entry = app.viewer_state.tree.file_tree.get(tree_idx)?;
+            let entry = app.explorer.tree.file_tree.get(tree_idx)?;
             let indent = indent_for_depth(entry.depth);
 
             // 名前部分と切り離すことで、hover 時の下線を名前自体に限定できる

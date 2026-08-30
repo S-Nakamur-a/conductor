@@ -70,16 +70,16 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         super::super::explorer_panel::render(frame, columns[1], app);
 
         // カラム2: Viewer（ファイル内容）
-        if app.viewer_state.is_current_file_media()
-            && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
+        if app.viewer.is_current_file_media()
+            && let Some(ref rel_path) = app.viewer.content.current_file.clone()
         {
             // 画像も本文と同じ根から読む。current_file は Viewer のツリーの
             // 相対パスなので、別の根に繋ぐと「タイトルは A のファイル、絵は B の
             // ファイル」になり得る。
-            let full_path = app.viewer_state.root().join(rel_path);
+            let full_path = app.explorer.root().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
-            app.viewer_state
+            app.viewer
                 .media_state
                 .render_if_needed(&full_path, rel_path, cols, rows);
         }

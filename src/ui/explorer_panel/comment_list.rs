@@ -29,8 +29,8 @@ pub(super) fn render_comment_list(frame: &mut Frame, area: Rect, app: &App, pane
 
     let theme = &app.theme;
     let icon_set = app.config.ui.icon_set();
-    let vs_explorer = &app.viewer_state.explorer;
-    let list_focused = panel_focused && vs_explorer.explorer_focus_on_diff_list;
+    let vs_explorer = &app.explorer;
+    let list_focused = panel_focused && vs_explorer.focus_on_diff_list;
     let border_color = if list_focused {
         theme.border_focused
     } else if panel_focused {

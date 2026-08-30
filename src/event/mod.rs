@@ -96,10 +96,10 @@ fn effective_overlay(app: &App) -> EffectiveOverlay {
         ActiveOverlay::None => {}
         other => return EffectiveOverlay::Active(other),
     }
-    if app.viewer_state.filename_search.filename_search_active {
+    if app.viewer.filename_search.filename_search_active {
         return EffectiveOverlay::FilenameSearch;
     }
-    if app.viewer_state.search.search_active {
+    if app.viewer.search.search_active {
         return EffectiveOverlay::ViewerSearch;
     }
     if app.review_state.search_active {

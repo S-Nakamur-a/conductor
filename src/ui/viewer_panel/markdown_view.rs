@@ -112,13 +112,9 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
     let (total, scroll, visible) = {
         let key = format!(
             "viewer-md:{}",
-            app.viewer_state
-                .content
-                .current_file
-                .as_deref()
-                .unwrap_or("")
+            app.viewer.content.current_file.as_deref().unwrap_or("")
         );
-        let body = app.viewer_state.content.file_content.join("\n");
+        let body = app.viewer.content.file_content.join("\n");
         // 折り返された文章がスクロールバーのトラックと決して衝突しないよう
         // 右側に1列確保する（summary view のインセットに合わせている）。
         app.markdown_cache.render_window(
@@ -128,7 +124,7 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
             &app.theme,
             &app.highlight.syntax_set,
             &app.highlight.theme,
-            app.viewer_state.md_scroll,
+            app.viewer.md_scroll,
             inner_height,
         )
     };
@@ -137,8 +133,8 @@ pub(super) fn render_markdown_view(frame: &mut Frame, area: Rect, app: &mut App,
     // ドキュメントが縮んだ（あるいはパネルが広がって再折り返しで短くなった）
     // 場合でもナビゲーションが応答し続けるよう、クランプ済みのスクロール位置を
     // 書き戻す。
-    app.viewer_state.md_total_lines = total;
-    app.viewer_state.md_scroll = scroll;
+    app.viewer.md_total_lines = total;
+    app.viewer.md_scroll = scroll;
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(Paragraph::new(visible).block(block), area);

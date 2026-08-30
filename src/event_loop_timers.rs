@@ -227,7 +227,7 @@ fn tick_semantic_regeneration(app: &mut App) {
     }
     // 読んでいるファイルの索引ルートに索引が無ければ、ここで作りに行かせる。
     // 索引ルートは実在するリポジトリで 109 本になるので、まとめては作らない。
-    if let Some(rel) = app.viewer_state.content.current_file.clone() {
+    if let Some(rel) = app.viewer.content.current_file.clone() {
         let reading =
             app.code_nav
                 .semantic

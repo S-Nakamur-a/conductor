@@ -95,7 +95,7 @@ impl App {
     /// 意味索引に位置で聞き、答えなければシンボルインデックスを名前で引く。
     /// 索引が答えた位置は gd の飛び先と同じなので、両者の説明がずれない。
     fn hover_info_at(&self, symbol: &str, line_1: usize, start_col: usize) -> Option<HoverInfo> {
-        let current_file = self.viewer_state.content.current_file.clone();
+        let current_file = self.viewer.content.current_file.clone();
         // 索引への問い合わせは 1 回にまとめる。所属と説明で別々に聞くと、同じ位置に
         // 2 回 Document をデコードすることになる。
         let described = self.semantic_description(line_1, start_col);
@@ -120,7 +120,7 @@ impl App {
 
     /// top が中にいるシンボルのうち、宣言が画面の外にあるいちばん内側のもの。
     pub fn sticky_declaration_line(&mut self, top: usize) -> Option<usize> {
-        let key = (self.viewer_state.content.current_file.clone()?, top);
+        let key = (self.viewer.content.current_file.clone()?, top);
         if self.code_nav.sticky.asked.as_ref() != Some(&key) {
             let found = self.enclosing_declaration_out_of_view(&key.0, key.1);
             self.code_nav.sticky.declaration = found;
@@ -193,9 +193,9 @@ impl App {
     pub fn show_hover_info_at(&mut self, line_idx: usize, symbol: &str) {
         use crate::app::StatusLevel;
 
-        let current_file = self.viewer_state.content.current_file.clone();
+        let current_file = self.viewer.content.current_file.clone();
         let start_col = self
-            .viewer_state
+            .viewer
             .content
             .file_content
             .get(line_idx)
@@ -203,7 +203,7 @@ impl App {
                 crate::symbol_index::code_identifiers_on_line(
                     line,
                     line_idx + 1,
-                    &self.viewer_state.content.code_mask,
+                    &self.viewer.content.code_mask,
                 )
                 .find(|(_, _, word)| word == symbol)
                 .map(|(_, start, _)| start)
@@ -228,12 +228,12 @@ impl App {
     /// オーバーレイやサマリー疑似ビューが画面を占有していないことが条件。
     fn hover_auto_allowed(&self) -> bool {
         self.focus == Focus::Viewer
-            && !self.viewer_state.is_summary()
+            && !self.viewer.is_summary()
             && self.overlays.active == crate::overlay::ActiveOverlay::None
             && !self.code_nav.references.active
             && !self.code_nav.symbol_action.active
             && !self.code_nav.symbol_hint.active
-            && self.viewer_state.content.current_file.is_some()
+            && self.viewer.content.current_file.is_some()
     }
 
     /// ホバーのモーダルスタック全体（ポップアップ、保留中の候補、参照リスト、
@@ -279,8 +279,8 @@ impl App {
     /// crossterm はポインタがウィンドウの外に出たことを報告しないため、これが
     /// なければキーボード操作に切り替えた後もハイライトが点いたままになる。
     pub fn clear_pointer_hover(&mut self) {
-        self.viewer_state.click.hover_symbol = None;
-        self.viewer_state.click.underline_pending = None;
+        self.viewer.click.hover_symbol = None;
+        self.viewer.click.underline_pending = None;
         self.list_hover.clear();
         // バー・タブバーのホバー状態（背景色ベースの表現に変更済み）。
         self.wtbar.hover = None;
@@ -311,7 +311,7 @@ impl App {
                 if same {
                     return;
                 }
-                let file = self.viewer_state.content.current_file.clone();
+                let file = self.viewer.content.current_file.clone();
                 self.code_nav.hover_info.pending = Some(crate::overlay::HoverCandidate {
                     symbol,
                     line,
@@ -362,7 +362,7 @@ impl App {
     ) {
         match cand {
             Some((symbol, line, start_col, end_col)) => {
-                if let Some(hs) = self.viewer_state.click.hover_symbol.as_mut()
+                if let Some(hs) = self.viewer.click.hover_symbol.as_mut()
                     && hs.line == line
                     && hs.start_col == start_col
                     && hs.end_col == end_col
@@ -371,7 +371,7 @@ impl App {
                     return;
                 }
                 let same_pending = self
-                    .viewer_state
+                    .viewer
                     .click
                     .underline_pending
                     .as_ref()
@@ -379,12 +379,12 @@ impl App {
                         p.line == line && p.start_col == start_col && p.end_col == end_col
                     });
                 if same_pending {
-                    if let Some(p) = self.viewer_state.click.underline_pending.as_mut() {
+                    if let Some(p) = self.viewer.click.underline_pending.as_mut() {
                         p.has_jump_modifier = has_jump_modifier;
                     }
                     return;
                 }
-                self.viewer_state.click.underline_pending = Some(crate::viewer::PendingUnderline {
+                self.viewer.click.underline_pending = Some(crate::viewer::PendingUnderline {
                     symbol,
                     line,
                     start_col,
@@ -395,11 +395,11 @@ impl App {
                 });
                 // 猶予なし。新しく乗った候補は、前の候補で表示されていた下線を
                 // 即座に隠す。
-                self.viewer_state.click.hover_symbol = None;
+                self.viewer.click.hover_symbol = None;
             }
             None => {
-                self.viewer_state.click.underline_pending = None;
-                self.viewer_state.click.hover_symbol = None;
+                self.viewer.click.underline_pending = None;
+                self.viewer.click.hover_symbol = None;
             }
         }
     }
@@ -455,7 +455,7 @@ impl App {
         // ポップアップはもはや画面にないファイルのシンボルを説明していることになる。
         // 猶予期間中であっても破棄し、無関係なコードの上に残り続けないようにする。
         if self.code_nav.hover_info.info.is_some()
-            && self.code_nav.hover_info.shown_file != self.viewer_state.content.current_file
+            && self.code_nav.hover_info.shown_file != self.viewer.content.current_file
         {
             if self.clear_hover() {
                 self.request_redraw();
@@ -549,7 +549,7 @@ impl App {
         // 明らかに速く、それとは独立に保てる程度には短い。下線はポップアップの
         // 意図的な間とは対照的に、瞬時に現れるべきものだからである。
         let ready = self
-            .viewer_state
+            .viewer
             .click
             .underline_pending
             .as_ref()
@@ -559,7 +559,7 @@ impl App {
         }
 
         let (symbol, line, start_col, end_col, has_jump_modifier) = {
-            let p = self.viewer_state.click.underline_pending.as_ref().unwrap();
+            let p = self.viewer.click.underline_pending.as_ref().unwrap();
             (
                 p.symbol.clone(),
                 p.line,
@@ -569,10 +569,10 @@ impl App {
             )
         };
         let jumpable = self.can_jump_to_symbol(&symbol);
-        if let Some(p) = self.viewer_state.click.underline_pending.as_mut() {
+        if let Some(p) = self.viewer.click.underline_pending.as_mut() {
             p.resolved = true;
         }
-        self.viewer_state.click.hover_symbol = jumpable.then_some(crate::viewer::HoverSymbol {
+        self.viewer.click.hover_symbol = jumpable.then_some(crate::viewer::HoverSymbol {
             line,
             start_col,
             end_col,
@@ -703,19 +703,19 @@ impl App {
     /// 定義の上でジャンプを押したときに参照一覧へ切り替えるための判定。索引の答えは
     /// 位置なので、行の近さで当てにいく必要が無い。
     pub fn definition_is_here(&self, answer: &Definition, line_idx: usize) -> bool {
-        let Some(current) = self.viewer_state.content.current_file.as_deref() else {
+        let Some(current) = self.viewer.content.current_file.as_deref() else {
             return false;
         };
         answer_points_at(answer, current, line_idx)
     }
 
     pub fn is_cursor_at_definition(&self, symbol: &str) -> bool {
-        let cur_file = match &self.viewer_state.content.current_file {
+        let cur_file = match &self.viewer.content.current_file {
             Some(f) => f,
             None => return false,
         };
         // カーソル行は1始まり（file_scroll は0始まり）。
-        let cursor_line = self.viewer_state.content.file_scroll + 1;
+        let cursor_line = self.viewer.content.file_scroll + 1;
         let defs = self
             .code_nav
             .index
@@ -733,19 +733,19 @@ impl App {
     pub fn jump_to_location(&mut self, file_path: &str, line: usize, source_screen_row: usize) {
         // 自分自身へのジャンプ（移動先==現在位置）はスキップする。
         let target_line_0 = line.saturating_sub(1);
-        if let Some(ref cur_file) = self.viewer_state.content.current_file {
-            let current_line_0 = self.viewer_state.content.file_scroll + source_screen_row;
+        if let Some(ref cur_file) = self.viewer.content.current_file {
+            let current_line_0 = self.viewer.content.file_scroll + source_screen_row;
             if cur_file == file_path && current_line_0 == target_line_0 {
                 return;
             }
         }
 
         // 現在位置を履歴に保存する。
-        if let Some(ref cur_file) = self.viewer_state.content.current_file.clone() {
+        if let Some(ref cur_file) = self.viewer.content.current_file.clone() {
             let loc = crate::jump_history::Location {
                 file_path: cur_file.clone(),
-                line: self.viewer_state.content.file_scroll,
-                h_scroll: self.viewer_state.content.h_scroll,
+                line: self.viewer.content.file_scroll,
+                h_scroll: self.viewer.content.h_scroll,
             };
             self.code_nav.history.push(loc);
         }
@@ -753,65 +753,68 @@ impl App {
         // 対象ファイルを開く。根は Viewer が表示中のツリーのもの。ツリーの行を
         // 選び直す reveal と同じ根でないと、本文と選択行が別ツリーを指す。
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(file_path, tab_width);
+        self.viewer
+            .open_file(self.explorer.root(), file_path, tab_width);
         self.rehighlight_viewer();
-        self.viewer_state.reveal_file_in_tree(file_path);
+        self.explorer.reveal_file_in_tree(file_path);
 
         // ジャンプ先の行が、ジャンプ元のシンボルと同じ画面行に来るようスクロールする。
         let target_0 = line.saturating_sub(1);
-        let total = self.viewer_state.content.file_content.len();
+        let total = self.viewer.content.file_content.len();
         let scroll = target_0
             .saturating_sub(source_screen_row)
             .min(total.saturating_sub(1));
-        self.viewer_state.content.file_scroll = scroll;
-        self.viewer_state.content.h_scroll = 0;
-        self.viewer_state.show_raw_for_line_target();
+        self.viewer.content.file_scroll = scroll;
+        self.viewer.content.h_scroll = 0;
+        self.viewer.show_raw_for_line_target();
         self.set_focus(Focus::Viewer);
     }
 
     /// ジャンプ履歴を1つ戻る。
     pub fn jump_back(&mut self) {
-        let current = match self.viewer_state.content.current_file.clone() {
+        let current = match self.viewer.content.current_file.clone() {
             Some(f) => crate::jump_history::Location {
                 file_path: f,
-                line: self.viewer_state.content.file_scroll,
-                h_scroll: self.viewer_state.content.h_scroll,
+                line: self.viewer.content.file_scroll,
+                h_scroll: self.viewer.content.h_scroll,
             },
             None => return,
         };
 
         if let Some(loc) = self.code_nav.history.go_back(current) {
             let tab_width = self.config.viewer.tab_width;
-            self.viewer_state.open_file(&loc.file_path, tab_width);
+            self.viewer
+                .open_file(self.explorer.root(), &loc.file_path, tab_width);
             self.rehighlight_viewer();
-            self.viewer_state.reveal_file_in_tree(&loc.file_path);
-            let total = self.viewer_state.content.file_content.len();
-            self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
-            self.viewer_state.content.h_scroll = loc.h_scroll;
-            self.viewer_state.show_raw_for_line_target();
+            self.explorer.reveal_file_in_tree(&loc.file_path);
+            let total = self.viewer.content.file_content.len();
+            self.viewer.content.file_scroll = loc.line.min(total.saturating_sub(1));
+            self.viewer.content.h_scroll = loc.h_scroll;
+            self.viewer.show_raw_for_line_target();
         }
     }
 
     /// ジャンプ履歴を1つ進める。
     pub fn jump_forward(&mut self) {
-        let current = match self.viewer_state.content.current_file.clone() {
+        let current = match self.viewer.content.current_file.clone() {
             Some(f) => crate::jump_history::Location {
                 file_path: f,
-                line: self.viewer_state.content.file_scroll,
-                h_scroll: self.viewer_state.content.h_scroll,
+                line: self.viewer.content.file_scroll,
+                h_scroll: self.viewer.content.h_scroll,
             },
             None => return,
         };
 
         if let Some(loc) = self.code_nav.history.go_forward(current) {
             let tab_width = self.config.viewer.tab_width;
-            self.viewer_state.open_file(&loc.file_path, tab_width);
+            self.viewer
+                .open_file(self.explorer.root(), &loc.file_path, tab_width);
             self.rehighlight_viewer();
-            self.viewer_state.reveal_file_in_tree(&loc.file_path);
-            let total = self.viewer_state.content.file_content.len();
-            self.viewer_state.content.file_scroll = loc.line.min(total.saturating_sub(1));
-            self.viewer_state.content.h_scroll = loc.h_scroll;
-            self.viewer_state.show_raw_for_line_target();
+            self.explorer.reveal_file_in_tree(&loc.file_path);
+            let total = self.viewer.content.file_content.len();
+            self.viewer.content.file_scroll = loc.line.min(total.saturating_sub(1));
+            self.viewer.content.h_scroll = loc.h_scroll;
+            self.viewer.show_raw_for_line_target();
         }
     }
 
@@ -1060,7 +1063,7 @@ impl App {
         }
         let repo_root = self.repo.path.clone();
         let tree_root = self.selected_worktree_path();
-        let reading = self.viewer_state.content.current_file.clone();
+        let reading = self.viewer.content.current_file.clone();
         // 鍵を失ったルートを名指しで渡す。渡さないと、調査に選ばれないまま
         // 「鍵が無い」と言い続け、調査が毎フレーム走る。
         let wanted = self
@@ -1086,15 +1089,15 @@ impl App {
     /// 先頭の 1 つを黙って選んでいて、`pub use model::MenuItem;` のような行では
     /// 意図しない語に飛んでいた。
     pub fn pick_line_identifier(&mut self, action: HintAction) -> LinePick {
-        let line_idx = self.viewer_state.content.file_scroll;
-        let Some(line) = self.viewer_state.content.file_content.get(line_idx) else {
+        let line_idx = self.viewer.content.file_scroll;
+        let Some(line) = self.viewer.content.file_content.get(line_idx) else {
             return LinePick::None;
         };
         // ラベルは 1 文字なので 26 個で頭打ちになる。
         let choices: Vec<_> = crate::symbol_index::code_identifiers_on_line(
             line,
             line_idx + 1,
-            &self.viewer_state.content.code_mask,
+            &self.viewer.content.code_mask,
         )
         .take(26)
         .collect();
@@ -1136,7 +1139,7 @@ impl App {
 
     /// 描画された行の `col` 列に重なっている識別子が、その行の何番目の出現か。
     pub fn occurrence_at_rendered_column(&self, line_idx: usize, col: usize) -> Option<usize> {
-        let line = self.viewer_state.content.file_content.get(line_idx)?;
+        let line = self.viewer.content.file_content.get(line_idx)?;
         crate::symbol_index::identifier_occurrences(line)
             .position(|(start, end, _)| col >= start && col < end)
     }
@@ -1197,7 +1200,7 @@ impl App {
         line_idx: usize,
         occurrence: usize,
     ) -> Option<SemanticSite> {
-        let rel = self.viewer_state.content.current_file.clone()?;
+        let rel = self.viewer.content.current_file.clone()?;
         let abs = tree_root.join(&rel);
         let source = std::fs::read_to_string(&abs).ok()?;
         let (col, _) = crate::symbol_index::occurrence_span_in_source(
@@ -1217,7 +1220,7 @@ impl App {
         crate::semantic_index::Bridge {
             abs_path: &site.abs,
             source: &site.source,
-            mask: &self.viewer_state.content.code_mask,
+            mask: &self.viewer.content.code_mask,
             index: &self.code_nav.index,
         }
     }
@@ -1226,11 +1229,7 @@ impl App {
     ///
     /// 名前でしか引けない検索の絞り込みに要る。空のパスは分類できないので絞らない。
     pub fn reading_file(&self) -> &str {
-        self.viewer_state
-            .content
-            .current_file
-            .as_deref()
-            .unwrap_or("")
+        self.viewer.content.current_file.as_deref().unwrap_or("")
     }
 
     /// シンボルインデックス中にそのシンボルの定義があるかを調べる。
@@ -1248,16 +1247,16 @@ impl App {
     /// ビューアに表示中の行についてシンボルヒントを構築する。
     /// 画面上のジャンプ可能なシンボルに2文字ラベルを付けたヒントを返す。
     pub fn build_symbol_hints(&self, inner_height: usize) -> Vec<crate::overlay::SymbolHint> {
-        let scroll = self.viewer_state.content.file_scroll;
-        let total = self.viewer_state.content.file_content.len();
+        let scroll = self.viewer.content.file_scroll;
+        let total = self.viewer.content.file_content.len();
         let end = (scroll + inner_height).min(total);
 
-        let mask = &self.viewer_state.content.code_mask;
+        let mask = &self.viewer.content.code_mask;
         let mut seen = std::collections::HashSet::new();
         let mut candidates = Vec::new();
 
         for line_idx in scroll..end {
-            let line = &self.viewer_state.content.file_content[line_idx];
+            let line = &self.viewer.content.file_content[line_idx];
             let line_1 = line_idx + 1;
             // マスクを構築したのと同じスキャンで列挙している。マスクはこの並びの
             // 位置をキーにしているため、必ずこのスキャンでなければならない。

@@ -287,7 +287,7 @@ pub(super) fn run_background_work(app: &mut App, loop_state: &mut LoopState) {
     app.tick_underline_hover();
 
     if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch {
-        let root = app.viewer_state.root().to_path_buf();
+        let root = app.explorer.root().to_path_buf();
         if app.overlays.grep_search.check_debounce(&root) {
             app.request_redraw();
         }

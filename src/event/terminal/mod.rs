@@ -193,7 +193,7 @@ pub(super) fn open_file_from_terminal_output(app: &mut App) {
     // リンクの実在確認に使う根は Viewer のツリーのもの。ここで確認した相対パスを
     // そのまま open_file_in_viewer に渡すので、別の根で確認すると「リンクとして
     // 認識されたのに開くと空」になる。
-    let wt_path = app.viewer_state.root().to_path_buf();
+    let wt_path = app.explorer.root().to_path_buf();
 
     // パーサをロックし、scrollback を設定して、カーソル行から上方向に行をスキャンする。
     let found = {

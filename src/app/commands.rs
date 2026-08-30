@@ -147,14 +147,14 @@ impl App {
             // "Raw/Rendered applies to a markdown file in the Viewer"
             // (app/view_state.rs) — コマンドが参照するのと同じヘルパー。
             crate::command_palette::CommandId::ToggleMarkdownRender => {
-                self.viewer_state.markdown_toggle_available()
+                self.viewer.markdown_toggle_available()
             }
 
             // 畳める範囲を持つファイルを Viewer が表示しているときだけ意味を持つ。
             crate::command_palette::CommandId::FoldOneLevel
             | crate::command_palette::CommandId::UnfoldOneLevel
             | crate::command_palette::CommandId::FoldAll
-            | crate::command_palette::CommandId::UnfoldAll => self.viewer_state.folds_available(),
+            | crate::command_palette::CommandId::UnfoldAll => self.viewer.folds_available(),
 
             // Review
             // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに
@@ -239,8 +239,8 @@ impl App {
     }
 
     fn cmd_search_in_file(&mut self) {
-        self.viewer_state.search.search_active = true;
-        self.viewer_state.search.search_query.clear();
+        self.viewer.search.search_active = true;
+        self.viewer.search.search_query.clear();
         self.set_focus(Focus::Viewer);
     }
 
@@ -250,9 +250,8 @@ impl App {
     }
 
     fn cmd_show_review_comments(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::Comments;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.explorer.bottom_view = crate::viewer::ExplorerBottomView::Comments;
+        self.explorer.focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
@@ -299,16 +298,14 @@ impl App {
     }
 
     fn cmd_show_diff_list(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::DiffList;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.explorer.bottom_view = crate::viewer::ExplorerBottomView::DiffList;
+        self.explorer.focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 
     fn cmd_show_comment_list(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::Comments;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.explorer.bottom_view = crate::viewer::ExplorerBottomView::Comments;
+        self.explorer.focus_on_diff_list = true;
         self.set_focus(Focus::Explorer);
     }
 }

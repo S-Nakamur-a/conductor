@@ -31,7 +31,7 @@ use inline_reply::{handle_inline_reply_input, start_inline_reply, toggle_inline_
 /// content.file_scroll を diff カーソルの位置に同期させる責任を持つ —
 /// ヒントも同じ同期後の位置から構築される。
 fn enter_g_prefix_mode(app: &mut App) {
-    app.viewer_state.pending_g_key = true;
+    app.viewer.pending_g_key = true;
     // 推定した viewer の高さでヒントを構築する（実際のコンテンツでクリップされる）。
     let hints = app.build_symbol_hints(50);
     app.code_nav.symbol_hint.active = !hints.is_empty();
@@ -54,28 +54,28 @@ fn handle_tab_action(app: &mut App, action: Option<Action>) -> bool {
 /// Viewer パネルがフォーカスされているときのキーを処理する。
 pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // インライン返信の入力モード
-    if app.viewer_state.explorer.inline_reply_line.is_some() {
+    if app.viewer.inline.reply_line.is_some() {
         handle_inline_reply_input(app, key);
         return None;
     }
 
     // Summary 疑似ファイルビューは独自の（シンプルな）スクロールナビゲーションを持つ。
-    if app.viewer_state.is_summary() {
+    if app.viewer.is_summary() {
         return handle_viewer_summary_mode_key(app, key);
     }
 
     // レンダリング済み markdown: プロースには行番号がないため、ビュー全体の
     // ナビゲーションのみ有効。以下のすべてより先にチェックする — ヒントを
     // 行番号で解決する g のシンボルヒントプレフィックスも含めて。
-    if app.viewer_state.is_showing_rendered_markdown() {
+    if app.viewer.is_showing_rendered_markdown() {
         return handle_viewer_markdown_mode_key(app, key);
     }
 
     // 保留中の 'g' キー — シンボルヒントが表示され、2つ目のキーを待っている
     // gd/gi/gr/gg はプレーンファイル表示でも diff 表示でも同じように動作
     // するので、以下の diff モード振り分けより先にチェックする。
-    if app.viewer_state.pending_g_key {
-        app.viewer_state.pending_g_key = false;
+    if app.viewer.pending_g_key {
+        app.viewer.pending_g_key = false;
         match key.code {
             KeyCode::Char('d') => {
                 app.code_nav.symbol_hint = Default::default();
@@ -105,10 +105,10 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
             KeyCode::Char('g') => {
                 // gg = 先頭へ移動
                 app.code_nav.symbol_hint = Default::default();
-                if app.viewer_state.diff_view.diff_mode {
-                    app.viewer_state.diff_view.diff_view_scroll = 0;
+                if app.viewer.diff_view.diff_mode {
+                    app.viewer.diff_view.diff_view_scroll = 0;
                 } else {
-                    app.viewer_state.content.file_scroll = 0;
+                    app.viewer.content.file_scroll = 0;
                 }
                 return None;
             }
@@ -131,24 +131,24 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
     // 保留中の 'z' キー — 折りたたみの2打鍵目を待っている。プレーンファイル
     // 表示専用: diff 表示の折りたたみは ExpandableContext という別の仕組みで、
     // 同じキーに2つの意味を持たせない。
-    if app.viewer_state.pending_z_key {
-        app.viewer_state.pending_z_key = false;
-        if !app.viewer_state.diff_view.diff_mode {
+    if app.viewer.pending_z_key {
+        app.viewer.pending_z_key = false;
+        if !app.viewer.diff_view.diff_mode {
             return handle_fold_key(app, key);
         }
     }
 
     // 統合 diff モードは独自のナビゲーションを持つ。
-    if app.viewer_state.diff_view.diff_mode {
+    if app.viewer.diff_view.diff_mode {
         return handle_viewer_diff_mode_key(app, key);
     }
 
-    let total = app.viewer_state.content.file_content.len();
+    let total = app.viewer.content.file_content.len();
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
     if let Some(Action::ExitToExplorer) = action {
-        if app.viewer_state.selection != crate::viewer::LineSelection::None {
-            app.viewer_state.clear_selection();
+        if app.viewer.selection != crate::viewer::LineSelection::None {
+            app.viewer.clear_selection();
         } else {
             app.set_focus(crate::app::Focus::Explorer);
         }
@@ -181,31 +181,31 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
 
     match action {
         // 移動はすべて可視行を歩く（畳んだ中にカーソルが入らない）。
-        Some(Action::NavigateDown) => app.viewer_state.move_cursor_lines(1),
-        Some(Action::NavigateUp) => app.viewer_state.move_cursor_lines(-1),
-        Some(Action::ScrollHalfPageDown) => app.viewer_state.move_cursor_lines(15),
-        Some(Action::ScrollHalfPageUp) => app.viewer_state.move_cursor_lines(-15),
+        Some(Action::NavigateDown) => app.viewer.move_cursor_lines(1),
+        Some(Action::NavigateUp) => app.viewer.move_cursor_lines(-1),
+        Some(Action::ScrollHalfPageDown) => app.viewer.move_cursor_lines(15),
+        Some(Action::ScrollHalfPageUp) => app.viewer.move_cursor_lines(-15),
         Some(Action::GoToTop) => enter_g_prefix_mode(app),
-        Some(Action::GoToBottom) => app.viewer_state.goto_last_visible_line(),
-        Some(Action::FoldPrefix) => app.viewer_state.pending_z_key = true,
+        Some(Action::GoToBottom) => app.viewer.goto_last_visible_line(),
+        Some(Action::FoldPrefix) => app.viewer.pending_z_key = true,
         Some(Action::SearchInFile) => {
-            app.viewer_state.search.search_active = true;
-            app.viewer_state.search.search_query.clear();
+            app.viewer.search.search_active = true;
+            app.viewer.search.search_query.clear();
         }
         Some(Action::NextSearchMatch) => {
-            app.viewer_state.next_search_match();
+            app.viewer.next_search_match();
         }
         Some(Action::PrevSearchMatch) => {
-            app.viewer_state.prev_search_match();
+            app.viewer.prev_search_match();
         }
         Some(Action::ScrollLeft) => {
-            app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
+            app.viewer.content.h_scroll = app.viewer.content.h_scroll.saturating_sub(4);
         }
         Some(Action::ScrollRight) => {
-            app.viewer_state.scroll_right(4);
+            app.viewer.scroll_right(4);
         }
         Some(Action::ScrollHome) => {
-            app.viewer_state.content.h_scroll = 0;
+            app.viewer.content.h_scroll = 0;
         }
         Some(Action::ToggleInlineThread) => {
             toggle_inline_thread(app);
@@ -244,13 +244,13 @@ pub(super) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
 fn handle_fold_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Char('a') => {
-            app.viewer_state.fold_toggle_cursor();
+            app.viewer.fold_toggle_cursor();
         }
         KeyCode::Char('c') => {
-            app.viewer_state.fold_close_cursor();
+            app.viewer.fold_close_cursor();
         }
         KeyCode::Char('o') => {
-            app.viewer_state.fold_open_cursor();
+            app.viewer.fold_open_cursor();
         }
         KeyCode::Char('m') => app.cmd_fold_one_level(),
         KeyCode::Char('r') => app.cmd_unfold_one_level(),
@@ -271,7 +271,7 @@ fn handle_fold_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 /// 引き続き通常の Viewer コンテキストを使うので、切り替えても両モードで
 /// バインディングは1つのまま。
 pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    let total = app.viewer_state.md_total_lines;
+    let total = app.viewer.md_total_lines;
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
 
     if handle_tab_action(app, action) {
@@ -285,22 +285,21 @@ pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> O
         // ファイル単位であって行単位ではない: レンダリング表示から $EDITOR に
         // 渡すのも同じように意味がある。
         Some(Action::OpenInEditor) => app.open_in_editor(),
-        Some(Action::NavigateDown) if app.viewer_state.md_scroll + 1 < total => {
-            app.viewer_state.md_scroll += 1;
+        Some(Action::NavigateDown) if app.viewer.md_scroll + 1 < total => {
+            app.viewer.md_scroll += 1;
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.md_scroll = app.viewer_state.md_scroll.saturating_sub(1);
+            app.viewer.md_scroll = app.viewer.md_scroll.saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
-            app.viewer_state.md_scroll =
-                (app.viewer_state.md_scroll + 15).min(total.saturating_sub(1));
+            app.viewer.md_scroll = (app.viewer.md_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.md_scroll = app.viewer_state.md_scroll.saturating_sub(15);
+            app.viewer.md_scroll = app.viewer.md_scroll.saturating_sub(15);
         }
-        Some(Action::GoToTop) => app.viewer_state.md_scroll = 0,
+        Some(Action::GoToTop) => app.viewer.md_scroll = 0,
         Some(Action::GoToBottom) => {
-            app.viewer_state.md_scroll = total.saturating_sub(1);
+            app.viewer.md_scroll = total.saturating_sub(1);
         }
         _ => {}
     }
@@ -312,31 +311,31 @@ pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> O
 /// または Explorer へ抜ける。diff モードのキーコンテキストを再利用するので、
 /// j/k/d/u/g/G/Esc は他の場所と同じように振る舞う。
 pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    let total = app.viewer_state.summary_total_lines;
+    let total = app.viewer.summary_total_lines;
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
     match action {
         Some(Action::ExitToExplorer) => {
-            app.viewer_state.exit_diff_mode(); // show_summary もクリアする
+            app.viewer.exit_diff_mode(); // show_summary もクリアする
             app.set_focus(crate::app::Focus::Explorer);
         }
         Some(Action::SearchFilename) => super::open_filename_search(app),
-        Some(Action::NavigateDown) if app.viewer_state.summary_scroll + 1 < total => {
-            app.viewer_state.summary_scroll += 1;
+        Some(Action::NavigateDown) if app.viewer.summary_scroll + 1 < total => {
+            app.viewer.summary_scroll += 1;
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.summary_scroll = app.viewer_state.summary_scroll.saturating_sub(1);
+            app.viewer.summary_scroll = app.viewer.summary_scroll.saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
-            app.viewer_state.summary_scroll =
-                (app.viewer_state.summary_scroll + 15).min(total.saturating_sub(1));
+            app.viewer.summary_scroll =
+                (app.viewer.summary_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.summary_scroll = app.viewer_state.summary_scroll.saturating_sub(15);
+            app.viewer.summary_scroll = app.viewer.summary_scroll.saturating_sub(15);
         }
-        Some(Action::GoToTop) => app.viewer_state.summary_scroll = 0,
+        Some(Action::GoToTop) => app.viewer.summary_scroll = 0,
         Some(Action::GoToBottom) => {
-            app.viewer_state.summary_scroll = total.saturating_sub(1);
+            app.viewer.summary_scroll = total.saturating_sub(1);
         }
         _ => {}
     }
@@ -344,14 +343,14 @@ pub(super) fn handle_viewer_summary_mode_key(app: &mut App, key: KeyEvent) -> Op
 }
 
 pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    let total = app.viewer_state.diff_view.diff_view_lines.len();
+    let total = app.viewer.diff_view.diff_view_lines.len();
     let action = app.keymap.resolve(&key, KeyContext::ViewerDiffMode);
 
     if let Some(Action::ExitToExplorer) = action {
-        if app.viewer_state.selection != crate::viewer::LineSelection::None {
-            app.viewer_state.clear_selection();
+        if app.viewer.selection != crate::viewer::LineSelection::None {
+            app.viewer.clear_selection();
         } else {
-            app.viewer_state.exit_diff_mode();
+            app.viewer.exit_diff_mode();
             app.set_focus(crate::app::Focus::Explorer);
         }
         return None;
@@ -389,26 +388,20 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
     }
 
     match action {
-        Some(Action::NavigateDown) if app.viewer_state.diff_view.diff_view_scroll + 1 < total => {
-            app.viewer_state.diff_view.diff_view_scroll += 1;
+        Some(Action::NavigateDown) if app.viewer.diff_view.diff_view_scroll + 1 < total => {
+            app.viewer.diff_view.diff_view_scroll += 1;
         }
         Some(Action::NavigateUp) => {
-            app.viewer_state.diff_view.diff_view_scroll = app
-                .viewer_state
-                .diff_view
-                .diff_view_scroll
-                .saturating_sub(1);
+            app.viewer.diff_view.diff_view_scroll =
+                app.viewer.diff_view.diff_view_scroll.saturating_sub(1);
         }
         Some(Action::ScrollHalfPageDown) => {
-            app.viewer_state.diff_view.diff_view_scroll =
-                (app.viewer_state.diff_view.diff_view_scroll + 15).min(total.saturating_sub(1));
+            app.viewer.diff_view.diff_view_scroll =
+                (app.viewer.diff_view.diff_view_scroll + 15).min(total.saturating_sub(1));
         }
         Some(Action::ScrollHalfPageUp) => {
-            app.viewer_state.diff_view.diff_view_scroll = app
-                .viewer_state
-                .diff_view
-                .diff_view_scroll
-                .saturating_sub(15);
+            app.viewer.diff_view.diff_view_scroll =
+                app.viewer.diff_view.diff_view_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
             // 'g' は先頭へ直接ジャンプする代わりに、今ではプレーンファイル
@@ -417,65 +410,63 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
             // ジャンプ」という挙動は gg に移り、両方のビューで g の意味が
             // 揃った。シンボル検索とヒント構築はこのフィールドを読むので、
             // まず content.file_scroll を diff カーソル下の行に同期させる。
-            app.viewer_state.sync_file_scroll_to_diff_scroll();
+            app.viewer.sync_file_scroll_to_diff_scroll();
             enter_g_prefix_mode(app);
         }
         Some(Action::GoToBottom) => {
-            app.viewer_state.diff_view.diff_view_scroll = total.saturating_sub(1);
+            app.viewer.diff_view.diff_view_scroll = total.saturating_sub(1);
         }
         Some(Action::SearchInFile) => {
-            app.viewer_state.sync_file_scroll_to_diff_scroll();
-            app.viewer_state.search.search_active = true;
-            app.viewer_state.search.search_query.clear();
+            app.viewer.sync_file_scroll_to_diff_scroll();
+            app.viewer.search.search_active = true;
+            app.viewer.search.search_query.clear();
         }
         Some(Action::NextSearchMatch) => {
-            app.viewer_state.next_search_match();
+            app.viewer.next_search_match();
         }
         Some(Action::PrevSearchMatch) => {
-            app.viewer_state.prev_search_match();
+            app.viewer.prev_search_match();
         }
         Some(Action::NextHunk) => {
-            let lines = &app.viewer_state.diff_view.diff_view_lines;
-            if let Some(idx) = next_change_block(lines, app.viewer_state.diff_view.diff_view_scroll)
-            {
-                app.viewer_state.diff_view.diff_view_scroll = idx;
+            let lines = &app.viewer.diff_view.diff_view_lines;
+            if let Some(idx) = next_change_block(lines, app.viewer.diff_view.diff_view_scroll) {
+                app.viewer.diff_view.diff_view_scroll = idx;
             }
         }
         Some(Action::PrevHunk) => {
-            let lines = &app.viewer_state.diff_view.diff_view_lines;
-            if let Some(idx) = prev_change_block(lines, app.viewer_state.diff_view.diff_view_scroll)
-            {
-                app.viewer_state.diff_view.diff_view_scroll = idx;
+            let lines = &app.viewer.diff_view.diff_view_lines;
+            if let Some(idx) = prev_change_block(lines, app.viewer.diff_view.diff_view_scroll) {
+                app.viewer.diff_view.diff_view_scroll = idx;
             }
         }
         Some(Action::NextComment) => {
             let idx = next_comment_line(
-                &app.viewer_state.diff_view.diff_view_lines,
+                &app.viewer.diff_view.diff_view_lines,
                 &app.review_state.file_comments,
-                app.viewer_state.diff_view.diff_view_scroll,
+                app.viewer.diff_view.diff_view_scroll,
             );
             if let Some(idx) = idx {
-                app.viewer_state.diff_view.diff_view_scroll = idx;
+                app.viewer.diff_view.diff_view_scroll = idx;
             }
         }
         Some(Action::PrevComment) => {
             let idx = prev_comment_line(
-                &app.viewer_state.diff_view.diff_view_lines,
+                &app.viewer.diff_view.diff_view_lines,
                 &app.review_state.file_comments,
-                app.viewer_state.diff_view.diff_view_scroll,
+                app.viewer.diff_view.diff_view_scroll,
             );
             if let Some(idx) = idx {
-                app.viewer_state.diff_view.diff_view_scroll = idx;
+                app.viewer.diff_view.diff_view_scroll = idx;
             }
         }
         Some(Action::ScrollLeft) => {
-            app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
+            app.viewer.content.h_scroll = app.viewer.content.h_scroll.saturating_sub(4);
         }
         Some(Action::ScrollRight) => {
-            app.viewer_state.scroll_right(4);
+            app.viewer.scroll_right(4);
         }
         Some(Action::ScrollHome) => {
-            app.viewer_state.content.h_scroll = 0;
+            app.viewer.content.h_scroll = 0;
         }
         Some(Action::ToggleInlineThread) => {
             toggle_inline_thread(app);
@@ -491,23 +482,23 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
         }
         Some(Action::ExpandContext) => {
             // 最初に見えている ExpandableContext で10行展開する。
-            if let Some(idx) = app.viewer_state.find_visible_expandable(50) {
-                app.viewer_state.expand_context_at(idx, false);
+            if let Some(idx) = app.viewer.find_visible_expandable(50) {
+                app.viewer.expand_context_at(idx, false);
             }
         }
         Some(Action::ExpandAllContext) => {
             // 最初に見えている ExpandableContext ですべて展開する。
-            if let Some(idx) = app.viewer_state.find_visible_expandable(50) {
-                app.viewer_state.expand_context_at(idx, true);
+            if let Some(idx) = app.viewer.find_visible_expandable(50) {
+                app.viewer.expand_context_at(idx, true);
             }
         }
         Some(Action::ToggleViewed) => {
-            if let Some(path) = app.viewer_state.content.current_file.clone() {
+            if let Some(path) = app.viewer.content.current_file.clone() {
                 app.toggle_path_viewed(&path);
             }
         }
         Some(Action::ShowHoverInfo) => {
-            app.viewer_state.sync_file_scroll_to_diff_scroll();
+            app.viewer.sync_file_scroll_to_diff_scroll();
             handle_show_hover_info(app);
         }
         _ => {}

@@ -46,18 +46,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 要素ではない。スクロールのページ幅とマウスの行→インデックス変換の両方が
     // この行数を知る必要があるので、どのビューが表示中かを唯一知っている
     // ここから公開する。
-    let shows_error_banner = app.viewer_state.explorer.explorer_bottom_view
+    let shows_error_banner = app.explorer.bottom_view
         == crate::viewer::ExplorerBottomView::DiffList
         && app.diff_state.error.is_some();
     let banner_rows = diff_list::diff_list_banner_rows(shows_error_banner);
     let diff_inner_height =
         (chunks[1].height.saturating_sub(2) as usize).saturating_sub(banner_rows);
-    app.viewer_state.explorer.explorer_tree_height = tree_inner_height.max(1);
-    app.viewer_state.explorer.explorer_diff_list_height = diff_inner_height.max(1);
-    app.viewer_state.explorer.explorer_diff_banner_rows = banner_rows;
+    app.explorer.tree_height = tree_inner_height.max(1);
+    app.explorer.diff_list_height = diff_inner_height.max(1);
+    app.explorer.diff_banner_rows = banner_rows;
 
     file_tree::render_file_tree(frame, chunks[0], app, focused);
-    match app.viewer_state.explorer.explorer_bottom_view {
+    match app.explorer.bottom_view {
         crate::viewer::ExplorerBottomView::Comments => {
             comment_list::render_comment_list(frame, chunks[1], app, focused);
         }
@@ -68,11 +68,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // 検索入力のオーバーレイを出す (全体オーバーレイに覆われている間はカーソル配置をしない)。
     let overlay_active = app.is_any_overlay_active();
-    if app.viewer_state.search.search_active {
+    if app.viewer.search.search_active {
         search_box::render_search_box(
             frame,
             area,
-            &app.viewer_state.search.search_query,
+            &app.viewer.search.search_query,
             &app.theme,
             overlay_active,
         );

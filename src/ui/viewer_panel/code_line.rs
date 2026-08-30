@@ -317,7 +317,7 @@ pub(super) fn render_code_line_rows(
     // コメント範囲の最終行の下にインラインスレッドの行を追加する。
     if expanded_threads.contains(&line_1) {
         let reply_cid = if inline_reply_line == Some(line_1) {
-            app.viewer_state.explorer.inline_reply_comment_id.as_deref()
+            app.viewer.inline.reply_comment_id.as_deref()
         } else {
             None
         };
@@ -327,7 +327,7 @@ pub(super) fn render_code_line_rows(
             ctx.area_width as usize,
             &app.review_state,
             reply_cid,
-            &app.viewer_state.explorer.inline_reply_buffer,
+            &app.viewer.inline.reply_buffer,
             theme,
             &app.highlight.syntax_set,
             &app.highlight.theme,

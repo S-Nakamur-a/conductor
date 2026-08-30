@@ -123,13 +123,12 @@ pub(super) fn handle_explorer_column_click(
 
     // クリックが上半分（ファイルツリー）か下半分（差分/コメントリスト）かを判定する。
     if row >= explorer_mid_y {
-        app.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        app.explorer.focus_on_diff_list = true;
 
         // 下枠の「✨ Ask Claude All」ボタンへのクリックかを確認する。
         let bottom_border_y = main_area.y + main_area.height.saturating_sub(1);
         if row == bottom_border_y
-            && app.viewer_state.explorer.explorer_bottom_view
-                == crate::viewer::ExplorerBottomView::Comments
+            && app.explorer.bottom_view == crate::viewer::ExplorerBottomView::Comments
         {
             // 「 ✨ Ask Claude All 」は右揃えで、右端から約19文字。
             let ask_label_w = 19_u16;
@@ -144,19 +143,17 @@ pub(super) fn handle_explorer_column_click(
         if row >= inner_y {
             let click_offset = (row - inner_y) as usize;
 
-            if app.viewer_state.explorer.explorer_bottom_view
-                == crate::viewer::ExplorerBottomView::Comments
-            {
+            if app.explorer.bottom_view == crate::viewer::ExplorerBottomView::Comments {
                 // コメントリストが表示されている場合 — コメント選択を処理する。
-                let idx = app.viewer_state.explorer.comment_list_scroll + click_offset;
+                let idx = app.explorer.comment_list_scroll + click_offset;
                 let row_count = app.review_state.comment_list_rows.len();
                 if idx < row_count {
-                    app.viewer_state.explorer.comment_list_selected = idx;
+                    app.explorer.comment_list_selected = idx;
 
                     // ダブルクリック検出。
                     let is_double = register_double_click_on(
-                        &mut app.viewer_state.click.last_comment_click_time,
-                        &mut app.viewer_state.click.last_comment_click_idx,
+                        &mut app.viewer.click.last_comment_click_time,
+                        &mut app.viewer.click.last_comment_click_idx,
                         idx,
                         std::time::Instant::now(),
                     );
@@ -168,32 +165,28 @@ pub(super) fn handle_explorer_column_click(
                         navigate_to_comment_with_focus(app, comment_idx, is_double);
                     }
                 }
-            } else if app.viewer_state.explorer.explorer_bottom_view
-                == crate::viewer::ExplorerBottomView::DiffList
-            {
+            } else if app.explorer.bottom_view == crate::viewer::ExplorerBottomView::DiffList {
                 // 差分リストが表示されている場合 — 差分選択を処理する。
-                let scroll = app.viewer_state.explorer.diff_list_scroll;
-                let banner = app.viewer_state.explorer.explorer_diff_banner_rows;
+                let scroll = app.explorer.diff_list_scroll;
+                let banner = app.explorer.diff_banner_rows;
                 if let Some(idx) = diff_list_row_at(geom, scroll, banner, col, row)
                     && idx < app.diff_state.display_list.len()
                 {
-                    app.viewer_state.explorer.diff_list_selected = idx;
+                    app.explorer.diff_list_selected = idx;
                     // シングルクリック: SUMMARY擬似ファイルなら変更サマリーを開く。
                     if matches!(
                         app.diff_state.display_list.get(idx),
                         Some(crate::diff_state::DiffListEntry::Summary {})
                     ) {
-                        app.viewer_state.enter_summary_view();
+                        app.viewer.enter_summary_view();
                         app.set_focus(Focus::Viewer);
                     }
                     // シングルクリック: ヘッダーの開閉、またはViewerでファイルを開く。
                     else if app.diff_state.toggle_section(idx) {
                         // セクションヘッダーを開閉した。
                         let new_count = app.diff_state.display_list.len();
-                        if new_count > 0
-                            && app.viewer_state.explorer.diff_list_selected >= new_count
-                        {
-                            app.viewer_state.explorer.diff_list_selected = new_count - 1;
+                        if new_count > 0 && app.explorer.diff_list_selected >= new_count {
+                            app.explorer.diff_list_selected = new_count - 1;
                         }
                     } else if app.diff_state.resolve_file(idx).is_some() {
                         // diff_list_selected は既にこの行を指している。共通のオープン処理は
@@ -205,26 +198,26 @@ pub(super) fn handle_explorer_column_click(
             }
         }
     } else {
-        app.viewer_state.explorer.explorer_focus_on_diff_list = false;
+        app.explorer.focus_on_diff_list = false;
         // クリックされたファイルツリーの項目を選択する。
-        let scroll = app.viewer_state.tree.tree_scroll;
+        let scroll = app.explorer.tree.tree_scroll;
         if let Some(idx) = explorer_tree_row_at(geom, scroll, col, row) {
-            let visible = app.viewer_state.visible_indices();
+            let visible = app.explorer.visible_indices();
             if let Some(&tree_idx) = visible.get(idx) {
-                app.viewer_state.tree.tree_selected = tree_idx;
+                app.explorer.tree.tree_selected = tree_idx;
                 // シングルクリックでViewerにファイルを開く（ディレクトリなら開閉する）。
-                if let Some(entry) = app.viewer_state.tree.file_tree.get(tree_idx).cloned() {
+                if let Some(entry) = app.explorer.tree.file_tree.get(tree_idx).cloned() {
                     if entry.is_dir {
                         // 展開する前に子要素を遅延読み込みする。
                         if !entry.is_expanded {
-                            app.viewer_state.ensure_children_loaded(tree_idx);
+                            app.explorer.ensure_children_loaded(tree_idx);
                         }
-                        app.viewer_state.toggle_dir(tree_idx);
+                        app.explorer.toggle_dir(tree_idx);
                     } else {
                         // ダブルクリック検出。
                         let is_double = register_double_click_on(
-                            &mut app.viewer_state.click.last_tree_click_time,
-                            &mut app.viewer_state.click.last_tree_click_idx,
+                            &mut app.viewer.click.last_tree_click_time,
+                            &mut app.viewer.click.last_tree_click_idx,
                             tree_idx,
                             std::time::Instant::now(),
                         );
@@ -233,9 +226,14 @@ pub(super) fn handle_explorer_column_click(
                         // シングルクリックは preview（次にどれかを開くと閉じる）、
                         // ダブルクリックは永続。開いたまま溜まるのを防ぐ。
                         if is_double {
-                            app.viewer_state.open_file(&entry.path, tab_width);
+                            app.viewer
+                                .open_file(app.explorer.root(), &entry.path, tab_width);
                         } else {
-                            app.viewer_state.open_file_preview(&entry.path, tab_width);
+                            app.viewer.open_file_preview(
+                                app.explorer.root(),
+                                &entry.path,
+                                tab_width,
+                            );
                         }
                         app.rehighlight_viewer();
                         app.review_state.build_file_comment_cache(&entry.path);

@@ -18,7 +18,7 @@ impl App {
             let wt = self.selected_worktree_branch();
             self.review_state.load_comments(store, &wt);
             // 現在表示中のファイルについて、ファイル単位のキャッシュを再構築する。
-            if let Some(file_path) = self.viewer_state.content.current_file.clone() {
+            if let Some(file_path) = self.viewer.content.current_file.clone() {
                 self.review_state.build_file_comment_cache(&file_path);
             }
             // diff リストの SUMMARY 疑似ファイルを、このブランチに change summary が
@@ -43,18 +43,19 @@ impl App {
     /// 開く。ファイルジャンプ系のキーから共有される。選択エントリがファイルでなければ
     /// 何もしない。
     pub fn open_diff_file_at_selected(&mut self) {
-        let idx = self.viewer_state.explorer.diff_list_selected;
+        let idx = self.explorer.diff_list_selected;
         let (file_path, file_diff_clone) = match self.diff_state.resolve_file(idx) {
             Some(f) => (f.path.clone(), f.clone()),
             None => return,
         };
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(&file_path, tab_width);
-        self.viewer_state.reveal_file_in_tree(&file_path);
+        self.viewer
+            .open_file(self.explorer.root(), &file_path, tab_width);
+        self.explorer.reveal_file_in_tree(&file_path);
         self.rehighlight_viewer();
         self.review_state.build_file_comment_cache(&file_path);
         self.expand_threads_for_file(&file_path);
-        self.viewer_state.build_unified_diff_view(&file_diff_clone);
+        self.viewer.build_unified_diff_view(&file_diff_clone);
         // ファイルにレビューコメントがあれば最初のコメントへ着地させ(レビュアーが
         // すぐ気付けるようにする)、なければ最初の変更箇所へ着地させる。
         let first_comment_line = self
@@ -66,14 +67,14 @@ impl App {
             .min();
         let target = first_comment_line
             .and_then(|line| {
-                self.viewer_state
+                self.viewer
                     .diff_view
                     .diff_view_lines
                     .iter()
                     .position(|e| matches!(e, crate::viewer::UnifiedDiffEntry::Line { new_line_no: Some(n), .. } if *n == line))
             })
             .or_else(|| {
-                self.viewer_state
+                self.viewer
                     .diff_view
                     .diff_view_lines
                     .iter()
@@ -83,7 +84,7 @@ impl App {
                     })
             });
         if let Some(pos) = target {
-            self.viewer_state.diff_view.diff_view_scroll = pos.saturating_sub(3);
+            self.viewer.diff_view.diff_view_scroll = pos.saturating_sub(3);
         }
     }
 
@@ -96,7 +97,7 @@ impl App {
         // カーソルをクランプする: 古い diff_list_selected(リフレッシュでリストが
         // 縮んだ場合など)が下の後方スキャンでリスト範囲を超えてはならない。
         // 超えると display_list[i] がパニックする。
-        let cur = self.viewer_state.explorer.diff_list_selected.min(len);
+        let cur = self.explorer.diff_list_selected.min(len);
         let target = if forward {
             (cur + 1..len)
                 .find(|&i| matches!(self.diff_state.display_list[i], DiffListEntry::File { .. }))
@@ -106,7 +107,7 @@ impl App {
                 .find(|&i| matches!(self.diff_state.display_list[i], DiffListEntry::File { .. }))
         };
         if let Some(idx) = target {
-            self.viewer_state.explorer.diff_list_selected = idx;
+            self.explorer.diff_list_selected = idx;
             self.open_diff_file_at_selected();
         }
     }
@@ -130,10 +131,7 @@ impl App {
             .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
             .collect();
         for line in lines {
-            self.viewer_state
-                .explorer
-                .expanded_inline_threads
-                .insert(line);
+            self.viewer.inline.expanded.insert(line);
         }
     }
 
@@ -184,17 +182,14 @@ impl App {
             // 作成直後のスレッドは展開したままにし、ガターバッジに折りたたまれず
             // コメントがすぐに見えるようにする。
             let line = line_end.unwrap_or(line_start) as usize;
-            self.viewer_state
-                .explorer
-                .expanded_inline_threads
-                .insert(line);
+            self.viewer.inline.expanded.insert(line);
         }
     }
 
     /// ファイルパスの「viewed」マークをトグルする — diff リストの v キーと
     /// Viewer の diff モードの v キーから使われる。
     pub fn toggle_path_viewed(&mut self, path: &str) {
-        let viewed = &mut self.viewer_state.explorer.viewed;
+        let viewed = &mut self.explorer.viewed;
         if !viewed.remove(path) {
             viewed.insert(path.to_string());
         }

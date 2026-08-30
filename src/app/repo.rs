@@ -3,7 +3,7 @@
 
 use crate::git_engine;
 use crate::review_store::{self, ReviewStore};
-use crate::viewer::ViewerState;
+use crate::viewer::{ExplorerState, ViewerState};
 
 use super::{App, StatusLevel};
 
@@ -49,11 +49,12 @@ impl App {
         // worktreeとレビューを即座にリフレッシュする。viewer/diffは遅延読み込みする。
         self.worktrees.select(0);
         self.refresh_worktrees();
-        self.viewer_state = ViewerState::default();
+        self.explorer = ExplorerState::default();
+        self.viewer = ViewerState::default();
         // ツリーの走査は遅延させる (上のコメントのとおり) が、根だけは今ここで
         // 入れておく。空のままだと、ツリーを歩く前に開いたファイル名検索が
         // カレントディレクトリを歩いてしまう。
-        self.viewer_state.set_root(self.selected_worktree_path());
+        self.explorer.set_root(self.selected_worktree_path());
         self.diff_state = crate::diff_state::DiffState::new(
             &self.config.general.main_branch,
             self.diff_state.view_mode,
@@ -125,9 +126,10 @@ impl App {
 
                 self.worktrees.select(0);
                 self.refresh_worktrees();
-                self.viewer_state = ViewerState::default();
+                self.explorer = ExplorerState::default();
+                self.viewer = ViewerState::default();
                 // 同上。ツリーは遅延させるが根は今決まっている。
-                self.viewer_state.set_root(self.selected_worktree_path());
+                self.explorer.set_root(self.selected_worktree_path());
                 // このリポジトリにはビュー復元が無いので、*前の*リポジトリ用にまだ
                 // 有効な復元があれば破棄する — そうしないと、ここで発火して新しく
                 // 開いたツリー内の同名パスを開いてしまう可能性がある。

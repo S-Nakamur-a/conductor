@@ -11,7 +11,7 @@ use crate::keymap::KeyMap;
 use crate::overlay::OverlayManager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
-use crate::viewer::ViewerState;
+use crate::viewer::{ExplorerState, ViewerState};
 use crate::worktree_ops::WorktreeManager;
 
 use super::state::{
@@ -117,7 +117,8 @@ impl App {
                 name: theme_name,
                 high_contrast,
             },
-            viewer_state: ViewerState::default(),
+            explorer: ExplorerState::default(),
+            viewer: ViewerState::default(),
             diff_state,
             review_store,
             review_state: ReviewState::new(),

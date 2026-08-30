@@ -17,14 +17,24 @@ impl App {
     pub fn refresh_viewer(&mut self) -> bool {
         let path = self.selected_worktree_path();
         let tab_width = self.config.viewer.tab_width;
-        let changed = self.viewer_state.load_file_tree(&path, tab_width);
+        let reload = self
+            .explorer
+            .load_file_tree(&path, self.viewer.content.current_file.as_deref());
+        if reload.root_changed {
+            self.viewer
+                .prune_tabs_to_root(self.explorer.root(), tab_width);
+        }
+        if let Some(rel) = &reload.reopen {
+            self.viewer
+                .reload_active_file(self.explorer.root(), rel, tab_width);
+        }
         // 起動時の復元: これは遅延（同期的な）ツリー読み込み経路
         // （例えばViewerが初めてフォーカスされたときなど）なので、保留中の
         // ファイルがあればここで再度開く。非同期のworktree切り替え経路では
         // poll_worktree_switch_ops がこれを行う。
         self.consume_pending_view_restore();
         self.rehighlight_viewer();
-        changed
+        reload.entries_changed
     }
 
     /// 以前選択していたworktreeを復元し、現在のリポジトリの保存済みビュー
@@ -89,8 +99,8 @@ impl App {
         let (file, line) = match &self.view_restore.pending {
             Some(r) => (Some(r.file.clone()), r.scroll as i64),
             None => (
-                self.viewer_state.content.current_file.clone(),
-                self.viewer_state.content.file_scroll as i64,
+                self.viewer.content.current_file.clone(),
+                self.viewer.content.file_scroll as i64,
             ),
         };
         let _ = store.save_view_state(branch, file.as_deref(), line);
@@ -116,8 +126,8 @@ impl App {
             return;
         };
         match restore_disposition(
-            self.viewer_state.content.current_file.is_some(),
-            self.viewer_state.is_summary(),
+            self.viewer.content.current_file.is_some(),
+            self.viewer.is_summary(),
         ) {
             RestoreDisposition::Apply => {}
             RestoreDisposition::Drop => return,
@@ -129,18 +139,14 @@ impl App {
         // 復元先の存在確認は Viewer の根で行う。ここは「ツリーが揃った直後」に
         // 呼ばれる (同期の refresh_viewer と、非同期の worktree 切り替えの両方)
         // ので、そのツリーと同じ根で見ないと確認と実際に開く先がずれる。
-        if !self.viewer_state.root().join(&restore.file).is_file() {
+        if !self.explorer.root().join(&restore.file).is_file() {
             return;
         }
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(&restore.file, tab_width);
-        let max = self
-            .viewer_state
-            .content
-            .file_content
-            .len()
-            .saturating_sub(1);
-        self.viewer_state.content.file_scroll = restore.scroll.min(max);
+        self.viewer
+            .open_file(self.explorer.root(), &restore.file, tab_width);
+        let max = self.viewer.content.file_content.len().saturating_sub(1);
+        self.viewer.content.file_scroll = restore.scroll.min(max);
     }
 
     /// 現在読み込まれているファイル内容にsyntectハイライトを実行する。
@@ -149,8 +155,7 @@ impl App {
         let syntax_set = &self.highlight.syntax_set;
         let theme = &self.highlight.theme;
         let generation = self.highlight.generation;
-        self.viewer_state
-            .highlight_content(syntax_set, theme, generation);
+        self.viewer.highlight_content(syntax_set, theme, generation);
     }
 
     /// branch のdiffを計算すべき対象ref。
@@ -183,7 +188,7 @@ impl App {
             let tab_width = self.config.viewer.tab_width;
             self.diff_state
                 .load_diff(&path, &base_branch, word_diff, tab_width);
-            self.viewer_state.invalidate_diff_annotations();
+            self.viewer.invalidate_diff_annotations();
         }
     }
 
@@ -195,24 +200,24 @@ impl App {
     /// 隠れているからである。
     /// 深さ単位で1段畳む（zm）。
     pub fn cmd_fold_one_level(&mut self) {
-        let depth = self.viewer_state.fold_collapse_deepest();
+        let depth = self.viewer.fold_collapse_deepest();
         self.report_fold_depth(depth);
     }
 
     /// 深さ単位の畳み込みを1段開き戻す（zr）。
     pub fn cmd_unfold_one_level(&mut self) {
-        let depth = self.viewer_state.fold_expand_shallowest();
+        let depth = self.viewer.fold_expand_shallowest();
         self.report_fold_depth(depth);
     }
 
     /// すべて畳む（zM）。
     pub fn cmd_fold_all(&mut self) {
-        self.viewer_state.fold_close_all();
+        self.viewer.fold_close_all();
     }
 
     /// すべて開く（zR）。
     pub fn cmd_unfold_all(&mut self) {
-        self.viewer_state.fold_open_all();
+        self.viewer.fold_open_all();
     }
 
     /// 畳んだ段数は畳んだ跡からは読み取れないので、操作のたびに知らせる。
@@ -223,15 +228,15 @@ impl App {
     }
 
     pub fn cmd_toggle_markdown_render(&mut self) {
-        if !self.viewer_state.markdown_toggle_available() {
+        if !self.viewer.markdown_toggle_available() {
             self.set_status(
                 "Raw/Rendered applies to a markdown file in the Viewer".to_string(),
                 StatusLevel::Warning,
             );
             return;
         }
-        self.viewer_state.toggle_markdown_rendered();
-        let msg = if self.viewer_state.md_rendered {
+        self.viewer.toggle_markdown_rendered();
+        let msg = if self.viewer.md_rendered {
             "Markdown: Rendered"
         } else {
             "Markdown: Raw"
@@ -242,32 +247,32 @@ impl App {
     /// Viewer の次のタブへ切り替える。
     pub fn next_viewer_tab(&mut self) {
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.next_tab(tab_width);
+        self.viewer.next_tab(self.explorer.root(), tab_width);
         self.after_viewer_tab_change();
     }
 
     /// Viewer の前のタブへ切り替える。
     pub fn prev_viewer_tab(&mut self) {
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.prev_tab(tab_width);
+        self.viewer.prev_tab(self.explorer.root(), tab_width);
         self.after_viewer_tab_change();
     }
 
     /// idx のタブをアクティブにする（タブ行のクリック）。
     pub fn focus_viewer_tab(&mut self, idx: usize) {
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.focus_tab(idx, tab_width);
+        self.viewer.focus_tab(self.explorer.root(), idx, tab_width);
         self.after_viewer_tab_change();
     }
 
     /// idx のタブを閉じる。省略時はアクティブなタブ。
     pub fn close_viewer_tab(&mut self, idx: Option<usize>) {
         let tab_width = self.config.viewer.tab_width;
-        let idx = idx.unwrap_or(self.viewer_state.active_tab);
-        let Some(closed) = self.viewer_state.tabs.get(idx).map(|t| t.path.clone()) else {
+        let idx = idx.unwrap_or(self.viewer.active_tab);
+        let Some(closed) = self.viewer.tabs.get(idx).map(|t| t.path.clone()) else {
             return;
         };
-        self.viewer_state.close_tab(idx, tab_width);
+        self.viewer.close_tab(self.explorer.root(), idx, tab_width);
         self.after_viewer_tab_change();
         self.set_status(format!("Closed {closed}"), StatusLevel::Info);
     }
@@ -277,9 +282,9 @@ impl App {
     /// 忘れると前のタブの色とコメントがそのまま残る。
     fn after_viewer_tab_change(&mut self) {
         self.rehighlight_viewer();
-        if let Some(path) = self.viewer_state.content.current_file.clone() {
+        if let Some(path) = self.viewer.content.current_file.clone() {
             self.review_state.build_file_comment_cache(&path);
-            self.viewer_state.reveal_file_in_tree(&path);
+            self.explorer.reveal_file_in_tree(&path);
         }
     }
 
@@ -291,18 +296,14 @@ impl App {
     pub fn open_file_in_viewer(&mut self, relative_path: &str, line: Option<usize>) {
         let tab_width = self.config.viewer.tab_width;
 
-        self.viewer_state.open_file(relative_path, tab_width);
-        self.viewer_state.reveal_file_in_tree(relative_path);
+        self.viewer
+            .open_file(self.explorer.root(), relative_path, tab_width);
+        self.explorer.reveal_file_in_tree(relative_path);
 
         if let Some(ln) = line {
-            let max = self
-                .viewer_state
-                .content
-                .file_content
-                .len()
-                .saturating_sub(1);
-            self.viewer_state.content.file_scroll = (ln.saturating_sub(1)).min(max);
-            self.viewer_state.show_raw_for_line_target();
+            let max = self.viewer.content.file_content.len().saturating_sub(1);
+            self.viewer.content.file_scroll = (ln.saturating_sub(1)).min(max);
+            self.viewer.show_raw_for_line_target();
         }
 
         self.set_focus(Focus::Viewer);

@@ -5,7 +5,7 @@ use crate::types::PendingViewRestore;
 /// worktree を切り替えても、再起動しても、元の場所に戻すための状態。
 #[derive(Default)]
 pub struct ViewRestore {
-    /// いまメモリ上の viewer_state がどの worktree のものか。
+    /// いまメモリ上の explorer/viewer の状態がどの worktree のものか。
     ///
     /// 切り替える前に現在の状態を保存するための「持ち主」の記録で、
     /// 最初の worktree を読むまでは None。

@@ -39,7 +39,7 @@ pub(in crate::event) use viewer_panel::toggle_inline_thread_at;
 /// フレームではクリック領域が空なので false になり、ホイールは本文の
 /// スクロールへ落ちる。
 fn on_viewer_tab_row(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
-    !app.viewer_state.tab_row_hits.is_empty()
+    !app.viewer.tab_row_hits.is_empty()
         && row == geom.main_area.y + 1
         && matches!(geom.column_at(col), Column::Viewer)
 }
@@ -89,15 +89,15 @@ fn register_double_click_on(
 /// 考慮した1始まりのファイル行番号に解決する。画面行マッピングが無い場合は
 /// 単純な算術にフォールバックする。
 fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
-    let map = &app.viewer_state.content.screen_row_map;
+    let map = &app.viewer.content.screen_row_map;
     if !map.is_empty() {
         match map.get(screen_offset) {
             Some(crate::viewer::ScreenRow::Code(line)) => Some(*line),
             _ => None,
         }
     } else {
-        let line_1 = app.viewer_state.content.file_scroll + screen_offset + 1;
-        if line_1 <= app.viewer_state.content.file_content.len() {
+        let line_1 = app.viewer.content.file_scroll + screen_offset + 1;
+        if line_1 <= app.viewer.content.file_content.len() {
             Some(line_1)
         } else {
             None
@@ -240,7 +240,7 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.review_state.input_mode != ReviewInputMode::Normal
         || app.worktree_mgr.input_mode != WorktreeInputMode::Normal
         || app.overlays.active != ActiveOverlay::None
-        || app.viewer_state.filename_search.filename_search_active
+        || app.viewer.filename_search.filename_search_active
         || app.review_state.search_active
         || app.review_state.template_picker_active
         || app.code_nav.references.active
@@ -256,8 +256,7 @@ fn has_blocking_overlay(app: &App) -> bool {
 fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
     if app.editor.is_some()
         || row != geom.explorer_mid_y
-        || app.viewer_state.explorer.explorer_bottom_view
-            != crate::viewer::ExplorerBottomView::DiffList
+        || app.explorer.bottom_view != crate::viewer::ExplorerBottomView::DiffList
     {
         return false;
     }
@@ -386,7 +385,7 @@ impl ClickGeometry {
 /// toggle_segments から取得しており、markdown_toggle_available によるゲーティングも
 /// レンダラと全く同じ — なので画面に出ていないトグルにはクリック対象が存在しない。
 fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool {
-    if !app.viewer_state.markdown_toggle_available() {
+    if !app.viewer.markdown_toggle_available() {
         return false;
     }
     let viewer_x = geom.explorer_end;
@@ -400,7 +399,7 @@ fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool
     } else {
         return false;
     };
-    if app.viewer_state.md_rendered != want_rendered {
+    if app.viewer.md_rendered != want_rendered {
         app.cmd_toggle_markdown_render();
     }
     true
@@ -559,10 +558,10 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             app.wtbar.scroll = app.wtbar.scroll.saturating_sub(wtbar_page_step(app));
         }
         MouseEventKind::ScrollDown if on_viewer_tab_row(app, col, row, &geom) => {
-            app.viewer_state.tab_scroll += 1;
+            app.viewer.tab_scroll += 1;
         }
         MouseEventKind::ScrollUp if on_viewer_tab_row(app, col, row, &geom) => {
-            app.viewer_state.tab_scroll = app.viewer_state.tab_scroll.saturating_sub(1);
+            app.viewer.tab_scroll = app.viewer.tab_scroll.saturating_sub(1);
         }
         MouseEventKind::ScrollDown => {
             handle_mouse_scroll(app, col, row, &geom, 3);
@@ -573,11 +572,11 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
         MouseEventKind::ScrollLeft
             // 横スクロール — viewerパネルのみに作用する。
             if col >= explorer_end && col < viewer_end => {
-                app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
+                app.viewer.content.h_scroll = app.viewer.content.h_scroll.saturating_sub(4);
             }
         MouseEventKind::ScrollRight
             if col >= explorer_end && col < viewer_end => {
-                app.viewer_state.scroll_right(4);
+                app.viewer.scroll_right(4);
             }
         MouseEventKind::Down(MouseButton::Left) => {
             // メニューバーを最初にチェックする。理由は、下でworktreeストリップが
@@ -666,7 +665,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
             // 進行中のガター範囲選択を、ドラッグ先の行まで延長する。
-            if let Some(anchor) = app.viewer_state.click.gutter_drag_anchor {
+            if let Some(anchor) = app.viewer.click.gutter_drag_anchor {
                 let inner_y = main_area.y + 1;
                 if row >= inner_y && col >= explorer_end && col < viewer_end {
                     let screen_offset = (row - inner_y) as usize;
@@ -676,7 +675,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                         } else {
                             (line, anchor)
                         };
-                        app.viewer_state.selection =
+                        app.viewer.selection =
                             crate::viewer::LineSelection::Selected { start, end };
                     }
                 }
@@ -692,7 +691,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
             // ガターのドラッグを終える: そのための（単一行または範囲の）選択を
             // 確定させ、コメント作成欄を開く。
-            let was_dragging = app.viewer_state.click.gutter_drag_anchor.take().is_some();
+            let was_dragging = app.viewer.click.gutter_drag_anchor.take().is_some();
             if was_dragging {
                 open_viewer_comment(app);
             }
@@ -741,7 +740,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // 上、など）は常にNoneになり、これがマウスが離れたときにホバーを
             // クリアするのに必要な処理そのものになる — 「ツリーから離れたか」を
             // 別途チェックする必要はない。
-            let tree_scroll = app.viewer_state.tree.tree_scroll;
+            let tree_scroll = app.explorer.tree.tree_scroll;
             app.list_hover.explorer_tree
                 .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
 
@@ -750,8 +749,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             app.revidere.badge_hover = revidere_badge_hit(app, col, row, &geom);
 
             // Explorerの下半分にある変更ファイル（diff）リストについても同様。
-            let diff_scroll = app.viewer_state.explorer.diff_list_scroll;
-            let diff_banner = app.viewer_state.explorer.explorer_diff_banner_rows;
+            let diff_scroll = app.explorer.diff_list_scroll;
+            let diff_banner = app.explorer.diff_banner_rows;
             app.list_hover.diff_list
                 .set(diff_list_row_at(&geom, diff_scroll, diff_banner, col, row));
 
@@ -760,10 +759,10 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // ソース行でもないので、カーソルがパネルの外にあるかのように下の
             // 「全てクリアする」分岐に入る。
             let inner_y = main_area.y + 1;
-            if !app.viewer_state.is_showing_rendered_markdown() && col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
+            if !app.viewer.is_showing_rendered_markdown() && col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
                 let line_offset = (row - inner_y) as usize;
                 let inner_x = explorer_end + 1;
-                let gutter_w = app.viewer_state.gutter_total_width();
+                let gutter_w = app.viewer.gutter_total_width();
                 // コメントマーカー列（左）と2セル分の「+」バッジ列（右）を含める
                 // ことで、カーソルが左マージン全体の上にある間は「+」ボタンが
                 // 光ったまま（かつクリック可能）になる。
@@ -776,15 +775,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // なった（diff表示はインラインのコメントスレッドを差し込む）ので、
                 // 1回の画面行の参照でどちらのモードでもホバー中の行を解決できる。
                 let resolved = resolve_screen_line(app, line_offset);
-                app.viewer_state.click.hover_line = resolved;
-                app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
+                app.viewer.click.hover_line = resolved;
+                app.viewer.click.hover_gutter_line = if on_gutter { resolved } else { None };
 
                 // 折りたたみマーカーの上にいる間だけ、その範囲の端から端までを
                 // マーカー列の罫線で示す。
-                let on_fold = !app.viewer_state.diff_view.diff_mode
+                let on_fold = !app.viewer.diff_view.diff_mode
                     && in_fold_zone(col, inner_x + marker_w + gutter_w);
-                app.viewer_state
-                    .content
+                app.viewer.content
                     .folds
                     .set_hover(if on_fold { resolved } else { None });
 
@@ -796,7 +794,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // ポップアップの両方がこれを必要とする。違うのはどのcandidate
                 // setterがそれを消費するかと、diffモードによる制限（下記参照）
                 // だけ。
-                let gutter_w = app.viewer_state.gutter_total_width();
+                let gutter_w = app.viewer.gutter_total_width();
                 let inner_x = explorer_end + 1;
                 let badge_w: u16 = 2;
                 let content_start_x =
@@ -804,9 +802,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 let symbol_here = if col >= content_start_x {
                     resolve_screen_line(app, line_offset).and_then(|line_1| {
                         let content_col =
-                            (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
-                        app.viewer_state
-                            .content
+                            (col - content_start_x) as usize + app.viewer.content.h_scroll;
+                        app.viewer.content
                             .file_content
                             .get(line_1 - 1)
                             .and_then(|text| {
@@ -814,7 +811,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                                     text,
                                     content_col,
                                     line_1,
-                                    &app.viewer_state.content.code_mask,
+                                    &app.viewer.content.code_mask,
                                 )
                                 .map(|(symbol, start, end)| (symbol, line_1, start, end))
                             })
@@ -830,7 +827,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // （viewer_panel.rs）自体が!diff_mode限定だから。diff表示で下線を
                 // 出すと、クリックしても実現できないジャンプを約束することに
                 // なってしまう。
-                if app.viewer_state.diff_view.diff_mode {
+                if app.viewer.diff_view.diff_mode {
                     app.set_underline_candidate(None, has_jump_modifier);
                 } else {
                     app.set_underline_candidate(symbol_here.clone(), has_jump_modifier);
@@ -842,14 +839,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // 以前から変わっていない。
                 let auto_cand = symbol_here.map(|(symbol, line_1, start, end)| {
                     let anchor_col = content_start_x
-                        + (start.saturating_sub(app.viewer_state.content.h_scroll)) as u16;
+                        + (start.saturating_sub(app.viewer.content.h_scroll)) as u16;
                     (symbol, line_1, row, anchor_col, start, end)
                 });
                 app.set_mouse_hover_candidate(auto_cand);
             } else {
-                app.viewer_state.click.hover_line = None;
-                app.viewer_state.click.hover_gutter_line = None;
-                app.viewer_state.content.folds.set_hover(None);
+                app.viewer.click.hover_line = None;
+                app.viewer.click.hover_gutter_line = None;
+                app.viewer.content.folds.set_hover(None);
                 app.set_underline_candidate(None, false);
                 app.set_mouse_hover_candidate(None);
             }

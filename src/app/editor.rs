@@ -46,10 +46,8 @@ impl App {
             return;
         }
         let (worktree_name, working_dir) = self.selected_worktree_info();
-        let Some(path) = editor_target(
-            self.viewer_state.content.current_file.as_deref(),
-            &working_dir,
-        ) else {
+        let Some(path) = editor_target(self.viewer.content.current_file.as_deref(), &working_dir)
+        else {
             self.set_status("No file open to edit".to_string(), StatusLevel::Warning);
             return;
         };

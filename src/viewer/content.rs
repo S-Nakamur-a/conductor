@@ -18,23 +18,30 @@ impl ViewerState {
     /// ファイルを開く。既に開いているファイルなら新しいタブを増やさず、その
     /// タブをアクティブにして読んでいた位置へ戻る。
     ///
-    /// relative_path は表示中のツリーの根からの相対。絶対パスに戻すのは
-    /// [ViewerState::root] だけで、呼び出し側は根を知らなくてよい。
-    pub fn open_file(&mut self, relative_path: &str, tab_width: usize) {
-        self.open_file_as(relative_path, tab_width, ViewerTabStatus::Persistent);
+    /// relative_path は表示中のツリーの根からの相対。root はその根の絶対パスで、
+    /// Explorer 側の状態 (ExplorerState::root) を呼び出し側が渡す — Viewer が
+    /// Explorer をフィールドとして持つことはしない。
+    pub fn open_file(&mut self, root: &Path, relative_path: &str, tab_width: usize) {
+        self.open_file_as(root, relative_path, tab_width, ViewerTabStatus::Persistent);
     }
 
     /// ちょっと見るためにファイルを開く。タブは Preview として立ち、フォーカス
     /// が外れると閉じる。既に永続で開いているファイルなら永続のまま。
-    pub fn open_file_preview(&mut self, relative_path: &str, tab_width: usize) {
-        self.open_file_as(relative_path, tab_width, ViewerTabStatus::Preview);
+    pub fn open_file_preview(&mut self, root: &Path, relative_path: &str, tab_width: usize) {
+        self.open_file_as(root, relative_path, tab_width, ViewerTabStatus::Preview);
     }
 
-    fn open_file_as(&mut self, relative_path: &str, tab_width: usize, status: ViewerTabStatus) {
+    fn open_file_as(
+        &mut self,
+        root: &Path,
+        relative_path: &str,
+        tab_width: usize,
+        status: ViewerTabStatus,
+    ) {
         if self.activate_tab_for(relative_path, status) {
-            self.load_active_file(relative_path, tab_width);
+            self.load_active_file(root, relative_path, tab_width);
         } else {
-            self.reload_active_file(relative_path, tab_width);
+            self.reload_active_file(root, relative_path, tab_width);
         }
     }
 
@@ -44,7 +51,7 @@ impl ViewerState {
     /// [ViewerState::load_active_file] は表示モードを畳んでしまうので、退避と
     /// 復元をここ 1 か所に閉じ込めている。ファイルウォッチャーの再読み込みも
     /// タブ切り替えも同じ要求なので、別々に書くと片方だけ直る。
-    pub(in crate::viewer) fn reload_active_file(&mut self, relative_path: &str, tab_width: usize) {
+    pub fn reload_active_file(&mut self, root: &Path, relative_path: &str, tab_width: usize) {
         let file_scroll = self.content.file_scroll;
         let h_scroll = self.content.h_scroll;
         let md_scroll = self.md_scroll;
@@ -54,7 +61,7 @@ impl ViewerState {
             .then(|| std::mem::take(&mut self.diff_view));
         let summary = self.show_summary.then_some(self.summary_scroll);
 
-        self.load_active_file(relative_path, tab_width);
+        self.load_active_file(root, relative_path, tab_width);
 
         let last_line = self.content.file_content.len().saturating_sub(1);
         self.content.file_scroll = file_scroll.min(last_line);
@@ -71,7 +78,12 @@ impl ViewerState {
 
     /// アクティブなタブの中身を読み込んで file_content に格納する。タブの
     /// 出し入れには関知しない — 入口は [ViewerState::open_file] の側。
-    pub(in crate::viewer) fn load_active_file(&mut self, relative_path: &str, tab_width: usize) {
+    pub(in crate::viewer) fn load_active_file(
+        &mut self,
+        root: &Path,
+        relative_path: &str,
+        tab_width: usize,
+    ) {
         self.exit_diff_mode();
         // md_rendered は意図的に維持する（このモードはファイルをまたいで持続する）。
         // スクロール位置は維持しない — 古いドキュメントを指す値になるため。
@@ -86,7 +98,7 @@ impl ViewerState {
         self.content.code_mask = crate::symbol_index::CodeMask::default();
         // 前のファイルの失敗理由を持ち越さない。以降の分岐が必要なら再度立てる。
         self.content.load_error = None;
-        let full = self.tree.root.join(relative_path);
+        let full = root.join(relative_path);
 
         // メディアファイル（画像/動画）は aa-media 経由で扱う。
         if media_state::is_media_file(relative_path) {
@@ -199,9 +211,9 @@ impl ViewerState {
         // 進行中の gutter ドラッグをそのままにすると、mouse-up でコメント作成が
         // 開いてしまう。ドラッグ元の gutter が無い表示の上でそうなるのはおかしい。
         self.click.gutter_drag_anchor = None;
-        self.explorer.inline_reply_line = None;
-        self.explorer.inline_reply_comment_id = None;
-        self.explorer.inline_reply_buffer.clear();
+        self.inline.reply_line = None;
+        self.inline.reply_comment_id = None;
+        self.inline.reply_buffer.clear();
     }
 
     /// レンダリング済み markdown を離れ、行に紐づくジャンプ先が実際に見えるようにする。
@@ -253,6 +265,7 @@ pub fn is_markdown_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::state::ExplorerState;
     use super::*;
 
     /// ファイルの中身はワークツリーの実ファイルから読む。git を一切経由しないので
@@ -266,10 +279,11 @@ mod tests {
         std::fs::write(dir.join("plain.txt"), "ALPHA\nBRAVO\n").unwrap();
         assert!(!dir.join(".git").exists(), "fixture must not be a git repo");
 
+        let mut explorer = ExplorerState::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
-        vs.set_root(dir.clone());
-        vs.open_file("plain.txt", 4);
+        vs.open_file(explorer.root(), "plain.txt", 4);
 
         assert_eq!(vs.content.file_content, vec!["ALPHA", "BRAVO"]);
         assert_eq!(vs.content.current_file.as_deref(), Some("plain.txt"));
@@ -287,10 +301,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
+        let mut explorer = ExplorerState::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
-        vs.set_root(dir.clone());
-        vs.open_file("missing.txt", 4);
+        vs.open_file(explorer.root(), "missing.txt", 4);
 
         assert!(vs.content.file_content.is_empty());
         assert_eq!(vs.content.current_file.as_deref(), Some("missing.txt"));
@@ -302,7 +317,7 @@ mod tests {
         // 次に成功したら理由は消える。持ち越すと直後の正常なファイルまで
         // エラー表示になる。
         std::fs::write(dir.join("ok.txt"), "OK\n").unwrap();
-        vs.open_file("ok.txt", 4);
+        vs.open_file(explorer.root(), "ok.txt", 4);
         assert!(vs.content.load_error.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -324,10 +339,11 @@ mod tests {
         )
         .unwrap();
 
+        let mut explorer = ExplorerState::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
-        vs.set_root(dir.clone());
-        vs.open_file("sample.go", 4);
+        vs.open_file(explorer.root(), "sample.go", 4);
 
         // build_symbol_hints と同じやり方で各行を走査し、ジャンプ可能として
         // 提示するはずの単語を集める。
@@ -372,13 +388,14 @@ mod tests {
         std::fs::write(dir.join("a.rs"), "fn keep() {}\n").unwrap();
         std::fs::write(dir.join("b.py"), "def keep():\n    pass\n").unwrap();
 
+        let mut explorer = ExplorerState::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
 
-        vs.set_root(dir.clone());
-        vs.open_file("a.rs", 4);
+        vs.open_file(explorer.root(), "a.rs", 4);
         assert!(vs.content.code_mask.is_code(1, 0), "Rust file is masked");
 
-        vs.open_file("b.py", 4);
+        vs.open_file(explorer.root(), "b.py", 4);
         assert!(
             !vs.content.code_mask.is_code(1, 0),
             "Python must not inherit the Rust file's mask"
@@ -450,14 +467,14 @@ mod tests {
             selection: crate::viewer::LineSelection::Selected { start: 3, end: 9 },
             ..Default::default()
         };
-        vs.explorer.inline_reply_line = Some(7);
-        vs.explorer.inline_reply_comment_id = Some("c1".to_string());
+        vs.inline.reply_line = Some(7);
+        vs.inline.reply_comment_id = Some("c1".to_string());
 
         vs.toggle_markdown_rendered();
 
         assert_eq!(vs.selection, crate::viewer::LineSelection::None);
-        assert_eq!(vs.explorer.inline_reply_line, None);
-        assert_eq!(vs.explorer.inline_reply_comment_id, None);
+        assert_eq!(vs.inline.reply_line, None);
+        assert_eq!(vs.inline.reply_comment_id, None);
     }
 
     /// file:line へのジャンプはその行を見せなければならない。レンダリング済み

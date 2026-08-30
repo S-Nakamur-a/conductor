@@ -9,9 +9,26 @@ use crate::git_engine::status_map::GitStatusMap;
 use crate::icons::{dir_icon, file_icon};
 
 use super::file_tree::FileTreeEntry;
-use super::state::ViewerState;
+use super::state::{ExplorerState, FilenameSearchState};
 
-impl ViewerState {
+/// ツリーを読み直した結果、Viewer 側でやるべきこと。
+///
+/// ExplorerState は ViewerState を知らないので、後始末は呼び出し側 (App の
+/// 配線層) が行う。
+#[must_use]
+pub struct TreeReload {
+    /// 根が変わった。新しい根に無いファイルのタブを閉じること。
+    pub root_changed: bool,
+    /// 開いていたファイルの、新しいツリーでの相対パス。読み直すこと。
+    pub reopen: Option<String>,
+    /// 可視エントリの集合が変わった。`root_changed` とは別物 — 同じ根への
+    /// 再走査でもファイルの増減があれば真になる。`refresh_viewer` がそのまま
+    /// 返し、3秒ポーリング (`event_loop_timers.rs`) はこれを見て、変化が無ければ
+    /// 再描画をスキップする。分割前の `load_file_tree` の唯一の戻り値がこれだった。
+    pub entries_changed: bool,
+}
+
+impl ExplorerState {
     /// 表示中のツリーを歩いた根。エントリの相対パスはここに繋いで絶対パスにする。
     pub fn root(&self) -> &Path {
         &self.tree.root
@@ -32,24 +49,23 @@ impl ViewerState {
     /// 入れ替える。別々に書けるようにしておくと「根は新しいのにエントリは古い」
     /// 状態が作れてしまい、その瞬間のクリックは別ブランチの同名ファイルを静かに
     /// 開く (worktree 切り替えは走査を裏に回すので、この隙間は実在する)。
+    ///
+    /// 根が変わったかどうかを返す。呼び出し側 (App) はこれを見て、新しい根に
+    /// 無いファイルのタブを閉じる ([ViewerState::prune_tabs_to_root]) かどうかを
+    /// 決める — 同じ根への再走査では触ってはならない (一時的に消えたファイルの
+    /// タブまで勝手に閉じてしまう)。
     pub fn replace_tree(
         &mut self,
         root: PathBuf,
         entries: Vec<FileTreeEntry>,
         git_status: GitStatusMap,
-        tab_width: usize,
-    ) {
+    ) -> bool {
         let root_changed = self.tree.root != root;
         self.tree.root = root;
         self.tree.file_tree = entries;
         self.tree.git_status = git_status;
         self.invalidate_visible_cache();
-        // 相対パスの指す先が変わるので、新しい根に無いファイルのタブは閉じる。
-        // 同じ根への再走査では触らない — 一時的に消えたファイルのタブまで
-        // 勝手に閉じてしまう。
-        if root_changed {
-            self.prune_tabs_to_root(tab_width);
-        }
+        root_changed
     }
 
     /// worktree_path 以下のファイルシステムを歩いてファイルツリーを構築する。
@@ -61,20 +77,19 @@ impl ViewerState {
     /// ファイルウォッチャーによる再構築がユーザーの見ている画面を崩さない。
     /// 以前開いていたファイルが削除されていた場合は、自然に「ファイル未選択」に戻る。
     ///
-    /// 可視エントリの集合が変化した場合は true を返す。呼び出し側は、定期リフレッシュで
-    /// 変化が無かった場合の再描画をスキップできる。
-    ///
-    /// 根を受け取る唯一の入口。ここで [ViewerState::root] を確定させ、以降
+    /// 根を受け取る唯一の入口。ここで [ExplorerState::root] を確定させ、以降
     /// ファイルを開く・子を読む・検索候補を集めるのはすべてこの根に対して行う。
-    pub fn load_file_tree(&mut self, worktree_path: &Path, tab_width: usize) -> bool {
+    ///
+    /// 現在開いているファイルのパス (`prev_file`) は、読んでいた位置と表示モードを
+    /// 保ったまま読み直す対象を決めるために必要だが、それ自体は Viewer 側の状態
+    /// なので引数で受け取る。Explorer が Viewer をフィールドとして持つことはしない。
+    /// 戻り値の [TreeReload] が、その読み直しを含め Viewer 側でやるべきことを表す
+    /// — 実行するのは呼び出し側 (App の配線層)。
+    pub fn load_file_tree(&mut self, worktree_path: &Path, prev_file: Option<&str>) -> TreeReload {
         let root_changed = self.tree.root != worktree_path;
         self.tree.root = worktree_path.to_path_buf();
-        if root_changed {
-            self.prune_tabs_to_root(tab_width);
-        }
 
         // クリアする前に状態を退避しておく。
-        let prev_file = self.content.current_file.clone();
         let expanded_dirs: Vec<String> = self
             .tree
             .file_tree
@@ -138,29 +153,31 @@ impl ViewerState {
             idx += 1;
         }
 
-        // 以前開いていたファイルがまだ存在するなら、読んでいた位置と表示モード
-        // （unified diff / SUMMARY / markdown）を保ったまま読み直す。ウォッチャー
-        // や3秒ポーリングが読者を追い出さないようにするのが要点。
-        // ファイルが削除されていた場合は、自然に「ファイル未選択」のまま留まる。
-        if let Some(ref rel_path) = prev_file
-            && worktree_path.join(rel_path).is_file()
-        {
-            self.reload_active_file(rel_path, tab_width);
+        // 以前開いていたファイルがまだ存在するなら reopen 対象にする。読んでいた
+        // 位置と表示モード（unified diff / SUMMARY / markdown）を保ったまま
+        // 読み直すのは呼び出し側の仕事 — ウォッチャーや3秒ポーリングが読者を
+        // 追い出さないようにするのが要点。ファイルが削除されていた場合は、
+        // 自然に「ファイル未選択」のまま留まる (reopen は None のまま)。
+        let reopen = prev_file.and_then(|rel_path| {
+            if !worktree_path.join(rel_path).is_file() {
+                return None;
+            }
             // tree_selected をファイルエントリに合わせて復元しようとする。
-            if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == *rel_path) {
+            if let Some(idx) = self.tree.file_tree.iter().position(|e| e.path == rel_path) {
                 self.tree.tree_selected = idx;
             }
-        }
+            Some(rel_path.to_string())
+        });
 
         // 再構築をまたいでツリーのカーソルを固定する。ファイルが開いている場合は
         // 上のブロックで既にカーソルをそこに合わせている。そうでなければ以前選択していた
         // エントリを復元し、ウォッチャーや定期リフレッシュでカーソルが先頭に
         // 巻き戻されないようにする。
-        let anchored_to_open_file = prev_file.as_ref().is_some_and(|f| {
+        let anchored_to_open_file = reopen.as_deref().is_some_and(|f| {
             self.tree
                 .file_tree
                 .get(self.tree.tree_selected)
-                .map(|e| &e.path)
+                .map(|e| e.path.as_str())
                 == Some(f)
         });
         if !anchored_to_open_file
@@ -173,11 +190,18 @@ impl ViewerState {
             self.tree.tree_selected = self.tree.file_tree.len().saturating_sub(1);
         }
 
-        self.tree
+        let entries_changed = self
+            .tree
             .file_tree
             .iter()
             .map(|e| &e.path)
-            .ne(prev_paths.iter())
+            .ne(prev_paths.iter());
+
+        TreeReload {
+            root_changed,
+            reopen,
+            entries_changed,
+        }
     }
 
     /// file_tree のインデックス idx にあるディレクトリの展開/折りたたみを切り替える。
@@ -292,7 +316,7 @@ impl ViewerState {
                 // その項目が見えるようスクロールを調整する。
                 let visible = self.visible_indices();
                 if let Some(vis_pos) = visible.iter().position(|&vi| vi == idx) {
-                    let height = self.explorer.explorer_tree_height;
+                    let height = self.tree_height;
                     if vis_pos < self.tree.tree_scroll || vis_pos >= self.tree.tree_scroll + height
                     {
                         self.tree.tree_scroll = vis_pos.saturating_sub(height / 3);
@@ -380,13 +404,16 @@ impl ViewerState {
     }
 
     /// ツリーの根以下のファイルシステム全体を歩き、ファイル名検索キャッシュを構築する。
-    pub fn populate_filename_search_cache(&mut self) {
-        self.filename_search.filename_search_all_files.clear();
+    ///
+    /// ファイル名検索は Viewer 側の状態なので、書き込み先を引数で受け取る
+    /// (Explorer が Viewer をフィールドとして持つことはしない)。
+    pub fn populate_filename_search_cache(&mut self, filename_search: &mut FilenameSearchState) {
+        filename_search.filename_search_all_files.clear();
         Self::collect_all_file_paths(
             &self.tree.root,
             &self.tree.root,
             0,
-            &mut self.filename_search.filename_search_all_files,
+            &mut filename_search.filename_search_all_files,
         );
     }
 

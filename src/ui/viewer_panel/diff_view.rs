@@ -92,7 +92,7 @@ fn render_expandable_context(
 /// unified diff ビュー（GitHub 風）を描画する。
 pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, block: Block<'_>) {
     // タブ行は素のファイル表示と同じくブロック内側の先頭行に重ねる。
-    let tab_row_height: u16 = if super::tab_row::is_visible(&app.viewer_state) {
+    let tab_row_height: u16 = if super::tab_row::is_visible(&app.viewer) {
         1
     } else {
         0
@@ -104,7 +104,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
     // （レビューコメントが diff の中にそのまま見え、デフォルトで展開された状態になる）。
     let (lines, screen_row_map, screen_entry_map) = {
         let theme = &app.theme;
-        let vs = &app.viewer_state;
+        let vs = &app.viewer;
         let tab_width = app.config.viewer.tab_width;
         let gutter_width = digit_count(vs.diff_view.diff_view_max_line_no);
 
@@ -118,8 +118,8 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
             .filter(|c| vs.content.current_file.as_deref() == Some(&*c.file_path))
             .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
             .collect();
-        let expanded = &vs.explorer.expanded_inline_threads;
-        let inline_reply_line = vs.explorer.inline_reply_line;
+        let expanded = &vs.inline.expanded;
+        let inline_reply_line = vs.inline.reply_line;
         let compose_anchor_end = new_comment_anchor_end(app);
 
         let line_ctx = DiffLineRenderCtx {
@@ -184,7 +184,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
                 && expanded.contains(&n)
             {
                 let reply_cid = if inline_reply_line == Some(n) {
-                    vs.explorer.inline_reply_comment_id.as_deref()
+                    vs.inline.reply_comment_id.as_deref()
                 } else {
                     None
                 };
@@ -194,7 +194,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
                     area.width as usize,
                     &app.review_state,
                     reply_cid,
-                    &vs.explorer.inline_reply_buffer,
+                    &vs.inline.reply_buffer,
                     theme,
                     &app.highlight.syntax_set,
                     &app.highlight.theme,
@@ -245,8 +245,8 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
         screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
         screen_entry_map.insert(0, None);
     }
-    app.viewer_state.content.screen_row_map = screen_row_map;
-    app.viewer_state.diff_view.screen_entry_map = screen_entry_map;
+    app.viewer.content.screen_row_map = screen_row_map;
+    app.viewer.diff_view.screen_entry_map = screen_entry_map;
 
     frame.render_widget(ratatui::widgets::Clear, area);
     let paragraph = Paragraph::new(lines).block(block);
@@ -255,7 +255,7 @@ pub(super) fn render_diff_view(frame: &mut Frame, area: Rect, app: &mut App, blo
 
     // 選択ヒントのオーバーレイを表示する。
     let theme = &app.theme;
-    let vs = &app.viewer_state;
+    let vs = &app.viewer;
 
     // diff の行数がパネルに収まりきらない場合にスクロールバーを描画する —
     // トリガーも見た目も Explorer のファイルツリーと同じ。

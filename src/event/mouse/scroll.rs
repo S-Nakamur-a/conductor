@@ -71,15 +71,13 @@ pub(super) fn handle_mouse_scroll(
             let file_count = app.diff_state.display_list.len();
             if file_count > 0 {
                 if delta > 0 {
-                    app.viewer_state.explorer.diff_list_scroll = app
-                        .viewer_state
+                    app.explorer.diff_list_scroll = app
                         .explorer
                         .diff_list_scroll
                         .saturating_add(delta.unsigned_abs() as usize)
                         .min(file_count.saturating_sub(1));
                 } else {
-                    app.viewer_state.explorer.diff_list_scroll = app
-                        .viewer_state
+                    app.explorer.diff_list_scroll = app
                         .explorer
                         .diff_list_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
@@ -87,19 +85,19 @@ pub(super) fn handle_mouse_scroll(
             }
         } else {
             // ファイルツリーのスクロール。
-            let visible_count = app.viewer_state.visible_indices().len();
-            let page = app.viewer_state.explorer.explorer_tree_height.max(1);
+            let visible_count = app.explorer.visible_indices().len();
+            let page = app.explorer.tree_height.max(1);
             let max_scroll = visible_count.saturating_sub(page);
             if delta > 0 {
-                app.viewer_state.tree.tree_scroll = app
-                    .viewer_state
+                app.explorer.tree.tree_scroll = app
+                    .explorer
                     .tree
                     .tree_scroll
                     .saturating_add(delta.unsigned_abs() as usize)
                     .min(max_scroll);
             } else {
-                app.viewer_state.tree.tree_scroll = app
-                    .viewer_state
+                app.explorer.tree.tree_scroll = app
+                    .explorer
                     .tree
                     .tree_scroll
                     .saturating_sub(delta.unsigned_abs() as usize);
@@ -112,48 +110,46 @@ pub(super) fn handle_mouse_scroll(
         // 全体に描画され、current_file は裏で開かれていたファイルを指し続けている。
         // これがないとホイールがその隠れたファイルをスクロールしてしまい、サマリーは
         // 動かないままになる。
-        if app.viewer_state.is_summary() {
-            let total = app.viewer_state.summary_total_lines;
+        if app.viewer.is_summary() {
+            let total = app.viewer.summary_total_lines;
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.summary_scroll = (app.viewer_state.summary_scroll
+                    app.viewer.summary_scroll = (app.viewer.summary_scroll
                         + delta.unsigned_abs() as usize)
                         .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.summary_scroll = app
-                        .viewer_state
+                    app.viewer.summary_scroll = app
+                        .viewer
                         .summary_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
-        } else if app.viewer_state.is_showing_rendered_markdown() {
+        } else if app.viewer.is_showing_rendered_markdown() {
             // レンダリング済みmarkdownは折り返し後の行数でスクロールするため、
             // file_scroll が指すソースの行数とは無関係。
-            let total = app.viewer_state.md_total_lines;
+            let total = app.viewer.md_total_lines;
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.md_scroll = (app.viewer_state.md_scroll
-                        + delta.unsigned_abs() as usize)
+                    app.viewer.md_scroll = (app.viewer.md_scroll + delta.unsigned_abs() as usize)
                         .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.md_scroll = app
-                        .viewer_state
+                    app.viewer.md_scroll = app
+                        .viewer
                         .md_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
-        } else if app.viewer_state.diff_view.diff_mode {
+        } else if app.viewer.diff_view.diff_mode {
             // 統合差分ビューのスクロール。
-            let total = app.viewer_state.diff_view.diff_view_lines.len();
+            let total = app.viewer.diff_view.diff_view_lines.len();
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.diff_view.diff_view_scroll =
-                        (app.viewer_state.diff_view.diff_view_scroll
-                            + delta.unsigned_abs() as usize)
-                            .min(total.saturating_sub(1));
+                    app.viewer.diff_view.diff_view_scroll = (app.viewer.diff_view.diff_view_scroll
+                        + delta.unsigned_abs() as usize)
+                        .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.diff_view.diff_view_scroll = app
-                        .viewer_state
+                    app.viewer.diff_view.diff_view_scroll = app
+                        .viewer
                         .diff_view
                         .diff_view_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
@@ -163,7 +159,7 @@ pub(super) fn handle_mouse_scroll(
             // 折りたたんだ行を跨がないよう、可視行を歩いて動かす。生の加減算だと
             // 畳んだぶんだけ行き過ぎ、着地点が隠れていれば描画側が畳みを開いて
             // しまう（ホイールで畳みが勝手に開く）。
-            app.viewer_state.move_cursor_lines(delta as isize);
+            app.viewer.move_cursor_lines(delta as isize);
         }
     } else {
         // ターミナルパネル（右カラム）。

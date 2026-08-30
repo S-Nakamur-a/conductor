@@ -65,7 +65,7 @@ pub(super) fn handle_terminal_column_click(
 
             // 実在確認と実際に開く先を同じ根に揃える (キーボード側の
             // open_file_from_terminal_output と同じ理由)。
-            let wt_path = app.viewer_state.root().to_path_buf();
+            let wt_path = app.explorer.root().to_path_buf();
             let links = terminal_link::detect_file_links(&text, &wt_path);
             // カーソル下のリンクを優先し、なければその行の最初のリンクにフォールバックする。
             let link =

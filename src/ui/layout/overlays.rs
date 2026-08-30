@@ -48,7 +48,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
                 .input_anchor
                 .as_ref()
                 .is_some_and(|(f, _, _)| {
-                    Some(f.as_str()) == app.viewer_state.content.current_file.as_deref()
+                    Some(f.as_str()) == app.viewer.content.current_file.as_deref()
                 });
         if !inline_new_comment {
             super::super::review::render_input_overlay(frame, area, app);
@@ -120,7 +120,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     // ファジーなファイル名検索（「ジャンプ先」）モーダル ―― explorer カラムが
     // 折りたたまれていて（viewer 最大化時）も動くようトップレベルで描画する。
-    if app.viewer_state.filename_search.filename_search_active {
+    if app.viewer.filename_search.filename_search_active {
         super::super::dashboard::render_filename_search_overlay(frame, area, app);
     }
     match app.update.state {

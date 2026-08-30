@@ -31,12 +31,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
     // 画面行マップをクリアし、diff/media モードで古いデータが使われないようにする。
-    app.viewer_state.content.screen_row_map.clear();
-    app.viewer_state.tab_row_hits.clear();
+    app.viewer.content.screen_row_map.clear();
+    app.viewer.tab_row_hits.clear();
 
     // Summary 疑似ファイル: ブランチの変更サマリーがパネル全体を占める。
     // 描画関数が &mut App を取れるよう、共有借用の前にチェックする。
-    if app.viewer_state.is_summary() {
+    if app.viewer.is_summary() {
         let focused = app.focus == Focus::Viewer;
         render_summary_view(frame, area, app, focused);
         return;
@@ -52,16 +52,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // diff 表示は除く。そこでの file_scroll は diff カーソルの写しでしかなく、
     // 画面に出ない畳みを開いてしまうと、素の表示へ戻ったときに理由の分からない
     // 開き方をして見える。
-    if !app.viewer_state.diff_view.diff_mode {
-        app.viewer_state.reveal_cursor_line();
+    if !app.viewer.diff_view.diff_mode {
+        app.viewer.reveal_cursor_line();
     }
 
     // 差分表示の file_scroll は diff カーソルの写しなので、行を囲むものを聞いても
     // 意味が無い。畳みがあると file_scroll 自身は画面に出ないことがある。
-    let top_visible = if app.viewer_state.diff_view.diff_mode {
+    let top_visible = if app.viewer.diff_view.diff_mode {
         None
     } else {
-        let content = &app.viewer_state.content;
+        let content = &app.viewer.content;
         content
             .folds
             .visible_from(content.file_scroll + 1, content.file_content.len())
@@ -70,7 +70,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let sticky_declaration = top_visible.and_then(|line_1| app.sticky_declaration_line(line_1 - 1));
 
     let theme = &app.theme;
-    let vs = &app.viewer_state;
+    let vs = &app.viewer;
     let tab_width = app.config.viewer.tab_width;
     let focused = app.focus == Focus::Viewer;
     let border_color = app.animated_border_color(Focus::Viewer);
@@ -218,12 +218,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let gutter_width = digit_count(vs.content.file_content.len());
 
     // diff 注釈は ViewerState にキャッシュされている（関数の入口で埋めた）。
-    let diff_annotations = app
-        .viewer_state
-        .content
-        .cached_diff_annotations
-        .as_ref()
-        .unwrap();
+    let diff_annotations = app.viewer.content.cached_diff_annotations.as_ref().unwrap();
 
     // レビューコメントが付いている行番号を集める（メモリ上のキャッシュから）。
     let comment_lines: std::collections::HashSet<usize> =
@@ -234,13 +229,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .review_state
         .comments
         .iter()
-        .filter(|c| app.viewer_state.content.current_file.as_deref() == Some(&*c.file_path))
+        .filter(|c| app.viewer.content.current_file.as_deref() == Some(&*c.file_path))
         .map(|c| c.line_end.unwrap_or(c.line_start) as usize)
         .collect();
 
     // 表示行を組み立て、コメント行の後にインラインスレッドの行を挿入する。
-    let expanded_threads = &app.viewer_state.explorer.expanded_inline_threads;
-    let inline_reply_line = app.viewer_state.explorer.inline_reply_line;
+    let expanded_threads = &app.viewer.inline.expanded;
+    let inline_reply_line = app.viewer.inline.reply_line;
     let compose_anchor_end = new_comment_anchor_end(app);
     let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
     let mut screen_row_map: Vec<crate::viewer::ScreenRow> = Vec::with_capacity(inner_height);
@@ -366,7 +361,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // マウスイベント処理用に画面行マッピングを保存する。
-    // vs（&app.viewer_state）の借用がすべて終わった後でなければならない。
+    // vs（&app.viewer）の借用がすべて終わった後でなければならない。
     //
     // パンくずバーは内部の先頭行を占めるがコード行ではなく、screen_row_map には
     // 含まれていなかったので、その下のすべての行がマップ上で1行ずつ上にずれて
@@ -381,21 +376,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if tab_row_height > 0 {
         screen_row_map.insert(0, crate::viewer::ScreenRow::ThreadContent);
     }
-    app.viewer_state.content.screen_row_map = screen_row_map;
+    app.viewer.content.screen_row_map = screen_row_map;
 
     render_tab_row(frame, area, app);
 }
 
 /// ブロック内側の先頭行にタブ行を重ね、クリック領域を記録する。
 pub(super) fn render_tab_row(frame: &mut Frame, area: Rect, app: &mut App) {
-    if !tab_row::is_visible(&app.viewer_state) || area.width < 3 || area.height < 3 {
+    if !tab_row::is_visible(&app.viewer) || area.width < 3 || area.height < 3 {
         return;
     }
     let row = Rect::new(area.x + 1, area.y + 1, area.width - 2, 1);
-    let (hits, scroll) = tab_row::render(frame, row, &app.theme, &app.viewer_state);
-    app.viewer_state.tab_row_hits = hits;
-    app.viewer_state.tab_scroll = scroll;
-    app.viewer_state.tab_reveal = false;
+    let (hits, scroll) = tab_row::render(frame, row, &app.theme, &app.viewer);
+    app.viewer.tab_row_hits = hits;
+    app.viewer.tab_scroll = scroll;
+    app.viewer.tab_reveal = false;
 }
 
 /// Viewer のタイトルを max_w **表示カラム数**に収める。左側から省略し
@@ -456,11 +451,11 @@ fn build_sticky_line(
 /// ジャンプ履歴＋現在位置からパンくずの Line を組み立てる。
 /// エントリが2件未満（ナビゲーションが起きていない）場合は None を返す。
 fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
-    let current_file = app.viewer_state.content.current_file.as_ref()?;
+    let current_file = app.viewer.content.current_file.as_ref()?;
     let current = crate::jump_history::Location {
         file_path: current_file.clone(),
-        line: app.viewer_state.content.file_scroll,
-        h_scroll: app.viewer_state.content.h_scroll,
+        line: app.viewer.content.file_scroll,
+        h_scroll: app.viewer.content.h_scroll,
     };
 
     let (entries, cur_idx) = app.code_nav.history.breadcrumb_trail(&current, 7);

@@ -8,23 +8,23 @@ use crate::review_store::{Author, CommentKind};
 
 /// Viewer からレビューコメント入力欄を開き、位置をプレフィルする。
 pub(in crate::event) fn open_viewer_comment(app: &mut App) {
-    let file_path = match app.viewer_state.content.current_file.clone() {
+    let file_path = match app.viewer.content.current_file.clone() {
         Some(p) => p,
         None => return,
     };
 
-    let location = if let Some((start, end)) = app.viewer_state.selected_range() {
+    let location = if let Some((start, end)) = app.viewer.selected_range() {
         if start == end {
             format!("{file_path}:{start} ")
         } else {
             format!("{file_path}:{start}-{end} ")
         }
     } else {
-        let line = app.viewer_state.content.file_scroll + 1;
+        let line = app.viewer.content.file_scroll + 1;
         format!("{file_path}:{line} ")
     };
 
-    app.viewer_state.clear_selection();
+    app.viewer.clear_selection();
     app.review_state.input_buffer.set_text(&location);
     app.review_state.input_kind = CommentKind::Suggest;
     app.review_state.input_mode = ReviewInputMode::AddingComment;
@@ -34,10 +34,10 @@ pub(in crate::event) fn open_viewer_comment(app: &mut App) {
 /// Viewer パネルから、現在行のコメント詳細モーダルを開く。
 pub(in crate::event) fn open_viewer_comment_detail(app: &mut App) {
     // カーソルがどの行にあるかを求める (プレビューと同じロジック)。
-    let cursor_line = if let Some((start, _)) = app.viewer_state.selected_range() {
+    let cursor_line = if let Some((start, _)) = app.viewer.selected_range() {
         start
     } else {
-        app.viewer_state.content.file_scroll + 1
+        app.viewer.content.file_scroll + 1
     };
 
     // その行にあるコメントを探す。

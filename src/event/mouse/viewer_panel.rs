@@ -70,7 +70,7 @@ fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
 
 /// 画面上の行をThreadActions行として解決し、comment_idを返す。
 fn resolve_screen_action(app: &App, screen_offset: usize) -> Option<String> {
-    let map = &app.viewer_state.content.screen_row_map;
+    let map = &app.viewer.content.screen_row_map;
     match map.get(screen_offset) {
         Some(crate::viewer::ScreenRow::ThreadActions { comment_id }) => Some(comment_id.clone()),
         _ => None,
@@ -94,7 +94,7 @@ pub(super) fn handle_viewer_column_click(
     // レンダリング済みmarkdownには行番号がないので、以降の処理（シンボルジャンプ、
     // コメントスレッド、ガターのコメント/テスト実行ゾーン）はどれも解決する対象の
     // 行を持たない。クリックは単なるフォーカス変更で終わり、それ以上は何もしない。
-    if app.viewer_state.is_showing_rendered_markdown() {
+    if app.viewer.is_showing_rendered_markdown() {
         return;
     }
 
@@ -105,23 +105,23 @@ pub(super) fn handle_viewer_column_click(
     // タブ行を描かないモード（メディア/SUMMARY など）ではこれが空になるので、
     // その行のクリックを飲み込まずに通常の処理へ落ちる。
     if row == inner_y
-        && let Some(action) = app.viewer_state.tab_row_hits.at(col)
+        && let Some(action) = app.viewer.tab_row_hits.at(col)
     {
         match action {
             crate::ui::tab_bar::TabAction::Select(idx) => app.focus_viewer_tab(idx),
             crate::ui::tab_bar::TabAction::Close(idx) => app.close_viewer_tab(Some(idx)),
             crate::ui::tab_bar::TabAction::ScrollLeft => {
-                app.viewer_state.tab_scroll = app.viewer_state.tab_scroll.saturating_sub(1);
+                app.viewer.tab_scroll = app.viewer.tab_scroll.saturating_sub(1);
             }
             crate::ui::tab_bar::TabAction::ScrollRight => {
-                app.viewer_state.tab_scroll += 1;
+                app.viewer.tab_scroll += 1;
             }
             _ => {}
         }
         return;
     }
     let marker_w = crate::viewer::COMMENT_MARKER_W;
-    let gutter_w = app.viewer_state.gutter_total_width();
+    let gutter_w = app.viewer.gutter_total_width();
     let on_gutter = col >= inner_x && col < inner_x + marker_w + gutter_w;
     // コード本体が始まる列。左マージンは コメント列 + 行番号ガター + バッジ列。
     let badge_w: u16 = 2;
@@ -130,12 +130,11 @@ pub(super) fn handle_viewer_column_click(
     // Cmd+Click (macOS) / Ctrl+Click — クリックしたシンボルの定義へジャンプする。
     let has_jump_modifier = mouse.modifiers.contains(KeyModifiers::SUPER)
         || mouse.modifiers.contains(KeyModifiers::CONTROL);
-    if has_jump_modifier && !on_gutter && !app.viewer_state.diff_view.diff_mode && row >= inner_y {
+    if has_jump_modifier && !on_gutter && !app.viewer.diff_view.diff_mode && row >= inner_y {
         if col >= content_start_x {
             let screen_offset = (row - inner_y) as usize;
             if let Some(line_1) = resolve_screen_line(app, screen_offset) {
-                let content_col =
-                    (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
+                let content_col = (col - content_start_x) as usize + app.viewer.content.h_scroll;
                 // インデックスではなく.getを使う: screen_row_mapは描画時にしか
                 // 再構築されないので、ファイルウォッチャーの再読み込みと同じループの
                 // イテレーションで処理されたクリックは「前のフレーム」のマップを
@@ -143,12 +142,12 @@ pub(super) fn handle_viewer_column_click(
                 // 書き換えやgit checkoutなど）、その行番号は既に末尾を超えており、
                 // インデックスアクセスだとクリックの最中にアプリ全体を落としかねない。
                 // ホバー側のパスも既に同じ方法でこれをガードしている。
-                if let Some(line_text) = app.viewer_state.content.file_content.get(line_1 - 1)
+                if let Some(line_text) = app.viewer.content.file_content.get(line_1 - 1)
                     && let Some((symbol, _, _)) = crate::app::masked_symbol_at_column(
                         line_text,
                         content_col,
                         line_1,
-                        &app.viewer_state.content.code_mask,
+                        &app.viewer.content.code_mask,
                     )
                 {
                     handle_symbol_click_jump(app, &symbol, line_1 - 1, content_col, screen_offset);
@@ -180,20 +179,12 @@ pub(super) fn handle_viewer_column_click(
                     .find(|c| c.id == comment_id)
                 {
                     let end_line = comment.line_end.unwrap_or(comment.line_start) as usize;
-                    if !app
-                        .viewer_state
-                        .explorer
-                        .expanded_inline_threads
-                        .contains(&end_line)
-                    {
-                        app.viewer_state
-                            .explorer
-                            .expanded_inline_threads
-                            .insert(end_line);
+                    if !app.viewer.inline.expanded.contains(&end_line) {
+                        app.viewer.inline.expanded.insert(end_line);
                     }
-                    app.viewer_state.explorer.inline_reply_line = Some(end_line);
-                    app.viewer_state.explorer.inline_reply_comment_id = Some(comment_id);
-                    app.viewer_state.explorer.inline_reply_buffer.clear();
+                    app.viewer.inline.reply_line = Some(end_line);
+                    app.viewer.inline.reply_comment_id = Some(comment_id);
+                    app.viewer.inline.reply_buffer.clear();
                 }
             } else if click_col < thread_actions::resolve_end() {
                 // 解決/未解決に戻す。
@@ -218,7 +209,7 @@ pub(super) fn handle_viewer_column_click(
                     let _ = store.update_review_status(&comment_id, new_status);
                     let wt = app.selected_worktree_branch();
                     app.review_state.load_comments(store, &wt);
-                    if let Some(file) = app.viewer_state.content.current_file.clone() {
+                    if let Some(file) = app.viewer.content.current_file.clone() {
                         app.review_state.build_file_comment_cache(&file);
                     }
                 }
@@ -242,47 +233,47 @@ pub(super) fn handle_viewer_column_click(
     // 行をずらすので、entry mapを介してその行を対応するdiffエントリへ逆引きする。
     // （これらの行は行番号を持たないので、下のマージンのディスパッチと衝突する
     // ことはない。）
-    if app.viewer_state.diff_view.diff_mode && row >= inner_y {
+    if app.viewer.diff_view.diff_mode && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(idx) = app
-            .viewer_state
+            .viewer
             .diff_view
             .screen_entry_map
             .get(screen_offset)
             .copied()
             .flatten()
             && matches!(
-                app.viewer_state.diff_view.diff_view_lines.get(idx),
+                app.viewer.diff_view.diff_view_lines.get(idx),
                 Some(crate::viewer::UnifiedDiffEntry::ExpandableContext { .. })
             )
         {
-            app.viewer_state.expand_context_at(idx, false);
+            app.viewer.expand_context_at(idx, false);
         }
     }
 
     // 折りたたみマーカー。ガターの中にあるので、コメント作成へ落ちる前に
     // ここで捌く。当たり判定の列は in_fold_zone が持つ（ホバーの罫線と共有）。
-    if !app.viewer_state.diff_view.diff_mode
+    if !app.viewer.diff_view.diff_mode
         && row >= inner_y
         && super::in_fold_zone(col, inner_x + marker_w + gutter_w)
     {
         let screen_offset = (row - inner_y) as usize;
         if let Some(line_1) = resolve_screen_line(app, screen_offset)
-            && app.viewer_state.content.folds.is_foldable(line_1)
+            && app.viewer.content.folds.is_foldable(line_1)
         {
-            app.viewer_state.fold_toggle_at(line_1);
+            app.viewer.fold_toggle_at(line_1);
             return;
         }
     }
 
     // 畳んだ行は本体（見出しのコードと "⋯ N lines"）を押しても開く。マーカーの
     // 1列は狙って当てるには細く、開きたい行はその場に見えている。
-    if !app.viewer_state.diff_view.diff_mode && row >= inner_y && col >= content_start_x {
+    if !app.viewer.diff_view.diff_mode && row >= inner_y && col >= content_start_x {
         let screen_offset = (row - inner_y) as usize;
         if let Some(line_1) = resolve_screen_line(app, screen_offset)
-            && app.viewer_state.content.folds.is_collapsed(line_1)
+            && app.viewer.content.folds.is_collapsed(line_1)
         {
-            app.viewer_state.fold_toggle_at(line_1);
+            app.viewer.fold_toggle_at(line_1);
             return;
         }
     }
@@ -310,8 +301,8 @@ pub(super) fn handle_viewer_column_click(
             // カレントだった時にMCP経由でコメントが作られた場合など）に備えて
             // 防御的に更新し、バッジと下のディスパッチの認識を一致させる。
             if app.review_state.file_comments_path.as_deref()
-                != app.viewer_state.content.current_file.as_deref()
-                && let Some(f) = app.viewer_state.content.current_file.clone()
+                != app.viewer.content.current_file.as_deref()
+                && let Some(f) = app.viewer.content.current_file.clone()
             {
                 app.review_state.build_file_comment_cache(&f);
             }
@@ -325,20 +316,20 @@ pub(super) fn handle_viewer_column_click(
             let has_comment = app.review_state.file_comments.contains_key(&line_1);
             // ▶ マーカーはファイル表示でのみ描画される — diff表示ではヒットテスト
             // しない。
-            let has_test_run = !app.viewer_state.diff_view.diff_mode
-                && app.viewer_state.content.test_runs.contains_key(&line_1);
+            let has_test_run = !app.viewer.diff_view.diff_mode
+                && app.viewer.content.test_runs.contains_key(&line_1);
             let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
             match classify_margin_click(zone, has_comment, has_test_run, shift) {
                 MarginClickAction::ToggleThread => toggle_inline_thread_at(app, line_1),
                 MarginClickAction::RunTest => {
-                    if let Some(run) = app.viewer_state.content.test_runs.get(&line_1).cloned() {
+                    if let Some(run) = app.viewer.content.test_runs.get(&line_1).cloned() {
                         run_test(app, &run);
                     }
                 }
                 MarginClickAction::StartComment { extend: true } => {
                     // Shift+クリックは直前にクリックした行から範囲を延長し、
                     // その場で作成欄を開く。
-                    app.viewer_state.gutter_comment_click(line_1, true);
+                    app.viewer.gutter_comment_click(line_1, true);
                     open_viewer_comment(app);
                 }
                 MarginClickAction::StartComment { extend: false } => {
@@ -346,8 +337,8 @@ pub(super) fn handle_viewer_column_click(
                     // 始まり、カーソルがドラッグされるにつれて複数行に広がる。
                     // 作成欄はマウスアップ時に開く（GitHub風: クリック = 1行、
                     // ドラッグ = 範囲）。
-                    app.viewer_state.gutter_comment_click(line_1, false);
-                    app.viewer_state.click.gutter_drag_anchor = Some(line_1);
+                    app.viewer.gutter_comment_click(line_1, false);
+                    app.viewer.click.gutter_drag_anchor = Some(line_1);
                 }
             }
         }
@@ -425,13 +416,13 @@ pub(in crate::event) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
         .file_comments
         .get(&line_1)
         .map_or(line_1, |comments| thread_anchor_line(comments, line_1));
-    let threads = &mut app.viewer_state.explorer.expanded_inline_threads;
+    let threads = &mut app.viewer.inline.expanded;
     if threads.contains(&line_1) {
         threads.remove(&line_1);
-        if app.viewer_state.explorer.inline_reply_line == Some(line_1) {
-            app.viewer_state.explorer.inline_reply_line = None;
-            app.viewer_state.explorer.inline_reply_comment_id = None;
-            app.viewer_state.explorer.inline_reply_buffer.clear();
+        if app.viewer.inline.reply_line == Some(line_1) {
+            app.viewer.inline.reply_line = None;
+            app.viewer.inline.reply_comment_id = None;
+            app.viewer.inline.reply_buffer.clear();
         }
     } else {
         threads.insert(line_1);

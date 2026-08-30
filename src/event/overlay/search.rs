@@ -19,87 +19,69 @@ pub(in crate::event) fn handle_filename_search_key(
 ) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
-            app.viewer_state.filename_search.filename_search_active = false;
-            app.viewer_state
-                .filename_search
-                .filename_search_query
-                .clear();
-            app.viewer_state
-                .filename_search
-                .filename_search_results
-                .clear();
-            app.viewer_state.filename_search.filename_search_selected = 0;
+            app.viewer.filename_search.filename_search_active = false;
+            app.viewer.filename_search.filename_search_query.clear();
+            app.viewer.filename_search.filename_search_results.clear();
+            app.viewer.filename_search.filename_search_selected = 0;
         }
         KeyCode::Enter => {
             if let Some(result) = app
-                .viewer_state
+                .viewer
                 .filename_search
                 .filename_search_results
-                .get(app.viewer_state.filename_search.filename_search_selected)
+                .get(app.viewer.filename_search.filename_search_selected)
                 .cloned()
             {
-                app.viewer_state.filename_search.filename_search_active = false;
+                app.viewer.filename_search.filename_search_active = false;
 
                 // 選択したファイルをツリー上に表示して開く（Focus は Explorer のまま）。
-                app.viewer_state.reveal_file_in_tree(&result.path);
+                app.explorer.reveal_file_in_tree(&result.path);
                 let tab_width = app.config.viewer.tab_width;
-                app.viewer_state.open_file(&result.path, tab_width);
+                app.viewer
+                    .open_file(app.explorer.root(), &result.path, tab_width);
                 app.rehighlight_viewer();
                 app.review_state.build_file_comment_cache(&result.path);
             }
-            app.viewer_state
-                .filename_search
-                .filename_search_query
-                .clear();
-            app.viewer_state
-                .filename_search
-                .filename_search_results
-                .clear();
-            app.viewer_state.filename_search.filename_search_selected = 0;
+            app.viewer.filename_search.filename_search_query.clear();
+            app.viewer.filename_search.filename_search_results.clear();
+            app.viewer.filename_search.filename_search_selected = 0;
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            app.viewer_state
+            app.viewer
                 .filename_search
                 .filename_search_query
                 .delete_to_line_start();
-            app.viewer_state.filename_search.filename_search_selected = 0;
+            app.viewer.filename_search.filename_search_selected = 0;
         }
         _ if filterable_overlay_list_nav(
             &app.keymap,
             &key,
-            &mut app.viewer_state.filename_search.filename_search_selected,
-            app.viewer_state
-                .filename_search
-                .filename_search_results
-                .len(),
+            &mut app.viewer.filename_search.filename_search_selected,
+            app.viewer.filename_search.filename_search_results.len(),
         ) => {}
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let count = app
-                .viewer_state
-                .filename_search
-                .filename_search_results
-                .len();
-            if count > 0 && app.viewer_state.filename_search.filename_search_selected + 1 < count {
-                app.viewer_state.filename_search.filename_search_selected += 1;
+            let count = app.viewer.filename_search.filename_search_results.len();
+            if count > 0 && app.viewer.filename_search.filename_search_selected + 1 < count {
+                app.viewer.filename_search.filename_search_selected += 1;
             }
         }
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if app.viewer_state.filename_search.filename_search_selected > 0 {
-                app.viewer_state.filename_search.filename_search_selected -= 1;
+            if app.viewer.filename_search.filename_search_selected > 0 {
+                app.viewer.filename_search.filename_search_selected -= 1;
             }
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             clipboard_paste(
                 app,
-                |a| &mut a.viewer_state.filename_search.filename_search_query,
+                |a| &mut a.viewer.filename_search.filename_search_query,
                 false,
             );
-            app.viewer_state.filename_search.filename_search_selected = 0;
-            app.viewer_state.execute_filename_search();
+            app.viewer.filename_search.filename_search_selected = 0;
+            app.viewer.execute_filename_search();
         }
         _ => {
             if app
-                .viewer_state
+                .viewer
                 .filename_search
                 .filename_search_query
                 .handle_key(key)
@@ -107,8 +89,8 @@ pub(in crate::event) fn handle_filename_search_key(
                 // テキストを変更するキーは選択をリセットして検索を再実行する。
                 match key.code {
                     KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                        app.viewer_state.filename_search.filename_search_selected = 0;
-                        app.viewer_state.execute_filename_search();
+                        app.viewer.filename_search.filename_search_selected = 0;
+                        app.viewer.execute_filename_search();
                     }
                     _ => {}
                 }
@@ -180,24 +162,19 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) -> 
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.grep_search.cancel();
 
-                app.viewer_state.reveal_file_in_tree(&result.file_path);
+                app.explorer.reveal_file_in_tree(&result.file_path);
                 let tab_width = app.config.viewer.tab_width;
-                app.viewer_state.open_file(&result.file_path, tab_width);
+                app.viewer
+                    .open_file(app.explorer.root(), &result.file_path, tab_width);
                 app.rehighlight_viewer();
                 let hit_0 = result.line_number.saturating_sub(1);
-                let max = app
-                    .viewer_state
-                    .content
-                    .file_content
-                    .len()
-                    .saturating_sub(1);
-                app.viewer_state.content.file_scroll =
-                    result.line_number.saturating_sub(6).min(max);
-                app.viewer_state.content.grep_highlight_line = Some(result.line_number);
-                if app.viewer_state.content.file_scroll > hit_0 {
-                    app.viewer_state.content.file_scroll = hit_0;
+                let max = app.viewer.content.file_content.len().saturating_sub(1);
+                app.viewer.content.file_scroll = result.line_number.saturating_sub(6).min(max);
+                app.viewer.content.grep_highlight_line = Some(result.line_number);
+                if app.viewer.content.file_scroll > hit_0 {
+                    app.viewer.content.file_scroll = hit_0;
                 }
-                app.viewer_state.show_raw_for_line_target();
+                app.viewer.show_raw_for_line_target();
                 app.set_focus(Focus::Viewer);
             } else {
                 app.overlays.grep_search.result_tree.toggle_expand(selected);
@@ -351,25 +328,25 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) -> 
 pub(in crate::event) fn handle_viewer_search_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
-            app.viewer_state.search.search_active = false;
+            app.viewer.search.search_active = false;
         }
         KeyCode::Enter => {
-            app.viewer_state.search.search_active = false;
-            app.viewer_state.execute_search();
+            app.viewer.search.search_active = false;
+            app.viewer.execute_search();
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            app.viewer_state.search.search_query.delete_to_line_start();
-            app.viewer_state.execute_search();
+            app.viewer.search.search_query.delete_to_line_start();
+            app.viewer.execute_search();
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            clipboard_paste(app, |a| &mut a.viewer_state.search.search_query, false);
-            app.viewer_state.execute_search();
+            clipboard_paste(app, |a| &mut a.viewer.search.search_query, false);
+            app.viewer.execute_search();
         }
         _ => {
-            if app.viewer_state.search.search_query.handle_key(key) {
+            if app.viewer.search.search_query.handle_key(key) {
                 match key.code {
                     KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(_) => {
-                        app.viewer_state.execute_search();
+                        app.viewer.execute_search();
                     }
                     _ => {}
                 }

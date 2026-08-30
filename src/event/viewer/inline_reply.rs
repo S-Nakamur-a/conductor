@@ -7,10 +7,10 @@ use crate::app::{App, StatusLevel};
 
 /// 現在のカーソル行のインラインスレッド展開を切り替える。
 pub(super) fn toggle_inline_thread(app: &mut App) {
-    let cursor_line = if let Some((start, _)) = app.viewer_state.selected_range() {
+    let cursor_line = if let Some((start, _)) = app.viewer.selected_range() {
         start
     } else {
-        app.viewer_state.content.file_scroll + 1
+        app.viewer.content.file_scroll + 1
     };
 
     // その行にコメントがある場合のみ切り替える。共有ヘルパーは範囲の途中の行を
@@ -28,10 +28,10 @@ pub(super) fn toggle_inline_thread(app: &mut App) {
 /// 最初のコメントを対象にする。すでにその行のコメントに返信中の場合は、
 /// 次のコメントに切り替える（1行に複数コメントがある場合のため）。
 pub(super) fn start_inline_reply(app: &mut App) {
-    let cursor_line = if let Some((start, _)) = app.viewer_state.selected_range() {
+    let cursor_line = if let Some((start, _)) = app.viewer.selected_range() {
         start
     } else {
-        app.viewer_state.content.file_scroll + 1
+        app.viewer.content.file_scroll + 1
     };
 
     let comments = match app.review_state.file_comments.get(&cursor_line) {
@@ -40,16 +40,8 @@ pub(super) fn start_inline_reply(app: &mut App) {
     };
 
     // まだ展開されていなければスレッドを自動展開する。
-    if !app
-        .viewer_state
-        .explorer
-        .expanded_inline_threads
-        .contains(&cursor_line)
-    {
-        app.viewer_state
-            .explorer
-            .expanded_inline_threads
-            .insert(cursor_line);
+    if !app.viewer.inline.expanded.contains(&cursor_line) {
+        app.viewer.inline.expanded.insert(cursor_line);
         // キャッシュされていなければ返信を読み込む。
         for comment in comments {
             if !app.review_state.cached_replies.contains_key(&comment.id)
@@ -64,8 +56,8 @@ pub(super) fn start_inline_reply(app: &mut App) {
     }
 
     // すでにこの行に返信中なら、次のコメントに切り替える。
-    let target_id = if app.viewer_state.explorer.inline_reply_line == Some(cursor_line) {
-        if let Some(current_id) = &app.viewer_state.explorer.inline_reply_comment_id {
+    let target_id = if app.viewer.inline.reply_line == Some(cursor_line) {
+        if let Some(current_id) = &app.viewer.inline.reply_comment_id {
             let current_pos = comments.iter().position(|c| &c.id == current_id);
             match current_pos {
                 Some(pos) if pos + 1 < comments.len() => comments[pos + 1].id.clone(),
@@ -78,9 +70,9 @@ pub(super) fn start_inline_reply(app: &mut App) {
         comments[0].id.clone()
     };
 
-    app.viewer_state.explorer.inline_reply_line = Some(cursor_line);
-    app.viewer_state.explorer.inline_reply_comment_id = Some(target_id);
-    app.viewer_state.explorer.inline_reply_buffer.clear();
+    app.viewer.inline.reply_line = Some(cursor_line);
+    app.viewer.inline.reply_comment_id = Some(target_id);
+    app.viewer.inline.reply_buffer.clear();
 }
 
 /// インライン返信の入力モードでのキー操作を処理する。
@@ -89,39 +81,31 @@ pub(super) fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
     // モーダルと同じ規約にすることで、インライン返信も本格的な複数行フォーム
     // になる。
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.viewer_state
-            .explorer
-            .inline_reply_buffer
-            .insert_char('\n');
+        app.viewer.inline.reply_buffer.insert_char('\n');
         return;
     }
     match key.code {
         KeyCode::Esc => {
             // 返信をキャンセルする。
-            app.viewer_state.explorer.inline_reply_line = None;
-            app.viewer_state.explorer.inline_reply_comment_id = None;
-            app.viewer_state.explorer.inline_reply_buffer.clear();
+            app.viewer.inline.reply_line = None;
+            app.viewer.inline.reply_comment_id = None;
+            app.viewer.inline.reply_buffer.clear();
         }
         KeyCode::Enter => {
             // 返信を送信する。
-            if app.viewer_state.explorer.inline_reply_line.is_none() {
+            if app.viewer.inline.reply_line.is_none() {
                 return;
             }
-            let body = app
-                .viewer_state
-                .explorer
-                .inline_reply_buffer
-                .text()
-                .to_string();
+            let body = app.viewer.inline.reply_buffer.text().to_string();
             if body.trim().is_empty() {
-                app.viewer_state.explorer.inline_reply_line = None;
-                app.viewer_state.explorer.inline_reply_comment_id = None;
-                app.viewer_state.explorer.inline_reply_buffer.clear();
+                app.viewer.inline.reply_line = None;
+                app.viewer.inline.reply_comment_id = None;
+                app.viewer.inline.reply_buffer.clear();
                 return;
             }
 
             // 明示的に追跡しているコメント ID を使う。
-            let review_id = app.viewer_state.explorer.inline_reply_comment_id.clone();
+            let review_id = app.viewer.inline.reply_comment_id.clone();
 
             if let Some(review_id) = review_id {
                 // store の借用をスコープ内に限定して DB 操作を行う。
@@ -155,29 +139,19 @@ pub(super) fn handle_inline_reply_input(app: &mut App, key: KeyEvent) {
                 }
             }
 
-            app.viewer_state.explorer.inline_reply_line = None;
-            app.viewer_state.explorer.inline_reply_comment_id = None;
-            app.viewer_state.explorer.inline_reply_buffer.clear();
+            app.viewer.inline.reply_line = None;
+            app.viewer.inline.reply_comment_id = None;
+            app.viewer.inline.reply_buffer.clear();
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            app.viewer_state
-                .explorer
-                .inline_reply_buffer
-                .delete_to_line_start();
+            app.viewer.inline.reply_buffer.delete_to_line_start();
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            crate::event::clipboard_paste(
-                app,
-                |a| &mut a.viewer_state.explorer.inline_reply_buffer,
-                true,
-            );
+            crate::event::clipboard_paste(app, |a| &mut a.viewer.inline.reply_buffer, true);
         }
         _ => {
             // 通常の編集操作（文字入力、矢印、Home/End、単語単位移動、Backspace/Delete）。
-            app.viewer_state
-                .explorer
-                .inline_reply_buffer
-                .handle_key(key);
+            app.viewer.inline.reply_buffer.handle_key(key);
         }
     }
 }

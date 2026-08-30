@@ -312,7 +312,7 @@ pub(super) fn new_comment_anchor_end(app: &App) -> Option<usize> {
         return None;
     }
     let (file, start, end) = app.review_state.input_anchor.as_ref()?;
-    if Some(file.as_str()) != app.viewer_state.content.current_file.as_deref() {
+    if Some(file.as_str()) != app.viewer.content.current_file.as_deref() {
         return None;
     }
     Some(end.unwrap_or(*start) as usize)

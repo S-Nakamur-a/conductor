@@ -50,7 +50,7 @@ use crate::review_state::ReviewState;
 use crate::review_store::ReviewStore;
 use crate::terminal_state::TerminalState;
 use crate::theme::Theme;
-use crate::viewer::ViewerState;
+use crate::viewer::{ExplorerState, ViewerState};
 use crate::worktree_ops::WorktreeManager;
 
 pub use crate::types::Focus;
@@ -105,8 +105,10 @@ pub struct App {
     pub theme: Theme,
     /// [Self::theme] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
     pub theme_sel: ThemeSelection,
-    /// Explorer/Viewerパネルの状態（ファイルツリー + ファイル内容）。
-    pub viewer_state: ViewerState,
+    /// Explorerパネルの状態（ファイルツリー + diff一覧/コメント一覧の選択）。
+    pub explorer: ExplorerState,
+    /// Viewerパネルの状態（開いているファイルのタブとその内容）。
+    pub viewer: ViewerState,
     /// Diffデータの状態（Viewerのインラインハイライトに使われる）。
     pub diff_state: DiffState,
     /// SQLiteによるレビューコメントストア。DBを開けなかった場合は None。

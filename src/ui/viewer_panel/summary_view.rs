@@ -72,12 +72,9 @@ pub(super) fn render_summary_view(frame: &mut Frame, area: Rect, app: &mut App, 
 
     // キーハンドラがスクロールをクランプできるよう総行数を記録し、概要が短くなっても
     // ナビゲーションが正しく効くようクランプ後のスクロール値を書き戻す。
-    app.viewer_state.summary_total_lines = lines.len();
-    let scroll = app
-        .viewer_state
-        .summary_scroll
-        .min(lines.len().saturating_sub(1));
-    app.viewer_state.summary_scroll = scroll;
+    app.viewer.summary_total_lines = lines.len();
+    let scroll = app.viewer.summary_scroll.min(lines.len().saturating_sub(1));
+    app.viewer.summary_scroll = scroll;
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(inner_height).collect();
 
     frame.render_widget(ratatui::widgets::Clear, area);

@@ -26,7 +26,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
     // コメントへの Select はその場でスレッドを開くだけなので、その場合は
     // モーダルを開いたままにしておく必要がある。
     let close_after = in_modal && matches!(action, Some(Action::Select)) && {
-        let visual = app.viewer_state.explorer.comment_list_selected;
+        let visual = app.explorer.comment_list_selected;
         match app.review_state.comment_list_rows.get(visual) {
             Some(CommentListRow::Comment { comment_idx }) => {
                 let has_replies = app
@@ -46,7 +46,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
 
     match action {
         Some(Action::ExitSubPanel) => {
-            app.viewer_state.explorer.explorer_focus_on_diff_list = false;
+            app.explorer.focus_on_diff_list = false;
         }
         Some(Action::DeleteComment) if row_count > 0 => {
             app.request_delete_selected_review_item();
@@ -60,7 +60,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
         Some(Action::ReplyToComment) if row_count > 0 => {
             let comment_idx = app
                 .review_state
-                .selected_comment_idx(app.viewer_state.explorer.comment_list_selected);
+                .selected_comment_idx(app.explorer.comment_list_selected);
             if let Some(idx) = comment_idx {
                 app.review_state.input_buffer.clear();
                 app.review_state.input_mode =
@@ -71,21 +71,21 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
             }
         }
         Some(Action::NavigateDown)
-            if row_count > 0 && app.viewer_state.explorer.comment_list_selected + 1 < row_count =>
+            if row_count > 0 && app.explorer.comment_list_selected + 1 < row_count =>
         {
-            app.viewer_state.explorer.comment_list_selected += 1;
+            app.explorer.comment_list_selected += 1;
         }
-        Some(Action::NavigateUp) if app.viewer_state.explorer.comment_list_selected > 0 => {
-            app.viewer_state.explorer.comment_list_selected -= 1;
+        Some(Action::NavigateUp) if app.explorer.comment_list_selected > 0 => {
+            app.explorer.comment_list_selected -= 1;
         }
         Some(Action::GoToTop) => {
-            app.viewer_state.explorer.comment_list_selected = 0;
+            app.explorer.comment_list_selected = 0;
         }
         Some(Action::GoToBottom) if row_count > 0 => {
-            app.viewer_state.explorer.comment_list_selected = row_count - 1;
+            app.explorer.comment_list_selected = row_count - 1;
         }
         Some(Action::CollapseOrLeft) => {
-            let visual = app.viewer_state.explorer.comment_list_selected;
+            let visual = app.explorer.comment_list_selected;
             match app.review_state.comment_list_rows.get(visual).cloned() {
                 Some(CommentListRow::Reply { comment_idx, .. }) => {
                     if let Some(parent_visual) = app
@@ -94,7 +94,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
                         .iter()
                         .position(|r| matches!(r, CommentListRow::Comment { comment_idx: ci } if *ci == comment_idx))
                     {
-                        app.viewer_state.explorer.comment_list_selected = parent_visual;
+                        app.explorer.comment_list_selected = parent_visual;
                     }
                     app.toggle_comment_expansion();
                 }
@@ -109,7 +109,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
             }
         }
         Some(Action::Select) | Some(Action::ExpandOrRight) => {
-            let visual = app.viewer_state.explorer.comment_list_selected;
+            let visual = app.explorer.comment_list_selected;
             match app.review_state.comment_list_rows.get(visual).cloned() {
                 Some(CommentListRow::Comment { comment_idx }) => {
                     let has_replies = app
@@ -134,7 +134,7 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
             }
         }
         Some(Action::ViewCommentDetail) => {
-            let visual = app.viewer_state.explorer.comment_list_selected;
+            let visual = app.explorer.comment_list_selected;
             if let Some(comment_idx) = app.review_state.selected_comment_idx(visual) {
                 app.review_state.comment_detail_idx = comment_idx;
                 app.review_state.comment_detail_scroll = 0;
@@ -158,12 +158,12 @@ pub(in crate::event) fn handle_explorer_comment_list_key(
     }
 
     // コメント一覧のスクロールを調整する。
-    let selected = app.viewer_state.explorer.comment_list_selected;
-    let page_size = app.viewer_state.explorer.explorer_diff_list_height.max(1);
-    if selected < app.viewer_state.explorer.comment_list_scroll {
-        app.viewer_state.explorer.comment_list_scroll = selected;
-    } else if selected >= app.viewer_state.explorer.comment_list_scroll + page_size {
-        app.viewer_state.explorer.comment_list_scroll = selected.saturating_sub(page_size - 1);
+    let selected = app.explorer.comment_list_selected;
+    let page_size = app.explorer.diff_list_height.max(1);
+    if selected < app.explorer.comment_list_scroll {
+        app.explorer.comment_list_scroll = selected;
+    } else if selected >= app.explorer.comment_list_scroll + page_size {
+        app.explorer.comment_list_scroll = selected.saturating_sub(page_size - 1);
     }
     None
 }
@@ -182,13 +182,14 @@ pub(in crate::event) fn navigate_to_comment_with_focus(
     let file_path = comment.file_path.clone();
     let line = comment.line_start as usize;
     let tab_width = app.config.viewer.tab_width;
-    app.viewer_state.open_file(&file_path, tab_width);
+    app.viewer
+        .open_file(app.explorer.root(), &file_path, tab_width);
     app.rehighlight_viewer();
-    app.viewer_state.content.file_scroll = line.saturating_sub(1);
+    app.viewer.content.file_scroll = line.saturating_sub(1);
     // コメントはソース行に紐づくので source を表示する: markdown レンダリング
     // だと本文の先頭に飛ばされ、選択箇所が見えなくなってしまう。
-    app.viewer_state.show_raw_for_line_target();
-    app.viewer_state.selection = crate::viewer::LineSelection::Selected {
+    app.viewer.show_raw_for_line_target();
+    app.viewer.selection = crate::viewer::LineSelection::Selected {
         start: line,
         end: line,
     };
