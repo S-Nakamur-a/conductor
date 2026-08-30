@@ -103,7 +103,14 @@ fn status_color(theme: &crate::theme::Theme, state: FileStageState) -> ratatui::
 }
 
 /// 変更ファイル一覧（下部ペインの Changes ビュー）を描画する。
-pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, paint: &Paint) {
+pub(super) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    view: Viewport,
+    ex: &Explorer,
+    ctx: &Ctx,
+    paint: &Paint,
+) {
     let theme = ctx.theme;
     let icon_set = ctx.config.ui.icon_set();
     let list_focused = ctx.focused && ex.focus() == Pane::Bottom;
@@ -141,8 +148,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, pa
         );
     }
 
-    let inner_height = area.height.saturating_sub(2) as usize;
-
     // 以前は base 解決の失敗が完全に無音だった: 一覧が単に空で返ってきて
     // 「変更なし」に見えてしまっていた。メッセージを先頭行に固定して両者を
     // 混同しないようにする。このバナーは display_list の一部ではないため
@@ -156,10 +161,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, pa
             Style::default().fg(theme.error),
         ))
     });
-    let banner_rows = changes_banner_rows(error_banner.is_some());
-    let list_height = inner_height.saturating_sub(banner_rows);
-    let view = Viewport::new(area.y + 1 + banner_rows as u16, list_height);
-
     let selected = ex.changes_cursor.selected();
     let range = ex.changes_cursor.visible(ctx.diff.display_list.len(), view);
 
@@ -207,13 +208,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, pa
                 let stage_state = file_stage_state(ex.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
 
-                // アイコンの色はファイル種別を表すが、選択行では行の色に譲る。
-                // 選択の背景色の上で種別色が読める保証が11テーマぶんには無いため。
-                let icon_fg = if selected {
-                    None
-                } else {
-                    Some(icon.role.color(theme))
-                };
+                let icon_fg = Some(icon.role.color(theme));
 
                 let mut trail = vec![
                     Segment::colored(format!(" +{}", file_diff.added_lines), theme.diff_add),
@@ -277,11 +272,8 @@ fn changes_title(total: usize, has_error: bool, icon_set: crate::icons::IconSet)
 
 /// changed-files 一覧の先頭でエラーバナーが占める行数。
 ///
-/// この寸法に関する単一の情報源。3箇所がここに合わせる必要がある:
-/// レンダラ（何行分のエントリが収まるか）、スクロールのページサイズ、
-/// マウスハンドラ（画面上のどの行が display_list のどのインデックスに
-/// 対応するか）。以前はこれらがずれてしまうことがあり、1行のずれが
-/// クリック時に別のファイルを静かに開いてしまっていた。
+/// [crate::explorer::keys::Panes::split] だけがこれを読む。描画と入力が別々に
+/// 数えていた頃は 1 行のずれでクリックが別のファイルを開いていた。
 pub(crate) fn changes_banner_rows(has_error: bool) -> usize {
     usize::from(has_error)
 }

@@ -7,12 +7,10 @@ use crossterm::event::KeyEvent;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::app::App;
-use crate::types::Focus;
-use crate::widget::list::Viewport;
-
 use super::ctx::{Ctx, Paint};
 use super::keys::Panes;
+use crate::app::App;
+use crate::types::Focus;
 
 impl App {
     fn explorer_ctx(&self) -> Ctx<'_> {
@@ -48,20 +46,13 @@ impl App {
         self.layout.cache.columns[1]
     }
 
-    /// 上下 2 ペインの位置と高さ。描画と同じ分割を使う。
-    ///
-    /// 分割前はこれを描画が状態へ書き戻していたので、一度も描画されていない
-    /// 状態では入力が正しく動かなかった。
     pub fn explorer_panes(&self, area: Rect) -> Panes {
-        let tree_pct = self.config.layout.explorer_split_pct;
-        let tree_h = area.height * tree_pct / 100;
-        let inner = |y: u16, h: u16| Viewport::new(y + 1, h.saturating_sub(2) as usize);
-        Panes {
-            tree: inner(area.y, tree_h),
-            bottom: inner(area.y + tree_h, area.height - tree_h),
-            bottom_right: area.x + area.width,
-            bottom_width: area.width,
-        }
+        Panes::split(
+            area,
+            self.config.layout.explorer_split_pct,
+            self.explorer.bottom(),
+            self.diff_state.error.is_some(),
+        )
     }
 
     pub fn render_explorer(&mut self, frame: &mut Frame, area: Rect) {
@@ -72,8 +63,6 @@ impl App {
             &self.explorer_ctx(),
             &self.explorer_paint(),
         );
-        // 端末カーソルは描かないと位置が決まらない。他のオーバーレイが出ている
-        // ときは置かないので、判断は描画の外に出してある。
         if let Some((x, y)) = geometry.search_cursor
             && self.overlays.active == crate::overlay::ActiveOverlay::None
         {

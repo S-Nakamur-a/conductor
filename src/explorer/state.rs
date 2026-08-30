@@ -58,9 +58,6 @@ impl Explorer {
     }
 
     /// 下ペインに指定のものを出し、フォーカスもそこへ移す。
-    ///
-    /// 分割前はこれが `bottom_view` と `focus_on_diff_list` への 2 つの代入で、
-    /// 呼び出し側 2 箇所が両方書くのを覚えていなければならなかった。
     pub fn show(&mut self, view: BottomView) {
         self.bottom = view;
         self.focus = Pane::Bottom;

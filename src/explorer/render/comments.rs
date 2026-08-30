@@ -32,7 +32,14 @@ pub(crate) fn ask_claude_all_cols(x: u16, width: u16) -> Range<u16> {
 }
 
 /// コメント一覧を描画する（下部ペインの Comments ビュー、または C オーバーレイ）。
-pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, paint: &Paint) {
+pub(super) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    view: Viewport,
+    ex: &Explorer,
+    ctx: &Ctx,
+    paint: &Paint,
+) {
     let theme = ctx.theme;
     let icon_set = ctx.config.ui.icon_set();
     let list_focused = ctx.focused && ex.focus() == Pane::Bottom;
@@ -54,8 +61,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, pa
         Style::default().fg(theme.muted)
     };
 
-    let inner_height = area.height.saturating_sub(2) as usize;
-    let view = Viewport::new(area.y + 1, inner_height);
+    let inner_height = view.height;
     let total_rows = ctx.review.comment_list_rows.len();
     let scroll = ex.comments_cursor.scroll();
 
@@ -189,11 +195,8 @@ fn comment_row(
     );
     let body: String = first_line.chars().take(max_body).collect();
 
-    // 非選択行は意味色を使い、ステータスと位置情報を後退させて本文がスキャンの
-    // 主役になるようにする。解決済みの行はマーカーと本文も後退させる —
-    // ミュートな本文の上に明るい ✓ が乗ると、もう注意を払う必要のない行にこそ
-    // 目が引き寄せられてしまうため。位置情報とバッジ色は解決状態に関わらず
-    // 一定に保つ (元実装のまま)。
+    // 解決済みはマーカーも本文も後退させる。ミュートな本文の上に明るい ✓ が
+    // 乗ると、もう注意の要らない行にこそ目が引き寄せられるため。
     let marker_color = if resolved { theme.muted } else { theme.warning };
     let body_color = if resolved { theme.muted } else { theme.fg };
     let kind_color = match comment.kind {

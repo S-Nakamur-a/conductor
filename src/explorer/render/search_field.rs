@@ -2,9 +2,6 @@
 //!
 //! 表示するかどうかと中身の文字列は Viewer の検索状態を写した
 //! [crate::explorer::ctx::Paint::search] に従う。
-//!
-//! 端末カーソルの実際の配置は呼び出し側に委ねる: 全画面オーバーレイが別に
-//! 出ているかどうかは Explorer の外の話で、ここでは知りようがないため。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

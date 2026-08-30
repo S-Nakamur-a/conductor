@@ -17,6 +17,14 @@ impl Viewport {
     pub fn new(top: u16, height: usize) -> Self {
         Self { top, height }
     }
+
+    /// 枠で囲まれた矩形の内側。skip は先頭でバナーなどに食われる行数。
+    pub fn inside(rect: ratatui::layout::Rect, skip: usize) -> Self {
+        Self::new(
+            rect.y + 1 + skip as u16,
+            (rect.height.saturating_sub(2) as usize).saturating_sub(skip),
+        )
+    }
 }
 
 /// リストのどこを選んでいて、窓がどこにあるか。

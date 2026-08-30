@@ -11,7 +11,7 @@
 //! [search_field] がパネル内のファイル名検索入力欄を描画する。
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 
 mod changes;
 mod comments;
@@ -20,9 +20,11 @@ pub mod geometry;
 mod search_field;
 
 use crate::explorer::ctx::{Ctx, Paint};
+use crate::explorer::keys::Panes;
 use crate::explorer::state::{BottomView, Explorer};
+use crate::widget::list::Viewport;
 
-pub(crate) use changes::revidere_badge_cols;
+pub(crate) use changes::{changes_banner_rows, revidere_badge_cols};
 pub(crate) use comments::ask_claude_all_cols;
 pub use geometry::Geometry;
 
@@ -32,21 +34,19 @@ pub fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, paint: &P
         return Geometry::default();
     }
 
-    // 上 (ファイルツリー) と下 (Changes/Comments) に分割する。比率は設定値で、
-    // 実行中に Ctrl+Alt+↑/↓ で変えられる。マウスの当たり判定を描画と一致させる
-    // ため LayoutCache の explorer_mid_y と同じ計算にすること。
-    let tree_pct = ctx.config.layout.explorer_split_pct;
-    let changed_pct = 100u16.saturating_sub(tree_pct);
-    let chunks = Layout::vertical([
-        Constraint::Percentage(tree_pct),
-        Constraint::Percentage(changed_pct),
-    ])
-    .split(area);
+    // 比率は設定値で、実行中に Ctrl+Alt+↑/↓ で変えられる。
+    let panes = Panes::split(
+        area,
+        ctx.config.layout.explorer_split_pct,
+        ex.bottom(),
+        ctx.diff.error.is_some(),
+    );
 
-    file_tree::render(frame, chunks[0], ex, ctx, paint);
+    file_tree::render(frame, panes.tree_area, panes.tree, ex, ctx, paint);
+    let bottom = (panes.bottom_area, panes.bottom);
     match ex.bottom() {
-        BottomView::Changes => changes::render(frame, chunks[1], ex, ctx, paint),
-        BottomView::Comments => comments::render(frame, chunks[1], ex, ctx, paint),
+        BottomView::Changes => changes::render(frame, bottom.0, bottom.1, ex, ctx, paint),
+        BottomView::Comments => comments::render(frame, bottom.0, bottom.1, ex, ctx, paint),
     }
 
     let search_cursor = search_field::render(frame, area, ctx, paint);
@@ -71,5 +71,5 @@ pub fn render_comments_overlay(
     let y = area.y + area.height.saturating_sub(h) / 2;
     let popup = Rect::new(x, y, w, h);
     frame.render_widget(ratatui::widgets::Clear, popup);
-    comments::render(frame, popup, ex, ctx, paint);
+    comments::render(frame, popup, Viewport::inside(popup, 0), ex, ctx, paint);
 }

@@ -1,5 +1,6 @@
-//! Explorer の2つの行ベースリスト（file tree, Changed files）で共有する
-//! hover/selection の状態とスタイリング。selection/focus/hover の優先順位ルールを
+//! 行ベースのリストで共有する hover/selection の状態とスタイリング。
+//!
+//! selection/focus/hover の優先順位ルールを
 //! 各パネルで再導出させて食い違わせるのではなく、一箇所に集約するためにここに置く。
 
 use ratatui::style::{Color, Modifier, Style};

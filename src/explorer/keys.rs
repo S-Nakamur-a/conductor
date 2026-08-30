@@ -1,6 +1,7 @@
 //! キー入力。Explorer 自身の状態だけを書き換え、外に頼むことは [Intent] で返す。
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::diff_state::DiffListEntry;
 use crate::keymap::{Action, KeyContext};
@@ -11,16 +12,35 @@ use super::ctx::Ctx;
 use super::intent::{Intent, SectionOp};
 use super::state::{BottomView, Explorer, Pane};
 
-/// レイアウトが決めた 2 ペインの位置と高さ。
+/// 上下 2 ペインの分割。描画と入力がこの 1 つの結果を共有する。
 ///
-/// 分割前はこれを描画が状態へ書き戻していたため、一度も描画されていない
-/// 状態では入力が正しく動かなかった。
+/// 毎回レイアウトから作り直す値で、Explorer 自身には保存しない。保存すると、
+/// まだ描画されていない状態で古い値のまま入力を処理してしまう。
 pub struct Panes {
+    pub tree_area: Rect,
+    pub bottom_area: Rect,
     pub tree: Viewport,
     pub bottom: Viewport,
-    /// Explorer 列の右端と幅。下枠のボタンの当たり判定に使う。
-    pub bottom_right: u16,
-    pub bottom_width: u16,
+}
+
+impl Panes {
+    pub fn split(area: Rect, tree_pct: u16, bottom: BottomView, has_error: bool) -> Self {
+        let chunks = Layout::vertical([
+            Constraint::Percentage(tree_pct),
+            Constraint::Percentage(100u16.saturating_sub(tree_pct)),
+        ])
+        .split(area);
+        let banner = match bottom {
+            BottomView::Changes => super::render::changes_banner_rows(has_error),
+            BottomView::Comments => 0,
+        };
+        Self {
+            tree_area: chunks[0],
+            bottom_area: chunks[1],
+            tree: Viewport::inside(chunks[0], 0),
+            bottom: Viewport::inside(chunks[1], banner),
+        }
+    }
 }
 
 pub fn handle_key(
@@ -212,5 +232,30 @@ fn reveal(comment: usize, in_modal: bool) -> Intent {
             comment,
             focus_viewer: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 描画も入力もこの 1 つの結果を使うので、バナーのぶんは両方に効く。
+    #[test]
+    fn an_error_banner_pushes_the_bottom_pane_down_by_one_row() {
+        let area = Rect::new(0, 0, 40, 20);
+        let plain = Panes::split(area, 50, BottomView::Changes, false);
+        let errored = Panes::split(area, 50, BottomView::Changes, true);
+        assert_eq!(errored.bottom.top, plain.bottom.top + 1);
+        assert_eq!(errored.bottom.height, plain.bottom.height - 1);
+        assert_eq!(errored.tree, plain.tree);
+    }
+
+    /// コメント一覧にバナーは無いので、同じ error でもずれない。
+    #[test]
+    fn the_comment_list_ignores_the_diff_error() {
+        let area = Rect::new(0, 0, 40, 20);
+        let a = Panes::split(area, 50, BottomView::Comments, false);
+        let b = Panes::split(area, 50, BottomView::Comments, true);
+        assert_eq!(a.bottom, b.bottom);
     }
 }

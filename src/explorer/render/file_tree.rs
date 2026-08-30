@@ -41,14 +41,20 @@ fn indent_for_depth(depth: usize) -> Cow<'static, str> {
 }
 
 /// ファイルツリーを描画する。
-pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, paint: &Paint) {
+pub(super) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    view: Viewport,
+    ex: &Explorer,
+    ctx: &Ctx,
+    paint: &Paint,
+) {
     let theme = ctx.theme;
     let icon_set = ctx.config.ui.icon_set();
     let tree_focused = ctx.focused && ex.focus() == Pane::Tree;
 
     let visible = ex.tree.visible_indices();
-    let inner_height = area.height.saturating_sub(2) as usize;
-    let view = Viewport::new(area.y + 1, inner_height);
+    let inner_height = view.height;
 
     let selected = ex.tree_cursor.selected();
     let scroll = ex.tree_cursor.scroll();
@@ -118,14 +124,9 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ex: &Explorer, ctx: &Ctx, pa
                 }
             };
             let selected_row = vis_idx == selected;
-            // アイコンの色はファイル種別を表すが、選択行と減光対象の行では行の色に
-            // 譲る。選択の背景色の上で種別色が読める保証は全テーマぶんには無く、
-            // untracked/ignored の減光はアイコンにも及ぶべきだからである。
-            let icon_fg = if selected_row || entry.git_state != TreeGitState::Tracked {
-                None
-            } else {
-                Some(icon.role.color(theme))
-            };
+            // untracked/ignored の減光はアイコンにも及ぶ。
+            let icon_fg =
+                (entry.git_state == TreeGitState::Tracked).then(|| icon.role.color(theme));
 
             let hover = paint.hover_tree.phase(vis_idx);
             let line = Row::new(entry.name.clone(), base_fg)

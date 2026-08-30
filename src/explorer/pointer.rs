@@ -12,6 +12,8 @@ use super::state::{BottomView, Explorer, Pane};
 pub const ASK_CLAUDE_W: u16 = 20;
 
 pub fn click(ex: &mut Explorer, x: u16, y: u16, ctx: &Ctx, panes: &Panes) -> Option<Intent> {
+    // 枠の 1 行上も上ペイン扱いにしない。ここを削ると、パネル最大化中 (枠の
+    // ドラッグ判定が無効な間) に境界行のクリックが下へ抜けて別ファイルを開く。
     if y < panes.bottom.top.saturating_sub(1) {
         ex.focus_pane(Pane::Tree);
         return tree_click(ex, y, panes);
@@ -68,11 +70,8 @@ fn comments_click(ex: &mut Explorer, x: u16, y: u16, ctx: &Ctx, panes: &Panes) -
     let len = ctx.review.comment_list_rows.len();
     let bottom_border = panes.bottom.top + panes.bottom.height as u16;
     if y == bottom_border
-        && super::render::ask_claude_all_cols(
-            panes.bottom_right.saturating_sub(panes.bottom_width),
-            panes.bottom_width,
-        )
-        .contains(&x)
+        && super::render::ask_claude_all_cols(panes.bottom_area.x, panes.bottom_area.width)
+            .contains(&x)
     {
         return Some(Intent::AskClaudeAboutChanges);
     }
