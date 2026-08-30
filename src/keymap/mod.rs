@@ -32,10 +32,6 @@
 //! * ヘルプは解決の逆写像である。 KeyMap::keys_for_action は facade の
 //!   keys_for_action（keymap_suite::keys_for_action）を使うので、表示される
 //!   ショートカットが実際の解決結果からずれることはない。
-//!
-//! モジュールは責務ごとに分かれている: action が Action の語彙を、context
-//! が KeyContext のレイヤー選択を、warning が KeybindWarning 型を、map が
-//! それら3つを束ねる KeyMap リゾルバ自体を持つ。
 
 mod action;
 mod context;
