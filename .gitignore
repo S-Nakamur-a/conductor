@@ -5,3 +5,4 @@ dist/
 .env
 .vscode
 .claude
+__pycache__/
