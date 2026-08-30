@@ -45,8 +45,7 @@ pub fn render_panel(frame: &mut Frame, area: Rect, app: &mut App) {
         app.viewer.reveal_cursor_line();
     }
 
-    // 差分表示の file_scroll は diff カーソルの写しなので、行を囲むものを聞いても
-    // 意味が無い。畳みがあると file_scroll 自身は画面に出ないことがある。
+    // 畳みがあると file_scroll 自身が画面に出ないことがあるので、素の表示でだけ聞く。
     let top_visible = if app.viewer.diff_view.diff_mode {
         None
     } else {
@@ -96,7 +95,6 @@ fn ensure_diff_annotations_cached(app: &mut App) {
 
     let current_file = app.viewer.content.current_file.clone();
 
-    // キャッシュがまだ有効かどうかを確認する。
     if app.viewer.content.cached_diff_annotations.is_some()
         && app.viewer.content.cached_diff_annotations_file == current_file
     {

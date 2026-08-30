@@ -288,7 +288,7 @@ rows carry a `CommandId` and go through `App::execute_palette_command`, so
   `content`/`search`/`diff_view`/`selection` fields, and the rest is stashed on
   the tab it belongs to (`viewer/tabs.rs`) — one copy, never two. `open_file` is
   the single entry point and reuses an existing tab. The strip draws on the
-  block's first inner row (`ui/viewer_panel/tab_row.rs`), the same slot the
+  block's first inner row (`viewer/render/tab_row.rs`), the same slot the
   breadcrumb uses, so `screen_row_map` needs a placeholder for it.
 - The revidere review view (`Focus::Revidere`, `w`) is *not* part of the
   accordion: it takes `main_area` whole as two columns (reading order | diff) and

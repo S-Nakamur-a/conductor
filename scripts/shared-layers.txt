@@ -21,7 +21,7 @@ src/event/paste.rs	ブラケットペーストの取り込み
 src/event/clipboard.rs	クリップボード操作
 src/event/dialogs.rs	確認ダイアログのキー
 src/event/overlay_helpers.rs	ファイル名検索モーダルの開閉。explorer と viewer の両方から起動する
-src/event/mouse/	マウスディスパッチの骨組み（エントリポイント、ヒットテスト用ジオメトリ、bars/scroll）。パネル別ハンドラは S7/S8/S15/S16 で各パネルの mouse.rs へ抽出済み
+src/event/mouse/	マウスの振り分け骨組み（入口、ヒットテスト用ジオメトリ、帯のクリック、ホイール）。パネル別ハンドラは各パネルの mouse.rs にある
 src/app/mod.rs	App 本体。全パネルの状態を持つ
 src/app/types.rs	App が使う型
 src/app/state/	複数パネルに跨る状態
