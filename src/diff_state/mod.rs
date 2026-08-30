@@ -4,10 +4,6 @@
 //! 結果として得られる、ファイル単位の diff、ハンク情報、行単位の変更を保持する。
 //! コミット済みと未コミットは1本の diff にまとまっているので、1ファイルは常に
 //! 1エントリになる。
-//!
-//! 責務ごとに分割している: [model] はデータ型(DiffState とその構成要素)、
-//! [display_list] はフラット化した explorer 表示リストの構築とナビゲーション、
-//! [compute] は git2/similar ベースの diff 計算を担う。
 
 mod compute;
 mod display_list;

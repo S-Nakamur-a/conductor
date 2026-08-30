@@ -1,10 +1,8 @@
 //! ワークツリーパネルの空きスペースに表示する装飾の描画。
 //!
 //! aquarium・space・garden・city の複数のアニメーションモードをサポートする。
-//! 各モードはそれぞれ独自の状態構造体と、アニメーション更新用の tick_* 関数、
-//! 描画用の render_* 関数を持ち、モードごとに1サブモジュールに分割されている。
-//! トップレベルの [tick_decoration] と [render_decoration] が、実行中の
-//! モードへディスパッチする。
+//! モードを足すときは、状態構造体と tick_* / render_* を1サブモジュールに
+//! まとめて置く。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

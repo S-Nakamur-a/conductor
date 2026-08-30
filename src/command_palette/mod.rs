@@ -5,11 +5,6 @@
 //! 持つ (ある場合)。これにより表示するショートカットとスコープ (グローバルか
 //! フォーカス中パネルのレイヤーか) は keymap から都度導出され、古くなること
 //! がない。パレット専用のコマンド (キーバインドなし) は action: None を持つ。
-//!
-//! types (CommandId/CommandCategory/CommandScope/PaletteCommand/
-//! ScoredCommand のモデル)、commands (静的な COMMANDS テーブル)、search
-//! (あいまいフィルタリング/スコアリング) に分割してある。呼び出し側が
-//! 引き続き crate::command_palette::X を使えるよう、ここで re-export する。
 
 mod commands;
 mod search;
