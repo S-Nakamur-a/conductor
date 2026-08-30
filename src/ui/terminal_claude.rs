@@ -161,11 +161,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         let effective_border = if app.reflow.active && app.focus == Focus::TerminalClaude {
             let complement = crate::theme::Theme::complement(theme.accent);
             if let Some(sweep) = &app.reflow.sweep {
-                let p = crate::event::reflow::sweep_progress(
+                let p = crate::reflow::input::sweep_progress(
                     &sweep.start,
-                    crate::event::reflow::TRANSITION_DURATION_MS,
+                    crate::reflow::input::TRANSITION_DURATION_MS,
                 );
-                let t = crate::event::reflow::transition_eased(p);
+                let t = crate::reflow::input::transition_eased(p);
                 // 読み取りモードに入る: アクセント色 → 補色。
                 crate::theme::Theme::lerp(theme.accent, complement, t)
             } else {
@@ -190,7 +190,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.reflow.active && app.focus == Focus::TerminalClaude {
         let inner = output_block.inner(output_area);
         frame.render_widget(output_block, output_area);
-        crate::ui::reflow_view::render(frame, inner, app);
+        crate::reflow::render::render(frame, inner, app);
         return;
     }
 

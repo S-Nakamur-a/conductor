@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use super::rotation::resolve_current_session_id;
 use super::session_log_in_dir;
-use crate::claude_log::{DisplayBlock, load_session};
+use crate::reflow::log::{DisplayBlock, load_session};
 
 /// dir に <session_id>.jsonl を書く。turns の各要素を1ユーザターンとして
 /// 1行ずつ書き、mtime は now - age に強制する。

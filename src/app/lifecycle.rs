@@ -163,7 +163,7 @@ impl App {
             bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
             panel_number_overlay: Default::default(),
-            reflow: super::reflow::ReflowView::default(),
+            reflow: crate::reflow::ReflowView::default(),
         };
 
         // キーバインド設定の問題を表に出す: TUI は stdout を隠してしまうので、

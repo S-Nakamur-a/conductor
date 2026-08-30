@@ -8,7 +8,7 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::claude_log::DisplayBlock;
+use crate::reflow::log::DisplayBlock;
 
 use super::build::BuildCtx;
 use super::glyphs::{
@@ -81,7 +81,7 @@ pub(super) struct BlockPos<'a> {
     /// ユーザーの複数テキストブロックの間に空行を入れるかの判断に使う。
     pub entry_has_content: bool,
     /// 折りたたみ表示のための、バケットごとの事前集計。
-    pub bucket_counts: &'a std::collections::HashMap<crate::claude_log::CountedBucket, usize>,
+    pub bucket_counts: &'a std::collections::HashMap<crate::reflow::log::CountedBucket, usize>,
 }
 
 /// ブロック1つを行の列に変換する。何も描かないブロックでは空を返す。

@@ -224,7 +224,7 @@ pub(super) fn handle_mouse_scroll(
                     app.reflow.scroll = app.reflow.scroll.saturating_sub(abs_delta);
                 } else {
                     let inner = app.reflow.last_inner_height as usize;
-                    if crate::event::reflow::at_bottom(
+                    if crate::reflow::input::at_bottom(
                         app.reflow.scroll,
                         app.reflow.total_lines,
                         inner,
@@ -236,7 +236,7 @@ pub(super) fn handle_mouse_scroll(
                     app.reflow.scroll = app.reflow.scroll.saturating_add(abs_delta);
                 }
                 let inner = app.reflow.last_inner_height as usize;
-                app.reflow.scroll = crate::event::reflow::clamp_scroll(
+                app.reflow.scroll = crate::reflow::input::clamp_scroll(
                     app.reflow.scroll,
                     app.reflow.total_lines,
                     inner,
@@ -244,7 +244,7 @@ pub(super) fn handle_mouse_scroll(
                 // ホイールアップでビューは末尾から切り離され、ホイールダウンで最新行が
                 // 画面に戻ると再び追従する。これがないと、ホイールアップの後にリサイズ
                 // すると一番下に再固定されてスクロールが取り消されてしまう。
-                app.reflow.follow = crate::event::reflow::at_bottom(
+                app.reflow.follow = crate::reflow::input::at_bottom(
                     app.reflow.scroll,
                     app.reflow.total_lines,
                     inner,

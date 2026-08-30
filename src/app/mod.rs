@@ -10,15 +10,12 @@ mod editor;
 mod focus;
 mod lifecycle;
 mod panel_resize;
-mod reflow;
 mod repo;
-mod revidere;
 mod review;
 mod review_commands;
 mod review_edit;
 mod review_history;
 mod review_publish;
-pub use revidere::RevidereRuns;
 mod state;
 pub use state::{
     CodeNav, Highlighting, ListHover, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
@@ -48,6 +45,7 @@ use crate::git_engine;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
 use crate::pty_manager;
+use crate::reflow::ReflowView;
 use crate::review_state::ReviewState;
 use crate::review_store::ReviewStore;
 use crate::terminal_state::TerminalState;
@@ -66,7 +64,6 @@ pub use code_nav::{
 };
 pub use editor::EditorPanel;
 pub use panel_resize::{Divider, ResizeDir};
-pub use reflow::ReflowView;
 pub use types::{BackgroundOps, BgDiffResult, CcusageInfo};
 pub use update::UpdateState;
 

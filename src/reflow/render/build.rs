@@ -7,7 +7,7 @@ use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::claude_log::{DisplayBlock, LogEntry, Role};
+use crate::reflow::log::{DisplayBlock, LogEntry, Role};
 
 use super::block_render::{BlockPos, TranscriptStyles, render_block};
 

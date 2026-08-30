@@ -16,9 +16,6 @@ mod mouse;
 mod overlay;
 mod overlay_helpers;
 mod paste;
-pub mod reflow;
-mod reflow_key;
-mod revidere;
 mod scroll;
 mod terminal;
 mod viewer;
@@ -37,10 +34,10 @@ use self::explorer::handle_explorer_comment_list_key;
 use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
 use self::overlay::*;
-use self::reflow_key::handle_reflow_key;
 use self::terminal::{forward_key_to_pty, spawn_terminal_session};
 use self::viewer::handle_viewer_key;
 use self::worktree::handle_worktree_key;
+use crate::reflow::key::handle_reflow_key;
 
 // 元は crate::event::X だったが、今は隣接するサブモジュールへ移った項目を
 // re-export する。こうすることで、隣接モジュール側の既存の super::X 参照が
@@ -258,7 +255,7 @@ fn stage_focus(app: &mut App, key: KeyEvent) {
             handle_viewer_key(app, key);
         }
         Focus::Revidere => {
-            revidere::handle_revidere_key(app, key);
+            crate::revidere::input::handle_revidere_key(app, key);
         }
         // is_pty() な Focus は段 4 (PTY) が必ず先に消費するため、
         // ここには到達しない。

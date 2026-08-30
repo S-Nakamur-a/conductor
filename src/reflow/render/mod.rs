@@ -24,27 +24,27 @@
 //!
 //! 責務ごとにモジュールを分割している。[glyphs] はガター幅の定数、[palette] は固定の
 //! Claude Code カラースキーム、[helpers] はマーカー・省略表示の純粋関数、[build] は幅ごとの
-//! 行キャッシュ構築、[user_text] はユーザーターンの背景ブロック描画、[render] はキャッシュを
+//! 行キャッシュ構築、[user_text] はユーザーターンの背景ブロック描画、[frame] はキャッシュを
 //! 毎フレーム転送する公開エントリポイントを持つ。
 
 mod block_render;
 mod build;
+mod frame;
 mod glyphs;
 mod helpers;
 mod palette;
-mod render;
 mod tool_lines;
 mod user_text;
 
 pub(crate) use build::LineMeta;
-pub use render::render;
+pub use frame::render;
 
 #[cfg(test)]
 mod build_tests;
 #[cfg(test)]
 mod corpus_tests;
 #[cfg(test)]
-mod render_tests;
+mod frame_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

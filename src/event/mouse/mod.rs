@@ -418,8 +418,10 @@ fn handle_revidere_mouse(app: &mut App, mouse: MouseEvent) {
     // 総括は 1 列で読むだけの画面。ホイールだけ効かせる。
     if app.revidere.show_overview {
         match mouse.kind {
-            MouseEventKind::ScrollDown => super::revidere::scroll_overview(app, SCROLL_LINES),
-            MouseEventKind::ScrollUp => super::revidere::scroll_overview(app, -SCROLL_LINES),
+            MouseEventKind::ScrollDown => {
+                crate::revidere::input::scroll_overview(app, SCROLL_LINES)
+            }
+            MouseEventKind::ScrollUp => crate::revidere::input::scroll_overview(app, -SCROLL_LINES),
             _ => {}
         }
         return;
@@ -435,15 +437,15 @@ fn handle_revidere_mouse(app: &mut App, mouse: MouseEvent) {
                 return;
             };
             if let Some(idx) = app.revidere.list_rows.get(offset as usize).copied() {
-                super::revidere::select_section(app, idx);
+                crate::revidere::input::select_section(app, idx);
             }
         }
         // 左列のホイールは節を送る。行ではなく節で動かすのは、左列の
         // スクロール位置が選択に従属していて単独では動かせないため。
-        MouseEventKind::ScrollDown if in_list => super::revidere::step_section(app, 1),
-        MouseEventKind::ScrollUp if in_list => super::revidere::step_section(app, -1),
-        MouseEventKind::ScrollDown => super::revidere::scroll_diff(app, SCROLL_LINES),
-        MouseEventKind::ScrollUp => super::revidere::scroll_diff(app, -SCROLL_LINES),
+        MouseEventKind::ScrollDown if in_list => crate::revidere::input::step_section(app, 1),
+        MouseEventKind::ScrollUp if in_list => crate::revidere::input::step_section(app, -1),
+        MouseEventKind::ScrollDown => crate::revidere::input::scroll_diff(app, SCROLL_LINES),
+        MouseEventKind::ScrollUp => crate::revidere::input::scroll_diff(app, -SCROLL_LINES),
         _ => {}
     }
 }

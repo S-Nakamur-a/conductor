@@ -48,7 +48,7 @@ pub struct BackgroundOps {
         Option<sheaf_core::Store>,
     )>,
     /// リフロー式トランスクリプトビュー用のバックグラウンドセッションログ解析。
-    pub reflow_load: BackgroundOp<Vec<crate::claude_log::LogEntry>>,
+    pub reflow_load: BackgroundOp<Vec<crate::reflow::log::LogEntry>>,
 }
 
 /// バックグラウンド diff 計算の結果。

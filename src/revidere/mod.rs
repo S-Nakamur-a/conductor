@@ -1,6 +1,6 @@
 //! revidere の成果物 (`<worktree>/.conductor/review.json`) を読み、読む順を組む。
 //!
-//! ここは読むだけ。成果物を作る側は [crate::app::revidere]。
+//! ここは読むだけ。成果物を作る側は [run]。
 //!
 //! 型を宣言し直さない
 //!
@@ -14,6 +14,11 @@
 //! 見たのと同じ diff が要る。パスの綴り・削除行の前像行番号・rename の扱いが
 //! 1 つでもずれると、項目が指す位置が変更一覧から外れて「説明の無い変更行」に化ける。
 //! 同じ関数から取れば、その食い違いは起きようがない。
+
+pub mod input;
+pub mod render;
+pub mod run;
+pub mod state;
 
 use std::path::Path;
 

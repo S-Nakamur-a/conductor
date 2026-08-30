@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use syntect::highlighting::ThemeSet;
 use unicode_width::UnicodeWidthStr;
 
-use crate::claude_log::{LogEntry, load_session};
+use crate::reflow::log::{LogEntry, load_session};
 use crate::ui::markdown::MarkdownCache;
 
 use super::build::{BuildCtx, build_lines};

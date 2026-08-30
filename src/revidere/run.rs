@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
-use super::*;
+use crate::app::{App, Focus, StatusLevel};
 use crate::overlay::{ActiveOverlay, RevidereArtifact, RevidereConfirmOverlay};
 
 /// 解析 1 回の AI 呼び出しに与える実時間の上限 (秒)。

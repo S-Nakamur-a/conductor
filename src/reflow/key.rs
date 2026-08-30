@@ -19,13 +19,13 @@ use crate::app::App;
 /// * Esc — reflow ビューを閉じてライブ PTY へ戻る。
 /// * 最下部での j / Down / PageDown — reflow を閉じる (ライブへ戻る)。
 ///
-/// どの分岐も [ReflowView::follow](crate::app::ReflowView::follow) を維持する:
+/// どの分岐も [ReflowView::follow](crate::reflow::ReflowView::follow) を維持する:
 /// 上へ動くと解除され、最下部に着くと再度アタッチされる。このフラグは、後の
 /// reflow が最新ターンへの再固定と読者の論理位置の復元のどちらを取るか判断
 /// する際に参照するものなので、ここで古いままにしておくと、このビューが
 /// 避けようとしている最下部への強制スナップが復活してしまう。
-pub(super) fn handle_reflow_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    use crate::event::reflow::{at_bottom, clamp_scroll};
+pub(crate) fn handle_reflow_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+    use super::input::{at_bottom, clamp_scroll};
     use crossterm::event::KeyModifiers;
 
     let inner = app.reflow.last_inner_height as usize;

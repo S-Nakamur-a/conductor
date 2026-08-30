@@ -1,7 +1,12 @@
 //! Reflow トランスクリプトビュー: 無限スクロールバックモード中に Claude の PTY パネルへ
 //! 重ねて表示する、読み取り専用・折り返し表示のセッションログビューア。
 
-use super::{App, StatusLevel};
+pub mod input;
+pub mod key;
+pub mod log;
+pub mod render;
+
+use crate::app::{App, StatusLevel};
 
 /// reflow トランスクリプトビューの入場アニメーション。
 ///
@@ -32,7 +37,7 @@ pub struct ReflowView {
     /// Rc で包んでいるのは、build_lines がハンドルを安価に clone（refcount の
     /// インクリメントのみ）でき、cache.render を呼ぶ前に self への借用を解放できる
     /// ようにするため。リサイズのたびに全エントリの文字列をディープコピーせずに済む。
-    pub entries: std::rc::Rc<Vec<crate::claude_log::LogEntry>>,
+    pub entries: std::rc::Rc<Vec<log::LogEntry>>,
     /// 垂直スクロールオフセット — 先頭からスキップする描画済み行数。
     pub scroll: usize,
     /// cached_lines の総行数（各描画のあとに同期される）。
@@ -44,7 +49,7 @@ pub struct ReflowView {
     ///
     /// このフラグが reflow 時にビューポートをどう扱うかを決める。追従中は毎フレーム
     /// 最下部に再固定するのでリサイズ後も最新出力を表示し続け、離脱中は代わりに同じ
-    /// 論理行へ戻す（[crate::event::reflow::scroll_after_reflow] 参照）。この区別が
+    /// 論理行へ戻す（[input::scroll_after_reflow] 参照）。この区別が
     /// ないと必ずどちらかが壊れる — 無条件に固定すると読み手の位置を失い、無条件に
     /// アンカーすると幅の狭いパネルで行が増えたときに最新行がビューポートの外に出て
     /// しまう。
@@ -55,14 +60,14 @@ pub struct ReflowView {
     pub follow: bool,
     /// 離脱中に描画される「最新ターンへジャンプ」バッジの画面上の矩形。画面に出ていない
     /// ときは None。描画側が毎フレーム記録し、クリックハンドラが参照する。
-    /// [super::App::reflow_jump_to_latest] 参照。
+    /// [crate::app::App::reflow_jump_to_latest] 参照。
     pub jump_hit: Option<ratatui::layout::Rect>,
     /// 幅に合わせて事前に折り返し描画した行。last_width が変わるか needs_rebuild
     /// が立ったときだけ再構築する。
     pub cached_lines: Vec<ratatui::text::Line<'static>>,
     /// cached_lines の各行に対応する1エントリ。どこ由来か（スクロールアンカー）と、
     /// ガター用グリフのために未書き込みのままにするセルの位置を持つ。
-    pub line_meta: Vec<crate::ui::reflow_view::LineMeta>,
+    pub line_meta: Vec<render::LineMeta>,
     /// 幅の変化以外で cached_lines を無効化する必要があるときに立てる —
     /// 現状では expand トグルのみ。
     pub needs_rebuild: bool,
@@ -177,7 +182,7 @@ impl App {
         self.terminal.needs_clear = true;
 
         self.bg.reflow_load.start(move |tx| {
-            let _ = tx.send(crate::claude_log::load_session(&path));
+            let _ = tx.send(log::load_session(&path));
         });
 
         self.reflow = ReflowView {
@@ -245,7 +250,7 @@ impl App {
     /// 両方から共有される。そのためどちらの経路でもビューは同じ状態（最下部かつ
     /// 追従中）になり、次のリサイズでもその位置に留まる。
     pub fn reflow_jump_to_latest(&mut self) {
-        self.reflow.scroll = crate::event::reflow::bottom_scroll(
+        self.reflow.scroll = input::bottom_scroll(
             self.reflow.total_lines,
             self.reflow.last_inner_height as usize,
         );

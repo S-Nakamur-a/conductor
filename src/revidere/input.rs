@@ -11,7 +11,7 @@ use crate::keymap::{Action, KeyContext};
 /// 1 回のスクロールで動かす行数 (j/k)。
 const SCROLL_STEP: usize = 1;
 
-pub(super) fn handle_revidere_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+pub(crate) fn handle_revidere_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let action = app.keymap.resolve(&key, KeyContext::Revidere)?;
     // 画面の切り替えは行き先ごとにキーが分かれているので、どちらの画面から
     // でも同じ結果になる。先に受けてしまってよい。
@@ -84,12 +84,12 @@ fn section_count(app: &App) -> usize {
         .unwrap_or(0)
 }
 
-pub(super) fn scroll_diff(app: &mut App, delta: isize) {
+pub(crate) fn scroll_diff(app: &mut App, delta: isize) {
     let cur = app.revidere.diff_scroll as isize;
     app.revidere.diff_scroll = (cur + delta).max(0) as usize;
 }
 
-pub(super) fn scroll_overview(app: &mut App, delta: isize) {
+pub(crate) fn scroll_overview(app: &mut App, delta: isize) {
     let cur = app.revidere.overview_scroll as isize;
     app.revidere.overview_scroll = (cur + delta).max(0) as usize;
 }
@@ -98,7 +98,7 @@ pub(super) fn scroll_overview(app: &mut App, delta: isize) {
 ///
 /// 空の項目 (成果物が指した位置が diff に無かった項目) も飛ばさずに止まる。
 /// 黙って飛ばすと、「在ると言った変更が無かった」ことに気付けなくなる。
-pub(super) fn step_section(app: &mut App, delta: isize) {
+pub(crate) fn step_section(app: &mut App, delta: isize) {
     let len = section_count(app);
     if len == 0 {
         return;
@@ -107,7 +107,7 @@ pub(super) fn step_section(app: &mut App, delta: isize) {
     select_section(app, (cur + delta).clamp(0, len as isize - 1) as usize);
 }
 
-pub(super) fn select_section(app: &mut App, idx: usize) {
+pub(crate) fn select_section(app: &mut App, idx: usize) {
     let Some(review) = app.revidere.current.as_ref() else {
         return;
     };

@@ -116,7 +116,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 戻される。結果はクランプされるので、上限は total - 1 ではなく
     // total - inner_height になる。これにより論理的な末尾では最後のコンテンツ行が
     // 最後の表示行に収まり、パネルより短いログは空白行なしで 0 に収束する。
-    app.reflow.scroll = crate::event::reflow::scroll_after_reflow(
+    app.reflow.scroll = crate::reflow::input::scroll_after_reflow(
         app.reflow.follow,
         anchored,
         app.reflow.scroll,
@@ -131,7 +131,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 境界線を安定した読み取りモードの色に落ち着かせる。境界線自体の色遷移の描画は
     // ここではなく terminal_claude::render で行う。
     let entry_done = app.reflow.sweep.as_ref().is_some_and(|s| {
-        crate::event::reflow::sweep_progress(&s.start, crate::event::reflow::TRANSITION_DURATION_MS)
+        crate::reflow::input::sweep_progress(&s.start, crate::reflow::input::TRANSITION_DURATION_MS)
             >= 1.0
     });
     if entry_done {

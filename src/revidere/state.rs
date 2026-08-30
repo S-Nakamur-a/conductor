@@ -1,6 +1,6 @@
 //! revidere の状態: いま読み込まれている成果物と、解析の実行中のもの。
 
-use crate::app::RevidereRuns;
+use super::run::RevidereRuns;
 
 /// 成果物と解析の状態。
 #[derive(Default)]
@@ -43,7 +43,7 @@ pub struct RevidereState {
     pub section_rows: Vec<usize>,
     /// 組み立て済みの右列。syntect と折り返しは 1 フレームに収まる仕事では
     /// ないので、幅・テーマ・成果物が変わったときだけ作り直す。
-    pub diff_cache: Option<crate::ui::revidere_view::DiffRender>,
+    pub diff_cache: Option<super::render::DiffRender>,
     /// 成果物の版。[Self::replace] のたびに進み、右列のキャッシュキーに入る。
     /// 中身を比較する代わりの安い指紋。
     pub epoch: u64,

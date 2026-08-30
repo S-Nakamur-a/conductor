@@ -17,7 +17,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use syntect::highlighting::ThemeSet;
 
-use crate::claude_log::{DisplayBlock, LogEntry, Role};
+use crate::reflow::log::{DisplayBlock, LogEntry, Role};
 use crate::ui::markdown::MarkdownCache;
 
 use super::build::{BuildCtx, MAX_GUTTER_GLYPH_COL, build_lines};
@@ -136,7 +136,7 @@ fn marks_the_hole() {
         &[entry(
             Role::User,
             vec![DisplayBlock::ToolResult {
-                kind: crate::claude_log::ResultKind::Inline,
+                kind: crate::reflow::log::ResultKind::Inline,
                 lines: vec!["out".into()],
                 is_error: false,
             }],
@@ -230,7 +230,7 @@ fn wide_and_multi_char_clusters_do_not_shift_the_hole() {
             &[entry(
                 Role::User,
                 vec![DisplayBlock::ToolResult {
-                    kind: crate::claude_log::ResultKind::Inline,
+                    kind: crate::reflow::log::ResultKind::Inline,
                     lines: vec![body.to_string()],
                     is_error: false,
                 }],
@@ -309,7 +309,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use unicode_width::UnicodeWidthStr;
 
-use super::render::{JUMP_BADGE_LABELS, render_jump_badge};
+use super::frame::{JUMP_BADGE_LABELS, render_jump_badge};
 
 /// width x height のフレームにバッジを描画し、報告された値と描画後の画面を返す。
 fn draw_badge(width: u16, height: u16, following: bool) -> (Option<Rect>, Buffer) {
@@ -413,10 +413,10 @@ fn badge_labels_are_ordered_longest_first() {
 // 2つの幅で実行し、読者にとって重要な2つの結果を検証する: 離脱している読者は自分の
 // 行に留まり、追従している読者は最新に留まる。
 
-use crate::event::reflow::{at_bottom, scroll_after_reflow};
+use crate::reflow::input::{at_bottom, scroll_after_reflow};
 
 use super::build::BuiltLines;
-use super::render::anchor_index;
+use super::frame::anchor_index;
 
 /// テスト対象の2つの幅で折り返し位置が実際に異なるくらい長いプロース — この
 /// フィクスチャの仕事はそれだけである。

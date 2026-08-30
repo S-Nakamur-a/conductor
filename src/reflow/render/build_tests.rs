@@ -13,7 +13,7 @@ use ratatui::text::Line;
 use serde_json::json;
 use syntect::highlighting::ThemeSet;
 
-use crate::claude_log::{CountedBucket, DisplayBlock, LogEntry, ResultKind, Role};
+use crate::reflow::log::{CountedBucket, DisplayBlock, LogEntry, ResultKind, Role};
 use crate::ui::markdown::MarkdownCache;
 
 use super::build::{BuildCtx, build_lines};

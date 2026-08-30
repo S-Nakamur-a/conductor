@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::claude_log::{
+use crate::reflow::log::{
     BUCKET_ORDER, CountedBucket, DisplayBlock, LogEntry, ResultKind, ToolCategory, classify,
     unknown_tool_arg,
 };
