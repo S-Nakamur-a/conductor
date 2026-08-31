@@ -27,8 +27,7 @@ use crate::worktree::mouse::handle_worktree_column_click;
 use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
 use scroll::handle_mouse_scroll;
 
-/// Viewer のタブ行（ブロック内側の先頭行）の上か。タブ行を描いていない
-/// フレームではクリック領域が空なので false になり、ホイールは本文の
+/// タブ行を描いていないフレームでは領域が空なので false になり、ホイールは本文の
 /// スクロールへ落ちる。
 fn on_viewer_tab_row(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
     !app.viewer.tab_row_hits.is_empty()
@@ -82,18 +81,8 @@ pub(crate) fn in_fold_zone(col: u16, gutter_end: u16) -> bool {
     col < gutter_end && col + 5 >= gutter_end
 }
 
-/// 何らかのオーバーレイ/モーダルがアクティブな場合に true を返す。この場合は
-/// マウスイベントを全て消費し、背景のパネルに届かないようにする。
-/// マウスイベントをインタラクティブなホバーモーダルのスタックに対して振り分ける。
-/// イベントを消費した場合は true を返す（呼び出し側はその場合早期returnする）。
-///
-/// - N refs への左クリック → 参照リストを開く（ポップアップを固定する）。
-/// - リストの行への左クリック → そのコードプレビューを開く。
-/// - プレビューへの左クリック → その場所へジャンプし、スタック全体を閉じる。
-/// - ポップアップの余白への左クリック → そのまま維持する（消費する）。
-/// - 固定中に他の場所への左クリック → 閉じる（クリックは飲み込む）。
-/// - 任意の部分の上でマウスを動かす → 生存を維持する（一時的な猶予ウィンドウを解除）。
-/// - リスト上でのスクロール → 選択を移動する。
+/// ホバーのモーダル階層へマウスを配る。消費したら true を返し、呼び出し側は
+/// そこで打ち切って背景のパネルに届かないようにする。
 fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.code_nav.hover_info.is_shown() {
         return false;
@@ -213,12 +202,8 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.code_nav.symbol_action.active
 }
 
-/// Changed files パネル右上の revidere 状態チップの上にセル (col, row) があるか。
-///
-/// クリックとホバーの両方がここを通るので、光っている場所と押せる場所は
-/// 構造的にずれない。矩形は描画側と同じ [crate::explorer::render::revidere_badge_cols]
-/// から引く。埋め込みエディタが出ている間は Explorer カラムがその PTY に隠れる
-/// ので、チップも無いものとして扱う。
+/// クリックとホバーの両方がここを通るので、光る場所と押せる場所は構造的にずれない。
+/// 埋め込みエディタが出ている間はチップも無いものとして扱う。
 fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
     if app.editor.is_some()
         || row != geom.explorer_mid_y
@@ -236,10 +221,8 @@ fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bo
     .is_some_and(|cols| cols.contains(&col))
 }
 
-/// 指定した divider が現在マウスリサイズのためにつかめる状態かどうか。パネルが
-/// 最大化されている間は常に不可（列が両端に折りたたまれ、境界の意味が失われるため）。
-/// また、エディタがExplorer+Viewer列を1つのPTYに合体させている間は、Explorer側の
-/// 境界も不可。
+/// 最大化中は列が両端に畳まれて境界の意味が失われるので常に不可。エディタが
+/// Explorer+Viewer を1つの PTY に合体させている間も Explorer 側は不可。
 fn divider_draggable(app: &App, divider: crate::app::Divider) -> bool {
     use crate::app::Divider;
     if app.expanded_panel.is_some() {
@@ -294,13 +277,8 @@ impl ClickGeometry {
         }
     }
 
-    /// 画面上のセル (col, row) にドラッグ可能なパネル境界があるかをヒットテストする。
-    ///
-    /// 隣接するカラムはそれぞれ自分の枠を描画するため、縦の境界線は2セル分の
-    /// 厚みを持つ線になる（左パネルの右枠が edge - 1、右パネルの左枠が edge）。
-    /// どちらのセルもつかむ対象とみなし、横の境界も同様。縦の境界（カラム境界）と
-    /// 横の境界（カラム内部の分割）が角で重なる場合は、縦の境界を優先する。
-    /// エディタ合体時・最大化時のゲーティングは呼び出し側の責務。
+    /// 隣接する列がそれぞれ自分の枠を描くので、縦の境界は2セルの厚みを持つ。両方を
+    /// つかむ対象とし、角で重なる場合は縦を優先する。合体・最大化の判定は呼び出し側。
     fn divider_at(&self, col: u16, row: u16) -> Option<crate::app::Divider> {
         use crate::app::Divider;
 
@@ -329,9 +307,7 @@ impl ClickGeometry {
         None
     }
 
-    /// 上枠の行にある [<=>] 展開ボタンをヒットテストし、クリックされたボタンの
-    /// パネルを返す（あれば）。呼び出し側は、呼ぶ前にクリックが上枠の行上に
-    /// あることを保証する必要がある。
+    /// クリックが上枠の行にあることは呼び出し側が保証する。
     fn expand_button_at(&self, col: u16) -> Option<Focus> {
         if col < self.left_end && self.left_w >= 7 {
             let btn_start = self.main_area.x + self.left_w - 6;
@@ -351,13 +327,8 @@ impl ClickGeometry {
     }
 }
 
-/// Viewerヘッダーの [Raw|Rendered] トグルへのクリックを処理し、消費したかを返す。
-///
-/// 現在のモードを反転させるのではなく、どちらの半分をクリックしてもそのモードを
-/// そのまま選択する。そのため、既に見えているラベルをクリックしても驚きのある
-/// 動作にはならず、何も起きないだけになる。チップの列はレンダラが使うのと同じ
-/// toggle_segments から取得しており、markdown_toggle_available によるゲーティングも
-/// レンダラと全く同じ — なので画面に出ていないトグルにはクリック対象が存在しない。
+/// 反転ではなく、押した側のモードをそのまま選ぶ。見えているラベルを押しても
+/// 何も起きないだけで済む。列も出す条件もレンダラと同じ関数から引く。
 fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool {
     if !app.viewer.markdown_toggle_available() {
         return false;
@@ -379,14 +350,8 @@ fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool
     true
 }
 
-/// 1件のマウスイベントを処理し、必要に応じてアプリケーション状態を更新する。
-/// revidere の 2 列ビューのマウス操作。
-///
-/// フォーカスは動かさない。このビューを出るのは Esc だけ、というのが約束で、
-/// 節を選ぼうとしたクリックで画面ごと入れ替わるのはその約束を破る。
-///
-/// 左列は節の選択、右列は diff のスクロール。当たり判定に使う矩形と
-/// 「画面の行 → 節」の対応表は、幅で変わるので描画側が書いている。
+/// フォーカスは動かさない。このビューを出るのは Esc だけという約束を、節を選ぶ
+/// クリックで破らないため。
 fn handle_revidere_mouse(app: &mut App, mouse: MouseEvent) {
     // 総括は 1 列で読むだけの画面。ホイールだけ効かせる。
     if app.revidere.show_overview {

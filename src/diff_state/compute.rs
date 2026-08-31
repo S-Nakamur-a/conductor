@@ -15,24 +15,8 @@ use super::model::{DiffHunk, DiffLine, DiffLineTag, DiffState, FileDiff, InlineS
 /// ハンクの前後に付けるコンテキスト行数。git の既定と同じ 3 行。
 const CONTEXT_LINES: u32 = 3;
 
-/// base(ブランチ名、リモート追跡 ref、タグ、または生の OID)を diff の
-/// 基準となるコミットに解決する。
-///
-/// find_branch ではなく revparse_single を使う理由: Conductor が作成する
-/// worktree はベースを origin/<main> として記録しており(GitEngine::resolve_base_ref
-/// 参照)、リモート追跡 ref はローカルブランチではない。この不一致が変更ファイル
-/// リストを空で返す原因になっていた。
-///
-/// 名前は記録された通りに厳密に解決するので、ベースが origin/main であれば
-/// 古いローカルの main が存在してもリモート追跡 ref の方を使う。逆に PR intake
-/// は PR のベースを裸の名前(main)として記録しており、こちらはローカルブランチに
-/// 解決される(リモートより遅れている可能性がある)。origin/ を付けての再試行は、
-/// develop のように refs/remotes/origin/develop としてしか存在しないローカル
-/// ref を持たない名前のためだけに行う。
-///
-/// 解決の優先順位は git 自体の revspec ルールに従うので、main という名前の
-/// タグは main という名前のブランチより優先される。これは git rev-parse main
-/// が選ぶものと一致する。
+/// find_branch ではなく revparse_single を使う。conductor が作る worktree はベースを
+/// origin/<main> で記録していて、リモート追跡 ref はローカルブランチではないため。
 fn resolve_base_commit(repo: &Repository, base: &str) -> Result<git2::Oid> {
     let resolved = repo.revparse_single(base).or_else(|primary| {
         // 裸の名前(develop)で記録されたベースは refs/remotes/origin/develop
@@ -340,11 +324,8 @@ impl DiffState {
         Ok(file_diffs)
     }
 
-    /// word diff 用に、ハンク内の削除行と追加行を対にして行内の変更箇所を求める。
-    ///
-    /// libgit2 は行単位までしか出さないので、置き換えとみなせる削除ブロックと
-    /// 追加ブロックを並び順で対応付け、対になった行同士を単語単位で diff する。
-    /// 対応が付かない余りの行(片側だけ増減した分)は行全体をそのまま描画させる。
+    /// libgit2 は行単位までしか出さないので、置き換えとみなせる削除と追加を並び順で
+    /// 対応付けて単語 diff にかける。余った行は行全体をそのまま描かせる。
     fn attach_inline_segments(lines: &mut [DiffLine]) {
         let mut i = 0;
         while i < lines.len() {
@@ -405,9 +386,8 @@ impl DiffState {
         }
     }
 
-    /// 大文字小文字を区別しない FS ではケース違いの2エントリに実ファイルが1つしか
-    /// 無く、libgit2 は余った方を削除として報告する(git 本体は clean)。DiffOptions
-    /// では直らない — ignore_case が変えるのはデルタの並び順だけ。
+    /// ケース違いの2エントリに実ファイルが1つしか無いと、libgit2 は余った方を削除と
+    /// 報告する (git 本体は clean)。DiffOptions では直らない。
     fn find_deletions_still_on_disk(
         repo: &Repository,
         diff: &git2::Diff<'_>,
@@ -425,10 +405,8 @@ impl DiffState {
             .collect()
     }
 
-    /// 大文字小文字だけ異なるリネームのペア(パスが大文字小文字のみ異なり、
-    /// blob の内容が同一な削除+追加)を構成するデルタのインデックスを見つける。
-    ///
-    /// diff 処理でスキップすべきインデックスの集合を返す。
+    /// パスが大文字小文字だけ違い、blob が同一な削除+追加の組。
+    /// diff 処理で飛ばすべきインデックスを返す。
     fn find_case_only_rename_indices(diff: &git2::Diff<'_>) -> std::collections::HashSet<usize> {
         use std::collections::HashMap;
 
