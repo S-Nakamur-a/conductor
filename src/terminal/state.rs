@@ -86,6 +86,9 @@ pub struct TerminalState {
     /// PTY セッションの last_output_time へのマップ。
     pub cc_waiting_ack_time: HashMap<PathBuf, Instant>,
     /// 端末全体のクリアと再描画が必要なときに true にする。
+    /// 起動直後に 1 度だけ、以前セッションのあった worktree を resume する。
+    /// [crate::app::App::perform_auto_resume] が見て下ろす一度きりのラッチ。
+    pub pending_auto_resume: bool,
     pub needs_clear: bool,
     /// 保留中のプロンプト: セッション添字 → プロンプト文字列。
     /// Claude Code セッションが入力待ちになった時点で書き込まれる。
@@ -94,7 +97,7 @@ pub struct TerminalState {
 
 impl TerminalState {
     /// 指定したスクロールバック上限で TerminalState を作る。
-    pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
+    pub fn new(active_scrollback: usize, inactive_scrollback: usize, auto_resume: bool) -> Self {
         Self {
             pty_manager: pty_manager::PtyManager::new(active_scrollback, inactive_scrollback),
             claude: TerminalPane::new(pty_manager::SessionKind::ClaudeCode, (24, 80)),
@@ -103,6 +106,7 @@ impl TerminalState {
             cc_active_worktrees: HashSet::new(),
             cc_waiting_worktrees: HashSet::new(),
             cc_waiting_ack_time: HashMap::new(),
+            pending_auto_resume: auto_resume,
             needs_clear: false,
             deferred_prompts: HashMap::new(),
         }
@@ -162,7 +166,7 @@ mod tests {
 
     #[test]
     fn switch_claude_session_resets_scroll_and_cache() {
-        let mut term = TerminalState::new(1000, 100);
+        let mut term = TerminalState::new(1000, 100, false);
         term.claude.scroll = 42;
         term.claude.cache = stale_cache();
 
@@ -179,7 +183,7 @@ mod tests {
 
     #[test]
     fn switch_shell_session_resets_scroll_and_cache() {
-        let mut term = TerminalState::new(1000, 100);
+        let mut term = TerminalState::new(1000, 100, false);
         term.shell.scroll = 42;
         term.shell.cache = stale_cache();
 
@@ -193,7 +197,7 @@ mod tests {
 
     #[test]
     fn switch_claude_session_leaves_shell_panel_untouched() {
-        let mut term = TerminalState::new(1000, 100);
+        let mut term = TerminalState::new(1000, 100, false);
         term.shell.scroll = 5;
         term.shell.cache = stale_cache();
 

@@ -92,10 +92,10 @@ impl App {
     /// 以前セッションがあった全ての worktree について Claude Code セッションを
     /// 自動的に resume する。最初のフレーム描画後に一度だけ呼ばれる。
     pub fn perform_auto_resume(&mut self) {
-        if !self.pending_auto_resume {
+        if !self.terminal.pending_auto_resume {
             return;
         }
-        self.pending_auto_resume = false;
+        self.terminal.pending_auto_resume = false;
 
         let paths: Vec<PathBuf> = self.worktrees.iter().map(|w| w.path.clone()).collect();
         if paths.is_empty() {

@@ -108,9 +108,6 @@ pub struct App {
     pub branch_details: git_engine::BranchDetails,
     pub gh_available: bool,
 
-    /// 次のフレームで Claude セッションを自動再開する (一度きり)。
-    pub pending_auto_resume: bool,
-
     /// 「ユーザがどこを見ていたか」の保存と復元。
     pub view_restore: ViewRestore,
 

@@ -136,6 +136,7 @@ impl App {
             terminal: crate::terminal::state::TerminalState::new(
                 active_scrollback,
                 inactive_scrollback,
+                auto_resume,
             ),
             worktree_mgr: WorktreeManager::default(),
             status_message: None,
@@ -154,7 +155,6 @@ impl App {
             decoration_states: Default::default(),
             branch_details: Default::default(),
             gh_available: Self::check_gh_available(),
-            pending_auto_resume: auto_resume,
             view_restore: Default::default(),
             wtbar: Default::default(),
             menu: Default::default(),
