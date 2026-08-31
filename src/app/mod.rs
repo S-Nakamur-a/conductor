@@ -1,7 +1,4 @@
-//! アプリケーション状態とフォーカス管理。
-//!
-//! このモジュールはトップレベルのアプリケーション状態、統一されたパネル
-//! レイアウトのフォーカスモデル、パネル間の遷移を定義する。
+//! アプリケーション状態と、パネル間のフォーカス遷移。
 
 mod appearance;
 mod code_nav;
@@ -55,152 +52,117 @@ pub use panel_resize::{Divider, ResizeDir};
 pub use types::{BackgroundOps, BgDiffResult, CcusageInfo};
 pub use update::UpdateState;
 
-/// すべてのUIパネルで共有されるトップレベルのアプリケーション状態。
+/// すべての UI パネルで共有されるトップレベルの状態。
 pub struct App {
-    /// 再描画が必要かどうか。
     pub needs_redraw: bool,
-    /// 現在のパネルフォーカス。
     pub focus: Focus,
-    /// フォーカスが直前にあったパネルと、移った時刻。ボーダー色のグライド
-    /// アニメーション (animated_border_color) だけがこの 2 つを読む。
+    /// 直前のフォーカスと、移った時刻。ボーダー色のグライド
+    /// ([App::animated_border_color]) だけがこの 2 つを読む。
     pub focus_prev: Focus,
-    /// フォーカスが最後に変わった時刻。境界線遷移のタイミング計測に使う。
     pub focus_changed_at: std::time::Instant,
-    /// すべてのオーバーレイポップアップ状態（ブランチ切り替え、grab、prune、ヘルプなど）。
     pub overlays: OverlayManager,
     /// いま開いているリポジトリの同一性と、切り替え先の候補。
     pub repo: RepoState,
-    /// 次のティックでアプリケーションを終了すべきかどうか。
     pub should_quit: bool,
-    /// 有効時の埋め込みエディタパネル。Some ⟺ エディタのPTYが動作していて、
-    /// マージされたExplorer+Viewer領域を占有している状態。None は通常の
-    /// （エディタなしの）レイアウト。[App::open_in_editor] でセットされ、
-    /// [App::exit_editor] で解体される（このフィールドと Focus::Editor を
-    /// 対にする唯一の2つのメソッドであり、不変条件をこの中に閉じ込めている）。
+    /// Some ⟺ エディタの PTY が動いていて Explorer+Viewer を占有している。
+    /// [App::open_in_editor] と [App::exit_editor] だけがこれと Focus::Editor を
+    /// 対で扱うので、不変条件はその 2 つの中に閉じている。
     pub editor: Option<EditorPanel>,
     /// revidere の成果物と、実行中の解析。
     pub revidere: RevidereState,
     /// レビューコメントの GitHub 公開フロー (確認待ち + 実行中の処理)。
     pub publish: PublishState,
-    /// 発見済みの worktree 一覧と、そこへの選択 (行の平坦化リストを含む)。
+    /// 発見済みの worktree 一覧と、そこへの選択。
     pub worktrees: WorktreeList,
-    /// 設定ファイルから読み込まれたアプリケーション設定。
     pub config: config::Config,
-    /// 解決済みのキーバインドマップ（デフォルト + ユーザーによる上書き）。
+    /// デフォルトにユーザの上書きを重ねた解決済みのマップ。
     pub keymap: KeyMap,
     /// 描画に使う配色。フレームごとに読まれるので 1 階層浅いところに置く。
     /// 組み立ての元データは [Self::theme_sel]。
     pub theme: Theme,
-    /// [Self::theme] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
     pub theme_sel: ThemeSelection,
-    /// Explorerパネルの状態（ファイルツリー + diff一覧/コメント一覧の選択）。
     pub explorer: Explorer,
-    /// Viewerパネルの状態（開いているファイルのタブとその内容）。
     pub viewer: ViewerState,
-    /// Diffデータの状態（Viewerのインラインハイライトに使われる）。
     pub diff_state: DiffState,
-    /// SQLiteによるレビューコメントストア。DBを開けなかった場合は None。
+    /// DB を開けなかった場合は None。
     pub review_store: Option<ReviewStore>,
-    /// レビューコメントのUI状態。
     pub review_state: ReviewState,
-    /// ターミナル / PTYの状態。
     pub terminal: TerminalState,
-    /// worktree管理の状態（作成、削除、スマートworktreeなど）。
     pub worktree_mgr: WorktreeManager,
-    /// ステータスバーに表示されるステータスメッセージ（フラッシュメッセージ）。
     pub status_message: Option<StatusMessage>,
-    /// 選択中worktreeの最後に確認したHEAD oid（変更検知ポーリング用）。
+    /// 選択中 worktree の変更検知ポーリング。署名は (追加, 変更, 削除, 未追跡) 件数。
     pub last_poll_head_oid: Option<String>,
-    /// 選択中worktreeの最後に確認したステータス署名（追加・変更・削除件数）。
     pub last_poll_status: Option<(usize, usize, usize, usize)>,
 
-    /// syntect によるシンタックスハイライトの共有資源。
+    /// syntect の共有資源。
     pub highlight: Highlighting,
-    /// レンダリング済みMarkdown（コメント/返信の本文）のID別キャッシュ。
-    /// インラインスレッドボックスが毎フレーム再パース・再ハイライトしないため。
+    /// コメント本文の ID 別キャッシュ。インラインスレッドが毎フレーム再パースしない。
     pub markdown_cache: crate::ui::markdown::MarkdownCache,
 
-    /// 現在100%に拡大されているパネル（[<=>]ボタン経由）。
-    /// None はどのパネルも拡大されていない（デフォルトレイアウト）ことを表す。
+    /// 100% に拡大しているパネル。None は通常レイアウト。
     pub expanded_panel: Option<Focus>,
 
-    /// パネルの幾何: レイアウト矩形のキャッシュ、ターミナル列の分割比、
-    /// マウスによる境界リサイズ。
+    /// レイアウト矩形のキャッシュ、ターミナル列の分割比、境界のドラッグ。
     pub layout: PanelLayout,
 
-    /// Explorer の 2 つのリスト (ファイルツリー / Changed files) のホバー追跡。
     pub list_hover: ListHover,
 
-    /// UIアニメーション用のフレームカウンタ（例: waiting状態のパルス）。
+    /// UI アニメーション用。
     pub ui_tick: u64,
-    /// デコレーションアニメーション用の独立したティックカウンタ（一定間隔で増加）。
+    /// デコレーション専用。一定間隔で増える別勘定。
     pub decoration_tick: u64,
 
     /// セッション統計 (ゲーミフィケーション) と ccusage のキャッシュ。
     pub stats: SessionStats,
-    /// worktreeのブランチごとのHEAD oid（コミット検知用）。
+    /// ブランチ名 -> HEAD oid。コミットの検知に使う。
     pub worktree_heads: HashMap<String, String>,
 
-    /// 自己更新フロー: 新バージョンの検出 → 確認 → インストール → 再起動。
+    /// 自己更新: 検出 → 確認 → インストール → 再起動。
     pub update: UpdateFlow,
 
-    /// Ctrl+V貼り付けをサポートするためのシステムクリップボードコンテキスト。
     pub clipboard: Option<copypasta::ClipboardContext>,
 
-    /// すべてのデコレーションモードのアニメーション状態。
     pub decoration_states: crate::worktree::decoration::DecorationStates,
 
-    // ブランチ詳細 (worktree詳細パネル)
-    /// 選択中worktreeの計算済みブランチ系譜とPR情報。
+    /// 選択中 worktree のブランチ系譜と PR 情報。
     pub branch_details: git_engine::BranchDetails,
-    /// このシステムで gh CLIが利用可能かどうか。
     pub gh_available: bool,
 
-    // Claudeセッションの自動再開
-    /// 次のフレームで自動再開を実行すべきかどうか（一度きり）。
+    /// 次のフレームで Claude セッションを自動再開する (一度きり)。
     pub pending_auto_resume: bool,
 
-    /// 「ユーザーがどこを見ていたか」の保存と復元。
+    /// 「ユーザがどこを見ていたか」の保存と復元。
     pub view_restore: ViewRestore,
 
     /// 画面上端の worktree モニタストリップ (横スクロール位置 + 当たり判定)。
     pub wtbar: WtbarState,
 
-    /// メニューバーの操作状態: どのメニューがフォーカス/オープン中か、
-    /// 直近のバー/ドロップダウン描画で記録されたクリック領域。
+    /// どのメニューが開いているかと、直近の描画で記録したクリック領域。
     pub menu: crate::menu::MenuState,
 
-    /// コードナビゲーション: シンボル索引、ジャンプ履歴、付随するポップアップ。
+    /// シンボル索引、ジャンプ履歴、付随するポップアップ。
     pub code_nav: CodeNav,
 
-    // バックグラウンド処理 (イベントループがポーリング)
+    /// イベントループがポーリングするバックグラウンド処理。
     pub bg: BackgroundOps,
 
-    // 新規worktreeバッジ
-    /// 最近作成されたworktreeのパス（バッジ表示用）。選択時にクリアされる。
+    /// 最近作った worktree。バッジを出し、選択でクリアする。
     pub new_worktree_paths: HashSet<PathBuf>,
 
-    /// Alt+/ で出す、各パネル上の番号バッジ (2 秒で自動的に消える)。
+    /// Alt+/ で出す各パネルの番号バッジ。2 秒で消える。
     pub panel_number_overlay: PanelNumberOverlay,
 
-    // リフロー・トランスクリプトビュー
-    /// 無限スクロールバックモード中にClaude PTYパネルへオーバーレイされる、
-    /// 読み取り専用・折り返し表示のセッションログビューアの状態。
     pub reflow: ReflowView,
 }
 
-/// configから有効なUIテーマ名を解決する。
-///
-/// 解決規則そのものは [config::Config::theme_name] が持つ。シンタックス
-/// ハイライト側も同じ関数を通すので、UIとコードで別のテーマ名を見てしまう
-/// ことはない。
+/// 解決規則は [config::Config::theme_name] が持つ。ハイライト側も同じここを
+/// 通すので、UI とコードで別のテーマを見ることはない。
 fn resolve_theme_name(cfg: &config::Config) -> String {
     cfg.theme_name().to_string()
 }
 
-/// 名前から有効な [Theme] を組み立て、有効ならハイコントラスト変換を
-/// 適用する。すべての呼び出し元（起動時、テーマピッカー、ライブリロード、
-/// OSC11自動切り替え）がこのトグルを同一に扱うための唯一の構築ポイント。
+/// [Theme] の唯一の構築点。起動時・ピッカー・ライブリロード・OSC11 の自動切り替えが
+/// ハイコントラストのトグルを取り違えないよう、ここに集めている。
 fn build_theme(name: &str, high_contrast: bool) -> Theme {
     let theme = Theme::from_name(name);
     if high_contrast {
