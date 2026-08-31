@@ -325,15 +325,22 @@ mod tests {
     }
 
     #[test]
-    fn build_caller_accepts_known_providers() {
-        assert!(build_caller(&api("gemini"), &TaskEnv::default()).is_ok());
+    fn build_caller_accepts_the_known_providers() {
+        // 綴りは大小と前後の空白を無視する。
+        for provider in ["gemini", "GEMINI", "  gemini  "] {
+            assert!(
+                build_caller(&api(provider), &TaskEnv::default()).is_ok(),
+                "{provider}"
+            );
+        }
         assert!(build_caller(&ApiConfig::default(), &TaskEnv::default()).is_ok());
-    }
 
-    #[test]
-    fn build_caller_is_case_and_whitespace_insensitive() {
-        assert!(build_caller(&api("GEMINI"), &TaskEnv::default()).is_ok());
-        assert!(build_caller(&api("  gemini  "), &TaskEnv::default()).is_ok());
+        let cfg = ApiConfig {
+            provider: "command".to_string(),
+            command: vec!["cat".to_string()],
+            ..Default::default()
+        };
+        assert!(build_caller(&cfg, &TaskEnv::default()).is_ok());
     }
 
     /// Conductor が claude CLI を自分で起動することは決してあってはならない。エラーは
@@ -365,16 +372,6 @@ mod tests {
         };
         let err = build_caller(&cfg, &TaskEnv::default()).err().unwrap();
         assert!(err.contains("command"), "actionable message: {err}");
-    }
-
-    #[test]
-    fn build_caller_accepts_nonempty_command() {
-        let cfg = ApiConfig {
-            provider: "command".to_string(),
-            command: vec!["cat".to_string()],
-            ..Default::default()
-        };
-        assert!(build_caller(&cfg, &TaskEnv::default()).is_ok());
     }
 
     #[test]

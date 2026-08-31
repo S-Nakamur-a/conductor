@@ -114,6 +114,7 @@ fn main_worktree_path_from_main_repo() {
         "main worktree should contain .git"
     );
 }
+
 #[test]
 fn remote_url_to_https_base_normalises_every_remote_spelling() {
     for url in [

@@ -151,20 +151,13 @@ fn step_selection_wraps_at_both_ends() {
 }
 
 #[test]
-fn step_selection_is_a_no_op_without_selectable_rows() {
-    let items = vec![MenuItem::Separator, MenuItem::Separator];
-    assert_eq!(step_selection(&items, 0, 1), 0);
-    assert_eq!(step_selection(&items, 1, -1), 1);
-}
-
-#[test]
-fn step_selection_handles_an_empty_menu() {
+fn step_selection_holds_still_on_degenerate_input() {
+    // 選択できる行が無い / 空 / 古いインデックス (選択中にメニューテーブルが変わった)。
+    let separators = vec![MenuItem::Separator, MenuItem::Separator];
+    assert_eq!(step_selection(&separators, 0, 1), 0);
+    assert_eq!(step_selection(&separators, 1, -1), 1);
     assert_eq!(step_selection(&[], 0, 1), 0);
-}
 
-#[test]
-fn step_selection_clamps_an_out_of_range_start() {
-    // 古いインデックス(選択中にメニューテーブルが変わった場合)でも panic しないこと。
     let items = sample();
     assert!(step_selection(&items, 99, 1) < items.len());
 }

@@ -117,21 +117,10 @@ fn trim_raw_history_keeps_under_cap_and_aligns_to_line() {
     // 最も古い内容("aaaa")は削られていなければならない。
     assert!(!text.contains("aaaa"));
 }
+
 #[test]
 fn trim_raw_history_leaves_buffers_within_the_cap_alone() {
-    for (bytes, cap) in [
-        (
-            &b"hello\
-"[..],
-            1024,
-        ),
-        (
-            &b"abcd\
-"[..],
-            5,
-        ),
-        (&b""[..], 0),
-    ] {
+    for (bytes, cap) in [(&b"hello\n"[..], 1024), (&b"abcd\n"[..], 5), (&b""[..], 0)] {
         let mut history: VecDeque<u8> = bytes.iter().copied().collect();
         PtyManager::trim_raw_history(&mut history, cap);
         assert_eq!(
