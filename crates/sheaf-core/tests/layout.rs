@@ -296,7 +296,7 @@ fn 接ぎ木してもルートの外に出るdocumentは捨てる() {
 #[test]
 fn 接ぎ木でルート内に入ったdocumentは出自が合わなければexactにしない() {
     // 索引ルートの外を指す Document は今まで問答無用で捨てていた。接ぎ木を入れると
-    // リポジトリの中に入ってくるので、ここが S1 で唯一、誤答が起こり得る箇所になる。
+    // リポジトリの中に入ってくるので、ここが唯一、誤答が起こり得る箇所になる。
     let root = workdir("graft-in");
     put(&root, "api/main.go", "package main\n");
     // api/ から見た ../shared/util.go は shared/util.go になる。リポジトリ内。

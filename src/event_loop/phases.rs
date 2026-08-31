@@ -130,15 +130,9 @@ fn handle_event(app: &mut App, loop_state: &mut LoopState, event: Event) {
                 key.kind
             );
             loop_state.last_input_time = Instant::now();
-            // D7(a): キー入力があった = マウスはもう能動的な入力デバイスではない。
-            // crossterm はマウスが端末ウィンドウから出たことを報告しないので、
-            // これが無いとアンダーラインや行 / チップ / タブのハイライトが、
-            // ユーザーがキーボードに移ったあともずっと点いたままになる。
-            //
-            // 消すのはポインタ由来のハイライトだけ。ホバー *ポップアップ* は
-            // 下の handle_key_event の担当で、pin されたモーダル (キーで操作)
-            // と一時的なもの (任意のキーで消え、Esc は握り潰す) を区別するのに
-            // スタックが要る。
+            // キー入力があった = マウスはもう能動的な入力デバイスではない。crossterm はマウスが
+            // 端末ウィンドウから出たことを報告しないので、これが無いとアンダーラインや
+            // ハイライトがキーボードに移ったあとも点いたままになる。
             app.clear_pointer_hover();
             handle_key_event(app, key);
         }
@@ -155,9 +149,8 @@ fn handle_event(app: &mut App, loop_state: &mut LoopState, event: Event) {
             // 残らないようハードクリアする (境界ドラッグと同じ種類のズレ)。
             app.terminal.needs_clear = true;
         }
-        // D7(b): crossterm が確実に報告してくれて、かつマウスが我々の描画面から
-        // 出たと言い切れる唯一のケース — 端末ウィンドウ自体がフォーカスを失った
-        // (ユーザーが alt-tab した等)。
+        // crossterm が確実に報告し、かつマウスが描画面から出たと言い切れる唯一のケース —
+        // 端末ウィンドウ自体がフォーカスを失った (alt-tab など)。
         Event::FocusLost => app.clear_all_hover(),
         _ => {}
     }
@@ -282,8 +275,8 @@ pub(super) fn run_background_work(app: &mut App, loop_state: &mut LoopState) {
     // 自動ホバー: マウスがシンボル上で規定時間止まったらポップアップを出し、
     // 猶予時間と無効化を管理する。
     app.tick_hover();
-    // ジャンプ用アンダーライン (D8/D9): ポップアップとは別の、より速い
-    // (150ms・猶予なし) デバウンス。tick_underline_hover を参照。
+    // ジャンプ用アンダーラインはポップアップとは別の、より速い (150ms・猶予なし)
+    // デバウンス。tick_underline_hover を参照。
     app.tick_underline_hover();
 
     if app.overlays.active == crate::overlay::ActiveOverlay::GrepSearch {

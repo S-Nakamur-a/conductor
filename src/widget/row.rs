@@ -7,10 +7,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::time::{Duration, Instant};
 
-/// ポインタが離れてから行がフェードアウトし続ける時間（ミリ秒）。
-/// アニメーションするのは離れる側の行だけ（D2）: 行に入るときは即座に
-/// ライトアップすることでポインタ追従が遅く感じないようにし、逆に離れた側の
-/// 行はイーズアウトすることで行を素早く横切っても滑らかな動きに見えるようにする。
+/// ポインタが離れてから行がフェードアウトし続ける時間 (ミリ秒)。
+///
+/// アニメーションするのは離れる側の行だけ。入るときに即座にライトアップすることで
+/// ポインタ追従が遅く感じないようにし、離れた側をイーズアウトさせることで行を
+/// 素早く横切っても滑らかに見せる。
 const HOVER_FADE_MS: u64 = 120;
 
 /// 1つの行ベースリストにおける hover 状態: 現在ポインタの下にある行と、
@@ -93,11 +94,9 @@ impl HoverRow {
 /// 選択色を保つ。selection の方がより重要な状態であり、hover の色味で薄めてしまうと
 /// ポインタでリストをなぞる間にどの行が選択されているか追いにくくなるため。
 ///
-/// ADR D1（改訂版）に従い、この行ベースリストの hover は前景色のみで表現する
-/// （背景色は使わない）。これは Viewer の行 hover（src/viewer/render/code_line.rs）
-/// の既存の前例に合わせたもの。背景色で表現する方式も試したが却下した:
-/// 11テーマ中7テーマで selected_bg_inactive と区別が付かなかった。これはまさに
-/// hover 中だがフォーカスされていない行が置かれる状態そのものである。
+/// この行ベースリストの hover は前景色のみで表現する (背景色は使わない)。Viewer の行
+/// hover に合わせたもの。背景色方式は 11 テーマ中 7 テーマで selected_bg_inactive と
+/// 区別が付かず却下した。
 pub fn row_style(
     theme: &crate::theme::Theme,
     base_fg: ratatui::style::Color,
@@ -126,18 +125,8 @@ pub fn row_style(
         None => base_fg,
     };
     let style = Style::default().fg(fg);
-    // hover のための2つ目の、色以外のチャンネル（D1改訂版）: 色だけでは
-    // 11パレット全てと行が取り得るすべての基本色をカバーしなければならず、
-    // 圧倒的に最も多い行の色である theme.fg では最も効果が弱くなる。
-    // 下線はパレットに依存せず色覚特性の影響も受けず、このコードベースでは
-    // 既に hover の語彙として使われている: Viewer はポインタの下にある
-    // ジャンプ可能なシンボルに下線を引く（src/viewer/render/code_line.rs）。
-    // また背景色 + BOLD で表現される selection と混同することもない。
-    //
-    // FadingOut には意図的に持ち越さない: 下線は「ポインタが *ここにある*」
-    // ことを示すものであり、離れた瞬間に真ではなくなる。またモディファイアは
-    // 補間できないので、どのみちフェードの途中のどこかで唐突に消えるしかない。
-    // 色のフェードだけで退出をなめらかにする。
+    // 色以外の 2 つ目のチャンネル。色だけでは 11 パレット全てと行が取り得る全ての基本色を
+    // カバーする必要があり、最も多い theme.fg で最も効果が弱くなる。
     if matches!(hover, Some(HoverPhase::On)) {
         style.add_modifier(Modifier::UNDERLINED)
     } else {
@@ -145,51 +134,39 @@ pub fn row_style(
     }
 }
 
-/// hover の下線を除いた同じ行スタイル: 行の名前部分以外
-/// （先頭のインデント、展開矢印、アイコン、origin マーカー、行数）に使う。
+/// hover の下線を除いた同じ行スタイル。先頭のインデント・展開矢印・アイコン・
+/// origin マーカー・行数に使う。
 ///
-/// 下線は「あなたが指しているのはこれだ」という印であり、その対象はファイルで
-/// あって手前のツリー装飾ではない。インデントの下にも下線を引くと、
-/// ネストされた行の下線がクリック可能な要素よりずっと左から始まってしまい、
-/// ポインタのアフォーダンスではなく行全体に渡るテキスト入力の下線のように
-/// 見えていた。色は行全体に引き続き適用されるので、行全体としては見た目に
-/// hover していることが分かる。
+/// 下線は「あなたが指しているのはこれだ」の印で、その対象はファイルであってツリー
+/// 装飾ではない。インデントにも引くと、ネストされた行の下線がクリック可能な要素
+/// よりずっと左から始まる。
 pub fn decoration_style(style: Style) -> Style {
     style.remove_modifier(Modifier::UNDERLINED)
 }
 
-/// hover 中の行の色が、静止時の色からどれだけ離れている必要があるか。
-/// 単位は [Theme::perceptual_distance]（0が同一、黒対白が約765）。
+/// hover 中の行の色が、静止時の色からどれだけ離れている必要があるか。単位は
+/// [Theme::perceptual_distance] (0 が同一、黒対白が約 765)。
 ///
-/// この下限が存在するのは、素朴な変換ではこれを満たせないため。行の色を
-/// 白（ダークテーマ）や黒（ライトテーマ）へ寄せる方式では、色が既にその
-/// 極値付近にあると余地が残っていない — そしてまさに theme.fg、圧倒的多数の
-/// 行が持つ色は設計上その状態にある。以前の lighten(base, 0.45) と比較すると、
-/// theme.fg の行は約53しか動かなかったのに対し theme.hint（untracked）の行は
-/// 約237動いた: hover は最も頻繁に発火する箇所でちょうど4倍弱くなっており、
-/// これが「控えめ」ではなく「あてにならない」と受け取られる原因になっていた。
+/// 下限が要るのは、行の色を白/黒へ寄せる素朴な変換ではこれを満たせないため。色が
+/// 既に極値付近にあると余地が残らず、圧倒的多数の行が持つ theme.fg は設計上その状態
+/// にある。hover が最も頻繁に発火する箇所でいちばん弱くなる。
 const HOVER_MIN_DISTANCE: f64 = 120.0;
 
 /// hover 中の色を寄せる先となり得る明度値。テーマの極性ごとに優先順で並べる。
-/// 2つあるのは、片方が常に到達可能とは限らないため: 既に明るい方のターゲット
-/// （catppuccin の info、L 0.73 のほぼ完全に彩度を持つシアン）に位置している
-/// 行の色は、theme.fg が白へ向かって余地がないのとまったく同じように、
-/// そちらへ向かう余地がない。2つ目のターゲットは反対側にあるので、
-/// どちらか一方には常に余地がある。
 ///
-/// ペアの両方の値とも、テーマの背景色から見て遠い側に置く —
-/// ダークテーマでは明るい側、ライトテーマでは深い側 — ので、
-/// 探索がどちらを選んでも十分に判読できる。
+/// 2 つあるのは、片方が常に到達可能とは限らないため。既に明るい側のターゲットに位置
+/// している行はそちらへ向かう余地がなく、2 つ目は反対側にあるのでどちらかには必ず
+/// 余地がある。両方ともテーマの背景色から見て遠い側に置くので、どちらを選んでも読める。
 const HOVER_TARGET_L_DARK: [f64; 2] = [0.85, 0.52];
 const HOVER_TARGET_L_LIGHT: [f64; 2] = [0.34, 0.14];
 
 /// 下の探索が辿るステップ数。強調の粒度を決めるだけのもの。
 const HOVER_STEPS: u32 = 20;
 
-/// 固定トークンではなく行自身の色から導く。以前は theme.accent を使っていたが、
-/// solarized-dark と gruvbox は accent == warning なので、未ステージの行を hover すると
-/// ステージ済みと同じ色になり working tree について嘘をついていた。押し出し量も固定に
-/// しないのは、固定だと変化の大きさが出発点の色に依存してしまうため。
+/// 固定トークンではなく行自身の色から導く。solarized-dark と gruvbox は
+/// accent == warning なので、固定トークンだと未ステージの行を hover するとステージ済みと
+/// 同じ色になり working tree について嘘をつく。押し出し量も固定にしないのは、変化の
+/// 大きさが出発点の色に依存してしまうため。
 fn hover_emphasis(
     theme: &crate::theme::Theme,
     base_fg: ratatui::style::Color,
@@ -345,11 +322,8 @@ mod tests {
         let theme = test_theme();
         let base_fg = theme.fg;
 
-        // selected x panel_focused x hover の行列を代表するケース。
-        // （個別に手で決めた期待 Style と比較するのではなく）すべてのペアを
-        // 比較することがこのテストを意味あるものにしている:
-        // 固定の期待値と比較するだけでは実装をそのまま繰り返すだけで、
-        // 自明に通ってしまう。
+        // 固定の期待 Style と比較するのではなく、すべてのペアを比較することがこのテストを
+        // 意味あるものにしている。固定値との比較は実装をそのまま繰り返すだけで自明に通る。
         let cases = [
             ("normal", row_style(&theme, base_fg, false, true, None)),
             (
@@ -470,17 +444,14 @@ mod tests {
         assert_ne!(mid, Some(base));
     }
 
-    /// hover が *嘘をつく* 不具合の回帰防止: solarized-dark と gruvbox では
-    /// hover 色として使っていた theme.accent が theme.warning
-    /// （ステージ済みの色）と等しく、未ステージのファイルを hover すると
-    /// ステージ済みに見えていた。強調は今では行自身の色から導出されるので、
-    /// これはすべてのテーマ、意味を持つすべての基本色について成り立つ。
+    /// hover が嘘をつく不具合の回帰防止。solarized-dark と gruvbox では accent == warning
+    /// (ステージ済みの色) なので、未ステージのファイルがステージ済みに見えていた。
     #[test]
     fn hover_never_repaints_a_row_as_another_meaningful_token() {
         for &name in crate::theme::Theme::all_names() {
             let theme = crate::theme::Theme::from_name(name);
             // hover 中の行が成りすましてはならない意味を持つトークン群:
-            // D6 の4つのステージ色に加え、ツリーのディレクトリ色。
+            // 4 つのステージ色に加え、ツリーのディレクトリ色。
             let meaningful = [
                 ("error/unstaged", theme.error),
                 ("warning/staged", theme.warning),
@@ -509,11 +480,8 @@ mod tests {
         }
     }
 
-    /// 強調ロジックを作り直した狙い: 行がどの色から始まっていても hover は
-    /// *等しく* 見えなければならない。以前の変換は暗い行ではこの下限を
-    /// クリアしていたが、普通の theme.fg の行では2〜3倍不足していた。
-    /// そのため同じ操作でも、ファイルの git 状態によって明らかに異なる
-    /// フィードバックが生じていた。
+    /// 行がどの色から始まっていても hover は等しく見えなければならない。満たさないと、
+    /// 同じ操作でもファイルの git 状態によって明らかに異なるフィードバックが生じる。
     #[test]
     fn hover_clears_the_visibility_floor_on_every_theme_and_base_colour() {
         for &name in crate::theme::Theme::all_names() {
@@ -610,10 +578,7 @@ mod tests {
 
     #[test]
     fn lerp_dummy_color_is_used_directly_when_hover_is_none_or_non_rgb() {
-        // hover がないとき row_style が誤って lerp を呼び出さないことの
-        // 健全性チェック。非RGBの base_fg を使うことで検証する（lerp は
-        // Theme::lerp の契約上いずれにせよそれをそのまま返すが、こうしておく
-        // ことで後から読む人にとって分岐の形が明示的になる）。
+        // hover がないとき row_style が lerp を呼ばないこと。非 RGB の base_fg で検証する。
         let theme = test_theme();
         let style = row_style(&theme, Color::Reset, false, true, None);
         assert_eq!(style.fg, Some(Color::Reset));

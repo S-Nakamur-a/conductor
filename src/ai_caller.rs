@@ -36,12 +36,6 @@
 //!   ([TaskEnv] を参照)、ユーザーがキャンセルしたら子プロセスを kill する。
 //!   コマンドは単に kill されるだけで、通知は受けない。
 //!
-//! コマンドではなく機能の側に属するもの
-//!
-//! 各タスクは自分のシステムプロンプトを書き、制約はそこに置く。スマート worktree の
-//! 命名はモデルに「ツールを使わず JSON オブジェクト 1 つで答えよ」と伝える。
-//! 形式から外れた応答を再試行するかどうかも同様に機能側の判断。再試行のコストを
-//! 知っているのはその機能だけだから。
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -100,16 +94,6 @@ impl AiCaller for GeminiCaller {
         .map_err(|e| format!("{e}"))
     }
 }
-
-// 組み込みの Claude プロバイダをあえて置いていない。Conductor は補完のために
-// claude プロセスを起動しない。使いたいなら構わないが、それは設定の話であって
-// ラッパースクリプトも要らない:
-//
-//     [api]
-//     provider = "command"
-//     command = ["claude", "-p", "{prompt}"]
-//
-// プロンプトを入れて補完を出す CLI なら、他のものも同じやり方で設定できる。
 
 /// 組み立て済みのプロンプトに置き換えられるプレースホルダ。これがあると、
 /// プロンプトの受け渡しが stdin から argv へ切り替わる。
@@ -182,22 +166,17 @@ impl AiCaller for CommandCaller {
             .spawn()
             .map_err(|e| format!("Failed to spawn AI command '{program}': {e}"))?;
 
-        // stdout と stderr はそれぞれ専用スレッドで吸い出す。よく喋るコマンド
-        // (進捗を stderr に出すツールなど) がパイプのバッファを埋めて、終了する前に
-        // デッドロックすることがないようにするため。
+        // stdout と stderr はそれぞれ専用スレッドで吸い出す。よく喋るコマンドがパイプの
+        // バッファを埋めて、終了する前にデッドロックしないようにするため。
         let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
         let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
 
-        // プロンプトを渡す。既に引数として渡してある場合でも stdin は即座に閉じる
-        // (ハンドルを drop する)。それでも stdin を読むツールには、永久にブロックする
-        // のではなく EOF を見せなければならないし、プロンプトを 2 回送るのは
-        // まったく送らないより悪いから。
+        // 引数として渡してある場合でも stdin は即座に閉じる。stdin を読むツールに EOF を
+        // 見せないと永久にブロックするし、プロンプトを 2 回送るのは送らないより悪い。
         //
-        // 書き込みは別スレッドに出す。レビューのプロンプトはパイプのバッファ
-        // (64KB 程度) を平気で超えるので、ここで待つと stdin を読まないコマンドを
-        // 指したときに下の loop へ辿り着けず、タイムアウトもキャンセルも効かなくなる。
-        // 書けなかったこと自体は失敗にしない (相手が途中で読むのをやめた EPIPE は
-        // 正常にもなり得る)。成否は終了コードと stdout で見る。
+        // 書き込みは別スレッドに出す。レビューのプロンプトはパイプのバッファ (64KB 程度) を
+        // 超えるので、ここで待つと stdin を読まないコマンドでタイムアウトもキャンセルも
+        // 効かなくなる。書けなかったこと自体は失敗にしない (EPIPE は正常にもなり得る)。
         let stdin_writer = child.stdin.take().map(|mut stdin| {
             let payload = if prompt_in_argv {
                 Vec::new()
@@ -345,8 +324,6 @@ mod tests {
         }
     }
 
-    // build_caller のプロバイダ選択と検証
-
     #[test]
     fn build_caller_accepts_known_providers() {
         assert!(build_caller(&api("gemini"), &TaskEnv::default()).is_ok());
@@ -359,10 +336,8 @@ mod tests {
         assert!(build_caller(&api("  gemini  "), &TaskEnv::default()).is_ok());
     }
 
-    /// Conductor が claude CLI を自分で起動することは決してあってはならないので、
-    /// かつてまさにそれをしていたプロバイダ名は、いまはただの未知の値になっている。
-    /// そしてエラーは command を指し示さねばならない。Claude を使う構成はそちらで
-    /// 組むから。
+    /// Conductor が claude CLI を自分で起動することは決してあってはならない。エラーは
+    /// command を指し示さねばならない — Claude を使う構成はそちらで組むから。
     #[test]
     fn build_caller_rejects_the_removed_claude_provider() {
         let err = build_caller(&api("claude"), &TaskEnv::default())
@@ -402,18 +377,13 @@ mod tests {
         assert!(build_caller(&cfg, &TaskEnv::default()).is_ok());
     }
 
-    // tail_chars
-
     #[test]
     fn tail_chars_takes_last_n() {
         assert_eq!(tail_chars("hello", 3), "llo");
         assert_eq!(tail_chars("hi", 5), "hi");
         assert_eq!(tail_chars("hi", 0), "");
-        // マルチバイト入力でも文字境界を壊さない
         assert_eq!(tail_chars("あいうえお", 2), "えお");
     }
-
-    // CommandCaller (実際のサブプロセス。Unix のみ)
 
     #[cfg(unix)]
     mod command {
@@ -454,13 +424,11 @@ mod tests {
             assert_eq!(reported, std::fs::canonicalize(dir.path()).unwrap());
         }
 
-        /// タイムアウトを指定したタスクはその値を使い、設定の値は指定が無いときだけ
-        /// 埋める。数秒の命名を想定した command_timeout_secs の下で、それより
-        /// 長く走るタスクが頭打ちにされないための口。
+        /// タスク側のタイムアウトが設定値を上書きすること。数秒の命名を想定した
+        /// command_timeout_secs の下で、それより長く走るタスクが頭打ちにされないための口。
         ///
-        /// 組み立てた caller を覗くのではなく振る舞いで検証する。設定側は
-        /// タイムアウトを完全に無効にしてあるので、コマンドが kill されるのは
-        /// タスク自身の値が届いたときだけ。
+        /// 組み立てた caller を覗くのではなく振る舞いで検証する。設定側はタイムアウトを
+        /// 完全に無効にしてあるので、kill されるのはタスク自身の値が届いたときだけ。
         #[test]
         fn task_timeout_overrides_the_configured_one() {
             let cfg = ApiConfig {
@@ -492,8 +460,7 @@ mod tests {
         #[test]
         fn prompt_placeholder_delivers_via_argv() {
             let caller = CommandCaller {
-                // printf %s は引数をそのまま出すので、stdout は argv に着地した
-                // ものそのものになる。
+                // printf %s は引数をそのまま出すので、stdout は argv に着地したものそのものになる。
                 cmd: vec![
                     "printf".to_string(),
                     "%s".to_string(),
@@ -581,10 +548,9 @@ mod tests {
             assert!(err.contains("empty"), "got: {err}");
         }
 
-        /// stdin を読まないコマンドに、パイプのバッファを超えるプロンプトを渡しても
-        /// 打ち切れる。書き込みを待ってから時間を見る作りだと、ここで止まったまま
-        /// タイムアウトもキャンセルも一度も効かない。レビューのプロンプトは
-        /// 実際にこの大きさになる。
+        /// stdin を読まないコマンドに、パイプのバッファを超えるプロンプトを渡しても打ち切れる。
+        /// 書き込みを待ってから時間を見る作りだと、ここで止まったままタイムアウトもキャンセルも
+        /// 効かない。レビューのプロンプトは実際にこの大きさになる。
         #[test]
         fn a_command_that_never_reads_stdin_still_times_out() {
             let caller = sh("sleep 30", 1);

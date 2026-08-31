@@ -347,10 +347,8 @@ pub struct SymbolActionOverlay {
     pub source_screen_row: usize,
 }
 
-/// マウスやカーソルが乗っていて、待機のデバウンスが明けてホバーポップアップが
-/// 解決されるのを待っているシンボル。resolved は (ポップアップが出たかどうかに
-/// かかわらず) 検索を試みた時点で true になる。カーソルが止まっている間、
-/// フレームごとの処理が毎フレーム計算し直さないようにするため。
+/// 待機のデバウンスが明けてホバーポップアップが解決されるのを待っているシンボル。
+/// resolved は検索を試みた時点で true になる (フレームごとに計算し直さないため)。
 pub struct HoverCandidate {
     /// カーソル・マウスの下にある識別子。
     pub symbol: String,
@@ -363,9 +361,9 @@ pub struct HoverCandidate {
     pub anchor_row: u16,
     /// シンボル先頭の画面上の絶対桁。横方向の配置に使う。
     pub anchor_col: u16,
-    /// ソース行におけるシンボルの開始桁 (0 始まり、h_scroll 適用前の内容文字での桁)。
-    /// 解決後に HoverInfoOverlay::target_* へ引き継がれ、マウスの現在位置とは
-    /// 無関係にポップアップの対象をハイライトし続けられるようにする。
+    /// ソース行におけるシンボルの開始桁 (0 始まり、h_scroll 適用前)。解決後に
+    /// HoverInfoOverlay::target_* へ引き継がれ、マウスの現在位置とは無関係に対象を
+    /// ハイライトし続けられるようにする。
     pub start_col: usize,
     /// 終了桁 (この桁は含まない)。start_col を参照。
     pub end_col: usize,
@@ -407,18 +405,13 @@ pub struct HoverRefs {
     pub preview: Option<HoverPreview>,
 }
 
-/// シンボルのホバー情報ポップアップ。Viewer のカーソル下にあるシンボルの
-/// シグネチャ・doc・参照。マウスがシンボル上で止まるか、キーボードのカーソルが
-/// 動かなくなると自動で表示される。info は解決済みのポップアップ
-/// (None は非表示)、pending は待機のデバウンスを数えている候補。
-/// anchor_row と anchor_col は配置に使う、解決したシンボルの画面上の位置。
+/// シンボルのホバー情報ポップアップ。マウスがシンボル上で止まるか、キーボードの
+/// カーソルが動かなくなると自動で表示される。
 ///
-/// ここから対話的なモーダルの階層へ発展し得る: N refs をクリックすると
-/// ポップアップが固定され [HoverRefs] が開き、行をクリックすると
-/// [HoverPreview] が開く。pinned のポップアップは Esc か外側のクリックまで
-/// フォーカスや待機の解除を生き延びる。leave_at は、まだ一時的なポップアップを
-/// マウスがシンボルから外れたあと少しだけ生かしておく猶予 (カーソルが
-/// ポップアップまで移動してクリックできるように)。
+/// ここから対話的なモーダルの階層へ発展し得る: N refs をクリックするとポップアップが
+/// 固定され [HoverRefs] が開き、行をクリックすると [HoverPreview] が開く。pinned は
+/// Esc か外側のクリックまで生き延びる。leave_at はマウスがシンボルから外れたあと
+/// 一時的なポップアップを少し生かしておく猶予。
 #[derive(Default)]
 pub struct HoverInfoOverlay {
     pub info: Option<crate::viewer::hover_info::HoverInfo>,
@@ -427,16 +420,12 @@ pub struct HoverInfoOverlay {
     pub anchor_col: u16,
     pub pinned: bool,
     pub leave_at: Option<std::time::Instant>,
-    /// 現在の info を解決したときに表示していたファイル。(固定されていない)
-    /// ポップアップの下で Viewer がファイルを切り替えると、これが
-    /// content.current_file と一致しなくなり、古くなったポップアップが
-    /// 毎フレームの処理で落とされる。
+    /// 現在の info を解決したときに表示していたファイル。content.current_file と一致
+    /// しなくなると、古くなったポップアップが毎フレームの処理で落とされる。
     pub shown_file: Option<String>,
-    /// info が説明しているシンボルのソース行 (1 始まり)。ポップアップが
-    /// 表示されているあいだ、PointerState::hover_symbol とは独立に描画側が
-    /// そのシンボルをハイライトし続けられるようにする。マウスは既にそこから
-    /// 外れているかもしれないし、ポップアップの離脱猶予の中にいるかもしれないが、
-    /// 下線そのものにはそうした猶予が無いため。
+    /// info が説明しているシンボルのソース行 (1 始まり)。PointerState::hover_symbol とは
+    /// 独立に描画側がハイライトし続けるために持つ — マウスは既に外れているかもしれないが、
+    /// 下線そのものには猶予が無い。
     pub target_line: usize,
     /// target_line 上のハイライト対象シンボルの開始桁 (target_line を参照)。
     pub target_start_col: usize,
