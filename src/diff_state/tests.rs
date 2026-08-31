@@ -990,6 +990,7 @@ fn binary_file_stays_listed_without_line_counts() {
     assert!(f.hunks.is_empty());
 }
 
+#[cfg(target_os = "macos")]
 fn fs_ignores_case(dir: &std::path::Path) -> bool {
     let probe = dir.join("CaseProbe");
     std::fs::write(&probe, b"").unwrap();
@@ -1000,6 +1001,10 @@ fn fs_ignores_case(dir: &std::path::Path) -> bool {
 
 /// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
 /// git 本体は clean と報告する。
+// 大文字小文字を区別しないファイルシステムでしか再現しない。cfg で外して
+// あるのは、走らない環境では『テストが無い』ことが一覧から見えるようにする
+// ため。実行時に return すると、検証していないのに緑になる。
+#[cfg(target_os = "macos")]
 #[test]
 fn test_case_colliding_entry_not_reported_as_deleted() {
     let dir = tempfile::tempdir().unwrap();

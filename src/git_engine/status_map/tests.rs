@@ -186,6 +186,7 @@ fn git_status_map_classify_file_under_gitignored_dir_inherits_ignored_via_prefix
     assert_eq!(map.classify("build/deep/x.txt"), TreeGitState::Ignored);
 }
 
+#[cfg(target_os = "macos")]
 fn fs_ignores_case(dir: &Path) -> bool {
     let probe = dir.join("CaseProbe");
     fs::write(&probe, b"").unwrap();
@@ -194,6 +195,7 @@ fn fs_ignores_case(dir: &Path) -> bool {
     ignores
 }
 
+#[cfg(target_os = "macos")]
 fn build_case_colliding_fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let repo = git2::Repository::init(tmp.path()).expect("init repo");
@@ -220,6 +222,10 @@ fn build_case_colliding_fixture() -> tempfile::TempDir {
 
 /// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
 /// git 本体は clean と報告する。
+// 大文字小文字を区別しないファイルシステムでしか再現しない。cfg で外して
+// あるのは、走らない環境では『テストが無い』ことが一覧から見えるようにする
+// ため。実行時に return すると、検証していないのに緑になる。
+#[cfg(target_os = "macos")]
 #[test]
 fn git_status_map_case_colliding_entry_is_not_deleted() {
     let tmp = build_case_colliding_fixture();
