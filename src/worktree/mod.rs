@@ -421,7 +421,7 @@ mod tests {
     /// 解決できないベース ref を指定しても手元の変更は消えないこと (17 個の変更ファイルが
     /// (0) と表示される不具合の回帰防止)。
     #[test]
-    fn bg_diff_result_with_error_keeps_the_files() {
+    fn エラー付きの結果でもファイル一覧は残す() {
         let mut ds = DiffState::new("origin/main", DiffViewMode::Unified);
         apply_bg_diff_result(
             &mut ds,
@@ -474,7 +474,7 @@ mod tests {
     /// ベースを解決できなくてもワーカーが HEAD 基準の diff を返し続けること
     /// (apply_bg_diff_result は「反映」側しか証明しない)。
     #[test]
-    fn compute_bg_diff_keeps_the_files_when_base_is_unresolvable() {
+    fn ベースが解決できなくても背景のdiffはファイルを返す() {
         let dir = repo_with_uncommitted_change();
 
         let result = compute_bg_diff(dir.path(), "no-such-base", false, 4);
@@ -496,7 +496,7 @@ mod tests {
 
     /// 解決可能なベースならエラーは残らず、パネルにバナーは表示されない。
     #[test]
-    fn compute_bg_diff_reports_no_error_for_a_resolvable_base() {
+    fn 解決できるベースならエラーは出ない() {
         let dir = repo_with_uncommitted_change();
 
         let result = compute_bg_diff(dir.path(), "main", false, 4);
@@ -515,7 +515,7 @@ mod tests {
     /// あとから来た成功結果は、古いエラーをクリアしなければならない。そうしないと
     /// パネルにエラーマーカーが残り続けてしまう。
     #[test]
-    fn bg_diff_result_without_error_clears_a_stale_one() {
+    fn エラー無しの結果は古いエラーを消す() {
         let mut ds = DiffState::new("main", DiffViewMode::Unified);
         ds.error = Some("previous failure".to_string());
         apply_bg_diff_result(

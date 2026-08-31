@@ -7,21 +7,21 @@ use super::index::SymbolIndex;
 use super::model::{Scope, Symbol, SymbolKind};
 
 #[test]
-fn a_fresh_index_is_unavailable_until_it_is_built() {
+fn 作りたての索引は構築するまで使えない() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     assert!(!idx.is_available());
     assert_eq!(idx.root(), PathBuf::from("/tmp"));
 }
 
 #[test]
-fn an_unbuilt_index_finds_no_definitions() {
+fn 構築前の索引は定義を見つけない() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     let results = idx.find_definitions("foo", std::path::Path::new(""));
     assert!(results.is_empty());
 }
 
 #[test]
-fn every_top_level_rust_item_kind_is_extracted() {
+fn rustのトップレベルの項目は全種類拾う() {
     let source = r#"
 pub fn hello_world() {
     println!("hello");
@@ -99,7 +99,7 @@ macro_rules! my_macro {
 }
 
 #[test]
-fn fields_are_not_offered_as_definitions() {
+fn フィールドは定義として提示しない() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     {
         let mut data = idx.data.lock().unwrap();
@@ -140,7 +140,7 @@ fn write_fixture(dir: &std::path::Path, name: &str, contents: &str) {
 }
 
 #[test]
-fn find_references_skips_non_code_extensions() {
+fn 参照検索はコードでない拡張子を飛ばす() {
     let dir = std::env::temp_dir().join(format!("refs_ext_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -162,7 +162,7 @@ fn find_references_skips_non_code_extensions() {
 }
 
 #[test]
-fn find_references_skips_comment_and_string_hits() {
+fn 参照検索はコメントと文字列の一致を飛ばす() {
     let dir = std::env::temp_dir().join(format!("refs_mask_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -199,7 +199,7 @@ fn find_references_skips_comment_and_string_hits() {
 /// 計測すべきは上限付きの呼び出しであり、しかも最も負荷の高い名前で行う
 /// 必要がある。
 #[test]
-fn hover_reference_count_stays_within_a_frame() {
+fn ホバーの参照数はフレームの予算に収まる() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let idx = SymbolIndex::new(root.clone());
 
@@ -228,7 +228,7 @@ fn hover_reference_count_stays_within_a_frame() {
 /// ならない。特徴的な名前ならファイル数は少なく、マスク導入前のベースラインで
 /// ある 8〜10ms に近い値に収まるはず。
 #[test]
-fn find_references_defers_parsing_to_files_that_match() {
+fn パースは名前が当たったファイルまで遅らせる() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let idx = SymbolIndex::new(root.clone());
     idx.find_references("count_references_upto", &root);
@@ -249,7 +249,7 @@ fn find_references_defers_parsing_to_files_that_match() {
 }
 
 #[test]
-fn find_implementations_matches_the_impl_symbol() {
+fn 実装検索はimplのシンボルに当たる() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     {
         let mut data = idx.data.lock().unwrap();
@@ -292,7 +292,7 @@ fn scratch_tree(tag: &str, files: &[(&str, &str)]) -> PathBuf {
 /// ならない。古いツリーについて答え続けることが、別のブランチの行番号で
 /// もっともらしいファイルへジャンプしてしまうという失敗として現れる。
 #[test]
-fn rerooting_replaces_what_the_index_answers_for() {
+fn 根の付け替えは索引の答える対象を差し替える() {
     let a = scratch_tree("root_a", &[("a.rs", "pub fn only_in_a() {}\n")]);
     let b = scratch_tree("root_b", &[("b.rs", "pub fn only_in_b() {}\n")]);
 
@@ -338,7 +338,7 @@ fn rerooting_replaces_what_the_index_answers_for() {
 /// ファイルシステム変更経路はその場で再構築するので、そうしないと保存の
 /// たびに「未準備」状態にばたついてしまう。
 #[test]
-fn rerooting_to_the_same_path_is_a_no_op() {
+fn 同じパスへの付け替えは何もしない() {
     let a = scratch_tree("root_same", &[("a.rs", "pub fn keep() {}\n")]);
     let idx = SymbolIndex::new(a.clone());
     idx.build().unwrap();
@@ -365,7 +365,7 @@ fn rerooting_to_the_same_path_is_a_no_op() {
 /// まさに「刻む → root を動かす → 完了する」であり、スレッドを使った版では
 /// スケジューラがたまたま協力してくれた時にしかこの状況に到達しない。
 #[test]
-fn a_build_that_started_before_a_reroot_is_discarded() {
+fn 付け替え前に始まったビルドは捨てる() {
     let old = scratch_tree("stale_old", &[("old.rs", "pub fn from_old_tree() {}\n")]);
     let new = scratch_tree("stale_new", &[("new.rs", "pub fn from_new_tree() {}\n")]);
 
@@ -416,7 +416,7 @@ fn a_build_that_started_before_a_reroot_is_discarded() {
 /// 存在しない」と答えてしまう — これはこの作業がなくそうとしている
 /// 「黙って間違った答えを返す」問題そのものを、別の場所に向けているだけである。
 #[test]
-fn find_references_keeps_hits_in_unparseable_languages() {
+fn パースできない言語の一致は捨てない() {
     let dir = scratch_tree(
         "refs_unsupported",
         &[
@@ -447,7 +447,7 @@ fn find_references_keeps_hits_in_unparseable_languages() {
 /// (.tsx の data が無関係な .ts の const data を引き当てたのがこれ)。言語を
 /// またいで 1 つの性質として見る — 言語ごとに書くと、次に足した言語で同じ穴が空く。
 #[test]
-fn locals_are_never_definition_candidates() {
+fn ローカル束縛は定義の候補にしない() {
     let dir = scratch_tree(
         "locals",
         &[

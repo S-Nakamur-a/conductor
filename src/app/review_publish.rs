@@ -229,12 +229,12 @@ mod tests {
     use super::should_start_publish;
 
     #[test]
-    fn confirming_again_while_a_publish_is_running_does_not_start_a_new_one() {
+    fn 投稿中にもう一度確定しても二重に始めない() {
         assert!(!should_start_publish(true));
     }
 
     #[test]
-    fn confirming_starts_when_nothing_is_running() {
+    fn 何も走っていなければ確定で始まる() {
         assert!(should_start_publish(false));
     }
 }

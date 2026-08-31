@@ -412,7 +412,7 @@ mod tests {
     /// 期待値は実装から導出せずフィクスチャから手で数えたもの。マスクを自身の構築方法に
     /// 照らして検証しても、何をしても通ってしまう。
     #[test]
-    fn rust_masks_comments_strings_and_chars() {
+    fn rustはコメントと文字列と文字をマスクする() {
         let src = "\
 // comment mentions Foo
 fn real(x: i32) -> Foo {
@@ -472,7 +472,7 @@ fn real(x: i32) -> Foo {
     }
 
     #[test]
-    fn go_masks_comments_and_both_string_forms() {
+    fn goはコメントと両方の文字列形式をマスクする() {
         let src =
             "package main\n// Foo does things\nfunc Bar() {\n\ts := \"Foo\"\n\tr := `Foo raw`\n}\n";
         let mask = CodeMask::compute(src, "main.go");
@@ -509,7 +509,7 @@ fn real(x: i32) -> Foo {
     /// リテラルの補間はコードであり、名前に "string" を含むノードの中に
     /// 座っていてもジャンプ可能なままでなければならない。
     #[test]
-    fn typescript_keeps_template_interpolations_jumpable() {
+    fn typescriptのテンプレート補間は飛べるまま残す() {
         let src = "// Foo comment\nconst t = `text ${realCode} more`;\nconst s = \"Foo\";\n";
         let mask = CodeMask::compute(src, "a.ts");
 
@@ -540,7 +540,7 @@ fn real(x: i32) -> Foo {
     /// format 文字列によって捕捉された識別子は実在する束縛を名指ししており、文法がリテラル
     /// 全体を構造のない 1 つの string_content として渡してきてもナビゲート可能でなければならない。
     #[test]
-    fn rust_keeps_inline_format_captures_jumpable() {
+    fn rustのformat捕捉は飛べるまま残す() {
         let src = "\
 fn f(widget: u32) {
     let s = format!(\"{widget} and {}\", widget);
@@ -612,7 +612,7 @@ fn f(widget: u32) {
     }
 
     #[test]
-    fn block_comment_spanning_lines_masks_all_of_them() {
+    fn 複数行のブロックコメントは全行をマスクする() {
         let src = "fn a() {}\n/* Foo\n   Bar\n   Baz */\nfn b() {}\n";
         let mask = CodeMask::compute(src, "lib.rs");
 
@@ -629,7 +629,7 @@ fn f(widget: u32) {
     /// タブ展開はカラムをずらすが順序は変えない。マスクが occurrence index をキーにしている
     /// 理由そのもの。Go は慣習としてタブインデントされるので、特殊ではなく一般的なケース。
     #[test]
-    fn occurrence_indices_survive_tab_expansion() {
+    fn 出現番号はタブ展開を生き延びる() {
         let src = "package main\nfunc f() {\n\tx := \"Foo\"\n}\n";
         let mask = CodeMask::compute(src, "main.go");
 
@@ -644,7 +644,7 @@ fn f(widget: u32) {
     }
 
     #[test]
-    fn unsupported_language_offers_nothing() {
+    fn 対応しない言語は何も提示しない() {
         let src = "def build(x):\n    return x\n";
         let mask = CodeMask::compute(src, "script.py");
         assert!(!mask.is_code(1, 0));
@@ -652,7 +652,7 @@ fn f(widget: u32) {
     }
 
     #[test]
-    fn out_of_range_lookups_are_not_code() {
+    fn 範囲外の問い合わせはコードではない() {
         let mask = CodeMask::compute("fn a() {}\n", "lib.rs");
         assert!(!mask.is_code(0, 0), "line numbers are 1-based");
         assert!(!mask.is_code(99, 0), "past end of file");

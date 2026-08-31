@@ -723,13 +723,13 @@ mod tests {
     }
 
     #[test]
-    fn no_scip_and_no_hashes_file_is_none() {
+    fn scipもhashesも無ければnoneになる() {
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         assert!(load(dir.path(), dir.path()).is_none());
     }
 
     #[test]
-    fn missing_scip_file_is_none() {
+    fn scipが無ければnoneになる() {
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1325,7 +1325,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_hashes_file_is_none() {
+    fn hashesが無ければnoneになる() {
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1426,7 +1426,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_tree_answers_with_exact() {
+    fn 索引のあるツリーはexactで答える() {
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         place_index(dir.path());
 
@@ -1442,7 +1442,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_worktree_finds_the_index_at_the_main_worktree() {
+    fn リンクされたworktreeはmain側の索引を見つける() {
         // リンクされた worktree の Repository::workdir() はリンク先自身を指すので、
         // repo_root にそれをそのまま渡すと、main 側にしか無い .conductor/ が
         // 見つからない。commondir() を辿って main を解決できているかを確かめる。
@@ -1478,7 +1478,7 @@ mod tests {
     }
 
     #[test]
-    fn other_tree_with_the_same_content_still_answers() {
+    fn 内容が同じ別ツリーでも答える() {
         // worktree の形。内容が同じファイルは索引を使い回せる。これが成り立たないと
         // worktree ごとに索引を作ることになり、この設計の意味が無くなる。
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
@@ -1497,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn other_tree_with_a_changed_file_does_not_answer() {
+    fn 変わったファイルには答えない() {
         // 同じ worktree の形だが、そのファイルが編集されている。索引の言う 0 行目は
         // もう greet の定義ではないので、確信度つきで答えてはいけない。
         //
@@ -1526,7 +1526,7 @@ mod tests {
     /// 合成した索引では、実索引の Document 数(345)やパスの綴りまでは検査できない。
     #[test]
     #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
-    fn real_index_loads_from_the_repository_it_was_generated_for() {
+    fn 実索引は生成元のリポジトリから読める() {
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO")
             .expect("CONDUCTOR_TEST_REPO に .conductor/ へ索引を置いたリポジトリのパスを渡すこと");
         let repo_root = Path::new(&repo_root);
@@ -1546,7 +1546,7 @@ mod tests {
     /// enclosing_range を実際に書くかを検査できない。
     #[test]
     #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
-    fn real_index_answers_what_encloses_a_line() {
+    fn 実索引は行を囲むものを答える() {
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
         let repo_root = Path::new(&repo_root);
         let store = load(repo_root, repo_root).expect("索引と出自の申告が揃っている");
@@ -1591,7 +1591,7 @@ mod tests {
     /// フィールド番号がまさにそれ) と、種別の番号が変わったとき。
     #[test]
     #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
-    fn real_index_describes_what_it_answers() {
+    fn 実索引は答えたものの説明を持つ() {
         use crate::symbol_index::{code_identifiers_on_line, occurrence_span_in_source};
 
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
@@ -1692,7 +1692,7 @@ mod tests {
     /// 対象は Rust なのでタブを含む行が無く、ここでは元ソースから取っている。
     #[test]
     #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
-    fn real_index_answers_across_the_repository() {
+    fn 実索引はリポジトリ全体に答える() {
         use crate::symbol_index::{code_identifiers_on_line, occurrence_span_in_source};
 
         let repo_root = std::env::var("CONDUCTOR_TEST_REPO").expect("CONDUCTOR_TEST_REPO");
@@ -1816,7 +1816,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_paths_are_spelled_the_way_scip_spells_them() {
+    fn 入れ子のパスはscipの綴りに合わせる() {
         // 表の鍵は SCIP の relative_path と突き合わせられる。綴りがずれると
         // 一致するファイルが 1 つも無くなり、全部が構文層に落ちる。誤答にはならないので
         // 気づけず、テストも緑のままになる。深い階層で綴りを固定しておく。
@@ -1840,7 +1840,7 @@ mod tests {
     /// `index.hashes` に書かれたハッシュが、そのまま(取り直さずに)期待ハッシュの表に
     /// 入ることを確かめる。
     #[test]
-    fn expected_hashes_uses_the_recorded_hash_as_is() {
+    fn 期待ハッシュは記録された値をそのまま使う() {
         let dir = tempfile::tempdir().unwrap();
         let hashes_path = dir.path().join("index.hashes");
         let hash = sheaf_core::blob_hash(b"fn f() {}\n");
@@ -1854,7 +1854,7 @@ mod tests {
     /// Exact 率は汚れ具合で変わるため assert できないので、固定の一時リポジトリに
     /// 1 ファイルずつ用意して個別に検査する。
     #[test]
-    fn provenance_table_governs_freshness_per_file() {
+    fn 出自の表が鮮度をファイル単位で決める() {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
 

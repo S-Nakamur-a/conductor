@@ -234,7 +234,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn focus_is_pty_only_for_pty_panels() {
+    fn is_ptyになるのはptyのパネルだけ() {
         assert!(Focus::TerminalClaude.is_pty());
         assert!(Focus::TerminalShell.is_pty());
         assert!(Focus::Editor.is_pty());
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_focus_uses_editor_keymap_context() {
+    fn editorのフォーカスはeditorのkeymap文脈を使う() {
         assert_eq!(
             Focus::Editor.key_context(),
             crate::keymap::KeyContext::Editor

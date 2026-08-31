@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn reselect_pins_to_branch_when_order_shifts() {
+    fn 並びが変わってもブランチ名で選び直す() {
         // 選択は "feat-b"（インデックス2）を指している。より前に新しいworktreeが
         // 挿入されるとインデックスがずれる。選択は "feat-b" に追従しなければ
         // ならず、インデックス2（今は別のブランチを保持している）に留まっては
@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn reselect_falls_back_when_branch_removed() {
+    fn ブランチが消えたら選び直しは落ちる先を持つ() {
         // "feat-a"（インデックス1）が削除され、"main" だけが残っている。古い
         // インデックス1は範囲外なので、最後の有効なインデックス（main）に
         // クランプしなければならない。
@@ -352,18 +352,18 @@ mod tests {
     }
 
     #[test]
-    fn reselect_keeps_index_when_branch_unchanged() {
+    fn ブランチが変わらなければ添字を保つ() {
         let after = [wt("main"), wt("feat-a")];
         assert_eq!(reselect_worktree_index(&after, "feat-a", 1), Some(1));
     }
 
     #[test]
-    fn reselect_returns_none_for_empty_list() {
+    fn 空の一覧では選び直しがnoneを返す() {
         assert_eq!(reselect_worktree_index(&[], "main", 0), None);
     }
 
     #[test]
-    fn reselect_clamps_when_prev_branch_empty() {
+    fn 前のブランチ名が空なら添字をクランプする() {
         // 以前選択していたブランチが無い場合（例: 初回読み込み時）: インデックスを
         // 範囲内に保つだけ。
         let after = [wt("main"), wt("feat-a")];

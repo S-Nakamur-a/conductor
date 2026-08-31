@@ -364,7 +364,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_diff_base_branch_prefers_saved_base_over_main() {
+    fn 保存されたベースをmainより優先する() {
         assert_eq!(
             resolve_diff_base_branch(Some("release/1.0".to_string()), "main"),
             "release/1.0"
@@ -372,14 +372,14 @@ mod tests {
     }
 
     #[test]
-    fn resolve_diff_base_branch_falls_back_to_main_when_unsaved() {
+    fn 保存が無ければmainへ落ちる() {
         assert_eq!(resolve_diff_base_branch(None, "main"), "main");
     }
 
     /// 完全な真理値表。起動時と worktree 切り替えはどちらも復元前に Viewer をリセットするので
     /// Apply が通常経路。残り 2 行はツリー走査中にユーザーが先に動いた場合にのみ発生する。
     #[test]
-    fn restore_disposition_truth_table() {
+    fn 復元の扱いの真理値表() {
         use RestoreDisposition::*;
         assert_eq!(restore_disposition(false, false), Apply);
         // SUMMARY だけが開いている: 上書きはしないが、後の save で保存済みファイルが消されない

@@ -4,7 +4,7 @@
 use super::*;
 
 #[test]
-fn mode_from_str_known_values() {
+fn 既知の名前からモードを引く() {
     assert_eq!(
         DecorationMode::from_str("aquarium"),
         DecorationMode::Aquarium
@@ -16,7 +16,7 @@ fn mode_from_str_known_values() {
 }
 
 #[test]
-fn mode_from_str_defaults_to_aquarium() {
+fn 知らない名前はaquariumになる() {
     assert_eq!(
         DecorationMode::from_str("unknown"),
         DecorationMode::Aquarium
@@ -25,7 +25,7 @@ fn mode_from_str_defaults_to_aquarium() {
 }
 
 #[test]
-fn mode_has_animation() {
+fn アニメーションの有無を答える() {
     assert!(DecorationMode::Aquarium.has_animation());
     assert!(DecorationMode::Space.has_animation());
     assert!(DecorationMode::Garden.has_animation());
@@ -34,7 +34,7 @@ fn mode_has_animation() {
 }
 
 #[test]
-fn aquarium_initializes_on_first_tick() {
+fn aquariumは最初のtickで初期化される() {
     let mut state = AquariumState::default();
     assert!(!state.initialized);
     tick_aquarium(&mut state, 0, 20, 6, DecorationActivity::Calm);
@@ -43,14 +43,14 @@ fn aquarium_initializes_on_first_tick() {
 }
 
 #[test]
-fn aquarium_skips_small_area() {
+fn aquariumは狭い領域では動かない() {
     let mut state = AquariumState::default();
     tick_aquarium(&mut state, 0, 2, 2, DecorationActivity::Calm);
     assert!(state.fish.is_empty());
 }
 
 #[test]
-fn aquarium_bubbles_spawn_faster_when_active() {
+fn aquariumの泡は稼働中は速く湧く() {
     let mut state = AquariumState::default();
     // Calm — 100ティック実行する。
     for t in 0..100 {
@@ -70,7 +70,7 @@ fn aquarium_bubbles_spawn_faster_when_active() {
 }
 
 #[test]
-fn space_initializes_on_first_tick() {
+fn spaceは最初のtickで初期化される() {
     let mut state = SpaceState::default();
     assert!(!state.initialized);
     tick_space(&mut state, 0, 20, 6, DecorationActivity::Calm);
@@ -80,14 +80,14 @@ fn space_initializes_on_first_tick() {
 }
 
 #[test]
-fn space_skips_small_area() {
+fn spaceは狭い領域では動かない() {
     let mut state = SpaceState::default();
     tick_space(&mut state, 0, 2, 2, DecorationActivity::Calm);
     assert!(state.stars.is_empty());
 }
 
 #[test]
-fn space_planets_turn_around_at_the_edge() {
+fn spaceの惑星は端で折り返す() {
     let mut state = SpaceState::default();
     tick_space(&mut state, 0, 10, 6, DecorationActivity::Calm);
     // 端に押し付けてから進ませる。反転を見るのが目的なので、偶然の往復では代用しない。
@@ -103,7 +103,7 @@ fn space_planets_turn_around_at_the_edge() {
 }
 
 #[test]
-fn garden_initializes_on_first_tick() {
+fn gardenは最初のtickで初期化される() {
     let mut state = GardenState::default();
     assert!(!state.initialized);
     tick_garden(&mut state, 0, 20, 6, DecorationActivity::Calm);
@@ -113,14 +113,14 @@ fn garden_initializes_on_first_tick() {
 }
 
 #[test]
-fn garden_skips_small_area() {
+fn gardenは狭い領域では動かない() {
     let mut state = GardenState::default();
     tick_garden(&mut state, 0, 2, 2, DecorationActivity::Calm);
     assert!(state.plants.is_empty());
 }
 
 #[test]
-fn garden_butterflies_stay_in_bounds() {
+fn gardenの蝶は領域の外へ出ない() {
     let mut state = GardenState::default();
     let w: u16 = 20;
     let h: u16 = 6;
@@ -136,7 +136,7 @@ fn garden_butterflies_stay_in_bounds() {
 }
 
 #[test]
-fn city_initializes_on_first_tick() {
+fn cityは最初のtickで初期化される() {
     let mut state = CityState::default();
     assert!(!state.initialized);
     tick_city(&mut state, 0, 20, 6, DecorationActivity::Calm);
@@ -146,14 +146,14 @@ fn city_initializes_on_first_tick() {
 }
 
 #[test]
-fn city_skips_small_area() {
+fn cityは狭い領域では動かない() {
     let mut state = CityState::default();
     tick_city(&mut state, 0, 2, 2, DecorationActivity::Calm);
     assert!(state.buildings.is_empty());
 }
 
 #[test]
-fn city_more_cars_when_active() {
+fn cityは稼働中は車が増える() {
     let mut state_calm = CityState::default();
     for t in 0..200 {
         tick_city(&mut state_calm, t, 30, 8, DecorationActivity::Calm);
@@ -173,7 +173,7 @@ fn city_more_cars_when_active() {
 }
 
 #[test]
-fn city_cars_wrap_around() {
+fn cityの車は端で回り込む() {
     let mut state = CityState::default();
     tick_city(&mut state, 0, 10, 6, DecorationActivity::Calm);
     // 車を右端まで強制的に動かす。
@@ -188,7 +188,7 @@ fn city_cars_wrap_around() {
 }
 
 #[test]
-fn tick_decoration_routes_each_mode_to_its_own_state() {
+fn tickは各モードを自分の状態へ振り分ける() {
     let mut states = DecorationStates::default();
 
     // 各モードをティックし、対応する状態が初期化されたことを確認する。
@@ -235,7 +235,7 @@ fn tick_decoration_routes_each_mode_to_its_own_state() {
 }
 
 #[test]
-fn tick_decoration_none_is_noop() {
+fn モードがnoneならtickは何もしない() {
     let mut states = DecorationStates::default();
     tick_decoration(
         &mut states,

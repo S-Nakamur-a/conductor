@@ -241,7 +241,7 @@ mod tests {
 
     /// 描画も入力もこの 1 つの結果を使うので、バナーのぶんは両方に効く。
     #[test]
-    fn an_error_banner_pushes_the_bottom_pane_down_by_one_row() {
+    fn エラーのバナーは下のペインを1行押し下げる() {
         let area = Rect::new(0, 0, 40, 20);
         let plain = Panes::split(area, 50, BottomView::Changes, false);
         let errored = Panes::split(area, 50, BottomView::Changes, true);
@@ -252,7 +252,7 @@ mod tests {
 
     /// コメント一覧にバナーは無いので、同じ error でもずれない。
     #[test]
-    fn the_comment_list_ignores_the_diff_error() {
+    fn コメント一覧はdiffのエラーを無視する() {
         let area = Rect::new(0, 0, 40, 20);
         let a = Panes::split(area, 50, BottomView::Comments, false);
         let b = Panes::split(area, 50, BottomView::Comments, true);

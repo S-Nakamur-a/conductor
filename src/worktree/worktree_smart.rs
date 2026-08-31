@@ -267,14 +267,14 @@ mod tests {
     /// 限りツールに手を伸ばし会話してしまい、以前はその指示をユーザが保守する
     /// ラッパースクリプト側に書く必要があった。
     #[test]
-    fn system_prompt_forbids_tools_and_demands_json() {
+    fn システムプロンプトはツールを禁じjsonを求める() {
         assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Do not use any tools"));
         assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Do not run any commands"));
         assert!(SMART_WORKTREE_SYSTEM_PROMPT.contains("Output ONLY a JSON object"));
     }
 
     #[test]
-    fn bare_json_parses() {
+    fn 素のjsonを読める() {
         let raw = r#"{"branch": "feature/add-login", "prompt": "Add login page"}"#;
         let result = parse_smart_gen_result(raw).unwrap();
         assert_eq!(result.branch, "feature/add-login");
@@ -282,14 +282,14 @@ mod tests {
     }
 
     #[test]
-    fn json_inside_a_markdown_fence_parses() {
+    fn コードフェンスの中のjsonを読める() {
         let raw = "```json\n{\"branch\": \"fix/bug\", \"prompt\": \"Fix bug\"}\n```";
         let result = parse_smart_gen_result(raw).unwrap();
         assert_eq!(result.branch, "fix/bug");
     }
 
     #[test]
-    fn json_wrapped_in_prose_parses() {
+    fn 地の文に包まれたjsonを読める() {
         let raw = r#"Here is the result:
 {"branch": "feature/smart-parse", "prompt": "Implement smart parsing"}
 Hope this helps!"#;
@@ -299,14 +299,14 @@ Hope this helps!"#;
     }
 
     #[test]
-    fn json_after_a_preamble_parses() {
+    fn 前置きの後ろのjsonを読める() {
         let raw = r#"Now I have full understanding. The result is: {"branch": "fix/json-parse", "prompt": "Fix JSON parsing"}"#;
         let result = parse_smart_gen_result(raw).unwrap();
         assert_eq!(result.branch, "fix/json-parse");
     }
 
     #[test]
-    fn a_reply_with_no_json_at_all_is_an_error() {
+    fn jsonが1つも無い応答はエラー() {
         let raw = "This has no JSON at all";
         assert!(parse_smart_gen_result(raw).is_err());
     }

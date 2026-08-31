@@ -444,13 +444,13 @@ mod tests {
     use super::is_usable_diff_base;
 
     #[test]
-    fn head_and_empty_are_rejected_as_diff_bases() {
+    fn headと空はdiffのベースとして拒む() {
         assert!(!is_usable_diff_base("HEAD"));
         assert!(!is_usable_diff_base(""));
     }
 
     #[test]
-    fn real_refs_are_accepted() {
+    fn 実在するrefは受け入れる() {
         for base in ["main", "origin/main", "release/1.0", "v1.2.3"] {
             assert!(is_usable_diff_base(base), "{base} should be usable");
         }

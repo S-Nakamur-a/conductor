@@ -9,7 +9,7 @@ use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence}
 use super::locale::{utf8_chunks, utf8_locale_overrides};
 
 #[test]
-fn arrow_sequence_honors_decckm_and_direction() {
+fn 矢印の列はdecckmと向きに従う() {
     // アプリケーションカーソルキーモード → SS3 (ESC O)。文字 O (0x4f) に注意。
     assert_eq!(scroll_arrow_sequence(true, true), b"\x1bOA");
     assert_eq!(scroll_arrow_sequence(false, true), b"\x1bOB");
@@ -19,25 +19,25 @@ fn arrow_sequence_honors_decckm_and_direction() {
 }
 
 #[test]
-fn sanitize_keeps_plain_text_tabs_and_newlines() {
+fn サニタイズは素のテキストとタブと改行を残す() {
     let input = "echo hello\tworld\nsecond line\n";
     assert_eq!(sanitize_pasted_text(input), input);
 }
 
 #[test]
-fn sanitize_normalizes_crlf_and_lone_cr_to_lf() {
+fn crlfと単独のcrはlfに正規化する() {
     assert_eq!(sanitize_pasted_text("a\r\nb\rc"), "a\nb\nc");
 }
 
 #[test]
-fn sanitize_strips_csi_escape_sequences() {
+fn csiのエスケープ列を取り除く() {
     // 単語を囲む SGR カラーコードは除去され、プレーンテキストだけが残る。
     let input = "\x1b[31mred\x1b[0m text";
     assert_eq!(sanitize_pasted_text(input), "red text");
 }
 
 #[test]
-fn sanitize_removes_embedded_bracketed_paste_end_marker() {
+fn 紛れ込んだ貼り付け終了マーカーを取り除く() {
     // 挙動を左右する重要なセキュリティケース: paste-end マーカー
     // (\x1b[201~) の後にコマンドを忍ばせたクリップボードが、bracketed
     // paste から抜け出せてはならない。CSI シーケンス全体(終端の ~ を
@@ -50,27 +50,27 @@ fn sanitize_removes_embedded_bracketed_paste_end_marker() {
 }
 
 #[test]
-fn sanitize_strips_osc_string_sequence() {
+fn oscの列を取り除く() {
     // BEL で終端される OSC(ウィンドウタイトル)— 丸ごと除去される。
     let input = "before\x1b]0;evil title\x07after";
     assert_eq!(sanitize_pasted_text(input), "beforeafter");
 }
 
 #[test]
-fn sanitize_drops_bare_control_bytes_but_keeps_text() {
+fn 裸の制御バイトは落とし本文は残す() {
     // NUL、BEL、バックスペース、DEL はすべて除去され、前後のテキストは無傷。
     let input = "a\x00b\x07c\x08d\x7fe";
     assert_eq!(sanitize_pasted_text(input), "abcde");
 }
 
 #[test]
-fn sanitize_preserves_multibyte_text() {
+fn マルチバイトの本文は壊さない() {
     let input = "こんにちは\tworld\n";
     assert_eq!(sanitize_pasted_text(input), input);
 }
 
 #[test]
-fn encode_mouse_wheel_sgr_up_and_down() {
+fn ホイールのsgr符号化は上下を書き分ける() {
     // SGR: ホイールアップ = ボタン 64、ダウン = 65。座標はインラインで最後に 'M'。
     assert_eq!(
         encode_mouse_wheel(true, 5, 9, vt100::MouseProtocolEncoding::Sgr),
@@ -83,14 +83,14 @@ fn encode_mouse_wheel_sgr_up_and_down() {
 }
 
 #[test]
-fn encode_mouse_wheel_x10_offsets_by_32() {
+fn x10の符号化は32だけずらす() {
     // レガシー X10: CSI M Cb Cx Cy で各値に +32。アップ = 64+32 = 96 = ''。
     let seq = encode_mouse_wheel(true, 2, 3, vt100::MouseProtocolEncoding::Default);
     assert_eq!(seq, vec![0x1b, b'[', b'M', 96, 34, 35]);
 }
 
 #[test]
-fn encode_mouse_wheel_clamps_coordinates_to_at_least_one() {
+fn 座標は最低1にクランプする() {
     // 座標 0 は 1 にクランプされ、SGR 形式が well-formed であり続ける。
     assert_eq!(
         encode_mouse_wheel(true, 0, 0, vt100::MouseProtocolEncoding::Sgr),
@@ -99,7 +99,7 @@ fn encode_mouse_wheel_clamps_coordinates_to_at_least_one() {
 }
 
 #[test]
-fn trim_raw_history_keeps_under_cap_and_aligns_to_line() {
+fn 履歴は上限以下かつ行境界に揃える() {
     let mut history: VecDeque<u8> = b"aaaa\nbbbb\ncccc\ndddd\n".iter().copied().collect();
     // 現在の長さを下回る上限を指定してトリムを強制する。
     PtyManager::trim_raw_history(&mut history, 10);
@@ -119,7 +119,7 @@ fn trim_raw_history_keeps_under_cap_and_aligns_to_line() {
 }
 
 #[test]
-fn trim_raw_history_leaves_buffers_within_the_cap_alone() {
+fn 上限以下のバッファには触らない() {
     for (bytes, cap) in [(&b"hello\n"[..], 1024), (&b"abcd\n"[..], 5), (&b""[..], 0)] {
         let mut history: VecDeque<u8> = bytes.iter().copied().collect();
         PtyManager::trim_raw_history(&mut history, cap);
@@ -135,7 +135,7 @@ fn trim_raw_history_leaves_buffers_within_the_cap_alone() {
 /// リサイズ時に画面が真っ白になる方が、多少不完全な先頭行よりはるかに悪い。
 /// (これはエスケープシーケンスだらけの TUI 出力での失敗モードである。)
 #[test]
-fn trim_raw_history_keeps_bytes_when_no_newline() {
+fn 改行が無くても中身は空にしない() {
     let mut history: VecDeque<u8> = std::iter::repeat_n(b'x', 100).collect();
     PtyManager::trim_raw_history(&mut history, 10);
     assert!(!history.is_empty(), "history was drained to empty");
@@ -148,7 +148,7 @@ fn trim_raw_history_keeps_bytes_when_no_newline() {
 /// resize_session の列変更経路の核心である。(vt100 自身の set_size は
 /// リフローしない。これがこの変更全体で修正しているバグである。)
 #[test]
-fn replay_reflows_to_new_width() {
+fn 再生は新しい幅で折り返し直す() {
     // 明示的な改行の無い、単一の12文字の論理行。
     let stream = b"ABCDEFGHIJKL";
 
@@ -176,7 +176,7 @@ fn replay_reflows_to_new_width() {
 }
 
 #[test]
-fn rebuild_parser_handles_empty_history() {
+fn 空の履歴でもパーサを組み直せる() {
     let history: VecDeque<u8> = VecDeque::new();
     let parser = PtyManager::rebuild_parser(&history, 5, 20, 100);
     assert_eq!(parser.screen().contents().trim_end(), "");
@@ -186,7 +186,7 @@ fn rebuild_parser_handles_empty_history() {
 /// ストリーム中の純粋なバイトシーケンスであるため、正しい最終状態
 /// (通常画面)が再構築されなければならない。
 #[test]
-fn rebuild_parser_reconstructs_alt_screen_roundtrip() {
+fn 代替画面の往復も組み直せる() {
     // 通常テキスト、オルタネート画面へ突入、描画、オルタネート画面を退出、通常テキスト続き
     let mut stream: Vec<u8> = Vec::new();
     stream.extend_from_slice(b"normal-before\r\n");
@@ -208,7 +208,7 @@ fn rebuild_parser_reconstructs_alt_screen_roundtrip() {
 }
 
 #[test]
-fn utf8_chunks_never_splits_a_multibyte_char() {
+fn チャンク分割はマルチバイト文字を割らない() {
     // 各かなは UTF-8 で3バイト。max=4 では、単純なバイト分割は2文字目を
     // 切ってしまう。utf8_chunks はすべての文字を無傷に保たなければならない。
     let text = "あいうえお"; // 5文字 × 3バイト = 15バイト
@@ -223,7 +223,7 @@ fn utf8_chunks_never_splits_a_multibyte_char() {
 }
 
 #[test]
-fn utf8_chunks_preserves_mixed_and_ascii_text() {
+fn 混在テキストもasciiも保たれる() {
     let text = "abc日本語def";
     // 単純な分割だと文字の途中に着地するチャンクサイズ。
     let chunks = utf8_chunks(text, 5);
@@ -236,7 +236,7 @@ fn utf8_chunks_preserves_mixed_and_ascii_text() {
 }
 
 #[test]
-fn utf8_chunks_handles_char_wider_than_max() {
+fn 上限より大きい文字も扱える() {
     // 防御的な経路: max より大きい単一の文字は、無限ループせずに
     // そのまま丸ごと出力される。
     let chunks = utf8_chunks("あ", 1); // 'あ' は3バイト
@@ -244,12 +244,12 @@ fn utf8_chunks_handles_char_wider_than_max() {
 }
 
 #[test]
-fn utf8_chunks_empty_input_yields_no_chunks() {
+fn 空の入力ではチャンクが出ない() {
     assert!(utf8_chunks("", 1024).is_empty());
 }
 
 #[test]
-fn locale_unset_everywhere_forces_utf8() {
+fn ロケール未設定ならutf8を強制する() {
     // 挙動を左右する重要なケース: 何も設定されていない環境では vim が
     // latin1 をデフォルトにし、全角入力が化ける。UTF-8 の LC_CTYPE を注入する。
     let (sets, removes) = utf8_locale_overrides(None, None, None);
@@ -258,7 +258,7 @@ fn locale_unset_everywhere_forces_utf8() {
 }
 
 #[test]
-fn locale_empty_values_are_treated_as_unset() {
+fn 空のロケール値は未設定として扱う() {
     // macOS では LANG/LC_ALL が空のままなことがよくある。空の値を有効な
     // 非 UTF-8 ロケールと誤認してはならない。
     let (sets, removes) = utf8_locale_overrides(Some(""), Some(""), Some(""));
@@ -267,7 +267,7 @@ fn locale_empty_values_are_treated_as_unset() {
 }
 
 #[test]
-fn locale_existing_utf8_is_respected() {
+fn 既にutf8なら尊重する() {
     // LC_CTYPE=UTF-8 (macOS Terminal のデフォルト) はすでに utf-8 になっている。
     assert_eq!(
         utf8_locale_overrides(None, Some("UTF-8"), None),
@@ -286,7 +286,7 @@ fn locale_existing_utf8_is_respected() {
 }
 
 #[test]
-fn locale_lc_all_takes_precedence_for_detection() {
+fn 判定ではlc_allが優先される() {
     // LANG が非 UTF-8 ロケールでも、UTF-8 の LC_ALL が優先される。
     assert_eq!(
         utf8_locale_overrides(Some("C.UTF-8"), None, Some("C")),
@@ -295,7 +295,7 @@ fn locale_lc_all_takes_precedence_for_detection() {
 }
 
 #[test]
-fn locale_non_utf8_lc_all_is_dropped_so_lc_ctype_can_win() {
+fn utf8でないlc_allは落としてlc_ctypeを通す() {
     // LC_ALL は LC_CTYPE を覆い隠すため、注入した LC_CTYPE を効かせるには
     // 非 UTF-8 の LC_ALL を削除しなければならない。
     let (sets, removes) = utf8_locale_overrides(Some("C"), Some("C"), Some("C"));
@@ -304,7 +304,7 @@ fn locale_non_utf8_lc_all_is_dropped_so_lc_ctype_can_win() {
 }
 
 #[test]
-fn locale_non_utf8_lang_without_lc_all_keeps_lc_all_untouched() {
+fn lc_allが無ければlangが非utf8でもlc_allに触らない() {
     let (sets, removes) = utf8_locale_overrides(None, None, Some("C"));
     assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
     assert!(removes.is_empty());
@@ -317,7 +317,7 @@ fn locale_non_utf8_lang_without_lc_all_keeps_lc_all_untouched() {
 // session id を確実に結べるので、spawn 時にこれを差し込む。
 
 #[test]
-fn hook_settings_declare_the_conductor_session_start_hook() {
+fn 設定にsession_startフックが宣言される() {
     let repo = tempfile::tempdir().expect("tmp repo");
     let path = PtyManager::write_hook_settings(repo.path()).expect("write settings");
 
@@ -338,7 +338,7 @@ fn hook_settings_declare_the_conductor_session_start_hook() {
 }
 
 #[test]
-fn hook_settings_are_rewritten_each_spawn() {
+fn フック設定は起動のたびに書き直される() {
     // conductor を置き直しても追随できるよう、毎回書き直す。
     let repo = tempfile::tempdir().expect("tmp repo");
     let path = PtyManager::write_hook_settings(repo.path()).expect("first write");
@@ -351,7 +351,7 @@ fn hook_settings_are_rewritten_each_spawn() {
 }
 
 #[test]
-fn hook_command_survives_awkward_executable_paths() {
+fn 扱いにくい実行パスでもフックのコマンドは壊れない() {
     // フックの command はシェルに渡されるので、空白や引用符を含む置き場所でも
     // 1 語のままでなければならない。
     assert_eq!(

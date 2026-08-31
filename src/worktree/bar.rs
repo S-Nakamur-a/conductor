@@ -340,7 +340,7 @@ mod tests {
     /// 走らせていない worktree には何も出さない。印が付いていないこと自体が
     /// 「まだ解析していない」を意味するので、ここが空でなくなると印が意味を失う。
     #[test]
-    fn an_unanalysed_worktree_gets_no_mark() {
+    fn 解析していないworktreeには印を出さない() {
         assert_eq!(review_mark(ArtifactState::None, 0), "");
         for state in [
             ArtifactState::Running,
@@ -358,7 +358,7 @@ mod tests {
     /// 印に背景を敷かないこと。どのテーマでも accent は selected_bg と同じ色で、
     /// 選択中チップの塗りを引き継いだ瞬間に実行中の印が背景と同色になって消える。
     #[test]
-    fn the_mark_never_carries_a_background() {
+    fn 印は背景を持たない() {
         let theme = Theme::from_name("catppuccin-mocha");
         assert_eq!(theme.accent, theme.selected_bg, "前提が変わっている");
         for state in [

@@ -286,7 +286,7 @@ mod tests {
     const MIN: u16 = 10;
 
     #[test]
-    fn ev_divider_moves_space_between_explorer_and_viewer() {
+    fn explorerとviewerの境界は両者の間で幅を移す() {
         // Explorerを広げる (delta +5) とViewerから5ポイント奪う。Terminal
         // （保存される残り）は変わらない。
         assert_eq!(clamp_ev_divider(24, 38, 5, MIN), (29, 33));
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn ev_divider_clamps_at_min_floor() {
+    fn explorerとviewerの境界は下限でクランプする() {
         // 大きく縮めてもExplorerはMINを下回れない。
         assert_eq!(clamp_ev_divider(12, 50, -5, MIN), (10, 52));
         // Explorerが広がろうとしてもViewerはMINを下回れない。
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn vt_divider_protects_the_terminal_column() {
+    fn viewerとterminalの境界はterminal列を守る() {
         // Explorer 24, Viewer 38 → Terminal 38。Viewerを右に広げるとTerminalを
         // 侵食するが、そのMIN下限を超えることはない: 最大Viewer = 100 - 24 - 10 = 66。
         assert_eq!(clamp_vt_divider(24, 38, 5, MIN), 43);
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn dividers_never_let_a_column_vanish() {
+    fn 境界はどの列も消さない() {
         // 全範囲でdeltaを掃引する。3列すべてが常に >= MIN を保つこと。
         for delta in [-50i16, -20, -5, 5, 20, 50] {
             let (e, v) = clamp_ev_divider(24, 38, delta, MIN);
