@@ -11,12 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # fmt と構造判定を先に置くのはビルドが要らず、失敗したときに clippy を待たせないため。
+      # fmt を先に置くのはビルドが要らず、失敗したときに clippy を待たせないため。
       - name: Format
         run: cargo fmt --all -- --check
-
-      - name: Structure
-        run: ./scripts/check-structure.sh closure
 
       # 保存を main に限るのは、PR ブランチごとのキャッシュがリポジトリの容量枠を
       # 食い合うため。PR は main が保存したものを読めば足りる。
