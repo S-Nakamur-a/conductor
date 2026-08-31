@@ -29,7 +29,6 @@ use inline_reply::{handle_inline_reply_input, start_inline_reply, toggle_inline_
 /// content.file_scroll を diff カーソルへ同期させる — ヒントも同じ位置から作る。
 fn enter_g_prefix_mode(app: &mut App) {
     app.viewer.pending_g_key = true;
-    // 推定した viewer の高さでヒントを構築する（実際のコンテンツでクリップされる）。
     let hints = app.build_symbol_hints(50);
     app.code_nav.symbol_hint.active = !hints.is_empty();
     app.code_nav.symbol_hint.hints = hints;
@@ -50,27 +49,23 @@ fn handle_tab_action(app: &mut App, action: Option<Action>) -> bool {
 
 /// Viewer パネルがフォーカスされているときのキーを処理する。
 pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    // インライン返信の入力モード
     if app.viewer.inline.reply_line.is_some() {
         handle_inline_reply_input(app, key);
         return None;
     }
 
-    // Summary 疑似ファイルビューは独自の（シンプルな）スクロールナビゲーションを持つ。
     if app.viewer.is_summary() {
         return handle_viewer_summary_mode_key(app, key);
     }
 
-    // レンダリング済み markdown: プロースには行番号がないため、ビュー全体の
-    // ナビゲーションのみ有効。以下のすべてより先にチェックする — ヒントを
-    // 行番号で解決する g のシンボルヒントプレフィックスも含めて。
+    // レンダリング済み markdown には行番号が無いのでビュー全体のナビゲーションのみ。ヒントを
+    // 行番号で解決する g プレフィックスより先にチェックする。
     if app.viewer.is_showing_rendered_markdown() {
         return handle_viewer_markdown_mode_key(app, key);
     }
 
-    // 保留中の 'g' キー — シンボルヒントが表示され、2つ目のキーを待っている
-    // gd/gi/gr/gg はプレーンファイル表示でも diff 表示でも同じように動作
-    // するので、以下の diff モード振り分けより先にチェックする。
+    // gd/gi/gr/gg はプレーンファイル表示でも diff 表示でも同じなので、diff モードの
+    // 振り分けより先にチェックする。
     if app.viewer.pending_g_key {
         app.viewer.pending_g_key = false;
         match key.code {
@@ -89,18 +84,13 @@ pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
                 handle_find_references(app);
                 return None;
             }
-            // gK / gh — hover 情報。大文字 K（Vim-LSP の慣習）と "hover" の h。
-            // ヒントラベルは常に小文字で、これらの予約キーで始まることはない
-            // ので、どちらも安全に使える。プレーンファイル表示でも diff
-            // 表示でも動作する: diff モードの g ハンドラは、ここに来る前に
-            // すでに content.file_scroll を diff カーソルへ同期している。
+            // gK / gh — hover 情報。ヒントラベルは常に小文字なので、これらの予約キーと衝突しない。
             KeyCode::Char('K') | KeyCode::Char('h') => {
                 app.code_nav.symbol_hint = Default::default();
                 handle_show_hover_info(app);
                 return None;
             }
             KeyCode::Char('g') => {
-                // gg = 先頭へ移動
                 app.code_nav.symbol_hint = Default::default();
                 if app.viewer.diff_view.diff_mode {
                     app.viewer.diff_view.diff_view_scroll = 0;
@@ -114,20 +104,17 @@ pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
                 return None;
             }
             KeyCode::Char(c) if c.is_ascii_lowercase() => {
-                // ヒントラベルの1文字目 — ヒント入力モードに入る。
                 app.code_nav.symbol_hint.input.push(c);
                 return None;
             }
             _ => {
-                // 未知の2つ目のキー — ヒントを消す。
                 app.code_nav.symbol_hint = Default::default();
             }
         }
     }
 
-    // 保留中の 'z' キー — 折りたたみの2打鍵目を待っている。プレーンファイル
-    // 表示専用: diff 表示の折りたたみは ExpandableContext という別の仕組みで、
-    // 同じキーに2つの意味を持たせない。
+    // プレーンファイル表示専用。diff 表示の折りたたみは ExpandableContext という別の仕組み
+    // なので、同じキーに 2 つの意味を持たせない。
     if app.viewer.pending_z_key {
         app.viewer.pending_z_key = false;
         if !app.viewer.diff_view.diff_mode {
@@ -135,7 +122,6 @@ pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
         }
     }
 
-    // 統合 diff モードは独自のナビゲーションを持つ。
     if app.viewer.diff_view.diff_mode {
         return handle_viewer_diff_mode_key(app, key);
     }
@@ -152,22 +138,20 @@ pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
         return None;
     }
 
-    // ファジーなファイル名ジャンプ — ファイルが開かれていなくても動作するよう
-    // 空バッファのガードより前で処理し、ジャンプ後も viewer が最大化されたままになる。
+    // 空バッファのガードより前で処理する。ファイルが開かれていなくても動き、ジャンプ後も
+    // viewer が最大化されたままになる。
     if let Some(Action::SearchFilename) = action {
         crate::event::open_filename_search(app);
         return None;
     }
 
-    // 外部エディタへ引き渡す — ファイルがないときにヒントを出すだけにしたいので
-    // 空バッファのガードより前に処理する（何も起きない、ではなく）。
+    // 空バッファのガードより前へ。ファイルが無いときは「何も起きない」ではなくヒントを出す。
     if let Some(Action::OpenInEditor) = action {
         app.open_in_editor();
         return None;
     }
 
-    // タブ操作も空バッファのガードより前へ。読めなかったファイルのタブが
-    // 閉じられなくなるのを避ける。
+    // タブ操作も空バッファのガードより前へ。読めなかったファイルのタブが閉じられなくなる。
     if handle_tab_action(app, action) {
         return None;
     }
@@ -255,15 +239,11 @@ fn handle_fold_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     None
 }
 
-/// レンダリング済み markdown ビューをナビゲートする: スクロール、両端への
-/// ジャンプ、raw への切り替え、またはパネルを離れる。
+/// レンダリング済み markdown ビューのナビゲーション。
 ///
-/// 意図的に viewer の全ディスパッチではなく許可リストにしている: ここに
-/// ない操作（コメント作成、インラインスレッド、ファイル内検索、hover/
-/// シンボルジャンプ、水平スクロール）はすべてソース行単位でアドレスする
-/// もので、レンダリングされたプロースには対応する行番号がない。解決には
-/// 引き続き通常の Viewer コンテキストを使うので、切り替えても両モードで
-/// バインディングは1つのまま。
+/// 全ディスパッチではなく許可リストにしてある。ここに無い操作 (コメント作成、インライン
+/// スレッド、ファイル内検索、hover/シンボルジャンプ、水平スクロール) はすべてソース行
+/// 単位でアドレスするもので、レンダリングされた本文には対応する行番号が無い。
 pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let total = app.viewer.md_total_lines;
     let action = app.keymap.resolve(&key, KeyContext::Viewer);
@@ -276,8 +256,7 @@ pub(super) fn handle_viewer_markdown_mode_key(app: &mut App, key: KeyEvent) -> O
         Some(Action::ToggleMarkdownRender) => app.cmd_toggle_markdown_render(),
         Some(Action::ExitToExplorer) => app.set_focus(crate::app::Focus::Explorer),
         Some(Action::SearchFilename) => crate::event::open_filename_search(app),
-        // ファイル単位であって行単位ではない: レンダリング表示から $EDITOR に
-        // 渡すのも同じように意味がある。
+        // ファイル単位であって行単位ではないので、レンダリング表示からでも意味がある。
         Some(Action::OpenInEditor) => app.open_in_editor(),
         Some(Action::NavigateDown) if app.viewer.md_scroll + 1 < total => {
             app.viewer.md_scroll += 1;
@@ -350,7 +329,6 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
         return None;
     }
 
-    // ファジーなファイル名ジャンプ — 最大化された diff ビューアからも到達できる。
     if let Some(Action::SearchFilename) = action {
         crate::event::open_filename_search(app);
         return None;
@@ -370,7 +348,6 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
         return None;
     }
 
-    // レビュー対象のファイルを外部エディタへ渡し、手早く手動修正する —
     // 空バッファのガードより前に処理するので、空の diff でも動作する。
     if let Some(Action::OpenInEditor) = action {
         app.open_in_editor();
@@ -398,11 +375,8 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
                 app.viewer.diff_view.diff_view_scroll.saturating_sub(15);
         }
         Some(Action::GoToTop) => {
-            // 'g' は先頭へ直接ジャンプする代わりに、今ではプレーンファイル
-            // ビューと同じシンボルヒントプレフィックス（gd、gi、gr、gg、
-            // またはヒントラベル）にマッチする — 以前の「g 単独で先頭へ
-            // ジャンプ」という挙動は gg に移り、両方のビューで g の意味が
-            // 揃った。シンボル検索とヒント構築はこのフィールドを読むので、
+            // 'g' はプレーンファイルビューと同じシンボルヒントプレフィックス (gd/gi/gr/gg または
+            // ヒントラベル) にマッチする。シンボル検索とヒント構築はこのフィールドを読むので、
             // まず content.file_scroll を diff カーソル下の行に同期させる。
             app.viewer.sync_file_scroll_to_diff_scroll();
             enter_g_prefix_mode(app);
@@ -475,13 +449,11 @@ pub(super) fn handle_viewer_diff_mode_key(app: &mut App, key: KeyEvent) -> Optio
             app.cmd_add_review_comment();
         }
         Some(Action::ExpandContext) => {
-            // 最初に見えている ExpandableContext で10行展開する。
             if let Some(idx) = app.viewer.find_visible_expandable(50) {
                 app.viewer.expand_context_at(idx, false);
             }
         }
         Some(Action::ExpandAllContext) => {
-            // 最初に見えている ExpandableContext ですべて展開する。
             if let Some(idx) = app.viewer.find_visible_expandable(50) {
                 app.viewer.expand_context_at(idx, true);
             }

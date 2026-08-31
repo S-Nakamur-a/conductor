@@ -13,7 +13,6 @@ use crate::viewer::comment_actions::open_viewer_comment;
 fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
     let prompt = format!("/conductor:address-conductor-comment {comment_id}\n");
 
-    // アクティブなClaude Codeセッションに書き込む。
     if let Some(idx) = app.terminal.claude.active_session {
         if app.terminal.pty_manager.is_waiting_for_input(idx) {
             let _ = app
@@ -21,7 +20,6 @@ fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
                 .pty_manager
                 .write_chunked_to_session(idx, &prompt);
         } else {
-            // 保留中のプロンプトとしてキューに積む。
             app.terminal.deferred_prompts.insert(idx, prompt);
         }
         app.set_focus(Focus::TerminalClaude);
@@ -60,7 +58,6 @@ fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
         );
         return;
     }
-    // Shellターミナルを最新の末尾までスクロールし、コマンドが見えるようにする。
     app.terminal.shell.scroll = 0;
     app.set_focus(Focus::TerminalShell);
     app.set_status(format!("Running {}", run.label), StatusLevel::Info);
@@ -75,7 +72,6 @@ fn resolve_screen_action(app: &App, screen_offset: usize) -> Option<String> {
     }
 }
 
-/// Viewer列内の左クリックを処理する（シンボルジャンプ、コメントスレッド、ガター）。
 pub(crate) fn handle_viewer_column_click(
     app: &mut App,
     mouse: MouseEvent,
@@ -89,9 +85,8 @@ pub(crate) fn handle_viewer_column_click(
 
     app.set_focus(Focus::Viewer);
 
-    // レンダリング済みmarkdownには行番号がないので、以降の処理（シンボルジャンプ、
-    // コメントスレッド、ガターのコメント/テスト実行ゾーン）はどれも解決する対象の
-    // 行を持たない。クリックは単なるフォーカス変更で終わり、それ以上は何もしない。
+    // レンダリング済み markdown には行番号が無いので、以降の処理は解決する対象の行を持たない。
+    // クリックは単なるフォーカス変更で終わる。
     if app.viewer.is_showing_rendered_markdown() {
         return;
     }
@@ -99,8 +94,7 @@ pub(crate) fn handle_viewer_column_click(
     let inner_x = explorer_end + 1; // 左枠の内側
     let inner_y = main_area.y + 1; // 上枠の内側
 
-    // タブ行は内側の先頭行。判定は描画が記録したクリック領域だけで行う —
-    // タブ行を描かないモード（メディア/SUMMARY など）ではこれが空になるので、
+    // 判定は描画が記録したクリック領域だけで行う。タブ行を描かないモードでは空になるので、
     // その行のクリックを飲み込まずに通常の処理へ落ちる。
     if row == inner_y
         && let Some(action) = app.viewer.tab_row_hits.at(col)
@@ -133,13 +127,8 @@ pub(crate) fn handle_viewer_column_click(
             let screen_offset = (row - inner_y) as usize;
             if let Some(line_1) = resolve_screen_line(app, screen_offset) {
                 let content_col = (col - content_start_x) as usize + app.viewer.content.h_scroll;
-                // インデックスではなく.getを使う: screen_row_mapは描画時にしか
-                // 再構築されないので、ファイルウォッチャーの再読み込みと同じループの
-                // イテレーションで処理されたクリックは「前のフレーム」のマップを
-                // 参照して解決することになる。ファイルが縮んだ場合（Claude Codeによる
-                // 書き換えやgit checkoutなど）、その行番号は既に末尾を超えており、
-                // インデックスアクセスだとクリックの最中にアプリ全体を落としかねない。
-                // ホバー側のパスも既に同じ方法でこれをガードしている。
+                // 索引ではなく .get を使う。screen_row_map は描画時にしか再構築されないので、ファイルが
+                // 縮んだ直後のクリックは末尾を超えた行番号を引き、インデックスアクセスだと落ちる。
                 if let Some(line_text) = app.viewer.content.file_content.get(line_1 - 1)
                     && let Some((symbol, _, _)) = crate::viewer::code_nav::masked_symbol_at_column(
                         line_text,
@@ -155,20 +144,15 @@ pub(crate) fn handle_viewer_column_click(
         return;
     }
 
-    // スレッドアクション行（返信 / 解決 / 削除 / 質問）へのクリックを処理する。
-    // diff表示とファイル内容表示のどちらでも動く（両方ともscreen_row_mapを埋める）。
     if row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(comment_id) = resolve_screen_action(app, screen_offset) {
             use crate::viewer::render::thread_actions;
-            // 列オフセットからどのアクションがクリックされたかを判定する。レンダラが
-            // その行を描画するのに使うのと同じレイアウト定数を使う。
-            // レンダラとのオフセットの対応: left_pad は marker +
-            // gutter_total_width() + 2（バッジ）で、そこに "  │ " の4列が続く。
+            // レンダラと同じレイアウト定数を使う。left_pad は marker + gutter_total_width() + 2
+            // (バッジ) で、そこに "  │ " の 4 列が続く。
             let content_x = inner_x + marker_w + gutter_w + 2 + 4;
             let click_col = col.saturating_sub(content_x) as usize;
             if click_col < thread_actions::reply_end() {
-                // 返信: このコメントに対するインライン返信を開始する。
                 // このコメントがどの行にあるかを探す（末尾の行）。
                 if let Some(comment) = app
                     .review_state
@@ -185,7 +169,6 @@ pub(crate) fn handle_viewer_column_click(
                     app.viewer.inline.reply_buffer.clear();
                 }
             } else if click_col < thread_actions::resolve_end() {
-                // 解決/未解決に戻す。
                 if let Some(store) = app.review_store.as_ref() {
                     let new_status = if let Some(c) = app
                         .review_state
@@ -212,14 +195,11 @@ pub(crate) fn handle_viewer_column_click(
                     }
                 }
             } else {
-                // クリックが右側の「ask claude」ボタン上かどうかを確認する。
                 // 絶対列で判定する: 右端からその幅の範囲内かどうか。
                 let ask_claude_w = thread_actions::ask_claude_width() as u16 + 2;
                 if col + ask_claude_w >= viewer_end {
-                    // Ask Claude: コメントをアクティブなClaudeのPTYに送る。
                     ask_claude_about_comment(app, &comment_id);
                 } else {
-                    // 削除（確認あり）。
                     app.request_delete_comment_by_id(comment_id);
                 }
             }
@@ -227,10 +207,8 @@ pub(crate) fn handle_viewer_column_click(
         }
     }
 
-    // ExpandableContext行をクリックすると展開する。インラインスレッドは画面上の
-    // 行をずらすので、entry mapを介してその行を対応するdiffエントリへ逆引きする。
-    // （これらの行は行番号を持たないので、下のマージンのディスパッチと衝突する
-    // ことはない。）
+    // ExpandableContext 行をクリックすると展開する。インラインスレッドが行をずらすので、
+    // entry map を介して対応する diff エントリへ逆引きする。
     if app.viewer.diff_view.diff_mode && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
         if let Some(idx) = app
@@ -249,8 +227,7 @@ pub(crate) fn handle_viewer_column_click(
         }
     }
 
-    // 折りたたみマーカー。ガターの中にあるので、コメント作成へ落ちる前に
-    // ここで捌く。当たり判定の列は in_fold_zone が持つ（ホバーの罫線と共有）。
+    // 折りたたみマーカーはガターの中にあるので、コメント作成へ落ちる前にここで捌く。
     if !app.viewer.diff_view.diff_mode
         && row >= inner_y
         && crate::event::mouse::in_fold_zone(col, inner_x + marker_w + gutter_w)
@@ -264,8 +241,7 @@ pub(crate) fn handle_viewer_column_click(
         }
     }
 
-    // 畳んだ行は本体（見出しのコードと "⋯ N lines"）を押しても開く。マーカーの
-    // 1列は狙って当てるには細く、開きたい行はその場に見えている。
+    // 畳んだ行は本体を押しても開く。マーカーの 1 列は狙って当てるには細い。
     if !app.viewer.diff_view.diff_mode && row >= inner_y && col >= content_start_x {
         let screen_offset = (row - inner_y) as usize;
         if let Some(line_1) = resolve_screen_line(app, screen_offset)
@@ -292,12 +268,9 @@ pub(crate) fn handle_viewer_column_click(
     let on_badge = col >= gutter_start + gutter_w && col < content_start_x;
     if (on_marker || on_number_gutter || on_badge) && row >= inner_y {
         let screen_offset = (row - inner_y) as usize;
-        // 画面行のマッピングはインラインスレッド行と両方の表示モードを扱う
-        // （削除行は新しい行番号を持たないので、Noneに解決される）。
         if let Some(line_1) = resolve_screen_line(app, screen_offset) {
-            // ファイルごとのコメントキャッシュが古い場合（例えば別のファイルが
-            // カレントだった時にMCP経由でコメントが作られた場合など）に備えて
-            // 防御的に更新し、バッジと下のディスパッチの認識を一致させる。
+            // ファイルごとのコメントキャッシュが古いことがある (別ファイルがカレントの間に MCP 経由で
+            // コメントが作られた場合)。バッジと下のディスパッチの認識を一致させる。
             if app.review_state.file_comments_path.as_deref()
                 != app.viewer.content.current_file.as_deref()
                 && let Some(f) = app.viewer.content.current_file.clone()
@@ -312,8 +285,7 @@ pub(crate) fn handle_viewer_column_click(
                 MarginZone::NumberGutter
             };
             let has_comment = app.review_state.file_comments.contains_key(&line_1);
-            // ▶ マーカーはファイル表示でのみ描画される — diff表示ではヒットテスト
-            // しない。
+            // ▶ マーカーはファイル表示でのみ描画される — diff 表示ではヒットテストしない。
             let has_test_run = !app.viewer.diff_view.diff_mode
                 && app.viewer.content.test_runs.contains_key(&line_1);
             let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
@@ -325,16 +297,13 @@ pub(crate) fn handle_viewer_column_click(
                     }
                 }
                 MarginClickAction::StartComment { extend: true } => {
-                    // Shift+クリックは直前にクリックした行から範囲を延長し、
-                    // その場で作成欄を開く。
+                    // Shift+クリックは直前にクリックした行から範囲を延長し、その場で作成欄を開く。
                     app.viewer.gutter_comment_click(line_1, true);
                     open_viewer_comment(app);
                 }
                 MarginClickAction::StartComment { extend: false } => {
-                    // 通常の押下: ガターのドラッグを開始する。選択はこの1行から
-                    // 始まり、カーソルがドラッグされるにつれて複数行に広がる。
-                    // 作成欄はマウスアップ時に開く（GitHub風: クリック = 1行、
-                    // ドラッグ = 範囲）。
+                    // 通常の押下はガターのドラッグを開始する。作成欄はマウスアップ時に開く
+                    // (GitHub 風: クリック = 1 行、ドラッグ = 範囲)。
                     app.viewer.gutter_comment_click(line_1, false);
                     app.viewer.click.gutter_drag_anchor = Some(line_1);
                 }
@@ -346,10 +315,9 @@ pub(crate) fn handle_viewer_column_click(
 /// クリックがviewerの左マージンのどのゾーンに落ちたか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MarginZone {
-    /// 一番左のコメントマーカー列、行番号より前。コメントのある行では吹き出し、
-    /// 範囲の途中では罫線、それ以外の行では hover 中にコメント開始ボタンが出る。
+    /// 一番左のコメントマーカー列。コメントのある行では吹き出し、範囲の途中では罫線、
+    /// それ以外では hover 中にコメント開始ボタン。
     Marker,
-    /// 行番号ガター。
     NumberGutter,
     /// ガターの右にある2セル分のバッジ列（テスト実行ボタン）。
     Badge,
@@ -366,14 +334,11 @@ pub(crate) enum MarginClickAction {
     StartComment { extend: bool },
 }
 
-/// viewerの左マージンへの左クリックが何をするかを決定する。
+/// viewer の左マージンへの左クリックが何をするかを決める。
 ///
-/// スレッドのフォーカスはマーカー列にのみ存在する（そこに描かれた吹き出し/罫線が
-/// スレッドの目印になる）。コメントの無い行では同じ列がコメント開始ボタンになり、
-/// 行番号ガターとバッジ列も、既存のコメント範囲に含まれる行であっても常に新しい
-/// コメントを開始する — そのため、他のコメント範囲と重なる/入れ子になる範囲も
-/// 作成可能なままであり、コメント開始のアフォーダンスはどの行でも同じ挙動になる。
-/// テスト実行ボタンはバッジ列に自分の場所を保つ。
+/// スレッドのフォーカスはマーカー列にのみ存在する。行番号ガターとバッジ列は既存の
+/// コメント範囲に含まれる行でも常に新しいコメントを開始するので、重なる/入れ子の
+/// 範囲も作成できる。
 pub(crate) fn classify_margin_click(
     zone: MarginZone,
     has_comment: bool,
@@ -387,13 +352,10 @@ pub(crate) fn classify_margin_click(
     }
 }
 
-/// line_1へのバッジクリックに対するインラインスレッドがどこに固定されるか。
+/// line_1 へのバッジクリックに対するインラインスレッドがどこに固定されるか。
 ///
-/// スレッドはコメントの終了行（その💬がある場所）の下に差し込まれる —
-/// diffレンダラはそれ以外の場所には描画しない — なので、範囲の途中の│行への
-/// クリックは、スレッドを決して表示しない行を空振りでトグルするのではなく、
-/// 最も近い、その行をカバーしている終了行にリダイレクトする。終了行自体の
-/// 場合、最小値はその行自身になる。
+/// スレッドはコメントの終了行 (💬 のある場所) の下にしか描画されないので、範囲の途中の
+/// │ 行へのクリックは、その行をカバーしている最も近い終了行へリダイレクトする。
 pub(crate) fn thread_anchor_line(
     comments: &[crate::review_store::ReviewComment],
     line_1: usize,
@@ -405,9 +367,8 @@ pub(crate) fn thread_anchor_line(
         .unwrap_or(line_1)
 }
 
-/// line_1をカバーするコメントに対するインラインコメントスレッドをトグルする。
-/// 初回展開時に返信を読み込み、折りたたむ時は進行中の返信をキャンセルする。
-/// マウス（マーカー列のクリック）とキーボードのトグルの両方で共有される。
+/// line_1 をカバーするコメントのインラインスレッドをトグルする。初回展開時に返信を
+/// 読み込み、折りたたむ時は進行中の返信をキャンセルする。
 pub(in crate::viewer) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
     let line_1 = app
         .review_state

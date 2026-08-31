@@ -125,8 +125,6 @@ impl FoldState {
         self.range_starting_at(line_1).map(|r| r.end - r.start)
     }
 
-    // ホバー中の範囲
-
     /// マーカーにマウスが乗っている見出し行を覚える。見出し行でなければ忘れる。
     pub fn set_hover(&mut self, line_1: Option<usize>) {
         self.hover = line_1.filter(|l| self.is_foldable(*l));
@@ -145,8 +143,6 @@ impl FoldState {
             None
         }
     }
-
-    // 開閉
 
     /// line_1 のブロックを開閉する。line_1 が見出し行でなければ、それを含む
     /// 最も内側のブロックを対象にする（vim の za と同じ）。
@@ -258,8 +254,6 @@ impl FoldState {
         changed
     }
 
-    // 可視行のマッピング
-
     /// start_1 から total までの、画面に出る行番号（1始まり）。
     pub fn visible_from(&self, start_1: usize, total: usize) -> impl Iterator<Item = usize> + '_ {
         (start_1.max(1)..=total).filter(move |l| !self.is_hidden(*l))
@@ -339,8 +333,6 @@ impl FoldState {
         self.collapsed_from_depth.map(|_| self.depth_level(max))
     }
 
-    // 内部
-
     fn starts_at_depth(&self, depth: usize) -> Vec<usize> {
         self.ranges
             .iter()
@@ -387,8 +379,6 @@ impl FoldState {
         }
     }
 }
-
-// 範囲の算出
 
 /// source の折りたたみ範囲。tree-sitter で1つも取れなければインデントで求める。
 fn compute_ranges(source: &str, path: &str) -> Vec<FoldRange> {
@@ -550,8 +540,6 @@ fn normalize(mut ranges: Vec<FoldRange>) -> Vec<FoldRange> {
     ranges
 }
 
-// ViewerState 側の入口
-
 use super::state::ViewerState;
 
 impl ViewerState {
@@ -596,13 +584,11 @@ impl ViewerState {
 
     /// カーソル行が隠れているなら、隠しているブロックを開く。
     ///
-    /// 描画の直前に一度だけ呼ぶ。file_scroll を書く経路は検索・定義ジャンプ・
-    /// grep・履歴復元と多く、そのすべてに「開いてから飛ぶ」を書いて回ると
-    /// 必ずどれかが漏れる。可視性の判断を描画の一歩手前に集めておけば、
-    /// 行き先が隠れていたときの扱いは1か所で決まる。
+    /// 描画の直前に一度だけ呼ぶ。file_scroll を書く経路は検索・定義ジャンプ・grep・履歴復元と
+    /// 多く、そのすべてに「開いてから飛ぶ」を書いて回ると必ずどれかが漏れる。
     ///
-    /// j/k やホイールは可視行を歩くので、ここには決して到達しない — つまり
-    /// これが開くのは常に「畳んだ場所の外から飛んできた」ときだけ。
+    /// j/k やホイールは可視行を歩くのでここには到達しない — 開くのは常に「畳んだ場所の外から
+    /// 飛んできた」とき。
     pub fn reveal_cursor_line(&mut self) {
         let line = self.cursor_line();
         self.content.folds.reveal(line);

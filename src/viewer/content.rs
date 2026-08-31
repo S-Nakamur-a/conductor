@@ -45,12 +45,10 @@ impl ViewerState {
         }
     }
 
-    /// アクティブなタブの中身をディスクから読み直し、読んでいた位置と表示モード
-    /// （diff / SUMMARY / markdown のスクロール）を保つ。
+    /// アクティブなタブの中身をディスクから読み直し、読んでいた位置と表示モードを保つ。
     ///
-    /// [ViewerState::load_active_file] は表示モードを畳んでしまうので、退避と
-    /// 復元をここ 1 か所に閉じ込めている。ファイルウォッチャーの再読み込みも
-    /// タブ切り替えも同じ要求なので、別々に書くと片方だけ直る。
+    /// [ViewerState::load_active_file] は表示モードを畳むので、退避と復元をここ 1 か所に
+    /// 閉じ込めている。ウォッチャーの再読み込みもタブ切り替えも同じ要求。
     pub fn reload_active_file(&mut self, root: &Path, relative_path: &str, tab_width: usize) {
         let file_scroll = self.content.file_scroll;
         let h_scroll = self.content.h_scroll;
@@ -92,28 +90,24 @@ impl ViewerState {
         self.content.highlighted_cache_key = None;
         self.content.grep_highlight_line = None;
         self.content.test_runs.clear();
-        // 成功パスだけでなく先頭でクリアする: 下のメディア分岐や読み込みエラー分岐でも
-        // file_content を差し替えるので、前のファイルのマスクが残っていると
-        // 違うテキストを指したままになってしまう。
+        // 先頭でクリアする。メディア分岐や読み込みエラー分岐でも file_content を差し替えるので、
+        // 前のファイルのマスクが残ると違うテキストを指したままになる。
         self.content.code_mask = crate::symbol_index::CodeMask::default();
         // 前のファイルの失敗理由を持ち越さない。以降の分岐が必要なら再度立てる。
         self.content.load_error = None;
         let full = root.join(relative_path);
 
-        // メディアファイル（画像/動画）は aa-media 経由で扱う。
         if media::is_media_file(relative_path) {
             self.content.folds.clear();
             self.content.file_content.clear();
             self.content.current_file = Some(relative_path.to_string());
             self.content.file_scroll = 0;
             self.content.h_scroll = 0;
-            // 実際の描画は render 時に遅延して起動する（パネルサイズが分かった時点で）。
-            // 新しいファイル用に再描画されるようキャッシュをクリアする。
+            // 実際の描画は render 時に遅延して起動する (パネルサイズが分かった時点で)。
             self.media_state.clear();
             return;
         }
 
-        // メディア以外のファイルを開くときは media state をクリアする。
         self.media_state.clear();
 
         match fs::read_to_string(&full) {
@@ -122,24 +116,19 @@ impl ViewerState {
                     .lines()
                     .map(|l| Self::expand_tabs(l, tab_width))
                     .collect();
-                // ファイルが空行のみで長さゼロでない場合、空行を1行だけ表示する。
                 if self.content.file_content.is_empty() && !text.is_empty() {
                     self.content.file_content.push(String::new());
                 }
                 self.content.current_file = Some(relative_path.to_string());
                 self.content.file_scroll = 0;
                 self.content.h_scroll = 0;
-                // ジャンプ操作が可能になる前に、どの識別子がコードかを記録する。
-                // file_content ではなく text から構築するのは、tree-sitter には
-                // タブも含めて書かれたままのファイルが必要なため。
+                // file_content ではなく text から構築するのは、tree-sitter にはタブも含めて書かれた
+                // ままのファイルが必要なため。
                 self.content.code_mask =
                     crate::symbol_index::CodeMask::compute(&text, relative_path);
-                // 折りたたみ範囲も展開前の text から求める（tree-sitter もインデント
-                // 幅も、書かれたままのファイルを前提にしている）。同じファイルの
-                // 再読み込みなら開閉は FoldState 側が引き継ぐ。
+                // 折りたたみ範囲も展開前の text から求める (tree-sitter もインデント幅も、書かれた
+                // ままのファイルを前提にしている)。
                 self.content.folds.rebuild(&text, relative_path);
-                // ▶ 実行ボタン向けに、実行可能なテストを検出する。言語ごとに振り分ける:
-                // Go の *_test.go と Rust の *.rs。
                 self.content.test_runs = if relative_path.ends_with(".rs") {
                     crate::rust_test::scan_rust_test_runs(&self.content.file_content, relative_path)
                 } else {
@@ -147,10 +136,8 @@ impl ViewerState {
                 };
             }
             Err(e) => {
-                // 失敗理由は専用のフィールドへ。以前はここで擬似的な 1 行を
-                // file_content に流し込んでいたが、それだと行番号もハイライトも
-                // 付いて本文と区別が付かず、Viewer 側からは「空 = 未選択」と
-                // 見分けられなかった。
+                // 失敗理由は専用のフィールドへ。file_content に流し込むと行番号もハイライトも付いて
+                // 本文と区別が付かず、Viewer 側から「空 = 未選択」と見分けられない。
                 log::warn!("failed to read {}: {e}", full.display());
                 self.content.folds.clear();
                 self.content.file_content.clear();
@@ -162,7 +149,6 @@ impl ViewerState {
         }
     }
 
-    /// 現在のファイルがメディアファイルなら true を返す。
     pub fn is_current_file_media(&self) -> bool {
         self.content
             .current_file
@@ -172,11 +158,9 @@ impl ViewerState {
 
     /// Raw/Rendered トグルが、Viewer が今表示しているものに適用可能かどうか。
     ///
-    /// markdown ファイルの素のファイル表示のときだけこれを提供する: unified-diff
-    /// モードは diff を表示しており（そこで本文をレンダリングすると +/- の構造が
-    /// 壊れる）、SUMMARY 疑似ファイルは定義上すでにレンダリング済み markdown である。
-    /// この単一の述語がヘッダのトグルを描画するかどうかと、そのクリック対象が
-    /// 有効かどうかの両方を決めるので、この2つがずれることはない。
+    /// markdown の素のファイル表示のときだけ。unified-diff は本文をレンダリングすると
+    /// +/- の構造が壊れ、SUMMARY 疑似ファイルは定義上すでにレンダリング済み。この 1 つの
+    /// 述語がトグルの描画とクリック対象の有効性の両方を決めるので、2 つがずれない。
     pub fn markdown_toggle_available(&self) -> bool {
         !self.show_summary
             && !self.diff_view.diff_mode
@@ -187,41 +171,33 @@ impl ViewerState {
                 .is_some_and(is_markdown_path)
     }
 
-    /// Viewer が現在、生のソースの代わりにレンダリング済み markdown を描画しているか
-    /// どうか。行に紐づく機能は全てこれで判定しなければならない: レンダリング済み
-    /// 表示には行番号が無いので、行選択・ホバーハイライト・コメント作成/スレッド・
-    /// 行に紐づくジャンプは、どこにも紐付けられない（viewer::render::markdown_view
-    /// を参照）。
+    /// レンダリング済み markdown を描画しているか。行に紐づく機能は全てこれで判定する:
+    /// レンダリング済み表示には行番号が無いので、行選択・ホバー・コメント・行ジャンプは
+    /// どこにも紐付けられない。
     pub fn is_showing_rendered_markdown(&self) -> bool {
         self.md_rendered && self.markdown_toggle_available()
     }
 
-    /// 生のソースとレンダリング済み markdown を切り替える。レンダリング表示の
-    /// スクロールをリセットし、切り替えると常にドキュメントの先頭に着地するようにする。
+    /// 生のソースとレンダリング済み markdown を切り替える。切り替えると常にドキュメントの
+    /// 先頭に着地する。
     ///
-    /// あわせて、レンダリング表示では描画できない行に紐づくインタラクションを
-    /// 破棄する。破棄しないと、選択範囲は戻ってきたときに黙って再出現してしまい、
-    /// さらに悪いことに、開いたままのインラインリプライは画面上にもう無い
-    /// コンポーズボックスへキー入力を飲み込み続けてしまう（トグルは開いている間も
-    /// クリック可能なため）。
+    /// あわせて行に紐づくインタラクションを破棄する。残すと、開いたままのインライン
+    /// リプライが画面上にもう無いコンポーズボックスへキー入力を飲み込み続ける。
     pub fn toggle_markdown_rendered(&mut self) {
         self.md_rendered = !self.md_rendered;
         self.md_scroll = 0;
         self.clear_selection();
-        // 進行中の gutter ドラッグをそのままにすると、mouse-up でコメント作成が
-        // 開いてしまう。ドラッグ元の gutter が無い表示の上でそうなるのはおかしい。
+        // 進行中の gutter ドラッグを残すと、gutter の無い表示の上で mouse-up によりコメント作成が開く。
         self.click.gutter_drag_anchor = None;
         self.inline.reply_line = None;
         self.inline.reply_comment_id = None;
         self.inline.reply_buffer.clear();
     }
 
-    /// レンダリング済み markdown を離れ、行に紐づくジャンプ先が実際に見えるようにする。
+    /// レンダリング済み markdown を離れ、行に紐づくジャンプ先が見えるようにする。
     ///
-    /// Viewer を行単位で位置づけるあらゆる経路から呼ばれる（定義へジャンプ、
-    /// ジャンプ履歴、grep のヒット、ターミナルからの file:line）。これが無いと、
-    /// これらのジャンプは行番号の無いレンダリング済み本文へ着地してしまう —
-    /// 要求された行は黙って無視され、読み手はドキュメントの先頭に落とされてしまう。
+    /// Viewer を行単位で位置づけるあらゆる経路 (定義ジャンプ、履歴、grep、file:line) から
+    /// 呼ぶ。無いと、要求された行は黙って無視され読み手はドキュメント先頭に落ちる。
     pub fn show_raw_for_line_target(&mut self) {
         self.md_rendered = false;
     }
@@ -249,13 +225,9 @@ impl ViewerState {
     }
 }
 
-/// path が markdown ファイルを指しているかどうか、すなわち Viewer が
-/// Raw/Rendered トグルを提供できるファイルかどうか。
-///
-/// 拡張子のみで判定し、大文字小文字を区別しない（README.MD も該当する）。
-/// .mdx、.mdown、拡張子なしの README には意図的に一致させない: レンダラは
-/// change summary で使う小さな CommonMark のサブセットなので、対象を広げると
-/// 表現できないファイルを黙って誤整形してしまう。
+/// path が markdown ファイルかどうか (= Raw/Rendered トグルを出せるか)。拡張子のみ、
+/// 大小無視。.mdx / .mdown / 拡張子なしの README にあえて一致させないのは、レンダラが
+/// change summary 用の小さな CommonMark サブセットで、広げると黙って誤整形するため。
 pub fn is_markdown_path(path: &str) -> bool {
     Path::new(path)
         .extension()
@@ -323,11 +295,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ファイルを開いたら、viewer が描画するタブ展開後の行と整合するマスクが
-    /// 残らなければならない。ナビゲーションのクエリは全てその展開後の位置を
-    /// 参照するため。CodeMask::compute ではなく open_file を通して駆動することで、
-    /// 展開とマスクを互いに突き合わせて検証する。fixture がタブインデントに
-    /// なっているのはまさにそのため。
+    /// viewer が描画するタブ展開後の行と整合するマスクが残ること。CodeMask::compute では
+    /// なく open_file を通すことで、展開とマスクを突き合わせて検証する (fixture が
+    /// タブインデントなのはそのため)。
     #[test]
     fn opening_a_file_masks_its_comments_and_strings() {
         let dir = std::env::temp_dir().join(format!("mask_open_{}", std::process::id()));
@@ -345,8 +315,6 @@ mod tests {
 
         vs.open_file(explorer.root(), "sample.go", 4);
 
-        // build_symbol_hints と同じやり方で各行を走査し、ジャンプ可能として
-        // 提示するはずの単語を集める。
         let mut jumpable: Vec<(usize, String)> = Vec::new();
         for (i, line) in vs.content.file_content.iter().enumerate() {
             let line_1 = i + 1;
@@ -423,12 +391,9 @@ mod tests {
         assert!(!is_markdown_path(""));
     }
 
-    /// このトグルは素のファイル表示のためのアフォーダンスである。diff モードと
-    /// SUMMARY 疑似ファイルはそれぞれ独自のレンダラでパネル全体を占有するので、
-    /// そこではトグルは消えなければならない — そして重要なのは、md_rendered が
-    /// 保持されたままでも is_showing_rendered_markdown は一緒に false にならなければ
-    /// ならないこと。さもないと diff 表示が、行に紐づく機能をオフにしたまま
-    /// 描画されてしまう。
+    /// diff モードと SUMMARY 疑似ファイルではトグルが消えること。md_rendered が保持された
+    /// ままでも is_showing_rendered_markdown は false になる — さもないと diff 表示が、行に
+    /// 紐づく機能をオフにしたまま描画される。
     #[test]
     fn rendered_markdown_is_confined_to_the_plain_file_view() {
         let mut vs = ViewerState::default();
@@ -457,10 +422,8 @@ mod tests {
         assert!(vs.is_showing_rendered_markdown());
     }
 
-    /// 選択範囲や開いたままのインラインリプライは raw 表示に属するもの。
-    /// どちらもレンダリング済み表示へ持ち越すと問題が黙って起きる: リプライ
-    /// ボックスは描画されなくなってもキー入力を奪い続け、選択範囲は戻ったときに
-    /// 再出現する。
+    /// 選択範囲と開いたままのインラインリプライはレンダリング済み表示へ持ち越さない。
+    /// リプライボックスは描画されなくてもキー入力を奪い、選択範囲は戻ったときに再出現する。
     #[test]
     fn toggling_tears_down_line_anchored_interactions() {
         let mut vs = ViewerState {

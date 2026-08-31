@@ -1,11 +1,8 @@
 //! シンボルのホバー情報。Viewer のカーソル下にあるシンボルのシグネチャ、
 //! doc コメント、参照数。
 //!
-//! 既存の tree-sitter 製 [SymbolIndex](crate::symbol_index::SymbolIndex) の上に
-//! 作ってある (language server は使わない)。インデックスが定義位置を特定し、
-//! そのファイルを範囲を限って読んで宣言のシグネチャと直上の doc コメント
-//! ブロックを取り出す。何も見つからなければ None を返し、呼び出し側は
-//! 黙っていられる。
+//! 既存の tree-sitter 製 [SymbolIndex](crate::symbol_index::SymbolIndex) の上に作ってある
+//! (language server は使わない)。何も見つからなければ None を返し、呼び出し側は黙っていられる。
 
 use crate::symbol_index::SymbolIndex;
 
@@ -117,13 +114,11 @@ pub fn resolve_def_site(
     })
 }
 
-/// 定義位置からホバー情報を組み立てる。ファイルが読めない、行がファイルの外、
-/// のいずれかなら (黙って) None を返す。
+/// 定義位置からホバー情報を組み立てる。ファイルが読めない/行が範囲外なら黙って `None`。
 ///
-/// 索引が説明を持っていればそちらを使う。索引の宣言は producer が型を解決した
-/// もので、定義行を読み直して作る写しより中身が濃い (`let source: String` に対して
-/// 字面は `let source = std::fs::read_to_string(..)?`)。doc だけは索引が持たない
-/// ことが多い (doc コメントのある項目に限られる) ので、無ければソースから拾う。
+/// 索引の宣言は producer が型を解決したもので、定義行を読み直して作る写しより中身が
+/// 濃い (`let source: String` に対して字面は `let source = read_to_string(..)?`)。doc は
+/// 索引が持たないことが多いので、無ければソースから拾う。
 pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Option<HoverInfo> {
     let root = index.root();
     let source = std::fs::read_to_string(root.join(&def.file_path)).ok()?;
@@ -158,10 +153,8 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
         },
     };
 
-    // 正確な数ではなく上限付き。これはポインタがシンボル上で止まるたびに UI
-    // スレッドで走るが、ありふれた名前の正確な数を出すにはその名前が現れる全ファイルを
-    // パースすることになる (ここでの new は約 157ms = 10 フレーム落ち)。
-    // 上限を超えたぶんはポップアップに「50+」と出す。
+    // 正確な数ではなく上限付き。UI スレッドで走るのに、ありふれた名前の正確な数を出すには
+    // その名前が現れる全ファイルをパースすることになる (new で約 157ms = 10 フレーム落ち)。
     let (ref_count, ref_count_capped) = index.count_references_upto(symbol, &root, REF_COUNT_CAP);
 
     Some(HoverInfo {
@@ -501,9 +494,7 @@ mod tests {
 
     #[test]
     fn 構造体のフィールドは次のアイテムまで飲み込まない() {
-        // 索引がフィールドに答えるようになるまで、ホバーがこの位置に来ることは
-        // なかった。, を区切りにしていなかったので、上限の 8 行ぶん次のアイテムを
-        // そのまま読み込んでいた。
+        // , を区切りにしないと、上限の 8 行ぶん次のアイテムをそのまま読み込む。
         let src = "\
 pub struct A {
     pub session_name: Option<String>,
@@ -578,8 +569,6 @@ fn caller() {
 
     #[test]
     fn end_to_end_over_real_index() {
-        // 一時リポジトリに対して本物の tree-sitter インデックスを作り、
-        // 経路全体 (find_definitions → 読み取り → 抽出) を通してホバー情報を解決する。
         let dir = std::env::temp_dir().join(format!("hover_e2e_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

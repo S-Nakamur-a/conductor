@@ -90,8 +90,6 @@ struct SemanticSite {
 }
 
 impl App {
-    // コードナビゲーションのヘルパー
-
     /// 意味索引に位置で聞き、答えなければシンボルインデックスを名前で引く。索引の
     /// 答えは gd の飛び先と同じなので、両者の説明がずれない。
     fn hover_info_at(&self, symbol: &str, line_1: usize, start_col: usize) -> Option<HoverInfo> {
@@ -185,12 +183,9 @@ impl App {
         })
     }
 
-    /// ビューアのカーソル行から選んだシンボルについて、ホバー情報のポップアップを
-    /// 明示的に表示する。
-    ///
-    /// K キーに割り当てられた、待ち時間なしの即時トリガー。ユーザが意図して押した
-    /// 操作なので、ポップアップを出せない場合でもステータス表示でフィードバックを返す。
-    /// 何も表示しない受動的な自動ホバーとは異なる。
+    /// ビューアのカーソル行から選んだシンボルについて、ホバーのポップアップを出す (K キー)。
+    /// ユーザが意図して押した操作なので、出せない場合もステータスでフィードバックを返す。
+    /// 受動的な自動ホバーとの違いはそこ。
     pub fn show_hover_info_at(&mut self, line_idx: usize, symbol: &str) {
         use crate::app::StatusLevel;
 
@@ -246,56 +241,41 @@ impl App {
         had
     }
 
-    /// マウスホバーに関する状態をまとめてすべてクリアする: ジャンプ用の下線、
-    /// ポップアップスタック、Explorer の行ホバーハイライト。crossterm は
-    /// マウスが端末ウィンドウの外に出たことを報告してくれないため、この関数は
-    /// 「マウスが今どこにも乗っていない」と確実に言えるいくつかのイベント――
-    /// 任意のキー入力、FocusLost、ブロッキングオーバーレイが開いたとき――から
-    /// 呼ばれる（呼び出し箇所は event_loop.rs と event/mouse/mod.rs を参照）。
+    /// マウスホバーに関する状態 (ジャンプ用の下線、ポップアップスタック、Explorer の行
+    /// ハイライト) をまとめてクリアする。crossterm はマウスが端末ウィンドウの外に出た
+    /// ことを報告しないので、「どこにも乗っていない」と確実に言えるイベントから呼ぶ。
     pub fn clear_all_hover(&mut self) {
         self.clear_pointer_hover();
-        // ポップアップスタックを破棄してよいのはピン留めされていないときだけ。
-        // ピン留めされたモーダルはキーボード操作によるもので、以前からの慣習として
-        // フォーカスやアイドルによる消失を免れる（HoverInfoOverlay::pinned と
-        // tick_hover の早期リターンを参照）。
+        // ピン留めされたモーダルはキーボード操作によるもので、フォーカスやアイドルによる
+        // 消失を免れる (HoverInfoOverlay::pinned と tick_hover の早期リターン)。
         if !self.code_nav.hover_info.pinned {
             self.clear_hover();
         }
     }
 
-    /// ポインタ操作によるハイライトだけをクリアする: ジャンプ用の下線と
-    /// 行・チップ・タブのホバー。
+    /// ポインタ操作によるハイライト (ジャンプ用の下線と、行・チップ・タブのホバー) だけを
+    /// クリアする。
     ///
-    /// あえてホバーポップアップのスタックには触れない。handle_key_event が
-    /// キー入力ごとにポップアップの状態遷移を解決しており、その挙動はこの関数では
-    /// 再現できない――ピン留めされたモーダルはキー入力を自分の操作として消費し、
-    /// 一時的なポップアップは Esc で閉じられるが、その Esc はフォーカス中のパネル
-    /// 側の Esc アクションを二重に起動しないよう飲み込まれる。以前の版ではここで
-    /// スタックをクリアしていたが、それは handle_key_event より先に実行され
-    /// pinned をfalseに戻してしまうため、モーダルのキーボード経路全体が
-    /// 到達不能になり、Esc が二重に発火する不具合があった。
+    /// ホバーポップアップのスタックにあえて触れないのは、キー入力ごとの状態遷移を
+    /// handle_key_event が解決しており、ここで先に pinned を戻すとモーダルのキーボード
+    /// 経路が到達不能になり Esc が二重に発火するため。
     ///
-    /// ここでクリアする対象には、キー入力に対する他の解除経路が存在しない。
-    /// crossterm はポインタがウィンドウの外に出たことを報告しないため、これが
-    /// なければキーボード操作に切り替えた後もハイライトが点いたままになる。
+    /// ここでクリアする対象には、キー入力に対する他の解除経路が無い。crossterm は
+    /// ポインタがウィンドウの外に出たことを報告しないので、点いたままになる。
     pub fn clear_pointer_hover(&mut self) {
         self.viewer.click.hover_symbol = None;
         self.viewer.click.underline_pending = None;
         self.list_hover.clear();
-        // バー・タブバーのホバー状態（背景色ベースの表現に変更済み）。
         self.wtbar.hover = None;
         self.terminal.claude.tab_hover = None;
         self.terminal.shell.tab_hover = None;
         self.revidere.badge_hover = false;
     }
 
-    /// マウスが現在乗っているシンボルを記録する（マウス移動イベントから呼ばれる）。
-    /// cand は (symbol, 1始まりの行, anchor_row, anchor_col, start_col, end_col)。
-    /// anchor は画面上の絶対座標、col は（h_scroll適用前の）0始まりのコンテンツ列で、
-    /// 解決後は HoverInfoOverlay::target_* にそのまま引き継がれる。マウスが
-    /// 空白や識別子以外の上にあるときは None。新しいシンボルに移ると、
-    /// アイドルカウントダウンがリセットされ、前のシンボル用に表示されていた
-    /// ポップアップは破棄される。
+    /// マウスが現在乗っているシンボルを記録する (マウス移動イベントから)。cand は
+    /// (symbol, 1始まりの行, anchor_row, anchor_col, start_col, end_col) で、anchor は
+    /// 画面上の絶対座標、col は h_scroll 適用前の 0 始まりのコンテンツ列。新しいシンボルに
+    /// 移るとアイドルカウントダウンがリセットされ、前のポップアップは破棄される。
     pub fn set_mouse_hover_candidate(
         &mut self,
         cand: Option<(String, usize, u16, u16, usize, usize)>,
@@ -329,10 +309,8 @@ impl App {
                 }
             }
             None => {
-                // マウスがシンボルから離れて空白に移動した。ポップアップが表示中なら
-                // 即座には消さず、短い猶予期間を設ける（tick_hover を参照）。これにより
-                // カーソルをポップアップまで移動してクリックできるようにする。まだ何も
-                // 表示されていなければ候補を単に破棄する。
+                // ポップアップが表示中なら即座には消さず、猶予を置く (tick_hover)。カーソルを
+                // ポップアップまで移動してクリックできるようにするため。
                 if self.code_nav.hover_info.info.is_some() {
                     self.code_nav.hover_info.pending = None;
                     if self.code_nav.hover_info.leave_at.is_none() {
@@ -345,16 +323,12 @@ impl App {
         }
     }
 
-    /// ジャンプ用の下線のために、マウスが乗っているシンボルを記録する。
-    /// [set_mouse_hover_candidate] のポップアップ用デバウンスとは別系統。
-    /// cand は (symbol, 1始まりの行, start_col, end_col)、シンボル外なら
-    /// None。has_jump_modifier はこの移動時点での Cmd/Ctrl の状態で、
-    /// 下線の色を決めるために解決後の [crate::viewer::HoverSymbol] に保存
-    /// される。すでに解決済みのシンボルの上に乗ったままでも都度更新されるので、
+    /// ジャンプ用の下線のために、マウスが乗っているシンボルを記録する。cand は
+    /// (symbol, 1始まりの行, start_col, end_col)。has_jump_modifier はこの移動時点の
+    /// Cmd/Ctrl の状態で、下線の色を決める。解決済みのシンボルの上でも都度更新するので、
     /// デバウンスをやり直さずに修飾キーの押下・解放で色が切り替わる。
     ///
-    /// ポップアップと違い、こちらには離脱時の猶予がない。シンボルから離れる
-    /// （あるいは別のシンボルに移る）と、表示中の下線は即座に消える。
+    /// ポップアップと違い離脱時の猶予は無い。シンボルから離れると下線は即座に消える。
     pub fn set_underline_candidate(
         &mut self,
         cand: Option<(String, usize, usize, usize)>,
@@ -393,8 +367,6 @@ impl App {
                     resolved: false,
                     has_jump_modifier,
                 });
-                // 猶予なし。新しく乗った候補は、前の候補で表示されていた下線を
-                // 即座に隠す。
                 self.viewer.click.hover_symbol = None;
             }
             None => {
@@ -433,10 +405,9 @@ impl App {
         false
     }
 
-    /// 毎フレーム呼ばれる自動ホバーの駆動処理。マウスがシンボルの上で
-    /// デバウンス時間を超えて静止したらホバーポップアップを解決する。見つから
-    /// なければ何も表示しない。猶予期間の管理や、ファイル切り替え・フォーカス
-    /// 喪失による無効化も担う。
+    /// 毎フレーム呼ばれる自動ホバーの駆動処理。マウスがシンボルの上でデバウンス時間を
+    /// 超えて静止したらポップアップを解決する。猶予期間の管理や、ファイル切り替え・
+    /// フォーカス喪失による無効化も担う。
     pub fn tick_hover(&mut self) {
         /// マウスがシンボルの上で静止してからポップアップが現れるまでの時間。
         const HOVER_IDLE: std::time::Duration = std::time::Duration::from_millis(350);
@@ -450,10 +421,8 @@ impl App {
             return;
         }
 
-        // 古いファイルに対するガード。ポップアップ表示中にビューアが（ジャンプや
-        // ファイルツリー操作、外部からのリロードで）別ファイルに切り替わった場合、
-        // ポップアップはもはや画面にないファイルのシンボルを説明していることになる。
-        // 猶予期間中であっても破棄し、無関係なコードの上に残り続けないようにする。
+        // ポップアップ表示中にビューアが別ファイルへ切り替わったら、猶予期間中でも破棄する。
+        // 無関係なコードの上に残り続けないようにするため。
         if self.code_nav.hover_info.info.is_some()
             && self.code_nav.hover_info.shown_file != self.viewer.content.current_file
         {
@@ -487,12 +456,9 @@ impl App {
             return;
         }
 
-        // 自動ホバーはマウスがシンボルの上に静止していることだけで駆動する
-        // （マウス移動ハンドラが設定する）。最上行やキーボードに基づくヒューリスティ
-        // クも試したが採用しなかった。行単位のテキストカーソルがない以上「カーソル
-        // 行」は常に画面最上行になってしまい、ユーザが指していないコードに対しても
-        // 発火していた。マウス位置なら正確で、シンボルの上ならポップアップを出し、
-        // 空白の上なら何も出さない。
+        // マウス静止だけで駆動する。最上行やキーボードに基づくヒューリスティクスは、行単位の
+        // テキストカーソルが無い以上「カーソル行」が常に画面最上行になり、指していない
+        // コードで発火するので採らなかった。
 
         // 十分な時間静止した候補を解決する。
         let ready = self
@@ -520,13 +486,10 @@ impl App {
             }
             self.code_nav.hover_info.anchor_row = anchor_row;
             self.code_nav.hover_info.anchor_col = anchor_col;
-            // このポップアップがどのファイルを対象にしているかを記憶しておき、
-            // ビューアが別ファイルに切り替わった瞬間に古いファイルガードが破棄
-            // できるようにする。
+            // 対象ファイルを覚えておき、ビューアが切り替わった瞬間に古いファイルガードが破棄できるようにする。
             self.code_nav.hover_info.shown_file = if info.is_some() { file } else { None };
-            // 対象のシンボルは info が表示されている間はハイライトし続ける。これは
-            // PointerState::hover_symbol（マウスがすでに離れているかもしれず、また
-            // 離脱の猶予も一切ない）とは独立している。
+            // info が表示されている間はハイライトし続ける。離脱の猶予が無い
+            // PointerState::hover_symbol とは独立。
             if info.is_some() {
                 self.code_nav.hover_info.target_line = line;
                 self.code_nav.hover_info.target_start_col = start_col;
@@ -542,12 +505,8 @@ impl App {
     /// ジャンプ可能かどうかを解決し、それに応じて下線を表示・非表示する
     /// （ジャンプ不可能な単語には下線を出さない）。
     pub fn tick_underline_hover(&mut self) {
-        // 閾値は150ms（underline_debounce_ready が使う値）。マウスが通り
-        // すぎるだけのコードで、横切るシンボルすべてに下線が点滅するのを防ぐには
-        // 十分な長さがあり（0msも試したが「クリスマスツリー」のようにちらつく）、
-        // 一方で上の tick_hover にあるポップアップの350msの HOVER_IDLE より
-        // 明らかに速く、それとは独立に保てる程度には短い。下線はポップアップの
-        // 意図的な間とは対照的に、瞬時に現れるべきものだからである。
+        // 閾値は 150ms。0ms だと横切るシンボルすべてに下線が点滅する。ポップアップの
+        // 350ms より明らかに速いのは、下線が意図的な間を置かずに現れるべきものだから。
         let ready = self
             .viewer
             .click
@@ -695,9 +654,6 @@ impl App {
         false
     }
 
-    /// カーソルが現在、指定したシンボルの定義位置と一致する（あるいは非常に
-    /// 近い）かどうかを調べる。現在のファイル+行がシンボルの定義位置のいずれか
-    /// と一致すれば true を返す。
     /// その答えが「聞かれた位置そのもの」を指しているか。
     ///
     /// 定義の上でジャンプを押したときに参照一覧へ切り替えるための判定。索引の答えは
@@ -731,7 +687,6 @@ impl App {
     /// 行（0始まり）。ジャンプ先の行も同じ画面行に配置することで、ユーザの
     /// 視線位置を維持する。
     pub fn jump_to_location(&mut self, file_path: &str, line: usize, source_screen_row: usize) {
-        // 自分自身へのジャンプ（移動先==現在位置）はスキップする。
         let target_line_0 = line.saturating_sub(1);
         if let Some(ref cur_file) = self.viewer.content.current_file {
             let current_line_0 = self.viewer.content.file_scroll + source_screen_row;
@@ -740,7 +695,6 @@ impl App {
             }
         }
 
-        // 現在位置を履歴に保存する。
         if let Some(ref cur_file) = self.viewer.content.current_file.clone() {
             let loc = crate::viewer::jump_history::Location {
                 file_path: cur_file.clone(),
@@ -1008,9 +962,8 @@ impl App {
 
     /// gd / gr がカーソル行のどの語を対象にするか決める。
     ///
-    /// 行内カーソルが無いので、候補が複数ある行では選ばせるしかない。以前は
-    /// 先頭の 1 つを黙って選んでいて、`pub use model::MenuItem;` のような行では
-    /// 意図しない語に飛んでいた。
+    /// 行内カーソルが無いので、候補が複数ある行では選ばせるしかない。先頭を黙って選ぶと
+    /// `pub use model::MenuItem;` のような行で意図しない語に飛ぶ。
     pub fn pick_line_identifier(&mut self, action: HintAction) -> LinePick {
         let line_idx = self.viewer.content.file_scroll;
         let Some(line) = self.viewer.content.file_content.get(line_idx) else {
@@ -1200,7 +1153,6 @@ impl App {
             }
         }
 
-        // 2文字ラベルを割り当てる: aa, ab, ..., az, ba, bb, ...
         candidates
             .into_iter()
             .enumerate()
@@ -1294,24 +1246,18 @@ fn build_hover_preview(
     })
 }
 
-// ジャンプ下線の判定ヘルパー（純粋関数、直接ユニットテスト対象）
-
-/// 2色ある下線のどちらを描くか、あるいは何も描かないなら None。
+/// 2色ある下線のどちらを描くか、あるいは何も描かないなら `None`。
 ///
-/// 下線は現在、Cmd/Ctrl を押しているときだけでなく、シンボルに静止するだけで
-/// 表示される。色によって修飾キーの状態を伝える役割は残っており、Hint は
-/// 「ここに定義がある」、Accent は「今押せばジャンプできる」を意味する
-/// （実際のクリックには依然として修飾キーが必要で、下線はその約束の内容を
-/// 変えているだけ）。
+/// 下線は静止するだけで表示される。色は修飾キーの状態を伝えるだけで、Hint は
+/// 「ここに定義がある」、Accent は「今押せばジャンプできる」。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnderlineColorKind {
     Hint,
     Accent,
 }
 
-/// 静止中のシンボルに対する下線の色を決める。ジャンプ不可能な単語――
-/// キーワードや未解決の識別子――には下線をまったく出さない。これは
-/// ポップアップが同じ単語に対して何も表示しないのと揃えている。
+/// 静止中のシンボルに対する下線の色。ジャンプ不可能な単語 (キーワード、未解決の識別子)
+/// には出さない。ポップアップが同じ単語に何も出さないのと揃えている。
 pub fn underline_color_kind(
     is_jumpable: bool,
     has_jump_modifier: bool,
@@ -1326,10 +1272,8 @@ pub fn underline_color_kind(
     })
 }
 
-/// ホバー情報ポップアップの対象シンボルが query_line を含んでいるか、
-/// 含んでいればそのハイライト範囲を返す。ポップアップが非表示か別の行を
-/// 説明している間は None を返し、その場合レンダラはその行について
-/// PointerState::hover_symbol（下線）側の情報にフォールバックする。
+/// ポップアップの対象シンボルが query_line を含んでいれば、そのハイライト範囲。非表示か
+/// 別の行を説明している間は `None` で、レンダラは下線側の情報に落ちる。
 pub fn popup_highlight_range(
     popup_shown: bool,
     target_line: usize,
@@ -1350,25 +1294,21 @@ fn underline_debounce_ready(elapsed: std::time::Duration, resolved: bool) -> boo
     !resolved && elapsed >= std::time::Duration::from_millis(HOVER_UNDERLINE_MS)
 }
 
-/// 行中の特定の列にあるシンボル（識別子）を抽出する。
-/// (symbol_text, start_col, end_col) を返す。列は0始まりの文字オフセット。
+/// 行中の `col` 列にある識別子を (symbol_text, start_col, end_col) で返す。列は 0 始まり。
 pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize, usize)> {
     if col >= line.len() {
         return None;
     }
-    // col の位置の文字が識別子の一部であることを確認する。
     let ch = line.as_bytes().get(col).copied()?;
     if !(ch.is_ascii_alphanumeric() || ch == b'_') {
         return None;
     }
-    // 識別子の先頭を探すため後方に走査する。
     let start = line[..col]
         .bytes()
         .rev()
         .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
         .count();
     let start_col = col - start;
-    // 識別子の末尾を探すため前方に走査する。
     let end = line[col..]
         .bytes()
         .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
@@ -1378,21 +1318,16 @@ pub fn extract_symbol_at_column(line: &str, col: usize) -> Option<(String, usize
     if word.len() <= 1 || is_rust_keyword(word) {
         return None;
     }
-    // 識別子はアルファベットかアンダースコアで始まる必要がある。
     if !word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
         return None;
     }
     Some((word.to_string(), start_col, end_col))
 }
 
-/// [extract_symbol_at_column] を mask でゲートし、コメントや文字列
-/// リテラル内の単語がジャンプ先として解決されないようにする。
-///
-/// 抽出処理そのものとは分離してある。抽出処理は「この列にある識別子は何か」
-/// を調べる純粋な検索のままであり、その出現がコードなのか地の文なのかを
-/// 知る手段を持たない。マウスの列をジャンプ可能なシンボルに変換するすべての
-/// 呼び出し元（ホバー下線、自動ホバーポップアップ、Cmd+クリック）は、
-/// extract_symbol_at_column を直接呼ぶのではなくこちらを経由する。
+/// [extract_symbol_at_column] を mask でゲートし、コメントや文字列リテラル内の単語が
+/// ジャンプ先として解決されないようにする。抽出処理は「この列にある識別子は何か」を
+/// 調べる純粋な検索のままなので、地の文かどうかの判定はこちらに置く。マウスの列を
+/// シンボルに変換する呼び出し元はすべてこちらを経由する。
 pub fn masked_symbol_at_column(
     line: &str,
     col: usize,

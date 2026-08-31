@@ -11,20 +11,15 @@ impl ViewerState {
     /// 桁数に [crate::viewer::GUTTER_FIXED_W] を足したもの。
     pub fn gutter_total_width(&self) -> u16 {
         let digit_w = if self.diff_view.diff_mode {
-            // renderer の gutter 幅と厳密に一致させないと、マウスの当たり判定
-            // （バッジ/スレッドのトグル、symbol ジャンプ）が1列分ずれてしまう。
-            // renderer は diff_view_max_line_no を使っており、これは折りたたまれた
-            // （ExpandableContext）領域の new_line_end も数える — それは表示中の
-            // どの行よりも桁数が多くなり得るので、ここで Line エントリだけから
-            // 再計算すると桁数が足りず、クリック対象が左にずれてしまう。
+            // renderer の gutter 幅と厳密に一致させないとマウスの当たり判定が 1 列ずれる。renderer が
+            // 使う diff_view_max_line_no は折りたたまれた領域の new_line_end も数えるので、ここで
+            // Line エントリだけから再計算すると桁数が足りない。
             digit_count(self.diff_view.diff_view_max_line_no)
         } else {
             digit_count(self.content.file_content.len())
         };
         (digit_w + crate::viewer::GUTTER_FIXED_W) as u16
     }
-
-    // unified diff 表示
 
     /// FileDiff から unified diff 表示のエントリ一覧を構築する。
     ///
@@ -35,7 +30,6 @@ impl ViewerState {
 
         let total_new_lines = self.content.file_content.len();
 
-        // ヘルパー: hunk 内の new_line_no の最大値を求める。
         let hunk_max_new_line = |hunk: &DiffHunk| -> usize {
             hunk.lines
                 .iter()
@@ -43,7 +37,6 @@ impl ViewerState {
                 .max()
                 .unwrap_or(0)
         };
-        // ヘルパー: hunk 内の new_line_no の最小値を求める。
         let hunk_min_new_line = |hunk: &DiffHunk| -> usize {
             hunk.lines
                 .iter()
@@ -54,7 +47,6 @@ impl ViewerState {
 
         for (hunk_idx, hunk) in file_diff.hunks.iter().enumerate() {
             if hunk_idx == 0 {
-                // 最初の hunk より前: ファイル先頭に隠れた行が無いか確認する。
                 let first_new = hunk_min_new_line(hunk);
                 if first_new > 1 {
                     let hidden_start = 1;
@@ -69,7 +61,6 @@ impl ViewerState {
                         });
                 }
             } else {
-                // hunk と hunk の間: 隠れた範囲を計算する。
                 let prev_hunk = &file_diff.hunks[hunk_idx - 1];
                 let prev_end = hunk_max_new_line(prev_hunk);
                 let curr_start = hunk_min_new_line(hunk);
@@ -104,7 +95,6 @@ impl ViewerState {
             }
         }
 
-        // 最後の hunk より後: ファイル末尾に隠れた行が無いか確認する。
         if let Some(last_hunk) = file_diff.hunks.last() {
             let last_new = hunk_max_new_line(last_hunk);
             if last_new < total_new_lines {
@@ -129,7 +119,6 @@ impl ViewerState {
         }
     }
 
-    /// 現在の diff 表示の行から、キャッシュ済みの最大行番号を再計算する。
     fn recalc_diff_max_line_no(&mut self) {
         self.diff_view.diff_view_max_line_no = self
             .diff_view
@@ -172,8 +161,7 @@ impl ViewerState {
         }
     }
 
-    /// h_scroll を delta だけ増やす。現在の内容の中で最も長い行を超えて
-    /// スクロールしないようクランプする。
+    /// h_scroll を delta だけ増やす。最も長い行を超えてスクロールしないようクランプする。
     pub fn scroll_right(&mut self, delta: usize) {
         let max_w = self.max_content_width();
         // 数文字だけ見える状態になるまでスクロールを許可する。
@@ -181,9 +169,8 @@ impl ViewerState {
         self.content.h_scroll = (self.content.h_scroll + delta).min(limit);
     }
 
-    /// unified diff モードを終了し、関連する状態をリセットする。summary 疑似
-    /// ファイル表示からも抜ける — ファイルを開くあらゆる経路はここを通るので、
-    /// show_summary と diff_mode が両方同時に立たないことを保証する唯一の場所。
+    /// unified diff モードを終了する。summary 疑似ファイル表示からも抜ける — ファイルを開く
+    /// あらゆる経路がここを通るので、show_summary と diff_mode が同時に立たないことを保証する。
     pub fn exit_diff_mode(&mut self) {
         self.diff_view.diff_mode = false;
         self.diff_view.diff_view_lines.clear();
@@ -205,11 +192,10 @@ impl ViewerState {
         self.summary_scroll = 0;
     }
 
-    /// diff_view_lines 中の指定インデックスにある、隠れたコンテキスト行を展開する。
+    /// diff_view_lines の指定インデックスにある、隠れたコンテキスト行を展開する。
     ///
-    /// expand_all が true なら、隠れた行を全て表示する。そうでなければ最大10行
-    /// を表示する — 隠れた範囲の先頭から5行、末尾から5行（GitHub 方式の
-    /// 双方向展開）。展開が起きたら true を返す。
+    /// expand_all なら全て、そうでなければ先頭から 5 行 + 末尾から 5 行 (GitHub 方式の
+    /// 双方向展開)。展開が起きたら true。
     pub fn expand_context_at(&mut self, idx: usize, expand_all: bool) -> bool {
         let entry = match self.diff_view.diff_view_lines.get(idx) {
             Some(UnifiedDiffEntry::ExpandableContext { .. }) => {
@@ -229,7 +215,6 @@ impl ViewerState {
         };
 
         if expand_all || hidden_count <= 10 {
-            // 隠れた行を全て表示する。
             let mut new_entries: Vec<UnifiedDiffEntry> = Vec::with_capacity(hidden_count);
             for line_no in new_line_start..=new_line_end {
                 let content = self
@@ -256,14 +241,12 @@ impl ViewerState {
                 self.diff_view.diff_view_scroll += delta;
             }
         } else {
-            // 双方向: 先頭から5行 + 末尾から5行を表示する。
             let top_count = 5usize;
             let bottom_count = 5usize;
 
             let mut new_entries: Vec<UnifiedDiffEntry> =
                 Vec::with_capacity(top_count + bottom_count + 1);
 
-            // 先頭側の行（直前の hunk の直後）。
             for line_no in new_line_start..new_line_start + top_count {
                 let content = self
                     .content
@@ -289,7 +272,6 @@ impl ViewerState {
                 func_header,
             });
 
-            // 末尾側の行（次の hunk の直前）。
             for line_no in (new_line_end - bottom_count + 1)..=new_line_end {
                 let content = self
                     .content
@@ -320,8 +302,6 @@ impl ViewerState {
         true
     }
 
-    /// 現在のビューポートで見えている最初の ExpandableContext エントリを
-    /// 見つけ、そのインデックスを返す。
     pub fn find_visible_expandable(&self, viewport_height: usize) -> Option<usize> {
         let start = self.diff_view.diff_view_scroll;
         let end = (start + viewport_height).min(self.diff_view.diff_view_lines.len());
