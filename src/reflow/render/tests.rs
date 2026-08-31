@@ -9,7 +9,7 @@ use super::glyphs::{
     ASSISTANT_MARKER, MARKER_COLS, TEAMMATE_MESSAGE_GLYPH, THINKING_GLYPH, TOOL_RESULT_GLYPH,
     USER_MARKER,
 };
-use super::helpers::{pad_glyph_to, truncate_to_width, with_marker};
+use super::helpers::{pad_glyph_to, with_marker};
 
 // pad_glyph_to
 
@@ -91,39 +91,4 @@ fn with_marker_single_line_no_continuation() {
     let result = with_marker(vec![Line::from("only")], ">", style);
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].spans[0].content, "> ");
-}
-
-// truncate_to_width
-
-#[test]
-fn truncate_fits_returns_unchanged() {
-    assert_eq!(truncate_to_width("hello", 10), "hello");
-}
-
-#[test]
-fn truncate_over_limit_appends_ellipsis() {
-    let result = truncate_to_width("hello world", 6);
-    assert!(result.ends_with('\u{2026}'));
-    assert!(UnicodeWidthStr::width(result.as_str()) <= 6);
-}
-
-#[test]
-fn truncate_zero_budget_returns_empty() {
-    assert_eq!(truncate_to_width("anything", 0), "");
-}
-
-#[test]
-fn truncate_keeps_a_string_that_fits_exactly() {
-    // 以前は省略記号のカラムを無条件に確保していて "hell…" を返していた。
-    assert_eq!(truncate_to_width("hello", 5), "hello");
-}
-
-#[test]
-fn truncate_does_not_cut_inside_a_cluster() {
-    // ⚠ とその U+FE0F セレクタの間で切ると、宙に浮いた結合文字が残り、結果の
-    // 計測も誤ることになる。
-    let s = "\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}";
-    let out = truncate_to_width(s, 5);
-    assert!(UnicodeWidthStr::width(out.as_str()) <= 5, "{out:?}");
-    assert!(!out.contains('\u{fe0f}') || out.contains('\u{26a0}'));
 }

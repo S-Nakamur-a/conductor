@@ -8,6 +8,7 @@
 pub(crate) mod color;
 mod panel_chrome;
 pub mod strip;
+pub mod text;
 
 #[cfg(test)]
 mod tests;

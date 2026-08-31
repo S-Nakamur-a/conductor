@@ -9,37 +9,17 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState};
-use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, PendingWorktreeOp, WorktreeListRow};
 use crate::git_engine::WorktreeInfo;
 use crate::theme::Theme;
 use crate::ui::common::PanelChrome;
+use crate::ui::common::text::truncate_to_width;
 
 /// 未コミット変更が無いことを示すチェック。
 const CLEAN_MARK: &str = " \u{2713}";
 /// pending-create 行で説明文を切り詰める幅。
 const PENDING_DESC_WIDTH: usize = 30;
-
-/// 文字列を max_width の表示幅に収まるよう切り詰める。
-/// 切り詰めが発生した場合は末尾に "..." を付ける。
-pub(super) fn truncate_to_width(s: &str, max_width: usize) -> String {
-    let mut width = 0;
-    let mut end = s.len();
-    for (i, ch) in s.char_indices() {
-        let cw = ch.width().unwrap_or(0);
-        if width + cw > max_width {
-            end = i;
-            break;
-        }
-        width += cw;
-    }
-    if end < s.len() {
-        format!("{}...", &s[..end])
-    } else {
-        s.to_string()
-    }
-}
 
 /// インラインセッション行 1 つ分の、描画に要る情報。
 struct SessionRow {

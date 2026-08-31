@@ -15,8 +15,6 @@ use crate::worktree::decoration::{self, DecorationMode};
 
 mod detail;
 mod list;
-#[cfg(test)]
-mod tests;
 
 /// worktree パネルを指定領域に描画する。
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {

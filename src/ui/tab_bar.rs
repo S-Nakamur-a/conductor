@@ -23,32 +23,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 use crate::ui::common::strip::visible_window;
+use crate::ui::common::text::truncate_to_width;
 
 fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
-}
-
-/// s を最大 max_w 表示カラムまで切り詰め、切られた場合は … を付加する。
-/// 幅を意識しているので、幅広（CJK）グリフを境界で分断することはない。
-fn truncate_to_width(s: &str, max_w: u16) -> String {
-    use unicode_width::UnicodeWidthChar;
-    let max_w = max_w as usize;
-    if UnicodeWidthStr::width(s) <= max_w {
-        return s.to_string();
-    }
-    let budget = max_w.saturating_sub(1); // 省略記号用に1カラムを確保する
-    let mut out = String::new();
-    let mut acc = 0usize;
-    for ch in s.chars() {
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if acc + cw > budget {
-            break;
-        }
-        out.push(ch);
-        acc += cw;
-    }
-    out.push('\u{2026}');
-    out
 }
 
 /// タブバーのクリック可能な領域が何をするか。
@@ -142,7 +120,7 @@ pub fn render(
         .clamp(4, 28);
     let labels: Vec<String> = items
         .iter()
-        .map(|t| truncate_to_width(&t.label, max_label_w))
+        .map(|t| truncate_to_width(&t.label, max_label_w as usize))
         .collect();
     let slots: Vec<u16> = labels.iter().map(|l| w(l) + close_w).collect();
 

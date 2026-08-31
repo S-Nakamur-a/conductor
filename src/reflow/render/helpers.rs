@@ -3,8 +3,9 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+pub(crate) use crate::ui::common::text::truncate_to_width;
 
 use super::glyphs::MARKER_COLS;
 
@@ -50,38 +51,6 @@ pub(crate) fn pad_glyph_to(glyph: &str, target_cols: usize) -> String {
         }
         s
     }
-}
-
-/// s を高々 max_cols 表示カラムに切り詰め、切った場合は … を末尾に付ける。
-///
-/// Unicode スカラ値を順に走査して表示幅を積算し、はみ出す直前の文字の手前で切る。
-/// 呼び出し側が Span::styled にそのまま渡せるよう、所有権のある String を返す。
-pub(crate) fn truncate_to_width(s: &str, max_cols: usize) -> String {
-    if max_cols == 0 {
-        return String::new();
-    }
-    // 省略記号用のカラムは、実際に削る文字がある場合のみ確保する。
-    // 無条件に確保すると、ちょうど収まる文字列まで切り詰められてしまう
-    // （truncate_to_width("hello", 5) がかつて "hell…" を返していた）。
-    if UnicodeWidthStr::width(s) <= max_cols {
-        return s.to_string();
-    }
-    let mut width = 0usize;
-    let budget = max_cols - 1;
-    // char 単位ではなく書記素クラスタ単位で切る。基底文字と異体字セレクタの間
-    // （あるいは ZWJ シーケンスの途中）で切ると、幅の計測を誤るうえ、
-    // 結合文字が画面上に浮いた状態で残ってしまう。
-    for (i, cluster) in s.grapheme_indices(true) {
-        let cw = UnicodeWidthStr::width(cluster);
-        if width + cw > budget {
-            let mut out = s[..i].to_string();
-            out.push('\u{2026}'); // …
-            return out;
-        }
-        width += cw;
-    }
-    // max_cols に収まっているので切り詰め不要。
-    s.to_string()
 }
 
 /// parts を indent_cols 個の空白カラムの後ろに並べて1行に組み立てる。結果が width を
