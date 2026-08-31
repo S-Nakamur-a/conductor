@@ -339,47 +339,38 @@ mod tests {
             Err(PrIntakeError::InvalidInput("not-a-pr".to_string()))
         );
     }
-
     #[test]
-    fn classify_failure_text_detects_auth() {
-        assert_eq!(
-            classify_failure_text(
+    fn classify_failure_text_maps_gh_and_git_stderr_to_actionable_errors() {
+        let cases = [
+            (
                 1,
-                "To get started with GitHub CLI, please run:  gh auth login"
+                "To get started with GitHub CLI, please run:  gh auth login",
+                PrIntakeError::GhNotAuthenticated,
             ),
-            PrIntakeError::GhNotAuthenticated
-        );
-    }
-
-    #[test]
-    fn classify_failure_text_detects_not_found() {
-        assert_eq!(
-            classify_failure_text(404, "no pull requests found for branch \"x\""),
-            PrIntakeError::PrNotFound(404)
-        );
-        assert_eq!(
-            classify_failure_text(5, "fatal: couldn't find remote ref pull/5/head"),
-            PrIntakeError::PrNotFound(5)
-        );
-    }
-
-    #[test]
-    fn classify_failure_text_detects_network_error() {
-        assert_eq!(
-            classify_failure_text(
+            (
+                404,
+                r#"no pull requests found for branch "x""#,
+                PrIntakeError::PrNotFound(404),
+            ),
+            (
+                5,
+                "fatal: couldn't find remote ref pull/5/head",
+                PrIntakeError::PrNotFound(5),
+            ),
+            (
                 1,
-                "fatal: unable to access: Could not resolve host: github.com"
+                "fatal: unable to access: Could not resolve host: github.com",
+                PrIntakeError::NetworkError,
             ),
-            PrIntakeError::NetworkError
-        );
-    }
-
-    #[test]
-    fn classify_failure_text_falls_back_to_other() {
-        assert_eq!(
-            classify_failure_text(1, "something unexpected happened"),
-            PrIntakeError::Other("something unexpected happened".to_string())
-        );
+            (
+                1,
+                "something unexpected happened",
+                PrIntakeError::Other("something unexpected happened".to_string()),
+            ),
+        ];
+        for (pr, stderr, want) in cases {
+            assert_eq!(classify_failure_text(pr, stderr), want, "{stderr}");
+        }
     }
 
     #[test]

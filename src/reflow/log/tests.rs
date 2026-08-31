@@ -543,50 +543,34 @@ fn write_jsonl(lines: &[&str]) -> tempfile::NamedTempFile {
 }
 
 #[test]
-fn load_session_skips_non_user_assistant_types() {
-    let f = write_jsonl(&[
-        r#"{"type":"system","message":{"role":"system","content":"sys prompt"}}"#,
-        r#"{"type":"summary","message":{"role":"assistant","content":"summary"}}"#,
-        r#"{"type":"user","message":{"role":"user","content":"hello"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::User);
-}
-
-#[test]
-fn load_session_skips_sidechain_records() {
-    let f = write_jsonl(&[
-        r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":"hidden"}}"#,
-        r#"{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":"visible"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::Assistant);
-}
-
-#[test]
-fn load_session_skips_role_mismatch() {
-    // type=user だが role=system のレコードは黙って除外されるべき。
-    let f = write_jsonl(&[
-        r#"{"type":"user","message":{"role":"system","content":"not a user turn"}}"#,
-        r#"{"type":"user","message":{"role":"user","content":"real user"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::User);
-}
-
-#[test]
-fn load_session_skips_empty_blocks() {
-    // content が表示ブロックを1つも生成しないメッセージは出力されない。
-    let f = write_jsonl(&[
-        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""}]}}"#,
-        r#"{"type":"user","message":{"role":"user","content":"valid"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::User);
+fn load_session_drops_records_that_have_no_turn_to_draw() {
+    let cases = [
+        (
+            "user でも assistant でもない type",
+            r#"{"type":"system","message":{"role":"system","content":"sys prompt"}}"#,
+        ),
+        (
+            "サイドチェーン",
+            r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":"hidden"}}"#,
+        ),
+        (
+            "type と role の食い違い",
+            r#"{"type":"user","message":{"role":"system","content":"not a user turn"}}"#,
+        ),
+        (
+            "表示ブロックを 1 つも生まない content",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""}]}}"#,
+        ),
+    ];
+    for (label, dropped) in cases {
+        let f = write_jsonl(&[
+            dropped,
+            r#"{"type":"user","message":{"role":"user","content":"real user"}}"#,
+        ]);
+        let entries = load_session(f.path());
+        assert_eq!(entries.len(), 1, "{label}");
+        assert_eq!(entries[0].role, Role::User, "{label}");
+    }
 }
 
 #[test]

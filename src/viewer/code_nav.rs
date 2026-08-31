@@ -1443,40 +1443,26 @@ mod tests {
             .collect();
         assert!(words.is_empty(), "{words:?}");
     }
-
+    /// extract_symbol_at_column 単体はコメントという概念を持たないので、地の文の
+    /// "build" をそのまま返す。それをジャンプ先にしないのがこのマスク。
     #[test]
-    fn masked_symbol_at_column_skips_trailing_line_comment() {
-        // extract_symbol_at_column 単体では何の躊躇もなく "build" を返して
-        // しまう――コメントという概念を持たないため。ホバーや Cmd+クリックが
-        // 地の文をジャンプ先として扱わないようにしているのはこのマスクである。
-        let src = "fn f() {\n    let x = 1; // build the index\n}\n";
-        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
-        let line = src.lines().nth(1).unwrap();
-        let col = line.find("build").unwrap();
-        assert_eq!(masked_symbol_at_column(line, col, 2, &mask), None);
-    }
-
-    #[test]
-    fn masked_symbol_at_column_skips_string_literal() {
-        let src = "fn f() {\n    let s = \"index\";\n}\n";
-        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
-        let line = src.lines().nth(1).unwrap();
-        let col = line.find("index").unwrap();
-        assert_eq!(masked_symbol_at_column(line, col, 2, &mask), None);
-    }
-
-    #[test]
-    fn masked_symbol_at_column_allows_real_code() {
-        // 上のコメントのケースと同じ形の行だが、コード側の識別子を指している。
-        // マスクが過剰にマスクしていないことを確認する。
-        let src = "fn f() {\n    let value = 1; // build the index\n}\n";
-        let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
-        let line = src.lines().nth(1).unwrap();
-        let col = line.find("value").unwrap();
-        assert_eq!(
-            masked_symbol_at_column(line, col, 2, &mask),
-            Some(("value".to_string(), col, col + 5))
-        );
+    fn masked_symbol_at_column_gates_on_the_code_mask() {
+        let cases = [
+            ("    let x = 1; // build the index", "build", None),
+            (r#"    let s = "index";"#, "index", None),
+            (
+                "    let value = 1; // build the index",
+                "value",
+                Some(("value".to_string(), 8, 13)),
+            ),
+        ];
+        for (body, word, want) in cases {
+            let src = format!("fn f() {{\n{body}\n}}\n");
+            let mask = crate::symbol_index::CodeMask::compute(&src, "lib.rs");
+            let line = src.lines().nth(1).unwrap();
+            let col = line.find(word).unwrap();
+            assert_eq!(masked_symbol_at_column(line, col, 2, &mask), want, "{body}");
+        }
     }
 
     #[test]
@@ -1610,32 +1596,27 @@ pub struct Building {
         assert_eq!(first_candidate(line, 2, &mask), None);
     }
 
-    // ジャンプ下線の判定関数
-
     #[test]
-    fn viewer_hover_symbol_color_none_when_not_jumpable() {
-        // ジャンプ不可能な単語には、修飾キーの有無にかかわらず下線が付かない。
+    fn viewer_hover_symbol_underline_color_and_debounce() {
+        use std::time::Duration;
+
+        // ジャンプ不可能な単語には、修飾キーの有無にかかわらず下線が付かない。Hint は
+        // 「ここに定義がある」、Accent は「今押せばジャンプできる」。
         assert_eq!(underline_color_kind(false, false), None);
         assert_eq!(underline_color_kind(false, true), None);
-    }
-
-    #[test]
-    fn viewer_hover_symbol_color_hint_without_modifier() {
-        // 修飾キー不要で、静止するだけで表示される――情報提供であって操作可能
-        // という意味ではないことを示す色(Hint)。
         assert_eq!(
             underline_color_kind(true, false),
             Some(UnderlineColorKind::Hint)
         );
-    }
-
-    #[test]
-    fn viewer_hover_symbol_color_accent_with_modifier() {
-        // Cmd/Ctrl を押すと、同じ下線が「今押せばジャンプできる」という意味に昇格する。
         assert_eq!(
             underline_color_kind(true, true),
             Some(UnderlineColorKind::Accent)
         );
+
+        // 閾値は 150ms。解決済みの候補は、静止し続けても再解決されない。
+        assert!(!underline_debounce_ready(Duration::from_millis(149), false));
+        assert!(underline_debounce_ready(Duration::from_millis(150), false));
+        assert!(!underline_debounce_ready(Duration::from_millis(500), true));
     }
 
     #[test]
@@ -1653,31 +1634,5 @@ pub struct Building {
     #[test]
     fn viewer_hover_symbol_popup_range_none_when_hidden() {
         assert_eq!(popup_highlight_range(false, 42, 4, 10, 42), None);
-    }
-
-    #[test]
-    fn viewer_hover_symbol_debounce_not_ready_before_150ms() {
-        assert!(!underline_debounce_ready(
-            std::time::Duration::from_millis(149),
-            false
-        ));
-    }
-
-    #[test]
-    fn viewer_hover_symbol_debounce_ready_at_150ms() {
-        assert!(underline_debounce_ready(
-            std::time::Duration::from_millis(150),
-            false
-        ));
-    }
-
-    #[test]
-    fn viewer_hover_symbol_debounce_not_ready_once_resolved() {
-        // すでに解決済みの候補は、マウスが同じシンボルの上に静止している間、
-        // tick のたびに再解決されることはない。
-        assert!(!underline_debounce_ready(
-            std::time::Duration::from_millis(500),
-            true
-        ));
     }
 }

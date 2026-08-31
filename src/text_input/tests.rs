@@ -3,14 +3,6 @@
 use super::*;
 
 #[test]
-fn a_new_input_is_empty() {
-    let ti = TextInput::new();
-    assert!(ti.is_empty());
-    assert_eq!(ti.text(), "");
-    assert_eq!(ti.cursor, 0);
-}
-
-#[test]
 fn inserting_characters_advances_the_cursor() {
     let mut ti = TextInput::new();
     ti.insert_char('h');

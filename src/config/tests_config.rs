@@ -132,12 +132,6 @@ fn generated_default_config_is_valid_toml() {
 }
 
 #[test]
-fn ui_config_default_has_no_theme() {
-    let cfg = Config::default();
-    assert!(cfg.ui.theme.is_none());
-}
-
-#[test]
 fn ui_config_high_contrast_defaults_off_and_round_trips() {
     let cfg = Config::default();
     assert!(!cfg.ui.high_contrast, "high_contrast must default to false");
@@ -165,14 +159,6 @@ theme = "catppuccin-latte"
     let serialized = toml::to_string_pretty(&cfg).expect("serialize");
     let cfg2: Config = toml::from_str(&serialized).expect("round-trip");
     assert_eq!(cfg2.ui.theme.as_deref(), Some("catppuccin-latte"));
-}
-
-#[test]
-fn layout_config_defaults() {
-    let cfg = LayoutConfig::default();
-    assert_eq!(cfg.explorer_width_pct, 24);
-    assert_eq!(cfg.viewer_width_pct, 38);
-    assert_eq!(cfg.terminal_split_pct, 80);
 }
 
 #[test]

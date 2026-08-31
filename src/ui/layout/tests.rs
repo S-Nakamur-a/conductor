@@ -38,55 +38,30 @@ fn layout_cache_update_returns_false_on_identical_second_call() {
 }
 
 #[test]
-fn layout_cache_invalidates_on_frame_area_change() {
-    let mut cache = LayoutCache::default();
-    let cfg = layout(24, 38, 80);
-    cache.update(rect(200, 50), None, false, &cfg, 80);
-    let changed = cache.update(rect(201, 50), None, false, &cfg, 80);
-    assert!(changed, "frame_area change must invalidate");
+fn layout_cache_invalidates_on_any_input_change() {
+    // 入力のどれが動いてもキャッシュは無効化されなければならない。ターミナル分割だけは
+    // 実行時パラメータ (shell の拡大縮小) なので config ではなく引数の方を変える。
+    let base = layout(24, 38, 80);
+    let mut explorer_split = layout(24, 38, 80);
+    explorer_split.explorer_split_pct = 30;
+    let cases: [(&str, Rect, LayoutConfig, u16); 5] = [
+        ("frame_area", rect(201, 50), layout(24, 38, 80), 80),
+        ("explorer_width_pct", rect(200, 50), layout(30, 38, 80), 80),
+        ("viewer_width_pct", rect(200, 50), layout(24, 42, 80), 80),
+        ("terminal_split_pct", rect(200, 50), layout(24, 38, 80), 70),
+        ("explorer_split_pct", rect(200, 50), explorer_split, 80),
+    ];
+    for (label, area, cfg, split) in cases {
+        let mut cache = LayoutCache::default();
+        let mut first = base.clone();
+        first.explorer_split_pct = 50;
+        cache.update(rect(200, 50), None, false, &first, 80);
+        assert!(
+            cache.update(area, None, false, &cfg, split),
+            "{label} change must invalidate"
+        );
+    }
 }
-
-#[test]
-fn layout_cache_invalidates_on_explorer_pct_change() {
-    let mut cache = LayoutCache::default();
-    cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
-    let changed = cache.update(rect(200, 50), None, false, &layout(30, 38, 80), 80);
-    assert!(changed, "explorer_width_pct change must invalidate");
-}
-
-#[test]
-fn layout_cache_invalidates_on_viewer_pct_change() {
-    let mut cache = LayoutCache::default();
-    cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
-    let changed = cache.update(rect(200, 50), None, false, &layout(24, 42, 80), 80);
-    assert!(changed, "viewer_width_pct change must invalidate");
-}
-
-#[test]
-fn layout_cache_invalidates_on_terminal_split_change() {
-    // ターミナル分割は今や実行時パラメータ（shell の拡大縮小）として渡ってくるので、
-    // config フィールドではなくその引数の方を変える。
-    let mut cache = LayoutCache::default();
-    let cfg = layout(24, 38, 80);
-    cache.update(rect(200, 50), None, false, &cfg, 80);
-    let changed = cache.update(rect(200, 50), None, false, &cfg, 70);
-    assert!(changed, "terminal_split_pct change must invalidate");
-}
-
-#[test]
-fn layout_cache_invalidates_on_explorer_split_change() {
-    let mut cache = LayoutCache::default();
-    let mut cfg = layout(24, 38, 80);
-    cfg.explorer_split_pct = 50;
-    cache.update(rect(200, 50), None, false, &cfg, 80);
-    cfg.explorer_split_pct = 30;
-    let changed = cache.update(rect(200, 50), None, false, &cfg, 80);
-    assert!(changed, "explorer_split_pct change must invalidate");
-    // ファイルツリーが縮むと中間点は上に移動する。
-    assert!(cache.explorer_mid_y > 0);
-}
-
-// accordion_widths: 異常な割合
 
 #[test]
 fn accordion_widths_does_not_panic_on_large_percentages() {

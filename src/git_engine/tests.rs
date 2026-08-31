@@ -114,37 +114,20 @@ fn main_worktree_path_from_main_repo() {
         "main worktree should contain .git"
     );
 }
-
 #[test]
-fn remote_url_to_https_base_ssh() {
-    assert_eq!(
-        GitEngine::remote_url_to_https_base("git@github.com:owner/repo.git"),
-        Some("https://github.com/owner/repo".to_string()),
-    );
-}
-
-#[test]
-fn remote_url_to_https_base_https() {
-    assert_eq!(
-        GitEngine::remote_url_to_https_base("https://github.com/owner/repo.git"),
-        Some("https://github.com/owner/repo".to_string()),
-    );
-}
-
-#[test]
-fn remote_url_to_https_base_no_suffix() {
-    assert_eq!(
-        GitEngine::remote_url_to_https_base("https://github.com/owner/repo"),
-        Some("https://github.com/owner/repo".to_string()),
-    );
-}
-
-#[test]
-fn remote_url_to_https_base_ssh_prefix() {
-    assert_eq!(
-        GitEngine::remote_url_to_https_base("ssh://git@github.com/owner/repo.git"),
-        Some("https://github.com/owner/repo".to_string()),
-    );
+fn remote_url_to_https_base_normalises_every_remote_spelling() {
+    for url in [
+        "git@github.com:owner/repo.git",
+        "https://github.com/owner/repo.git",
+        "https://github.com/owner/repo",
+        "ssh://git@github.com/owner/repo.git",
+    ] {
+        assert_eq!(
+            GitEngine::remote_url_to_https_base(url),
+            Some("https://github.com/owner/repo".to_string()),
+            "{url}"
+        );
+    }
 }
 
 /// ヘルパー: 一時的な git リポジトリを作成し、その engine を返す。
