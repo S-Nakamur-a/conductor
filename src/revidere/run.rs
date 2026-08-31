@@ -1,20 +1,12 @@
 //! [App] における revidere の駆動: 成果物の読み直しと、解析の起動。
 //!
-//! 解析そのものは revidere が持ち、AI をどう呼ぶかだけをここから差し込む
-//! ([AiSeam])。呼び先は他の AI 機能と同じ `[api]` 設定なので、レビューのために
-//! 別の設定ファイルを用意する必要は無い。
+//! 解析そのものは revidere が持ち、AI をどう呼ぶかだけをここから差し込む ([AiSeam])。
+//! `provider = "gemini"` では使えない — プロンプトが渡すのは変更箇所の一覧までで、中身は
+//! モデルが自分でリポジトリを読む前提なので、エージェント型の CLI を指した
+//! `provider = "command"` が要る。
 //!
-//! ただし `provider = "gemini"` では使えない。プロンプトが渡すのは変更箇所の
-//! 一覧までで、中身はモデルが自分でリポジトリを読む前提のため、素の HTTP 補完
-//! ではなくエージェント型の CLI を指した `provider = "command"` が要る。
-//!
-//! 見るのはベースから作業ツリーまで
-//!
-//! 起点はベースとの共通祖先で、終点は今の作業ツリー。ブランチでやったこと
-//! 全部が対象になり、まだコミットしていない手元の変更もそこに入る。作り直す
-//! ときも同じで、前回の成果物は何も引き継がない。
-//! 出力先は `<worktree>/.conductor/review.json` — conductor の worktree は
-//! それぞれ別ディレクトリなので、ブランチごとに自然に分かれる。
+//! 見るのは共通祖先から今の作業ツリーまで。まだコミットしていない手元の変更も入る。
+//! 出力先は `<worktree>/.conductor/review.json`。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -65,11 +57,8 @@ pub struct FinishedRun {
 
 /// この conductor インスタンスで実行中の全解析。ブランチごとに高々 1 本。
 ///
-/// 「同時に 1 本まで」ではなくブランチをキーにしているのは、解析が実際に
-/// 競合する対象がブランチだけだからである。成果物の置き場は worktree ごとに
-/// 分かれているので、別のブランチの解析は別のファイルに書く。すべてを直列化
-/// すると、ある worktree を見ているレビュアーが別の worktree の解析を
-/// 始められなくなる。
+/// 成果物の置き場は worktree ごとに分かれているので、実際に競合する対象はブランチだけ。
+/// すべてを直列化すると、ある worktree のレビュアーが別の worktree の解析を始められない。
 #[derive(Default)]
 pub struct RevidereRuns {
     by_branch: HashMap<String, RevidereRun>,
@@ -131,13 +120,10 @@ impl RevidereRuns {
 
 impl App {
     /// 選択中の worktree の成果物を、前回から変わっていれば読み直す。
-    /// [App::refresh_reviews] から呼ばれる。
     ///
-    /// 成果物のパスと更新時刻が前回と同じなら何もしない。読み直しは git diff を
-    /// 取り直すので、MCP がコメントを 1 件書くたびに走らせるには重い。作業ツリーが
-    /// 動いて読む順がずれる可能性はあるが、それが問題になるのはビューを開いて
-    /// いるときだけなので、そちらは [App::cmd_show_revidere] が強制読み直しで
-    /// 面倒を見る。
+    /// 読み直しは git diff を取り直すので、MCP がコメントを 1 件書くたびに走らせるには重い。
+    /// 作業ツリーが動いて読む順がずれるのはビューを開いているときだけ問題になるので、
+    /// そちらは [App::cmd_show_revidere] の強制読み直しが面倒を見る。
     pub fn reload_revidere(&mut self) {
         let worktree = self.selected_worktree_path();
         let stamp = artifact_stamp(&worktree, self.revidere.scope);

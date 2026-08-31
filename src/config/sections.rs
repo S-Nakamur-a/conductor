@@ -182,25 +182,14 @@ impl Default for UpdatesConfig {
 pub struct ApiConfig {
     /// Gemini API のモデル ID。
     pub model: String,
-    /// どの LLM プロバイダーを使うか。各プロバイダーは独立していて、失敗は
-    /// 別プロバイダーへのフォールバックではなくユーザに表面化する。
-    /// "gemini"(デフォルト): Gemini の HTTP API。
-    /// "command": ユーザが指定する外部コマンド(command を参照)。
-    ///
-    /// claude CLI を実行する組み込みプロバイダーは存在しない: Conductor は
-    /// それを起動することはない。Claude を使う構成は単に provider = "command"
-    /// で command = ["claude", "-p", "{prompt}"] とするだけで、ラッパー
-    /// スクリプトは不要である。
+    /// どの LLM プロバイダーを使うか。各プロバイダーは独立していて、失敗は別プロバイダーへの
+    /// フォールバックではなくユーザに表面化する。"gemini" (既定) は HTTP API、"command" は
+    /// ユーザが指定する外部コマンド。claude CLI を実行する組み込みプロバイダーは存在しない。
     pub provider: String,
-    /// provider = "command" のときに実行する AI ツール。argv 形式で、
-    /// シェルを介さず直接実行する。
+    /// provider = "command" のときに実行する AI ツール。argv 形式で、シェルを介さず直接実行する。
     ///
-    /// {prompt} と {workdir} は任意の引数の中で置換される
-    /// (["claude", "-p", "{prompt}"])。{prompt} が無い場合は代わりに
-    /// prompt が stdin へ渡される(["ollama", "run", "llama3"])。completion
-    /// は stdout から読み取る。ai_caller.rs の「External LLM Command
-    /// Protocol」を参照 — なお、タスクごとの挙動(ツール使用、出力形式)は
-    /// このコマンドではなく機能側のプロンプトの責務である。
+    /// {prompt} と {workdir} は任意の引数の中で置換される。{prompt} が無い場合は prompt が
+    /// stdin へ渡される。completion は stdout から読む。詳細は ai_caller.rs のプロトコル。
     pub command: Vec<String>,
     /// command プロバイダーの実時間タイムアウト(秒)。0 で無効化する。
     pub command_timeout_secs: u64,

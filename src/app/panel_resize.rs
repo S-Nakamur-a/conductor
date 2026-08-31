@@ -3,12 +3,8 @@
 
 use super::App;
 
-/// tmux 風ペインリサイズの方向。フォーカス中のパネルを基準にする。
-///
-/// 意味は tmux の resize-pane -L/-R/-U/-D と同じ: フォーカス中のパネルは
-/// 指定方向側で隣接パネルと共有する境界を動かすことで、その方向へ広がる。
-/// その方向に隣接パネルがない場合（端に接している場合）は反対側の境界が
-/// 代わりに動き、パネルは縮む。
+/// tmux 風ペインリサイズの方向。意味は tmux の resize-pane -L/-R/-U/-D と同じで、
+/// その方向に隣接パネルがなければ反対側の境界が動いてパネルは縮む。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeDir {
     Left,
@@ -17,12 +13,8 @@ pub enum ResizeDir {
     Down,
 }
 
-/// マウスでつかんでドラッグしリサイズできるパネル境界。
-///
-/// 各バリアントは、キーボード（Ctrl+Alt+矢印）のリサイズを駆動するのと同じ
-/// クランプ済みステートミューテータにマップされる。つまりマウスとキーボードは
-/// レイアウト比率について単一の真実源を共有する（[App::drag_divider_to] が
-/// このマッピングを解決する）。
+/// マウスでつかんでドラッグしリサイズできるパネル境界。キーボードのリサイズと同じ
+/// クランプ済みミューテータにマップされるので、レイアウト比率の真実源は 1 つ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Divider {
     /// Explorer列とViewer列の間の垂直境界。
@@ -61,12 +53,8 @@ impl App {
 
     /// フォーカス中のパネルを dir 方向へ広げる形で、tmux 風にリサイズする。
     ///
-    /// フォーカス中のパネルと方向を、調整可能な3つの境界のいずれか
-    /// （Explorer|Viewer、Viewer|Terminal、Claude|Shell）にマップする。フォーカス中の
-    /// パネルは、その方向側で隣接パネルと共有する境界を動かすことで dir へ広がる。
-    /// 端に接している場合は唯一持っている境界を動かし、代わりに縮む —
-    /// resize-pane -L/-R/-U/-D と同じ挙動。中央（Viewer）列は両方の境界を
-    /// 押せるので、縮むことしかできない窮屈なペインにはならない。
+    /// 端に接している場合は唯一持っている境界を動かして代わりに縮む。中央 (Viewer) 列は
+    /// 両方の境界を押せるので、縮むことしかできない窮屈なペインにはならない。
     pub fn resize_focused_pane(&mut self, dir: ResizeDir) {
         use crate::types::Focus;
         let step = Self::RESIZE_STEP_PCT as i16;
@@ -74,9 +62,7 @@ impl App {
             ResizeDir::Left | ResizeDir::Right => {
                 let grow_right = matches!(dir, ResizeDir::Right);
                 match self.focus.current() {
-                    // worktree ストリップは全幅で、3つのリサイズ可能な列の1つではない —
-                    // ここからリサイズするものは何もない。2 列ビューも同様に、
-                    // 3 列レイアウトの外にいるので動かす境界を持たない。
+                    // worktree ストリップと 2 列ビューは 3 列レイアウトの外にいるので、動かす境界を持たない。
                     Focus::Worktree | Focus::Revidere => false,
                     // 最左列: 左右キーはExplorer|Viewer境界を動かす。
                     Focus::Explorer => {
@@ -97,9 +83,8 @@ impl App {
                 }
             }
             ResizeDir::Up | ResizeDir::Down => {
-                // 垂直分割を持つ列は2つ: ターミナル（Claude/Shell）とExplorer
-                // （ファイルツリー / 変更ファイル一覧）。Downで上側ペインが広がり、
-                // Upで縮む。
+                // 垂直分割を持つ列はターミナル (Claude/Shell) と Explorer (ツリー / 変更ファイル一覧)。
+                // Down で上側ペインが広がる。
                 let down = matches!(dir, ResizeDir::Down);
                 match self.focus.current() {
                     Focus::TerminalClaude | Focus::TerminalShell => {
@@ -114,23 +99,17 @@ impl App {
                 }
             }
         };
-        // キー押下ごとに1回だけ永続化する（比率が実際に動いたときだけ —
-        // クランプの下限に当たったリサイズは何も書き込まない）。マウスドラッグの
-        // 経路はリリース時に1回だけ永続化するので、両方とも同じクランプ済み
-        // ミューテータを共有しつつ、中間ステップごとにconfigを書き込むことはない。
+        // キー押下ごとに 1 回だけ永続化する (クランプの下限に当たったリサイズは書き込まない)。
+        // マウスドラッグはリリース時に 1 回だけなので、同じミューテータを共有しつつ中間
+        // ステップごとに config を書き込むことはない。
         if changed {
             self.persist_layout();
         }
     }
 
-    /// divider をドラッグし、その境界がスクリーンセル座標 (col, row) の
-    /// マウスに追従するようにする。キーボードリサイズと同じクランプ済み
-    /// ミューテータを再利用する。比率が実際に動いたかを返す。永続化は
-    /// **行わない** — 呼び出し側がドラッグ終了時に一度だけconfigを書き込み、
-    /// マウスイベントごとのディスク書き込みを避ける。
+    /// divider をドラッグして境界をマウスに追従させる。比率が実際に動いたかを返す。永続化は
+    /// **行わない** — 呼び出し側がドラッグ終了時に一度だけ書き込む。
     pub fn drag_divider_to(&mut self, divider: Divider, col: u16, row: u16) -> bool {
-        // (Copy な) ジオメトリを、ミューテータのために &mut self を取る前に
-        // スナップショットしておく。
         let main = self.layout.cache.main_area;
         let explorer_col = self.layout.cache.columns[1];
         let terminal_col = self.layout.cache.columns[3];
@@ -149,8 +128,7 @@ impl App {
                 if main.width == 0 {
                     return false;
                 }
-                // 境界は (Explorer + Viewer) の右端にある。Explorerを固定すると、
-                // 目標のViewerパーセントはこの合計幅からExplorerを引いたもの。
+                // 境界は (Explorer + Viewer) の右端にあるので、目標の Viewer は合計幅から Explorer を引いたもの。
                 let combined_px = col.saturating_sub(main.x);
                 let combined_pct = (combined_px as u32 * 100 / main.width as u32) as i16;
                 let target_v = combined_pct - self.config.layout.explorer_width_pct as i16;
@@ -237,9 +215,8 @@ impl App {
             return false;
         }
         self.layout.terminal_split_pct = next;
-        // メモリ上のconfigも同期させ、永続化時のappearanceスナップショットと
-        // 一致させておく — これによりconfigウォッチャーのリロードが no-op になり
-        // （スナップショットが異なるときのみ反応する）、自己書き込みループを避ける。
+        // メモリ上の config も同期させ、config ウォッチャーのリロードを no-op にする
+        // (自己書き込みループを避ける)。
         self.config.layout.terminal_split_pct = next;
         self.request_redraw();
         self.set_status_info(format!(
@@ -283,8 +260,6 @@ impl App {
     }
 }
 
-/// Explorer+Viewer の合計は保存する (Terminal 幅を動かさない)。下限を割る delta は
-/// クランプするので、境界は行き過ぎずに境目で止まる。
 fn clamp_ev_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> (u16, u16) {
     let e = explorer as i16;
     let v = viewer as i16;
@@ -307,8 +282,6 @@ fn clamp_vt_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // tmux 風ペインリサイズの境界計算
 
     const MIN: u16 = 10;
 
