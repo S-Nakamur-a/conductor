@@ -67,8 +67,10 @@ fn aquarium_bubbles_spawn_faster_when_active() {
         tick_aquarium(&mut state2, t, 20, 6, DecorationActivity::Active);
     }
     let active_bubbles = state2.bubbles.len();
-    // Active は少なくとも同数（通常はより多く）の泡を持つはず。
-    assert!(active_bubbles >= calm_bubbles);
+    assert!(
+        active_bubbles > calm_bubbles,
+        "active ({active_bubbles}) は calm ({calm_bubbles}) より多く泡を出すはず"
+    );
 }
 
 // Space
@@ -91,34 +93,19 @@ fn space_skips_small_area() {
 }
 
 #[test]
-fn space_shooting_stars_spawn_in_active() {
-    let mut state = SpaceState::default();
-    // 流れ星の生成をトリガーするのに十分なティック数を実行する。
-    for t in 0..100 {
-        tick_space(&mut state, t, 30, 8, DecorationActivity::Active);
-    }
-    // 100ティックの間に少なくとも1つの流れ星が生成されているはず。
-    // （すでに画面外に出ている可能性はあるが、惑星がまだ存在することを
-    // 確認すれば仕組みが動いていることは分かる。）
-    assert!(state.initialized);
-}
-
-#[test]
-fn space_planets_bounce() {
+fn space_planets_turn_around_at_the_edge() {
     let mut state = SpaceState::default();
     tick_space(&mut state, 0, 10, 6, DecorationActivity::Calm);
-    let initial_x = state.planets[0].x;
-    // 惑星が動くのに十分な回数ティックする。
+    // 端に押し付けてから進ませる。反転を見るのが目的なので、偶然の往復では代用しない。
+    state.planets[0].x = 9.9;
+    state.planets[0].direction = 1;
     for t in 1..200 {
         tick_space(&mut state, t, 10, 6, DecorationActivity::Calm);
+        if state.planets[0].direction == -1 {
+            return;
+        }
     }
-    // 惑星は移動と跳ね返りを経て、開始位置とは異なる位置にいるはず。
-    // （跳ね返りを繰り返した結果、開始位置付近に戻ることもあり得るため、動いたことだけを確認する。）
-    let final_x = state.planets[0].x;
-    assert!(
-        (final_x - initial_x).abs() > 0.01 || state.planets[0].direction != 1,
-        "planet should have moved"
-    );
+    panic!("端に着いても向きが変わらなかった");
 }
 
 // Garden
@@ -138,17 +125,6 @@ fn garden_skips_small_area() {
     let mut state = GardenState::default();
     tick_garden(&mut state, 0, 2, 2, DecorationActivity::Calm);
     assert!(state.plants.is_empty());
-}
-
-#[test]
-fn garden_birds_appear_when_active() {
-    let mut state = GardenState::default();
-    for t in 0..100 {
-        tick_garden(&mut state, t, 20, 6, DecorationActivity::Active);
-    }
-    // 100回の Active ティックの間に少なくとも1回は鳥が生成されているはず。
-    // すでにエリア外に出ている可能性があるため、ここではパニックしないことだけを確認する。
-    assert!(state.initialized);
 }
 
 #[test]
@@ -201,8 +177,8 @@ fn city_more_cars_when_active() {
     let active_cars = state_active.cars.len();
 
     assert!(
-        active_cars >= calm_cars,
-        "active ({active_cars}) should have >= calm ({calm_cars}) cars"
+        active_cars > calm_cars,
+        "active ({active_cars}) は calm ({calm_cars}) より多く車を出すはず"
     );
 }
 
@@ -224,7 +200,7 @@ fn city_cars_wrap_around() {
 // Dispatch
 
 #[test]
-fn tick_decoration_dispatches_correctly() {
+fn tick_decoration_routes_each_mode_to_its_own_state() {
     let mut states = DecorationStates::default();
 
     // 各モードをティックし、対応する状態が初期化されたことを確認する。
