@@ -66,7 +66,7 @@ mod tests {
     use super::wrap_with_cursor;
 
     #[test]
-    fn explicit_newlines_become_rows() {
+    fn 明示的な改行は行になる() {
         let (rows, r, c) = wrap_with_cursor("ab\ncd\u{2588}", 80, '\u{2588}');
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], "ab");
@@ -75,7 +75,7 @@ mod tests {
     }
 
     #[test]
-    fn long_line_hard_wraps_at_width_and_tracks_cursor() {
+    fn 長い行は幅で折り返しカーソルも追う() {
         // 10文字、幅4 → 4,4,2 の行になる。カーソルの記号は末尾にある。
         let (rows, r, c) = wrap_with_cursor("0123456789\u{2588}", 4, '\u{2588}');
         assert_eq!(rows, vec!["0123", "4567", "89\u{2588}"]);
@@ -83,14 +83,14 @@ mod tests {
     }
 
     #[test]
-    fn wide_chars_do_not_split_across_the_boundary() {
+    fn 全角文字は境界で割れない() {
         // CJK の各文字は幅2桁。幅3では1行につき1文字しか収まらない。
         let (rows, _r, _c) = wrap_with_cursor("あい", 3, '\u{2588}');
         assert_eq!(rows, vec!["あ", "い"]);
     }
 
     #[test]
-    fn empty_text_yields_one_row_and_origin_cursor() {
+    fn 空の本文は1行と原点のカーソルになる() {
         let (rows, r, c) = wrap_with_cursor("\u{2588}", 80, '\u{2588}');
         assert_eq!(rows.len(), 1);
         assert_eq!((r, c), (0, 0));

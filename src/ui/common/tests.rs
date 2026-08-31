@@ -10,7 +10,7 @@ fn contrast_ratio(l1: f64, l2: f64) -> f64 {
 }
 
 #[test]
-fn relative_luminance_endpoints() {
+fn 相対輝度の両端() {
     assert!(relative_luminance(0, 0, 0).abs() < 1e-9);
     assert!((relative_luminance(255, 255, 255) - 1.0).abs() < 1e-9);
     // 緑は最大強度のとき青よりはるかに大きく輝度に寄与する。
@@ -18,7 +18,7 @@ fn relative_luminance_endpoints() {
 }
 
 #[test]
-fn readable_fg_matches_higher_contrast_choice() {
+fn 読める文字色はコントラストの高い方を選ぶ() {
     // 明るい背景 → 黒文字が勝つ。
     assert_eq!(readable_fg_on(255, 255, 0), Color::Rgb(0, 0, 0));
     // 暗い背景 → 白文字が勝つ。
@@ -29,7 +29,7 @@ fn readable_fg_matches_higher_contrast_choice() {
 /// 優れていなければならない — これにより、バッジが明るくても暗くても、
 /// プロジェクト名が背景と衝突しないことを保証する。
 #[test]
-fn badge_fg_is_always_the_more_readable_choice() {
+fn バッジの文字色は常に読みやすい方が選ばれる() {
     for hue in 0..360 {
         let (r, g, b) = hsl_to_rgb(hue as f64, 0.6, 0.45);
         let bg = relative_luminance(r, g, b);

@@ -192,7 +192,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn border_glyph_detection() {
+    fn 枠線のグリフを見分ける() {
         // 罫線素片（細線 + 太線）はボーダーである。
         assert!(is_border_glyph("│"));
         assert!(is_border_glyph("─"));

@@ -283,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn add_and_expand_are_always_hittable_even_when_tabs_overflow() {
+    fn タブが溢れても追加と展開は押せる() {
         // バーに収まる数よりはるかに多いタブでも、[+] は常に存在してクリックできなければならない。
         let hits = render_hits(30, &items(20), 0);
         assert!(
@@ -294,14 +294,14 @@ mod tests {
     }
 
     #[test]
-    fn overflow_exposes_scroll_affordances() {
+    fn 溢れるとスクロールの手がかりが出る() {
         let hits = render_hits(24, &items(20), 5);
         assert!(hits.spans().any(|(_, _, a)| *a == TabAction::ScrollLeft));
         assert!(hits.spans().any(|(_, _, a)| *a == TabAction::ScrollRight));
     }
 
     #[test]
-    fn pinned_cluster_sits_flush_against_the_right_edge() {
+    fn 固定クラスタは右端にぴったり付く() {
         let width = 40u16;
         let hits = render_hits(width, &items(3), 0);
         let rightmost = hits.spans().map(|(_, x1, _)| x1).max().unwrap();
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn one_very_long_label_still_keeps_add_and_expand_pinned() {
+    fn 極端に長いラベル1つでも追加と展開は固定される() {
         // 巨大な名前を持つ単一のセッションでも [+]/[x] を隠さない。
         let items = vec![TabItem {
             global_idx: 0,
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn all_tabs_hittable_when_they_fit() {
+    fn 収まっていれば全タブが押せる() {
         let hits = render_hits(80, &items(3), 0);
         for i in 0..3 {
             assert!(
@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_close_hover_style_inactive_close_is_error_not_muted() {
+    fn 非アクティブなタブの閉じるはmutedではなくerror色() {
         // 1クリックで非アクティブなタブも閉じられるようになったので、その
         // [x] は以前の目立たないグレーではなく危険を示す色（theme.error）で
         // 表示されなければならない。目立たないグレーだと、破壊的な1クリック
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_close_hover_style_active_close_is_also_error() {
+    fn アクティブなタブの閉じるもerror色() {
         // 以前の実装から変わっていないが、今後の編集でアクティブなタブの
         // close ボタンだけが黙って劣化しないよう、ここで固定して検証する。
         let theme = Theme::default();
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_close_hover_style_applies_hover_background_only_to_hovered_close() {
+    fn hoverの背景はhover中の閉じるにだけ付く() {
         let theme = Theme::default();
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn hit_at_finds_the_action_owning_the_column() {
+    fn hit_atはその桁を持つアクションを見つける() {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let close_hit = hits
@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn hit_at_is_none_outside_every_region() {
+    fn どの領域の外でもhit_atはnoneになる() {
         let items = two_tabs();
         let hits = render_hits(80, &items, 0);
         let past_everything = hits.spans().map(|(_, x1, _)| x1).max().unwrap() + 1;
@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_close_hover_style_leading_separator_space_stays_unstyled() {
+    fn 閉じるの前の区切りスペースには色が付かない() {
         // ラベルと "[x]" の間のスペースは Close ではなく Select のヒット
         // 領域に属する — 隣の close ボタンが hover されている間も hover 背景を
         // 拾ってはならない。拾ってしまうとハイライトがラベルのクリック可能な

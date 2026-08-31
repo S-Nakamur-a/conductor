@@ -134,7 +134,7 @@ mod tests {
     const VIEW: Viewport = Viewport { top: 3, height: 5 };
 
     #[test]
-    fn step_moves_the_window_only_when_the_selection_leaves_it() {
+    fn 窓が動くのは選択が窓から出たときだけ() {
         let mut c = ListCursor::default();
         for (delta, selected, scroll) in [(4, 4, 0), (1, 5, 1), (-5, 0, 0)] {
             c.step(delta, 20, VIEW);
@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn step_clamps_at_both_ends() {
+    fn stepは両端でクランプする() {
         let mut c = ListCursor::default();
         c.step(-1, 20, VIEW);
         assert_eq!(c.selected(), 0);
@@ -152,21 +152,21 @@ mod tests {
     }
 
     #[test]
-    fn pan_leaves_the_selection_alone() {
+    fn panは選択を動かさない() {
         let mut c = ListCursor::default();
         c.pan(3, 20, VIEW);
         assert_eq!((c.selected(), c.scroll()), (0, 3));
     }
 
     #[test]
-    fn pan_stops_where_the_last_item_reaches_the_bottom() {
+    fn panは最後の項目が下端に着いたところで止まる() {
         let mut c = ListCursor::default();
         c.pan(999, 20, VIEW);
         assert_eq!(c.scroll(), 15);
     }
 
     #[test]
-    fn a_list_shorter_than_the_window_never_scrolls() {
+    fn 窓より短い一覧はスクロールしない() {
         let mut c = ListCursor::default();
         c.pan(999, 3, VIEW);
         c.step(2, 3, VIEW);
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn clamp_pulls_the_selection_back_when_the_list_shrinks() {
+    fn 一覧が縮むとclampが選択を引き戻す() {
         let mut c = ListCursor::default();
         c.select(18, 20, VIEW);
         c.clamp(4, VIEW);
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_list_resets_to_the_origin() {
+    fn 空の一覧は原点に戻る() {
         let mut c = ListCursor::default();
         c.select(5, 20, VIEW);
         c.clamp(0, VIEW);
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_is_the_window_trimmed_to_the_list() {
+    fn 可視範囲は窓を一覧の長さに切ったもの() {
         let mut c = ListCursor::default();
         assert_eq!(c.visible(20, VIEW), 0..5);
         c.select(19, 20, VIEW);
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn index_at_maps_screen_rows_back_and_refuses_the_rest() {
+    fn index_atは画面行を戻し範囲外は受け付けない() {
         let mut c = ListCursor::default();
         c.select(19, 20, VIEW);
         assert_eq!(c.index_at(3, 20, VIEW), Some(15));
@@ -213,7 +213,7 @@ mod tests {
     /// 引いた高さ) と一致していなければならない。ここがずれると、画面に出て
     /// いない行をクリックで開いてしまう。
     #[test]
-    fn index_at_accepts_exactly_the_rows_a_bordered_pane_draws() {
+    fn index_atは枠付きペインが実際に描く行だけを受け付ける() {
         let (y, h) = (7u16, 12u16);
         let view = Viewport::new(y + 1, h as usize - 2);
         let c = ListCursor::default();
@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn index_at_refuses_rows_past_the_end_of_a_short_list() {
+    fn index_atは短い一覧の末尾より後ろを受け付けない() {
         let c = ListCursor::default();
         assert_eq!(c.index_at(4, 2, VIEW), Some(1));
         assert_eq!(c.index_at(5, 2, VIEW), None);

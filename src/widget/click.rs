@@ -31,19 +31,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_first_click_is_never_double() {
+    fn 最初のクリックはダブルにならない() {
         assert!(!ClickTracker::default().is_double(3));
     }
 
     #[test]
-    fn the_same_place_twice_in_a_row_is_double() {
+    fn 同じ場所を続けて2回押すとダブルになる() {
         let mut c = ClickTracker::default();
         c.is_double(3);
         assert!(c.is_double(3));
     }
 
     #[test]
-    fn a_different_place_resets_it() {
+    fn 別の場所を押すと数え直しになる() {
         let mut c = ClickTracker::default();
         c.is_double(3);
         assert!(!c.is_double(4), "行が違えば速くても 2 回目ではない");
@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[test]
-    fn a_slow_second_click_is_not_double() {
+    fn 遅い2回目はダブルにならない() {
         let mut c = ClickTracker {
             last: Some((3, Instant::now() - DOUBLE_CLICK)),
         };

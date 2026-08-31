@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn row_style_cases_are_pairwise_distinct() {
+    fn 行スタイルの組み合わせは互いに異なる() {
         let theme = test_theme();
         let base_fg = theme.fg;
 
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_row_ignores_hover() {
+    fn 選択行はhoverを無視する() {
         let theme = test_theme();
         let base_fg = theme.fg;
 
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn hover_row_phase_reflects_current_row() {
+    fn hoverの段階は今の行を映す() {
         let mut hover = HoverRow::default();
         hover.set(Some(3));
         assert_eq!(hover.phase(3), Some(HoverPhase::On));
@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_hover_starts_fade_on_previous_row() {
+    fn hoverが移ると前の行のフェードが始まる() {
         let mut hover = HoverRow::default();
         hover.set(Some(3));
         hover.set(Some(4));
@@ -387,13 +387,13 @@ mod tests {
     }
 
     #[test]
-    fn fade_completes_after_duration_elapses() {
+    fn 時間が経てばフェードは完了する() {
         let hover = HoverRow::with_left_at(3, Instant::now() - Duration::from_millis(200));
         assert_eq!(hover.phase(3), None);
     }
 
     #[test]
-    fn resetting_same_row_does_not_restart_fade() {
+    fn 同じ行を入れ直してもフェードはやり直さない() {
         let mut hover = HoverRow::default();
         hover.set(Some(3));
         hover.set(Some(4));
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn is_animating_reflects_active_fade() {
+    fn is_animatingは進行中のフェードを映す() {
         let mut hover = HoverRow::default();
         assert!(!hover.is_animating());
 
@@ -424,7 +424,7 @@ mod tests {
     /// アニメーションもする — ただし、ポインタが離れた後に行が明るくなるという
     /// 逆の動きが再生されてしまう。方向を検証してこそこれを検知できる。
     #[test]
-    fn fading_out_starts_lit_and_ends_at_base() {
+    fn フェードは明るい側から始まり地の色で終わる() {
         let theme = test_theme();
         let base = theme.fg;
         let lit = row_style(&theme, base, false, true, Some(HoverPhase::On)).fg;
@@ -447,7 +447,7 @@ mod tests {
     /// hover が嘘をつく不具合の回帰防止。solarized-dark と gruvbox では accent == warning
     /// (ステージ済みの色) なので、未ステージのファイルがステージ済みに見えていた。
     #[test]
-    fn hover_never_repaints_a_row_as_another_meaningful_token() {
+    fn hoverは行を別の意味を持つ色に塗り替えない() {
         for &name in crate::theme::Theme::all_names() {
             let theme = crate::theme::Theme::from_name(name);
             // hover 中の行が成りすましてはならない意味を持つトークン群:
@@ -483,7 +483,7 @@ mod tests {
     /// 行がどの色から始まっていても hover は等しく見えなければならない。満たさないと、
     /// 同じ操作でもファイルの git 状態によって明らかに異なるフィードバックが生じる。
     #[test]
-    fn hover_clears_the_visibility_floor_on_every_theme_and_base_colour() {
+    fn hoverは全テーマ全地色で視認性の下限を満たす() {
         for &name in crate::theme::Theme::all_names() {
             let theme = crate::theme::Theme::from_name(name);
             let bases = [
@@ -513,7 +513,7 @@ mod tests {
     /// チャンネルを持つ。selection はそれを借用してはならない:
     /// hover 中の行が選択中の行の隣にあるとき、両者は区別できなければならない。
     #[test]
-    fn only_the_hovered_row_is_underlined() {
+    fn 下線が付くのはhover中の行だけ() {
         let theme = test_theme();
         let base = theme.fg;
         let underlined = |style: Style| style.add_modifier.contains(Modifier::UNDERLINED);
@@ -552,7 +552,7 @@ mod tests {
     /// 明るくなる）が下線は落とす。これにより、深くネストされた行の左端から
     /// 下線が始まってしまうことを防いでいる。
     #[test]
-    fn decoration_keeps_the_hover_colour_but_not_the_underline() {
+    fn 装飾はhoverの色は保つが下線は落とす() {
         let theme = test_theme();
         let hovered = row_style(&theme, theme.fg, false, true, Some(HoverPhase::On));
         let decoration = decoration_style(hovered);
@@ -566,7 +566,7 @@ mod tests {
     /// 保持されなければならない。さもないとプレフィックス部分がそれが属する
     /// 名前より薄く描画されてしまう。
     #[test]
-    fn decoration_preserves_selection_styling() {
+    fn 装飾は選択の強調を保つ() {
         let theme = test_theme();
         let selected = row_style(&theme, theme.fg, true, true, None);
         let decoration = decoration_style(selected);
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn lerp_dummy_color_is_used_directly_when_hover_is_none_or_non_rgb() {
+    fn hoverが無いかrgb以外ならlerpを通さない() {
         // hover がないとき row_style が lerp を呼ばないこと。非 RGB の base_fg で検証する。
         let theme = test_theme();
         let style = row_style(&theme, Color::Reset, false, true, None);
