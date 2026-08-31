@@ -338,7 +338,6 @@ diff --git a/src/a.rs b/src/a.rs
         }
     }
 
-    /// 成果物が全滅しても、素の diff に退化するだけで行は消えない。
     #[test]
     fn 役に立たない成果物でも素のdiffには退化する() {
         let empty = revidere_fixtures::review("[]");

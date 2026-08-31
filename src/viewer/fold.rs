@@ -812,7 +812,6 @@ tail
         assert_eq!(starts(&ranges), vec![(1, 3)]);
     }
 
-    /// インデントのフォールバックでは、ブロックのあとの空行を範囲に含めない。
     /// 含めると畳んだ跡に空行だけが残って、詰まったように見えない。
     #[test]
     fn インデントの範囲は末尾の空行を含まない() {
@@ -855,7 +854,7 @@ fn outer() {
         assert_eq!(fs.hidden_count(1), Some(4));
     }
 
-    /// 外側を開いても、内側の畳みは畳まれたまま（vim と同じ）。
+    /// vim と同じ挙動。
     #[test]
     fn 外側を開いても内側の畳みは残る() {
         let mut fs = state(NEST, "a.rs");
@@ -867,7 +866,6 @@ fn outer() {
         assert!(!fs.is_hidden(5));
     }
 
-    /// 見出し行でない行を対象にすると、それを含む最も内側のブロックが動く。
     #[test]
     fn ブロックの中での操作は最も内側を対象にする() {
         let mut fs = state(NEST, "a.rs");
@@ -906,7 +904,6 @@ fn outer() {
         assert!(!fs.reveal(1));
     }
 
-    /// zM のあとカーソルが隠れたら、それを隠している見出し行へ寄せる。
     #[test]
     fn 隠れた行の寄せ先はその見出し() {
         let mut fs = state(NEST, "a.rs");
@@ -936,7 +933,7 @@ fn outer() {
         assert!(!fs.is_hidden(2));
     }
 
-    /// 別のファイルへ移ったら開閉は捨てる。行番号は移った先で別の意味を持つ。
+    /// 行番号は移った先で別の意味を持つ。
     #[test]
     fn ファイルを移ると畳みは捨てる() {
         let mut fs = state(NEST, "a.rs");
@@ -945,7 +942,6 @@ fn outer() {
         assert!(!fs.is_collapsed(1));
     }
 
-    /// 折りたたみが無いファイルでは、すべての行がそのまま可視行になる。
     #[test]
     fn 畳みの無いファイルは全行が見える() {
         let fs = FoldState::default();
@@ -995,7 +991,6 @@ fn b() {
         assert!(!fs.is_collapsed(1) && !fs.is_collapsed(2));
     }
 
-    /// 畳める範囲が1つも無いファイルでは深さ操作そのものが成立しない。
     #[test]
     fn 畳みの無いファイルには深さが無い() {
         let mut fs = FoldState::default();

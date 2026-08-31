@@ -159,13 +159,11 @@ mod tests {
         }
     }
 
-    /// ファイル名は拡張子より優先されること (CMakeLists.txt が .txt に当たらない)。
     #[test]
     fn ファイル名は拡張子より優先される() {
         assert_eq!(syntax_name("CMakeLists.txt", None), "CMake");
     }
 
-    /// 通常の拡張子は今までどおり引けること。
     #[test]
     fn 普通の拡張子は引ける() {
         for (path, expected) in [
@@ -201,7 +199,6 @@ mod tests {
         assert!(syntax_name("bin/run", Some("#!/bin/bash")).contains("bash"));
     }
 
-    /// 手がかりが何も無ければ plain text に落ちること（パニックしない）。
     #[test]
     fn 最後はplain_textに落ちる() {
         assert_eq!(

@@ -241,7 +241,6 @@ mod tests {
         assert_eq!(hits.at(sel.0), Some(TabAction::Select(1)));
     }
 
-    /// preview タブは italic で描く。永続タブとの違いはここにしか出ない。
     #[test]
     fn previewのタブは斜体で描く() {
         let mut vs = state(&["a.rs", "b.rs"], 1);
@@ -318,7 +317,6 @@ mod tests {
         assert!(hits.spans().any(|(_, _, a)| *a == TabAction::Select(0)));
     }
 
-    /// スクロールして覗いている間は、アクティブなタブへ引き戻されない。
     #[test]
     fn スクロールがアクティブなタブに巻き戻されない() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();

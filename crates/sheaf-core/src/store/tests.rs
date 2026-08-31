@@ -542,7 +542,6 @@ fn 囲みは内側が先に来る() {
     assert_eq!((found[1].first_line, found[1].last_line), (0, 2));
 }
 
-/// 囲むものが無い行と、答えられない索引は別物として返る。
 #[test]
 fn 囲むものが無いことと答えられないことは違う() {
     let dir = tempfile::tempdir().unwrap();

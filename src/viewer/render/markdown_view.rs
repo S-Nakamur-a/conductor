@@ -181,7 +181,6 @@ mod tests {
         assert!(toggle_segments(0, MIN_VIEWER_W).is_some());
     }
 
-    /// 列のオフセットが何であれ、チップはパネルの内側に収まる。
     #[test]
     fn トグルは列の内側に収まる() {
         for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 100, 300] {

@@ -308,7 +308,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// タブを閉じたら隣へ移る。最後の 1 枚を閉じたらファイル未選択に戻る。
     #[test]
     fn タブを閉じると隣へ移り最後は未選択になる() {
         let dir = fixture("close", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
@@ -332,7 +331,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// シングルクリックで開いた preview タブは、次のファイルを開くと閉じる。
     /// クリックするたびにタブが増えるのを防ぐのがこの機能の本題。
     #[test]
     fn previewのタブは次のファイルで置き換わる() {

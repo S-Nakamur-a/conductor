@@ -235,7 +235,6 @@ mod tests {
         assert!(v < 0.2, "expected dark bg, got {v}");
     }
 
-    /// Nerd Font のシンボルを同梱している端末だけを Nerd と判定すること。
     #[test]
     fn シンボルを同梱する端末だけnerdと判定する() {
         use crate::icons::IconSet;

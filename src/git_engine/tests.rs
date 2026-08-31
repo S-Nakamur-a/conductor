@@ -4,14 +4,12 @@ use super::*;
 use std::env;
 use std::path::Path;
 
-/// スモークテスト: このソースファイル自身を含むリポジトリを開く。
 #[test]
 fn このリポジトリを開ける() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let _engine = GitEngine::open(Path::new(&manifest)).expect("should open repo");
 }
 
-/// スモークテスト: worktree を一覧する(少なくとも main が含まれるはず)。
 #[test]
 fn worktree一覧はmainを含む() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -147,7 +145,6 @@ fn temp_repo_engine() -> (tempfile::TempDir, GitEngine) {
     (tmp, engine)
 }
 
-/// grab の状態がセッション ID なしで正しく往復することを確認するテスト。
 #[test]
 fn grab状態はセッション無しで往復する() {
     let (_tmp, engine) = temp_repo_engine();
@@ -172,7 +169,6 @@ fn grab状態はセッション無しで往復する() {
     engine.remove_grab_state().unwrap();
 }
 
-/// grab の状態がセッション ID ありで正しく往復することを確認するテスト。
 #[test]
 fn grab状態はセッション付きで往復する() {
     let (_tmp, engine) = temp_repo_engine();
