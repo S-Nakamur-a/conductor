@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn inserting_characters_advances_the_cursor() {
+fn 文字を入れるとカーソルが進む() {
     let mut ti = TextInput::new();
     ti.insert_char('h');
     ti.insert_char('i');
@@ -12,7 +12,7 @@ fn inserting_characters_advances_the_cursor() {
 }
 
 #[test]
-fn insertion_happens_at_the_cursor_not_at_the_end() {
+fn 挿入は末尾ではなくカーソル位置で起きる() {
     let mut ti = TextInput::new();
     ti.insert_char('a');
     ti.insert_char('c');
@@ -22,7 +22,7 @@ fn insertion_happens_at_the_cursor_not_at_the_end() {
 }
 
 #[test]
-fn backspace_at_the_start_of_the_text_does_nothing() {
+fn 先頭でのbackspaceは何もしない() {
     let mut ti = TextInput::new();
     ti.set_text("abc");
     ti.delete_backward();
@@ -33,7 +33,7 @@ fn backspace_at_the_start_of_the_text_does_nothing() {
 }
 
 #[test]
-fn delete_at_the_end_of_the_text_does_nothing() {
+fn 末尾でのdeleteは何もしない() {
     let mut ti = TextInput::new();
     ti.set_text("abc");
     ti.move_home();
@@ -45,7 +45,7 @@ fn delete_at_the_end_of_the_text_does_nothing() {
 }
 
 #[test]
-fn moving_past_either_end_stops_there() {
+fn 両端を越える移動はそこで止まる() {
     let mut ti = TextInput::new();
     ti.set_text("abc");
     assert_eq!(ti.cursor, 3);
@@ -66,7 +66,7 @@ fn moving_past_either_end_stops_there() {
 }
 
 #[test]
-fn home_and_end_jump_to_the_ends_of_the_text() {
+fn homeとendは本文の両端へ飛ぶ() {
     let mut ti = TextInput::new();
     ti.set_text("hello");
     ti.move_home();
@@ -76,7 +76,7 @@ fn home_and_end_jump_to_the_ends_of_the_text() {
 }
 
 #[test]
-fn the_cursor_moves_by_character_not_by_byte() {
+fn カーソルはバイトではなく文字単位で動く() {
     let mut ti = TextInput::new();
     ti.insert_char('あ');
     ti.insert_char('い');
@@ -92,7 +92,7 @@ fn the_cursor_moves_by_character_not_by_byte() {
 }
 
 #[test]
-fn word_movement_stops_at_the_start_of_each_word() {
+fn 単語移動は各単語の先頭で止まる() {
     let mut ti = TextInput::new();
     ti.set_text("hello world foo");
     ti.move_home();
@@ -107,7 +107,7 @@ fn word_movement_stops_at_the_start_of_each_word() {
 }
 
 #[test]
-fn delete_to_line_start_removes_everything_before_the_cursor() {
+fn 行頭までの削除はカーソルより前を全部消す() {
     let mut ti = TextInput::new();
     ti.set_text("hello world");
     // カーソルが末尾にあるので全て削除される
@@ -127,7 +127,7 @@ fn delete_to_line_start_removes_everything_before_the_cursor() {
 }
 
 #[test]
-fn delete_to_line_start_stops_at_the_line_break() {
+fn 行頭までの削除は改行で止まる() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("line1\nline2\nline3");
     // カーソルは "line3" の末尾にある
@@ -140,7 +140,7 @@ fn delete_to_line_start_stops_at_the_line_break() {
 }
 
 #[test]
-fn select_all_and_clear_empties_the_input() {
+fn 全選択して消すと入力が空になる() {
     let mut ti = TextInput::new();
     ti.set_text("some text");
     ti.select_all_and_clear();
@@ -149,7 +149,7 @@ fn select_all_and_clear_empties_the_input() {
 }
 
 #[test]
-fn the_text_splits_at_the_cursor() {
+fn 本文はカーソル位置で分かれる() {
     let mut ti = TextInput::new();
     ti.set_text("abcdef");
     ti.move_home();
@@ -161,7 +161,7 @@ fn the_text_splits_at_the_cursor() {
 }
 
 #[test]
-fn the_cursor_reports_its_row_and_column() {
+fn カーソルは自分の行と桁を答える() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("hello\nworld\nfoo");
     let (row, col) = ti.cursor_row_col();
@@ -170,7 +170,7 @@ fn the_cursor_reports_its_row_and_column() {
 }
 
 #[test]
-fn home_and_end_stay_inside_the_current_line_when_multiline() {
+fn 複数行ではhomeとendは今の行の中に留まる() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("line1\nline2\nline3");
     // カーソルは "line3" の末尾にある
@@ -181,21 +181,21 @@ fn home_and_end_stay_inside_the_current_line_when_multiline() {
 }
 
 #[test]
-fn a_single_line_input_strips_newlines_from_pasted_text() {
+fn 単一行の入力は貼り付けた改行を落とす() {
     let mut ti = TextInput::new();
     ti.insert_str("hello\nworld");
     assert_eq!(ti.text(), "helloworld"); // 改行が取り除かれる
 }
 
 #[test]
-fn a_multiline_input_keeps_pasted_newlines() {
+fn 複数行の入力は貼り付けた改行を残す() {
     let mut ti = TextInput::new_multiline();
     ti.insert_str("hello\nworld");
     assert_eq!(ti.text(), "hello\nworld");
 }
 
 #[test]
-fn set_text_moves_the_cursor_to_the_end() {
+fn set_textはカーソルを末尾へ動かす() {
     let mut ti = TextInput::new();
     ti.set_text("hello");
     assert_eq!(ti.cursor, 5);
@@ -204,7 +204,7 @@ fn set_text_moves_the_cursor_to_the_end() {
 }
 
 #[test]
-fn full_width_glyphs_count_as_two_columns() {
+fn 全角のグリフは2桁として数える() {
     let mut ti = TextInput::new();
     ti.set_text("あいう");
     // 日本語1文字の表示幅は2なので合計は6
@@ -214,7 +214,7 @@ fn full_width_glyphs_count_as_two_columns() {
 }
 
 #[test]
-fn the_input_derefs_to_str() {
+fn 入力はstrへderefできる() {
     let ti = TextInput::new();
     assert!(ti.is_empty()); // Deref 経由の str::is_empty
     let mut ti = TextInput::new();
