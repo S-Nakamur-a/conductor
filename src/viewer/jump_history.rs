@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn test_push_and_go_back() {
+    fn going_back_walks_the_stack_then_stops_at_the_oldest_jump() {
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
         h.push(loc("b.rs", 20));
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_go_forward() {
+    fn going_forward_returns_to_where_going_back_came_from() {
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
         h.push(loc("b.rs", 20));
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn test_push_clears_forward() {
+    fn a_new_jump_discards_the_forward_stack() {
         // go_back した直後は forward に積まれていて、進める。
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn test_max_history() {
+    fn the_back_stack_stops_growing_at_two_hundred_entries() {
         let mut h = JumpHistory::new();
         for i in 0..250 {
             h.push(loc("file.rs", i));

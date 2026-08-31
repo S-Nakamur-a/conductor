@@ -194,7 +194,7 @@ fn test_match_counts() {
 }
 
 #[test]
-fn test_collapse_directory_only_dir() {
+fn a_directory_holding_only_subdirectories_is_still_collapsible() {
     // リグレッション: サブディレクトリのみを含む(直接のファイルを持たない)
     // ディレクトリも折りたたみ可能でなければならない。
     let matches = vec![

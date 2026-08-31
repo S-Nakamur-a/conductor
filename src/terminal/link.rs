@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nonexistent_path_excluded() {
+    fn a_path_that_is_not_on_disk_is_not_linkified() {
         let dir = setup_test_dir();
         let links = detect_file_links("error in src/nonexistent.rs:10", dir.path());
         assert!(links.is_empty());

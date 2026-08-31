@@ -313,7 +313,7 @@ Hope this helps!"#;
     }
 
     #[test]
-    fn test_parse_no_json_returns_error() {
+    fn a_reply_with_no_json_at_all_is_an_error() {
         let raw = "This has no JSON at all";
         assert!(parse_smart_gen_result(raw).is_err());
     }

@@ -30,7 +30,7 @@ fn test_insert_at_cursor() {
 }
 
 #[test]
-fn test_delete_backward() {
+fn backspace_at_the_start_of_the_text_does_nothing() {
     let mut ti = TextInput::new();
     ti.set_text("abc");
     ti.delete_backward();
@@ -41,7 +41,7 @@ fn test_delete_backward() {
 }
 
 #[test]
-fn test_delete_forward() {
+fn delete_at_the_end_of_the_text_does_nothing() {
     let mut ti = TextInput::new();
     ti.set_text("abc");
     ti.move_home();
@@ -84,7 +84,7 @@ fn test_move_home_end() {
 }
 
 #[test]
-fn test_multibyte_chars() {
+fn the_cursor_moves_by_character_not_by_byte() {
     let mut ti = TextInput::new();
     ti.insert_char('あ');
     ti.insert_char('い');
@@ -212,7 +212,7 @@ fn test_set_text_moves_cursor_to_end() {
 }
 
 #[test]
-fn test_display_width_japanese() {
+fn full_width_glyphs_count_as_two_columns() {
     let mut ti = TextInput::new();
     ti.set_text("あいう");
     // 日本語1文字の表示幅は2なので合計は6
