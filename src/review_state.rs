@@ -1,7 +1,4 @@
-//! レビューモードの状態。レビューパネルの UI 状態を保持する。
-//!
-//! 現在表示しているコメントの一覧、選択、スクロール、そしてレビューコメントの
-//! 追加・編集のための入力モードを扱う。
+//! レビューパネルの UI 状態。
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,16 +8,13 @@ use crate::review_store::{
 use crate::text_input::TextInput;
 use crate::types::{Notice, StatusLevel};
 
-/// 仮想的なコメント一覧の 1 行。
-///
-/// コメントのスレッドを展開すると、親コメントの行のあとに返信の行が並ぶ。この
-/// 列挙型のおかげで、UI とイベントハンドラは親と返信の関係を保ったまま一覧を
-/// 平坦な列として扱える。
+/// コメント一覧の 1 行。展開すると親の行のあとに返信の行が並ぶので、UI と
+/// イベントハンドラは親子関係を保ったまま平坦な列として扱える。
 #[derive(Debug, Clone)]
 pub enum CommentListRow {
-    /// ReviewState::comments の指定添字にあるトップレベルのコメント。
-    Comment { comment_idx: usize },
-    /// comment_idx のコメントに属する返信。
+    Comment {
+        comment_idx: usize,
+    },
     Reply {
         comment_idx: usize,
         reply_idx: usize,
@@ -30,99 +24,75 @@ pub enum CommentListRow {
 /// レビューパネルの入力モード。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewInputMode {
-    /// コメント一覧を移動している。
     Normal,
-    /// 新しいコメント本文を入力している (形式: "file:line body")。
+    /// バッファの形式は "file:line body"。
     AddingComment,
-    /// 既存コメントの本文を編集している。
     EditingComment,
-    /// 既存の返信の本文を編集している。
     EditingReply,
-    /// 既存コメントへ返信している。
     ReplyingToComment,
-    /// コメントまたは返信を削除する前の y/n 確認を待っている。
     ConfirmingDelete,
 }
 
-/// 確認待ちの削除が何を対象にしているか。
+/// 確認待ちの削除の対象。
 #[derive(Debug, Clone)]
 pub enum PendingDelete {
-    /// コメント全体を削除する (返信も連鎖して消える)。
+    /// 返信も連鎖して消える。
     Comment { id: String },
-    /// 返信 1 件だけを削除し、親コメントは残す。
+    /// 親コメントは残す。
     Reply { id: String, parent_id: String },
 }
 
 /// レビューモードの UI 状態。
 pub struct ReviewState {
-    /// 現在の worktree のコメント。データベースから読み込む。
+    /// 現在の worktree のコメント。DB から読み込む。
     pub comments: Vec<ReviewComment>,
-    /// 現在選択しているコメントの添字。
     pub selected: usize,
-    /// 現在の入力モード。
     pub input_mode: ReviewInputMode,
-    /// 入力欄のテキストバッファ (追加・編集中に使う)。
     pub input_buffer: TextInput,
-    /// 作成中のコメントの種別 (Suggest か Question)。
     pub input_kind: CommentKind,
-    /// 作成中の新規コメントの対象: (file_path, line_start, line_end)。
-    /// 設定されている (AddingComment の) あいだ、入力ボックスはその行に
-    /// インラインで描かれ、バッファは本文だけを持つ (file:line の接頭辞は無い)。
-    /// None のときは、バッファ内の接頭辞をパースする従来の経路
-    /// (テンプレートピッカーやコマンドパレットからの入口) に落ちる。
+    /// 作成中のコメントの対象 (file_path, line_start, line_end)。
+    ///
+    /// Some のあいだ入力欄はその行にインラインで描かれ、バッファは本文だけを持つ。
+    /// None なら "file:line " の接頭辞をバッファからパースする従来の経路に落ちる
+    /// (テンプレートピッカーやコマンドパレットからの入口)。
     pub input_anchor: Option<(String, u32, Option<u32>)>,
     /// パネル下部に出す一時的なメッセージ。
     pub status_message: Option<String>,
-    /// コメントに対する現在の検索・絞り込みクエリ。
     pub search_query: TextInput,
-    /// 検索入力が有効かどうか。
     pub search_active: bool,
-    /// 絞り込み後のコメントの添字 (comments に対する添字)。
+    /// 絞り込み後の、comments に対する添字。
     pub filtered_indices: Vec<usize>,
-    /// データベースから読み込んだ、利用可能なコメントテンプレート。
     pub templates: Vec<CommentTemplate>,
-    /// テンプレートピッカーが表示中かどうか。
     pub template_picker_active: bool,
-    /// ピッカー内で現在選択しているテンプレートの添字。
     pub template_selected: usize,
-    /// 現在表示中のファイルのコメントのキャッシュ。1 始まりの行番号がキー。
+    /// 表示中のファイルのコメント。1 始まりの行番号がキー。
     pub file_comments: HashMap<usize, Vec<ReviewComment>>,
-    /// file_comments を作ったときのファイルパス (キャッシュ無効化のため)。
+    /// file_comments を作ったときのパス。無効化の判定に使う。
     pub file_comments_path: Option<String>,
-    /// コメント ID ごとの返信数のキャッシュ。コメントと一緒に読み込む。
+    /// コメント ID ごとの返信数。コメントと一緒に読み込む。
     pub reply_counts: HashMap<String, usize>,
-    /// 返信スレッドを展開しているコメント ID の集合。
     pub expanded_comments: HashSet<String>,
-    /// 展開中コメントの返信のキャッシュ。コメント ID がキー。
+    /// 展開中のコメントの返信。コメント ID がキー。
     pub cached_replies: HashMap<String, Vec<ReviewReply>>,
-    /// コメントパネルの仮想的な行一覧 (展開状態が変わるたびに作り直す)。
+    /// 展開状態が変わるたびに作り直す。
     pub comment_list_rows: Vec<CommentListRow>,
 
-    // コメント詳細のオーバーレイ
-    /// コメント詳細モーダルが表示中かどうか。
     pub comment_detail_active: bool,
-    /// 詳細モーダル内のスクロール位置。
     pub comment_detail_scroll: usize,
-    /// スクロール位置の上限 (描画時に設定される)。
+    /// 描画が書き込む上限。
     pub comment_detail_max_scroll: usize,
-    /// 詳細モーダルで表示しているコメントの添字。
     pub comment_detail_idx: usize,
 
-    /// ブランチ単位の変更サマリ (差分全体の「何を・なぜ」)。コメントと一緒に
-    /// 読み込み、差分の上にバナーとして描画する。現在のブランチにサマリが
-    /// 書かれていなければ None。
+    /// 差分全体の「何を・なぜ」。コメントと一緒に読み込み、差分の上にバナーで出す。
     pub change_summary: Option<String>,
 
-    /// y/n の確認を待っている削除の対象 (input_mode == ConfirmingDelete の
-    /// あいだ設定される)。
+    /// input_mode == ConfirmingDelete のあいだ入る。
     pub pending_delete: Option<PendingDelete>,
-    /// 編集中の返信の (reply_id, parent_comment_id)
-    /// (input_mode == EditingReply のあいだ設定される)。
+    /// input_mode == EditingReply のあいだ入る (reply_id, parent_comment_id)。
     pub editing_reply: Option<(String, String)>,
 }
 
 impl ReviewState {
-    /// 空の既定値で ReviewState を作る。
     pub fn new() -> Self {
         Self {
             comments: Vec::new(),

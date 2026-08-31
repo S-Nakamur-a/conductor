@@ -1,10 +1,5 @@
-//! 端末 / PTY の状態管理。
-//!
-//! Claude Code と Shell の 2 パネルは同じものを持つので、1 枚ぶんを
-//! [TerminalPane] にまとめ、[TerminalState] はそれを 2 つ並べる。
-//! かつては `scroll_claude` / `scroll_shell` のように接頭辞で区別した
-//! フィールドが 10 組並んでおり、どちらのパネルかを選ぶ
-//! `match focus` が呼び出し側に 14 箇所あった。
+//! 端末 / PTY の状態。Claude Code と Shell は同じものを持つので、1 枚ぶんを
+//! [TerminalPane] にまとめ、[TerminalState] がそれを 2 つ並べる。
 
 use crate::hit_map::ColumnSpans;
 use std::collections::{HashMap, HashSet};
@@ -18,29 +13,25 @@ use crate::ui::tab_bar::TabAction;
 
 /// 端末パネル 1 枚ぶんの状態。
 pub struct TerminalPane {
-    /// このパネルが映す PTY セッションの種別。
     pub kind: pty_manager::SessionKind,
-    /// 現在の worktree でこのパネルが映しているセッションの添字。
+    /// 現在の worktree で、このパネルが映しているセッションの添字。
     pub active_session: Option<usize>,
     /// 最後に判明した内容領域のサイズ (行数, 桁数)。
     pub size: (u16, u16),
-    /// スクロールバックのオフセット (0 = 最新表示)。
+    /// スクロールバックのオフセット。0 が最新。
     pub scroll: usize,
-    /// 描画結果のキャッシュ。
     pub cache: PtyRenderCache,
-    /// 空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
+    /// 空白部分の直近のクリック時刻。ダブルクリック判定に使う。
     pub blank_last_click: Instant,
-    /// PTY のリーダースレッドがこのパネル向けの新しい出力を出したときに立つ。
+    /// PTY のリーダースレッドがこのパネル向けの出力を出したときに立つ。
     pub dirty: bool,
-    /// タブ列で最初に見えているタブの添字 (横スクロール)。
+    /// タブ列で最初に見えているタブの添字。
     pub tab_scroll: usize,
-    /// 次の描画でアクティブなタブが見えるようタブ列をずらす。
     pub tab_reveal: bool,
     /// タブ列のクリック可能領域。描画のたびに記録する。
     pub tab_hits: ColumnSpans<TabAction>,
-    /// タブ列のどの領域にポインタが乗っているか。描画を変えるのは Close だけだが、
-    /// アクションごと保存することで「ホバーが何を意味するか」を
-    /// イベント側ではなく描画側が決められる。
+    /// 描画を変えるのは Close だけだが、アクションごと持つことで「ホバーが何を
+    /// 意味するか」をイベント側ではなく描画側が決められる。
     pub tab_hover: Option<TabAction>,
 }
 
