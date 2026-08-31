@@ -92,7 +92,6 @@ fn help_key_dyn(lines: &mut Vec<Line<'static>>, keys: String, desc: &'static str
 }
 
 /// keymap から自動生成しているので、そのパネルで発火する全バインドを漏れなく出せる。
-/// 手作りのリストだった頃はアクションが黙って抜け落ちていた。
 fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>> {
     use crate::app::Focus;
     use crate::keymap::{Action, KeyContext};

@@ -159,10 +159,8 @@ fn syntect_theme_colors_most_tokens_across_languages() {
     }
 }
 
-/// syntect_theme_for: ui.theme が viewer.theme より優先されること。
-///
-/// テーマピッカーは ui.theme に書き込む。以前は viewer.theme だけを見ていた
-/// ので、UI の配色だけが変わってコードの配色が取り残されていた。
+/// syntect_theme_for: ui.theme が viewer.theme より優先されること。テーマピッカーは
+/// ui.theme に書き込むので、ここがずれると UI の配色だけが変わってコードの配色が残る。
 #[test]
 fn syntect_theme_for_prefers_ui_theme_over_viewer_theme() {
     let ts = two_face::theme::extra();

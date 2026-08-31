@@ -284,8 +284,7 @@ mod tests {
 
     #[test]
     fn add_and_expand_are_always_hittable_even_when_tabs_overflow() {
-        // 狭いバーに収まる数よりはるかに多いタブ — かつては [+] ボタンが
-        // 真っ先に切り取られていた。常に存在し、クリックできなければならない。
+        // バーに収まる数よりはるかに多いタブでも、[+] は常に存在してクリックできなければならない。
         let hits = render_hits(30, &items(20), 0);
         assert!(
             hits.spans().any(|(_, _, a)| *a == TabAction::Add),
@@ -314,7 +313,7 @@ mod tests {
 
     #[test]
     fn one_very_long_label_still_keeps_add_and_expand_pinned() {
-        // 巨大な名前を持つ単一のセッションが、かつてははみ出して [+]/[x] を隠していた。
+        // 巨大な名前を持つ単一のセッションでも [+]/[x] を隠さない。
         let items = vec![TabItem {
             global_idx: 0,
             label: "[CC:a-really-extremely-long-session-name-that-overflows]".to_string(),

@@ -1,7 +1,4 @@
 //! mpsc チャネルを使うバックグラウンド処理の汎用ラッパー。
-//!
-//! コードベース各所にあった場当たり的な Option<mpsc::Receiver<T>> を、
-//! 統一された BackgroundOp<T> に置き換える。
 
 use std::sync::mpsc;
 

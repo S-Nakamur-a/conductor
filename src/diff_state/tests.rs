@@ -201,10 +201,9 @@ fn a_case_rename_with_edits_is_still_shown() {
     );
 }
 
-/// リグレッション: 既に折りたたまれているディレクトリを折りたたむ(または既に
-/// 展開されているものを展開する)操作は no-op であるべきで panic してはならない。
-/// clippy --fix の collapsible_match 自動修正がかつて内側の if を match ガードに
-/// 変えてしまい、これらのケースが unreachable!() アームまで落ちてしまっていた。
+/// リグレッション: 既に折りたたまれているディレクトリを折りたたむ (または既に展開されて
+/// いるものを展開する) 操作は no-op であるべきで panic してはならない。内側の if を match
+/// ガードに変えると、これらのケースが unreachable!() アームまで落ちる。
 #[test]
 fn collapse_already_collapsed_dir_does_not_panic() {
     use super::*;
@@ -900,12 +899,9 @@ fn a_file_edited_after_commit_stays_one_entry() {
     assert_eq!(listed, vec!["a.txt"]);
 }
 
-// 新内容が空で返ってきたときに全行削除へ化ける件
-
-/// リグレッション: 未ステージ変更の新内容は workdir から読むが、読めなかった
-/// ときに空文字列へフォールバックしていた。旧内容だけが残るので、1行直した
-/// だけのファイルが Changed files に +0 -<全行数> と出て git diff と食い違う。
-/// 読めなかったことは削除された証拠ではない。
+/// リグレッション: 未ステージ変更の新内容は workdir から読む。読めなかったときに空文字列へ
+/// 落とすと旧内容だけが残り、1 行直しただけのファイルが +0 -<全行数> と出て git diff と
+/// 食い違う。読めなかったことは削除された証拠ではない。
 #[test]
 fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
     use std::os::unix::fs::PermissionsExt;

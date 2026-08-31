@@ -477,10 +477,8 @@ impl ReviewState {
         None
     }
 
-    /// 表示上の選択位置にある項目の削除を開始する — 返信の行が選択されて
-    /// いれば返信そのものを、そうでなければコメント全体を対象にする。
-    /// 実際の削除は [Self::confirm_delete] が行う。確認プロンプトを返す。
-    /// (以前は返信の行を選んでも親コメントが削除されるデータロスのバグがあった。)
+    /// 表示上の選択位置にある項目の削除を開始する — 返信の行が選択されていれば返信そのものを、
+    /// そうでなければコメント全体を対象にする。実際の削除は [Self::confirm_delete] が行う。
     pub fn request_delete_at(&mut self, visual: usize) -> Option<Notice> {
         let target = if let Some((c_idx, r_idx)) = self.selected_reply_at(visual) {
             self.reply_id_at(c_idx, r_idx)

@@ -252,9 +252,8 @@ impl App {
 
     /// 選択中の worktree の解析を起こす。
     ///
-    /// `force` は貯めた応答を捨てる。既定では効くので、diff が動いていなければ
-    /// AI は起動せず即座に返る — 旧 walkthrough が「同じコミットならスキップ」で
-    /// 自前に持っていた判断は、こちらでは revidere のキャッシュが引き受ける。
+    /// `force` は貯めた応答を捨てる。既定では効くので、diff が動いていなければ AI は起動せず
+    /// 即座に返る (「同じコミットならスキップ」は revidere のキャッシュが引き受ける)。
     pub fn cmd_analyze_revidere(&mut self, force: bool) {
         let branch = self.selected_worktree_branch();
         if branch.is_empty() {
