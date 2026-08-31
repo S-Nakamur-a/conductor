@@ -8,13 +8,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use keymap_suite::ActionName;
 
 #[test]
-fn defaults_build_without_warnings() {
+fn 既定は警告なしで組み上がる() {
     let (_km, warnings) = KeyMap::with_warnings(&toml::Table::new());
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 }
 
 #[test]
-fn every_default_action_name_resolves() {
+fn 既定のアクション名は全部解決する() {
     // default_keybinds.toml のタイポを検知するガード: 未知のアクション名は
     // デフォルトのパース時に警告として表面化するはずである。
     let build = keymap_suite::from_toml_str(DEFAULT_KEYBINDS, Action::from_name).unwrap();
@@ -22,7 +22,7 @@ fn every_default_action_name_resolves() {
 }
 
 #[test]
-fn critical_defaults_resolve() {
+fn 要のキーは解決する() {
     let km = default_keymap();
 
     // Quit は ctrl+q に移動した。素の q は未バインド（そのまま通過）なので
@@ -56,7 +56,7 @@ fn critical_defaults_resolve() {
 }
 
 #[test]
-fn worktree_switch_and_zoom_aliases_resolve() {
+fn worktree切替とズームの別名が解決する() {
     // alt+]/alt+[ は kitty プロトコルを使わない ctrl+tab ワークツリー切り替えの
     // エイリアスである。ctrl+alt+z はフォーカス中のパネルをズームし（tmux の
     // prefix z）、ctrl+alt によるペインサイズ変更ファミリーに加わる。
@@ -88,7 +88,7 @@ fn worktree_switch_and_zoom_aliases_resolve() {
 }
 
 #[test]
-fn terminal_intercepts_only_firing_actions() {
+fn terminalが奪うのは実際に発火するアクションだけ() {
     let km = default_keymap();
 
     // Quit（ctrl+q）はグローバルだがターミナルでは発火しない — このチョードは
@@ -135,7 +135,7 @@ fn terminal_intercepts_only_firing_actions() {
 }
 
 #[test]
-fn terminal_usable_actions_all_resolve_in_terminal() {
+fn terminalで使えるアクションはterminalで全部解決する() {
     // ターミナルで発火すると分類されたすべてのアクションは、実際にそこで解決
     // するチョードを持たなければならない — fires_in_terminal にバリアントを
     // 追加してバインドを忘れる（あるいはその逆の）ことへのガード。
@@ -170,7 +170,7 @@ fn terminal_usable_actions_all_resolve_in_terminal() {
 }
 
 #[test]
-fn editor_context_steals_only_leave_and_globals() {
+fn editorが奪うのは抜けるキーとグローバルだけ() {
     // 組み込みエディタはほぼすべてを vim/emacs に転送する。奪い返すのは
     // Ctrl+Esc（離脱）とターミナルで発火するグローバルチョードだけ。
     // エディタが必要とするキー — Esc、Ctrl+G、Shift+PageUp — はそのまま
@@ -215,7 +215,7 @@ fn editor_context_steals_only_leave_and_globals() {
 }
 
 #[test]
-fn ctrl_esc_is_additive_in_viewer() {
+fn viewerではctrl_escが追加で効く() {
     // アプリ全体の「フォーカスを離れる」チョードは PTY 以外のパネルでも
     // バインドされているが、加算的である: 素の Esc も引き続き機能する。
     let km = default_keymap();
@@ -232,7 +232,7 @@ fn ctrl_esc_is_additive_in_viewer() {
 }
 
 #[test]
-fn context_falls_back_to_global() {
+fn 文脈はグローバルへ落ちる() {
     let km = default_keymap();
 
     // Tab は非ターミナルの各コンテキストごとにバインドされている — Worktree
@@ -254,7 +254,7 @@ fn context_falls_back_to_global() {
 }
 
 #[test]
-fn context_shadows_are_per_context() {
+fn 文脈ごとの上書きは文脈の中だけ() {
     let km = default_keymap();
 
     // 'c' は Worktree では CherryPick、Explorer では ShowCommentList。
@@ -270,7 +270,7 @@ fn context_shadows_are_per_context() {
 }
 
 #[test]
-fn worktree_git_action_keys_resolve() {
+fn worktreeのgit操作のキーが解決する() {
     // ワークツリーパネルの git アクションを、より覚えやすいチョードに付け替えた
     // 0.67 の意図的な変更。新しいバインディングを静かな退行から守るために固定する。
     let km = default_keymap();
@@ -334,7 +334,7 @@ fn worktree_git_action_keys_resolve() {
 }
 
 #[test]
-fn shift_g_resolves_uppercase_binding() {
+fn shift_gは大文字の割り当てに解決する() {
     let km = default_keymap();
     // 通常の端末は Shift+g を解決済みグリフ 'G' + SHIFT として届ける。
     // keymap-core が冗長な SHIFT を畳み込み、"G" のバインディングに合う。
@@ -346,7 +346,7 @@ fn shift_g_resolves_uppercase_binding() {
 }
 
 #[test]
-fn shift_tab_is_cycle_backward() {
+fn shift_tabは逆回りの巡回() {
     let km = default_keymap();
     // BackTab と Tab+SHIFT はどちらも keymap-core で Tab+SHIFT に正規化される。
     let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty());
@@ -362,7 +362,7 @@ fn shift_tab_is_cycle_backward() {
 }
 
 #[test]
-fn ctrl_tab_switches_worktree() {
+fn ctrl_tabはworktreeを切り替える() {
     let km = default_keymap();
     // グローバルレイヤーなので、すべての非ターミナルコンテキストで解決する。
     // Ctrl+Tab はワークツリーを移動し、素の Tab は引き続きパネルフォーカスを
@@ -391,7 +391,7 @@ fn ctrl_tab_switches_worktree() {
 }
 
 #[test]
-fn ctrl_f_is_filename_search_in_viewer() {
+fn viewerでのctrl_fはファイル名検索() {
     let km = default_keymap();
     let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
     assert_eq!(
@@ -405,7 +405,7 @@ fn ctrl_f_is_filename_search_in_viewer() {
 }
 
 #[test]
-fn viewer_c_is_add_comment() {
+fn viewerでのcはコメント追加() {
     let km = default_keymap();
     let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
     assert_eq!(
@@ -419,7 +419,7 @@ fn viewer_c_is_add_comment() {
 }
 
 #[test]
-fn f10_opens_the_menu_bar_from_every_context() {
+fn f10はどの文脈でもメニューバーを開く() {
     // メニューバーは、そのチョードが実際に解決してこそ発見可能になる。ここは
     // ファンクションキーが使われる唯一の箇所でもあるので、f10 を静かに落とす
     // パーサがあれば、他のすべてのバインディングが動き続ける中でバーだけが
@@ -451,7 +451,7 @@ fn f10_opens_the_menu_bar_from_every_context() {
 }
 
 #[test]
-fn revidere_layer_resolves() {
+fn revidere層が解決する() {
     let km = default_keymap();
     let cases = [
         (
@@ -495,7 +495,7 @@ fn revidere_layer_resolves() {
 }
 
 #[test]
-fn explorer_show_and_analyze_keys_resolve() {
+fn explorerの表示と解析のキーが解決する() {
     let km = default_keymap();
     assert_eq!(
         km.resolve(

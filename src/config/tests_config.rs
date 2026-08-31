@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use super::*;
 
 #[test]
-fn default_config_round_trips_through_toml() {
+fn 既定のconfigはtomlを往復する() {
     let cfg = Config::default();
     let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
     let cfg2: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -26,23 +26,22 @@ fn default_config_round_trips_through_toml() {
 }
 
 #[test]
-fn empty_toml_gives_defaults() {
+fn 空のtomlは既定値になる() {
     let cfg: Config = toml::from_str("").expect("empty toml");
     assert_eq!(cfg.general.main_branch, "main");
     assert_eq!(cfg.diff.default_view, DiffView::Unified);
 }
 
 #[test]
-fn diff_view_serde() {
+fn diff_viewのserde() {
     let cfg: DiffConfig = toml::from_str(r#"default_view = "side-by-side""#).expect("parse");
     assert_eq!(cfg.default_view, DiffView::SideBySide);
 }
 
-/// 削除済みの review-prompt キーが残った設定ファイルも読み込みに失敗しては
-/// いけない。生成される config.toml すべてに書き込まれていたキーなので、
-/// 削除しても既存インストールを壊してはならない。
+/// 生成される config.toml すべてに書き込まれていたキーなので、削除しても既存インストールを
+/// 壊してはならない。
 #[test]
-fn removed_review_prompt_keys_are_ignored() {
+fn 削除したreview_promptの鍵は無視される() {
     // walkthrough_language も、revidere へ移った今は「知らない鍵」の側にいる。
     let _cfg: ReviewConfig = toml::from_str(
         "prompt_template = \"…{comments}\"\nprompt_action = \"send_to_session\"\nwalkthrough_language = \"日本語\"\n",
@@ -50,11 +49,10 @@ fn removed_review_prompt_keys_are_ignored() {
     .expect("stale keys should be ignored, not rejected");
 }
 
-/// 削除済みの [rich] セクションが残った設定ファイルも読み込みに失敗しては
-/// いけない。生成される config.toml すべてに書き込まれていたので、rich mode を
-/// 廃止しても既存インストールの起動を壊してはならない。
+/// 生成される config.toml すべてに書き込まれていたので、rich mode を廃止しても既存
+/// インストールの起動を壊してはならない。
 #[test]
-fn removed_rich_section_is_ignored() {
+fn 削除したrichセクションは無視される() {
     let cfg: Config =
         toml::from_str("[general]\nmain_branch = \"develop\"\n\n[rich]\nmode = \"force\"\n")
             .expect("stale [rich] section should be ignored, not rejected");
@@ -63,14 +61,14 @@ fn removed_rich_section_is_ignored() {
 }
 
 #[test]
-fn tilde_expansion() {
+fn チルダの展開() {
     let p = PathBuf::from("~/dev/project");
     let expanded = super::persist::expand_tilde(&p);
     assert!(!expanded.to_string_lossy().starts_with('~'));
 }
 
 #[test]
-fn ccusage_config_parse() {
+fn ccusageの設定を読む() {
     let cfg: CcusageConfig = toml::from_str(
         r#"enabled = true
 poll_interval_secs = 60"#,
@@ -81,7 +79,7 @@ poll_interval_secs = 60"#,
 }
 
 #[test]
-fn updates_config_parse() {
+fn updatesの設定を読む() {
     let cfg: UpdatesConfig = toml::from_str(
         r#"check_on_startup = false
 check_interval_secs = 3600"#,
@@ -92,7 +90,7 @@ check_interval_secs = 3600"#,
 }
 
 #[test]
-fn keybinds_parse() {
+fn keybindsを読む() {
     // [keybinds] セクションは生のテーブル(key→action のスキーマ)として取り込み、
     // パースを担う keymap::KeyMap に渡す。
     let toml_str = r#"
@@ -121,7 +119,7 @@ fn keybinds_parse() {
 }
 
 #[test]
-fn generated_default_config_is_valid_toml() {
+fn 生成した既定のconfigは妥当なtoml() {
     let content = generate_default_config();
     let cfg: Config = toml::from_str(&content).expect("generated config must be valid TOML");
     // 全部コメントアウトされているので、値はすべてデフォルトと一致するはず。
@@ -132,7 +130,7 @@ fn generated_default_config_is_valid_toml() {
 }
 
 #[test]
-fn ui_config_high_contrast_defaults_off_and_round_trips() {
+fn high_contrastは既定offでtomlを往復する() {
     let cfg = Config::default();
     assert!(!cfg.ui.high_contrast, "high_contrast must default to false");
 
@@ -148,7 +146,7 @@ fn ui_config_high_contrast_defaults_off_and_round_trips() {
 }
 
 #[test]
-fn ui_config_round_trips_through_toml() {
+fn uiセクションはtomlを往復する() {
     let toml_str = r#"[ui]
 theme = "catppuccin-latte"
 "#;
@@ -162,7 +160,7 @@ theme = "catppuccin-latte"
 }
 
 #[test]
-fn layout_config_round_trips_through_toml() {
+fn layoutセクションはtomlを往復する() {
     let toml_str = r#"[layout]
 explorer_width_pct = 30
 viewer_width_pct = 40
@@ -181,7 +179,7 @@ terminal_split_pct = 75
 }
 
 #[test]
-fn layout_config_empty_toml_gives_defaults() {
+fn 空のtomlでもlayoutは既定値になる() {
     let cfg: Config = toml::from_str("").expect("empty toml");
     assert_eq!(cfg.layout.explorer_width_pct, 24);
     assert_eq!(cfg.layout.viewer_width_pct, 38);
