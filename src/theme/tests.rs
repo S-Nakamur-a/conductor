@@ -113,40 +113,19 @@ fn lerp_clamps_out_of_range_t() {
     assert_eq!(Theme::lerp(a, b, 2.0), b);
 }
 
+/// リストの出どころを1箇所に保つ。テーマを足しても書き足す先は
+/// [Theme::all_names] だけで、light フラグの取り違えは依然ここで捕まる。
 #[test]
-fn from_name_light_themes_have_light_true() {
-    assert!(Theme::from_name("catppuccin-latte").light);
-    assert!(Theme::from_name("solarized-light").light);
-    assert!(Theme::from_name("github-light").light);
-}
-
-#[test]
-fn from_name_dark_themes_have_light_false() {
-    assert!(!Theme::from_name("catppuccin-mocha").light);
-    assert!(!Theme::from_name("dracula").light);
-    assert!(!Theme::from_name("nord").light);
-    assert!(!Theme::from_name("solarized-dark").light);
-    assert!(!Theme::from_name("tokyo-night").light);
-    assert!(!Theme::from_name("gruvbox").light);
-    assert!(!Theme::from_name("rose-pine").light);
-    assert!(!Theme::from_name("kanagawa").light);
-}
-
-#[test]
-fn all_names_contains_all_eleven_themes() {
-    let names = Theme::all_names();
-    assert_eq!(names.len(), 11);
-    assert!(names.contains(&"catppuccin-mocha"));
-    assert!(names.contains(&"dracula"));
-    assert!(names.contains(&"nord"));
-    assert!(names.contains(&"solarized-dark"));
-    assert!(names.contains(&"tokyo-night"));
-    assert!(names.contains(&"gruvbox"));
-    assert!(names.contains(&"rose-pine"));
-    assert!(names.contains(&"kanagawa"));
-    assert!(names.contains(&"catppuccin-latte"));
-    assert!(names.contains(&"solarized-light"));
-    assert!(names.contains(&"github-light"));
+fn light_themes_are_exactly_the_three_at_the_end_of_the_list() {
+    let light: Vec<&str> = Theme::all_names()
+        .iter()
+        .copied()
+        .filter(|n| Theme::from_name(n).light)
+        .collect();
+    assert_eq!(
+        light,
+        ["catppuccin-latte", "solarized-light", "github-light"]
+    );
 }
 
 #[test]

@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// ヘルパー: syntect テーマの背景輝度を推定する(0〜255の範囲)。
+/// syntect テーマの背景輝度の推定値 (0〜255)。
 fn theme_bg_luma(theme: &syntect::highlighting::Theme) -> f32 {
     theme
         .settings
@@ -12,7 +12,6 @@ fn theme_bg_luma(theme: &syntect::highlighting::Theme) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// ヘルパー: ui.theme を指定した Config を作る。
 fn cfg_with(theme: &str) -> Config {
     Config {
         ui: UiConfig {
@@ -23,42 +22,19 @@ fn cfg_with(theme: &str) -> Config {
     }
 }
 
-/// syntect_theme_for: dark UI テーマは暗い syntect テーマを返すこと。
+/// UI テーマの明暗と、割り当てた syntect テーマの明暗が一致すること。
+///
+/// [Theme::all_names] を回しているので、新しいテーマを足せば自動でここに乗る。
 #[test]
-fn syntect_theme_for_dark_themes_return_dark_syntect() {
+fn every_theme_maps_to_a_syntect_theme_of_the_same_lightness() {
     let ts = two_face::theme::extra();
-
-    for name in &[
-        "catppuccin-mocha",
-        "dracula",
-        "nord",
-        "solarized-dark",
-        "tokyo-night",
-        "gruvbox",
-        "rose-pine",
-        "kanagawa",
-    ] {
-        let theme = syntect_theme_for(&cfg_with(name), &ts);
-        assert!(
-            theme_bg_luma(&theme) < 128.0,
-            "dark conductor theme '{name}' must map to a dark syntect theme (luma={:.0})",
-            theme_bg_luma(&theme)
-        );
-    }
-}
-
-/// syntect_theme_for: ライトテーマがライト系 syntect テーマを返すこと。
-#[test]
-fn syntect_theme_for_light_themes_use_light_syntect() {
-    let ts = two_face::theme::extra();
-
-    // ライト UI テーマはライトな syntect 組み込みテーマにマップされること。
-    for name in &["catppuccin-latte", "solarized-light", "github-light"] {
-        let theme = syntect_theme_for(&cfg_with(name), &ts);
-        assert!(
-            theme_bg_luma(&theme) >= 128.0,
-            "light conductor theme '{name}' must map to a light syntect theme (luma={:.0})",
-            theme_bg_luma(&theme)
+    for name in crate::theme::Theme::all_names() {
+        let luma = theme_bg_luma(&syntect_theme_for(&cfg_with(name), &ts));
+        let expected_light = crate::theme::Theme::from_name(name).light;
+        assert_eq!(
+            luma >= 128.0,
+            expected_light,
+            "'{name}' の明暗が syntect 側と食い違う (luma={luma:.0})"
         );
     }
 }
