@@ -222,7 +222,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn editor_target_resolves_relative_against_worktree() {
+    fn エディタの対象はworktree基準で相対を解決する() {
         let root = std::path::Path::new("/repo/wt");
         assert_eq!(
             editor_target(Some("src/main.rs"), root),
@@ -231,13 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn editor_target_is_none_when_no_file_open() {
+    fn ファイルが開いていなければ対象は無い() {
         // 決め手となる分岐: 開いているファイルが無ければ → エディタは起動しない。
         assert_eq!(editor_target(None, std::path::Path::new("/repo/wt")), None);
     }
 
     #[test]
-    fn editor_target_is_none_for_empty_path() {
+    fn 空のパスなら対象は無い() {
         assert_eq!(
             editor_target(Some(""), std::path::Path::new("/repo/wt")),
             None
@@ -246,7 +246,7 @@ mod tests {
     /// VISUAL > EDITOR > fallback の順。空白のみの値は空のコマンドを生まないよう飛ばす。
     /// 分割は素朴で、シェル風のクォート解釈は行わない (意図的な制限)。
     #[test]
-    fn resolve_editor_command_picks_by_precedence_and_splits_naively() {
+    fn エディタのコマンドは優先順で選び素朴に分割する() {
         let cases: [(Option<&str>, Option<&str>, Vec<&str>); 9] = [
             (None, None, vec!["vi"]),
             (Some("vim"), Some("nano"), vec!["vim"]),
@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_content_size_subtracts_borders() {
+    fn エディタの中身の大きさは枠を引く() {
         // 非最大化: タイトル行＋下境界（2行）と左右境界（2列）。
         assert_eq!(editor_content_size(80, 40, false), (38, 78));
         // 最大化: タイトル行のみで境界線は無い。
@@ -284,13 +284,13 @@ mod tests {
     }
 
     #[test]
-    fn editor_content_size_defaults_on_zero_region() {
+    fn 領域が0なら既定の大きさになる() {
         assert_eq!(editor_content_size(0, 40, false), (24, 80));
         assert_eq!(editor_content_size(80, 0, false), (24, 80));
     }
 
     #[test]
-    fn editor_content_size_never_returns_zero() {
+    fn 中身の大きさが0になることはない() {
         // 極小のリージョンはアンダーフローせず1×1にクランプされる（vt100は≥1が必要）。
         for w in 1..=3u16 {
             for h in 1..=3u16 {

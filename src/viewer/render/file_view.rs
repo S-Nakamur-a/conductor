@@ -461,7 +461,7 @@ mod tests {
 
     /// 返り値がその列の予算を超えないこと。超えるとトグルや [<=>] に重なる。
     #[test]
-    fn fitted_title_never_exceeds_its_budget() {
+    fn 収めたタイトルは予算を超えない() {
         let titles = [
             " src/main.rs ",
             " 設計メモ.md ",
@@ -483,13 +483,13 @@ mod tests {
     }
 
     #[test]
-    fn short_titles_pass_through_untouched() {
+    fn 短いタイトルはそのまま通る() {
         assert_eq!(fit_title(" a.rs ", 20), " a.rs ");
         assert_eq!(fit_title(" a.rs ", 6), " a.rs ");
     }
 
     #[test]
-    fn elision_keeps_the_end_of_the_path() {
+    fn 省略してもパスの末尾は残す() {
         let fitted = fit_title(" src/viewer/render/file_view.rs ", 16);
         assert!(fitted.starts_with(" \u{2026}"), "{fitted:?}");
         assert!(fitted.ends_with("file_view.rs "), "{fitted:?}");
@@ -497,7 +497,7 @@ mod tests {
 
     /// 幅広グリフのタイトルはカラム数で予算配分されるので、バイト数から想定するより早く省略される。
     #[test]
-    fn wide_glyphs_are_budgeted_by_column() {
+    fn 全角のグリフはカラム数で予算を取る() {
         // CJK 4文字 = 8カラムだが、12バイト。
         let fitted = fit_title(" 設計メモ.md ", 10);
         assert!(display_width(&fitted) <= 10, "{fitted:?}");

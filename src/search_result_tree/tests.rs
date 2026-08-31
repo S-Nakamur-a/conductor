@@ -15,7 +15,7 @@ fn make_match(file_path: &str, line_number: usize, content: &str) -> GrepMatch {
 }
 
 #[test]
-fn matches_are_grouped_under_their_directory_and_file() {
+fn 一致はディレクトリとファイルの下にまとまる() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search_text()"),
         make_match("src/app.rs", 108, "let result = search()"),
@@ -61,7 +61,7 @@ fn matches_are_grouped_under_their_directory_and_file() {
 }
 
 #[test]
-fn collapsing_a_directory_hides_its_files() {
+fn ディレクトリを畳むと配下のファイルが隠れる() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -89,7 +89,7 @@ fn collapsing_a_directory_hides_its_files() {
 }
 
 #[test]
-fn collapsing_a_file_hides_its_matches() {
+fn ファイルを畳むと配下の一致が隠れる() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -112,7 +112,7 @@ fn collapsing_a_file_hides_its_matches() {
 }
 
 #[test]
-fn next_sibling_steps_over_a_collapsed_subtree() {
+fn 次の兄弟へは畳んだ部分木を飛び越える() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -134,14 +134,14 @@ fn next_sibling_steps_over_a_collapsed_subtree() {
 }
 
 #[test]
-fn no_matches_produces_an_empty_tree() {
+fn 一致が無ければツリーは空になる() {
     let mut tree = SearchResultTree::build(&[]);
     assert_eq!(tree.match_count(), 0);
     assert_eq!(tree.visible_rows().len(), 0);
 }
 
 #[test]
-fn files_at_the_root_need_no_directory_row() {
+fn 根直下のファイルにディレクトリ行は要らない() {
     let matches = vec![
         make_match("README.md", 5, "search"),
         make_match("Cargo.toml", 10, "search"),
@@ -163,7 +163,7 @@ fn files_at_the_root_need_no_directory_row() {
 }
 
 #[test]
-fn each_row_counts_the_matches_below_it() {
+fn 各行は配下の一致数を数える() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -194,7 +194,7 @@ fn each_row_counts_the_matches_below_it() {
 }
 
 #[test]
-fn a_directory_holding_only_subdirectories_is_still_collapsible() {
+fn サブディレクトリしか持たないディレクトリも畳める() {
     // リグレッション: サブディレクトリのみを含む(直接のファイルを持たない)
     // ディレクトリも折りたたみ可能でなければならない。
     let matches = vec![

@@ -243,7 +243,7 @@ mod tests {
     /// 別のファイルを開いても前のファイルは閉じない — これが複数タブの本題。
     /// 同じファイルをもう一度開いたときはタブを増やさず、既にあるタブへ戻る。
     #[test]
-    fn opening_files_accumulates_tabs_and_reopening_reuses_one() {
+    fn 開くとタブが増え同じファイルは使い回す() {
         let dir = fixture("reuse", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
         let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
@@ -265,7 +265,7 @@ mod tests {
     /// タブごとに読んでいた位置を持つ。戻ったときに先頭へ巻き戻されると、
     /// 差分レビュー中に行き来する用途では複数タブの意味が無くなる。
     #[test]
-    fn switching_tabs_restores_where_each_file_was_left() {
+    fn タブを移ると各ファイルの読みかけの位置が戻る() {
         let long: String = (0..50).map(|i| format!("line{i}\n")).collect();
         let dir = fixture("scroll", &[("a.txt", &long), ("b.txt", &long)]);
         let mut explorer = Explorer::default();
@@ -292,7 +292,7 @@ mod tests {
     /// 非アクティブな間にディスク上で書き換えられたタブは、戻った時点の中身を出す。
     /// Claude Code が裏でファイルを直すのが日常なので、古い本文が残ると実害が出る。
     #[test]
-    fn returning_to_a_tab_rereads_it_from_disk() {
+    fn タブへ戻るとディスクから読み直す() {
         let dir = fixture("stale", &[("a.txt", "OLD\n"), ("b.txt", "B\n")]);
         let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
@@ -310,7 +310,7 @@ mod tests {
 
     /// タブを閉じたら隣へ移る。最後の 1 枚を閉じたらファイル未選択に戻る。
     #[test]
-    fn closing_a_tab_falls_back_to_a_neighbour_then_to_nothing() {
+    fn タブを閉じると隣へ移り最後は未選択になる() {
         let dir = fixture("close", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
         let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
@@ -335,7 +335,7 @@ mod tests {
     /// シングルクリックで開いた preview タブは、次のファイルを開くと閉じる。
     /// クリックするたびにタブが増えるのを防ぐのがこの機能の本題。
     #[test]
-    fn a_preview_tab_is_replaced_by_the_next_one() {
+    fn previewのタブは次のファイルで置き換わる() {
         let dir = fixture(
             "preview",
             &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
@@ -362,7 +362,7 @@ mod tests {
     /// ダブルクリック相当（preview のまま永続で開き直す）で preview が外れ、
     /// 次のファイルを開いても残る。
     #[test]
-    fn reopening_a_preview_tab_as_persistent_pins_it() {
+    fn previewを永続で開き直すと固定される() {
         let dir = fixture("promote", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
         let mut explorer = Explorer::default();
         explorer.set_root(dir.clone());
@@ -382,7 +382,7 @@ mod tests {
     /// 別のタブへ移った時点でも preview は閉じる。閉じたぶん添字が前へ動くので、
     /// 詰め忘れると隣のファイルが開く。
     #[test]
-    fn focusing_another_tab_closes_the_preview() {
+    fn 別のタブへ移るとpreviewは閉じる() {
         let dir = fixture(
             "preview_focus",
             &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
@@ -410,7 +410,7 @@ mod tests {
     /// 相対パスは根が変わると別のファイルを指すので、残すと別ブランチの中身を
     /// 開いたままに見える。
     #[test]
-    fn switching_root_drops_tabs_that_do_not_exist_there() {
+    fn 根が変わると無いファイルのタブは落ちる() {
         let a = fixture("root_a", &[("both.txt", "A\n"), ("only_a.txt", "A\n")]);
         let b = fixture("root_b", &[("both.txt", "B\n")]);
         let mut explorer = Explorer::default();

@@ -61,14 +61,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gutter_click_selects_single_line() {
+    fn ガターのクリックは1行を選ぶ() {
         let mut vs = ViewerState::default();
         vs.gutter_comment_click(7, false);
         assert_eq!(vs.selected_range(), Some((7, 7)));
     }
 
     #[test]
-    fn shift_gutter_click_extends_range_from_anchor() {
+    fn shift付きは起点から範囲を伸ばす() {
         let mut vs = ViewerState::default();
         vs.gutter_comment_click(5, false); // アンカーは5
         vs.gutter_comment_click(9, true); // シフトクリックで9まで拡張
@@ -76,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_gutter_click_normalizes_upward_range() {
+    fn 上向きの範囲も正規化される() {
         let mut vs = ViewerState::default();
         vs.gutter_comment_click(9, false); // アンカーは9
         vs.gutter_comment_click(4, true); // アンカーより上をシフトクリック
@@ -84,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_gutter_click_without_anchor_falls_back_to_single_line() {
+    fn 起点が無ければ1行選択に落ちる() {
         let mut vs = ViewerState::default();
         // 事前のクリックがない → アンカーはデフォルトの0なので、単一行選択になる。
         vs.gutter_comment_click(3, true);

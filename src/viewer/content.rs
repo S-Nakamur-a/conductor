@@ -244,7 +244,7 @@ mod tests {
     /// .git の無いディレクトリでも、git 管理下の未追跡・未コミットのファイルでも
     /// 同じように開ける。これが崩れると「git 管理外だと Viewer が空のまま」に戻る。
     #[test]
-    fn open_file_reads_from_disk_without_git() {
+    fn ファイルはgitを経ずにディスクから読む() {
         let dir = std::env::temp_dir().join(format!("nogit_open_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -268,7 +268,7 @@ mod tests {
     /// 「未選択」「空ファイル」も同じなので、失敗をここで区別できないと
     /// Viewer が「ファイル未選択」に丸めてしまう。
     #[test]
-    fn open_file_records_why_it_failed() {
+    fn 開けなかった理由を残す() {
         let dir = std::env::temp_dir().join(format!("nogit_err_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -299,7 +299,7 @@ mod tests {
     /// なく open_file を通すことで、展開とマスクを突き合わせて検証する (fixture が
     /// タブインデントなのはそのため)。
     #[test]
-    fn opening_a_file_masks_its_comments_and_strings() {
+    fn 開いたファイルのコメントと文字列はマスクされる() {
         let dir = std::env::temp_dir().join(format!("mask_open_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -349,7 +349,7 @@ mod tests {
     /// 文法を持たない言語のファイルは、前のファイルの結果を引き継いだり生の
     /// 単語一致にフォールバックしたりせず、何も提示しない。
     #[test]
-    fn opening_an_unsupported_language_clears_the_mask() {
+    fn 対応しない言語ではマスクを空にする() {
         let dir = std::env::temp_dir().join(format!("mask_unsup_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -373,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn markdown_paths_are_detected_case_insensitively() {
+    fn markdownの判定は大小を無視する() {
         assert!(is_markdown_path("README.md"));
         assert!(is_markdown_path("docs/plan.markdown"));
         assert!(is_markdown_path("README.MD"));
@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn non_markdown_paths_are_rejected() {
+    fn markdownでないパスは弾く() {
         // トグルが付いてはならない近縁ケース: 別のレンダラ方言（.mdx）、拡張子なしの
         // ファイル、そして単に名前に "md" が含まれるだけのもの。
         assert!(!is_markdown_path("src/main.rs"));
@@ -395,7 +395,7 @@ mod tests {
     /// ままでも is_showing_rendered_markdown は false になる — さもないと diff 表示が、行に
     /// 紐づく機能をオフにしたまま描画される。
     #[test]
-    fn rendered_markdown_is_confined_to_the_plain_file_view() {
+    fn レンダリング表示は素のファイル表示に限られる() {
         let mut vs = ViewerState::default();
         vs.content.current_file = Some("README.md".to_string());
         vs.md_rendered = true;
@@ -425,7 +425,7 @@ mod tests {
     /// 選択範囲と開いたままのインラインリプライはレンダリング済み表示へ持ち越さない。
     /// リプライボックスは描画されなくてもキー入力を奪い、選択範囲は戻ったときに再出現する。
     #[test]
-    fn toggling_tears_down_line_anchored_interactions() {
+    fn 切り替えは行に紐づく操作を畳む() {
         let mut vs = ViewerState {
             selection: crate::viewer::LineSelection::Selected { start: 3, end: 9 },
             ..Default::default()
@@ -443,7 +443,7 @@ mod tests {
     /// file:line へのジャンプはその行を見せなければならない。レンダリング済み
     /// 本文には行が無いので、行に紐づく入口はまず raw 表示へ戻す。
     #[test]
-    fn line_targets_drop_out_of_rendered_mode() {
+    fn 行を指す操作はレンダリング表示から抜ける() {
         let mut vs = ViewerState {
             md_rendered: true,
             ..Default::default()
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn toggling_resets_the_rendered_scroll() {
+    fn 切り替えはレンダリング表示のスクロールを戻す() {
         let mut vs = ViewerState {
             md_scroll: 42,
             ..Default::default()

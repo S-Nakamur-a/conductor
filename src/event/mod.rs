@@ -490,7 +490,7 @@ mod overlay_priority_tests {
     ];
 
     #[test]
-    fn each_rung_alone_selects_itself() {
+    fn 各段は単独で自分が選ばれる() {
         for (set, expected) in LADDER {
             let mut f = OverlayFlags::default();
             set(&mut f);
@@ -499,7 +499,7 @@ mod overlay_priority_tests {
     }
 
     #[test]
-    fn the_higher_rung_wins_over_every_lower_one() {
+    fn 上の段は下の段すべてに勝つ() {
         for (i, (set_hi, expected)) in LADDER.iter().enumerate() {
             for (set_lo, lower) in &LADDER[i + 1..] {
                 let mut f = OverlayFlags::default();
@@ -515,7 +515,7 @@ mod overlay_priority_tests {
     }
 
     #[test]
-    fn nothing_open_dispatches_to_the_focused_panel() {
+    fn 何も開いていなければフォーカス中のパネルへ渡す() {
         assert_eq!(
             effective_overlay(OverlayFlags::default()),
             EffectiveOverlay::None

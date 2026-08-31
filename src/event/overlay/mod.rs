@@ -104,7 +104,7 @@ mod nav_guard_tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
-    fn bare_printable_char_is_text_input() {
+    fn 素の印字可能な文字は文字入力になる() {
         // フィルタ可能なオーバーレイでは、これらはナビゲーションではなくタイプ入力として扱う。
         for c in ['j', 'k', 'g', 'G'] {
             let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty());
@@ -116,7 +116,7 @@ mod nav_guard_tests {
     }
 
     #[test]
-    fn modified_and_named_keys_are_not_text_input() {
+    fn 修飾付きと名前付きのキーは文字入力ではない() {
         // これらはフィルタ可能なオーバーレイでもリストナビゲーションを駆動すべき。
         let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
         let alt_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT);

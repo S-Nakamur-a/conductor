@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn different_branches_analyse_side_by_side() {
+    fn 別のブランチは並行して解析できる() {
         let mut runs = RevidereRuns::default();
         let (a, _tx_a, _) = run("feature/a");
         let (b, _tx_b, _) = run("feature/b");
@@ -574,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_run_frees_its_branch() {
+    fn 終わった解析はブランチの枠を解放する() {
         let mut runs = RevidereRuns::default();
         let (a, tx, _) = run("feature/a");
         runs.insert(a);
@@ -592,7 +592,7 @@ mod tests {
     /// 古いロックからの回復: 結果を送らずに死んだワーカーは枠を解放しなければ
     /// ならず、次の要求は「すでに実行中」ではなく新しい解析を始められる。
     #[test]
-    fn a_dead_worker_frees_its_branch() {
+    fn 死んだワーカーもブランチの枠を解放する() {
         let mut runs = RevidereRuns::default();
         let (a, tx, _) = run("feature/a");
         runs.insert(a);
@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn abort_all_signals_every_worker_to_stop() {
+    fn 全停止はすべてのワーカーに止まれと伝える() {
         let mut runs = RevidereRuns::default();
         let (a, _tx_a, cancel_a) = run("feature/a");
         let (b, _tx_b, cancel_b) = run("feature/b");

@@ -268,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn arrows_use_csi_in_normal_cursor_mode() {
+    fn 通常のカーソルモードでは矢印はcsiを使う() {
         assert_eq!(
             key_event_to_ansi(&key(KeyCode::Up), false),
             Some(b"\x1b[A".to_vec())
@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn arrows_use_ss3_in_application_cursor_mode() {
+    fn アプリケーションカーソルモードでは矢印はss3を使う() {
         // DECCKM が有効な場合、less/bat/vim などのページャやエディタは SS3 を
         // 期待する — bat で矢印キースクロールが効くのはこのためである。
         assert_eq!(
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn home_end_honor_application_cursor_mode() {
+    fn homeとendもカーソルモードに従う() {
         assert_eq!(
             key_event_to_ansi(&key(KeyCode::Home), false),
             Some(b"\x1b[H".to_vec())
@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn modified_arrows_stay_csi_regardless_of_cursor_mode() {
+    fn 修飾付きの矢印はモードに関わらずcsiのまま() {
         // 修飾キーがある場合、DECCKM に関わらず xterm は CSI の 1;<param> 形式を使う。
         let shift_up = KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT);
         assert_eq!(

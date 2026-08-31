@@ -436,13 +436,13 @@ mod tests {
     }
 
     #[test]
-    fn signature_single_line_fn() {
+    fn 単一行の関数の宣言() {
         let src = "pub fn foo(a: usize) -> bool {\n    true\n}\n";
         assert_eq!(sig(src, 1), vec!["pub fn foo(a: usize) -> bool"]);
     }
 
     #[test]
-    fn signature_multi_line_fn() {
+    fn 複数行の関数の宣言() {
         let src = "fn foo(\n    a: usize,\n    b: &str,\n) -> bool {\n    true\n}\n";
         assert_eq!(
             sig(src, 1),
@@ -451,43 +451,43 @@ mod tests {
     }
 
     #[test]
-    fn signature_dedents_indented_method() {
+    fn 字下げされたメソッドの宣言は左へ詰める() {
         let src = "impl Foo {\n    pub fn bar(&self) -> usize {\n        1\n    }\n}\n";
         assert_eq!(sig(src, 2), vec!["pub fn bar(&self) -> usize"]);
     }
 
     #[test]
-    fn signature_stops_at_semicolon() {
+    fn 宣言はセミコロンで止まる() {
         let src = "type Alias = Vec<String>;\nfn next() {}\n";
         assert_eq!(sig(src, 1), vec!["type Alias = Vec<String>;"]);
     }
 
     #[test]
-    fn doc_rust_triple_slash_with_attribute() {
+    fn 属性を挟んだrustのdocコメント() {
         let src = "/// Does the thing.\n/// Second line.\n#[derive(Debug)]\npub struct Foo;\n";
         assert_eq!(doc(src, 4), vec!["Does the thing.", "Second line."]);
     }
 
     #[test]
-    fn doc_go_double_slash() {
+    fn goのdocコメント() {
         let src = "// Foo does the thing.\nfunc Foo() {}\n";
         assert_eq!(doc(src, 2), vec!["Foo does the thing."]);
     }
 
     #[test]
-    fn doc_ts_block_comment() {
+    fn typescriptのブロックコメント() {
         let src = "/**\n * Does the thing.\n * @param a input\n */\nfunction foo(a) {}\n";
         assert_eq!(doc(src, 5), vec!["Does the thing.", "@param a input"]);
     }
 
     #[test]
-    fn doc_none_when_code_above() {
+    fn 上がコードならdocは無し() {
         let src = "let x = 1;\nfn foo() {}\n";
         assert!(doc(src, 2).is_empty());
     }
 
     #[test]
-    fn doc_single_line_block_comment() {
+    fn 単一行のブロックコメント() {
         let src = "/** Does the thing. */\nfunction foo() {}\n";
         assert_eq!(doc(src, 2), vec!["Does the thing."]);
     }
@@ -568,7 +568,7 @@ fn caller() {
     }
 
     #[test]
-    fn end_to_end_over_real_index() {
+    fn 実索引を通した一続きの確認() {
         let dir = std::env::temp_dir().join(format!("hover_e2e_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

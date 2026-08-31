@@ -145,7 +145,7 @@ mod tests {
     /// チップは [<=>] 展開ボタンのすぐ左に来なければならない。重なると片方のボタンが
     /// もう片方のクリックを奪う。
     #[test]
-    fn toggle_sits_just_left_of_the_expand_button() {
+    fn トグルは展開ボタンのすぐ左に来る() {
         let (x, w) = (40u16, 60u16);
         let seg = toggle_segments(x, w).expect("60 cols is plenty");
         let expand_start = x + w - 6;
@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_halves_are_adjacent_and_correctly_sized() {
+    fn トグルの左右は隣り合い幅も正しい() {
         let seg = toggle_segments(0, 80).unwrap();
         assert_eq!(
             seg.raw.end, seg.rendered.start,
@@ -175,7 +175,7 @@ mod tests {
     /// 描画されないトグルはクリックもできてはならない: レンダラーとクリック
     /// 判定はどちらも同じこの関数に尋ねているので、None は両方を同時に無効化する。
     #[test]
-    fn narrow_columns_get_no_toggle() {
+    fn 狭い列にはトグルを出さない() {
         assert!(toggle_segments(0, MIN_VIEWER_W - 1).is_none());
         assert!(toggle_segments(0, 0).is_none());
         assert!(toggle_segments(0, MIN_VIEWER_W).is_some());
@@ -183,7 +183,7 @@ mod tests {
 
     /// 列のオフセットが何であれ、チップはパネルの内側に収まる。
     #[test]
-    fn toggle_stays_within_the_column() {
+    fn トグルは列の内側に収まる() {
         for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 100, 300] {
             let seg = toggle_segments(7, w).unwrap();
             assert!(seg.raw.start > 7, "must not overlap the left border");
@@ -198,7 +198,7 @@ mod tests {
     /// そのチップを保持していることを確認する。右寄せタイトルの着地位置は ratatui が決める
     /// ので、単体の計算だけではズレを検出できない。CJK は 1 文字 2 カラムなので幅広も含める。
     #[test]
-    fn drawn_columns_match_the_hit_test() {
+    fn 描いた列と当たり判定が一致する() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         use ratatui::layout::Alignment;
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn spans_highlight_the_active_mode() {
+    fn いま有効なモードが強調される() {
         let theme = Theme::default();
         let raw_mode = toggle_spans(false, &theme);
         let rendered_mode = toggle_spans(true, &theme);

@@ -709,7 +709,7 @@ mod tests {
     /// 全角は 1 文字 2 列として数えること。文字数で切っていた頃は、幅の 2 倍に
     /// 伸びた行が枠で黙って切り落とされ、本文の後半が読めなかった。
     #[test]
-    fn wrap_splits_on_display_width_and_keeps_every_character() {
+    fn 折り返しは表示幅で割り文字を1つも落とさない() {
         let got = wrap("あいうえおかきくけこ", 4);
         assert_eq!(got, vec!["あい", "うえ", "おか", "きく", "けこ"]);
         assert_eq!(got.concat().chars().count(), 10);
@@ -717,7 +717,7 @@ mod tests {
 
     /// 半角と全角が混ざっても、どの行も幅を超えないこと。
     #[test]
-    fn wrap_never_exceeds_the_width_on_mixed_text() {
+    fn 混在テキストでも幅を超えない() {
         use unicode_width::UnicodeWidthStr;
         for line in wrap("abcあいdef うえおgh", 7) {
             assert!(
@@ -730,12 +730,12 @@ mod tests {
     /// 幅 0 で無限ループや空返しにならないこと。狭い端末で項目一覧の幅が
     /// 潰れたときにここへ来る。
     #[test]
-    fn wrap_with_zero_width_returns_the_text_untouched() {
+    fn 幅0なら本文をそのまま返す() {
         assert_eq!(wrap("abc", 0), vec!["abc"]);
     }
 
     #[test]
-    fn wrap_keeps_blank_lines_between_paragraphs() {
+    fn 段落の間の空行は残す() {
         assert_eq!(wrap("a\n\nb", 8), vec!["a", "", "b"]);
     }
 }

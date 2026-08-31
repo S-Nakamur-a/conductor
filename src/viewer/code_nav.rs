@@ -1349,7 +1349,7 @@ mod tests {
     /// 識別子はその上のどの桁からでも同じ範囲に解決され、キーワード・空白・
     /// 1 文字の名前・行外は解決しない。
     #[test]
-    fn a_column_resolves_to_the_identifier_under_it_or_to_nothing() {
+    fn 桁はその下の識別子か何も無いかに解決する() {
         let decl = "    let foo = AppState::new();";
         /// 1 ケース: 行、桁、期待する (名前, 開始, 終了)、なぜそうなるか。
         type Case = (
@@ -1446,7 +1446,7 @@ mod tests {
     /// extract_symbol_at_column 単体はコメントという概念を持たないので、地の文の
     /// "build" をそのまま返す。それをジャンプ先にしないのがこのマスク。
     #[test]
-    fn masked_symbol_at_column_gates_on_the_code_mask() {
+    fn 桁からの語の取り出しはコードマスクで門を通す() {
         let cases = [
             ("    let x = 1; // build the index", "build", None),
             (r#"    let s = "index";"#, "index", None),
@@ -1466,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn build_hover_preview_windows_around_line() {
+    fn ホバーのプレビューは行の前後を窓にする() {
         let dir = std::env::temp_dir().join(format!("hover_prev_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1516,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_symbol_from_line_skips_comments_via_mask() {
+    fn マスク越しにコメント内の語を飛ばす() {
         // doc/行/ブロックコメントは、実在の型名とたまたま同じ英単語("Building"
         // バグ)を返してはならない。これは行頭プレフィックスによる推測ではなく
         // マスクによって判定するようになったため、ブロックコメントを1つとして
@@ -1573,7 +1573,7 @@ pub struct Building {
     }
 
     #[test]
-    fn extract_symbol_from_line_skips_trailing_comment_and_string_hits() {
+    fn 行末コメントと文字列の一致を飛ばす() {
         // 実際の文の後ろにトレイリングコメントが続くケース。x は 1 文字なので単独では除外され、
         // build/the/index はコメントの中にあるため、行全体が何も解決しない。行の「始まり方」
         // だけを見ると "build" を返してしまう。
@@ -1597,7 +1597,7 @@ pub struct Building {
     }
 
     #[test]
-    fn viewer_hover_symbol_underline_color_and_debounce() {
+    fn 下線の色とデバウンス() {
         use std::time::Duration;
 
         // ジャンプ不可能な単語には、修飾キーの有無にかかわらず下線が付かない。Hint は
@@ -1620,19 +1620,19 @@ pub struct Building {
     }
 
     #[test]
-    fn viewer_hover_symbol_popup_range_matches_target_line() {
+    fn ポップアップの範囲は対象行に一致する() {
         // ポップアップ自身の対象行・列は、マウスが現在どこにあるかに関係なく
         // 返される。
         assert_eq!(popup_highlight_range(true, 42, 4, 10, 42), Some((4, 10)));
     }
 
     #[test]
-    fn viewer_hover_symbol_popup_range_none_off_target_line() {
+    fn 対象行の外では範囲を返さない() {
         assert_eq!(popup_highlight_range(true, 42, 4, 10, 43), None);
     }
 
     #[test]
-    fn viewer_hover_symbol_popup_range_none_when_hidden() {
+    fn 非表示なら範囲を返さない() {
         assert_eq!(popup_highlight_range(false, 42, 4, 10, 42), None);
     }
 }

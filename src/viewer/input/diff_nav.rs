@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn change_block_start_detection() {
+    fn 変更ブロックの先頭を見分ける() {
         assert!(is_change_block_start(&[ins()], 0));
         assert!(is_change_block_start(&[eq(), ins()], 1));
         assert!(!is_change_block_start(&[ins(), ins()], 1)); // ブロックの途中
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn next_change_block_cases() {
+    fn 次の変更ブロックへの移動() {
         assert_eq!(next_change_block(&[], 0), None);
         assert_eq!(next_change_block(&[eq(), eq()], 0), None);
         let v = vec![eq(), ins(), eq(), ins(), eq()];
@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn prev_change_block_cases() {
+    fn 前の変更ブロックへの移動() {
         assert_eq!(prev_change_block(&[], 0), None);
         let v = vec![eq(), ins(), eq(), ins(), eq()];
         assert_eq!(prev_change_block(&v, 4), Some(3));
@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn comment_navigation() {
+    fn コメント間の移動() {
         let comments: HashMap<usize, ()> = [(5, ()), (8, ())].into_iter().collect();
         let v = vec![
             line_no(DiffLineTag::Equal, 4),  // 0: コメントなし
@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_line_is_never_commented() {
+    fn 削除行にはコメントが付かない() {
         // 削除行は新ファイル側の行番号を持たないため、その行番号がマップに
         // あってもコメントは付けられない。
         let comments: HashMap<usize, ()> = [(1, ())].into_iter().collect();
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn comment_hidden_in_fold_is_reachable() {
+    fn 畳みに隠れたコメントにも辿り着ける() {
         // 7行目のコメントは 5..=10 の折りたたまれたコンテキストの中にある。
         // ジャンプは展開できるよう折りたたみ自体に着地するべき。
         let comments: HashMap<usize, ()> = [(7, ())].into_iter().collect();

@@ -207,7 +207,7 @@ mod tests {
     /// タブが 1 枚だけならタブ行は出ない。パスはタイトルに出ているので、
     /// 1 行を使う理由が無い。
     #[test]
-    fn a_single_tab_does_not_take_a_row() {
+    fn タブが1つなら行を取らない() {
         let mut vs = state(&["src/main.rs"], 0);
         assert!(!is_visible(&vs));
         let (_, hits) = draw(40, &mut vs);
@@ -217,7 +217,7 @@ mod tests {
     /// 長いパスは前を削ってファイル名を残す。頭から切ると、どのタブも
     /// "src/ui/vie…" のように見分けが付かなくなる。
     #[test]
-    fn long_paths_keep_their_tail() {
+    fn 長いパスは末尾を残す() {
         assert_eq!(
             elide_head("src/viewer/render/tab_row.rs", 12),
             "\u{2026}/tab_row.rs"
@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn every_visible_tab_is_selectable_and_closable() {
+    fn 見えているタブは選べて閉じられる() {
         let mut vs = state(&["a.rs", "b.rs"], 0);
         let (_, hits) = draw(60, &mut vs);
         for idx in 0..2 {
@@ -243,7 +243,7 @@ mod tests {
 
     /// preview タブは italic で描く。永続タブとの違いはここにしか出ない。
     #[test]
-    fn a_preview_tab_is_drawn_in_italic() {
+    fn previewのタブは斜体で描く() {
         let mut vs = state(&["a.rs", "b.rs"], 1);
         vs.tabs[1].status = crate::viewer::ViewerTabStatus::Preview;
         let (buf, hits) = draw(60, &mut vs);
@@ -264,7 +264,7 @@ mod tests {
     /// アクティブなタブは、はみ出していても必ず見えていなければならない —
     /// 今どのファイルを読んでいるのかが分からなくなる。
     #[test]
-    fn the_active_tab_stays_visible_when_tabs_overflow() {
+    fn 溢れてもアクティブなタブは見える位置に残る() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
         let mut vs = state(&refs, 11);
@@ -276,7 +276,7 @@ mod tests {
     /// はみ出したタブへはヒントのクリックで届く。ここが空だと、隠れたタブは
     /// マウスからは一切触れない（それがこのヒントの唯一の役目）。
     #[test]
-    fn clicking_the_overflow_hint_reaches_a_hidden_tab() {
+    fn 溢れの印を押すと隠れたタブに届く() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
         let mut vs = state(&refs, 0);
@@ -320,7 +320,7 @@ mod tests {
 
     /// スクロールして覗いている間は、アクティブなタブへ引き戻されない。
     #[test]
-    fn scrolling_is_not_undone_by_the_active_tab() {
+    fn スクロールがアクティブなタブに巻き戻されない() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
         let mut vs = state(&refs, 0);
@@ -341,7 +341,7 @@ mod tests {
 
     /// はみ出した分は左右のヒントで数が分かる。
     #[test]
-    fn overflow_is_announced_on_both_sides() {
+    fn 溢れは左右どちらにも印が出る() {
         let paths: Vec<String> = (0..12).map(|i| format!("file{i:02}.rs")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
         let mut vs = state(&refs, 6);

@@ -145,7 +145,7 @@ mod tests {
 
     /// 拡張子を持たないファイルがファイル名で正しく判定されること (拡張子だけだと Plain Text)。
     #[test]
-    fn resolves_extensionless_files_by_name() {
+    fn 拡張子の無いファイルは名前で引く() {
         for (path, expected) in [
             ("Dockerfile", "Dockerfile"),
             ("deep/dir/Dockerfile", "Dockerfile"),
@@ -161,13 +161,13 @@ mod tests {
 
     /// ファイル名は拡張子より優先されること (CMakeLists.txt が .txt に当たらない)。
     #[test]
-    fn file_name_wins_over_extension() {
+    fn ファイル名は拡張子より優先される() {
         assert_eq!(syntax_name("CMakeLists.txt", None), "CMake");
     }
 
     /// 通常の拡張子は今までどおり引けること。
     #[test]
-    fn resolves_ordinary_extensions() {
+    fn 普通の拡張子は引ける() {
         for (path, expected) in [
             ("src/main.rs", "Rust"),
             ("a.tsx", "TypeScriptReact"),
@@ -180,7 +180,7 @@ mod tests {
 
     /// syntect に登録の無い拡張子がエイリアス経由で解決されること。
     #[test]
-    fn resolves_aliased_extensions() {
+    fn 別名の拡張子も引ける() {
         for path in ["a.jsx", "b.mjs", "c.cjs"] {
             let name = syntax_name(path, None);
             assert_ne!(
@@ -193,7 +193,7 @@ mod tests {
 
     /// 拡張子もファイル名も手がかりにならない場合、shebang で判定すること。
     #[test]
-    fn falls_back_to_shebang() {
+    fn 手がかりが無ければshebangに落ちる() {
         assert_eq!(
             syntax_name("bin/deploy", Some("#!/usr/bin/env python3")),
             "Python"
@@ -203,7 +203,7 @@ mod tests {
 
     /// 手がかりが何も無ければ plain text に落ちること（パニックしない）。
     #[test]
-    fn falls_back_to_plain_text() {
+    fn 最後はplain_textに落ちる() {
         assert_eq!(
             syntax_name("LICENSE", Some("Copyright (c) 2026")),
             "Plain Text"
@@ -213,7 +213,7 @@ mod tests {
     /// テーマ世代が変わるとハイライトのキャッシュが無効化されること。効かないと、テーマを
     /// 切り替えても内容が同じ限り古い配色の span が残る。
     #[test]
-    fn theme_generation_invalidates_the_highlight_cache() {
+    fn テーマ世代が変わるとキャッシュが無効になる() {
         let ss = two_face::syntax::extra_newlines();
         let themes = two_face::theme::extra();
         let dark = themes.get(two_face::theme::EmbeddedThemeName::CatppuccinMocha);
