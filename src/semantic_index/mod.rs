@@ -1,28 +1,12 @@
 //! sheaf-core の [`Store`] を conductor に橋渡しする層。
 //!
-//! # なぜ `.conductor/` を main worktree 側から読むか
+//! `.conductor/` は main worktree にしか無いので、`load` は `repo_root` から
+//! `commondir()` を辿って解決する。照合先のツリー (`tree_root`) は選択中の
+//! worktree で、これとは別物。
 //!
-//! リンクされた worktree は自分の `.conductor/` を持たない。これは既存の前提で、
-//! レビュー DB も同じ扱いをしている（[`crate::mcp_serve::resolve`]）。索引ファイルを
-//! worktree ごとに置く運用にはしないので、`load` は `repo_root` から `commondir()`
-//! を辿って main worktree のパスを解決する。`repo_root` にはどの worktree のパスを
-//! 渡してもよい（呼び出し元がリンクされた worktree で起動していても構わない）。
-//! 照合先のツリー（`tree_root`）は選択中の worktree のパスで、これは別物である。
-//!
-//! # なぜ出自の申告が要るか
-//!
-//! SCIP 索引はソース本文を持たない（rust-analyzer が `Document.text` を空にする）ため、
-//! 索引だけを見ても「生成した時点でファイルがどんな内容だったか」が分からない。
-//! `Store::load` が受け取る期待ハッシュの表は、その出自を外から渡すためのもの。
-//! 出自はコミットではなく生成時にディスク上にあった内容のハッシュで記録する。
-//! `make index` が作業ツリーを索引する一方でコミットを出自として申告すると、
-//! 未追跡ファイルが索引に載っていても永久に鮮度の検査を通らなくなる。
-//!
-//! # 触るファイル
-//!
-//! 索引ルート 1 本につき `.conductor/` に `index.<言語>[.<ルート>].{scip,hashes,log}` の
-//! 3 つ。`scip` が索引そのもの、`hashes` が生成した時点の内容ハッシュの表で、
-//! 1 行 1 ファイルの `<sha1> <相対パス>`。名前の付け方は [`roots`] にある。
+//! 出自 (生成時点で実際にディスクにあった内容のハッシュ) を外から申告するのは、
+//! SCIP 索引がソース本文を持たないため。コミットを出自にすると、作業ツリーを
+//! 索引したときに未追跡ファイルが永久に鮮度の検査を通らなくなる。
 
 mod bridge;
 mod history;
@@ -40,9 +24,8 @@ use std::time::Instant;
 
 /// 終わった生成 1 世代。
 ///
-/// 手で頼まれたものかどうかを添えるのは、結果を画面に出すかの判断に要るため。
-/// 編集のたびの作り直しまで知らせると status がそれで埋まるが、押した本人には
-/// 終わったことを言わないと、効かなかったのか動いているのか分からない。
+/// `manual` を添えるのは、編集ごとの作り直しで status を埋めずに、手で頼んだ
+/// ものだけ結果を出すため。
 pub struct Finished {
     pub outcome: Regenerated,
     pub manual: bool,
@@ -50,8 +33,8 @@ pub struct Finished {
 
 /// いま読んでいるファイルに対して索引がどこまで答えられるか。
 ///
-/// 呼び出し側が知りたいのは `Stale` だけだが、「まだ無い」と「対象外」と
-/// 「古い」を 1 つの `bool` に潰すと、作っている最中に古いと言うことになる。
+/// 「まだ無い」「対象外」「古い」を 1 つの `bool` に潰すと、作っている最中に
+/// 古いと言うことになる。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reading {
     /// 前回と同じファイル。何も起きていない。
@@ -60,9 +43,8 @@ pub enum Reading {
     Indexed,
     /// 今の内容の索引はあるのに、このファイルが載っていない。
     ///
-    /// 内容が動いただけなら [`Building`](Reading::Building) になる (その内容の索引を
-    /// 作りに行く)。ここに来るのは、producer がそのファイルを索引しなかったか、
-    /// 生成中に動いて出自から落ちたか、producer を起動できないかのいずれか。
+    /// producer がそのファイルを索引しなかったか、生成中に動いて出自から落ちたか、
+    /// producer を起動できないかのいずれか。内容が動いただけなら `Building`。
     Stale,
     /// このルートを索引しているところ。
     Building,
@@ -77,9 +59,8 @@ struct Root {
     at: IndexRoot,
     /// 調査した時点のツリーの内容から決まる鍵。成果物の名前に入る。
     ///
-    /// `None` は「編集が入って、まだ引き直せていない」。鍵が古いまま生成すると、
-    /// 出来た索引が古い内容の名前で置かれ、次に読むときには一致せず、また作り直す。
-    /// それを避けるため、鍵の無いルートは生成を始めない。
+    /// `None` は「編集が入って、まだ引き直せていない」。鍵が古いまま生成すると、出来た
+    /// 索引が読む側の探す名前と食い違うので、鍵の無いルートは生成を始めない。
     key: Option<String>,
     regenerator: Regenerator,
     /// 走っている 1 世代の顛末。記録に残すためだけに持つ。
@@ -87,13 +68,11 @@ struct Root {
 }
 
 impl Root {
-    /// 作り直しを待っているか、走っているか。
     fn is_working(&self) -> bool {
         self.regenerator.is_pending() || self.regenerator.is_running()
     }
 
-    /// 作り直しを頼む。既に待っている/走っているならきっかけは上書きしない
-    /// (最初に頼んだものがその世代の理由)。
+    /// 既に待っている/走っている世代のきっかけは上書きしない (最初に頼んだものがその理由)。
     fn request(&mut self, trigger: Trigger, cause: Option<PathBuf>) {
         if !self.is_working() {
             self.run = Run::asked(trigger, cause);
@@ -109,7 +88,6 @@ impl Root {
         source_delta(self.run.before.as_ref(), &self.at, dir, key)
     }
 
-    /// 終わった 1 世代を記録して、計測を畳む。
     fn record(&mut self, dir: &Path, key: &str, outcome: &Regenerated) {
         // 生成に至らなかったものは、比べる相手がそもそも入れ替わっていない。
         let sources = match outcome {
@@ -160,16 +138,13 @@ struct Run {
     cause: Option<PathBuf>,
     asked_at: Option<Instant>,
     started_at: Option<Instant>,
-    /// producer が立つ直前の出自の表。作り終えたものと比べて、この生成に
-    /// 意味があったかを言うために取っておく。
+    /// この生成に意味があったかを言うために、producer が立つ直前の出自の表を取っておく。
     before: Option<HashMap<PathBuf, String>>,
     /// 走っている間に変わったファイル。空でなければ、その索引は置いた時点で既に古い。
     /// 件数ではなくファイルで持つ — 監視は 1 回の保存で複数のイベントを上げるので、
     /// 生の件数を出すと編集 2 回が 6 に見える。
     changed_during: std::collections::HashSet<PathBuf>,
-    /// 走っている間に来た変更のうち、最後のもの。この世代が終わったあとに
-    /// もう一度走るときのきっかけになる。引き継がないと、その世代の記録が
-    /// 「きっかけ不明・待ち時間 0 秒」になる。
+    /// 次の世代のきっかけ。引き継がないと記録が「きっかけ不明・待ち時間 0 秒」になる。
     next_cause: Option<PathBuf>,
 }
 
@@ -209,13 +184,11 @@ pub struct SemanticIndex {
     tree: PathBuf,
     /// いま読んでいるファイル。同じものを繰り返し告げられたときに何もしないため。
     reading: Option<PathBuf>,
-    /// main worktree の `.conductor/` と、それを引いた元のリポジトリ。解決に
-    /// git2 のリポジトリオープンが要るので覚えておく。内側の `None` は
+    /// main worktree の `.conductor/` と、それを引いた元のリポジトリ。内側の `None` は
     /// 「git リポジトリでない」。
     ///
-    /// リポジトリを覚えておくのは、切り替えを取りこぼさないため。成果物の名前は
-    /// リポジトリをまたいで同じ (`index.rust.scip`) なので、引き直さないと
-    /// 切り替え先の索引を切り替え元へ書き込み、相手の索引を上書きしてしまう。
+    /// リポジトリを覚えておくのは、成果物の名前がリポジトリをまたいで同じ
+    /// (`index.rust.scip`) なため。引き直さないと切り替え先の索引を切り替え元へ書き込む。
     conductor_dir: Option<(PathBuf, Option<PathBuf>)>,
 }
 
@@ -225,16 +198,12 @@ impl SemanticIndex {
         self.slot.get(tree_root)
     }
 
-    /// いまこのファイルを読んでいる、と伝える。それを含む索引ルートに索引が
-    /// まだ無ければ 1 本作らせる。
+    /// いまこのファイルを読んでいる、と伝える。それを含む索引ルートに索引がまだ無ければ
+    /// 1 本作らせる。索引ルートは実在するリポジトリで 109 本になることがあり、まとめて
+    /// 作ると数十分かかるので、読むところから順に作る (全部なら `conductor index`)。
     ///
-    /// 索引ルートは実在するリポジトリで 109 本になることがあり、まとめて作ると
-    /// 数十分かかる。conductor が索引を引くのは読んでいるファイルの上だけなので、
-    /// 読むところから順に作る。全部まとめて作りたいときは `conductor index`。
-    ///
-    /// 毎フレーム呼ばれる前提で、前回と同じファイルなら即座に返る。開く経路が
-    /// 12 箇所あるので、そのどこかを通し忘れるより「いま何を読んでいるか」を
-    /// 毎周見るほうが落ちない。
+    /// 毎フレーム呼ばれる前提で、前回と同じファイルなら即座に返る。開く経路が 12 箇所
+    /// あるので、そのどこかを通し忘れるより毎周見るほうが落ちない。
     pub fn note_open(&mut self, rel: &Path, repo_root: &Path, tree_root: &Path) -> Reading {
         // ツリーが動いていれば、いまの索引ルートは前のツリーのもの。調査が届くまで
         // 答えを確定させない。確定させると、同じ相対パスのファイルを開いたまま
@@ -283,9 +252,8 @@ impl SemanticIndex {
         settle(self, answer)
     }
 
-    /// いま読んでいるファイルの索引ルートを作り直す。画面からの頼み。
-    ///
-    /// 読んでいるファイルがどの索引ルートにも属さなければ `false`。
+    /// いま読んでいるファイルの索引ルートを作り直す (画面からの頼み)。どの索引ルートにも
+    /// 属さなければ `false`。
     pub fn rebuild_reading(&mut self) -> bool {
         let Some(rel) = self.reading.clone() else {
             return false;
@@ -327,17 +295,13 @@ impl SemanticIndex {
         }
     }
 
-    /// `rel` を索引に載せるルート。同じ言語のルートが入れ子なら深いほうが持つ
-    /// ([`Store::load`] の衝突の解き方に合わせる)。
     fn owning_root(&self, rel: &Path) -> Option<usize> {
         let all: Vec<IndexRoot> = self.roots.iter().map(|r| r.at.clone()).collect();
         owning_root_of(&all, rel)
     }
 
-    /// 作り直しを 1 周進める。始めどきなら始め、終わっていれば結果を返す。
-    ///
-    /// 毎フレーム呼ばれる。待つものが無いうちに置き場所を組み立てないのは、
-    /// そこに git2 のリポジトリオープンが要るため。
+    /// 作り直しを 1 周進める。毎フレーム呼ばれる。待つものが無いうちに置き場所を
+    /// 組み立てないのは、そこに git2 のリポジトリオープンが要るため。
     pub fn tick_regeneration(&mut self, repo_root: &Path, tree_root: &Path) -> Option<Finished> {
         if !self.roots.iter().any(|r| r.is_working()) {
             return None;
@@ -346,8 +310,7 @@ impl SemanticIndex {
         // 1 周で返すのは 1 本ぶん。生成はロックで直列化されているので、
         // 同じ周に 2 本が終わることはほとんど無い。
         self.roots.iter_mut().find_map(|root| {
-            // 鍵が引き直せていないルートは進めない。いま生成すると、出来た索引が
-            // 前の内容の名前で置かれ、次に読むときには一致せず、また作り直しになる。
+            // 鍵が引き直せていないルートは進めない (置く名前と中身が食い違う)。
             let key = root.key.clone()?;
             // この内容の索引はもう置いてある。producer を起こしても同じものが出る。
             // 編集で行ったり来たりするだけで 14 秒 / 2.3GiB を払わないための門。
@@ -377,11 +340,9 @@ impl SemanticIndex {
 
     /// 索引ルートの調査が要るか。要るなら、鍵を出しておくべきルート。
     ///
-    /// 列挙も鍵の計算もツリーを歩くので (実測でそれぞれ 149ms と最大 110ms)、
-    /// UI スレッドではやらない。呼び出し側はこれを見て [`survey`] を背景に回す。
-    ///
-    /// 鍵の要るルートを名指しで返すのは、[`survey`] が鍵を出す相手を自分で選ぶため。
-    /// 選から漏れたルートは鍵を持てず、いつまでも「調査が要る」と言い続けることになる。
+    /// 列挙も鍵の計算もツリーを歩くので (実測でそれぞれ 149ms と最大 110ms)、UI スレッド
+    /// ではやらない。名指しで返すのは [`survey`] が鍵を出す相手を自分で選ぶためで、選から
+    /// 漏れたルートはいつまでも「調査が要る」と言い続けることになる。
     pub fn needs_survey(&self, tree_root: &Path) -> Option<Vec<IndexRoot>> {
         if self.tree != tree_root {
             return Some(Vec::new());
@@ -395,10 +356,8 @@ impl SemanticIndex {
         (!keyless.is_empty()).then_some(keyless)
     }
 
-    /// 背景で調べた索引ルートを取り込む。
-    ///
-    /// 調べている間にツリーが動いていれば捨てる。取り込むと、いま見ていない
-    /// ツリーの鍵で生成を始めることになる。
+    /// 背景で調べた索引ルートを取り込む。調べている間にツリーが動いていれば捨てる —
+    /// 取り込むと、いま見ていないツリーの鍵で生成を始めることになる。
     pub fn install(&mut self, survey: Survey, tree_root: &Path) {
         if survey.tree != tree_root {
             return;
@@ -442,9 +401,7 @@ impl SemanticIndex {
         self.roots.iter().any(|r| r.regenerator.is_pending())
     }
 
-    /// 走っている生成を止める。worktree を切り替えたときに呼ぶ。
-    ///
-    /// 止めた時点までの producer の時間は捨てることになるので、記録に残す。
+    /// 走っている生成を止める。止めた時点までの producer の時間は捨てるので、記録に残す。
     pub fn abort_regeneration(&mut self, repo_root: &Path) {
         let dir = self.conductor_dir(repo_root).map(Path::to_path_buf);
         for root in &mut self.roots {
@@ -469,8 +426,6 @@ impl SemanticIndex {
 }
 
 /// ツリーの索引ルートをすべて索引して置く。`conductor index` の実体。
-///
-/// 初回の 1 本を作るための口。以後は編集が収束するたびに conductor 自身が作り直す。
 ///
 /// 1 本が失敗しても残りは作る。道具は言語ごとに別なので、scip-go が入っていない
 /// ことを理由に Rust の索引まで諦めるのは筋が違う。
@@ -548,11 +503,9 @@ pub struct Survey {
     pub roots: Vec<(IndexRoot, String)>,
 }
 
-/// `tree_root` の索引ルートを列挙し、それぞれの内容の鍵を計算する。
-///
-/// 鍵を出すのは、`reading` を含むルート、既に成果物が置いてあるルート、そして
-/// `wanted` に名指しされたルートだけ。実在するリポジトリで索引ルートは 109 本あり、
-/// 全部の鍵を出すと 0.6 秒かかる。読みも書きもしないルートの鍵は誰も使わない。
+/// `tree_root` の索引ルートを列挙し、鍵を計算する。鍵を出すのは `reading` を含むルート、
+/// 既に成果物が置いてあるルート、`wanted` に名指しされたルートだけ — 実在するリポジトリ
+/// では 109 本あり、全部の鍵を出すと 0.6 秒かかる。
 pub fn survey(
     tree_root: &Path,
     conductor_dir: Option<&Path>,
@@ -600,12 +553,9 @@ fn owning_root_of(all: &[IndexRoot], rel: &Path) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// main worktree に置いてある索引を、`tree_root` のツリーに向けてロードする。
-///
-/// 索引ルートは `tree_root` から引き直す。索引の中の相対パスをツリーのどこへ
-/// 接ぎ木するかは、ツリーの側にあるルートで決まるため。
-///
-/// 1 本も投入できなければ `None`。
+/// main worktree に置いてある索引を、`tree_root` のツリーに向けてロードする。1 本も
+/// 投入できなければ `None`。索引ルートは `tree_root` から引き直す — 索引の中の相対パスを
+/// ツリーのどこへ接ぎ木するかは、ツリーの側にあるルートで決まるため。
 ///
 /// 索引ルートの調査も一緒に返す。どちらもツリーを歩くので、背景の 1 回で済ませる。
 pub fn survey_and_load(
@@ -638,8 +588,6 @@ pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
     survey_and_load(repo_root, tree_root, None, &[]).1
 }
 
-/// 出自の表には索引ルートの全ファイルが載るので、その言語のものだけを数える。
-/// 絞らないと README の修正が「ソースが動いた」に見えて、無駄な生成を無駄と言えない。
 fn source_delta(
     before: Option<&HashMap<PathBuf, String>>,
     at: &IndexRoot,
@@ -681,9 +629,8 @@ fn main_conductor_dir(repo_root: &Path) -> Option<PathBuf> {
 /// 名前しか根拠が無い答えを、その言語のファイルに限るための判定。
 ///
 /// tree-sitter の索引は名前でしか引けないので、`.go` の `rollbar` が `.tsx` の
-/// `const rollbar` に当たる。言語が違えば同じ綴りでも別物で、当たったところで
-/// 得るものが無い。分類できない拡張子は通す — 落とすと、いま答えているものまで
-/// 黙って消える。
+/// `const rollbar` に当たる。分類できない拡張子は通す — 落とすと、いま答えている
+/// ものまで黙って消える。
 pub fn same_language(asking: &Path, candidate: &Path) -> bool {
     match (
         roots::Language::of_file(asking),
@@ -694,11 +641,8 @@ pub fn same_language(asking: &Path, candidate: &Path) -> bool {
     }
 }
 
-/// 種別を、ホバーの見出しに置く 1 語にする。
-///
-/// 綴りは Rust の宣言キーワードに寄せてある。ホバーの本文には索引が書いた宣言が
-/// そのまま並ぶので、見出しだけ英語の分類名 (`Function`) にすると 2 つの語彙が
-/// 混ざる。読めない種別は空にして、見出しごと出さない。
+/// 種別を、ホバーの見出しに置く 1 語にする。綴りを Rust の宣言キーワードに寄せてあるのは、
+/// ホバーの本文に索引が書いた宣言がそのまま並ぶため。読めない種別は空にして見出しごと出さない。
 pub fn kind_label(kind: sheaf_core::SymbolKind) -> &'static str {
     use sheaf_core::SymbolKind::*;
     match kind {
@@ -752,8 +696,7 @@ mod tests {
         dir.join(format!("index.rust.{}.{ext}", key_in(tree, &at)))
     }
 
-    /// commit_sha でコミットした状態のリポジトリを tempdir に作る。
-    /// 戻り値は (repo_root, commit_sha)。
+    /// commit_sha でコミットした状態のリポジトリを tempdir に作り、(repo_root, commit_sha) を返す。
     fn init_repo_with_commit(files: &[(&str, &str)]) -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
@@ -824,8 +767,8 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&script, perms).unwrap();
 
-        // 索引ルートを直に組む。ツリーを既に引いてあることにしておかないと、
-        // sync_roots が rust-analyzer を持つ Regenerator に差し替えてしまう。
+        // ツリーを既に引いてあることにしないと、sync_roots が rust-analyzer を持つ
+        // Regenerator に差し替えてしまう。
         let mut semantic = SemanticIndex {
             tree: dir.path().to_path_buf(),
             roots: vec![Root {
@@ -907,11 +850,9 @@ mod tests {
         assert_eq!(argv[0], "scip-go");
     }
 
-    /// conductor が Go のツリーに scip-go を向け、その索引で `Exact` に答えるまでを
-    /// 一続きで見る。読み取り側は sheaf のテストが見ているので、ここで見たいのは
-    /// host 側の配線 (道具の選択・成果物の名前・投入) だけ。
-    ///
-    /// scip-go が無ければ飛ばさずに落とす。飛ばすと、配線が壊れていても緑になる。
+    /// conductor が Go のツリーに scip-go を向け、その索引で `Exact` に答えるまでを一続きで
+    /// 見る。読み取り側は sheaf のテストが見ているので、ここで見たいのは host 側の配線だけ。
+    /// scip-go が無ければ飛ばさずに落とす — 飛ばすと配線が壊れていても緑になる。
     #[test]
     fn go_のツリーを索引して定義に飛べる() {
         let (dir, _commit) = init_repo_with_commit(&[
@@ -962,8 +903,7 @@ mod tests {
         );
     }
 
-    /// このツリーに対するそのルートの鍵。成果物の名前に入るので、検査が索引を
-    /// 置くときも探すときも [`survey`] と同じ出し方をしないと見つからない。
+    /// このツリーに対するそのルートの鍵。[`survey`] と同じ出し方をしないと、置いた索引が見つからない。
     fn key_in(tree: &Path, at: &IndexRoot) -> String {
         let found = roots::discover(tree);
         at.content_key(tree, &deeper_than(&found, at))
@@ -1033,9 +973,8 @@ mod tests {
 
     #[test]
     fn 鍵を失ったルートは名指しで調べ直される() {
-        // 調査は鍵を出す相手を自分で選ぶ (109 本ぶんの鍵は 0.6 秒かかる)。選から
-        // 漏れたルートは鍵が付かないまま「調査が要る」と言い続け、背景の調査が
-        // 毎フレーム走ることになる。
+        // 調査は鍵を出す相手を自分で選ぶ (109 本ぶんの鍵は 0.6 秒かかる)。選から漏れたルートは
+        // 「調査が要る」と言い続け、背景の調査が毎フレーム走ることになる。
         let dir = nested_go_tree();
         let mut semantic = surveyed(dir.path(), Some("services/api/api.go"));
         semantic.note_change(&dir.path().join("services/api/api.go"), dir.path());
@@ -1102,10 +1041,8 @@ mod tests {
         assert!(!semantic.roots.iter().any(|r| r.regenerator.is_pending()));
     }
 
-    /// 入れ子の索引ルートで作った索引が、ツリーのルートから見た正しいパスに飛ぶ。
-    ///
-    /// 索引の中の綴りは索引ルート相対 (`handler/handler.go`) なので、接ぎ木を
-    /// 誤ると存在しないパスへ飛ぶ。誤答なので、落ちるまで気づけない。
+    /// 入れ子の索引ルートで作った索引が、ツリーのルートから見た正しいパスに飛ぶ。索引の中の
+    /// 綴りは索引ルート相対 (`handler/handler.go`) なので、接ぎ木を誤ると存在しないパスへ飛ぶ。
     #[test]
     fn 入れ子の索引ルートの中で定義に飛べる() {
         let dir = tempfile::tempdir().unwrap();
@@ -1186,7 +1123,6 @@ mod tests {
         place_index(dir.path());
         std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
         let mut semantic = loaded(dir.path());
-        // 調査が届いて、いまの内容の鍵に入れ替わる。
         semantic.install(
             survey(
                 dir.path(),
@@ -1221,16 +1157,13 @@ mod tests {
 
     #[test]
     fn 一度作った内容の索引は戻ってきても作り直さない() {
-        // 索引を 1 本しか持たないと、内容の違う worktree を行き来するたびに
-        // 上書きし合い、戻るたびに 14 秒 / 2.3GiB を払うことになる。内容ごとに
-        // 名前を分けるのはそのため。
+        // 索引を 1 本しか持たないと、内容の違う worktree を行き来するたびに上書きし合い、
+        // 戻るたびに 14 秒 / 2.3GiB を払うことになる。
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let conductor_dir = dir.path().join(".conductor");
         let lib = dir.path().join("src/lib.rs");
 
-        // 内容 A の索引。
         place_index(dir.path());
-        // 内容 B に移って、その索引も作られた状態にする。
         std::fs::write(&lib, "pub fn greet() {}\nfn other() { greet(); }\n").unwrap();
         place_index(dir.path());
         assert_eq!(
@@ -1239,7 +1172,6 @@ mod tests {
             "内容が違うのに同じ名前で上書きしている"
         );
 
-        // 内容 A に戻る。
         std::fs::write(&lib, SOURCE).unwrap();
         let mut semantic = surveyed(dir.path(), Some("src/lib.rs"));
         let store = load(dir.path(), dir.path()).expect("戻った内容の索引を読めない");
@@ -1278,9 +1210,8 @@ mod tests {
 
     #[test]
     fn 索引が説明できないファイルを読んでいることを伝える() {
-        // 索引はいまの内容のものなのに、このファイルだけ載っていない。作り直しても
-        // 同じものが出るので、作りに行くのではなく黙って構文層に落ちる。言わないと
-        // 「ジャンプが甘い」としか見えない。
+        // 索引はいまの内容のものなのに、このファイルだけ載っていない。作り直しても同じものが
+        // 出るので、黙って構文層に落ちる。言わないと「ジャンプが甘い」としか見えない。
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1298,9 +1229,8 @@ mod tests {
 
     #[test]
     fn 索引をまだ読み込めていないうちは答えを確定させない() {
-        // 索引の読み込みは別スレッドで、worktree 切替の直後は間に合っていない。
-        // ここで「説明できている」と答えて確定させると、古いことを言うべき唯一の
-        // 場面で必ず黙る。
+        // 索引の読み込みは別スレッドで、worktree 切替の直後は間に合っていない。ここで確定
+        // させると、古いことを言うべき唯一の場面で必ず黙る。
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1308,13 +1238,11 @@ mod tests {
         write_hashes(&artifact(&conductor_dir, "hashes"), &[]);
         let mut semantic = surveyed(dir.path(), None);
 
-        // ストアを投入する前。
         assert_eq!(
             semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
             Reading::Loading
         );
 
-        // 投入されたら、聞き直して古いと言えること。
         let store = load(dir.path(), dir.path()).unwrap();
         assert!(semantic.accept(dir.path(), dir.path(), Some(store)));
         assert_eq!(
@@ -1337,9 +1265,8 @@ mod tests {
 
     #[test]
     fn 同じパスのまま別のツリーへ移ったら調査が届くまで答えない() {
-        // 「前回と同じファイル」の早期リターンがツリーの照合より前にあると、相対パスが
-        // 同じファイルを開いたまま worktree を移ったときに、前のツリーの索引ルートで
-        // 答え続ける。答えは前のブランチの行番号になるので、誤りに見えない誤答になる。
+        // 「前回と同じファイル」の早期リターンがツリーの照合より前にあると、worktree を移った
+        // あとも前のツリーの索引ルートで答え続ける。誤りに見えない誤答になる。
         let (rust, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let (plain, _commit) = init_repo_with_commit(&[("src/lib.rs", SOURCE)]);
         let mut semantic = surveyed(rust.path(), Some("src/lib.rs"));
@@ -1368,9 +1295,8 @@ mod tests {
 
     #[test]
     fn リポジトリを切り替えたら成果物の置き場所も引き直す() {
-        // 成果物の名前はリポジトリをまたいで同じ (index.rust.scip) なので、
-        // 置き場所を引き直さないと、切り替え先の索引を切り替え元へ書き込む。
-        // 相手の索引を別のリポジトリの内容で上書きすることになる。
+        // 成果物の名前はリポジトリをまたいで同じ (index.rust.scip) なので、置き場所を引き直さないと
+        // 切り替え先の索引を切り替え元へ書き込み、相手の索引を上書きする。
         let (first, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let (second, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
         let mut semantic = SemanticIndex::default();
@@ -1403,9 +1329,8 @@ mod tests {
         let (dir, _commit) = init_repo_with_commit(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
         let conductor_dir = dir.path().join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
-        // 本物の SCIP を置いても、出自の表が無ければ None を返すこと。
-        // ここで壊れた索引を置くと、出自の表を見ずに投入が失敗しても
-        // 結果として None になり、このテストが検査したいことを検査できなくなる。
+        // 本物の SCIP を置いても、出自の表が無ければ None を返すこと。壊れた索引を置くと
+        // 出自を見ずに失敗しても None になり、検査したいことを検査できない。
         write_index(&artifact(&conductor_dir, "scip"));
         assert!(load(dir.path(), dir.path()).is_none());
     }
