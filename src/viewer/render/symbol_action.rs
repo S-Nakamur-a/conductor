@@ -8,7 +8,6 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
 
-/// area の中央にシンボルアクションオーバーレイを描画する。
 pub fn render_symbol_action_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let overlay = &app.code_nav.symbol_action;
     let theme = &app.theme;

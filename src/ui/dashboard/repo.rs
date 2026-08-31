@@ -9,7 +9,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// リポジトリセレクタのオーバーレイを描画する。
 pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
@@ -93,7 +92,6 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
-/// 「リポジトリを開く」パス入力オーバーレイを描画する。
 pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));

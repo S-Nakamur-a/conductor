@@ -18,7 +18,6 @@ struct PanelInfo {
     is_focused: bool,
 }
 
-/// すべてのパネルにパネル番号オーバーレイを描画する。
 pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
     let columns = app.layout.cache.columns;
     let terminal_split = app.layout.cache.terminal_split;

@@ -153,7 +153,6 @@ pub(super) fn tick_space(
     // ロケットは専用のフラグを持たず、描画時に選ぶ絵文字だけで流れ星と区別する。
 }
 
-/// スペースのシーンを描画する。
 pub(super) fn render_space(frame: &mut Frame, area: Rect, state: &SpaceState, theme: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;

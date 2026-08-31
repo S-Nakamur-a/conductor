@@ -12,7 +12,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-/// コメント種別のアイコン。
 pub fn kind_icon(kind: CommentKind, set: crate::icons::IconSet) -> &'static str {
     match kind {
         CommentKind::Suggest => crate::icons::KIND_SUGGEST.get(set),
@@ -38,7 +37,6 @@ pub fn kind_badge_span(
     }
 }
 
-/// コメントの追加/編集時に入力ボックスのオーバーレイを描画する。
 pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_height = 12_u16.min(area.height.saturating_sub(4));
@@ -143,7 +141,6 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// コメントまたは返信を削除する前の y/n 確認ポップアップを描画する。
 pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::review_state::PendingDelete;
     let theme = &app.theme;
@@ -190,7 +187,6 @@ pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// コメントテンプレート選択の中央ポップアップを描画する。
 pub fn render_template_picker_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -258,7 +254,6 @@ pub fn render_template_picker_overlay(
     frame.render_widget(paragraph, inner);
 }
 
-/// コメント全文とその返信を表示する中央詳細モーダルを描画する。
 pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));

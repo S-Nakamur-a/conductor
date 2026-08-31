@@ -8,7 +8,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
-/// 画面下部にステータスバーを描画する。
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     use crate::app::StatusLevel;
 

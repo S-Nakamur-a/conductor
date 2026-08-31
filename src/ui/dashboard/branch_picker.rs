@@ -9,7 +9,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// cherry-pick のコミットピッカーオーバーレイを描画する。
 pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
@@ -153,7 +152,6 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// grab のブランチピッカーオーバーレイを描画する。
 pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
@@ -223,7 +221,6 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// 削除確認オーバーレイを描画する。
 pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let stale_count = app.overlays.prune.stale.len() as u16;

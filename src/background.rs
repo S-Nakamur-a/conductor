@@ -46,7 +46,6 @@ impl<T> BackgroundOp<T> {
         }
     }
 
-    /// チャネルに溜まっている結果をすべて取り出す。
     pub fn poll_all(&mut self) -> Vec<T> {
         let mut results = Vec::new();
         let Some(ref rx) = self.rx else {

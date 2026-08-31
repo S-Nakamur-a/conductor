@@ -9,7 +9,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-/// 現在のコンテキストのキーバインドを表示するヘルプオーバーレイを描画する。
 pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::Focus;
 

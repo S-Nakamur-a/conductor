@@ -140,7 +140,6 @@ pub(super) fn tick_aquarium(
     }
 }
 
-/// 指定エリアにアクアリウムを描画する。
 pub(super) fn render_aquarium(frame: &mut Frame, area: Rect, state: &AquariumState, theme: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;

@@ -119,7 +119,6 @@ impl CcNotifyListener {
         })
     }
 
-    /// 次のイベントをノンブロッキングで取り出す。
     pub fn poll(&self) -> Option<CcNotifyEvent> {
         self.rx.try_recv().ok()
     }

@@ -193,7 +193,6 @@ pub(super) fn tick_garden(
     }
 }
 
-/// ガーデンのシーンを描画する。
 pub(super) fn render_garden(frame: &mut Frame, area: Rect, state: &GardenState, theme: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;

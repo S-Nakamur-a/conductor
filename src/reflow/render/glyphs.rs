@@ -43,7 +43,6 @@ pub(crate) const THINKING_GLYPH: &str = "\u{273b}";
 /// 背景の切れ込みとして見えてしまう。
 const WIDTH_AMBIGUOUS_GLYPHS: [char; 3] = ['\u{23fa}', '\u{23bf}', '\u{273b}'];
 
-/// ch が [WIDTH_AMBIGUOUS_GLYPHS] のいずれかかどうか。
 pub(crate) fn is_width_ambiguous(ch: char) -> bool {
     WIDTH_AMBIGUOUS_GLYPHS.contains(&ch)
 }

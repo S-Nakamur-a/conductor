@@ -453,7 +453,6 @@ pub struct HoverInfoOverlay {
 }
 
 impl HoverInfoOverlay {
-    /// ホバーのモーダル階層のいずれかが表示中かどうか。
     pub fn is_shown(&self) -> bool {
         self.info.is_some()
     }

@@ -8,7 +8,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// Claude Code セッション再開ピッカーのオーバーレイを描画する。
 pub fn render_resume_session_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 80_u16.min(area.width.saturating_sub(4));

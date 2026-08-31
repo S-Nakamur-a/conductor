@@ -358,7 +358,6 @@ impl SymbolIndex {
         refs
     }
 
-    /// インデックスが正常に構築済みかどうか。
     pub fn is_available(&self) -> bool {
         self.data.lock().unwrap().available
     }

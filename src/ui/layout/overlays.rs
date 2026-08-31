@@ -154,7 +154,6 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-/// worktree 削除用の小さな確認オーバーレイを描画する。
 fn render_confirming_delete_overlay(frame: &mut Frame, area: Rect, app: &App) {
     render_confirm_overlay(frame, area, app, " Confirm Delete ", app.theme.error);
 }

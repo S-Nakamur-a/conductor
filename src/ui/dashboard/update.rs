@@ -8,7 +8,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-/// アップデート確認オーバーレイを描画する。
 pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 55_u16.min(area.width.saturating_sub(4));
@@ -120,7 +119,6 @@ pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) 
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// アップデートの進行状況/エラーオーバーレイを描画する。
 pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup_width = 60_u16.min(area.width.saturating_sub(4));

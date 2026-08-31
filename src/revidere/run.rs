@@ -76,7 +76,6 @@ pub struct RevidereRuns {
 }
 
 impl RevidereRuns {
-    /// branch の解析が現在実行中かどうか。
     pub fn is_running(&self, branch: &str) -> bool {
         self.by_branch.contains_key(branch)
     }

@@ -8,7 +8,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// 検索バーとコマンド一覧を持つコマンドパレットのオーバーレイを描画する。
 pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::command_palette;
 

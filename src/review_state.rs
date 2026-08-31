@@ -162,7 +162,6 @@ impl ReviewState {
         self.rebuild_comment_list_rows();
     }
 
-    /// 指定した worktree のコメントをデータベースから読み直す。
     pub fn load_comments(&mut self, store: &ReviewStore, worktree: &str) {
         match store.reviews_for_worktree(worktree) {
             Ok(comments) => {
@@ -287,7 +286,6 @@ impl ReviewState {
         }
     }
 
-    /// コメントテンプレートをデータベースから読み込む。
     pub fn load_templates(&mut self, store: &ReviewStore) {
         match store.list_templates() {
             Ok(templates) => {

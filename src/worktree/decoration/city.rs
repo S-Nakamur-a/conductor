@@ -165,7 +165,6 @@ pub(super) fn tick_city(
     }
 }
 
-/// シティのシーンを描画する。
 pub(super) fn render_city(frame: &mut Frame, area: Rect, state: &CityState, theme: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;

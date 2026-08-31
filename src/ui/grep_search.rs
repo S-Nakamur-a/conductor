@@ -34,7 +34,6 @@ fn floor_char_boundary(s: &str, pos: usize) -> usize {
     i
 }
 
-/// grep 検索オーバーレイを描画する。
 pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
 
