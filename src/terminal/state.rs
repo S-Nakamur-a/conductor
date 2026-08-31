@@ -150,9 +150,8 @@ mod tests {
     use super::*;
     use ratatui::text::Line;
 
-    /// switch_* がキャッシュをクリアすることを示すために、描画キャッシュへ種を仕込む。
-    /// パネルが同期しなくなるバグを起こした古い状態、すなわち前に表示していた
-    /// セッションから残った空でないキャッシュを再現する。
+    /// パネルが同期しなくなるバグを起こした古い状態、つまり前に表示していたセッションから
+    /// 残った空でないキャッシュを再現する。
     fn stale_cache() -> PtyRenderCache {
         PtyRenderCache {
             lines: vec![Line::from("previous session output")],

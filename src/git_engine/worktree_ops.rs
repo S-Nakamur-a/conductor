@@ -196,10 +196,8 @@ impl GitEngine {
         "HEAD (detached)".to_string()
     }
 
-    /// リポジトリの (added, modified, deleted, staged) ステータス件数を
-    /// 計算する。最初の3つはファイルごとに1つのバケットを選ぶが、staged
-    /// はそれらと重複してよく、git add / git reset に反応する唯一の値
-    /// である(WorktreeInfo を参照)。
+    /// 最初の 3 つはファイルごとに 1 バケットだが、staged はそれらと重複してよく、
+    /// git add / git reset に反応する唯一の値になる。
     fn status_counts(repo: &Repository) -> Result<(usize, usize, usize, usize)> {
         let mut opts = StatusOptions::new();
         opts.show(StatusShow::IndexAndWorkdir)

@@ -159,10 +159,8 @@ impl GitStatusMap {
         }
     }
 
-    /// path の祖先ディレクトリパスを、末尾スラッシュ付き・近い順で返す。
-    /// 例: "a/b/c.rs" -> ["a/b/", "a/"]。末尾スラッシュは libgit2 が
-    /// 折りたたまれた ignored ディレクトリを報告する形式と一致する
-    /// (実測で確認済み — status_map_classify_tests を参照)。
+    /// 末尾スラッシュ付き・近い順。"a/b/c.rs" -> ["a/b/", "a/"]。スラッシュは libgit2 が
+    /// 折りたたまれた ignored ディレクトリを報告する形式に合わせている (実測)。
     fn ancestor_dirs(path: &str) -> impl Iterator<Item = String> + '_ {
         let mut current = path;
         std::iter::from_fn(move || {

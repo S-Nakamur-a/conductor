@@ -246,14 +246,8 @@ pub(super) fn sanitize_pasted_text(text: &str) -> String {
     out
 }
 
-/// 導入の ESC がすでに chars から読み取られている状態で、ANSI エスケープ
-/// シーケンスの残りを読み進めて消費する。破棄したシーケンスの余りバイトが
-/// サニタイズ後の出力に漏れないよう、代表的なシーケンス形状を扱う。
-/// * CSI (ESC [) — 最終バイト 0x40..=0x7E までのパラメータ/中間バイト。
-/// * 文字列シーケンス OSC/DCS/SOS/PM/APC (ESC ] P X ^ _) — BEL または
-///   文字列終端 ESC \ まで。
-/// * SS2/SS3 (ESC N / ESC O) — 続く1バイトのみ。
-/// * それ以外(ESC + 単一バイト、例: ESC 7) — すでに消費済み。
+/// 導入の ESC は読み取り済みの前提。CSI は最終バイト 0x40..=0x7E まで、OSC/DCS/SOS/PM/APC
+/// は BEL か ESC \ まで、SS2/SS3 は続く 1 バイトだけ、それ以外は消費済み。
 fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars>) {
     match chars.next() {
         Some('[') => {

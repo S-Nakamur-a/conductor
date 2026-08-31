@@ -419,9 +419,8 @@ impl Explorer {
         );
     }
 
-    /// dir 以下の全てのファイルパスを再帰的に収集する。スキップするディレクトリは
-    /// walk_dir / SKIP_DIRS と同じ。ファイルパスのみ（ディレクトリは含まない）を
-    /// paths に追加し、root からの相対パスとして格納する。
+    /// スキップするディレクトリは walk_dir / SKIP_DIRS と同じ。root からの相対パスで、
+    /// ディレクトリは含めない。
     fn collect_all_file_paths(root: &Path, dir: &Path, depth: usize, paths: &mut Vec<String>) {
         if depth > Self::MAX_DEPTH {
             return;

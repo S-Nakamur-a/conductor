@@ -208,9 +208,7 @@ impl PtyManager {
         )
     }
 
-    /// spawn 経路の共有末尾処理: PTY のペアを開き、reader スレッドと vt100
-    /// パーサを配線し、セッションを push する。cmd は組み立て済みの
-    /// コマンド(作業ディレクトリはここで設定する)。
+    /// spawn 経路の共有末尾処理。cmd は組み立て済みで、作業ディレクトリはここで設定する。
     #[allow(clippy::too_many_arguments)]
     fn finish_spawn(
         &mut self,

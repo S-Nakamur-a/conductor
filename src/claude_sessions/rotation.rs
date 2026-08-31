@@ -112,11 +112,8 @@ pub fn resolve_current_session_id(
     current
 }
 
-/// lower 以降に始まった /clear 始まりのログのうち、開始が最も早いものの
-/// session id。
-///
-/// lower から [MAX_CLEAR_GAP] 以内に始まった /clear 始まりのログのうち、
-/// 開始が最も早いものの session id。
+/// lower から [MAX_CLEAR_GAP] 以内に始まった /clear 始まりのログのうち、開始が最も
+/// 早いものの session id。
 fn next_cleared_log(
     project_dir: &Path,
     lower: SystemTime,
@@ -151,12 +148,8 @@ fn next_cleared_log(
     best.map(|(_, id)| id)
 }
 
-/// ログが /clear で始まっているときだけ、その開始時刻を返す。
-///
-/// 判定は「最初の表示対象ユーザレコードが /clear コマンドかどうか」。
-/// caveat のような isMeta レコードや、mode などの会話でないレコードは
-/// 読み飛ばす。会話のある通常のセッションは最初のユーザレコードが人間の
-/// プロンプトなので、ここで弾かれる。
+/// 判定は「最初の表示対象ユーザレコードが /clear か」。caveat のような isMeta や、
+/// 会話でないレコードは読み飛ばす。通常のセッションは最初が人間のプロンプトなので弾かれる。
 fn cleared_log_start(path: &Path) -> Option<SystemTime> {
     use std::io::BufRead;
 

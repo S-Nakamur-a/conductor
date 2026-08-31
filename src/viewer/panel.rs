@@ -87,9 +87,8 @@ pub fn render_hover_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     apply_hover_outcome(app, outcome);
 }
 
-/// ViewerState の diff 注釈キャッシュを、現在表示中のファイルについて確実に
-/// 埋める。ファイルが変わったかキャッシュが無効化された場合（load_diff() の後
-/// など）のみ再構築する。render 本体が共有借用を取る前に呼ぶ。
+/// ファイルが変わったかキャッシュが無効化されたときだけ組み直す。render 本体が共有借用を
+/// 取る前に呼ぶ。
 fn ensure_diff_annotations_cached(app: &mut App) {
     use crate::diff_state::{DiffLineTag, FileDiff, InlineSegment};
 

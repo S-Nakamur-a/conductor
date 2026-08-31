@@ -68,15 +68,8 @@ fn parse_smart_gen_result(raw: &str) -> Result<SmartGenResult, String> {
 /// 安く済む。数分かかるタスクなら、同じ判断にはならない。
 const SMART_WORKTREE_ATTEMPTS: usize = 3;
 
-/// smart worktree 用の LLM 生成(ブランチ名 + プロンプト)を実行する。
-///
-/// プロバイダは [api] 設定から選ばれ、[crate::ai_caller] 経由で構築される。
-/// この関数がプロンプト・リトライ方針・パースを所有し、設定済みコマンドは単に
-/// モデルであるにすぎない。各(ブロッキングの)呼び出しの前後で cancel_token を
-/// チェックする。
-///
-/// このタスクは [api] command_timeout_secs をそのまま使う: ブランチ名を
-/// 付けるのは数秒のテキスト生成なので、独自の予算を要求する理由が無い。
+/// プロンプト・リトライ方針・パースはこの関数が持ち、設定済みコマンドはモデルに過ぎない。
+/// [api] の command_timeout_secs をそのまま使う (数秒のテキスト生成なので独自の予算は不要)。
 fn run_smart_generation(
     desc: &str,
     cancel_token: &Arc<AtomicBool>,

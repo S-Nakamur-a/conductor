@@ -70,11 +70,8 @@ fn tool_use_errored(name: &str, input: serde_json::Value, errored: bool) -> Disp
     }
 }
 
-/// kind はすでに解決済みのペアリングマップの値である — パース時に
-/// crate::claude_log::convert::content_to_display_blocks が書き込むのと同じ値。
-/// ここで解決済みの状態で組み立てることで、これらのテストは build_lines の
-/// レンダリングルールに集中でき、ペアリングマップを再テストせずに済む
-/// （そちらは claude_log::tests と tool_class::tests で別途カバーされている）。
+/// kind は解決済みのペアリングマップの値。ここで解決済みにしておくことで、これらのテストは
+/// build_lines の描画規則だけを見て、ペアリングマップを再テストしないで済む。
 fn tool_result(kind: ResultKind, lines: &[&str], is_error: bool) -> DisplayBlock {
     DisplayBlock::ToolResult {
         kind,
@@ -130,9 +127,8 @@ fn non_blank_texts(lines: &[Line<'_>]) -> Vec<String> {
         .collect()
 }
 
-/// 唯一の可視（非空白）行。ちょうど1つでなければ panic する — 以下のスタイル検証
-/// テストで使われる。それらは span のスタイルを調べるためにテキストだけでなく
-/// 実際の Line が必要になる。
+/// ちょうど 1 つでなければ panic する。スタイル検証のテストは、テキストではなく実際の
+/// Line が要るのでこれを通す。
 fn only_visible_line<'a>(lines: &'a [Line<'a>]) -> &'a Line<'a> {
     let visible: Vec<&Line<'_>> = lines
         .iter()

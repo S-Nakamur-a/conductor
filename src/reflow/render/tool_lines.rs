@@ -211,11 +211,8 @@ fn lower_first(s: &str) -> String {
 
 const EXPAND_HINT: &str = " (ctrl+o to expand)";
 
-/// 1エントリ内のすべての Counted バケットを集約した1行。例えば
-/// "Searched for 1 pattern, read 1 file, listed 2 directories (ctrl+o to expand)"。
-///
 /// 節の順序は [BUCKET_ORDER]。最初の節の動詞だけ大文字を保ち、以降は小文字化する。
-/// 件数部分は太字で、それ以外は styles.result。すべて実測に基づく。
+/// 件数は太字。すべて実測に基づく。
 fn bucket_summary_line(
     counts: &HashMap<CountedBucket, usize>,
     width: usize,

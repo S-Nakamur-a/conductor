@@ -432,18 +432,9 @@ impl App {
     }
 }
 
-/// base_ref が、単に git worktree add の有効な起点であるというだけでなく、
-/// *diff* のベースとして意味を持つかどうか。
-///
-/// GitEngine::resolve_base_ref は origin/<main> も <main> も存在しないとき
-/// リテラル文字列 "HEAD" にフォールバックする — worktree の作成としては
-/// 正しいが、それを diff のベースにしても意味がない。ベースとして永続化
-/// された "HEAD" は worktree *自身* の head に解決されるため、
-/// merge-base(HEAD, HEAD) == HEAD となり、committed セクションは永遠に空
-/// のままエラーも出ない: これはまさに、この変更全体が潰そうとしている
-/// 「エラーの出ない空表示」が別口から入り込んでくるケースそのものである。
-/// ここで弾いておけば main_branch にフォールバックし、それは動くか、
-/// あるいはパネル上ではっきり失敗するかのどちらかになる。
+/// resolve_base_ref は origin/<main> も <main> も無いとき "HEAD" に落ちる。worktree の
+/// 作成としては正しいが、diff のベースにすると自分の head に解決されて
+/// merge-base(HEAD, HEAD) == HEAD となり、committed が永遠に空のままエラーも出ない。
 fn is_usable_diff_base(base_ref: &str) -> bool {
     !base_ref.is_empty() && base_ref != "HEAD"
 }

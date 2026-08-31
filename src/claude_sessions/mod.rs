@@ -50,9 +50,7 @@ fn history_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("history.jsonl"))
 }
 
-/// プロジェクトパスを Claude Code のプロジェクトディレクトリと同じ方式で
-/// エンコードする。/ と . はすべて - に置き換わる。
-/// 例: /Users/foo/github.com/proj → -Users-foo-github-com-proj。
+/// / と . はすべて - になる。例: /Users/foo/github.com/proj → -Users-foo-github-com-proj。
 fn encode_project_path(path: &str) -> String {
     path.replace(['/', '.'], "-")
 }

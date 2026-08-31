@@ -15,9 +15,8 @@ impl ViewerTabStatus {
         self == Self::Preview
     }
 
-    /// 既に開いているタブを開き直したときの寿命。永続で開き直すと固定される —
-    /// シングルクリックしたファイルをダブルクリックで固定する経路がこれ。
-    /// 逆に、固定済みのタブがシングルクリックで preview へ戻ることはない。
+    /// 永続で開き直すと固定される。シングルクリックしたファイルをダブルクリックで固定する
+    /// 経路がこれ。逆に、固定済みがシングルクリックで preview へ戻ることはない。
     fn reopened(self, requested: Self) -> Self {
         match requested {
             Self::Persistent => Self::Persistent,
@@ -180,11 +179,8 @@ impl ViewerState {
         true
     }
 
-    /// preview タブを閉じ、フォーカスの行き先 dest を詰めた添字を返す。
-    ///
-    /// preview は必ずアクティブなタブなので、呼ぶのはフォーカスが他へ移る
-    /// 直前（stash_active_view の後）だけ。閉じたタブより後ろの添字は 1 つ
-    /// 前へ動くので、行き先をここで詰めておかないと隣のファイルが開く。
+    /// preview は必ずアクティブなので、呼ぶのはフォーカスが他へ移る直前だけ。閉じたタブより
+    /// 後ろの添字は 1 つ前へ動くので、行き先をここで詰めないと隣のファイルが開く。
     fn close_preview_tab(&mut self, dest: usize) -> usize {
         let Some(idx) = self.tabs.iter().position(|t| t.status.is_preview()) else {
             return dest;

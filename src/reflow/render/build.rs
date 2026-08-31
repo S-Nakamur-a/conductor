@@ -157,28 +157,10 @@ fn is_annotation_only(entry: &LogEntry) -> bool {
             .all(|b| matches!(b, DisplayBlock::Annotation { .. }))
 }
 
-/// line 上で最初に現れる幅の曖昧なガターグリフの直後のカラム。存在しなければ None。
-///
-/// ⏺/⎿/✻ は unicode-width では1カラムと計測されるが、多くの端末は2カラム幅で描画するため、
-/// かつては行全体がずれる「scrollback のにじみ」が起きていた。Claude Code 自身はグリフの
-/// 直後に絶対カラム（CHA）を発行することでこれを回避している。このセルを1つ未書き込みの
-/// ままにしておくと、その位置で ratatui の diff が不連続になり、crossterm バックエンドが
-/// 絶対位置指定の MoveTo を発行する。同じ手口である。super::render のテストで実際の
-/// バックエンドに対して検証済み。
-///
-/// これには正しく処理すべき点が2つあり、素朴な走査ではどちらも間違える。
-///
-/// ガターだけを対象にすること。⏺/⎿/✻ は本文テキストにも普通の文字として現れる。
-/// このアプリ自身のトランスクリプトは、貼り付けられた Claude Code の出力であふれている。
-/// 穴は未書き込みのセルなので、本文にそれを開けると文字が1つ欠けるうえ、前フレームで
-/// そこにあったものが残ってしまう。マーカーは必ずカラム0（helpers::with_marker、
-/// helpers::fit_glyph_line）かカラム2（tool_lines の "  ⎿  " と " ⎿  " プレフィックス）
-/// にしか置かれないので、走査は MAX_GUTTER_GLYPH_COL の後で止める。
-///
-/// カラムは char ではなく書記素クラスタ単位で進めること。char ごとに合計すると、
-/// ZWJ シーケンス（家族の絵文字は2カラムだが7 char ある）を過大に数え、emoji
-/// presentation シーケンスを過小に数えてしまい、穴が誤ったセルに置かれてしまう。
-/// helpers::truncate_to_width や user_text::wrap_plain_text と同じ理屈である。
+/// ⏺/⎿/✻ は unicode-width で 1 カラムだが多くの端末は 2 カラムで描く。1 セルを未書き込みに
+/// しておくと ratatui の diff がそこで切れ、crossterm が絶対位置の MoveTo を出す (Claude Code
+/// 自身と同じ手口)。走査を MAX_GUTTER_GLYPH_COL で止めるのは、本文にも同じ字が出るから。
+/// カラムを書記素クラスタで進めるのは、char 単位だと ZWJ で穴が別のセルに落ちるから。
 fn width_risk_hole(line: &Line<'_>) -> Option<u16> {
     let mut col: usize = 0;
     for span in &line.spans {

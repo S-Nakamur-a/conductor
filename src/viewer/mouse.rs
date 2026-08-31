@@ -37,10 +37,8 @@ fn ask_claude_about_comment(app: &mut App, comment_id: &str) {
     }
 }
 
-/// クリックされた実行ボタンのテストコマンドをアクティブなShell PTYに送り、
-/// そこにフォーカスする。コマンドは自動実行される（改行で終端）。言語に
-/// 依存しない — コマンド（go test … や cargo test … など）はスキャナが
-/// 組み立てる。
+/// コマンドは改行付きで送るので自動実行される。言語には依存しない — go test や cargo test
+/// といったコマンドはスキャナが組み立てる。
 fn run_test(app: &mut App, run: &crate::test_run::TestRun) {
     let Some(idx) = app.terminal.shell.active_session else {
         app.set_status(
@@ -441,8 +439,6 @@ pub(in crate::viewer) fn toggle_inline_thread_at(app: &mut App, line_1: usize) {
     }
 }
 
-/// viewer内のシンボルに対するCmd+Clickでの定義へのジャンプを処理する。
-///
 /// キーボードの gd と同じ実装に合流させてある。クリックは行と桁を持っているので、
 /// 行内の語を選ばせる手順だけ飛ばして対象を直接渡す。
 fn handle_symbol_click_jump(

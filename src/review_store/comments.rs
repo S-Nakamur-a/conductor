@@ -237,11 +237,8 @@ impl ReviewStore {
     }
 }
 
-/// rusqlite::Row を ReviewComment に変換する。
-///
-/// 想定しているカラム順（11カラム）:
-///   0:id, 1:worktree, 2:file_path, 3:line_start, 4:line_end,
-///   5:kind, 6:body, 7:status, 8:author, 9:branch, 10:created_at
+/// 想定するカラム順 (11): id, worktree, file_path, line_start, line_end, kind, body,
+/// status, author, branch, created_at。
 fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
     let kind_str: String = row.get(5)?;
     let status_str: String = row.get(7)?;

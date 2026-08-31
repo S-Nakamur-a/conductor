@@ -37,9 +37,8 @@ fn w(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
 }
 
-/// チップの外に出す revidere の印。走らせていない worktree では空 — 印の
-/// 付いていない状態が「まだ解析していない」を意味するので、印そのものが
-/// 情報として効く。
+/// 走らせていない worktree では空。印の無い状態が「まだ解析していない」を意味するので、
+/// 印そのものが情報として効く。
 fn review_mark(state: crate::revidere::ArtifactState, ui_tick: u64) -> String {
     match state {
         crate::revidere::ArtifactState::None => String::new(),
@@ -47,10 +46,8 @@ fn review_mark(state: crate::revidere::ArtifactState, ui_tick: u64) -> String {
     }
 }
 
-/// 印の見た目。背景は敷かない。
-///
-/// 全テーマで accent と selected_bg が同じ色なので、選択中チップの塗りを
-/// 引き継ぐと実行中の印が背景と完全に同色になって消える。
+/// 背景は敷かない。全テーマで accent と selected_bg が同じ色なので、選択中チップの
+/// 塗りを引き継ぐと実行中の印が背景と同色になって消える。
 fn review_style(theme: &crate::theme::Theme, state: crate::revidere::ArtifactState) -> Style {
     Style::default()
         .fg(crate::ui::common::revidere_color(theme, state))

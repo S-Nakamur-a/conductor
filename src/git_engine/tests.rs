@@ -236,10 +236,8 @@ fn grab_state_load_legacy_format() {
     engine.remove_grab_state().unwrap();
 }
 
-/// main ブランチを持つ bare な "origin" リポジトリと、それを origin として
-/// 設定し main を fetch 済みのローカルリポジトリを作成する。返り値は
-/// (origin_tmp, local_tmp, origin_repo, local_engine) — origin_repo を
-/// 使うと、テストから "remote" へ push するコミットやブランチを追加できる。
+/// 返り値の origin_repo を使うと、テストから「remote」へ push するコミットや
+/// ブランチを足せる。
 fn temp_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir, Repository, GitEngine) {
     let origin_tmp = tempfile::tempdir().expect("create origin temp dir");
     let origin_repo = Repository::init_bare(origin_tmp.path()).expect("init bare origin");
@@ -269,9 +267,7 @@ fn temp_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir, Repository,
     (origin_tmp, local_tmp, origin_repo, engine)
 }
 
-/// repo の refs/heads/<branch_name> へ、main の現在の tip を親として
-/// コミットを追加する。PR の head が "origin" に着地した状態を再現する
-/// のに使う。
+/// main の現在の tip を親にする。PR の head が origin に着地した状態の再現に使う。
 fn commit_on_branch(repo: &Repository, branch_name: &str, message: &str) {
     let sig = git2::Signature::now("Test", "test@test.com").unwrap();
     let parent = repo
