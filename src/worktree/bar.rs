@@ -1,12 +1,9 @@
-//! Worktree ステータスバー — 以前の左カラムのworktree一覧を置き換える、
-//! コンパクトで全幅のストリップ。
+//! Worktree ステータスバー — コンパクトで全幅のストリップ。
 //!
-//! すべての worktree を一目で把握できる（ブランチ、変更ファイル数、ahead/behind、
-//! Claude Code の待機/稼働状態）ので、複数の並行セッションを視界の端で監視
-//! できる。ストリップは操作可能: worktree をクリックするとそこ（とその
-//! Claude セッション）にジャンプし、[+] で worktree を作成し、チップごとの
-//! ✕ で削除する（確認あり）。より詳細な一覧/詳細UIはスイッチャーモーダル
-//! （render_switcher_overlay）にある。
+//! すべての worktree を一目で把握できる (ブランチ、変更ファイル数、ahead/behind、
+//! Claude Code の待機/稼働状態) ので、複数の並行セッションを視界の端で監視できる。
+//! クリックでジャンプ、[+] で作成、チップごとの ✕ で削除。詳細な一覧は
+//! スイッチャーモーダル (render_switcher_overlay) にある。
 
 use crate::app::App;
 use crate::hit_map::ColumnSpans;
@@ -100,7 +97,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut spans: Vec<Span> = Vec::new();
     let mut hits = ColumnSpans::default();
 
-    // 識別マーカー（worktree 作成中は回転する）。
     {
         let icon = if creating {
             format!("{} ", crate::ui::common::spinner_frame(app.ticks.ui()))
@@ -115,14 +111,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         x += w(&icon);
         spans.push(Span::styled(icon, style));
     }
-    // 新規 worktree ボタンは右端に固定する（Claude/Shell セッションタブバーと
-    // 一貫させている）。ここで場所を確保しておき、最後に描画する。
-    // " [+]" = 前方の空白 + ボタン。
+    // 新規 worktree ボタンは右端に固定する (セッションタブバーと一貫させる)。ここで場所を
+    // 確保しておき、最後に描画する。
     let add = " [+]";
     let add_w = w(add);
     let chips_max_x = max_x.saturating_sub(add_w);
 
-    // 先にチップのデータを集めておく（app.worktrees への借用を解放するため）。
     let chips: Vec<Chip> = app
         .worktrees
         .iter()
@@ -163,9 +157,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             );
             let review_text = review_mark(review, app.ticks.ui());
 
-            // Claude/Shell セッションタブに合わせて [x]（以前は ✕）。チップの
-            // 塗りつぶし背景のすぐ外側に置くので、危険色の赤が読みやすいまま
-            // になる。
+            // Claude/Shell セッションタブに合わせて [x]。チップの塗りつぶし背景のすぐ外側に置くので、
+            // 危険色の赤が読みやすいままになる。
             let del = if wt.is_main { "" } else { "[x]" };
             Chip {
                 width: w(&text),

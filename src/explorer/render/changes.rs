@@ -143,13 +143,10 @@ pub(super) fn render(
         );
     }
 
-    // 以前は base 解決の失敗が完全に無音だった: 一覧が単に空で返ってきて
-    // 「変更なし」に見えてしまっていた。メッセージを先頭行に固定して両者を
-    // 混同しないようにする。このバナーは display_list の一部ではないため
-    // 選択もできず、ナビゲーションキーが扱うインデックスもずらさない —
-    // コストはリストの高さ1行分だけ。改行はスペースに潰す。複数行の
-    // ListItem はここで確保した1行より多くの行を静かに消費してしまい、
-    // List ウィジェットはパネル端で溢れた分を切り捨てるだけだから。
+    // base 解決の失敗を「変更なし」と混同させないため、メッセージを先頭行に固定する。この
+    // バナーは display_list の一部ではないので選択もできず、ナビゲーションキーのインデックスも
+    // ずらさない。改行はスペースに潰す — 複数行の ListItem はここで確保した 1 行より多くを
+    // 静かに消費し、List ウィジェットは溢れた分を切り捨てるだけだから。
     let error_banner: Option<ListItem> = ctx.diff.error.as_deref().map(|msg| {
         ListItem::new(Span::styled(
             format!("  \u{26a0} {}", msg.replace('\n', " ")),
@@ -183,12 +180,9 @@ pub(super) fn render(
                 Some(ListItem::new(line))
             }
             DiffListEntry::File { file_index, depth } => {
-                // インデックスアクセスではなく .get を使う: display_list と
-                // ファイル vector は異なるティックで再構築されるため、片方が
-                // 古いままレンダリングされるフレームがありうる。行をスキップ
-                // すればチラつきで済むが、インデックスアクセスだと描画処理の
-                // 内側からアプリ全体を落としかねない。上のファイルツリーも
-                // 同様の対応をしている。
+                // インデックスアクセスではなく .get を使う。display_list とファイル vector は異なる
+                // ティックで再構築されるので、片方が古いままのフレームがありうる。行をスキップすれば
+                // チラつきで済むが、インデックスアクセスだと描画の内側からアプリを落とす。
                 let file_diff = ctx.diff.files.get(*file_index)?;
                 let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
                 let indent = "  ".repeat(*depth);
@@ -196,10 +190,8 @@ pub(super) fn render(
                 let prefix = format!("  {indent}");
                 let glyph = format!("{} ", icon.glyph(icon_set));
 
-                // ファイル名の色はファイルの git ステージ状態
-                // （untracked / unstaged / staged / committed）を表す。
-                // 行数はベースからの合計なので、その内訳がコミット済みか
-                // 手元の編集かはこの色でしか分からない。
+                // ファイル名の色は git ステージ状態を表す。行数はベースからの合計なので、その内訳が
+                // コミット済みか手元の編集かはこの色でしか分からない。
                 let stage_state = file_stage_state(ex.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
 
