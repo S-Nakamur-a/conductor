@@ -39,7 +39,7 @@ pub(crate) fn handle_reflow_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
         KeyCode::Char('j') | KeyCode::Down => {
             if bottom {
                 // 最下部 + 単発の down キー → ライブ PTY へ戻る退場スイープを開始。
-                app.request_close_reflow();
+                app.close_reflow();
                 return None;
             }
             app.reflow.scroll = app.reflow.scroll.saturating_add(1);
@@ -51,14 +51,14 @@ pub(crate) fn handle_reflow_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
         // ページスクロール
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if bottom {
-                app.request_close_reflow();
+                app.close_reflow();
                 return None;
             }
             app.reflow.scroll = app.reflow.scroll.saturating_add(page);
         }
         KeyCode::PageDown => {
             if bottom {
-                app.request_close_reflow();
+                app.close_reflow();
                 return None;
             }
             app.reflow.scroll = app.reflow.scroll.saturating_add(page);
@@ -96,7 +96,7 @@ pub(crate) fn handle_reflow_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
         // 離脱
         KeyCode::Esc => {
             // ライブ PTY へ戻る前に退場スイープを再生する。
-            app.request_close_reflow();
+            app.close_reflow();
             return None;
         }
 

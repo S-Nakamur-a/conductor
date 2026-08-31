@@ -188,7 +188,7 @@ pub(super) fn handle_mouse_scroll(
                         inner,
                     ) {
                         // 既に一番下 — さらに下スクロールすると退出スイープに入る。
-                        app.request_close_reflow();
+                        app.close_reflow();
                         return;
                     }
                     app.reflow.scroll = app.reflow.scroll.saturating_add(abs_delta);
