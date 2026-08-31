@@ -757,11 +757,7 @@ impl App {
 
         // 対象ファイルを開く。根は Viewer が表示中のツリーのもの。ツリーの行を
         // 選び直す reveal と同じ根でないと、本文と選択行が別ツリーを指す。
-        let tab_width = self.config.viewer.tab_width;
-        self.viewer
-            .open_file(self.explorer.root(), file_path, tab_width);
-        self.rehighlight_viewer();
-        self.explorer.reveal_file_in_tree(file_path);
+        self.show_file(file_path, crate::app::OpenAs::Persistent);
 
         // ジャンプ先の行が、ジャンプ元のシンボルと同じ画面行に来るようスクロールする。
         let target_0 = line.saturating_sub(1);
@@ -787,11 +783,7 @@ impl App {
         };
 
         if let Some(loc) = self.code_nav.history.go_back(current) {
-            let tab_width = self.config.viewer.tab_width;
-            self.viewer
-                .open_file(self.explorer.root(), &loc.file_path, tab_width);
-            self.rehighlight_viewer();
-            self.explorer.reveal_file_in_tree(&loc.file_path);
+            self.show_file(&loc.file_path, crate::app::OpenAs::Persistent);
             let total = self.viewer.content.file_content.len();
             self.viewer.content.file_scroll = loc.line.min(total.saturating_sub(1));
             self.viewer.content.h_scroll = loc.h_scroll;
@@ -811,11 +803,7 @@ impl App {
         };
 
         if let Some(loc) = self.code_nav.history.go_forward(current) {
-            let tab_width = self.config.viewer.tab_width;
-            self.viewer
-                .open_file(self.explorer.root(), &loc.file_path, tab_width);
-            self.rehighlight_viewer();
-            self.explorer.reveal_file_in_tree(&loc.file_path);
+            self.show_file(&loc.file_path, crate::app::OpenAs::Persistent);
             let total = self.viewer.content.file_content.len();
             self.viewer.content.file_scroll = loc.line.min(total.saturating_sub(1));
             self.viewer.content.h_scroll = loc.h_scroll;

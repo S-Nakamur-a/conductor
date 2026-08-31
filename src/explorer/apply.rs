@@ -3,7 +3,7 @@
 //! パネルが他パネルへ書く経路はここ 1 本に集まっている。分割前は Explorer の
 //! 入力とマウス処理から 13 のフィールドパスへ直接書いていた。
 
-use crate::app::App;
+use crate::app::{App, OpenAs};
 use crate::overlay::ActiveOverlay;
 use crate::types::Focus;
 
@@ -13,20 +13,10 @@ impl App {
     pub fn apply_explorer_intent(&mut self, intent: Intent) {
         match intent {
             Intent::OpenFile { path } => {
-                let tab_width = self.config.viewer.tab_width;
-                let root = self.explorer.root().to_path_buf();
-                self.viewer.open_file(&root, &path, tab_width);
-                self.rehighlight_viewer();
-                self.review_state.build_file_comment_cache(&path);
+                self.show_file(&path, OpenAs::Persistent);
                 self.set_focus(Focus::Viewer);
             }
-            Intent::PreviewFile { path } => {
-                let tab_width = self.config.viewer.tab_width;
-                let root = self.explorer.root().to_path_buf();
-                self.viewer.open_file_preview(&root, &path, tab_width);
-                self.rehighlight_viewer();
-                self.review_state.build_file_comment_cache(&path);
-            }
+            Intent::PreviewFile { path } => self.show_file(&path, OpenAs::Preview),
             Intent::OpenSelectedChange => {
                 self.open_diff_file_at_selected();
                 self.set_focus(Focus::Viewer);
@@ -79,10 +69,7 @@ impl App {
         };
         let file_path = c.file_path.clone();
         let line = c.line_start as usize;
-        let tab_width = self.config.viewer.tab_width;
-        let root = self.explorer.root().to_path_buf();
-        self.viewer.open_file(&root, &file_path, tab_width);
-        self.rehighlight_viewer();
+        self.show_file(&file_path, OpenAs::Persistent);
         self.viewer.content.file_scroll = line.saturating_sub(1);
         // コメントはソース行に紐づくので source を出す。markdown 描画のままだと
         // 本文の先頭へ飛ばされ、選択箇所が見えない。
@@ -91,7 +78,6 @@ impl App {
             start: line,
             end: line,
         };
-        self.review_state.build_file_comment_cache(&file_path);
         if focus_viewer {
             self.set_focus(Focus::Viewer);
         }

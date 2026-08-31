@@ -48,12 +48,7 @@ impl App {
             Some(f) => (f.path.clone(), f.clone()),
             None => return,
         };
-        let tab_width = self.config.viewer.tab_width;
-        self.viewer
-            .open_file(self.explorer.root(), &file_path, tab_width);
-        self.explorer.reveal_file_in_tree(&file_path);
-        self.rehighlight_viewer();
-        self.review_state.build_file_comment_cache(&file_path);
+        self.show_file(&file_path, crate::app::OpenAs::Persistent);
         self.expand_threads_for_file(&file_path);
         self.viewer.build_unified_diff_view(&file_diff_clone);
         // ファイルにレビューコメントがあれば最初のコメントへ着地させ(レビュアーが

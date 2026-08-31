@@ -20,6 +20,7 @@ pub use state::{
 mod types;
 mod update;
 mod view_state;
+pub use view_state::OpenAs;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

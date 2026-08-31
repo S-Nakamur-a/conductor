@@ -290,21 +290,21 @@ impl App {
     pub fn next_viewer_tab(&mut self) {
         let tab_width = self.config.viewer.tab_width;
         self.viewer.next_tab(self.explorer.root(), tab_width);
-        self.after_viewer_tab_change();
+        self.after_viewer_file_change();
     }
 
     /// Viewer の前のタブへ切り替える。
     pub fn prev_viewer_tab(&mut self) {
         let tab_width = self.config.viewer.tab_width;
         self.viewer.prev_tab(self.explorer.root(), tab_width);
-        self.after_viewer_tab_change();
+        self.after_viewer_file_change();
     }
 
     /// idx のタブをアクティブにする（タブ行のクリック）。
     pub fn focus_viewer_tab(&mut self, idx: usize) {
         let tab_width = self.config.viewer.tab_width;
         self.viewer.focus_tab(self.explorer.root(), idx, tab_width);
-        self.after_viewer_tab_change();
+        self.after_viewer_file_change();
     }
 
     /// idx のタブを閉じる。省略時はアクティブなタブ。
@@ -315,14 +315,29 @@ impl App {
             return;
         };
         self.viewer.close_tab(self.explorer.root(), idx, tab_width);
-        self.after_viewer_tab_change();
+        self.after_viewer_file_change();
         self.set_status(format!("Closed {closed}"), StatusLevel::Info);
     }
 
-    /// タブが切り替わったあと、ファイルに紐づくキャッシュを新しいファイルへ貼り直す。
-    /// ハイライトもコメントも「今開いているファイル」が前提なので、貼り直しを
-    /// 忘れると前のタブの色とコメントがそのまま残る。
-    fn after_viewer_tab_change(&mut self) {
+    /// Viewer にファイルを出す唯一の入口。
+    ///
+    /// 開いたあとに貼り直すものは呼ぶ側に覚えさせない。8 箇所がそれぞれ違う手順を
+    /// 持っていた結果、コードジャンプと grep の飛び先はコメントのキャッシュを
+    /// 貼り直しておらず、行番号だけが一致した前のファイルの印を出していた。
+    pub fn show_file(&mut self, relative_path: &str, how: OpenAs) {
+        let tab_width = self.config.viewer.tab_width;
+        let root = self.explorer.root().to_path_buf();
+        match how {
+            OpenAs::Preview => self
+                .viewer
+                .open_file_preview(&root, relative_path, tab_width),
+            OpenAs::Persistent => self.viewer.open_file(&root, relative_path, tab_width),
+        }
+        self.after_viewer_file_change();
+    }
+
+    /// 開いているファイルに紐づくキャッシュを貼り直す。タブの切り替えも同じ経路。
+    fn after_viewer_file_change(&mut self) {
         self.rehighlight_viewer();
         if let Some(path) = self.viewer.content.current_file.clone() {
             self.review_state.build_file_comment_cache(&path);
@@ -330,17 +345,9 @@ impl App {
         }
     }
 
-    /// ファイルパス（現在のworktreeからの相対パス）をViewerパネルで開く。
-    ///
-    /// 指定があれば line（1始まり）へジャンプする。Explorerツリー内で
-    /// ファイルを表示し、フォーカスをViewerへ切り替え、ステータスメッセージを
-    /// 表示する。
+    /// Viewer で開いたうえで、行へ寄せ、フォーカスを移し、開いたことを知らせる。
     pub fn open_file_in_viewer(&mut self, relative_path: &str, line: Option<usize>) {
-        let tab_width = self.config.viewer.tab_width;
-
-        self.viewer
-            .open_file(self.explorer.root(), relative_path, tab_width);
-        self.explorer.reveal_file_in_tree(relative_path);
+        self.show_file(relative_path, OpenAs::Persistent);
 
         if let Some(ln) = line {
             let max = self.viewer.content.file_content.len().saturating_sub(1);
@@ -357,6 +364,15 @@ impl App {
         };
         self.set_status(msg, StatusLevel::Success);
     }
+}
+
+/// [App::show_file] が開いたタブを残すかどうか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAs {
+    /// 明示的に閉じるまで残る。
+    Persistent,
+    /// ちょっと見るだけ。フォーカスが外れると閉じる。
+    Preview,
 }
 
 /// 期限が来た保留中の [PendingViewRestore] をどう扱うか。

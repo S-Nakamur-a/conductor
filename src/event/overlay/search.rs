@@ -35,12 +35,7 @@ pub(in crate::event) fn handle_filename_search_key(
                 app.viewer.filename_search.filename_search_active = false;
 
                 // 選択したファイルをツリー上に表示して開く（Focus は Explorer のまま）。
-                app.explorer.reveal_file_in_tree(&result.path);
-                let tab_width = app.config.viewer.tab_width;
-                app.viewer
-                    .open_file(app.explorer.root(), &result.path, tab_width);
-                app.rehighlight_viewer();
-                app.review_state.build_file_comment_cache(&result.path);
+                app.show_file(&result.path, crate::app::OpenAs::Persistent);
             }
             app.viewer.filename_search.filename_search_query.clear();
             app.viewer.filename_search.filename_search_results.clear();
@@ -162,11 +157,7 @@ pub(in crate::event) fn handle_grep_search_key(app: &mut App, key: KeyEvent) -> 
                 app.overlays.active = ActiveOverlay::None;
                 app.overlays.grep_search.cancel();
 
-                app.explorer.reveal_file_in_tree(&result.file_path);
-                let tab_width = app.config.viewer.tab_width;
-                app.viewer
-                    .open_file(app.explorer.root(), &result.file_path, tab_width);
-                app.rehighlight_viewer();
+                app.show_file(&result.file_path, crate::app::OpenAs::Persistent);
                 let hit_0 = result.line_number.saturating_sub(1);
                 let max = app.viewer.content.file_content.len().saturating_sub(1);
                 app.viewer.content.file_scroll = result.line_number.saturating_sub(6).min(max);
