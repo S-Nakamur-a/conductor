@@ -32,15 +32,8 @@ use crate::terminal::input::{forward_key_to_pty, spawn_terminal_session};
 use crate::viewer::input::handle_viewer_key;
 use crate::worktree::input::handle_worktree_key;
 
-// 元は crate::event::X だったが、今は隣接するサブモジュールへ移った項目を
-// re-export する。こうすることで、隣接モジュール側の既存の super::X 参照が
-// 変更なしに解決され続ける。
 pub(crate) use self::clipboard::clipboard_paste;
-// explorer が独立モジュールへ移った後も、そちらの tree.rs / diff_list.rs から
-// 引き続き呼べるよう crate 全体へ公開する。
 pub(crate) use self::overlay_helpers::open_filename_search;
-
-// 有効なオーバーレイ
 
 /// ディスパッチ用に統一したオーバーレイ/モーダルの状態。複数の
 /// bool/enum チェックを単一の判別子に集約する。
@@ -141,7 +134,6 @@ fn effective_overlay(f: OverlayFlags) -> EffectiveOverlay {
     EffectiveOverlay::None
 }
 
-// 公開 API の re-export。
 pub use self::mouse::handle_mouse_event;
 pub use self::paste::handle_paste_event;
 
@@ -221,11 +213,8 @@ fn stage_panel_popup(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
         return handle_references_key(app, key);
     }
 
-    // Hover モーダル。pinned (ユーザがクリックして固定した) 状態では、
-    // キーはモーダルスタックを操作し消費される。そうでなければ一時的な
-    // 自動ポップアップであり、どのキーでも消える (Esc は消費し、他の
-    // キーはポップアップが消えつつ通常どおりの役目を果たすよう
-    // バブルさせる)。
+    // pinned なら、キーはモーダルスタックを操作し消費される。そうでなければ一時的な
+    // 自動ポップアップで、どのキーでも消える (Esc は消費し、他はバブルさせる)。
     if app.code_nav.hover_info.pinned {
         return handle_hover_modal_key(app, key);
     }
@@ -325,11 +314,8 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 /// app.focus.current().is_pty() か reflow-over-Claude が成り立つときにしか呼んではならない。
 /// 段 4 ([stage_pty]) がそれを保証する。
 fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    // Reflow トランスクリプトビュー — アクティブな間はすべてのキーを
-    // 消費する。ペインのリサイズ/ズーム/パネルオーバーレイは、スクロール
-    // バック中でも引き続き効く — reflow の素のキーナビゲーション
-    // (j/k/矢印) とは衝突しないので、reflow に黙って飲み込ませるのでは
-    // なく、こうしたコード (Ctrl+Alt+Arrow など) は素通しする。
+    // Reflow ビューはアクティブな間すべてのキーを消費するが、ペインのリサイズ/ズーム
+    // (Ctrl+Alt+Arrow など) は素通しする。reflow の j/k とは衝突しない。
     if app.reflow.active && app.focus.current() == Focus::TerminalClaude {
         if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
             && matches!(
@@ -353,35 +339,25 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     }
     let pty_context = app.focus.current().key_context();
 
-    // 選択中の worktree が grab されている場合、ナビゲーションキー以外の
-    // すべての terminal 入力をブロックする (フォーカス切り替えは段 5 の
-    // keymap 解決に任せる)。(editor は grab された worktree では決して
-    // 開かないので、実際にはこれは Claude/Shell の terminal だけを
-    // ガードしている。)
+    // grab された worktree では、ナビゲーションキー以外の terminal 入力をすべてブロックする
+    // (フォーカス切り替えは段 5 の keymap に任せる)。
     if app.is_selected_worktree_grabbed() {
-        // Esc で terminal を抜けることは許すが、それ以外はすべてブロックする。
         if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, pty_context) {
             app.set_focus(Focus::Explorer);
         }
         return None;
     }
 
-    // keymap で解決する (パネル層 + グローバルフォールバックで、terminal で
-    // 発火するアクションだけに絞り込み済み)。terminal 専用のアクションは
-    // terminal の状態を必要とし、それ以外は共有のグローバルディスパッチを
-    // 再利用する。マッチしなければ下の PTY へフォールスルーする — このパネル
-    // が内部のプログラムから何を奪うかについて、keymap が唯一の正とする
-    // 情報源 (手作業で維持する許可リストは持たない)。
+    // keymap で解決し、マッチしなければ下の PTY へフォールスルーする。このパネルが内部の
+    // プログラムから何を奪うかについて、keymap を唯一の正とする (手作業の許可リストを持たない)。
     if let Some(action) = app.keymap.resolve(&key, pty_context)
         && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
     {
         return None;
     }
 
-    // 親切のためのヒント: Ctrl+Q は Conductor の終了コードだが、terminal
-    // 内では内部のプログラムへ転送される (XON / フロー制御) ので、ここで
-    // 押しても終了しない。実際の終了方法をフラッシュ表示してから、通常
-    // どおり転送する。
+    // Ctrl+Q は Conductor の終了コードだが terminal 内では転送される (XON / フロー制御)
+    // ので、実際の終了方法をフラッシュ表示してから通常どおり転送する。
     if key.code == KeyCode::Char('q')
         && key
             .modifiers
@@ -392,7 +368,6 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
         );
     }
 
-    // 残りのキーはすべてアクティブな PTY セッションへ転送する。
     let session_idx = match app.focus.current() {
         Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
         f => app.terminal.pane(f).and_then(|p| p.active_session),
@@ -410,10 +385,8 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     match action {
         Action::LeaveTerminal => {
-            // editor パネルが開いている間、Ctrl+Esc はそれと Claude を
-            // トグルする (editor は開いたままなので、チャットしてから
-            // 戻れる)。editor 自身からは Claude へ移る。それ以外の場合は、
-            // 従来どおり terminal から Explorer へ抜ける。
+            // editor が開いている間、Ctrl+Esc は editor と Claude をトグルする (チャットしてから
+            // 戻れる)。それ以外は従来どおり terminal から Explorer へ抜ける。
             let target = if app.editor.is_some() {
                 match app.focus.current() {
                     Focus::Editor => Focus::TerminalClaude,
@@ -425,24 +398,16 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             app.set_focus(target);
         }
         Action::ScrollbackUp => {
-            // ライブの Claude terminal での最初の上スクロール
-            // (scroll_claude == 0) を横取りし、上限のある vt100
-            // スクロールバックバッファではなく無限スクロールバックの
-            // reflow ビューに入る。
+            // ライブの Claude terminal での最初の上スクロールを横取りし、上限のある vt100
+            // スクロールバックではなく無限スクロールバックの reflow ビューに入る。
             if app.focus.current() == Focus::TerminalClaude
                 && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
                 app.open_reflow();
-                // open_reflow は、パネルに pinned なセッションがない、
-                // またはそのログがディスク上に見当たらない場合、
-                // (ステータス表示をフラッシュして) 処理を打ち切る。
-                // このとき無条件にキーを消費したことにすると、ユーザは
-                // 立ち往生していた: scroll_claude は 0 のままなので、
-                // 次に押しても同じ分岐に再度入って同じように失敗する
-                // — scroll-up が vt100 バッファへ縮退するのではなく
-                // 完全に死んでしまっていた。ビューが実際に開いたときだけ
-                // キーを消費したことにする。
+                // open_reflow が打ち切ったときも無条件に消費すると、scroll_claude が 0 のままなので
+                // 次に押しても同じ分岐で同じように失敗し、scroll-up が完全に死ぬ。ビューが実際に
+                // 開いたときだけキーを消費する。
                 if app.reflow.active {
                     return true;
                 }
@@ -467,7 +432,6 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                 && !app.reflow.active
             {
                 app.open_reflow();
-                // ビューが開けなかった場合の扱いは ScrollbackUp と同じフォールスルー。
                 if app.reflow.active {
                     return true;
                 }
@@ -489,10 +453,8 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     true
 }
 
-// NOTE: 「既定は消費」が守られているかは、各ハンドラの match 網羅性を
-// 見るしかない — App::new が実際に git 処理を行うため、ここで単独
-// unit test するための安価な pure-fn の切れ目がなく、手動/統合テストで
-// カバーしている。
+// 「既定は消費」が守られているかは各ハンドラの match 網羅性を見るしかない。App::new が
+// 実際に git 処理を行うため、単独 unit test するための pure-fn の切れ目が無い。
 
 #[cfg(test)]
 mod overlay_priority_tests {
