@@ -46,10 +46,8 @@ impl AnsweredBy {
 /// 索引の宣言は where 節を畳まずに書くので、長いものは実際に長い。
 const MAX_INDEX_SIGNATURE_LINES: usize = 8;
 
-/// 索引が答えた説明を、ホバーが受け取る形にする。
-///
-/// 同じ位置に複数の符号が乗ることがある (`Struct { file_path }` の省略記法だと
-/// フィールドとローカル束縛の両方) ので、説明を持っているものを先に採る。
+/// 同じ位置に複数の符号が乗ることがある (`Struct { file_path }` の省略記法なら
+/// フィールドとローカル束縛の両方) ので、説明を持っている方を先に採る。
 fn indexed_detail(
     described: &[sheaf_core::SymbolDetail],
 ) -> crate::viewer::hover_info::IndexedDetail {
@@ -94,10 +92,8 @@ struct SemanticSite {
 impl App {
     // コードナビゲーションのヘルパー
 
-    /// 行と桁で指定したシンボルのホバー情報を組み立てる。
-    ///
-    /// 意味索引に位置で聞き、答えなければシンボルインデックスを名前で引く。
-    /// 索引が答えた位置は gd の飛び先と同じなので、両者の説明がずれない。
+    /// 意味索引に位置で聞き、答えなければシンボルインデックスを名前で引く。索引の
+    /// 答えは gd の飛び先と同じなので、両者の説明がずれない。
     fn hover_info_at(&self, symbol: &str, line_1: usize, start_col: usize) -> Option<HoverInfo> {
         let current_file = self.viewer.content.current_file.clone();
         // 索引への問い合わせは 1 回にまとめる。所属と説明で別々に聞くと、同じ位置に
@@ -228,9 +224,8 @@ impl App {
         }
     }
 
-    /// 受動的な自動ホバーポップアップを今表示してよいかどうか。フォーカスが
-    /// Viewer にあり、ファイル（通常またはdiff）が開かれていて、ブロッキングの
-    /// オーバーレイやサマリー疑似ビューが画面を占有していないことが条件。
+    /// フォーカスが Viewer にあり、ファイルが開いていて、オーバーレイやサマリーが
+    /// 画面を占有していないこと。
     fn hover_auto_allowed(&self) -> bool {
         self.focus == Focus::Viewer
             && !self.viewer.is_summary()
@@ -1118,10 +1113,8 @@ impl App {
         ))
     }
 
-    /// 問い合わせ位置を、索引が使う座標(タブ展開前のバイト位置)に直す。
-    ///
-    /// viewer が持つ行はタブを展開済みで、索引の列は展開前を指す。展開は識別子の
-    /// 数も並びも変えないので、出現番号を経由すれば列だけを戻せる。
+    /// viewer の行はタブ展開済み、索引の列は展開前。展開は識別子の数も並びも変えない
+    /// ので、出現番号を経由すれば列だけ戻せる。
     fn semantic_site(
         &self,
         tree_root: &std::path::Path,
@@ -1225,10 +1218,8 @@ impl App {
     }
 }
 
-/// 答えが (file, line_idx) を指しているか。line_idx も [`Location::line`] も 0 始まり。
-///
-/// Exact 以外は false。構文層の答えは名前一致でしかないので、同名の別物を
-/// 「ここが定義」と判定してしまう。
+/// Exact 以外は false。構文層の答えは名前一致でしかなく、同名の別物を「ここが
+/// 定義」と判定してしまう。line_idx も [`Location::line`] も 0 始まり。
 fn answer_points_at(answer: &Definition, file: &str, line_idx: usize) -> bool {
     let Definition::Exact(locations) = answer else {
         return false;
@@ -1275,9 +1266,7 @@ pub fn locations_to_references(
         .collect()
 }
 
-/// rel_path 内の line_1（1始まり）を中心に、前後数行を含むコードプレビュー
-/// のウィンドウを構築する。ファイルが読めない、または行が範囲外なら None
-/// を返す。
+/// ファイルが読めない、または行が範囲外なら None。
 fn build_hover_preview(
     root: &std::path::Path,
     rel_path: &str,
@@ -1355,9 +1344,7 @@ pub fn popup_highlight_range(
     }
 }
 
-/// 下線用デバウンスの判定を tick_underline_hover から切り出したもので、
-/// App を構築せずにユニットテストできる。elapsed が150msを超えていて、
-/// かつ候補がまだ一度も解決されていなければ準備完了とみなす。
+/// tick_underline_hover から切り出してあるのは、App を構築せずにテストするため。
 fn underline_debounce_ready(elapsed: std::time::Duration, resolved: bool) -> bool {
     const HOVER_UNDERLINE_MS: u64 = 150;
     !resolved && elapsed >= std::time::Duration::from_millis(HOVER_UNDERLINE_MS)

@@ -44,8 +44,6 @@ impl App {
 
     // ワークツリー作成・削除のヘルパー
 
-    /// パスを指定してワークツリーを選択し、UI の更新をトリガーする。
-    ///
     /// [worktree_grab] と [worktree_pr] で共有する。
     fn select_worktree_by_path(&mut self, path: &std::path::Path) {
         if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
@@ -365,9 +363,7 @@ impl App {
             .unwrap_or(false)
     }
 
-    /// ワークツリー操作の結果を送る sender を取得する（なければ遅延生成する）。
-    ///
-    /// [worktree_crud] と [worktree_smart] で共有する。
+    /// 無ければ遅延生成する。[worktree_crud] と [worktree_smart] で共有する。
     fn worktree_op_sender(&mut self) -> mpsc::Sender<WorktreeOpResult> {
         if self.worktree_mgr.bg_worktree_tx.is_none() {
             let (tx, rx) = mpsc::channel();
@@ -413,10 +409,8 @@ impl App {
     }
 }
 
-/// バックグラウンドのワークツリー切り替えワーカーのために diff を計算する。
-///
-/// 直接テストできるようワーカーのクロージャから切り出してある。同期版の
-/// [DiffState::load_diff] と対応する。
+/// ワーカーのクロージャから切り出してあるのは直接テストするため。同期版は
+/// [DiffState::load_diff]。
 fn compute_bg_diff(
     path: &std::path::Path,
     base_branch: &str,
@@ -435,16 +429,8 @@ fn compute_bg_diff(
     }
 }
 
-/// 完了したバックグラウンド diff を [DiffState] へ反映する。
-///
-/// DiffState のメソッドではなくフリー関数にしているのは、App 全体を構築せずに
-/// 単体テストできるようにするためと、diff_state が app::types::BgDiffResult
-/// に依存しないで済むようにするため — 依存すればモジュールの依存関係が逆転して
-/// しまう。
-///
-/// ファイル一覧は error が設定されている場合も無条件に反映する。ベース ref を
-/// 解決できないときは HEAD 基準にフォールバックした一覧が入っており、一緒に
-/// 捨ててしまうと不正なベース ref とクリーンなツリーが見分けつかなくなる。
+/// ファイル一覧は error があっても無条件に反映する。ベース ref を解決できない
+/// ときは HEAD 基準の一覧が入っており、捨てるとクリーンなツリーと区別できない。
 fn apply_bg_diff_result(diff_state: &mut DiffState, result: BgDiffResult) {
     diff_state.files = result.files;
     diff_state.error = result.error;
@@ -498,9 +484,8 @@ mod tests {
         assert_eq!(listed, vec!["src/config.rs", "CLAUDE.md"]);
     }
 
-    /// main に1コミット、HEAD は feature、ワークツリーに未コミットのファイルを
-    /// 持つリポジトリを構築する。tempdir を返す（呼び出し側が生存させ続ける）—
-    /// 以下のテストはどれも手組みの構造体ではなく実際のリポジトリを必要とする。
+    /// 以下のテストはどれも手組みの構造体ではなく実際のリポジトリを要る。
+    /// tempdir は呼び出し側が生存させ続けること。
     fn repo_with_uncommitted_change() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();

@@ -116,9 +116,7 @@ impl Ctx {
         segs.join("::")
     }
 
-    /// mod_stack (そのモジュール自身を既に含む) に対するモジュール絞り込みの
-    /// フィルタ。連結したパスの末尾に :: を付け、部分一致がそのモジュールの
-    /// 子孫に限られるようにする。
+    /// 連結したパスの末尾に :: を付ける。部分一致がそのモジュールの子孫に限られる。
     fn module_prefix(&self, mod_stack: &[String]) -> String {
         let mut segs: Vec<&str> = self.file_prefix().iter().map(String::as_str).collect();
         segs.extend(mod_stack.iter().map(String::as_str));
@@ -147,9 +145,8 @@ impl Ctx {
         )
     }
 
-    /// ファイル内の全テストを実行する。ファイルのモジュール接頭辞で絞るか、
-    /// 結合テストバイナリなら --test <name> を使うか、クレートルート
-    /// (main.rs / lib.rs) なら絞り込み無し。
+    /// モジュール接頭辞で絞るか、結合テストバイナリなら --test <name>、
+    /// クレートルート (main.rs / lib.rs) なら絞り込み無し。
     fn file_command(&self) -> String {
         let prefix = self.module_prefix(&[]);
         if prefix.is_empty() {
@@ -164,10 +161,8 @@ impl Ctx {
     }
 }
 
-/// node の直下の子を辿り、関数とモジュールのボタンを出しつつ mod の本体へ
-/// 再帰する。この部分木でテストが見つかったかどうかを返す (mod は自分の
-/// Module ボタンを描くかどうか、呼び出し側は File ボタンを描くかどうかを
-/// これで判断する)。
+/// この部分木でテストが見つかったかを返す。mod は自分の Module ボタンを、
+/// 呼び出し側は File ボタンを描くかどうかをこれで決める。
 fn scan_node(
     node: tree_sitter::Node,
     source: &str,
@@ -222,8 +217,7 @@ fn scan_node(
     found
 }
 
-/// function_item がテスト属性を持つかどうか。tree-sitter-rust では属性は前方の
-/// 兄弟である attribute_item ノードだが、一部の文法バージョンでは子として
+/// tree-sitter-rust では属性は前方の兄弟だが、文法バージョンによっては子として
 /// 入れ子にもなるので両方を調べる。
 fn is_test_fn(fn_node: tree_sitter::Node, source: &str) -> bool {
     // 前方の兄弟: fn の直上にある #[…] の行。あいだにコメントが挟まることもある。
@@ -251,11 +245,8 @@ fn is_test_fn(fn_node: tree_sitter::Node, source: &str) -> bool {
     false
 }
 
-/// attribute_item のパスがテストを示すかどうか。:: で区切った最後の
-/// セグメントが test (#[test], #[tokio::test], #[async_std::test],
-/// #[actix_web::test] など) であるか、test で終わらない有名なテストマクロの
-/// 小さな許可リストに載っているか。#[cfg(test)] は正しく除外される
-/// (パスのセグメントが cfg なので)。
+/// :: で区切った最後のセグメントが test か、test で終わらない有名なテストマクロの
+/// 許可リストに載っているか。#[cfg(test)] はセグメントが cfg なので外れる。
 fn attr_is_test(attr_item: tree_sitter::Node, source: &str) -> bool {
     let text = node_text(attr_item, source).trim();
     // 外側の #[ … ] を剥がす。内側属性の #![ … ] は無視する。

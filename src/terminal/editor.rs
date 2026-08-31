@@ -119,11 +119,8 @@ impl App {
         self.set_status(format!("Edited {fname}"), StatusLevel::Success);
     }
 
-    /// エディタのPTYを解体してパネルを破棄し、編集していたパスを返す
-    /// （エディタが開いていなければNone）。[Self::exit_editor]
-    /// （再読み込みとステータス表示を追加する）とworktree切り替え
-    /// （周囲の文脈がどのみち再読み込みされるので、エディタを黙って破棄する）
-    /// が共有する中核部分。
+    /// [Self::exit_editor] (再読み込みとステータスを足す) と worktree 切り替え
+    /// (文脈がどのみち再読み込みされるので黙って捨てる) が共有する中核。
     fn take_down_editor(&mut self) -> Option<PathBuf> {
         let panel = self.editor.take()?;
         // エディタのPTYを削除する（子プロセスがすでに終了していてもkillは
@@ -179,10 +176,8 @@ impl App {
     }
 }
 
-/// viewerの相対パスcurrent_fileとworktreeの根から、外部エディタに渡す
-/// 絶対パスを解決する。None（開いているファイルが無い、またはパスが空）は
-/// 「編集対象なし」を意味し、呼び出し側は不正な対象に対してエディタを起動
-/// する代わりにヒントを表示する。
+/// None は「編集対象なし」。呼び出し側は不正な対象でエディタを起動する代わりに
+/// ヒントを出す。
 fn editor_target(current_file: Option<&str>, worktree_root: &std::path::Path) -> Option<PathBuf> {
     let rel = current_file?;
     if rel.is_empty() {
@@ -191,11 +186,8 @@ fn editor_target(current_file: Option<&str>, worktree_root: &std::path::Path) ->
     Some(worktree_root.join(rel))
 }
 
-/// 埋め込みエディタPTYのコンテンツサイズ (rows, cols) を、リージョンサイズと
-/// 最大化状態から計算する。タイトル行は常に存在し、非最大化時はさらに下の
-/// 境界行と左右の境界列を持つ。ゼロのリージョン（レイアウト未計算）には
-/// 妥当なデフォルト値を与える — sync_pty_sizesでの毎フレームのリサイズが
-/// 後で補正する。どちらの次元も0を返すことはない（vt100は最低1×1が必要）。
+/// ゼロのリージョン (レイアウト未計算) には妥当な既定を返す。毎フレームの
+/// sync_pty_sizes が後で補正する。vt100 が要るので 0 は返さない。
 fn editor_content_size(region_w: u16, region_h: u16, expanded: bool) -> (u16, u16) {
     if region_w == 0 || region_h == 0 {
         return (24, 80);
@@ -208,12 +200,8 @@ fn editor_content_size(region_w: u16, region_h: u16, expanded: bool) -> (u16, u1
     )
 }
 
-/// $VISUAL / $EDITORからエディタのコマンドラインを解決し、無ければfallback
-/// にフォールバックする。空または空白のみの値は無視するので、意図しない
-/// EDITOR=""が空のコマンドを生まない。選ばれた値は空白で区切ってプログラム
-/// ＋引数に分割する（これで"code -w"のような指定が動く）。パスそのものに
-/// 空白を含むエディタは意図的にサポートしない（シェル風のクォート解釈は
-/// スコープ外）。
+/// 空白のみの値は無視する。意図しない EDITOR="" が空のコマンドを生まないため。
+/// パス自体に空白を含むエディタは非対応 (シェル風のクォート解釈はしない)。
 fn resolve_editor_command(
     visual: Option<&str>,
     editor: Option<&str>,
