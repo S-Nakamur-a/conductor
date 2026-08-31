@@ -13,7 +13,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::ShowHelp => {
-            app.overlays.help.context = app.focus;
+            app.overlays.help.context = app.focus.current();
             app.overlays.active = ActiveOverlay::Help;
             true
         }
@@ -90,7 +90,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             } else {
                 app.status_message = None;
             }
-            if app.focus != Focus::TerminalClaude {
+            if app.focus.current() != Focus::TerminalClaude {
                 app.set_focus(Focus::TerminalClaude);
             }
             true
@@ -103,7 +103,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             } else {
                 app.status_message = None;
             }
-            if app.focus != Focus::TerminalShell {
+            if app.focus.current() != Focus::TerminalShell {
                 app.set_focus(Focus::TerminalShell);
             }
             true
@@ -142,10 +142,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::TogglePanelExpand => {
-            if app.expanded_panel == Some(app.focus) {
+            if app.expanded_panel == Some(app.focus.current()) {
                 app.expanded_panel = None;
             } else {
-                app.expanded_panel = Some(app.focus);
+                app.expanded_panel = Some(app.focus.current());
             }
             true
         }

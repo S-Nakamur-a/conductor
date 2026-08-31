@@ -126,14 +126,10 @@ impl App {
         // エディタのPTYを削除する（子プロセスがすでに終了していてもkillは
         // 無害）。他のセッションのインデックスも調整する。
         self.close_terminal_session(panel.session_idx);
-        // フォーカスが（今は無くなった）エディタにあった場合のみViewerへ
-        // 移す — これが通常の:qの流れ。ユーザーがClaudeへ移っていて、
-        // エディタが足元で終了した場合はフォーカスをそのままにする。
-        // 「エディタが最大化されている」という古い状態だけを落とす。
-        // （set_focus経由ではなく）直接代入することで、呼び出し側が
-        // 再読み込みの制御権を持つ。
-        if self.focus == Focus::Editor {
-            self.focus = Focus::Viewer;
+        // set_focus を通さないのは、再読み込みの主導権を呼び出し側に残すため。
+        // Claude へ移っていてエディタが足元で終了した場合はそのままにする。
+        if self.focus.current() == Focus::Editor {
+            self.focus.enter(Focus::Viewer);
         }
         if self.expanded_panel == Some(Focus::Editor) {
             self.expanded_panel = None;

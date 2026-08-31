@@ -18,7 +18,7 @@ impl App {
             theme: &self.theme,
             config: &self.config,
             keymap: &self.keymap,
-            focused: self.focus == Focus::Explorer,
+            focused: self.focus.current() == Focus::Explorer,
             diff: &self.diff_state,
             review: &self.review_state,
             revidere: self.revidere_artifact_state(),

@@ -93,11 +93,7 @@ impl App {
         let mut app = Self {
             // 最初のフレームで全パネルを描画するための初期値。
             needs_redraw: true,
-            focus: Focus::Explorer,
-            focus_prev: Focus::Explorer,
-            // 最初のフレームで枠線の遷移演出が再生されないよう時刻を過去にずらす。
-            focus_changed_at: std::time::Instant::now()
-                - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
+            focus: crate::app::FocusState::settled(Focus::Explorer),
             overlays: OverlayManager::default(),
             // 索引の探索起点は repo_path。構造体に move される前に取る。
             code_nav: CodeNav::new(repo_path.clone()),

@@ -29,7 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     };
 
-    let focused = app.focus == Focus::Editor;
+    let focused = app.focus.current() == Focus::Editor;
     let fg = app.theme.fg;
     let muted = app.theme.muted;
     let accent = app.theme.accent;

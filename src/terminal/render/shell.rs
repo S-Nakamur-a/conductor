@@ -16,7 +16,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
     let theme = &app.theme;
-    let focused = app.focus == Focus::TerminalShell;
+    let focused = app.focus.current() == Focus::TerminalShell;
     let border_color = app.animated_border_color(Focus::TerminalShell);
 
     let is_grabbed = app.is_selected_worktree_grabbed();

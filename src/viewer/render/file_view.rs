@@ -39,7 +39,7 @@ pub(in crate::viewer) fn render(
     let theme = &app.theme;
     let vs = &app.viewer;
     let tab_width = app.config.viewer.tab_width;
-    let focused = app.focus == Focus::Viewer;
+    let focused = app.focus.current() == Focus::Viewer;
     let border_color = app.animated_border_color(Focus::Viewer);
 
     let is_expanded = app.expanded_panel == Some(Focus::Viewer);

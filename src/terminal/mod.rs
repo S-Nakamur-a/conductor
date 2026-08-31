@@ -59,7 +59,7 @@ impl App {
     pub fn cycle_terminal_session(&mut self, forward: bool) {
         let Some((kind, active)) = self
             .terminal
-            .pane(self.focus)
+            .pane(self.focus.current())
             .map(|p| (p.kind, p.active_session))
         else {
             return;
@@ -81,7 +81,7 @@ impl App {
             (pos + sessions.len() - 1) % sessions.len()
         };
         let target = sessions[next];
-        self.switch_session(self.focus, target);
+        self.switch_session(self.focus.current(), target);
     }
 
     /// 現在選択中の worktree に新しい Claude Code の PTY セッションを起動する。

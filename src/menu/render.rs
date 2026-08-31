@@ -122,7 +122,7 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
 
     // ショートカットのヒントはフォーカス中パネルのレイヤーに対して解決するので、
     // 行には今まさに発火するチョードが表示される — コマンドパレットと同じ規則。
-    let context = app.focus.key_context();
+    let context = app.focus.current().key_context();
     let rows: Vec<Row> = menu
         .items
         .iter()

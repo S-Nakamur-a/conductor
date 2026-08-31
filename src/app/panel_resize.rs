@@ -37,10 +37,10 @@ pub enum Divider {
 
 impl App {
     pub(super) fn cmd_toggle_panel_expand(&mut self) {
-        if self.expanded_panel == Some(self.focus) {
+        if self.expanded_panel == Some(self.focus.current()) {
             self.expanded_panel = None;
         } else {
-            self.expanded_panel = Some(self.focus);
+            self.expanded_panel = Some(self.focus.current());
         }
     }
 
@@ -73,7 +73,7 @@ impl App {
         let changed = match dir {
             ResizeDir::Left | ResizeDir::Right => {
                 let grow_right = matches!(dir, ResizeDir::Right);
-                match self.focus {
+                match self.focus.current() {
                     // worktree ストリップは全幅で、3つのリサイズ可能な列の1つではない —
                     // ここからリサイズするものは何もない。2 列ビューも同様に、
                     // 3 列レイアウトの外にいるので動かす境界を持たない。
@@ -101,7 +101,7 @@ impl App {
                 // （ファイルツリー / 変更ファイル一覧）。Downで上側ペインが広がり、
                 // Upで縮む。
                 let down = matches!(dir, ResizeDir::Down);
-                match self.focus {
+                match self.focus.current() {
                     Focus::TerminalClaude | Focus::TerminalShell => {
                         let step = Self::TERMINAL_SPLIT_STEP as i16;
                         self.adjust_terminal_split(if down { step } else { -step })

@@ -39,7 +39,7 @@ pub(in crate::event) fn handle_command_palette_key(
     let filtered = command_palette::filter_commands(
         &app.overlays.command_palette.filter,
         &app.keymap,
-        app.focus.key_context(),
+        app.focus.current().key_context(),
     );
     let count = filtered.len();
 

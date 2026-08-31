@@ -21,7 +21,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let focused = app.focus == Focus::Worktree;
+    let focused = app.focus.current() == Focus::Worktree;
     let border_color = if focused {
         app.theme.border_focused
     } else {

@@ -42,7 +42,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
 
     // revidere の 2 列ビューは main_area 全体を取る。3 列アコーディオンとは
     // 並ばないので、ターミナル列も含めてここで打ち切る。
-    if app.focus == crate::app::Focus::Revidere {
+    if app.focus.current() == crate::app::Focus::Revidere {
         crate::revidere::render::render(frame, main_area, app);
         super::super::chrome::render_status_bar(frame, status_area, app);
         return;

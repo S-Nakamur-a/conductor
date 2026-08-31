@@ -3,8 +3,64 @@
 //!
 //! [Focus] 型そのものは [crate::types] にある。
 
+use std::time::Instant;
+
 use super::App;
 use crate::types::Focus;
+
+/// フォーカスと、その遷移の記録。
+///
+/// current が private なのは、直接代入すると [App::set_focus] のリダイレクトも
+/// 遷移時刻の更新も飛ばせてしまうため。実際に 1 箇所が飛ばしていた。
+pub struct FocusState {
+    current: Focus,
+    prev: Focus,
+    changed_at: Instant,
+}
+
+impl FocusState {
+    /// 遷移演出が済んだ状態から始める。起動直後の 1 フレーム目で枠線が
+    /// 動き出さないよう、時刻を演出の長さぶん過去に置く。
+    pub fn settled(focus: Focus) -> Self {
+        Self {
+            current: focus,
+            prev: focus,
+            changed_at: Instant::now() - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
+        }
+    }
+}
+
+impl FocusState {
+    pub fn current(&self) -> Focus {
+        self.current
+    }
+
+    pub fn prev(&self) -> Focus {
+        self.prev
+    }
+
+    pub fn changed_at(&self) -> Instant {
+        self.changed_at
+    }
+
+    /// 移す。再フォーカスで演出が再始動しないよう、実際に変わったときだけ記録する。
+    ///
+    /// 普段の入口は [App::set_focus] で、そちらは遅延読み込みとエディタへの
+    /// リダイレクトも行う。ここを直に呼ぶのは、その副作用が困る解体経路だけ。
+    pub(crate) fn enter(&mut self, next: Focus) {
+        if self.current != next {
+            self.prev = self.current;
+            self.changed_at = Instant::now();
+        }
+        self.current = next;
+    }
+
+    /// 遷移せずに時刻だけ進める。Explorer の上下ペインの移動など、パネルは
+    /// 変わらないがボーダーを引き直したいとき用。
+    fn touch(&mut self) {
+        self.changed_at = Instant::now();
+    }
+}
 
 impl App {
     /// パネルにフォーカスをセットする。必要になった時点でデータを遅延読み込みする。
@@ -84,14 +140,7 @@ impl App {
         ) {
             self.viewer.filename_search.filename_search_active = false;
         }
-        // 変化を記録し、フォーカスを得る/失うパネルが境界線の色をグライド
-        // できるようにする（実際に変化した場合のみ。そうしないと再フォーカスで
-        // アニメーションが再始動してしまう）。
-        if self.focus != focus {
-            self.focus_prev = self.focus;
-            self.focus_changed_at = std::time::Instant::now();
-        }
-        self.focus = focus;
+        self.focus.enter(focus);
     }
 
     /// パネルの境界線の色。フォーカス変化にまたがってイージングする:
@@ -101,14 +150,15 @@ impl App {
     /// これが、テーマのRGB色とTheme::lerpを使って、パネル切り替えをぱっと
     /// 切り替わるのではなく滑らかに感じさせている要因。
     pub fn animated_border_color(&self, panel: Focus) -> ratatui::style::Color {
-        let t = crate::anim::eased_progress(self.focus_changed_at.elapsed(), crate::anim::FOCUS_MS);
-        if self.focus == panel {
+        let t =
+            crate::anim::eased_progress(self.focus.changed_at().elapsed(), crate::anim::FOCUS_MS);
+        if self.focus.current() == panel {
             if t >= 1.0 {
                 self.theme.border_focused
             } else {
                 crate::theme::Theme::lerp(self.theme.border_unfocused, self.theme.border_focused, t)
             }
-        } else if self.focus_prev == panel && t < 1.0 {
+        } else if self.focus.prev() == panel && t < 1.0 {
             crate::theme::Theme::lerp(self.theme.border_focused, self.theme.border_unfocused, t)
         } else {
             self.theme.border_unfocused
@@ -129,7 +179,7 @@ impl App {
     /// 止まり始めてしまう。ここに組み込んでおくことで、フェードは自分自身の
     /// 条件でアニメーションするようになる。
     pub fn has_active_transition(&self) -> bool {
-        self.focus_changed_at.elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
+        self.focus.changed_at().elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
             || self.list_hover.is_animating()
     }
 
@@ -149,14 +199,14 @@ impl App {
         // （ファイルツリー → 変更ファイル → Viewer）、次へ進む前にサブ
         // フォーカスを切り替える。
         if self.editor.is_none()
-            && self.focus == Focus::Explorer
+            && self.focus.current() == Focus::Explorer
             && !(self.explorer.focus() == crate::explorer::Pane::Bottom)
         {
             self.explorer.focus_pane(crate::explorer::Pane::Bottom);
-            self.focus_changed_at = std::time::Instant::now();
+            self.focus.touch();
             return;
         }
-        let next = self.focus.next_in_cycle();
+        let next = self.focus.current().next_in_cycle();
         // 他のどこからであれExplorer列に着地したときは、常にファイルツリー
         // （上のパネル）から始まる。
         if next == Focus::Explorer {
@@ -170,14 +220,14 @@ impl App {
         // 前方循環の鏡像: Explorer列を逆向きに歩くと変更ファイルの次に
         // ファイルツリーを訪れる。
         if self.editor.is_none()
-            && self.focus == Focus::Explorer
+            && self.focus.current() == Focus::Explorer
             && (self.explorer.focus() == crate::explorer::Pane::Bottom)
         {
             self.explorer.focus_pane(crate::explorer::Pane::Tree);
-            self.focus_changed_at = std::time::Instant::now();
+            self.focus.touch();
             return;
         }
-        let prev = self.focus.prev_in_cycle();
+        let prev = self.focus.current().prev_in_cycle();
         // Viewer側からExplorer列に入ると、（一番近い）変更ファイルパネルに
         // 着地するので、さらにTabで戻るとツリーに到達する。
         if prev == Focus::Explorer {

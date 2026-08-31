@@ -309,7 +309,7 @@ impl App {
                 // 現在のフォーカスと選択中の worktree を保つ — 作成したばかりの
                 // worktree へユーザのビューを切り替えたりしない。
                 let prev_selected = self.worktrees.selected_index();
-                let prev_focus = self.focus;
+                let prev_focus = self.focus.current();
                 self.set_status(
                     format!(
                         "Created worktree: {} (from {})",
@@ -345,7 +345,7 @@ impl App {
                     // 元の worktree 選択とフォーカスを復元する。
                     self.worktrees.select(prev_selected);
                     self.on_worktree_changed();
-                    self.focus = prev_focus;
+                    self.focus.enter(prev_focus);
                 }
             }
             WorktreeOpResult::CreateFailed { error, pending } => {

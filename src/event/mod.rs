@@ -253,7 +253,9 @@ fn stage_panel_popup(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 /// 段4: Reflow ビューと PTY フォーカス。フォーカス別ハンドラより先に置かないと
 /// キーが Claude へ転送される。
 fn stage_pty(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    if (app.reflow.active && app.focus == Focus::TerminalClaude) || app.focus.is_pty() {
+    if (app.reflow.active && app.focus.current() == Focus::TerminalClaude)
+        || app.focus.current().is_pty()
+    {
         return dispatch_pty_key(app, key);
     }
     Some(key)
@@ -261,7 +263,7 @@ fn stage_pty(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 
 /// 段5: terminal 以外のパネル — keymap で解決する。
 fn stage_keymap(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    if let Some(action) = app.keymap.resolve(&key, app.focus.key_context())
+    if let Some(action) = app.keymap.resolve(&key, app.focus.current().key_context())
         && dispatch_global_action(app, action)
     {
         return None;
@@ -271,7 +273,7 @@ fn stage_keymap(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 
 /// 段6: フォーカス固有のキーバインド。
 fn stage_focus(app: &mut App, key: KeyEvent) {
-    match app.focus {
+    match app.focus.current() {
         Focus::Worktree => {
             handle_worktree_key(app, key);
         }
@@ -320,7 +322,7 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     None
 }
 
-/// app.focus.is_pty() か reflow-over-Claude が成り立つときにしか呼んではならない。
+/// app.focus.current().is_pty() か reflow-over-Claude が成り立つときにしか呼んではならない。
 /// 段 4 ([stage_pty]) がそれを保証する。
 fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // Reflow トランスクリプトビュー — アクティブな間はすべてのキーを
@@ -328,7 +330,7 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // バック中でも引き続き効く — reflow の素のキーナビゲーション
     // (j/k/矢印) とは衝突しないので、reflow に黙って飲み込ませるのでは
     // なく、こうしたコード (Ctrl+Alt+Arrow など) は素通しする。
-    if app.reflow.active && app.focus == Focus::TerminalClaude {
+    if app.reflow.active && app.focus.current() == Focus::TerminalClaude {
         if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
             && matches!(
                 action,
@@ -346,10 +348,10 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
         return handle_reflow_key(app, key);
     }
 
-    if !app.focus.is_pty() {
+    if !app.focus.current().is_pty() {
         return None;
     }
-    let pty_context = app.focus.key_context();
+    let pty_context = app.focus.current().key_context();
 
     // 選択中の worktree が grab されている場合、ナビゲーションキー以外の
     // すべての terminal 入力をブロックする (フォーカス切り替えは段 5 の
@@ -391,13 +393,13 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     }
 
     // 残りのキーはすべてアクティブな PTY セッションへ転送する。
-    let session_idx = match app.focus {
+    let session_idx = match app.focus.current() {
         Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
         f => app.terminal.pane(f).and_then(|p| p.active_session),
     };
     if let Some(idx) = session_idx {
         forward_key_to_pty(app, idx, key);
-    } else if key.code == KeyCode::Enter && app.focus != Focus::Editor {
+    } else if key.code == KeyCode::Enter && app.focus.current() != Focus::Editor {
         spawn_terminal_session(app);
     }
     None
@@ -413,7 +415,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             // 戻れる)。editor 自身からは Claude へ移る。それ以外の場合は、
             // 従来どおり terminal から Explorer へ抜ける。
             let target = if app.editor.is_some() {
-                match app.focus {
+                match app.focus.current() {
                     Focus::Editor => Focus::TerminalClaude,
                     _ => Focus::Editor,
                 }
@@ -427,7 +429,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             // (scroll_claude == 0) を横取りし、上限のある vt100
             // スクロールバックバッファではなく無限スクロールバックの
             // reflow ビューに入る。
-            if app.focus == Focus::TerminalClaude
+            if app.focus.current() == Focus::TerminalClaude
                 && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
@@ -445,14 +447,14 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+            let Some(pane) = app.terminal.pane_mut(app.focus.current()) else {
                 unreachable!()
             };
             let page = pane.size.0 as usize / 2;
             pane.scroll = pane.scroll.saturating_add(page.max(1));
         }
         Action::ScrollbackDown => {
-            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+            let Some(pane) = app.terminal.pane_mut(app.focus.current()) else {
                 unreachable!()
             };
             let page = pane.size.0 as usize / 2;
@@ -460,7 +462,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
         }
         Action::ScrollbackTop => {
             // ScrollbackUp と同じ横取り: Claude ライブ表示から reflow へ直接ジャンプする。
-            if app.focus == Focus::TerminalClaude
+            if app.focus.current() == Focus::TerminalClaude
                 && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
@@ -470,12 +472,12 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+            if let Some(pane) = app.terminal.pane_mut(app.focus.current()) {
                 pane.scroll = 1000;
             }
         }
         Action::SnapToLive => {
-            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+            if let Some(pane) = app.terminal.pane_mut(app.focus.current()) {
                 pane.scroll = 0;
             }
         }

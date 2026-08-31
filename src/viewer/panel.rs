@@ -26,7 +26,7 @@ pub fn render_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     // 下記の diff 注釈キャッシュ・カーソル行畳み展開・宣言貼り付け解決は
     // いずれもコード表示のための前処理なので、ここでは行わない。
     if app.viewer.is_summary() {
-        let focused = app.focus == Focus::Viewer;
+        let focused = app.focus.current() == Focus::Viewer;
         let outcome = render::render_summary_view(frame, area, app, focused);
         app.viewer.summary_total_lines = outcome.total_lines;
         app.viewer.summary_scroll = outcome.scroll;

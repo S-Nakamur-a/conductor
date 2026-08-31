@@ -25,7 +25,7 @@ pub(crate) fn run_due_timers(
             // 静かなモード: 装飾を進めるのは worktree パネルにフォーカスがあるときだけ。
             // レビューや端末作業の最中に視界の端で動き続けることがないようにする。
             // それ以外のときはその場で止まり、フォーカスが戻ったら再開する。
-            "decoration" if app.focus == crate::app::Focus::Worktree => {
+            "decoration" if app.focus.current() == crate::app::Focus::Worktree => {
                 let left_w = app.layout.cache.columns[0].width;
                 let panel_h = app.layout.cache.main_area.height;
                 let list_h = (app.worktrees.len() as u16 + 2).max(5);
@@ -41,7 +41,7 @@ pub(crate) fn run_due_timers(
                 app.request_redraw();
             }
             "unfocused_terminal" => {
-                app.terminal.drop_inactive_caches(app.focus);
+                app.terminal.drop_inactive_caches(app.focus.current());
                 app.request_redraw();
             }
             // I/O の重いタイマー。入力中はスクロールが固まるので飛ばす。

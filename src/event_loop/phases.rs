@@ -76,7 +76,7 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
     if app.needs_redraw || signals.pty_dirty {
         return Duration::ZERO;
     }
-    match app.focus {
+    match app.focus.current() {
         f if f.is_pty() => TICK_RATE_TERMINAL,
         _ if app.update.is_active() => TICK_RATE_ACTIVE,
         _ if !app.worktree_mgr.pending_worktrees.is_empty() => TICK_RATE_ACTIVE,

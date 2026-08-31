@@ -34,7 +34,7 @@ pub(crate) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
         log::warn!("failed to write to PTY session: {e}");
     } else {
         // ユーザがターミナルに入力したらライブ表示に戻す。
-        if let Some(pane) = app.terminal.pane_mut(app.focus) {
+        if let Some(pane) = app.terminal.pane_mut(app.focus.current()) {
             pane.scroll = 0;
         }
         // Claude Code セッションにユーザ入力を送ったら CC 待機シグナルをクリアする。
@@ -44,7 +44,7 @@ pub(crate) fn forward_key_to_pty(app: &mut App, session_idx: usize, key: KeyEven
 
 /// 現在のフォーカス（Claude Code か Shell）に応じて新しいターミナルセッションを起動する。
 pub(crate) fn spawn_terminal_session(app: &mut App) {
-    match app.focus {
+    match app.focus.current() {
         Focus::TerminalClaude => {
             app.set_status("Starting Claude Code...".to_string(), StatusLevel::Info);
             if let Err(e) = app.spawn_claude_code() {
@@ -173,7 +173,7 @@ pub(crate) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
 /// Ctrl+G（またはユーザ設定のキー）で発火する。アクティブな PTY セッションの
 /// 画面に表示されている行を、カーソル行から上方向へスキャンする。
 pub(crate) fn open_file_from_terminal_output(app: &mut App) {
-    let Some(pane) = app.terminal.pane(app.focus) else {
+    let Some(pane) = app.terminal.pane(app.focus.current()) else {
         return;
     };
     let (session_idx, scroll_offset) = (pane.active_session, pane.scroll);

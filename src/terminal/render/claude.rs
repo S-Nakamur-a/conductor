@@ -16,7 +16,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
     let theme = &app.theme;
-    let focused = app.focus == Focus::TerminalClaude;
+    let focused = app.focus.current() == Focus::TerminalClaude;
     // フォーカス変化時、非フォーカス/フォーカスのボーダー色の間を緩やかに遷移する。
     let border_color = app.animated_border_color(Focus::TerminalClaude);
 
@@ -158,7 +158,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // 非フォーカスの間はライブの PTY を表示する（reflow は保持されるが
         // 描画されない）ので、そこで読み取りモードの補色を出すと誤ったボーダー
         // の合図になってしまう。
-        let effective_border = if app.reflow.active && app.focus == Focus::TerminalClaude {
+        let effective_border = if app.reflow.active && app.focus.current() == Focus::TerminalClaude
+        {
             let complement = crate::theme::Theme::complement(theme.accent);
             if let Some(sweep) = &app.reflow.sweep {
                 let p = crate::reflow::input::sweep_progress(
@@ -187,7 +188,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // reflow が描画されるのを防ぐ（念のための二重の安全策。F4 は
     // set_focus/on_worktree_changed で reflow を閉じるが、このガードが描画の
     // 安全性を保つ）。
-    if app.reflow.active && app.focus == Focus::TerminalClaude {
+    if app.reflow.active && app.focus.current() == Focus::TerminalClaude {
         let inner = output_block.inner(output_area);
         frame.render_widget(output_block, output_area);
         crate::reflow::render::render(frame, inner, app);

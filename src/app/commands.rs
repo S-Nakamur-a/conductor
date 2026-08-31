@@ -245,7 +245,7 @@ impl App {
     }
 
     fn cmd_toggle_help(&mut self) {
-        self.overlays.help.context = self.focus;
+        self.overlays.help.context = self.focus.current();
         self.overlays.active = ActiveOverlay::Help;
     }
 

@@ -48,7 +48,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let list_inner = list_block.inner(chunks[1]);
     frame.render_widget(list_block, chunks[1]);
 
-    let context = app.focus.key_context();
+    let context = app.focus.current().key_context();
     let filtered = command_palette::filter_commands(
         &app.overlays.command_palette.filter,
         &app.keymap,
@@ -62,7 +62,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         return;
     }
 
-    let current_label = app.focus.label();
+    let current_label = app.focus.current().label();
     let scope_header = |scope: command_palette::CommandScope| match scope {
         command_palette::CommandScope::Current => current_label,
         command_palette::CommandScope::Global => "Global",

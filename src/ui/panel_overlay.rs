@@ -38,7 +38,7 @@ pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
         explorer_col.height.saturating_sub(explorer_top.height),
     );
 
-    let is_explorer_focused = app.focus == Focus::Explorer;
+    let is_explorer_focused = app.focus.current() == Focus::Explorer;
     let on_diff_list = app.explorer.focus() == crate::explorer::Pane::Bottom;
 
     let panels = [
@@ -46,7 +46,7 @@ pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
             area: columns[0],
             number: "1",
             label: "Worktree",
-            is_focused: app.focus == Focus::Worktree,
+            is_focused: app.focus.current() == Focus::Worktree,
         },
         PanelInfo {
             area: explorer_top,
@@ -64,19 +64,19 @@ pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
             area: columns[2],
             number: "4",
             label: "Diff Viewer",
-            is_focused: app.focus == Focus::Viewer,
+            is_focused: app.focus.current() == Focus::Viewer,
         },
         PanelInfo {
             area: terminal_split[0],
             number: "5",
             label: "Claude",
-            is_focused: app.focus == Focus::TerminalClaude,
+            is_focused: app.focus.current() == Focus::TerminalClaude,
         },
         PanelInfo {
             area: terminal_split[1],
             number: "6",
             label: "Shell",
-            is_focused: app.focus == Focus::TerminalShell,
+            is_focused: app.focus.current() == Focus::TerminalShell,
         },
     ];
 

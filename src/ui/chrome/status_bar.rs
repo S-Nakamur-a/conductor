@@ -58,7 +58,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
         // デフォルトのキーバインドヒントテキスト。実際のバインディング
         // （ユーザによる上書きを含む）から常にずれないよう、キーマップから
         // その都度動的に導出する。
-        let hint = status_bar_hint(app.focus, &app.keymap);
+        let hint = status_bar_hint(app.focus.current(), &app.keymap);
         let span = Span::styled(hint, Style::default().fg(theme.hint));
         frame.render_widget(Paragraph::new(span), area);
     }

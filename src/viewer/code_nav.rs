@@ -227,7 +227,7 @@ impl App {
     /// フォーカスが Viewer にあり、ファイルが開いていて、オーバーレイやサマリーが
     /// 画面を占有していないこと。
     fn hover_auto_allowed(&self) -> bool {
-        self.focus == Focus::Viewer
+        self.focus.current() == Focus::Viewer
             && !self.viewer.is_summary()
             && self.overlays.active == crate::overlay::ActiveOverlay::None
             && !self.code_nav.references.active

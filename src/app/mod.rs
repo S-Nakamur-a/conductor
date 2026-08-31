@@ -4,6 +4,7 @@ mod appearance;
 mod code_nav;
 mod commands;
 mod focus;
+pub use focus::FocusState;
 mod lifecycle;
 mod panel_resize;
 mod repo;
@@ -56,11 +57,7 @@ pub use update::UpdateState;
 /// すべての UI パネルで共有されるトップレベルの状態。
 pub struct App {
     pub needs_redraw: bool,
-    pub focus: Focus,
-    /// 直前のフォーカスと、移った時刻。ボーダー色のグライド
-    /// ([App::animated_border_color]) だけがこの 2 つを読む。
-    pub focus_prev: Focus,
-    pub focus_changed_at: std::time::Instant,
+    pub focus: FocusState,
     pub overlays: OverlayManager,
     /// いま開いているリポジトリの同一性と、切り替え先の候補。
     pub repo: RepoState,

@@ -87,7 +87,7 @@ impl App {
                 }
 
                 // フォーカスによる抑制: ユーザがこのターミナルにフォーカスしているなら自動 ack する。
-                let is_focused = matches!(self.focus, Focus::TerminalClaude)
+                let is_focused = matches!(self.focus.current(), Focus::TerminalClaude)
                     && self.selected_worktree_path() == wt_path;
                 if is_focused {
                     return;
@@ -170,7 +170,7 @@ impl App {
 
         // 新たに waiting 状態に入った worktree を検出する。
         let current_wt_path = self.selected_worktree_path();
-        let is_terminal_focused = matches!(self.focus, Focus::TerminalClaude);
+        let is_terminal_focused = matches!(self.focus.current(), Focus::TerminalClaude);
 
         // ユーザが CC ターミナルにフォーカスしている場合、waiting 状態は ack
         // されたものとして扱う — 通知バーと worktree アニメーションが(pulse の

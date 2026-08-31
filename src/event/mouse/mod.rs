@@ -442,7 +442,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // ハンドラがフォーカスを移してビューが閉じてしまう。ここで止める。
     // main_area の外 (タイトル・メニュー・worktree ストリップ) はこのビューでも
     // 出ているので、そのまま下へ通す。
-    if app.focus == Focus::Revidere
+    if app.focus.current() == Focus::Revidere
         && main_area.height > 0
         && row >= main_area.y
         && row < main_area.y + main_area.height

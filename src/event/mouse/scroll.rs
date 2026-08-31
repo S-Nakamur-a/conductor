@@ -133,10 +133,10 @@ pub(super) fn handle_mouse_scroll(
         // 補足: set_focus(TerminalShell) はreflowがアクティブなら閉じるが、これは
         // 意図的なもの — ユーザは意図的にClaudeから離れてスクロールしている。
         if row < terminal_split_y {
-            if app.focus != Focus::TerminalClaude {
+            if app.focus.current() != Focus::TerminalClaude {
                 app.set_focus(Focus::TerminalClaude);
             }
-        } else if app.focus != Focus::TerminalShell {
+        } else if app.focus.current() != Focus::TerminalShell {
             app.set_focus(Focus::TerminalShell);
         }
 
