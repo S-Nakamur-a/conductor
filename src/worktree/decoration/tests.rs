@@ -3,8 +3,6 @@
 
 use super::*;
 
-// DecorationMode
-
 #[test]
 fn mode_from_str_known_values() {
     assert_eq!(
@@ -34,8 +32,6 @@ fn mode_has_animation() {
     assert!(DecorationMode::City.has_animation());
     assert!(!DecorationMode::None.has_animation());
 }
-
-// Aquarium
 
 #[test]
 fn aquarium_initializes_on_first_tick() {
@@ -73,8 +69,6 @@ fn aquarium_bubbles_spawn_faster_when_active() {
     );
 }
 
-// Space
-
 #[test]
 fn space_initializes_on_first_tick() {
     let mut state = SpaceState::default();
@@ -108,8 +102,6 @@ fn space_planets_turn_around_at_the_edge() {
     panic!("端に着いても向きが変わらなかった");
 }
 
-// Garden
-
 #[test]
 fn garden_initializes_on_first_tick() {
     let mut state = GardenState::default();
@@ -142,8 +134,6 @@ fn garden_butterflies_stay_in_bounds() {
         assert!(bf.y <= h as f32, "butterfly y out of bounds: {}", bf.y);
     }
 }
-
-// City
 
 #[test]
 fn city_initializes_on_first_tick() {
@@ -196,8 +186,6 @@ fn city_cars_wrap_around() {
     // 車は左側へ回り込んでいるはず。
     assert!(state.cars[0].x < 9.0, "car should have wrapped");
 }
-
-// Dispatch
 
 #[test]
 fn tick_decoration_routes_each_mode_to_its_own_state() {

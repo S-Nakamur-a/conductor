@@ -198,7 +198,6 @@ fn has_restart_changes_true_for_each_restart_field() {
 fn every_field_is_either_live_or_restart() {
     let base = Config::default();
 
-    // general
     {
         let mut c = base.clone();
         c.general.repo = Some(PathBuf::from("/p"));
@@ -263,7 +262,6 @@ fn every_field_is_either_live_or_restart() {
             "general.auto_resume_main"
         );
     }
-    // terminal
     {
         let mut c = base.clone();
         c.terminal.active_scrollback = 9999;
@@ -298,7 +296,6 @@ fn every_field_is_either_live_or_restart() {
             "diff.word_diff"
         );
     }
-    // api
     {
         let mut c = base.clone();
         c.api.provider = String::from("claude"); // デフォルトは "gemini"
@@ -307,7 +304,6 @@ fn every_field_is_either_live_or_restart() {
             "api.provider"
         );
     }
-    // ccusage
     {
         let mut c = base.clone();
         c.ccusage.enabled = true;

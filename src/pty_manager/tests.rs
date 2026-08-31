@@ -18,8 +18,6 @@ fn arrow_sequence_honors_decckm_and_direction() {
     assert_eq!(scroll_arrow_sequence(false, false), b"\x1b[B");
 }
 
-// sanitize_pasted_text
-
 #[test]
 fn sanitize_keeps_plain_text_tabs_and_newlines() {
     let input = "echo hello\tworld\nsecond line\n";
@@ -70,8 +68,6 @@ fn sanitize_preserves_multibyte_text() {
     let input = "こんにちは\tworld\n";
     assert_eq!(sanitize_pasted_text(input), input);
 }
-
-// encode_mouse_wheel
 
 #[test]
 fn encode_mouse_wheel_sgr_up_and_down() {
@@ -260,8 +256,6 @@ fn utf8_chunks_handles_char_wider_than_max() {
 fn utf8_chunks_empty_input_yields_no_chunks() {
     assert!(utf8_chunks("", 1024).is_empty());
 }
-
-// utf8_locale_overrides
 
 #[test]
 fn locale_unset_everywhere_forces_utf8() {

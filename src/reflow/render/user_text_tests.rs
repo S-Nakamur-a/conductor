@@ -8,8 +8,6 @@ use super::glyphs::MARKER_COLS;
 use super::palette;
 use super::user_text::{pad_to_width, render_user_text, wrap_plain_text};
 
-// wrap_plain_text
-
 #[test]
 fn wrap_fits_on_one_line_unchanged() {
     assert_eq!(wrap_plain_text("hello world", 20), vec!["hello world"]);
@@ -70,8 +68,6 @@ fn wrap_hard_split_never_breaks_a_full_width_glyph() {
     assert_eq!(chunks.concat(), "あ".repeat(5));
 }
 
-// pad_to_width
-
 #[test]
 fn pad_short_string_fills_with_trailing_spaces() {
     let padded = pad_to_width("hi", 5);
@@ -88,8 +84,6 @@ fn pad_string_already_at_width_unchanged() {
 fn pad_string_wider_than_target_unchanged() {
     assert_eq!(pad_to_width("hello world", 5), "hello world");
 }
-
-// render_user_text
 
 fn marker_style() -> Style {
     Style::default()

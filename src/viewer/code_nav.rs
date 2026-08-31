@@ -1384,8 +1384,6 @@ mod tests {
         }
     }
 
-    // answer_points_at
-
     fn at(path: &str, line: u32) -> Location {
         Location {
             path: std::path::PathBuf::from(path),
@@ -1409,8 +1407,6 @@ mod tests {
         let answer = Definition::Syntactic(vec![at("src/app/focus.rs", 53)]);
         assert!(!answer_points_at(&answer, "src/app/focus.rs", 53));
     }
-
-    // code_identifiers_on_line
 
     #[test]
     fn 再輸出の行はモジュール名と型名の両方を候補に出す() {
@@ -1447,8 +1443,6 @@ mod tests {
             .collect();
         assert!(words.is_empty(), "{words:?}");
     }
-
-    // masked_symbol_at_column
 
     #[test]
     fn masked_symbol_at_column_skips_trailing_line_comment() {

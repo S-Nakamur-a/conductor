@@ -21,8 +21,6 @@ fn rect(w: u16, h: u16) -> Rect {
     Rect::new(0, 0, w, h)
 }
 
-// LayoutCache::update
-
 #[test]
 fn layout_cache_update_returns_true_first_call() {
     let mut cache = LayoutCache::default();

@@ -5,7 +5,6 @@ use super::types::{CommandCategory, CommandId, PaletteCommand};
 use crate::keymap::Action;
 
 pub const COMMANDS: &[PaletteCommand] = &[
-    // Navigation
     PaletteCommand {
         id: CommandId::FocusWorktree,
         label: "Focus: Worktree Panel",
@@ -90,7 +89,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::ResizePaneDown),
         keywords: "resize pane panel height shell claude split shorter taller tmux down",
     },
-    // Worktree
     PaletteCommand {
         id: CommandId::CreateWorktree,
         label: "Worktree: Create New",
@@ -169,7 +167,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::UngrabBranch),
         keywords: "ungrab release branch",
     },
-    // Terminal
     PaletteCommand {
         id: CommandId::NewClaudeCode,
         label: "Terminal: New Claude Code",
@@ -191,7 +188,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: None,
         keywords: "resume continue",
     },
-    // Git
     PaletteCommand {
         id: CommandId::RefreshDiff,
         label: "Diff: Refresh",
@@ -199,7 +195,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: None,
         keywords: "reload diff",
     },
-    // View
     PaletteCommand {
         id: CommandId::SearchInFile,
         label: "Search in File",
@@ -279,7 +274,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::ShowRevidere),
         keywords: "revidere review sections importance diff two column reading order",
     },
-    // Review
     PaletteCommand {
         id: CommandId::ShowReviewComments,
         label: "Review: Show Comments",
@@ -378,7 +372,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: None,
         keywords: "save record session output snapshot scrollback",
     },
-    // Repository
     PaletteCommand {
         id: CommandId::OpenRepo,
         label: "Repository: Open by Path",
@@ -408,7 +401,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: None,
         keywords: "index scip code jump definition stale rebuild regenerate semantic",
     },
-    // App
     PaletteCommand {
         id: CommandId::CheckForUpdate,
         label: "App: Check for Updates",
@@ -430,7 +422,6 @@ pub const COMMANDS: &[PaletteCommand] = &[
         action: Some(Action::Quit),
         keywords: "exit close",
     },
-    // UI
     PaletteCommand {
         id: CommandId::SwitchTheme,
         label: "Switch Theme",

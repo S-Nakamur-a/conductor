@@ -82,7 +82,7 @@ fn target_in(root: &Path, artifacts: &Path) -> Target {
     }
 }
 
-// ---- 合成した索引で見るもの（素の cargo test で走る） ----
+// 合成した索引で見るもの（素の cargo test で走る）
 
 const SELF: &str = "scip-test cargo demo 0.1.0 Repo#Find().";
 const LIB: &str = "impl Repo { fn Find() {} }\n";
@@ -328,7 +328,7 @@ fn generate(root: &Path, producer: Arc<dyn sheaf_core::Producer>, tag: &str) -> 
     sheaf_core::generate_once(target_in(root, &workdir(tag)), producer)
 }
 
-// ---- 実リポジトリで見るもの ----
+// 実リポジトリで見るもの
 
 fn go_store(tag: &str) -> Store {
     let root = PathBuf::from(

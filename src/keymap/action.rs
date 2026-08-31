@@ -151,7 +151,6 @@ keymap_suite::actions! {
         /// フォーカス中のパネルを下へ広げる（tmux の resize-pane -D）。
         ResizePaneDown => "resize_pane_down",
 
-        // UI
         /// 実行時に UI のカラーテーマを切り替えるため、テーマピッカーの
         /// オーバーレイを開く。
         OpenThemePicker => "open_theme_picker",

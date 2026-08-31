@@ -119,7 +119,6 @@ impl App {
         self.poll_revidere();
         self.poll_publish_review();
 
-        // ccusage
         if let Some(info) = self.bg.ccusage.poll() {
             self.stats.ccusage = Some(info);
         }

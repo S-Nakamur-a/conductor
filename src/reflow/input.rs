@@ -102,8 +102,6 @@ pub fn transition_eased(progress: f64) -> f64 {
 mod tests {
     use super::*;
 
-    // clamp_scroll
-
     #[test]
     fn clamp_allows_zero() {
         assert_eq!(clamp_scroll(0, 100, 20), 0);
@@ -143,8 +141,6 @@ mod tests {
         assert_eq!(clamp_scroll(0, 0, 20), 0);
     }
 
-    // at_bottom
-
     #[test]
     fn at_bottom_when_scroll_equals_max() {
         assert!(at_bottom(80, 100, 20));
@@ -165,8 +161,6 @@ mod tests {
         // total(10) <= inner(20): max_scroll = 0 なので scroll >= 0 なら常に最下部
         assert!(at_bottom(0, 10, 20));
     }
-
-    // scroll_after_reflow
 
     #[test]
     fn follower_repins_to_bottom_when_a_narrower_width_adds_lines() {
@@ -238,8 +232,6 @@ mod tests {
         }
     }
 
-    // sweep_progress
-
     #[test]
     fn sweep_progress_zero_duration_returns_complete() {
         let t = std::time::Instant::now();
@@ -253,8 +245,6 @@ mod tests {
         // 始まったばかりのアニメーションは10%を大きく下回っていなければならない。
         assert!(p < 0.1, "expected near 0.0, got {p}");
     }
-
-    // transition_eased
 
     #[test]
     fn transition_eased_endpoints_are_exact() {

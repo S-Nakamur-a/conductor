@@ -472,7 +472,7 @@ fn 参照が載っていた行が消えたらfoundを返さない() {
     );
 }
 
-// ---- 囲みクエリ ----
+// 囲みクエリ
 
 /// 入れ子の 2 つを載せた索引。行 1 は両方に囲まれている。
 fn build_enclosure_fixture(root: &Path) -> PathBuf {

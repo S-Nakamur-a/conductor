@@ -227,8 +227,6 @@ mod tests {
         assert!(ensure_repo_relative("./src/foo.rs", "file_path").is_ok());
     }
 
-    // render_thread
-
     fn sample_comment(branch: Option<&str>) -> ReviewComment {
         ReviewComment {
             id: "abcdef01-2345-6789-abcd-ef0123456789".into(),

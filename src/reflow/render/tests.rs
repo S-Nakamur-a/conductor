@@ -11,8 +11,6 @@ use super::glyphs::{
 };
 use super::helpers::{pad_glyph_to, with_marker};
 
-// pad_glyph_to
-
 #[test]
 fn pad_glyph_ascii_pads_to_target() {
     // ">" は幅1カラム。2までパディングすると "> " になるはず。
@@ -63,8 +61,6 @@ fn gutter_markers_are_exactly_one_column() {
         );
     }
 }
-
-// with_marker
 
 #[test]
 fn with_marker_prepends_glyph_to_first_line() {
