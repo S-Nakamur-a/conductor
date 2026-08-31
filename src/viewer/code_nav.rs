@@ -1424,57 +1424,42 @@ mod tests {
     use super::*;
     use crate::symbol_index::code_identifiers_on_line;
 
+    /// 識別子はその上のどの桁からでも同じ範囲に解決され、キーワード・空白・
+    /// 1 文字の名前・行外は解決しない。
     #[test]
-    fn test_extract_symbol_at_column_basic() {
-        let line = "    let foo = AppState::new();";
-        // col 14 の AppState の 'A' をクリック
-        let result = extract_symbol_at_column(line, 14);
-        assert_eq!(result, Some(("AppState".to_string(), 14, 22)));
-    }
-
-    #[test]
-    fn test_extract_symbol_at_column_middle() {
-        let line = "    let foo = AppState::new();";
-        // col 17 の AppState の 'S' をクリック
-        let result = extract_symbol_at_column(line, 17);
-        assert_eq!(result, Some(("AppState".to_string(), 14, 22)));
-    }
-
-    #[test]
-    fn test_extract_symbol_at_column_on_keyword() {
-        let line = "    let foo = bar;";
-        // col 4 の let の 'l' をクリック
-        let result = extract_symbol_at_column(line, 4);
-        assert_eq!(result, None); // "let" はキーワード
-    }
-
-    #[test]
-    fn test_extract_symbol_at_column_on_space() {
-        let line = "fn main() {}";
-        let result = extract_symbol_at_column(line, 2);
-        assert_eq!(result, None); // 空白
-    }
-
-    #[test]
-    fn test_extract_symbol_at_column_out_of_bounds() {
-        let line = "short";
-        let result = extract_symbol_at_column(line, 100);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_extract_symbol_at_column_single_char() {
-        let line = "x + y";
-        // 1文字の識別子は除外される
-        let result = extract_symbol_at_column(line, 0);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_extract_symbol_at_column_underscore_prefix() {
-        let line = "    _handler.call();";
-        let result = extract_symbol_at_column(line, 5);
-        assert_eq!(result, Some(("_handler".to_string(), 4, 12)));
+    fn a_column_resolves_to_the_identifier_under_it_or_to_nothing() {
+        let decl = "    let foo = AppState::new();";
+        /// 1 ケース: 行、桁、期待する (名前, 開始, 終了)、なぜそうなるか。
+        type Case = (
+            &'static str,
+            usize,
+            Option<(&'static str, usize, usize)>,
+            &'static str,
+        );
+        let cases: &[Case] = &[
+            (decl, 14, Some(("AppState", 14, 22)), "先頭の桁"),
+            (
+                decl,
+                17,
+                Some(("AppState", 14, 22)),
+                "途中の桁でも範囲は同じ",
+            ),
+            ("    let foo = bar;", 4, None, "キーワードは対象外"),
+            ("fn main() {}", 2, None, "空白の上"),
+            ("short", 100, None, "行の外"),
+            ("x + y", 0, None, "1 文字の名前は対象外"),
+            (
+                "    _handler.call();",
+                5,
+                Some(("_handler", 4, 12)),
+                "先頭の _ も名前の一部",
+            ),
+        ];
+        for (line, col, expected, why) in cases {
+            let got = extract_symbol_at_column(line, *col);
+            let want = expected.map(|(n, a, b)| (n.to_string(), a, b));
+            assert_eq!(got, want, "{why}: {line:?} の col {col}");
+        }
     }
 
     // answer_points_at
