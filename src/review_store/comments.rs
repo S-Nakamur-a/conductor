@@ -47,7 +47,6 @@ impl ReviewStore {
             ],
         )?;
 
-        // サーバ側のデフォルト値（created_at, updated_at）を得るために読み直す。
         self.get_review(&id)
     }
 
@@ -111,10 +110,9 @@ impl ReviewStore {
         collect_reviews(&mut stmt, params![worktree])
     }
 
-    /// 指定したレビューコメント群を GitHub に投稿済みとしてマークし、全件に
-    /// 同じタイムスタンプを刻む（1回の投稿バッチ＝1つの時刻）。一度設定されると
-    /// unpublished_reviews はそれらを返さなくなるので、投稿をリトライしても
-    /// 同じコメントを二重投稿することはない。
+    /// 指定したレビューコメント群を GitHub に投稿済みとしてマークする (1 回の投稿バッチ =
+    /// 1 つの時刻)。一度設定されると unpublished_reviews は返さなくなるので、投稿を
+    /// リトライしても二重投稿にならない。
     pub fn mark_published(&self, comment_ids: &[String], timestamp: &str) -> Result<()> {
         self.conn.execute_batch("BEGIN;")?;
         let result = (|| -> Result<()> {
@@ -153,31 +151,21 @@ impl ReviewStore {
 
     /// コメントの完全な id、またはその一意なプレフィックスを、完全な id に解決する。
     ///
-    /// [MIN_ID_PREFIX_LEN] より短いものは拒否する。これはツールが公表している
-    /// 長さであり、かつコメント id が実際に表示される際の長さでもあるため、
-    /// それより短いものは正当な省略ではなく単なる入力ミスとみなす。
+    /// [MIN_ID_PREFIX_LEN] より短いものは、正当な省略ではなく入力ミスとみなして拒否する。
     ///
-    /// prefix は16進数の文字と - のみ（UUID を構成する文字集合）でなければ
-    /// ならず、そうでなければデータベースに触れずに Ok(None) を返す。未検証の
-    /// プレフィックスからそのまま LIKE パターンを組み立てると、%/_ が SQL の
-    /// ワイルドカードとして働いてしまう（例えば prefix = "%" が任意のコメントに
-    /// マッチする）ため、この形を事前に弾いておく。この制限によって正当な
-    /// id や id プレフィックスが困ることは一切ない。複数行がマッチした場合は
-    /// あいまいとして扱わず id 順で最初の1件を返す。これは置き換え元の Node
-    /// 製 MCP サーバの挙動を踏襲したもので、明示的な ORDER BY によって
-    /// 決定的にしている点だけが異なる。
+    /// prefix は 16 進数の文字と - のみ (UUID の文字集合) でなければならず、そうでなければ
+    /// データベースに触れずに `Ok(None)`。未検証のプレフィックスから LIKE パターンを組むと、
+    /// %/_ がワイルドカードとして働く (prefix = "%" が任意のコメントにマッチする)。
+    ///
+    /// 複数行がマッチしたときはあいまいとせず、id 順で最初の 1 件を返す。
     pub fn resolve_id_prefix(&self, prefix: &str) -> Result<Option<String>> {
-        // ツール側は「ID または一意なプレフィックス（最短8文字）」と公表している。
-        // それをドキュメントに書くだけでなく実際に強制する。1〜2文字の
-        // プレフィックスだと、たまたま id順で最初に来たものにマッチしてしまい、
-        // id を打ち間違えたモデルが他人のコメントを解決・返信してしまい、
-        // しかも成功したと報告されることになる。
+        // 1〜2 文字のプレフィックスだと、たまたま id 順で最初に来たものにマッチし、id を打ち
+        // 間違えたモデルが他人のコメントを解決・返信して、しかも成功したと報告される。
         if prefix.len() < MIN_ID_PREFIX_LEN {
             return Ok(None);
         }
-        // id は UUID なので、16進数とハイフン以外の文字を含むものは絶対に
-        // マッチしない。ここで拒否しておけば、LIKE のワイルドカードである
-        // % と _ が下のパターンに紛れ込んで無関係な行にマッチすることも防げる。
+        // 16 進数とハイフン以外を拒否しておけば、LIKE のワイルドカード % と _ が下のパターンに
+        // 紛れ込んで無関係な行にマッチすることも防げる。
         if !prefix.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             return Ok(None);
         }
@@ -194,17 +182,12 @@ impl ReviewStore {
         }
     }
 
-    /// 未解決のレビューコメントを返す。branch、worktree、file_path で
-    /// 任意に絞り込める。
+    /// 未解決のレビューコメントを返す。branch、worktree、file_path で任意に絞り込める。
     ///
-    /// branch は branch カラムまたは worktree カラムのどちらかにマッチする
-    /// （OR で、両方とも同じ値にバインドする）。v4 スキーマの CHECK
-    /// （branch IS NULL OR worktree = branch）の下では、非 null な branch は
-    /// 常に既に worktree と一致しているため、branch = ? 側だけがマッチの
-    /// 決め手になることは起こり得ず、この OR は現行スキーマ上は冗長になる。
-    /// それでも残しているのは、置き換え元である Node 製 MCP サーバとの
-    /// 互換性のためで、あちらはこの CHECK が入る前から存在し、両者が
-    /// 食い違う行が見えることもあった。
+    /// branch は branch カラムまたは worktree カラムのどちらかにマッチする。v4 スキーマの
+    /// CHECK (branch IS NULL OR worktree = branch) の下では非 null な branch は常に worktree と
+    /// 一致するので、この OR は現行スキーマ上は冗長。CHECK が入る前の行が見えることがある
+    /// ため残してある。
     pub fn pending_reviews(
         &self,
         branch: Option<&str>,
@@ -341,7 +324,6 @@ mod tests {
         assert_eq!(review.author, Author::User);
         assert_eq!(review.branch, None);
 
-        // worktree で取得する
         let reviews = store.reviews_for_worktree("wt1").unwrap();
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].id, review.id);
@@ -395,7 +377,6 @@ mod tests {
         assert_eq!(review.author, Author::Claude);
         assert_eq!(review.branch.as_deref(), Some("feature/x"));
 
-        // 単一行（line_end = None）
         let r2 = store
             .add_review(
                 "wt1",

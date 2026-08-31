@@ -11,19 +11,15 @@ use anyhow::{Context, Result, bail};
 
 /// コマンドラインから --db <path> があれば取り出す。
 ///
-/// [resolve_db_path] から分離してあるのは、優先順位のルールをプロセスの
-/// 環境変数に触れずにテストできるようにするため。空の値はそのまま渡さず
-/// 捨てる。Connection::open("") は *プライベートな一時* データベースを開いて
-/// しまうので、--db= を許すとすべてのツールが、成功したように見えて終了時に
-/// 消えてしまうスクラッチデータベースを持つことになる — このサブコマンドが
-/// 排除しようとしている「動いたように見える失敗」そのものである。
+/// [resolve_db_path] から分離してあるのは、優先順位のルールをプロセスの環境変数に触れずに
+/// テストできるようにするため。空の値は捨てる — Connection::open("") は *プライベートな
+/// 一時* データベースを開いてしまい、すべてのツールが成功したように見えて終了時に消える。
 pub(super) fn parse_db_arg(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         if arg == "--db" {
             return it.next().filter(|v| !v.is_empty()).map(PathBuf::from);
         }
-        // --db=<path> の形。通常の CLI の慣習との対称性のため。
         if let Some(rest) = arg.strip_prefix("--db=") {
             return (!rest.is_empty()).then(|| PathBuf::from(rest));
         }
@@ -31,25 +27,16 @@ pub(super) fn parse_db_arg(args: impl IntoIterator<Item = String>) -> Option<Pat
     None
 }
 
-/// レビューデータベースを、Node サーバが使っていたのと同じ順序で探す。
-/// conductor が起動したケースのために --db を先頭に追加してある。
+/// レビューデータベースを探す。
 ///
 /// 1. --db <path> — spawn_generation が渡すもの
-/// 2. CONDUCTOR_DB_PATH — pty_manager::spawn が対話的セッションに注入する
-///    もので、マーケットプレイスプラグインが持つ唯一の経路でもある
-///    （.mcp.json は引数を一切渡さない）
+/// 2. CONDUCTOR_DB_PATH — pty_manager::spawn が対話的セッションに注入するもので、
+///    マーケットプレイスプラグインが持つ唯一の経路 (.mcp.json は引数を渡さない)
 /// 3. cwd の git ルート、次に 4. *main* worktree のルート
-///    （リンクされた worktree で動いているセッションの場合）
 ///
-/// 3 と 4 のステップはファイルがすでに存在していることを要求する。これは
-/// 意図的である。Connection::open は放っておくと空のデータベースを作って
-/// マイグレーションまで済ませてしまい、TUI には何も表示されていないのに
-/// 全てのツールが成功を報告することになる — これはこの変更全体が取り除こう
-/// としている、まさに同じ形の静かな失敗である。明示的な --db や
-/// CONDUCTOR_DB_PATH はそのまま額面通りに受け取る（呼び出し側はどこに
-/// 書き込みたいか分かっているし、新しいリポジトリのデータベースを正当に
-/// 作ろうとしている場合もあり得るため）。
-/// 対話的セッションがデータベースを取得する際に使う環境変数。
+/// 3 と 4 はファイルが既に存在していることを要求する。Connection::open は放っておくと
+/// 空のデータベースを作ってマイグレーションまで済ませ、TUI には何も出ていないのに全ての
+/// ツールが成功を報告する。明示的な --db や CONDUCTOR_DB_PATH は額面通りに受け取る。
 pub(super) const DB_PATH_ENV: &str = "CONDUCTOR_DB_PATH";
 
 pub(super) fn resolve_db_path(db_arg: Option<PathBuf>) -> Result<PathBuf> {
@@ -86,7 +73,6 @@ pub(super) fn resolve_db_path_with(
         )
     })?;
 
-    // 起動された worktree そのもの。
     if let Some(workdir) = repo.workdir() {
         let candidate = conductor_db(workdir);
         if candidate.is_file() {
@@ -94,9 +80,8 @@ pub(super) fn resolve_db_path_with(
         }
     }
 
-    // リンクされた worktree は自分の .conductor/ を持たない。データベースは
-    // main worktree にある。commondir() は <main>/.git を返すので、その
-    // 親が main のルートになる。
+    // リンクされた worktree は自分の .conductor/ を持たない。commondir() は <main>/.git を
+    // 返すので、その親が main のルートになる。
     if let Some(main_root) = repo.commondir().parent() {
         let candidate = conductor_db(main_root);
         if candidate.is_file() {
@@ -116,13 +101,10 @@ fn conductor_db(root: &Path) -> PathBuf {
     root.join(".conductor").join("conductor.db")
 }
 
-/// サーバの cwd がチェックアウトしているブランチ。使えるものが無ければ
-/// None。
+/// サーバの cwd がチェックアウトしているブランチ。使えるものが無ければ `None`。
 ///
-/// None は「まだ HEAD が無い」と「detached HEAD」の両方をカバーする。
-/// どちらもコメントやウォークスルーのキーにはできず、ブランチを必要とする
-/// ツールはこれを、Node サーバが返していたのと同じ「detached HEAD?」という
-/// メッセージに変換する。
+/// `None` は「まだ HEAD が無い」と「detached HEAD」の両方をカバーする。どちらもコメントの
+/// キーにはできず、ブランチを必要とするツールはこれを「detached HEAD?」に変換する。
 pub(super) fn current_branch(repo: &git2::Repository) -> Option<String> {
     if repo.head_detached().unwrap_or(true) {
         return None;

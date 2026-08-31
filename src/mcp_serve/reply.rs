@@ -13,16 +13,8 @@ pub(super) fn ok_text(text: impl Into<String>) -> Result<CallToolResult, ErrorDa
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
 
-/// ツールレベルの失敗。isError を持つ *成功* した呼び出しとして報告する。
-/// Node サーバがそうしていたやり方であり、モデルがメッセージを読んで自分で
-/// 訂正できるようにするための形でもある。
-///
-/// これは単純な「入力が悪い vs サーバが壊れている」の区別ではない。*書き込み*
-/// でのデータベース失敗も意図的にこの形で返す — create_comment が
-/// 失敗したときは、バリデーションエラーと同様にモデルが
-/// 理由を見て再試行する必要がある。一方 *読み込み* でのデータベース失敗は
-/// 代わりに ErrorData として送出される（tools.rs の db_error 経由）。
-/// モデル側に訂正すべき誤りは無く、違うやり方で再試行しても意味が無いため。
+/// ツールレベルの失敗。isError を持つ *成功* した呼び出しとして報告する。モデルが
+/// メッセージを読んで自分で訂正できるようにするため。
 pub(super) fn err_text(text: impl Into<String>) -> Result<CallToolResult, ErrorData> {
     Ok(CallToolResult::error(vec![ContentBlock::text(text)]))
 }
@@ -43,11 +35,8 @@ pub(super) fn short_id(id: &str) -> &str {
     &id[..end]
 }
 
-/// 必須の文字列が空だったら拒否する。
-///
-/// スキーマは「string」としか言えない。これが置き換えた Node サーバはこれら
-/// すべてに最小長を強制していたし、空のコメント本文やステップタイトルは、
-/// 分かりやすい誤りとしてではなく TUI 上の見えない行として現れてしまう。
+/// 必須の文字列が空だったら拒否する。スキーマは「string」としか言えず、空のコメント本文や
+/// ステップタイトルは分かりやすい誤りとしてではなく TUI 上の見えない行として現れる。
 pub(super) fn ensure_not_blank(value: &str, what: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{what} must not be empty."));
@@ -216,8 +205,7 @@ mod tests {
         assert!(normalize_repo_relative(".", "file_path").is_err());
     }
 
-    /// Node サーバは絶対パスだけを拒否していたが、.. も同じ join してから
-    /// 読み込むという経路に到達するので、ここでも拒否する。
+    /// .. も絶対パスと同じく join してから読み込むという経路に到達するので、どちらも拒否する。
     #[test]
     fn ensure_repo_relative_catches_absolute_and_parent_dir() {
         assert!(ensure_repo_relative("/etc/passwd", "file_path").is_err());
