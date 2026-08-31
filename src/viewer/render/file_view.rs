@@ -60,7 +60,8 @@ pub(in crate::viewer) fn render(
     });
     let fold_depth_w = fold_depth.as_deref().map_or(0, display_width);
 
-    // ] ボタン（と表示されていればトグル）と重ならないようタイトルを=>確保するのは 2 (枠線) + 段数 + トグル + expand_label の幅 + 1 (隙間)。
+    // 右側の [<=>] ボタン (と表示されていればトグル) と重ならないようタイトルを切り詰める。
+    // 確保するのは 2 (枠線) + 段数 + トグル + expand_label の幅 + 1 (隙間)。
     let max_title_len = (area.width as usize)
         .saturating_sub(2 + fold_depth_w + md_toggle_w + expand_label.len() + 1);
     let title = match &vs.content.current_file {

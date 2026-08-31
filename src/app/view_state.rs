@@ -192,9 +192,7 @@ impl App {
         }
     }
 
-    /// Viewer を生の Markdown ソースとレンダリング済み表示の間で切り替える。プレーン表示中の
-    /// Markdown でのみ意味を持ち、それ以外ではヒントを出す — ヘッダーのトグルがまさにその
-    /// 場面で隠れているので、見えないモードを黙ってラッチしない。
+    /// 深さ単位で1段畳む（zm）。
     pub fn cmd_fold_one_level(&mut self) {
         let depth = self.viewer.fold_collapse_deepest();
         self.report_fold_depth(depth);
@@ -223,6 +221,9 @@ impl App {
         }
     }
 
+    /// Viewer を生の Markdown ソースとレンダリング済み表示の間で切り替える。プレーン表示中の
+    /// Markdown でのみ意味を持ち、それ以外ではヒントを出す — ヘッダーのトグルがまさにその
+    /// 場面で隠れているので、見えないモードを黙ってラッチしない。
     pub fn cmd_toggle_markdown_render(&mut self) {
         if !self.viewer.markdown_toggle_available() {
             self.set_status(

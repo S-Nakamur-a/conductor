@@ -532,7 +532,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
 
-            // ] 展開ボタン、どちらも上枠の行に=>トグルを先にチェックする。展開ボタンより左にあり、両者は重ならない。
+            // [Raw|Rendered] トグルと [<=>] 展開ボタンはどちらも上枠の行にある。トグルを先に
+            // チェックする — 展開ボタンより左にあり、両者は重ならない。
             if row == main_area.y && handle_md_toggle_click(app, col, &geom) {
                 return;
             }

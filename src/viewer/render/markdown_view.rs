@@ -142,7 +142,8 @@ pub(super) fn render_markdown_view(
 mod tests {
     use super::*;
 
-    /// ] 展開ボタンのすぐ左に来なければならない。展開ボタンの=>チップは [<=>] のすぐ左に来る。重なると片方のボタンがもう片方のクリックを奪う。
+    /// チップは [<=>] 展開ボタンのすぐ左に来なければならない。重なると片方のボタンが
+    /// もう片方のクリックを奪う。
     #[test]
     fn toggle_sits_just_left_of_the_expand_button() {
         let (x, w) = (40u16, 60u16);
