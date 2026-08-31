@@ -158,40 +158,26 @@ mod tests {
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
-
+    /// 空の値を拒むのが要点。Connection::open("") はプライベートな一時データベースを
+    /// 開いてしまい、すべてのツールが成功して自分の書き込みも読み戻せるのに、終了時に
+    /// 全部消える。
     #[test]
-    fn parse_db_arg_reads_separate_value() {
-        assert_eq!(
-            parse_db_arg(args(&["mcp-serve", "--db", "/tmp/a.db"])),
-            Some(PathBuf::from("/tmp/a.db"))
-        );
-    }
-
-    #[test]
-    fn parse_db_arg_reads_equals_form() {
-        assert_eq!(
-            parse_db_arg(args(&["mcp-serve", "--db=/tmp/b.db"])),
-            Some(PathBuf::from("/tmp/b.db"))
-        );
-    }
-
-    #[test]
-    fn parse_db_arg_is_none_when_absent() {
-        assert_eq!(parse_db_arg(args(&["mcp-serve"])), None);
-    }
-
-    #[test]
-    fn parse_db_arg_is_none_when_flag_has_no_value() {
-        assert_eq!(parse_db_arg(args(&["mcp-serve", "--db"])), None);
-    }
-
-    /// Connection::open("") はプライベートな一時データベースを開いてしまう。
-    /// すべてのツールが成功し、自分の書き込みを読み戻せてしまうが、終了時に
-    /// 全部消えてしまう。
-    #[test]
-    fn parse_db_arg_rejects_an_empty_value() {
-        assert_eq!(parse_db_arg(args(&["mcp-serve", "--db="])), None);
-        assert_eq!(parse_db_arg(args(&["mcp-serve", "--db", ""])), None);
+    fn parse_db_arg_reads_both_flag_forms_and_rejects_missing_values() {
+        let cases: [(&[&str], Option<&str>); 6] = [
+            (&["mcp-serve", "--db", "/tmp/a.db"], Some("/tmp/a.db")),
+            (&["mcp-serve", "--db=/tmp/b.db"], Some("/tmp/b.db")),
+            (&["mcp-serve"], None),
+            (&["mcp-serve", "--db"], None),
+            (&["mcp-serve", "--db="], None),
+            (&["mcp-serve", "--db", ""], None),
+        ];
+        for (argv, want) in cases {
+            assert_eq!(
+                parse_db_arg(args(argv)),
+                want.map(PathBuf::from),
+                "{argv:?}"
+            );
+        }
     }
 
     #[test]

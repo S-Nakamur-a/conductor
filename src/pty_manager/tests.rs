@@ -117,27 +117,29 @@ fn trim_raw_history_keeps_under_cap_and_aligns_to_line() {
     // 最も古い内容("aaaa")は削られていなければならない。
     assert!(!text.contains("aaaa"));
 }
-
 #[test]
-fn trim_raw_history_noop_when_within_cap() {
-    let mut history: VecDeque<u8> = b"hello\n".iter().copied().collect();
-    PtyManager::trim_raw_history(&mut history, 1024);
-    assert_eq!(history.iter().copied().collect::<Vec<u8>>(), b"hello\n");
-}
-
-#[test]
-fn trim_raw_history_noop_when_cap_equals_len() {
-    let mut history: VecDeque<u8> = b"abcd\n".iter().copied().collect();
-    let len = history.len();
-    PtyManager::trim_raw_history(&mut history, len);
-    assert_eq!(history.len(), len);
-}
-
-#[test]
-fn trim_raw_history_empty_is_safe() {
-    let mut history: VecDeque<u8> = VecDeque::new();
-    PtyManager::trim_raw_history(&mut history, 0);
-    assert!(history.is_empty());
+fn trim_raw_history_leaves_buffers_within_the_cap_alone() {
+    for (bytes, cap) in [
+        (
+            &b"hello\
+"[..],
+            1024,
+        ),
+        (
+            &b"abcd\
+"[..],
+            5,
+        ),
+        (&b""[..], 0),
+    ] {
+        let mut history: VecDeque<u8> = bytes.iter().copied().collect();
+        PtyManager::trim_raw_history(&mut history, cap);
+        assert_eq!(
+            history.iter().copied().collect::<Vec<u8>>(),
+            bytes,
+            "cap={cap}"
+        );
+    }
 }
 
 /// 改行を一切含まない上限超過バッファは、空になるまで削られては*ならない* —

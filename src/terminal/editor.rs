@@ -243,50 +243,32 @@ mod tests {
             None
         );
     }
-
+    /// VISUAL > EDITOR > fallback の順。空白のみの値は空のコマンドを生まないよう飛ばす。
+    /// 分割は素朴で、シェル風のクォート解釈は行わない (意図的な制限)。
     #[test]
-    fn resolve_editor_falls_back_when_unset() {
-        assert_eq!(resolve_editor_command(None, None, "vi"), vec!["vi"]);
-    }
-
-    #[test]
-    fn resolve_editor_visual_takes_precedence() {
-        assert_eq!(
-            resolve_editor_command(Some("vim"), Some("nano"), "vi"),
-            vec!["vim"]
-        );
-    }
-
-    #[test]
-    fn resolve_editor_uses_editor_when_visual_unset() {
-        assert_eq!(
-            resolve_editor_command(None, Some("nano"), "vi"),
-            vec!["nano"]
-        );
-    }
-
-    #[test]
-    fn resolve_editor_splits_args() {
-        assert_eq!(
-            resolve_editor_command(Some("code -w"), None, "vi"),
-            vec!["code", "-w"]
-        );
-        assert_eq!(
-            resolve_editor_command(Some("code\t-w  -n"), None, "vi"),
-            vec!["code", "-w", "-n"]
-        );
-    }
-
-    #[test]
-    fn resolve_editor_ignores_blank_values() {
-        // 空白のみのVISUALはスキップされる。空のコマンドを生むのではなく、
-        // EDITOR（またはfallback）が優先されるようにするため。
-        assert_eq!(resolve_editor_command(Some(""), None, "vi"), vec!["vi"]);
-        assert_eq!(resolve_editor_command(Some("   "), None, "vi"), vec!["vi"]);
-        assert_eq!(
-            resolve_editor_command(Some(""), Some("nano"), "vi"),
-            vec!["nano"]
-        );
+    fn resolve_editor_command_picks_by_precedence_and_splits_naively() {
+        let cases: [(Option<&str>, Option<&str>, Vec<&str>); 9] = [
+            (None, None, vec!["vi"]),
+            (Some("vim"), Some("nano"), vec!["vim"]),
+            (None, Some("nano"), vec!["nano"]),
+            (Some("code -w"), None, vec!["code", "-w"]),
+            (Some("code\t-w  -n"), None, vec!["code", "-w", "-n"]),
+            (Some(""), None, vec!["vi"]),
+            (Some("   "), None, vec!["vi"]),
+            (Some(""), Some("nano"), vec!["nano"]),
+            (
+                Some("vim -c 'set ft=rust'"),
+                None,
+                vec!["vim", "-c", "'set", "ft=rust'"],
+            ),
+        ];
+        for (visual, editor, want) in cases {
+            assert_eq!(
+                resolve_editor_command(visual, editor, "vi"),
+                want,
+                "visual={visual:?} editor={editor:?}"
+            );
+        }
         assert_eq!(
             resolve_editor_command(Some("  vim  "), None, "vi"),
             vec!["vim"]
@@ -316,15 +298,5 @@ mod tests {
                 assert!(rows >= 1 && c >= 1, "w={w} h={h} → ({rows},{c})");
             }
         }
-    }
-
-    #[test]
-    fn resolve_editor_naive_split_does_not_honor_quotes() {
-        // 既知の制限: シェル風のクォート解釈は行わない。クォートされた引数も
-        // 内部の空白で分割される。これは意図的な挙動を固定するテスト。
-        assert_eq!(
-            resolve_editor_command(Some("vim -c 'set ft=rust'"), None, "vi"),
-            vec!["vim", "-c", "'set", "ft=rust'"]
-        );
     }
 }
