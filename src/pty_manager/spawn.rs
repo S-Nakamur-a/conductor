@@ -18,18 +18,9 @@ use super::{PtyManager, PtySession, SessionKind};
 impl PtyManager {
     /// 新しい PTY セッションを起動し、セッションリスト内でのインデックスを返す。
     ///
-    /// * kind — Claude Code とシェルのどちらを起動するか。
-    /// * worktree — このセッションが属する worktree 名。
-    /// * label — UI に表示する人間可読なラベル。
-    /// * shell_path — シェルバイナリへのパス(SessionKind::Shell のみで使用)。
-    /// * working_dir — 起動するプロセスの作業ディレクトリ。
-    /// * rows — PTY と vt100 パーサの行数。
-    /// * cols — PTY と vt100 パーサの列数。
-    /// * resume_session_id — Some の場合、Claude CLI に --resume <id> を渡す。
-    /// * repo_root — リポジトリのルートパス。Claude Code セッションで
-    ///   CONDUCTOR_DB_PATH を設定し、MCP サーバがデータベースを見つけられる
-    ///   ようにするために使う。
-    /// * session_name — Some の場合、Claude CLI に --name <name> を渡す。
+    /// `resume_session_id` が `Some` なら Claude CLI に `--resume <id>` を、`session_name` が
+    /// `Some` なら `--name <name>` を渡す。`repo_root` は CONDUCTOR_DB_PATH の設定に使い、
+    /// MCP サーバがレビューデータベースを見つけられるようにする。
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_session(
         &mut self,
@@ -44,23 +35,16 @@ impl PtyManager {
         repo_root: &Path,
         session_name: Option<&str>,
     ) -> Result<usize> {
-        // セッションの種類に応じてコマンドを組み立て、共有の spawn 経路へ渡す。
-        // Claude セッションについては、reflow トランスクリプトビューが後で
-        // このパネル自身のログを開けるよう、session id もここで確定させる。
-        //
-        // パネルの識別子。SessionStart フックへ環境変数で渡し、フックが
-        // 「どのパネルの通知か」を名乗れるようにする (cc_hook)。セッションを
-        // 作る前に決めるのは、コマンドを組み立てる時点で環境変数に入れる必要が
-        // あるため。
+        // パネルの識別子は SessionStart フックへ環境変数で渡し、フックが「どのパネルの通知か」を
+        // 名乗れるようにする (cc_hook)。セッションを作る前に決めるのは、コマンドを組み立てる
+        // 時点で環境変数に入れる必要があるため。
         let panel_id = Uuid::new_v4().to_string();
 
         let (cmd, claude_session_id) = match kind {
             SessionKind::ClaudeCode => {
                 let mut c = CommandBuilder::new("claude");
-                // resume は既存の session id を保つ(Claude は同じ <id>.jsonl
-                // に追記する)。新規起動では --session-id で生成した id を
-                // 強制するので、「worktree の最新セッション」を推測する
-                // 必要がなく、事前にファイル名がわかる。
+                // resume は既存の session id を保つ。新規起動では --session-id で生成した id を強制
+                // するので、「worktree の最新セッション」を推測せずに事前にファイル名がわかる。
                 let session_id = if let Some(resume_id) = resume_session_id {
                     c.arg("--resume");
                     c.arg(resume_id);
@@ -79,15 +63,10 @@ impl PtyManager {
                 let db_path = repo_root.join(".conductor").join("conductor.db");
                 c.env("CONDUCTOR_DB_PATH", db_path);
 
-                // /clear は書き込み先を新しい session id の .jsonl に移すが、
-                // 旧ログにも新ログにも相互参照が残らない。SessionStart フックは
-                // そのパネル自身の Claude プロセスの中で走り、新しい session id を
-                // 持って来てくれるので、これを差し込んでおくとローテーションを
-                // 推測ではなく事実として受け取れる。
-                //
-                // --settings は追加レイヤーとして重なる (実測: ユーザ全体の
-                // settings もプロジェクトの .claude/settings.json もそのまま
-                // 生き残る) ので、ユーザ自身のフックを潰す心配はない。
+                // /clear は書き込み先を新しい session id の .jsonl に移すが、相互参照が残らない。
+                // SessionStart フックはパネル自身の Claude プロセスの中で走って新しい id を持って来るので、
+                // ローテーションを推測ではなく事実として受け取れる。--settings は追加レイヤーとして重なる
+                // (実測: ユーザ全体もプロジェクトの settings もそのまま生き残る)。
                 match Self::write_hook_settings(repo_root) {
                     Ok(path) => {
                         c.arg("--settings");

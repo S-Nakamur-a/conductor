@@ -48,7 +48,6 @@ impl RefreshPipe {
             let _ = std::fs::remove_file(&pipe_path);
         }
 
-        // FIFO を作る。
         let path_cstr = std::ffi::CString::new(
             pipe_path
                 .to_str()
@@ -106,8 +105,7 @@ impl RefreshPipe {
                 break;
             }
 
-            // 読みやすいように File で包む。SAFETY: fd はこちらが排他的に所有する
-            // 有効な open 済みファイルディスクリプタ。
+            // SAFETY: fd はこちらが排他的に所有する有効な open 済みファイルディスクリプタ。
             let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
 
             let mut buf = [0u8; 64];
