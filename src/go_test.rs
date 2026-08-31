@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn test_main_is_excluded() {
+    fn test_main_is_not_offered_as_a_runnable_test() {
         let src = lines(
             "package foo\n\
              func TestMain(m *testing.M) {}\n\

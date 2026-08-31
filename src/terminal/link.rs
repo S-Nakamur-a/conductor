@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_relative_path() {
+    fn a_bare_relative_path_becomes_a_link() {
         let dir = setup_test_dir();
         let links = detect_file_links("opening src/app.rs now", dir.path());
         assert_eq!(links.len(), 1);
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_path_with_line() {
+    fn a_trailing_line_number_joins_the_link() {
         let dir = setup_test_dir();
         let links = detect_file_links("error at src/app.rs:42", dir.path());
         assert_eq!(links.len(), 1);
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_path_with_line_col() {
+    fn a_line_and_column_both_join_the_link() {
         let dir = setup_test_dir();
         let links = detect_file_links("error at src/app.rs:42:10", dir.path());
         assert_eq!(links.len(), 1);
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_compiler_arrow() {
+    fn the_rustc_arrow_line_links_to_what_it_points_at() {
         let dir = setup_test_dir();
         let links = detect_file_links("  --> src/main.rs:10:5", dir.path());
         assert_eq!(links.len(), 1);
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_dot_slash_path() {
+    fn a_dot_slash_prefix_stays_in_the_path() {
         let dir = setup_test_dir();
         let links = detect_file_links("reading ./src/app.rs ok", dir.path());
         assert_eq!(links.len(), 1);
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_links() {
+    fn every_path_on_a_line_becomes_its_own_link() {
         let dir = setup_test_dir();
         let links = detect_file_links("src/app.rs:1 and src/main.rs:2", dir.path());
         assert_eq!(links.len(), 2);
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_link_at_offset() {
+    fn an_offset_inside_the_path_finds_that_link() {
         let dir = setup_test_dir();
         let text = "error at src/app.rs:42:10 done";
         let links = detect_file_links(text, dir.path());
@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn test_absolute_path() {
+    fn an_absolute_path_becomes_a_link() {
         let dir = setup_test_dir();
         let abs = dir.path().join("src/app.rs");
         let text = format!("opening {} now", abs.display());

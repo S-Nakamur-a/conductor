@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn test_new_and_empty() {
+fn a_new_input_is_empty() {
     let ti = TextInput::new();
     assert!(ti.is_empty());
     assert_eq!(ti.text(), "");
@@ -11,7 +11,7 @@ fn test_new_and_empty() {
 }
 
 #[test]
-fn test_insert_char() {
+fn inserting_characters_advances_the_cursor() {
     let mut ti = TextInput::new();
     ti.insert_char('h');
     ti.insert_char('i');
@@ -20,7 +20,7 @@ fn test_insert_char() {
 }
 
 #[test]
-fn test_insert_at_cursor() {
+fn insertion_happens_at_the_cursor_not_at_the_end() {
     let mut ti = TextInput::new();
     ti.insert_char('a');
     ti.insert_char('c');
@@ -53,7 +53,7 @@ fn delete_at_the_end_of_the_text_does_nothing() {
 }
 
 #[test]
-fn test_move_left_right() {
+fn moving_past_either_end_stops_there() {
     let mut ti = TextInput::new();
     ti.set_text("abc");
     assert_eq!(ti.cursor, 3);
@@ -74,7 +74,7 @@ fn test_move_left_right() {
 }
 
 #[test]
-fn test_move_home_end() {
+fn home_and_end_jump_to_the_ends_of_the_text() {
     let mut ti = TextInput::new();
     ti.set_text("hello");
     ti.move_home();
@@ -100,7 +100,7 @@ fn the_cursor_moves_by_character_not_by_byte() {
 }
 
 #[test]
-fn test_word_movement() {
+fn word_movement_stops_at_the_start_of_each_word() {
     let mut ti = TextInput::new();
     ti.set_text("hello world foo");
     ti.move_home();
@@ -115,7 +115,7 @@ fn test_word_movement() {
 }
 
 #[test]
-fn test_delete_to_line_start_single_line() {
+fn delete_to_line_start_removes_everything_before_the_cursor() {
     let mut ti = TextInput::new();
     ti.set_text("hello world");
     // カーソルが末尾にあるので全て削除される
@@ -135,7 +135,7 @@ fn test_delete_to_line_start_single_line() {
 }
 
 #[test]
-fn test_delete_to_line_start_multiline() {
+fn delete_to_line_start_stops_at_the_line_break() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("line1\nline2\nline3");
     // カーソルは "line3" の末尾にある
@@ -148,7 +148,7 @@ fn test_delete_to_line_start_multiline() {
 }
 
 #[test]
-fn test_select_all_and_clear() {
+fn select_all_and_clear_empties_the_input() {
     let mut ti = TextInput::new();
     ti.set_text("some text");
     ti.select_all_and_clear();
@@ -157,7 +157,7 @@ fn test_select_all_and_clear() {
 }
 
 #[test]
-fn test_text_before_after_cursor() {
+fn the_text_splits_at_the_cursor() {
     let mut ti = TextInput::new();
     ti.set_text("abcdef");
     ti.move_home();
@@ -169,7 +169,7 @@ fn test_text_before_after_cursor() {
 }
 
 #[test]
-fn test_multiline_cursor_row_col() {
+fn the_cursor_reports_its_row_and_column() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("hello\nworld\nfoo");
     let (row, col) = ti.cursor_row_col();
@@ -178,7 +178,7 @@ fn test_multiline_cursor_row_col() {
 }
 
 #[test]
-fn test_multiline_home_end() {
+fn home_and_end_stay_inside_the_current_line_when_multiline() {
     let mut ti = TextInput::new_multiline();
     ti.set_text("line1\nline2\nline3");
     // カーソルは "line3" の末尾にある
@@ -189,21 +189,21 @@ fn test_multiline_home_end() {
 }
 
 #[test]
-fn test_insert_str_single_line() {
+fn a_single_line_input_strips_newlines_from_pasted_text() {
     let mut ti = TextInput::new();
     ti.insert_str("hello\nworld");
     assert_eq!(ti.text(), "helloworld"); // 改行が取り除かれる
 }
 
 #[test]
-fn test_insert_str_multiline() {
+fn a_multiline_input_keeps_pasted_newlines() {
     let mut ti = TextInput::new_multiline();
     ti.insert_str("hello\nworld");
     assert_eq!(ti.text(), "hello\nworld");
 }
 
 #[test]
-fn test_set_text_moves_cursor_to_end() {
+fn set_text_moves_the_cursor_to_the_end() {
     let mut ti = TextInput::new();
     ti.set_text("hello");
     assert_eq!(ti.cursor, 5);
@@ -222,7 +222,7 @@ fn full_width_glyphs_count_as_two_columns() {
 }
 
 #[test]
-fn test_deref() {
+fn the_input_derefs_to_str() {
     let ti = TextInput::new();
     assert!(ti.is_empty()); // Deref 経由の str::is_empty
     let mut ti = TextInput::new();

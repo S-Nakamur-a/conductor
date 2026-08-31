@@ -7,21 +7,21 @@ use super::index::SymbolIndex;
 use super::model::{Scope, Symbol, SymbolKind};
 
 #[test]
-fn test_symbol_index_new() {
+fn a_fresh_index_is_unavailable_until_it_is_built() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     assert!(!idx.is_available());
     assert_eq!(idx.root(), PathBuf::from("/tmp"));
 }
 
 #[test]
-fn test_find_definitions_empty() {
+fn an_unbuilt_index_finds_no_definitions() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     let results = idx.find_definitions("foo", std::path::Path::new(""));
     assert!(results.is_empty());
 }
 
 #[test]
-fn test_extract_symbols_from_rust_source() {
+fn every_top_level_rust_item_kind_is_extracted() {
     let source = r#"
 pub fn hello_world() {
     println!("hello");
@@ -99,7 +99,7 @@ macro_rules! my_macro {
 }
 
 #[test]
-fn test_find_definitions_filters_fields() {
+fn fields_are_not_offered_as_definitions() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     {
         let mut data = idx.data.lock().unwrap();
@@ -249,7 +249,7 @@ fn find_references_defers_parsing_to_files_that_match() {
 }
 
 #[test]
-fn test_find_implementations() {
+fn find_implementations_matches_the_impl_symbol() {
     let idx = SymbolIndex::new(PathBuf::from("/tmp"));
     {
         let mut data = idx.data.lock().unwrap();

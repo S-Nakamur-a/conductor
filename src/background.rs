@@ -96,7 +96,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_poll_single() {
+    fn poll_yields_the_value_the_worker_sent() {
         let mut op: BackgroundOp<i32> = BackgroundOp::default();
         assert!(!op.is_running());
         assert!(op.poll().is_none());
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn test_poll_all() {
+    fn poll_all_drains_every_value_at_once() {
         let mut op: BackgroundOp<i32> = BackgroundOp::default();
         op.start(|tx| {
             for i in 0..5 {
@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear() {
+    fn clear_forgets_a_running_operation() {
         let mut op: BackgroundOp<i32> = BackgroundOp::default();
         op.start(|tx| {
             tx.send(1).unwrap();

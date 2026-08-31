@@ -73,7 +73,7 @@ fn base_error(dir: &std::path::Path, base: &str) -> Option<String> {
 }
 
 #[test]
-fn test_inline_segments_populated_for_replace() {
+fn a_replaced_line_carries_inline_segments() {
     let old = "hello world\n";
     let new = "hello rust\n";
     let diff = TextDiff::from_lines(old, new);
@@ -95,7 +95,7 @@ fn test_inline_segments_populated_for_replace() {
 /// これらは同じファイルを指すので、blob の内容が同一なら compute_diff_range
 /// はこれらを除外すべきである。
 #[test]
-fn test_case_only_rename_filtered_out() {
+fn a_case_only_rename_is_not_shown_as_a_change() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -150,7 +150,7 @@ fn test_case_only_rename_filtered_out() {
 
 /// 内容変更を伴う大文字小文字リネームはフィルタで除外されないことを検証する。
 #[test]
-fn test_case_rename_with_content_change_kept() {
+fn a_case_rename_with_edits_is_still_shown() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -1004,7 +1004,7 @@ fn fs_ignores_case(dir: &std::path::Path) -> bool {
 // ため。実行時に return すると、検証していないのに緑になる。
 #[cfg(target_os = "macos")]
 #[test]
-fn test_case_colliding_entry_not_reported_as_deleted() {
+fn a_case_colliding_entry_is_not_reported_as_deleted() {
     let dir = tempfile::tempdir().unwrap();
     if !fs_ignores_case(dir.path()) {
         eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");

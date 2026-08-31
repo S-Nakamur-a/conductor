@@ -15,7 +15,7 @@ fn make_match(file_path: &str, line_number: usize, content: &str) -> GrepMatch {
 }
 
 #[test]
-fn test_build_tree_structure() {
+fn matches_are_grouped_under_their_directory_and_file() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search_text()"),
         make_match("src/app.rs", 108, "let result = search()"),
@@ -61,7 +61,7 @@ fn test_build_tree_structure() {
 }
 
 #[test]
-fn test_collapse_dir_hides_children() {
+fn collapsing_a_directory_hides_its_files() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -89,7 +89,7 @@ fn test_collapse_dir_hides_children() {
 }
 
 #[test]
-fn test_collapse_file_hides_matches() {
+fn collapsing_a_file_hides_its_matches() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -112,7 +112,7 @@ fn test_collapse_file_hides_matches() {
 }
 
 #[test]
-fn test_next_sibling_skips_collapsed() {
+fn next_sibling_steps_over_a_collapsed_subtree() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),
@@ -134,14 +134,14 @@ fn test_next_sibling_skips_collapsed() {
 }
 
 #[test]
-fn test_empty_matches() {
+fn no_matches_produces_an_empty_tree() {
     let mut tree = SearchResultTree::build(&[]);
     assert_eq!(tree.match_count(), 0);
     assert_eq!(tree.visible_rows().len(), 0);
 }
 
 #[test]
-fn test_root_level_files() {
+fn files_at_the_root_need_no_directory_row() {
     let matches = vec![
         make_match("README.md", 5, "search"),
         make_match("Cargo.toml", 10, "search"),
@@ -163,7 +163,7 @@ fn test_root_level_files() {
 }
 
 #[test]
-fn test_match_counts() {
+fn each_row_counts_the_matches_below_it() {
     let matches = vec![
         make_match("src/app.rs", 42, "fn search()"),
         make_match("src/app.rs", 108, "search()"),

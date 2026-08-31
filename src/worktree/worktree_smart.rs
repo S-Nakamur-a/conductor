@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_plain_json() {
+    fn bare_json_parses() {
         let raw = r#"{"branch": "feature/add-login", "prompt": "Add login page"}"#;
         let result = parse_smart_gen_result(raw).unwrap();
         assert_eq!(result.branch, "feature/add-login");
@@ -282,14 +282,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_markdown_fenced_json() {
+    fn json_inside_a_markdown_fence_parses() {
         let raw = "```json\n{\"branch\": \"fix/bug\", \"prompt\": \"Fix bug\"}\n```";
         let result = parse_smart_gen_result(raw).unwrap();
         assert_eq!(result.branch, "fix/bug");
     }
 
     #[test]
-    fn test_parse_json_with_surrounding_text() {
+    fn json_wrapped_in_prose_parses() {
         let raw = r#"Here is the result:
 {"branch": "feature/smart-parse", "prompt": "Implement smart parsing"}
 Hope this helps!"#;
@@ -299,7 +299,7 @@ Hope this helps!"#;
     }
 
     #[test]
-    fn test_parse_json_with_preamble_only() {
+    fn json_after_a_preamble_parses() {
         let raw = r#"Now I have full understanding. The result is: {"branch": "fix/json-parse", "prompt": "Fix JSON parsing"}"#;
         let result = parse_smart_gen_result(raw).unwrap();
         assert_eq!(result.branch, "fix/json-parse");
