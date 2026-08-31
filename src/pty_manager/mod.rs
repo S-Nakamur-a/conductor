@@ -6,12 +6,8 @@
 //! 各セッションは実際の疑似端末に支えられ、バックグラウンドの reader スレッドが
 //! 出力を有界の行バッファへ取り込む。
 //!
-//! このモジュールは PtySession/PtyManager 型と、小さなライフサイクルメソッド
-//! (構築・アクティブ化・削除) を持つ。それ以外の振る舞いは責務ごとに以下の
-//! サブモジュールへ分割している: [spawn] (Claude/Shell/Editor プロセスの起動)、
-//! [io] (入力の書き込みとスクロールイベントの転送)、[screen] (vt100 アクセス、
-//! リサイズ/リフロー、入力待ち検出)、[reader] (バックグラウンド reader スレッド)、
-//! [locale] (UTF-8 ロケール/チャンク分割ヘルパー)。
+//! ここには PtySession/PtyManager 型とライフサイクルメソッドだけを置き、
+//! それ以外の振る舞いは責務ごとにサブモジュールへ分割している。
 
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
@@ -50,14 +46,11 @@ const MAX_RAW_HISTORY_BYTES: usize = 512 * 1024;
 /// PTY セッション内で動いているプロセスの種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionKind {
-    /// claude CLI セッション (Claude Code)。
     ClaudeCode,
-    /// 対話型シェルセッション (bash、zsh、fish など)。
     Shell,
     /// 単一ファイルに対して起動する使い捨ての外部エディタ ($VISUAL / $EDITOR)。
-    /// 永続的な Claude/Shell パネルと異なり一時的な存在で、ユーザーが編集している
-    /// 間だけ生存し、エディタプロセスの終了とともに破棄される。Claude 出力の
-    /// スキャナ (waiting/active 検出) の対象外。
+    /// エディタプロセスの終了とともに破棄され、Claude 出力のスキャナ
+    /// (waiting/active 検出) の対象外。
     Editor,
 }
 
@@ -65,15 +58,12 @@ pub enum SessionKind {
 
 /// 対応する reader/writer ハンドルを持つ単一の PTY セッション。
 pub struct PtySession {
-    /// 一意な識別子 (UUID v4)。
+    /// UUID v4。
     pub id: String,
-    /// このセッションの人間可読なラベル (例: "Auth logic implementation")。
+    /// 人間可読なラベル (例: "Auth logic implementation")。
     pub label: String,
-    /// 動いているプロセスの種類。
     pub kind: SessionKind,
-    /// このセッションが紐づく worktree 名。
     pub worktree: String,
-    /// このセッションを起動した作業ディレクトリ。
     pub working_dir: PathBuf,
     /// このパネルを支える Claude Code セッション id (プロジェクトディレクトリ配下の
     /// <id>.jsonl)。判明している場合のみ設定する。ClaudeCode セッションでは、
@@ -89,27 +79,20 @@ pub struct PtySession {
     /// 始まっていたログを後続と誤認しないための下限として使う (古いセッションを
     /// --resume した直後は pin したログの mtime が何日も前になりうる)。
     pub spawned_at: std::time::SystemTime,
-    /// このセッションが現在表示中の(アクティブな)セッションかどうか。
     pub is_active: bool,
 
     // PTY のハンドル
-    /// PTY のマスター側。リサイズ操作に使う。
     master: Box<dyn portable_pty::MasterPty + Send>,
-    /// PTY へ入力を送るための writer ハンドル。
-    /// reader スレッドと共有し、端末クエリ (カーソル位置レポートなど) へ
-    /// 最小レイテンシで応答できるようにしている。
+    /// reader スレッドと共有する。端末クエリ (カーソル位置レポートなど) へ
+    /// 最小レイテンシで応答するため。
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    /// PTY 内で起動した子プロセス。
     child: Box<dyn portable_pty::Child + Send + Sync>,
 
     // 出力バッファ (リーダースレッドと共有)
-    /// キャプチャした出力の行データ。バックグラウンドの reader スレッドと共有する。
     output_buffer: Arc<Mutex<Vec<String>>>,
-    /// 現在保持している最大行数。
     max_buffer_lines: usize,
 
     // vt100 のターミナルエミュレータ
-    /// 正しい端末描画のため PTY の生バイトを処理する vt100 パーサ。
     screen: Arc<Mutex<vt100::Parser>>,
     /// 追記のみ(有界)の PTY 生出力バイト履歴。reader スレッドと共有する。
     /// vt100 自体は既存内容をリフローしないため、リサイズ時にこの履歴を
@@ -128,7 +111,7 @@ pub struct PtySession {
     raw_history: Option<Arc<Mutex<VecDeque<u8>>>>,
 
     // 入力待ちの検出
-    /// 直近に PTY 出力を受け取った時刻。reader スレッドと共有する。
+    /// reader スレッドと共有する。
     pub last_output_time: Arc<Mutex<Instant>>,
 
     // 代替スクリーンの検出
@@ -137,10 +120,9 @@ pub struct PtySession {
     /// 促す no-op リサイズ(SIGWINCH)を送れる。
     pub alt_screen_entered: Arc<AtomicBool>,
 
-    /// 定期的な SIGWINCH ナッジを送り続ける締め切り時刻。
     /// メインループが alt_screen_entered を最初に観測したときに設定する。
     alt_screen_nudge_until: Option<Instant>,
-    /// 直近に送った SIGWINCH ナッジの時刻。スロットリングに使う。
+    /// スロットリング用。
     last_nudge_time: Option<Instant>,
 }
 
@@ -150,12 +132,9 @@ pub struct PtySession {
 pub struct PtyManager {
     pty_system: NativePtySystem,
     sessions: Vec<PtySession>,
-    /// reader スレッドと共有するバッファ上限ハンドルの並行ベクタ。
-    /// 各要素は sessions の同じインデックスのセッションに対応する。
+    /// sessions と同じインデックスで対応する。reader スレッドと共有する。
     buffer_limits: Vec<Arc<Mutex<usize>>>,
-    /// アクティブ(フォアグラウンド)セッションのスクロールバック行数。
     active_scrollback: usize,
-    /// 非アクティブ(バックグラウンド)セッションのスクロールバック行数。
     inactive_scrollback: usize,
     /// 新しい PTY 出力が届くと reader スレッドがセットするフラグ。
     /// メインループはこれを見て poll のタイムアウトを飛ばし即座に描画する。
@@ -163,7 +142,6 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
-    /// 指定したスクロールバック上限で、セッションを持たない新しい PtyManager を作る。
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
             pty_system: NativePtySystem::default(),

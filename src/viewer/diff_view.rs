@@ -193,7 +193,6 @@ impl ViewerState {
         self.summary_scroll = 0;
     }
 
-    /// viewer が現在 summary 疑似ファイルを表示しているかどうか。
     pub fn is_summary(&self) -> bool {
         self.show_summary
     }

@@ -283,10 +283,8 @@ impl GitEngine {
         Ok(wt_path)
     }
 
-    /// 名前で worktree エントリを、有効かどうかに関わらず強制的に
-    /// 整理する。ベストエフォート: エラーは黙って無視する(エントリが
-    /// 存在しないこともある)。新しい worktree を作成する前に、残って
-    /// いるエントリを片付けるために使う。
+    /// ベストエフォート。エントリが無いこともあるのでエラーは黙って捨てる。
+    /// 新しい worktree を作る前の後始末に使う。
     fn force_prune_worktree_entry(&self, name: &str) {
         if let Ok(wt) = self.repo.find_worktree(name) {
             let _ = wt.prune(Some(

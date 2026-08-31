@@ -69,10 +69,8 @@ impl KeyMap {
         (KeyMap { loaded }, warnings)
     }
 
-    /// あるコンテキストのアクティブなレイヤーチェーン: そのコンテキスト自身の
-    /// レイヤー（存在し、かつ Global でない場合）を先に、その後に常時有効な
-    /// グローバルレイヤーを続ける。これは、suite が呼び出し側に組み立てさせる
-    /// イベントごとのスタックである。
+    /// そのコンテキスト自身のレイヤーを先に、常時有効なグローバルレイヤーを後に。
+    /// suite が呼び出し側に組み立てさせるイベントごとのスタック。
     fn chain(&self, context: KeyContext) -> Vec<&Keymap<Action>> {
         let global = self.loaded.global();
         if context == KeyContext::Global {
@@ -159,10 +157,8 @@ impl KeyMap {
     }
 }
 
-/// ユーザの [keybinds.layers.<name>] のうち、どの KeyContext の名前にも
-/// 一致しないものについて警告する — そのバインディングはマージはされるが
-/// 決して参照されない。ローダが常に注入する空の GLOBAL_LAYER はスキップ
-/// されるので、本当に未知で空でない名前付きレイヤーだけが警告になる。
+/// どの KeyContext 名にも一致しないレイヤーは、マージはされるが決して参照されない。
+/// ローダが常に注入する空の GLOBAL_LAYER は対象外。
 fn warn_unknown_layers(overlay: &Loaded<Action>, warnings: &mut Vec<KeybindWarning>) {
     for (name, layer) in &overlay.layers {
         if name == keymap_suite::GLOBAL_LAYER || layer.is_empty() {
@@ -176,10 +172,8 @@ fn warn_unknown_layers(overlay: &Loaded<Action>, warnings: &mut Vec<KeybindWarni
     }
 }
 
-/// ユーザの [keybinds] テーブルを keymap-suite のオーバーレイにパースする。
-/// テーブルが空かパースできない場合は None（上書きなし）を返す。パース失敗は
-/// KeybindWarning::InvalidConfig として記録し、アプリがユーザにカスタマイズが
-/// 無視されたことを伝えられるようにする。
+/// 空かパースできなければ None (上書きなし)。失敗は KeybindWarning::InvalidConfig に
+/// 記録し、カスタマイズが無視されたことをユーザに伝えられるようにする。
 fn parse_user_keybinds(
     user: &toml::Table,
     warnings: &mut Vec<KeybindWarning>,

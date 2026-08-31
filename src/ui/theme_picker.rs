@@ -14,7 +14,7 @@ use crate::theme::Theme;
 
 /// テーマピッカーオーバーレイを画面中央のモーダルポップアップとして描画する。
 pub fn render_theme_picker_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let themes = &app.overlays.theme_picker.themes;
 
     // すべてのテーマが余裕を持って収まるようポップアップのサイズを決める。

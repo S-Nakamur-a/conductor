@@ -9,10 +9,8 @@
 use super::*;
 use std::fs;
 
-/// コミット済みファイル1つでリポジトリを作り、classify() が区別すべき
-/// 全組み合わせをカバーする6ファイルを追加で配置する。さらに .gitignore
-/// で ignored と宣言した build/ ディレクトリ(prefix 継承を確認するため
-/// ネストしたファイルも含む)を用意する。リポジトリのルートパスを返す。
+/// classify() が区別すべき全組み合わせ 6 ファイルと、.gitignore で ignored にした build/
+/// (prefix 継承を見るためネストしたファイル込み) を置き、リポジトリのルートを返す。
 fn build_fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let root = tmp.path();
@@ -130,62 +128,26 @@ fn git_status_map_classify_sibling_sharing_a_prefix_is_not_ignored() {
 }
 
 #[test]
-fn git_status_map_classify_untouched_file_is_tracked() {
+fn classify_reports_the_state_each_fixture_was_built_into() {
     let tmp = build_fixture();
     let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("untouched.txt"), TreeGitState::Tracked);
+    // build/ は libgit2 が 1 エントリに折りたたむ (実測)。ディレクトリ側の
+    // キーは末尾スラッシュを持つのに FileTreeEntry::path は持たないので、
+    // 両方の綴りを見て、かつ祖先のプレフィックスを遡らないと通らない。
+    for (path, want) in [
+        ("untouched.txt", TreeGitState::Tracked),
+        ("staged_only.txt", TreeGitState::Tracked),
+        ("unstaged_only.txt", TreeGitState::Tracked),
+        ("both.txt", TreeGitState::Tracked),
+        ("untracked.txt", TreeGitState::Untracked),
+        ("build", TreeGitState::Ignored),
+        ("build/deep/x.txt", TreeGitState::Ignored),
+    ] {
+        assert_eq!(map.classify(path), want, "{path}");
+    }
 }
 
-#[test]
-fn git_status_map_classify_staged_only_file_is_tracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("staged_only.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_unstaged_only_file_is_tracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("unstaged_only.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_file_staged_and_then_edited_is_tracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("both.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_never_added_file_is_untracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("untracked.txt"), TreeGitState::Untracked);
-}
-
-#[test]
-fn git_status_map_classify_gitignored_dir_itself_is_ignored() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    // FileTreeEntry::path はディレクトリであっても末尾スラッシュを
-    // 一切持たないが、libgit2 の折りたたまれた ignored ディレクトリの
-    // キー("build/")は持つ — classify() が両方の形式をチェックして
-    // いる場合のみこのテストは通る。
-    assert_eq!(map.classify("build"), TreeGitState::Ignored);
-}
-
-#[test]
-fn git_status_map_classify_file_under_gitignored_dir_inherits_ignored_via_prefix() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    // libgit2 は build/deep/x.txt を個別に報告するのではなく、build/ を
-    // 1つの status エントリに折りたたむ(実測で確認済み)。そのため
-    // classify() が完全一致のルックアップではなく実際に祖先の
-    // プレフィックスを遡っている場合のみこのテストは通る。
-    assert_eq!(map.classify("build/deep/x.txt"), TreeGitState::Ignored);
-}
-
+#[cfg(target_os = "macos")]
 fn fs_ignores_case(dir: &Path) -> bool {
     let probe = dir.join("CaseProbe");
     fs::write(&probe, b"").unwrap();
@@ -194,6 +156,7 @@ fn fs_ignores_case(dir: &Path) -> bool {
     ignores
 }
 
+#[cfg(target_os = "macos")]
 fn build_case_colliding_fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let repo = git2::Repository::init(tmp.path()).expect("init repo");
@@ -220,6 +183,10 @@ fn build_case_colliding_fixture() -> tempfile::TempDir {
 
 /// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
 /// git 本体は clean と報告する。
+// 大文字小文字を区別しないファイルシステムでしか再現しない。cfg で外して
+// あるのは、走らない環境では『テストが無い』ことが一覧から見えるようにする
+// ため。実行時に return すると、検証していないのに緑になる。
+#[cfg(target_os = "macos")]
 #[test]
 fn git_status_map_case_colliding_entry_is_not_deleted() {
     let tmp = build_case_colliding_fixture();

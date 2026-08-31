@@ -55,7 +55,7 @@ pub(crate) fn run_loop(
         // その終了は毎周ここで検出する: 子プロセスが消えていたらパネルを畳み、
         // Explorer/Viewer のレイアウトを戻し、編集されたファイルを読み直す。
         if app.poll_editor_exit() {
-            app.dirty.mark_all();
+            app.request_redraw();
         }
 
         loop_state.note_layout_change(app);

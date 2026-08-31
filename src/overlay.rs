@@ -1,10 +1,4 @@
-//! オーバーレイの状態を表す型。
-//!
-//! オーバーレイのポップアップごとに専用の状態構造体を持つ。整理のためと
-//! フィールド数を減らすために、一枚岩の App 構造体から切り出したもの。
-//!
-//! どのオーバーレイが表示中かは ActiveOverlay 列挙型が持つ。以前は各構造体に
-//! active: bool を持たせていた。
+//! オーバーレイの状態。表示中のものは [ActiveOverlay] が 1 つだけ指す。
 
 use crate::background::BackgroundOp;
 use crate::claude_sessions::ResumableSession;
@@ -74,7 +68,6 @@ pub struct RevidereConfirmOverlay {
     pub artifact: RevidereArtifact,
 }
 
-/// テーマピッカーのオーバーレイ状態。
 #[derive(Default)]
 pub struct ThemePickerOverlay {
     /// 選べるテーマ名を表示順に並べたもの (Theme::all_names を参照)。
@@ -85,7 +78,6 @@ pub struct ThemePickerOverlay {
     pub original: String,
 }
 
-/// ブランチ切り替えのオーバーレイ状態。
 #[derive(Default)]
 pub struct SwitchBranchOverlay {
     pub branches: Vec<String>,
@@ -93,7 +85,6 @@ pub struct SwitchBranchOverlay {
     pub filter: TextInput,
 }
 
-/// ブランチ grab のオーバーレイ状態。
 #[derive(Default)]
 pub struct GrabOverlay {
     pub branches: Vec<String>,
@@ -101,7 +92,6 @@ pub struct GrabOverlay {
     pub filter: TextInput,
 }
 
-/// チェリーピックのオーバーレイ状態。
 #[derive(Default)]
 pub struct CherryPickOverlay {
     pub source_branch: String,
@@ -109,13 +99,11 @@ pub struct CherryPickOverlay {
     pub selected: usize,
 }
 
-/// prune のオーバーレイ状態。
 #[derive(Default)]
 pub struct PruneOverlay {
     pub stale: Vec<String>,
 }
 
-/// セッション再開のオーバーレイ状態。
 #[derive(Default)]
 pub struct ResumeSessionOverlay {
     pub sessions: Vec<ResumableSession>,
@@ -124,7 +112,6 @@ pub struct ResumeSessionOverlay {
     pub all_projects: bool,
 }
 
-/// grep 全文検索のオーバーレイ状態。
 #[derive(Default)]
 pub struct GrepSearchOverlay {
     pub query: TextInput,
@@ -149,14 +136,12 @@ pub struct GrepSearchOverlay {
     pub input_focused: bool,
 }
 
-/// コマンドパレットのオーバーレイ状態。
 #[derive(Default)]
 pub struct CommandPaletteOverlay {
     pub filter: TextInput,
     pub selected: usize,
 }
 
-/// セッション履歴のオーバーレイ状態。
 #[derive(Default)]
 pub struct HistoryOverlay {
     pub records: Vec<SessionHistory>,
@@ -165,13 +150,11 @@ pub struct HistoryOverlay {
     pub search_active: bool,
 }
 
-/// リポジトリ選択のオーバーレイ状態。
 #[derive(Default)]
 pub struct RepoSelectorOverlay {
     pub selected: usize,
 }
 
-/// リポジトリを開くためのパス入力のオーバーレイ状態。
 #[derive(Default)]
 pub struct OpenRepoOverlay {
     pub buffer: TextInput,
@@ -438,7 +421,7 @@ pub struct HoverRefs {
 /// ポップアップまで移動してクリックできるように)。
 #[derive(Default)]
 pub struct HoverInfoOverlay {
-    pub info: Option<crate::hover_info::HoverInfo>,
+    pub info: Option<crate::viewer::hover_info::HoverInfo>,
     pub pending: Option<HoverCandidate>,
     pub anchor_row: u16,
     pub anchor_col: u16,
@@ -450,7 +433,7 @@ pub struct HoverInfoOverlay {
     /// 毎フレームの処理で落とされる。
     pub shown_file: Option<String>,
     /// info が説明しているシンボルのソース行 (1 始まり)。ポップアップが
-    /// 表示されているあいだ、ClickTracker::hover_symbol とは独立に描画側が
+    /// 表示されているあいだ、PointerState::hover_symbol とは独立に描画側が
     /// そのシンボルをハイライトし続けられるようにする。マウスは既にそこから
     /// 外れているかもしれないし、ポップアップの離脱猶予の中にいるかもしれないが、
     /// 下線そのものにはそうした猶予が無いため。
@@ -470,7 +453,6 @@ pub struct HoverInfoOverlay {
 }
 
 impl HoverInfoOverlay {
-    /// ホバーのモーダル階層のいずれかが表示中かどうか。
     pub fn is_shown(&self) -> bool {
         self.info.is_some()
     }

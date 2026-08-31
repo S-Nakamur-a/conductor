@@ -5,10 +5,11 @@
 //!
 //! [ViewerState] とそのサブ構造体は [state] にある。振る舞いは関心事ごとに
 //! 他のサブモジュールへ分割されている（[content] はファイルを開く処理、
-//! [tree] はファイルツリーの走査・展開、[search] はファイル内検索とファイル名検索、
+//! [search] はファイル内検索とファイル名検索、
 //! [diff_view] は unified diff 表示、[highlight] は syntect によるシンタックスハイライト、
 //! [selection] はガター行選択、[fold] はコードブロックの折りたたみ、
-//! [tabs] は複数ファイルを同時に開くためのタブ）。
+//! [tabs] は複数ファイルを同時に開くためのタブ）。ファイルツリーの走査・展開は
+//! [crate::explorer::tree] にある。
 
 mod content;
 mod diff_view;
@@ -20,10 +21,21 @@ mod search;
 mod selection;
 mod state;
 mod tabs;
-mod tree;
+
+pub mod code_nav;
+pub mod code_nav_state;
+pub mod comment_actions;
+pub mod hover_info;
+pub mod input;
+pub mod jump_history;
+pub mod media;
+pub mod mouse;
+mod panel;
+pub mod render;
 
 pub use file_tree::FileTreeEntry;
 pub use fold::{FoldDepth, FoldRule, FoldState};
+pub use panel::{render_hover_overlay, render_panel};
 // revidere の 2 列ビューは開いているファイルではなく diff の行を直接ハイライト
 // するので、ViewerState を経由せず構文定義だけを引く。拡張子のエイリアス表を
 // 2 つ持つと、片方だけ直したときに同じファイルが場所によって色付いたり

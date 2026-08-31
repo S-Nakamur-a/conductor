@@ -83,7 +83,6 @@ impl RefreshPipe {
         })
     }
 
-    /// 次のイベントをノンブロッキングで取り出す。
     pub fn poll(&self) -> Option<RefreshEvent> {
         self.rx.try_recv().ok()
     }
@@ -263,10 +262,8 @@ impl Drop for RefreshPipe {
 mod tests {
     use super::*;
 
-    /// mcp-serve のツールハンドラと同じやり方で FIFO へ書く。自前の複製ではなく
-    /// 本物の signal_refresh を通す。ここで複製してしまうと、signal_refresh
-    /// 自体が壊れてもこれらのテストは通ったままになる。それは本番で書き込み系の
-    /// mcp-serve ツールがどれも呼んでいる、まさにその関数なのに。
+    /// 自前の複製ではなく本物の signal_refresh を通す。複製すると、本番で書き込み系の
+    /// mcp-serve ツールが全部呼んでいるその関数が壊れてもテストが通ってしまう。
     fn write_to_pipe(pipe_path: &Path) {
         super::signal_refresh(pipe_path);
     }

@@ -3,44 +3,34 @@
 //! このモジュールはエントリポイント（handle_mouse_event）と、各パネル別サブ
 //! モジュールで共有するヒットテスト用ジオメトリ（ClickGeometry/Column）、
 //! ダブルクリック判定のヘルパーを持つ。各サブモジュールはレイアウトの1領域を
-//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、[worktree_panel]、
-//! [explorer_panel]、[viewer_panel]、[terminal_panel]、そして [scroll]
-//! （全パネル共通のホイールスクロール）。
+//! 担当する: [bars]（通知バー/worktreeバー/タイトルバー）、そして
+//! [scroll]（全パネル共通のホイールスクロール）。
+//! Viewer カラムのクリック処理は [crate::viewer::mouse]、Explorer カラムは
+//! [crate::explorer::mouse]、Worktree カラムは [crate::worktree::mouse]、
+//! Terminal カラムは [crate::terminal::mouse] にある。
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::{App, Focus};
 use crate::overlay::ActiveOverlay;
-
-use super::explorer::open_viewer_comment;
+use crate::viewer::comment_actions::open_viewer_comment;
 
 mod bars;
-mod explorer_panel;
-mod menu;
 mod scroll;
-mod terminal_panel;
-mod viewer_panel;
-mod worktree_panel;
 
 #[cfg(test)]
 mod tests;
 
+use crate::terminal::mouse::handle_terminal_column_click;
+use crate::viewer::mouse::handle_viewer_column_click;
+use crate::worktree::mouse::handle_worktree_column_click;
 use bars::{handle_title_bar_click, handle_wtbar_click, wtbar_page_step};
-use explorer_panel::{diff_list_row_at, explorer_tree_row_at, handle_explorer_column_click};
 use scroll::handle_mouse_scroll;
-use terminal_panel::handle_terminal_column_click;
-use viewer_panel::handle_viewer_column_click;
-use worktree_panel::handle_worktree_column_click;
 
-// event::viewer のキーボードトグルがマウスのマーカー列クリックと全く同じ
-// スレッドフォーカスのロジックを共有できるよう再エクスポートしている。
-pub(in crate::event) use viewer_panel::toggle_inline_thread_at;
-
-/// Viewer のタブ行（ブロック内側の先頭行）の上か。タブ行を描いていない
-/// フレームではクリック領域が空なので false になり、ホイールは本文の
+/// タブ行を描いていないフレームでは領域が空なので false になり、ホイールは本文の
 /// スクロールへ落ちる。
 fn on_viewer_tab_row(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
-    !app.viewer_state.tab_row_hits.is_empty()
+    !app.viewer.tab_row_hits.is_empty()
         && row == geom.main_area.y + 1
         && matches!(geom.column_at(col), Column::Viewer)
 }
@@ -60,45 +50,19 @@ fn terminal_tab_row_at(col: u16, row: u16, geom: &ClickGeometry) -> Option<bool>
     }
 }
 
-/// 2回のクリックをダブルクリックとみなす最大間隔（ミリ秒）。
-const DOUBLE_CLICK_MS: u128 = 400;
-
-/// now にクリックを記録し、last に保存されている前回のクリックとダブル
-/// クリックを構成するか（つまり間隔が [DOUBLE_CLICK_MS] 未満か）を返す。
-/// *last を now に更新する。
-fn register_double_click(last: &mut std::time::Instant, now: std::time::Instant) -> bool {
-    let is_double = now.duration_since(*last).as_millis() < DOUBLE_CLICK_MS;
-    *last = now;
-    is_double
-}
-
-/// [register_double_click] と同様だが、さらにクリックが前回と同じ idx に
-/// 当たっていることを要求する。*last と *last_idx の両方を更新する。
-fn register_double_click_on(
-    last: &mut std::time::Instant,
-    last_idx: &mut usize,
-    idx: usize,
-    now: std::time::Instant,
-) -> bool {
-    let same_idx = *last_idx == idx;
-    *last_idx = idx;
-    // register_double_click は必ず先に実行するので、*last はどちらにせよ更新される。
-    register_double_click(last, now) && same_idx
-}
-
 /// 画面上の行オフセット（inner_yからの相対値）を、インラインスレッド行を
 /// 考慮した1始まりのファイル行番号に解決する。画面行マッピングが無い場合は
 /// 単純な算術にフォールバックする。
-fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
-    let map = &app.viewer_state.content.screen_row_map;
+pub(crate) fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
+    let map = &app.viewer.content.screen_row_map;
     if !map.is_empty() {
         match map.get(screen_offset) {
             Some(crate::viewer::ScreenRow::Code(line)) => Some(*line),
             _ => None,
         }
     } else {
-        let line_1 = app.viewer_state.content.file_scroll + screen_offset + 1;
-        if line_1 <= app.viewer_state.content.file_content.len() {
+        let line_1 = app.viewer.content.file_scroll + screen_offset + 1;
+        if line_1 <= app.viewer.content.file_content.len() {
             Some(line_1)
         } else {
             None
@@ -113,22 +77,12 @@ fn resolve_screen_line(app: &App, screen_offset: usize) -> Option<usize> {
 /// （隙間・マーカー・区切り線・その右の空白）をまとめて受ける。行番号そのもの
 /// はコメント作成に残す。ホバーの罫線とクリックが同じ範囲を見るように、判定は
 /// ここにしかない。
-pub(super) fn in_fold_zone(col: u16, gutter_end: u16) -> bool {
+pub(crate) fn in_fold_zone(col: u16, gutter_end: u16) -> bool {
     col < gutter_end && col + 5 >= gutter_end
 }
 
-/// 何らかのオーバーレイ/モーダルがアクティブな場合に true を返す。この場合は
-/// マウスイベントを全て消費し、背景のパネルに届かないようにする。
-/// マウスイベントをインタラクティブなホバーモーダルのスタックに対して振り分ける。
-/// イベントを消費した場合は true を返す（呼び出し側はその場合早期returnする）。
-///
-/// - N refs への左クリック → 参照リストを開く（ポップアップを固定する）。
-/// - リストの行への左クリック → そのコードプレビューを開く。
-/// - プレビューへの左クリック → その場所へジャンプし、スタック全体を閉じる。
-/// - ポップアップの余白への左クリック → そのまま維持する（消費する）。
-/// - 固定中に他の場所への左クリック → 閉じる（クリックは飲み込む）。
-/// - 任意の部分の上でマウスを動かす → 生存を維持する（一時的な猶予ウィンドウを解除）。
-/// - リスト上でのスクロール → 選択を移動する。
+/// ホバーのモーダル階層へマウスを配る。消費したら true を返し、呼び出し側は
+/// そこで打ち切って背景のパネルに届かないようにする。
 fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.code_nav.hover_info.is_shown() {
         return false;
@@ -197,7 +151,7 @@ fn handle_hover_modal_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             // 非Movedクリアがそれを消してくれる）。
             if pinned {
                 app.clear_hover();
-                app.dirty.mark_all();
+                app.request_redraw();
                 return true;
             }
             false
@@ -241,38 +195,37 @@ fn has_blocking_overlay(app: &App) -> bool {
         || app.review_state.input_mode != ReviewInputMode::Normal
         || app.worktree_mgr.input_mode != WorktreeInputMode::Normal
         || app.overlays.active != ActiveOverlay::None
-        || app.viewer_state.filename_search.filename_search_active
+        || app.viewer.filename_search.filename_search_active
         || app.review_state.search_active
         || app.review_state.template_picker_active
         || app.code_nav.references.active
         || app.code_nav.symbol_action.active
 }
 
-/// Changed files パネル右上の revidere 状態チップの上にセル (col, row) があるか。
-///
-/// クリックとホバーの両方がここを通るので、光っている場所と押せる場所は
-/// 構造的にずれない。矩形は描画側と同じ [crate::ui::explorer_panel::revidere_badge_cols]
-/// から引く。埋め込みエディタが出ている間は Explorer カラムがその PTY に隠れる
-/// ので、チップも無いものとして扱う。
+/// クリックとホバーの両方がここを通るので、光る場所と押せる場所は構造的にずれない。
+/// 埋め込みエディタが出ている間はチップも無いものとして扱う。
 fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bool {
     if app.editor.is_some()
         || row != geom.explorer_mid_y
-        || app.viewer_state.explorer.explorer_bottom_view
-            != crate::viewer::ExplorerBottomView::DiffList
+        || app.explorer.bottom() != crate::explorer::BottomView::Changes
     {
         return false;
     }
-    crate::ui::explorer_panel::revidere_badge_cols(app, geom.left_end, geom.explorer_w)
-        .is_some_and(|cols| cols.contains(&col))
+    crate::explorer::render::revidere_badge_cols(
+        app.diff_state.files.len(),
+        app.diff_state.error.is_some(),
+        app.config.ui.icon_set(),
+        geom.left_end,
+        geom.explorer_w,
+    )
+    .is_some_and(|cols| cols.contains(&col))
 }
 
-/// 指定した divider が現在マウスリサイズのためにつかめる状態かどうか。パネルが
-/// 最大化されている間は常に不可（列が両端に折りたたまれ、境界の意味が失われるため）。
-/// また、エディタがExplorer+Viewer列を1つのPTYに合体させている間は、Explorer側の
-/// 境界も不可。
+/// 最大化中は列が両端に畳まれて境界の意味が失われるので常に不可。エディタが
+/// Explorer+Viewer を1つの PTY に合体させている間も Explorer 側は不可。
 fn divider_draggable(app: &App, divider: crate::app::Divider) -> bool {
     use crate::app::Divider;
-    if app.expanded_panel.is_some() {
+    if app.layout.expanded.is_some() {
         return false;
     }
     if app.editor.is_some() && matches!(divider, Divider::ExplorerViewer | Divider::ExplorerSplit) {
@@ -294,18 +247,20 @@ enum Column {
 /// [handle_mouse_event] の冒頭でレイアウトキャッシュからスナップショットする。
 /// これらの値をまとめておくことで、各カラムのクリックハンドラが長い引数リストを
 /// 取らずに済む。
+///
+/// crate::explorer::mouse からも参照するため crate 全体に公開している。
 #[derive(Debug, Clone, Copy)]
-struct ClickGeometry {
-    main_area: ratatui::layout::Rect,
-    left_w: u16,
-    explorer_w: u16,
-    viewer_w: u16,
-    left_end: u16,
-    explorer_end: u16,
-    viewer_end: u16,
-    explorer_mid_y: u16,
-    terminal_claude_y: u16,
-    terminal_split_y: u16,
+pub(crate) struct ClickGeometry {
+    pub(crate) main_area: ratatui::layout::Rect,
+    pub(crate) left_w: u16,
+    pub(crate) explorer_w: u16,
+    pub(crate) viewer_w: u16,
+    pub(crate) left_end: u16,
+    pub(crate) explorer_end: u16,
+    pub(crate) viewer_end: u16,
+    pub(crate) explorer_mid_y: u16,
+    pub(crate) terminal_claude_y: u16,
+    pub(crate) terminal_split_y: u16,
 }
 
 impl ClickGeometry {
@@ -322,13 +277,8 @@ impl ClickGeometry {
         }
     }
 
-    /// 画面上のセル (col, row) にドラッグ可能なパネル境界があるかをヒットテストする。
-    ///
-    /// 隣接するカラムはそれぞれ自分の枠を描画するため、縦の境界線は2セル分の
-    /// 厚みを持つ線になる（左パネルの右枠が edge - 1、右パネルの左枠が edge）。
-    /// どちらのセルもつかむ対象とみなし、横の境界も同様。縦の境界（カラム境界）と
-    /// 横の境界（カラム内部の分割）が角で重なる場合は、縦の境界を優先する。
-    /// エディタ合体時・最大化時のゲーティングは呼び出し側の責務。
+    /// 隣接する列がそれぞれ自分の枠を描くので、縦の境界は2セルの厚みを持つ。両方を
+    /// つかむ対象とし、角で重なる場合は縦を優先する。合体・最大化の判定は呼び出し側。
     fn divider_at(&self, col: u16, row: u16) -> Option<crate::app::Divider> {
         use crate::app::Divider;
 
@@ -357,9 +307,7 @@ impl ClickGeometry {
         None
     }
 
-    /// 上枠の行にある [<=>] 展開ボタンをヒットテストし、クリックされたボタンの
-    /// パネルを返す（あれば）。呼び出し側は、呼ぶ前にクリックが上枠の行上に
-    /// あることを保証する必要がある。
+    /// クリックが上枠の行にあることは呼び出し側が保証する。
     fn expand_button_at(&self, col: u16) -> Option<Focus> {
         if col < self.left_end && self.left_w >= 7 {
             let btn_start = self.main_area.x + self.left_w - 6;
@@ -379,19 +327,14 @@ impl ClickGeometry {
     }
 }
 
-/// Viewerヘッダーの [Raw|Rendered] トグルへのクリックを処理し、消費したかを返す。
-///
-/// 現在のモードを反転させるのではなく、どちらの半分をクリックしてもそのモードを
-/// そのまま選択する。そのため、既に見えているラベルをクリックしても驚きのある
-/// 動作にはならず、何も起きないだけになる。チップの列はレンダラが使うのと同じ
-/// toggle_segments から取得しており、markdown_toggle_available によるゲーティングも
-/// レンダラと全く同じ — なので画面に出ていないトグルにはクリック対象が存在しない。
+/// 反転ではなく、押した側のモードをそのまま選ぶ。見えているラベルを押しても
+/// 何も起きないだけで済む。列も出す条件もレンダラと同じ関数から引く。
 fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool {
-    if !app.viewer_state.markdown_toggle_available() {
+    if !app.viewer.markdown_toggle_available() {
         return false;
     }
     let viewer_x = geom.explorer_end;
-    let Some(seg) = crate::ui::viewer_panel::toggle_segments(viewer_x, geom.viewer_w) else {
+    let Some(seg) = crate::viewer::render::toggle_segments(viewer_x, geom.viewer_w) else {
         return false;
     };
     let want_rendered = if seg.raw.contains(&col) {
@@ -401,26 +344,22 @@ fn handle_md_toggle_click(app: &mut App, col: u16, geom: &ClickGeometry) -> bool
     } else {
         return false;
     };
-    if app.viewer_state.md_rendered != want_rendered {
+    if app.viewer.md_rendered != want_rendered {
         app.cmd_toggle_markdown_render();
     }
     true
 }
 
-/// 1件のマウスイベントを処理し、必要に応じてアプリケーション状態を更新する。
-/// revidere の 2 列ビューのマウス操作。
-///
-/// フォーカスは動かさない。このビューを出るのは Esc だけ、というのが約束で、
-/// 節を選ぼうとしたクリックで画面ごと入れ替わるのはその約束を破る。
-///
-/// 左列は節の選択、右列は diff のスクロール。当たり判定に使う矩形と
-/// 「画面の行 → 節」の対応表は、幅で変わるので描画側が書いている。
+/// フォーカスは動かさない。このビューを出るのは Esc だけという約束を、節を選ぶ
+/// クリックで破らないため。
 fn handle_revidere_mouse(app: &mut App, mouse: MouseEvent) {
     // 総括は 1 列で読むだけの画面。ホイールだけ効かせる。
     if app.revidere.show_overview {
         match mouse.kind {
-            MouseEventKind::ScrollDown => super::revidere::scroll_overview(app, SCROLL_LINES),
-            MouseEventKind::ScrollUp => super::revidere::scroll_overview(app, -SCROLL_LINES),
+            MouseEventKind::ScrollDown => {
+                crate::revidere::input::scroll_overview(app, SCROLL_LINES)
+            }
+            MouseEventKind::ScrollUp => crate::revidere::input::scroll_overview(app, -SCROLL_LINES),
             _ => {}
         }
         return;
@@ -436,15 +375,15 @@ fn handle_revidere_mouse(app: &mut App, mouse: MouseEvent) {
                 return;
             };
             if let Some(idx) = app.revidere.list_rows.get(offset as usize).copied() {
-                super::revidere::select_section(app, idx);
+                crate::revidere::input::select_section(app, idx);
             }
         }
         // 左列のホイールは節を送る。行ではなく節で動かすのは、左列の
         // スクロール位置が選択に従属していて単独では動かせないため。
-        MouseEventKind::ScrollDown if in_list => super::revidere::step_section(app, 1),
-        MouseEventKind::ScrollUp if in_list => super::revidere::step_section(app, -1),
-        MouseEventKind::ScrollDown => super::revidere::scroll_diff(app, SCROLL_LINES),
-        MouseEventKind::ScrollUp => super::revidere::scroll_diff(app, -SCROLL_LINES),
+        MouseEventKind::ScrollDown if in_list => crate::revidere::input::step_section(app, 1),
+        MouseEventKind::ScrollUp if in_list => crate::revidere::input::step_section(app, -1),
+        MouseEventKind::ScrollDown => crate::revidere::input::scroll_diff(app, SCROLL_LINES),
+        MouseEventKind::ScrollUp => crate::revidere::input::scroll_diff(app, -SCROLL_LINES),
         _ => {}
     }
 }
@@ -495,7 +434,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // ポップアップを無効化する: それは今は古くなった行に紐づいていたもの。
     // Movedは下で自分のcandidateを別途管理する。
     if !matches!(mouse.kind, MouseEventKind::Moved) && app.clear_hover() {
-        app.dirty.mark_all();
+        app.request_redraw();
     }
 
     // revidere の 2 列ビューは main_area をアコーディオンとは別の割り方で
@@ -503,7 +442,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
     // ハンドラがフォーカスを移してビューが閉じてしまう。ここで止める。
     // main_area の外 (タイトル・メニュー・worktree ストリップ) はこのビューでも
     // 出ているので、そのまま下へ通す。
-    if app.focus == Focus::Revidere
+    if app.focus.current() == Focus::Revidere
         && main_area.height > 0
         && row >= main_area.y
         && row < main_area.y + main_area.height
@@ -558,10 +497,10 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             app.wtbar.scroll = app.wtbar.scroll.saturating_sub(wtbar_page_step(app));
         }
         MouseEventKind::ScrollDown if on_viewer_tab_row(app, col, row, &geom) => {
-            app.viewer_state.tab_scroll += 1;
+            app.viewer.tab_scroll += 1;
         }
         MouseEventKind::ScrollUp if on_viewer_tab_row(app, col, row, &geom) => {
-            app.viewer_state.tab_scroll = app.viewer_state.tab_scroll.saturating_sub(1);
+            app.viewer.tab_scroll = app.viewer.tab_scroll.saturating_sub(1);
         }
         MouseEventKind::ScrollDown => {
             handle_mouse_scroll(app, col, row, &geom, 3);
@@ -572,11 +511,11 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
         MouseEventKind::ScrollLeft
             // 横スクロール — viewerパネルのみに作用する。
             if col >= explorer_end && col < viewer_end => {
-                app.viewer_state.content.h_scroll = app.viewer_state.content.h_scroll.saturating_sub(4);
+                app.viewer.content.h_scroll = app.viewer.content.h_scroll.saturating_sub(4);
             }
         MouseEventKind::ScrollRight
             if col >= explorer_end && col < viewer_end => {
-                app.viewer_state.scroll_right(4);
+                app.viewer.scroll_right(4);
             }
         MouseEventKind::Down(MouseButton::Left) => {
             // メニューバーを最初にチェックする。理由は、下でworktreeストリップが
@@ -584,7 +523,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // main_areaより上の行を全て「タイトル」として扱ってしまう。メニューバーは
             // 外側クリックでの閉じる処理も持っており、それはどのパネルより先に
             // クリックを見る必要がある。
-            if menu::handle_menu_click(app, col, row) {
+            if crate::menu::mouse::handle_menu_click(app, col, row) {
                 return;
             }
             // worktree/タイトルバーへのクリックを最初に消費する。
@@ -640,7 +579,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
             if row == main_area.y
                 && let Some(target) = geom.expand_button_at(col) {
-                    app.expanded_panel = if app.expanded_panel == Some(target) {
+                    app.layout.expanded = if app.layout.expanded == Some(target) {
                         None
                     } else {
                         Some(target)
@@ -650,7 +589,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
 
             match geom.column_at(col) {
                 Column::Worktree => handle_worktree_column_click(app, row, &geom),
-                Column::Explorer => handle_explorer_column_click(app, col, row, &geom),
+                Column::Explorer => app.explorer_click(col, row),
                 Column::Viewer => handle_viewer_column_click(app, mouse, col, row, &geom),
                 Column::Terminal => handle_terminal_column_click(app, mouse, col, row, &geom),
             }
@@ -665,7 +604,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 return;
             }
             // 進行中のガター範囲選択を、ドラッグ先の行まで延長する。
-            if let Some(anchor) = app.viewer_state.click.gutter_drag_anchor {
+            if let Some(anchor) = app.viewer.click.gutter_drag_anchor {
                 let inner_y = main_area.y + 1;
                 if row >= inner_y && col >= explorer_end && col < viewer_end {
                     let screen_offset = (row - inner_y) as usize;
@@ -675,7 +614,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                         } else {
                             (line, anchor)
                         };
-                        app.viewer_state.selection =
+                        app.viewer.selection =
                             crate::viewer::LineSelection::Selected { start, end };
                     }
                 }
@@ -691,7 +630,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
             // ガターのドラッグを終える: そのための（単一行または範囲の）選択を
             // 確定させ、コメント作成欄を開く。
-            let was_dragging = app.viewer_state.click.gutter_drag_anchor.take().is_some();
+            let was_dragging = app.viewer.click.gutter_drag_anchor.take().is_some();
             if was_dragging {
                 open_viewer_comment(app);
             }
@@ -700,7 +639,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // メニューのホバーを最初にチェックし、メニューが開いている間はイベント
             // 全体を横取りする — 開いているドロップダウンの下にあるパネルが、
             // あたかも到達可能であるかのように光ってはいけない。
-            if menu::handle_menu_hover(app, col, row) {
+            if crate::menu::mouse::handle_menu_hover(app, col, row) {
                 return;
             }
 
@@ -740,29 +679,25 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             // 上、など）は常にNoneになり、これがマウスが離れたときにホバーを
             // クリアするのに必要な処理そのものになる — 「ツリーから離れたか」を
             // 別途チェックする必要はない。
-            let tree_scroll = app.viewer_state.tree.tree_scroll;
-            app.list_hover.explorer_tree
-                .set(explorer_tree_row_at(&geom, tree_scroll, col, row));
+            let (tree_row, changes_row) = app.explorer_hover(col, row);
+            app.list_hover.explorer_tree.set(tree_row);
 
             // revidere の状態チップ。カーソルがそこから外れれば false に戻るので、
             // 離れたときの消灯も同じ 1 行で済む。
             app.revidere.badge_hover = revidere_badge_hit(app, col, row, &geom);
 
-            // Explorerの下半分にある変更ファイル（diff）リストについても同様。
-            let diff_scroll = app.viewer_state.explorer.diff_list_scroll;
-            let diff_banner = app.viewer_state.explorer.explorer_diff_banner_rows;
-            app.list_hover.diff_list
-                .set(diff_list_row_at(&geom, diff_scroll, diff_banner, col, row));
+            // Explorer の下半分、変更ファイル一覧についても同様。
+            app.list_hover.diff_list.set(changes_row);
 
             // viewerパネルのガターハイライト用にホバー行を追跡する。レンダリング
             // 済みmarkdownはガターも行単位のハイライトも描画せず、その行は
             // ソース行でもないので、カーソルがパネルの外にあるかのように下の
             // 「全てクリアする」分岐に入る。
             let inner_y = main_area.y + 1;
-            if !app.viewer_state.is_showing_rendered_markdown() && col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
+            if !app.viewer.is_showing_rendered_markdown() && col >= explorer_end && col < viewer_end && row >= inner_y && row < main_area.y + main_area.height.saturating_sub(1) {
                 let line_offset = (row - inner_y) as usize;
                 let inner_x = explorer_end + 1;
-                let gutter_w = app.viewer_state.gutter_total_width();
+                let gutter_w = app.viewer.gutter_total_width();
                 // コメントマーカー列（左）と2セル分の「+」バッジ列（右）を含める
                 // ことで、カーソルが左マージン全体の上にある間は「+」ボタンが
                 // 光ったまま（かつクリック可能）になる。
@@ -775,15 +710,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // なった（diff表示はインラインのコメントスレッドを差し込む）ので、
                 // 1回の画面行の参照でどちらのモードでもホバー中の行を解決できる。
                 let resolved = resolve_screen_line(app, line_offset);
-                app.viewer_state.click.hover_line = resolved;
-                app.viewer_state.click.hover_gutter_line = if on_gutter { resolved } else { None };
+                app.viewer.click.hover_line = resolved;
+                app.viewer.click.hover_gutter_line = if on_gutter { resolved } else { None };
 
                 // 折りたたみマーカーの上にいる間だけ、その範囲の端から端までを
                 // マーカー列の罫線で示す。
-                let on_fold = !app.viewer_state.diff_view.diff_mode
+                let on_fold = !app.viewer.diff_view.diff_mode
                     && in_fold_zone(col, inner_x + marker_w + gutter_w);
-                app.viewer_state
-                    .content
+                app.viewer.content
                     .folds
                     .set_hover(if on_fold { resolved } else { None });
 
@@ -795,7 +729,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // ポップアップの両方がこれを必要とする。違うのはどのcandidate
                 // setterがそれを消費するかと、diffモードによる制限（下記参照）
                 // だけ。
-                let gutter_w = app.viewer_state.gutter_total_width();
+                let gutter_w = app.viewer.gutter_total_width();
                 let inner_x = explorer_end + 1;
                 let badge_w: u16 = 2;
                 let content_start_x =
@@ -803,17 +737,16 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 let symbol_here = if col >= content_start_x {
                     resolve_screen_line(app, line_offset).and_then(|line_1| {
                         let content_col =
-                            (col - content_start_x) as usize + app.viewer_state.content.h_scroll;
-                        app.viewer_state
-                            .content
+                            (col - content_start_x) as usize + app.viewer.content.h_scroll;
+                        app.viewer.content
                             .file_content
                             .get(line_1 - 1)
                             .and_then(|text| {
-                                crate::app::masked_symbol_at_column(
+                                crate::viewer::code_nav::masked_symbol_at_column(
                                     text,
                                     content_col,
                                     line_1,
-                                    &app.viewer_state.content.code_mask,
+                                    &app.viewer.content.code_mask,
                                 )
                                 .map(|(symbol, start, end)| (symbol, line_1, start, end))
                             })
@@ -826,10 +759,10 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // なしで表示される。色だけがhas_jump_modifierに依存する
                 // （tick_underline_hoverで解決）。ここでも!diff_modeに限定して
                 // いるのは、実際のCmd+クリックによるジャンプハンドラ
-                // （viewer_panel.rs）自体が!diff_mode限定だから。diff表示で下線を
+                // （crate::viewer::mouse）自体が!diff_mode限定だから。diff表示で下線を
                 // 出すと、クリックしても実現できないジャンプを約束することに
                 // なってしまう。
-                if app.viewer_state.diff_view.diff_mode {
+                if app.viewer.diff_view.diff_mode {
                     app.set_underline_candidate(None, has_jump_modifier);
                 } else {
                     app.set_underline_candidate(symbol_here.clone(), has_jump_modifier);
@@ -841,14 +774,14 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
                 // 以前から変わっていない。
                 let auto_cand = symbol_here.map(|(symbol, line_1, start, end)| {
                     let anchor_col = content_start_x
-                        + (start.saturating_sub(app.viewer_state.content.h_scroll)) as u16;
+                        + (start.saturating_sub(app.viewer.content.h_scroll)) as u16;
                     (symbol, line_1, row, anchor_col, start, end)
                 });
                 app.set_mouse_hover_candidate(auto_cand);
             } else {
-                app.viewer_state.click.hover_line = None;
-                app.viewer_state.click.hover_gutter_line = None;
-                app.viewer_state.content.folds.set_hover(None);
+                app.viewer.click.hover_line = None;
+                app.viewer.click.hover_gutter_line = None;
+                app.viewer.content.folds.set_hover(None);
                 app.set_underline_candidate(None, false);
                 app.set_mouse_hover_candidate(None);
             }

@@ -19,7 +19,7 @@ pub(super) fn handle_mouse_scroll(
         left_end,
         explorer_end,
         viewer_end,
-        explorer_mid_y,
+        explorer_mid_y: _,
         terminal_split_y,
         ..
     } = *geom;
@@ -64,47 +64,7 @@ pub(super) fn handle_mouse_scroll(
             app.on_worktree_changed();
         }
     } else if col < explorer_end {
-        // Explorerのスクロール。
-        // スクロールが上半分（ファイルツリー）か下半分（差分リスト）かを判定する。
-        if row >= explorer_mid_y {
-            // 差分リストのスクロール。
-            let file_count = app.diff_state.display_list.len();
-            if file_count > 0 {
-                if delta > 0 {
-                    app.viewer_state.explorer.diff_list_scroll = app
-                        .viewer_state
-                        .explorer
-                        .diff_list_scroll
-                        .saturating_add(delta.unsigned_abs() as usize)
-                        .min(file_count.saturating_sub(1));
-                } else {
-                    app.viewer_state.explorer.diff_list_scroll = app
-                        .viewer_state
-                        .explorer
-                        .diff_list_scroll
-                        .saturating_sub(delta.unsigned_abs() as usize);
-                }
-            }
-        } else {
-            // ファイルツリーのスクロール。
-            let visible_count = app.viewer_state.visible_indices().len();
-            let page = app.viewer_state.explorer.explorer_tree_height.max(1);
-            let max_scroll = visible_count.saturating_sub(page);
-            if delta > 0 {
-                app.viewer_state.tree.tree_scroll = app
-                    .viewer_state
-                    .tree
-                    .tree_scroll
-                    .saturating_add(delta.unsigned_abs() as usize)
-                    .min(max_scroll);
-            } else {
-                app.viewer_state.tree.tree_scroll = app
-                    .viewer_state
-                    .tree
-                    .tree_scroll
-                    .saturating_sub(delta.unsigned_abs() as usize);
-            }
-        }
+        app.explorer_scroll(delta as isize, row);
     } else if col < viewer_end {
         // Viewerのスクロール。
         //
@@ -112,48 +72,46 @@ pub(super) fn handle_mouse_scroll(
         // 全体に描画され、current_file は裏で開かれていたファイルを指し続けている。
         // これがないとホイールがその隠れたファイルをスクロールしてしまい、サマリーは
         // 動かないままになる。
-        if app.viewer_state.is_summary() {
-            let total = app.viewer_state.summary_total_lines;
+        if app.viewer.is_summary() {
+            let total = app.viewer.summary_total_lines;
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.summary_scroll = (app.viewer_state.summary_scroll
+                    app.viewer.summary_scroll = (app.viewer.summary_scroll
                         + delta.unsigned_abs() as usize)
                         .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.summary_scroll = app
-                        .viewer_state
+                    app.viewer.summary_scroll = app
+                        .viewer
                         .summary_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
-        } else if app.viewer_state.is_showing_rendered_markdown() {
+        } else if app.viewer.is_showing_rendered_markdown() {
             // レンダリング済みmarkdownは折り返し後の行数でスクロールするため、
             // file_scroll が指すソースの行数とは無関係。
-            let total = app.viewer_state.md_total_lines;
+            let total = app.viewer.md_total_lines;
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.md_scroll = (app.viewer_state.md_scroll
-                        + delta.unsigned_abs() as usize)
+                    app.viewer.md_scroll = (app.viewer.md_scroll + delta.unsigned_abs() as usize)
                         .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.md_scroll = app
-                        .viewer_state
+                    app.viewer.md_scroll = app
+                        .viewer
                         .md_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
-        } else if app.viewer_state.diff_view.diff_mode {
+        } else if app.viewer.diff_view.diff_mode {
             // 統合差分ビューのスクロール。
-            let total = app.viewer_state.diff_view.diff_view_lines.len();
+            let total = app.viewer.diff_view.diff_view_lines.len();
             if total > 0 {
                 if delta > 0 {
-                    app.viewer_state.diff_view.diff_view_scroll =
-                        (app.viewer_state.diff_view.diff_view_scroll
-                            + delta.unsigned_abs() as usize)
-                            .min(total.saturating_sub(1));
+                    app.viewer.diff_view.diff_view_scroll = (app.viewer.diff_view.diff_view_scroll
+                        + delta.unsigned_abs() as usize)
+                        .min(total.saturating_sub(1));
                 } else {
-                    app.viewer_state.diff_view.diff_view_scroll = app
-                        .viewer_state
+                    app.viewer.diff_view.diff_view_scroll = app
+                        .viewer
                         .diff_view
                         .diff_view_scroll
                         .saturating_sub(delta.unsigned_abs() as usize);
@@ -163,7 +121,7 @@ pub(super) fn handle_mouse_scroll(
             // 折りたたんだ行を跨がないよう、可視行を歩いて動かす。生の加減算だと
             // 畳んだぶんだけ行き過ぎ、着地点が隠れていれば描画側が畳みを開いて
             // しまう（ホイールで畳みが勝手に開く）。
-            app.viewer_state.move_cursor_lines(delta as isize);
+            app.viewer.move_cursor_lines(delta as isize);
         }
     } else {
         // ターミナルパネル（右カラム）。
@@ -175,10 +133,10 @@ pub(super) fn handle_mouse_scroll(
         // 補足: set_focus(TerminalShell) はreflowがアクティブなら閉じるが、これは
         // 意図的なもの — ユーザは意図的にClaudeから離れてスクロールしている。
         if row < terminal_split_y {
-            if app.focus != Focus::TerminalClaude {
+            if app.focus.current() != Focus::TerminalClaude {
                 app.set_focus(Focus::TerminalClaude);
             }
-        } else if app.focus != Focus::TerminalShell {
+        } else if app.focus.current() != Focus::TerminalShell {
             app.set_focus(Focus::TerminalShell);
         }
 
@@ -224,19 +182,19 @@ pub(super) fn handle_mouse_scroll(
                     app.reflow.scroll = app.reflow.scroll.saturating_sub(abs_delta);
                 } else {
                     let inner = app.reflow.last_inner_height as usize;
-                    if crate::event::reflow::at_bottom(
+                    if crate::reflow::input::at_bottom(
                         app.reflow.scroll,
                         app.reflow.total_lines,
                         inner,
                     ) {
                         // 既に一番下 — さらに下スクロールすると退出スイープに入る。
-                        app.request_close_reflow();
+                        app.close_reflow();
                         return;
                     }
                     app.reflow.scroll = app.reflow.scroll.saturating_add(abs_delta);
                 }
                 let inner = app.reflow.last_inner_height as usize;
-                app.reflow.scroll = crate::event::reflow::clamp_scroll(
+                app.reflow.scroll = crate::reflow::input::clamp_scroll(
                     app.reflow.scroll,
                     app.reflow.total_lines,
                     inner,
@@ -244,7 +202,7 @@ pub(super) fn handle_mouse_scroll(
                 // ホイールアップでビューは末尾から切り離され、ホイールダウンで最新行が
                 // 画面に戻ると再び追従する。これがないと、ホイールアップの後にリサイズ
                 // すると一番下に再固定されてスクロールが取り消されてしまう。
-                app.reflow.follow = crate::event::reflow::at_bottom(
+                app.reflow.follow = crate::reflow::input::at_bottom(
                     app.reflow.scroll,
                     app.reflow.total_lines,
                     inner,

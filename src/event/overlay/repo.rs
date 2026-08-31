@@ -12,7 +12,7 @@ use super::overlay_list_nav;
 
 // オーバーレイ: リポジトリセレクタ
 
-pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     let count = app.repo.known.len();
 
     if overlay_list_nav(
@@ -21,7 +21,7 @@ pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
         &mut app.overlays.repo_selector.selected,
         count,
     ) {
-        return;
+        return None;
     }
 
     match key.code {
@@ -35,11 +35,12 @@ pub(in crate::event) fn handle_repo_selector_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
 // オーバーレイ: リポジトリパス入力
 
-pub(in crate::event) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_open_repo_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
             app.overlays.active = ActiveOverlay::None;
@@ -61,18 +62,19 @@ pub(in crate::event) fn handle_open_repo_key(app: &mut App, key: KeyEvent) {
             app.overlays.open_repo.buffer.handle_key(key);
         }
     }
+    None
 }
 
 // オーバーレイ: PR intake (Review Pull Request)
 
-pub(in crate::event) fn handle_pr_input_key(app: &mut App, key: KeyEvent) {
+pub(in crate::event) fn handle_pr_input_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // gh/git の intake 実行中は Esc のみ受け付ける。入力自体をフリーズさせることで、
     // 誤操作のキー入力がバックグラウンドスレッドと競合するのを防ぐ。
     if app.overlays.pr_input.loading {
         if key.code == KeyCode::Esc {
             app.overlays.active = ActiveOverlay::None;
         }
-        return;
+        return None;
     }
     match key.code {
         KeyCode::Esc => {
@@ -100,4 +102,5 @@ pub(in crate::event) fn handle_pr_input_key(app: &mut App, key: KeyEvent) {
             app.overlays.pr_input.buffer.handle_key(key);
         }
     }
+    None
 }

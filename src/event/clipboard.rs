@@ -5,7 +5,7 @@ use crate::app::App;
 /// クリップボードの内容を get_buffer が返す TextInput に貼り付ける。
 ///
 /// multiline が false の場合、貼り付けたテキストから改行を取り除く。
-pub(in crate::event) fn clipboard_paste<F>(app: &mut App, get_buffer: F, multiline: bool)
+pub(crate) fn clipboard_paste<F>(app: &mut App, get_buffer: F, multiline: bool)
 where
     F: FnOnce(&mut App) -> &mut crate::text_input::TextInput,
 {

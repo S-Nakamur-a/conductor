@@ -9,53 +9,42 @@
 
 mod clipboard;
 mod dialogs;
-mod explorer;
 mod global;
 pub(crate) mod input_target;
-mod menu;
-mod mouse;
+pub(crate) mod mouse;
 mod overlay;
 mod overlay_helpers;
-use input_target::InputTarget;
 mod paste;
-pub mod reflow;
-mod reflow_key;
-mod revidere;
-mod scroll;
-mod terminal;
-mod viewer;
-mod worktree;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Focus, WorktreeInputMode};
 use crate::keymap::{Action, KeyContext};
+use crate::menu::input::handle_menu_key;
 use crate::overlay::ActiveOverlay;
 use crate::review_state::ReviewInputMode;
 
 use self::dialogs::{handle_publish_confirm_key, handle_update_key};
-use self::explorer::handle_explorer_comment_list_key;
-use self::explorer::handle_explorer_key;
 use self::global::dispatch_global_action;
-use self::menu::handle_menu_key;
 use self::overlay::*;
-use self::overlay_helpers::dismiss_overlays;
-use self::reflow_key::handle_reflow_key;
-use self::terminal::{forward_key_to_pty, spawn_terminal_session};
-use self::viewer::handle_viewer_key;
-use self::worktree::handle_worktree_key;
+use crate::reflow::key::handle_reflow_key;
+use crate::terminal::input::{forward_key_to_pty, spawn_terminal_session};
+use crate::viewer::input::handle_viewer_key;
+use crate::worktree::input::handle_worktree_key;
 
 // 元は crate::event::X だったが、今は隣接するサブモジュールへ移った項目を
 // re-export する。こうすることで、隣接モジュール側の既存の super::X 参照が
 // 変更なしに解決され続ける。
-pub(in crate::event) use self::clipboard::clipboard_paste;
-pub(in crate::event) use self::overlay_helpers::open_filename_search;
-pub(in crate::event) use self::scroll::{adjust_diff_list_scroll, adjust_tree_scroll};
+pub(crate) use self::clipboard::clipboard_paste;
+// explorer が独立モジュールへ移った後も、そちらの tree.rs / diff_list.rs から
+// 引き続き呼べるよう crate 全体へ公開する。
+pub(crate) use self::overlay_helpers::open_filename_search;
 
 // 有効なオーバーレイ
 
 /// ディスパッチ用に統一したオーバーレイ/モーダルの状態。複数の
 /// bool/enum チェックを単一の判別子に集約する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectiveOverlay {
     /// アップデートの確認/進行状況/失敗ダイアログ。
     UpdateState,
@@ -81,46 +70,75 @@ enum EffectiveOverlay {
     None,
 }
 
+/// [effective_overlay] が実際に読む App の状態。
+///
+/// 順位そのものは App を組み立てずに確かめたい。入れ替わっても落ちる場所は無く、
+/// 「別のモーダルが開いているのに入力が違う所へ行く」形でしか現れないため。
+#[derive(Clone, Copy, Default)]
+struct OverlayFlags {
+    update: bool,
+    publish_confirm: bool,
+    comment_detail: bool,
+    review_input: bool,
+    worktree_input: bool,
+    active: ActiveOverlay,
+    filename_search: bool,
+    viewer_search: bool,
+    review_search: bool,
+    template_picker: bool,
+}
+
+impl From<&App> for OverlayFlags {
+    fn from(app: &App) -> Self {
+        Self {
+            update: app.update.is_active(),
+            publish_confirm: app.publish.confirm.is_some(),
+            comment_detail: app.review_state.comment_detail_active,
+            review_input: app.review_state.input_mode != ReviewInputMode::Normal,
+            worktree_input: app.worktree_mgr.input_mode != WorktreeInputMode::Normal,
+            active: app.overlays.active,
+            filename_search: app.viewer.filename_search.filename_search_active,
+            viewer_search: app.viewer.search.search_active,
+            review_search: app.review_state.search_active,
+            template_picker: app.review_state.template_picker_active,
+        }
+    }
+}
+
 /// 入力を消費すべき、唯一の有効なオーバーレイ/モーダルを判定する。
-fn effective_overlay(app: &App) -> EffectiveOverlay {
-    if app.update.is_active() {
+fn effective_overlay(f: OverlayFlags) -> EffectiveOverlay {
+    if f.update {
         return EffectiveOverlay::UpdateState;
     }
-    if app.publish.confirm.is_some() {
+    if f.publish_confirm {
         return EffectiveOverlay::PublishConfirm;
     }
-    if app.review_state.comment_detail_active {
+    if f.comment_detail {
         return EffectiveOverlay::CommentDetail;
     }
-    if app.review_state.input_mode != ReviewInputMode::Normal {
+    if f.review_input {
         return EffectiveOverlay::ReviewInput;
     }
-    if app.worktree_mgr.input_mode != WorktreeInputMode::Normal {
+    if f.worktree_input {
         return EffectiveOverlay::WorktreeInput;
     }
-    match app.overlays.active {
+    match f.active {
         ActiveOverlay::None => {}
         other => return EffectiveOverlay::Active(other),
     }
-    if app.viewer_state.filename_search.filename_search_active {
+    if f.filename_search {
         return EffectiveOverlay::FilenameSearch;
     }
-    if app.viewer_state.search.search_active {
+    if f.viewer_search {
         return EffectiveOverlay::ViewerSearch;
     }
-    if app.review_state.search_active {
+    if f.review_search {
         return EffectiveOverlay::ReviewSearch;
     }
-    if app.review_state.template_picker_active {
+    if f.template_picker {
         return EffectiveOverlay::ReviewTemplate;
     }
     EffectiveOverlay::None
-}
-
-/// テキスト入力欄が現在フォーカスされていて、印字可能な文字をリテラル
-/// テキストとして挿入することを期待している場合に true。
-fn is_text_input_active(app: &App) -> bool {
-    InputTarget::active(app).is_some()
 }
 
 // 公開 API の re-export。
@@ -128,189 +146,155 @@ pub use self::mouse::handle_mouse_event;
 pub use self::paste::handle_paste_event;
 
 /// キーイベントを1つ処理し、必要に応じてアプリケーション状態を更新する。
+///
+/// 内側 (メニュー・オーバーレイ) から外側 (フォーカス別ハンドラ) へ 6 段の
+/// バブリングで問い合わせ、いずれかの段が `None` (消費) を返した時点で
+/// 打ち切る。既定を消費にしてあるので、テキスト入力欄が最内にいる限り
+/// IME 合成中のグリフがこの外側の段まで抜けてくることはない。
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
-    // 0. グローバルなフォーカス切り替え — テキスト以外のオーバーレイ
-    // (y/n 確認、リスト選択) の上では有効だが、テキストフィールドが
-    // フォーカスされている間は無効。フォーカス済みのテキストフィールドは
-    // モーダルグラブであり、すべてのキーを握るので、グローバルフォーカス
-    // 層は参照されず、コード入力中はコード (chord) も突き抜けられない
-    // (抜けるにはまず Esc を押す)。
-    //
-    // これが IME 入力中のフォーカス奪取を止めている仕組み。kitty
-    // keyboard protocol のもとでは、macOS は Option で合成した入力を
-    // ALT ビット付きで報告するため、合成されたグリフ ('∞' → Claude
-    // パネル) や Meta モードの数字 ('alt+5') が、そうでなければフォーカス
-    // アクションとして解決され、入力中にフォーカスをかっさらってしまう。
-    // is_text_input_active でグラブすることで、terminal がどんなキー形状
-    // を出しうるか列挙することなく、このカテゴリ全体を一括で塞げる。
-    // テキスト以外のオーバーレイでは is_text_input_active が false のため、
-    // 引き続き突き抜けられる。
-    if !is_text_input_active(app)
-        && let Some(action) = app.keymap.resolve(&key, KeyContext::Global)
-    {
-        match action {
-            Action::FocusWorktree
-            | Action::FocusExplorer
-            | Action::FocusExplorerDiffList
-            | Action::FocusViewer
-            | Action::FocusTerminalClaude
-            | Action::FocusTerminalShell => {
-                dismiss_overlays(app);
-                dispatch_global_action(app, action);
-                return;
-            }
-            _ => {}
-        }
-    }
+    let Some(key) = stage_menu(app, key) else {
+        return;
+    };
+    let Some(key) = stage_overlay(app, key) else {
+        return;
+    };
+    let Some(key) = stage_panel_popup(app, key) else {
+        return;
+    };
+    let Some(key) = stage_pty(app, key) else {
+        return;
+    };
+    let Some(key) = stage_keymap(app, key) else {
+        return;
+    };
+    stage_focus(app, key);
+}
 
-    // 0.5. メニューバー — フォーカスされている間はすべてのキーを消費する
-    //
-    // オーバーレイのディスパッチより先に置いている。メニューはオーバーレイが
-    // 何も出ていないときにしかアクティブにならない (開く条件は下でそちらを
-    // ゲートにしている) ので、ここを先に通しても何もコストがかからず、
-    // メニュー自身の Esc/矢印処理を一箇所にまとめておける。
+/// 段1: メニューバー — フォーカスされている間はすべてのキーを消費する。
+fn stage_menu(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     if app.menu.focus.is_active() {
-        handle_menu_key(app, key);
-        return;
+        return handle_menu_key(app, key);
     }
+    Some(key)
+}
 
-    // 1. オーバーレイ / モーダルのディスパッチ — アクティブな間はすべてのキーを消費する
-
-    match effective_overlay(app) {
-        EffectiveOverlay::UpdateState => {
-            handle_update_key(app, key);
-            return;
-        }
-        EffectiveOverlay::PublishConfirm => {
-            handle_publish_confirm_key(app, key);
-            return;
-        }
-        EffectiveOverlay::CommentDetail => {
-            handle_comment_detail_key(app, key);
-            return;
-        }
-        EffectiveOverlay::ReviewInput => {
-            handle_review_input_key(app, key);
-            return;
-        }
-        EffectiveOverlay::WorktreeInput => {
-            handle_worktree_input_key(app, key);
-            return;
-        }
-        EffectiveOverlay::Active(overlay) => {
-            match overlay {
-                ActiveOverlay::SwitchBranch => handle_switch_branch_key(app, key),
-                ActiveOverlay::Grab => handle_grab_key(app, key),
-                ActiveOverlay::Prune => handle_prune_key(app, key),
-                ActiveOverlay::CherryPick => handle_cherry_pick_key(app, key),
-                ActiveOverlay::History => handle_history_key(app, key),
-                ActiveOverlay::ResumeSession => handle_resume_session_key(app, key),
-                ActiveOverlay::RepoSelector => handle_repo_selector_key(app, key),
-                ActiveOverlay::OpenRepo => handle_open_repo_key(app, key),
-                ActiveOverlay::PrInput => handle_pr_input_key(app, key),
-                ActiveOverlay::GrepSearch => handle_grep_search_key(app, key),
-                ActiveOverlay::Help => handle_help_key(app, key),
-                ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
-                ActiveOverlay::WorktreeSwitcher => handle_worktree_key(app, key),
-                ActiveOverlay::CommentList => handle_explorer_comment_list_key(app, key),
-                ActiveOverlay::ThemePicker => handle_theme_picker_key(app, key),
-                ActiveOverlay::RevidereConfirm => handle_revidere_confirm_key(app, key),
-                ActiveOverlay::None => unreachable!(),
-            }
-            return;
-        }
-        EffectiveOverlay::FilenameSearch => {
-            handle_filename_search_key(app, key);
-            return;
-        }
-        EffectiveOverlay::ViewerSearch => {
-            handle_viewer_search_key(app, key);
-            return;
-        }
-        EffectiveOverlay::ReviewSearch => {
-            handle_review_search_key(app, key);
-            return;
-        }
-        EffectiveOverlay::ReviewTemplate => {
-            handle_review_template_key(app, key);
-            return;
-        }
-        EffectiveOverlay::None => {} // パネルのディスパッチへフォールスルー。
+/// 段2: オーバーレイ / モーダルのディスパッチ — アクティブな間はすべてのキーを消費する。
+fn stage_overlay(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+    match effective_overlay(OverlayFlags::from(&*app)) {
+        EffectiveOverlay::UpdateState => handle_update_key(app, key),
+        EffectiveOverlay::PublishConfirm => handle_publish_confirm_key(app, key),
+        EffectiveOverlay::CommentDetail => handle_comment_detail_key(app, key),
+        EffectiveOverlay::ReviewInput => handle_review_input_key(app, key),
+        EffectiveOverlay::WorktreeInput => handle_worktree_input_key(app, key),
+        EffectiveOverlay::Active(overlay) => match overlay {
+            ActiveOverlay::SwitchBranch => handle_switch_branch_key(app, key),
+            ActiveOverlay::Grab => handle_grab_key(app, key),
+            ActiveOverlay::Prune => handle_prune_key(app, key),
+            ActiveOverlay::CherryPick => handle_cherry_pick_key(app, key),
+            ActiveOverlay::History => handle_history_key(app, key),
+            ActiveOverlay::ResumeSession => handle_resume_session_key(app, key),
+            ActiveOverlay::RepoSelector => handle_repo_selector_key(app, key),
+            ActiveOverlay::OpenRepo => handle_open_repo_key(app, key),
+            ActiveOverlay::PrInput => handle_pr_input_key(app, key),
+            ActiveOverlay::GrepSearch => handle_grep_search_key(app, key),
+            ActiveOverlay::Help => handle_help_key(app, key),
+            ActiveOverlay::CommandPalette => handle_command_palette_key(app, key),
+            ActiveOverlay::WorktreeSwitcher => handle_worktree_key(app, key),
+            ActiveOverlay::CommentList => app.explorer_key(key),
+            ActiveOverlay::ThemePicker => handle_theme_picker_key(app, key),
+            ActiveOverlay::RevidereConfirm => handle_revidere_confirm_key(app, key),
+            // effective_overlay は Active(ActiveOverlay::None) を返さない。
+            ActiveOverlay::None => Some(key),
+        },
+        EffectiveOverlay::FilenameSearch => handle_filename_search_key(app, key),
+        EffectiveOverlay::ViewerSearch => handle_viewer_search_key(app, key),
+        EffectiveOverlay::ReviewSearch => handle_review_search_key(app, key),
+        EffectiveOverlay::ReviewTemplate => handle_review_template_key(app, key),
+        EffectiveOverlay::None => Some(key), // パネルのディスパッチへフォールスルー。
     }
+}
 
-    // 1b. References オーバーレイ (パネルレベルのポップアップで、OverlayManager の一部ではない)
+/// 段3: パネル内ポップアップ — references → hover モーダル (pinned) →
+/// symbol アクション → symbol ヒントの順。
+fn stage_panel_popup(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     if app.code_nav.references.active {
-        handle_references_key(app, key);
-        return;
+        return handle_references_key(app, key);
     }
 
-    // 1b1. Hover モーダル。pinned (ユーザがクリックして固定した) 状態では、
-    // キーはモーダルスタックを操作する — Esc は1段階戻る、矢印は refs
-    // リストのナビゲーション、Enter は掘り下げ/ジャンプ — そしてキーは
-    // 消費される。そうでなければ一時的な自動ポップアップであり、どの
-    // キーでも消える (Esc は消費し、他のキーはポップアップが消えつつ
-    // 通常どおりの役目を果たすようフォールスルーする)。
+    // Hover モーダル。pinned (ユーザがクリックして固定した) 状態では、
+    // キーはモーダルスタックを操作し消費される。そうでなければ一時的な
+    // 自動ポップアップであり、どのキーでも消える (Esc は消費し、他の
+    // キーはポップアップが消えつつ通常どおりの役目を果たすよう
+    // バブルさせる)。
     if app.code_nav.hover_info.pinned {
-        handle_hover_modal_key(app, key);
-        return;
+        return handle_hover_modal_key(app, key);
     }
     if app.code_nav.hover_info.info.is_some() || app.code_nav.hover_info.pending.is_some() {
         app.clear_hover();
         if key.code == KeyCode::Esc {
-            return;
+            return None;
         }
     }
 
-    // 1b2. Symbol アクションオーバーレイ (ヒント選択後)
     if app.code_nav.symbol_action.active {
-        handle_symbol_action_key(app, key);
-        return;
+        return handle_symbol_action_key(app, key);
     }
 
-    // 1b3. Symbol ヒントオーバーレイの入力 (ラベルの2文字目、または gd / gr の行内選択)
     if app.code_nav.symbol_hint.active
         && (app.code_nav.symbol_hint.pending.is_some()
             || !app.code_nav.symbol_hint.input.is_empty())
     {
-        handle_symbol_hint_key(app, key);
-        return;
+        return handle_symbol_hint_key(app, key);
     }
 
-    // 1b4/1c. Reflow トランスクリプトビューと PTY フォーカス
-    // 下の Focus ディスパッチより先に置く必要がある。そうしないとキーが
-    // Claude へ転送されてしまう。dispatch_pty_key に括り出すことで、
-    // reflow-over-Claude のケースと素の PTY フォーカスのケースが1つの
-    // コードパスを共有する。
-    if (app.reflow.active && app.focus == Focus::TerminalClaude) || app.focus.is_pty() {
-        dispatch_pty_key(app, key);
-        return;
+    Some(key)
+}
+
+/// 段4: Reflow ビューと PTY フォーカス。フォーカス別ハンドラより先に置かないと
+/// キーが Claude へ転送される。
+fn stage_pty(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+    if (app.reflow.active && app.focus.current() == Focus::TerminalClaude)
+        || app.focus.current().is_pty()
+    {
+        return dispatch_pty_key(app, key);
     }
+    Some(key)
+}
 
-    // 2. terminal 以外のパネル — keymap で解決する
-
-    if let Some(action) = app.keymap.resolve(&key, app.focus.key_context())
+/// 段5: terminal 以外のパネル — keymap で解決する。
+fn stage_keymap(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
+    if let Some(action) = app.keymap.resolve(&key, app.focus.current().key_context())
         && dispatch_global_action(app, action)
     {
-        return;
+        return None;
     }
+    Some(key)
+}
 
-    // 3. フォーカス固有のキーバインド
-
-    match app.focus {
-        Focus::Worktree => handle_worktree_key(app, key),
-        Focus::Explorer => handle_explorer_key(app, key),
-        Focus::Viewer => handle_viewer_key(app, key),
-        Focus::Revidere => revidere::handle_revidere_key(app, key),
-        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => unreachable!(),
+/// 段6: フォーカス固有のキーバインド。
+fn stage_focus(app: &mut App, key: KeyEvent) {
+    match app.focus.current() {
+        Focus::Worktree => {
+            handle_worktree_key(app, key);
+        }
+        Focus::Explorer => {
+            app.explorer_key(key);
+        }
+        Focus::Viewer => {
+            handle_viewer_key(app, key);
+        }
+        Focus::Revidere => {
+            crate::revidere::input::handle_revidere_key(app, key);
+        }
+        // is_pty() な Focus は段 4 (PTY) が必ず先に消費するため、
+        // ここには到達しない。
+        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => {}
     }
 }
 
-/// pinned 状態のインタラクティブな hover モーダルスタックのキー操作。
-/// Esc は開いている最も深い階層を1段階戻す (プレビュー → refs リスト →
-/// ポップアップ全体)。Up/Down (または k/j) は references の選択を動かす。
-/// Enter は選択中の reference のプレビューを開くか、プレビューが既に
-/// 表示されていればその位置へジャンプする。
-fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
+/// Esc は最も深い階層を 1 段戻す (プレビュー → refs リスト → ポップアップ全体)。
+/// Enter は選択中のプレビューを開くか、出ていればその位置へ飛ぶ。
+fn handle_hover_modal_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
             app.hover_pop_level();
@@ -335,20 +319,18 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+    None
 }
 
-/// PTY がフォーカスされているパネル (Claude/Shell/Editor) 向け、または
-/// Claude terminal の上に重なる reflow トランスクリプトビュー向けに、
-/// キーイベントをディスパッチする。呼び出し側は app.focus.is_pty() か
-/// reflow-over-Claude の条件が成り立つときにしかこれを呼んではならない
-/// — handle_key_event のパネルディスパッチがこれを保証する。
-fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
+/// app.focus.current().is_pty() か reflow-over-Claude が成り立つときにしか呼んではならない。
+/// 段 4 ([stage_pty]) がそれを保証する。
+fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // Reflow トランスクリプトビュー — アクティブな間はすべてのキーを
     // 消費する。ペインのリサイズ/ズーム/パネルオーバーレイは、スクロール
     // バック中でも引き続き効く — reflow の素のキーナビゲーション
     // (j/k/矢印) とは衝突しないので、reflow に黙って飲み込ませるのでは
     // なく、こうしたコード (Ctrl+Alt+Arrow など) は素通しする。
-    if app.reflow.active && app.focus == Focus::TerminalClaude {
+    if app.reflow.active && app.focus.current() == Focus::TerminalClaude {
         if let Some(action) = app.keymap.resolve(&key, KeyContext::Terminal)
             && matches!(
                 action,
@@ -361,27 +343,27 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
             )
             && dispatch_global_action(app, action)
         {
-            return;
+            return None;
         }
-        handle_reflow_key(app, key);
-        return;
+        return handle_reflow_key(app, key);
     }
 
-    if !app.focus.is_pty() {
-        return;
+    if !app.focus.current().is_pty() {
+        return None;
     }
-    let pty_context = app.focus.key_context();
+    let pty_context = app.focus.current().key_context();
 
     // 選択中の worktree が grab されている場合、ナビゲーションキー以外の
-    // すべての terminal 入力をブロックする (フォーカス切り替えは上の §0 で
-    // 扱い済み)。(editor は grab された worktree では決して開かないので、
-    // 実際にはこれは Claude/Shell の terminal だけをガードしている。)
+    // すべての terminal 入力をブロックする (フォーカス切り替えは段 5 の
+    // keymap 解決に任せる)。(editor は grab された worktree では決して
+    // 開かないので、実際にはこれは Claude/Shell の terminal だけを
+    // ガードしている。)
     if app.is_selected_worktree_grabbed() {
         // Esc で terminal を抜けることは許すが、それ以外はすべてブロックする。
         if let Some(Action::LeaveTerminal) = app.keymap.resolve(&key, pty_context) {
             app.set_focus(Focus::Explorer);
         }
-        return;
+        return None;
     }
 
     // keymap で解決する (パネル層 + グローバルフォールバックで、terminal で
@@ -393,7 +375,7 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
     if let Some(action) = app.keymap.resolve(&key, pty_context)
         && (handle_terminal_only_action(app, action) || dispatch_global_action(app, action))
     {
-        return;
+        return None;
     }
 
     // 親切のためのヒント: Ctrl+Q は Conductor の終了コードだが、terminal
@@ -411,23 +393,20 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) {
     }
 
     // 残りのキーはすべてアクティブな PTY セッションへ転送する。
-    let session_idx = match app.focus {
+    let session_idx = match app.focus.current() {
         Focus::Editor => app.editor.as_ref().map(|e| e.session_idx),
         f => app.terminal.pane(f).and_then(|p| p.active_session),
     };
     if let Some(idx) = session_idx {
         forward_key_to_pty(app, idx, key);
-    } else if key.code == KeyCode::Enter && app.focus != Focus::Editor {
+    } else if key.code == KeyCode::Enter && app.focus.current() != Focus::Editor {
         spawn_terminal_session(app);
     }
+    None
 }
 
-/// terminal 専用のアクション (スクロールバック、離脱、ファイルを開く) を
-/// 処理する。terminal の状態が必要で、他のどのパネルでも意味を持たないため
-/// dispatch_global_action を経由できない。処理したら true を返す。それ以外
-/// のアクションでは false を返す (呼び出し側はそれを dispatch_global_action
-/// へ渡す)。terminal パネルがフォーカスされている間しか呼ばれないので、
-/// unreachable!() の分岐は成立する。
+/// terminal の状態を要り、他のパネルでは意味を持たないので dispatch_global_action を
+/// 経由できない。処理したら true。terminal にフォーカスがある間しか呼ばれない。
 fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     match action {
         Action::LeaveTerminal => {
@@ -436,7 +415,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             // 戻れる)。editor 自身からは Claude へ移る。それ以外の場合は、
             // 従来どおり terminal から Explorer へ抜ける。
             let target = if app.editor.is_some() {
-                match app.focus {
+                match app.focus.current() {
                     Focus::Editor => Focus::TerminalClaude,
                     _ => Focus::Editor,
                 }
@@ -450,7 +429,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
             // (scroll_claude == 0) を横取りし、上限のある vt100
             // スクロールバックバッファではなく無限スクロールバックの
             // reflow ビューに入る。
-            if app.focus == Focus::TerminalClaude
+            if app.focus.current() == Focus::TerminalClaude
                 && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
@@ -468,14 +447,14 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+            let Some(pane) = app.terminal.pane_mut(app.focus.current()) else {
                 unreachable!()
             };
             let page = pane.size.0 as usize / 2;
             pane.scroll = pane.scroll.saturating_add(page.max(1));
         }
         Action::ScrollbackDown => {
-            let Some(pane) = app.terminal.pane_mut(app.focus) else {
+            let Some(pane) = app.terminal.pane_mut(app.focus.current()) else {
                 unreachable!()
             };
             let page = pane.size.0 as usize / 2;
@@ -483,7 +462,7 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
         }
         Action::ScrollbackTop => {
             // ScrollbackUp と同じ横取り: Claude ライブ表示から reflow へ直接ジャンプする。
-            if app.focus == Focus::TerminalClaude
+            if app.focus.current() == Focus::TerminalClaude
                 && app.terminal.claude.scroll == 0
                 && !app.reflow.active
             {
@@ -493,16 +472,16 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
                     return true;
                 }
             }
-            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+            if let Some(pane) = app.terminal.pane_mut(app.focus.current()) {
                 pane.scroll = 1000;
             }
         }
         Action::SnapToLive => {
-            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+            if let Some(pane) = app.terminal.pane_mut(app.focus.current()) {
                 pane.scroll = 0;
             }
         }
-        Action::OpenFileFromTerminal => terminal::open_file_from_terminal_output(app),
+        Action::OpenFileFromTerminal => crate::terminal::input::open_file_from_terminal_output(app),
         Action::NextSession => app.cycle_terminal_session(true),
         Action::PrevSession => app.cycle_terminal_session(false),
         _ => return false,
@@ -510,8 +489,74 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     true
 }
 
-// NOTE: フォーカスグラブの判断は今、handle_key_event の §0 をゲートする
-// is_text_input_active (App 状態の関数) に集約されている。ここで単独
-// unit test するための安価な pure-fn の切れ目がない — App::new は実際に
-// git 処理を行うため — なので、このファイル内の unit test ではなく
-// 手動/統合テストでカバーしている。
+// NOTE: 「既定は消費」が守られているかは、各ハンドラの match 網羅性を
+// 見るしかない — App::new が実際に git 処理を行うため、ここで単独
+// unit test するための安価な pure-fn の切れ目がなく、手動/統合テストで
+// カバーしている。
+
+#[cfg(test)]
+mod overlay_priority_tests {
+    use super::*;
+
+    /// 1 段ぶん: その段を立てる手続きと、そのとき選ばれるべきもの。
+    type Rung = (fn(&mut OverlayFlags), EffectiveOverlay);
+
+    /// 上から順に、入力を取る権利が強い。この並びが唯一の真実。
+    const LADDER: &[Rung] = &[
+        (|f| f.update = true, EffectiveOverlay::UpdateState),
+        (
+            |f| f.publish_confirm = true,
+            EffectiveOverlay::PublishConfirm,
+        ),
+        (|f| f.comment_detail = true, EffectiveOverlay::CommentDetail),
+        (|f| f.review_input = true, EffectiveOverlay::ReviewInput),
+        (|f| f.worktree_input = true, EffectiveOverlay::WorktreeInput),
+        (
+            |f| f.active = ActiveOverlay::Help,
+            EffectiveOverlay::Active(ActiveOverlay::Help),
+        ),
+        (
+            |f| f.filename_search = true,
+            EffectiveOverlay::FilenameSearch,
+        ),
+        (|f| f.viewer_search = true, EffectiveOverlay::ViewerSearch),
+        (|f| f.review_search = true, EffectiveOverlay::ReviewSearch),
+        (
+            |f| f.template_picker = true,
+            EffectiveOverlay::ReviewTemplate,
+        ),
+    ];
+
+    #[test]
+    fn each_rung_alone_selects_itself() {
+        for (set, expected) in LADDER {
+            let mut f = OverlayFlags::default();
+            set(&mut f);
+            assert_eq!(effective_overlay(f), *expected);
+        }
+    }
+
+    #[test]
+    fn the_higher_rung_wins_over_every_lower_one() {
+        for (i, (set_hi, expected)) in LADDER.iter().enumerate() {
+            for (set_lo, lower) in &LADDER[i + 1..] {
+                let mut f = OverlayFlags::default();
+                set_hi(&mut f);
+                set_lo(&mut f);
+                assert_eq!(
+                    effective_overlay(f),
+                    *expected,
+                    "{expected:?} より下の {lower:?} が勝っている"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_open_dispatches_to_the_focused_panel() {
+        assert_eq!(
+            effective_overlay(OverlayFlags::default()),
+            EffectiveOverlay::None
+        );
+    }
+}

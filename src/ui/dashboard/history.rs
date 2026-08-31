@@ -8,9 +8,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// セッション履歴ビューアのオーバーレイを描画する。
 pub fn render_history_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     frame.render_widget(ratatui::widgets::Clear, area);
 
     let (content_area, search_area) = if app.overlays.history.search_active {

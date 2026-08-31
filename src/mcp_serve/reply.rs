@@ -254,46 +254,36 @@ mod tests {
         }
     }
 
-    /// branch あり、replies あり: 全てのオプションのセクションが描画される。
+    /// 組み合わせによらず常に出る骨組み。
     #[test]
-    fn render_thread_with_branch_and_replies() {
+    fn render_thread_always_shows_the_header_and_metadata() {
         let text = render_thread(&sample_comment(Some("feature-x")), &[sample_reply()]);
 
         assert!(text.starts_with("## SUGGEST — src/foo.rs:10-12\n"));
         assert!(text.contains("ID: abcdef01-2345-6789-abcd-ef0123456789\n"));
         assert!(text.contains("Status: pending | Author: user\n"));
-        assert!(text.contains("Worktree: feature-x | Branch: feature-x\nCreated:"));
-        assert!(text.contains("\n### Replies (1)\n"));
         assert!(text.contains("\n**claude** (2026-07-30 00:01:00):\nSounds good.\n"));
     }
 
-    /// branch なし、replies なし: 両方のオプションセクションが消え、worktree の
-    /// 行は | Branch: を挟まずそのまま Created: に続く。
+    /// branch と replies は独立したオプションセクション。片方の有無が
+    /// もう片方の出方を変えてはいけない。
     #[test]
-    fn render_thread_without_branch_or_replies() {
-        let text = render_thread(&sample_comment(None), &[]);
-
-        assert!(text.contains("Worktree: feature-x\nCreated:"));
-        assert!(!text.contains("Branch:"));
-        assert!(!text.contains("Replies"));
-    }
-
-    /// branch あり、replies なし: | Branch: の接尾部は描画されるが
-    /// ### Replies セクションは付いてこない。
-    #[test]
-    fn render_thread_with_branch_but_no_replies() {
-        let text = render_thread(&sample_comment(Some("feature-x")), &[]);
-
-        assert!(text.contains("Worktree: feature-x | Branch: feature-x\nCreated:"));
-        assert!(!text.contains("Replies"));
-    }
-
-    /// branch なし、replies あり: 上とは逆の組み合わせ。
-    #[test]
-    fn render_thread_without_branch_but_with_replies() {
-        let text = render_thread(&sample_comment(None), &[sample_reply()]);
-
-        assert!(!text.contains("Branch:"));
-        assert!(text.contains("\n### Replies (1)\n"));
+    fn render_thread_shows_each_optional_section_only_when_it_has_one() {
+        for branch in [Some("feature-x"), None] {
+            for replies in [vec![sample_reply()], vec![]] {
+                let case = format!("branch={branch:?} replies={}", replies.len());
+                let text = render_thread(&sample_comment(branch), &replies);
+                let worktree_line = match branch {
+                    Some(b) => format!("Worktree: feature-x | Branch: {b}\nCreated:"),
+                    None => "Worktree: feature-x\nCreated:".to_string(),
+                };
+                assert!(text.contains(&worktree_line), "{case}");
+                assert_eq!(
+                    text.contains("\n### Replies (1)\n"),
+                    !replies.is_empty(),
+                    "{case}"
+                );
+            }
+        }
     }
 }

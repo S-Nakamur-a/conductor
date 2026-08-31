@@ -5,12 +5,8 @@ use super::commands::COMMANDS;
 use super::types::{CommandScope, PaletteCommand, ScoredCommand, scope_rank};
 use crate::keymap::{KeyContext, KeyMap};
 
-/// コマンドをフォーカス中パネルとの関係で分類する。グローバルにバインドされた
-/// アクションは、パネルのレイヤー側でも重ねてバインドされていても (パレットを
-/// 開く : など) 常に global になる。そうでなければ、現在のパネル自身のレイヤーに
-/// バインドされているアクションは current、それ以外 (別パネルだけにバインド
-/// されていて、パレット経由でのみここから実行できるもの) は other になる。
-/// パレット専用コマンドはグローバル扱いとする。
+/// グローバルに割り当てたアクションは、パネル側で重ねて割り当てていても常に global。
+/// そうでなければ現在のパネルのレイヤーにあれば current、他パネルだけにあれば other。
 fn command_scope(cmd: &PaletteCommand, keymap: &KeyMap, current: KeyContext) -> CommandScope {
     match cmd.action {
         None => CommandScope::Global,

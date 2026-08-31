@@ -13,7 +13,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::ShowHelp => {
-            app.overlays.help.context = app.focus;
+            app.overlays.help.context = app.focus.current();
             app.overlays.active = ActiveOverlay::Help;
             true
         }
@@ -34,8 +34,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::OpenCommentList => {
-            app.viewer_state.explorer.comment_list_selected = 0;
-            app.viewer_state.explorer.comment_list_scroll = 0;
+            app.explorer.comments_cursor.reset();
             app.overlays.active = ActiveOverlay::CommentList;
             true
         }
@@ -65,7 +64,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
         }
         Action::FocusExplorerDiffList => {
             app.set_focus(Focus::Explorer);
-            app.viewer_state.explorer.explorer_focus_on_diff_list = true;
+            app.explorer.focus_pane(crate::explorer::Pane::Bottom);
             true
         }
         Action::FocusViewer => {
@@ -91,7 +90,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             } else {
                 app.status_message = None;
             }
-            if app.focus != Focus::TerminalClaude {
+            if app.focus.current() != Focus::TerminalClaude {
                 app.set_focus(Focus::TerminalClaude);
             }
             true
@@ -104,7 +103,7 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             } else {
                 app.status_message = None;
             }
-            if app.focus != Focus::TerminalShell {
+            if app.focus.current() != Focus::TerminalShell {
                 app.set_focus(Focus::TerminalShell);
             }
             true
@@ -143,10 +142,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::TogglePanelExpand => {
-            if app.expanded_panel == Some(app.focus) {
-                app.expanded_panel = None;
+            if app.layout.expanded == Some(app.focus.current()) {
+                app.layout.expanded = None;
             } else {
-                app.expanded_panel = Some(app.focus);
+                app.layout.expanded = Some(app.focus.current());
             }
             true
         }

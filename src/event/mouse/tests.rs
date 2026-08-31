@@ -1,15 +1,9 @@
-//! マウスのヒットテストジオメトリ、ダブルクリック判定、左マージンの
-//! クリック分類に対する単体テスト。
+//! マウスのヒットテストジオメトリと、左マージンのクリック分類。
 
-use super::explorer_panel::{diff_list_row_at, explorer_tree_row_at};
-use super::viewer_panel::{
+use super::{ClickGeometry, Column, in_fold_zone, terminal_tab_row_at};
+use crate::viewer::mouse::{
     MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
 };
-use super::{
-    ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on,
-    terminal_tab_row_at,
-};
-use std::time::{Duration, Instant};
 
 /// 指定したカラム境界でClickGeometryを構築する。幅/高さは、[<=>] 展開ボタン
 /// （各カラム境界の手前5列、幅7以上が必要）がテスト可能になるよう設定する。
@@ -213,174 +207,10 @@ fn expand_button_absent_for_narrow_columns() {
     assert_eq!(g.expand_button_at(4), None);
 }
 
-#[test]
-fn explorer_tree_row_at_rejects_the_border_row() {
-    let g = geom(20, 50, 90); // main_area.y = 1 なので、上枠は行1。
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 1), None);
-    // 枠の内側の最初の行は表示上のインデックス0に解決される。
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 2), Some(0));
-}
-
-#[test]
-fn explorer_tree_row_at_rejects_columns_outside_the_explorer() {
-    let g = geom(20, 50, 90);
-    assert_eq!(explorer_tree_row_at(&g, 0, 19, 5), None); // worktree列
-    assert_eq!(explorer_tree_row_at(&g, 0, 50, 5), None); // Viewer列
-    // Explorer自身の端の列は依然として範囲内。
-    assert_eq!(explorer_tree_row_at(&g, 0, 20, 5), Some(3));
-    assert_eq!(explorer_tree_row_at(&g, 0, 49, 5), Some(3));
-}
-
-#[test]
-fn explorer_tree_row_at_rejects_the_bottom_half() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 18), Some(16)); // 実際に描画される最後の行
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 19), None); // ツリー自身の下枠
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 20), None); // ここからChanged filesが始まる
-    assert_eq!(explorer_tree_row_at(&g, 0, 30, 25), None);
-}
-
-/// 両方のヒットテスタを、そのパネルが実際に描画する行数（レンダラが導出するのと
-/// 同じ方法、2つの枠ぶんの height - 2）に結び付ける。単に「行Nはインデックス
-/// Mに対応する」というだけのアサーションは、その関数がたまたまやっていることを
-/// なぞるにすぎない。このテストは、どちらかのパネルが枠の行を受け入れたり
-/// コンテンツ行を落としたりした瞬間に失敗する — これはまさに、画面に表示されて
-/// いなかったファイルをクリックで開いてしまうという類のバグにつながるもの。
-#[test]
-fn row_at_helpers_accept_exactly_the_rows_their_panel_draws() {
-    let g = geom(20, 50, 90);
-    let col = 30;
-
-    let tree_inner = (g.explorer_mid_y - g.main_area.y) as usize - 2;
-    let tree_hits: Vec<usize> = (0..g.explorer_mid_y)
-        .filter_map(|row| explorer_tree_row_at(&g, 0, col, row))
-        .collect();
-    assert_eq!(tree_hits, (0..tree_inner).collect::<Vec<_>>());
-
-    let diff_bottom = g.main_area.y + g.main_area.height;
-    let diff_inner = (diff_bottom - g.explorer_mid_y) as usize - 2;
-    let diff_hits: Vec<usize> = (g.explorer_mid_y..diff_bottom)
-        .filter_map(|row| diff_list_row_at(&g, 0, 0, col, row))
-        .collect();
-    assert_eq!(diff_hits, (0..diff_inner).collect::<Vec<_>>());
-}
-
-#[test]
-fn explorer_tree_row_at_adds_the_scroll_offset() {
-    let g = geom(20, 50, 90);
-    assert_eq!(explorer_tree_row_at(&g, 5, 30, 2), Some(5));
-    assert_eq!(explorer_tree_row_at(&g, 5, 30, 7), Some(10));
-}
-
-#[test]
-fn diff_list_row_at_rejects_the_top_half_and_its_border() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 19), None); // まだファイルツリー
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 20), None); // diffリスト自身の上枠
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 21), Some(0)); // diffリストの最初の行
-}
-
-#[test]
-fn diff_list_row_at_rejects_columns_outside_the_explorer() {
-    let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 19, 25), None); // worktree列
-    assert_eq!(diff_list_row_at(&g, 0, 0, 50, 25), None); // Viewer列
-    assert_eq!(diff_list_row_at(&g, 0, 0, 20, 25), Some(4));
-    assert_eq!(diff_list_row_at(&g, 0, 0, 49, 25), Some(4));
-}
-
-#[test]
-fn diff_list_row_at_rejects_the_bottom_border() {
-    // main_area = Rect::new(0, 1, .., 40) → 下枠の行は 1 + 40 - 1 = 40 で、
-    // これはリストの行ではなく「Ask Claude All」ボタンが置かれている場所。
-    let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 39), Some(18)); // diffリストの最後の行
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 40), None);
-    assert_eq!(diff_list_row_at(&g, 0, 0, 30, 45), None);
-}
-
-/// エラーバナーはリストの内側領域にエントリを1つ消費せずに収まるので、
-/// エントリはその分だけ下の行から始まる。ここを間違えるとクリックが1ファイル分
-/// ずれ、バナー自体が、スクロールして一番上に来ているものを開いてしまう。
-/// クリックハンドラとホバートラッカーの両方がここを通るので、オフセットは
-/// 一箇所だけ正しければよい。
-#[test]
-fn diff_list_row_at_skips_the_error_banner() {
-    let g = geom(20, 50, 90); // explorer_mid_y = 20、最初の内側行は21
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 21), None); // エントリではなくバナー
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 22), None);
-    assert_eq!(diff_list_row_at(&g, 0, 2, 30, 23), Some(0)); // 最初の実エントリ
-    assert_eq!(diff_list_row_at(&g, 5, 2, 30, 23), Some(5)); // バナーの後にスクロール分
-}
-
-#[test]
-fn diff_list_row_at_adds_the_scroll_offset() {
-    let g = geom(20, 50, 90);
-    assert_eq!(diff_list_row_at(&g, 5, 0, 30, 21), Some(5));
-    assert_eq!(diff_list_row_at(&g, 5, 0, 30, 26), Some(10));
-}
-
-#[test]
-fn double_click_within_threshold() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    // 前回のクリックから100ms後のクリックはダブルクリックになる。
-    let is_double = register_double_click(&mut last, t0 + Duration::from_millis(100));
-    assert!(is_double);
-    assert_eq!(last, t0 + Duration::from_millis(100));
-}
-
-#[test]
-fn single_click_beyond_threshold() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    // 400ms後のクリックはダブルクリックにならない（境界は含まない）。
-    assert!(!register_double_click(
-        &mut last,
-        t0 + Duration::from_millis(400)
-    ));
-    // しきい値を大きく超えたクリックも同様。
-    let t1 = t0 + Duration::from_millis(400);
-    assert!(!register_double_click(
-        &mut last,
-        t1 + Duration::from_millis(500)
-    ));
-}
-
-#[test]
-fn indexed_double_click_requires_same_idx() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    let mut last_idx = 0usize;
-    // idx 5への最初のクリック: 時間窓の中であっても、記録されているidx（0）と
-    // 異なるのでダブルクリックにはならない。
-    let first =
-        register_double_click_on(&mut last, &mut last_idx, 5, t0 + Duration::from_millis(50));
-    assert!(!first);
-    assert_eq!(last_idx, 5);
-    // 窓の中で同じidxへの2回目のクリック: ダブルクリックになる。
-    let second =
-        register_double_click_on(&mut last, &mut last_idx, 5, t0 + Duration::from_millis(100));
-    assert!(second);
-}
-
-#[test]
-fn indexed_double_click_resets_on_different_idx() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    let mut last_idx = 3usize;
-    // 素早いクリックだが行が異なる → ダブルクリックにはならず、記録される
-    // インデックス/時刻が更新されるので、次のクリックはこれと比較される。
-    let hit = register_double_click_on(&mut last, &mut last_idx, 7, t0 + Duration::from_millis(10));
-    assert!(!hit);
-    assert_eq!(last_idx, 7);
-    assert_eq!(last, t0 + Duration::from_millis(10));
-}
-
 // メニューバーのクリック
 
 mod menu_clicks {
-    use super::super::menu::{MenuClick, classify_menu_click};
+    use crate::menu::mouse::{MenuClick, classify_menu_click};
     use crate::menu::state::{ItemHit, MenuFocus, MenuState};
     use ratatui::layout::Rect;
 

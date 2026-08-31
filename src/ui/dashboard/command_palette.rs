@@ -8,11 +8,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// 検索バーとコマンド一覧を持つコマンドパレットのオーバーレイを描画する。
 pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::command_palette;
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 24_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -49,7 +48,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
     let list_inner = list_block.inner(chunks[1]);
     frame.render_widget(list_block, chunks[1]);
 
-    let context = app.focus.key_context();
+    let context = app.focus.current().key_context();
     let filtered = command_palette::filter_commands(
         &app.overlays.command_palette.filter,
         &app.keymap,
@@ -63,7 +62,7 @@ pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) 
         return;
     }
 
-    let current_label = app.focus.label();
+    let current_label = app.focus.current().label();
     let scope_header = |scope: command_palette::CommandScope| match scope {
         command_palette::CommandScope::Current => current_label,
         command_palette::CommandScope::Global => "Global",

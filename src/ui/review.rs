@@ -12,7 +12,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-/// コメント種別のアイコン。
 pub fn kind_icon(kind: CommentKind, set: crate::icons::IconSet) -> &'static str {
     match kind {
         CommentKind::Suggest => crate::icons::KIND_SUGGEST.get(set),
@@ -38,9 +37,8 @@ pub fn kind_badge_span(
     }
 }
 
-/// コメントの追加/編集時に入力ボックスのオーバーレイを描画する。
 pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_height = 12_u16.min(area.height.saturating_sub(4));
     let popup_width = area.width.saturating_sub(8).min(80);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -143,10 +141,9 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// コメントまたは返信を削除する前の y/n 確認ポップアップを描画する。
 pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::review_state::PendingDelete;
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let what = match &app.review_state.pending_delete {
         Some(PendingDelete::Reply { .. }) => "this reply",
         Some(PendingDelete::Comment { .. }) => "this comment and all its replies",
@@ -190,7 +187,6 @@ pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// コメントテンプレート選択の中央ポップアップを描画する。
 pub fn render_template_picker_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -258,9 +254,8 @@ pub fn render_template_picker_overlay(
     frame.render_widget(paragraph, inner);
 }
 
-/// コメント全文とその返信を表示する中央詳細モーダルを描画する。
 pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
     let popup_height = area.height.saturating_sub(4).max(10);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -343,8 +338,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         &comment.body,
         inner_width.saturating_sub(1),
         theme,
-        &app.highlight.syntax_set,
-        &app.highlight.theme,
+        &app.appearance.highlight.syntax_set,
+        &app.appearance.highlight.theme,
     );
     for line in body_md {
         let mut spans = vec![Span::raw(" ")];
@@ -387,8 +382,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 &reply.body,
                 inner_width.saturating_sub(4),
                 theme,
-                &app.highlight.syntax_set,
-                &app.highlight.theme,
+                &app.appearance.highlight.syntax_set,
+                &app.appearance.highlight.theme,
             );
             for line in reply_md {
                 let mut spans = vec![Span::raw("    ")];

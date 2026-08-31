@@ -3,11 +3,6 @@
 //! tree-sitter で Rust ソースファイルを構文解析してシンボル定義を抽出し、
 //! 定義/実装/参照のルックアップを提供する SymbolIndex を提供する。
 //!
-//! 責務ごとに分割している。[model] は公開データ型（Symbol、SymbolKind、
-//! Reference）、[index] は SymbolIndex 本体とその構築/クエリメソッド、
-//! extract_common は各言語共通の tree-sitter AST 走査ヘルパー、
-//! extract_rust/extract_go/extract_ts は言語ごとのシンボル抽出器を持つ。
-//!
 //! [code_mask] はインデックス側では答えられない問いに答える。画面上の
 //! ある単語が本当にコードなのか、それともコメントや文字列の中の地の文なのか。
 //! 名前のルックアップが意味を持つ前に、どのナビゲーションクエリもこれを

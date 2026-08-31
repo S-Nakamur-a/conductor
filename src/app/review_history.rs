@@ -100,7 +100,7 @@ impl App {
                     self.status_message = Some(StatusMessage::new(
                         "Session history saved.".to_string(),
                         StatusLevel::Success,
-                        self.ui_tick,
+                        self.ticks.ui(),
                     ));
                     if self.overlays.active == ActiveOverlay::History {
                         match store.list_session_history(50) {
@@ -119,7 +119,7 @@ impl App {
                     self.status_message = Some(StatusMessage::new(
                         format!("Error saving history: {e}"),
                         StatusLevel::Error,
-                        self.ui_tick,
+                        self.ticks.ui(),
                     ));
                 }
             }

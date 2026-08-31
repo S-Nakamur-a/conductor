@@ -120,13 +120,13 @@ impl App {
             crate::command_palette::CommandId::DeleteWorktree => selected_worktree
                 .is_some_and(|w| !w.is_main && !self.is_worktree_pending_delete(&w.path)),
 
-            // "Cannot merge main into itself."(app/worktree_commands.rs)。
+            // "Cannot merge main into itself."(worktree/worktree_commands.rs)。
             crate::command_palette::CommandId::MergeToMain => {
                 selected_worktree.is_some_and(|w| !w.is_main)
             }
 
             // "Already grabbing a branch. Ungrab first (G)."
-            // (app/worktree_commands.rs)。後続の「grab 可能な非 main worktree が
+            // (worktree/worktree_commands.rs)。後続の「grab 可能な非 main worktree が
             // ない」というチェックはここでは再現しない。オーバーレイ状態を変更する
             // load_grab_branches() が必要になるため。
             crate::command_palette::CommandId::GrabBranch => {
@@ -138,7 +138,7 @@ impl App {
                 self.worktree_mgr.grabbed_branch.is_some()
             }
 
-            // "No worktree selected."(app/worktree_pr.rs)。ブランチに実際に
+            // "No worktree selected."(worktree/worktree_pr.rs)。ブランチに実際に
             // PR があるかどうかは git 呼び出しが必要なので、そこはコマンド側に
             // 任せる。
             crate::command_palette::CommandId::OpenPullRequest => selected_worktree.is_some(),
@@ -147,14 +147,14 @@ impl App {
             // "Raw/Rendered applies to a markdown file in the Viewer"
             // (app/view_state.rs) — コマンドが参照するのと同じヘルパー。
             crate::command_palette::CommandId::ToggleMarkdownRender => {
-                self.viewer_state.markdown_toggle_available()
+                self.viewer.markdown_toggle_available()
             }
 
             // 畳める範囲を持つファイルを Viewer が表示しているときだけ意味を持つ。
             crate::command_palette::CommandId::FoldOneLevel
             | crate::command_palette::CommandId::UnfoldOneLevel
             | crate::command_palette::CommandId::FoldAll
-            | crate::command_palette::CommandId::UnfoldAll => self.viewer_state.folds_available(),
+            | crate::command_palette::CommandId::UnfoldAll => self.viewer.folds_available(),
 
             // Review
             // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに
@@ -175,12 +175,12 @@ impl App {
             .collect();
         let selected = themes
             .iter()
-            .position(|t| t == &self.theme_sel.name)
+            .position(|t| t == &self.appearance.sel.name)
             .unwrap_or(0);
         self.overlays.theme_picker = crate::overlay::ThemePickerOverlay {
             themes,
             selected,
-            original: self.theme_sel.name.clone(),
+            original: self.appearance.sel.name.clone(),
         };
         self.overlays.active = ActiveOverlay::ThemePicker;
     }
@@ -190,20 +190,15 @@ impl App {
     /// ハイコントラストのテーマ変換をその場で切り替え、選択を永続化し、
     /// テーマ依存のキャッシュを再構築して変更を即座に反映させる。
     fn cmd_toggle_high_contrast(&mut self) {
-        self.theme_sel.high_contrast = !self.theme_sel.high_contrast;
-        self.config.ui.high_contrast = self.theme_sel.high_contrast;
-        self.theme = super::build_theme(&self.theme_sel.name, self.theme_sel.high_contrast);
+        let name = self.appearance.sel.name.clone();
+        self.install_palette(name, !self.appearance.sel.high_contrast);
+        self.config.ui.high_contrast = self.appearance.sel.high_contrast;
+        self.request_redraw();
 
-        // テーマの色を描画済みの span に焼き込んでいるキャッシュは再構築が必要。
-        self.markdown_cache.clear();
-        self.reflow.last_width = 0;
-        self.reflow.cache.clear();
-        self.dirty.mark_all();
-
-        if let Err(e) = crate::config::persist_ui_high_contrast(self.theme_sel.high_contrast) {
+        if let Err(e) = crate::config::persist_ui_high_contrast(self.appearance.sel.high_contrast) {
             log::warn!("failed to persist high_contrast: {e}");
         }
-        let state = if self.theme_sel.high_contrast {
+        let state = if self.appearance.sel.high_contrast {
             "on"
         } else {
             "off"
@@ -239,20 +234,18 @@ impl App {
     }
 
     fn cmd_search_in_file(&mut self) {
-        self.viewer_state.search.search_active = true;
-        self.viewer_state.search.search_query.clear();
+        self.viewer.search.search_active = true;
+        self.viewer.search.search_query.clear();
         self.set_focus(Focus::Viewer);
     }
 
     fn cmd_toggle_help(&mut self) {
-        self.overlays.help.context = self.focus;
+        self.overlays.help.context = self.focus.current();
         self.overlays.active = ActiveOverlay::Help;
     }
 
     fn cmd_show_review_comments(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::Comments;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.explorer.show(crate::explorer::BottomView::Comments);
         self.set_focus(Focus::Explorer);
     }
 
@@ -299,16 +292,12 @@ impl App {
     }
 
     fn cmd_show_diff_list(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::DiffList;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.explorer.show(crate::explorer::BottomView::Changes);
         self.set_focus(Focus::Explorer);
     }
 
     fn cmd_show_comment_list(&mut self) {
-        self.viewer_state.explorer.explorer_bottom_view =
-            crate::viewer::ExplorerBottomView::Comments;
-        self.viewer_state.explorer.explorer_focus_on_diff_list = true;
+        self.explorer.show(crate::explorer::BottomView::Comments);
         self.set_focus(Focus::Explorer);
     }
 }

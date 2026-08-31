@@ -34,9 +34,8 @@ fn floor_char_boundary(s: &str, pos: usize) -> usize {
     i
 }
 
-/// grep 検索オーバーレイを描画する。
 pub fn render_grep_search_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
 
     // 幅60%、高さ70%、中央配置。
     let popup_width = ((area.width as u32 * 60 / 100) as u16)

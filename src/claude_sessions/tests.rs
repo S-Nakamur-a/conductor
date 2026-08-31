@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use super::rotation::resolve_current_session_id;
 use super::session_log_in_dir;
-use crate::claude_log::{DisplayBlock, load_session};
+use crate::reflow::log::{DisplayBlock, load_session};
 
 /// dir に <session_id>.jsonl を書く。turns の各要素を1ユーザターンとして
 /// 1行ずつ書き、mtime は now - age に強制する。
@@ -134,8 +134,6 @@ fn write_plain_log(dir: &Path, session_id: &str, start: SystemTime, turns: &[&st
     write_records(dir, session_id, start, &[], turns)
 }
 
-/// /clear で始まるセッションログ (ローテーション先) を書く。
-///
 /// 実物と同じ並び: mode → caveat (isMeta) → /clear コマンド → 会話。
 fn write_cleared_log(dir: &Path, session_id: &str, start: SystemTime, turns: &[&str]) -> PathBuf {
     let ts = rfc3339(start);

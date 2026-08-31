@@ -5,7 +5,6 @@ use unicode_width::UnicodeWidthStr;
 use super::TextInput;
 
 impl TextInput {
-    /// 新しい単一行のテキスト入力を作る。
     pub fn new() -> Self {
         Self {
             buffer: String::new(),

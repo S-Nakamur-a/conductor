@@ -130,11 +130,8 @@ pub struct CommandCaller {
     pub working_dir: Option<PathBuf>,
 }
 
-/// 設定された argv 内のプレースホルダを展開する。
-///
-/// 展開後の argv と、{prompt} が見つかったかどうかを返す。呼び出し側は argv と
-/// stdin のどちらで渡すか決めるのにこれが要る。「どこにもプレースホルダが無い」は、
-/// プロンプトを何も受け取らないコマンドではなく stdin を意味しなければならない。
+/// 展開後の argv と、{prompt} が見つかったかを返す。「どこにも無い」はプロンプトを
+/// 受け取らないコマンドではなく stdin を意味しなければならない。
 fn expand_argv(cmd: &[String], prompt: &str, workdir: Option<&Path>) -> (Vec<String>, bool) {
     let workdir = workdir.map(|d| d.to_string_lossy().into_owned());
     let mut saw_prompt = false;

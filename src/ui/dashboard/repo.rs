@@ -9,9 +9,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// リポジトリセレクタのオーバーレイを描画する。
 pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
     let content_lines = app.repo.known.len() as u16;
     let popup_height = (content_lines + 2)
@@ -93,9 +92,8 @@ pub fn render_repo_selector_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
-/// 「リポジトリを開く」パス入力オーバーレイを描画する。
 pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 5_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -126,7 +124,7 @@ pub fn render_open_repo_overlay(frame: &mut Frame, area: Rect, app: &App) {
 /// オーバーレイを開いたまま（入力内容も保持したまま）にして、ユーザが修正して
 /// 再試行できるようにする。
 pub fn render_pr_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let overlay = &app.overlays.pr_input;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 6_u16.min(area.height.saturating_sub(4));

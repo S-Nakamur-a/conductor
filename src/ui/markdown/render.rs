@@ -198,11 +198,8 @@ pub(crate) fn render_block(
     }
 }
 
-/// syntect でフェンス付きコードブロックをハイライトし、影付きの「カード」として
-/// レイアウトする。各行を theme.code_bg で全幅に塗り、左右に1列ずつ字下げする。
-/// GitHub がコードブロックを枠で囲むのと同じやり方。コードは単語折り返しではなく
-/// ハードラップして何も隠れないようにし、上下の空パディング行でカードに縦方向の
-/// 余白を持たせる。
+/// 各行を theme.code_bg で全幅に塗り、左右 1 列ずつ字下げして枠のように見せる (GitHub と
+/// 同じやり方)。単語折り返しではなくハードラップして何も隠さない。
 fn render_code_block(
     lang: Option<&str>,
     lines: &[String],
@@ -264,9 +261,8 @@ fn render_code_block(
     out
 }
 
-/// 折り返し済みのコード行1本をカードで包む: 先頭の字下げ用スペース、その行の
-/// span 列、末尾のパディングという順で、すべてのセルに code_bg を持たせて
-/// 行が width 桁ぶん一色のカード色で埋まるようにする。
+/// 先頭の字下げ・span 列・末尾のパディングの全セルに code_bg を持たせ、行が width 桁ぶん
+/// 一色で埋まるようにする。
 fn frame_code_row(line: Line<'static>, width: usize, code_bg: Color) -> Line<'static> {
     let inset = Style::default().bg(code_bg);
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 2);

@@ -25,31 +25,29 @@ pub(crate) fn run_due_timers(
             // 静かなモード: 装飾を進めるのは worktree パネルにフォーカスがあるときだけ。
             // レビューや端末作業の最中に視界の端で動き続けることがないようにする。
             // それ以外のときはその場で止まり、フォーカスが戻ったら再開する。
-            "decoration" if app.focus == crate::app::Focus::Worktree => {
+            "decoration" if app.focus.current() == crate::app::Focus::Worktree => {
                 let left_w = app.layout.cache.columns[0].width;
                 let panel_h = app.layout.cache.main_area.height;
                 let list_h = (app.worktrees.len() as u16 + 2).max(5);
                 let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
                 let deco_h = panel_h.saturating_sub(list_h + detail_h);
                 if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
-                    app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                    app.request_redraw();
                 }
             }
             // どこかのセッションが待機している限り、フォーカスや装飾のアニメーション
             // 有無にかかわらず通知バーの明滅を動かす。
             "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
-                app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                app.request_redraw();
             }
             "unfocused_terminal" => {
-                app.terminal.drop_inactive_caches(app.focus);
-                app.dirty.mark(crate::app::DirtyPanels::TERMINAL);
+                app.terminal.drop_inactive_caches(app.focus.current());
+                app.request_redraw();
             }
             // I/O の重いタイマー。入力中はスクロールが固まるので飛ばす。
             "worktree_poll" if !input_active => {
                 if app.refresh_worktrees() {
-                    app.dirty.mark(
-                        crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::EXPLORER,
-                    );
+                    app.request_redraw();
                 }
                 // 監視対象のパス集合が変わったらファイル監視を作り直す (git init で
                 // 最初の worktree ができた、worktree が追加・削除された、など)。
@@ -77,20 +75,16 @@ pub(crate) fn run_due_timers(
                 // 新規作成されたファイルが現れるようにする。安い処理 (子は遅延読み込み)
                 // で、変化があったときだけ再描画する。
                 if app.refresh_viewer() {
-                    app.dirty
-                        .mark(crate::app::DirtyPanels::EXPLORER | crate::app::DirtyPanels::VIEWER);
+                    app.request_redraw();
                 }
                 app.check_diff_viewer_staleness();
             }
             "pty_cleanup" if !input_active && app.cleanup_dead_sessions() => {
-                app.dirty
-                    .mark(crate::app::DirtyPanels::TERMINAL | crate::app::DirtyPanels::WORKTREE);
+                app.request_redraw();
             }
             "cc_waiting" if !input_active => {
                 if app.check_cc_waiting_state() {
-                    app.dirty.mark(
-                        crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL,
-                    );
+                    app.request_redraw();
                 }
                 app.flush_deferred_prompts();
             }
@@ -99,7 +93,7 @@ pub(crate) fn run_due_timers(
                     let new_stats = store.get_today_stats().ok();
                     if new_stats != app.stats.today {
                         app.stats.today = new_stats;
-                        app.dirty.mark(crate::app::DirtyPanels::WORKTREE);
+                        app.request_redraw();
                     }
                 }
             }
@@ -169,7 +163,7 @@ pub(crate) fn poll_watchers(
             if !app.bg.symbol_index.is_running() {
                 app.start_symbol_index_build();
             }
-            app.dirty.mark_all();
+            app.request_redraw();
         }
     }
 
@@ -202,8 +196,7 @@ pub(crate) fn poll_watchers(
     if let Some(cc_notify) = cc_notify {
         while let Some(event) = cc_notify.poll() {
             app.handle_cc_notify(event);
-            app.dirty
-                .mark(crate::app::DirtyPanels::WORKTREE | crate::app::DirtyPanels::TERMINAL);
+            app.request_redraw();
         }
     }
 
@@ -214,16 +207,13 @@ pub(crate) fn poll_watchers(
         // 余分なイベントを吸い出す (連続した書き込みをまとめる)。
         while refresh_pipe.poll().is_some() {}
         app.refresh_reviews();
-        app.dirty.mark_all();
+        app.request_redraw();
         log::debug!("refresh_pipe: reloaded reviews from MCP trigger");
     }
 }
 
-/// 意味索引の作り直しを 1 周進める。
-///
-/// 成果は選択中の worktree ではなく索引そのものに乗るので、生成が終わったら
-/// 読み直す。生成が向いていたツリーと今の選択が違えば `Slot` が取り込みを拒み、
-/// [`crate::app::App::start_semantic_index_load`] が正しい向きで読み直す。
+/// 成果は選択中の worktree ではなく索引そのものに乗るので、終わったら読み直す。
+/// 向きが違えば `Slot` が取り込みを拒み、正しい向きで読み直される。
 fn tick_semantic_regeneration(app: &mut App) {
     let repo_root = app.repo.path.clone();
     let tree_root = app.selected_worktree_path();
@@ -234,7 +224,7 @@ fn tick_semantic_regeneration(app: &mut App) {
     }
     // 読んでいるファイルの索引ルートに索引が無ければ、ここで作りに行かせる。
     // 索引ルートは実在するリポジトリで 109 本になるので、まとめては作らない。
-    if let Some(rel) = app.viewer_state.content.current_file.clone() {
+    if let Some(rel) = app.viewer.content.current_file.clone() {
         let reading =
             app.code_nav
                 .semantic

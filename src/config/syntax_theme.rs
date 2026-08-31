@@ -3,18 +3,9 @@
 use super::Config;
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
-/// 有効な UI テーマ名に対応する two-face 組み込みテーマを返す。
-///
-/// 対応表は theme::Theme::all_names() の全エントリを網羅する。ここに漏れが
-/// あるとそのテーマだけシンタックスハイライトが別テーマの配色のまま残り、
-/// 「テーマを切り替えてもコードの色が変わらない」ように見えてしまうので、
-/// 網羅は tests_syntax_theme.rs のテストで固定してある。
-///
-/// syntect 同梱の base16-* 系ではなく two-face (bat 由来) を使うのは、
-/// 色を付けるスコープの数が段違いに多いため。base16-mocha.dark はスコープ
-/// 規則が 47 件しかなく、TypeScript ではトークンの約半分が無着色の
-/// デフォルト前景のまま残る。Catppuccin Mocha は 185 件で、同じファイルの
-/// 約 9 割に色が付く。
+/// 対応表は all_names() を網羅する。漏れるとそのテーマだけ配色が変わらず見えるので、
+/// 網羅は tests_syntax_theme.rs で固定してある。two-face (bat 由来) を使うのは色を
+/// 付けるスコープ数が段違いなため — base16-mocha.dark は 47 件、Catppuccin Mocha は 185 件。
 fn embedded_theme_for(theme: &str) -> EmbeddedThemeName {
     match theme {
         // ダークテーマ — 同名の組み込みがあるものはそのまま対応させる。

@@ -2,7 +2,7 @@
 //!
 //! app/review_publish.rs (確認オーバーレイの状態、バックグラウンドスレッドの起動、
 //! DB への書き込みといった App 側の段取り) とは分けてある。pr_intake.rs を
-//! app/worktree.rs から分けているのと同じ理由で、gh の CLI と JSON の正確な
+//! worktree/mod.rs から分けているのと同じ理由で、gh の CLI と JSON の正確な
 //! 綴りを 1 か所にまとめるため。ここにあるのは素のデータと gh のサブプロセス
 //! 呼び出しだけで App に依存しないので、アプリを起動せずに単体テストできる。
 
@@ -179,9 +179,7 @@ struct SingleCommentPayload<'a> {
 
 // gh CLI の配管
 
-/// PR の head コミットの sha を gh pr view <N> --json headRefOid で明示的に取る。
-/// レビュー API の既定 (投稿時点の HEAD が何であれそれを使う) に任せないのは、
-/// 既定だと同時に走る push と競合するため。
+/// レビュー API の既定 (投稿時点の HEAD) に任せない。同時に走る push と競合する。
 fn fetch_head_commit_id(pr_number: u64) -> Result<String, String> {
     let output = Command::new("gh")
         .args([

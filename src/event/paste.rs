@@ -31,7 +31,10 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         return;
     }
 
-    let session_idx = app.terminal.pane(app.focus).and_then(|p| p.active_session);
+    let session_idx = app
+        .terminal
+        .pane(app.focus.current())
+        .and_then(|p| p.active_session);
 
     // grab されている worktree の terminal へのペーストはブロックする。
     if app.is_selected_worktree_grabbed() {
@@ -44,7 +47,7 @@ pub fn handle_paste_event(app: &mut App, data: String) {
         if let Err(e) = app.terminal.pty_manager.write_paste_to_session(idx, &data) {
             log::warn!("failed to write paste data to PTY session: {e}");
         } else {
-            if let Some(pane) = app.terminal.pane_mut(app.focus) {
+            if let Some(pane) = app.terminal.pane_mut(app.focus.current()) {
                 pane.scroll = 0;
             }
             app.clear_cc_waiting_signal(idx);

@@ -402,9 +402,7 @@ fn compute_ranges(source: &str, path: &str) -> Vec<FoldRange> {
     ranges
 }
 
-/// 包含している範囲の数を数えて、各範囲に入れ子の深さを与える。
-///
-/// ranges は start 昇順で入れ子が壊れていないことが前提（normalize 済み）。
+/// ranges は start 昇順で入れ子が壊れていないこと (normalize 済み) が前提。
 fn assign_depths(ranges: &mut [FoldRange]) {
     let mut enclosing: Vec<usize> = Vec::new();
     for range in ranges.iter_mut() {
@@ -450,10 +448,8 @@ fn syntax_ranges(source: &str, path: &str) -> Option<Vec<FoldRange>> {
     }
 }
 
-/// 拡張子ごとの、折りたためるノード種別。
-///
-/// 「複数行にまたがるノード全部」ではなく列挙にしているのは、式や引数リストまで
-/// 畳めると1行あたりのマーカーが増えすぎて、どれがブロックなのか読めなくなるため。
+/// 「複数行のノード全部」ではなく列挙なのは、式や引数リストまで畳めると1行あたりの
+/// マーカーが増えすぎて、どれがブロックなのか読めなくなるため。
 fn foldable_kinds(ext: &str) -> &'static [&'static str] {
     const RUST: &[&str] = &[
         "block",
@@ -495,11 +491,8 @@ fn foldable_kinds(ext: &str) -> &'static [&'static str] {
     }
 }
 
-/// インデント幅だけを頼りにブロックを組み立てる（文法を持たない言語向け）。
-///
-/// ある行より深くインデントされた行が続く限り、その行の子とみなす。空行は
-/// ブロックを切らないが、末尾の空行は範囲に含めない（畳んだときに空行だけが
-/// 残るのを避けるため）。
+/// 文法を持たない言語向け。空行はブロックを切らないが、末尾の空行は範囲に含めない
+/// (畳んだときに空行だけが残るのを避ける)。
 fn indent_ranges(source: &str) -> Vec<FoldRange> {
     fn indent_of(line: &str) -> Option<usize> {
         let trimmed = line.trim_start();
@@ -549,11 +542,8 @@ fn indent_ranges(source: &str) -> Vec<FoldRange> {
     out
 }
 
-/// start 昇順に並べ、同じ見出し行の範囲は最も広いものだけ残す。
-///
-/// 見出し行がひとつなら折りたたみもひとつでなければならない: 同じ行に2つ
-/// あると、開閉が collapsed の1エントリを取り合って、開いたのにまだ隠れている
-/// 行が出る。
+/// 見出し行がひとつなら折りたたみもひとつ。同じ行に2つあると開閉が collapsed の
+/// 1エントリを取り合い、開いたのにまだ隠れている行が出る。
 fn normalize(mut ranges: Vec<FoldRange>) -> Vec<FoldRange> {
     ranges.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     ranges.dedup_by(|a, b| a.start == b.start);
@@ -683,10 +673,8 @@ impl ViewerState {
         changed
     }
 
-    /// 閉じる操作でカーソル行が隠れたら、それを隠している見出し行へ寄せる。
-    ///
-    /// 開くのではなく寄せるのは、閉じたのは操作した本人だから: 直後に開き直す
-    /// のでは操作が無かったことになる。
+    /// 開くのではなく寄せる。閉じたのは操作した本人なので、直後に開き直すのでは
+    /// 操作が無かったことになる。
     fn clamp_cursor_to_visible(&mut self) {
         let line = self.content.folds.visible_anchor(self.cursor_line());
         self.content.file_scroll = line.saturating_sub(1);

@@ -9,11 +9,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-/// 現在のコンテキストのキーバインドを表示するヘルプオーバーレイを描画する。
 pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::Focus;
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
     let popup_height = 30_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -92,12 +91,8 @@ fn help_key_dyn(lines: &mut Vec<Line<'static>>, keys: String, desc: &'static str
     ]));
 }
 
-/// ヘルプタブのチートシート行を組み立てる。keymap から自動生成しているので、
-/// そのパネルで発火するすべてのバインドを常に漏れなく列挙できる — 手作業での
-/// 選別は一切していないので、アクションが黙って抜け落ちることがない（以前の
-/// 手作りリストは一部しか表示できていなかった）。レイヤーごとに1セクションで、
-/// そのレイヤー自身のバインドを列挙する（グローバルなコード進行は「Global」の
-/// 下に1回だけ表示する）。
+/// keymap から自動生成しているので、そのパネルで発火する全バインドを漏れなく出せる。
+/// 手作りのリストだった頃はアクションが黙って抜け落ちていた。
 fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Line<'static>> {
     use crate::app::Focus;
     use crate::keymap::{Action, KeyContext};
@@ -150,12 +145,8 @@ fn help_lines_for(app: &App, focus: crate::app::Focus, theme: &Theme) -> Vec<Lin
     lines
 }
 
-/// ライブの末尾から上にスクロールして入る、Claude のトランスクリプトのキー。
-///
-/// 下のセクションと同じ理由で手書きにしている: handle_reflow_key が
-/// app.keymap を経由せずこれらを直接扱っているため、keymap を辿る section()
-/// からは1つも見えない。これができるまでは help に一切表示されておらず、
-/// G も例外ではなかった。
+/// handle_reflow_key が app.keymap を経由せず直接扱うので、keymap を辿る section() からは
+/// 1 つも見えない。手書きにしないと help に一切出ない (G も例外ではなかった)。
 fn help_transcript_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     help_section(lines, "Claude transcript (scroll up to enter)", theme);
     for (keys, desc) in [
@@ -170,10 +161,8 @@ fn help_transcript_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     }
 }
 
-/// PR取り込み、ウォークスルー生成、公開の各コマンドにはデフォルトのキーバインドが
-/// ない（default_keybinds.toml 参照） — コマンドパレット経由でしか到達できないため、
-/// app.keymap を辿る上の section() では見つからない。それでも help 画面に
-/// 表示されるよう、ここに列挙している。
+/// これらは既定のキーバインドを持たずパレット経由でしか到達できないので、keymap を辿る
+/// section() では見つからない。help に出すためここに並べている。
 fn help_review_commands_section(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     help_section(lines, "Review (via command palette)", theme);
     help_key_dyn(

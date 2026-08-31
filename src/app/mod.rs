@@ -1,220 +1,145 @@
-//! アプリケーション状態とフォーカス管理。
-//!
-//! このモジュールはトップレベルのアプリケーション状態、統一されたパネル
-//! レイアウトのフォーカスモデル、パネル間の遷移を定義する。
+//! アプリケーション状態と、パネル間のフォーカス遷移。
 
 mod appearance;
 mod code_nav;
 mod commands;
-mod editor;
 mod focus;
+pub use focus::FocusState;
 mod lifecycle;
 mod panel_resize;
-mod reflow;
 mod repo;
-mod revidere;
 mod review;
 mod review_commands;
 mod review_edit;
 mod review_history;
 mod review_publish;
-pub use revidere::RevidereRuns;
 mod state;
 pub use state::{
-    CodeNav, Highlighting, ListHover, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
-    RevidereState, SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WorktreeList, WtbarState,
+    Appearance, ChangeWatch, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
+    RevidereState, SessionStats, Ticks, UpdateFlow, ViewRestore, WtbarState,
 };
-mod terminal;
-mod terminal_cc_state;
-mod terminal_resize;
-mod terminal_resume;
 mod types;
 mod update;
 mod view_state;
-mod worktree;
-mod worktree_branches;
-mod worktree_commands;
-mod worktree_crud;
-mod worktree_grab;
-mod worktree_pr;
-mod worktree_smart;
+pub use view_state::OpenAs;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::config;
 use crate::diff_state::DiffState;
+use crate::explorer::Explorer;
+use crate::explorer::hover::ListHover;
 use crate::git_engine;
 use crate::keymap::KeyMap;
 use crate::overlay::{ActiveOverlay, OverlayManager};
 use crate::pty_manager;
+use crate::reflow::ReflowView;
 use crate::review_state::ReviewState;
 use crate::review_store::ReviewStore;
-use crate::terminal_state::TerminalState;
+use crate::terminal::editor::EditorPanel;
+use crate::terminal::state::TerminalState;
 use crate::theme::Theme;
 use crate::viewer::ViewerState;
-use crate::worktree_ops::WorktreeManager;
+use crate::viewer::code_nav_state::CodeNav;
+use crate::worktree::ops::WorktreeManager;
+use crate::worktree::state::WorktreeList;
 
 pub use crate::types::Focus;
 pub use crate::types::{
-    DirtyPanels, GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp,
-    SmartGenResult, StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow,
-    WorktreeOpResult,
+    GrabbedBranch, Notice, PendingViewRestore, PendingWorktree, PendingWorktreeOp, SmartGenResult,
+    StatusLevel, StatusMessage, WorktreeInputMode, WorktreeListRow, WorktreeOpResult,
 };
-pub use code_nav::{
-    LinePick, UnderlineColorKind, masked_symbol_at_column, popup_highlight_range,
-    underline_color_kind,
-};
-pub use editor::EditorPanel;
 pub use panel_resize::{Divider, ResizeDir};
-pub use reflow::ReflowView;
 pub use types::{BackgroundOps, BgDiffResult, CcusageInfo};
 pub use update::UpdateState;
 
-/// すべてのUIパネルで共有されるトップレベルのアプリケーション状態。
+/// すべての UI パネルで共有されるトップレベルの状態。
 pub struct App {
-    /// どのパネルが再描画を必要としているかを追跡する。
-    pub dirty: DirtyPanels,
-    /// 現在のパネルフォーカス。
-    pub focus: Focus,
-    /// フォーカスが直前にあったパネルと、移った時刻。ボーダー色のグライド
-    /// アニメーション (animated_border_color) だけがこの 2 つを読む。
-    pub focus_prev: Focus,
-    /// フォーカスが最後に変わった時刻。境界線遷移のタイミング計測に使う。
-    pub focus_changed_at: std::time::Instant,
-    /// すべてのオーバーレイポップアップ状態（ブランチ切り替え、grab、prune、ヘルプなど）。
+    pub needs_redraw: bool,
+    pub focus: FocusState,
     pub overlays: OverlayManager,
     /// いま開いているリポジトリの同一性と、切り替え先の候補。
     pub repo: RepoState,
-    /// 次のティックでアプリケーションを終了すべきかどうか。
     pub should_quit: bool,
-    /// 有効時の埋め込みエディタパネル。Some ⟺ エディタのPTYが動作していて、
-    /// マージされたExplorer+Viewer領域を占有している状態。None は通常の
-    /// （エディタなしの）レイアウト。[App::open_in_editor] でセットされ、
-    /// [App::exit_editor] で解体される（このフィールドと Focus::Editor を
-    /// 対にする唯一の2つのメソッドであり、不変条件をこの中に閉じ込めている）。
+    /// Some ⟺ エディタの PTY が動いていて Explorer+Viewer を占有している。
+    /// [App::open_in_editor] と [App::exit_editor] だけがこれと Focus::Editor を
+    /// 対で扱うので、不変条件はその 2 つの中に閉じている。
     pub editor: Option<EditorPanel>,
     /// revidere の成果物と、実行中の解析。
     pub revidere: RevidereState,
     /// レビューコメントの GitHub 公開フロー (確認待ち + 実行中の処理)。
     pub publish: PublishState,
-    /// 発見済みの worktree 一覧と、そこへの選択 (行の平坦化リストを含む)。
+    /// 発見済みの worktree 一覧と、そこへの選択。
     pub worktrees: WorktreeList,
-    /// 設定ファイルから読み込まれたアプリケーション設定。
     pub config: config::Config,
-    /// 解決済みのキーバインドマップ（デフォルト + ユーザーによる上書き）。
+    /// デフォルトにユーザの上書きを重ねた解決済みのマップ。
     pub keymap: KeyMap,
-    /// 描画に使う配色。フレームごとに読まれるので 1 階層浅いところに置く。
-    /// 組み立ての元データは [Self::theme_sel]。
-    pub theme: Theme,
-    /// [Self::theme] を組み立てるための元データ (テーマ名 + ハイコントラスト)。
-    pub theme_sel: ThemeSelection,
-    /// Explorer/Viewerパネルの状態（ファイルツリー + ファイル内容）。
-    pub viewer_state: ViewerState,
-    /// Diffデータの状態（Viewerのインラインハイライトに使われる）。
+    pub appearance: Appearance,
+    pub explorer: Explorer,
+    pub viewer: ViewerState,
     pub diff_state: DiffState,
-    /// SQLiteによるレビューコメントストア。DBを開けなかった場合は None。
+    /// DB を開けなかった場合は None。
     pub review_store: Option<ReviewStore>,
-    /// レビューコメントのUI状態。
     pub review_state: ReviewState,
-    /// ターミナル / PTYの状態。
     pub terminal: TerminalState,
-    /// worktree管理の状態（作成、削除、スマートworktreeなど）。
     pub worktree_mgr: WorktreeManager,
-    /// ステータスバーに表示されるステータスメッセージ（フラッシュメッセージ）。
     pub status_message: Option<StatusMessage>,
-    /// 選択中worktreeの最後に確認したHEAD oid（変更検知ポーリング用）。
-    pub last_poll_head_oid: Option<String>,
-    /// 選択中worktreeの最後に確認したステータス署名（追加・変更・削除件数）。
-    pub last_poll_status: Option<(usize, usize, usize, usize)>,
+    pub change_watch: ChangeWatch,
 
-    /// syntect によるシンタックスハイライトの共有資源。
-    pub highlight: Highlighting,
-    /// レンダリング済みMarkdown（コメント/返信の本文）のID別キャッシュ。
-    /// インラインスレッドボックスが毎フレーム再パース・再ハイライトしないため。
-    pub markdown_cache: crate::ui::markdown::MarkdownCache,
-
-    /// 現在100%に拡大されているパネル（[<=>]ボタン経由）。
-    /// None はどのパネルも拡大されていない（デフォルトレイアウト）ことを表す。
-    pub expanded_panel: Option<Focus>,
-
-    /// パネルの幾何: レイアウト矩形のキャッシュ、ターミナル列の分割比、
-    /// マウスによる境界リサイズ。
+    /// レイアウト矩形のキャッシュ、ターミナル列の分割比、境界のドラッグ。
     pub layout: PanelLayout,
 
-    /// Explorer の 2 つのリスト (ファイルツリー / Changed files) のホバー追跡。
     pub list_hover: ListHover,
 
-    /// UIアニメーション用のフレームカウンタ（例: waiting状態のパルス）。
-    pub ui_tick: u64,
-    /// デコレーションアニメーション用の独立したティックカウンタ（一定間隔で増加）。
-    pub decoration_tick: u64,
+    pub ticks: Ticks,
 
     /// セッション統計 (ゲーミフィケーション) と ccusage のキャッシュ。
     pub stats: SessionStats,
-    /// worktreeのブランチごとのHEAD oid（コミット検知用）。
-    pub worktree_heads: HashMap<String, String>,
 
-    /// 自己更新フロー: 新バージョンの検出 → 確認 → インストール → 再起動。
+    /// 自己更新: 検出 → 確認 → インストール → 再起動。
     pub update: UpdateFlow,
 
-    /// Ctrl+V貼り付けをサポートするためのシステムクリップボードコンテキスト。
     pub clipboard: Option<copypasta::ClipboardContext>,
 
-    /// すべてのデコレーションモードのアニメーション状態。
-    pub decoration_states: crate::ui::decoration::DecorationStates,
+    pub decoration_states: crate::worktree::decoration::DecorationStates,
 
-    // ブランチ詳細 (worktree詳細パネル)
-    /// 選択中worktreeの計算済みブランチ系譜とPR情報。
+    /// 選択中 worktree のブランチ系譜と PR 情報。
     pub branch_details: git_engine::BranchDetails,
-    /// このシステムで gh CLIが利用可能かどうか。
     pub gh_available: bool,
 
-    // Claudeセッションの自動再開
-    /// 次のフレームで自動再開を実行すべきかどうか（一度きり）。
-    pub pending_auto_resume: bool,
-
-    /// 「ユーザーがどこを見ていたか」の保存と復元。
+    /// 「ユーザがどこを見ていたか」の保存と復元。
     pub view_restore: ViewRestore,
 
     /// 画面上端の worktree モニタストリップ (横スクロール位置 + 当たり判定)。
     pub wtbar: WtbarState,
 
-    /// メニューバーの操作状態: どのメニューがフォーカス/オープン中か、
-    /// 直近のバー/ドロップダウン描画で記録されたクリック領域。
+    /// どのメニューが開いているかと、直近の描画で記録したクリック領域。
     pub menu: crate::menu::MenuState,
 
-    /// コードナビゲーション: シンボル索引、ジャンプ履歴、付随するポップアップ。
+    /// シンボル索引、ジャンプ履歴、付随するポップアップ。
     pub code_nav: CodeNav,
 
-    // バックグラウンド処理 (イベントループがポーリング)
+    /// イベントループがポーリングするバックグラウンド処理。
     pub bg: BackgroundOps,
 
-    // 新規worktreeバッジ
-    /// 最近作成されたworktreeのパス（バッジ表示用）。選択時にクリアされる。
+    /// 最近作った worktree。バッジを出し、選択でクリアする。
     pub new_worktree_paths: HashSet<PathBuf>,
 
-    /// Alt+/ で出す、各パネル上の番号バッジ (2 秒で自動的に消える)。
+    /// Alt+/ で出す各パネルの番号バッジ。2 秒で消える。
     pub panel_number_overlay: PanelNumberOverlay,
 
-    // リフロー・トランスクリプトビュー
-    /// 無限スクロールバックモード中にClaude PTYパネルへオーバーレイされる、
-    /// 読み取り専用・折り返し表示のセッションログビューアの状態。
     pub reflow: ReflowView,
 }
 
-/// configから有効なUIテーマ名を解決する。
-///
-/// 解決規則そのものは [config::Config::theme_name] が持つ。シンタックス
-/// ハイライト側も同じ関数を通すので、UIとコードで別のテーマ名を見てしまう
-/// ことはない。
+/// 解決規則は [config::Config::theme_name] が持つ。ハイライト側も同じここを
+/// 通すので、UI とコードで別のテーマを見ることはない。
 fn resolve_theme_name(cfg: &config::Config) -> String {
     cfg.theme_name().to_string()
 }
 
-/// 名前から有効な [Theme] を組み立て、有効ならハイコントラスト変換を
-/// 適用する。すべての呼び出し元（起動時、テーマピッカー、ライブリロード、
-/// OSC11自動切り替え）がこのトグルを同一に扱うための唯一の構築ポイント。
+/// [Theme] の唯一の構築点。起動時・ピッカー・ライブリロード・OSC11 の自動切り替えが
+/// ハイコントラストのトグルを取り違えないよう、ここに集めている。
 fn build_theme(name: &str, high_contrast: bool) -> Theme {
     let theme = Theme::from_name(name);
     if high_contrast {
@@ -239,9 +164,14 @@ impl App {
         self.should_quit = true;
     }
 
+    /// 次のフレームでの再描画をリクエストする。
+    pub fn request_redraw(&mut self) {
+        self.needs_redraw = true;
+    }
+
     /// スタイル付きのステータスメッセージを設定する。
     pub fn set_status(&mut self, text: String, level: StatusLevel) {
-        self.status_message = Some(StatusMessage::new(text, level, self.ui_tick));
+        self.status_message = Some(StatusMessage::new(text, level, self.ticks.ui()));
     }
 
     /// 通常のinfoステータスメッセージを設定する（後方互換のための省略形）。

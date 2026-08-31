@@ -3,10 +3,8 @@
 use super::file_view::UnifiedDiffEntry;
 use super::state::ViewerState;
 
-/// diff エントリが表す新ファイル側の行番号。対応する行番号を持つエントリの
-/// 場合のみ値を返す: 具体的な Line（削除行なら新ファイル側の行が無いので
-/// None）か、ExpandableContext の最初の隠れた行。HunkSeparator は行番号を
-/// 持たない。
+/// 削除行は新ファイル側の行を持たないので None。ExpandableContext は最初の隠れた行、
+/// HunkSeparator は行番号そのものを持たない。
 fn diff_entry_new_line_no(entry: &UnifiedDiffEntry) -> Option<usize> {
     match entry {
         UnifiedDiffEntry::Line { new_line_no, .. } => *new_line_no,
@@ -70,11 +68,8 @@ impl ViewerState {
         self.sync_diff_scroll_to_file_scroll();
     }
 
-    /// diff 表示の現在のスクロール位置に対応するファイル行（0始まり、
-    /// content.file_scroll に対応）を求める。diff_view_scroll 以降で最も近い
-    /// 具体的な新ファイル側の行番号を使う（見つからなければそれより前で最も
-    /// 近いものにフォールバックする — 例えばカーソルが削除行の上にあり、
-    /// 新ファイル側の行番号を持たない場合）。
+    /// diff_view_scroll 以降で最も近い具体的な行番号を使い、無ければそれより前で最も
+    /// 近いものに落とす (カーソルが削除行の上にある場合など)。
     fn diff_scroll_file_line(&self) -> Option<usize> {
         let lines = &self.diff_view.diff_view_lines;
         let scroll = self.diff_view.diff_view_scroll.min(lines.len());
@@ -105,10 +100,8 @@ impl ViewerState {
         }
     }
 
-    /// content.file_scroll が自力で（検索マッチなどにより）動いたあと、diff
-    /// 表示側のスクロール位置もそれに同期させる。背後のカーソルが動いているのに
-    /// diff ペインだけがその場に留まってしまわないようにするため。diff モード
-    /// 以外では何もしない。
+    /// 背後のカーソルだけが動いて diff ペインがその場に留まるのを防ぐ。
+    /// diff モード以外では何もしない。
     fn sync_diff_scroll_to_file_scroll(&mut self) {
         if !self.diff_view.diff_mode {
             return;

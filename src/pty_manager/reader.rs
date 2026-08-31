@@ -187,9 +187,8 @@ impl PtyManager {
     }
 }
 
-/// バイトスライス中の Cursor Position Report リクエスト(CSI 6 n = \x1b[6n)
-/// の数を数える。プログラムは端末に「カーソルはどこにあるか」を尋ねるために
-/// これを送り、CSI row ; col R という応答を期待する。
+/// プログラムは端末に「カーソルはどこか」を尋ねるためにこれを送り、CSI row ; col R を
+/// 期待する。
 fn count_csi_dsr(bytes: &[u8]) -> usize {
     if bytes.len() < 4 {
         return 0;

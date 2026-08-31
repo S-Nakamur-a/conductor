@@ -1,14 +1,30 @@
-//! 見た目の決定に関わる状態: テーマの選択と、シンタックスハイライトの資源。
+//! 描画に使う色と、そこから色を焼き込んだキャッシュ。
 
 use syntect::parsing::SyntaxSet;
 use two_face::theme::EmbeddedLazyThemeSet;
 
-/// 実際の [crate::theme::Theme] を組み立てるための「元データ」。
+use crate::theme::Theme;
+use crate::ui::markdown::MarkdownCache;
+
+/// 一緒に動かさないと壊れるものの集まり。
 ///
-/// Theme そのものは App::theme に置いてある — 描画のたびに読まれる
-/// ホットな値なので、1 階層浅いところに置く価値がある。こちらはそれを
-/// 再構築するための入力で、テーマ切り替え・config のライブリロード・
-/// OSC11 による自動切り替えのどれもがこの 2 つから Theme を作り直す。
+/// theme を差し替えたら、その色を span へ焼き込んだキャッシュも捨てなければ
+/// 古い配色が残る。差し替えの入口は [crate::app::App::install_palette] 一本。
+pub struct Appearance {
+    /// 描画のたびに読むので、素のフィールドで持つ。
+    pub theme: Theme,
+    /// theme を組み立てる元データ。
+    pub sel: ThemeSelection,
+    /// syntect の共有資源。
+    pub highlight: Highlighting,
+    /// コメント本文の ID 別キャッシュ。インラインスレッドが毎フレーム再パースしない。
+    pub markdown_cache: MarkdownCache,
+}
+
+/// [Appearance::theme] を組み立てるための元データ。
+///
+/// テーマ切り替え・config のライブリロード・OSC11 の自動切り替えのどれもが、
+/// この 2 つから Theme を作り直す。
 #[derive(Default)]
 pub struct ThemeSelection {
     /// 有効なテーマ名。Theme を引くための正準キー。

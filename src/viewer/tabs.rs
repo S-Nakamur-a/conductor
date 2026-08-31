@@ -5,6 +5,8 @@
 //! 実体を 1 つに保つのは、アクティブなタブの状態が「タブの中」と「ViewerState
 //! の直下」の 2 か所に現れると、どちらを書いたかで表示がずれるため。
 
+use std::path::Path;
+
 use super::state::{TabView, ViewerState, ViewerTab, ViewerTabStatus};
 
 impl ViewerTabStatus {
@@ -13,9 +15,8 @@ impl ViewerTabStatus {
         self == Self::Preview
     }
 
-    /// 既に開いているタブを開き直したときの寿命。永続で開き直すと固定される —
-    /// シングルクリックしたファイルをダブルクリックで固定する経路がこれ。
-    /// 逆に、固定済みのタブがシングルクリックで preview へ戻ることはない。
+    /// 永続で開き直すと固定される。シングルクリックしたファイルをダブルクリックで固定する
+    /// 経路がこれ。逆に、固定済みがシングルクリックで preview へ戻ることはない。
     fn reopened(self, requested: Self) -> Self {
         match requested {
             Self::Persistent => Self::Persistent,
@@ -44,7 +45,7 @@ impl ViewerState {
 
     /// idx のタブへ切り替える。中身はディスクから読み直すので、裏で編集された
     /// ファイルが古いまま表示されることはない。
-    pub fn focus_tab(&mut self, idx: usize, tab_width: usize) {
+    pub fn focus_tab(&mut self, root: &Path, idx: usize, tab_width: usize) {
         if idx >= self.tabs.len() {
             return;
         }
@@ -58,19 +59,19 @@ impl ViewerState {
             }
         }
         let path = self.tabs[self.active_tab].path.clone();
-        self.reload_active_file(&path, tab_width);
+        self.reload_active_file(root, &path, tab_width);
     }
 
     /// 次のタブへ（末尾からは先頭へ回り込む）。
-    pub fn next_tab(&mut self, tab_width: usize) {
+    pub fn next_tab(&mut self, root: &Path, tab_width: usize) {
         if self.tabs.len() < 2 {
             return;
         }
-        self.focus_tab((self.active_tab + 1) % self.tabs.len(), tab_width);
+        self.focus_tab(root, (self.active_tab + 1) % self.tabs.len(), tab_width);
     }
 
     /// 前のタブへ（先頭からは末尾へ回り込む）。
-    pub fn prev_tab(&mut self, tab_width: usize) {
+    pub fn prev_tab(&mut self, root: &Path, tab_width: usize) {
         if self.tabs.len() < 2 {
             return;
         }
@@ -80,12 +81,12 @@ impl ViewerState {
         } else {
             self.active_tab - 1
         };
-        self.focus_tab(prev, tab_width);
+        self.focus_tab(root, prev, tab_width);
     }
 
     /// idx のタブを閉じる。アクティブなタブを閉じたときは右隣（無ければ左隣）へ
     /// 移り、最後の 1 枚を閉じたときはファイル未選択の状態へ戻る。
-    pub fn close_tab(&mut self, idx: usize, tab_width: usize) {
+    pub fn close_tab(&mut self, root: &Path, idx: usize, tab_width: usize) {
         if idx >= self.tabs.len() {
             return;
         }
@@ -110,15 +111,15 @@ impl ViewerState {
             self.restore_view(view);
         }
         let path = self.tabs[next].path.clone();
-        self.reload_active_file(&path, tab_width);
+        self.reload_active_file(root, &path, tab_width);
     }
 
     /// 根が変わったあと、新しい根に無いファイルのタブを閉じる。
     ///
     /// 相対パスは根が変わると別のファイルを指すので、残しておくと切り替え前の
-    /// worktree のファイルを開いたままに見える。
-    pub fn prune_tabs_to_root(&mut self, tab_width: usize) {
-        let root = self.tree.root.clone();
+    /// worktree のファイルを開いたままに見える。根は Explorer 側の状態なので
+    /// 引数で受け取る (Viewer が Explorer をフィールドとして持つことはしない)。
+    pub fn prune_tabs_to_root(&mut self, root: &std::path::Path, tab_width: usize) {
         let before = self.tabs.len();
         let active_path = self.active_tab_path().map(str::to_string);
         self.tabs.retain(|t| root.join(&t.path).is_file());
@@ -135,7 +136,7 @@ impl ViewerState {
                     // 別の根で溜めた状態は捨て、新しい根のファイルとして開き直す。
                     tab.stashed = None;
                     let path = tab.path.clone();
-                    self.load_active_file(&path, tab_width);
+                    self.load_active_file(root, &path, tab_width);
                 }
             }
         }
@@ -178,11 +179,8 @@ impl ViewerState {
         true
     }
 
-    /// preview タブを閉じ、フォーカスの行き先 dest を詰めた添字を返す。
-    ///
-    /// preview は必ずアクティブなタブなので、呼ぶのはフォーカスが他へ移る
-    /// 直前（stash_active_view の後）だけ。閉じたタブより後ろの添字は 1 つ
-    /// 前へ動くので、行き先をここで詰めておかないと隣のファイルが開く。
+    /// preview は必ずアクティブなので、呼ぶのはフォーカスが他へ移る直前だけ。閉じたタブより
+    /// 後ろの添字は 1 つ前へ動くので、行き先をここで詰めないと隣のファイルが開く。
     fn close_preview_tab(&mut self, dest: usize) -> usize {
         let Some(idx) = self.tabs.iter().position(|t| t.status.is_preview()) else {
             return dest;
@@ -230,6 +228,7 @@ impl ViewerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::explorer::Explorer;
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("tabs_{name}_{}", std::process::id()));
@@ -246,15 +245,16 @@ mod tests {
     #[test]
     fn opening_files_accumulates_tabs_and_reopening_reuses_one() {
         let dir = fixture("reuse", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file("a.txt", 4);
-        vs.open_file("b.txt", 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
+        vs.open_file(explorer.root(), "b.txt", 4);
         assert_eq!(vs.tabs.len(), 2);
         assert_eq!(vs.active_tab_path(), Some("b.txt"));
 
-        vs.open_file("a.txt", 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
         assert_eq!(vs.tabs.len(), 2, "既に開いているファイルはタブを増やさない");
         assert_eq!(vs.active_tab_path(), Some("a.txt"));
         assert_eq!(vs.content.file_content, vec!["A"]);
@@ -268,20 +268,21 @@ mod tests {
     fn switching_tabs_restores_where_each_file_was_left() {
         let long: String = (0..50).map(|i| format!("line{i}\n")).collect();
         let dir = fixture("scroll", &[("a.txt", &long), ("b.txt", &long)]);
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file("a.txt", 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
         vs.content.file_scroll = 30;
-        vs.open_file("b.txt", 4);
+        vs.open_file(explorer.root(), "b.txt", 4);
         assert_eq!(vs.content.file_scroll, 0, "新しいタブは先頭から");
         vs.content.file_scroll = 10;
 
-        vs.prev_tab(4);
+        vs.prev_tab(explorer.root(), 4);
         assert_eq!(vs.active_tab_path(), Some("a.txt"));
         assert_eq!(vs.content.file_scroll, 30);
 
-        vs.next_tab(4);
+        vs.next_tab(explorer.root(), 4);
         assert_eq!(vs.active_tab_path(), Some("b.txt"));
         assert_eq!(vs.content.file_scroll, 10);
 
@@ -293,13 +294,14 @@ mod tests {
     #[test]
     fn returning_to_a_tab_rereads_it_from_disk() {
         let dir = fixture("stale", &[("a.txt", "OLD\n"), ("b.txt", "B\n")]);
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file("a.txt", 4);
-        vs.open_file("b.txt", 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
+        vs.open_file(explorer.root(), "b.txt", 4);
         std::fs::write(dir.join("a.txt"), "NEW\n").unwrap();
-        vs.prev_tab(4);
+        vs.prev_tab(explorer.root(), 4);
 
         assert_eq!(vs.content.file_content, vec!["NEW"]);
 
@@ -310,17 +312,19 @@ mod tests {
     #[test]
     fn closing_a_tab_falls_back_to_a_neighbour_then_to_nothing() {
         let dir = fixture("close", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file("a.txt", 4);
-        vs.open_file("b.txt", 4);
-        vs.close_tab(vs.active_tab, 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
+        vs.open_file(explorer.root(), "b.txt", 4);
+        let active = vs.active_tab;
+        vs.close_tab(explorer.root(), active, 4);
         assert_eq!(vs.tabs.len(), 1);
         assert_eq!(vs.active_tab_path(), Some("a.txt"));
         assert_eq!(vs.content.file_content, vec!["A"]);
 
-        vs.close_tab(0, 4);
+        vs.close_tab(explorer.root(), 0, 4);
         assert!(vs.tabs.is_empty());
         assert_eq!(vs.content.current_file, None);
         assert!(vs.content.file_content.is_empty());
@@ -336,17 +340,18 @@ mod tests {
             "preview",
             &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
         );
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file_preview("a.txt", 4);
-        vs.open_file_preview("b.txt", 4);
+        vs.open_file_preview(explorer.root(), "a.txt", 4);
+        vs.open_file_preview(explorer.root(), "b.txt", 4);
         assert_eq!(vs.tabs.len(), 1, "preview タブは同時に 1 枚だけ");
         assert_eq!(vs.active_tab_path(), Some("b.txt"));
         assert_eq!(vs.content.file_content, vec!["B"]);
 
         // 永続で開いた場合も、残っていた preview は閉じる。
-        vs.open_file("c.txt", 4);
+        vs.open_file(explorer.root(), "c.txt", 4);
         assert_eq!(vs.tabs.len(), 1);
         assert_eq!(vs.active_tab_path(), Some("c.txt"));
         assert!(!vs.tabs[0].status.is_preview());
@@ -359,14 +364,15 @@ mod tests {
     #[test]
     fn reopening_a_preview_tab_as_persistent_pins_it() {
         let dir = fixture("promote", &[("a.txt", "A\n"), ("b.txt", "B\n")]);
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file_preview("a.txt", 4);
-        vs.open_file("a.txt", 4);
+        vs.open_file_preview(explorer.root(), "a.txt", 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
         assert!(!vs.tabs[0].status.is_preview());
 
-        vs.open_file_preview("b.txt", 4);
+        vs.open_file_preview(explorer.root(), "b.txt", 4);
         assert_eq!(vs.tabs.len(), 2, "固定したタブは次を開いても残る");
         assert_eq!(vs.active_tab_path(), Some("b.txt"));
 
@@ -381,15 +387,16 @@ mod tests {
             "preview_focus",
             &[("a.txt", "A\n"), ("b.txt", "B\n"), ("c.txt", "C\n")],
         );
+        let mut explorer = Explorer::default();
+        explorer.set_root(dir.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(dir.clone());
 
-        vs.open_file("a.txt", 4);
-        vs.open_file("b.txt", 4);
-        vs.open_file_preview("c.txt", 4);
+        vs.open_file(explorer.root(), "a.txt", 4);
+        vs.open_file(explorer.root(), "b.txt", 4);
+        vs.open_file_preview(explorer.root(), "c.txt", 4);
         assert_eq!(vs.tabs.len(), 3);
 
-        vs.focus_tab(0, 4);
+        vs.focus_tab(explorer.root(), 0, 4);
         assert_eq!(vs.tabs.len(), 2);
         assert_eq!(vs.active_tab, 0);
         assert_eq!(vs.active_tab_path(), Some("a.txt"));
@@ -406,14 +413,18 @@ mod tests {
     fn switching_root_drops_tabs_that_do_not_exist_there() {
         let a = fixture("root_a", &[("both.txt", "A\n"), ("only_a.txt", "A\n")]);
         let b = fixture("root_b", &[("both.txt", "B\n")]);
+        let mut explorer = Explorer::default();
+        explorer.set_root(a.clone());
         let mut vs = ViewerState::default();
-        vs.set_root(a.clone());
 
-        vs.open_file("both.txt", 4);
-        vs.open_file("only_a.txt", 4);
+        vs.open_file(explorer.root(), "both.txt", 4);
+        vs.open_file(explorer.root(), "only_a.txt", 4);
         assert_eq!(vs.tabs.len(), 2);
 
-        vs.load_file_tree(&b, 4);
+        let reload = explorer.load_file_tree(&b, vs.content.current_file.as_deref());
+        if reload.root_changed {
+            vs.prune_tabs_to_root(explorer.root(), 4);
+        }
 
         assert_eq!(vs.tabs.len(), 1);
         assert_eq!(vs.active_tab_path(), Some("both.txt"));

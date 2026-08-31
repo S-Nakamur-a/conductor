@@ -9,9 +9,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// cherry-pick のコミットピッカーオーバーレイを描画する。
 pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 18_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -85,7 +84,7 @@ pub fn render_cherry_pick_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
 /// switch-branch（リモートブランチのチェックアウト）オーバーレイを描画する。
 pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 22_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -153,9 +152,8 @@ pub fn render_switch_branch_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// grab のブランチピッカーオーバーレイを描画する。
 pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 50_u16.min(area.width.saturating_sub(4));
     let popup_height = 22_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -223,9 +221,8 @@ pub fn render_grab_overlay(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_inner, &mut state);
 }
 
-/// 削除確認オーバーレイを描画する。
 pub fn render_prune_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let stale_count = app.overlays.prune.stale.len() as u16;
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
     let popup_height = (stale_count + 4).min(16).min(area.height.saturating_sub(4));

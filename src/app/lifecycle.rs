@@ -1,25 +1,27 @@
 //! App の構築: config を読み込み、review store を開き、シンタックス
 //! ハイライトの種を仕込み、以前選択していた worktree/view/grab の状態を復元する。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::app::{Appearance, ChangeWatch, Ticks};
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
+use crate::explorer::Explorer;
 use crate::git_engine;
 use crate::keymap::KeyMap;
 use crate::overlay::OverlayManager;
 use crate::review_state::ReviewState;
 use crate::review_store::{self, ReviewStore};
 use crate::viewer::ViewerState;
-use crate::worktree_ops::WorktreeManager;
+use crate::viewer::code_nav_state::CodeNav;
+use crate::worktree::ops::WorktreeManager;
 
 use super::state::{
-    CodeNav, Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
+    Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
 };
 use super::types::BackgroundOps;
 use super::{App, GrabbedBranch, StatusLevel};
-use crate::types::DirtyPanels;
 use crate::types::Focus;
 
 impl App {
@@ -90,12 +92,11 @@ impl App {
         let inactive_scrollback = config.terminal.inactive_scrollback;
 
         let mut app = Self {
-            dirty: DirtyPanels::all(),
-            focus: Focus::Explorer,
-            focus_prev: Focus::Explorer,
-            // 最初のフレームで枠線の遷移演出が再生されないよう時刻を過去にずらす。
-            focus_changed_at: std::time::Instant::now()
-                - std::time::Duration::from_millis(crate::anim::FOCUS_MS),
+            // 最初のフレームで全パネルを描画するための初期値。
+            needs_redraw: true,
+            focus: crate::app::FocusState::settled(Focus::Explorer),
+            change_watch: ChangeWatch::default(),
+            ticks: Ticks::default(),
             overlays: OverlayManager::default(),
             // 索引の探索起点は repo_path。構造体に move される前に取る。
             code_nav: CodeNav::new(repo_path.clone()),
@@ -112,58 +113,55 @@ impl App {
             worktrees: Default::default(),
             config,
             keymap,
-            theme,
-            theme_sel: ThemeSelection {
-                name: theme_name,
-                high_contrast,
+            appearance: Appearance {
+                theme,
+                sel: ThemeSelection {
+                    name: theme_name,
+                    high_contrast,
+                },
+                highlight: Highlighting {
+                    syntax_set,
+                    themes: syntect_themes,
+                    theme: syntect_theme,
+                    theme_id: syntect_theme_id,
+                    generation: 0,
+                },
+                markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             },
-            viewer_state: ViewerState::default(),
+            explorer: Explorer::default(),
+            viewer: ViewerState::default(),
             diff_state,
             review_store,
             review_state: ReviewState::new(),
-            terminal: crate::terminal_state::TerminalState::new(
+            terminal: crate::terminal::state::TerminalState::new(
                 active_scrollback,
                 inactive_scrollback,
+                auto_resume,
             ),
             worktree_mgr: WorktreeManager::default(),
             status_message: None,
-            last_poll_head_oid: None,
-            last_poll_status: None,
-            highlight: Highlighting {
-                syntax_set,
-                themes: syntect_themes,
-                theme: syntect_theme,
-                theme_id: syntect_theme_id,
-                generation: 0,
-            },
-            markdown_cache: crate::ui::markdown::MarkdownCache::new(),
-            expanded_panel: None,
             layout: PanelLayout {
                 terminal_split_pct: config_terminal_split_pct,
                 ..Default::default()
             },
             list_hover: Default::default(),
-            ui_tick: 0,
-            decoration_tick: 0,
             stats: SessionStats {
                 session_id: stats_session_id,
                 today: today_stats,
                 ccusage: None,
             },
-            worktree_heads: HashMap::new(),
             update: UpdateFlow::from_current_process(),
             clipboard: copypasta::ClipboardContext::new().ok(),
             decoration_states: Default::default(),
             branch_details: Default::default(),
             gh_available: Self::check_gh_available(),
-            pending_auto_resume: auto_resume,
             view_restore: Default::default(),
             wtbar: Default::default(),
             menu: Default::default(),
             bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
             panel_number_overlay: Default::default(),
-            reflow: super::reflow::ReflowView::default(),
+            reflow: crate::reflow::ReflowView::default(),
         };
 
         // キーバインド設定の問題を表に出す: TUI は stdout を隠してしまうので、

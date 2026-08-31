@@ -15,8 +15,8 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 /// 描画する — 特に、viewer が最大化されてファイルツリー列の幅がゼロに潰れている
 /// 場合でも表示できる。
 pub fn render_filename_search_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-    let vs = &app.viewer_state.filename_search;
+    let theme = &app.appearance.theme;
+    let vs = &app.viewer.filename_search;
 
     let popup_width = 80_u16.min(area.width.saturating_sub(4));
     let popup_height = 24_u16.min(area.height.saturating_sub(4));

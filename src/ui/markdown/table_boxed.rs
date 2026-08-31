@@ -99,9 +99,8 @@ fn rendered_width(text: &str, theme: &Theme) -> usize {
     )))
 }
 
-/// グリッド全体（列 + 境界ごとに1文字の枠線、合計 ncols + 1 個）が width に
-/// 収まるよう、自然な内側幅を縮める。super::table::fit_col_widths の
-/// 「最も広い列を1ずつ削る」やり方を踏襲する。どの列も最低1列は確保する。
+/// 枠線は境界ごとに 1 文字 (ncols + 1 個)。削り方は super::table::fit_col_widths と同じ
+/// 「最も広い列を 1 ずつ」。どの列も最低 1 列は確保する。
 fn fit_inner_widths(natural: &[usize], width: usize) -> Vec<usize> {
     let ncols = natural.len();
     if ncols == 0 {
@@ -157,10 +156,8 @@ fn render_row(
         .collect()
 }
 
-/// テキストを、ちょうど inner_w 桁の表示幅の行に折り返す: 色・強調以外の
-/// インラインマークアップのスタイルを取り除き、inner_w - 2 の内容領域の中で
-/// 単語境界で折り返し、左右に1スペースずつのパディングを付けて左寄せする。
-/// 常に最低1行を返す。
+/// 色と強調以外のスタイルを落とし、inner_w - 2 の内容領域で折り返して左右 1 スペースを付ける。
+/// 常に最低 1 行を返す。
 fn wrap_cell(text: &str, inner_w: usize, style: Style, theme: &Theme) -> Vec<Vec<Cell>> {
     if inner_w == 0 {
         return vec![Vec::new()];
@@ -204,9 +201,7 @@ fn border_cells(inner: &[usize], left: char, mid: char, right: char, style: Styl
     out
 }
 
-/// セルを最大 width 桁の表示幅までハードクリップする — 列の計算が収まりきらない
-/// 場合（例: 幅3のパネルに4列のテーブル）でも、すべてのテーブル行を幅の上限内に
-/// 収める最終防御。
+/// 列の計算が収まりきらない場合でも、全行を幅の上限に収める最終防御。
 fn clip_line(cells: Vec<Cell>, width: usize) -> Line<'static> {
     let mut out = Vec::new();
     let mut w = 0;

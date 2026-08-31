@@ -77,10 +77,7 @@ impl ConfigWatcher {
     }
 }
 
-/// path が指定した設定ファイル名を指しているとき true を返す。
-///
-/// ファイル名の一致判定をファイルシステムと切り離して単体テストできるよう、
-/// 純粋な関数として切り出してある。
+/// ファイルシステムと切り離してテストできるよう純粋関数にしてある。
 fn matches_config_file(path: &Path, config_filename: &OsStr) -> bool {
     path.file_name() == Some(config_filename)
 }

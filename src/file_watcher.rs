@@ -27,7 +27,6 @@ pub struct FileWatcher {
 }
 
 impl FileWatcher {
-    /// 指定したパス群を監視するウォッチャを作る。
     pub fn new(paths: &[PathBuf]) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel();
 

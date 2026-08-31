@@ -254,10 +254,10 @@ fn first_reference_span(store: &Store, symbol: &str, path: &Path) -> Span {
         .unwrap_or_else(|| panic!("{symbol} の参照 occurrence が {path:?} に見つからない"))
 }
 
-// 符号にはクレートの版が埋まっている（`... <クレート> 0.104.0 app/App#viewer_state.`）ので、
+// 符号にはクレートの版が埋まっている（`... <クレート> 0.104.0 app/App#viewer.`）ので、
 // 完全一致で固定すると版を上げるだけで落ちる。末尾で引いて、対象そのものが
 // 消えたときだけ落ちるようにする。
-const VIEWER_STATE: &str = "app/App#viewer_state.";
+const VIEWER_STATE: &str = "app/App#viewer.";
 const OPTION_SOME: &str = "option/Option#Some#";
 
 /// 末尾が一致する符号を索引から 1 つだけ選ぶ。複数あれば対象が曖昧なので落とす。
@@ -280,7 +280,7 @@ fn symbol_ending_with(store: &Store, suffix: &str) -> String {
 
 #[test]
 #[ignore = "実索引が要る"]
-fn 実索引_viewer_stateの参照が全走査と一致する() {
+fn 実索引_viewerの参照が全走査と一致する() {
     let store = real_store();
     let symbol = symbol_ending_with(&store, VIEWER_STATE);
     let doc_ids = &store.references[0][symbol.as_str()];

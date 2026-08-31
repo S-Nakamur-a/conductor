@@ -83,21 +83,14 @@ impl McpServer {
         }
     }
 
-    /// レビューストア。mutex の汚染を伝播させるのではなく回復する。panic が
-    /// 起こり得るのは文の途中またはトランザクションの途中で mutex が
-    /// 汚染される場合だけであり、rusqlite::Connection は drop 時に未完了
-    /// のトランザクションをロールバックするので、汚染されたロックの背後の
-    /// データが書きかけのまま残ることはなく、into_inner() での回復は安全
-    /// である。
+    /// mutex の汚染は伝播させず回復する。rusqlite::Connection は drop で未完了の
+    /// トランザクションを巻き戻すので、書きかけのデータが残ることはない。
     fn store(&self) -> MutexGuard<'_, ReviewStore> {
         self.inner.store.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// サーバの作業ディレクトリがチェックアウトしているブランチ。
-    ///
-    /// 起動時にキャッシュせず呼び出しごとに読み直す: セッションは裏で
-    /// ブランチを切り替えることがあり得るし、git2::Repository は Sync
-    /// ではないので、開いたまま保持しておく利点も無い。
+    /// 呼び出しごとに読み直す。セッションが裏でブランチを切り替えることがあり、
+    /// git2::Repository は Sync でないので開いたまま持つ利点も無い。
     fn branch(&self) -> Option<String> {
         let repo = resolve::discover_repo().ok()?;
         resolve::current_branch(&repo)
@@ -434,9 +427,8 @@ mod tests {
             .block_on(fut)
     }
 
-    /// 新規の tempdir データベースを背後に持つ McpServer。tempdir には
-    /// refresh FIFO が無いので、signal_refresh の libc::open は黙って失敗
-    /// する — スタブは不要。
+    /// tempdir には refresh FIFO が無いので signal_refresh の libc::open は黙って失敗する。
+    /// スタブは要らない。
     fn test_server() -> (McpServer, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("conductor.db");

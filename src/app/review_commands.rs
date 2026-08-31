@@ -7,19 +7,19 @@ use crate::types::Focus;
 
 impl App {
     pub fn cmd_add_review_comment(&mut self) {
-        if let Some(file_path) = self.viewer_state.content.current_file.clone() {
+        if let Some(file_path) = self.viewer.content.current_file.clone() {
             // コメントを選択範囲(なければ先頭の可視行)にアンカーし、その行に
             // 本文だけを入力するインラインの作成ボックスを開く — GitHub 風に
             // file:line のプレフィックスは入力させない。
-            let (start, end) = if let Some((start, end)) = self.viewer_state.selected_range() {
+            let (start, end) = if let Some((start, end)) = self.viewer.selected_range() {
                 (
                     start as u32,
                     if start == end { None } else { Some(end as u32) },
                 )
             } else {
-                ((self.viewer_state.content.file_scroll + 1) as u32, None)
+                ((self.viewer.content.file_scroll + 1) as u32, None)
             };
-            self.viewer_state.clear_selection();
+            self.viewer.clear_selection();
             self.review_state.input_anchor = Some((file_path, start, end));
             self.review_state.input_buffer.clear();
             self.review_state.input_kind = crate::review_store::CommentKind::Suggest;
@@ -34,11 +34,11 @@ impl App {
     pub(super) fn cmd_view_comment_detail(&mut self) {
         // まず viewer のコンテキスト(現在行)を試し、次にコメント一覧の
         // コンテキストを試す。
-        if self.viewer_state.content.current_file.is_some() {
-            let cursor_line = if let Some((start, _)) = self.viewer_state.selected_range() {
+        if self.viewer.content.current_file.is_some() {
+            let cursor_line = if let Some((start, _)) = self.viewer.selected_range() {
                 start
             } else {
-                self.viewer_state.content.file_scroll + 1
+                self.viewer.content.file_scroll + 1
             };
             if let Some(comments) = self.review_state.file_comments.get(&cursor_line)
                 && !comments.is_empty()
@@ -72,9 +72,8 @@ impl App {
     }
 
     pub(super) fn cmd_delete_comment(&mut self) {
-        if self.viewer_state.explorer.explorer_bottom_view
-            == crate::viewer::ExplorerBottomView::Comments
-            && self.viewer_state.explorer.explorer_focus_on_diff_list
+        if self.explorer.bottom() == crate::explorer::BottomView::Comments
+            && (self.explorer.focus() == crate::explorer::Pane::Bottom)
             && !self.review_state.comment_list_rows.is_empty()
         {
             self.request_delete_selected_review_item();
@@ -84,9 +83,8 @@ impl App {
     }
 
     pub(super) fn cmd_toggle_comment_resolve(&mut self) {
-        if self.viewer_state.explorer.explorer_bottom_view
-            == crate::viewer::ExplorerBottomView::Comments
-            && self.viewer_state.explorer.explorer_focus_on_diff_list
+        if self.explorer.bottom() == crate::explorer::BottomView::Comments
+            && (self.explorer.focus() == crate::explorer::Pane::Bottom)
             && !self.review_state.comment_list_rows.is_empty()
         {
             self.toggle_selected_review_status();
@@ -98,7 +96,7 @@ impl App {
     pub(super) fn cmd_edit_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
+            .selected_comment_idx(self.explorer.comments_cursor.selected());
         if let Some(comment) = comment_idx.and_then(|idx| self.review_state.comments.get(idx)) {
             self.review_state.input_buffer.set_text(&comment.body);
             self.review_state.input_mode = crate::review_state::ReviewInputMode::EditingComment;
@@ -113,7 +111,7 @@ impl App {
     pub(super) fn cmd_reply_to_comment(&mut self) {
         let comment_idx = self
             .review_state
-            .selected_comment_idx(self.viewer_state.explorer.comment_list_selected);
+            .selected_comment_idx(self.explorer.comments_cursor.selected());
         if let Some(idx) = comment_idx {
             self.review_state.input_buffer.clear();
             self.review_state.input_mode = crate::review_state::ReviewInputMode::ReplyingToComment;

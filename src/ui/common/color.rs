@@ -63,7 +63,7 @@ pub(super) fn readable_fg_on(r: u8, g: u8, b: u8) -> Color {
 /// - バッジ文字: 背景とのコントラストがより良い方の黒か白
 ///   （色相によって同じ明度でも知覚される輝度が大きく異なるため）
 /// - ブランチ文字: 明るめ（S=0.7, L=0.75）
-pub(super) fn name_to_color(name: &str) -> (Color, Color, Color) {
+pub(crate) fn name_to_color(name: &str) -> (Color, Color, Color) {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     name.hash(&mut hasher);
     let hash = hasher.finish();
@@ -76,7 +76,7 @@ pub(super) fn name_to_color(name: &str) -> (Color, Color, Color) {
 }
 
 /// トークン数を人が読みやすい文字列（例: "1.2K", "14.2M"）に整形する。
-pub(super) fn format_tokens(tokens: u64) -> String {
+pub(crate) fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {

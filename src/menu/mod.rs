@@ -16,14 +16,13 @@
 //! キーマップからその都度読み取るので、ユーザ設定でのリバインドはこのモジュールに
 //! 手を入れずとも反映される。
 //!
-//! - [model] — 静的テーブル。どのコマンドがどのメニューに属するか。
-//! - [state] — インタラクション状態([MenuFocus])と、キーボード/マウス
-//!   両ハンドラが共有する純粋なナビゲーションヘルパー。
-//!
-//! 描画は [crate::ui::menu_bar]、入力処理は [crate::event::menu](キー)と
-//! crate::event::mouse(クリックとホバー)が担う。
+//! ナビゲーションのヘルパーは [state] に純粋関数として置き、キーボードと
+//! マウスの両ハンドラが共有する。
 
+pub mod input;
 pub mod model;
+pub mod mouse;
+pub mod render;
 pub mod state;
 
 #[cfg(test)]

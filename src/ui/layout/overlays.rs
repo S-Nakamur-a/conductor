@@ -25,10 +25,22 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             render_confirming_delete_overlay(frame, area, app);
         }
         crate::app::WorktreeInputMode::ConfirmingUngrab => {
-            render_confirm_overlay(frame, area, app, " Confirm Ungrab ", app.theme.warning);
+            render_confirm_overlay(
+                frame,
+                area,
+                app,
+                " Confirm Ungrab ",
+                app.appearance.theme.warning,
+            );
         }
         crate::app::WorktreeInputMode::ConfirmingReset => {
-            render_confirm_overlay(frame, area, app, " Confirm Reset ", app.theme.error);
+            render_confirm_overlay(
+                frame,
+                area,
+                app,
+                " Confirm Reset ",
+                app.appearance.theme.error,
+            );
         }
         crate::app::WorktreeInputMode::SmartDescription => {
             super::super::dashboard::render_smart_description_overlay(frame, area, app);
@@ -48,7 +60,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
                 .input_anchor
                 .as_ref()
                 .is_some_and(|(f, _, _)| {
-                    Some(f.as_str()) == app.viewer_state.content.current_file.as_deref()
+                    Some(f.as_str()) == app.viewer.content.current_file.as_deref()
                 });
         if !inline_new_comment {
             super::super::review::render_input_overlay(frame, area, app);
@@ -59,7 +71,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             frame,
             area,
             &app.review_state,
-            &app.theme,
+            &app.appearance.theme,
             app.config.ui.icon_set(),
         );
     }
@@ -106,10 +118,10 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             super::super::dashboard::render_help_overlay(frame, area, app);
         }
         crate::overlay::ActiveOverlay::WorktreeSwitcher => {
-            super::super::worktree_bar::render_switcher_overlay(frame, area, app);
+            crate::worktree::bar::render_switcher_overlay(frame, area, app);
         }
         crate::overlay::ActiveOverlay::CommentList => {
-            super::super::explorer_panel::render_comment_list_overlay(frame, area, app);
+            app.render_explorer_overlay(frame, area);
         }
         crate::overlay::ActiveOverlay::ThemePicker => {
             super::super::theme_picker::render_theme_picker_overlay(frame, area, app);
@@ -120,7 +132,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     // ファジーなファイル名検索（「ジャンプ先」）モーダル ―― explorer カラムが
     // 折りたたまれていて（viewer 最大化時）も動くようトップレベルで描画する。
-    if app.viewer_state.filename_search.filename_search_active {
+    if app.viewer.filename_search.filename_search_active {
         super::super::dashboard::render_filename_search_overlay(frame, area, app);
     }
     match app.update.state {
@@ -140,23 +152,28 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // References オーバーレイ（パネルレベル、OverlayManager には含まれない）
     if app.code_nav.references.active {
-        crate::ui::references::render_references_overlay(frame, area, app);
+        crate::viewer::render::references::render_references_overlay(frame, area, app);
     }
 
     // シンボルアクションオーバーレイ（ヒント選択後）
     if app.code_nav.symbol_action.active {
-        crate::ui::symbol_action::render_symbol_action_overlay(frame, area, app);
+        crate::viewer::render::symbol_action::render_symbol_action_overlay(frame, area, app);
     }
 
     // ホバー情報ポップアップ（viewer での K）
     if app.code_nav.hover_info.info.is_some() {
-        crate::ui::hover_info::render_hover_info_overlay(frame, area, app);
+        crate::viewer::render_hover_overlay(frame, area, app);
     }
 }
 
-/// worktree 削除用の小さな確認オーバーレイを描画する。
 fn render_confirming_delete_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    render_confirm_overlay(frame, area, app, " Confirm Delete ", app.theme.error);
+    render_confirm_overlay(
+        frame,
+        area,
+        app,
+        " Confirm Delete ",
+        app.appearance.theme.error,
+    );
 }
 
 /// タイトルとボーダー色をカスタマイズできる、汎用の小さな確認オーバーレイ。
@@ -187,7 +204,7 @@ fn render_confirm_overlay(
 
         let paragraph = ratatui::widgets::Paragraph::new(ratatui::text::Span::styled(
             msg.as_str(),
-            ratatui::style::Style::default().fg(app.theme.fg),
+            ratatui::style::Style::default().fg(app.appearance.theme.fg),
         ));
         frame.render_widget(paragraph, inner);
     }

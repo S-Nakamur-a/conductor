@@ -12,10 +12,8 @@ fn test_signature() -> git2::Signature<'static> {
     git2::Signature::now("test", "test@test.com").unwrap()
 }
 
-/// parent(None ならルートコミット)の上に、指定したフラットなファイル内容で
-/// コミットを作る。parent のツリーに既にあるファイルはそのまま引き継がれる。
-/// ref は一切更新しない。呼び出し側が明示的にブランチ/タグを返り値の oid に
-/// 向けるので、どの ref が存在するかはテストが完全に制御する。
+/// parent のツリーにあるファイルは引き継ぐ。ref は一切更新しないので、どの ref が
+/// 存在するかはテストが完全に制御できる。
 fn commit_files(
     repo: &git2::Repository,
     parent: Option<&git2::Commit>,
@@ -75,7 +73,7 @@ fn base_error(dir: &std::path::Path, base: &str) -> Option<String> {
 }
 
 #[test]
-fn test_inline_segments_populated_for_replace() {
+fn a_replaced_line_carries_inline_segments() {
     let old = "hello world\n";
     let new = "hello rust\n";
     let diff = TextDiff::from_lines(old, new);
@@ -97,7 +95,7 @@ fn test_inline_segments_populated_for_replace() {
 /// これらは同じファイルを指すので、blob の内容が同一なら compute_diff_range
 /// はこれらを除外すべきである。
 #[test]
-fn test_case_only_rename_filtered_out() {
+fn a_case_only_rename_is_not_shown_as_a_change() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -152,7 +150,7 @@ fn test_case_only_rename_filtered_out() {
 
 /// 内容変更を伴う大文字小文字リネームはフィルタで除外されないことを検証する。
 #[test]
-fn test_case_rename_with_content_change_kept() {
+fn a_case_rename_with_edits_is_still_shown() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -990,6 +988,7 @@ fn binary_file_stays_listed_without_line_counts() {
     assert!(f.hunks.is_empty());
 }
 
+#[cfg(target_os = "macos")]
 fn fs_ignores_case(dir: &std::path::Path) -> bool {
     let probe = dir.join("CaseProbe");
     std::fs::write(&probe, b"").unwrap();
@@ -1000,8 +999,12 @@ fn fs_ignores_case(dir: &std::path::Path) -> bool {
 
 /// リグレッション: ケース違いの2エントリに実ファイルが1つしか無いこの状態を、
 /// git 本体は clean と報告する。
+// 大文字小文字を区別しないファイルシステムでしか再現しない。cfg で外して
+// あるのは、走らない環境では『テストが無い』ことが一覧から見えるようにする
+// ため。実行時に return すると、検証していないのに緑になる。
+#[cfg(target_os = "macos")]
 #[test]
-fn test_case_colliding_entry_not_reported_as_deleted() {
+fn a_case_colliding_entry_is_not_reported_as_deleted() {
     let dir = tempfile::tempdir().unwrap();
     if !fs_ignores_case(dir.path()) {
         eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");

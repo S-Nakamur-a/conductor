@@ -638,12 +638,8 @@ pub fn load(repo_root: &Path, tree_root: &Path) -> Option<Store> {
     survey_and_load(repo_root, tree_root, None, &[]).1
 }
 
-/// 前の出自の表と、いま置いてある表を比べて、その producer が読むファイルが
-/// どれだけ動いたかを言う。
-///
 /// 出自の表には索引ルートの全ファイルが載るので、その言語のものだけを数える。
-/// 絞らないと、README を直しただけの生成が「ソースが動いた」に見えて、
-/// 要らなかった生成を無駄だと言えなくなる。
+/// 絞らないと README の修正が「ソースが動いた」に見えて、無駄な生成を無駄と言えない。
 fn source_delta(
     before: Option<&HashMap<PathBuf, String>>,
     at: &IndexRoot,
@@ -675,11 +671,8 @@ fn source_delta(
     history::Sources::Delta(delta)
 }
 
-/// `repo_root` の main worktree での `.conductor/` を返す。
-///
-/// `repo_root` がリンクされた worktree のパスでも、`commondir()` は常に main の
-/// `.git` を指すので、その親を辿れば main のルートになる
-/// （`mcp_serve::resolve::resolve_db_path_with` が同じ考え方でレビュー DB を探している）。
+/// `repo_root` がリンクされた worktree でも `commondir()` は常に main の `.git` を
+/// 指すので、その親が main のルートになる。
 fn main_conductor_dir(repo_root: &Path) -> Option<PathBuf> {
     let repo = git2::Repository::open(repo_root).ok()?;
     Some(repo.commondir().parent()?.join(".conductor"))
@@ -748,10 +741,8 @@ mod tests {
         Language::Rust.producer()
     }
 
-    /// Rust の索引ルート 1 本ぶんの成果物の名前。
-    ///
-    /// 鍵は置き場所の親のツリーから出す。実際の内容の鍵で置かないと、読む側が
-    /// 探す名前と食い違って、置いたはずの索引が見つからない。
+    /// 鍵は置き場所の親のツリーから出す。実際の内容の鍵で置かないと、読む側が探す名前と
+    /// 食い違って、置いたはずの索引が見つからない。
     fn artifact(dir: &Path, ext: &str) -> PathBuf {
         let tree = dir.parent().expect(".conductor の親がツリー");
         let at = IndexRoot {
@@ -1422,12 +1413,8 @@ mod tests {
     const SOURCE: &str = "pub fn greet() {}\nfn caller() { greet(); }\n";
     const SYMBOL: &str = "scip-test cargo demo 0.1.0 greet().";
 
-    /// 渡した各ファイルが SOURCE を説明する索引を書き出す。greet の定義が 0 行目、
-    /// 呼び出しが 1 行目。
-    ///
-    /// シンボルはファイルごとに変える。`Store` はシンボル文字列だけで定義を引く
-    /// (ファイルをまたいで同じ文字列を使うと別ファイルの定義まで拾ってしまう)ので、
-    /// 複数ファイルを 1 つの索引に入れるときは同じ SYMBOL を使い回せない。
+    /// `Store` はシンボル文字列だけで定義を引くので、複数ファイルを 1 つの索引に入れる
+    /// ときは同じ SYMBOL を使い回せない (別ファイルの定義まで拾う)。
     fn write_index_for(path: &Path, rels: &[&str]) {
         use protobuf::{EnumOrUnknown, Message, MessageField};
         use scip::types::{Document, Index, Metadata, Occurrence, TextEncoding};
@@ -1491,9 +1478,7 @@ mod tests {
         definition_of_greet_at(store, tree_root, "src/lib.rs")
     }
 
-    /// Rust の索引と、`repo_root` に今ある `src/lib.rs` の内容から計算した出自の表を
-    /// 置く。「生成時点でディスクにあった内容」を申告する体で、コミットされているか
-    /// どうかは問わない。
+    /// 「生成時点でディスクにあった内容」を申告する体で、コミット済みかは問わない。
     fn place_index(repo_root: &Path) {
         let conductor_dir = repo_root.join(".conductor");
         std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1505,9 +1490,8 @@ mod tests {
         );
     }
 
-    /// 出自の表を置く。書式は sheaf の持ち物なので `write_provenance` に書かせる。
-    /// 見出しには producer の素性が入り、読む側がそれを照合する。手で綴ると、
-    /// 読み書きのどちらかが変わったときに、表が黙って読まれなくなる。
+    /// 書式は sheaf の持ち物なので `write_provenance` に書かせる。手で綴ると、読み書きの
+    /// どちらかが変わったときに表が黙って読まれなくなる。
     fn write_hashes(path: &Path, entries: &[(&str, String)]) {
         let expected = entries
             .iter()

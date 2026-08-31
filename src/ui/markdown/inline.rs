@@ -189,13 +189,8 @@ struct Link {
     next_i: usize,
 }
 
-/// chars[i] に [ がある [text](url) 形式のリンクを解析する。リンクの形式が不正な場合
-/// （] がない、直後に ( が続かない、閉じ記号 ) がない）は None を返し、呼び出し元は
-/// [ をそのまま文字として残す。
-///
-/// 意図的な簡略化: 最初に現れた ) を URL の閉じとみなすため、) を文字として含む URL
-/// （一部の Wikipedia のリンクなど）はサポートしない。残りはパニックせず単なる文字列に
-/// フォールバックする。
+/// 形式が不正なら None を返し、呼び出し元は [ をそのまま文字として残す。最初の ) を URL の
+/// 閉じとみなすので、) を含む URL (一部の Wikipedia など) は非対応。
 fn parse_link_at(chars: &[char], i: usize) -> Option<Link> {
     let text_end = find_char_from(chars, i + 1, ']')?;
     let url_open = text_end + 1;
@@ -215,9 +210,8 @@ fn find_char_from(chars: &[char], from: usize, target: char) -> Option<usize> {
     (from..chars.len()).find(|&k| chars[k] == target)
 }
 
-/// リンクテキストが実質的に URL 自身と同じかどうか。同じなら括弧書きで URL を
-/// 繰り返す必要がない。大文字小文字を無視し、末尾のスラッシュも無視して比較する
-/// （[https://x/](https://x) が縮退するように）。
+/// 同じなら括弧書きで URL を繰り返さない。大文字小文字と末尾スラッシュを無視して比べる
+/// ([https://x/](https://x) が縮退するように)。
 fn link_text_matches_url(text: &str, url: &str) -> bool {
     let norm = |s: &str| s.trim_end_matches('/').to_ascii_lowercase();
     norm(text) == norm(url)

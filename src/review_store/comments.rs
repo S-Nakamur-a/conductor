@@ -237,11 +237,8 @@ impl ReviewStore {
     }
 }
 
-/// rusqlite::Row を ReviewComment に変換する。
-///
-/// 想定しているカラム順（11カラム）:
-///   0:id, 1:worktree, 2:file_path, 3:line_start, 4:line_end,
-///   5:kind, 6:body, 7:status, 8:author, 9:branch, 10:created_at
+/// 想定するカラム順 (11): id, worktree, file_path, line_start, line_end, kind, body,
+/// status, author, branch, created_at。
 fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewComment> {
     let kind_str: String = row.get(5)?;
     let status_str: String = row.get(7)?;
@@ -632,8 +629,10 @@ mod tests {
         assert_eq!(store.resolve_id_prefix("deadbeef").unwrap(), None);
     }
 
+    /// プレフィックスは16進数と - だけを通す。検証が緩むと、id 順で最初に
+    /// 来たコメントに解決されてしまう。セキュリティ上重要な抜け穴。
     #[test]
-    fn resolve_id_prefix_rejects_like_wildcards() {
+    fn resolve_id_prefix_rejects_invalid_prefixes() {
         let store = test_store();
         store
             .add_review(
@@ -649,9 +648,20 @@ mod tests {
             )
             .unwrap();
 
-        // 16進数と - の検証がなければ、id順で最初に来たコメントに解決されて
-        // しまう。セキュリティ上重要な抜け穴。
-        assert_eq!(store.resolve_id_prefix("%").unwrap(), None);
+        for (prefix, why) in [
+            ("%", "LIKE の任意長ワイルドカード"),
+            (
+                "_",
+                "LIKE の1文字ワイルドカード。% を潰しただけでは塞げない",
+            ),
+            ("", "空文字"),
+            (
+                "xyz",
+                "%/_ を含まないので、ワイルドカードの除去だけを実装したバリデータは素通りさせてしまう",
+            ),
+        ] {
+            assert_eq!(store.resolve_id_prefix(prefix).unwrap(), None, "{why}");
+        }
     }
 
     #[test]
@@ -680,72 +690,6 @@ mod tests {
 
         let resolved = store.resolve_id_prefix("aaaaaaaa").unwrap().unwrap();
         assert_eq!(resolved, "aaaaaaaa-1111-0000-0000-000000000000");
-    }
-
-    #[test]
-    fn resolve_id_prefix_rejects_underscore_wildcard() {
-        let store = test_store();
-        store
-            .add_review(
-                "wt1",
-                "src/a.rs",
-                1,
-                None,
-                CommentKind::Suggest,
-                "note",
-                "abc",
-                Author::User,
-                None,
-            )
-            .unwrap();
-
-        // _ は LIKE の1文字ワイルドカードで、% のもう一方に当たる。未検証の
-        // プレフィックスからそのまま LIKE パターンを組み立てれば、こちらも
-        // 同様に抜け穴になる。
-        assert_eq!(store.resolve_id_prefix("_").unwrap(), None);
-    }
-
-    #[test]
-    fn resolve_id_prefix_rejects_empty_string() {
-        let store = test_store();
-        store
-            .add_review(
-                "wt1",
-                "src/a.rs",
-                1,
-                None,
-                CommentKind::Suggest,
-                "note",
-                "abc",
-                Author::User,
-                None,
-            )
-            .unwrap();
-
-        assert_eq!(store.resolve_id_prefix("").unwrap(), None);
-    }
-
-    #[test]
-    fn resolve_id_prefix_rejects_non_hex_letters() {
-        let store = test_store();
-        store
-            .add_review(
-                "wt1",
-                "src/a.rs",
-                1,
-                None,
-                CommentKind::Suggest,
-                "note",
-                "abc",
-                Author::User,
-                None,
-            )
-            .unwrap();
-
-        // %/_ を一切含まない。LIKE のワイルドカード文字を取り除くだけで
-        // （文字集合が16進数+-であることを実際にはチェックしない）
-        // バリデータを実装していた場合、これはそのまま素通りしてしまう。
-        assert_eq!(store.resolve_id_prefix("xyz").unwrap(), None);
     }
 
     /// 公表している8文字より短いプレフィックスは何にも解決されない。この

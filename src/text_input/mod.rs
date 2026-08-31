@@ -2,11 +2,6 @@
 //!
 //! カーソルナビゲーション、カーソル位置への挿入、前方/後方の削除、
 //! 単語単位の移動、クリップボードからの貼り付けをサポートする TextInput 構造体を提供する。
-//!
-//! construct（生成・状態アクセサ）、edit（挿入と削除）、movement（カーソルナビゲーション）、
-//! key_handler（統一されたキーイベントハンドラ）、boundary（edit/movement が共有する
-//! 非公開の文字境界ヘルパー）に分割している。各サブモジュールの impl TextInput ブロックは
-//! 自動的にマージされるので、crate::text_input::TextInput の再エクスポートは不要。
 
 mod boundary;
 mod construct;

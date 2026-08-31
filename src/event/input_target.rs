@@ -37,7 +37,7 @@ impl InputTarget {
     /// `WorktreeInputMode::Confirming*` の y/n サブモードはテキスト入力では
     /// ないので、ここには現れない。
     pub fn active(app: &App) -> Option<Self> {
-        if app.viewer_state.explorer.inline_reply_line.is_some() {
+        if app.viewer.inline.reply_line.is_some() {
             return Some(Self::InlineReply);
         }
         if app.review_state.input_mode != ReviewInputMode::Normal {
@@ -53,10 +53,10 @@ impl InputTarget {
         if app.overlays.active == ActiveOverlay::GrepSearch {
             return Some(Self::GrepSearch);
         }
-        if app.viewer_state.search.search_active {
+        if app.viewer.search.search_active {
             return Some(Self::ViewerSearch);
         }
-        if app.viewer_state.filename_search.filename_search_active {
+        if app.viewer.filename_search.filename_search_active {
             return Some(Self::FilenameSearch);
         }
         if app.review_state.search_active {
@@ -81,11 +81,7 @@ impl InputTarget {
     /// この欄へテキストを挿入する。
     pub fn insert(self, app: &mut App, text: &str) {
         match self {
-            Self::InlineReply => app
-                .viewer_state
-                .explorer
-                .inline_reply_buffer
-                .insert_str(text),
+            Self::InlineReply => app.viewer.inline.reply_buffer.insert_str(text),
             Self::ReviewInput => app.review_state.input_buffer.insert_str(text),
             Self::SmartDescription => app.worktree_mgr.smart_description_buffer.insert_str(text),
             Self::WorktreeName => app.worktree_mgr.input_buffer.insert_str(text),
@@ -94,9 +90,9 @@ impl InputTarget {
                 app.overlays.grep_search.input_focused = true;
                 app.overlays.grep_search.schedule();
             }
-            Self::ViewerSearch => app.viewer_state.search.search_query.insert_str(text),
+            Self::ViewerSearch => app.viewer.search.search_query.insert_str(text),
             Self::FilenameSearch => app
-                .viewer_state
+                .viewer
                 .filename_search
                 .filename_search_query
                 .insert_str(text),

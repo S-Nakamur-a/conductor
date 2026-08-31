@@ -1,6 +1,7 @@
 //! リポジトリの選択とキャッシュされたworktree一覧: 既知のリポジトリ間の
 //! 切り替え、任意パスのオープン、gitからのworktree/ブランチ状態のリフレッシュ。
 
+use crate::explorer::Explorer;
 use crate::git_engine;
 use crate::review_store::{self, ReviewStore};
 use crate::viewer::ViewerState;
@@ -49,11 +50,12 @@ impl App {
         // worktreeとレビューを即座にリフレッシュする。viewer/diffは遅延読み込みする。
         self.worktrees.select(0);
         self.refresh_worktrees();
-        self.viewer_state = ViewerState::default();
+        self.explorer = Explorer::default();
+        self.viewer = ViewerState::default();
         // ツリーの走査は遅延させる (上のコメントのとおり) が、根だけは今ここで
         // 入れておく。空のままだと、ツリーを歩く前に開いたファイル名検索が
         // カレントディレクトリを歩いてしまう。
-        self.viewer_state.set_root(self.selected_worktree_path());
+        self.explorer.set_root(self.selected_worktree_path());
         self.diff_state = crate::diff_state::DiffState::new(
             &self.config.general.main_branch,
             self.diff_state.view_mode,
@@ -125,9 +127,10 @@ impl App {
 
                 self.worktrees.select(0);
                 self.refresh_worktrees();
-                self.viewer_state = ViewerState::default();
+                self.explorer = Explorer::default();
+                self.viewer = ViewerState::default();
                 // 同上。ツリーは遅延させるが根は今決まっている。
-                self.viewer_state.set_root(self.selected_worktree_path());
+                self.explorer.set_root(self.selected_worktree_path());
                 // このリポジトリにはビュー復元が無いので、*前の*リポジトリ用にまだ
                 // 有効な復元があれば破棄する — そうしないと、ここで発火して新しく
                 // 開いたツリー内の同名パスを開いてしまう可能性がある。
@@ -225,13 +228,13 @@ impl App {
                             })
                             .collect();
                         for (branch, head_oid) in head_updates {
-                            if let Some(old) = self.worktree_heads.get(&branch)
+                            if let Some(old) = self.change_watch.heads.get(&branch)
                                 && old != &head_oid
                             {
                                 self.record_stat("commits_made");
                                 changed = true;
                             }
-                            self.worktree_heads.insert(branch, head_oid);
+                            self.change_watch.heads.insert(branch, head_oid);
                         }
                     }
                     Err(e) => {
@@ -272,20 +275,20 @@ impl App {
     /// デコレーションアニメーションを1ティック進める。アニメーションが
     /// 実際に更新された場合（つまりmodeが None でない場合）に true を返す。
     pub fn tick_decoration(&mut self, width: u16, height: u16) -> bool {
-        use crate::ui::decoration::{DecorationActivity, DecorationMode};
+        use crate::worktree::decoration::{DecorationActivity, DecorationMode};
         let mode = DecorationMode::from_str(&self.config.general.decoration);
         if !mode.has_animation() {
             return false;
         }
-        self.decoration_tick = self.decoration_tick.wrapping_add(1);
+        self.ticks.advance_decoration();
         let activity = if self.terminal.cc_waiting_worktrees.is_empty() {
             DecorationActivity::Calm
         } else {
             DecorationActivity::Active
         };
-        crate::ui::decoration::tick_decoration(
+        crate::worktree::decoration::tick_decoration(
             &mut self.decoration_states,
-            self.decoration_tick,
+            self.ticks.decoration(),
             width,
             height,
             activity,
@@ -295,7 +298,7 @@ impl App {
     }
 
     /// 現在のセッションと日次合計の両方に統計イベントを記録する。
-    pub(super) fn record_stat(&self, field: &str) {
+    pub(crate) fn record_stat(&self, field: &str) {
         if let Some(store) = &self.review_store {
             let _ = store.increment_daily_stat(field);
             if let Some(ref sid) = self.stats.session_id {
@@ -305,7 +308,7 @@ impl App {
     }
 
     /// 現在選択中のworktreeの (worktree_name, working_dir) を返す。
-    pub(super) fn selected_worktree_info(&self) -> (String, std::path::PathBuf) {
+    pub(crate) fn selected_worktree_info(&self) -> (String, std::path::PathBuf) {
         self.worktrees
             .get(self.worktrees.selected_index())
             .map(|w| (w.branch.clone(), w.path.clone()))
@@ -313,17 +316,8 @@ impl App {
     }
 }
 
-/// worktreeリストがリフレッシュされた後も選択を保つべきworktreeの
-/// インデックスを選ぶ。
-///
-/// リストの順序はリフレッシュのたびに安定しない — worktreeの追加・削除は
-/// それ以降のすべてのインデックスをずらす。単純に古いインデックスで選ぶと、
-/// 選択が黙って*別の*ブランチを指してしまい、そのブランチのレビューデータ
-/// （変更サマリを含む）が誤ったworktreeに対して表示されてしまう。そこで
-/// まずブランチの同一性で再ピン留めし、以前選択していたブランチが無くなった
-/// 場合にのみ古いインデックスを範囲内にクランプする。
-///
-/// worktreeが1つも無い場合は None を返す（選ぶものが無い）。
+/// リストの順序は安定せず、追加・削除で以降のインデックスがずれる。古い添字で選ぶと
+/// 選択が黙って別ブランチを指すので、まずブランチ名で貼り直し、無い場合だけ丸める。
 fn reselect_worktree_index(
     worktrees: &[git_engine::WorktreeInfo],
     prev_branch: &str,

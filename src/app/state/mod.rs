@@ -10,28 +10,25 @@
 
 mod appearance;
 mod bars;
-mod code_nav;
-mod hover;
+mod change_watch;
 mod layout;
 mod panel_number;
 mod publish;
 mod repo;
-mod revidere;
 mod stats;
+mod ticks;
 mod update_flow;
 mod view_restore;
-mod worktrees;
 
-pub use appearance::{Highlighting, ThemeSelection};
+pub use crate::revidere::state::RevidereState;
+pub use appearance::{Appearance, Highlighting, ThemeSelection};
 pub use bars::WtbarState;
-pub use code_nav::CodeNav;
-pub use hover::ListHover;
+pub use change_watch::ChangeWatch;
 pub use layout::PanelLayout;
 pub use panel_number::PanelNumberOverlay;
 pub use publish::PublishState;
 pub use repo::RepoState;
-pub use revidere::RevidereState;
 pub use stats::SessionStats;
+pub use ticks::Ticks;
 pub use update_flow::UpdateFlow;
 pub use view_restore::ViewRestore;
-pub use worktrees::WorktreeList;

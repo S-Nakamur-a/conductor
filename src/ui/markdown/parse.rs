@@ -200,10 +200,8 @@ fn parse_list_item(line: &str) -> Option<MdBlock> {
     None
 }
 
-/// リスト項目テキストの先頭にある GFM タスクマーカーを切り出す。"[ ] foo" →
-/// (Some(false), "foo")、"[x] foo"/"[X] foo" → (Some(true), "foo")、
-/// 空のタスク "[ ]" → (Some(_), "")。マーカーの後にはスペースか文字列終端が
-/// 必要なので、"[ ]x" や "[y]" はそのままの文字列として扱う（None, original）。
+/// "[ ] foo" → (Some(false), "foo")、"[x] foo" → (Some(true), "foo")。マーカーの後は
+/// スペースか終端が要るので、"[ ]x" や "[y]" は素の文字列のまま返す。
 fn split_task_marker(text: &str) -> (Option<bool>, &str) {
     for (pat, val) in [("[ ]", false), ("[x]", true), ("[X]", true)] {
         if let Some(rest) = text.strip_prefix(pat) {
@@ -218,13 +216,8 @@ fn split_task_marker(text: &str) -> (Option<bool>, &str) {
     (None, text)
 }
 
-/// lines[i] から GFM のパイプテーブルが始まっている場合（| を含む行の直後に
-/// 有効なデリミタ行が続く場合）、それを解析してブロックと消費したソース行数を
-/// 返す。本物のテーブルでなければ何も消費せずに None を返すので、
-/// a | b のような段落を誤ってテーブルと解釈することはない。
-///
-/// デリミタ行がゲートになっている: すべてのセルが有効な :?-+:? でなければ、
-/// 1行も消費せずに候補全体を却下する。
+/// デリミタ行がゲート。全セルが有効な :?-+:? でなければ 1 行も消費せず候補ごと却下するので、
+/// a | b のような段落をテーブルと誤解しない。
 fn parse_table_at(lines: &[&str], i: usize) -> Option<(MdBlock, usize)> {
     let header_line = lines.get(i)?;
     if !header_line.contains('|') {
@@ -268,9 +261,7 @@ pub(crate) fn split_table_row(line: &str) -> Vec<String> {
     t.split('|').map(|c| c.trim().to_string()).collect()
 }
 
-/// デリミタ行のセルをアライメントへ解析する。いずれかのセルが有効な
-/// :?-+:? 区切り（ハイフン1つ以上）でなければ None。「これはテーブルか」を
-/// 判定するゲートも兼ねる。
+/// いずれかのセルが有効な :?-+:? でなければ None。「これはテーブルか」の判定も兼ねる。
 fn parse_alignments(cells: &[String]) -> Option<Vec<Align>> {
     if cells.is_empty() {
         return None;

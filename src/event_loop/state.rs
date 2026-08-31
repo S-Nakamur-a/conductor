@@ -71,8 +71,8 @@ impl LoopState {
         let sources = Self::open_event_sources(app);
         let timers = Self::register_timers(app);
 
-        // 最初のフレームで全パネルが描かれるように dirty を立てておく。
-        app.dirty.mark_all();
+        // 最初のフレームが描かれるように再描画を要求しておく。
+        app.request_redraw();
 
         Self {
             sources,
@@ -133,9 +133,8 @@ impl LoopState {
         timers
     }
 
-    /// ccusage は複数の Conductor で npx ccusage を重複起動しないよう
-    /// グローバルなファイルキャッシュを使う。起動時はキャッシュの中身をそのまま出し、
-    /// 鮮度の確認は即座にスケジュールする。
+    /// 複数の Conductor が npx ccusage を重複起動しないようグローバルなファイルキャッシュを
+    /// 使う。起動時は中身をそのまま出し、鮮度の確認は即座にスケジュールする。
     fn bootstrap_ccusage(app: &mut App, timers: &mut timer::TimerRegistry) {
         if !app.config.ccusage.enabled {
             return;
@@ -174,7 +173,7 @@ impl LoopState {
     /// 領域の持ち主が変わったかを判定し、変わっていたらハードクリアを予約する。
     pub fn note_layout_change(&mut self, app: &mut App) {
         let key = (
-            app.expanded_panel,
+            app.layout.expanded,
             app.editor.is_some(),
             app.reflow.active,
             app.config.layout.explorer_width_pct,

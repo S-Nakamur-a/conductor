@@ -38,10 +38,8 @@ pub(super) use worktree::handle_worktree_input_key;
 
 // オーバーレイ間で共有するリストナビゲーション
 
-/// keymap 経由でオーバーレイポップアップ共通のリストナビゲーションキーを処理する。
-///
-/// KeyContext::Overlay に対してキーを解決し、*selected を 0..count の範囲で
-/// 調整する。キーを消費した場合は true を返す。
+/// KeyContext::Overlay でキーを解決し、*selected を 0..count に収める。
+/// 消費したら true。
 fn overlay_list_nav(keymap: &KeyMap, key: &KeyEvent, selected: &mut usize, count: usize) -> bool {
     let Some(action) = keymap.resolve(key, KeyContext::Overlay) else {
         return false;
@@ -49,9 +47,8 @@ fn overlay_list_nav(keymap: &KeyMap, key: &KeyEvent, selected: &mut usize, count
     apply_list_nav(action, selected, count)
 }
 
-/// このキーイベントはテキストフィールドにそのまま文字を入力するものか？
-/// 素の印字可能文字（Ctrl/Alt/Super なし）はタイプ入力とみなす。SHIFT はあえて
-/// 除外条件にしていない。Shift+G はフィルタに入力すべき文字 G そのものだから。
+/// 素の印字可能文字 (Ctrl/Alt/Super なし) をタイプ入力とみなす。SHIFT をあえて
+/// 除外条件にしていないのは、Shift+G が入力すべき文字 G そのものだから。
 fn is_text_input_key(key: &KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char(_))
         && !key
@@ -59,9 +56,8 @@ fn is_text_input_key(key: &KeyEvent) -> bool {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
-/// テキストフィルタも持つオーバーレイ（コマンドパレット、ファイル名検索など）の
-/// リストナビゲーション。素の印字可能キーはフィルタ側に落ちるため、非テキスト
-/// キー（矢印、PageUp/Down）だけがナビゲーションになる。j/k/g はタイプされる。
+/// 素の印字可能キーはフィルタ側に落ちるので、矢印や PageUp/Down だけがナビになる。
+/// j/k/g はタイプされる。
 fn filterable_overlay_list_nav(
     keymap: &KeyMap,
     key: &KeyEvent,

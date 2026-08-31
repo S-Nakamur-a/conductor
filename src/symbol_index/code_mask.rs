@@ -144,11 +144,8 @@ impl CodeMask {
         Self::from_masked_ranges(source, &collect_masked_ranges(&tree, source, &grammar))
     }
 
-    /// masked の外側にある識別子の出現すべてにビットを立てる。
-    ///
-    /// masked は開始オフセットでソートされていて重複しないことが前提。
-    /// マスクされたノードで潜らずに止まる pre-order 走査はこの条件を満たす
-    /// 結果を生成する。
+    /// masked は開始オフセット順で重複しないことが前提。マスクされたノードで潜らずに
+    /// 止まる pre-order 走査はこの条件を満たす。
     fn from_masked_ranges(source: &str, masked: &[(usize, usize)]) -> Self {
         let mut lines = Vec::new();
         let mut line_start = 0usize;
@@ -192,21 +189,9 @@ impl CodeMask {
     }
 }
 
-/// Rust のインライン format 引数として捕捉された識別子を、マスクされた範囲
-/// から改めて掘り出す。
-///
-/// format!("{widget:?}") は実在する束縛を名指ししており、ここにある他の
-/// すべての言語での相当物はナビゲート可能なままである — TypeScript の
-/// ${...} は文法上そもそも独立したノードとして現れる。tree-sitter-rust は
-/// format 文字列を分割しないので、リテラル全体が1つの string_content として
-/// 渡ってきてしまい、その中の識別子は地の文と一緒にマスクされてしまう。
-/// 2021年頃のコードベースにおいてこれは特殊なケースではない: このリポジトリ
-/// には159ファイルにわたり945件もそのような参照がある。
-///
-/// 1つのマスクされた範囲を受け取り、{ident} / {ident:spec} の各識別子を
-/// 除外した後もマスクされたままになる部分範囲を返す。{} と {0} は識別子を
-/// 保持していないのでそのままにし、エスケープされた波括弧である {{ も
-/// 同様にそのままにする。
+/// format!("{widget:?}") は実在する束縛を名指しているが、tree-sitter-rust は format
+/// 文字列を分割しないので、リテラル全体が地の文と一緒にマスクされる。特殊ケースでは
+/// なく、このリポジトリだけで 159 ファイル 945 件ある。{} と {0} と {{ はそのまま。
 fn subtract_format_args(source: &str, start: usize, end: usize) -> Vec<(usize, usize)> {
     let text = &source[start..end];
     let bytes = text.as_bytes();

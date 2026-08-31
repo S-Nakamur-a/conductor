@@ -208,9 +208,7 @@ impl App {
     }
 }
 
-/// ダウンロードとビルドの更新処理をバックグラウンドスレッドで実行する。
-///
-/// ステータス報告のため、チャンネル経由で [UpdateProgress] メッセージを送る。
+/// 進捗はチャンネル経由で [UpdateProgress] として送る。
 fn perform_update(
     tx: &mpsc::Sender<UpdateProgress>,
     version: &str,
@@ -426,11 +424,8 @@ fn try_binary_update(
     true
 }
 
-/// pathに対して --version を実行し、正常終了したかどうかを報告する。
-///
-/// インストール前のスモークテストとして使う: バージョンすら出力できない
-/// (ダウンロードが壊れている、アーキテクチャ違い、署名不正などの)
-/// できたてのバイナリで、動いているものを置き換えてはならない。
+/// インストール前のスモークテスト。バージョンすら出せない (壊れた、アーキテクチャ違い、
+/// 署名不正の) バイナリで動いているものを置き換えてはならない。
 fn verify_runnable(path: &std::path::Path) -> bool {
     use std::process::{Command, Stdio};
     match Command::new(path)

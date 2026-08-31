@@ -18,7 +18,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // 別々の構造体フィールドなので Rust ではこれが許される。
     app.layout.cache.update(
         area,
-        app.expanded_panel,
+        app.layout.expanded,
         has_notifications,
         &app.config.layout,
         app.layout.terminal_split_pct,
@@ -31,20 +31,20 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     let status_area = app.layout.cache.status_area;
 
     // タイトルバー
-    super::super::common::render_title_bar(frame, title_area, app);
+    super::super::chrome::render_title_bar(frame, title_area, app);
 
     // メニューバー（常に表示、タイトル直下）
-    super::super::menu_bar::render(frame, menubar_area, app);
+    crate::menu::render::render(frame, menubar_area, app);
 
     // worktree 監視ストリップ（旧左カラムと、以前あった
     // CC 待機通知バーの後継）
-    super::super::worktree_bar::render(frame, wtbar_area, app);
+    crate::worktree::bar::render(frame, wtbar_area, app);
 
     // revidere の 2 列ビューは main_area 全体を取る。3 列アコーディオンとは
     // 並ばないので、ターミナル列も含めてここで打ち切る。
-    if app.focus == crate::app::Focus::Revidere {
-        super::super::revidere_view::render(frame, main_area, app);
-        super::super::common::render_status_bar(frame, status_area, app);
+    if app.focus.current() == crate::app::Focus::Revidere {
+        crate::revidere::render::render(frame, main_area, app);
+        super::super::chrome::render_status_bar(frame, status_area, app);
         return;
     }
 
@@ -64,32 +64,32 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
             width: columns[1].width.saturating_add(columns[2].width),
             height: columns[1].height,
         };
-        super::super::editor_panel::render(frame, region, app);
+        crate::terminal::render::editor::render(frame, region, app);
     } else {
         // カラム1: Explorer（ファイルツリー + 差分リスト）
-        super::super::explorer_panel::render(frame, columns[1], app);
+        app.render_explorer(frame, columns[1]);
 
         // カラム2: Viewer（ファイル内容）
-        if app.viewer_state.is_current_file_media()
-            && let Some(ref rel_path) = app.viewer_state.content.current_file.clone()
+        if app.viewer.is_current_file_media()
+            && let Some(ref rel_path) = app.viewer.content.current_file.clone()
         {
             // 画像も本文と同じ根から読む。current_file は Viewer のツリーの
             // 相対パスなので、別の根に繋ぐと「タイトルは A のファイル、絵は B の
             // ファイル」になり得る。
-            let full_path = app.viewer_state.root().join(rel_path);
+            let full_path = app.explorer.root().join(rel_path);
             let cols = columns[2].width;
             let rows = columns[2].height;
-            app.viewer_state
+            app.viewer
                 .media_state
                 .render_if_needed(&full_path, rel_path, cols, rows);
         }
-        super::super::viewer_panel::render(frame, columns[2], app);
+        crate::viewer::render_panel(frame, columns[2], app);
     }
 
     // カラム3: ターミナル分割（Claude 80% / Shell 20%）
     let terminal_split = app.layout.cache.terminal_split;
-    super::super::terminal_claude::render(frame, terminal_split[0], app);
-    super::super::terminal_shell::render(frame, terminal_split[1], app);
+    crate::terminal::render::claude::render(frame, terminal_split[0], app);
+    crate::terminal::render::shell::render(frame, terminal_split[1], app);
 
     // リサイズのアフォーダンス: hover/ドラッグ中のディバイダを点灯させる
     highlight_active_divider(frame, app);
@@ -111,7 +111,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // メニューのドロップダウン
     // コンテンツの中で最後に描画し、各パネルの上に乗せる。main_area より上にある
     // メニューバー行から垂れ下がるので、main_area ではなくフレーム全体でクランプする。
-    super::super::menu_bar::render_dropdown(frame, area, app);
+    crate::menu::render::render_dropdown(frame, area, app);
 
     // ステータスバー
     // ステータスバー右側に worktree のブランチとリポジトリを表示する。
@@ -120,13 +120,13 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         .get(app.worktrees.selected_index())
         .map(|w| w.branch.as_str())
         .unwrap_or("");
-    super::super::common::render_status_bar(frame, status_area, app);
-    super::super::common::render_worktree_label(
+    super::super::chrome::render_status_bar(frame, status_area, app);
+    super::super::chrome::render_worktree_label(
         frame,
         status_area,
         _worktree_branch,
         &app.repo.path,
-        &app.theme,
+        &app.appearance.theme,
     );
 }
 
@@ -136,11 +136,8 @@ fn is_border_glyph(s: &str) -> bool {
     matches!(s.chars().next(), Some(c) if ('\u{2500}'..='\u{257F}').contains(&c))
 }
 
-/// 現在 hover 中またはドラッグ中のディバイダをテーマのアクセントカラーで塗る。
-/// crossterm では OS のカーソル形状を切り替えられないので、GUI でいう
-/// col-resize/row-resize カーソルの代わりの表現になる。ドラッグ中はホバーより
-/// 優先され、ドラッグ中にカーソルが1セルずれても境界を光らせたままにする。
-/// ボーダーのグリフだけ再着色するので、パネルの内容には触れない。
+/// crossterm では OS のカーソル形状を変えられないので、GUI の col-resize/row-resize の
+/// 代わりになる。ドラッグ中はホバーより優先し、1 セルずれても光らせ続ける。
 fn highlight_active_divider(frame: &mut Frame, app: &App) {
     use crate::app::Divider;
 
@@ -148,7 +145,7 @@ fn highlight_active_divider(frame: &mut Frame, app: &App) {
         return;
     };
     let lc = &app.layout.cache;
-    let color = app.theme.accent;
+    let color = app.appearance.theme.accent;
 
     // ディバイダを (is_vertical, 固定座標, 対象領域) に解決する。固定座標は
     // 上/左パネルのボーダーセル（edge - 1）で、これが目に見えるディバイダ線になる。

@@ -37,10 +37,10 @@ pub enum Divider {
 
 impl App {
     pub(super) fn cmd_toggle_panel_expand(&mut self) {
-        if self.expanded_panel == Some(self.focus) {
-            self.expanded_panel = None;
+        if self.layout.expanded == Some(self.focus.current()) {
+            self.layout.expanded = None;
         } else {
-            self.expanded_panel = Some(self.focus);
+            self.layout.expanded = Some(self.focus.current());
         }
     }
 
@@ -73,7 +73,7 @@ impl App {
         let changed = match dir {
             ResizeDir::Left | ResizeDir::Right => {
                 let grow_right = matches!(dir, ResizeDir::Right);
-                match self.focus {
+                match self.focus.current() {
                     // worktree ストリップは全幅で、3つのリサイズ可能な列の1つではない —
                     // ここからリサイズするものは何もない。2 列ビューも同様に、
                     // 3 列レイアウトの外にいるので動かす境界を持たない。
@@ -101,7 +101,7 @@ impl App {
                 // （ファイルツリー / 変更ファイル一覧）。Downで上側ペインが広がり、
                 // Upで縮む。
                 let down = matches!(dir, ResizeDir::Down);
-                match self.focus {
+                match self.focus.current() {
                     Focus::TerminalClaude | Focus::TerminalShell => {
                         let step = Self::TERMINAL_SPLIT_STEP as i16;
                         self.adjust_terminal_split(if down { step } else { -step })
@@ -179,10 +179,8 @@ impl App {
         }
     }
 
-    /// Explorer|Viewer境界を delta ポイント分動かす（正の値は右方向、Explorerを
-    /// 広げてViewerを縮める）。Terminal幅は保存される。ExplorerもViewerも
-    /// [Self::MIN_COL_PCT] を下回らないようクランプされる。比率が変わったかを
-    /// 返す。永続化は呼び出し側が行う。
+    /// Explorer|Viewer 境界を delta 動かす。正で Explorer が広がり、Terminal 幅は変わらない。
+    /// 比率が変わったかを返す。永続化は呼び出し側。
     fn move_explorer_viewer_divider(&mut self, delta: i16) -> bool {
         let (new_e, new_v) = clamp_ev_divider(
             self.config.layout.explorer_width_pct,
@@ -199,10 +197,8 @@ impl App {
         true
     }
 
-    /// Viewer|Terminal境界を delta ポイント分動かす（正の値は右方向、Viewerを
-    /// 広げてTerminalを縮める）。Explorer幅は変わらない。ViewerもTerminalも
-    /// [Self::MIN_COL_PCT] を下回らないようクランプされる。比率が変わったかを
-    /// 返す。永続化は呼び出し側が行う。
+    /// Viewer|Terminal 境界を delta 動かす。正で Viewer が広がり、Explorer 幅は変わらない。
+    /// 比率が変わったかを返す。永続化は呼び出し側。
     fn move_viewer_terminal_divider(&mut self, delta: i16) -> bool {
         let new_v = clamp_vt_divider(
             self.config.layout.explorer_width_pct,
@@ -218,11 +214,10 @@ impl App {
         true
     }
 
-    /// 列リサイズ共通の後処理: 再描画して新しい分割をフラッシュ表示する。
-    /// 永続化は呼び出し側に任せる（キーボード: キー押下ごと、マウス: ドラッグ
-    /// リリース時）。
+    /// 永続化はここでやらない。キーボードは打鍵ごと、マウスはドラッグを離した時と、
+    /// 書き出す頻度が違うため。
     fn after_horizontal_resize(&mut self) {
-        self.dirty.mark_all();
+        self.request_redraw();
         let e = self.config.layout.explorer_width_pct;
         let v = self.config.layout.viewer_width_pct;
         let t = 100u16.saturating_sub(e.saturating_add(v));
@@ -231,11 +226,8 @@ impl App {
         ));
     }
 
-    /// 実行時のClaude領域高さパーセントを delta ポイント分調整する。
-    /// ClaudeとShell両方のペインが使える最低限を保つようクランプされる。
-    /// 正の delta はClaudeペインを広げ（Shellを縮め）、負の値はShellを
-    /// 広げる。結果の分割をフラッシュ表示する。比率が変わったかを返す。
-    /// 永続化は呼び出し側が行う。
+    /// Claude 領域の高さを delta 調整する。正で Claude が広がる。
+    /// 比率が変わったかを返す。永続化は呼び出し側。
     fn adjust_terminal_split(&mut self, delta: i16) -> bool {
         let next = (self.layout.terminal_split_pct as i16 + delta).clamp(
             Self::TERMINAL_SPLIT_MIN as i16,
@@ -249,7 +241,7 @@ impl App {
         // 一致させておく — これによりconfigウォッチャーのリロードが no-op になり
         // （スナップショットが異なるときのみ反応する）、自己書き込みループを避ける。
         self.config.layout.terminal_split_pct = next;
-        self.dirty.mark_all();
+        self.request_redraw();
         self.set_status_info(format!(
             "Terminal split: Claude {next}% / Shell {}%",
             100 - next
@@ -257,10 +249,8 @@ impl App {
         true
     }
 
-    /// Explorer列のファイルツリー高さパーセントを delta ポイント分調整する
-    /// （正の値でファイルツリーが広がり、変更ファイル一覧が縮む）。両方の
-    /// パネルが使える最低限を保つようクランプされる。フラッシュ表示する。
-    /// 比率が変わったかを返す。永続化は呼び出し側が行う。
+    /// ファイルツリーの高さを delta 調整する。正でツリーが広がる。
+    /// 比率が変わったかを返す。永続化は呼び出し側。
     fn adjust_explorer_split(&mut self, delta: i16) -> bool {
         let next = (self.config.layout.explorer_split_pct as i16 + delta).clamp(
             Self::TERMINAL_SPLIT_MIN as i16,
@@ -270,7 +260,7 @@ impl App {
             return false;
         }
         self.config.layout.explorer_split_pct = next;
-        self.dirty.mark_all();
+        self.request_redraw();
         self.set_status_info(format!(
             "Explorer split: tree {next}% / changed files {}%",
             100 - next
@@ -293,11 +283,8 @@ impl App {
     }
 }
 
-/// Explorer|Viewer境界を delta ポイント分動かした後の新しい
-/// (explorer, viewer) 幅パーセントを計算する。Explorer+Viewerの合計は
-/// 保存され（Terminal幅は変わらない）、両方の列とも >= min に保たれる。
-/// 列を下限より下げてしまう delta はクランプされるので、境界は
-/// 行き過ぎず境目で止まる。
+/// Explorer+Viewer の合計は保存する (Terminal 幅を動かさない)。下限を割る delta は
+/// クランプするので、境界は行き過ぎずに境目で止まる。
 fn clamp_ev_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> (u16, u16) {
     let e = explorer as i16;
     let v = viewer as i16;
@@ -307,9 +294,7 @@ fn clamp_ev_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> (u16, u
     (new_e as u16, (e + v - new_e) as u16)
 }
 
-/// Viewer|Terminal境界を delta ポイント分動かした後の新しいViewer幅
-/// パーセントを計算する。Explorerは変わらない。Viewerと暗黙のTerminal列
-/// （100 - explorer - viewer）はそれぞれ >= min に保たれる。
+/// Viewer と、暗黙の Terminal 列 (100 - explorer - viewer) の両方を下限以上に保つ。
 fn clamp_vt_divider(explorer: u16, viewer: u16, delta: i16, min: u16) -> u16 {
     let e = explorer as i16;
     let v = viewer as i16;

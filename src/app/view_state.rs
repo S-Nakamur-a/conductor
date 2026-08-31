@@ -17,14 +17,24 @@ impl App {
     pub fn refresh_viewer(&mut self) -> bool {
         let path = self.selected_worktree_path();
         let tab_width = self.config.viewer.tab_width;
-        let changed = self.viewer_state.load_file_tree(&path, tab_width);
+        let reload = self
+            .explorer
+            .load_file_tree(&path, self.viewer.content.current_file.as_deref());
+        if reload.root_changed {
+            self.viewer
+                .prune_tabs_to_root(self.explorer.root(), tab_width);
+        }
+        if let Some(rel) = &reload.reopen {
+            self.viewer
+                .reload_active_file(self.explorer.root(), rel, tab_width);
+        }
         // 起動時の復元: これは遅延（同期的な）ツリー読み込み経路
         // （例えばViewerが初めてフォーカスされたときなど）なので、保留中の
         // ファイルがあればここで再度開く。非同期のworktree切り替え経路では
         // poll_worktree_switch_ops がこれを行う。
         self.consume_pending_view_restore();
         self.rehighlight_viewer();
-        changed
+        reload.entries_changed
     }
 
     /// 以前選択していたworktreeを復元し、現在のリポジトリの保存済みビュー
@@ -82,15 +92,15 @@ impl App {
     /// まだ復元待ちの場合（このセッションでこのworktreeのViewerを一度も
     /// 開いていない場合）、未消費の保留値をそのまま書き戻すことで、保存済みの
     /// 状態を空のビューで上書きしないようにする。
-    pub(super) fn save_view_for(&self, branch: &str) {
+    pub(crate) fn save_view_for(&self, branch: &str) {
         let Some(store) = &self.review_store else {
             return;
         };
         let (file, line) = match &self.view_restore.pending {
             Some(r) => (Some(r.file.clone()), r.scroll as i64),
             None => (
-                self.viewer_state.content.current_file.clone(),
-                self.viewer_state.content.file_scroll as i64,
+                self.viewer.content.current_file.clone(),
+                self.viewer.content.file_scroll as i64,
             ),
         };
         let _ = store.save_view_state(branch, file.as_deref(), line);
@@ -116,8 +126,8 @@ impl App {
             return;
         };
         match restore_disposition(
-            self.viewer_state.content.current_file.is_some(),
-            self.viewer_state.is_summary(),
+            self.viewer.content.current_file.is_some(),
+            self.viewer.is_summary(),
         ) {
             RestoreDisposition::Apply => {}
             RestoreDisposition::Drop => return,
@@ -129,28 +139,23 @@ impl App {
         // 復元先の存在確認は Viewer の根で行う。ここは「ツリーが揃った直後」に
         // 呼ばれる (同期の refresh_viewer と、非同期の worktree 切り替えの両方)
         // ので、そのツリーと同じ根で見ないと確認と実際に開く先がずれる。
-        if !self.viewer_state.root().join(&restore.file).is_file() {
+        if !self.explorer.root().join(&restore.file).is_file() {
             return;
         }
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.open_file(&restore.file, tab_width);
-        let max = self
-            .viewer_state
-            .content
-            .file_content
-            .len()
-            .saturating_sub(1);
-        self.viewer_state.content.file_scroll = restore.scroll.min(max);
+        self.viewer
+            .open_file(self.explorer.root(), &restore.file, tab_width);
+        let max = self.viewer.content.file_content.len().saturating_sub(1);
+        self.viewer.content.file_scroll = restore.scroll.min(max);
     }
 
     /// 現在読み込まれているファイル内容にsyntectハイライトを実行する。
     pub fn rehighlight_viewer(&mut self) {
         // borrow checkerを満たすため、フィールドを分離して借用する。
-        let syntax_set = &self.highlight.syntax_set;
-        let theme = &self.highlight.theme;
-        let generation = self.highlight.generation;
-        self.viewer_state
-            .highlight_content(syntax_set, theme, generation);
+        let syntax_set = &self.appearance.highlight.syntax_set;
+        let theme = &self.appearance.highlight.theme;
+        let generation = self.appearance.highlight.generation;
+        self.viewer.highlight_content(syntax_set, theme, generation);
     }
 
     /// branch のdiffを計算すべき対象ref。
@@ -161,7 +166,7 @@ impl App {
     /// 切り替え直後は片方のファイル一覧を、次のリフレッシュ後は別のファイル
     /// 一覧を表示するということが起きていた。決定ロジックを単一のメソッドに
     /// 保つことで、この不具合が静かにぶり返すのを防いでいる。
-    pub(super) fn diff_base_for(&self, branch: &str) -> String {
+    pub(crate) fn diff_base_for(&self, branch: &str) -> String {
         // PRレビュー用のworktreeは、設定されたmainブランチ以外を対象にすることが
         // ある（例: release/developブランチ）。intake時に記録されたbase refを
         // 優先し、保存されていない場合（通常のworktreeやDBが使えない場合）のみ
@@ -183,7 +188,38 @@ impl App {
             let tab_width = self.config.viewer.tab_width;
             self.diff_state
                 .load_diff(&path, &base_branch, word_diff, tab_width);
-            self.viewer_state.invalidate_diff_annotations();
+            self.viewer.invalidate_diff_annotations();
+        }
+    }
+
+    /// 選択中の worktree の HEAD oid とステータス件数を前回の既知値と比較し、
+    /// diff パネルと viewer パネルの更新が必要かを判定する。実際に変化が
+    /// 検出された場合のみ、コストの高い refresh_diff() と refresh_viewer()
+    /// を呼び出す。
+    ///
+    /// ポーリングループ内で refresh_worktrees() の後に呼ばれる。
+    /// refresh_worktrees() はその副作用として既に HEAD oid とステータス
+    /// 件数を取得済みである。
+    pub fn check_diff_viewer_staleness(&mut self) {
+        let wt = match self.worktrees.selected() {
+            Some(wt) => wt,
+            None => return,
+        };
+
+        let current_head = self.change_watch.heads.get(&wt.branch).cloned();
+        // staged をここに含めているのは、git add / git reset を可視化するため。
+        // 他の3つはインデックスを先にチェックして1ファイルにつき1バケットで
+        // 数えるため、変更済みファイルをステージしても値は変わらない — かつ
+        // ファイルウォッチャーも .git/ を無視するので役に立たず、ステージング
+        // は他に何も触らない。この要素がなければ、Explorer のステージ状態の
+        // 色は、たまたま無関係な編集が更新をトリガーしたときにしか更新されない
+        // ことになる。
+        let current_status = (wt.added, wt.modified, wt.deleted, wt.staged);
+
+        if self.change_watch.record(current_head, current_status) {
+            log::debug!("Change detected for worktree '{}'", wt.branch);
+            self.refresh_diff();
+            self.refresh_viewer();
         }
     }
 
@@ -195,24 +231,24 @@ impl App {
     /// 隠れているからである。
     /// 深さ単位で1段畳む（zm）。
     pub fn cmd_fold_one_level(&mut self) {
-        let depth = self.viewer_state.fold_collapse_deepest();
+        let depth = self.viewer.fold_collapse_deepest();
         self.report_fold_depth(depth);
     }
 
     /// 深さ単位の畳み込みを1段開き戻す（zr）。
     pub fn cmd_unfold_one_level(&mut self) {
-        let depth = self.viewer_state.fold_expand_shallowest();
+        let depth = self.viewer.fold_expand_shallowest();
         self.report_fold_depth(depth);
     }
 
     /// すべて畳む（zM）。
     pub fn cmd_fold_all(&mut self) {
-        self.viewer_state.fold_close_all();
+        self.viewer.fold_close_all();
     }
 
     /// すべて開く（zR）。
     pub fn cmd_unfold_all(&mut self) {
-        self.viewer_state.fold_open_all();
+        self.viewer.fold_open_all();
     }
 
     /// 畳んだ段数は畳んだ跡からは読み取れないので、操作のたびに知らせる。
@@ -223,15 +259,15 @@ impl App {
     }
 
     pub fn cmd_toggle_markdown_render(&mut self) {
-        if !self.viewer_state.markdown_toggle_available() {
+        if !self.viewer.markdown_toggle_available() {
             self.set_status(
                 "Raw/Rendered applies to a markdown file in the Viewer".to_string(),
                 StatusLevel::Warning,
             );
             return;
         }
-        self.viewer_state.toggle_markdown_rendered();
-        let msg = if self.viewer_state.md_rendered {
+        self.viewer.toggle_markdown_rendered();
+        let msg = if self.viewer.md_rendered {
             "Markdown: Rendered"
         } else {
             "Markdown: Raw"
@@ -242,67 +278,70 @@ impl App {
     /// Viewer の次のタブへ切り替える。
     pub fn next_viewer_tab(&mut self) {
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.next_tab(tab_width);
-        self.after_viewer_tab_change();
+        self.viewer.next_tab(self.explorer.root(), tab_width);
+        self.after_viewer_file_change();
     }
 
     /// Viewer の前のタブへ切り替える。
     pub fn prev_viewer_tab(&mut self) {
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.prev_tab(tab_width);
-        self.after_viewer_tab_change();
+        self.viewer.prev_tab(self.explorer.root(), tab_width);
+        self.after_viewer_file_change();
     }
 
     /// idx のタブをアクティブにする（タブ行のクリック）。
     pub fn focus_viewer_tab(&mut self, idx: usize) {
         let tab_width = self.config.viewer.tab_width;
-        self.viewer_state.focus_tab(idx, tab_width);
-        self.after_viewer_tab_change();
+        self.viewer.focus_tab(self.explorer.root(), idx, tab_width);
+        self.after_viewer_file_change();
     }
 
     /// idx のタブを閉じる。省略時はアクティブなタブ。
     pub fn close_viewer_tab(&mut self, idx: Option<usize>) {
         let tab_width = self.config.viewer.tab_width;
-        let idx = idx.unwrap_or(self.viewer_state.active_tab);
-        let Some(closed) = self.viewer_state.tabs.get(idx).map(|t| t.path.clone()) else {
+        let idx = idx.unwrap_or(self.viewer.active_tab);
+        let Some(closed) = self.viewer.tabs.get(idx).map(|t| t.path.clone()) else {
             return;
         };
-        self.viewer_state.close_tab(idx, tab_width);
-        self.after_viewer_tab_change();
+        self.viewer.close_tab(self.explorer.root(), idx, tab_width);
+        self.after_viewer_file_change();
         self.set_status(format!("Closed {closed}"), StatusLevel::Info);
     }
 
-    /// タブが切り替わったあと、ファイルに紐づくキャッシュを新しいファイルへ貼り直す。
-    /// ハイライトもコメントも「今開いているファイル」が前提なので、貼り直しを
-    /// 忘れると前のタブの色とコメントがそのまま残る。
-    fn after_viewer_tab_change(&mut self) {
+    /// Viewer にファイルを出す唯一の入口。
+    ///
+    /// 開いたあとに貼り直すものは呼ぶ側に覚えさせない。8 箇所がそれぞれ違う手順を
+    /// 持っていた結果、コードジャンプと grep の飛び先はコメントのキャッシュを
+    /// 貼り直しておらず、行番号だけが一致した前のファイルの印を出していた。
+    pub fn show_file(&mut self, relative_path: &str, how: OpenAs) {
+        let tab_width = self.config.viewer.tab_width;
+        let root = self.explorer.root().to_path_buf();
+        match how {
+            OpenAs::Preview => self
+                .viewer
+                .open_file_preview(&root, relative_path, tab_width),
+            OpenAs::Persistent => self.viewer.open_file(&root, relative_path, tab_width),
+        }
+        self.after_viewer_file_change();
+    }
+
+    /// 開いているファイルに紐づくキャッシュを貼り直す。タブの切り替えも同じ経路。
+    fn after_viewer_file_change(&mut self) {
         self.rehighlight_viewer();
-        if let Some(path) = self.viewer_state.content.current_file.clone() {
+        if let Some(path) = self.viewer.content.current_file.clone() {
             self.review_state.build_file_comment_cache(&path);
-            self.viewer_state.reveal_file_in_tree(&path);
+            self.explorer.reveal_file_in_tree(&path);
         }
     }
 
-    /// ファイルパス（現在のworktreeからの相対パス）をViewerパネルで開く。
-    ///
-    /// 指定があれば line（1始まり）へジャンプする。Explorerツリー内で
-    /// ファイルを表示し、フォーカスをViewerへ切り替え、ステータスメッセージを
-    /// 表示する。
+    /// Viewer で開いたうえで、行へ寄せ、フォーカスを移し、開いたことを知らせる。
     pub fn open_file_in_viewer(&mut self, relative_path: &str, line: Option<usize>) {
-        let tab_width = self.config.viewer.tab_width;
-
-        self.viewer_state.open_file(relative_path, tab_width);
-        self.viewer_state.reveal_file_in_tree(relative_path);
+        self.show_file(relative_path, OpenAs::Persistent);
 
         if let Some(ln) = line {
-            let max = self
-                .viewer_state
-                .content
-                .file_content
-                .len()
-                .saturating_sub(1);
-            self.viewer_state.content.file_scroll = (ln.saturating_sub(1)).min(max);
-            self.viewer_state.show_raw_for_line_target();
+            let max = self.viewer.content.file_content.len().saturating_sub(1);
+            self.viewer.content.file_scroll = (ln.saturating_sub(1)).min(max);
+            self.viewer.show_raw_for_line_target();
         }
 
         self.set_focus(Focus::Viewer);
@@ -314,6 +353,15 @@ impl App {
         };
         self.set_status(msg, StatusLevel::Success);
     }
+}
+
+/// [App::show_file] が開いたタブを残すかどうか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAs {
+    /// 明示的に閉じるまで残る。
+    Persistent,
+    /// ちょっと見るだけ。フォーカスが外れると閉じる。
+    Preview,
 }
 
 /// 期限が来た保留中の [PendingViewRestore] をどう扱うか。
@@ -335,13 +383,8 @@ enum RestoreDisposition {
     Keep,
 }
 
-/// Viewerがいま何を表示しているかから、期限が来たビュー復元の運命を決める。
-///
-/// [App::consume_pending_view_restore] から切り出しているのは、どちらの
-/// 誤答も静かに起きるため: Keep であるべきところで Drop すると
-/// ブランチの保存済みファイルを黙って消してしまい、Drop であるべき
-/// ところで Keep すると古い値のまま黙って固定してしまう。どちらも
-/// クラッシュとして表面化しないので、この真理値表はテストで固定している。
+/// どちらの誤答も静かに起きる。Keep すべきを Drop すると保存済みファイルを黙って
+/// 消し、Drop すべきを Keep すると古い値で固定する。真理値表はテストで固定してある。
 fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDisposition {
     if has_open_file {
         RestoreDisposition::Drop
@@ -352,12 +395,8 @@ fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDis
     }
 }
 
-/// diffを計算すべき対象のbaseブランチを解決する: worktreeの保存済み
-/// base ref（PR intake時に記録される — save_worktree_base_branch 参照）が
-/// 優先される。PRは設定されたmainブランチ以外（例: release/develop）を
-/// 対象にすることがあるため。main_branch は、保存済みbaseが無いworktree
-/// （通常のworktree、またはレビューDBが使えない場合）のフォールバックとして
-/// のみ使われる。
+/// PR intake が記録した base ref を優先する。PR は main 以外 (release/develop など) を
+/// 対象にすることがあるため。main_branch は保存済み base が無いときだけ使う。
 fn resolve_diff_base_branch(saved_base: Option<String>, main_branch: &str) -> String {
     saved_base.unwrap_or_else(|| main_branch.to_string())
 }

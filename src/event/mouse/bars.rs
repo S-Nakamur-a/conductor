@@ -3,8 +3,6 @@
 
 use crate::app::{App, Focus};
 
-use super::register_double_click;
-
 /// 新規worktree作成ダイアログを開く。worktreeバーの [+] ボタンと空白領域の
 /// ダブルクリックの両方から呼ばれる共通処理で、2つの入口の挙動がずれないようにしている。
 fn start_worktree_creation(app: &mut App) {
@@ -21,7 +19,7 @@ fn start_worktree_creation(app: &mut App) {
 /// 重なり用に1チップ引いた値（最低1）。表示チップ数は直前の描画で記録された
 /// Select 領域から読み取る。
 pub(super) fn wtbar_page_step(app: &App) -> usize {
-    use crate::ui::worktree_bar::WtbarAction;
+    use crate::worktree::bar::WtbarAction;
     let visible = app
         .wtbar
         .hits
@@ -44,7 +42,7 @@ pub(super) fn handle_wtbar_click(
         return false;
     }
     use crate::app::{StatusLevel, WorktreeInputMode};
-    use crate::ui::worktree_bar::WtbarAction;
+    use crate::worktree::bar::WtbarAction;
 
     let action = app.wtbar.hits.at(col);
 
@@ -88,10 +86,7 @@ pub(super) fn handle_wtbar_click(
         // シングルクリックはやることがない（バー自体はフォーカスを持たない）ので、
         // ただ消費するだけ。
         None => {
-            if register_double_click(
-                &mut app.worktree_mgr.wtbar_blank_last_click,
-                std::time::Instant::now(),
-            ) {
+            if app.worktree_mgr.wtbar_blank_clicks.is_double(0) {
                 start_worktree_creation(app);
             }
         }

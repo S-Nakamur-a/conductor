@@ -13,10 +13,8 @@ fn code_lines(lang: &str, source: &str) -> Vec<Line<'static>> {
     render_transcript(&text, 100)
 }
 
-/// content がちょうど text と一致する単一の span を探す — 部分一致ではない。
-/// 隣接する同スタイルの syntect トークンは1つの span に融合するため
-/// （wrap.rs の cells_to_line）。呼び出し側は融合後に期待する連続文字列を
-/// 渡す（文字列リテラル全体なら hi ではなく "hi" のように）。
+/// 部分一致ではなく完全一致。隣接する同スタイルのトークンは 1 span に融合するので、
+/// 呼び出し側は融合後の連続文字列を渡すこと (文字列リテラルなら "hi" のように)。
 fn span<'a>(lines: &'a [Line<'static>], text: &str) -> &'a Span<'static> {
     lines
         .iter()
@@ -49,17 +47,9 @@ fn assert_fg_dim(lines: &[Line<'static>], text: &str, color: Color) {
     );
 }
 
-/// word を単独の識別子として見たときの色を探す。周囲の句読点/空白と一緒に
-/// より広い同スタイルの span へ融合されている場合でも対応する（wrap.rs は
-/// 隣接する同スタイルの span をまとめるので、struct 名のようなスタイルなしの
-/// 識別子は、周りの括弧/コロン/スペースにくっついてしまうことがよくある）。
-/// 各 span の content を単語以外の文字で分割し、単語が完全一致する箇所を探す。
-///
-/// DIM が付いていないことも検査する — fg だけを見ていると、フィクスチャが
-/// Builtin（Cyan、DIM なし）を期待している箇所で、実際には同じ前景色を持つ
-/// Type（Cyan + DIM）の span を黙って通してしまう。現状のすべての呼び出し元は
-/// DIM なしの色を期待しているので、将来 DIM 付きの単語ベースの検査が必要に
-/// なったら、検査なしの双子を増やすのではなくこの関数を拡張すること。
+/// span を単語以外の文字で分割して完全一致を探す (スタイルなしの識別子は括弧やコロンに
+/// くっつくため)。DIM が無いことも見るのは、fg だけだと Builtin (Cyan) を期待した箇所で
+/// Type (Cyan + DIM) を黙って通すため。DIM 付きが要るなら双子を増やさずここを拡張すること。
 fn assert_word_fg(lines: &[Line<'static>], word: &str, color: Color) {
     let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
     for line in lines {

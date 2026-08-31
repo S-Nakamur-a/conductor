@@ -1,6 +1,7 @@
 //! パネルの幾何: キャッシュしたレイアウト矩形と、境界のドラッグリサイズ。
 
 use crate::app::panel_resize::Divider;
+use crate::types::Focus;
 use crate::ui::layout::LayoutCache;
 
 /// 3 カラムアコーディオンの配分と、マウスによる境界リサイズの状態。
@@ -11,6 +12,8 @@ use crate::ui::layout::LayoutCache;
 pub struct PanelLayout {
     /// 直近に計算したレイアウト矩形 (フレームサイズか最大化状態が変わると再計算)。
     pub cache: LayoutCache,
+    /// 100% に拡大しているパネル。None は通常レイアウト。
+    pub expanded: Option<Focus>,
     /// ターミナルカラム内で Claude Code 側が占める高さの割合 (残りが Shell)。
     ///
     /// 起動時は config.layout.terminal_split_pct から。tmux 風のペイン
